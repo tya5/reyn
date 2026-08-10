@@ -256,7 +256,7 @@ _CLIENT_INPUT_SITES: "dict[tuple[str, str], _SiteDeclaration]" = {
         ),
         measured_by=(),
     ),
-    ("reyn/runtime/session.py", "Session._peek_mid_turn_injection"): _SiteDeclaration(
+    ("reyn/runtime/inbox_arbiter.py", "InboxArbiter.peek_mid_turn_injection"): _SiteDeclaration(
         role="reads",
         reason=(
             "#3792: the mid-turn injection origin gate. Only a CLIENT_INPUT-origin "
@@ -266,7 +266,10 @@ _CLIENT_INPUT_SITES: "dict[tuple[str, str], _SiteDeclaration]" = {
             "as if this method did not exist. Reads the kind as an eligibility "
             "check, the same fail-safe if/else shape as "
             "Session._stamp_execution_context above: an unmapped or non-human "
-            "origin cannot reach the permissive (inject) side."
+            "origin cannot reach the permissive (inject) side. Proposal 0067 P1 "
+            "(#3978): moved from Session._peek_mid_turn_injection onto "
+            "InboxArbiter.peek_mid_turn_injection (InboxArbiter extraction) —"
+            " byte-identical relocation, same site, new qualname."
         ),
         measured_by=(
             "tests/core/test_3792_pr2_session_injection.py::"

@@ -4,17 +4,17 @@ End-to-end reply path completion for the Slack chat-transport. PR-D
 landed inbound (= Slack → Reyn inbox). PR-D2 completes outbound:
 
   inbox payload reply_to (= ExternalRef from PR-D handler)
-    → Session captures into self._last_reply_to
+    → InboxArbiter captures into self.last_reply_to
     → agent reply via _put_outbox
-    → reply_to defaults from _last_reply_to (when not explicit)
+    → reply_to defaults from InboxArbiter.last_reply_to (when not explicit)
     → _outbox_interceptor invoked (= PR-D2 wiring)
     → make_outbox_interceptor dispatches via route_to_mcp (PR-C)
     → Slack MCP server chat.postMessage (= operator-installed)
 
 Tests:
 
-  1. Sender attribution also captures reply_to into _last_reply_to
-  2. _put_outbox defaults missing reply_to from _last_reply_to
+  1. Sender attribution also captures reply_to into last_reply_to
+  2. _put_outbox defaults missing reply_to from last_reply_to
   3. _put_outbox invokes interceptor when reply_to is ExternalRef
   4. Interceptor return True → message NOT queued (= consumed by
      external transport, no TUI duplicate)
@@ -28,6 +28,15 @@ Tests:
 Tier 2 because this is the load-bearing wiring that makes Slack
 chat-transport actually work end-to-end. Without it, PR-D inbound
 delivers messages but no reply ever reaches Slack.
+
+Proposal 0067 P1 (#3978) co-vet (architect + lead-coder, #3978): a
+payload with no ``reply_to`` now CLEARS ``last_reply_to`` to ``None``
+instead of preserving the previous value. The prior "preserve" behavior
+was itself the misdelivery bug this arc closed — the stale value WAS
+consumed by ``_put_outbox``/``_put_outbox_nowait`` before the interceptor
+ever ran, contradicting the comment that justified it ("falls through to
+the default surface"). See ``InboxArbiter.handle_sender_attribution``'s
+own docstring for the full finding.
 """
 from __future__ import annotations
 
@@ -65,24 +74,34 @@ def test_attribution_captures_reply_to_from_payload(tmp_path):
     """
     session = _make_session(tmp_path)
     rt = ExternalRef(transport="slack", destination={"channel": "C1"})
-    session._handle_sender_attribution({
+    session._inbox_arbiter.handle_sender_attribution({
         "sender": "slack:U1",
         "reply_to": rt,
     })
     assert session.last_reply_to is rt
 
 
-def test_attribution_does_not_clear_reply_to_when_payload_lacks_it(tmp_path):
-    """Tier 2: a follow-up payload without reply_to preserves the
-    previously captured value (= same-thread follow-ups inherit the
-    original reply_to without each producer needing to re-attach).
+def test_attribution_clears_reply_to_when_payload_lacks_it(tmp_path):
+    """Tier 2: a follow-up payload without reply_to CLEARS the
+    previously captured value to None (proposal 0067 P1 co-vet, #3978:
+    the old "preserve" behavior was the misdelivery bug this arc closed
+    — a reply_to-less turn used to inherit the PREVIOUS turn's stale
+    destination in ``_put_outbox``. A same-thread Slack follow-up that
+    wants to keep replying to the same thread must resend ``reply_to``
+    on every payload — verified against the real producers, see
+    ``InboxArbiter.handle_sender_attribution``'s docstring).
+
+    Falsify-verified: reverting ``InboxArbiter.handle_sender_attribution``
+    to only overwrite ``last_reply_to`` when the payload carries one (the
+    pre-fix behavior) makes this go RED with the old
+    ``assert session.last_reply_to is rt``.
     """
     session = _make_session(tmp_path)
     rt = ExternalRef(transport="slack", destination={"channel": "C1"})
-    session._handle_sender_attribution({"sender": "slack:U1", "reply_to": rt})
+    session._inbox_arbiter.handle_sender_attribution({"sender": "slack:U1", "reply_to": rt})
     # Second payload, no reply_to.
-    session._handle_sender_attribution({"sender": "slack:U1"})
-    assert session.last_reply_to is rt
+    session._inbox_arbiter.handle_sender_attribution({"sender": "slack:U1"})
+    assert session.last_reply_to is None
 
 
 def test_attribution_updates_reply_to_when_payload_carries_new_one(tmp_path):
@@ -90,9 +109,9 @@ def test_attribution_updates_reply_to_when_payload_carries_new_one(tmp_path):
     (= different Slack thread / different transport).
     """
     session = _make_session(tmp_path)
-    session._last_reply_to = ExternalRef(transport="slack", destination={"channel": "C1"})
+    session._inbox_arbiter.last_reply_to = ExternalRef(transport="slack", destination={"channel": "C1"})
     new_rt = ExternalRef(transport="slack", destination={"channel": "C2"})
-    session._handle_sender_attribution({
+    session._inbox_arbiter.handle_sender_attribution({
         "sender": "slack:U1", "reply_to": new_rt,
     })
     assert session.last_reply_to is new_rt
@@ -109,7 +128,7 @@ async def test_put_outbox_inherits_reply_to_from_last(tmp_path):
     """
     session = _make_session(tmp_path)
     rt = ExternalRef(transport="slack", destination={"channel": "C1"})
-    session._last_reply_to = rt
+    session._inbox_arbiter.last_reply_to = rt
 
     msg = OutboxMessage(kind="agent", text="hello back")
     await session._put_outbox(msg)
@@ -124,7 +143,7 @@ async def test_put_outbox_keeps_explicit_reply_to(tmp_path):
     that explicitly sets reply_to wins).
     """
     session = _make_session(tmp_path)
-    session._last_reply_to = ExternalRef(transport="slack", destination={"channel": "C1"})
+    session._inbox_arbiter.last_reply_to = ExternalRef(transport="slack", destination={"channel": "C1"})
 
     explicit = TuiRef()
     msg = OutboxMessage(kind="agent", text="x", reply_to=explicit)

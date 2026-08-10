@@ -35,10 +35,10 @@ from pathlib import Path
 import pytest
 
 from reyn.core.events.state_log import StateLog
+from reyn.runtime.inbox_arbiter import _format_sender_label
 from reyn.runtime.session import (
     ChatMessage,
     Session,
-    _format_sender_label,
 )
 from tests._support.agent_session import make_session
 
@@ -78,7 +78,7 @@ def test_first_sender_triggers_first_attributed_turn_entry(tmp_path):
     session = _make_session(tmp_path)
     assert session.last_sender() is None
 
-    session._handle_sender_attribution({"sender": "slack:U456:bob"})
+    session._inbox_arbiter.handle_sender_attribution({"sender": "slack:U456:bob"})
 
     entries = _attribution_entries(session)
     assert entries, "expected attribution entry"
@@ -98,10 +98,10 @@ def test_sender_transition_emits_state_change(tmp_path):
     turn was from Y."
     """
     session = _make_session(tmp_path)
-    session._handle_sender_attribution({"sender": "cron:morning_news"})
+    session._inbox_arbiter.handle_sender_attribution({"sender": "cron:morning_news"})
     pre_count = len(_attribution_entries(session))
 
-    session._handle_sender_attribution({"sender": "slack:U456:bob"})
+    session._inbox_arbiter.handle_sender_attribution({"sender": "slack:U456:bob"})
 
     entries = _attribution_entries(session)
     assert len(entries) == pre_count + 1
@@ -121,12 +121,12 @@ def test_same_sender_consecutive_does_not_emit(tmp_path):
     only fires on the boundary between consumers.
     """
     session = _make_session(tmp_path)
-    session._handle_sender_attribution({"sender": "user:tui"})
+    session._inbox_arbiter.handle_sender_attribution({"sender": "user:tui"})
     pre_count = len(_attribution_entries(session))
 
     # Same sender again — no new transition.
-    session._handle_sender_attribution({"sender": "user:tui"})
-    session._handle_sender_attribution({"sender": "user:tui"})
+    session._inbox_arbiter.handle_sender_attribution({"sender": "user:tui"})
+    session._inbox_arbiter.handle_sender_attribution({"sender": "user:tui"})
 
     assert len(_attribution_entries(session)) == pre_count
     assert session.last_sender() == "user:tui"
@@ -145,7 +145,7 @@ def test_payload_without_sender_skips_attribution(tmp_path):
     pre_count = len(_attribution_entries(session))
     pre_last = session.last_sender()
 
-    session._handle_sender_attribution({"text": "hello", "chain_id": "c1"})
+    session._inbox_arbiter.handle_sender_attribution({"text": "hello", "chain_id": "c1"})
 
     assert len(_attribution_entries(session)) == pre_count
     assert session.last_sender() == pre_last  # unchanged
@@ -157,7 +157,7 @@ def test_empty_sender_string_skips_attribution(tmp_path):
     producers that haven't fully populated the field.
     """
     session = _make_session(tmp_path)
-    session._handle_sender_attribution({"sender": ""})
+    session._inbox_arbiter.handle_sender_attribution({"sender": ""})
 
     assert len(_attribution_entries(session)) == 0
     assert session.last_sender() is None
@@ -173,10 +173,10 @@ def test_non_dict_payload_does_not_crash(tmp_path):
     dispatch. Defensive isolation.
     """
     session = _make_session(tmp_path)
-    session._handle_sender_attribution(None)
-    session._handle_sender_attribution("string-not-dict")
-    session._handle_sender_attribution(["list-not-dict"])
-    session._handle_sender_attribution(42)
+    session._inbox_arbiter.handle_sender_attribution(None)
+    session._inbox_arbiter.handle_sender_attribution("string-not-dict")
+    session._inbox_arbiter.handle_sender_attribution(["list-not-dict"])
+    session._inbox_arbiter.handle_sender_attribution(42)
 
     assert len(_attribution_entries(session)) == 0
     assert session.last_sender() is None
@@ -190,9 +190,9 @@ def test_three_way_transition_each_fires(tmp_path):
     state_change entries — one per boundary.
     """
     session = _make_session(tmp_path)
-    session._handle_sender_attribution({"sender": "user:tui"})
-    session._handle_sender_attribution({"sender": "cron:nightly"})
-    session._handle_sender_attribution({"sender": "a2a:peer_one"})
+    session._inbox_arbiter.handle_sender_attribution({"sender": "user:tui"})
+    session._inbox_arbiter.handle_sender_attribution({"sender": "cron:nightly"})
+    session._inbox_arbiter.handle_sender_attribution({"sender": "a2a:peer_one"})
 
     entries = _attribution_entries(session)
     e0, e1, e2 = entries
@@ -265,7 +265,7 @@ def test_attribution_resilient_to_notify_state_change_failure(
     monkeypatch.setattr(session, "notify_state_change", _boom)
 
     # Must not raise.
-    session._handle_sender_attribution({"sender": "slack:U456:bob"})
+    session._inbox_arbiter.handle_sender_attribution({"sender": "slack:U456:bob"})
 
     # _last_sender did update despite the failure.
     assert session.last_sender() == "slack:U456:bob"

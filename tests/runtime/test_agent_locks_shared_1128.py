@@ -1,9 +1,9 @@
-"""Tier 2: OS invariant tests for the shared per-agent lock registry (#1128).
+"""Tier 2: OS invariant tests for the shared per-(agent, sid) lock registry (#1128, #3978).
 
 Pins the cross-transport serialization guarantee introduced in PR-b of
 issue #1128: MCP and A2A must acquire the SAME ``asyncio.Lock`` for a
-given agent name so concurrent MCP+A2A calls to the same session serialize
-rather than racing on ``session.history``.
+given (agent, sid) session so concurrent MCP+A2A calls to the same session
+serialize rather than racing on ``session.history``.
 
 Invariants exercised (identity invariants hold WITHIN a running loop — the
 registry is loop-aware since #1762, see ``agent_locks`` docstring):
@@ -18,6 +18,14 @@ registry is loop-aware since #1762, see ``agent_locks`` docstring):
   (e) #1762 regression: a contended lock used across distinct event loops
       (= pytest-asyncio's per-test fresh loops) must NOT raise "bound to a
       different event loop" — loop-aware keying gives each loop its own lock.
+  (f) Proposal 0067 P1 (#3978, architect A-2 axis-mismatch finding): two
+      different ``sid``s for the SAME agent name now yield DISTINCT locks —
+      this lock protects one Session's ``history``, not everything sharing
+      an agent name, and an agent can have more than one live session
+      (a per-delegation ``a2a:<id>`` session alongside "main").
+  (g) ``sid=None`` (the default, meaning "main") is the SAME key as an
+      explicit ``sid="main"`` — a bare pre-#3978-style call still serializes
+      against an explicit-sid caller for the same agent's main session.
 
 Policy compliance (docs/deep-dives/contributing/testing.ja.md):
 - No unittest.mock / MagicMock / AsyncMock / patch.
@@ -188,3 +196,74 @@ def test_agent_lock_reusable_across_event_loops() -> None:
     # RuntimeError("... bound to a different event loop"); loop-aware keying passes.
     asyncio.run(contended_once())
     asyncio.run(contended_once())
+
+
+# ---------------------------------------------------------------------------
+# (f)/(g) Proposal 0067 P1 (#3978): (agent_name, sid) axis
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_different_sids_for_same_agent_return_distinct_locks() -> None:
+    """Tier 2: get_agent_lock("x", "main") and get_agent_lock("x", "a2a:1")
+    return DISTINCT lock objects (#3978 architect A-2: the lock protects one
+    Session's history, and one agent name can have more than one live
+    session — a per-delegation sid must not serialize against "main").
+
+    Falsify-verified: reverting ``get_agent_lock`` to key by ``agent_name``
+    alone (the pre-#3978 shape) makes this go RED — both calls would return
+    the same object.
+    """
+    lock_main = get_agent_lock("shared-agent", "main")
+    lock_delegation = get_agent_lock("shared-agent", "a2a:peer-1")
+    assert lock_main is not lock_delegation, (
+        "get_agent_lock must return distinct asyncio.Lock objects for "
+        "different sids of the SAME agent — sharing one lock across "
+        "sessions that share no state over-serializes them"
+    )
+
+
+@pytest.mark.asyncio
+async def test_absent_sid_is_the_same_key_as_explicit_main() -> None:
+    """Tier 2: get_agent_lock("x") (sid omitted) and get_agent_lock("x", "main")
+    return the SAME lock object — the omitted-sid convention canonicalizes
+    to "main", so a caller that never passes sid still serializes correctly
+    against a caller that explicitly names the main session.
+    """
+    lock_bare = get_agent_lock("bare-vs-main-agent")
+    lock_explicit_main = get_agent_lock("bare-vs-main-agent", "main")
+    assert lock_bare is lock_explicit_main, (
+        "get_agent_lock(name) and get_agent_lock(name, \"main\") must be the "
+        "same key — omitted sid means the main session, same as explicit "
+        "sid=\"main\""
+    )
+
+
+@pytest.mark.asyncio
+async def test_different_sid_locks_do_not_serialize_against_each_other() -> None:
+    """Tier 2: concurrent coroutines holding locks for DIFFERENT sids of the
+    same agent do NOT block each other — the behavioral counterpart to (f).
+    Mirrors (d)'s serialization test, but proves the opposite: distinct
+    sessions run freely in parallel.
+    """
+    agent = "parallel-sid-agent"
+    main_entered = asyncio.Event()
+    delegation_entered = asyncio.Event()
+    entered: set[str] = set()
+
+    async def hold(sid: str, own: "asyncio.Event", other: "asyncio.Event") -> None:
+        async with get_agent_lock(agent, sid):
+            entered.add(sid)
+            own.set()
+            # Wait for the OTHER sid's coroutine to also be inside its own
+            # critical section concurrently — if they were serialized by a
+            # shared lock, this would deadlock (the other could never enter
+            # while this one waits on an event only the other sets) and the
+            # test would time out rather than pass.
+            await asyncio.wait_for(other.wait(), timeout=2.0)
+
+    await asyncio.gather(
+        hold("main", main_entered, delegation_entered),
+        hold("a2a:peer-2", delegation_entered, main_entered),
+    )
+    assert entered == {"main", "a2a:peer-2"}

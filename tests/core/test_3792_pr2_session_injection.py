@@ -95,7 +95,7 @@ async def test_only_client_input_origin_is_peek_eligible(tmp_path):
             tmp_path / f"{origin.value}.wal", tmp_path / f"{origin.value}.json",
         )
         await session._put_inbox(origin, kwargs)
-        result = await session._peek_mid_turn_injection()
+        result = await session._inbox_arbiter.peek_mid_turn_injection()
         assert result is None, f"origin {origin!r} must NOT be peek-eligible"
         await state_log.aclose()
 
@@ -104,7 +104,7 @@ async def test_only_client_input_origin_is_peek_eligible(tmp_path):
         tmp_path / "client_input.wal", tmp_path / "client_input.json",
     )
     await session.submit_user_text("hello")
-    result = await session._peek_mid_turn_injection()
+    result = await session._inbox_arbiter.peek_mid_turn_injection()
     assert result is not None
     assert result["payload"]["text"] == "hello"
     await state_log.aclose()
@@ -136,17 +136,17 @@ async def test_ineligible_head_blocks_peek_and_surfaces_via_normal_drain_in_orde
     )
     await session.submit_user_text("second, eligible")
 
-    peeked = await session._peek_mid_turn_injection()
+    peeked = await session._inbox_arbiter.peek_mid_turn_injection()
     assert peeked is None, "the ineligible AGENT_REQUEST head must block the peek"
 
-    kind, payload = await session._consume_inbox()
+    kind, payload = await session._inbox_arbiter.consume_inbox()
     assert kind == TurnOrigin.AGENT_REQUEST, (
         "the FIRST item _consume_inbox returns must be the same ineligible "
         "head the peek saw — not the 2nd (eligible) item out of order"
     )
     assert payload["request"] == "r"
 
-    kind2, payload2 = await session._consume_inbox()
+    kind2, payload2 = await session._inbox_arbiter.consume_inbox()
     assert kind2 == TurnOrigin.CLIENT_INPUT
     assert payload2["text"] == "second, eligible"
 
@@ -168,7 +168,7 @@ async def test_peek_without_commit_carries_forward_to_normal_consume(tmp_path):
 
     Falsification (performed during review): if ``_consume_inbox`` read
     ``self.inbox.get()`` unconditionally (ignoring
-    ``self._pending_inbox_item``), this test goes RED with an indefinite
+    ``self._inbox_arbiter.pending_inbox_item``), this test goes RED with an indefinite
     hang (the queue is empty — the item is stuck in the buffer forever) —
     demonstrated by using ``asyncio.wait_for`` with a short timeout instead
     of a bare await, so the failure mode is a clean test failure, not a
@@ -179,11 +179,11 @@ async def test_peek_without_commit_carries_forward_to_normal_consume(tmp_path):
     session, state_log = _make_session(tmp_path / "s.wal", tmp_path / "s.json")
     await session.submit_user_text("carry me")
 
-    peeked = await session._peek_mid_turn_injection()
+    peeked = await session._inbox_arbiter.peek_mid_turn_injection()
     assert peeked is not None
     # Deliberately do NOT commit — simulates the abnormal exit.
 
-    kind, payload = await asyncio.wait_for(session._consume_inbox(), timeout=2.0)
+    kind, payload = await asyncio.wait_for(session._inbox_arbiter.consume_inbox(), timeout=2.0)
     assert kind == TurnOrigin.CLIENT_INPUT
     assert payload["text"] == "carry me"
     assert payload["_msg_id"] == peeked["msg_id"]
@@ -215,7 +215,7 @@ async def test_commit_appends_history_prunes_snapshot_emits_turn_started(tmp_pat
     session._audit_events.add_subscriber(lambda e: events.append(e))
 
     msg_id = await session.submit_user_text("inject me", attribution=None)
-    peeked = await session._peek_mid_turn_injection()
+    peeked = await session._inbox_arbiter.peek_mid_turn_injection()
     assert peeked is not None
     assert peeked["msg_id"] == msg_id
 
@@ -258,7 +258,7 @@ async def test_commit_does_not_reset_hook_driven_turns(tmp_path):
     session._hook_driven_turns = 7  # setup (write): no public setter exists
 
     msg_id = await session.submit_user_text("inject me")
-    await session._peek_mid_turn_injection()
+    await session._inbox_arbiter.peek_mid_turn_injection()
     await session._commit_mid_turn_injection(msg_id)
 
     assert session.hook_driven_turns == 7
@@ -293,7 +293,7 @@ async def test_commit_truncate_falsify(tmp_path):
 
     msg_id = await session.submit_user_text("inject me")
     keep_id = await session.submit_user_text("stays queued")
-    await session._peek_mid_turn_injection()
+    await session._inbox_arbiter.peek_mid_turn_injection()
     await session._commit_mid_turn_injection(msg_id)
     await session.journal.flush()
 

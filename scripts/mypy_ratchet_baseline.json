@@ -612,6 +612,10 @@
     "code": "attr-defined"
   },
   {
+    "file": "src/reyn/runtime/inbox_arbiter.py",
+    "code": "arg-type"
+  },
+  {
     "file": "src/reyn/runtime/lifecycle_forwarder.py",
     "code": "arg-type"
   },
