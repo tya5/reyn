@@ -226,7 +226,9 @@ Two other mechanisms are easy to mistake for this one, and neither widens it:
   three profile-based backends tabled above (Seatbelt, Landlock, Noop) — the
   container boundary, not a policy applied to a host process. It is still a
   sandbox backend as far as this warning is concerned, which is exactly why the
-  silence described above covers it too.
+  silence described above covers it too — see [What container mode itself
+  enforces](#what-container-mode-itself-enforces) below for what actually
+  applies instead.
 
 ## Run in a container (mount mode)
 
@@ -258,11 +260,13 @@ by `reyn.yaml sandbox.backend` as usual (typically `landlock` on Linux).
 
 ### What container mode itself enforces
 
-The per-backend tables above, and the `sandbox_axis_unenforced` warning, are
-about the three **sandbox** backends (Seatbelt, Landlock, Noop) — a separate
-question from what the **container** you launch into already restricts on its
-own, independent of any `sandbox.*` policy. Measured directly (real execution
-against a live container, not inferred from the launch code):
+The section above already establishes that Docker's `run()` honors only
+`policy.timeout_seconds`, and that `allow_write_paths`/`network`/`subprocess`
+pass through unenforced with no warning. That leaves the question of what, if
+anything, DOES restrict those axes when you run in a container — the
+container's own launch-time isolation, independent of any `sandbox.*` policy.
+Measured directly (real execution against a live container, not inferred from
+the launch code):
 
 | axis | what actually happens | driven by |
 |---|---|---|
