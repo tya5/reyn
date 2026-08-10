@@ -61,10 +61,13 @@ _IDLE_POLL_INTERVAL_SECONDS: float = 0.05
 _IDLE_GRACE_SECONDS: float = 0.05
 
 
-# Per-agent serialization lock — shared across ALL transport layers (MCP +
-# A2A).  ``_get_agent_lock`` is imported from ``reyn.runtime.agent_locks`` at the
-# top of this file so MCP and A2A share the SAME lock object per agent name.
-# See that module for the full rationale.
+# Per-(agent, sid) serialization lock (proposal 0067 P1, #3978 — rekeyed
+# from agent_name alone; this lock protects THIS session's history, and an
+# agent can have more than one live session). ``_get_agent_lock`` is imported
+# from ``reyn.runtime.agent_locks`` at the top of this file; A2A traffic
+# reaches this same lock by routing through ``send_to_agent_impl`` below
+# rather than acquiring its own (see that module's docstring for the full
+# rationale, including why a2a.py's own import of it is vestigial).
 #
 # FP-0013: with MessageBus, the inbox is the serialization point but the
 # lock is retained as a belt-and-suspenders measure during the migration

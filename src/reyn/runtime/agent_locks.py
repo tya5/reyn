@@ -9,9 +9,14 @@ the same session race at every ``await`` inside ``run_one_iteration``, corruptin
 The fix: every transport that drives ``run_one_iteration`` acquires the same
 per-session ``asyncio.Lock`` before entering the critical section.
 
-This module is the single registry for those locks.  Both ``mcp_server`` and
-``a2a`` import ``get_agent_lock`` from here; on a given event loop they therefore
-share the same lock object for any given (agent, sid) pair.
+This module is the single registry for those locks. ``mcp.server.send_to_agent_impl``
+is the one call site that actually acquires a lock today — ``a2a.py`` routes
+through ``send_to_agent_impl`` itself (``reyn.interfaces.web.routers.a2a``
+imports it from ``reyn.mcp.server``) rather than acquiring its own; a2a's OWN
+``get_agent_lock`` import is a leftover from a drain loop #2442 removed
+(the acquire went with it, the import didn't) and is not itself part of the
+current protection path. On a given event loop, every caller that reaches
+``send_to_agent_impl`` shares the same lock object for a given (agent, sid) pair.
 
 Design constraints:
 - **Keyed by (agent_name, sid), not agent_name alone (proposal 0067 P1,
