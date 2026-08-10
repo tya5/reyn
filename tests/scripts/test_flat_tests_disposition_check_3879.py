@@ -10,52 +10,79 @@ import json
 from pathlib import Path
 
 from scripts.flat_tests_disposition_check import (
+    load_arc_population,
     unprocessed,
     validation_errors,
 )
 
 
-def _write_baseline(path: Path, names: "list[str]") -> None:
-    path.write_text(json.dumps(names), encoding="utf-8")
+def _write_arc_population(path: Path, keys: "list[str]") -> None:
+    path.write_text(json.dumps(keys), encoding="utf-8")
 
 
 def _write_disposition(path: Path, entries: dict) -> None:
     path.write_text(json.dumps(entries), encoding="utf-8")
 
 
-def test_unprocessed_is_baseline_minus_disposition_keys(tmp_path: Path) -> None:
-    """Tier 2: THE derivation — a baseline file with a disposition entry is
-    accounted for; one without is unprocessed."""
-    baseline = tmp_path / "baseline.json"
+def test_unprocessed_is_arc_population_minus_disposition_keys(tmp_path: Path) -> None:
+    """Tier 2: THE derivation — an arc-population entry with a disposition
+    entry is accounted for; one without is unprocessed."""
+    arc_population = tmp_path / "arc_population.json"
     disposition = tmp_path / "disposition.json"
-    _write_baseline(baseline, ["test_a.py", "test_b.py", "test_c.py"])
+    _write_arc_population(arc_population, ["tests/test_a.py", "tests/test_b.py", "tests/test_c.py"])
     _write_disposition(disposition, {
         "tests/test_a.py": {"disposition": "moved", "to": "tests/x/test_a.py"},
         "tests/test_b.py": {"disposition": "flat-by-decision", "reason": "single-file module, no bucket exists"},
     })
-    result = unprocessed(baseline, disposition)
+    result = unprocessed(arc_population, disposition)
     assert result == {"tests/test_c.py"}
 
 
 def test_unprocessed_is_empty_set_when_fully_accounted(tmp_path: Path) -> None:
-    """Tier 2: accept-side — every baseline file has an entry -> empty set,
-    the #3879 stopping condition."""
-    baseline = tmp_path / "baseline.json"
+    """Tier 2: accept-side — every arc-population file has an entry ->
+    empty set, the #3879 stopping condition."""
+    arc_population = tmp_path / "arc_population.json"
     disposition = tmp_path / "disposition.json"
-    _write_baseline(baseline, ["test_a.py"])
+    _write_arc_population(arc_population, ["tests/test_a.py"])
     _write_disposition(disposition, {
         "tests/test_a.py": {"disposition": "deleted", "reason": "Q3: nobody would miss it, no consumer"},
     })
-    assert unprocessed(baseline, disposition) == set()
+    assert unprocessed(arc_population, disposition) == set()
 
 
 def test_missing_disposition_file_means_everything_unprocessed(tmp_path: Path) -> None:
     """Tier 2: a disposition.json that doesn't exist yet is the same as an
-    empty one — every baseline file is unprocessed, not an error."""
-    baseline = tmp_path / "baseline.json"
-    _write_baseline(baseline, ["test_a.py", "test_b.py"])
+    empty one — every arc-population file is unprocessed, not an error."""
+    arc_population = tmp_path / "arc_population.json"
+    _write_arc_population(arc_population, ["tests/test_a.py", "tests/test_b.py"])
     missing = tmp_path / "does_not_exist.json"
-    assert unprocessed(baseline, missing) == {"tests/test_a.py", "tests/test_b.py"}
+    assert unprocessed(arc_population, missing) == {"tests/test_a.py", "tests/test_b.py"}
+
+
+def test_a_move_without_a_disposition_entry_does_not_shrink_unprocessed(tmp_path: Path) -> None:
+    """Tier 2: THE regression this snapshot exists to fix (lead-coder,
+    #4068 follow-up) — a file moving OUT of the live, ratchet-shrinking
+    baseline must NOT make it disappear from `unprocessed` if nobody wrote
+    a disposition entry for it. `arc_population` is frozen at a
+    point-in-time snapshot, so it does not react to a baseline shrinking
+    the way the OLD (baseline-based) derivation did.
+
+    Simulates the exact failure: an arc-population file "moves" (its
+    disposition is never recorded) — `unprocessed` must still name it,
+    proving the frozen snapshot doesn't shrink out from under the
+    population the way the live baseline does."""
+    arc_population = tmp_path / "arc_population.json"
+    disposition = tmp_path / "disposition.json"
+    _write_arc_population(arc_population, ["tests/test_a.py", "tests/test_b.py"])
+    # test_a.py "moves" — nobody records a disposition entry for it, the
+    # exact #4066 shape (a migration PR merges, the live baseline shrinks,
+    # nothing gets transcribed).
+    _write_disposition(disposition, {})
+    result = unprocessed(arc_population, disposition)
+    assert result == {"tests/test_a.py", "tests/test_b.py"}, (
+        "a file moving without a disposition entry must stay unprocessed — "
+        "the frozen snapshot must not shrink the way the live baseline does"
+    )
 
 
 def test_moved_without_to_is_a_schema_error() -> None:
@@ -114,3 +141,28 @@ def test_the_real_disposition_file_has_no_schema_errors() -> None:
 
     real = load_disposition()
     assert validation_errors(real) == []
+
+
+def test_the_frozen_snapshot_has_no_internal_duplicate_keys() -> None:
+    """Tier 2: the real, committed flat_tests_arc_population.json was built
+    as a union of `disposition`'s own keys and `baseline` at freeze time —
+    this asserts what was verified before writing (not assumed, per the
+    #3879 "bare numbers don't compare" lesson) stayed true."""
+    keys = load_arc_population()
+    raw = json.loads(
+        (Path(__file__).resolve().parents[2] / "scripts" / "flat_tests_arc_population.json")
+        .read_text(encoding="utf-8")
+    )
+    assert len(raw) == len(keys), "duplicate keys in the frozen snapshot"
+
+
+def test_the_real_disposition_keys_are_a_subset_of_the_frozen_population() -> None:
+    """Tier 2: every currently-recorded disposition entry must trace back
+    to the frozen population it was recorded against — a disposition key
+    absent from `arc_population` would mean the artifact drifted from what
+    it's supposed to be tracking."""
+    from scripts.flat_tests_disposition_check import load_disposition
+
+    population = load_arc_population()
+    disposition = load_disposition()
+    assert set(disposition.keys()) <= population
