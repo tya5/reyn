@@ -1475,6 +1475,58 @@ def skill_list_to_canonical(result: dict) -> CanonicalToolResult:
     return _records_to_canonical(text, skills)
 
 
+def describe_task_to_canonical(result: dict) -> CanonicalToolResult:
+    """``describe_task`` result -> canonical (proposal 0067 P4, #3978). A
+    single-task "describe" view — ``{task_id, kind, status, session,
+    requester}`` (``ttl_seconds`` deferred to P8) — records as ONE
+    structured attachment, mirroring every other Bucket B describe mapper's
+    shape (``_records_to_canonical`` with a dict, not a list)."""
+    if not result.get("ok"):
+        return CanonicalToolResult(
+            text=f"task not found: {result.get('error', '')}", attachments=[], source_ref=None, meta={},
+        )
+    text = f"task {result.get('task_id')}: {result.get('status')} ({result.get('kind')})"
+    return _records_to_canonical(text, result)
+
+
+def list_tasks_to_canonical(result: dict) -> CanonicalToolResult:
+    """``list_tasks`` result -> canonical (proposal 0067 P4, #3978).
+    ``tasks`` entries carry ``{task_id, kind, status, session}`` — only
+    RUNNING tasks (ADR-0040 D4: a settled task's handle is already gone).
+    """
+    tasks = result.get("tasks") or []
+    n = len(tasks)
+    preview = _bounded_join(tasks, "task_id")
+    text = f"{n} running task{'s' if n != 1 else ''}" + (f": {preview}" if preview else "") + "."
+    return _records_to_canonical(text, tasks)
+
+
+_CANCEL_TASK_STATUSES = frozenset({"cancel_requested", "error"})
+
+
+def cancel_task_to_canonical(result: dict) -> CanonicalToolResult:
+    """``cancel_task`` result -> canonical (proposal 0067 P4, #3978).
+    Deliberately does NOT summarize a bare "cancelled" for every outcome —
+    the architect's witness requirement (a caller finding no live cancel
+    hook must not read this as success) has to survive offload too, or the
+    LLM-visible text itself becomes the silent lie the requirement exists
+    to prevent. ``status`` here already carries the distinction
+    (``cancel_requested`` vs an explicit error status) — this mapper never
+    collapses it to a bare "ok".
+
+    ``status`` IS this mapper's inner discriminator (FP-0056 M3, #2695): a
+    value outside the two ``cancel_task`` actually emits is a
+    discriminator-miss, not a bare status echo — the guard
+    (``test_fp0056_m3_fail_visible.py``) drives every registered mapper
+    with a discriminator-less ``{"status": <sentinel>}`` probe specifically
+    to catch a mapper that echoes an unrecognized status verbatim."""
+    status = result.get("status")
+    if status not in _CANCEL_TASK_STATUSES:
+        raise CanonicalDiscriminatorMiss(f"cancel_task_to_canonical: unknown status {status!r}")
+    text = f"task {result.get('task_id')}: {status}"
+    return _records_to_canonical(text, result)
+
+
 def pipeline_list_to_canonical(result: dict) -> CanonicalToolResult:
     """``pipeline_list`` result -> canonical (#3026). ``pipelines`` entries carry
     ``{name, description}`` — the discovery view of every REGISTERED pipeline.

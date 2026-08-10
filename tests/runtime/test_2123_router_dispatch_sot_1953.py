@@ -81,6 +81,10 @@ _EXPECTED_DISPATCH: "frozenset[str]" = frozenset({
     "pipeline_install_local", "pipeline_install_source",
     "pipeline_list", "run_pipeline", "run_pipeline_async",
     "run_pipeline_inline", "run_pipeline_inline_async",
+    # proposal 0067 P4 (#3978): describe_task / list_tasks / cancel_task —
+    # router_dispatched=True, dispatched via invoke_action like the catalog
+    # actions above.
+    "describe_task", "list_tasks", "cancel_task",
     "presentation_install_local",
     "reyn_repo_glob", "reyn_repo_grep",
     "skill_install_local", "skill_install_source", "skill_list",

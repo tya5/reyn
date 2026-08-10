@@ -143,6 +143,9 @@ CATEGORIES: Final[tuple[str, ...]] = (
     # pipeline dynamic actions; ``pipeline`` is now launch
     # verbs + ``pipeline_list`` only.)
     "pipeline_management",
+    # proposal 0067 P4 (#3978): describe_task / list_tasks / cancel_task —
+    # read/act against a currently-running async task's settle-path handle.
+    "task",
     # proposal 0060 Phase 1 Layer A (A8): presentation management ops (install).
     # Single verb (no source/git-fetch counterpart — a blueprint is inline
     # declarative data). Management plane — mirrors ``skill_management`` /

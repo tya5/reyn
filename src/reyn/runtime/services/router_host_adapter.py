@@ -167,6 +167,11 @@ class RouterHostAdapter:
     pipeline_registry:
         PipelineRegistry (or None, IS-5) — the ``run_pipeline`` tool's
         lookup source, exposed via ``get_pipeline_registry()``.
+    chains:
+        ChainManager (or None) — proposal 0067 P4 (#3978)'s
+        describe_task/list_tasks/cancel_task read/act against THIS
+        session's own pending_chains, exposed via ``get_chains()``
+        (mirrors ``get_pipeline_registry()``, same threading shape).
     agent_workspace_dir:
         Path to ``.reyn/agents/<agent_name>`` — used for ``get_memory_index``.
     mcp_call_tool:
@@ -269,6 +274,7 @@ class RouterHostAdapter:
         state_log: Any = None,                  # StateLog | None — #2248 PR-A2 (config emit)
         agent_registry: Any,                    # AgentRegistry | None
         pipeline_registry: Any = None,          # PipelineRegistry | None — IS-5
+        chains: Any = None,                     # ChainManager | None — #3978 P4
         presentation_registry: Any = None,      # PresentationRegistry | None — FP-0054 PR-C
         record_spawned_task: "Callable[[str, str], None] | None" = None,  # #2103 S1bc-exec
         agent_workspace_dir: Path,
@@ -527,6 +533,7 @@ class RouterHostAdapter:
         self._state_log = state_log  # #2259 PR-1: WAL head for config generation emit
         self._registry = agent_registry
         self._pipeline_registry = pipeline_registry  # IS-5: run_pipeline lookup source
+        self._chains = chains  # #3978 P4: describe_task/list_tasks/cancel_task lookup source
         # FP-0054 PR-C: operator named-template registry (presentations.yaml). Held on
         # the adapter (like _pipeline_registry) so make_router_op_context threads the
         # CURRENT snapshot into each OpContext; the pipelines/skills-style hot-reload
@@ -833,6 +840,14 @@ class RouterHostAdapter:
         against the session's actual registered pipelines instead of the
         None landmine."""
         return self._pipeline_registry
+
+    def get_chains(self) -> Any:
+        """The session's ChainManager (or None) — proposal 0067 P4 (#3978):
+        read by ``build_resource_caller_state`` to populate
+        ``RouterCallerState.chains`` so ``describe_task``/``list_tasks``/
+        ``cancel_task`` act against THIS session's own pending_chains
+        (mirrors ``get_pipeline_registry()``, same threading shape)."""
+        return self._chains
 
     def get_presentation_registry(self) -> Any:
         """The adapter's captured PresentationRegistry (or None) — FP-0054 PR-C.

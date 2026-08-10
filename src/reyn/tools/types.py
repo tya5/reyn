@@ -72,6 +72,12 @@ class RouterCallerState:
     # don't support run_pipeline.
     pipeline_registry: Any = None
 
+    # proposal 0067 P4 (#3978): the ChainManager describe_task/list_tasks/
+    # cancel_task read/act against — THIS session's own pending_chains, not
+    # a global. Threaded the same way as pipeline_registry above (populated
+    # by build_resource_caller_state from host.get_chains()).
+    chains: Any = None
+
     # Async dispatch callbacks (= for delegate_to_agent / plan
     # handlers that need to interact with chain / task lifecycle)
     send_to_agent: Callable[..., Awaitable[Any]] | None = None
@@ -287,6 +293,9 @@ async def build_resource_caller_state(host: Any) -> "RouterCallerState":
         ),
         pipeline_registry=(
             getattr(host, "get_pipeline_registry", lambda: None)()
+        ),
+        chains=(
+            getattr(host, "get_chains", lambda: None)()
         ),
     )
 

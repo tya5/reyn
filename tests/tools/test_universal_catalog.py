@@ -85,6 +85,9 @@ def test_categories_master_table_order() -> None:
         # ``pipeline__`` resource category; management plane (mirrors
         # ``skill_management``).
         "pipeline_management",
+        # proposal 0067 P4 (#3978): describe_task / list_tasks / cancel_task —
+        # read/act against a currently-running async task's settle-path handle.
+        "task",
         # proposal 0060 Phase 1 Layer A (A8): presentation management ops
         # (install). Management plane (mirrors skill_management /
         # pipeline_management); required for presentation_install_local to

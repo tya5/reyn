@@ -211,6 +211,13 @@ _NOT_EXTERNAL = {
     # runs (same "ACK here, fenced at its own seam" rationale as above).
     "run_pipeline_inline",
     "run_pipeline_inline_async",
+    # proposal 0067 P4 (#3978): describe_task / list_tasks / cancel_task all
+    # return OS-assembled structured data (task_id/kind/status/session/
+    # requester, drawn from ChainManager's own in-memory state) — no
+    # external content of any kind.
+    "describe_task",
+    "list_tasks",
+    "cancel_task",
 }
 
 
