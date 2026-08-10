@@ -48,8 +48,9 @@ from reyn.security.permissions.permissions import PermissionDecl
 from reyn.tools.mcp_verbs import _handle_mcp_install_local
 from reyn.tools.types import RouterCallerState, ToolContext
 from tests._support.agent_session import make_session
+from tests._support.paths import REPO_ROOT
 
-_PID_SERVER = Path(__file__).parent / "_support" / "mcp_tools_only_pid_server.py"
+_PID_SERVER = REPO_ROOT / "tests" / "_support" / "mcp_tools_only_pid_server.py"
 _STDIO = {"command": sys.executable, "args": [str(_PID_SERVER)]}
 
 

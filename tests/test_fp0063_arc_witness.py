@@ -186,10 +186,11 @@ pytest.importorskip(
 
 import reyn.builtin as _builtin_pkg  # noqa: E402
 from tests._support.agent_session import make_session
+from tests._support.paths import REPO_ROOT
 
 _RAG_PLUGIN_DIR = Path(_builtin_pkg.__file__).resolve().parent / "plugins" / "rag"
 
-_FIXTURE_DIR = Path(__file__).parent / "fixtures" / "llm" / "fp0063_arc_witness"
+_FIXTURE_DIR = REPO_ROOT / "tests" / "fixtures" / "llm" / "fp0063_arc_witness"
 _INSTALL_FIXTURE_PATH = _FIXTURE_DIR / "turn1_install.jsonl"
 _INGEST_QUERY_FIXTURE_PATH = _FIXTURE_DIR / "turn2_ingest_query.jsonl"
 

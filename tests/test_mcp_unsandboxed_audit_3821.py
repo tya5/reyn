@@ -35,14 +35,14 @@ from __future__ import annotations
 import asyncio
 import sys
 import warnings
-from pathlib import Path
 
 import pytest
 
 from reyn.mcp.client import MCPClient
 from reyn.mcp.connection_service import MCPConnectionService
+from tests._support.paths import REPO_ROOT
 
-_ECHO_SERVER = Path(__file__).parent / "_support" / "mcp_fastmcp_echo_server.py"
+_ECHO_SERVER = REPO_ROOT / "tests" / "_support" / "mcp_fastmcp_echo_server.py"
 
 
 def _boom(config=None):

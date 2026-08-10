@@ -159,3 +159,78 @@ def parse_file_relative_targets(source: str, anchor: Path) -> "list[Path]":
             continue  # a sub-expression of a larger resolvable chain
         seen[target] = None
     return list(seen)
+
+
+def _module_level_nodes(tree: ast.Module) -> "list[ast.AST]":
+    """Every node reachable from *tree* WITHOUT descending into a
+    ``def``/``async def``/``class`` body — the "runs at import time" subset
+    of the module. A directory a test creates at runtime (a fixture's
+    ``tmp_path``-scoped output dir, a `TemporaryDirectory`, ...) is, by
+    construction, always built inside a function body — never at bare
+    module scope, since nothing has run yet at import time. Restricting to
+    this subset is what lets :func:`module_level_glob_roots` require
+    existence without false-positiving on that whole (very common)
+    pattern."""
+    nodes: "list[ast.AST]" = []
+
+    def _walk(node: ast.AST) -> None:
+        nodes.append(node)
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                continue
+            _walk(child)
+
+    _walk(tree)
+    return nodes
+
+
+def module_level_glob_roots(source: str, anchor: Path) -> "list[Path]":
+    """Every ``__file__``-rooted directory that *source* uses, AT MODULE
+    LEVEL (import time, never inside a function/class body), as the base
+    of a ``.glob(...)``/``.rglob(...)`` call — the "eager fixture
+    discovery" pattern (``_FIXTURES_ROOT = Path(__file__).parent /
+    "fixtures"; _FIXTURE_FILES = sorted(_FIXTURES_ROOT.rglob("*.jsonl"))``)
+    that #4019's real instance (``tests/dev/test_replay_fixture_no_
+    stacking_3634.py``) broke: the directory silently didn't exist, the
+    glob silently returned nothing, and the test's own parametrization
+    silently collected zero cases instead of failing.
+
+    Deliberately narrow, matching the SAME "module-level only" reasoning
+    :func:`_module_level_nodes` documents: a target used this way, this
+    early, is a genuine "this SHOULD already exist on disk" claim, not a
+    runtime-created output directory (those live inside function bodies).
+    Empty for a syntax error."""
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return []
+    module_nodes = _module_level_nodes(tree)
+    bindings: "dict[str, Path]" = {}
+    for node in module_nodes:
+        if (
+            isinstance(node, ast.Assign)
+            and len(node.targets) == 1
+            and isinstance(node.targets[0], ast.Name)
+        ):
+            target_path = _resolve(node.value, anchor)
+            if target_path is not None:
+                bindings[node.targets[0].id] = target_path
+
+    roots: "dict[Path, None]" = {}
+    for node in module_nodes:
+        if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)):
+            continue
+        if node.func.attr not in ("glob", "rglob"):
+            continue
+        base = node.func.value
+        # Directly `Path(__file__)...glob(...)` (the target resolves without
+        # an intermediate name binding).
+        direct = _resolve(base, anchor)
+        if direct is not None:
+            roots[direct] = None
+            continue
+        # `_SOME_NAME.glob(...)` where `_SOME_NAME` was bound, at module
+        # level, to a __file__-rooted expression above.
+        if isinstance(base, ast.Name) and base.id in bindings:
+            roots[bindings[base.id]] = None
+    return list(roots)
