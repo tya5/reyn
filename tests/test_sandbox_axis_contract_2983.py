@@ -150,11 +150,12 @@ def _resolve_workload_test(workload_test_id: str) -> object:
     """Load the module a workload_test_id points into and return the named
     test function, or None if it does not resolve.
 
-    importlib.util rather than `import tests.<module>` — tests/ has no
-    __init__.py (a deliberate namespace-package-free layout, and pyproject's
-    pytest `pythonpath` only adds src/), so a plain package import is not
-    guaranteed to resolve the same way pytest's own collection does. Loading
-    by file path is robust to both.
+    importlib.util rather than `import tests.<module>` — this stays robust to
+    a workload_test_id whose dotted package path pytest's own collection
+    would resolve differently (e.g. a bucket-migrated test whose real module
+    name is `tests.<bucket>.test_x`, not derivable from the `tests/...`
+    slash-path string this function is handed). Loading by file path sidesteps
+    that translation entirely rather than needing to keep it in sync.
     """
     path, _, func_name = workload_test_id.partition("::")
     repo_root = REPO_ROOT
@@ -193,9 +194,13 @@ def test_write_and_spawn_workload_test_ids_resolve_to_real_tests(axis_name: str)
     function in THIS file (added by this PR, see section 5 below) — not a
     stale or typo'd reference."""
     axis = next(a for a in AXIS_REGISTRY if a.name == axis_name)
-    path, _, _ = axis.workload_test_id.partition("::")
-    assert path == "tests/test_sandbox_axis_contract_2983.py"
-
+    # A pinned `path == "tests/test_sandbox_axis_contract_2983.py"` assert
+    # used to sit here too — dropped, same class and same reasoning as the
+    # network axis's own pin above: this asserts THIS FILE'S OWN path, so an
+    # M4 bucket move of this very file would fail here on the side that
+    # correctly updated the registry, not the side that forgot to. The
+    # resolve below already witnesses existence for whatever path the
+    # registry currently carries.
     func = _resolve_workload_test(axis.workload_test_id)
     assert func is not None, (
         f"{axis.workload_test_id} does not resolve — the {axis_name} axis's "
