@@ -94,14 +94,6 @@ def test_session_spawn_renders_status_text() -> None:
     assert canonical["meta"]["sid"] == "sess-42"
 
 
-def test_delegate_to_agent_renders_status_text() -> None:
-    """Tier 1: ``delegate_to_agent`` (tools/delegate_to_agent.py) dispatch-ack shape."""
-    result = {"status": "dispatched", "to": "peer_agent", "note": "Peer's reply will arrive later."}
-    canonical = to_canonical(result, source="delegate_to_agent")
-    assert "peer_agent" in canonical["text"]
-    assert canonical["meta"]["to"] == "peer_agent"
-
-
 def test_index_drop_renders_status_text() -> None:
     """Tier 1: ``index_drop`` (OS-internal op kind, core/op_runtime/index_drop.py) surfaces its
     ``{removed, chunks_dropped}`` handler result via its declared mapper. FP-0066 P1b: the

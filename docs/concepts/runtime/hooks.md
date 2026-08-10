@@ -343,10 +343,12 @@ isn't loaded) or when the disposition itself was `"drop"`. This is
 deliberate: a Composer's `all` combinator waits for every one of N tasks to
 settle, and if the hook were gated on delivery success, a single dropped
 or undeliverable task would mean `all` never fires — composition rests on
-"settled", not on "delivered". `delegate_to_agent`'s own chain-resolve
-completion path is a separate, still-unwired "settle"-shaped mechanism
-today — folding it into this same point is deferred (recorded as an open
-remainder in `BUILTIN_HOOK_SCHEMAS`'s own code comment, not silently
+"settled", not on "delivered". `delegate_to_agent` retired in proposal 0067
+P6 (#3978) with no replacement producer for its own chain-resolve
+completion path, so folding it into this point never happens for that
+specific mechanism (architect ruling, #3978) — `run_prompt(collect="async")`
+is this hook point's real second producer, still pending its own PR
+(`BUILTIN_HOOK_SCHEMAS`'s own code comment tracks it, not silently
 dropped).
 
 Template vars:

@@ -159,8 +159,18 @@ def test_reachable_role_that_denies_is_clean(tmp_path: Path, monkeypatch) -> Non
     # genuinely tight: deny BOTH the qualified catalog names AND the bare unwrapped
     # aliases (#2111 — the audit taxonomy covers every invocable form, so a profile
     # denying only the qualified form would still re-grant the bare one).
+    #
+    # NOTE (proposal 0067 P6, #3978): this list previously named
+    # delegate_to_agent (re-delegation class) and the pre-#4004 renamed
+    # session_spawn/agent_spawn/topology_create (spawn class) — both were
+    # stale enough that `load_capability_profile` raised on the renamed
+    # names, `_scan`'s `except Exception: continue` swallowed it silently,
+    # and this test passed for the WRONG reason (the profile never loaded,
+    # so "worker" was never scanned at all — a false negative masked by a
+    # trivially-true assertion). Fixed to the current names so the profile
+    # actually loads and this test verifies what its docstring claims.
     (_profiles(tmp_path) / "tight.yaml").write_text(
-        "name: tight\ntool_deny: [delegate_to_agent, delegate_to_agent, exec, "
+        "name: tight\ntool_deny: [run_prompt, send_to_session, exec, "
         "exec, "
         "delete_file, delete_file, remember_shared, "
         "remember_agent, forget_memory, remember_shared, "
@@ -170,7 +180,7 @@ def test_reachable_role_that_denies_is_clean(tmp_path: Path, monkeypatch) -> Non
         "skill_install_source, skill_install_source, "  # #2548 PR-D: source install
         "pipeline_install_local, pipeline_install_local, "  # pipeline-install class (mirrors skill-install)
         "pipeline_install_source, pipeline_install_source, "  # pipeline source install
-        "session_spawn, agent_spawn, topology_create, "  # #2103: the full spawn class (session + agent + topology)
+        "spawn_session, spawn_agent, create_topology, "  # #2103: the full spawn class (session + agent + topology)
         # IS-1/IS-2/IS-4 pipeline-run class (spawn-adjacent): proposal 0067 P7
         # (#3978) unified the former 4 names (sync/async/inline/inline-async)
         # into this one, 0 aliases — every collect=/definition= combination

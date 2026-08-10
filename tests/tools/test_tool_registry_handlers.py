@@ -13,7 +13,6 @@ from __future__ import annotations
 import pytest
 
 from reyn.tools.catalog import DESCRIBE_AGENT, LIST_AGENTS
-from reyn.tools.delegate_to_agent import DELEGATE_TO_AGENT
 from reyn.tools.types import RouterCallerState, ToolContext
 
 # ── helpers ───────────────────────────────────────────────────────────────────
@@ -93,46 +92,3 @@ async def test_describe_agent_handler_raises_when_fn_none():
     rs = RouterCallerState()  # describe_agent_fn defaults to None
     with pytest.raises(RuntimeError, match="router_state.describe_agent_fn"):
         await DESCRIBE_AGENT.handler({"name": "research"}, _ctx(rs))
-
-
-# ── delegate_to_agent ─────────────────────────────────────────────────────────
-
-@pytest.mark.asyncio
-async def test_delegate_to_agent_handler_delegates_to_send_to_agent():
-    """Tier 2: delegate_to_agent handler delegates to ctx.router_state.send_to_agent
-    with per-call args and returns the spawn-ack dict (chain_id is bound at
-    population time, not by the handler)."""
-    captured_kwargs: list[dict] = []
-
-    async def fake_send(*, to: str, request: str) -> None:
-        captured_kwargs.append({"to": to, "request": request})
-
-    rs = RouterCallerState(send_to_agent=fake_send)
-    ctx = _ctx(rs)
-    result = await DELEGATE_TO_AGENT.handler(
-        {"to": "peer_agent", "request": "please do X"}, ctx
-    )
-    assert captured_kwargs == [{"to": "peer_agent", "request": "please do X"}]
-    assert result["status"] == "dispatched"
-    assert result["to"] == "peer_agent"
-    assert "future router invocation" in result["note"]
-
-
-@pytest.mark.asyncio
-async def test_delegate_to_agent_handler_raises_when_send_to_agent_missing():
-    """Tier 2: delegate_to_agent handler raises RuntimeError when send_to_agent
-    is not populated (= mis-wired dispatcher)."""
-    rs = RouterCallerState()  # send_to_agent defaults to None
-    with pytest.raises(RuntimeError, match="send_to_agent"):
-        await DELEGATE_TO_AGENT.handler(
-            {"to": "peer", "request": "hi"}, _ctx(rs)
-        )
-
-
-@pytest.mark.asyncio
-async def test_delegate_to_agent_handler_raises_when_router_state_is_none():
-    """Tier 2: delegate_to_agent handler raises RuntimeError when router_state is None."""
-    with pytest.raises(RuntimeError, match="send_to_agent"):
-        await DELEGATE_TO_AGENT.handler(
-            {"to": "peer", "request": "hi"}, _ctx(None)
-        )

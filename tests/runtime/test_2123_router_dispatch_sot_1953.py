@@ -28,7 +28,9 @@ from reyn.tools import get_default_registry
 # change) when adding/removing a dispatch-routed tool, the same way #1822 / #2111 / #1056
 # require deliberate updates to their exhaustiveness lists.
 _EXPECTED_DISPATCH: "frozenset[str]" = frozenset({
-    "list_agents", "describe_agent", "delegate_to_agent",
+    # delegate_to_agent retired, proposal 0067 P6 (#3978) — send_to_session/
+    # run_prompt reach another agent's context the same way.
+    "list_agents", "describe_agent",
     "spawn_session", "spawn_agent", "create_topology",
     # Proposal 0067 P5 (#3978): send_to_session gained a router-dispatched
     # ToolDefinition (fire-and-forget delivery primitive).

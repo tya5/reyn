@@ -69,12 +69,15 @@ dispatch).
 
 ⚠️ **Exclusive-wrapper mode has no catalog route for this tool.** When
 [`action_retrieval.universal_wrappers_enabled`](../tools-integrations/universal-catalog.md)
-is `true`, `spawn_session`'s individual per-tool entry is stripped (like
-`delegate_to_agent`'s) — but unlike `delegate_to_agent`, which stays
-reachable through the `multi_agent` category's catalog dispatch,
-`spawn_session` has no catalog-channel equivalent today. An operator
-enabling exclusive-wrapper mode loses `spawn_session` reachability
-entirely, with no compensating route.
+is `true`, `spawn_session`'s individual per-tool entry is stripped, the same
+as every router-only delegation tool (`run_prompt`, `send_to_session`) —
+none of them has a `multi_agent` category catalog-dispatch fallback; that
+category's action set is `list_agents` / `describe_agent` only. (Prior to
+proposal 0067 P6, #3978, `delegate_to_agent` was the one exception with a
+catalog-channel route; it retired with the rest of its own tool, so this
+gap is now uniform across the whole delegation surface, not
+`spawn_session`-specific.) An operator enabling exclusive-wrapper mode
+loses `spawn_session` reachability entirely, with no compensating route.
 
 **`mode`**:
 

@@ -148,16 +148,16 @@ def without_duplicate_names(entries: "list[dict]") -> "list[dict]":
 
     A cell that composes ``base_tools`` with the flat catalog offers the same
     operation twice — the base tools and the catalog both carry ``read_file``,
-    ``delegate_to_agent``, and so on. Measured on #3428: 12 such pairs under a
+    ``call_mcp_tool``, and so on. Measured on #3428: 12 such pairs under a
     default host config, 18 under a maximal one, i.e. up to 18 declarations the
     model is shown twice on **every** turn.
 
     **The base tools' entry is the one kept**, because callers compose
     ``base_tools`` first, and that ordering is load-bearing rather than
-    incidental: ``delegate_to_agent``'s base schema carries the live ``enum`` of
-    peer names (``tools/delegate_to_agent.py``'s schema enricher) while the
+    incidental: an MCP tool's base schema carries the live ``enum`` of server/
+    tool names (``tools/mcp.py``'s ``_enrich_router_schema``) while the
     catalog projection of the same tool does not, so keeping the catalog's row
-    instead would let a model name a peer that does not exist.
+    instead would let a model name a server/tool that does not exist.
 
     #3429 is why this is a plain name dedup. It used to be an *alias* dedup:
     the two rows carried two DIFFERENT names for one operation (``read_file``

@@ -5,8 +5,10 @@ disposition (``"deliver"`` | ``"<pipeline name>"`` | ``"drop"``) executes,
 then its handle is popped, IN THE SAME FUNCTION (mirroring ``resolve()``'s
 existing pop+cancel_timeout+journal shape — this is the acceptance
 condition: ONE settle function, no ``pipeline``/``run_id`` in its
-signature, so a later PR (P6) can point ``delegate_to_agent``'s own
-chain-resolve completion at this SAME function).
+signature). ``delegate_to_agent``'s own chain-resolve completion never
+folds into this function — architect ruling, #3978: P6 retired the tool
+with no replacement producer, so its (permanently non-task) chains stay on
+``resolve()``, never ``settle()``.
 
 Real ``ChainManager``/``SnapshotJournal``/``StateLog`` throughout — no
 mocks, matching ``test_chain_manager_find_chain.py``'s established pattern.
@@ -108,8 +110,8 @@ def test_settle_signature_names_no_pipeline_or_run_id():
     """Tier 1: the settle-path acceptance condition itself, grep-checkable
     at the type level — ``ChainManager.settle`` takes no parameter literally
     named ``pipeline`` or ``run_id`` (the generic ``chain_id`` is reused,
-    same as every other ChainManager method), so P6 can point
-    ``delegate_to_agent``'s own completion at this SAME function without a
+    same as every other ChainManager method) — a kind-agnostic signature
+    generic enough for a future task-kind producer to reuse without a
     signature change. (``launch_pipeline`` — the disposition-execution
     callback for the "<pipeline name>" case, D4 — is exempt by design: the
     condition bars a pipeline-RUN-SPECIFIC argument like a raw ``pipeline``

@@ -117,11 +117,13 @@ BUILTIN_HOOK_SCHEMAS: "dict[str, frozenset[str]]" = {
     "builtin:external:cron_fired": frozenset({"point", "job_name", "to"}),
     "builtin:external:webhook_received": frozenset({"point", "transport", "sender"}),
     # proposal 0067 P3: producer = the pipeline-async terminal-delivery path
-    # ONLY (owner ruling via lead-coder, 2026-08-10) — delegate_to_agent's
-    # chain-resolve path is a SEPARATE, still-unwired "settle"-shaped
-    # completion today; folding it in is P6's job (retiring delegate_to_agent
-    # repurposes pending_chains as this point's second producer). Recorded
-    # here, not silently dropped, per CLAUDE.md's arc-closure remainder rule.
+    # ONLY (owner ruling via lead-coder, 2026-08-10). delegate_to_agent's own
+    # chain-resolve completion never folds in here — architect ruling,
+    # #3978: P6 retired the tool with no replacement producer, so its
+    # chains stay outside the task/settle vocabulary permanently (kind=None
+    # for their remaining lifetime). run_prompt(collect="async") is this
+    # point's real second producer, a later PR. Recorded here, not silently
+    # dropped, per CLAUDE.md's arc-closure remainder rule.
     "builtin:task:task_settled": frozenset(
         {"point", "task_id", "kind", "status", "session", "result"},
     ),

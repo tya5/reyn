@@ -107,11 +107,13 @@ def test_list_agents_purity_and_category():
 
 def test_describe_agent_render_exact_description():
     """Tier 2: DESCRIBE_AGENT description is byte-identical to the
-    router_tools.py ToolSpec literal."""
+    router_tools.py ToolSpec literal. delegate_to_agent retired in
+    proposal 0067 P6 (#3978) — the text now points at run_prompt/
+    send_to_session instead."""
     rendered = DESCRIBE_AGENT.render_for_router()
     legacy = (
         "Fetch full role / capabilities profile for one agent. "
-        "Call before delegate_to_agent if uncertain."
+        "Call before run_prompt/send_to_session if uncertain it fits."
     )
     assert rendered["function"]["description"] == legacy
 

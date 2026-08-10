@@ -45,12 +45,14 @@ def test_pipeline_step_deny_sets_are_non_empty():
 
 def test_pipeline_step_deny_sets_name_the_expected_tools():
     """Tier 2: proposal 0067 P7 (#3978) — after retiring run_pipeline_async /
-    run_pipeline_inline / run_pipeline_inline_async (4 names -> 1), both
-    deny sets must contain exactly {delegate_to_agent, run_pipeline} — not a
-    superset that still carries a retired name (which would silently mean
-    the retired name is "denied" everywhere, masking that it no longer
-    exists as a real registered tool at all) and not a subset missing the
-    surviving one."""
-    expected = {"delegate_to_agent", "run_pipeline"}
+    run_pipeline_inline / run_pipeline_inline_async (4 names -> 1), and P6
+    (#3978) retiring delegate_to_agent with no replacement in this specific
+    deny-set (see ``_DELEGATION_DENY_TOOLS``'s own comment: nothing today
+    shares its async-dispatch-ends-the-turn posture), both deny sets must
+    contain exactly {run_pipeline} — not a superset that still carries a
+    retired name (which would silently mean the retired name is "denied"
+    everywhere, masking that it no longer exists as a real registered tool
+    at all) and not an empty set."""
+    expected = {"run_pipeline"}
     assert set(_PIPELINE_STEP_DENY_TOOLS) == expected
     assert set(_DELEGATION_DENY_TOOLS) == expected

@@ -23,7 +23,9 @@ from reyn.security.permissions.capability_profile import _BUILTIN_UNTRUSTED_DENY
 from reyn.security.permissions.effective import ContextualPermission
 
 # A representative dangerous tool from the taxonomy (re-delegation class).
-_REDELEGATE = "delegate_to_agent"
+# delegate_to_agent (the original representative) retired in proposal 0067
+# P6 (#3978); run_prompt/send_to_session carry the same floor forward.
+_REDELEGATE = "run_prompt"
 
 
 def _registry(tmp_path: Path, *, default: str = "deny") -> AgentRegistry:

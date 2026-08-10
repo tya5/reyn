@@ -100,18 +100,15 @@ def test_build_tools_dispatch_kinds_consistent() -> None:
 
     Verified via build_tools() output: the returned OpenAI dicts carry
     the tool names; we confirm get_dispatch_kind() is consistent with
-    the known async tools (delegate_to_agent, plan) and that all others
-    default to "sync".
+    the known async tools (spawn_session, plan) and that all others
+    default to "sync". delegate_to_agent (the original sole async tool
+    besides spawn_session) retired in proposal 0067 P6 (#3978).
     """
     tools = build_tools(_SAMPLE_AGENTS)
     tool_names = [t["function"]["name"] for t in tools]
 
-    # delegate_to_agent is always present and must be "async".
-    assert "delegate_to_agent" in tool_names, "delegate_to_agent must always be present"
-    assert get_dispatch_kind("delegate_to_agent") == "async"
-
-    # All other tools in the baseline set must be "sync".
-    async_tools = {"delegate_to_agent", "spawn_session"}
+    # All tools in the baseline set must be "sync" except the known async ones.
+    async_tools = {"spawn_session"}
     for name in tool_names:
         expected = "async" if name in async_tools else "sync"
         actual = get_dispatch_kind(name)
@@ -131,7 +128,7 @@ def test_build_tools_full_permissions_dispatch_kinds_consistent() -> None:
         web_fetch_allowed=True,
     )
     tool_names = [t["function"]["name"] for t in tools]
-    async_tools = {"delegate_to_agent", "spawn_session"}
+    async_tools = {"spawn_session"}
     for name in tool_names:
         expected = "async" if name in async_tools else "sync"
         actual = get_dispatch_kind(name)

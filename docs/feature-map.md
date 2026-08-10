@@ -167,7 +167,7 @@ mindmap
       Agent registry
       Topology system
       MessageBus
-      delegate_to_agent
+      run_prompt / send_to_session
     🖥️ Inline CUI
       Conversation view
       Bottom-chrome drawer (Model/Agent/History/Cost/Ctx/Tool/MCP/Skill/Pipe/Hook/Cron/Menu/Help)
@@ -618,7 +618,7 @@ logic. Design: [content-threat scan proposal](deep-dives/proposals/0050-content-
 | Driver-as-session architecture | A pipeline run executes inside a spawned `PipelineExecutorDriver` session — reuses the ordinary session's run-loop, inbox, and WAL/crash-restore substrate rather than a bespoke execution path | [Concepts: Pipelines](concepts/runtime/pipelines.md) |
 | Crash recovery | Per-run work-order (`invocation.json`) persisted before step 0; step-boundary generation snapshots give exactly-once, truncation-surviving resume (including mid-`call`/`fold`/`for_each` state) | [Concepts: Pipelines](concepts/runtime/pipelines.md) |
 | S5 spawn bounds | `safety.spawn.max_pipeline_fan_out_depth` (`for_each` nesting depth, default 5) and `safety.spawn.max_pipeline_spawns` (ephemeral sessions per run, default 100) — both `0` = unlimited (operator opt-out) | [Reference: Pipeline DSL](reference/runtime/pipeline-dsl.md) |
-| Security floor | Launching a pipeline (any `run_pipeline` `name=`/`definition=`/`collect=` combination) sits on the same `HIGH`-severity spawn-adjacent floor as `delegate_to_agent`; the 2 install tools sit on the same floor as `skill_install_local` / `skill_install_source` — an `_untrusted`- or `_delegate`-narrowed context cannot launch or register one | [Concepts: Pipeline registration § Security](concepts/runtime/pipeline-registration.md) |
+| Security floor | Launching a pipeline (any `run_pipeline` `name=`/`definition=`/`collect=` combination) sits on the same `HIGH`-severity spawn-adjacent floor as `spawn_session`/`spawn_agent`/`create_topology` (`delegate_to_agent`, the original citation here, retired in proposal 0067 P6); the 2 install tools sit on the same floor as `skill_install_local` / `skill_install_source` — an `_untrusted`- or `_delegate`-narrowed context cannot launch or register one | [Concepts: Pipeline registration § Security](concepts/runtime/pipeline-registration.md) |
 | Flagship builtin pipeline (`flagship.research_and_report`, proposal 0060 F3b) | The through-chain composition-thesis exemplar: `web_search` (input) → `agent` summarize (workflow) → `agent` self-review, schema-validated (workflow) → `present` (output), ships builtin + inert (invoke-by-name only). Self-review composes from the `agent` + `schema` primitives, with the threshold comparison done by a plain `transform` step | [Reference: Pipeline DSL § AgentStep](reference/runtime/pipeline-dsl.md) |
 | Builtin RAG pipelines (`rag_ingest.ingest` / `rag_query.query`, proposal 0063 P3) | The turnkey user-RAG chain, and the DSL's most substantial worked example: `glob_files` → per-file `for_each` fan-out (markitdown convert → chunker) → `fold` flatten → `content_hash` diff → `embed` only the new/changed → MCP `upsert`/`delete`. Ships builtin + inert (invoke-by-name). **This file IS the extension mechanism (R2)** — every backend is a `*_server` input with a default, so swapping vector-DB/chunker/parser means copying the YAML and re-pointing it, not patching reyn. Every tunable (`chunk_size`/`chunk_overlap_ratio`/`file_extensions`/`max_files`) is an input with a default, never a step constant | [Guide: Build a RAG corpus](guide/for-users/build-a-rag-corpus.md) · [Reference: Pipeline DSL](reference/runtime/pipeline-dsl.md) |
 
@@ -710,7 +710,7 @@ Cross-surface `ask_user` and permission routing — the same prompt reaches the 
 | `pipeline` topology | Ordered — each member sends only to next | — |
 | `_default` topology | Auto-synthesized full mesh for unassigned agents | [Multi-agent config](reference/config/multi-agent.md) |
 | MessageBus | Quiescence-based coordination with `reply_to` correlation | [Multi-agent config](reference/config/multi-agent.md) |
-| `delegate_to_agent` | Async-dispatch to peer with topology permission gate | [Multi-agent concepts](concepts/multi-agent/multi-agent.md) |
+| `run_prompt` | Ask a peer agent's already-live session to run a prompt and wait for the reply inline (`collect="attached"`, the only supported value today) — the successor to `delegate_to_agent`, retired in proposal 0067 P6 | [Multi-agent concepts](concepts/multi-agent/multi-agent.md) |
 | `send_to_session` | Fire-and-forget delivery to a specific `(agent, session)` — no reply is collected; `wake=True` starts a turn on it now, `wake=False` (default) queues it as context for the target's next turn | [Multi-agent concepts](concepts/multi-agent/multi-agent.md) |
 | `describe_task` / `list_tasks` / `cancel_task` | Read/act against the settle-path task handle (`ChainManager`) — `describe_task` returns `{task_id, kind, status, session, requester}`, `list_tasks` lists running handles by kind, `cancel_task` never reports a fabricated success on a crash-recovered handle whose live callable is gone | [Multi-agent concepts](concepts/multi-agent/multi-agent.md) |
 | Agent hops cap | Max delegation depth via `safety.loop.max_agent_hops` | [reyn-yaml § safety](reference/config/reyn-yaml.md#safety-block) |
@@ -725,10 +725,12 @@ Cross-surface `ask_user` and permission routing — the same prompt reaches the 
 > and a handle) with a single collection surface, retiring
 > `delegate_to_agent` and the three `run_pipeline_*` async variants in favor of `run_prompt` /
 > `run_pipeline(collect=…)`. `send_to_session` (P5), `describe_task` / `list_tasks` /
-> `cancel_task` (P4), and the `run_pipeline` launch-verb unification (P7, 0
-> aliases kept — see the row above) have all landed; the remaining `run_prompt` tools and
-> `delegate_to_agent`'s retirement are still pending. `delegate_to_agent` stays live and
-> unchanged until its own retirement PR lands.
+> `cancel_task` (P4), `run_prompt(collect="attached")` (P4d), the `run_pipeline`
+> launch-verb unification (P7, 0 aliases kept — see the row above), and
+> `delegate_to_agent`'s retirement (P6, no fold — see ADR-0040/proposal 0067
+> for why a nested-delegation chain-settle fold never happens for this specific
+> tool) have all landed. Only the `run_prompt(collect="async")` producer and
+> P8/P9's remaining vocabulary work are still pending.
 
 ---
 

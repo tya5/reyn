@@ -178,13 +178,16 @@ def test_list_actions_no_category_filter_includes_all() -> None:
 
 
 def test_list_actions_multi_agent_static_category_returns_verbs() -> None:
-    """Tier 2: list_actions(category=['multi_agent']) returns the three
-    verb actions (= list_peers / describe_peer / delegate) regardless of
-    which peers are reachable.
+    """Tier 2: list_actions(category=['multi_agent']) returns the two
+    verb actions (= list_peers / describe_peer) regardless of which peers
+    are reachable.
 
     Phase 1 follow-up (2026-05-25) collapsed the per-peer agent.peer__X
     resource shape into verb actions; per-peer enumeration moves to the
-    list_peers handler return value.
+    list_peers handler return value. delegate_to_agent (the original third
+    verb here) retired in proposal 0067 P6 (#3978) — run_prompt/
+    send_to_session are router-only tools, not invoke_action/catalog
+    actions, so they are not in this category's enumeration.
     """
     result = _run(LIST_ACTIONS.handler(
         {"category": ["multi_agent"]}, _make_ctx(),
@@ -193,7 +196,6 @@ def test_list_actions_multi_agent_static_category_returns_verbs() -> None:
     assert qns == {
         "list_agents",
         "describe_agent",
-        "delegate_to_agent",
     }, f"multi_agent enumeration drifted: got {qns}"
 
 

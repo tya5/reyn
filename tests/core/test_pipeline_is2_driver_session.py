@@ -320,12 +320,14 @@ async def test_tool_step_dispatch_structurally_denies_launch_and_delegation() ->
     path and the IS-2 driver path build their dispatch here). Proposal 0067
     P7 (#3978): the unified ``run_pipeline`` name is the only pipeline-launch
     verb left to deny — ``collect=`` is an argument to it, not a second name,
-    so there is no longer a separate "async" spelling to enumerate."""
+    so there is no longer a separate "async" spelling to enumerate.
+    delegate_to_agent (the deny set's other former member) retired in P6
+    (#3978), with no replacement in this specific deny-set — see
+    ``session_api._DELEGATION_DENY_TOOLS``'s own comment."""
     dispatch = _make_tool_dispatch(_bare_ctx())
-    for denied in ("run_pipeline", "delegate_to_agent"):
-        with pytest.raises(PipelineExecutionError) as exc:
-            await dispatch(denied, {})
-        assert "structurally denied" in str(exc.value)
+    with pytest.raises(PipelineExecutionError) as exc:
+        await dispatch("run_pipeline", {})
+    assert "structurally denied" in str(exc.value)
 
 
 def test_agent_step_narrowing_denies_pipeline_launch() -> None:
@@ -334,7 +336,7 @@ def test_agent_step_narrowing_denies_pipeline_launch() -> None:
     with — the sibling escape hatch is closed."""
     from reyn.runtime.session_api import _build_agent_step_narrowing
     deny = _build_agent_step_narrowing(["read_file"])["tool_deny"]
-    assert "run_pipeline" in deny and "delegate_to_agent" in deny
+    assert "run_pipeline" in deny
 
 
 # ── async launch e2e: tool → driver-session → pipeline_result ───────────────

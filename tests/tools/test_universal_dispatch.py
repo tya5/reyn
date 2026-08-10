@@ -247,10 +247,9 @@ _ACTION_CONTRACT_SAMPLES: list[tuple[str, dict[str, Any]]] = [
     # itself defaults an absent ``path`` to ``""``.)
     ("list_agents", {"path": ""}),
     ("describe_agent", {"name": "planner"}),
-    # #3429: no ``message`` key — the undeclared ``message`` -> ``request``
-    # remap went with the qualified spelling that was the only route honouring
-    # it, so the sample now carries only what the schema declares.
-    ("delegate_to_agent", {"to": "planner", "request": "hi"}),
+    # delegate_to_agent retired, proposal 0067 P6 (#3978) — run_prompt/
+    # send_to_session are router-only tools (not invoke_action/catalog
+    # actions), so they need no contract sample here.
     # #3026: the verbs that replaced the memory_entry / rag_corpus resource
     # actions. ``read`` uses a NON-DEFAULT layer so a regression to the old
     # hard-coded ``shared`` fails the contract here.

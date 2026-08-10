@@ -20,7 +20,6 @@ EXPECTED_TOOL_NAMES = [
     "describe_agent",
     "list_memory",
     "read_memory_body",
-    "delegate_to_agent",
     "spawn_session",  # #2103 S1bc / #2120: router-only spawn primitive (unconditional)
     "spawn_agent",     # #2103 B-tool: router-only org-design spawn primitive
     "create_topology",  # #2103 C1: router-only org-wiring primitive
@@ -98,7 +97,8 @@ SAMPLE_MCP_SERVERS = [{"name": "fs", "description": "Filesystem MCP server"}]
 
 
 def test_build_tools_returns_expected_baseline_tools():
-    """Tier 2: No file / MCP extras: 11 baseline + web_search (E1, always on)
+    """Tier 2: No file / MCP extras: 12 baseline (delegate_to_agent retired,
+    #3978 P6 — was 13) + web_search (E1, always on)
     + web_fetch (E2, FP-0022: always on, handler-level approval)
     + read_tool_result (E3, B49 Step 2 v6 fix: lazy-expand half of the
     preview-driven design, surfaced for router-side use)
@@ -302,7 +302,8 @@ def test_total_tool_count_with_full_permissions():
     + 2 web E1+E2 (web_search + web_fetch always on since FP-0022; #1449
     retired read_tool_result E3) + 4 MCP D1-D4
     + 2 reyn_repo F1-F2 + 1 plan G1
-    + 2 presentation (present + render_template, #2692) = 26 tools total.
+    + 2 presentation (present + render_template, #2692) = 25 tools total
+    (delegate_to_agent retired, #3978 P6 — was 26).
     FP-0066 P1b retired the former 3 RAG H1-H3 tools (semantic_search /
     drop_source / index_update).
     FP-0032: D4 describe_mcp_tool added alongside D1-D3.
@@ -375,9 +376,11 @@ def test_session_spawn_in_dispatch_registry():
     falls through to the unhandled-tool branch.
     """
     from reyn.runtime.router_loop import RouterLoop
-    # Paired with the delegate_to_agent sentinel (the async router-only peer it mirrors)
-    # so the test pins the shared dispatch family, not a spawn_session-only fluke.
-    assert "delegate_to_agent" in RouterLoop.REGISTRY_DISPATCH_TOOLS
+    # Paired with the send_to_session sentinel (a sibling router-only peer
+    # primitive, proposal 0067 P5 #4101) so the test pins the shared dispatch
+    # family, not a spawn_session-only fluke. delegate_to_agent — the
+    # original sentinel here — retired in #3978 P6.
+    assert "send_to_session" in RouterLoop.REGISTRY_DISPATCH_TOOLS
     assert "spawn_session" in RouterLoop.REGISTRY_DISPATCH_TOOLS, (
         "'spawn_session' missing from RouterLoop.REGISTRY_DISPATCH_TOOLS"
     )

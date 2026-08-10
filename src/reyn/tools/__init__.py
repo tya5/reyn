@@ -50,7 +50,6 @@ def get_default_registry() -> ToolRegistry:
         CRON_REGISTER,
         CRON_UNREGISTER,
     )
-    from reyn.tools.delegate_to_agent import DELEGATE_TO_AGENT
     from reyn.tools.embed import EMBED
     from reyn.tools.emit_hook_event import EMIT_HOOK_EVENT
     from reyn.tools.exec import EXEC
@@ -210,7 +209,10 @@ def get_default_registry() -> ToolRegistry:
     registry.register(EXEC)
     registry.register(ASK_USER)
     # ── Router-only capabilities (gates.router=allow) ──
-    registry.register(DELEGATE_TO_AGENT)
+    # delegate_to_agent retired (proposal 0067 P6, #3978) — send_to_session /
+    # run_prompt reach another agent's context the same way; the relay/
+    # completion substrate (PR14 pending_chain) stays live as run_prompt
+    # (collect="async")'s own producer.
     registry.register(SESSION_SPAWN)
     registry.register(AGENT_SPAWN)
     registry.register(TOPOLOGY_CREATE)

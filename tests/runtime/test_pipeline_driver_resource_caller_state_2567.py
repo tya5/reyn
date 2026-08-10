@@ -287,7 +287,6 @@ async def test_driver_dispatch_still_structurally_denies_pipeline_launch(
     driver.bind_session(caller, caller._router_host)
 
     dispatch = await driver._make_dispatch()
-    for denied in ("run_pipeline", "delegate_to_agent"):
-        with pytest.raises(PipelineExecutionError) as exc:
-            await dispatch(denied, {})
-        assert "structurally denied" in str(exc.value)
+    with pytest.raises(PipelineExecutionError) as exc:
+        await dispatch("run_pipeline", {})
+    assert "structurally denied" in str(exc.value)

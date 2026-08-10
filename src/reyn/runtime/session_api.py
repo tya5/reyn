@@ -115,12 +115,7 @@ if TYPE_CHECKING:
     from reyn.runtime.registry import AgentRegistry
 
 # Tool names an ``agent`` pipeline step must never reach — a leaf worker (R6
-# session-hierarchy constraint 4: "E_i are spawn-tree LEAVES"). Two distinct
-# reasons collapse into one deny-set:
-#   - ``delegate_to_agent``: a mid-turn delegation would make
-#     ``MessageBus.request``'s quiescence predicate (inbox.empty()) return
-#     early on a pending chain the spawned session is still awaiting a reply
-#     for (see the module docstring).
+# session-hierarchy constraint 4: "E_i are spawn-tree LEAVES").
 #   - ``run_pipeline`` (R6 S3): nesting a pipeline launch inside an ``agent``
 #     step would let a step spawn ANOTHER pipeline at runtime, defeating the
 #     transitive-closure cost-bound approval a pipeline gets at launch time —
@@ -134,11 +129,22 @@ if TYPE_CHECKING:
 #     ``test_pipeline_step_deny_sets_are_equal`` (tests/tools/
 #     test_pipeline_step_deny_gate_3978.py), the equality gate architect
 #     required after this arc's rebase collided on this exact pair.
+#   - ``delegate_to_agent`` (retired, proposal 0067 P6, #3978) used to be the
+#     other member here, for a DIFFERENT reason than run_pipeline's: a
+#     mid-turn delegation would make ``MessageBus.request``'s quiescence
+#     predicate (inbox.empty()) return early on a pending chain the spawned
+#     session was still awaiting a reply for (see the module docstring).
+#     That specific hazard has no live producer today — neither
+#     ``run_prompt`` (synchronous, blocks in-band) nor ``send_to_session``
+#     (fire-and-forget, never ends the turn) shares delegate_to_agent's
+#     async-dispatch-ends-the-turn posture — so nothing currently needs this
+#     deny-set entry for that reason. If a future tool reintroduces that
+#     posture, it belongs back here.
 # #3429: each name here is the tool's ONLY invocable name, so the deny-set is
 # complete as written. It used to need ``_expand_tool_forms``
 # (capability_profile.py) to add each tool's second, catalog-qualified spelling.
 _DELEGATION_DENY_TOOLS: tuple[str, ...] = (
-    "delegate_to_agent", "run_pipeline",
+    "run_pipeline",
 )
 
 # MessageBus.request has no default — an agent step needs one so callers

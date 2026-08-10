@@ -92,10 +92,12 @@ MAX_DESC_LEN_FOR_LISTING: int = 80
 #   "sync"  — invoker awaits a result that's available in this RouterLoop
 #             turn; the LLM sees the tool_result and decides next step.
 #   "async" — invoker dispatches work whose result arrives via a separate
-#             channel in a future router invocation (e.g. delegate_to_agent
-#             result comes through PR14 pending_chain). The current loop
-#             cannot wait for the answer; RouterLoop must exit after
-#             dispatch and rely on the future invocation to resume.
+#             channel in a future router invocation (the PR14 pending_chain
+#             relay — retired delegate_to_agent's own dispatch_kind, #3978
+#             P6; the substrate stays live as run_prompt(collect="async")'s
+#             own producer). The current loop cannot wait for the answer;
+#             RouterLoop must exit after dispatch and rely on the future
+#             invocation to resume.
 #
 # Future-proof for tool metadata growth (cost weight, rate-limit class,
 # per-tool budget, log redaction policy). Add fields here as those needs
@@ -264,7 +266,8 @@ def build_tools(
     Tool order matches the plan's canonical ordering:
       A1 list_agents, A2 describe_agent,
       A3 list_memory, A4 read_memory_body,
-      B1 delegate_to_agent,
+      (B1 delegate_to_agent retired, #3978 P6 — numbering below kept as-is
+      rather than renumbered, to match the B2b/B2c labels still in the code)
       B2 remember_shared, B3 remember_agent, B4 forget_memory,
       C1 list_directory, C2 read_file (when any file scope),
       C3 write_file, C4 delete_file (only when write scope),
@@ -282,8 +285,10 @@ def build_tools(
     Parameters
     ----------
     available_agents:
-        Peer agent entries. Each dict must have at least ``name``.
-        Same enum strategy as above for ``delegate_to_agent.to``.
+        Peer agent entries. Each dict must have at least ``name``. Kept for
+        backward compatibility with all callers — its only consumer,
+        ``delegate_to_agent``'s per-call ``to`` enum injection, retired in
+        #3978 P6.
     file_permissions:
         Optional dict with ``read`` and/or ``write`` lists of path strings.
         - None or both empty → File tools omitted entirely (C1–C4).
@@ -310,16 +315,6 @@ def build_tools(
         router_loop.py call site — confirmed no-op). A caller that wants
         non-default behavior passes this kwarg explicitly.
     """
-    # RETRO-H1+H2 fix: dynamic enum injection for delegate_to_agent.to closes
-    # the schema-level hallucination gap (P4 alignment — LLM picks only from
-    # OS-provided candidates). Enrichment lives in schema_enricher
-    # (tools/delegate_to_agent.py _enrich_router_schema); render_for_router
-    # (state=...) applies it per-call.
-    #
-    # When available_agents is empty, delegate_to_agent is omitted from the
-    # tools list to avoid an empty-enum schema that some providers reject.
-    agent_names = [a["name"] for a in available_agents]
-
     # Collect ToolSpec objects in canonical order (single source of truth).
     # Each spec carries name + description + parameters + dispatch_kind.
     # build_tools() converts to OpenAI dict shape via to_openai_dict().
@@ -370,22 +365,6 @@ def build_tools(
             description=_read_memory_body_rendered["function"]["description"],
             parameters=_read_memory_body_rendered["function"]["parameters"],
             dispatch_kind=_read_memory_body_def.dispatch_kind,
-        ))
-
-    # ── B2: delegate_to_agent ────────────────────────────────────────────
-    # Wave 2c: registry-driven render with schema_enricher for per-call enum.
-    from reyn.tools.types import RouterCallerState as _RouterCallerState
-    _state = _RouterCallerState(
-        available_agents=[{"name": n} for n in agent_names],
-    )
-    _delegate_def = _registry.lookup("delegate_to_agent")
-    if _delegate_def is not None and _delegate_def.gates.router == "allow":
-        _delegate_rendered = _delegate_def.render_for_router(state=_state)
-        specs.append(ToolSpec(
-            name=_delegate_rendered["function"]["name"],
-            description=_delegate_rendered["function"]["description"],
-            parameters=_delegate_rendered["function"]["parameters"],
-            dispatch_kind=_delegate_def.dispatch_kind,
         ))
 
     # ── B2b: spawn_session (#2103 S1bc / #2120 fix; renamed from session_spawn

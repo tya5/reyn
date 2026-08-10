@@ -75,10 +75,6 @@ _NOT_EXTERNAL = {
     # user-message-as-instruction model). User-relayed paste is out of the S2
     # threat model (principal's own channel).
     "ask_user",
-    # delegate_to_agent: async dispatch → returns a "spawned" ACK, not the
-    # sub-agent's output. The peer reply arrives via the A3 inbound seam
-    # (EP5, handle_agent_response → history) and is fenced there in S4.
-    "delegate_to_agent",
     # #2103 S1bc: spawn_session → async dispatch, returns a "spawned" ACK
     # {status, sid, mode}, not the spawned session's output (result-routing-back is
     # the S1bc-exec/Stage-4 follow-on, fenced there).
@@ -91,9 +87,8 @@ _NOT_EXTERNAL = {
     # {status, name, kind, members, ...}, not external content (it wires a topology).
     "create_topology",
     # Proposal 0067 P5 (#3978): send_to_session → returns an OS-generated
-    # delivery ACK {status, agent, session, wake}, not external content (it
-    # is fire-and-forget delivery; there is no reply to relay at all, unlike
-    # delegate_to_agent's future-arriving reply).
+    # delivery ACK {status, agent, session, wake}, not external content — it
+    # is fire-and-forget delivery, so there is no reply to relay at all.
     "send_to_session",
     # — writes / installs / deletes: return status, not external content —
     "write_file", "edit_file", "delete_file",
