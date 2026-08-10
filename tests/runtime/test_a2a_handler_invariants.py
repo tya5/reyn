@@ -479,22 +479,26 @@ async def test_pending_chain_resolved_on_all_responses(
 
 
 # ---------------------------------------------------------------------------
-# Test 5: agent_response history injection carries `[task_completed] kind=agent`
+# Test 5: agent_response history injection carries `[task_completed] kind=prompt`
 # structural header (B55 R-7 — symmetry with skill / plan completion paths)
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_agent_response_history_carries_task_completed_kind_agent_header(
+async def test_agent_response_history_carries_task_completed_kind_prompt_header(
     tmp_path, monkeypatch,
 ):
     """Tier 2: handle_agent_response must wrap the peer's reply in a
-    ``[task_completed] kind=agent from=<peer> chain_id=<Y>\\nreply: ...``
+    ``[task_completed] kind=prompt from=<peer> chain_id=<Y>\\nreply: ...``
     structured header before appending to history (= role=user). Pairs
-    with the ``[task_spawned] kind=agent ...`` spawn_ack in router_loop;
+    with the ``[task_spawned] kind=prompt ...`` spawn_ack in router_loop;
     together they bring the agent-delegation path into structural
     parity with skill / plan completion injections so the SP
     TASK_COMPLETED rule covers all three lifecycles uniformly.
+
+    Proposal 0067 P4 (#3978), architect ruling 2026-08-10: `kind=agent`
+    collapsed to `kind=prompt` (D2's kind axis names WHAT ran, not WHO
+    triggered it) — `from=` still carries "who" unchanged.
 
     Prior behaviour appended the raw peer text alone, leaving the LLM
     without a task lifecycle anchor for agent delegations (= W5
@@ -531,7 +535,7 @@ async def test_agent_response_history_carries_task_completed_kind_agent_header(
         "completion path; role=tool would violate provider tool_call_id "
         "constraints since the spawn happened in a prior turn)"
     )
-    assert "[task_completed] kind=agent" in entry["text"], (
+    assert "[task_completed] kind=prompt" in entry["text"], (
         f"structured header missing from history; got: {entry['text']!r}"
     )
     assert "from=researcher" in entry["text"]

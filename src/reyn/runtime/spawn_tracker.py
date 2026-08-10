@@ -125,7 +125,10 @@ class SpawnTracker:
     def lookup_and_evict_spawned_task(self, sid: "str | None") -> "str | None":
         """The TRUSTED task for a spawned ``sid``, or None (not one I spawned / already
         consumed). Evict-on-read — a result is consumed once; a spoofed/unknown sid → None
-        → the caller renders the safe ``kind=agent`` fallback (still fenced)."""
+        → the caller renders the safe from=-only fallback (still fenced, still kind=prompt
+        — proposal 0067 P4 (#3978): the sid/from distinction rides the header's OTHER
+        field, not `kind`, since architect's 2026-08-10 ruling collapsed both branches
+        to `kind=prompt`)."""
         if not sid:
             return None
         return self._spawned_tasks.pop(sid, None)

@@ -110,9 +110,12 @@ _MAX_REPRESENT_ROUNDS = 64
 # async requests; awaiting peer reply` status row with no
 # `[task_spawned]` header, leaving the SP TASK_SPAWNED rule
 # un-anchored for the agent path. Now emits the uniform
-# `[task_spawned] kind=agent ...` header + user-facing trailer. Pairs
-# with the `[task_completed] kind=agent ...` injection on peer reply
-# receipt (see inter_agent_messaging).
+# `[task_spawned] kind=prompt ...` header + user-facing trailer. Pairs
+# with the `[task_completed] kind=prompt ...` injection on peer reply
+# receipt (see inter_agent_messaging) — proposal 0067 P4 (#3978),
+# architect ruling 2026-08-10: `kind=agent` collapsed to `kind=prompt`
+# (D2's kind axis names WHAT ran, not WHO triggered it; "who" still
+# rides chain_id/peer, unaffected by this rename).
 _AGENT_SPAWN_ACK_MSG: dict[str, str] = {
     "ja": (
         "ピアエージェントにリクエストを送信しました。"
@@ -2278,12 +2281,12 @@ class RouterLoop:
                     # B55 R-7 (2026-05-25): non-plan async dispatch (=
                     # delegate_to_agent or other peer-async tools). Mirror
                     # task / plan spawn_ack format: `[task_spawned]
-                    # kind=agent ...` header + user-facing trailer so the
+                    # kind=prompt ...` header + user-facing trailer so the
                     # SP TASK_SPAWNED rule covers this path too. Prior
                     # behaviour pushed a generic `status` row with no
                     # structured header, leaving the LLM without a task
                     # lifecycle anchor when the corresponding
-                    # `[task_completed] kind=agent ...` injection arrives.
+                    # `[task_completed] kind=prompt ...` injection arrives.
                     #
                     # Extract peer / request hint from the first async
                     # tool call (= delegate_to_agent's `to` + `request`
@@ -2313,7 +2316,7 @@ class RouterLoop:
                             async_args.get("request", "") or "",
                         )[:200]
                     header_lines = [
-                        f"[task_spawned] kind=agent "
+                        f"[task_spawned] kind=prompt "
                         f"chain_id={self.chain_id} count={async_count}",
                     ]
                     if peer:

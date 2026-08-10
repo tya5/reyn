@@ -198,13 +198,16 @@ async def test_delegate_to_agent(monkeypatch):
     assert agent_send["chain_id"] == "chain-test"
     # Only the first LLM call ran; the second round was never consumed.
     assert scripted.call_count == 1
-    # B55 R-7: outbox shows a `[task_spawned] kind=agent ...`
+    # B55 R-7: outbox shows a `[task_spawned] kind=prompt ...`
     # structured spawn_ack (= parity with skill / plan spawn_ack),
-    # not a generic "awaiting peer reply" status row.
+    # not a generic "awaiting peer reply" status row. (proposal 0067 P4,
+    # #3978, architect ruling 2026-08-10: kind=agent -> kind=prompt —
+    # `m["kind"]` below is the UNRELATED outbox-display-frame axis, byte-
+    # identical, not touched by this migration.)
     assert any(
         m["kind"] == "agent"
         and m.get("meta", {}).get("source") == "agent_spawn_ack"
-        and "[task_spawned] kind=agent" in m["text"]
+        and "[task_spawned] kind=prompt" in m["text"]
         for m in host.outbox
     ), f"Expected agent_spawn_ack; got: {host.outbox}"
 
