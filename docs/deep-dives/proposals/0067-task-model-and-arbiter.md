@@ -167,6 +167,34 @@ Measured during design; each has bitten or would bite:
 | `_last_reply_to` | inherited when a trigger carries no `reply_to` (`session.py:2731-2733`) — a live misdelivery path that P1 removes. |
 | chain timers | re-armed *fresh* on restore, so a crash extends the deadline (P8). |
 | hook points | eight, not ten (#3996). |
+| `RunStatus` | the status vocabulary D3 describes **already exists** — `run_registry.py:64`, five members, and the `input_required` transition is live at `a2a_intervention.py:124`. What is missing is a bridge to the chain handle, not a state machine. Reusing it from `runtime/` would be a new layering inversion (`runtime/ → interfaces/web/` is currently 0 imports; the reverse is 10), so it moves to `runtime/task_types.py` beside `TaskKind` / `Requester`. The rename to `TaskStatus` waits for P6, same treatment as `requester`. |
+
+### Reading ADR-0040 on what a cancel leaves behind
+
+The ADR's `cancel`-verb entry says "a cancelled task's record persists with
+`status="cancelled"`", which against D4 (immediate deletion, no retention) reads as registry
+retention for one status. It is not. Two different things are named, and D4 §"records it; that is
+observation, not retention" already draws the same line:
+
+| | at settle |
+|---|---|
+| the **handle** (`task_id` → the pending entry) | **deleted** — D4, uniformly for every settle, cancelled included |
+| the **audit-event record** (P6 `.reyn/events`) | **persists** — this is "the record" |
+
+Two implementation questions were being decided from that sentence on 2026-08-10, which is why it
+is written out here rather than left to the reader:
+
+- **Does a cancel settle?** Yes — `status=cancelled`, delivered on the same `on_settle` path.
+  A cancel that did not settle would leave a requester who asked for delivery with nothing, and
+  would give teardown a second route (the settle path's own acceptance condition is one function).
+- **What is `describe_task`'s status domain?** Since every settle deletes the handle, a
+  `describe_task` reply can only ever carry a **non-terminal** status: `running` or
+  `input-required`. `completed` / `failed` / `cancelled` are real, and reach the audit trail and
+  the requester's delivery — but never a `describe_task` reply.
+
+⚠️ This is a **reading** of an accepted ADR, recorded on the mutable surface because ADRs are
+immutable once accepted (`decisions/README.md:14`). It adds no decision the owner did not accept;
+where it draws a consequence, the consequence is marked as such above.
 
 LLM-visible strings change in P-1, P4, P5, P6 and P7. Each of those PRs updates the system
 prompt, `descriptions/catalog.py` and the affected docs **in the same PR** (CLAUDE.md's
