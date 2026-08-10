@@ -124,6 +124,17 @@ def _is_excluded(doc_relpath: Path, patterns: list[str]) -> bool:
     return any(posix == p or posix.startswith(p + "/") for p in patterns)
 
 
+def _require_vacuity_floor(count: int, floor: int, message: str) -> None:
+    """Fail loud (not an `assert`) when a link-extraction count falls below
+    its measured floor — `assert` is stripped entirely under `python -O`
+    (lead-coder, 2026-08-10, follow-up to #4021: fixing only one of this
+    script's two floors to survive `-O` would make "a floor exists" true
+    only in appearance, since CI doesn't pass `-O` today but nothing pins
+    that). `SystemExit` has no such escape hatch."""
+    if count < floor:
+        raise SystemExit(message)
+
+
 def _md_to_html_path(md_relpath: str) -> Path:
     """Mirror mkdocs' directory-url convention: foo/bar.md -> foo/bar/index.html,
     foo/bar.ja.md -> ja/foo/bar/index.html, index.md -> index.html."""
@@ -216,12 +227,13 @@ def check_deep_dives_link_existence() -> int:
     # capture branches) must fail loud, not report "0 broken" as if that
     # meant "0 links reviewed and all fine." 283 measured at gate-landing
     # (2026-08-10, #4021); floor set below that to tolerate organic growth.
-    assert total_links >= 200, (
+    _require_vacuity_floor(
+        total_links, 200,
         f"Extracted only {total_links} relative .md links from "
         f"docs/deep-dives/{{{','.join(DEEP_DIVES_LINK_EXISTENCE_SUBDIRS)}}}/ "
         "— 283 measured when this gate landed (#4021). A `> 0` guard only "
         "catches total regex breakage; a partial regression would still "
-        "pass while quietly checking a fraction of the target subdirs."
+        "pass while quietly checking a fraction of the target subdirs.",
     )
 
     print(
@@ -306,14 +318,15 @@ def main() -> int:
             if anchor not in ids:
                 anchor_not_found.append((str(rel), link))
 
-    assert total_links >= 400, (
+    _require_vacuity_floor(
+        total_links, 400,
         f"Extracted only {total_links} anchor-bearing links from docs/ — "
         "the repo-wide count was 461 when this gate landed (#3667). `> 0` "
         "only catches total regex breakage; a partial regression (e.g. one "
         "of the two LINK_RE alternatives silently stops matching) would "
         "still pass a `> 0` guard while quietly checking a fraction of "
         "docs/. This floor is deliberately below 461 to tolerate organic "
-        "doc growth/removal, not a hardcoded count pin."
+        "doc growth/removal, not a hardcoded count pin.",
     )
 
     print(f"checked {total_links} anchor-bearing links")
