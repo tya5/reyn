@@ -51,7 +51,11 @@ See [Reference: `reyn.yaml` — `safety` block](reyn-yaml.md#safety-block) for t
 > guarantees eventual failure at `0`, just not an immediate one — not a
 > depth cap. `chain_seconds` (below) is fully live and unchanged in
 > meaning: a `run_prompt(async)` call that never gets a reply genuinely
-> times out under it.
+> times out under it. In short: the cap concept is inherited from the
+> retired multi-hop model, but its enforcement point sits on the
+> currently-used transport (`InterAgentMessaging.send_to_agent`) — setting
+> `0` to "restrict the retired mechanism" would, in effect, stop live
+> `run_prompt(async)` delivery instead.
 
 ## `safety.loop.max_agent_hops` (integer, default `3`)
 
