@@ -120,3 +120,4 @@ Links to related ADRs, PRs, and docs.
 | [0058](0058-web-surface-modularity.md) | Web surface modularity + Chainlit retire | owner-ratified; Phases 1-4 landed (#2837/#2849/#2850), Phase 5 (optional refactor fold) open | LARGE |
 | [0059](0059-hook-event-redesign.md) | Hook-Event Redesign (Event Bus / reactivity substrate) | owner-ratified; Phases 1-5 landed (#2871–#2885) | LARGE |
 | [0060](0060-llm-wielding-foundation.md) | LLM-Wielding Foundation — making the agent actually use what it can build | closed (2026-07-13); floor + show delivered, Addenda A/B/C settled, enhancement/loop layers de-scoped by owner | LARGE |
+| [0067](0067-task-model-and-arbiter.md) | Task model and the inbox arbiter — sequencing and interface for [ADR-0040](../decisions/0040-task-as-os-concept.md) | Accepted (2026-08-10, owner) — **not yet implemented**; tracking #3978 | LARGE |
