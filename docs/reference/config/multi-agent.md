@@ -28,6 +28,15 @@ safety:
 
 See [Reference: `reyn.yaml` — `safety` block](reyn-yaml.md#safety-block) for the full schema.
 
+> **No current producer** (architect ruling, #3978/#4135, 2026-08-10): the
+> multi-hop `messages_to_agents`/`_PendingChain` mechanism these two
+> settings gate is structurally unreachable today — its sole consumer,
+> `delegate_to_agent`, was retired in proposal 0067 P6. Both settings and
+> the enforcement code they configure remain in place, waiting for P4e's
+> second half to reactivate the same substrate under a 1:1 shape
+> (`|waiting_on| == 1`) — not the multi-hop join this page describes below.
+> Read what follows as the pre-retirement shape, not current behavior.
+
 ## `safety.loop.max_agent_hops` (integer, default `3`)
 
 Caps how deep an agent-to-agent message chain may traverse before the runtime refuses further sends. Modeled after LangGraph's recursion limit.
