@@ -147,15 +147,34 @@ P5    send_to_session
 P6    retire delegate_to_agent (its own PR; 129 files mention it, whole-repo, at 5f80e0a6 —
       re-measure before starting, and see the scope note below for what is NOT work)
       pending_chains is repurposed as P3/P4's collection substrate
-      Acceptance, settled during P4 and recorded here because P6 is where they come due:
-        - no field on `_PendingChain` carries a delegate-specific NAME and is still required.
-          P4 left `origin_agent` / `origin_depth` / `origin_sid` in place with a derived
-          `requester` property over them; P6 is when the storage itself is renamed, and this
-          condition is how "the generalization actually happened" gets checked.
-        - `register()` accepts `from_user` and never stores it — the `_PendingChain(...)`
-          construction does not reference it. Either it feeds something P6 keeps, or it goes.
+      P6 is CATALOG-ONLY and does not touch `chain_manager.py`. Deleting
+      `delegate_to_agent.py` removes the only consumer of `RouterCallerState.send_to_agent`,
+      so the chain-registration site stops producing chains — and everything the completion
+      path still handles afterward is pre-existing (in-flight or restored), carrying
+      `kind is None`, i.e. NOT tasks. Folding those into `settle()` would route non-tasks
+      through the task settle path; firing `task_settled` alongside would announce a settle
+      for something that is not a task. The fold belongs to `run_prompt(collect="async")`,
+      the first step that creates task-shaped chains on this path.
+      Acceptance:
         - both S3 deny sets shed `delegate_to_agent` in the same PR, and the equality gate
           added in P7 stays green (see the deny-set note below).
+        - `kind is None` after P6 means "not a task" and no more: restored relay chains and
+          joins both keep it, so the value cannot be narrowed to either one alone.
+
+P4e   run_prompt(collect="async") — the substrate step this arc deferred twice
+      ⚠️ P4's letters are identity, not order: P4d landed AFTER P5, and P4e lands after
+      P6/P7. Read the position in this block for sequence and the letter for which tool
+      family the step belongs to. (Counting "how many steps are done" from the letters
+      is what makes P4 look like one step when it is five.)
+      Owns the settle fold, and with it the two renames P4 deliberately postponed:
+        - `origin_agent` / `origin_depth` / `origin_sid` become the stored form of
+          `requester`; the derived property P4 added stops being a translation layer. The
+          check is that no field carries a delegate-specific NAME and is still required.
+        - `register()` accepts `from_user` and never stores it — the `_PendingChain(...)`
+          construction does not reference it. Either it feeds something this step keeps,
+          or it goes.
+      These were written as P6 conditions while P6 was still assumed to touch the substrate.
+      It does not, so they move here rather than being dropped.
 
 P7    run_pipeline: four names → one (`collect` carries the attached/async axis)
       The two SOURCE params are unchanged: `name` (a registered pipeline) and `definition`
