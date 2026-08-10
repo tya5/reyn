@@ -390,31 +390,19 @@ async def _handle_run_pipeline(
         }
 
     rs = ctx.router_state
-    agent_registry = rs.agent_registry if rs is not None else None
-    host = rs.host if rs is not None else None
-    if agent_registry is None or host is None:
-        return {
-            "status": "error",
-            "data": {
-                "error": (
-                    "run_pipeline requires a fully-wired router context "
-                    "(agent_registry + host on ctx.router_state) to spawn its "
-                    "driver-session"
-                ),
-            },
-        }
-    state_log = ctx.state_log
-    if state_log is None:
-        return {
-            "status": "error",
-            "data": {
-                "error": (
-                    "run_pipeline requires WAL persistence (ctx.state_log) — "
-                    "every launch is a crash-recoverable driver-session"
-                ),
-            },
-        }
 
+    # Validation order is deliberately branch-dependent, preserving each of
+    # the two pre-P7 handlers' own order exactly (both are covered by
+    # existing tests that pin the specific error message a given missing
+    # piece of wiring produces):
+    #   - registered (``name=``): pipeline_registry / name-lookup errors
+    #     surface BEFORE the agent_registry/host/state_log check (the old
+    #     ``_handle_run_pipeline``'s order — resolving *what* to run doesn't
+    #     need a spawn-capable context).
+    #   - inline (``definition=``): the agent_registry/host/state_log check
+    #     surfaces BEFORE parse+gate (the old ``_prepare_inline_launch``'s
+    #     order — an inline definition's static gate needs the invoker's
+    #     identity, which comes from ``host``).
     if has_name:
         # Narrows for mypy: ``has_name`` is a derived bool, not a type guard on
         # ``name`` itself — the ``isinstance`` check above already proved this
@@ -440,7 +428,33 @@ async def _handle_run_pipeline(
                 "data": {"error": f"pipeline {name!r} is not registered"},
             }
         pipeline_name = name
-    else:
+
+    agent_registry = rs.agent_registry if rs is not None else None
+    host = rs.host if rs is not None else None
+    if agent_registry is None or host is None:
+        return {
+            "status": "error",
+            "data": {
+                "error": (
+                    "run_pipeline requires a fully-wired router context "
+                    "(agent_registry + host on ctx.router_state) to spawn its "
+                    "driver-session"
+                ),
+            },
+        }
+    state_log = ctx.state_log
+    if state_log is None:
+        return {
+            "status": "error",
+            "data": {
+                "error": (
+                    "run_pipeline requires WAL persistence (ctx.state_log) — "
+                    "every launch is a crash-recoverable driver-session"
+                ),
+            },
+        }
+
+    if not has_name:
         # Same narrowing as the ``has_name`` branch above, for ``definition``.
         assert isinstance(definition, str)
         error_result, launch = _prepare_inline_pipeline(
