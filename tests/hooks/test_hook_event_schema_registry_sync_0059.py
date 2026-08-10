@@ -93,7 +93,7 @@ def _capture_dispatch(monkeypatch, captured: list) -> None:
     push/shell/pipeline routing all still run for real — only observation is
     added). Every builtin producer (in-process or out-of-process) funnels
     through some ``HookDispatcher`` instance's ``dispatch``, so patching the
-    class method here captures all 8 points uniformly."""
+    class method here captures every builtin point uniformly."""
     original = dispatcher_mod.HookDispatcher.dispatch
 
     async def _recording_dispatch(self, point, template_vars):

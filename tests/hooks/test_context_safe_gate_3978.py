@@ -1,12 +1,15 @@
 """Tier 2: proposal 0067 P2 — the context_safe gate + hook-push ``include``.
 
 "Build the gate before adding the first field that needs it" (proposal §
-"The gate, before the field that needs it") — today's 8 builtin schemas
-mark every field safe (``CONTEXT_UNSAFE_FIELDS`` is empty, owner ruling
-2026-08-10), so this file exercises the MECHANISM directly (via
-``monkeypatch`` on the real module-level dict, not a fake collaborator —
-the dict itself is the production data structure) rather than waiting for
-a real unsafe field to exist.
+"The gate, before the field that needs it") — at P2 landing time every
+builtin schema marked every field safe (``CONTEXT_UNSAFE_FIELDS`` was
+empty, owner ruling 2026-08-10), so this file originally exercised the
+MECHANISM directly (via ``monkeypatch`` on the real module-level dict, not
+a fake collaborator — the dict itself is the production data structure)
+rather than waiting for a real unsafe field to exist. P3 (same arc, same
+PR sequence) is that real field: ``task_settled.result`` is the first
+actual ``CONTEXT_UNSAFE_FIELDS`` exclusion — see
+``test_context_unsafe_fields_excludes_task_settled_result`` below.
 
 Real ``PushBlock``/``render_push`` throughout — no mocks. Policy per
 ``docs/deep-dives/contributing/testing.md``.
