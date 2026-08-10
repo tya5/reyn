@@ -83,7 +83,7 @@ mapping に無いため prefix strip 条件を満たさず `estimate_cost("route
 1 turn dogfood で `cost $0.0002 prompt=1601 completion=11` を確認 ✅。
 
 **F8** (retry budget 枯渇英語 fallback): 該当 scenario が batch 2 に無かったので
-test 経由で structural 保証を確認。 `tests/test_chat_router_i18n.py` 12/12 pass、
+test 経由で structural 保証を確認。 `tests/runtime/test_chat_router_i18n.py` 12/12 pass、
 `test_retry_exhausted_fallback_is_english_when_output_language_is_none` 含む。
 `output_language=None` で en、 `=ja` で ja、 unknown code で en fallback、
 全件 ✅。

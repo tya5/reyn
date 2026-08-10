@@ -9,7 +9,7 @@ they are not interchangeable and one is not derived from the other:
    interface, because reyn is not the only consumer of ``.reyn/events``, and an
    external subscriber must be able to enumerate the kinds it may receive. An
    open namespace makes that impossible in principle, so the namespace is
-   closed here and gated in ``tests/test_audit_event_kind_vocabulary_3410.py``
+   closed here and gated in ``tests/core/test_audit_event_kind_vocabulary_3410.py``
    in both directions (nothing emits an undeclared kind; nothing is declared
    without a producer).
 
@@ -196,7 +196,7 @@ EVENT_AUDIT_REQUIREMENTS: dict[str, frozenset[str]] = {
 #
 # Adding an audit-event kind is a three-line change: emit it, add it here, add
 # it to the enumeration in ``docs/reference/runtime/events.md``. The gate
-# (``tests/test_audit_event_kind_vocabulary_3410.py``) fails on any two of the
+# (``tests/core/test_audit_event_kind_vocabulary_3410.py``) fails on any two of the
 # three without the third — in BOTH directions, so a kind cannot be emitted
 # without being declared, and cannot be declared without a producer.
 #

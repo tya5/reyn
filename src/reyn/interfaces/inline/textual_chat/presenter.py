@@ -379,7 +379,7 @@ def _body_and_background(
     across the gutter column too, the left gutter's coral ``✗``/``⎿`` glyph
     (``ReynGutter``, ``_STATE_COLOR[EntryState.ERROR] == _CC_ERR``) vanished with
     it — one background choice, every foreground on the row. The gate is
-    ``tests/test_textual_chat_row_contrast_3367.py``, which enumerates the
+    ``tests/interfaces/test_textual_chat_row_contrast_3367.py``, which enumerates the
     (kind, state) pairings from the producers rather than a hand-written list.
     """
     kind = msg.kind

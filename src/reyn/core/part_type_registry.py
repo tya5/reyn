@@ -55,7 +55,7 @@ MARKER_ATTR: str = "PART_TYPE_SPEC"
 # proposal 0060 Addendum D, D5d: the sentinel a ``PartTypeSpec`` declares when
 # it is genuinely doc-less (no distinct reference doc exists beyond this
 # module's own docstring) — an explicit opt-out, never a forgotten field. The
-# registry-walk completeness gate (tests/test_0060_d5d_doc_ref_registry_gate.py)
+# registry-walk completeness gate (tests/core/test_0060_d5d_doc_ref_registry_gate.py)
 # accepts a real ``docs/...`` path OR exactly this sentinel; nothing else.
 DOC_REF_NONE: str = "none"
 

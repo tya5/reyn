@@ -655,7 +655,7 @@ def run_run(args: argparse.Namespace) -> None:
     no "resume on the next chat turn" expectation to honor. So this loads
     the config, builds a real ``PipelineRegistry``, and calls the executor
     directly with ``state_log=None`` (an established, already-used pattern —
-    see e.g. ``tests/test_2575_pipeline_disk_registration.py`` — meaning no
+    see e.g. ``tests/core/test_2575_pipeline_disk_registration.py`` — meaning no
     R4 recovery snapshot is written; a killed ``reyn pipe run`` simply is not
     resumable, matching the "just a CLI command" trust model).
 

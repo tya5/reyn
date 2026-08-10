@@ -3,7 +3,7 @@
 S3.1b-1 extends the S3.1a model to faithfully reproduce the gates (the AgentLayer
 MCP fix + the ② approval-fold + interactive-mode) and cuts over require_mcp (the
 migration anchor) to read EffectivePermission — the existing require_mcp suite
-(tests/test_permissions.py) is the byte-identical decision guard. These tests pin
+(tests/security/test_permissions.py) is the byte-identical decision guard. These tests pin
 the new model behavior, especially the ★② grant-back safety.
 """
 from __future__ import annotations

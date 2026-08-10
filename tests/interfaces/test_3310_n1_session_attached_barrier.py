@@ -26,7 +26,7 @@ Gates covered here:
    vocabulary (``forwarded_frame_kinds()``) AND registered in the AG-UI
    extension profile (``is_profiled("reyn.event.session_attached")``).
    Stripping the ``profile.py`` entry alone is caught by the EXISTING
-   completeness gate (``tests/test_agui_profile_completeness.py::
+   completeness gate (``tests/interfaces/test_agui_profile_completeness.py::
    test_every_custom_mapped_frame_is_profiled`` — strip-falsified during
    review, not committed here). Stripping the ``frames.py`` vocabulary entry
    alone is NOT caught by anything else (found during review: with

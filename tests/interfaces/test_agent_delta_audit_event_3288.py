@@ -43,7 +43,7 @@ _PIECES = ["hello ", "streamed ", "world"]
 
 class _EventSink:
     """A real (non-mock) audit-event subscriber — a plain callback collector
-    (mirrors ``tests/test_user_submitted_render_3300.py``'s ``_EventSink``)."""
+    (mirrors ``tests/interfaces/test_user_submitted_render_3300.py``'s ``_EventSink``)."""
 
     def __init__(self) -> None:
         self.events: list = []
@@ -72,7 +72,7 @@ def test_agent_delta_is_forwarded_and_profiled_on_the_wire() -> None:
     (``forwarded_frame_kinds()`` — both ``InProcessTransport`` and the AG-UI
     endpoint filter against this, so absence here means it never reaches
     EITHER client) AND its encoded CUSTOM name is a profiled ``reyn.event.*``
-    entry (``tests/test_agui_profile_completeness.py`` enforces this
+    entry (``tests/interfaces/test_agui_profile_completeness.py`` enforces this
     generically for every forwarded etype; this is the etype-specific pin the
     ③b PR is responsible for)."""
     assert "agent_delta" in forwarded_frame_kinds()

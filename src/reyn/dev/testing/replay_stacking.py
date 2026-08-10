@@ -26,7 +26,7 @@ Two consumers share this one grouping rule rather than each re-deriving it:
 :meth:`LLMReplay.flush` (record mode: drop an old entry from the SAME group
 a session just re-recorded, so regenerating in place replaces instead of
 appending — see ``reyn.dev.testing.replay``'s module docstring "Record
-mode") and ``tests/test_replay_fixture_no_stacking_3634.py`` (the CI gate:
+mode") and ``tests/dev/test_replay_fixture_no_stacking_3634.py`` (the CI gate:
 every committed fixture must hold zero multi-key groups).
 """
 from __future__ import annotations

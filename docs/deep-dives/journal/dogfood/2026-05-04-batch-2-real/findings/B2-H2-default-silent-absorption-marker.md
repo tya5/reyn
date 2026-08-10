@@ -98,7 +98,7 @@ Agent J の推奨 option (b): OS 側での決定論的 marker 検出。
   - `_resolve_pending_chain`: pending chain path に marker 検出を挿入 → LLM を bypass して上流 agent へ転送
   - `_audit_events.emit("peer_reply_failed_surfaced", ...)` — audit event
 
-- `tests/test_session_invariants.py`:
+- `tests/runtime/test_session_invariants.py`:
   - `test_peer_no_reply_marker_surfaced_to_user_not_absorbed` — user-initiated chain path
   - `test_peer_no_reply_marker_forwarded_upstream_in_pending_chain` — pending chain relay path
 

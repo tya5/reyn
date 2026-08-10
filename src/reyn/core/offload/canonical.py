@@ -39,7 +39,7 @@ offloaded as a whole-dict ``structured`` blob instead of the readable body):
    chokepoint called), NOT the result dict. ``result["kind"]`` stops being load-bearing for
    canonicalization; it stays ordinary result data. This fixes the kind-less-handler class outright.
 
-A registry-derived CI gate (``tests/test_fp0056_canonical_coverage_gate.py``) walks every registered
+A registry-derived CI gate (``tests/core/test_fp0056_canonical_coverage_gate.py``) walks every registered
 op kind + every ToolDefinition and asserts each carries a declaration — catching design-level
 omissions a hand-written table misses (it WOULD have caught the ``file`` gap).
 

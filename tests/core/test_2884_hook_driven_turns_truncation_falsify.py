@@ -13,11 +13,11 @@ REJECTED by the design: consumed WAL entries are pruned by ``truncate_below``
 (only ``REWIND_KIND`` is force-kept) — exactly the #2259 config-loss class.
 This test proves the snapshot-backed value survives truncation of its OWN
 source WAL events (the CLAUDE.md recovery-feature PR gate), mirroring
-``tests/test_2259_config_truncation_bug.py``.
+``tests/core/test_2259_config_truncation_bug.py``.
 
 Real Session / StateLog / AgentSnapshot (no mocks); only the LLM boundary
 (``_loop_driver.run_turn``) is replaced with a plain async recorder, exactly
-as ``tests/test_hook_loop_valve_1800_7.py`` does to isolate the valve.
+as ``tests/core/test_hook_loop_valve_1800_7.py`` does to isolate the valve.
 """
 from __future__ import annotations
 

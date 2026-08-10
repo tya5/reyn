@@ -10,7 +10,7 @@ OUTPUT channel). This migrates the answer-echo to an
 precedent exactly: RAW text on the wire, each consuming surface neutralizes
 at its OWN render boundary.
 
-``tests/test_user_echo_broadcast.py`` (Part B) covers the producer side
+``tests/runtime/test_user_echo_broadcast.py`` (Part B) covers the producer side
 (``InterventionHandler`` itself: the event's shape, attribution, fence-
 orthogonality, the absence of an outbox frame). This file covers the TWO
 SURFACE-SIDE consumers the producer-side tests cannot reach:
@@ -28,7 +28,7 @@ SURFACE-SIDE consumers the producer-side tests cannot reach:
    they are the FALLBACK leg's witnesses — which is exactly the leg whose
    ADR-0039 reachability + own-boundary neutralization they were written for.
    The fold leg (and the live-vs-restore entry-sequence gate) lives in
-   ``tests/test_3540_intervention_answer_fold.py``.
+   ``tests/interfaces/test_3540_intervention_answer_fold.py``.
 2. ``ConsoleChatRenderer`` / ``InlineChatRenderer`` (the plain/--cui and
    plain-render-mode-fallback surfaces, ``on_audit_event`` ->
    ``intervention_answer_display_message``) — same neutralize-at-boundary

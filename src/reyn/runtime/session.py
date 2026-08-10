@@ -5065,7 +5065,7 @@ class Session:
         snapshot HERE, synchronously, at cancel-record time (via
         ``SnapshotJournal.cancel_inbox``, mirroring ``consume_inbox``'s
         shape) is what makes cancellation survive that truncation — see
-        ``tests/test_3300_p3_cancel_by_id.py``'s truncate-falsify gate (and
+        ``tests/interfaces/test_3300_p3_cancel_by_id.py``'s truncate-falsify gate (and
         its strip-falsify: skipping the snapshot-prune resurrects the
         "cancelled" item post-truncation).
 
@@ -5084,7 +5084,7 @@ class Session:
         ``kind=="user"`` trigger, likewise has no suspension between its own
         dequeue and its ``turn_started`` emit) — can interleave between this
         method's "still queued?" check and its commit. See
-        ``tests/test_3300_p3_cancel_by_id.py``'s cancel-during-dequeue race
+        ``tests/interfaces/test_3300_p3_cancel_by_id.py``'s cancel-during-dequeue race
         test.
         """
         cancelled = await self._journal.cancel_inbox(msg_id=msg_id)
@@ -7159,7 +7159,7 @@ class Session:
     # ``interfaces/slash/dispatch.py``). ``_resolve_intervention_id`` /
     # ``_deliver_answer_to`` stay here as session-state helpers the slash
     # modules call back into through ``SlashContext.session`` — the declared,
-    # shrinking residue enumerated in ``tests/test_3595_s4_slash_handler_seam.py``.
+    # shrinking residue enumerated in ``tests/interfaces/test_3595_s4_slash_handler_seam.py``.
 
     async def _maybe_handle_skill_invoke(
         self, text: str,

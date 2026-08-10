@@ -127,7 +127,7 @@ subsystem to flip the same coin, so the second name is what was removed.
 
 The naming convention for the surviving name is
 [`docs/reference/runtime/tool-naming.md`](../../reference/runtime/tool-naming.md).
-`tests/test_no_qualified_tool_names_3429.py` is the gate: it walks the live
+`tests/tools/test_no_qualified_tool_names_3429.py` is the gate: it walks the live
 registry, the membership table, the categories tuple, and the assembled
 `tools=` payload, and fails on any `__` in a name. (Deletion is a state; the
 gate is the property.)
@@ -135,7 +135,7 @@ gate is the property.)
 A useful side effect: every name now satisfies OpenAI's native function-name
 grammar `^[a-zA-Z0-9_-]{1,64}$` by construction. The dotted categories that
 once made qualified names LiteLLM-proxy-dependent are long gone, and
-`tests/test_qualified_name_provider_grammar_1456.py` pins the property.
+`tests/tools/test_qualified_name_provider_grammar_1456.py` pins the property.
 
 ## The 3 wrappers
 

@@ -30,7 +30,7 @@ also surfaced a THIRD member of this fix-class (the ``session_spawn`` tool's spa
 passed its LLM's requested narrowing, never its spawner's), declared as such and
 filed as #3556 rather than fixed on a guess; #3556 then composed the spawner's layer
 in and replaced that site's ``unmeasured_reason`` with the two behavioural legs in
-``tests/test_3556_session_spawn_narrowing_inheritance.py``.
+``tests/runtime/test_3556_session_spawn_narrowing_inheritance.py``.
 
 #3561 widened it a third time, on the axis the first two widenings had in common. Both
 earlier gates decided membership by SHAPE — #3554's by whether a site spelled
@@ -47,7 +47,7 @@ walk resolving calls by RECEIVER so ``spawn_session`` the registry primitive is 
 conflated with the two other functions of that name (see ``_Seam``).
 
 Reachability is measured, not assumed:
-``tests/test_3561_spawn_session_seam_reachability.py`` drove an agent step whose prompt
+``tests/runtime/test_3561_spawn_session_seam_reachability.py`` drove an agent step whose prompt
 was a previous agent step's MODEL OUTPUT, on a session narrowed to one capability, and
 observed it reach ``/session new`` and spawn — ``Session._handle_user_message``
 short-circuited to ``_maybe_handle_slash`` before the router turn, so the reaching turn
@@ -168,7 +168,7 @@ steps:
 
 def _agent_registry(tmp_path: Path, state_log: "StateLog") -> AgentRegistry:
     """Real ``AgentRegistry`` + real ``Session`` factory (the harness shape
-    ``tests/test_3093_pipeline_registry_spawn_propagation.py`` uses)."""
+    ``tests/runtime/test_3093_pipeline_registry_spawn_propagation.py`` uses)."""
     if not (tmp_path / "reyn.yaml").exists():
         (tmp_path / "reyn.yaml").write_text("model: standard\n", encoding="utf-8")
     holder: dict = {}
@@ -397,9 +397,9 @@ _EXEMPT_RECORDED_SEAM_INJECTS_LATER = (
     "re-resolves the envelope from base and SETs it — on a session with no registry "
     "back-reference there was no base, so it set ALLOW-ALL and discarded anything "
     "injected earlier. Handing the value down the primitive's channel was tried and "
-    "REDded tests/test_2103_s1bc_session_spawn_tool.py::"
+    "REDded tests/runtime/test_2103_s1bc_session_spawn_tool.py::"
     "test_spawn_session_recorded_enforces_narrowing_on_live_session and "
-    "tests/test_pipeline_a2_spawn_ephemeral_session.py::"
+    "tests/runtime/test_pipeline_a2_spawn_ephemeral_session.py::"
     "test_spawn_ephemeral_session_narrowing_applied, both with an empty live tool_deny. "
     "#3593 (1) removed that discard — no base obtained now PRESERVES the live envelope "
     "instead of overwriting it — and re-measured: both tests stay GREEN with the value "

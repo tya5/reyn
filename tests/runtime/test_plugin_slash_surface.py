@@ -1,6 +1,6 @@
 """Tier 2: OS invariant — `/plugin install`/`uninstall` slash surface (ADR 0064 §3.9, P3).
 
-Same contract as ``tests/test_plugin_cli_surface.py`` for the slash surface:
+Same contract as ``tests/interfaces/test_plugin_cli_surface.py`` for the slash surface:
 ``/plugin`` is a thin adapter over the SAME typed op — it builds a
 ``ToolContext`` from this session's LIVE ``RouterHostAdapter``
 (``build_resource_caller_state(session.router_host)``, i.e. the SAME factory
@@ -22,7 +22,7 @@ Tests:
      reply_error, not a crash.
 
 No unittest.mock anywhere. Real ``Session`` (mirrors
-``tests/test_2548_skill_hotreload_toggle_pr_b.py::_make_session``) + real
+``tests/runtime/test_2548_skill_hotreload_toggle_pr_b.py::_make_session``) + real
 ``RouterHostAdapter`` + real ``PermissionResolver`` throughout.
 """
 from __future__ import annotations
@@ -77,7 +77,7 @@ def _make_session(
     sandbox_config: "object | None" = None,
 ) -> _ReplyCapturingSession:
     """Minimal real Session in *tmp_path* (mirrors
-    tests/test_2548_skill_hotreload_toggle_pr_b.py::_make_session), anchored
+    tests/runtime/test_2548_skill_hotreload_toggle_pr_b.py::_make_session), anchored
     at tmp_path so ``session.router_host.make_router_op_context()`` builds a
     real Workspace rooted there.
 

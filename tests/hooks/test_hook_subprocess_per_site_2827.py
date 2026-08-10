@@ -16,7 +16,7 @@ the False floor, byte-identical to pre-knob behaviour.
 
 Real ``load_hooks`` / ``HookDispatcher`` / ``run_shell_hook`` and a real (non-mock)
 recording SandboxBackend implementing the actual backend protocol — the same
-``_StubBackend`` pattern as tests/test_op_sandboxed_exec.py. The backend is the
+``_StubBackend`` pattern as tests/core/test_op_sandboxed_exec.py. The backend is the
 enforcement boundary (its own enforcement is covered by #1914/#2820); what this
 module pins is the CONTRACT that the operator's per-hook declaration reaches it.
 """

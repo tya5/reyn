@@ -264,7 +264,7 @@ def test_landlock_resolve_spawn_now_wraps_via_abstraction(monkeypatch) -> None:
     delegating to it correctly ENABLES Landlock rather than weakening the prior
     fail-closed refusal. ``available()`` is monkeypatched on the real instance
     (its genuine platform/kernel-ABI gate is exercised separately by
-    ``tests/test_sandbox_landlock.py``) so this delegation is pinned on any host,
+    ``tests/security/test_sandbox_landlock.py``) so this delegation is pinned on any host,
     including this macOS dev box."""
     from reyn.security.sandbox.backends.landlock import LandlockBackend
     from reyn.security.sandbox.policy import SandboxPolicy

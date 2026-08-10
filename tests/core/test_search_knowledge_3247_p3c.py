@@ -25,7 +25,7 @@ Covers:
 No mocks — real ``SqliteIndexBackend``, real ``IndexCoordinator``, real
 ``SourceManifest``, real ``Workspace``/``OpContext``/``ToolContext``; a
 plain fake embedding provider (same established convention as
-``tests/test_fp0066_p3a_knowledge_ingest.py`` / ``test_index_coordinator_
+``tests/core/test_fp0066_p3a_knowledge_ingest.py`` / ``test_index_coordinator_
 3247_p2d.py``) stands in for the litellm boundary via the
 ``reyn.core.op_runtime.embed.get_provider`` monkeypatch seam.
 """

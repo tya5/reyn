@@ -88,7 +88,7 @@ class NoopBackend:
 
         This exemption is not a hole. `probe_enforcement()` pointed at this very
         backend is what proves the probe can fail at all (see
-        `tests/test_sandbox_self_test_2983.py`), and CodeAct independently
+        `tests/security/test_sandbox_self_test_2983.py`), and CodeAct independently
         refuses to run on a backend named "noop" (`codeact_runner.py`), so the
         exemption grants Noop no enforcement credit anywhere.
         """

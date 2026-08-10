@@ -4,8 +4,8 @@ A live-dogfood + investigation of the external-event->hooks arc (#2608)
 confirmed BY REPRODUCTION that a background-fired external-event hook push
 (``wake=True``) wakes an IDLE ``session.run()`` loop and runs a
 hook-attributed turn. But the existing H1/H4 unit tests
-(``tests/test_2608_h1_mcp_resource_updated_hook.py``,
-``tests/test_2608_h4_fs_watcher.py``) call the producer/dispatch path
+(``tests/hooks/test_2608_h1_mcp_resource_updated_hook.py``,
+``tests/runtime/test_2608_h4_fs_watcher.py``) call the producer/dispatch path
 directly and only assert the templated push LANDS in ``session.inbox`` —
 they never start ``session.run()``, so they cannot observe the run-loop
 actually picking the push up off the inbox and executing a turn. That is
@@ -24,7 +24,7 @@ Policy (docs/deep-dives/contributing/testing.md): real instances only — no
 ``unittest.mock``/``MagicMock``/``AsyncMock``/``patch``. The ONLY faked
 boundary is the LLM call itself (``reyn.runtime.router_loop.call_llm_tools``),
 replaced with a real async stub function — the same established idiom
-``tests/test_1800_wake_drain.py`` uses to drive ``session.run()`` end-to-end
+``tests/core/test_1800_wake_drain.py`` uses to drive ``session.run()`` end-to-end
 without a live model.
 """
 from __future__ import annotations

@@ -40,8 +40,8 @@ if TYPE_CHECKING:
 #
 # The settled disposition of every producer kind (P6a): standard 4 / profiled 11
 # / control 2. This module DECLARES the vocabulary independently; the
-# non-circular gate (tests/test_outbox_vocabulary.py +
-# tests/test_agui_profile_completeness.py) binds it against the real codec map
+# non-circular gate (tests/interfaces/test_outbox_vocabulary.py +
+# tests/interfaces/test_agui_profile_completeness.py) binds it against the real codec map
 # (protocol._DISPLAY_KIND_EVENT), the extension profile (profile.CUSTOM_PROFILE),
 # and the wire-filter allowlist (protocol.CONTROL_FILTER_KINDS).
 

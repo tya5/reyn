@@ -2188,7 +2188,7 @@ async def recorded_acompletion(
         for providers whose wire protocol has no such field. Two SEPARATE
         properties of litellm's param layer make passing it unconditionally
         safe — neither implies the other, and both are pinned by Tier 1 tests
-        in ``tests/test_streaming_usage_provider_supplied_3348.py``:
+        in ``tests/llm/test_streaming_usage_provider_supplied_3348.py``:
         (1) it does not RAISE for a provider that rejects the param —
         ``litellm/utils.py`` skips ``stream_options`` when pruning unsupported
         params (``if k == "user" or k == "stream_options" or k == "stream":

@@ -24,7 +24,7 @@ adopted: the pending set is already FULL state (a small dict of per-key
 records), so it IS a snapshot. It is written as a file, not as truncatable
 WAL-events, and reconstruction reads that file alone — the WAL is never
 consulted. That makes CLAUDE.md's truncate-falsify gate pass **structurally**
-rather than by argument (``tests/test_3180_composer_pending_truncate_falsify.py``
+rather than by argument (``tests/hooks/test_3180_composer_pending_truncate_falsify.py``
 sets an armed deadline, truncates the WAL below every event of the run, rebuilds
 from this file, and asserts the arm survives with its ``created_at`` intact).
 

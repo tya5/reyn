@@ -33,7 +33,7 @@
 - **EventStore stale-path recovery** (B35 W1 ablation cond C):
   `EventStore.write()` now catches `FileNotFoundError`, resets `_active`,
   retries `_open_new_file()` once. Tier 2 test
-  `tests/test_event_store_stale_path_recovery.py` (2 cases, no mocks).
+  `tests/core/test_event_store_stale_path_recovery.py` (2 cases, no mocks).
 
 ### C1 / Q2 stability (= continued)
 

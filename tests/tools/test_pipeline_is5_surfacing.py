@@ -30,7 +30,7 @@ Policy compliance (docs/deep-dives/contributing/testing.md): no
 unittest.mock.MagicMock/AsyncMock/patch — the LLM is faked via a real async
 callable stub (Tier 2c), monkeypatched onto ``reyn.runtime.router_loop.
 call_llm_tools`` (the designed Tier-2 test seam), same precedent as
-``tests/test_session_invariants.py``.
+``tests/runtime/test_session_invariants.py``.
 """
 from __future__ import annotations
 
@@ -82,7 +82,7 @@ def _registry_backed_session(tmp_path: Path):
 
 # ---------------------------------------------------------------------------
 # 1. RouterCallerState wiring (RouterLoop + minimal fake host — mirrors
-#    tests/test_router_caller_state_mcp_servers.py's precedent).
+#    tests/runtime/test_router_caller_state_mcp_servers.py's precedent).
 # ---------------------------------------------------------------------------
 
 

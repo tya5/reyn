@@ -9,7 +9,7 @@ audience: [human, agent]
 This page is the canonical record of the naming convention for tool names —
 **the one name each tool has**, e.g. `read_file`. It exists so a reviewer can
 check "does this new tool name fit the convention" without re-deriving the rule
-from a census each time, and so `tests/test_tool_naming_convention_gate_3223.py`
+from a census each time, and so `tests/tools/test_tool_naming_convention_gate_3223.py`
 (the drift-prevention CI gate) has a human-readable rationale to point at.
 
 > **#3429 — there is no second namespace.** Until 2026-07-29 every catalog
@@ -20,7 +20,7 @@ from a census each time, and so `tests/test_tool_naming_convention_gate_3223.py`
 > without. The qualified namespace is abolished. A category survives only as the
 > browsing axis `list_actions(category=[…])` exposes.
 >
-> `tests/test_no_qualified_tool_names_3429.py` keeps it abolished: it walks the
+> `tests/tools/test_no_qualified_tool_names_3429.py` keeps it abolished: it walks the
 > live registry, the catalog's membership table, the categories tuple, and the
 > assembled `tools=` payload, and fails on any `__` in a name.
 
@@ -239,7 +239,7 @@ the verbs they minted are still in the lexicon:
   from `read` (see the load-class section above).
 
 A tool name that contains `__` is now a violation of R1, caught by
-`tests/test_no_qualified_tool_names_3429.py`.
+`tests/tools/test_no_qualified_tool_names_3429.py`.
 
 ## Grandfathered anomalies with no family (individual, pre-existing)
 
@@ -276,7 +276,7 @@ verbs" above), `create` (#4004 — added for `create_topology`, renamed from
 `topology_create`).
 
 This lexicon (and the grandfather frozen-set) is reconciled against the full
-live registry census in `tests/test_tool_naming_convention_gate_3223.py` —
+live registry census in `tests/tools/test_tool_naming_convention_gate_3223.py` —
 that test file is the executable source of truth for which names are
 currently registered; this doc is the human-readable rationale for the
 rules the test enforces, plus the semantic rules (R2/R3 class-selection,

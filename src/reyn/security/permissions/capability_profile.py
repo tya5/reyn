@@ -331,7 +331,7 @@ UNTRUSTED_PROFILE_NAME: "str" = "_untrusted"
 # paid on every session for a threat the operator may not have.
 #
 # Named here rather than imported from ``reyn.config`` (security must not depend
-# on config) — ``tests/test_3501_untrusted_narrowing_opt_in.py`` resolves this
+# on config) — ``tests/security/test_3501_untrusted_narrowing_opt_in.py`` resolves this
 # dotted path against the real config objects, so a rename that misses this
 # string fails rather than shipping a deny message pointing at a key that does
 # not exist.
@@ -444,7 +444,7 @@ _FLOORED_TOOLS: "dict[str, frozenset[str]]" = {
 
 # The floor names ARE the deny set: #3429 left every tool with exactly one
 # invocable name, so there is no per-class derivation step between the declaration
-# and the enforced set. ``tests/test_2111_floor_alias_completeness.py`` pins the
+# and the enforced set. ``tests/security/test_2111_floor_alias_completeness.py`` pins the
 # replacement invariant — every floored name is a REGISTERED tool name, so a typo
 # floors nothing and is caught rather than silently leaving the real route
 # unguarded (the #2111 gap-class, in the opposite direction).

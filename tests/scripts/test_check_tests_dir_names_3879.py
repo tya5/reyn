@@ -11,8 +11,8 @@ faking any of them would test nothing real.
 isolated fixtures) before this file was written: creating a real
 ``tests/scripts/__init__.py`` made ``check_tests_dir_names.py`` genuinely
 RED for the shadow reason, and separately made two already-existing tests
-(``tests/test_swe_bench_runner_venv_183.py``,
-``tests/test_verify_package_move_root_config.py``) fail collection with
+(``tests/scripts/test_swe_bench_runner_venv_183.py``,
+``tests/scripts/test_verify_package_move_root_config.py``) fail collection with
 ``ModuleNotFoundError: No module named 'scripts.swe_bench_runner'`` — the
 exact real-world breakage the shadow check exists to predict, not a guessed
 one. The working tree was restored and confirmed clean afterward.

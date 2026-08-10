@@ -473,7 +473,7 @@ def test_search_actions_no_router_state_returns_empty() -> None:
     instead of raising — gracefully degrading per §D14.
 
     The deeper handler invariants (query routing, ranking, category
-    filter) live in tests/test_universal_handlers.py with a real
+    filter) live in tests/tools/test_universal_handlers.py with a real
     ActionEmbeddingIndex + fake EmbeddingProvider.
     """
     ctx = _make_minimal_ctx()

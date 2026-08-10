@@ -80,7 +80,7 @@ completely independently of it. The in-memory build-queue (``_bg_tasks``,
 ``_failure_memo``) is volatile BY DESIGN — a crash loses it, and that is
 fine, because ``search_await`` re-derives "does this need a build" from the
 persisted ``sources.yaml`` state alone, not from the in-memory queue. See
-``tests/test_index_coordinator_3247_p2a.py`` for the truncate-falsify proof.
+``tests/core/test_index_coordinator_3247_p2a.py`` for the truncate-falsify proof.
 """
 from __future__ import annotations
 

@@ -26,7 +26,7 @@ def _load_module():
     """Import scripts/check_pr_closing_intent.py without a scripts/ package.
 
     scripts/ has no ``__init__.py`` (mirrors the loader idiom used by
-    ``tests/test_tier_audit_format_pin.py`` for the sibling audit script).
+    ``tests/scripts/test_tier_audit_format_pin.py`` for the sibling audit script).
     """
     repo_root = REPO_ROOT
     path = repo_root / "scripts" / "check_pr_closing_intent.py"

@@ -18,7 +18,7 @@ Pins:
   2. ``experimental_capabilities`` declares ``reyn.progress.skill_lifecycle``
      with the exact audit-event kinds ``_MCPProgressBridge`` subscribes to
      — asserted on the built ``InitializationOptions``, in
-     ``tests/test_progress_lifecycle_fanout_3357.py``, since the list is now
+     ``tests/interfaces/test_progress_lifecycle_fanout_3357.py``, since the list is now
      DERIVED from the shared constant rather than restated in source.
   3. ``experimental_capabilities`` declares
      ``reyn.cancellation.cooperative`` (= matches the PR #279 cancel
@@ -100,7 +100,7 @@ def test_experimental_capability_declares_skill_lifecycle_progress() -> None:
     ``PROGRESS_LIFECYCLE_EVENTS``, and restating it in a test is what froze two
     producer-less kinds into the wire contract (#3357). The derivation and the
     liveness of its members are asserted in
-    ``tests/test_progress_lifecycle_fanout_3357.py``.
+    ``tests/interfaces/test_progress_lifecycle_fanout_3357.py``.
     """
     from mcp.server import Server
 

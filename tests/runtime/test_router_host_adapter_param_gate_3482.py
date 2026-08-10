@@ -57,7 +57,7 @@ def _load_measurement_module():
     """Import scripts/measure_router_host_adapter_consumers.py.
 
     scripts/ has no ``__init__.py`` — same loader idiom as
-    tests/test_check_pr_closing_intent.py uses for its sibling script.
+    tests/scripts/test_check_pr_closing_intent.py uses for its sibling script.
     """
     path = _repo_root() / "scripts" / "measure_router_host_adapter_consumers.py"
     assert path.is_file(), f"measurement script missing: {path}"

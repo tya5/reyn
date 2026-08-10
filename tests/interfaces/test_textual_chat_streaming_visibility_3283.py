@@ -39,7 +39,7 @@ the gates below are shaped to tell them apart:
 
 All real instances: a real ``TextualChatApp`` under ``run_test``, a real
 ``ClientTransport`` implementation fed from a queue (the ``QueueTransport``
-idiom shared with ``tests/test_3288_3c_tui_delta_coalesce.py``), real
+idiom shared with ``tests/interfaces/test_3288_3c_tui_delta_coalesce.py``), real
 ``OutboxMessage`` / ``Event`` / ``FlowView`` / ``FlowModel``. No
 ``unittest.mock``, no hand-rolled stand-ins.
 """
@@ -66,7 +66,7 @@ _FILLER_ROWS = 40
 
 class _DrivenClock:
     """The app's own ``clock`` injection point, driven instead of slept through
-    (the idiom ``tests/test_stream_spinner_3530.py`` uses for the blink).
+    (the idiom ``tests/interfaces/test_stream_spinner_3530.py`` uses for the blink).
 
     Needed here since #3570: the repaint budget reads this clock, so a test that
     wants "one delta, one update" has to say when a delta is due rather than
@@ -84,7 +84,7 @@ class _DrivenClock:
 
 class QueueTransport(ClientTransport):
     """A real, minimal :class:`ClientTransport` fed one frame at a time from a
-    queue (the idiom shared with ``tests/test_3288_3c_tui_delta_coalesce.py``)."""
+    queue (the idiom shared with ``tests/interfaces/test_3288_3c_tui_delta_coalesce.py``)."""
 
     def __init__(self) -> None:
         self._queue: "asyncio.Queue[object]" = asyncio.Queue()
@@ -232,7 +232,7 @@ async def test_offscreen_deltas_do_not_re_render_the_row() -> None:
     therefore drives the app's own injected clock past that window between
     deltas — which keeps this test measuring the ③ VISIBILITY gate (its subject)
     at full strength rather than accidentally measuring #3570's budget. The
-    budget's own gates live in ``tests/test_stream_repaint_coalesce_3570.py``.
+    budget's own gates live in ``tests/interfaces/test_stream_repaint_coalesce_3570.py``.
     """
     transport = QueueTransport()
     clock = _DrivenClock()

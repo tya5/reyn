@@ -1,6 +1,6 @@
 """Tier 1: scripts/mypy_ratchet.py's parse/diff contract.
 
-Same skeleton as `tests/test_3595_s4_slash_handler_seam.py`'s `_SESSION_RESIDUE`
+Same skeleton as `tests/interfaces/test_3595_s4_slash_handler_seam.py`'s `_SESSION_RESIDUE`
 ratchet — a committed baseline set only ever shrinks; a measured entry not in
 it is new and must be surfaced, an entry that silently disappears from the
 measured set (a fix) is not itself reported. Here the measured set is

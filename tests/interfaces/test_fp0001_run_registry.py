@@ -159,8 +159,8 @@ async def test_attach_task_stores_task_reference() -> None:
 # ---------------------------------------------------------------------------
 # Tests 6-8: removed in issue #292 (α). RunRegistry.answer_intervention is
 # gone; iv resolution lives in Session.answer_pending_intervention,
-# tested in tests/test_fp0001_a2a_intervention_bus.py + the new
-# tests/test_a2a_iv_kind_choices_267_gap4.py answer-injection block.
+# tested in tests/interfaces/test_fp0001_a2a_intervention_bus.py + the new
+# tests/interfaces/test_a2a_iv_kind_choices_267_gap4.py answer-injection block.
 # ---------------------------------------------------------------------------
 
 

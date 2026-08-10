@@ -38,7 +38,7 @@ tests were measuring nothing. ``test_the_witness_tool_actually_runs_when_permitt
 is the instrument check that keeps that failure detectable.
 
 The completeness half of the gate lives in
-``tests/test_3546_pipeline_driver_narrowing_inheritance.py``, extended by #3553 to
+``tests/runtime/test_3546_pipeline_driver_narrowing_inheritance.py``, extended by #3553 to
 record, per spawn site, WHICH parent layers it composes and which test measures
 that. That half records INTENT: a site whose declaration and implementation disagree
 stays green there. These two legs are what actually measures this site, and neither

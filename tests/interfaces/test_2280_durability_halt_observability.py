@@ -64,7 +64,7 @@ from tests._support.agent_session import make_session
 async def _inject_persistent_durability_failure(log: StateLog) -> None:
     """Genuinely trigger the §4-exhausted fire-and-forget durable-write
     failure that latches ``StateLog.durability_failed`` — the same real
-    trigger ``tests/test_2259_pr3_recovery_semantics_falsify.py`` uses, never
+    trigger ``tests/runtime/test_2259_pr3_recovery_semantics_falsify.py`` uses, never
     a private-attribute poke."""
     async def _boom() -> None:
         raise OSError("simulated disk death")

@@ -165,7 +165,7 @@ def test_cheat_sheet_hook_example_corrupted_raises_hookconfigerror() -> None:
 
 class _ScriptedAgentReply:
     """Real-callable stub for the pipeline's `agent` step LLM calls — mirrors
-    tests/test_pipeline_is3_dsl_parser.py's precedent. Cycles through
+    tests/core/test_pipeline_is3_dsl_parser.py's precedent. Cycles through
     `contents` in call order (this flagship has TWO `agent` steps run
     sequentially — summarize, then self-review — both routed through the
     same scripted stub since each ephemeral session's `_loop_driver` is
@@ -197,7 +197,7 @@ class _ScriptedAgentReply:
 
 
 def _agent_registry(tmp_path: Path, state_log, scripted: "_ScriptedAgentReply"):
-    """Mirrors tests/test_pipeline_r5_run_agent_step.py's ``_registry``: the
+    """Mirrors tests/runtime/test_pipeline_r5_run_agent_step.py's ``_registry``: the
     self-review agent step declares ``schema:``, which runs RouterLoop's
     model-support pre-check before the (fully scripted) turn -- the resolver
     must map the default "standard" class to a litellm-known model whose

@@ -3,7 +3,7 @@
 Incremental / delta-reconcile ingestion — NO full-rebuild mode. Tests use a
 real FakeEmbeddingProvider (monkeypatched into both `op_runtime.embed`'s and
 `op_runtime.index_update`'s module-level `get_provider`, mirroring
-`tests/test_op_embed.py`'s pattern — the index_update handler dispatches the
+`tests/core/test_op_embed.py`'s pattern — the index_update handler dispatches the
 actual embed call through the shared `embed` op via `execute_op`, and
 separately resolves a provider for the cost-estimate) and a real
 SqliteIndexBackend + SourceManifest for end-to-end dispatch. No mocks.

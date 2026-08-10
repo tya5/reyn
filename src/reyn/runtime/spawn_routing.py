@@ -36,7 +36,7 @@ concrete pair a site forwards:
 Enforcement is three-layered, mirroring the landed P1 present-sink gate:
   1. required no-default kwargs (``inspect.signature`` pin) — a site cannot omit the decision;
   2. the :class:`ReviewedNA` frozenset ratchet — a new self-bound site cannot silently join;
-  3. an AST guard (``tests/test_spawn_routing_gate_2708.py``) — every ``src/reyn`` call to a
+  3. an AST guard (``tests/runtime/test_spawn_routing_gate_2708.py``) — every ``src/reyn`` call to a
      spawn seam passes both routing kwargs explicitly, so a new gap is a PR-time CI failure.
 """
 from __future__ import annotations

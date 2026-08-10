@@ -136,7 +136,7 @@ def test_delegate_to_agent_in_for_router():
 
 
 # ── 5. Handler activated (M4 Phase 3) — mis-wiring contract ──────────────────
-# Happy-path delegation tests live in tests/test_tool_registry_handlers.py.
+# Happy-path delegation tests live in tests/tools/test_tool_registry_handlers.py.
 
 @pytest.mark.asyncio
 async def test_delegate_to_agent_handler_raises_when_router_state_missing():

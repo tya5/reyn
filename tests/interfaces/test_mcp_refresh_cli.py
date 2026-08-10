@@ -251,7 +251,7 @@ def test_refresh_uses_configured_mcp_probe_seconds(tmp_path: Path, monkeypatch) 
     the actual configured value into `_probe_server_tools`'s `per_server_timeout`
     kwarg — the CLI side of #3475's "one source for both hardcoded 5.0 sites"
     requirement (the runtime side is `Session._safety.timeout.mcp_probe_seconds`,
-    covered in tests/test_3475_probe_degradation_visibility_and_timeout_config.py).
+    covered in tests/core/test_3475_probe_degradation_visibility_and_timeout_config.py).
     Uses 9.5 (NOT the unchanged 5.0 default) — testing with the default value would
     stay green even if this wiring were dead."""
     import reyn.interfaces.cli.commands.mcp as mcp_cmd

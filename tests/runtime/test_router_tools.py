@@ -359,7 +359,7 @@ def test_nested_objects_max_depth_1_full_permissions():
 # agent-facing RAG tools are removed along with the tools themselves — see
 # docs/deep-dives/proposals/0066-retrieval-two-groups-two-axes.md §9.
 # test_returns_external_content_flagset_1822.py / test_universal_catalog.py /
-# tests/test_op_semantic_search.py + test_op_index_update.py (OS-internal op
+# tests/core/test_op_semantic_search.py + test_op_index_update.py (OS-internal op
 # level, kept) cover the surviving invariants.
 
 

@@ -12,7 +12,7 @@ text is already ``content``), and preserve the only non-duplicate SDK field — 
 These tests pin the op-level shape fact directly (no ``raw`` duplicate field; ``structured`` present
 iff the SDK returned one) rather than through the retired offload-decision helpers. The canonical
 mapper's own handling of ``content``/``structured`` (text vs. attachment) is covered separately by
-``tests/test_2425_canonical_tool_result.py``.
+``tests/core/test_2425_canonical_tool_result.py``.
 """
 from __future__ import annotations
 

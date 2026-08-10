@@ -8,7 +8,7 @@ gate) proving the dirty flag survives independently of the WAL.
 
 No mocks — real ``SourceManifest``, real ``SqliteIndexBackend``, real
 ``OpContext``; a plain ``FakeEmbeddingProvider`` (same pattern as
-``tests/test_action_embedding_index.py``) stands in for the litellm
+``tests/core/test_action_embedding_index.py``) stands in for the litellm
 boundary via the established ``get_provider`` monkeypatch convention.
 """
 from __future__ import annotations
@@ -40,7 +40,7 @@ def _run(coro: Any) -> Any:
 
 def _ctx_for(provider: Any, monkeypatch: pytest.MonkeyPatch) -> OpContext:
     """Real OpContext whose `embed` op resolves to ``provider`` (mirrors
-    ``tests/test_action_embedding_index.py::_ctx_for``)."""
+    ``tests/core/test_action_embedding_index.py::_ctx_for``)."""
     import reyn.core.op_runtime.embed as _embed_mod
     monkeypatch.setattr(_embed_mod, "get_provider", lambda *a, **kw: provider)
     events = EventLog()

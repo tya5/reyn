@@ -60,7 +60,7 @@ class SlashContext:
     an operation designed for them, and designing 25 commands' worth of
     operations inside the increment that moves the seam would make neither
     reviewable. Every remaining private access through this field is enumerated
-    with its reason in ``tests/test_3595_s4_slash_handler_seam.py``, whose gate
+    with its reason in ``tests/interfaces/test_3595_s4_slash_handler_seam.py``, whose gate
     is a RATCHET: the declared set may shrink, and a member not in it is RED.
 
     ★ The success metric of the arc is that ``Session``'s public surface does not

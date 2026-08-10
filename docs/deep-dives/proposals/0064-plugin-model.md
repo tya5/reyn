@@ -160,7 +160,7 @@ rather than duplicating it:
   auto-scan — mirrors `BUILTIN_SKILLS`/`BUILTIN_PIPELINES`'s discipline and
   the #3196 rule that a directory appearing on disk must never itself
   advertise a capability. A CI gate
-  (`tests/test_builtin_plugins_registry_disk_parity.py`) enforces two-way
+  (`tests/builtin/test_builtin_plugins_registry_disk_parity.py`) enforces two-way
   parity between this dict and the real `src/reyn/builtin/plugins/*`
   directories, so a new builtin plugin shipped without a registry entry
   fails CI instead of shipping silently undiscoverable.

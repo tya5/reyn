@@ -30,7 +30,7 @@ again.
    builtin skills.
 2. Every ``SKILL.md`` under ``src/reyn/builtin/plugins/*/skills/*/`` -- the
    plugin-shipped skills (the RAG plugin's, at time of writing). These are
-   OUT OF SCOPE for ``tests/test_builtin_registry_disk_parity.py`` (#3168),
+   OUT OF SCOPE for ``tests/builtin/test_builtin_registry_disk_parity.py`` (#3168),
    which explicitly excludes ``builtin/plugins/**`` from its own disk walk
    because plugin skills register through a structurally different,
    install-time path (``reyn.core.op_runtime.plugin_install``), not
@@ -70,7 +70,7 @@ def _plugin_skill_md_paths_on_disk() -> "set[Path]":
     directory -- a real directory walk, NOT a hardcoded plugin/skill name
     list, so a newly added plugin skill (or plugin) is picked up
     automatically. This is the surface #3168's registry<->disk parity gate
-    (``tests/test_builtin_registry_disk_parity.py``) explicitly excludes,
+    (``tests/builtin/test_builtin_registry_disk_parity.py``) explicitly excludes,
     because plugin skills register through the install-time
     ``plugin_install`` path rather than ``BUILTIN_SKILLS`` -- but it is
     exactly the surface that shipped an over-cap file (#3162)."""

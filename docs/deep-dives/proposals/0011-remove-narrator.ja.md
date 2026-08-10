@@ -120,9 +120,9 @@ narrator を廃止することでこの矛盾が解消される。ルーター L
 
 - `tests/test_replay_narrator.py` を削除（Tier 3a — narrator LLM 挙動の replay テスト）
 - `tests/test_narrator_drift.py` を削除（Tier 2b — narrator のドリフト検出不変条件）
-- `tests/test_router_loop_chatsession.py`: narrator が `available_skills` から除外される
+- `tests/llm/test_router_loop_chatsession.py`: narrator が `available_skills` から除外される
   アサーションを削除（narrator 自体がなくなるため）
-- `tests/test_multi_agent_p7.py`: `_KNOWN_SKILL_NAMES` から `skill_narrator` を削除
+- `tests/runtime/test_multi_agent_p7.py`: `_KNOWN_SKILL_NAMES` から `skill_narrator` を削除
 
 ### Component E — post-invoke_skill narration の Tier 2 契約テストを追加（SMALL）
 

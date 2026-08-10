@@ -31,7 +31,7 @@ Three witnesses, per lead-coder's design (issue #3783 comments):
 Real ``retry_loop``/``CompactionEngine`` collaborators throughout arms (a)/(b)
 (only the LLM completion call is stubbed — the same one seam
 ``synthetic_t_max``-style tests already stub); mirrors
-``tests/test_pr_n6_compaction_overflow_retry.py``'s existing
+``tests/services/test_pr_n6_compaction_overflow_retry.py``'s existing
 ``_OverflowingEngine`` harness. Arm (c) drives a REAL ``Session``/
 ``RouterLoopDriver`` end to end (``tests/_support/session.py``), with only
 ``RouterLoop`` (a collaborator double, per
@@ -57,7 +57,7 @@ from reyn.services.compaction.engine import (
 from tests._support.session import make_session as _make_session
 from tests._support.session import push as _push
 
-# ── shared retry_loop harness (mirrors tests/test_pr_n6_compaction_overflow_retry.py) ──
+# ── shared retry_loop harness (mirrors tests/services/test_pr_n6_compaction_overflow_retry.py) ──
 
 
 class _StubEngineCompactRaises:
@@ -220,7 +220,7 @@ async def test_input_independent_exception_hits_the_cap_not_an_infinite_loop(tmp
     # Cap is > 2, so exactly 3 consecutive same-cause recovers are emitted
     # before the 3rd one also raises — unpacking to exactly 3 elements
     # raises ValueError otherwise (mirrors the stage-2 precedent in
-    # tests/test_pr_n6_compaction_overflow_retry.py).
+    # tests/services/test_pr_n6_compaction_overflow_retry.py).
     first, second, third = recovered
     assert first.data["consecutive"] == 1
     assert second.data["consecutive"] == 2

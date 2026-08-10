@@ -1,9 +1,9 @@
 """Shared SKILL.md <-> catalog tool-name drift-detection helpers (#3092).
 
 Single source for the extraction/lookup logic the #3090 RAG-only gate
-(``tests/test_fp0063_p4_builtin_rag_skill.py``) originated and #3092
+(``tests/plugins/test_fp0063_p4_builtin_rag_skill.py``) originated and #3092
 generalizes to every builtin SKILL.md
-(``tests/test_builtin_skill_tool_name_drift_3092.py``). Factored out here so
+(``tests/repo/test_builtin_skill_tool_name_drift_3092.py``). Factored out here so
 the two test files share ONE regex / ONE catalog lookup rather than two
 independent copies that could silently drift from each other (the same
 duplication hazard the extraction functions themselves guard against for
@@ -28,7 +28,7 @@ BUILTIN_DIR = REPO_ROOT / "src" / "reyn" / "builtin"
 class _NoOpEvents:
     """Real ToolContext requires an events sink; a no-op recorder is not a
     faked COLLABORATOR under test (nothing here asserts on events) — same
-    shape as ``tests/test_catalog_entries_1593.py``'s fixture."""
+    shape as ``tests/tools/test_catalog_entries_1593.py``'s fixture."""
 
     def emit(self, *args, **kwargs) -> None:
         pass

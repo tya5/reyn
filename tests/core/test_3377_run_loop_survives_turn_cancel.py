@@ -25,7 +25,7 @@ test, which would prove nothing about a path that never catches it.
 
 Real ``Session`` / ``StateLog`` (no mocks). The only replaced collaborator is
 ``RouterLoopDriver.run_turn``, method-assigned as a real async function — the
-same controllable-hang seam ``tests/test_2242_hard_cancel.py`` uses.
+same controllable-hang seam ``tests/core/test_2242_hard_cancel.py`` uses.
 """
 from __future__ import annotations
 

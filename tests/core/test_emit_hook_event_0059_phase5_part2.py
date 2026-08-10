@@ -52,8 +52,8 @@ Policy (docs/deep-dives/contributing/testing.md): real ``OpContext`` / real
 ``unittest.mock``/``MagicMock``/``AsyncMock``/``patch``. Only the LLM
 boundary (``session._loop_driver.run_turn``) is replaced with a plain async
 recorder that itself calls the REAL ``emit_hook_event`` handler — the same
-substitution class ``tests/test_hook_composer_reachability_phase5.py`` and
-``tests/test_hook_loop_valve_1800_7.py`` already establish as compliant.
+substitution class ``tests/hooks/test_hook_composer_reachability_phase5.py`` and
+``tests/core/test_hook_loop_valve_1800_7.py`` already establish as compliant.
 """
 from __future__ import annotations
 
@@ -369,7 +369,7 @@ def _checkpoint_kinds(events: list[dict]) -> list:
 @pytest.mark.asyncio
 async def test_emit_origin_self_stimulating_chain_force_closes_at_cap(tmp_path):
     """Tier 2: STRENGTHENED loop-valve pin — the emit-ORIGIN variant of
-    ``tests/test_hook_composer_reachability_phase5.py``'s external-
+    ``tests/hooks/test_hook_composer_reachability_phase5.py``'s external-
     ``file_changed``-origin chain): each hook-driven turn's "LLM" calls the
     REAL ``emit_hook_event`` handler (``llm:<session_id>:ping``), which a
     Composer (``op=count``, ``threshold=1``) correlates into

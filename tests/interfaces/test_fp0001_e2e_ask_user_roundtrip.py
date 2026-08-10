@@ -139,7 +139,7 @@ def test_run_registry_to_public_dict_excludes_internals():
 # Tests for ``RunRegistry.answer_intervention`` removed: post-issue-#292,
 # the method is gone and peer-answer flows go through
 # ``Session.answer_pending_intervention``. See
-# tests/test_fp0001_a2a_intervention_bus.py for the post-α coverage.
+# tests/interfaces/test_fp0001_a2a_intervention_bus.py for the post-α coverage.
 
 
 def test_run_registry_cancel_marks_cancelled():
@@ -168,7 +168,7 @@ def test_run_registry_cancel_marks_cancelled():
 # field mirroring removed: post-issue-#292 the bus is a side-effect
 # observer (= ``on_dispatch``) that does not own iv resolution. Status
 # mirror behaviour is covered by
-# tests/test_fp0001_a2a_intervention_bus.py::test_on_dispatch_mirrors_input_required_status.
+# tests/interfaces/test_fp0001_a2a_intervention_bus.py::test_on_dispatch_mirrors_input_required_status.
 
 
 # ---------------------------------------------------------------------------

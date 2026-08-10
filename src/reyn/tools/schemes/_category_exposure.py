@@ -13,7 +13,7 @@ composition — and never from ``ops.catalog_entries`` (the M-action enumeration
 the ``enumerate-all`` presentation exposes). An encoder renders what it is given;
 if a cell reached past this builder for the flat catalog, the ``content_fence``
 cell's code-API would list every action and the scheme would have no reason to
-exist. ``tests/test_tool_use_category_content_fence_3376.py`` asserts the
+exist. ``tests/tools/test_tool_use_category_content_fence_3376.py`` asserts the
 function count is invariant under catalog growth, which is the falsifiable form
 of that sentence.
 

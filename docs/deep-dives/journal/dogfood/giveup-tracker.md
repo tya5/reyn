@@ -504,7 +504,7 @@ ROI 評価) に集中。
 - **Option F 採用**: `RouterLoop.run()` で empty-stop 検出 → audit event emit
   (`router_empty_response_detected`) + user-visible failure message → exit (no retry)
 - 実装: `_is_empty_router_response()` + `_EMPTY_RESPONSE_MSG` dict in `router_loop.py`
-- Tier 2 tests: `tests/test_router_empty_response.py` (16 tests)
+- Tier 2 tests: `tests/llm/test_router_empty_response.py` (16 tests)
 - 履歴: ADR-0021 Option B 却下、 Option F 採用 (2026-05-04)
 
 **短期 (2026-05-04 実装中) — Option G**:

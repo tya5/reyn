@@ -30,7 +30,7 @@ instead of a private ``vectors``/``meta`` schema under
 unified schema directly (real on-disk SQLite, same shape
 ``SqliteIndexBackend`` writes) rather than going through the CLI's own
 production code, so this stays a fixture, not a round-trip test of the
-backend itself (that's ``tests/test_index_backend.py``'s job).
+backend itself (that's ``tests/data/test_index_backend.py``'s job).
 
 No mocks. Tests work against real on-disk state in ``tmp_path`` with
 ``monkeypatch.chdir(tmp_path)`` so the CLI's cwd-based project-root

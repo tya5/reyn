@@ -32,7 +32,7 @@ from tests._async_wait import wait_until  # noqa: E402 — shared #1751 test wai
 from tests._support.agent_session import make_session
 
 # ---------------------------------------------------------------------------
-# Helpers (mirror tests/test_session_invariants.py pattern)
+# Helpers (mirror tests/runtime/test_session_invariants.py pattern)
 # ---------------------------------------------------------------------------
 
 

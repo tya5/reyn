@@ -19,7 +19,7 @@ Pins:
   1. ``_A2AProgressBridge.TRACKED_EVENTS`` IS the shared declaration and
      matches ``_MCPProgressBridge``'s scope (= the contract two bridges
      share). The liveness of those kinds is gated separately, in
-     ``tests/test_progress_lifecycle_fanout_3357.py`` — pinning a literal
+     ``tests/interfaces/test_progress_lifecycle_fanout_3357.py`` — pinning a literal
      set here is what let two producer-less kinds survive (#3357).
   2. ``attach()`` subscribes to ``session._audit_events``;
      ``detach()`` unsubscribes + cancels in-flight tasks; idempotent.

@@ -9,7 +9,7 @@ This test drives the pipeline FILES directly (a project-local
 ``_write_project`` below) rather than going through a real
 ``plugin_install`` -- the install mechanism itself (copy, materialise deps
 into a per-plugin venv, register) has its own coverage in
-``tests/test_plugin_install.py`` and ``scripts/wheel_plugin_install_probe.py``;
+``tests/core/test_plugin_install.py`` and ``scripts/wheel_plugin_install_probe.py``;
 this file's job is the PIPELINE BEHAVIOR, so it stays fast/offline by
 pointing straight at the plugin's shipped files with the ``builtin-rag``
 extra installed for direct import, instead of paying a real ``uv``
@@ -27,7 +27,7 @@ FastMCP stdio server written to disk for the test (the real
 ``uvx`` would need network) -- this substitution is disclosed in the PR
 body, not silently passed off as "real markitdown-mcp".
 
-Only the embedding PROVIDER is faked (mirrors ``tests/test_op_embed.py``'s
+Only the embedding PROVIDER is faked (mirrors ``tests/core/test_op_embed.py``'s
 ``FakeEmbeddingProvider`` precedent -- monkeypatching
 ``reyn.core.op_runtime.embed.get_provider``, NOT ``unittest.mock``) so the
 tests need no real embedding API key/network. Everything else -- the pipeline
@@ -186,12 +186,12 @@ def _server_env(src_root: str) -> dict[str, str]:
 
 class FakeEmbeddingProvider:
     """Deterministic real EmbeddingProvider (mirrors
-    ``tests/test_op_embed.py``'s own fixture) -- a fixed-length vector per
+    ``tests/core/test_op_embed.py``'s own fixture) -- a fixed-length vector per
     text so distinct chunk texts get distinct (but reproducible) vectors,
     with no real embedding API call.
 
     **``embed`` RESOLVES the requested model to ``fake/<model>``** rather
-    than echoing it back -- exactly as ``tests/test_op_embed.py``'s fixture
+    than echoing it back -- exactly as ``tests/core/test_op_embed.py``'s fixture
     does, and as the real ``RoutingEmbeddingProvider`` does when handed a
     model-CLASS alias (``"standard"`` -> a concrete provider model id). This
     is load-bearing for the C4 test: were the resolved name identical to the
@@ -399,7 +399,7 @@ def test_only_real_document_content_reaches_the_store(
 
     The third way -- ``meta.empty``, the marker path that motivated #3010 -- is NOT witnessed by this
     test and cannot be, for the SDK reason above. It is pinned SDK-independently against the non-MCP
-    producers in ``tests/test_3010_empty_success_fact_data_path.py``.
+    producers in ``tests/core/test_3010_empty_success_fact_data_path.py``.
 
     Stub fidelity (the stub stands in for markitdown-mcp -- see module docstring): both branches ride
     the stub's own natural behavior over real fixture bytes, mirroring what the real library was

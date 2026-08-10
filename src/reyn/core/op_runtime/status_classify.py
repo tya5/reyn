@@ -43,7 +43,7 @@ Classification policy
   yet" and say so plainly to their own caller/the LLM (e.g. surface
   whatever payload fields ARE present, tag the result as carrying an
   unrecognized status, and log it) — never fabricate certainty in either
-  direction. `tests/test_3193_op_status_classifier_coverage.py` is the CI
+  direction. `tests/core/test_3193_op_status_classifier_coverage.py` is the CI
   gate that keeps this module's known-status tables in sync with the live
   op_runtime vocabulary, so the ``unknown`` branch is a should-never-happen
   safety net, not a load-bearing default path.

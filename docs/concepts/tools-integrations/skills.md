@@ -408,7 +408,7 @@ Deeper detail on hooks and MCP:
 - Each reference is read the same way as `SKILL.md` (ordinary `read_file`),
   so it is subject to the **same** default inline cap.
 
-`tests/test_skill_references_gate_3162.py` gates, for every shipped skill
+`tests/builtin/test_skill_references_gate_3162.py` gates, for every shipped skill
 (builtin registry + plugin skills-on-disk, the same registry-plus-disk-walk
 enumeration `test_skill_md_default_inline_cap_gate.py` and
 `test_builtin_registry_disk_parity.py` use): every `${CLAUDE_SKILL_DIR}`- or

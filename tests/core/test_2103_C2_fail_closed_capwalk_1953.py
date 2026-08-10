@@ -14,7 +14,7 @@ subtree, the edges are confined to the subtree by construction — no broader re
 (lead Q2 steer). Confirmed here.
 
 The cascade live-prune of a purged member's profiles[member] (sandbox_2's #2162) is
-verified by tests/test_cascade_profile_preserve_2103.py (referenced, not duplicated).
+verified by tests/runtime/test_cascade_profile_preserve_2103.py (referenced, not duplicated).
 
 Real AgentRegistry + StateLog + on-disk topology/profile YAML + RouterHostAdapter (no mocks).
 """

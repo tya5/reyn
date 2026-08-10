@@ -420,7 +420,7 @@ same set of destinations** — and that is not recorded anywhere as prose. It is
 COMPUTED, by `scripts/measure_router_host_adapter_consumers.py` (exact
 consumer-set equality; a member that reads an already-bundled attribute is a
 landed bundle's hub and is not counted twice), and enforced by
-`tests/test_router_host_adapter_param_gate_3482.py`, which goes RED when a
+`tests/runtime/test_router_host_adapter_param_gate_3482.py`, which goes RED when a
 bare param acquires an exact-match partner, when a param loses its last
 measurable consumer without being shelved in
 `ROUTER_HOST_ADAPTER_CONSUMER_UNMEASURED`, or when a written claim in either

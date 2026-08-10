@@ -74,7 +74,7 @@ async def _background_attach(registry, name: str, *, skip_restore: bool) -> None
     moving this off the critical path is that the client survives a
     restore/attach failure instead of never having started. Module-level
     (not a nested closure) so it is independently testable — see
-    ``tests/test_startup_client_before_attach_3671_p2.py``.
+    ``tests/interfaces/test_startup_client_before_attach_3671_p2.py``.
 
     #3671 P3: this now ALSO calls ``registry.record_background_attach_error``
     on every failure path (in addition to logging), so a client reading

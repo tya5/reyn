@@ -48,7 +48,7 @@ Deny-default SBPL profile generated from `SandboxPolicy`, passed to `sandbox-exe
 - Automatically allows `/usr/lib`, `/System/Library`, `/usr/bin`, `/bin`, `/usr/share`, etc. read-only for dylib loading.
 - Available iff `platform.system() == "Darwin"`, `sandbox-exec` binary on PATH, and macOS < 26. Falls back to `NoopBackend` otherwise.
 - Internally marked deprecated (Apple is removing `sandbox-exec` in macOS 26) — emits a runtime WARN on first use prompting migration to the future `AppleContainerBackend`.
-- Files: `src/reyn/sandbox/backends/seatbelt.py`, `tests/test_sandbox_seatbelt.py`.
+- Files: `src/reyn/sandbox/backends/seatbelt.py`, `tests/security/test_sandbox_seatbelt.py`.
 
 **Component B — `LandlockBackend` (Linux 5.13+)**
 
@@ -59,7 +59,7 @@ Filesystem + network restriction backend for Linux kernel 5.13+:
 - Applies `LANDLOCK_RULE_PATH_BENEATH` rules for `read_paths` / `write_paths`.
 - Network restriction (`LANDLOCK_RULE_NET_PORT`) available on ABI v4+ (Linux 6.7+) only.
 - **Contributor-friendly track**: the primary maintainer's dev environment is macOS-only; Linux contributors are welcome to validate end-to-end.
-- Files: `src/reyn/sandbox/backends/landlock.py`, `tests/test_sandbox_landlock.py`.
+- Files: `src/reyn/sandbox/backends/landlock.py`, `tests/security/test_sandbox_landlock.py`.
 
 **Component B (seccomp portion) — syscall filter builder**
 
@@ -70,7 +70,7 @@ seccomp-BPF layer stacked on top of `LandlockBackend`:
 - Extends the allowlist based on `policy.network` and `policy.allow_subprocess`.
 - Destructive filesystem syscalls (covered by Landlock) and known escape hatches (`ptrace`, `process_vm_readv`, etc.) are on the deny list unconditionally.
 - Landlock and seccomp-BPF are orthogonal: Landlock enforces path/port restrictions; seccomp-BPF reduces the syscall surface (e.g. blocks `ptrace` which Landlock cannot).
-- Files: `src/reyn/sandbox/backends/seccomp.py`, `tests/test_sandbox_seccomp.py`.
+- Files: `src/reyn/sandbox/backends/seccomp.py`, `tests/security/test_sandbox_seccomp.py`.
 
 **Backend auto-selection + `SandboxConfig`**
 
@@ -79,7 +79,7 @@ seccomp-BPF layer stacked on top of `LandlockBackend`:
 - Configured via the `sandbox:` section in `reyn.yaml` (`backend: auto|seatbelt|landlock|noop`, `on_unsupported: warn|error|ignore`).
 - `auto` inspects the platform and installed extras to select the best backend. See [concepts/runtime/sandbox.md](../../concepts/runtime/sandbox.md) for the selection table.
 - `on_unsupported: error` fails skill dispatch when the requested backend is unavailable (for production environments requiring enforcement guarantees).
-- Files: `src/reyn/config.py`, `src/reyn/sandbox/__init__.py`, `tests/test_sandbox_factory.py`.
+- Files: `src/reyn/config.py`, `src/reyn/sandbox/__init__.py`, `tests/security/test_sandbox_factory.py`.
 
 ### Post-dogfood fix — macOS 26 compatibility (commit `b477508`)
 

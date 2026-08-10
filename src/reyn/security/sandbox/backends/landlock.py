@@ -472,7 +472,7 @@ class LandlockBackend:
         # ⚠ Linux-only; logic mirrors SeatbeltBackend (verified on macOS) — the
         # cancel block + `kill_process_tree` (SIGTERM-pg → SIGKILL grace) are a
         # faithful mirror (code-inspected, #1527). LIVE-confirmed by
-        # ``tests/test_subprocess_cancel_1470.py::test_landlock_cancel_kills_subprocess``
+        # ``tests/security/test_subprocess_cancel_1470.py::test_landlock_cancel_kills_subprocess``
         # when run on a Linux 5.13+ host with the landlock LSM (skipif-gated; the
         # CI Noop default + macOS e2e don't exercise it). Worst-case if cancel does
         # not work: behaviour degrades to pre-#1470 (subprocess runs to completion)

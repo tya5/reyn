@@ -21,7 +21,7 @@ elsewhere rather than here, because baking either into an assertion here
 would itself be a Tier-4 size/shape pin (testing.md): total pytest collection
 count unchanged (`pytest --collect-only -q`, before/after this rename) and
 ``AUDIT_EVENT_KINDS`` unchanged (the existing, already-CI-gated
-``tests/test_audit_event_kind_vocabulary_3410.py`` staying green IS that
+``tests/core/test_audit_event_kind_vocabulary_3410.py`` staying green IS that
 witness — this PR does not touch the vocabulary declaration itself, only a
 comment-string identifier reference in ``event_schema.py``).
 """

@@ -127,9 +127,9 @@ in tests.
 
 - Delete `tests/test_replay_narrator.py` (Tier 3a — replay tests for narrator LLM behaviour)
 - Delete `tests/test_narrator_drift.py` (Tier 2b — drift detection invariants for narrator)
-- Update `tests/test_router_loop_chatsession.py`: remove assertion that narrator is excluded
+- Update `tests/llm/test_router_loop_chatsession.py`: remove assertion that narrator is excluded
   from `available_skills` (narrator no longer exists)
-- Update `tests/test_multi_agent_p7.py`: remove `skill_narrator` from `_KNOWN_SKILL_NAMES`
+- Update `tests/runtime/test_multi_agent_p7.py`: remove `skill_narrator` from `_KNOWN_SKILL_NAMES`
 
 ### Component E — Add Tier 2 contract test for post-invoke_skill narration (SMALL)
 
