@@ -174,10 +174,10 @@ SECTION 04 — Beyond a single agent
     the interface); architect ruling, 2026-08-10: multi-hop relay is a
     retired capability, not a renamed one, so the diagram must not be
     "fixed" by swapping the tool name in place. The live page currently
-    shows a plain "being redesigned" placeholder card instead (same
-    ruling — redraw after proposal 0067 P4e settles the async producer's
-    own shape). Left diagram code (STALE, kept here as the pre-retirement
-    record only):
+    shows a placeholder card stating the capability is retired, with the
+    redraw deferred to P4e (redraw after proposal 0067 P4e settles the
+    async producer's own shape). Left diagram code (STALE, kept here as
+    the pre-retirement record only):
     ```
     sequenceDiagram
         participant U as User (depth=0)
