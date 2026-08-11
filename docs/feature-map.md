@@ -448,7 +448,7 @@ Main reference: **[`reyn.yaml`](reference/config/reyn-yaml.md)**
 | `embedding` | Model classes / batch_size / cost_warn_threshold | [RAG concepts](concepts/data-retrieval/rag.md) |
 | `voice` ⚠️ | Whisper model / language / device config still parses, but has no consumer since the Textual TUI it was built for was deleted (replaced by the inline CUI) — currently unavailable | [Voice concepts](concepts/tools-integrations/voice.md) |
 | `events` | Rotation size/age + cleanup_period_days | [Events reference](reference/runtime/events.md) |
-| `models` | Class → LiteLLM model string with `extends` chain | [reyn-yaml § models](reference/config/reyn-yaml.md#models-block) |
+| `models` | Class → LiteLLM model string with `extends` chain | [reyn-yaml § llm.models](reference/config/reyn-yaml.md#llmmodels-block) |
 | `permissions` | Project-wide default capability policy | [Permissions config](reference/config/permissions.md) |
 | `multi-agent` | Agent and topology defaults | [Multi-agent config](reference/config/multi-agent.md) |
 | `state_dir` | Runtime state directory (default `.reyn/`) | [State dir](reference/config/state-dir.md) |
