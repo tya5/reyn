@@ -53,7 +53,6 @@ from reyn.config.infra import (
     EventsConfig,
     FsWatchConfig,
     LLMConfig,
-    PythonConfig,
     SandboxConfig,
 )
 from reyn.config.media import (
@@ -176,8 +175,6 @@ class ReynConfig:
     #           Authorization: "Bearer ${GITHUB_TOKEN}"
     #           X-API-Version: "2024-01-01"
     mcp: dict = field(default_factory=dict)
-    # Python preprocessor step settings.
-    python: PythonConfig = field(default_factory=PythonConfig)
     # FP-0016 Component E — agent identity for audit trail + HTTP header
     # propagation. Default `reyn/<hostname>` when reyn.yaml has no
     # `agent:` block. Read by Session to construct its EventLog and

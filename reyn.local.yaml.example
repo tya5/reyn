@@ -339,17 +339,6 @@
 #   backend: bm25
 
 
-# -----------------------------------------------------------------------------
-# python: settings for the python preprocessor step.
-# ``allowed_modules`` extends the stdlib allow-list with extra modules that
-# user code may ``import`` in *safe* mode. Curate carefully — libraries that
-# internally perform I/O (pandas, requests, ...) defeat sandboxing.
-# -----------------------------------------------------------------------------
-# python:
-#   allowed_modules:
-#     - numpy
-#     - dateutil
-
 
 # -----------------------------------------------------------------------------
 # agent: runtime identity used in audit events and the

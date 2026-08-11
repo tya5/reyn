@@ -362,19 +362,6 @@ def _build_auth_config(raw: object) -> AuthConfig:
 
 
 @dataclass
-class PythonConfig:
-    """`python` section — settings for the python preprocessor step."""
-    # Modules that user code may import in pure mode in addition to the
-    # stdlib allowlist. Curate carefully: libraries that internally do I/O
-    # (pandas.read_csv, requests, etc.) defeat pure-mode sandboxing.
-    allowed_modules: list[str] = field(default_factory=list)
-                                      # (= 5 min default). Prevents runaway memory
-                                      # growth + multi-GB transcribe calls if the
-                                      # user walks away mid-recording. 16 kHz mono
-                                      # float32 ≈ 64 KB/s, so 5 min is ~19 MB.
-
-
-@dataclass
 class EventsConfig:
     """`events:` — audit log rotation policy (PR20).
 
@@ -821,15 +808,6 @@ def _build_fs_watch_config(raw: object) -> FsWatchConfig:
     except (TypeError, ValueError):
         debounce_seconds = 0.2
     return FsWatchConfig(paths=paths, debounce_seconds=debounce_seconds)
-
-
-def _build_python_config(raw: object) -> PythonConfig:
-    if not isinstance(raw, dict):
-        return PythonConfig()
-    modules = raw.get("allowed_modules") or []
-    if not isinstance(modules, list):
-        modules = []
-    return PythonConfig(allowed_modules=[str(m) for m in modules])
 
 
 def _build_events_config(raw: object) -> EventsConfig:
