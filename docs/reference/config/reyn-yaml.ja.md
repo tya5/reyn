@@ -52,20 +52,20 @@ reload）、`reyn.yaml` 側に書いた同じキーは他と同じく再起動�
 | `model` | 文字列 | PRJ のみ・**再起動** | デフォルトのモデルクラス。`models` を通じて解決されます。`--model` でオーバーライド。 |
 | `models` | マップ | PRJ のみ・**再起動** | クラス名 → LiteLLM モデル文字列 **または** dict（以下参照）。 |
 | `output_language` | 文字列 | PRJ のみ・**再起動** | デフォルトの出力言語コード（例: `en`、`ja`）。`--output-language` でオーバーライド。 |
-| `safety` | マップ | PRJ のみ・**再起動** | ランタイムの停止条件: ループ検出上限、タイムアウト、上限超過時ポリシー。以下参照。 |
+| `safety` | マップ | PRJ のみ・**再起動** | ランタイムの上限**と content 層の防御**: ループ検出上限、タイムアウト、上限超過時ポリシー、非信頼コンテンツの threat scan + fence（`safety.threat_scan`、FP-0050）、LLM spawn ツリーの上限（`safety.spawn`、DoS ガード）。以下参照。 |
 | `cost` | マップ | PRJ のみ・**再起動** | バジェット上限とレート制限（エージェントごと、日次、月次）。以下参照。 |
-| `web` | マップ | PRJ のみ・**再起動** | `web_fetch` と MCP レジストリ呼び出しの SSL 設定。以下参照。 |
+| `web` | マップ | PRJ のみ・**再起動** | **無関係な 2 つのサブシステムが同居しています。** (a) `web_fetch` ツールと MCP レジストリ呼び出しの SSL 設定（`web.fetch`）、(b) `reyn web` ゲートウェイ: 認証モデル（`web.auth`）、WebSocket 受信フレーム上限（`web.ws_max_size`）、マウントするサーフェス（`web.surfaces`）。以下参照。 |
 | `sandbox` | マップ | PRJ のみ・**再起動** | `sandboxed_exec` のバックエンド選択・非対応プラットフォームポリシー・agent-level サンドボックスポリシー。以下参照。 |
 | `action_retrieval` | マップ | PRJ のみ・**再起動** | ユニバーサルカタログの可視化 + 検索設定。以下参照。 |
 | `embedding` | マップ | PRJ のみ・**再起動** | RAG 埋め込みモデルクラスとバッチ設定。以下参照。 |
-| `chat` | マップ | PRJ のみ・**再起動** | チャットセッションの Head/Body/Tail 圧縮設定。以下参照。 |
+| `chat` | マップ | PRJ のみ・**再起動** | チャットセッションのランタイム設定: 履歴の圧縮、reasoning（"thinking"）テキストの扱い、対話レンダラ（`render_mode`）、TUI の gutter、body の neutralize、許可する画像 URL スキーム。以下参照。 |
 | `voice` | マップ | PRJ のみ・**再起動** | ⚠️ 現在利用不可(consumerなし)。以下参照。 |
-| `events` | マップ | PRJ のみ・**再起動** | チャットセッションイベントファイルの監査ログローテーションポリシー。以下参照。 |
+| `events` | マップ | PRJ のみ・**再起動** | `.reyn/events` 配下の P6 **audit-event** ファイルのローテーション（サイズ / 経過時間 / 掃除周期）。WAL-event でも hook-event でもありません。以下参照。 |
 | `observability` | マップ | PRJ のみ・**再起動** | P6 監査イベントの OpenTelemetry (OTLP) エクスポート（オプトイン）。デフォルトは無効。以下参照。 |
 | `tool_use` | マップ | PRJ のみ・**再起動** | chat レイヤーの tool-use scheme x transport セレクタ（`scheme`、`transport`）。以下参照。 |
 | `mcp` | マップ | 両方（`.reyn/config/mcp.yaml` 側は **hot reload**） | MCP サーバー定義。以下参照。 |
-| `python` | マップ | PRJ のみ・**再起動** | Python preprocessor の追加許可モジュール。以下参照。 |
-| `agent` | マップ | PRJ のみ・**再起動** | P6 イベント監査証跡と送信 HTTP ヘッダー用のエージェント識別子。以下参照。 |
+| `python` | マップ | PRJ のみ・**再起動** | Python preprocessor が import してよい追加モジュール（`python.allowed_modules`）— このリスト 1 つがキーの全体です。以下参照。 |
+| `agent` | マップ | PRJ のみ・**再起動** | エージェントの**識別子のみ**（`agent.id`）— P6 監査証跡と送信 HTTP ヘッダーに刻まれます。**エージェントの定義・設定はしません**（エージェント定義は `.reyn/agents/<名前>/`）。以下参照。 |
 | `auth` | マップ | PRJ のみ・**再起動** | `reyn auth login` 用の OAuth プロバイダー設定。以下参照。 |
 | `cron` | マップ | 両方（`.reyn/config/cron.yaml` 側は **hot reload**） | スケジュール付きスキル実行。以下参照。 |
 | `external_transports` | マップ | PRJ のみ・**再起動** | チャット向け受信トランスポート → MCP ツールルーティング（Slack / LINE / Discord など）。以下参照。 |
@@ -77,7 +77,7 @@ reload）、`reyn.yaml` 側に書いた同じキーは他と同じく再起動�
 | `llm` | マップ | PRJ のみ・**再起動** | LLM 層の設定（ルーティング #1829 / リトライ #1835）。 |
 | `model_class_by_purpose` | マップ | PRJ のみ・**再起動** | 用途名 → モデルクラス。用途ごとに既定クラスを差し替えます。 |
 | `delegation` | マップ | PRJ のみ・**再起動** | エージェント間委任のポリシー（#2081）。 |
-| `cost_warn` | マップ | PRJ のみ・**再起動** | 高コストモデルを選ぶ前の事前警告（#1830 / FP-0052）。 |
+| `cost_warn` | マップ | PRJ のみ・**再起動** | 高コストモデルのゲート（#1830 / FP-0052）: 選択前に警告し、名前に反して**ブロックもできます**（`cost_warn.block_on_high_cost`）。以下参照。 |
 | `offload` | マップ | PRJ のみ・**再起動** | tool 結果のサイズゲートの opt-in スイッチ。 |
 | `render_template` | マップ | PRJ のみ・**再起動** | `render_template` op の出力上限（FP-0055 / #2679）。 |
 | `fs_watch` | マップ | PRJ のみ・**再起動** | オペレータが宣言するファイル監視パス（#2608 H4）。 |

@@ -56,21 +56,21 @@ can additionally be written on an **agent** surface (`.reyn/agents/<name>/`,
 | `models` | map | PRJ only · **restart** | Class name → LiteLLM model string **or** dict (see below). |
 | `model_class_by_purpose` | map | PRJ only · **restart** | Per-purpose model-class override (`router` / `control_ir` / `tool` / `judge`). Unset purpose → `model`. `compaction` is NOT a valid key (#3785) — compaction always follows the conversation model. See below. |
 | `output_language` | string | PRJ only · **restart** | Default output language code (e.g. `en`, `ja`). Override with `--output-language`. |
-| `safety` | map | PRJ only · **restart** | Runtime stop conditions: loop-detection caps, timeouts, on-limit policy. See below. |
+| `safety` | map | PRJ only · **restart** | Runtime bounds **and content-layer defenses**: loop-detection caps, timeouts, on-limit policy, the untrusted-content threat scan + fence (`safety.threat_scan`, FP-0050), and operator bounds on the LLM spawn tree (`safety.spawn`, a DoS guard). See below. |
 | `cost` | map | PRJ only · **restart** | Budget caps and rate limits (per-agent, daily, monthly). See below. |
-| `web` | map | PRJ only · **restart** | SSL settings for `web_fetch` and MCP registry calls, the gateway auth model, and (`web.surfaces`) which `reyn web` surfaces are mounted. See below. |
+| `web` | map | PRJ only · **restart** | **Two unrelated subsystems share this key.** (a) the `web_fetch` tool and MCP registry calls: SSL settings (`web.fetch`); (b) the `reyn web` gateway: auth model (`web.auth`), WebSocket inbound-frame ceiling (`web.ws_max_size`), and which surfaces are mounted (`web.surfaces`). See below. |
 | `sandbox` | map | PRJ only · **restart** | Sandboxed-exec backend selection, unsupported-platform policy, and the agent-level sandbox policy. See below. |
 | `hooks` | list | both (`.reyn/config/hooks.yaml` side is **hot-reloaded**) | Agent-lifecycle hooks — template_push / exec / exec_capture hooks at lifecycle points. See below. |
 | `action_retrieval` | map | PRJ only · **restart** | Universal catalog visibility + retrieval settings. See below. |
 | `embedding` | map | PRJ only · **restart** | RAG embedding model classes and batch settings. See below. |
-| `chat` | map | PRJ only · **restart** | Chat-session compaction settings. See below. |
+| `chat` | map | PRJ only · **restart** | Chat-session runtime knobs: history compaction, reasoning/"thinking" text handling, the interactive renderer (`render_mode`), TUI gutters, body neutralization, and permitted image-URL schemes. See below. |
 | `voice` | map | PRJ only · **restart** | ⚠️ Currently unavailable (no consumer). See below. |
-| `events` | map | PRJ only · **restart** | Audit-log rotation policy for chat-session event files. See below. |
+| `events` | map | PRJ only · **restart** | Rotation policy (size / age / cleanup period) for the P6 **audit-event** files under `.reyn/events`. Not WAL-events, not hook-events. See below. |
 | `observability` | map | PRJ only · **restart** | Opt-in OpenTelemetry (OTLP) export of P6 audit-events. Off by default. See below. |
 | `tool_use` | map | PRJ only · **restart** | Chat-layer tool-use scheme x transport selector (`scheme`, `transport`). See below. |
 | `mcp` | map | both (`.reyn/config/mcp.yaml` side is **hot-reloaded**) | MCP server definitions. See below. |
-| `python` | map | PRJ only · **restart** | Python preprocessor additional allowed-modules. See below. |
-| `agent` | map | PRJ only · **restart** | Agent identity for P6 event audit trail and outgoing HTTP header. See below. |
+| `python` | map | PRJ only · **restart** | Additional modules the Python preprocessor may import (`python.allowed_modules`) — that one list is the whole key. See below. |
+| `agent` | map | PRJ only · **restart** | Agent **identity** only (`agent.id`) — stamped on the P6 audit trail and the outgoing HTTP header. Does **not** define or configure agents; agent definitions live in `.reyn/agents/<name>/`. See below. |
 | `auth` | map | PRJ only · **restart** | OAuth provider configurations for `reyn auth login`. See below. |
 | `cron` | map | both (`.reyn/config/cron.yaml` side is **hot-reloaded**) | Scheduled skill executions. See below. |
 | `external_transports` | map | PRJ only · **restart** | Inbound transport → MCP tool routing for chat (Slack / LINE / Discord etc.). See below. |
@@ -81,7 +81,7 @@ can additionally be written on an **agent** surface (`.reyn/agents/<name>/`,
 | `api_base` | string | PRJ only · **restart** | LiteLLM proxy base URL. Typically set in `reyn.local.yaml` (gitignored). |
 | `llm` | map | PRJ only · **restart** | LLM-layer config: routing (#1829) and retry (#1835). |
 | `delegation` | map | PRJ only · **restart** | Cross-agent delegation policy (#2081). |
-| `cost_warn` | map | PRJ only · **restart** | Pre-selection awareness for high-cost models (#1830 / FP-0052). |
+| `cost_warn` | map | PRJ only · **restart** | High-cost-model gate (#1830 / FP-0052): warns before an expensive model is selected — and, despite the name, **can block it** (`cost_warn.block_on_high_cost`). See below. |
 | `offload` | map | PRJ only · **restart** | Opt-in switch for the tool-result size gates. |
 | `render_template` | map | PRJ only · **restart** | Operator-tunable output bounds for the `render_template` op (FP-0055 / #2679). |
 | `fs_watch` | map | PRJ only · **restart** | Operator-declared filesystem watch paths (#2608 H4). |
