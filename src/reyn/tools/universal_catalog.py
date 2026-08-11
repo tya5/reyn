@@ -67,7 +67,7 @@ the membership table and dispatch it through the unified ToolRegistry.
 """
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Collection, Final, Mapping
+from typing import TYPE_CHECKING, Any, Final, Mapping
 
 from reyn.tools.descriptions import catalog as _catalog_descriptions
 from reyn.tools.descriptions import discovery

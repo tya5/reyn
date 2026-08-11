@@ -636,7 +636,6 @@ async def _handle_describe_mcp_tool(
 # ── ToolDefinitions ───────────────────────────────────────────────────────────
 
 from reyn.core.offload.canonical import (  # noqa: E402
-    CANONICAL_TODO,
     describe_mcp_tool_to_canonical,
     list_mcp_prompts_to_canonical,
     list_mcp_resource_templates_to_canonical,

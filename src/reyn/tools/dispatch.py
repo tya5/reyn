@@ -9,7 +9,7 @@ from __future__ import annotations
 from typing import Any, Mapping
 
 from reyn.tools.registry import ToolRegistry
-from reyn.tools.types import ToolContext, ToolDefinition, ToolResult
+from reyn.tools.types import ToolContext, ToolResult
 
 
 class ToolNotFound(KeyError):
