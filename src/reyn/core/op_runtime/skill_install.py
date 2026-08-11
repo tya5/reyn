@@ -54,6 +54,7 @@ from reyn.security.content_guard import first_blocking_match, scan_for_threats
 from . import register
 from .context import OpContext
 from .context import provenance_from_ctx as _provenance_from_ctx
+from .context import resolve_path_for_gate as _resolve_for_gate
 from .context import sandbox_policy_from_ctx as _sandbox_policy_from_ctx
 
 # ---------------------------------------------------------------------------
@@ -407,7 +408,21 @@ async def handle(
 
     else:
         # ── 1. Resolve SKILL.md (local path) ─────────────────────────────────
-        skill_md = _resolve_skill_md(op.path)
+        # #4198: op.path is LLM-supplied. Previously resolved twice, both
+        # against the HOST PROCESS cwd — once implicitly via
+        # _resolve_skill_md's Path(op.path).is_dir()/.exists() check, once
+        # explicitly via Path(op.path).resolve() for the recorded
+        # install_path — harmless only because base_dir == cwd on every
+        # execution path that exists today (a container backend, or a
+        # future per-session base_dir, would resolve to the wrong
+        # location: #187 B3's originally-found bug, same class).
+        # resolve_path_for_gate is the SAME resolve-once helper
+        # file.py/load_skill.py already use for this; #3196's invariant
+        # (call exactly once, reuse the result) is respected here too —
+        # one resolve, reused for both the existence check and the
+        # recorded path, so what was checked is what gets recorded.
+        resolved_path = _resolve_for_gate(ctx, op.path)
+        skill_md = _resolve_skill_md(resolved_path)
         if not skill_md.exists():
             return {
                 "kind": "skill_install",
@@ -418,7 +433,7 @@ async def handle(
                     "Provide the directory containing SKILL.md or the direct path."
                 ),
             }
-        install_path = str(Path(op.path).resolve())
+        install_path = resolved_path
 
     # ── 2. Extract name + description from frontmatter ────────────────────────
     fm_name, description = _read_skill_metadata(skill_md)
