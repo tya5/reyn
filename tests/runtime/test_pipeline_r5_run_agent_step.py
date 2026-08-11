@@ -255,12 +255,13 @@ def test_build_agent_step_narrowing_no_capabilities_is_restrict_only(tmp_path: P
     ``tool_allow`` unset (no re-grant beyond the agent's normal envelope);
     only the structural leaf-worker deny (the unified pipeline launch —
     registered AND inline, sync AND async, all reached through the one
-    surviving name post proposal 0067 P7 #3978 — R6 S3) is imposed.
-    Pure function, no session needed. delegate_to_agent (this deny-set's
-    former other member) retired in P6 (#3978), with no replacement here."""
+    surviving name post proposal 0067 P7 #3978 — R6 S3 — plus #4244's
+    ``hooks_add`` confused-deputy denial) is imposed. Pure function, no
+    session needed. delegate_to_agent (this deny-set's former other
+    member) retired in P6 (#3978), with no replacement here."""
     narrowing = _build_agent_step_narrowing(None)
     assert "tool_allow" not in narrowing
-    assert set(narrowing["tool_deny"]) == {"run_pipeline"}
+    assert set(narrowing["tool_deny"]) == {"run_pipeline", "hooks_add"}
 
 
 # ── ephemeral cleanup ────────────────────────────────────────────────────────

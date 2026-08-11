@@ -1,13 +1,17 @@
-"""Tier 2: proposal 0067 P7 (#3978) — the two pipeline-nesting deny sets
-stay in equality.
+"""Tier 2: proposal 0067 P7 (#3978) — the two pipeline-step deny sets stay
+in equality.
 
 ``pipeline_verbs._PIPELINE_STEP_DENY_TOOLS`` (a ToolStep's own dispatch
-denial, R6 S3) and ``session_api._DELEGATION_DENY_TOOLS`` (an agent step's
-narrowing denial, same rule) are two INDEPENDENT collections stating the
-SAME fact — "these tools must not be reachable from inside a pipeline step,
-nesting is call-only" — and neither module can see the other's set: no test
-that reads only one of them can catch a drift where one set gains or loses a
-name and the other doesn't.
+denial) and ``session_api._DELEGATION_DENY_TOOLS`` (an agent step's
+narrowing denial) are two INDEPENDENT collections stating the SAME fact —
+"these tools must not be reachable from inside a pipeline step" — and
+neither module can see the other's set: no test that reads only one of
+them can catch a drift where one set gains or loses a name and the other
+doesn't. #4244 widened the SET OF REASONS a tool can land here for (R6 S3
+nesting for ``run_pipeline``; confused-deputy for ``hooks_add`` — see
+``pipeline_verbs._PIPELINE_STEP_DENY_REASONS``) without touching the
+equality invariant itself — the two sets still must agree, regardless of
+why any individual member is there.
 
 This gate exists because this arc (#3978) collided on exactly this pair
 twice already this session (P5's rebase onto P4's tools, and this PR's own
@@ -31,7 +35,8 @@ def test_pipeline_step_deny_sets_are_equal():
         "pipeline_verbs._PIPELINE_STEP_DENY_TOOLS and "
         "session_api._DELEGATION_DENY_TOOLS have drifted apart — a tool "
         "denied from a ToolStep but not an agent step (or vice versa) is a "
-        "real R6 S3 nesting-cost-bound hole, not a cosmetic mismatch"
+        "real hole (R6 S3 nesting, or #4244's confused-deputy shape), not a "
+        "cosmetic mismatch"
     )
 
 
@@ -49,10 +54,12 @@ def test_pipeline_step_deny_sets_name_the_expected_tools():
     (#3978) retiring delegate_to_agent with no replacement in this specific
     deny-set (see ``_DELEGATION_DENY_TOOLS``'s own comment: nothing today
     shares its async-dispatch-ends-the-turn posture), both deny sets must
-    contain exactly {run_pipeline} — not a superset that still carries a
-    retired name (which would silently mean the retired name is "denied"
-    everywhere, masking that it no longer exists as a real registered tool
-    at all) and not an empty set."""
-    expected = {"run_pipeline"}
+    contain exactly {run_pipeline, hooks_add} (#4244 added the second,
+    architect ruling — a confused-deputy hazard, unrelated to R6 S3
+    nesting) — not a superset that still carries a retired name (which
+    would silently mean the retired name is "denied" everywhere, masking
+    that it no longer exists as a real registered tool at all) and not an
+    empty set."""
+    expected = {"run_pipeline", "hooks_add"}
     assert set(_PIPELINE_STEP_DENY_TOOLS) == expected
     assert set(_DELEGATION_DENY_TOOLS) == expected

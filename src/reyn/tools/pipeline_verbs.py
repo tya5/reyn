@@ -251,7 +251,55 @@ _PIPELINE_STEP_DENY_TOOLS: "frozenset[str]" = frozenset({
     # member, ``delegate_to_agent`` — see ``_DELEGATION_DENY_TOOLS``'s own
     # comment for why nothing replaces it here.
     "run_pipeline",
+    # #4244 (#4240's own split-out remainder, architect ruling): a confused
+    # deputy — the LLM authors a pipeline containing a `tool: hooks_add`
+    # step via the LLM-visible pipeline_install_local/_source tools; the
+    # step's WRITE happens whenever a wider-authority principal later runs
+    # that pipeline. `run_pipeline` (LLM-triggered) threads session_state_dir
+    # correctly (#4241) and is safe; `reyn pipe run` (operator-triggered,
+    # pipe.py's own session-less ToolContext) does not, and would write the
+    # LLM-authored hook into the shared GLOBAL .reyn/config/hooks.yaml —
+    # the exact "hooks is reactive, someone else's registration affects
+    # you" shape #4215① exists to close, just with the roles of author and
+    # trigger reversed. The operator's own direct edit of
+    # .reyn/config/hooks.yaml remains open (self-evidently self-authored);
+    # only the LLM-authored INDIRECT path through a pipeline step is denied.
+    "hooks_add",
 })
+
+#: #4244: per-tool reason for a ``_PIPELINE_STEP_DENY_TOOLS`` hit — the set
+#: now holds two semantically DIFFERENT denials (R6 S3 nesting for
+#: ``run_pipeline``; confused-deputy for ``hooks_add``), so a single
+#: hardcoded "nesting"/"launch a pipeline or delegate" message would be
+#: actively wrong for the second. Falls back to the original nesting
+#: wording for any future entry that doesn't register its own reason here
+#: — every CURRENT member has one, so the fallback is only a safety net.
+_PIPELINE_STEP_DENY_REASONS: "dict[str, str]" = {
+    "run_pipeline": (
+        "a step must not launch a pipeline or delegate — nesting is "
+        "call-only, so the launch-time cost-bound approval stays a "
+        "transitive closure"
+    ),
+    "hooks_add": (
+        "a pipeline step must not self-write hooks — the step's author "
+        "(possibly an LLM, via pipeline_install_local/_source) and the "
+        "principal who eventually runs the pipeline (possibly an operator, "
+        "via reyn pipe run) can differ, and reyn pipe run's session-less "
+        "context would write the step-authored hook into the shared "
+        "GLOBAL hooks.yaml rather than a session-local one (#4244)"
+    ),
+}
+
+
+def _pipeline_step_deny_reason(name: str) -> str:
+    """The human-readable reason *name* is in ``_PIPELINE_STEP_DENY_TOOLS`` —
+    see :data:`_PIPELINE_STEP_DENY_REASONS`."""
+    return _PIPELINE_STEP_DENY_REASONS.get(
+        name,
+        "a step must not launch a pipeline or delegate — nesting is "
+        "call-only, so the launch-time cost-bound approval stays a "
+        "transitive closure",
+    )
 
 
 def _make_tool_dispatch(
@@ -297,10 +345,8 @@ def _make_tool_dispatch(
 
         if name in _PIPELINE_STEP_DENY_TOOLS:
             raise PipelineExecutionError(
-                f"pipeline tool step {name!r} is structurally denied (R6 S3): "
-                "a step must not launch a pipeline or delegate — nesting is "
-                "call-only, so the launch-time cost-bound approval stays a "
-                "transitive closure."
+                f"pipeline tool step {name!r} is structurally denied: "
+                f"{_pipeline_step_deny_reason(name)}."
             )
 
         # #3546: the TOOL-axis contextual gate, on the one dispatch seam that runs
@@ -691,9 +737,8 @@ def _static_analysis_gate(
             # verb IS a registered tool, so lookup would pass; the deny must win.
             if name in _PIPELINE_STEP_DENY_TOOLS:
                 return (
-                    f"step {i}: tool {name!r} is structurally denied (R6 S3) — an "
-                    "inline pipeline step must not launch a pipeline or delegate "
-                    "(nesting is call-only)"
+                    f"step {i}: tool {name!r} is structurally denied — "
+                    f"{_pipeline_step_deny_reason(name)}"
                 )
             # Check 3: the tool name must resolve to a registered tool.
             if registry.lookup(name) is None:
