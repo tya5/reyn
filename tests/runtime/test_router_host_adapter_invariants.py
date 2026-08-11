@@ -92,7 +92,10 @@ def test_adapter_protocol_conformance(tmp_path):
     Uses @runtime_checkable isinstance check — catches missing methods at
     refactor time without requiring a real LLM or full session.
     """
-    adapter = _make_adapter(agent_workspace_dir=tmp_path / "agents" / "test-agent")
+    adapter = _make_adapter(
+        agent_workspace_dir=tmp_path / "agents" / "test-agent",
+        universal_wrappers_enabled=False,  # #4159: not exercised by this test
+    )
     assert isinstance(adapter, RouterLoopHost), (
         "RouterHostAdapter must satisfy RouterLoopHost protocol structurally"
     )
@@ -128,6 +131,7 @@ def test_adapter_exposes_the_memory_capability_itself(tmp_path):
         agent_workspace_dir=workspace,
         events=events,
         memory=memory,
+        universal_wrappers_enabled=False,  # #4159: not exercised by this test
     )
 
     assert adapter.memory is memory
@@ -156,6 +160,7 @@ def test_events_identity(tmp_path):
     adapter = _make_adapter(
         agent_workspace_dir=tmp_path / "agents" / "test-agent",
         events=events,
+        universal_wrappers_enabled=False,  # #4159: not exercised by this test
     )
     assert adapter.events is events, (
         "adapter.events must be the same EventLog instance as injected"
@@ -192,6 +197,7 @@ def test_adapter_exposes_permission_resolver_property(tmp_path):
     sentinel = object()  # any non-None value — we only assert identity
     adapter = _make_adapter(
         agent_workspace_dir=tmp_path / "agents" / "alpha",
+        universal_wrappers_enabled=False,  # #4159: not exercised by this test
     )
     # Re-build with the resolver argument set — _make_adapter doesn't take it.
     from reyn.core.events.events import EventLog

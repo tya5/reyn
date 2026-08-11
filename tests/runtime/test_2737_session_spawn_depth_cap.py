@@ -112,7 +112,7 @@ async def test_session_spawn_beyond_cap_is_rejected(tmp_path: Path) -> None:
     main = reg.get_or_load("worker")
     child_sid = await _nest_once(reg, main)  # nesting depth 1 == max
 
-    adapter = make_adapter(
+    adapter = make_adapter(universal_wrappers_enabled=False,  # #4159: not exercised by this test
         agent_name="worker", agent_registry=reg, session_id=child_sid,
         on_limit=OnLimitConfig(mode="unattended"),
     )
@@ -136,7 +136,7 @@ async def test_session_spawn_within_cap_still_works(tmp_path: Path) -> None:
     main = reg.get_or_load("worker")
     child_sid = await _nest_once(reg, main)  # nesting depth 1; cap 2 ⇒ one more allowed
 
-    adapter = make_adapter(
+    adapter = make_adapter(universal_wrappers_enabled=False,  # #4159: not exercised by this test
         agent_name="worker", agent_registry=reg, session_id=child_sid,
         on_limit=OnLimitConfig(mode="unattended"),
     )
@@ -163,7 +163,7 @@ async def test_session_spawn_interactive_approve_extends_and_proceeds(
     child_sid = await _nest_once(reg, main)  # depth 1 == max
 
     ext: dict = {}
-    adapter = make_adapter(
+    adapter = make_adapter(universal_wrappers_enabled=False,  # #4159: not exercised by this test
         agent_name="worker", agent_registry=reg, session_id=child_sid,
         on_limit=OnLimitConfig(mode="interactive", ask_timeout_seconds=0.0),
         safety_extensions=ext, intervention_answer="yes",

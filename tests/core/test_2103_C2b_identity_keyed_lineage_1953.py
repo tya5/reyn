@@ -86,7 +86,8 @@ async def test_name_reuse_after_purge_rejects_orphan_forge_guard(tmp_path):
     assert not reg.is_spawn_descendant("worker", "coord")  # stale edge → not a descendant
 
     # forge-guard: the reused-name coord cannot wire the orphan it never spawned
-    adapter = make_adapter(agent_name="coord", agent_registry=reg)
+    adapter = make_adapter(universal_wrappers_enabled=False,  # #4159: not exercised by this test
+        agent_name="coord", agent_registry=reg)
     res = await adapter.create_topology(
         name="grab", kind="network", members=["coord", "worker"],
     )
@@ -102,7 +103,8 @@ async def test_no_reuse_preserves_subtree_membership(tmp_path):
     await reg.create_agent("coord")
     await reg.create_agent("worker", parent="coord")
     assert reg.is_spawn_descendant("worker", "coord")
-    adapter = make_adapter(agent_name="coord", agent_registry=reg)
+    adapter = make_adapter(universal_wrappers_enabled=False,  # #4159: not exercised by this test
+        agent_name="coord", agent_registry=reg)
     res = await adapter.create_topology(name="org", kind="network", members=["coord", "worker"])
     assert res["status"] == "created"
 

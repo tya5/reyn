@@ -38,7 +38,7 @@ def test_get_cwd_with_container_backend_returns_repo_dir(tmp_path: Path) -> None
     get_cwd() returns the container path, not the host cwd."""
     container_path = "/testbed"
     backend = _FakeContainerBackend(repo_dir=container_path)
-    adapter = _make_adapter(
+    adapter = _make_adapter(universal_wrappers_enabled=False,  # #4159: not exercised by this test
         agent_workspace_dir=tmp_path / "agents" / "test",
         environment_backend=backend,
     )
@@ -49,7 +49,7 @@ def test_get_cwd_with_host_backend_returns_os_getcwd(tmp_path: Path) -> None:
     """Tier 2: #1477 — when environment_backend has no repo_dir (HostBackend),
     get_cwd() falls back to os.getcwd() — existing behaviour preserved."""
     backend = _FakeHostBackend()
-    adapter = _make_adapter(
+    adapter = _make_adapter(universal_wrappers_enabled=False,  # #4159: not exercised by this test
         agent_workspace_dir=tmp_path / "agents" / "test",
         environment_backend=backend,
     )
@@ -59,7 +59,7 @@ def test_get_cwd_with_host_backend_returns_os_getcwd(tmp_path: Path) -> None:
 def test_get_cwd_with_no_backend_returns_os_getcwd(tmp_path: Path) -> None:
     """Tier 2: #1477 — when no environment_backend is set (None), get_cwd()
     returns os.getcwd() — backward-compat for host-only sessions."""
-    adapter = _make_adapter(
+    adapter = _make_adapter(universal_wrappers_enabled=False,  # #4159: not exercised by this test
         agent_workspace_dir=tmp_path / "agents" / "test",
     )
     assert adapter.get_cwd() == os.getcwd()
@@ -70,7 +70,7 @@ def test_get_cwd_container_differs_from_host(tmp_path: Path) -> None:
     Confirms the fix actually changes the value (not a no-op)."""
     container_path = "/testbed"
     backend = _FakeContainerBackend(repo_dir=container_path)
-    adapter = _make_adapter(
+    adapter = _make_adapter(universal_wrappers_enabled=False,  # #4159: not exercised by this test
         agent_workspace_dir=tmp_path / "agents" / "test",
         environment_backend=backend,
     )
