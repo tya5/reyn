@@ -14,7 +14,6 @@ from typing import TYPE_CHECKING, Callable, Coroutine, NamedTuple, TypeVar, Unio
 
 logger = logging.getLogger(__name__)
 from reyn.core.turn_scope import get_active_turn_chain_id
-from reyn.llm.json_parse import loads_lenient
 from reyn.llm.litellm_bootstrap import ensure_litellm_ready
 from reyn.llm.model_resolver import ModelSpec
 from reyn.llm.pricing import TokenUsage, UsageSource, estimate_cost, parse_usage_source
