@@ -219,16 +219,10 @@ DEFAULT_MAX_EXEC_TIMEOUT_SECONDS: int = 600
 # budget bound it instead"; it would remove the only instrument that bounds
 # THIS resource (process wall-clock time is not tokens or dollars).
 #
-# DEFAULT_BACKGROUND_EXEC_TIMEOUT_SECONDS is a judgment call (tui-coder,
-# 2026-08-11), not a measured or owner-specified number — the same posture
-# #4179's own 120/600 took ("realizing a spec, not something a measurement
-# should block"), scaled up for the background case: 30 minutes is long
-# enough to cover the class of background work #3903's own reference section
-# describes (a build step, a long-running install) without being unbounded.
-# Open to revision by whoever picks the actual number next; the type/shape
-# (a real int, operator-settable, distinct from foreground) is the owner
-# ruling, this magnitude is not.
-DEFAULT_BACKGROUND_EXEC_TIMEOUT_SECONDS: int = 1800
+# DEFAULT_BACKGROUND_EXEC_TIMEOUT_SECONDS: owner-specified (#3903,
+# 2026-08-11), operator-settable via config — the type/shape (a real int,
+# distinct from the foreground default) is owner ruling too.
+DEFAULT_BACKGROUND_EXEC_TIMEOUT_SECONDS: int = 3600
 # owner ruling (2026-08-11, relayed via lead-coder): the background CEILING's
 # default is None (no cap) — NOT a large sentinel int. A sentinel (e.g.
 # 2**31-1) would still be a real number an LLM-supplied override could be
