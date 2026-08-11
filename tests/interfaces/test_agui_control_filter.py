@@ -71,25 +71,17 @@ def _registry(tmp_path):
     return reg
 
 
-async def _collect_within(agen, *, window: float) -> "list":
-    """Collect from an async generator for a BOUNDED wall-clock window.
+async def _collect_all(agen) -> "list":
+    """Collect every item from an async generator until it terminates.
 
-    A broken tap can strand the stream permanently; bounding turns that into a
-    fast, named assertion failure instead of a CI timeout.
+    #4275: the caller always pushes an ``__end__`` sentinel, which
+    ``AgUiEmitter.stream()`` returns on — the stream is naturally finite, so
+    no wall-clock window is needed. If a caller regresses and never sends
+    ``__end__``, this hangs, surfaced by CI's kill switch rather than a
+    bounded window that would silently truncate the collected list instead
+    of failing.
     """
-    out: list = []
-    it = agen.__aiter__()
-    loop = asyncio.get_event_loop()
-    deadline = loop.time() + window
-    while True:
-        remaining = deadline - loop.time()
-        if remaining <= 0:
-            break
-        try:
-            out.append(await asyncio.wait_for(it.__anext__(), timeout=remaining))
-        except (asyncio.TimeoutError, StopAsyncIteration):
-            break
-    return out
+    return [item async for item in agen]
 
 
 async def _wire_events(frames):
@@ -202,7 +194,7 @@ async def test_forwarder_continue_does_not_keep_a_sentinel_off_the_wire(
 
     task = asyncio.create_task(_drive())
     try:
-        sse = "".join(await _collect_within(emitter.stream(), window=5.0))
+        sse = "".join(await _collect_all(emitter.stream()))
     finally:
         await task
         source.close()

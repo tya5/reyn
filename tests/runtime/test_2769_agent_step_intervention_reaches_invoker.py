@@ -59,6 +59,7 @@ from reyn.runtime.session_params import PresentationWiring
 from reyn.schemas.models import PresentIROp
 from reyn.security.permissions.permissions import PermissionDecl, PermissionResolver
 from reyn.user_intervention import UserIntervention
+from tests._async_wait import wait_until
 from tests._support.agent_session import make_session
 
 
@@ -153,14 +154,7 @@ async def test_attached_agent_step_ask_user_reaches_invoker_operator(tmp_path: P
     bus = worker.intervention_bridge.bus(run_id="r", actor="agent-step")
     iv = UserIntervention(kind="ask_user", prompt="which branch?")
     deliver = asyncio.ensure_future(bus.deliver(iv))
-    loop = asyncio.get_event_loop()
-    deadline = loop.time() + 5.0
-    while loop.time() < deadline and not invoker.interventions.list_active():
-        await asyncio.sleep(0.02)
-    assert invoker.interventions.list_active(), (
-        "the agent-step ask_user never reached the invoker operator's active queue (it refused "
-        "locally instead of bridging to the originator)."
-    )
+    await wait_until(lambda: bool(invoker.interventions.list_active()))
     # The operator was prompted on the invoker's own surface (chat-native intervention announce).
     assert _by_kind(_drain(invoker.outbox), "intervention"), (
         "the operator was never prompted on the invoker surface — the bridged ask_user did not "
@@ -200,14 +194,7 @@ async def test_attached_agent_step_permission_reaches_invoker_operator(tmp_path:
         kind="permission.generic", prompt="Allow tool 'shell'?", choices=generic_yn_choices(),
     )
     deliver = asyncio.ensure_future(bus.deliver(iv))
-    loop = asyncio.get_event_loop()
-    deadline = loop.time() + 5.0
-    while loop.time() < deadline and not invoker.interventions.list_active():
-        await asyncio.sleep(0.02)
-    assert invoker.interventions.list_active(), (
-        "the agent-step PERMISSION prompt never reached the invoker operator — the routing swap "
-        "must be bus-wide (permission.* / safety.limit / elicitation), not ask_user-only."
-    )
+    await wait_until(lambda: bool(invoker.interventions.list_active()))
     # The operator picks the affirmative choice on the invoker surface (the authoritative
     # closed-set choice path the inline selector uses — bypasses text/hotkey match_choice).
     consumed = await invoker.answer_oldest_intervention_choice(YES)

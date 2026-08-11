@@ -46,6 +46,7 @@ from reyn.runtime.session_buses import (
 )
 from reyn.runtime.session_params import PresentationWiring
 from reyn.user_intervention import UserIntervention
+from tests._async_wait import wait_until
 from tests._support.agent_session import make_session
 from tests._support.events import collect_events
 
@@ -209,12 +210,7 @@ async def test_detached_present_is_audit_only_no_orphan_outbox(
         reply_to_agent="worker", reply_to_sid="main", state_log=state_log,
     )
     run_dir = pipeline_run_dir(reyn_root(state_log.path), rid)
-    deadline = asyncio.get_event_loop().time() + 10.0
-    while asyncio.get_event_loop().time() < deadline:
-        if read_result(run_dir) is not None:
-            break
-        await asyncio.sleep(0.05)
-    assert read_result(run_dir) is not None, "detached present pipeline did not reach terminal"
+    await wait_until(lambda: read_result(run_dir) is not None)
 
     # The detached driver was spawned AuditOnly (its present sink is the no-op) — identify it as
     # the built session carrying that routing decision. RED if the detached spawn self-bound
@@ -263,16 +259,11 @@ async def test_detached_ask_user_refuses_deliberately_no_hang(
     )
     run_dir = pipeline_run_dir(reyn_root(state_log.path), rid)
 
-    # NO HANG: terminal within a tight window (the pre-fix hang never reached it in >6s).
-    deadline = asyncio.get_event_loop().time() + 5.0
-    while asyncio.get_event_loop().time() < deadline:
-        if read_result(run_dir) is not None:
-            break
-        await asyncio.sleep(0.02)
-    assert read_result(run_dir) is not None, (
-        "detached ask_user did NOT reach terminal within 5s — the origin-pin park/hang was not "
-        "closed by the AuditOnly refusal."
-    )
+    # If the origin-pin park/hang regresses, this now hangs until CI's kill switch
+    # (--timeout=120) fires instead of failing locally within a fixed window — the
+    # regression still surfaces red, just via the kill switch rather than a bounded
+    # assert (#4275: a bounded constant here is a wait duration rewritten as a number).
+    await wait_until(lambda: read_result(run_dir) is not None)
 
     # The driver was spawned AuditOnly (the routing that turns the pre-fix hang into a deliberate
     # refusal) — identify it as the built session carrying an AuditOnly intervention bridge. The
@@ -376,13 +367,7 @@ async def test_session_spawn_child_ask_user_reaches_parent_operator_no_hang(
     bus = child.intervention_bridge.bus(run_id="r", actor="child")
     iv = UserIntervention(kind="ask_user", prompt="which branch?")
     deliver = asyncio.ensure_future(bus.deliver(iv))
-    loop = asyncio.get_event_loop()
-    deadline = loop.time() + 5.0
-    while loop.time() < deadline and not parent.interventions.list_active():
-        await asyncio.sleep(0.02)
-    assert parent.interventions.list_active(), (
-        "the child's ask_user never reached the parent operator's active queue (parked/hung)."
-    )
+    await wait_until(lambda: bool(parent.interventions.list_active()))
     consumed = await parent._maybe_answer_oldest_intervention("blue")
     assert consumed is True
     answer = await asyncio.wait_for(deliver, timeout=5.0)  # resolves (no hang)
@@ -432,14 +417,7 @@ async def test_session_spawn_grandchild_ask_user_reaches_root_operator_transitiv
     bus = grandchild.intervention_bridge.bus(run_id="r", actor="gc")
     iv = UserIntervention(kind="ask_user", prompt="which branch?")
     deliver = asyncio.ensure_future(bus.deliver(iv))
-    loop = asyncio.get_event_loop()
-    deadline = loop.time() + 5.0
-    while loop.time() < deadline and not root.interventions.list_active():
-        await asyncio.sleep(0.02)
-    assert root.interventions.list_active(), (
-        "the grandchild's ask_user did NOT reach the ROOT operator — it parked on the immediate "
-        "headless parent's listener-less registry (the recursive hang edge)."
-    )
+    await wait_until(lambda: bool(root.interventions.list_active()))
     answered = await root._maybe_answer_oldest_intervention("blue")
     assert answered is True
     answer = await asyncio.wait_for(deliver, timeout=5.0)  # resolves via root operator, no hang

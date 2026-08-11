@@ -133,14 +133,35 @@ def _texts(msgs: "list[OutboxMessage]") -> "list[str]":
     return [f"{m.kind}:{m.text}" for m in msgs]
 
 
+async def _collect_all(agen) -> "list":
+    """Collect every item from an async generator until it terminates.
+
+    #4275 (co-vet #3322 (b) is superseded, not just amended — that review's
+    "collecting unboundedly turns a structural break into an undiagnosable
+    CI-timeout hang" is exactly the justification the #4145 owner ruling
+    names and rejects: a local bounded window duplicates CI's own kill
+    switch and adds an arbitrary failure constant). Every caller here
+    deliberately pushes an ``__end__`` sentinel, which ``AgUiEmitter.stream()``
+    returns on, so the stream is naturally finite. If a switch-follow
+    mechanism regresses and the stream never terminates, this hangs,
+    surfaced by CI's kill switch rather than a local window that would
+    silently truncate the collected list instead of failing.
+    """
+    return [item async for item in agen]
+
+
 async def _collect_within(agen, *, window: float) -> "list":
-    """Collect items off an async generator for a BOUNDED wall-clock window,
-    never awaiting past it (co-vet #3322 (b)). When a switch-follow mechanism
-    is broken the underlying stream can be permanently stranded and simply
-    never terminate; collecting unboundedly turns that structural break into
-    a slow, undiagnosable CI-timeout hang. Bounding here means a broken build
-    fails FAST, and the caller's own assertions — pointed at whatever WAS
-    collected in the window — name exactly what's missing."""
+    """Collect items off an async generator for a BOUNDED wall-clock window.
+
+    #4275 NOTE (not yet converted): unlike ``_collect_all`` above, the one
+    remaining caller of this helper (``test_switch_announce_precedes_any_new_
+    session_audit_event``) drives ``source.frames()`` without ever pushing an
+    ``__end__`` sentinel — there is no natural termination signal to wait on,
+    only a wall-clock settle window after driving the adversary + switch
+    request. This is the same shape as the #4275 issue's still-open inline
+    dedup item, not a mechanical conversion — left bounded pending a real
+    design (e.g. a quiet-period/settle signal) rather than guessed at here.
+    """
     out: list = []
     it = agen.__aiter__()
     loop = asyncio.get_event_loop()
@@ -157,8 +178,8 @@ async def _collect_within(agen, *, window: float) -> "list":
     return out
 
 
-async def _run_emitter_to_frames(emitter: AgUiEmitter, *, window: float = 3.0) -> "list":
-    sse = "".join(await _collect_within(emitter.stream(), window=window))
+async def _run_emitter_to_frames(emitter: AgUiEmitter) -> "list":
+    sse = "".join(await _collect_all(emitter.stream()))
 
     async def _noop_send(_payload):
         return None
@@ -194,7 +215,7 @@ async def test_remote_switch_has_no_scrollback_without_the_refire(tmp_path) -> N
 
         switch_task = asyncio.create_task(_switch())
         try:
-            frames = await _run_emitter_to_frames(emitter, window=3.0)
+            frames = await _run_emitter_to_frames(emitter)
         finally:
             await switch_task
             source.close()
@@ -270,7 +291,7 @@ async def test_remote_switch_parity_a_b_a_with_staleness(tmp_path) -> None:
 
         drive_task = asyncio.create_task(_drive())
         try:
-            frames = await _run_emitter_to_frames(emitter, window=3.0)
+            frames = await _run_emitter_to_frames(emitter)
         finally:
             await drive_task
             source.close()
@@ -409,7 +430,7 @@ async def test_barrier_precedes_refire_on_the_wire(tmp_path) -> None:
 
         switch_task = asyncio.create_task(_switch())
         try:
-            sse = "".join(await _collect_within(emitter.stream(), window=3.0))
+            sse = "".join(await _collect_all(emitter.stream()))
         finally:
             await switch_task
             source.close()
