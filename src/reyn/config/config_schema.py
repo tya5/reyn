@@ -304,6 +304,133 @@ def unknown_config_keys(
 
 
 # ---------------------------------------------------------------------------
+# #4231 (C): known keys DISABLED by another key's current value
+# ---------------------------------------------------------------------------
+
+
+@_dataclass(frozen=True)
+class DisabledByHint:
+    """A KNOWN, correctly-spelled config key whose value has no effect
+    under the CURRENT value of another key it depends on.
+
+    A DIFFERENT category than :class:`RenamedKeyHint` / :func:`unknown_config_keys`
+    (#4174 T0 handles unknown keys — a typo, or a key that never existed).
+    This one is for a key that IS real, IS spelled correctly, and is
+    genuinely read somewhere in the codebase — architect's #4231 ruling:
+    the discriminator for "does this deserve a check, or deletion" is
+    "is there at least one read path" (``universal_wrappers_enabled`` has
+    one — the ``universal-category`` scheme genuinely consumes it — vs.
+    #3907/#3962's fields that NO code ever read, which were deleted, not
+    documented-as-inert). A key that would ever fall into THIS category
+    but has zero read paths anywhere belongs back in the delete-it
+    discipline, not here.
+
+    Same 4-element warning discipline #4174 T0's own report already
+    established (architect, #4231): state the result plainly, name the
+    conflicting key (and ideally its current value), batch every finding
+    in one pass (never early-return), and give an actionable fix.
+    """
+
+    #: Plain statement of the result — "has no effect under the current
+    #: tool_use.scheme" — always shown.
+    note: str
+    #: The OTHER key this one's applicability depends on, dotted
+    #: (``"tool_use.scheme"``) — so the operator knows what to look at.
+    dependency_key: str
+    #: One concrete remedy — change the dependency, or drop the disabled
+    #: key. Never "this has no effect" alone (the #4179 lesson: name what
+    #: to do next, don't just report a state).
+    fix: str
+
+
+def _check_universal_wrappers_enabled_scheme_mismatch(
+    raw: dict,
+) -> "DisabledByHint | None":
+    """#4231: ``action_retrieval.universal_wrappers_enabled`` only affects
+    the ``universal-category`` ``tool_use.scheme`` — the OTHER schemes
+    (``enumerate-all`` the #1657 owner default, and ``retrieval``) have
+    their own, mutually-exclusive presentation mechanism and never read
+    it (``router_loop.py``'s ``base_tools()``: "the universal wrappers
+    OFF... enumerate-all adds catalog_entries ON TOP OF the wrappers,
+    INSTEAD").
+
+    Re-measured before writing this check (architect's own explicit
+    caveat on the #4231 ruling — "re-measure before implementing, don't
+    build a mechanism on an assumption"): ``universal_wrappers_enabled``
+    DOES have a real read path — ``RouterHostAdapter.
+    get_universal_wrappers_enabled()`` returns the live config value,
+    consumed by ``_category_exposure.build_category_exposure`` (imported
+    by ``universal_category.py``'s scheme, and nowhere else) to compute
+    real ``sp_facts`` differences (``search_actions_enabled``'s formula
+    changes under it). Confirmed via a full read-path trace, not assumed.
+
+    Fires ONLY when the raw file EXPLICITLY sets the flag to ``True``
+    (the resolved *default* is also ``True`` — firing on the unset
+    default would warn nearly every operator who never touched this key
+    at all, which is not what "explicit" means in architect's ruling)."""
+    action_retrieval = raw.get("action_retrieval")
+    if not isinstance(action_retrieval, dict):
+        return None
+    if action_retrieval.get("universal_wrappers_enabled") is not True:
+        return None
+    tool_use = raw.get("tool_use")
+    scheme = tool_use.get("scheme") if isinstance(tool_use, dict) else None
+    if scheme is None:
+        scheme = "enumerate-all"  # the #1657 owner default (execution.py's own)
+    if scheme == "universal-category":
+        return None
+    return DisabledByHint(
+        note=(
+            f"action_retrieval.universal_wrappers_enabled: true has no effect "
+            f"under tool_use.scheme: {scheme!r} — only the 'universal-category' "
+            f"scheme uses universal wrappers; {scheme!r} has its own, "
+            f"mutually-exclusive presentation mechanism."
+        ),
+        dependency_key="tool_use.scheme",
+        fix=(
+            "set tool_use.scheme: universal-category to make this flag apply, "
+            "or remove action_retrieval.universal_wrappers_enabled if you did "
+            "not intend to opt into the universal-category scheme."
+        ),
+    )
+
+
+#: #4231 (C): registered (key -> check) pairs, one per known
+#: dependency-disabled config knob. Deliberately a small, explicit
+#: registry rather than a general "declare key dependencies" framework —
+#: architect's own ruling scoped that broader mechanism to a SEPARATE,
+#: larger issue (other same-shaped knobs likely exist — embedding.* under
+#: embedding.enabled=false, offload.* under offload.enabled=false — but
+#: are UNENUMERATED; adding one here does not imply they're covered).
+_DISABLED_KEY_CHECKS: "dict[str, Any]" = {
+    "action_retrieval.universal_wrappers_enabled": (
+        _check_universal_wrappers_enabled_scheme_mismatch
+    ),
+}
+
+
+def disabled_config_keys(raw: "dict | None") -> "dict[str, DisabledByHint]":
+    """Return ``{dotted_key: DisabledByHint}`` for every KNOWN config key in
+    *raw* whose value is currently inert because of another key's value —
+    #4231 (C)'s "make the inconsistency speak" mechanism, the sibling of
+    :func:`unknown_config_keys` (#4174 T0) for a DIFFERENT defect class
+    (a real key, silently ignored under the current configuration, vs. a
+    key that was never real at all).
+
+    Collects every finding in one pass (never early-returns) — the SAME
+    "report all problems at once" discipline :func:`unknown_config_keys`
+    already established."""
+    if not isinstance(raw, dict):
+        return {}
+    result: "dict[str, DisabledByHint]" = {}
+    for key, check in _DISABLED_KEY_CHECKS.items():
+        hint = check(raw)
+        if hint is not None:
+            result[key] = hint
+    return result
+
+
+# ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
 

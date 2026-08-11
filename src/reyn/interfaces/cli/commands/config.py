@@ -274,7 +274,10 @@ def _migrate_mcp(*, dry_run: bool = False) -> None:
 def _validate() -> None:
     """#4174 T0: report every unknown/renamed config key found in the
     operator-editable policy tier (reyn.yaml / reyn.local.yaml /
-    ~/.reyn/config.yaml).
+    ~/.reyn/config.yaml). #4231 (C): also report every KNOWN key whose
+    value is silently inert under another key's current value (a
+    DIFFERENT defect class — the key is real and correctly spelled, but
+    the configuration as a whole makes it a no-op).
 
     Uses ``build_policy_tier_config`` — the SAME construction
     ``load_config``'s own startup warning uses (architect's explicit
@@ -282,23 +285,39 @@ def _validate() -> None:
     a second hand-reconstructed merge). Exits 0 regardless of findings
     (owner ruling: warn, never hard-fail — this command REPORTS, it does
     not gate anything)."""
-    from reyn.config.config_schema import unknown_config_keys
+    from reyn.config.config_schema import disabled_config_keys, unknown_config_keys
     from reyn.config.loader import build_policy_tier_config
 
     merged = build_policy_tier_config()
     unknown = unknown_config_keys(merged)
-    if not unknown:
-        print("No unknown or renamed config keys found.")
+    disabled = disabled_config_keys(merged)
+
+    if not unknown and not disabled:
+        print("No unknown, renamed, or disabled-by-dependency config keys found.")
         return
 
-    print(f"Found {len(unknown)} unrecognized config key(s):\n")
-    for key, hint in sorted(unknown.items()):
-        print(f"  {key}")
-        if hint:
-            print(f"    -> {hint.note}")
-        else:
-            print("    -> not applied; see 'reyn config fields' for valid keys.")
-    print("\nRun 'reyn config migrate' to fix renamed keys automatically.")
+    if unknown:
+        print(f"Found {len(unknown)} unrecognized config key(s):\n")
+        for key, hint in sorted(unknown.items()):
+            print(f"  {key}")
+            if hint:
+                print(f"    -> {hint.note}")
+            else:
+                print("    -> not applied; see 'reyn config fields' for valid keys.")
+        print("\nRun 'reyn config migrate' to fix renamed keys automatically.")
+
+    if disabled:
+        if unknown:
+            print()
+        print(
+            f"Found {len(disabled)} config key(s) that are known but currently "
+            f"have no effect:\n"
+        )
+        for key, disabled_hint in sorted(disabled.items()):
+            print(f"  {key}")
+            print(f"    -> {disabled_hint.note}")
+            print(f"    -> depends on: {disabled_hint.dependency_key}")
+            print(f"    -> fix: {disabled_hint.fix}")
 
 
 def _migrate(*, dry_run: bool = False) -> None:
