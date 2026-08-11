@@ -34,7 +34,9 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from reyn.prompt.turn_budget import WRAP_UP_SYSTEM_PROMPT as _WRAP_UP_SYSTEM_PROMPT
-from reyn.prompt.turn_budget import wrap_up_system_prompt
+from reyn.prompt.turn_budget import (
+    wrap_up_system_prompt,  # noqa: F401 — re-exported via __init__.py's __all__, engine.py itself doesn't call it
+)
 from reyn.services.compaction.engine import estimate_tokens
 
 if TYPE_CHECKING:
