@@ -8,9 +8,10 @@ Component A scope:
   - ``headers: dict[str, str]`` is accepted on http-mode MCP server configs.
   - ``${VAR}`` tokens inside header values resolve at config-load time.
   - The headers dict reaches the real ``StreamableHttpTransport`` verbatim
-    (post-expand) — #2597 S1: inspected via the transport's own public
-    ``.headers`` attribute (a real ``fastmcp`` object), not a mocked SDK entry
-    point.
+    (post-expand) — #2597 S1, updated for #4282's fastmcp-to-official-SDK
+    migration: inspected via the kwargs the real ``streamablehttp_client``
+    call site is invoked with (captured at that boundary, not a mocked SDK
+    entry point — see ``_capture_streamablehttp_client_kwargs`` below).
   - Missing / empty ``headers`` is fine — no header is sent (back-compat).
 """
 from __future__ import annotations

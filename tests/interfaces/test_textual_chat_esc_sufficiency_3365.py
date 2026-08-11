@@ -357,11 +357,12 @@ async def test_esc_with_an_active_selection_cancels_it_and_stays_on_the_pane() -
             f"Esc with an active selection bubbled past the pane instead of "
             f"being consumed by it: {app.focused!r}"
         )
-        after = flow.screen.get_selected_text() or ""
-        assert len(after) == len(baseline), (
-            f"Esc did not cancel the visual selection back to the bare-cursor "
-            f"baseline width ({baseline!r}): {after!r}"
-        )
+        # A trailing assert on the selection-width-after-Esc (`len(after) ==
+        # len(baseline)`) was removed here (#4304, part of #3880): it pinned
+        # flowview's own cursor_cancel binding collapsing a visual selection
+        # back to baseline width — reyn's own claim is only that Esc reaches
+        # the pane (asserted above), not what flowview's own cursor_cancel does
+        # with it.
 
 
 @pytest.mark.asyncio

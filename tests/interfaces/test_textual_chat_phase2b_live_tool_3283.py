@@ -460,44 +460,12 @@ async def test_running_body_animates_live_then_stops_on_settle() -> None:
         assert entry.state is EntryState.SUCCESS
 
 
-@pytest.mark.asyncio
-async def test_offscreen_running_tool_is_not_animated() -> None:
-    """Tier 2b: an OFF-SCREEN RUNNING tool is not animated (viewport gating).
-
-    ``animate_entry`` auto-pauses when the entry scrolls out of the viewport, and
-    an off-screen entry is not repainted, so a RUNNING tool pushed above the fold
-    neither spins nor recomputes. Push a started tool, then enough later frames to
-    scroll it off the top (a small viewport, STICKY_BOTTOM anchor), confirm it is
-    OFF-SCREEN via the public ``visible_range()``, and assert its present-count is
-    frozen across a pause."""
-    transport = QueueTransport()
-    presenter = _CountingPresenter()  # held locally — assert on its PUBLIC count
-    app = _fast_app(transport=transport, presenter=presenter)
-    async with app.run_test(size=(80, 8)) as pilot:
-        await pilot.pause()
-        await transport.push(_started("op-off"))
-        await pilot.pause(0.1)
-        # Fill past the fold with many later rows, then scroll to the bottom so
-        # the started tool (row 0) is above the visible range.
-        for i in range(40):
-            await transport.push(OutboxMessage(kind="agent", text=f"line {i}"))
-        await pilot.pause()
-        flow = app.query_one(FlowView)
-        flow.scroll_to_bottom()
-        await pilot.pause()
-
-        entries = flow.entries
-        idx = next(i for i, e in enumerate(entries) if e.item.meta.get("op_id") == "op-off")
-        start, stop = flow.visible_range()
-        assert not (start <= idx < stop), (
-            f"precondition: started row must be off-screen, got idx={idx} in [{start},{stop})"
-        )
-
-        baseline = presenter.present_counts.get("op-off", 0)
-        await pilot.pause(0.4)
-        assert presenter.present_counts.get("op-off", 0) == baseline, (
-            "off-screen RUNNING tool was animated (viewport gating failed)"
-        )
+# test_offscreen_running_tool_is_not_animated removed (#4304, part of #3880):
+# per this test's own docstring, "animate_entry auto-pauses when the entry
+# scrolls out of the viewport" is flowview's own track_visibility mechanism —
+# reyn only registers the animate_entry callback, it does not implement the
+# off-screen pause decision itself. If this failed, it would be flowview's
+# viewport-gating bug, not reyn's.
 
 
 # ── Gate 4: no regression ─────────────────────────────────────────────────────
