@@ -81,6 +81,43 @@ async def handle(
     )
     policy = SandboxPolicy(**ctx.default_sandbox_policy)
 
+    # #3903① (2026-08-11 owner ruling, architect-conditioned): the LLM may
+    # extend the foreground wall-clock timeout past the operator's default
+    # (policy.timeout_seconds), up to the OPERATOR's own configured ceiling
+    # (policy.max_timeout_seconds — never a hardcoded value, so the LLM can
+    # never widen an operator's own narrower configuration). A request above
+    # the ceiling is REJECTED (typed error naming the actual max), not
+    # silently clamped — a silent clamp would recreate #3962's advertised-
+    # but-ignored shape in a new form (the LLM would believe it got the
+    # duration it asked for). A non-positive request is also rejected —
+    # "wait 0 seconds" is not a meaningful override, and negative durations
+    # invert the meaning of the field.
+    if op.timeout_seconds is not None:
+        if op.timeout_seconds <= 0:
+            return {
+                "kind": "sandboxed_exec",
+                "status": "error",
+                "error": (
+                    f"timeout_seconds must be positive, got {op.timeout_seconds}"
+                ),
+            }
+        if op.timeout_seconds > policy.max_timeout_seconds:
+            return {
+                "kind": "sandboxed_exec",
+                "status": "error",
+                "error": (
+                    f"timeout_seconds ({op.timeout_seconds}) exceeds this "
+                    f"deployment's configured maximum of "
+                    f"{policy.max_timeout_seconds} seconds. For a longer-"
+                    f"running command, run it in the background instead "
+                    f"(spawn an ephemeral session, or run_pipeline with "
+                    f"collect=\"async\") — background work runs on a "
+                    f"separate budget from this foreground wall-clock cap."
+                ),
+            }
+        import dataclasses
+        policy = dataclasses.replace(policy, timeout_seconds=int(op.timeout_seconds))
+
     # Anchor the working directory to the run's workspace base_dir — parity with
     # the legacy `shell` op (FP-0008 PR-I). Without this, repo-relative `git` /
     # `pytest` run in the harness process cwd instead of the repo root, which

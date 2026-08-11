@@ -108,17 +108,150 @@ def test_op_no_longer_accepts_the_deleted_policy_fields():
     them — a distinct, deeper layer the tool schema could in principle
     diverge from.
 
-    #3962: `timeout_seconds` joins the removed set — the same defect class
+    #3962: `timeout_seconds` joined the removed set — the same defect class
     as the other 5 (LLM-advertised, silently ignored on the real path), just
     missed by #3907's own sweep since a wall-clock cap isn't a permission
-    axis."""
+    axis.
+
+    #3903① (2026-08-11): `timeout_seconds` came BACK — a deliberate, narrow
+    reversal, not a re-opening of the gap #3962 closed. The distinguishing
+    fact this test's own docstring already names: THIS time the field has a
+    real reader (`op_runtime/sandboxed_exec.py`'s handler checks it against
+    `SandboxPolicy.max_timeout_seconds` and applies it), so it is no longer
+    advertised-but-ignored. `test_sandboxed_exec_timeout_seconds_is_actually_applied`
+    below is the positive witness that distinguishes "back and read" from
+    "back and ignored again"."""
     fields = set(SandboxedExecIROp.model_fields)
-    assert fields == {"kind", "argv", "stdin"}
+    assert fields == {"kind", "argv", "stdin", "timeout_seconds"}
     for removed_field in (
         "network", "read_paths", "write_paths", "allow_subprocess",
-        "env_passthrough", "timeout_seconds",
+        "env_passthrough",
     ):
         assert removed_field not in fields
+
+
+class _RecordingBackend:
+    """Real (non-mock) SandboxBackend stub that records the exact `policy`
+    object `run()` was invoked with — the positive witness for #3903①: does
+    an LLM-supplied `timeout_seconds` actually reach the dispatch path, or
+    is it merely accepted by the model and then ignored (the #3962 shape
+    this reversal must not recreate)?"""
+
+    name = "recording-backend"
+
+    def __init__(self) -> None:
+        self.received_policy: "SandboxPolicy | None" = None
+        self.run_called = False
+
+    def available(self) -> bool:
+        return True
+
+    async def run(self, argv, policy, *, stdin=None, cwd=None, cancel_event=None) -> SandboxResult:
+        self.run_called = True
+        self.received_policy = policy
+        return SandboxResult(returncode=0, stdout=b"ok", stderr=b"")
+
+
+@pytest.mark.asyncio
+async def test_sandboxed_exec_timeout_seconds_is_actually_applied():
+    """Tier 2: #3903① positive witness — an LLM-supplied timeout_seconds
+    below the operator's max_timeout_seconds is threaded all the way to the
+    real backend.run() call, not just accepted by the pydantic model and
+    then dropped. Value-assert only (no real waiting, per CLAUDE.md's
+    testing policy — this asserts what policy object WOULD have been used,
+    never actually sleeps)."""
+    ctx, _events = _make_ctx()
+    backend = _RecordingBackend()
+    ctx.sandbox_backend = backend
+    op = SandboxedExecIROp(kind="sandboxed_exec", argv=["/bin/echo", "x"], timeout_seconds=45)
+
+    await execute_op(op, ctx)
+
+    assert backend.run_called is True
+    assert backend.received_policy is not None
+    assert backend.received_policy.timeout_seconds == 45, (
+        "the LLM's timeout_seconds must reach the real backend.run() call, "
+        f"got {backend.received_policy.timeout_seconds}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_sandboxed_exec_timeout_seconds_none_uses_the_policy_default():
+    """Tier 2: #3903① — omitting timeout_seconds (the common case) uses
+    SandboxPolicy.timeout_seconds unchanged (120, the empty-dict default in
+    _make_ctx's default_sandbox_policy={})."""
+    ctx, _events = _make_ctx()
+    backend = _RecordingBackend()
+    ctx.sandbox_backend = backend
+    op = SandboxedExecIROp(kind="sandboxed_exec", argv=["/bin/echo", "x"])
+
+    await execute_op(op, ctx)
+
+    assert backend.received_policy is not None
+    assert backend.received_policy.timeout_seconds == 120
+
+
+@pytest.mark.asyncio
+async def test_sandboxed_exec_timeout_seconds_above_max_is_rejected_not_clamped():
+    """Tier 2: #3903① — a request above the operator's max_timeout_seconds
+    is a typed error (status="error", naming the actual configured max),
+    never a silent clamp — a silent clamp would let the LLM believe it got
+    the duration it asked for, recreating #3962's advertised-but-ignored
+    shape. The backend.run() must NEVER be called — rejection happens
+    before dispatch, no partial/clamped exec."""
+    ctx, _events = _make_ctx()  # default_sandbox_policy={} -> max_timeout_seconds=600
+    backend = _RecordingBackend()
+    ctx.sandbox_backend = backend
+    op = SandboxedExecIROp(kind="sandboxed_exec", argv=["/bin/echo", "x"], timeout_seconds=900)
+
+    result = await execute_op(op, ctx)
+
+    assert result["status"] == "error"
+    assert "600" in result["error"], (
+        f"the error must name the ACTUAL configured max, not a vague message: {result['error']}"
+    )
+    assert backend.run_called is False, "rejection must happen before dispatch, no clamped exec"
+
+
+@pytest.mark.asyncio
+async def test_sandboxed_exec_timeout_seconds_non_positive_is_rejected():
+    """Tier 2: #3903① — a non-positive timeout_seconds (0 or negative) is
+    rejected before dispatch, not passed through as a meaningless-or-inverted
+    duration."""
+    ctx, _events = _make_ctx()
+    backend = _RecordingBackend()
+    ctx.sandbox_backend = backend
+    op = SandboxedExecIROp(kind="sandboxed_exec", argv=["/bin/echo", "x"], timeout_seconds=0)
+
+    result = await execute_op(op, ctx)
+
+    assert result["status"] == "error"
+    assert backend.run_called is False
+
+
+@pytest.mark.asyncio
+async def test_sandboxed_exec_respects_an_operator_narrowed_max():
+    """Tier 2: #3903① — architect's conditional-approval requirement,
+    verified at the dispatch layer: an operator who configured a LOWER
+    max_timeout_seconds than the 600 default has that ceiling actually
+    enforced — the LLM cannot widen an operator's own narrower
+    configuration by requesting more than the operator allows."""
+    events = EventLog()
+    ws = Workspace(events=events)
+    ctx = OpContext(
+        workspace=ws, events=events, permission_decl=PermissionDecl(),
+        permission_resolver=None,
+        default_sandbox_policy={"max_timeout_seconds": 90},
+    )
+    backend = _RecordingBackend()
+    ctx.sandbox_backend = backend
+    op = SandboxedExecIROp(kind="sandboxed_exec", argv=["/bin/echo", "x"], timeout_seconds=120)
+
+    result = await execute_op(op, ctx)
+
+    assert result["status"] == "error"
+    assert "90" in result["error"]
+    assert backend.run_called is False
 
 
 # ─── 2. NoopBackend ──────────────────────────────────────────────────────────

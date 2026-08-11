@@ -358,32 +358,48 @@ The Control IR op kind stays `sandboxed_exec` (`OP_KIND_MODEL_MAP["sandboxed_exe
 {
   "kind": "sandboxed_exec",
   "argv": ["echo", "hello"],
-  "stdin": null
+  "stdin": null,
+  "timeout_seconds": null
 }
 ```
 
 Fields:
 - `argv` (required) — command + arguments. `argv[0]` is the executable.
 - `stdin` (optional, default `None`) — bytes written to the process's stdin, if any (a pipeline `tool` step can thread the previous step's pipe-data here as JSON via `args: {argv: [...], stdin_pipe: !expr pipe}` — see [Pipeline DSL](pipeline-dsl.md#tool)).
+- `timeout_seconds` (optional, default `None`) — **#3903① (2026-08-11), a
+  deliberate reversal of the paragraph below**: the LLM may request a
+  foreground wall-clock timeout above `SandboxPolicy.timeout_seconds`'s own
+  default, up to `SandboxPolicy.max_timeout_seconds` — the operator's OWN
+  configured ceiling, never a hardcoded value (an operator who narrows
+  `max_timeout_seconds` below its 600s default has that ceiling actually
+  enforced; the LLM cannot widen an operator's own narrower configuration).
+  `None` (the default) uses the policy's own `timeout_seconds`. A value
+  above the ceiling is **rejected** (`status: "error"`, naming the actual
+  configured max) — never silently clamped, which would recreate the
+  advertised-but-ignored shape the removal below closed, just for a value
+  that quietly changes instead of a field that's quietly dropped. A
+  non-positive value is rejected the same way.
 
-**No policy fields, and no `timeout_seconds`** (`network` / `read_paths` /
-`write_paths` / `allow_subprocess` / `env_passthrough` — removed #3907;
-`timeout_seconds` — removed #3962, same defect class one field late): the
-sandbox policy — including the wall-clock timeout — that actually governs a run
-is **never** settable via this op. It is the agent-level (operator) `sandbox.policy`
+**No other policy fields** (`network` / `read_paths` / `write_paths` /
+`allow_subprocess` / `env_passthrough` — removed #3907): the sandbox
+policy's other axes that actually govern a run are **never** settable via
+this op. It is the agent-level (operator) `sandbox.policy`
 (`reyn.yaml`, resolved through `resolve_sandbox_policy` — see the
 [`sandbox` config block](../config/reyn-yaml.md#sandbox-block)) or, absent that, the
 operator's compat/strict default — either way a value the LLM cannot see or widen
 (#1326/#1339: the operator-or-default policy always wins over anything an op
-requests). The op used to carry the 5 policy fields (and, until #3962,
-`timeout_seconds`) as a fallback source when no operator policy was resolved;
-#3907① measured that path is unreachable in production (every context-building
-path resolves a concrete policy), so the fields were pure LLM-facing surface
-with no effect — deleted rather than left as an advertised-but-ignored knob.
-`timeout_seconds` wasn't one of the 5 #3907① scoped to (a wall-clock cap isn't
-a permission axis), so it survived that sweep and stayed dead one issue longer;
-`ctx.default_sandbox_policy`'s own `timeout_seconds` (`SandboxPolicy`) is what
-actually governs a run's timeout, same as it always was.
+requests). The op used to carry the 5 policy fields as a fallback source when
+no operator policy was resolved; #3907① measured that path is unreachable in
+production (every context-building path resolves a concrete policy), so the
+fields were pure LLM-facing surface with no effect — deleted rather than left
+as an advertised-but-ignored knob.
+
+`timeout_seconds` followed the same path once (removed #3962 as the same
+defect class, one field late — a wall-clock cap isn't a permission axis, so
+it survived #3907's sweep and stayed dead one issue longer) but is a
+DIFFERENT axis from the 5 above: boundedness, not permission (#3903's own
+framing). It came back with a real reader this time — see above — which is
+what distinguishes this reversal from reopening the gap #3962 closed.
 
 **Backend selection**: `get_default_backend()` chooses per platform. On macOS < 26, `SeatbeltBackend` (sandbox-exec SBPL). On Linux ≥ 5.13 with the `sandbox-linux` extra installed, `LandlockBackend` (+ optional seccomp-BPF stack). On other platforms or when the chosen backend is unavailable, falls back to `NoopBackend` (audit-only, no enforcement) — emits a one-line WARN on first use. Override via `reyn.yaml` `sandbox.backend` (`auto` | `seatbelt` | `landlock` | `noop`) and `sandbox.on_unsupported` (`warn` | `error` | `ignore`).
 
