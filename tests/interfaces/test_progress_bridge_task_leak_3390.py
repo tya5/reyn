@@ -188,7 +188,9 @@ def test_a2a_bridge_detach_still_cancels_inflight_task_while_removal_wired() -> 
     async def _slow_send(ordinal: int, event_type: str, message: str) -> None:
         sent_events.append("started")
         try:
-            await asyncio.sleep(5.0)
+            # Never completes on its own — only detach()'s cancel() ends
+            # this wait, which is exactly what the test is exercising.
+            await asyncio.Event().wait()
         except asyncio.CancelledError:
             sent_events.append("cancelled")
             raise
