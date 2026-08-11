@@ -53,7 +53,7 @@ class _FakeSession:
 
     async def run(self) -> None:
         try:
-            await asyncio.sleep(3600)
+            await asyncio.Event().wait()
         except asyncio.CancelledError:
             pass
 
