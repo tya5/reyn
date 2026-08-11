@@ -276,6 +276,107 @@ async def test_sandboxed_exec_timeout_seconds_fractional_is_rejected_not_truncat
 
 
 @pytest.mark.asyncio
+async def test_sandboxed_exec_ephemeral_omitted_timeout_gets_the_background_default():
+    """Tier 2: #3903 a-2 ③ — an ephemeral session's exec, with no LLM-supplied
+    timeout, gets policy.background_timeout_seconds (3600, the dataclass
+    default), NOT policy.timeout_seconds (120, the foreground default).
+    Positive witness: reyn's OWN branch on ctx.ephemeral in
+    sandboxed_exec.py, verified via the ACTUAL policy handed to the
+    backend — direction claimed: "an ephemeral exec gets the background
+    pair" (see OpContext.ephemeral's own docstring for the one-directional
+    scope of this claim)."""
+    import dataclasses
+
+    ctx, _events = _make_ctx()
+    ctx = dataclasses.replace(ctx, ephemeral=True)
+    backend = _RecordingBackend()
+    ctx.sandbox_backend = backend
+    op = SandboxedExecIROp(kind="sandboxed_exec", argv=["/bin/echo", "x"])
+
+    await execute_op(op, ctx)
+
+    assert backend.received_policy is not None
+    assert backend.received_policy.timeout_seconds == 3600, (
+        f"ephemeral exec must get the background default (3600), got "
+        f"{backend.received_policy.timeout_seconds}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_sandboxed_exec_non_ephemeral_omitted_timeout_stays_foreground():
+    """Tier 2: #3903 a-2 ③ — accept-side sibling: a NON-ephemeral session's
+    exec (ctx.ephemeral defaults to False) keeps the foreground default
+    (120) unaffected by the new branch — same op, only ctx.ephemeral
+    differs from the test above, isolating the branch actually taken."""
+    ctx, _events = _make_ctx()
+    backend = _RecordingBackend()
+    ctx.sandbox_backend = backend
+    op = SandboxedExecIROp(kind="sandboxed_exec", argv=["/bin/echo", "x"])
+
+    await execute_op(op, ctx)
+
+    assert backend.received_policy is not None
+    assert backend.received_policy.timeout_seconds == 120
+
+
+@pytest.mark.asyncio
+async def test_sandboxed_exec_ephemeral_llm_override_checked_against_background_max():
+    """Tier 2: #3903 a-2 ③ — an ephemeral exec's LLM-supplied timeout is
+    checked against policy.background_max_timeout_seconds (None = no cap
+    by default), NOT policy.max_timeout_seconds (600). A request that
+    would be REJECTED under the foreground ceiling (900 > 600) must
+    SUCCEED under the ephemeral/background ceiling (which is unset here)
+    — proves the ceiling comparison itself switched, not just the
+    omitted-timeout default path above."""
+    import dataclasses
+
+    ctx, _events = _make_ctx()  # default_sandbox_policy={} -> background_max_timeout_seconds=None
+    ctx = dataclasses.replace(ctx, ephemeral=True)
+    backend = _RecordingBackend()
+    ctx.sandbox_backend = backend
+    op = SandboxedExecIROp(kind="sandboxed_exec", argv=["/bin/echo", "x"], timeout_seconds=900)
+
+    result = await execute_op(op, ctx)
+
+    assert result["status"] == "ok", (
+        f"900s must be accepted under the (unset, no-cap) background "
+        f"ceiling even though it exceeds the foreground 600s ceiling: {result}"
+    )
+    assert backend.received_policy is not None
+    assert backend.received_policy.timeout_seconds == 900
+
+
+@pytest.mark.asyncio
+async def test_sandboxed_exec_ephemeral_llm_override_rejected_above_explicit_background_max():
+    """Tier 2: #3903 a-2 ③ — when an operator DOES configure a real
+    background_max_timeout_seconds, an ephemeral exec's LLM-supplied
+    timeout above it is still rejected (the "no cap by default" shape
+    above is a default, not an exemption from the ceiling mechanism
+    itself)."""
+    import dataclasses
+
+    events = EventLog()
+    ws = Workspace(events=events)
+    ctx = OpContext(
+        workspace=ws, events=events, permission_decl=PermissionDecl(),
+        permission_resolver=None,
+        default_sandbox_policy={"background_max_timeout_seconds": 300},
+    )
+    ctx = dataclasses.replace(ctx, ephemeral=True)
+    backend = _RecordingBackend()
+    ctx.sandbox_backend = backend
+    op = SandboxedExecIROp(kind="sandboxed_exec", argv=["/bin/echo", "x"], timeout_seconds=600)
+
+    result = await execute_op(op, ctx)
+
+    assert result["status"] == "error"
+    assert "300" in result["error"], (
+        f"the error must name the actual configured background max: {result['error']}"
+    )
+    assert backend.run_called is False
+
+
+@pytest.mark.asyncio
 async def test_sandboxed_exec_respects_an_operator_narrowed_max():
     """Tier 2: #3903① — architect's conditional-approval requirement,
     verified at the dispatch layer: an operator who configured a LOWER
