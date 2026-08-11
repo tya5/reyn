@@ -286,7 +286,15 @@ def _apply_auth_startup(args: argparse.Namespace, config) -> dict:
         print(f"Error: {exc}", file=sys.stderr)
         sys.exit(2)
 
-    run_dir = Path.cwd() / ".reyn" / "run"
+    # #4204: was bare Path.cwd() — runs unconditionally on every `reyn web`
+    # startup (the UDS socket dir + TLS cert provisioning both live under
+    # run_dir). Launched from a subdirectory of the project, the socket/
+    # cert files land under a phantom .reyn/run/ instead of the real
+    # project's — a same-machine client connecting via the documented
+    # `.reyn/run/` path would not find them.
+    from reyn.config import _find_project_root
+
+    run_dir = (_find_project_root(Path.cwd()) or Path.cwd()) / ".reyn" / "run"
 
     # Resolve the effective token. UDS needs none; loopback generates one for
     # the browser surface; network is guaranteed to have a configured token

@@ -296,6 +296,10 @@
     "code": "attr-defined"
   },
   {
+    "file": "src/reyn/interfaces/cli/commands/events.py",
+    "code": "attr-defined"
+  },
+  {
     "file": "src/reyn/interfaces/cli/commands/mcp.py",
     "code": "attr-defined"
   },
