@@ -29,12 +29,14 @@ from reyn.config.infra import SandboxConfig
 from reyn.hooks.loader import HookConfigError, load_hooks
 from reyn.hooks.sandbox_scope import unapplied_policy_fields
 from reyn.security.sandbox.backend import SandboxResult
+from tests._support.sandbox_backend import FULLY_ENFORCING_AXES
 
 
 class _RecordingBackend:
     """Real (non-mock) SandboxBackend recording each policy it is handed."""
 
     name = "recording"
+    enforced_axes = FULLY_ENFORCING_AXES
 
     def __init__(self) -> None:
         self.calls: list[tuple[list[str], object]] = []

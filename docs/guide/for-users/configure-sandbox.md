@@ -179,44 +179,47 @@ effect. Use only in trusted environments where enforcement is unavailable.
 
 ### When Reyn warns that an axis is not enforced — and when it stays quiet
 
-If you configure `deny_read_paths` or `deny_write_paths` and the selected backend
-cannot express them, Reyn says so at dispatch time: a `sandbox_axis_unenforced`
-audit event plus a `WARNING` log line naming the axes, the backend, and the
-reason ("Landlock cannot express a deny-list — LSM allowlist-only constraint").
-The policy is still written to the audit log; it simply was not applied for
-those axes.
+If you configure a policy axis and the selected backend does not enforce it,
+Reyn says so at dispatch time: a `sandbox_axis_unenforced` audit event plus a
+`WARNING` log line naming the axes, the backend, and the reason. The policy is
+still written to the audit log; it simply was not applied for those axes.
 
-**Scope — this warning covers one gap, not every gap.** It fires only for the
-two deny-list fields, and only on a backend that is specifically deny-list
-incapable, which today means Landlock alone. It is not a general "your policy
-was not enforced" check.
+**The check asks "does this backend enforce what you configured" — every
+axis, every backend, no exception ([#4039](https://github.com/tya5/reyn/issues/4039)).**
+Earlier, this only fired for `deny_read_paths`/`deny_write_paths` on a
+backend specifically incapable of expressing a deny-list (Landlock alone) —
+a backend that simply enforced NOTHING for an axis (Noop, Docker) passed the
+check in silence, because the check never asked that broader question. Each
+backend now DECLARES what it enforces, over the full field set
+(`allow_write_paths` / `deny_write_paths` / `deny_read_paths` / `network` /
+`subprocess` / `env_deny_names` / `allow_env_names`), and the warning fires
+for any axis you configured that the backend's own declaration says it does
+not enforce — not just the deny-list pair.
 
-🔴 **Silence is therefore not a clean bill of health.** The check asks "can
-this backend express a deny-list?", not "does this backend enforce what you
-configured?" — so a backend that enforces little or nothing passes it in
-silence.
+**Docker** (`--env-backend=docker`, below) is the sharpest instance this
+generalization was built for. It is a sandbox backend — the same object
+serves as both the environment and the sandbox backend for a container
+agent — and its `run()` **honors only `policy.timeout_seconds` and
+`policy.max_output_bytes`**. Configure `allow_write_paths`, `network`,
+`subprocess`, or either env field under it and Reyn now warns for each one
+you set: the write/network/subprocess/env fields all declare
+`DOES_NOT_ENFORCE`, so a configured axis on any of them fires the check.
+Isolation still comes from the container boundary itself — the image and
+the mount set — not from these policy fields; the warning tells you that
+directly now, instead of leaving it to this doc alone.
 
-The sharpest case is the **Docker backend** (`--env-backend=docker`, below).
-It is a sandbox backend — the same object serves as both the environment and
-the sandbox backend for a container agent — and its `run()` **honors only
-`policy.timeout_seconds`**. Configure `allow_write_paths`, `network` or
-`subprocess` under it and none of them is applied, and **no
-`sandbox_axis_unenforced` warning is emitted**, because Docker is not
-deny-list-incapable in the sense this check tests for; it is simply not
-enforcing those axes at all, which the check does not look at. Isolation does
-come from the container boundary itself — but it is the image and the mount
-set that provide it, not the policy fields you wrote.
-
-Noop is the same shape with nothing left to fall back on: it enforces nothing,
-records the policy for audit, and likewise warns about nothing.
-
-A quiet run under Docker or Noop and a quiet run under Seatbelt are
-indistinguishable from this signal alone.
+Noop is the same shape except for env: it enforces `env_deny_names` /
+`allow_env_names` (the one policy mechanism it actually applies — see the
+Noop row above) but nothing else, so a configured write/network/subprocess
+restriction under Noop also now warns.
 
 **What to rely on instead:** the per-backend tables above state, field by field,
 what each backend actually enforces. Read the table for the backend you are
-running; treat the warning as a targeted extra notice, not as the answer to
-"was my policy applied?".
+running; the warning now covers the same ground those tables do, so it is a
+much closer answer to "was my policy applied?" than before — though it only
+fires for axes you actually SET (an unset, default-permissive axis has
+nothing to warn about even on a backend that would not have enforced a
+restriction on it).
 
 Two other mechanisms are easy to mistake for this one, and neither widens it:
 
@@ -228,8 +231,8 @@ Two other mechanisms are easy to mistake for this one, and neither widens it:
 - Container (mount) mode below is a **different kind of isolation** from the
   three profile-based backends tabled above (Seatbelt, Landlock, Noop) — the
   container boundary, not a policy applied to a host process. It is still a
-  sandbox backend as far as this warning is concerned, which is exactly why the
-  silence described above covers it too — see [What container mode itself
+  sandbox backend as far as this warning is concerned, which is exactly why
+  the warning covers it too — see [What container mode itself
   enforces](#what-container-mode-itself-enforces) below for what actually
   applies instead.
 
@@ -264,10 +267,12 @@ by `reyn.yaml sandbox.backend` as usual (typically `landlock` on Linux).
 ### What container mode itself enforces
 
 The section above already establishes that Docker's `run()` honors only
-`policy.timeout_seconds`, and that `allow_write_paths`/`network`/`subprocess`
-pass through unenforced with no warning. That leaves the question of what, if
-anything, DOES restrict those axes when you run in a container — the
-container's own launch-time isolation, independent of any `sandbox.*` policy.
+`policy.timeout_seconds`/`policy.max_output_bytes`, and that
+`allow_write_paths`/`network`/`subprocess` pass through unenforced (now
+warned about if you configure them — see above). That leaves the question of
+what, if anything, DOES restrict those axes when you run in a container —
+the container's own launch-time isolation, independent of any `sandbox.*`
+policy.
 Measured directly (real execution against a live container, not inferred from
 the launch code):
 

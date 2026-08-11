@@ -23,6 +23,7 @@ from pathlib import Path
 import pytest
 
 from reyn.security.sandbox.resolve import resolve_real_executable
+from tests._support.sandbox_backend import FULLY_ENFORCING_AXES
 
 
 def _make_executable(path: Path, body: str = "#!/bin/sh\necho x\n") -> None:
@@ -280,6 +281,7 @@ class _CapturingBackend:
     """Real SandboxBackend test double capturing the argv + policy it is handed."""
 
     name = "capture"
+    enforced_axes = FULLY_ENFORCING_AXES
 
     def __init__(self) -> None:
         self.seen_argv: list[str] | None = None
