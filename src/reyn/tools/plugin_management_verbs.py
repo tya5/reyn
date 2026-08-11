@@ -89,7 +89,6 @@ async def _handle_plugin_install(
     """Install/promote a plugin. Delegates to op_runtime/plugin_install.handle
     via build_legacy_op_context (same bridge pattern as every other install
     verb)."""
-    from pathlib import Path
 
     from reyn.core.op_runtime.plugin_install import handle as plugin_install_handle
     from reyn.core.op_runtime.plugin_install import plugins_root
