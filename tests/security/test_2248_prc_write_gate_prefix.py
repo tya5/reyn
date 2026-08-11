@@ -90,3 +90,36 @@ def test_safe_file_allows_non_recovery_core_reyn_write(tmp_path, monkeypatch):
     )
     safe_file._check_write(str(tmp_path / ".reyn" / "memory" / "note.md"))  # must not raise
     safe_file._check_write(str(tmp_path / ".reyn" / "cache" / "x.db"))  # must not raise
+
+
+def test_safe_file_recovery_core_gate_anchors_on_project_root_not_launch_subdir(
+    tmp_path, monkeypatch,
+):
+    """Tier 2: #4204 bucket C — the recovery-core write-gate must anchor on the
+    PROJECT root (walked up via reyn.yaml), not the raw process cwd, so a
+    ``reyn`` launched from a subdirectory still gates the REAL
+    ``.reyn/config``/``.reyn/state`` — not a phantom
+    ``<subdir>/.reyn/config`` that doesn't exist, and not silently letting
+    the real path through unguarded.
+
+    STRIP-FALSIFY: replacing ``_project_root_for_gate()`` with a bare
+    ``os.getcwd()`` (the pre-#4204 form) makes this go RED — the gate
+    would anchor at ``<project>/subdir/.reyn/config``, which does not
+    prefix-match the real target path under ``<project>/.reyn/config``, so
+    ``_is_under_recovery_core_prefix`` returns False and the raw write is
+    wrongly ALLOWED via the broad ``.reyn/`` zone."""
+    (tmp_path / "reyn.yaml").write_text("mcp:\n  servers: {}\n", encoding="utf-8")
+    subdir = tmp_path / "subdir"
+    subdir.mkdir()
+    monkeypatch.chdir(subdir)  # the operator launched reyn from here, not tmp_path
+
+    from reyn.api.safe import file as safe_file
+
+    safe_file._set_permission_context(
+        read_paths=[str(tmp_path)],
+        write_paths=[str(tmp_path / ".reyn"), str(tmp_path / "reyn")],
+    )
+    # The REAL recovery-core path (under the project root, not the launch
+    # subdirectory) must still be gated — a raw write is DENIED.
+    with pytest.raises(PermissionError):
+        safe_file._check_write(str(tmp_path / ".reyn" / "config" / "mcp.yaml"))
