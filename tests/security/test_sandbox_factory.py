@@ -256,6 +256,34 @@ def test_unknown_config_keys_flags_an_unknown_sandbox_policy_key() -> None:
     assert unknown == {"sandbox.policy.unknown_totally_made_up_key": None}
 
 
+def test_config_background_timeout_defaults_independently_of_foreground() -> None:
+    """Tier 2: #3903 a-2 — background_timeout_seconds/background_max_timeout_seconds
+    resolve to their OWN dataclass defaults (1800 / None) when the operator
+    sets only the foreground pair — the single-shared-field shape #3903's
+    issue body named as the problem ("一時セッション内でも同じ 60 秒") is gone:
+    setting foreground's timeout_seconds must not also move background's.
+    Constructs the real ``SandboxPolicy(**resolved)`` the op handler builds
+    (``sandboxed_exec.py``), not just the delta dict ``resolve_sandbox_policy``
+    returns — the delta is empty for an unset key by design (only explicit
+    writes are represented), so the field-level default only shows up once
+    the dataclass is actually constructed from it."""
+    from reyn.security.sandbox.policy import SandboxPolicy, resolve_sandbox_policy
+
+    cfg = SandboxConfig(policy={"timeout_seconds": 30})
+    resolved = resolve_sandbox_policy(cfg.policy, write_paths=[], mode=cfg.mode)
+    assert resolved["timeout_seconds"] == 30
+    assert "background_timeout_seconds" not in resolved, (
+        "an unset operator key must not appear in the delta dict at all"
+    )
+    policy = SandboxPolicy(**resolved)
+    assert policy.timeout_seconds == 30
+    assert policy.background_timeout_seconds == 1800, (
+        "background_timeout_seconds must resolve to its OWN default (1800), "
+        "not be dragged by the foreground override"
+    )
+    assert policy.background_max_timeout_seconds is None
+
+
 def test_unknown_config_keys_flags_a_renamed_sandbox_policy_key_with_guidance() -> None:
     """Tier 2: #3823 / #4174 T0 — an operator on a pre-#3823 (or pre-#3901)
     config who still writes an OLD internal-vocabulary key (`write_paths`,

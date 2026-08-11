@@ -55,7 +55,14 @@ def test_policy_defaults():
 
     ``timeout_seconds`` defaults to 120 (#3903①, owner ruling 2026-08-11:
     60 -> 120, matching industry foreground precedent — see
-    ``DEFAULT_EXEC_TIMEOUT_SECONDS`` in ``reyn.security.sandbox.policy``)."""
+    ``DEFAULT_EXEC_TIMEOUT_SECONDS`` in ``reyn.security.sandbox.policy``).
+
+    ``background_timeout_seconds``/``background_max_timeout_seconds`` are
+    #3903 a-2 (owner ruling 2026-08-11): background exec gets its OWN
+    default + ceiling, not the single shared field the issue named as the
+    problem. The ceiling defaults to ``None`` (no cap) — an explicit owner
+    choice, not a large sentinel int (see the field's own docstring in
+    ``policy.py`` for why)."""
     p = SandboxPolicy()
     assert p.network is True
     assert p.write_paths == []
@@ -64,6 +71,9 @@ def test_policy_defaults():
     assert p.deny_subprocess is False
     assert p.env_deny_names == []
     assert p.timeout_seconds == 120
+    assert p.max_timeout_seconds == 600
+    assert p.background_timeout_seconds == 1800
+    assert p.background_max_timeout_seconds is None
 
 
 def test_policy_custom_fields():
@@ -76,6 +86,8 @@ def test_policy_custom_fields():
         deny_subprocess=True,
         env_deny_names=["SECRET_TOKEN"],
         timeout_seconds=5,
+        background_timeout_seconds=3600,
+        background_max_timeout_seconds=7200,
     )
     assert p.network is False
     assert p.write_paths == ["/var/out"]
@@ -84,6 +96,8 @@ def test_policy_custom_fields():
     assert p.deny_subprocess is True
     assert p.env_deny_names == ["SECRET_TOKEN"]
     assert p.timeout_seconds == 5
+    assert p.background_timeout_seconds == 3600
+    assert p.background_max_timeout_seconds == 7200
 
 
 # ─── 1b. SandboxedExecIROp no longer carries policy fields (#3907) ───────────
