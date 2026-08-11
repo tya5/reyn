@@ -540,8 +540,12 @@ embedding:
 > `action_retrieval.embedding_class`(on/off の判断と、どの embedding class を
 > 使うかを混同していた)は **廃止(alias なし)**。 2 つの独立したフィールドに
 > 分割: `embedding.enabled`(bool、デフォルト `false` — embedding-backed な
-> semantic-discovery レイヤー全体 — action retrieval の `search_actions` +
-> FP-0063 プラグインの `rag_ingest` embed step — の単一 opt-in スイッチ)と
+> semantic-discovery レイヤー全体の単一 opt-in スイッチ。同時に 2 つを有効化する
+> ─ action retrieval の `search_actions` と、FP-0066 P3b リポジトリ知識
+> index（`knowledge_repo_doc`/`knowledge_repo_src`）の無条件バックグラウンド
+> build。後者は別物の FP-0063 `rag` プラグイン自身の `rag_ingest` とは異なり、
+> それを要求もしない ─ 詳細は [`embedding` フィールド表](reyn-yaml.md#embedding-fields)
+> (EN) を参照)と
 > `embedding.default_class`(string、デフォルト `"standard"` — 既存フィールド、
 > 変更なし)。
 

@@ -1117,8 +1117,12 @@ embedding:
 > which embedding class to use) is **retired, no alias**. It splits into two
 > orthogonal fields: [`embedding.enabled`](#embedding-block) (bool, default
 > `false` — the single opt-in switch for the whole embedding-backed
-> semantic-discovery layer: action retrieval `search_actions` + the FP-0063
-> plugin's `rag_ingest` embed step) and `embedding.default_class` (string,
+> semantic-discovery layer: action retrieval `search_actions` + an
+> unconditional background build of the FP-0066 P3b repo-knowledge index
+> (`knowledge_repo_doc`/`knowledge_repo_src` — see the
+> [field table below](#embedding-fields) for the full breakdown; this is
+> distinct from, and does not require, the separate FP-0063 `rag` plugin's
+> own `rag_ingest`) and `embedding.default_class` (string,
 > default `"standard"` — already existed; unaffected by this change). See
 > [`embedding` block](#embedding-block) below for the full field table.
 
@@ -1828,7 +1832,7 @@ embedding:
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `enabled` | bool | `false` | **FP-0066 §7 — single opt-in switch** for the whole embedding-backed semantic-discovery layer: action retrieval's `search_actions` tool + the FP-0063 `rag` plugin's `rag_ingest` embed step. Default `false` (opt-in / predictable-safe default — embedding needs a provider + cost). Clean-break replacement for the retired `action_retrieval.embedding_class` gate (no alias) — the on/off decision now lives here; the model class is the separate `default_class` field below, unaffected. **Symmetric model**: `enabled: false` hides only semantic discovery (`search_actions`) — non-semantic discovery (`list_actions`, …) and load/invoke verbs (`invoke_action`, …) are unaffected. When `embedding.enabled` is `false`, the `embed` op pre-flights and returns a decision-enabling `status: "blocked"` result (naming this key) rather than a silent no-op or an opaque provider error. |
+| `enabled` | bool | `false` | **FP-0066 §7 — single opt-in switch**, and it turns on two independent things at once, not one: (1) action retrieval's `search_actions` tool (a small index — today's action catalog is ~10 entries), and (2) an unconditional background build of the FP-0066 P3b **repo-knowledge index** (`knowledge_repo_doc` + `knowledge_repo_src` — every reachable `.md` doc and every other source file in the repo, chunked — measured at ~1,609 chunks on this repo at #4156's filing, and it scales with the repo, not fixed). (2) is scheduled on **every router-loop turn** (`sync_repo_ingest_background`, a no-op once the index is clean) purely because this flag is `true` — it does not require `eager_embedding_build`/`--eager-embedding-build`, which only affects whether (1) blocks the first turn. **There is currently no way to enable `search_actions` without also pulling in the repo-knowledge build** (#4156) — both embedding workloads, and their combined provider cost/TPM usage, ride this one flag. Default `false` (opt-in / predictable-safe default — embedding needs a provider + cost). Clean-break replacement for the retired `action_retrieval.embedding_class` gate (no alias) — the on/off decision now lives here; the model class is the separate `default_class` field below, unaffected. **Symmetric model**: `enabled: false` hides only semantic discovery (`search_actions`) — non-semantic discovery (`list_actions`, …) and load/invoke verbs (`invoke_action`, …) are unaffected. When `embedding.enabled` is `false`, the `embed` op pre-flights and returns a decision-enabling `status: "blocked"` result (naming this key) rather than a silent no-op or an opaque provider error. |
 | `default_class` | string | `standard` | Class used when embedding ops don't specify one (used only when `enabled: true`). Must be a key in `classes`. |
 | `batch_size` | int | `100` | Texts per embedding API call. Valid range: 1–2048. |
 | `max_concurrent_batches` | int | `1` | Parallel batch calls in flight. Valid range: 1–10. Values > 1 are accepted but log a warning until concurrent support lands. |
