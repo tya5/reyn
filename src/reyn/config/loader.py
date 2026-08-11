@@ -113,6 +113,60 @@ def load_project_context(config: ReynConfig, project_root: Path) -> str:
     return ""
 
 
+def _warn_unknown_config_keys(policy_tier_merged: dict) -> None:
+    """#4174 T0: log ONE warning naming every unknown/renamed config key
+    found in the policy-tier config (``user_global`` + ``project`` +
+    ``project_local`` merged — the operator-editable files; the 5
+    hot-reload registry files are NOT included, they're checked separately
+    at their own load points, see ``runtime.hot_reload.validate_in_set``).
+
+    Owner ruling (accumulated across #4174's spec revisions): warn, never
+    hard-fail, anywhere — including ``sandbox.policy`` (no special case).
+    Every unknown key is collected and reported in ONE pass (never an
+    early-return "fix one, restart, hit the next" loop). Each line states
+    the consequence as "not applied" (never just "unknown" — the operator
+    needs to know their config had no effect, not just that a word was
+    unrecognized), names the exact new destination when the key was
+    renamed, and points at ``reyn config migrate`` as the fix command.
+    A ``sandbox.*``-rooted key gets an EXTRA line naming the effective
+    resolved sandbox policy — dropping a policy key makes the config
+    LOOSER, not silently inert like an ordinary dropped key, so an
+    operator relying on it must see what's actually in force.
+    """
+    from reyn.config import config_schema
+
+    unknown = config_schema.unknown_config_keys(policy_tier_merged)
+    if not unknown:
+        return
+
+    import logging
+    log = logging.getLogger(__name__)
+
+    lines = [
+        f"config key {key!r} is not recognized — it was NOT APPLIED"
+        + (f"; it belongs at {hint}" if hint else ".")
+        for key, hint in sorted(unknown.items())
+    ]
+    lines.append("Run `reyn config migrate` to fix renamed keys automatically.")
+
+    if any(key.startswith("sandbox.") for key in unknown):
+        from reyn.security.sandbox.policy import resolve_sandbox_policy
+
+        sandbox_raw = policy_tier_merged.get("sandbox")
+        policy_raw = sandbox_raw.get("policy") if isinstance(sandbox_raw, dict) else None
+        mode = sandbox_raw.get("mode", "compat") if isinstance(sandbox_raw, dict) else "compat"
+        resolved = resolve_sandbox_policy(
+            policy_raw if isinstance(policy_raw, dict) else None,
+            write_paths=[], mode=str(mode),
+        )
+        lines.append(
+            f"Effective sandbox policy in force right now (unknown keys "
+            f"above are excluded from it): {resolved!r}"
+        )
+
+    log.warning("Unrecognized config key(s) found:\n" + "\n".join(f"  - {line}" for line in lines))
+
+
 def _as_config_dict(val: object, key: str) -> dict:
     """Coerce a top-level config value to a dict, defaulting on a malformed type.
 
@@ -538,6 +592,13 @@ def load_config(cwd: Path | None = None) -> ReynConfig:
         project_local = _load_yaml(project_root / "reyn.local.yaml")
         merged = _merge(merged, project_local, tier_label="project_local")
 
+        # #4174 T0: unknown-key WARN check on the policy tier ONLY (builtin
+        # + user_global + project + project_local), before the 5 dynamic
+        # registry files below are merged in — those are checked separately
+        # at their own load points (runtime.hot_reload.validate_in_set),
+        # not duplicated here.
+        _warn_unknown_config_keys(merged)
+
         # Issue #470: dynamic MCP registry separated from static config.
         # ``.reyn/mcp.yaml`` carries op-managed server entries; merged
         # LAST so it overrides any operator-edited ``mcp.servers`` in
@@ -599,6 +660,11 @@ def load_config(cwd: Path | None = None) -> ReynConfig:
         # the 3-layer cascade).  Emit a one-time warning if the file exists so
         # users know to migrate.  The file is intentionally NOT loaded.
         _warn_legacy_dot_reyn_config(project_root / ".reyn" / "config.yaml")
+    else:
+        # #4174 T0: no project root — only builtin + user_global are in
+        # `merged`, still worth checking (a mistyped ~/.reyn/config.yaml
+        # key should not go unreported just because there's no project).
+        _warn_unknown_config_keys(merged)
 
     # ADR-0030: apply ${VAR} interpolation across all string fields of the
     # merged config dict.  At this point os.environ already contains values
