@@ -37,7 +37,7 @@ def build_universal_tool_use_slots(
     non_claude: bool = False,  # #1791 A2: non-Claude operational-steering hygiene in slot_in_behaviour
     available_skills: "list | None" = None,  # #2548 PR-A: SkillEntry list for ## Skills block
 ) -> "dict[str, str]":
-    """Build the four positional tool-use SP slots for the universal-category path.
+    """Build the positional tool-use SP slots (listed below) for the universal-category path.
 
     Called by each scheme's ``build_presentation`` to fill the slot-map they
     pass as ``tool_use_sp`` to ``build_system_prompt``. Returns a dict with ONLY
