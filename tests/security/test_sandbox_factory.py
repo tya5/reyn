@@ -258,7 +258,7 @@ def test_unknown_config_keys_flags_an_unknown_sandbox_policy_key() -> None:
 
 def test_config_background_timeout_defaults_independently_of_foreground() -> None:
     """Tier 2: #3903 a-2 — background_timeout_seconds/background_max_timeout_seconds
-    resolve to their OWN dataclass defaults (1800 / None) when the operator
+    resolve to their OWN dataclass defaults (3600 / None) when the operator
     sets only the foreground pair — the single-shared-field shape #3903's
     issue body named as the problem ("一時セッション内でも同じ 60 秒") is gone:
     setting foreground's timeout_seconds must not also move background's.
@@ -277,8 +277,8 @@ def test_config_background_timeout_defaults_independently_of_foreground() -> Non
     )
     policy = SandboxPolicy(**resolved)
     assert policy.timeout_seconds == 30
-    assert policy.background_timeout_seconds == 1800, (
-        "background_timeout_seconds must resolve to its OWN default (1800), "
+    assert policy.background_timeout_seconds == 3600, (
+        "background_timeout_seconds must resolve to its OWN default (3600), "
         "not be dragged by the foreground override"
     )
     assert policy.background_max_timeout_seconds is None
