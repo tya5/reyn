@@ -315,8 +315,9 @@ def _renderer_is_interactive(*, is_interactive: bool, render_mode: str) -> bool:
     (https://github.com/tya5/reyn/pull/3291#issuecomment-5081647531). ``plain``
     now forces the SAME ``ConsoleChatRenderer`` a real ``--cui`` invocation
     gets — genuine equivalence, not a doc-only claim. Every other
-    ``render_mode`` value (``alt-screen`` / ``inline`` / ``auto``, or an
-    already-defaulted unknown value) leaves ``is_interactive`` untouched.
+    ``render_mode`` value (``alt-screen``, or an already-defaulted unknown
+    value — #4223 removed the ``inline``/``auto`` values this comment used
+    to also name) leaves ``is_interactive`` untouched.
     """
     return is_interactive and render_mode != "plain"
 

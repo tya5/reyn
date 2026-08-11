@@ -448,7 +448,7 @@ pane's two gutter columns' start state.
 
 ```yaml
 chat:
-  render_mode: alt-screen # interactive chat renderer: alt-screen (default) | inline | plain | auto
+  render_mode: alt-screen # interactive chat renderer: alt-screen (default) | plain
   reasoning:
     continuity: true      # persist reasoning to history + replay recent turns
     display: true         # show reasoning in the UI (TUI + web, collapsible)
@@ -470,11 +470,13 @@ terminal.
 | Value | Behaviour |
 |-------|-----------|
 | `alt-screen` | **Default.** Full-screen Textual (alt-screen driver). Terminal scrollback is auto-saved on enter and restored on exit; the previous conversation is rebuilt from `history.jsonl` on restart. This is the recommended mode. |
-| `inline` | Legacy bounded inline driver — keeps your pre-launch scrollback in place above a bounded region. **Caveat**: upstream reports Textual inline-driver bugs here (on resize old frames stack, and the conversation pane can collapse to ~1 line), but reyn's own live-TTY integration did not reproduce the resize-stacking bug across 4+ resizes in a real terminal ([witness](https://github.com/tya5/reyn/pull/3291#issuecomment-5081647531)) — treat this mode as not verified-broken but also not verified-clean. Kept as an escape hatch for users who prefer scrollback-in-place; `alt-screen` remains the recommended default. |
 | `plain` | Force the plain line-based renderer (`ConsoleChatRenderer`, no Textual), genuinely equivalent to `--cui` — same renderer and same input-loop driver, not just the input driver. |
-| `auto` | Resolve to `alt-screen` on a TTY (behaviourally identical to `alt-screen` given the non-TTY→`plain` guard). |
 
-An unrecognised value warns and falls back to `alt-screen`.
+An unrecognised value — including a stale `inline` or `auto` from before this
+table was narrowed to two values (owner instruction, `inline`'s legacy
+bounded driver was removed; `auto` was behaviourally identical to
+`alt-screen` and carried no distinct behaviour) — warns and falls back to
+`alt-screen`.
 
 ### `chat.gutters` fields
 

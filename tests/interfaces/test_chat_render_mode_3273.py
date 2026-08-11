@@ -2,15 +2,20 @@
 
 The #3273 TUI pivot makes the interactive chat renderer/driver operator-selectable
 instead of hardcoding one render mode (charter "no uncustomizable hardcoded
-choices"). Two OS invariants are pinned here:
+choices"). #4223 (owner instruction, 2026-08-11) narrowed the declared values
+from four to two — ``inline`` (the legacy bounded Textual driver, upstream
+bugs #3285/#3286) and ``auto`` (behaviourally identical to ``alt-screen``
+given the TTY guard below, a name-only third option) are gone. Two OS
+invariants are pinned here:
 
-- **config parse**: ``chat.render_mode`` accepts the four declared values
-  (``alt-screen`` default / ``inline`` / ``plain`` / ``auto``); an unknown value
-  falls back to the ``alt-screen`` default rather than aborting or silently
-  selecting a bogus path.
+- **config parse**: ``chat.render_mode`` accepts the two declared values
+  (``alt-screen`` default / ``plain``); an unknown value — including a
+  stale ``inline``/``auto`` left over from before #4223 — falls back to the
+  ``alt-screen`` default rather than aborting or silently selecting a
+  bogus path.
 - **resolution + TTY guard**: :func:`resolve_render_mode` maps
-  ``(mode, is_tty)`` to one of the three physical paths. A non-TTY session ALWAYS
-  resolves to ``plain`` regardless of mode (the interactive Textual drivers need a
+  ``(mode, is_tty)`` to one of the two physical paths. A non-TTY session ALWAYS
+  resolves to ``plain`` regardless of mode (the interactive Textual driver needs a
   real terminal — this is the guard that keeps CI / piped / sandbox paths off the
   alt-screen driver). On a TTY each mode routes to its own path.
 - **renderer selection (#3292)**: :func:`~reyn.interfaces.cli.commands.chat.
@@ -48,7 +53,7 @@ def test_render_mode_default_is_alt_screen() -> None:
 
 @pytest.mark.parametrize("mode", CHAT_RENDER_MODES)
 def test_render_mode_each_declared_value_parses(mode: str) -> None:
-    """Tier 2: each of the four declared values round-trips through the parser."""
+    """Tier 2: each of the two declared values round-trips through the parser."""
     assert _build_chat_config({"render_mode": mode}).render_mode == mode
     # And still parses when a sibling compaction block is present (the two parse
     # independently).
@@ -66,21 +71,46 @@ def test_render_mode_unknown_value_falls_back_to_default() -> None:
         assert _build_chat_config({"render_mode": 123}).render_mode == "alt-screen"
 
 
+def test_render_mode_stale_inline_or_auto_falls_back_to_default() -> None:
+    """Tier 2: #4223 — an operator whose config still says ``render_mode:
+    inline`` or ``render_mode: auto`` from before #4223 removed those values
+    is not broken by the removal: they hit the SAME unknown-value
+    warn-and-fall-back path an ordinary typo already took (config parsing
+    treats a former-valid, now-removed value identically to one that was
+    never valid — there is no separate "used to work" carve-out)."""
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        assert _build_chat_config({"render_mode": "inline"}).render_mode == "alt-screen"
+        assert _build_chat_config({"render_mode": "auto"}).render_mode == "alt-screen"
+
+
 @pytest.mark.parametrize("mode", ["alt-screen", "inline", "plain", "auto", "bogus"])
 def test_non_tty_always_resolves_plain(mode: str) -> None:
-    """Tier 2: the universal TTY guard — no configured mode can enter an
-    interactive Textual driver without a real terminal; every mode → plain."""
+    """Tier 2: the universal TTY guard — no mode string can enter an
+    interactive Textual driver without a real terminal; every mode → plain.
+    ``resolve_render_mode`` itself stays permissive of any string input
+    (config-level validation is a separate layer, see
+    ``_build_render_mode``'s own tests above) — ``inline``/``auto`` are
+    included here as arbitrary strings, not as claims they are still valid
+    config values post-#4223."""
     assert resolve_render_mode(mode, is_tty=False) == "plain"
 
 
 def test_tty_resolution_routes_each_mode() -> None:
-    """Tier 2: on a TTY, each mode routes to its own physical path — alt-screen
-    and auto to full-screen alt-screen, inline to the legacy bounded driver, plain
-    to the plain renderer. An unexpected value defaults to alt-screen."""
+    """Tier 2: on a TTY, ``alt-screen`` routes to full-screen alt-screen and
+    ``plain`` to the plain renderer — the two live paths post-#4223. Every
+    OTHER string (a former-valid ``inline``/``auto``, or anything else
+    unexpected) falls through to ``alt-screen``, the SAME belt-and-braces
+    default `resolve_render_mode`'s own docstring describes — #4223
+    deliberately did NOT narrow this fall-through (architect's invariant:
+    narrowing it to `if mode == "alt-screen":` would remove the belt half
+    of its pairing with `_build_render_mode`'s own warn-fallback)."""
     assert resolve_render_mode("alt-screen", is_tty=True) == "alt-screen"
-    assert resolve_render_mode("auto", is_tty=True) == "alt-screen"
-    assert resolve_render_mode("inline", is_tty=True) == "inline"
     assert resolve_render_mode("plain", is_tty=True) == "plain"
+    # Former-valid values, now removed (#4223) — same fall-through as any
+    # other unexpected string, not a special "used to be inline" case.
+    assert resolve_render_mode("auto", is_tty=True) == "alt-screen"
+    assert resolve_render_mode("inline", is_tty=True) == "alt-screen"
     # Belt-and-braces: an unvalidated/unexpected mode on a TTY → alt-screen default.
     assert resolve_render_mode("something-else", is_tty=True) == "alt-screen"
 

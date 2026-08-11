@@ -48,9 +48,12 @@ logger = logging.getLogger(__name__)
 def resolve_render_mode(mode: str, *, is_tty: bool) -> str:
     """Resolve a configured ``chat.render_mode`` + TTY presence to a concrete path.
 
-    Returns one of ``"alt-screen"``, ``"inline"``, ``"plain"`` — the three
-    physical render paths (the first two are the Textual conversation-pane app's
-    driver modes; the last is the plain :class:`ChatRenderer`).
+    Returns one of ``"alt-screen"``, ``"plain"`` — the two physical render
+    paths (the first is the Textual conversation-pane app's one driver mode;
+    the second is the plain :class:`ChatRenderer`). #4223 removed the legacy
+    ``"inline"`` bounded driver and the ``"auto"`` config value (owner
+    instruction — the latter was behaviourally IDENTICAL to ``"alt-screen"``
+    given the TTY guard below, a name-only third option).
 
     The TTY guard is universal: a non-TTY session (piped, CI, sandbox with no
     real terminal, or a host where alt-screen would silently no-op) can never
@@ -64,24 +67,24 @@ def resolve_render_mode(mode: str, *, is_tty: bool) -> str:
     defensive fallback for any caller that reaches here with an app-input
     renderer despite a ``"plain"`` config. The net effect (renderer forced
     Console + this fallback) is genuine ``--cui`` equivalence, not a hybrid.
-    ``"inline"`` selects the legacy bounded inline driver — upstream reports
-    resize-frame-stacking (#3285) and pane-collapse (#3286) there, but reyn's
-    live-TTY integration did NOT reproduce #3285 across 4+ resizes in a real
-    terminal (tui-coder,
-    https://github.com/tya5/reyn/pull/3291#issuecomment-5081647531); treat
-    ``inline`` as **not verified-broken** here but **also not verified-clean**
-    — re-check live before citing either claim. ``"auto"`` and ``"alt-screen"``
-    both resolve to ``"alt-screen"`` (full-screen). An unrecognised mode is
-    treated as the ``alt-screen`` default — config parsing already
-    validates+warns, this is a belt-and-braces fallback.
+    Any unrecognised mode (including a stale ``"inline"``/``"auto"`` left
+    over in an operator's config after #4223) is treated as the
+    ``"alt-screen"`` default — config parsing already validates+warns, this
+    is a belt-and-braces fallback.
     """
     if not is_tty:
         return "plain"
     if mode == "plain":
         return "plain"
-    if mode == "inline":
-        return "inline"
-    # "alt-screen", "auto", or any unexpected value → full-screen alt-screen.
+    # #4223: "inline" removed. "alt-screen" or any unexpected value (a stale
+    # "inline"/"auto" left over in an operator's config, or anything else)
+    # → full-screen alt-screen — the SAME fall-through this line already
+    # provided for "auto"/unexpected before #4223, deliberately kept wide
+    # rather than narrowed to `if mode == "alt-screen":` (architect's
+    # invariant, #4223: narrowing this line removes the belt half of the
+    # belt-and-braces pairing with `_build_render_mode`'s own warn-fallback
+    # — an unexpected value that slips past config validation would then
+    # have nowhere to land).
     return "alt-screen"
 
 
@@ -108,9 +111,10 @@ async def run_chat_client(
 ) -> None:
     """Input-driver selection + (plain) banner/output loop + wait + teardown.
 
-    When the renderer ``uses_app_input()``, ``chat.render_mode`` (#3273) +
-    ``is_tty`` are resolved by :func:`resolve_render_mode` to one of three paths:
-    ``alt-screen`` / ``inline`` (both the Textual conversation-pane app
+    When the renderer ``uses_app_input()``, ``chat.render_mode`` (#3273,
+    narrowed to 2 values by #4223) + ``is_tty`` are resolved by
+    :func:`resolve_render_mode` to one of two paths: ``alt-screen`` (the
+    Textual conversation-pane app
     :func:`~reyn.interfaces.inline.textual_chat.run_textual_chat`, which owns
     both input and output and drains ``transport.frames()`` itself — imported
     LAZILY here so the flowview/textual dependency is touched on that path only)
@@ -159,12 +163,17 @@ async def run_chat_client(
             with stage("client-prep:tui-import"):
                 from reyn.interfaces.inline.textual_chat import run_textual_chat  # noqa: PLC0415
             mark_tui_import_done()
+            # #4223: `resolve_render_mode` can no longer return "inline" (the
+            # config value was removed), so `resolved` here is always
+            # "alt-screen" — no `inline=` kwarg to compute; `run_textual_chat`'s
+            # own `inline: bool = False` default already selects alt-screen
+            # (that parameter and its behavior are untouched, #4223's
+            # invariant — see the function's own docstring).
             await run_textual_chat(
                 transport=transport,
                 read_model=read_model,
                 agent_name=agent_name,
                 config=config,
-                inline=(resolved == "inline"),
             )
             return
 

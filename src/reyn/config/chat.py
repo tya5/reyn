@@ -577,30 +577,27 @@ class ReasoningConfig:
     recent_turns: int = 3
 
 
-# #3273 (#3285/#3286): the interactive chat renderer/driver selection. The
-# Textual conversation-pane app has two driver modes; ``plain`` forces the
+# #3273 (#4223 removed ``inline``/``auto`` — owner instruction, 2026-08-11):
+# the interactive chat renderer/driver selection. The Textual conversation-
+# pane app has ONE driver mode (full-screen alt-screen); ``plain`` forces the
 # ConsoleChatRenderer path even on a TTY.
 #
-# - ``alt-screen`` (DEFAULT): full-screen Textual (alt-screen driver). Sidesteps
-#   the two upstream inline-driver bugs — stale frames stacking on resize (#3285)
-#   and the pane collapsing to ~1 line (#3286) — and auto-saves/restores terminal
-#   scrollback on enter/exit.
-# - ``inline``: the legacy bounded inline driver, kept as an escape hatch for
-#   users who prefer their pre-launch scrollback preserved in place above the
-#   region. CAVEAT: upstream reports the Textual inline-driver bugs #3285
-#   (resize stacking) and #3286 (pane collapse) here, but reyn's own live-TTY
-#   integration did NOT reproduce #3285 across 4+ resizes in a real terminal
-#   (https://github.com/tya5/reyn/pull/3291#issuecomment-5081647531) — treat
-#   this mode as not verified-broken but also not verified-clean; it is still
-#   not the recommended default.
+# - ``alt-screen`` (DEFAULT): full-screen Textual (alt-screen driver).
+#   Auto-saves/restores terminal scrollback on enter/exit.
 # - ``plain``: force the plain ConsoleChatRenderer (no Textual), equivalent to
 #   ``--cui`` (#3292: the renderer selection in ``chat.py`` forces this too,
 #   not only the input-driver choice ``client_driver.resolve_render_mode``
 #   makes — genuine equivalence, not a hybrid).
-# - ``auto``: resolve to ``alt-screen`` on a real TTY (identical to ``alt-screen``
-#   given the TTY guard, which falls any interactive mode back to ``plain`` off a
-#   TTY); provided as the Codex-style ``auto/always/never`` affordance.
-CHAT_RENDER_MODES = ("alt-screen", "inline", "plain", "auto")
+#
+# #4223 removed the legacy bounded ``inline`` driver (upstream Textual bugs
+# #3285/#3286 — reyn's own live-TTY integration reproduced #3286 but did NOT
+# reproduce #3285 across 4+ resizes) and ``auto`` (behaviourally IDENTICAL to
+# ``alt-screen`` given the TTY guard — a name-only third option, no distinct
+# behaviour to preserve). An operator with a stale ``render_mode: inline`` or
+# ``render_mode: auto`` in their config is not broken: :func:`_build_render_mode`
+# below already warns-and-falls-back to ``alt-screen`` on any unrecognized
+# value, the same graceful path an ordinary typo already took.
+CHAT_RENDER_MODES = ("alt-screen", "plain")
 
 
 @dataclass
@@ -634,14 +631,13 @@ class ChatConfig:
     ``gutters`` (#3352): the TTY conversation pane's per-side gutter start
     state — see :class:`GutterConfig`.
 
-    ``render_mode`` (#3273): selects the interactive chat renderer/driver —
-    ``alt-screen`` (default, full-screen), ``inline`` (legacy bounded driver;
-    upstream reports bugs #3285/#3286 there, not reproduced live in reyn's own
-    integration — see the ``CHAT_RENDER_MODES`` comment above), ``plain``
-    (force ``ConsoleChatRenderer``, genuine ``--cui`` equivalence, #3292), or
-    ``auto`` (resolve to alt-screen on a TTY). A non-TTY session always falls
-    back to ``plain`` regardless of this value (the interactive Textual drivers
-    need a real terminal).
+    ``render_mode`` (#3273, narrowed to 2 values by #4223): selects the
+    interactive chat renderer/driver — ``alt-screen`` (default, full-screen)
+    or ``plain`` (force ``ConsoleChatRenderer``, genuine ``--cui``
+    equivalence, #3292). A non-TTY session always falls back to ``plain``
+    regardless of this value (the interactive Textual driver needs a real
+    terminal). See the ``CHAT_RENDER_MODES`` comment above for why the
+    former ``inline``/``auto`` values were removed.
 
     ``neutralize_body`` (#3318): opt-in ESC/OSC-control-sequence stripping on
     the agent-reply / tool-result BODY text (owner ruling B — default OFF,
@@ -668,7 +664,7 @@ class ChatConfig:
     """
     compaction: CompactionConfig = field(default_factory=CompactionConfig)
     reasoning: ReasoningConfig = field(default_factory=ReasoningConfig)
-    render_mode: Literal["alt-screen", "inline", "plain", "auto"] = "alt-screen"
+    render_mode: Literal["alt-screen", "plain"] = "alt-screen"
     gutters: GutterConfig = field(default_factory=GutterConfig)
     neutralize_body: bool = False
     image_url_schemes: "list[str]" = field(default_factory=list)
