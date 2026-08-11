@@ -85,7 +85,6 @@ import json
 import logging
 from dataclasses import dataclass
 
-from jinja2 import TemplateError
 from jinja2.sandbox import SandboxedEnvironment
 
 from reyn.hooks.schema import PushBlock
