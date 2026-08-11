@@ -483,7 +483,7 @@ web_fetch:
 
 `web_fetch.allow_private_ips`（bool, デフォルト `false`）は SSRF 対策。`true` のとき `web_fetch` / `safe.http` がプライベート RFC1918/ULA アドレスへ到達できます（エンタープライズの内部 fetch 向け opt-in）。link-local / クラウドメタデータ（`169.254.169.254`）/ ループバックはこのフラグに関わらず**常に**拒否されます。HTTP リダイレクトは hop ごとに再検証（allowlist + IP-deny）されるため、allowlist 済みホストが内部ターゲットへリダイレクトすることはできません。`REYN_FETCH_ALLOW_PRIVATE_IPS` 環境変数にもエクスポートされ、safe.http サブプロセス + レジストリクライアントが同じ opt-in を参照します。
 
-> ⚠️ **#4274（未対応）**: `web_fetch.*` は現在、実際のチャットセッションの op 実行には配線されていません — `web_fetch.verify_ssl: false`（や `ca_bundle` / `allow_private_ips`）を設定しても、パース・validate は通りますが、実際の `web_fetch` 呼び出しには届きません（常に環境変数 / デフォルト経路にフォールスルーします）。これは #4174 T4 の改名が作った・悪化させたものではない既存のギャップで、別途追跡されています。
+> ℹ️ **#4274**: `web_fetch.*` は現在、実際のチャットセッションの `web_fetch` op 実行に配線されています（`SessionFactoryConfig.web_fetch_config` → `Session` → router `OpContext`）。これが入るまでは、パース・validate は通っても実際の `web_fetch` 呼び出しには届きませんでした — #4174 T4 の改名が作った・悪化させたものではない既存のギャップでした。`verify_ssl: false` や `allow_private_ips: true` のような非デフォルト値を設定したまま気づいていなかった環境では、これから実際に効くようになります。
 
 ## `gateway` ブロック
 

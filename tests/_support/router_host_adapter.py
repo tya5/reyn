@@ -41,6 +41,7 @@ _INERT_OP_CONTEXT_SOURCE_FIELDS: dict = {
     "presentation_renderer_factory": None,
     "presentation_registry_fn": None,
     "multimodal_config": None,
+    "web_fetch_config": None,  # #4274
     "media_store_fn": None,
     "compact_now": None,
     "threat_scan": None,

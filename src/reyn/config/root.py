@@ -258,10 +258,9 @@ class ReynConfig:
     # litellm.ssl_verify → SSL_CERT_FILE → True (default).
     # #4174 T4: this field was `web` (renamed here, unchanged shape). The
     # OTHER half of the old `web:` key — the `reyn web` gateway's own
-    # settings — is the SEPARATE `gateway` field below; #4274 tracks that
-    # this OpContext.web_fetch_config wiring is not actually consumed by
-    # any live session today (a pre-existing gap this rename does not fix
-    # or worsen).
+    # settings — is the SEPARATE `gateway` field below. #4274: this value now
+    # reaches every live session's OpContext.web_fetch_config via
+    # SessionFactoryConfig — see factory_config.py.
     web_fetch: WebFetchConfig = field(default_factory=WebFetchConfig)
     # #4174 T4: the `reyn web` gateway's own settings (auth model, WS frame
     # ceiling, per-surface mount overrides) — split from `web:` because that

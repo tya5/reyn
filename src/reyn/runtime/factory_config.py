@@ -1,11 +1,14 @@
 """#2093: the shared session-factory config bundle — completeness-by-construction.
 
-The four session-factory sites (cli/chat, cli/dogfood, web/deps, cli/mcp)
-each thread a set of UNIFORM, reyn.yaml-config-derived args identically into
-``build_scoped_chat_session`` (8) and ``AgentRegistry`` (3). Historically a new uniform
-arg had to be added at all four sites by hand — and was silently missed at one
-(``sandbox_config`` at the A2A factory; ``delegation_capability_default`` at
-``mcp.py``).
+The five session-factory sites (cli/chat, cli/dogfood, web/deps, cli/mcp,
+runtime/registry_bootstrap) each thread a set of UNIFORM, reyn.yaml-config-derived
+args identically into ``build_scoped_chat_session`` (8) and ``AgentRegistry`` (3).
+Historically a new uniform arg had to be added at all five sites by hand — and was
+silently missed at one (``sandbox_config`` at the A2A factory;
+``delegation_capability_default`` at ``mcp.py``). #4274 is the same class again, one
+level up: ``web_fetch_config`` was declared on ``OpContext`` (#4174 T4) with zero
+production construction sites at all — every factory site was silently missing it,
+not just one.
 
 ``SessionFactoryConfig.from_config`` is the SINGLE point that maps ``ReynConfig`` →
 those uniform args. Every site builds the bundle once and passes it to both consumers,
@@ -31,6 +34,11 @@ class SessionFactoryConfig:
     # ── build_scoped_chat_session uniform config (8) ────────────────────────
     sandbox_config: Any
     multimodal_config: Any
+    # #4274: reyn.yaml web_fetch.* (verify_ssl / allow_private_ips / max_download_bytes,
+    # #4174 T4) — declared on OpContext since T4 but never populated at any factory
+    # site until this field existed. Same shape as multimodal_config: a plain value,
+    # not a per-turn supplier (WebFetchConfig doesn't change mid-session).
+    web_fetch_config: Any
     action_retrieval_config: Any
     embedding_config: Any
     router_config: Any
@@ -106,6 +114,8 @@ class SessionFactoryConfig:
         return cls(
             sandbox_config=config.sandbox,
             multimodal_config=config.multimodal,
+            # #4274: the previously-dead web_fetch.* config, now threaded live.
+            web_fetch_config=config.web_fetch,
             action_retrieval_config=config.action_retrieval,
             embedding_config=config.embedding,
             router_config=config.llm.router,
