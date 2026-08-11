@@ -1128,6 +1128,24 @@ silently start running the full suite locally again without updating it.
    is fine. CI still runs the untruncated suite with those flags on every
    PR, so a hang in your change is still caught there even though you don't
    reproduce that flag combination locally.
+
+   **A passing local sweep can still be missing files your local venv can't
+   see** (#4104/#4101): CI installs every optional extra; a scoped local
+   sweep runs whatever your own venv happens to have. A test gated on a
+   missing extra (`pytest.importorskip`) never enters your local "N passed"
+   count at all — it isn't a failure, it's invisible, wearing the same green
+   a genuine pass does. `pytest_sessionfinish` (`src/reyn/dev/testing/extra_skip_report.py`,
+   wired in `tests/conftest.py`) prints a separate, loud tally of exactly
+   this at the end of any local run that hit one — no action needed to see
+   it; it shows in the same terminal output your scoped run already
+   produces, and stays silent in CI by construction (every extra is
+   installed there, so there's nothing to report). **This only catches
+   phrasing it recognizes** — it matches a skip reason containing "not
+   installed" or "could not import" (`importorskip`'s own default and this
+   repo's conventional phrasing), not "is this an optional-extra skip" in
+   general; a hand-written `importorskip(..., reason="requires the foo
+   extra")` slips past silently. Write new `importorskip` calls with a
+   default or conventionally-phrased reason, or they won't get this net.
 2. **ruff** — lint + import-sort (`I001`):
    ```bash
    ruff check src tests        # add --fix for autofixable I001 / formatting
