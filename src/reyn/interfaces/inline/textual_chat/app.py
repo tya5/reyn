@@ -4302,10 +4302,14 @@ async def run_textual_chat(
     scrollback-preservation rationale that originally motivated inline is now
     redundant — alt-screen auto-saves/restores terminal scrollback on
     enter/exit, and Phase 5 restore rebuilds the conversation from
-    ``history.jsonl`` on restart. ``inline=True`` remains selectable as an
-    escape hatch (``chat.render_mode: inline``) for scrollback-preferring
-    users; ``alt-screen`` stays the recommended default regardless. Returns so
-    the driver's caller can tear the transport down + print the cost summary.
+    ``history.jsonl`` on restart. This ``inline: bool`` PARAMETER is
+    unchanged and still selectable by a caller that passes it explicitly;
+    #4223 removed ONLY the ``chat.render_mode: inline`` CONFIG value that
+    used to drive it here (owner instruction — the config-facing escape
+    hatch, not this function's own parameter, which #4223's own invariant
+    left untouched). ``alt-screen`` stays the recommended default
+    regardless. Returns so the driver's caller can tear the transport down
+    + print the cost summary.
     """
     # #3671: the framework's own startup begins here — terminal setup, first
     # layout, first paint. Everything before it is reyn assembling things;
