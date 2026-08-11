@@ -94,6 +94,7 @@ bearer token):
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import signal
@@ -278,41 +279,22 @@ _TOOL_CALL_WRITE_DENIAL_HINT = (
     "server's working directory is always granted."
 )
 
-def _looks_like_init_timeout(exc: BaseException) -> bool:
-    """Whether *exc* is FastMCP's ``init_timeout`` firing on the MCP handshake.
-
-    Structural, not textual: the ``__cause__`` chain is walked for a
-    ``TimeoutError``, because the wording that reaches us carries no usable
-    signal. MEASURED against the real client (fastmcp 3.4.2) with a stdio server
-    that starts and never speaks — the chain arrives as::
-
-        MCPError: MCP initialize failed: Client failed to connect: Failed to
-                  initialize server session
-          __cause__ RuntimeError: Client failed to connect: Failed to initialize …
-          __cause__ RuntimeError: Failed to initialize server session
-          __cause__ TimeoutError
-
-    i.e. FastMCP re-raises its ``anyio.fail_after`` TimeoutError as a bare
-    ``RuntimeError`` whose message names neither a timeout nor the elapsed
-    seconds, but preserves the TimeoutError as ``__cause__``. So the chain is the
-    only load-bearing evidence in the failure; matching the string would pin
-    wording FastMCP owns and can reword in a patch release.
-
-    Deliberately walks ``__cause__`` only, never ``__context__``: an unrelated
-    error raised while *handling* some incidental TimeoutError would be linked by
-    ``__context__``, and treating that as "the handshake timed out" would attach
-    a confidently wrong remedy to it. Defensive on depth — an exception chain is
-    not structurally guaranteed to be acyclic, and a hint must never be the
-    reason a failure path hangs.
-    """
-    seen: set[int] = set()
-    cur: BaseException | None = exc
-    while cur is not None and id(cur) not in seen:
-        seen.add(id(cur))
-        if isinstance(cur, TimeoutError):
-            return True
-        cur = cur.__cause__
-    return False
+# #3698 stage 1 (removed): ``_looks_like_init_timeout`` used to walk an
+# exception's ``__cause__`` chain looking for a ``TimeoutError``, because
+# fastmcp's OWN ``init_timeout`` mechanism (``anyio.fail_after`` inside
+# ``Client.initialize()``) re-raised it wrapped in two layers of opaque
+# ``RuntimeError`` — the chain-walk existed only to see through that
+# wrapping. Once reyn bounds the stdio handshake itself
+# (``asyncio.wait_for(session.initialize(), timeout=...)`` in
+# ``_initialize_stdio``), the exception that actually reaches the caller on
+# timeout is a plain ``TimeoutError`` with ``__cause__ is None`` — live-
+# verified against a stdio server that starts and never speaks (see the
+# commit removing this function for the probe output). Detecting it is now
+# a direct ``isinstance(exc, TimeoutError)`` at the call site; no separate
+# predicate function is needed. If a future reader hits an opaque multi-
+# layer wrapping again (e.g. from some other library reyn adopts), THIS is
+# the shape that pattern takes and why — re-derive the chain-walk from this
+# note rather than from scratch.
 
 
 # #3028: how long to wait for a server to answer the MCP handshake before giving up.
@@ -502,80 +484,37 @@ def _classify_and_raise(exc: Exception, message: str) -> NoReturn:
     raise MCPError(message) from exc
 
 
-def _extract_stdio_child_pid(fastmcp_client: "Any") -> int | None:
-    """#2714 best-effort: return the OS pid of the stdio subprocess backing
-    ``fastmcp_client``, or None if it can't be located.
+def _extract_stdio_child_pid(stdio_cm: "Any") -> int | None:
+    """#2714 best-effort: return the OS pid of the stdio subprocess opened by
+    the official SDK's ``stdio_client(...)`` async context manager, or None
+    if it can't be located.
 
-    fastmcp 3.4.2's ``StdioTransport`` deliberately keeps the spawned subprocess
-    handle OFF the transport object (its connect-task holds it in a task-local
-    ``AsyncExitStack`` so the task owns no back-reference), and neither fastmcp nor
-    the mcp SDK exposes the pid on any public surface. So we walk the connect-task's
-    coroutine / async-generator frame chain (through the mcp ``stdio_client``
-    generator's ``AsyncExitStack``) to find the ``anyio.abc.Process`` and read its
-    ``pid``.
+    #3698 stage 1: ``stdio_client`` is an ``@asynccontextmanager``-decorated
+    generator function; ``contextlib.asynccontextmanager`` wraps it in an
+    ``_AsyncGeneratorContextManager`` whose ``.gen`` attribute IS the entered
+    generator, and ``anyio.abc.Process`` lives in that generator's OWN local
+    variable (``process``) once entered — one hop, since ``MCPClient`` holds
+    the entered context manager directly (via its own ``AsyncExitStack`), not
+    behind fastmcp's extra task-local indirection the pre-swap
+    ``_walk_frames_for_process_pid`` BFS existed to reach. Live-verified: the
+    extracted pid matched the server's own ``os.getpid()`` exactly (see the
+    commit message introducing this function for the probe output).
 
-    Every step is defensive: any structural drift from a fastmcp/mcp upgrade returns
-    None, and the belt-and-suspenders reap then simply falls back to the async
-    graceful teardown — byte-identical to pre-#2714 behaviour. Captured ONCE at
-    connect (structure known-good) and only ever used as a terminate target, so a
-    stale/None value can never do worse than the pre-fix orphan."""
+    Defensive throughout: any structural drift from an ``mcp`` SDK upgrade
+    returns None, and the belt-and-suspenders reap then simply falls back to
+    the async graceful teardown — byte-identical to pre-#2714 behaviour.
+    Captured ONCE at connect (structure known-good) and only ever used as a
+    terminate target, so a stale/None value can never do worse than the
+    pre-fix orphan."""
     try:
-        from anyio.abc import Process as _AnyioProcess
-    except Exception:  # pragma: no cover — anyio ships with fastmcp
-        return None
-    transport = getattr(fastmcp_client, "transport", None)
-    connect_task = getattr(transport, "_connect_task", None)
-    get_coro = getattr(connect_task, "get_coro", None)
-    if get_coro is None:
-        return None
-    try:
-        return _walk_frames_for_process_pid(get_coro(), _AnyioProcess)
+        frame = getattr(getattr(stdio_cm, "gen", None), "ag_frame", None)
+        if frame is None:
+            return None
+        process = frame.f_locals.get("process")
+        pid = getattr(process, "pid", None)
+        return pid if isinstance(pid, int) else None
     except Exception:  # noqa: BLE001 — pid capture is best-effort, never fatal
         return None
-
-
-def _walk_frames_for_process_pid(root_coro: "Any", process_type: type) -> int | None:
-    """Breadth-first walk of a coroutine/async-generator/AsyncExitStack graph rooted
-    at ``root_coro``, returning the ``pid`` of the first ``process_type`` instance
-    found in any frame's locals. Bounded (``id``-deduped, step-capped) so a cyclic
-    or pathological graph can never loop forever. Helper for
-    :func:`_extract_stdio_child_pid` — see there for why the walk is necessary."""
-    pending: list[Any] = [root_coro]
-    seen: set[int] = set()
-    steps = 0
-    while pending and steps < 500:
-        steps += 1
-        node = pending.pop()
-        if node is None or id(node) in seen:
-            continue
-        seen.add(id(node))
-        # An AsyncExitStack node: descend into the context managers it will exit
-        # (the mcp stdio_client generator + the ClientSession live here).
-        callbacks = getattr(node, "_exit_callbacks", None)
-        if callbacks is not None:
-            for cb in callbacks:
-                callback = cb[1] if isinstance(cb, tuple) and len(cb) == 2 else None
-                target = getattr(callback, "__self__", None)
-                gen = getattr(target, "gen", None)  # _AsyncGeneratorContextManager.gen
-                if gen is not None:
-                    pending.append(gen)
-                inner_stack = getattr(target, "_exit_stack", None)  # ClientSession
-                if inner_stack is not None:
-                    pending.append(inner_stack)
-            continue
-        frame = getattr(node, "cr_frame", None) or getattr(node, "ag_frame", None)
-        if frame is not None:
-            for value in frame.f_locals.values():
-                if isinstance(value, process_type):
-                    pid = getattr(value, "pid", None)
-                    if isinstance(pid, int):
-                        return pid
-                if getattr(value, "_exit_callbacks", None) is not None:
-                    pending.append(value)
-        awaited = getattr(node, "cr_await", None) or getattr(node, "ag_await", None)
-        if awaited is not None:
-            pending.append(awaited)
-    return None
 
 
 # ── Client ───────────────────────────────────────────────────────────────────
@@ -684,7 +623,19 @@ class MCPClient:
         # None (default) means auto-detect via sys.stdin.isatty() at the point
         # _open_http actually needs the answer — see _is_non_interactive().
         self._non_interactive_override: bool | None = non_interactive
-        self._client: Any = None  # fastmcp.Client when initialized
+        self._client: Any = None  # official mcp.ClientSession (stdio) or fastmcp.Client (http/sse, pending #3698 stage 1) when initialized
+        # #3698 stage 1: holds the entered stdio_client + ClientSession async
+        # context managers open for this object's lifetime — the official
+        # SDK's connection lifecycle is a pair of async context managers, not
+        # fastmcp.Client's single reentrant __aenter__/close() object, so an
+        # AsyncExitStack is what reproduces the same "open once, use across
+        # many calls, close later" pattern (live-verified: initialize() then
+        # TWO separate call_tool()s against the SAME held session, then a
+        # clean stack.aclose() — see the commit message for the probe). None
+        # until initialize() actually opens a stdio connection; the http/sse
+        # paths still use fastmcp's own Client (pending stage-1 follow-up
+        # commits) and leave this None.
+        self._exit_stack: "Any | None" = None
         self._initialized = False
         # Captures subprocess stderr for stdio transport so initialize
         # failures (e.g. self-made MCP server exits immediately, writes
@@ -800,13 +751,208 @@ class MCPClient:
         """
         return self._initialized
 
+    async def _paginate_official_sdk(self, list_fn: Any, items_attr: str) -> list[Any]:
+        """#3698 stage 1: fastmcp's ``Client.list_tools()`` (and its sibling
+        list methods) auto-paginate internally, following ``nextCursor`` —
+        reyn relied on that. The official SDK's raw ``ClientSession.
+        list_tools(cursor=...)`` returns ONE page (a ``ListToolsResult``
+        object with ``.tools``/``.nextCursor``, not a bare list) and does
+        NOT paginate on its own — measured directly (its own return
+        annotation; ``ClientSession`` has no auto-paginating convenience
+        layer fastmcp added on top). This reproduces fastmcp's behavior:
+        follow ``nextCursor`` until it's ``None``, same 250-page guard
+        (a malformed/adversarial server cycling cursors forever must not
+        hang this call) as the pre-swap comment on the fastmcp path named."""
+        items: list[Any] = []
+        cursor: str | None = None
+        for _ in range(250):
+            result = await list_fn(cursor)
+            items.extend(getattr(result, items_attr))
+            cursor = result.nextCursor
+            if cursor is None:
+                break
+        return items
+
+    @property
+    def _uses_official_sdk(self) -> bool:
+        """#3698 stage 1: True once ``self._client`` is the official SDK's
+        ``ClientSession`` directly (stdio, migrated) rather than fastmcp's
+        ``Client`` (http/sse, pending their own stage-1 commits). The two
+        expose a few operations under different names/paths for the SAME
+        protocol call (``call_tool_mcp`` vs ``call_tool``, ``.session.
+        subscribe_resource`` vs ``.subscribe_resource`` directly) — this is
+        the single dispatch point every such call site branches on, so the
+        distinction disappears in one place once http/sse migrate too rather
+        than needing to be re-found at each call site. ``self._exit_stack``
+        is only ever set by ``_initialize_stdio`` — a reliable proxy with no
+        separate bookkeeping."""
+        return self._exit_stack is not None
+
     async def initialize(self) -> None:
         """Open the transport and complete the MCP handshake.
 
         Idempotent: a second call is a no-op.
+
+        #3698 stage 1: ``stdio`` now goes through the official ``mcp`` SDK
+        directly (:meth:`_initialize_stdio`) — fastmcp is no longer in this
+        transport's path at all. ``http``/``sse`` still go through
+        :meth:`_initialize_fastmcp` pending their own stage-1 follow-up
+        commits (same PR, reported per-transport — see the commit history).
         """
         if self._initialized:
             return
+        if self._type == "stdio":
+            await self._initialize_stdio()
+        else:
+            await self._initialize_fastmcp()
+
+    async def _initialize_stdio(self) -> None:
+        """#3698 stage 1: stdio via the official ``mcp`` SDK, no fastmcp.
+
+        Connection-lifetime model: fastmcp's ``Client`` is a single reentrant
+        async context manager an ``MCPClient`` enters once and holds open for
+        its own lifetime. The official SDK expresses the SAME connection as
+        TWO separate async context managers (``stdio_client`` for the
+        transport, ``ClientSession`` for the protocol session) that are
+        normally used inside one ``async with`` block. An
+        ``contextlib.AsyncExitStack`` reproduces the "open once, use across
+        many calls, close later" pattern instead — live-verified against the
+        real echo test-double (initialize → two separate call_tool()s against
+        the SAME held session → a clean ``stack.aclose()``) before this was
+        written, not assumed from reading the API alone.
+        """
+        from contextlib import AsyncExitStack
+
+        from mcp.client.session import ClientSession
+        from mcp.client.stdio import StdioServerParameters, stdio_client
+
+        # Computed BEFORE the try block: the except handler's init-timeout hint
+        # needs this value even if the exception fires before the handshake
+        # itself starts (a bad command / sandbox-wrap failure), so it cannot
+        # live inside the try (unbound-on-early-exception otherwise).
+        init_timeout = float(self._config.get("init_timeout", _DEFAULT_INIT_TIMEOUT_SECONDS))
+        stack = AsyncExitStack()
+        try:
+            command = self._config.get("command")
+            if not command:
+                raise MCPError("stdio MCP server config requires 'command'")
+            args = list(self._config.get("args") or [])
+            command, args = self._sandbox_wrap_stdio(command, args)
+            env = self._config.get("env")
+            # Subprocess stderr capture for diagnostic readback on init
+            # failure — same tempfile.TemporaryFile pattern _open_stdio used
+            # for fastmcp's log_file=; the official SDK's stdio_client takes
+            # an errlog= TextIO directly (a real fileno, same requirement).
+            try:
+                self._stderr_capture = tempfile.TemporaryFile(mode="w+t", encoding="utf-8")
+            except Exception:  # noqa: BLE001 — temp-file failure is non-fatal
+                self._stderr_capture = None
+            params = StdioServerParameters(
+                command=command,
+                args=args,
+                env=dict(env) if env else None,
+                cwd=self._config.get("cwd"),
+            )
+            stdio_cm = stdio_client(
+                params, **({"errlog": self._stderr_capture} if self._stderr_capture else {}),
+            )
+            read, write = await stack.enter_async_context(stdio_cm)
+            elicitation_callback = None
+            if self._elicitation_handler is not None:
+                elicitation_callback = _adapt_elicitation_handler(self._elicitation_handler)
+            session = await stack.enter_async_context(
+                ClientSession(
+                    read, write,
+                    message_handler=self._message_handler,
+                    elicitation_callback=elicitation_callback,
+                )
+            )
+            # #3028/#3698 stage 1: reyn now owns the handshake bound directly
+            # (asyncio.wait_for) instead of relying on fastmcp's opaque
+            # init_timeout constructor kwarg (anyio.fail_after wrapped in two
+            # layers of RuntimeError — see the removed _looks_like_init_timeout
+            # for why that indirection existed and why it no longer does).
+            # init_timeout == 0 disables THIS bound (#3028's own documented
+            # escape hatch) — asyncio.wait_for(timeout=0) means "fire almost
+            # immediately", the OPPOSITE of disabled, so 0 must skip the
+            # wrapper entirely rather than being passed through.
+            if init_timeout > 0:
+                init_result = await asyncio.wait_for(session.initialize(), timeout=init_timeout)
+            else:
+                init_result = await session.initialize()
+        except MCPError:
+            self.close_stderr_capture()
+            await stack.aclose()
+            raise
+        except Exception as exc:
+            tail = self.read_stderr_tail()
+            self.close_stderr_capture()
+            await stack.aclose()
+            from reyn.security.sandbox.policy import DEFAULT_SANDBOX_NETWORK
+
+            hint = ""
+            if not self._config.get("network", DEFAULT_SANDBOX_NETWORK):
+                hint = (
+                    "\nHint (#1344): this MCP server is sandboxed with network "
+                    "DISABLED (`network: false` in its config). If it needs "
+                    "network access, set `network: true` (or remove the override)."
+                )
+            if _looks_like_write_denial(tail):
+                hint += (
+                    "\nHint (#2976): the sandbox DENIED a write to a path outside "
+                    "this server's granted write scope (the stderr below names "
+                    "the exact path). A launcher that bootstraps into a per-user "
+                    "cache needs that cache granted. Add the path to this "
+                    "server's `write_paths` in its MCP config, e.g.\n"
+                    "    write_paths: [\"~/.npm\"]\n"
+                    "Declaring `write_paths` replaces the built-in per-runtime "
+                    "defaults; the server's working directory is always granted."
+                )
+            # #3698 stage 1: no more chain-walking predicate — asyncio.wait_for
+            # raises a plain TimeoutError (__cause__=None) directly, live-
+            # verified against a stdio server that starts and never speaks
+            # (see this commit's message for the probe output). The old
+            # fastmcp-only branch needed _looks_like_init_timeout because
+            # fastmcp implemented its OWN init_timeout via anyio.fail_after,
+            # re-wrapped in two layers of RuntimeError before it reached us.
+            if isinstance(exc, (TimeoutError, asyncio.TimeoutError)):
+                hint += _INIT_TIMEOUT_HINT.format(
+                    seconds=init_timeout, server=self._server_name or "<server-name>",
+                )
+            if tail:
+                raise MCPError(
+                    f"MCP initialize failed: {exc}{hint}\n"
+                    f"--- subprocess stderr (tail) ---\n{tail}"
+                ) from exc
+            raise MCPError(f"MCP initialize failed: {exc}{hint}") from exc
+
+        self._client = session
+        self._exit_stack = stack
+        self._initialized = True
+        # #2714: capture the stdio subprocess pid now (structure known-good
+        # right after the handshake) for the belt-and-suspenders reap in
+        # close(). #3698 stage 1: reads it off the ENTERED stdio_client
+        # generator's own frame directly — one hop, not fastmcp's task-local
+        # AsyncExitStack indirection _walk_frames_for_process_pid existed
+        # for. Live-verified: the extracted pid matched the server's own
+        # os.getpid() exactly (see this commit's message for the probe).
+        self._child_pid = _extract_stdio_child_pid(stdio_cm)
+        # #2597 capability/version gate: read the negotiated version +
+        # capabilities right after the handshake. init_result is the plain
+        # return value of session.initialize() here (not a property read off
+        # a later object, unlike fastmcp's Client.initialize_result) — never
+        # None on a successful call, but read defensively anyway in case a
+        # future SDK version's contract changes underneath us.
+        if init_result is not None:
+            self._negotiated_version = str(init_result.protocolVersion)
+            self._server_capabilities = init_result.capabilities
+        else:
+            self._negotiated_version = None
+            self._server_capabilities = None
+
+    async def _initialize_fastmcp(self) -> None:
+        """http/sse transports — unchanged fastmcp path, pending #3698 stage
+        1's own follow-up commits for these two transports."""
         try:
             from reyn.mcp._fastmcp_boundary import import_fastmcp_client
 
@@ -879,6 +1025,11 @@ class MCPClient:
             from reyn.security.sandbox.policy import DEFAULT_SANDBOX_NETWORK
 
             hint = ""
+            # #3698 stage 1: the stdio-gated hints below are now unreachable —
+            # this method only ever runs for http/sse (stdio moved to
+            # _initialize_stdio above) — kept as dead-but-harmless conditions
+            # rather than restructured, since this whole method is itself
+            # temporary pending http/sse's own stage-1 follow-up commits.
             if self._type == "stdio" and not self._config.get(
                 "network", DEFAULT_SANDBOX_NETWORK
             ):
@@ -904,19 +1055,6 @@ class MCPClient:
                     "Declaring `write_paths` replaces the built-in per-runtime "
                     "defaults; the server's working directory is always granted."
                 )
-            # #3028: stdio-gated for the same reason the two hints above are — the
-            # remedy it names (pre-install the package the launcher is fetching) only
-            # exists where reyn spawned a process. An http/sse handshake that times
-            # out already explains itself: the SDK's read timeout raises "Timed out
-            # while waiting for response to InitializeRequest. Waited N seconds",
-            # naming both the request and the duration this wording lacks.
-            if self._type == "stdio" and _looks_like_init_timeout(exc):
-                hint += _INIT_TIMEOUT_HINT.format(
-                    seconds=float(
-                        self._config.get("init_timeout", _DEFAULT_INIT_TIMEOUT_SECONDS)
-                    ),
-                    server=self._server_name or "<server-name>",
-                )
             if tail:
                 # #2976: the hint goes BEFORE the stderr dump, not after it. The
                 # message is later summarised by pool.describe_fault(limit=600),
@@ -934,13 +1072,6 @@ class MCPClient:
 
         self._client = client
         self._initialized = True
-        # #2714: capture the stdio subprocess pid now (structure known-good right
-        # after the handshake) for the belt-and-suspenders reap in close(). Best-
-        # effort and stdio-only — non-stdio transports own no subprocess, and any
-        # structural drift in a future fastmcp/mcp upgrade simply yields None (the
-        # reap then no-ops, falling back to the async graceful teardown).
-        if self._type == "stdio":
-            self._child_pid = _extract_stdio_child_pid(client)
         # #2597 capability/version gate: read the negotiated version + capabilities
         # right after the handshake completes. ``initialize_result`` is populated by
         # ``client.__aenter__()`` above (fastmcp 3.4.2: ``Client.initialize_result``
@@ -1004,18 +1135,38 @@ class MCPClient:
         # server never advertised "tools" rather than let the request reach the
         # server and bounce back as a confusing raw protocol error.
         require_capability(self, "tools")
+        # #3698 stage 1: fastmcp's call_tool_mcp and the official SDK's plain
+        # call_tool take the SAME two concepts (a progress callback, a
+        # per-call read timeout) under DIFFERENT kwarg names
+        # (progress_handler/timeout vs progress_callback/read_timeout_seconds
+        # — measured by reading ClientSession.call_tool's own signature) —
+        # NOT interchangeable via **kwargs, so each branch builds its own.
         kwargs: dict[str, Any] = {}
-        if progress_callback is not None:
-            kwargs["progress_handler"] = progress_callback
-        if timeout_seconds is not None:
-            from datetime import timedelta
-            kwargs["timeout"] = timedelta(seconds=timeout_seconds)
+        if self._uses_official_sdk:
+            if progress_callback is not None:
+                kwargs["progress_callback"] = progress_callback
+            if timeout_seconds is not None:
+                from datetime import timedelta
+                kwargs["read_timeout_seconds"] = timedelta(seconds=timeout_seconds)
+        else:
+            if progress_callback is not None:
+                kwargs["progress_handler"] = progress_callback
+            if timeout_seconds is not None:
+                from datetime import timedelta
+                kwargs["timeout"] = timedelta(seconds=timeout_seconds)
         try:
             # call_tool_mcp (not FastMCP's raise_on_error-by-default call_tool)
             # returns the RAW mcp.types.CallToolResult unchanged — same object
             # shape _result_to_dict already flattens, so op_runtime/mcp.py's
-            # consumed shape stays byte-identical.
-            result = await self._client.call_tool_mcp(name, args or {}, **kwargs)
+            # consumed shape stays byte-identical. #3698 stage 1: the official
+            # SDK's OWN plain call_tool() is already the raw/no-raise variant
+            # (measured by reading ClientSession.call_tool's source: it
+            # returns CallToolResult unconditionally, never raises on
+            # isError) — no _mcp-suffixed name exists there to begin with.
+            if self._uses_official_sdk:
+                result = await self._client.call_tool(name, args or {}, **kwargs)
+            else:
+                result = await self._client.call_tool_mcp(name, args or {}, **kwargs)
         except Exception as exc:
             _classify_and_raise(exc, f"MCP tools/call error: {exc}")
         return self._annotate_write_denial(_result_to_dict(result))
@@ -1069,12 +1220,20 @@ class MCPClient:
         ``nextCursor`` up to a 250-page guard) instead of a single page-1
         request — #2597 S1 free win: servers with >1 page of tools no
         longer silently truncate.
+
+        #3698 stage 1: the official SDK's raw ``ClientSession.list_tools()``
+        has no such auto-pagination (measured: it returns ONE
+        ``ListToolsResult`` page, not a flat list) — see
+        :meth:`_paginate_official_sdk`, which reproduces fastmcp's behavior.
         """
         await self.initialize()
         # #2597 capability/version gate: same seam as call_tool — see there.
         require_capability(self, "tools")
         try:
-            tools = await self._client.list_tools()
+            if self._uses_official_sdk:
+                tools = await self._paginate_official_sdk(self._client.list_tools, "tools")
+            else:
+                tools = await self._client.list_tools()
         except Exception as exc:
             _classify_and_raise(exc, f"MCP tools/list error: {exc}")
         return [_tool_to_dict(t) for t in tools]
@@ -1091,7 +1250,12 @@ class MCPClient:
         await self.initialize()
         require_capability(self, "resources")
         try:
-            resources = await self._client.list_resources()
+            if self._uses_official_sdk:
+                resources = await self._paginate_official_sdk(
+                    self._client.list_resources, "resources",
+                )
+            else:
+                resources = await self._client.list_resources()
         except Exception as exc:
             _classify_and_raise(exc, f"MCP resources/list error: {exc}")
         return [_resource_to_dict(r) for r in resources]
@@ -1103,7 +1267,12 @@ class MCPClient:
         await self.initialize()
         require_capability(self, "resources")
         try:
-            templates = await self._client.list_resource_templates()
+            if self._uses_official_sdk:
+                templates = await self._paginate_official_sdk(
+                    self._client.list_resource_templates, "resourceTemplates",
+                )
+            else:
+                templates = await self._client.list_resource_templates()
         except Exception as exc:
             _classify_and_raise(exc, f"MCP resources/templates/list error: {exc}")
         return [_resource_to_dict(t) for t in templates]
@@ -1118,11 +1287,22 @@ class MCPClient:
         down to just ``.contents``) so the shape-flattening lives in ONE
         place (:func:`_read_resource_result_to_dict`), mirroring how
         :meth:`call_tool` uses ``call_tool_mcp`` for the same reason.
+
+        #3698 stage 1: the official SDK's OWN plain ``read_resource`` never
+        had fastmcp's convenience-stripping layer to begin with — it already
+        returns the full ``ReadResourceResult`` (live-verified: called
+        against the real echo server's ``resource://pid``, ``.contents``
+        reachable directly, no fastmcp in the path). ``uri`` is typed
+        ``AnyUrl`` on that method but accepts a plain ``str`` — pydantic
+        coerces it at the request-params model boundary (also live-verified).
         """
         await self.initialize()
         require_capability(self, "resources")
         try:
-            result = await self._client.read_resource_mcp(uri)
+            if self._uses_official_sdk:
+                result = await self._client.read_resource(uri)
+            else:
+                result = await self._client.read_resource_mcp(uri)
         except Exception as exc:
             _classify_and_raise(exc, f"MCP resources/read error: {exc}")
         return _read_resource_result_to_dict(result)
@@ -1139,7 +1319,10 @@ class MCPClient:
         await self.initialize()
         require_capability(self, "prompts")
         try:
-            prompts = await self._client.list_prompts()
+            if self._uses_official_sdk:
+                prompts = await self._paginate_official_sdk(self._client.list_prompts, "prompts")
+            else:
+                prompts = await self._client.list_prompts()
         except Exception as exc:
             _classify_and_raise(exc, f"MCP prompts/list error: {exc}")
         return [_prompt_to_dict(p) for p in prompts]
@@ -1155,11 +1338,18 @@ class MCPClient:
         lives in ONE place (:func:`_get_prompt_result_to_dict`), mirroring
         how :meth:`read_resource` uses ``read_resource_mcp`` for the same
         reason.
+
+        #3698 stage 1: the official SDK's OWN plain ``get_prompt`` has no
+        such extra convenience kwargs to begin with — same signature shape
+        (``name``, ``arguments``), full ``GetPromptResult`` returned.
         """
         await self.initialize()
         require_capability(self, "prompts")
         try:
-            result = await self._client.get_prompt_mcp(name=name, arguments=arguments)
+            if self._uses_official_sdk:
+                result = await self._client.get_prompt(name=name, arguments=arguments)
+            else:
+                result = await self._client.get_prompt_mcp(name=name, arguments=arguments)
         except Exception as exc:
             _classify_and_raise(exc, f"MCP prompts/get error: {exc}")
         return _get_prompt_result_to_dict(result)
@@ -1207,12 +1397,19 @@ class MCPClient:
         re-read the resource to see the new content; see
         :mod:`reyn.mcp.message_handler`'s ``on_resource_updated`` for the
         EventLog bridge.
+
+        #3698 stage 1: once ``self._client`` IS the ``ClientSession`` directly
+        (stdio), the ``.session`` indirection fastmcp needed is gone — call
+        the method on ``self._client`` itself.
         """
         await self.initialize()
         require_capability(self, "resources")
         self._require_resources_subscribe_capability()
         try:
-            await self._client.session.subscribe_resource(uri)
+            if self._uses_official_sdk:
+                await self._client.subscribe_resource(uri)
+            else:
+                await self._client.session.subscribe_resource(uri)
         except Exception as exc:
             _classify_and_raise(exc, f"MCP resources/subscribe error: {exc}")
 
@@ -1224,7 +1421,10 @@ class MCPClient:
         require_capability(self, "resources")
         self._require_resources_subscribe_capability()
         try:
-            await self._client.session.unsubscribe_resource(uri)
+            if self._uses_official_sdk:
+                await self._client.unsubscribe_resource(uri)
+            else:
+                await self._client.session.unsubscribe_resource(uri)
         except Exception as exc:
             _classify_and_raise(exc, f"MCP resources/unsubscribe error: {exc}")
 
@@ -1247,7 +1447,9 @@ class MCPClient:
             self._reap_child_process()  # nothing opened, or already closed once — still idempotent
             return
         client = self._client
+        exit_stack = self._exit_stack
         self._client = None
+        self._exit_stack = None
         self._initialized = False
         # #2597 capability/version gate: a closed client re-negotiates on the next
         # initialize() (or duck-typed callers who happen to keep querying supports()
@@ -1256,11 +1458,33 @@ class MCPClient:
         self._negotiated_version = None
         self._server_capabilities = None
         try:
-            await client.close()
-        except Exception:
+            # #3698 stage 1: stdio was opened via self._exit_stack (the official
+            # SDK's stdio_client + ClientSession, entered as two separate async
+            # context managers — see _initialize_stdio) — closing means exiting
+            # THAT stack, not calling .close() on the ClientSession object
+            # (which has no such method; only __aexit__ via the stack it was
+            # entered through). http/sse still open via fastmcp's Client,
+            # which owns its own close().
+            if exit_stack is not None:
+                await exit_stack.aclose()
+            else:
+                await client.close()
+        except (Exception, asyncio.CancelledError):
             # Best-effort graceful cleanup; transport may already be down. The
             # belt-and-suspenders reap in the finally still terminates the OS
             # subprocess even when this graceful path raised (the #2714 guard).
+            # #3698 stage 1: asyncio.CancelledError joins Exception here
+            # (Python 3.8+ makes it a BaseException, not an Exception
+            # subclass) — measured live: the official SDK's stdio_client
+            # exits via anyio.create_task_group(), whose __aexit__ can
+            # surface a CancelledError from an in-flight subprocess-wait
+            # when the CALLER's own task is being torn down concurrently
+            # (tests/mcp/test_2597_s2a_mcp_connection_service.py's pool
+            # teardown hit this). This is the SAME class of teardown fault
+            # the surrounding docstring already documents tolerating for
+            # Windows (BrokenResourceError/BaseExceptionGroup) — the
+            # finally-reap below is what actually guarantees the child dies,
+            # not this try succeeding.
             pass
         finally:
             # #2714: explicit terminate runs on BOTH the success and the fault path
@@ -1781,6 +2005,31 @@ class MCPClient:
 
 
 # ── helpers ──────────────────────────────────────────────────────────────────
+
+def _adapt_elicitation_handler(fastmcp_shaped_handler: Any) -> Any:
+    """#3698 stage 1: adapt reyn's own ``(message, response_type, params,
+    context) -> ...`` elicitation handler (``reyn.mcp.elicitation.
+    build_elicitation_handler``, built to fastmcp's
+    ``fastmcp.client.elicitation.ElicitationHandler`` calling convention) to
+    the official SDK's ``ElicitationFnT`` — ``(context, params) ->
+    ElicitResult | ErrorData``, TWO positional args in the OPPOSITE order.
+
+    Measured before writing this: reyn's own handler body never reads
+    ``response_type`` past its signature declaration (grepped — zero uses;
+    the module docstring itself says it's "only used as the None-vs-not-None
+    signal for does this elicitation carry a schema at all", and the handler
+    body already gets that from ``isinstance(params, ElicitRequestFormParams)``
+    directly) — so passing ``None`` here loses nothing. ``message`` is
+    ``params.message`` on every real ``ElicitRequestParams`` shape (form or
+    URL) the official SDK sends.
+    """
+    async def _adapted(context: Any, params: Any) -> Any:
+        return await fastmcp_shaped_handler(
+            getattr(params, "message", ""), None, params, context,
+        )
+
+    return _adapted
+
 
 def _result_to_dict(result: Any) -> dict[str, Any]:
     """Flatten an ``mcp.types.CallToolResult`` into the shape

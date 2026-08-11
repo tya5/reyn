@@ -162,33 +162,46 @@ def test_open_stdio_allocates_stderr_capture() -> None:
         del cm
 
 
-def test_initialize_failure_includes_stderr_tail_in_error() -> None:
+def test_initialize_failure_includes_stderr_tail_in_error(monkeypatch) -> None:
     """Tier 2: when initialize fails after stderr was written, the
     MCPError carries the tail as part of the message.
 
-    Uses the public ``initialize`` API with a deliberately broken
-    transport opener that raises after writing to the capture file —
-    simulating a subprocess that emits diagnostic text then exits.
+    #3698 stage 1: stdio now goes through ``_initialize_stdio`` directly
+    (the official SDK's ``stdio_client``, not fastmcp's ``_open_transport``/
+    ``_open_stdio`` — those are only reachable via the http/sse fastmcp path
+    now). Patches ``mcp.client.stdio.stdio_client`` at the SOURCE module —
+    ``_initialize_stdio``'s own ``from mcp.client.stdio import ...`` is a
+    local import re-executed on every call, so it re-reads whatever this
+    monkeypatch has installed there, same mechanism the module docstring's
+    item 1 already relied on for the (now-superseded) fastmcp seam.
+
+    ``_initialize_stdio`` allocates its OWN ``self._stderr_capture`` (it
+    can't be pre-populated by the test the way the old fastmcp seam allowed
+    — the real flow's own temp file didn't exist yet at that point either)
+    — so the fake CM writes the diagnostic text into whatever file
+    ``errlog=`` it's called with, simulating what a real subprocess's stderr
+    capture would have produced before dying.
     """
     pytest.importorskip("mcp")
     client = _client()
-    # Pre-allocate a capture so the simulated transport can write into
-    # it before the failure. Real flow allocates this in _open_stdio.
-    client._stderr_capture = tempfile.TemporaryFile(mode="w+t", encoding="utf-8")
-    client._stderr_capture.write("Traceback: ImportError: missing dep 'foo'\n")
-    client._stderr_capture.flush()
 
     class _BrokenAsyncCM:
+        def __init__(self, errlog):
+            self._errlog = errlog
+
         async def __aenter__(self):
+            if self._errlog is not None:
+                self._errlog.write("Traceback: ImportError: missing dep 'foo'\n")
+                self._errlog.flush()
             raise RuntimeError("subprocess died before handshake")
 
         async def __aexit__(self, *args):
             return False
 
-    def _broken_transport():
-        return _BrokenAsyncCM()
+    def _broken_stdio_client(params, errlog=None):
+        return _BrokenAsyncCM(errlog)
 
-    client._open_transport = _broken_transport  # type: ignore[method-assign]
+    monkeypatch.setattr("mcp.client.stdio.stdio_client", _broken_stdio_client)
 
     import asyncio
     with pytest.raises(MCPError) as excinfo:
