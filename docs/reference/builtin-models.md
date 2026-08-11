@@ -13,7 +13,7 @@ without declaring them in `reyn.yaml`.
 
 > **These are examples, not endorsements.**  The built-in catalog provides a convenient
 > starting point.  Your `reyn.yaml` is always the source of truth.  Override any entry
-> by declaring the same name under `models:`.
+> by declaring the same name under `llm.models:`.
 
 ## Catalog entries
 
@@ -27,27 +27,27 @@ strong:   gemini-pro           # alias — extends: gemini-pro
 
 The three generic tier names `ReynConfig.model` and `--model` document are
 **aliases** into the concrete catalog below, not separate model definitions —
-a project's own `reyn.yaml` normally redeclares these three under `models:`
+a project's own `reyn.yaml` normally redeclares these three under `llm.models:`
 (see `reference/config/reyn-yaml.md`), which overrides these built-ins with
 the same override semantics as any other entry. Without a `reyn.yaml` at all
-(or one whose `models:` block omits one of these three), the class still
+(or one whose `llm.models:` block omits one of these three), the class still
 resolves via this built-in alias rather than reaching LiteLLM as a bare,
 unresolved class name (#3368).
 
 #### Partially declared tiers are warned about
 
-Because an omitted tier still resolves, an *incomplete* `models:` block would
+Because an omitted tier still resolves, an *incomplete* `llm.models:` block would
 otherwise be invisible: a project that maps `light` and `strong` but forgets
 `standard` silently routes every default-class call to reyn's built-in default
 instead of the provider it deliberately chose for the other two. So when
-`models:` declares **some but not all** of the tiers, reyn logs a warning
+`llm.models:` declares **some but not all** of the tiers, reyn logs a warning
 naming the omitted tier, the model it fell back to, and the line to add:
 
 ```
-reyn.yaml `models:` declares the light, strong tier(s) but omits standard —
+reyn.yaml `llm.models:` declares the light, strong tier(s) but omits standard —
 the omitted tier(s) still resolve, via reyn's built-in defaults:
 standard -> gemini/gemini-2.5-flash-lite. ... To take control, add under
-`models:` in reyn.yaml:
+`llm.models:` in reyn.yaml:
   standard: gemini/gemini-2.5-flash-lite
 ```
 
@@ -81,12 +81,13 @@ reasoning-heavy tasks.  Cost is roughly 2–3× `claude-sonnet` for the same out
 To create a cost variant, use `extends`:
 
 ```yaml
-models:
-  reasoning-light:
-    extends: claude-sonnet-thinking
-    extra_body:
-      thinking:
-        budget_tokens: 4000   # overrides 8000; type: enabled is carried from base
+llm:
+  models:
+    reasoning-light:
+      extends: claude-sonnet-thinking
+      extra_body:
+        thinking:
+          budget_tokens: 4000   # overrides 8000; type: enabled is carried from base
 ```
 
 ### `claude-haiku`
@@ -296,13 +297,14 @@ user-declared entries always win:
 
 ```yaml
 # reyn.yaml
-models:
-  # Override built-in claude-sonnet with a project-specific variant.
-  claude-sonnet:
-    model: anthropic/claude-3-7-sonnet
-    max_completion_tokens: 4096   # tighter budget for this project
+llm:
+  models:
+    # Override built-in claude-sonnet with a project-specific variant.
+    claude-sonnet:
+      model: anthropic/claude-3-7-sonnet
+      max_completion_tokens: 4096   # tighter budget for this project
 ```
 
 ## See also
 
-- `reference/config/reyn-yaml.md` — `models:` block, `extends` syntax, deep merge
+- `reference/config/reyn-yaml.md` — `llm.models:` block, `extends` syntax, deep merge

@@ -38,16 +38,15 @@ Any string field in any reyn YAML file can reference an environment variable usi
 
 ```yaml
 # reyn.yaml — all ${VAR} references below are resolved from secrets.env or shell env
-models:
-  default-sonnet:
-    model: claude-sonnet-4-5
-    api_key: ${ANTHROPIC_API_KEY}          # LLM API key
-    extra_body:
-      headers:
-        Authorization: ${LITELLM_PROXY_TOKEN}
-
-litellm:
-  api_base: ${LITELLM_API_BASE}
+llm:
+  models:
+    default-sonnet:
+      model: claude-sonnet-4-5
+      api_key: ${ANTHROPIC_API_KEY}          # LLM API key
+      extra_body:
+        headers:
+          Authorization: ${LITELLM_PROXY_TOKEN}
+  api_base: ${LITELLM_API_BASE}            # nests under llm:, not a separate litellm: key
 
 mcp:
   servers:
