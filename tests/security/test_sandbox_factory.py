@@ -144,26 +144,56 @@ def test_compat_mode_still_respects_an_explicit_operator_deny() -> None:
     assert resolved["deny_subprocess"] is True
 
 
-def test_config_rejects_an_unknown_policy_key_rather_than_dropping_it() -> None:
-    """Tier 2: #3823 — the config-vocabulary translation layer must FAIL LOUD
-    on a key it does not recognize, not silently drop it. lead-coder's
-    explicit requirement: for a security deny-list, a dropped-not-rejected
-    unknown key (e.g. a typo'd `deny_subprocess` under the new vocabulary)
-    reads as "nothing to deny" — a fail-OPEN regression. This asserts the
-    load FAILS (ValueError), not that some default gets returned."""
-    with pytest.raises(ValueError, match="unknown_totally_made_up_key"):
-        SandboxConfig(policy={"unknown_totally_made_up_key": True})
+def test_config_no_longer_raises_on_an_unknown_policy_key() -> None:
+    """Tier 2: #4174 T0 (owner ruling — "no hard-fail anywhere, don't
+    special-case sandbox.policy") supersedes #3823's original fail-loud
+    posture asserted by this test's predecessor
+    (test_config_rejects_an_unknown_policy_key_rather_than_dropping_it).
+    Construction no longer raises — the unknown key is caught by the
+    unified #4174 T0 warn-not-fail path instead (see
+    test_unknown_config_keys_flags_an_unknown_sandbox_policy_key below for
+    that half). This test's own job: prove the RELAXATION — a key that used
+    to crash construction no longer does."""
+    cfg = SandboxConfig(policy={"unknown_totally_made_up_key": True})
+    assert cfg.policy == {"unknown_totally_made_up_key": True}
 
 
-def test_config_rejects_a_default_timeout_above_the_default_cap() -> None:
-    """Tier 2: #3903① — with max_timeout_seconds left unset (defaults to 600,
-    DEFAULT_MAX_EXEC_TIMEOUT_SECONDS), an operator-declared timeout_seconds
-    above it is a self-consistency error (default > the LLM-extensible cap
-    makes no sense), not silently accepted. Real SandboxConfig(policy=...)
-    construction, not a bare _translate_sandbox_policy_config() call — the
-    config load path is what an operator actually exercises."""
-    with pytest.raises(ValueError, match="timeout_seconds"):
-        SandboxConfig(policy={"timeout_seconds": 601})
+def test_config_silently_filters_an_unknown_policy_key_at_resolve_time() -> None:
+    """Tier 2: #4174 T0 accept-side — a known, well-formed policy key
+    resolves normally and an unknown key alongside it is dropped without
+    raising (the warn already happened at config-load time, upstream of
+    this call — see _translate_sandbox_policy_config's docstring)."""
+    from reyn.security.sandbox.policy import resolve_sandbox_policy
+
+    cfg = SandboxConfig(
+        policy={"network": False, "unknown_totally_made_up_key": True}
+    )
+    resolved = resolve_sandbox_policy(cfg.policy, write_paths=[], mode=cfg.mode)
+    assert resolved["network"] is False
+    assert "unknown_totally_made_up_key" not in resolved
+
+
+def test_config_clamps_a_default_timeout_above_the_default_cap(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Tier 2: #3903① / #4174 T0 — with max_timeout_seconds left unset
+    (defaults to 600, DEFAULT_MAX_EXEC_TIMEOUT_SECONDS), an
+    operator-declared timeout_seconds above it no longer raises
+    (superseding this test's predecessor,
+    test_config_rejects_a_default_timeout_above_the_default_cap) — it WARNS
+    and clamps the effective default down to the max, per the owner's
+    blanket no-hard-fail ruling (folded in per architect's explicit flag
+    that this raise would otherwise be the one hard-fail left standing)."""
+    from reyn.security.sandbox.policy import resolve_sandbox_policy
+
+    cfg = SandboxConfig(policy={"timeout_seconds": 601})
+    with caplog.at_level(logging.WARNING):
+        resolved = resolve_sandbox_policy(cfg.policy, write_paths=[], mode=cfg.mode)
+    assert resolved["timeout_seconds"] == 600
+    messages = [r.getMessage() for r in caplog.records]
+    assert any(
+        "timeout_seconds" in m and "max_timeout_seconds" in m for m in messages
+    ), f"expected a warning naming both values, got: {messages!r}"
 
 
 def test_config_accepts_a_timeout_exactly_at_the_default_cap() -> None:
@@ -193,34 +223,87 @@ def test_config_max_timeout_seconds_is_operator_settable_below_the_default() -> 
     assert resolved["max_timeout_seconds"] == 90
 
 
-def test_config_rejects_default_timeout_above_an_explicit_lower_max() -> None:
-    """Tier 2: #3903① — the self-consistency check reads BOTH operator-
-    declared values, not just timeout_seconds against the 600 default: a
-    default of 100 against an explicitly-lowered max of 90 is still
-    rejected."""
-    with pytest.raises(ValueError, match="max_timeout_seconds"):
-        SandboxConfig(policy={"timeout_seconds": 100, "max_timeout_seconds": 90})
+def test_config_clamps_default_timeout_above_an_explicit_lower_max(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Tier 2: #3903① / #4174 T0 — the self-consistency check reads BOTH
+    operator-declared values, not just timeout_seconds against the 600
+    default: a default of 100 against an explicitly-lowered max of 90 warns
+    and clamps to 90, no longer raises (supersedes
+    test_config_rejects_default_timeout_above_an_explicit_lower_max)."""
+    from reyn.security.sandbox.policy import resolve_sandbox_policy
+
+    cfg = SandboxConfig(policy={"timeout_seconds": 100, "max_timeout_seconds": 90})
+    with caplog.at_level(logging.WARNING):
+        resolved = resolve_sandbox_policy(cfg.policy, write_paths=[], mode=cfg.mode)
+    assert resolved["timeout_seconds"] == 90
+    messages = [r.getMessage() for r in caplog.records]
+    assert any("max_timeout_seconds" in m for m in messages), messages
 
 
-def test_config_guides_an_old_internal_vocabulary_key_by_name_not_as_unknown() -> None:
-    """Tier 2: #3823 — an operator on a pre-#3823 (or pre-#3901) config who
-    still writes an OLD internal-vocabulary key (`write_paths`, the pre-#3823
-    name for `allow_write_paths`) gets the RENAMED-KEY guidance naming the
-    new key, not the generic "unknown key" message — `_RENAMED_SANDBOX_POLICY_KEYS`
-    is checked BEFORE the generic unknown-key path specifically because a
-    rename can carry a value inversion (`deny_subprocess` -> `subprocess`)
-    the generic message cannot explain. This is a real witness for
-    `_RENAMED_SANDBOX_POLICY_KEYS` — no prior test constructed a
-    `SandboxConfig(policy=...)` with an old key at all, so a wrong/stale
-    entry in that map (or the ordering silently regressing to the generic
-    unknown-key path) stayed green with nothing catching it."""
-    with pytest.raises(ValueError) as exc_info:
-        SandboxConfig(policy={"write_paths": ["/x"]})
-    msg = str(exc_info.value)
-    assert "allow_write_paths" in msg, (
-        f"expected the renamed-key guidance naming 'allow_write_paths', got: {msg!r}"
+def test_unknown_config_keys_flags_an_unknown_sandbox_policy_key() -> None:
+    """Tier 2: #4174 T0 — the unified unknown-key walk
+    (config_schema.unknown_config_keys), not SandboxConfig construction, is
+    now where an unknown sandbox.policy key surfaces (see
+    test_config_no_longer_raises_on_an_unknown_policy_key above for the
+    construction-side half of this same change). A totally unrecognized
+    key gets a None hint (no rename to point to)."""
+    from reyn.config import config_schema
+
+    unknown = config_schema.unknown_config_keys(
+        {"sandbox": {"policy": {"unknown_totally_made_up_key": True}}}
     )
-    assert "unknown key" not in msg.lower()
+    assert unknown == {"sandbox.policy.unknown_totally_made_up_key": None}
+
+
+def test_unknown_config_keys_flags_a_renamed_sandbox_policy_key_with_guidance() -> None:
+    """Tier 2: #3823 / #4174 T0 — an operator on a pre-#3823 (or pre-#3901)
+    config who still writes an OLD internal-vocabulary key (`write_paths`,
+    the pre-#3823 name for `allow_write_paths`) gets the RENAMED-KEY
+    guidance naming the new key via the unified walk (supersedes
+    test_config_guides_an_old_internal_vocabulary_key_by_name_not_as_unknown,
+    which asserted this through a SandboxConfig-construction raise that
+    #4174 T0 removed) — a real witness for `_RENAMED_SANDBOX_POLICY_KEYS`
+    reaching the new mechanism, not a stale/dropped registration."""
+    from reyn.config import config_schema
+
+    unknown = config_schema.unknown_config_keys(
+        {"sandbox": {"policy": {"write_paths": ["/x"]}}}
+    )
+    hint = unknown["sandbox.policy.write_paths"]
+    assert hint is not None and "allow_write_paths" in hint.note, (
+        f"expected the renamed-key guidance naming 'allow_write_paths', got: {hint!r}"
+    )
+    # #4174 T0 (lead-coder's block on #4190): a sandbox.policy rename's
+    # guidance describes a per-key VALUE TRANSFORM, not a plain
+    # relocation — `destination` must stay None so `reyn config migrate`
+    # never guesses at the transform.
+    assert hint.destination is None
+
+
+def test_unknown_config_keys_is_silent_for_a_well_formed_sandbox_policy() -> None:
+    """Tier 2: #4174 T0 accept-side (lead-coder's explicit false-positive-noise
+    concern — a correctly-configured section must never be flagged, or the
+    warning as a whole becomes something operators learn to ignore). A
+    policy using only real config-vocabulary keys across the whole nested
+    sandbox.* section produces zero unknown-key hits."""
+    from reyn.config import config_schema
+
+    unknown = config_schema.unknown_config_keys({
+        "sandbox": {
+            "backend": "auto",
+            "mode": "strict",
+            "policy": {
+                "network": False,
+                "subprocess": True,
+                "allow_write_paths": ["/repo"],
+                "deny_read_paths": ["~/.ssh"],
+                "timeout_seconds": 30,
+                "max_timeout_seconds": 90,
+            },
+        },
+    })
+    assert unknown == {}
 
 
 def test_yaml_parse_defaults_mode_to_compat_when_absent():
