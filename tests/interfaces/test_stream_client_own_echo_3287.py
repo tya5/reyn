@@ -90,6 +90,17 @@ class _Recorder:
         return False
 
 
+async def _wait_until(predicate) -> None:
+    """#4264 ③: unbounded poll on run_output_loop's own OBSERVABLE effects
+    (``own_submissions`` shrinking, ``renderer.events`` growing) — no fixed
+    sleep, no attempt cap (testing.md § Time). No new production signal:
+    both are state the loop already mutates for real consumers (the set it
+    was handed, the renderer it renders into), not a hook added for this
+    test's own sake."""
+    while not predicate():
+        await asyncio.sleep(0.01)
+
+
 class _QueueTransport(ClientTransport):
     """A real, minimal ClientTransport: yields queued frames; ``submit_user_text``
     returns a caller-scripted msg_id (mirroring the production contract —
@@ -187,7 +198,12 @@ async def test_matching_own_submission_is_not_rerendered_and_is_consumed() -> No
     task = asyncio.create_task(
         run_output_loop(transport, renderer, own_submissions=own_submissions)
     )
-    await asyncio.sleep(0.05)
+    # #4264 ③: own_submissions emptying IS the loop's own observable effect
+    # of having consumed the matching event — wait on that, not a sleep.
+    await _wait_until(lambda: not own_submissions)
+    # The other two queued frames (turn_started/turn_settled) still need a
+    # moment to drain after the matching id is consumed.
+    await _wait_until(lambda: "turn_settled" in [e.type for e in renderer.events])
     task.cancel()
     await asyncio.gather(task, return_exceptions=True)
 
@@ -213,7 +229,9 @@ async def test_non_matching_event_still_renders_and_set_untouched() -> None:
     task = asyncio.create_task(
         run_output_loop(transport, renderer, own_submissions=own_submissions)
     )
-    await asyncio.sleep(0.05)
+    # #4264 ③: wait for the loop's own observable effect (the event actually
+    # reaching the renderer) instead of a sleep.
+    await _wait_until(lambda: "user_submitted" in [e.type for e in renderer.events])
     task.cancel()
     await asyncio.gather(task, return_exceptions=True)
 
@@ -249,7 +267,10 @@ async def test_same_text_two_clients_does_not_cross_match_by_id() -> None:
     task = asyncio.create_task(
         run_output_loop(transport, renderer, own_submissions=own_submissions)
     )
-    await asyncio.sleep(0.05)
+    # #4264 ③: own_submissions emptying means BOTH queued events have been
+    # consumed — "m-theirs" (rendered) and "m-mine" (matched, suppressed) —
+    # since the loop processes the FIFO queue one at a time.
+    await _wait_until(lambda: not own_submissions)
     task.cancel()
     await asyncio.gather(task, return_exceptions=True)
 
@@ -276,7 +297,8 @@ async def test_own_submissions_none_preserves_the_event_as_sole_echo() -> None:
     await transport.push(EventFrame(_user_submitted_event("piped line", "m-piped")))
 
     task = asyncio.create_task(run_output_loop(transport, renderer, own_submissions=None))
-    await asyncio.sleep(0.05)
+    # #4264 ③: wait for the loop's own observable effect instead of a sleep.
+    await _wait_until(lambda: "user_submitted" in [e.type for e in renderer.events])
     task.cancel()
     await asyncio.gather(task, return_exceptions=True)
 
@@ -304,17 +326,32 @@ async def test_connection_id_suppresses_with_no_msg_id_correlation_at_all() -> N
     await transport.push(
         EventFrame(_user_submitted_event("hello", "m-999", auth_connection_id="conn-mine"))
     )
+    # #4264 ③: this proves an ABSENCE (the suppressed event never renders),
+    # so there is no positive effect of ITS OWN processing to wait on. A
+    # sentinel event, pushed onto the SAME transport queue right after it,
+    # gives one: the loop drains its single FIFO queue strictly in order
+    # (one `transport.frames()` consumer, `async for`), so by the time the
+    # sentinel appears in renderer.events, the suppressed event ahead of it
+    # has already been fully processed — same path, same order (the #4267/
+    # #4269 causal-successor shape, applied here without a new production
+    # hook: renderer.events is already the real consumer both this test and
+    # every sibling above rely on).
+    await transport.push(EventFrame(_user_submitted_event("sentinel", "m-sentinel")))
 
     task = asyncio.create_task(
         run_output_loop(
             transport, renderer, own_submissions=None, own_connection_id="conn-mine",
         )
     )
-    await asyncio.sleep(0.05)
+    await _wait_until(lambda: "m-sentinel" in [
+        e.data.get("msg_id") for e in renderer.events if e.type == "user_submitted"
+    ])
     task.cancel()
     await asyncio.gather(task, return_exceptions=True)
 
-    assert "user_submitted" not in [e.type for e in renderer.events], (
+    assert "m-999" not in [
+        e.data.get("msg_id") for e in renderer.events if e.type == "user_submitted"
+    ], (
         "an event carrying THIS client's own connection_id must be "
         "suppressed without ever needing a matching msg_id in own_submissions"
     )
@@ -338,7 +375,8 @@ async def test_connection_id_mismatch_still_renders_another_clients_turn() -> No
             transport, renderer, own_submissions=None, own_connection_id="conn-mine",
         )
     )
-    await asyncio.sleep(0.05)
+    # #4264 ③: wait for the loop's own observable effect instead of a sleep.
+    await _wait_until(lambda: "user_submitted" in [e.type for e in renderer.events])
     task.cancel()
     await asyncio.gather(task, return_exceptions=True)
 
