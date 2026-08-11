@@ -3899,6 +3899,11 @@ class Session:
             # gate is a TRUST decision and must not depend on whether the
             # operator hid the skill from the menu.
             available_skills_fn=lambda: self._available_skills,
+            # #3903 a-2 ③: live — ``_ephemeral`` is reassigned post-construction
+            # (``spawn_ephemeral_session``), same reasoning as ``session_id_fn``
+            # above and the existing ``ephemeral_fn`` this Session already
+            # threads to the MCP gateway (``_mcp_list_via_gateway``, below).
+            ephemeral_fn=lambda: self._ephemeral,
         )
         # #3482/#3447: the 3-param mcp-gateway cluster (sole reader:
         # RouterHostAdapter._mcp_list_via_gateway) — a real consumer-set
