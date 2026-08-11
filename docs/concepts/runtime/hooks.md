@@ -39,7 +39,7 @@ valid in one is not necessarily valid in the other:
 | `file_changed` | `builtin:external:file_changed` | a watched path changes ([`fs_watch`](../../reference/config/reyn-yaml.md#fs_watch-block) required) | ✅ | ✅ |
 | `cron_fired` | `builtin:external:cron_fired` | a message-based `cron:` job delivers | ✅ | ✅ |
 | `webhook_received` | `builtin:external:webhook_received` | an inbound webhook resolves to this session | ✅ | ✅ |
-| `task_settled` | `builtin:task:task_settled` | an async task (today: a `run_pipeline` async launch) reaches a terminal disposition | ✅ | ✅ |
+| `task_settled` | `builtin:task:task_settled` | an async task (see below for its producers) reaches a terminal disposition | ✅ | ✅ |
 | — (open) | `composed:<name>` | a Composer (see below) publishes its correlated output | ✅ | ✅ (chaining — another Composer's output) |
 | — (open) | `llm:<session_id>:<event_name>` | the LLM itself emits one via `emit_hook_event` (always its own session) | ❌ **rejected at load** (`HookConfigError`) | ✅ |
 
