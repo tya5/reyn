@@ -1,19 +1,48 @@
 """
-MCP client — thin wrapper around ``fastmcp.Client`` (v3.4.2; #2597 S1).
+MCP client (v#2597 S1; #3698 stage 1).
 
 Supports two transports today: ``stdio`` and ``http`` (Streamable HTTP);
-``sse`` uses FastMCP's ``SSETransport`` (previously ``NotImplementedError`` —
-a free win from the swap: no incremental cost to wire once FastMCP's own
-transport inference exists).
+``sse`` uses the SSE client (previously ``NotImplementedError`` — a free
+win from the original fastmcp swap: no incremental cost to wire once
+FastMCP's own transport inference existed).
 
-Each ``MCPClient`` owns a single ``fastmcp.Client`` opened on
-:meth:`initialize` and torn down on :meth:`close`. FastMCP's ``Client`` is
-itself a reentrant async context manager wrapping the transport + the
-underlying ``mcp.ClientSession``; MCPClient enters it once and holds it open
+#3698 stage 1: ``stdio`` and non-OAuth-configured ``http``/``sse`` now go
+through the official ``mcp`` SDK DIRECTLY (``mcp.client.session.
+ClientSession`` + ``mcp.client.{stdio,streamable_http,sse}``) — fastmcp is
+no longer in those paths at all. An OAuth-configured ``http`` server still
+goes through fastmcp's ``Client`` (:meth:`_initialize_fastmcp`), split out
+to its own issue (#4282) rather than attempted here — the official SDK's
+``OAuthClientProvider`` needs a caller-supplied browser-redirect +
+localhost-callback implementation fastmcp currently provides internally,
+PLUS a second adapter for reyn's own token storage (fastmcp's
+``AsyncKeyValue`` protocol vs. the official SDK's ``TokenStorage``
+protocol — genuinely different shapes, not a rename) — materially more
+than the method-name/kwarg differences the other transports needed. The
+"OAuth 2.1" section below is still accurate for that path.
+
+⚠️ **This module is a HYBRID, not a completed migration** — a state a
+future reader could easily misread as "done" without this paragraph:
+  - ``fastmcp`` stays a REQUIRED dependency (not optional, not vendored)
+    until #4282 lands, because the OAuth path still needs it.
+  - The ``mcp<2.0`` pin (owned by ``fastmcp-slim``'s own dependency
+    constraint, not reyn's) CANNOT be relaxed until #4282 lands either —
+    #3698's own stage 2 (adopting ``mcp>=2.0`` for ``2026-07-28`` support)
+    is gated on #4282, not on "the remaining transports": there are no
+    remaining transports once this PR lands, only the remaining
+    DEPENDENCY that #4282 removes.
+  - Do not read "stage 1 landed" as "fastmcp can be removed from
+    pyproject.toml" — that is #4282's own landing condition, not this
+    one's.
+
+Each ``MCPClient`` owns a single connection opened on :meth:`initialize` and
+torn down on :meth:`close`. The official-SDK path holds it open via an
+``contextlib.AsyncExitStack`` (see :meth:`_initialize_stdio`'s docstring for
+why — the SDK expresses the SAME connection as two SEPARATE async context
+managers, not fastmcp's one reentrant object); the fastmcp/OAuth path still
+enters ``fastmcp.Client`` directly. Either way, the connection stays open
 for the object's lifetime (matching the previous hand-rolled client's
 caching semantics on ``OpContext.mcp_clients`` / the pool's subprocess-reuse
-contract — FastMCP's ``StdioTransport(keep_alive=True)`` is the same
-persistent-subprocess semantics).
+contract — persistent-subprocess semantics for stdio either way).
 
 Environment variable expansion:
   ``${VAR_NAME}`` in any string config value is replaced with
@@ -25,11 +54,14 @@ Capability / version gate (#2597 capability slice):
   MCP's ``initialize`` handshake natively negotiates BOTH a protocol version
   and a set of server capabilities (tools/resources/prompts/logging/
   completions) in one round trip — rather than sprinkling version checks
-  across reyn, :meth:`initialize` captures both ONCE, right after FastMCP's
-  ``client.__aenter__()`` completes the handshake (verified against fastmcp
-  3.4.2: ``Client.initialize_result`` — an ``mcp.types.InitializeResult`` —
-  is populated at that point; see ``initialize()``'s inline comment for the
-  exact source-file/line trail). :meth:`supports` answers "did the server
+  across reyn, :meth:`initialize` captures both ONCE, right after the
+  handshake completes. #3698 stage 1 re-measured this against the official
+  SDK directly (live probe, not read from docs): ``ClientSession.
+  initialize()`` RETURNS the ``mcp.types.InitializeResult`` directly (a plain
+  return value, not a property read off a separate object the way fastmcp's
+  ``Client.initialize_result`` — populated by ``client.__aenter__()``,
+  verified against fastmcp 3.4.2 — worked; that description stays accurate
+  for the OAuth/fastmcp path only). :meth:`supports` answers "did the server
   advertise capability X" (conservative False before initialize / on a
   missing result); :func:`require_capability` is the enforcement seam —
   call it before issuing a request for a gated feature so an unsupported
@@ -43,13 +75,20 @@ Capability / version gate (#2597 capability slice):
 
 Elicitation (#2597 slice ③ — server->client ``elicitation/create``):
   an optional ``elicitation_handler`` (constructor kwarg, same shape as
-  ``message_handler``) is forwarded verbatim to ``fastmcp.Client(...,
-  elicitation_handler=...)`` — passing ANY non-None handler is itself what
-  makes FastMCP declare the ``elicitation`` client capability during the
-  initialize handshake. See :mod:`reyn.mcp.elicitation` for the handler
+  ``message_handler``) — on the fastmcp/OAuth path, forwarded verbatim to
+  ``fastmcp.Client(..., elicitation_handler=...)``. #3698 stage 1: on the
+  official-SDK path, ``_adapt_elicitation_handler`` wraps it first — reyn's
+  own handler is shaped ``(message, response_type, params, context)``
+  (fastmcp's ``ElicitationHandler`` protocol), while the official SDK's
+  ``ElicitationFnT`` is ``(context, params)`` — 2 args, opposite order,
+  entirely different shape (measured by reading both protocols directly,
+  not assumed). Passing ANY non-None (adapted or not) handler is itself
+  what declares the ``elicitation`` client capability during the initialize
+  handshake, on both paths. See :mod:`reyn.mcp.elicitation` for the handler
   that routes a server's structured question through reyn's consent path
   (:class:`~reyn.mcp.connection_service.MCPConnectionService` builds one per
-  held connection); this module only plumbs the constructor kwarg through.
+  held connection); this module only plumbs the constructor kwarg through
+  (adapted or not).
 
 OAuth 2.1 (#2597 slice ④ — the umbrella's LAST slice, hosted MCP servers like
 GitHub MCP / Atlassian that require browser-based OAuth rather than a static
@@ -412,9 +451,26 @@ def _is_transport_death(exc: BaseException) -> bool:
     signals genuine MCP transport death — as opposed to an application-level
     protocol error the server responded with while alive and connected.
 
-    #2597 F1 predicate — verified by reading the installed fastmcp 3.4.2 +
-    mcp SDK source AND by live-probing both branches against the real
-    ``tests/_support/mcp_fastmcp_echo_server.py`` test double over stdio:
+    #2597 F1 predicate — originally verified by reading the installed
+    fastmcp 3.4.2 + mcp SDK source AND by live-probing both branches
+    against the real ``tests/_support/mcp_fastmcp_echo_server.py`` test
+    double over stdio. **#3698 stage 1 re-measurement**: this predicate's
+    own logic needed ZERO code changes — it already reads
+    ``mcp.shared.exceptions.McpError``/``mcp.types.CONNECTION_CLOSED``
+    directly from the official SDK, never through a fastmcp-shaped
+    wrapper, so the classification below is unchanged for the
+    stdio/non-OAuth-http/sse call sites that now go through
+    ``ClientSession`` directly. Re-confirmed live against the official
+    SDK path (``_initialize_stdio`` + a killed-subprocess probe): the
+    ``McpError``/``CONNECTION_CLOSED`` branch fires exactly the same way
+    as it did for fastmcp, since both sit on the same underlying
+    ``mcp.shared.session.BaseSession`` receive loop. The
+    ``RuntimeError("Server session was closed unexpectedly")`` branch
+    remains fastmcp-specific (fastmcp's ``Client._context_manager`` wraps
+    the error in this exact message) — it is dead weight for the
+    stdio/non-OAuth-http/sse call sites now that they bypass fastmcp
+    entirely, but is kept because the OAuth-http path (``_initialize_fastmcp``)
+    still routes through fastmcp's ``Client`` and can still raise it:
 
       - ``mcp.shared.exceptions.McpError`` whose ``.error.code`` equals
         ``mcp.types.CONNECTION_CLOSED`` (``-32000``). ``mcp.shared.session.
@@ -1467,6 +1523,16 @@ class MCPClient:
         class — see ``tests/_support/mcp_subscribable_resources_server.py``'s
         module docstring for the full fact-check). This is a REFUSAL, the same
         shape as :func:`require_capability` — not a transport failure.
+
+        **#3698 stage 1 re-measurement**: this declaration was already reading
+        ``mcp.types.ServerCapabilities``/``ResourcesCapability`` directly — the
+        official SDK's own types, not a fastmcp-shaped projection — since
+        ``self._server_capabilities`` is populated from ``ClientSession.
+        initialize()``'s ``InitializeResult.capabilities`` on the stdio/
+        non-OAuth-http/sse path (and from fastmcp's ``Client.initialize_result.
+        capabilities`` — same underlying SDK type — on the OAuth/fastmcp path).
+        No code or behavior change; re-confirmed by re-reading both call sites'
+        population code, not just this predicate's read side.
         """
         server = self.server_name or "<unknown>"
         version = self.negotiated_version or "<unknown>"
