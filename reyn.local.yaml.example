@@ -22,6 +22,29 @@
 # ``LANGFUSE_SECRET_KEY``, etc.) can live in ``~/.reyn/secrets.env``;
 # they are auto-loaded into ``os.environ`` before YAML is parsed, so any
 # ``${VAR}`` reference below resolves transparently.
+#
+# Two kinds of section below (#4174 T6 — labeling only, no key/structure change):
+#
+#   REGISTRY  named-entry collections a running session can also grow at
+#             runtime (install a skill, register an MCP server, ...) — marked
+#             "[registry]" on their section header below. Of the 9:
+#             ``mcp`` / ``cron`` / ``hooks`` / ``skills`` / ``pipelines`` /
+#             ``presentations`` also live under ``.reyn/config/<name>.yaml``
+#             and are re-read at the turn boundary without a restart (the
+#             hot-reload IN-set, #2073) — new entries written there merge
+#             LAST and win on a name collision with what's declared here.
+#             ``composers`` / ``external_transports`` / ``auth`` are
+#             registry-shaped (named entries) but currently load from this
+#             file only — same restart-only cadence as a POLICY key, until
+#             something adds a ``.reyn/config/`` counterpart for them.
+#   POLICY    everything else — single-value or structural settings read
+#             ONCE at startup from this file (``reyn.yaml`` / this file /
+#             ``~/.reyn/config.yaml``); changing one needs a restart.
+#
+# The registry/policy split is load-bearing in ``config/loader.py``'s
+# ``_HOT_RELOAD_FILES``, whose own comment states it plainly: "the file-split
+# IS the write-gate boundary (owner-confirmed #2073)". Unmarked sections
+# below are policy.
 # =============================================================================
 
 
@@ -231,7 +254,7 @@
 
 
 # -----------------------------------------------------------------------------
-# mcp: Model Context Protocol server registry.
+# mcp: [registry] Model Context Protocol server registry.
 #
 # Two locations write to this section:
 #   - ``reyn.yaml`` / ``reyn.local.yaml`` — operator hand-edited entries
@@ -277,7 +300,7 @@
 
 
 # -----------------------------------------------------------------------------
-# skills: skill registry — raw dict passed to build_skill_registry at
+# skills: [registry] skill registry — raw dict passed to build_skill_registry at
 # session/router construction. Absent/empty (default) → no skills registered
 # beyond whatever a skill directory scan finds elsewhere. Merged across
 # config tiers by name (explicit entries win on collision).
@@ -302,7 +325,7 @@
 
 
 # -----------------------------------------------------------------------------
-# pipelines: pipeline registry — raw dict passed to build_pipeline_registry
+# pipelines: [registry] pipeline registry — raw dict passed to build_pipeline_registry
 # at session-factory time. Pipelines are registered PURELY via explicit
 # ``pipelines.entries`` declarations (a *.yaml file with no config entry is
 # invisible to every session). Absent/empty (default) → no pipelines loaded.
@@ -366,7 +389,7 @@
 
 
 # -----------------------------------------------------------------------------
-# auth: OAuth provider configurations consumed by
+# auth: [registry, restart-only — see the header note above] OAuth provider configurations consumed by
 # ``reyn auth login``. Each entry maps a provider name to its OAuth 2.0
 # device authorization grant parameters. ``client_secret`` is optional for
 # public clients (= PKCE flow); ``audience`` is Auth0-specific.
@@ -948,7 +971,7 @@
 
 
 # -----------------------------------------------------------------------------
-# hooks: agent-lifecycle hooks (#1800/#2069, Hook-Event Redesign proposal 0059)
+# hooks: [registry] agent-lifecycle hooks (#1800/#2069, Hook-Event Redesign proposal 0059)
 # — a thin operator layer over the inbox + the P6 lifecycle. A list of
 # entries; each fires at a hook-point (``on``) and carries EXACTLY ONE of
 # FOUR mutually-exclusive schemes:
@@ -999,7 +1022,7 @@
 
 
 # -----------------------------------------------------------------------------
-# composers: event correlation (Hook-Event Redesign Phase 4b/5, #2880/#2881) — a
+# composers: [registry, restart-only — see the header note above] event correlation (Hook-Event Redesign Phase 4b/5, #2880/#2881) — a
 # Composer subscribes to this session's per-process HookBus (independent pub/sub
 # broadcast of every hook-event, NOT the P6 audit-event/WAL-event stream), buffers
 # matching events per its ``op``, and publishes ONE new ``composed:<name>`` event
@@ -1065,7 +1088,7 @@
 
 
 # -----------------------------------------------------------------------------
-# cron: scheduled execution. Two
+# cron: [registry] scheduled execution. Two
 # shapes coexist; pick exactly one per entry:
 #
 #   Message-based (recommended): ``to`` + ``message``. Cron dispatches the
@@ -1111,7 +1134,7 @@
 
 
 # -----------------------------------------------------------------------------
-# external_transports: map external transport names
+# external_transports: [registry, restart-only — see the header note above] map external transport names
 # (Slack / LINE / Discord / ...) to the MCP tool that delivers replies, plus
 # an ``args_template`` describing how router output is shaped into the tool's
 # arguments. Empty by default; see ``reyn.runtime.external_routing`` for the
@@ -1133,7 +1156,7 @@
 #             text: "${ROUTER_REPLY}"
 
 # -----------------------------------------------------------------------------
-# presentations: named presentation-template registry for the `present` op.
+# presentations: [registry] named presentation-template registry for the `present` op.
 # A template's value is a blueprint (the same declarative component tree an
 # inline `present` blueprint is). Registering one is an operator/config action
 # (there is no install tool — the model authors inline blueprints only). Merges
