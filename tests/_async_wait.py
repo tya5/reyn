@@ -10,33 +10,35 @@ These helpers are the explicit, deterministic replacement (NOT a global fixture 
 NOT a to_thread-sync monkeypatch — those would mask the real async timing). Each
 call site passes the exact predicate it needs (pending iv registered, snapshot
 mutated, WAL event durable, …), so the assertion the test makes is preserved.
+
+#4275: ``wait_until`` used to take a ``timeout`` and return ``bool`` — a bounded
+poll whose own docstring argued "the generous timeout only guards against a
+genuinely-stuck operation." Per the #4145 owner ruling (no exception for
+time-dependent tests unless reyn's own logic is genuinely under test — a bounded
+failure constant is a wait duration rewritten as a number, and it duplicates
+CI's own kill switch), the wait is now unconditional: it returns ``None`` and
+blocks until ``predicate()`` holds. A predicate that never holds hangs the test,
+surfaced by CI's `--timeout=120`, not by a local number chosen for this call.
 """
 from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable
 
-_DEFAULT_TIMEOUT = 5.0
 _DEFAULT_INTERVAL = 0.005
 
 
 async def wait_until(
     predicate: Callable[[], bool],
     *,
-    timeout: float = _DEFAULT_TIMEOUT,
     interval: float = _DEFAULT_INTERVAL,
-) -> bool:
-    """Poll ``predicate()`` until it is truthy or ``timeout`` elapses.
+) -> None:
+    """Poll ``predicate()`` until it is truthy. Unbounded — see module docstring.
 
-    Returns True if the predicate became truthy, False on timeout (so the caller's
-    ``assert`` still pins the real condition rather than a fixed sleep). Bounded —
-    the awaited WAL/to_thread work lands within a few ms; the generous timeout only
-    guards against a genuinely-stuck operation."""
-    loop = asyncio.get_event_loop()
-    deadline = loop.time() + timeout
-    while True:
-        if predicate():
-            return True
-        if loop.time() >= deadline:
-            return False
+    Returns nothing: by the time this returns, ``predicate()`` holds, so the
+    caller has nothing left to check on this axis. A predicate that never
+    becomes true hangs the test, surfaced by CI's own timeout kill switch
+    rather than a bounded failure constant local to this call.
+    """
+    while not predicate():
         await asyncio.sleep(interval)
