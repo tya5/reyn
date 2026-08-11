@@ -1083,13 +1083,15 @@ class RouterLoop:
         )
         # #4206 T1 (②bounding): the project-declared ceiling, if any — read
         # once here (not re-fetched per call) since the resolver is
-        # process-wide and its ceiling doesn't change mid-session. A host
-        # whose resolver has no ``class_ceiling`` (a test double / stub) is
-        # unbounded, same as today.
+        # process-wide and its ceiling doesn't change mid-session. No
+        # ``hasattr`` fallback here (unlike ``resolve_purpose_class`` above):
+        # that fallback's failure direction is a harmless value default
+        # ("standard"); this one's is a WIDENING one — a resolver that can't
+        # answer ``class_ceiling()`` would silently make the ceiling
+        # disappear. A host whose ``resolver`` is not a real ``ModelResolver``
+        # should raise (fail loud), not go unbounded (lead-coder review, #4318).
         self._model_class_ceiling = (
-            _resolver.class_ceiling()
-            if _resolver is not None and hasattr(_resolver, "class_ceiling")
-            else None
+            _resolver.class_ceiling() if _resolver is not None else None
         )
         self.budget = budget
         # When set, RouterLoop skips ``build_system_prompt(host=...)`` and uses

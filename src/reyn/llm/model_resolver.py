@@ -48,6 +48,17 @@ def model_class_exceeds_ceiling(class_name: str, ceiling: "str | None") -> bool:
     a ceiling to also constrain custom class names would need a richer
     per-class cost declaration — out of #4206 T1's scope (one axis: the 3
     standard tiers).
+
+    Scope limit (#4324, part of #4206): this axis only ever sees a class
+    when the CALLER resolved one via ``class_for_purpose``/``model_class``.
+    A caller that received an explicit raw model string (e.g.
+    ``--router-model openai/gpt-4o`` bypassing class resolution entirely)
+    has nothing to compare — the ceiling is a silent no-op for that call, by
+    construction, not a bug in this predicate. Likewise a call that declared
+    ``model_class=None`` (dogfood's real-cost calls included, not just
+    compaction) is permanently outside the axis. "a ceiling is configured"
+    does NOT mean "every LLM spend is bounded" — only class-resolved calls
+    are.
     """
     if ceiling is None:
         return False
