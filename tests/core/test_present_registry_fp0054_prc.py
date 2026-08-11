@@ -36,6 +36,7 @@ from reyn.schemas.models import ALL_OP_KINDS, PresentIROp
 from reyn.security.permissions.permissions import PermissionDecl, PermissionResolver
 from tests._support.agent_session import make_session
 from tests._support.events import collect_events
+from tests._support.minimal_reyn_yaml import MINIMAL_REYN_YAML
 
 # A named template (operator config) whose value is a blueprint — the same
 # declarative component tree an inline blueprint is.
@@ -123,7 +124,7 @@ def test_config_roundtrip_named_template_reaches_registry(tmp_path: Path) -> Non
     NON-default blueprint value) is loaded through the full config cascade + built
     into the registry under its entry name, with the blueprint structurally
     validated (mirrors the skills/pipelines disk round-trip)."""
-    (tmp_path / "reyn.yaml").write_text("llm:\n  model: standard\n", encoding="utf-8")
+    (tmp_path / "reyn.yaml").write_text(MINIMAL_REYN_YAML, encoding="utf-8")
     cfg_dir = tmp_path / ".reyn" / "config"
     cfg_dir.mkdir(parents=True)
     (cfg_dir / "presentations.yaml").write_text(
@@ -355,7 +356,7 @@ def _make_session(tmp_path: Path) -> Session:
     """Minimal real Session whose presentation registry is built from the current
     config cascade (mirrors SessionFactoryConfig.from_config's build-once path)."""
     if not (tmp_path / "reyn.yaml").exists():
-        (tmp_path / "reyn.yaml").write_text("llm:\n  model: standard\n", encoding="utf-8")
+        (tmp_path / "reyn.yaml").write_text(MINIMAL_REYN_YAML, encoding="utf-8")
     cfg = load_config(tmp_path)
     return make_session(
         agent_name="prc-test",

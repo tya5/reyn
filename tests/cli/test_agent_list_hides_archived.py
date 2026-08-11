@@ -15,6 +15,7 @@ import argparse
 import sys
 from pathlib import Path
 
+from tests._support.minimal_reyn_yaml import MINIMAL_REYN_YAML
 from tests._support.paths import REPO_ROOT
 
 _SRC = REPO_ROOT / "src"
@@ -75,7 +76,7 @@ def test_list_from_a_subdirectory_still_finds_the_project_agents(
     would print the "no agents yet" message (it would look under
     `<subdir>/.reyn/agents/`, which is empty/absent) instead of listing the
     real agent created at the project root."""
-    (tmp_path / "reyn.yaml").write_text("llm:\n  model: standard\n", encoding="utf-8")
+    (tmp_path / "reyn.yaml").write_text(MINIMAL_REYN_YAML, encoding="utf-8")
     reg = AgentRegistry(project_root=tmp_path, session_factory=_no_factory)
     reg.create("alpha", role="coordinator")
 

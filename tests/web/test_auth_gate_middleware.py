@@ -21,6 +21,8 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+from tests._support.minimal_reyn_yaml import MINIMAL_REYN_YAML
+
 # Ensure the worktree src is importable even when the main-tree src appears
 # earlier on sys.path (editable-install collision) — mirrors the sibling
 # route-mount tests so the fully-mounted worktree app is the one under test.
@@ -54,7 +56,7 @@ def _reset_singletons() -> None:
 @pytest.fixture()
 def tmp_project(tmp_path: Path) -> Path:
     """A minimal project root so the real budget/config/registry deps resolve."""
-    (tmp_path / "reyn.yaml").write_text("llm:\n  model: standard\n", encoding="utf-8")
+    (tmp_path / "reyn.yaml").write_text(MINIMAL_REYN_YAML, encoding="utf-8")
     agent_dir = tmp_path / ".reyn" / "agents" / "default"
     agent_dir.mkdir(parents=True)
     (agent_dir / "profile.yaml").write_text(

@@ -15,6 +15,8 @@ from pathlib import Path
 
 import pytest
 
+from tests._support.minimal_reyn_yaml import MINIMAL_REYN_YAML
+
 
 def _write_yaml(path: Path, content: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -46,7 +48,7 @@ def test_validate_reports_no_findings_on_a_well_formed_config(project, capsys):
     category (a well-formed config trips neither)."""
     from reyn.interfaces.cli.commands.config import _validate
 
-    _write_yaml(project / "reyn.yaml", "llm:\n  model: standard\nsandbox:\n  mode: strict\n")
+    _write_yaml(project / "reyn.yaml", MINIMAL_REYN_YAML + "sandbox:\n  mode: strict\n")
     _validate()
     out = capsys.readouterr().out
     assert "No unknown, renamed, or disabled-by-dependency config keys found." in out
@@ -72,7 +74,7 @@ def test_validate_reports_llm_model_as_known_not_flagged(project, capsys):
     `model` field, so the SAME input must now report clean."""
     from reyn.interfaces.cli.commands.config import _validate
 
-    _write_yaml(project / "reyn.yaml", "llm:\n  model: standard\n")
+    _write_yaml(project / "reyn.yaml", MINIMAL_REYN_YAML)
     _validate()
     out = capsys.readouterr().out
     assert "llm.model" not in out
@@ -114,7 +116,7 @@ def test_migrate_reports_nothing_to_migrate_when_registry_is_empty(
     from reyn.interfaces.cli.commands.config import _migrate
 
     monkeypatch.setattr("reyn.config.config_schema._RENAMED_CONFIG_KEYS", {})
-    _write_yaml(project / "reyn.yaml", "llm:\n  model: standard\n")
+    _write_yaml(project / "reyn.yaml", MINIMAL_REYN_YAML)
     _migrate()
     out = capsys.readouterr().out
     assert "No config key renames are registered yet" in out
@@ -136,7 +138,7 @@ def test_migrate_reports_nothing_to_migrate_when_config_has_no_renamed_key(
             note="moved to new_top_level_key", destination="new_top_level_key",
         )},
     )
-    _write_yaml(project / "reyn.yaml", "llm:\n  model: standard\n")
+    _write_yaml(project / "reyn.yaml", MINIMAL_REYN_YAML)
     _migrate()
     out = capsys.readouterr().out
     assert "nothing to migrate" in out.lower()
@@ -155,7 +157,7 @@ def test_migrate_rewrites_an_unambiguous_plain_rename(project, capsys, monkeypat
             note="moved to new.nested.key", destination="new.nested.key",
         )},
     )
-    _write_yaml(project / "reyn.yaml", "llm:\n  model: standard\nold_flat_key: hello\n")
+    _write_yaml(project / "reyn.yaml", MINIMAL_REYN_YAML + "old_flat_key: hello\n")
 
     from reyn.interfaces.cli.commands.config import _migrate
     _migrate()

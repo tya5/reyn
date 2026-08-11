@@ -27,6 +27,8 @@ from pathlib import Path
 
 import pytest
 
+from tests._support.minimal_reyn_yaml import MINIMAL_REYN_YAML
+
 
 def _write_yaml(path: Path, content: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -64,7 +66,7 @@ def test_migrate_no_legacy_entries_is_noop(project, capsys):
     """Tier 2: no ``mcp.servers`` anywhere → command prints "nothing to
     migrate" and doesn't write any files.
     """
-    _write_yaml(project / "reyn.yaml", "llm:\n  model: standard\n")
+    _write_yaml(project / "reyn.yaml", MINIMAL_REYN_YAML)
 
     _run_migrate()
 
@@ -113,8 +115,8 @@ def test_migrate_moves_from_both_reyn_yaml_and_local(project, capsys):
     """
     _write_yaml(
         project / "reyn.yaml",
-        "llm:\n  model: standard\n"
-        "mcp:\n  servers:\n    sqlite:\n      type: stdio\n      command: npx\n",
+        MINIMAL_REYN_YAML
+        + "mcp:\n  servers:\n    sqlite:\n      type: stdio\n      command: npx\n",
     )
     _write_yaml(
         project / "reyn.local.yaml",
@@ -172,8 +174,8 @@ def test_migrate_dry_run_does_not_write_files(project, capsys):
     """
     _write_yaml(
         project / "reyn.yaml",
-        "llm:\n  model: standard\n"
-        "mcp:\n  servers:\n    sqlite:\n      type: stdio\n      command: npx\n",
+        MINIMAL_REYN_YAML
+        + "mcp:\n  servers:\n    sqlite:\n      type: stdio\n      command: npx\n",
     )
 
     _run_migrate(dry_run=True)

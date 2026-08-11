@@ -17,6 +17,8 @@ from pathlib import Path
 
 import pytest
 
+from tests._support.minimal_reyn_yaml import MINIMAL_REYN_YAML
+
 
 def _write_yaml(path: Path, content: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -42,7 +44,7 @@ def test_an_unknown_in_set_key_is_reported_in_its_own_labeled_section(
     same top-level dict) is reported under the IN-SET section, separately
     from the policy-tier section, with IN-set-specific remedy text (no
     restart, no 'reyn config migrate' mention)."""
-    _write_yaml(project / "reyn.yaml", "llm:\n  model: standard\n")
+    _write_yaml(project / "reyn.yaml", MINIMAL_REYN_YAML)
     _write_yaml(
         project / ".reyn" / "config" / "hooks.yaml",
         "totally_bogus_in_set_key: 1\n",
@@ -103,7 +105,7 @@ def test_a_well_formed_in_set_produces_no_findings(project, capsys):
     """Tier 2: accept-side — real, valid IN-set files touching several
     registries never trip the new section (a false positive here would
     teach operators to ignore the report, the same #4174 T0 concern)."""
-    _write_yaml(project / "reyn.yaml", "llm:\n  model: standard\n")
+    _write_yaml(project / "reyn.yaml", MINIMAL_REYN_YAML)
     _write_yaml(
         project / ".reyn" / "config" / "mcp.yaml",
         "mcp:\n  servers: {}\n",

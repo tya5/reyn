@@ -42,6 +42,7 @@ from reyn.core.registry.source_resolver import (
     _strip_mcp_prefix,
     resolve,
 )
+from tests._support.minimal_reyn_yaml import MINIMAL_REYN_YAML
 
 # ── #318: type: stdio in every install ────────────────────────────────
 
@@ -213,7 +214,7 @@ def test_install_command_warns_on_tmp_args_on_darwin(tmp_path, reyn_console_scri
     # #1442: install now resolves a project root and fails loud outside one
     # (error-not-silent-cwd), so give tmp_path a reyn.yaml — the #320 /tmp-args
     # warning fires inside the source install, past project resolution.
-    (tmp_path / "reyn.yaml").write_text("llm:\n  model: standard\n", encoding="utf-8")
+    (tmp_path / "reyn.yaml").write_text(MINIMAL_REYN_YAML, encoding="utf-8")
     result = subprocess.run(
         [
             reyn_bin, "mcp", "install",

@@ -21,6 +21,7 @@ from reyn.interfaces.cli.commands.dogfood import (
     _dogfood_base_dir,
     _runs_dir,
 )
+from tests._support.minimal_reyn_yaml import MINIMAL_REYN_YAML
 
 
 def test_base_dir_resolves_to_project_root_from_a_subdirectory(
@@ -29,7 +30,7 @@ def test_base_dir_resolves_to_project_root_from_a_subdirectory(
     """Tier 2: launched from a subdirectory, the dogfood storage dir still
     anchors on the project root (the `reyn.yaml` ancestor), not the
     subdirectory."""
-    (tmp_path / "reyn.yaml").write_text("llm:\n  model: standard\n", encoding="utf-8")
+    (tmp_path / "reyn.yaml").write_text(MINIMAL_REYN_YAML, encoding="utf-8")
     subdir = tmp_path / "src" / "nested"
     subdir.mkdir(parents=True)
     monkeypatch.chdir(subdir)
@@ -44,7 +45,7 @@ def test_runs_and_baselines_dirs_share_the_same_fix(
     """Tier 2: both derived dirs delegate to _dogfood_base_dir(), so they
     inherit the fix — a real witness that the delegation wasn't
     shadowed/duplicated somewhere."""
-    (tmp_path / "reyn.yaml").write_text("llm:\n  model: standard\n", encoding="utf-8")
+    (tmp_path / "reyn.yaml").write_text(MINIMAL_REYN_YAML, encoding="utf-8")
     subdir = tmp_path / "src" / "nested"
     subdir.mkdir(parents=True)
     monkeypatch.chdir(subdir)

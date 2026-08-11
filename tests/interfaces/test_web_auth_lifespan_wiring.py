@@ -15,6 +15,8 @@ from pathlib import Path
 
 import pytest
 
+from tests._support.minimal_reyn_yaml import MINIMAL_REYN_YAML
+
 pytest.importorskip("fastapi", reason="fastapi not installed ([web] extra missing)")
 
 from fastapi import FastAPI  # noqa: E402
@@ -32,7 +34,7 @@ async def test_lifespan_builds_auth_context_from_configured_token(tmp_path, monk
     monkeypatch.delenv(TOKEN_ENV_VAR, raising=False)
     _write_reyn_yaml(
         tmp_path,
-        "llm:\n  model: standard\ngateway:\n  auth:\n    token: operator-configured-secret\n",
+        MINIMAL_REYN_YAML + "gateway:\n  auth:\n    token: operator-configured-secret\n",
     )
     monkeypatch.chdir(tmp_path)
 
@@ -54,7 +56,7 @@ async def test_lifespan_generates_token_when_none_configured(tmp_path, monkeypat
     unauthenticated instead of gated).
     """
     monkeypatch.delenv(TOKEN_ENV_VAR, raising=False)
-    _write_reyn_yaml(tmp_path, "llm:\n  model: standard\n")
+    _write_reyn_yaml(tmp_path, MINIMAL_REYN_YAML)
     monkeypatch.chdir(tmp_path)
 
     from reyn.interfaces.web.server import _lifespan

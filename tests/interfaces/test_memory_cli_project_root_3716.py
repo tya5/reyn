@@ -21,6 +21,7 @@ from pathlib import Path
 
 from reyn.data.memory.memory_paths import memory_dir
 from reyn.interfaces.cli.commands.memory import _layer_dir, _project_reyn_root
+from tests._support.minimal_reyn_yaml import MINIMAL_REYN_YAML
 
 
 def test_memory_dir_respects_an_explicit_root():
@@ -47,7 +48,7 @@ def test_project_reyn_root_walks_up_to_the_real_project_root(tmp_path, monkeypat
     not fabricate one under the subdirectory."""
     project_root = tmp_path / "my-project"
     (project_root / "src" / "deep" / "subdir").mkdir(parents=True)
-    (project_root / "reyn.yaml").write_text("llm:\n  model: standard\n", encoding="utf-8")
+    (project_root / "reyn.yaml").write_text(MINIMAL_REYN_YAML, encoding="utf-8")
     monkeypatch.chdir(project_root / "src" / "deep" / "subdir")
 
     assert _project_reyn_root() == project_root / ".reyn"
@@ -61,7 +62,7 @@ def test_layer_dir_uses_the_project_root_not_raw_cwd(tmp_path, monkeypatch):
     project_root = tmp_path / "my-project"
     subdir = project_root / "some" / "nested" / "cwd"
     subdir.mkdir(parents=True)
-    (project_root / "reyn.yaml").write_text("llm:\n  model: standard\n", encoding="utf-8")
+    (project_root / "reyn.yaml").write_text(MINIMAL_REYN_YAML, encoding="utf-8")
     monkeypatch.chdir(subdir)
 
     args = argparse.Namespace(agent=None)

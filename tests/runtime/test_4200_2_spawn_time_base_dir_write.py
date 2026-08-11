@@ -30,6 +30,7 @@ from reyn.core.events.state_log import StateLog
 from reyn.runtime.registry import AgentRegistry
 from reyn.runtime.session import Session
 from tests._support.agent_session import make_session
+from tests._support.minimal_reyn_yaml import MINIMAL_REYN_YAML
 
 
 async def _registry_with_live_parent(
@@ -40,7 +41,7 @@ async def _registry_with_live_parent(
     style — the registry's own agent-level "main" session is a
     non-loading accessor and is never auto-constructed by ``create()``
     alone, so a genuinely-live spawner needs to come from a real spawn)."""
-    (tmp_path / "reyn.yaml").write_text("llm:\n  model: standard\n", encoding="utf-8")
+    (tmp_path / "reyn.yaml").write_text(MINIMAL_REYN_YAML, encoding="utf-8")
     state_log = StateLog(tmp_path / ".reyn" / "wal.jsonl")
     holder: dict = {}
 

@@ -34,6 +34,7 @@ from reyn.config.loader import load_config
 from reyn.core.op_runtime.render_template import handle
 from reyn.runtime.session import Session
 from tests._support.agent_session import make_session
+from tests._support.minimal_reyn_yaml import MINIMAL_REYN_YAML
 
 
 class _RenderOp:
@@ -67,7 +68,7 @@ def test_operator_yaml_bounds_cap_the_op_through_a_real_session(tmp_path: Path) 
     regression is now caught.
     """
     (tmp_path / "reyn.yaml").write_text(
-        "llm:\n  model: standard\n"
+        MINIMAL_REYN_YAML +
         "render_template:\n"
         "  max_output_chars: 20\n"
         "  wall_clock_seconds: 1.5\n"

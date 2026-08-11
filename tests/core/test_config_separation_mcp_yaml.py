@@ -20,6 +20,8 @@ from pathlib import Path
 
 import pytest
 
+from tests._support.minimal_reyn_yaml import MINIMAL_REYN_YAML
+
 
 def _write_yaml(path: Path, content: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -37,7 +39,7 @@ def test_load_config_reads_dynamic_mcp_yaml(tmp_path, monkeypatch):
     from reyn.config import load_config
 
     # Plant a reyn.yaml so _find_project_root finds tmp_path.
-    _write_yaml(tmp_path / "reyn.yaml", "llm:\n  model: standard\n")
+    _write_yaml(tmp_path / "reyn.yaml", MINIMAL_REYN_YAML)
     _write_yaml(
         tmp_path / ".reyn" / "config" / "mcp.yaml",
         "mcp:\n  servers:\n    sqlite:\n      type: stdio\n      command: npx\n",
@@ -63,7 +65,7 @@ def test_load_config_dynamic_mcp_yaml_overrides_reyn_yaml(tmp_path, monkeypatch)
 
     _write_yaml(
         tmp_path / "reyn.yaml",
-        "llm:\n  model: standard\n"
+        MINIMAL_REYN_YAML +
         "mcp:\n  servers:\n    git:\n      type: stdio\n      command: old-cmd\n",
     )
     _write_yaml(
@@ -89,7 +91,7 @@ def test_load_config_dynamic_mcp_yaml_and_reyn_yaml_servers_union(
 
     _write_yaml(
         tmp_path / "reyn.yaml",
-        "llm:\n  model: standard\n"
+        MINIMAL_REYN_YAML +
         "mcp:\n  servers:\n    legacy:\n      type: stdio\n      command: legacy-cmd\n",
     )
     _write_yaml(
@@ -116,7 +118,7 @@ def test_load_config_works_without_dynamic_mcp_yaml(tmp_path, monkeypatch):
 
     _write_yaml(
         tmp_path / "reyn.yaml",
-        "llm:\n  model: standard\n"
+        MINIMAL_REYN_YAML +
         "mcp:\n  servers:\n    only-in-reyn:\n      type: stdio\n      command: x\n",
     )
 

@@ -12,6 +12,7 @@ from pathlib import Path
 
 import pytest
 
+from tests._support.minimal_reyn_yaml import MINIMAL_REYN_YAML
 from tests._support.paths import REPO_ROOT
 
 # ---------------------------------------------------------------------------
@@ -37,7 +38,7 @@ httpx = pytest.importorskip("httpx", reason="httpx not installed (needed by Test
 def tmp_project(tmp_path: Path) -> Path:
     """Minimal project root with one agent, one local design, and reyn.yaml."""
     # reyn.yaml
-    (tmp_path / "reyn.yaml").write_text("llm:\n  model: standard\n", encoding="utf-8")
+    (tmp_path / "reyn.yaml").write_text(MINIMAL_REYN_YAML, encoding="utf-8")
 
     # Agent
     agents_dir = tmp_path / ".reyn" / "agents" / "default"

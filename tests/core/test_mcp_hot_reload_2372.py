@@ -21,12 +21,13 @@ import yaml
 from reyn.core.events.state_log import StateLog
 from reyn.runtime.session import Session
 from tests._support.agent_session import make_session
+from tests._support.minimal_reyn_yaml import MINIMAL_REYN_YAML
 
 
 def _session(tmp_path: Path) -> Session:
     # load_config resolves the project root by walking up for reyn.yaml (the marker gating the
     # dynamic .reyn/config/mcp.yaml read); a Reyn project always has one.
-    (tmp_path / "reyn.yaml").write_text("llm:\n  model: standard\n", encoding="utf-8")
+    (tmp_path / "reyn.yaml").write_text(MINIMAL_REYN_YAML, encoding="utf-8")
     s = make_session(
         agent_name="alice", state_log=StateLog(tmp_path / "state.wal"),
         snapshot_path=tmp_path / "snap.json",

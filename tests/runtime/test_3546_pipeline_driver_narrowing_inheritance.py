@@ -155,6 +155,7 @@ from reyn.runtime.spawn_routing import AuditOnlyNoSurface
 from reyn.tools.pipeline_verbs import _handle_run_pipeline
 from reyn.tools.types import RouterCallerState, ToolContext
 from tests._support.agent_session import make_session
+from tests._support.minimal_reyn_yaml import MINIMAL_REYN_YAML
 from tests._support.paths import REPO_ROOT
 
 _DENIED_TOOL = "p3546_denied_step"
@@ -170,7 +171,7 @@ def _agent_registry(tmp_path: Path, state_log: "StateLog") -> AgentRegistry:
     """Real ``AgentRegistry`` + real ``Session`` factory (the harness shape
     ``tests/runtime/test_3093_pipeline_registry_spawn_propagation.py`` uses)."""
     if not (tmp_path / "reyn.yaml").exists():
-        (tmp_path / "reyn.yaml").write_text("llm:\n  model: standard\n", encoding="utf-8")
+        (tmp_path / "reyn.yaml").write_text(MINIMAL_REYN_YAML, encoding="utf-8")
     holder: dict = {}
 
     def _factory(profile, *, presentation_consumer=None, intervention_bridge=None) -> Session:

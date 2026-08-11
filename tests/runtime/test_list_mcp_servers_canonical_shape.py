@@ -31,10 +31,11 @@ from reyn.runtime.session import Session
 from reyn.tools import get_default_registry
 from reyn.tools.scheme import ExecutionResult
 from tests._support.agent_session import make_session
+from tests._support.minimal_reyn_yaml import MINIMAL_REYN_YAML
 
 
 def _session(tmp_path: Path) -> Session:
-    (tmp_path / "reyn.yaml").write_text("llm:\n  model: standard\n", encoding="utf-8")
+    (tmp_path / "reyn.yaml").write_text(MINIMAL_REYN_YAML, encoding="utf-8")
     (tmp_path / "reyn.local.yaml").write_text(
         "mcp:\n  servers:\n"
         "    s1:\n      command: /usr/bin/true\n      description: server 1\n"

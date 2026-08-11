@@ -42,6 +42,7 @@ from reyn.interfaces.web.deps import (
 )
 from reyn.security.permissions.permissions import PermissionDecl
 from reyn.security.sandbox.policy import SandboxPolicy
+from tests._support.minimal_reyn_yaml import MINIMAL_REYN_YAML
 from tests._support.paths import REPO_ROOT
 
 _SRC = REPO_ROOT / "src" / "reyn"
@@ -162,7 +163,7 @@ def test_factory_threads_holder_to_build_scoped_chat_session():
 
 
 def _write_reyn_yaml(tmp_path: Path, *, permissions: dict | None = None) -> None:
-    lines = ["llm:\n  model: standard"]
+    lines = [MINIMAL_REYN_YAML.rstrip("\n")]
     if permissions is not None:
         lines.append("permissions:")
         for key, value in permissions.items():

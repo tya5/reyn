@@ -54,6 +54,7 @@ from reyn.runtime.outbox import OutboxMessage
 from reyn.runtime.session import Session
 from reyn.runtime.transport import ExternalRef, TuiRef
 from tests._support.agent_session import make_session
+from tests._support.minimal_reyn_yaml import MINIMAL_REYN_YAML
 
 
 def _make_session(tmp_path: Path, *, agent_name: str = "alpha") -> Session:
@@ -366,7 +367,7 @@ def test_reyn_config_external_transports_defaults_to_empty(tmp_path, monkeypatch
     """
     from reyn.config import load_config
 
-    (tmp_path / "reyn.yaml").write_text("llm:\n  model: standard\n", encoding="utf-8")
+    (tmp_path / "reyn.yaml").write_text(MINIMAL_REYN_YAML, encoding="utf-8")
     monkeypatch.chdir(tmp_path)
     cfg = load_config(cwd=tmp_path)
 
@@ -384,7 +385,7 @@ def test_reyn_config_external_transports_parses_well_formed_yaml(
     from reyn.config import load_config
 
     (tmp_path / "reyn.yaml").write_text(
-        "llm:\n  model: standard\n"
+        MINIMAL_REYN_YAML +
         "external_transports:\n"
         "  slack:\n"
         "    mcp_tool: slack__chat_postMessage\n"

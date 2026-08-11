@@ -46,6 +46,7 @@ from reyn.runtime.registry import AgentRegistry
 from reyn.runtime.session import Session
 from reyn.runtime.turn_origin import TurnOrigin
 from tests._support.agent_session import make_session
+from tests._support.minimal_reyn_yaml import MINIMAL_REYN_YAML
 from tests._support.slash import local_transport
 
 AGENT = "s2-nudge-agent"
@@ -104,7 +105,7 @@ async def test_a_pipeline_nudge_turn_cannot_execute_a_slash_command(
     """
     monkeypatch.chdir(tmp_path)
     state_log = StateLog(tmp_path / "state.wal")
-    (tmp_path / "reyn.yaml").write_text("llm:\n  model: standard\n", encoding="utf-8")
+    (tmp_path / "reyn.yaml").write_text(MINIMAL_REYN_YAML, encoding="utf-8")
     holder: dict = {}
 
     def _factory(profile, *, presentation_consumer=None, intervention_bridge=None) -> Session:

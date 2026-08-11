@@ -43,6 +43,7 @@ from reyn.runtime.services.pipeline_executor_driver import PipelineExecutorDrive
 from reyn.runtime.session import Session
 from reyn.runtime.session_params import PresentationWiring
 from tests._support.agent_session import make_session
+from tests._support.minimal_reyn_yaml import MINIMAL_REYN_YAML
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -57,7 +58,7 @@ def _make_session(tmp_path: Path, *, agent_name: str = "test-agent") -> Session:
     production build-once path. A bare ``model: standard`` reyn.yaml (no
     ``pipelines:`` block) is also valid and yields an empty registry."""
     if not (tmp_path / "reyn.yaml").exists():
-        (tmp_path / "reyn.yaml").write_text("llm:\n  model: standard\n", encoding="utf-8")
+        (tmp_path / "reyn.yaml").write_text(MINIMAL_REYN_YAML, encoding="utf-8")
     from reyn.config.loader import load_config
     from reyn.data.pipelines.registry import build_pipeline_registry
     cfg = load_config(tmp_path)
@@ -164,7 +165,7 @@ async def test_hotreload_changes_pipeline_description_on_live_registry(
 @pytest.mark.asyncio
 async def test_hotreload_seam_registered(tmp_path: Path) -> None:
     """Tier 2: the Session registers the pipelines seam on the HotReloader."""
-    (tmp_path / "reyn.yaml").write_text("llm:\n  model: standard\n", encoding="utf-8")
+    (tmp_path / "reyn.yaml").write_text(MINIMAL_REYN_YAML, encoding="utf-8")
     session = make_session(
         agent_name="a", state_log=StateLog(tmp_path / "s.wal"),
         snapshot_path=tmp_path / "snap.json",

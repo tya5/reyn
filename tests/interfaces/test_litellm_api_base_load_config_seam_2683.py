@@ -24,6 +24,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 from reyn.interfaces.cli.invocation_context import InvocationContext
+from tests._support.minimal_reyn_yaml import MINIMAL_REYN_YAML
 
 _KEY = "LITELLM_API_BASE"
 
@@ -70,7 +71,7 @@ def test_absent_api_base_leaves_env_unset() -> None:
     """Tier 2: no api_base configured → the seam leaves LITELLM_API_BASE unset."""
     with TemporaryDirectory() as td:
         project = Path(td)
-        (project / "reyn.yaml").write_text("llm:\n  model: standard\n", encoding="utf-8")
+        (project / "reyn.yaml").write_text(MINIMAL_REYN_YAML, encoding="utf-8")
         with _clean_env_and_cwd(project):
             ctx = InvocationContext.from_args(argparse.Namespace())
             assert not ctx.config.llm.api_base

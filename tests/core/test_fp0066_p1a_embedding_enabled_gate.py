@@ -38,6 +38,7 @@ from reyn.tools.universal_catalog import (
     SEARCH_ACTIONS,
     is_search_available,
 )
+from tests._support.minimal_reyn_yaml import MINIMAL_REYN_YAML
 
 
 def _run(coro):
@@ -257,7 +258,7 @@ def test_bare_mcp_search_threshold_key_is_ignored_not_erroring(tmp_path) -> None
     from reyn.config import load_config
 
     (tmp_path / "reyn.yaml").write_text(
-        "llm:\n  model: standard\nmcp:\n  search_threshold: 5\n", encoding="utf-8",
+        MINIMAL_REYN_YAML + "mcp:\n  search_threshold: 5\n", encoding="utf-8",
     )
     cfg = load_config(cwd=tmp_path)
     # No derived field reads it anymore; it just survives in the raw dict.

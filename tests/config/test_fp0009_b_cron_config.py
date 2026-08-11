@@ -21,6 +21,7 @@ from reyn.config import (
     _build_cron_config,
     load_config,
 )
+from tests._support.minimal_reyn_yaml import MINIMAL_REYN_YAML
 
 # ── 1. CronJobConfig — direct construction ──────────────────────────────────
 
@@ -66,7 +67,7 @@ def test_cron_config_default_empty() -> None:
 
 def test_no_cron_block_gives_empty_jobs(tmp_path: Path) -> None:
     """Tier 1: reyn.yaml with no cron: block → ReynConfig.cron.jobs == []."""
-    (tmp_path / "reyn.yaml").write_text("llm:\n  model: standard\n", encoding="utf-8")
+    (tmp_path / "reyn.yaml").write_text(MINIMAL_REYN_YAML, encoding="utf-8")
     cfg = load_config(cwd=tmp_path)
     assert cfg.cron.jobs == []
 
@@ -194,7 +195,7 @@ cron:
 
 def test_empty_cron_block_gives_empty_jobs(tmp_path: Path) -> None:
     """Tier 1: empty cron: block (no jobs key) → CronConfig(jobs=[])."""
-    (tmp_path / "reyn.yaml").write_text("llm:\n  model: standard\ncron: {}\n", encoding="utf-8")
+    (tmp_path / "reyn.yaml").write_text(MINIMAL_REYN_YAML + "cron: {}\n", encoding="utf-8")
     cfg = load_config(cwd=tmp_path)
     assert cfg.cron.jobs == []
 

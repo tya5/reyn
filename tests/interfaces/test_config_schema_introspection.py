@@ -26,6 +26,7 @@ from reyn.config.config_schema import (
     resolve_config_value,
     walk_config_schema,
 )
+from tests._support.minimal_reyn_yaml import MINIMAL_REYN_YAML
 
 # ---------------------------------------------------------------------------
 # Helper: write a minimal reyn.yaml so load_config() has a project root
@@ -33,7 +34,7 @@ from reyn.config.config_schema import (
 
 def _project_root(tmp_path: Path) -> Path:
     """Create a minimal reyn.yaml so _find_project_root succeeds."""
-    (tmp_path / "reyn.yaml").write_text("llm:\n  model: standard\n", encoding="utf-8")
+    (tmp_path / "reyn.yaml").write_text(MINIMAL_REYN_YAML, encoding="utf-8")
     return tmp_path
 
 

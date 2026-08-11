@@ -39,6 +39,7 @@ from reyn.runtime.outbox import OutboxMessage
 from reyn.runtime.session import Session
 from reyn.security.permissions.permissions import PermissionResolver
 from tests._support.agent_session import make_session
+from tests._support.minimal_reyn_yaml import MINIMAL_REYN_YAML
 from tests._support.slash import slash_ctx
 
 
@@ -89,7 +90,7 @@ def _make_session(
     writes OUTSIDE the workspace (``~/.reyn/plugins/``), so exercising that
     path for real requires the operator-equivalent explicit
     ``sandbox.policy.write_paths`` grant, supplied here."""
-    (tmp_path / "reyn.yaml").write_text("llm:\n  model: standard\n", encoding="utf-8")
+    (tmp_path / "reyn.yaml").write_text(MINIMAL_REYN_YAML, encoding="utf-8")
     session = make_session(
         agent_name=agent_name,
         state_log=StateLog(tmp_path / "state.wal"),

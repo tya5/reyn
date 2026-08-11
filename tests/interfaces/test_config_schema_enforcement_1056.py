@@ -44,6 +44,7 @@ from reyn.config.config_schema import (
     resolve_config_value,
     walk_config_schema,
 )
+from tests._support.minimal_reyn_yaml import MINIMAL_REYN_YAML
 
 # Fields that silently COERCE an invalid value back to their default (rather
 # than raising a validation error), so a generic "<default>_nd" candidate can't
@@ -102,7 +103,7 @@ _MIGRATED_DESC_KEYS = (
 
 def _project_root(tmp_path: Path) -> Path:
     """Create a minimal reyn.yaml so _find_project_root / load_config succeed."""
-    (tmp_path / "reyn.yaml").write_text("llm:\n  model: standard\n", encoding="utf-8")
+    (tmp_path / "reyn.yaml").write_text(MINIMAL_REYN_YAML, encoding="utf-8")
     return tmp_path
 
 
@@ -149,7 +150,7 @@ def test_every_scalar_leaf_takes_effect_on_nondefault_set(tmp_path: Path) -> Non
                 continue
             root = tmp_path / f"leaf{i}"
             root.mkdir()
-            (root / "reyn.yaml").write_text("llm:\n  model: standard\n", encoding="utf-8")
+            (root / "reyn.yaml").write_text(MINIMAL_REYN_YAML, encoding="utf-8")
             os.chdir(root)
             _set(node.key, yaml.safe_dump(cand, default_flow_style=True).strip())
             try:
