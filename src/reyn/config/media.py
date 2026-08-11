@@ -225,7 +225,7 @@ def _build_auth_config(raw: object) -> AuthConfig:
 
 
 def _build_surfaces_config(raw: object) -> SurfacesConfig:
-    """Parse the ``web.surfaces:`` sub-section (mirrors ``_build_web_fetch_config``).
+    """Parse the ``gateway.surfaces:`` sub-section (mirrors ``_build_web_fetch_config``).
 
     Accepts both a long form (``{a2a: {enabled: true}}``) and a tolerated
     short form (``{a2a: true}``). Malformed / missing input returns an empty

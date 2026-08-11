@@ -36,10 +36,10 @@ by this module.
 ``REYN_WEB_ENABLE_SURFACES`` / ``REYN_WEB_DISABLE_SURFACES`` comma-separated
 env vars, mirroring the existing ``REYN_WEB_*`` CLI→server propagation
 pattern used by ``--default-design`` / ``--eager-embedding-build``) beat the
-``web.surfaces.<name>.enabled`` config, which beats the secure-default table
+``gateway.surfaces.<name>.enabled`` config, which beats the secure-default table
 above::
 
-    CLI (--enable/--disable) > web.surfaces config > secure-default
+    CLI (--enable/--disable) > gateway.surfaces config > secure-default
 
 Resolution happens once, at server-module-import time (``mount_all`` is
 called from ``server.py`` at import, matching where the surfaces were

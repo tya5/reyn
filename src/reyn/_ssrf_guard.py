@@ -20,7 +20,7 @@ Policy (lead-approved, #1956):
     fetch has no legitimate use for these.
   - **deny by default, operator opt-in** — private RFC1918 / ULA
     (``10/8``, ``172.16/12``, ``192.168/16``, ``fc00::/7``). Allowed only when
-    ``allow_private`` is True (``web.fetch.allow_private_ips: true``, for
+    ``allow_private`` is True (``web_fetch.allow_private_ips: true``, for
     enterprise internal-fetch).
 
 Resolution is DNS-aware: the host is resolved and EVERY returned IP is checked
@@ -160,7 +160,7 @@ def assert_fetch_host_allowed(host: str, *, allow_private: bool) -> None:
 def resolve_allow_private() -> bool:
     """Operator opt-in for private-IP fetches, from the config→env export.
 
-    The config loader exports ``web.fetch.allow_private_ips`` into
+    The config loader exports ``web_fetch.allow_private_ips`` into
     ``REYN_FETCH_ALLOW_PRIVATE_IPS``; the safe.http subprocess and the
     config-less registry main-process modules read it here. Absent / unset →
     ``False`` (deny private — fail-secure even if a sandbox strips the env).

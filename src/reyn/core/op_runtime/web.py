@@ -190,9 +190,9 @@ def _resolve_ssl_verify(ctx: OpContext) -> bool | str:
     """Resolve the SSL verify value for httpx from config + env fallback.
 
     Priority (highest → lowest):
-      1. ``web.fetch.ca_bundle`` set in config → returns the CA bundle path (str).
-      2. ``web.fetch.verify_ssl`` set to False → returns False (disable SSL check).
-      3. ``web.fetch.verify_ssl`` set to True  → returns True (force SSL check).
+      1. ``web_fetch.ca_bundle`` set in config → returns the CA bundle path (str).
+      2. ``web_fetch.verify_ssl`` set to False → returns False (disable SSL check).
+      3. ``web_fetch.verify_ssl`` set to True  → returns True (force SSL check).
       4. Both unset (None) → falls through to litellm.get_ssl_verify()
          (= SSL_VERIFY env → litellm.ssl_verify → SSL_CERT_FILE → True).
     """
@@ -277,14 +277,14 @@ async def handle_web_fetch(op: WebFetchIROp, ctx: OpContext) -> dict:
             "kind": "web_fetch", "url": op.url, "status": "too_large",
             "error": (
                 f"response body ({n} bytes) exceeds the {_max_dl}-byte download "
-                f"cap (web.fetch.max_download_bytes)"
+                f"cap (web_fetch.max_download_bytes)"
             ),
         }
 
     _REDIRECT_CODES = (301, 302, 303, 307, 308)
     body = b""
     try:
-        # SSL verification — priority: reyn.yaml web.fetch config → env-var chain.
+        # SSL verification — priority: reyn.yaml web_fetch config → env-var chain.
         # #1956: follow_redirects=False — we follow manually so each hop is gated.
         # #1972/#3075: pin_ssrf=True routes through PinnedAsyncHTTPTransport,
         # which pins each hop's connect to the pre-validated IP
@@ -431,7 +431,7 @@ async def handle_web_fetch(op: WebFetchIROp, ctx: OpContext) -> dict:
     # ``next_start`` in this result, i.e. it told the model "there is more, resume
     # at N" while ``start_index`` was absent from the tool schema (measured: never
     # present, `git log -S` on this file is empty) — the model could not act on it.
-    # Download volume is still bounded, by ``web.fetch.max_download_bytes``, above.
+    # Download volume is still bounded, by ``web_fetch.max_download_bytes``, above.
     total_length = len(content)
 
     ctx.events.emit(

@@ -7,7 +7,7 @@ Every hosted **surface** — AG-UI, the OpenUI web shell (`/`, `/static/*`,
 resource-fetch routes, A2A, MCP — is mounted through the FP-0058 P2
 :mod:`reyn.interfaces.web.surfaces` ``SurfaceSpec`` registry
 (``mount_all``), which resolves each surface's opt-in/opt-out posture
-(CLI ``--enable``/``--disable`` > ``web.surfaces`` config > secure-default)
+(CLI ``--enable``/``--disable`` > ``gateway.surfaces`` config > secure-default)
 before mounting it. See that module for the secure-default table and the
 per-surface mount functions. The webhook plugin surface (FP-0041) is
 mounted separately, unchanged, via its own ``webhooks.yaml`` opt-in.
@@ -387,7 +387,7 @@ def create_app() -> FastAPI:
 
     # Core surfaces (AG-UI / OpenUI web shell / health / REST /api / resources /
     # A2A / MCP): each resolved enabled/disabled (CLI --enable/--disable >
-    # web.surfaces config > secure-default) and mounted via the SAME
+    # gateway.surfaces config > secure-default) and mounted via the SAME
     # mount(app, config) -> APIRouter | None seam the plugin loader above already
     # used — see reyn.interfaces.web.surfaces for the registry, the secure-default
     # table, and the strip-gate falsification note.
