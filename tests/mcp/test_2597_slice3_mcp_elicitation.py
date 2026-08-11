@@ -54,7 +54,9 @@ class _HangingBus:
 
     async def request(self, iv: UserIntervention) -> InterventionAnswer:
         self.seen.append(iv)
-        await asyncio.sleep(9999)
+        # Never resolves — the handler's own timeout is what ends this wait,
+        # not a fixed delay racing it.
+        await asyncio.Event().wait()
         raise AssertionError("unreachable")  # pragma: no cover
 
 
