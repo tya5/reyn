@@ -100,7 +100,36 @@ jobs:
         # run that was going to happen anyway, so the measurement costs no
         # extra CI cycle; it is also the exact input a duration-balanced
         # shard split would need.
-        run: timeout 12m python -m pytest -q -n auto --timeout=120 -rs --durations=25
+        #
+        # `set -o pipefail` + `| tee /tmp/pytest-output.log` (#4331): the
+        # census step below needs this run's own `-rs` output to parse —
+        # `tee` gives it a file without changing what prints to the CI log.
+        # `set -o pipefail` is explicit (not relied on as a shell default)
+        # so this step's pass/fail still reflects pytest's own exit code,
+        # not `tee`'s (which always succeeds) — this step must keep failing
+        # the job exactly as before; only the informational step below is
+        # allowed to be silent about failure.
+        run: |
+          set -o pipefail
+          timeout 12m python -m pytest -q -n auto --timeout=120 -rs --durations=25 | tee /tmp/pytest-output.log
+
+      # #4331: what a green run above does NOT say — the skip census (count
+      # + reason breakdown) and the collection-error count, on the SAME
+      # surface (this job's own summary page) a human reads the green
+      # result on. Lead-coder's #4331 ruling explicitly rejected a doc line
+      # instead: a hardcoded count goes stale the moment the population
+      # shifts, and nobody opens a doc at the moment they're reading a
+      # green check — the fix has to live where the green already is.
+      #
+      # `if: always()`: the census must appear whether the run above passed
+      # or failed — visibility here does not depend on the gate's own
+      # result. `scripts/pytest_skip_census.py` never exits nonzero (see its
+      # own module docstring "Not a gate") — condition 3 from the issue:
+      # this step must never turn red over a skip count, or "reduce skips"
+      # becomes a pressure that eats correct-by-design optional-extra skips.
+      - name: Test-coverage census (#4331 — informational, not a gate)
+        if: always()
+        run: python scripts/pytest_skip_census.py /tmp/pytest-output.log >> "$GITHUB_STEP_SUMMARY"
 
   lint:
     name: ruff
