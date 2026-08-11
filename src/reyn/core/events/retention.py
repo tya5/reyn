@@ -39,17 +39,6 @@ class RetentionPolicy:
             and self.keep_bytes is None
         )
 
-    @classmethod
-    def from_config(cls, cfg: dict | None) -> "RetentionPolicy":
-        """Build from a reyn.yaml ``retention:`` block (or ``None`` → live)."""
-        if not cfg:
-            return cls()
-        return cls(
-            keep_generations=cfg.get("keep_generations"),
-            keep_duration_secs=cfg.get("keep_duration_secs"),
-            keep_bytes=cfg.get("keep_bytes"),
-        )
-
 
 def compute_retention_floor(
     policy: RetentionPolicy,

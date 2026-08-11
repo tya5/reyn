@@ -14,6 +14,20 @@ this correction, against `origin/main`. The "5/5 seams" flow-trace above verifie
 where a rewind must hook into existing code, not end-to-end config/UI wiring for
 these two — the two claims read together implied more than the trace established.
 Tracked in #3987; current state in `docs/feature-map.md`.
+**Status correction, resolved** (2026-08-11, lead-coder, #3987): **D5's retention-window
+config — decided NOT to wire.** `RetentionPolicy.from_config` measured (tui-coder):
+the WAL/generation GC already runs correctly on the default live-only floor (throttled,
+every chat-turn boundary — `session.py`'s `maybe_truncate_for_size`), with no
+unbounded-disk-growth risk; the only thing config wiring would have added is a *deeper*
+undo window than live, a capability nobody had asked for while it sat unconfigurable.
+`from_config` removed rather than left dead. **2b's tree-layout UI remains OPEN,
+substrate-only**: the underlying branch-topology data (`list_branches`,
+`list_rewind_points(include_abandoned=True)`) is real and load-bearing for other
+production paths (`checkout`'s fork-switch, the 2c edit flow's lineage lookup), but
+`build_branch_tree_rows` — the function that would render it as a picker tree — has
+no production caller; `/rewind`'s actual picker shows only the active branch's flat
+checkpoint list. Decision on whether to build that UI is owner-pending, tracked
+in #3987.
 **Track**: Core state-model — successor seam to ADR-0001 (WAL+snapshot),
 ADR-0002 (forward-replay), ADR-0023 (PlanSnapshot).
 **Owner status**: design judgments co-designed + confirmed with owner (issue

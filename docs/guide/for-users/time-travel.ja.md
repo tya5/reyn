@@ -54,10 +54,11 @@ Reyn を Web インターフェース（AG-UI SSE / A2A）経由で利用する�
 | 機能 | ステータス |
 |------|-----------|
 | 新しい fork-and-edit 分岐を作る、ターン内編集（`ctrl+t`）付きの `/rewind` | ✅ Phase 2c, landed |
-| 古いチェックポイントを GC する保持ウィンドウ設定（`retention: keep_generations: N`） | ⏳ designed, not yet wired |
 | ピッカーの分岐 **ツリービュー**（現在の分岐だけでなく破棄済み分岐のチェックポイントも） | ⏳ not yet wired — 非アクティブ分岐の seq への fork-switch は `/rewind <N>` で可能 |
 | ピッカーを開く `Esc Esc` ダブルタップのショートカット | ⏳ not yet wired — `/rewind` で開いてください |
 | AG-UI SSE / A2A Web 面での `/rewind` ピッカー; `AskUserMessage` UX による Web 編集 | ✅ Phase 2d, landed |
+
+保持ウィンドウ設定（`retention: keep_generations: N`、古いチェックポイントを GC するための設定）——検討の結果、配線しないと決定（#3987、2026-08-11）: WAL/generation の GC は既定の live-only floor で正しく動作しており、毎チャットターン境界でスロットル付きで実行され、無制限growthのリスクはありません。`retention:` 設定ブロックが追加していたはずのものは、liveより深いundoウィンドウという能力だけで、設定できない状態のまま誰からも要望が出ていませんでした。`RetentionPolicy.from_config` は死んだまま残さず削除しました。
 
 ## 関連情報
 
