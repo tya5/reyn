@@ -51,7 +51,9 @@ class _HttpEchoServer:
             )
         )
         # Poll until the socket accepts connections instead of a fixed sleep.
-        for _ in range(100):
+        # Unbounded per the testing policy — a capped attempt count is a wait
+        # duration rewritten as a count, and fails the same way on a slow host.
+        while True:
             try:
                 with socket.create_connection(("127.0.0.1", self.port), timeout=0.1):
                     break
@@ -256,7 +258,9 @@ def test_sse_transport_round_trip() -> None:
             )
         )
         try:
-            for _ in range(100):
+            # Unbounded per the testing policy — see the identical poll in
+            # _HttpEchoServer.__aenter__ above for the rationale.
+            while True:
                 try:
                     with socket.create_connection(("127.0.0.1", port), timeout=0.1):
                         break

@@ -129,16 +129,25 @@ async def test_esc_from_an_empty_composer_goes_back_to_the_newest_output() -> No
 async def test_esc_with_a_draft_in_the_box_moves_nothing() -> None:
     """Tier 2b: a draft makes esc mean "never mind the text", not "scroll".
 
-    Checked by pumping a while and asserting the state did NOT change, which
-    cannot be proven by waiting — so it is paired with the positive test above:
-    that one establishes that this sequence DOES resume following when the box
-    is empty, so a False here is the draft's doing and not a dead keypress.
+    "esc did nothing" has no positive predicate of its own to wait on, so it
+    is proven via a causal successor instead of elapsed time: a real,
+    positively-observable event is pushed through the SAME message pump right
+    after the escape keypress, and this test waits (unbounded) for THAT to
+    land. Textual's pump processes messages in order, so once the marker
+    entry is rendered, escape's own handler (had it done anything) has
+    already run — the negative checks below reflect settled state, not an
+    early sample.
+
+    Paired with the positive test above: that one establishes that this
+    sequence DOES resume following when the box is empty, so a False here is
+    the draft's doing and not a dead keypress.
     """
     transport = QueueTransport()
     app = TextualChatApp(transport=transport)
     async with app.run_test(size=(100, 30)) as pilot:
         await pilot.pause()
         flow = await _leave_the_tail(app, transport, pilot)
+        entries_before = len(flow.entries)
 
         composer = app.query_one(Composer)
         composer.focus()
@@ -146,9 +155,10 @@ async def test_esc_with_a_draft_in_the_box_moves_nothing() -> None:
         composer.text = "a draft"
         await pilot.pause()
         await pilot.press("escape")
-        for _ in range(60):
-            await pilot.pause()
-            await asyncio.sleep(0.01)
+        await transport.push_display(
+            OutboxMessage(kind="agent", text="after-escape marker", meta={})
+        )
+        await _pump(pilot, lambda: len(flow.entries) > entries_before)
 
         assert not flow.following, (
             "esc scrolled the conversation while there was a draft in the box"
@@ -166,12 +176,19 @@ async def test_sending_does_not_go_back_to_the_newest_output() -> None:
     answers "did it send" is the sent queue and the NOW row, both outside the
     scrolling region — which is exactly the thing those other interfaces do not
     have, and the whole reason they jump.
+
+    "sending did not resume following" has no positive predicate of its own,
+    so it is proven via a causal successor (same pattern as the draft-esc
+    test above): a real event is pushed through the SAME message pump right
+    after "enter", and this test waits (unbounded) for THAT to land before
+    checking the negative.
     """
     transport = QueueTransport()
     app = TextualChatApp(transport=transport)
     async with app.run_test(size=(100, 30)) as pilot:
         await pilot.pause()
         flow = await _leave_the_tail(app, transport, pilot)
+        entries_before = len(flow.entries)
 
         composer = app.query_one(Composer)
         composer.focus()
@@ -179,9 +196,10 @@ async def test_sending_does_not_go_back_to_the_newest_output() -> None:
         composer.text = "a message"
         await pilot.pause()
         await pilot.press("enter")
-        for _ in range(60):
-            await pilot.pause()
-            await asyncio.sleep(0.01)
+        await transport.push_display(
+            OutboxMessage(kind="agent", text="after-send marker", meta={})
+        )
+        await _pump(pilot, lambda: len(flow.entries) > entries_before)
 
         assert not flow.following, (
             "sending returned to the tail — the convention was restored without "

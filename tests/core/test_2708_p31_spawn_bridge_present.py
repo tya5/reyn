@@ -217,11 +217,10 @@ async def test_detached_present_not_bridged_to_caller(tmp_path: Path, monkeypatc
     )
     run_dir = pipeline_run_dir(reyn_root(state_log.path), rid)
 
-    # Drive the detached pump to terminal (result marker written).
-    deadline = asyncio.get_event_loop().time() + 15.0
-    while asyncio.get_event_loop().time() < deadline:
-        if read_result(run_dir) is not None:
-            break
+    # Drive the detached pump to terminal (result marker written). Unbounded
+    # per the testing policy — a wall-clock deadline is a wait duration
+    # rewritten as a bound, and fails the same way on a slow host.
+    while read_result(run_dir) is None:
         await asyncio.sleep(0.05)
     assert read_result(run_dir) is not None, "detached pipeline run did not reach terminal"
 
