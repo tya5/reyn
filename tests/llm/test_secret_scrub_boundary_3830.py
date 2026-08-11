@@ -7,11 +7,13 @@ actual credential.
 """
 from __future__ import annotations
 
+import os
+
 import litellm
 import pytest
 
 from reyn.llm.secret_scrub import (
-    SECRET_ENV_VARS,
+    SECRET_KWARG_HINTS,
     collect_secret_values,
     scrub_exception_in_place,
     scrub_secrets,
@@ -22,14 +24,19 @@ _FAKE_TOKEN = "sk-FAKEPLACEHOLDER000"  # synthetic — never a real credential
 
 @pytest.fixture(autouse=True)
 def _no_ambient_secret_env(monkeypatch):
-    """`collect_secret_values` unconditionally scans every
-    `SECRET_ENV_VARS` name — a real dev/CI environment may have real
-    provider keys set for unrelated reasons. Every test in this file must
-    see a clean slate so its assertions are about the FUNCTION's contract,
-    not this machine's ambient environment (and so no real key value can
-    ever reach an assertion diff or failure message here)."""
-    for var in SECRET_ENV_VARS:
-        monkeypatch.delenv(var, raising=False)
+    """`collect_secret_values` scans every env var whose NAME matches
+    `SECRET_KWARG_HINTS` (#3830/#4341 — a predicate, not a fixed name
+    list) — a real dev/CI environment may have real provider keys set for
+    unrelated reasons. Every test in this file must see a clean slate so
+    its assertions are about the FUNCTION's contract, not this machine's
+    ambient environment (and so no real key value can ever reach an
+    assertion diff or failure message here). Iterates a SNAPSHOT of
+    `os.environ`'s keys (not the live mapping) since `monkeypatch.delenv`
+    mutates it as we go — deleting from the same dict while iterating it
+    would skip entries."""
+    for name in list(os.environ.keys()):
+        if any(h in name.lower() for h in SECRET_KWARG_HINTS):
+            monkeypatch.delenv(name, raising=False)
 
 
 def _make_litellm_exception() -> "litellm.exceptions.AuthenticationError":
@@ -66,6 +73,41 @@ def test_collect_secret_values_reads_known_env_vars(monkeypatch) -> None:
     without it ever passing through base_kwargs at all."""
     monkeypatch.setenv("OPENAI_API_KEY", _FAKE_TOKEN)
     assert collect_secret_values({}) == [_FAKE_TOKEN]
+
+
+def test_collect_secret_values_reads_an_unlisted_provider_env_var_too(monkeypatch) -> None:
+    """Tier 1: #4341 review fix — the env side is a PREDICATE on the var
+    NAME (same as the kwargs side), not a fixed enumeration. A provider
+    env var this module never named explicitly (here a synthetic
+    `MISTRAL_API_KEY`) is still covered, because its name matches
+    `SECRET_KWARG_HINTS` the same way `OPENAI_API_KEY` does — the fixed
+    6-name list this replaced would have missed it by construction."""
+    monkeypatch.setenv("MISTRAL_API_KEY", _FAKE_TOKEN)
+    assert collect_secret_values({}) == [_FAKE_TOKEN]
+
+
+def test_a_short_secret_keyed_kwarg_value_is_excluded() -> None:
+    """Tier 1: #4341 review catch — a secret-hint-keyed value that's too
+    short to plausibly be a real key must not be collected, or scrubbing
+    it would blindly replace that short substring wherever it coincidentally
+    appears in unrelated provider text."""
+    assert collect_secret_values({"api_key": "short"}) == []
+
+
+def test_a_purely_numeric_secret_keyed_kwarg_value_is_excluded() -> None:
+    """Tier 1: #4341 review catch, the exact motivating case — an env var
+    like `TOKEN_LIMIT=4096` matches the name predicate but its value is an
+    ordinary numeric setting, not a credential. Scrubbing "4096" out of a
+    provider error message would corrupt a legitimate token-count/status-
+    code mention that happens to share those digits."""
+    assert collect_secret_values({"token_limit": "409600000000"}) == []
+
+
+def test_an_env_var_matching_by_name_but_short_numeric_value_is_excluded(monkeypatch) -> None:
+    """Tier 1: same filter, exercised on the env-var side — the shape
+    lead-coder's review named directly (`TOKEN_LIMIT=4096`)."""
+    monkeypatch.setenv("TOKEN_LIMIT", "4096")
+    assert collect_secret_values({}) == []
 
 
 # ── scrub_secrets ────────────────────────────────────────────────────────────

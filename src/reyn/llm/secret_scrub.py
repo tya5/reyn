@@ -55,31 +55,61 @@ SECRET_KWARG_HINTS: tuple[str, ...] = (
     "api_key", "api-key", "authorization", "secret", "token",
 )
 
-#: #1676: env vars whose values are API secrets — scrubbed from any
-#: freeform provider text (error body, exception message) so a captured
-#: 4xx/401 never leaks a key, regardless of whether the key reached
-#: litellm via an explicit kwarg or an environment variable it read
-#: itself.
-SECRET_ENV_VARS: tuple[str, ...] = (
-    "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY",
-    "LITELLM_API_KEY", "AZURE_API_KEY",
-)
+#: A candidate secret value shorter than this, or made of digits only, is
+#: excluded from the scrub list — lead-coder's #3830 review catch: an env
+#: var like ``TOKEN_LIMIT=4096`` matches ``SECRET_KWARG_HINTS`` on its NAME
+#: (contains "token") but its VALUE is an ordinary short numeric setting,
+#: not a credential. Blindly ``str.replace()``-ing every occurrence of
+#: ``"4096"`` in a provider error message would corrupt legitimate
+#: diagnostic text (a token count, a byte limit, a status code) that
+#: happens to share those digits — a real correctness risk, not a
+#: hypothetical. Real provider API keys (`sk-...`, `AIza...`, proxy
+#: tokens, …) are uniformly well over this length and never purely
+#: numeric, so this filter costs no real-secret coverage. Chosen by
+#: reasoning about key-format lengths, not by inspecting any value this
+#: process has ever held — see module docstring's own rule about not
+#: outputting secret values, which extends to not using them to tune this
+#: threshold either.
+_MIN_SECRET_VALUE_LENGTH = 12
+
+
+def _looks_like_a_real_secret(value: str) -> bool:
+    """False for a short and/or purely-numeric string — see
+    :data:`_MIN_SECRET_VALUE_LENGTH`'s docstring for why this filter
+    exists and how the threshold was chosen."""
+    return len(value) >= _MIN_SECRET_VALUE_LENGTH and not value.isdigit()
 
 
 def collect_secret_values(base_kwargs: dict) -> list[str]:
-    """The concrete secret VALUES to scrub — the secret-keyed kwargs (e.g.
-    the proxy-injected ``api_key``) + known API-key env vars, unconditionally
-    (a provider call may read its key straight from the environment without
-    it ever passing through *base_kwargs*). Scrubbing the actual value is
-    precise (vs. guessing patterns in arbitrary provider output)."""
+    """The concrete secret VALUES to scrub — every kwarg AND env var whose
+    NAME matches :data:`SECRET_KWARG_HINTS`, filtered by
+    :func:`_looks_like_a_real_secret`.
+
+    The env-var side used to be a fixed 6-name enumeration
+    (``OPENAI_API_KEY``, ``ANTHROPIC_API_KEY``, …) — the exact "deny-list
+    needs a new entry every time a provider is added" shape this module's
+    own docstring names as the class #3830 rejects for SINKS; applying it
+    here, to the SOURCE side, was the same mistake once removed (lead-coder
+    review, #4341). Scanning ``os.environ`` with the SAME name-predicate the
+    kwargs side already uses means a provider this list never named
+    (``MISTRAL_API_KEY``, a self-hosted proxy's own env var name, …) is
+    covered by construction, not by remembering to add a line here.
+    """
     vals: list[str] = []
     for k, v in base_kwargs.items():
-        if isinstance(v, str) and v and any(h in k.lower() for h in SECRET_KWARG_HINTS):
+        if (
+            isinstance(v, str) and v
+            and any(h in k.lower() for h in SECRET_KWARG_HINTS)
+            and _looks_like_a_real_secret(v)
+        ):
             vals.append(v)
-    for env in SECRET_ENV_VARS:
-        val = os.environ.get(env)
-        if val:
-            vals.append(val)
+    for k, v in os.environ.items():
+        if (
+            v
+            and any(h in k.lower() for h in SECRET_KWARG_HINTS)
+            and _looks_like_a_real_secret(v)
+        ):
+            vals.append(v)
     return vals
 
 
