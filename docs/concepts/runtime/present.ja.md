@@ -57,7 +57,7 @@ view は**宣言的なコンポーネントツリー**であり、コードで�
 | `keyvalue` | ラベル/値の行カード |
 | `table` | 行 × 列 |
 | `list` | 箇条書き |
-| `image` | v1 では `[image: <alt>]` という dim テキストのプレースホルダーのみ描画される — マルチモーダル配送経路へはまだルーティングされない |
+| `image` | TUI が URL を自ら fetch し実ピクセルを描画する（Kitty/WezTerm/Sixel、フォールバックは half-block/unicode、端末ごとに自動検出 — #3846 ③）。resolution stage を持たない surface（`--cui`、`reyn pipe`）は `[image: <alt>]` という dim テキストのプレースホルダーにフォールバックする |
 
 データは **JSON Pointer (RFC 6901)** のパスバインディングで view に結合され、`{"$bind":
 "<pointer>"}` として構造的に表現される。`table` / `list` のパスは**行相対**（各反復行に対する

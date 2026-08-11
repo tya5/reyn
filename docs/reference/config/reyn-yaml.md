@@ -1797,7 +1797,7 @@ mcp:
 
 Servers are merged across config sources: `~/.reyn/config.yaml` ⊕ `reyn.yaml` ⊕ `reyn.local.yaml`. The merge is a shallow union on `mcp.servers` keys — a per-machine `reyn.local.yaml` can add or override a single server without re-stating the rest.
 
-The MCP runtime ships in the core install — `fastmcp` is a core dependency (the MCP client is constructed by every session), so no extra is required. (A now-empty `[mcp]` extra is retained as a back-compat alias so existing `pip install -e ".[mcp]"` invocations keep resolving.)
+The MCP runtime ships in the core install — every session's MCP client is now built directly on the official `mcp` SDK (#4283/#4298/#4299: `fastmcp` retired from the client path entirely), which is a core dependency, so no extra is required. (`fastmcp` itself stays a core dependency ONLY because `tests/_support/`'s MCP server test-doubles still build on its server framework — porting those to the official SDK's server API is #4302's own scope and the actual precondition for dropping it; not, as an earlier draft of this note wrongly claimed, the bundled RAG plugin, whose `requirements.txt` is register-only and never read or installed by reyn. A now-empty `[mcp]` extra is retained as a back-compat alias so existing `pip install -e ".[mcp]"` invocations keep resolving.)
 
 See [Concepts: MCP](../../concepts/tools-integrations/mcp.md) for the protocol overview and How-to: use an MCP server for the end-to-end quickstart.
 
