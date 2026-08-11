@@ -34,8 +34,10 @@ from pathlib import Path
 import pytest
 
 sys.path.insert(0, str(Path(__file__).parent))
+from reyn.core.events.config_recovery import reyn_root  # noqa: E402
 from reyn.core.events.state_log import StateLog  # noqa: E402
 from reyn.core.pipeline.executor import Pipeline, ToolStep  # noqa: E402
+from reyn.core.pipeline.work_order import pipeline_run_dir, read_result  # noqa: E402
 from reyn.llm.llm import LLMToolCallResult  # noqa: E402
 from reyn.llm.pricing import TokenUsage  # noqa: E402
 from reyn.runtime.registry import AgentRegistry  # noqa: E402
@@ -255,7 +257,7 @@ async def test_detached_ask_user_does_not_reach_invoker(tmp_path: Path, monkeypa
     caller.register_intervention_listener(DEFAULT_CHAT_CHANNEL_ID)
 
     try:
-        await start_pipeline_run(
+        rid = await start_pipeline_run(
             reg,
             pipeline=_ask_pipeline(),
             pipeline_name="asks",
@@ -264,17 +266,20 @@ async def test_detached_ask_user_does_not_reach_invoker(tmp_path: Path, monkeypa
             reply_to_sid="main",
             state_log=state_log,
         )
-        # Over a bounded window (the detached driver spawns + pumps + reaches its ask_user),
-        # the invoker's live operator listener is NEVER consulted — no intervention parks on
-        # the caller's active queue. (An attached bridge WOULD park one there; see the
-        # attached test. This is the not-bridged scope.)
-        deadline = asyncio.get_event_loop().time() + 4.0
-        while asyncio.get_event_loop().time() < deadline:
-            assert caller.interventions.list_active() == [], (
-                "a detached ask_user unexpectedly reached the invoker's live listener — "
-                "detached is out of P3.2a scope (known-RED)."
-            )
-            await asyncio.sleep(0.1)
+        run_dir = pipeline_run_dir(reyn_root(state_log.path), rid)
+        # "the invoker's live listener is never consulted" has no positive predicate
+        # of its own — proven via a causal successor instead (#4280 ③, same pattern
+        # as #4269's esc/send fix): the detached ask_user's own typed-refusal
+        # resolution (test_spawn_routing_detached_fail_mode_2708's
+        # test_detached_ask_user_refuses_deliberately_no_hang) reaches terminal
+        # deterministically and is waited on unboundedly here. Once it lands, the
+        # detached driver's own processing has necessarily already run — so if it
+        # were ever going to touch the invoker's listener, it already would have.
+        await wait_until(lambda: read_result(run_dir) is not None)
+        assert caller.interventions.list_active() == [], (
+            "a detached ask_user unexpectedly reached the invoker's live listener — "
+            "detached is out of P3.2a scope (known-RED)."
+        )
     finally:
         # Teardown: cancel the registry's live session run tasks to avoid a lingering coroutine
         # at loop close. (Post-P3-item3 the detached ask_user resolves immediately via the
