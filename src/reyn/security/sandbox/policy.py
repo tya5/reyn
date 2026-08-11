@@ -177,13 +177,17 @@ DEFAULT_SANDBOX_NETWORK: bool = True
 # never hardcoded ceilings a running policy is measured against. The LLM's
 # actual ceiling on any given deployment is ``policy.max_timeout_seconds``,
 # whatever the operator configured it to (600 only when they left it at the
-# default). Single source: SandboxPolicy's own field defaults below, the
-# exec tool's schema enrichment (exec.py's schema_enricher, reads the
-# RESOLVED policy per session — never a bare 120/600 literal in the static
-# schema text), and the LLM-supplied op-level override's reject-not-clamp
-# check (op_runtime/sandboxed_exec.py) all read the RESOLVED
-# SandboxPolicy fields, not these two constants directly (these two are
-# only the dataclass defaults).
+# default). Single source: SandboxPolicy's own field defaults below and the
+# LLM-supplied op-level override's reject-not-clamp check
+# (op_runtime/sandboxed_exec.py) both read the RESOLVED SandboxPolicy
+# fields, not these two constants directly (these two are only the
+# dataclass defaults). The exec tool's SCHEMA TEXT (tools/descriptions/
+# execution.py) deliberately carries no number at all (lead-coder ruling,
+# option (b)) — it does not read these constants or the resolved policy;
+# exec.py has no schema_enricher (that mechanism only reaches tools on the
+# router_tools.build_tools() ToolSpec path, not universal_catalog's
+# describe path exec uses — dynamic per-session schema injection, option
+# (a), was considered and explicitly deferred, not implemented).
 DEFAULT_EXEC_TIMEOUT_SECONDS: int = 120
 DEFAULT_MAX_EXEC_TIMEOUT_SECONDS: int = 600
 
