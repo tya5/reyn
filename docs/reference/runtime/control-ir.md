@@ -82,7 +82,7 @@ Each is a distinct op kind with its own schema; there is no `op` sub-field.
 
 | Kind | Permission | Notes |
 |------|-----------|-------|
-| `read_file` | `file.read` | `offset` / `limit` (line range) optional. A plain read — no path/filename special-casing: a `SKILL.md`-named file reads byte-identical to any other file (the former invocation-time `${REYN_*}`/`${CLAUDE_*}`/`${env:VAR}` expansion pass for exactly that filename moved to the dedicated `load_skill` op below, FP-0066 P0/#3247 — see that op's section). When the inline cap self-bounds the read, the result carries `status: "truncated"` and a `note` (chars shown of total + the on-disk path/offset to resume from); the chat router's `read_file` alias, which otherwise flattens the result to a bare string before `to_canonical` runs, appends that same `note` inline instead of dropping it (#3191). |
+| `read_file` | `file.read` | `offset` / `limit` (line range) optional. A plain read — no path/filename special-casing: a `SKILL.md`-named file reads byte-identical to any other file (the former invocation-time `${REYN_*}`/`${CLAUDE_*}`/`${env:VAR}` expansion pass for exactly that filename moved to the dedicated `load_skill` op below, FP-0066 P0/#3247 — see that op's section). When the inline cap self-bounds the read, the result carries `status: "truncated"` and a `note` (chars shown of total + the on-disk path/offset to resume from); the chat router's `read_file` alias, which otherwise flattens the result to a bare string before `to_canonical` runs, appends that same `note` inline instead of dropping it (#3191). `char_offset` (int, optional, #2335) — the char position WITHIN the line named by `offset` to resume from; set ONLY on a truncated result whose single overflowing line was itself longer than the inline cap (the result's own `next_char_offset`), never on an ordinary multi-line truncation (which resumes at a LINE boundary via `next_offset` alone, `char_offset` absent — pre-#2335, byte-identical). Passing `offset`/`limit` together with `char_offset` set switches the read out of the plain line-window mode above into the self-bounding accumulate-from-`(offset, char_offset)` mode. |
 | `write_file` | `file.write` | Creates or overwrites; parent dirs created as needed. |
 | `edit_file` | `file.write` | `old_string` must be unique unless `replace_all: true`. |
 | `delete_file` | `file.write` | |
@@ -582,13 +582,25 @@ in the skill's frontmatter **and** user approval.
 ```
 
 Fields:
-- `server_id` (required) — registry identifier (e.g. `"io.github.foo/bar-mcp"`).
+- `server_id` (required — required even when `source` is set, since it feeds the
+  audit event; when installing from a `source`, derive it from the specifier or
+  pass an empty string) — registry identifier (e.g. `"io.github.foo/bar-mcp"`).
 - `scope` (optional, default `"local"`) — config tier to write to:
   - `"local"` → `<project>/.reyn/config.yaml`
   - `"project"` → `<project>/reyn.yaml`
   - `"user"` → `~/.reyn/config.yaml`
 - `env_overrides` (optional) — pre-supplied secret env values; skip interactive prompt
   for keys present here.
+- `source` (optional) — a `--source` specifier that, when set, SKIPS the
+  registry fetch entirely and resolves server metadata directly from the
+  specifier instead: `"npm:@scope/pkg"`, `"pypi:my-mcp-server"`,
+  `"docker:my-org/server"`, or a GitHub URL. The resolved server name (from
+  the specifier) becomes the config key, falling back to `server_id`'s short
+  name when resolution doesn't name one.
+- `extra_args` (optional, list[str]) — extra CLI args appended to the
+  resolved server's `args` list after registry/source resolution — for a
+  server that needs a runtime flag beyond what the registry/source metadata
+  supplies (e.g. `["--server", "pyright"]`).
 
 Handler lifecycle:
 1. Fetches `server.json` via `RegistryClient`
@@ -626,6 +638,60 @@ Handler lifecycle:
 > for user RAG composition AND is the shared internal mechanism `index_update` /
 > `semantic_search` dispatch through. So `kind: embed` is emitted again; only
 > `kind: index_write` is not.
+
+## `mcp_drop_server`
+
+Removes an MCP server from project/local/user config — the counter-op to
+`mcp_install` (FP-0034 §D23). Purely mechanical (no LLM reasoning needed);
+lives in the universal catalog under `mcp.operation__drop_server`. Requires
+`permissions.mcp_drop_server: true` in the skill's frontmatter — a
+DISTINCT decl field from `mcp_install`'s, so install intent alone never
+implies drop intent (prevents an install-only agent from accidentally
+tearing down user-configured servers).
+
+```json
+{
+  "kind": "mcp_drop_server",
+  "server": "filesystem",
+  "clear_secrets": true
+}
+```
+
+Fields:
+- `server` (required) — the short config key (e.g. `"filesystem"`).
+- `scope` (optional, default `None` = auto-detect) — which config tier to
+  remove from (`"local"` / `"project"` / `"user"`, same mapping as
+  `mcp_install`'s `scope`). When omitted, the handler walks
+  dynamic → local → project → user and removes from the first tier that
+  contains `server`.
+- `clear_secrets` (optional, default `true`) — also remove the server's
+  `${KEY}=value` secret entries from `~/.reyn/secrets.env` (keyed by the
+  entry's `env` block at removal time). The CLI's own default leaves
+  secrets behind for safety; the LLM path defaults to cleaning them up on
+  the premise that an LLM's drop intent is more deliberate.
+
+Handler lifecycle:
+1. Resolve scope — explicit (`op.scope`) or auto-detect by walking tiers
+   for the first that contains `server`; not found anywhere → a structured
+   `{status: "not_found"}` result, never an exception (the LLM can
+   `list_actions`/retry rather than crash the turn).
+2. Gate via `PermissionResolver.require_file_write` over the scope's config
+   file — mirrors `mcp_install`'s gate; the old per-server bool-axis
+   `require_mcp_drop_server` prompt was removed by the #571
+   permission-collapse arc (per-server granularity is now an operator
+   config-level concern, not a per-op runtime one).
+3. Capture the entry's `env` block's key names (before mutation) so the
+   secrets cleanup step in 5 knows what to clear.
+4. Remove the entry from the scope's YAML, pruning now-empty `mcp.servers`/
+   `mcp` containers so the file stays tidy; `record_config_generation`
+   (recovery-core: truncation-surviving snapshot, #2259 / CLAUDE.md gate).
+5. When `clear_secrets` is `true`, remove the captured keys via
+   `reyn.security.secrets.store.clear_secret` — secret VALUES are never
+   read or emitted, only key names.
+6. Emits `mcp_server_removed` event (P6 audit trail).
+
+Result fields: `status` (`"ok"` / `"not_found"`), `server`, `scope`,
+`removed_path`, `env_keys_cleared`, `secrets_cleared`.
 
 ## `skill_install`
 
