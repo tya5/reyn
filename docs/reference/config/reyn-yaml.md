@@ -25,14 +25,18 @@ models:
 in `reyn.yaml` / `reyn.local.yaml` (= **PRJ scope**), which `load_config` reads
 **once at startup** — editing them mid-run has no effect **until a restart**.
 
-The exception is the six registries (`mcp`, `cron`, `hooks`, `skills`,
-`pipelines`, `presentations`), which may also be written in
+The exception is the runtime-mutable registries, which may also be written in
 `.reyn/config/<name>.yaml`. **Only what is written on that side is re-read at the
 turn boundary** (= hot reload); the same key written in `reyn.yaml` waits for a
 restart like everything else. **The file split *is* the write-gate boundary**
-(`_HOT_RELOAD_FILES` in `config/loader.py`, #2073), so the hot-reload loader
-structurally never opens `reyn.yaml` — to make a setting hot-reloadable, put it
-under `.reyn/config/` rather than adding to `reyn.yaml`.
+(#2073), so the hot-reload loader structurally never opens `reyn.yaml` — to make
+a setting hot-reloadable, put it under `.reyn/config/` rather than adding to
+`reyn.yaml`.
+
+**`_HOT_RELOAD_FILES` in `src/reyn/config/loader.py` is the source of which keys
+are in that exception.** The rows below are derived from it, but **do not read a
+count or a name list out of this prose** — it does not follow the registry when
+one is added.
 
 ⚠️ **One exception to the exception**: `composers` is read from the same 4-layer
 combine as `hooks` (`reyn.yaml` ∪ `.reyn/config/hooks.yaml` ∪ per-agent ∪

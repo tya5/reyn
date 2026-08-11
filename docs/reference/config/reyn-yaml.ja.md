@@ -25,13 +25,17 @@ models:
 `reyn.local.yaml`（＝ **PRJ スコープ**）にしか書けず、`load_config` が
 **起動時に一度だけ**読みます — 実行中に編集しても、**再起動するまで効きません**。
 
-例外は 6 つのレジストリ（`mcp` / `cron` / `hooks` / `skills` / `pipelines` /
-`presentations`）で、これらは `.reyn/config/<名前>.yaml` にも書けます。**そちら側に
-書いた分だけがターン境界で読み直され**（= hot reload）、`reyn.yaml` 側に書いた同じ
-キーは他と同じく再起動待ちです。**ファイル分割そのものが write-gate の境界**である
-ため（`config/loader.py` の `_HOT_RELOAD_FILES`、#2073）、hot reload のローダは
-`reyn.yaml` を構造的に読みません — 「hot reload される設定」を増やしたい場合は、
-`reyn.yaml` に書き足すのではなく `.reyn/config/` 側へ置きます。
+例外はランタイム可変なレジストリ群で、これらは `.reyn/config/<名前>.yaml` にも
+書けます。**`.reyn/config/` 側に書いた分だけがターン境界で読み直され**（= hot
+reload）、`reyn.yaml` 側に書いた同じキーは他と同じく再起動待ちです。
+**ファイル分割そのものが write-gate の境界**であるため（#2073）、hot reload の
+ローダは `reyn.yaml` を構造的に読みません — 「hot reload される設定」を増やしたい
+場合は、`reyn.yaml` に書き足すのではなく `.reyn/config/` 側へ置きます。
+
+**どのキーがこの例外に入るかの一次の出所は `src/reyn/config/loader.py` の
+`_HOT_RELOAD_FILES`** です。下の表の各行はそこから引いていますが、**個数や
+名前の一覧をここから読み取らず、`_HOT_RELOAD_FILES` を読んでください** — 追加
+されてもこの散文は自動追随しません。
 
 ⚠️ **例外の例外**: `composers` は `hooks` と同じ 4 層の結合（`reyn.yaml` ∪
 `.reyn/config/hooks.yaml` ∪ エージェントごと ∪ セッションごと）で読まれますが、
