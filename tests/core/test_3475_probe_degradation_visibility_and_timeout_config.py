@@ -39,10 +39,14 @@ strip-falsify (recorded here, executed manually before landing):
   - Visibility: revert the two `self._events.emit("mcp_tool_probe_degraded", ...)` calls
     in `_probe_one` back to a bare `return server_name, []` → RED (no event of that type).
   - Config wiring: revert `Session._handle_user_message` / `Session._run_router_loop` to
-    call `ensure_mcp_tools_cached()` with no `per_server_timeout=` kwarg → RED (the 0.05s
-    configured value never reaches the probe, the 5.0s default absorbs the 0.2s sleep, the
-    server is NOT cached empty, and `test_session_threads_configured_probe_timeout...`
-    fails on the "cached empty" assertion).
+    call `ensure_mcp_tools_cached()` with no `per_server_timeout=` kwarg → RED (the 0
+    configured value never reaches the probe, the unwired 5.0s default lets the
+    near-instant yielding probe complete normally, the server IS cached with tools, and
+    `test_session_threads_configured_probe_timeout...` fails on the "absent from cache"
+    assertion). #4264 ⑤ replaced the original 0.05s-configured/0.2s-sleeping-probe/5.0s-
+    default three-value race with `per_server_timeout=0` + a probe that only YIELDS
+    (`await asyncio.sleep(0)`) — reyn's own responsibility ends at "which value reaches
+    `asyncio.timeout()`", so the test no longer needs a real elapsed-time race to prove it.
 """
 from __future__ import annotations
 
@@ -136,34 +140,40 @@ async def _drive_first_turn(session) -> None:
 
 @pytest.mark.asyncio
 async def test_session_threads_configured_probe_timeout_into_the_real_probe(tmp_path: Path):
-    """Tier 2: (LOAD-BEARING) `safety.timeout.mcp_probe_seconds` set to a NON-default,
-    short value (0.05s) must reach `ensure_mcp_tools_cached`'s `per_server_timeout` —
-    the round-trip is witnessed by a probe that sleeps 0.2s: that sleep exceeds the
-    CONFIGURED 0.05s but not the unchanged 5.0s default, so a wired path times out
-    (server left UNANSWERED — #3520: absent from the cache, not cached empty) and a
-    dead path (still passing the 5.0s default) would instead record the probe's
-    tools — the test fails on a wrong RESULT, not merely on an uncalled function, if
-    the wiring from Session._safety.timeout.mcp_probe_seconds regresses."""
+    """Tier 2: (LOAD-BEARING) `safety.timeout.mcp_probe_seconds` set to a NON-default
+    value (0) must reach `ensure_mcp_tools_cached`'s `per_server_timeout` — reyn's own
+    responsibility here is only WHICH VALUE reaches `asyncio.timeout(per_server_timeout)`
+    (#4264 ⑤, owner ruling: reyn calls an existing stdlib timeout mechanism, it does not
+    implement one, so the test needs a VALUE distinction, not a real elapsed-time race).
+    A probe that yields once (`await asyncio.sleep(0)`, a scheduler yield — not a wait)
+    is used against `per_server_timeout=0`: `asyncio.timeout(0)` expires at the FIRST
+    checkpoint, so a wired path ALWAYS times out (server left UNANSWERED — #3520: absent
+    from the cache, not cached empty) with zero real elapsed time, while a dead path
+    (still passing the unchanged 5.0s default) lets the near-instant probe complete
+    normally and record its tools — the test fails on a wrong RESULT, not merely on an
+    uncalled function, if the wiring from Session._safety.timeout.mcp_probe_seconds
+    regresses, and it does so without racing real wall-clock time against a chosen
+    constant (the old 0.05s-vs-0.2s-vs-5.0s three-value race this replaces)."""
     old_cwd = os.getcwd()
     os.chdir(tmp_path)
     try:
-        async def _slow_probe(server_name: str) -> list[dict]:
-            await asyncio.sleep(0.2)
+        async def _yielding_probe(server_name: str) -> list[dict]:
+            await asyncio.sleep(0)  # a scheduler yield, not a wait — see docstring
             return [{"name": "should_not_appear", "description": ""}]
 
         session, server = _make_probe_session(
-            tmp_path, mcp_probe_seconds=0.05, probe_cb=_slow_probe,
+            tmp_path, mcp_probe_seconds=0, probe_cb=_yielding_probe,
         )
         await _drive_first_turn(session)
 
         snapshot = session.router_host.mcp_tools_cache_snapshot
         assert snapshot is not None, "priming must have run for the first turn"
         assert server not in snapshot, (
-            "expected the configured 0.05s per_server_timeout to time out the "
-            "0.2s-sleeping probe, leaving the server unanswered and therefore "
-            f"absent from the cache; got {snapshot!r}. A recorded entry means "
-            "the 0.05s value never reached ensure_mcp_tools_cached and the "
-            "unwired 5.0s default absorbed the sleep instead"
+            "expected the configured 0-second per_server_timeout to time out the "
+            "yielding probe at its first checkpoint, leaving the server unanswered "
+            f"and therefore absent from the cache; got {snapshot!r}. A recorded "
+            "entry means the 0 value never reached ensure_mcp_tools_cached and the "
+            "unwired 5.0s default absorbed the (near-instant) probe instead"
         )
     finally:
         os.chdir(old_cwd)
@@ -174,16 +184,18 @@ async def test_probe_timeout_emits_visible_degradation_event(tmp_path: Path):
     """Tier 2: (LOAD-BEARING) a probe that times out under the configured budget emits
     `mcp_tool_probe_degraded` on the session's real EventLog, naming the server and
     `reason="timeout"` — the literal payload an operator reading `.reyn/events` sees,
-    not merely evidence that some emit call happened."""
+    not merely evidence that some emit call happened. See the sibling test above for
+    why `per_server_timeout=0` + a yielding (not sleeping) probe replaces a real-time
+    race (#4264 ⑤)."""
     old_cwd = os.getcwd()
     os.chdir(tmp_path)
     try:
-        async def _slow_probe(server_name: str) -> list[dict]:
-            await asyncio.sleep(0.2)
+        async def _yielding_probe(server_name: str) -> list[dict]:
+            await asyncio.sleep(0)  # a scheduler yield, not a wait — see sibling test
             return [{"name": "x", "description": ""}]
 
         session, server = _make_probe_session(
-            tmp_path, mcp_probe_seconds=0.05, probe_cb=_slow_probe,
+            tmp_path, mcp_probe_seconds=0, probe_cb=_yielding_probe,
         )
         collected = collect_events(session.router_host.events)
         await _drive_first_turn(session)
@@ -199,7 +211,7 @@ async def test_probe_timeout_emits_visible_degradation_event(tmp_path: Path):
         event = degradations[0]
         assert event.data["server"] == server
         assert event.data["reason"] == "timeout"
-        assert event.data["per_server_timeout"] == 0.05, (
+        assert event.data["per_server_timeout"] == 0, (
             "the event should name the ACTUAL timeout budget in force, not a "
             "hardcoded literal"
         )
