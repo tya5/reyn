@@ -123,6 +123,47 @@ async def test_skill_install_e2e_writes_config_and_registry_picks_up(tmp_path):
     assert skill.enabled is True
 
 
+# ── Test 1b: #4198 — a relative op.path resolves against base_dir, not cwd ────
+
+
+@pytest.mark.asyncio
+async def test_skill_install_relative_path_resolves_against_base_dir_not_cwd(
+    tmp_path, monkeypatch,
+) -> None:
+    """Tier 2: #4198 (#187 B3's originally-found bug class) — a relative
+    ``op.path`` (LLM-supplied) must resolve against the workspace
+    ``base_dir``, never the host process cwd. Launched with ``base_dir``
+    (the project) DIFFERENT from cwd (an unrelated directory this test
+    chdir's into) — the fix (``resolve_path_for_gate``) makes the install
+    succeed; the pre-fix ``Path(op.path).resolve()`` behavior would resolve
+    against cwd instead and fail to find SKILL.md there.
+
+    RED without the fix: SKILL.md not found (cwd has no ``skills/my-skill``
+    subdirectory), status="error". GREEN with the fix: install succeeds,
+    and the recorded ``install_path`` is anchored under base_dir, not cwd.
+    """
+    from reyn.core.op_runtime.skill_install import handle
+
+    project_root = tmp_path / "project"
+    _make_skill_dir(project_root / "skills", "my-skill", "Base-dir anchored")
+    ctx = _make_ctx(project_root)
+
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    monkeypatch.chdir(elsewhere)
+
+    # A RELATIVE path — the shape that exposes the cwd-vs-base_dir gap.
+    op = SkillInstallIROp(kind="skill_install", path="skills/my-skill")
+    result = await handle(op=op, ctx=ctx)
+
+    assert result["status"] == "installed", result
+    assert result["path"].startswith(str(project_root)), (
+        f"install_path {result['path']!r} was not anchored under base_dir "
+        f"{project_root!r} — resolved against cwd instead"
+    )
+    assert not str(elsewhere) in result["path"]
+
+
 # ── Test 2: truncate-falsify (MANDATORY CLAUDE.md recovery gate) ─────────────
 
 
