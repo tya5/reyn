@@ -126,7 +126,8 @@ async def test_topology_create_edges_confined_to_subtree_members(tmp_path):
     reg.create("coord")
     await reg.create_agent("worker", parent="coord")
     reg.create("outsider")  # operator-top, not wired by coord
-    adapter = make_adapter(agent_name="coord", agent_registry=reg)
+    adapter = make_adapter(universal_wrappers_enabled=False,  # #4159: not exercised by this test
+        agent_name="coord", agent_registry=reg)
 
     res = await adapter.create_topology(name="org", kind="network", members=["coord", "worker"])
     assert res["status"] == "created"

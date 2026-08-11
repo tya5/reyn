@@ -259,7 +259,7 @@ async def test_router_loop_peek_and_commit_names_resolve_on_the_real_adapter() -
     async def _real_commit(msg_id: str) -> None:
         commit_calls.append(msg_id)
 
-    adapter = make_adapter(
+    adapter = make_adapter(universal_wrappers_enabled=False,  # #4159: not exercised by this test
         peek_mid_turn_injection=_real_peek,
         commit_mid_turn_injection=_real_commit,
     )

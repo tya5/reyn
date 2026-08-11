@@ -75,7 +75,7 @@ def test_env_info_host_backend_derives_from_platform_module(tmp_path: Path) -> N
     """Tier 2: #1479 — host backend path: platform/os_version/shell derived
     from local platform module + os.environ. date always present."""
     import platform
-    adapter = _make_adapter(
+    adapter = _make_adapter(universal_wrappers_enabled=False,  # #4159: not exercised by this test
         agent_workspace_dir=tmp_path / "agents" / "test",
         environment_backend=_FakeHostBackend(),
     )
@@ -94,7 +94,7 @@ def test_env_info_container_backend_uses_backend_values(tmp_path: Path) -> None:
         os_version="5.15.0",
         shell="/bin/bash",
     )
-    adapter = _make_adapter(
+    adapter = _make_adapter(universal_wrappers_enabled=False,  # #4159: not exercised by this test
         agent_workspace_dir=tmp_path / "agents" / "test",
         environment_backend=backend,
     )
@@ -111,7 +111,7 @@ def test_env_info_container_backend_no_probe_omits_platform_shell(tmp_path: Path
     regression: showing host darwin/zsh for a linux container = wrong context.
     """
     backend = _FakeContainerBackendNoInfo(repo_dir="/testbed")
-    adapter = _make_adapter(
+    adapter = _make_adapter(universal_wrappers_enabled=False,  # #4159: not exercised by this test
         agent_workspace_dir=tmp_path / "agents" / "test",
         environment_backend=backend,
     )
@@ -125,7 +125,7 @@ def test_env_info_container_backend_no_probe_omits_platform_shell(tmp_path: Path
 def test_env_info_no_backend_derives_from_platform_module(tmp_path: Path) -> None:
     """Tier 2: #1479 — no backend: same as host backend (fallback to platform)."""
     import platform
-    adapter = _make_adapter(
+    adapter = _make_adapter(universal_wrappers_enabled=False,  # #4159: not exercised by this test
         agent_workspace_dir=tmp_path / "agents" / "test",
     )
     info = adapter.get_environment_info()
@@ -144,7 +144,7 @@ def test_env_info_git_repo_detection_true(tmp_path: Path) -> None:
         repo_dir=str(tmp_path), platform="linux", os_version="5.15.0",
         shell="/bin/bash", is_git_repo=True,
     )
-    adapter = _make_adapter(
+    adapter = _make_adapter(universal_wrappers_enabled=False,  # #4159: not exercised by this test
         agent_workspace_dir=tmp_path / "agents" / "test",
         environment_backend=backend,
     )
@@ -158,7 +158,7 @@ def test_env_info_git_repo_detection_false(tmp_path: Path) -> None:
         repo_dir=str(tmp_path), platform="linux", os_version="5.15.0",
         shell="/bin/bash", is_git_repo=False,
     )
-    adapter = _make_adapter(
+    adapter = _make_adapter(universal_wrappers_enabled=False,  # #4159: not exercised by this test
         agent_workspace_dir=tmp_path / "agents" / "test",
         environment_backend=backend,
     )
@@ -173,7 +173,7 @@ def test_env_info_git_repo_omitted_when_probe_degrades(tmp_path: Path) -> None:
         repo_dir=str(tmp_path), platform="linux", os_version="5.15.0",
         shell="/bin/bash", is_git_repo=None,
     )
-    adapter = _make_adapter(
+    adapter = _make_adapter(universal_wrappers_enabled=False,  # #4159: not exercised by this test
         agent_workspace_dir=tmp_path / "agents" / "test",
         environment_backend=backend,
     )
