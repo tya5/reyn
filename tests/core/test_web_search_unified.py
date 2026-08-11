@@ -240,14 +240,25 @@ def test_web_search_no_deny_config_does_not_raise(tmp_path: Path) -> None:
     """Tier 2: absent web.search config does not block handle_web_search.
 
     Default Tier 1 behavior: web_search is allowed unless explicitly denied.
-    This test uses a non-existent backend to avoid real network calls; the
-    backend error occurs AFTER the permission check passes.
+
+    #4293: this test's own docstring used to claim "a non-existent backend
+    to avoid real network calls" while actually passing `backend="duckduckgo"`
+    — a REAL, registered backend (`reyn.tools.search_backends`). The claim
+    was false: the test made a genuine live network call on every run, which
+    once hung a full local regression sweep for ~35 minutes (a real
+    connection to a DDG redirect target, confirmed via `lsof`). Fixed to a
+    truly nonexistent backend name — `get_backend()` raises `ValueError`
+    (see `search_backends/__init__.py`) BEFORE any network I/O, matching
+    what the docstring always claimed the test does.
     """
     from reyn.core.op_runtime.web import handle_web_search
     from reyn.schemas.models import WebSearchIROp
 
     ctx = _make_op_context({}, tmp_path)  # no web.search config → allow
-    op = WebSearchIROp(kind="web_search", query="test", max_results=5, backend="duckduckgo")
+    op = WebSearchIROp(
+        kind="web_search", query="test", max_results=5,
+        backend="__not_a_real_backend__",
+    )
     # Backend will fail (no real network), but the PermissionError must NOT fire.
     result = asyncio.run(handle_web_search(op, ctx))
     # Permission passed — result is either ok or an error from the backend.
