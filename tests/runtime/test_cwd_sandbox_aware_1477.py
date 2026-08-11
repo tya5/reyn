@@ -76,3 +76,49 @@ def test_get_cwd_container_differs_from_host(tmp_path: Path) -> None:
     )
     assert adapter.get_cwd() == container_path
     assert adapter.get_cwd() != os.getcwd()
+
+
+def test_get_cwd_with_host_backend_uses_workspace_base_dir_over_process_cwd(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    """Tier 2: #4204 bucket D — when a HostBackend is present AND the
+    session's real workspace_base_dir differs from the process's raw cwd
+    (the subdirectory-launch case this issue tracks), get_cwd() reports
+    the base_dir — matching what sandboxed_exec.py's real op actually
+    anchors its subprocess cwd on (``ctx.workspace.base_dir``) — not the
+    process cwd the SP would otherwise show.
+
+    STRIP-FALSIFY: reverting get_cwd()'s workspace_base_dir_fn branch
+    (the pre-#4204 form) makes this go RED — it would return the
+    subdirectory (process cwd) instead of the real project root."""
+    project_root = tmp_path
+    subdir = tmp_path / "subdir"
+    subdir.mkdir()
+    monkeypatch.chdir(subdir)  # the operator launched reyn from here
+
+    backend = _FakeHostBackend()
+    adapter = _make_adapter(
+        universal_wrappers_enabled=False,
+        agent_workspace_dir=tmp_path / "agents" / "test",
+        environment_backend=backend,
+        workspace_base_dir=project_root,
+    )
+    assert adapter.get_cwd() == str(project_root)
+    assert adapter.get_cwd() != os.getcwd()  # os.getcwd() is the subdir
+
+
+def test_get_cwd_falls_back_to_os_getcwd_when_base_dir_unresolvable(
+    tmp_path: Path,
+) -> None:
+    """Tier 2: #4204 bucket D — when no workspace_base_dir supplier is wired
+    at all (test hosts / adapters built without one), get_cwd() falls back
+    to os.getcwd() — the pre-#4204 behavior is preserved as the defensive
+    floor, not silently broken for callers that don't supply one."""
+    backend = _FakeHostBackend()
+    adapter = _make_adapter(
+        universal_wrappers_enabled=False,
+        agent_workspace_dir=tmp_path / "agents" / "test",
+        environment_backend=backend,
+        # workspace_base_dir intentionally omitted (None) — no supplier wired.
+    )
+    assert adapter.get_cwd() == os.getcwd()
