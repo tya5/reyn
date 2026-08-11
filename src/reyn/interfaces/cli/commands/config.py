@@ -273,32 +273,66 @@ def _migrate_mcp(*, dry_run: bool = False) -> None:
 
 def _validate() -> None:
     """#4174 T0: report every unknown/renamed config key found in the
-    operator-editable policy tier (reyn.yaml / reyn.local.yaml /
-    ~/.reyn/config.yaml). #4231 (C): also report every KNOWN key whose
-    value is silently inert under another key's current value (a
-    DIFFERENT defect class — the key is real and correctly spelled, but
-    the configuration as a whole makes it a no-op).
+    operator-editable POLICY TIER (reyn.yaml / reyn.local.yaml /
+    ~/.reyn/config.yaml). #4231 (C): also report every KNOWN policy-tier
+    key whose value is silently inert under another key's current value
+    (a DIFFERENT defect class — the key is real and correctly spelled,
+    but the configuration as a whole makes it a no-op). #4235: also
+    report unknown/renamed keys, separately again, for the hot-reload
+    IN-set (``.reyn/{mcp,cron,hooks,skills,pipelines,presentations}.yaml``)
+    — a DIFFERENT config surface with a DIFFERENT remedy (edit-and-restart
+    for the policy tier vs. edit-and-next-turn for the IN-set), so all
+    three findings are reported as separate labeled sections rather than
+    merged into one dict: merging would lose exactly the "which one do I
+    fix, and how" information a finding needs to be actionable
+    (lead-coder/docs-maintainer ruling, #4235).
+
+    Policy-tier and IN-set unknown-key detection both use the SAME
+    ``unknown_config_keys`` (config_schema.py) — a tier is just a raw dict
+    to it, and #4235's own investigation confirmed the IN-set's merged
+    dict (``load_hot_reload_config``) uses the identical top-level key
+    vocabulary (``mcp``/``cron``/``hooks``/... are ordinary ``ReynConfig``
+    fields too) — no new validation logic, only a second call with a
+    second load. ``disabled_config_keys`` (#4231 C) is checked against the
+    policy tier only — the one dependency it currently knows about
+    (``action_retrieval.universal_wrappers_enabled`` vs.
+    ``tool_use.scheme``) lives there.
 
     Uses ``build_policy_tier_config`` — the SAME construction
     ``load_config``'s own startup warning uses (architect's explicit
     requirement: this command must check exactly what startup checks, not
-    a second hand-reconstructed merge). Exits 0 regardless of findings
-    (owner ruling: warn, never hard-fail — this command REPORTS, it does
-    not gate anything)."""
+    a second hand-reconstructed merge) — and ``load_hot_reload_config``,
+    the same loader the hot-reload mechanism itself uses to build the
+    IN-set every turn. Exits 0 regardless of findings (owner ruling: warn,
+    never hard-fail — this command REPORTS, it does not gate anything).
+
+    ⚠️ Known remaining gap (#4235's own recorded scope, not closed here):
+    the #4194 CUI status indicator counts POLICY-TIER findings only (tui
+    decision) — this PR widens ``validate``'s own scope to the IN-set
+    without widening the indicator to match, so the two surfaces'
+    coverage diverges again (the indicator undercounts relative to what
+    ``validate`` can now show). Left as-is; closing it is a separate
+    decision.
+    """
     from reyn.config.config_schema import disabled_config_keys, unknown_config_keys
-    from reyn.config.loader import build_policy_tier_config
+    from reyn.config.loader import build_policy_tier_config, load_hot_reload_config
 
-    merged = build_policy_tier_config()
-    unknown = unknown_config_keys(merged)
-    disabled = disabled_config_keys(merged)
+    policy_merged = build_policy_tier_config()
+    policy_unknown = unknown_config_keys(policy_merged)
+    disabled = disabled_config_keys(policy_merged)
+    in_set_merged = load_hot_reload_config()
+    in_set_unknown = unknown_config_keys(in_set_merged)
 
-    if not unknown and not disabled:
+    if not policy_unknown and not disabled and not in_set_unknown:
         print("No unknown, renamed, or disabled-by-dependency config keys found.")
         return
 
-    if unknown:
-        print(f"Found {len(unknown)} unrecognized config key(s):\n")
-        for key, hint in sorted(unknown.items()):
+    if policy_unknown:
+        print(
+            f"Policy tier (reyn.yaml / reyn.local.yaml / ~/.reyn/config.yaml) — "
+            f"{len(policy_unknown)} unrecognized config key(s):\n"
+        )
+        for key, hint in sorted(policy_unknown.items()):
             print(f"  {key}")
             if hint:
                 print(f"    -> {hint.note}")
@@ -307,7 +341,7 @@ def _validate() -> None:
         print("\nRun 'reyn config migrate' to fix renamed keys automatically.")
 
     if disabled:
-        if unknown:
+        if policy_unknown:
             print()
         print(
             f"Found {len(disabled)} config key(s) that are known but currently "
@@ -318,6 +352,26 @@ def _validate() -> None:
             print(f"    -> {disabled_hint.note}")
             print(f"    -> depends on: {disabled_hint.dependency_key}")
             print(f"    -> fix: {disabled_hint.fix}")
+
+    if in_set_unknown:
+        if policy_unknown or disabled:
+            print()
+        print(
+            f"Hot-reload IN-set (.reyn/{{mcp,cron,hooks,skills,pipelines,"
+            f"presentations}}.yaml) — {len(in_set_unknown)} unrecognized "
+            f"config key(s):\n"
+        )
+        for key, hint in sorted(in_set_unknown.items()):
+            print(f"  {key}")
+            if hint:
+                print(f"    -> {hint.note}")
+            else:
+                print("    -> not applied; see 'reyn config fields' for valid keys.")
+        print(
+            "\nIN-set keys apply on the next turn automatically (no restart, "
+            "no 'reyn config migrate' support for this tier — edit the "
+            ".reyn/*.yaml file directly)."
+        )
 
 
 def _migrate(*, dry_run: bool = False) -> None:
