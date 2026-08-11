@@ -825,6 +825,7 @@ that key used to conflate.
 ```yaml
 gateway:
   ws_max_size: 16777216                 # WS inbound-frame ceiling (default 16MB)
+  default_design: coral                 # OpenUI host's default design slug (unset → env → first alphabetically)
   auth:
     token: my-shared-secret             # T3 cross-machine bearer token (required for a non-loopback bind)
     require_token_on_loopback: true     # also require the token on loopback TCP (secure default)
@@ -835,6 +836,7 @@ gateway:
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `gateway.ws_max_size` | int | `16777216` (16MB) | Maximum size (bytes) of a single inbound WebSocket frame the `reyn web` gateway accepts; a larger frame is rejected by the server before delivery. Pins the WebSocket frame ceiling explicitly instead of relying on the server library's implicit default, so the bound stays in place across server-library upgrades. Operators may tighten or loosen it. `<= 0` or non-integer falls back to the default. |
+| `gateway.default_design` | str | `null` | The OpenUI host's default design slug, served by `GET /api/web/config` (#4317). Resolution priority: `REYN_WEB_DEFAULT_DESIGN` env var → this field → first available design alphabetically. Was `web.default_design` pre-#4174-T4; T4's split enumerated `ws_max_size`/`auth`/`surfaces` but dropped this field entirely, leaving it with no address in the typed schema for a full cycle — #4317 gave it one. |
 | `gateway.auth.token` | str | `null` | The gateway's cross-machine (T3) bearer token. A **non-loopback bind refuses to start** without it (fail-closed — closes the accidental-exposure hole). A loopback bind generates an ephemeral token at startup when this is unset (printed in the launch URL, Jupyter-style), so no gateway surface is ever left unauthenticated. The token gates **every** functional surface uniformly — the AG-UI chat routes, `/api`, `/a2a`, `/mcp`, and the resource-fetch routes — not the AG-UI surface alone. |
 | `gateway.auth.require_token_on_loopback` | bool | `true` | When `true`, even loopback TCP connections must present the token (secure default — a shared multi-user host must not leave the browser loopback surface open). Same-machine UDS connections are authenticated by OS peer credentials and never need a token. |
 | `gateway.auth.tls_certfile` | str | `null` | Operator TLS certificate (PEM) for a T3 network bind. When unset, a self-signed certificate is generated at startup and its SHA-256 fingerprint is printed for trust-on-first-use pinning. Must be set together with `tls_keyfile`. |

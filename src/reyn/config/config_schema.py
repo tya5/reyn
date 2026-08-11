@@ -222,9 +222,10 @@ _RENAMED_CONFIG_KEYS: "dict[str, RenamedKeyHint]" = {
         note="`web:` split into two keys: move `web.fetch.*` to the "
              "top-level `web_fetch.*` (unchanged fields — verify_ssl / "
              "ca_bundle / max_download_bytes / allow_private_ips), and "
-             "move `web.auth` / `web.ws_max_size` / `web.surfaces` under "
-             "a new top-level `gateway:` block (same field names, just "
-             "renested there)",
+             "move `web.auth` / `web.ws_max_size` / `web.surfaces` / "
+             "`web.default_design` under a new top-level `gateway:` "
+             "block (same field names, just renested there — #4317 "
+             "added `default_design`, dropped by the original T4 split)",
     ),
     # #4174 T3. All 5 are plain renames — same shape, only the top-level key
     # moved under `llm:` (which already existed for router/retry) — so
