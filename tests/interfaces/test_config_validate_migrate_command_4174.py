@@ -41,13 +41,15 @@ def project(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 def test_validate_reports_no_findings_on_a_well_formed_config(project, capsys):
     """Tier 2: #4174 T0 accept-side — a real, valid reyn.yaml produces
-    'no unknown keys' output, not a false-positive warning."""
+    'no unknown keys' output, not a false-positive warning. #4231 (C)
+    widened the message when it added the disabled-by-dependency
+    category (a well-formed config trips neither)."""
     from reyn.interfaces.cli.commands.config import _validate
 
     _write_yaml(project / "reyn.yaml", "model: standard\nsandbox:\n  mode: strict\n")
     _validate()
     out = capsys.readouterr().out
-    assert "No unknown or renamed config keys found." in out
+    assert "No unknown, renamed, or disabled-by-dependency config keys found." in out
 
 
 def test_validate_reports_an_unrecognized_top_level_key(project, capsys):
