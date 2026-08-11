@@ -494,7 +494,6 @@ async def _post_device_authorization(
     (space-separated). Returns the JSON object including ``device_code``,
     ``user_code``, ``verification_uri``, ``expires_in``, and ``interval``.
     """
-    import httpx
 
     payload: dict[str, str] = {"client_id": provider.client_id}
     if provider.scopes:

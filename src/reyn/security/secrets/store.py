@@ -8,7 +8,6 @@ The file is always written with chmod 600 after modification.
 """
 from __future__ import annotations
 
-import stat
 from pathlib import Path
 
 from .loader import _default_secrets_path, _parse_dotenv

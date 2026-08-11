@@ -20,7 +20,6 @@ from ._subprocess_io import communicate_capped, kill_process_tree
 from .backend import (
     AxisEnforcement,
     AxisEnforcementDeclaration,
-    SandboxBackend,
     SandboxResult,
     WrappedCommand,
 )
