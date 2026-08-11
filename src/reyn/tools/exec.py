@@ -53,7 +53,15 @@ _EXEC_PARAMETERS: dict[str, Any] = {
             "description": _execution_descriptions.PARAMS["exec"]["argv"].text,
         },
         "timeout": {
-            "type": "number",
+            # lead-coder review (#4179): "integer", not "number" — a
+            # sub-second override has no meaning here, so the schema
+            # itself should say a whole number is expected rather than
+            # silently accepting a fraction. The handler still rejects a
+            # fractional value explicitly (op_runtime/sandboxed_exec.py) —
+            # a model that ignores the schema type hint (not every
+            # provider enforces it) still can't reach a silently-truncated
+            # timeout.
+            "type": "integer",
             "description": _execution_descriptions.PARAMS["exec"]["timeout"].text,
         },
     },
