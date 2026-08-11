@@ -88,6 +88,7 @@ def make_mcp_cache_adapter(
             session_id=None, live_session_id_fn=None,
         ),
         state_dir=state_dir,
+        universal_wrappers_enabled=False,  # #4159: preserves prior implicit default
     )
     # #3447: mcp_list_tools is now a real RouterHostAdapter method — see the
     # same-shaped note in test_mcp_lazy_tools_cache.py's _make_adapter_with_mcp.

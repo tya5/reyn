@@ -71,6 +71,7 @@ def _mk_host_with_kwargs():
             session_id=None, live_session_id_fn=None,
         ),
         environment_backend=None,
+        universal_wrappers_enabled=False,  # #4159: preserves prior implicit default
     )
 
 

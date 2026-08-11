@@ -316,12 +316,16 @@ class RouterHostAdapter:
         live_session_id_inputs: LiveSessionIdInputs,
         # FP-0034 PR-3b-iii/iv: universal catalog wrapper visibility
         # (= reyn.yaml action_retrieval.universal_wrappers_enabled).
-        # Session passes True by default since PR-3b-iv flipped the
-        # ActionRetrievalConfig default; this constructor parameter
-        # still defaults to False so direct callers (= tests that build
-        # adapters by hand) preserve the prior tools= shape and don't
-        # accidentally activate wrappers without intent.
-        universal_wrappers_enabled: bool = False,
+        # #4159: no default — this param used to default to False while
+        # ActionRetrievalConfig's own default is True (PR-3b-iv), a silent
+        # implicit/config mismatch: the production call site (Session)
+        # always passed it explicitly so the mismatch never fired, but any
+        # OTHER construction path that forgot to thread it would silently
+        # get False without ever knowing the config said True — a missing
+        # kwarg raising a loud TypeError closes that class outright (every
+        # caller must now say what it means), rather than defaulting to
+        # either value and leaving a forgetful caller undetectable.
+        universal_wrappers_enabled: bool,
         # FP-0034 Phase 2 step 1: ActionEmbeddingIndex + EmbeddingProvider
         # for search_actions.  When all three are set (= operator set
         # ``embedding.enabled: true`` (FP-0066 §7) AND Session built a
