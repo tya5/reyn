@@ -8,6 +8,18 @@ audience: [human, agent]
 
 Control IR は LLM が artifact と並行して出力できる副作用 op のリストです。OS は各 op をディスパッチし、LLM（または次の Phase）が消費するために結果を返します。
 
+> ⚠️ **このページは部分訳です（#4196）。** `OP_KIND_MODEL_MAP`（`src/reyn/schemas/models.py`）が
+> 定義する op kind は現在 32 件ですが、このページが記述しているのは 16 件のみです — 残り 16 件
+> （`mcp_read_resource` / `mcp_subscribe_resource` / `mcp_unsubscribe_resource` /
+> `mcp_get_prompt` / `render_template` / `mcp_drop_server` / `embed` / `index_update` /
+> `compact` / `skill_install` / `load_skill` / `pipeline_install` / `presentation_install` /
+> `plugin_install` / `plugin_uninstall` / `emit_hook_event`）は**このページに一切記載がありません**
+> （「翻訳が古い」のではなく、そもそも節が存在しません）。それらの op を調べる際は
+> [英語版 Control IR reference](control-ir.md) を参照してください。
+> CLAUDE.md は en/ja の一律ミラーを義務としていません（ja は意図的な部分 subset）——
+> この注記は「未翻訳であること」自体を欠陥だと言っているのではなく、**部分訳であることを
+> このページ自身が今まで一度も明示していなかった**ことに対するものです。
+
 ## Op の種類
 
 | 種類 | 目的 | 必要な Permission |
