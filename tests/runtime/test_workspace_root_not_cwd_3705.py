@@ -195,9 +195,14 @@ def _cwd_relative_reyn_sites(py_file: Path) -> "list[int]":
 #   `make_session`, and not implicated in the incident (a test never
 #   constructs `reyn agent list` / `reyn events` / etc. the way it
 #   constructs a `Session`):
-#   interfaces/cli/commands/{agent,dogfood,events,mcp,web}.py,
+#   interfaces/cli/commands/{agent,dogfood,events,mcp}.py,
 #   interfaces/web/server.py (the `reyn web` server's own persist paths),
 #   dev/dogfood/runner.py.
+#   (#4204 bucket A: `interfaces/cli/commands/web.py` moved OFF this
+#   list — its UDS run-dir startup path now anchors on
+#   `_find_project_root(Path.cwd()) or Path.cwd()` like the other CLI
+#   command modules that already made this switch, rather than a bare
+#   cwd-relative literal, so it no longer appears in the sweep below.)
 # - Deferred (filed separately, NOT fixed here): `interfaces/slash/memory.py`
 #   (#3721) — the `/memory` chat command calls `list_entries()`/`find_one()`
 #   with no arguments, falling into the same `memory_dir()` cwd-relative
@@ -217,7 +222,6 @@ _ALLOWED_SITES: "dict[str, int]" = {
     "src/reyn/interfaces/cli/commands/dogfood.py": 1,
     "src/reyn/interfaces/cli/commands/events.py": 1,
     "src/reyn/interfaces/cli/commands/mcp.py": 2,
-    "src/reyn/interfaces/cli/commands/web.py": 1,
     "src/reyn/interfaces/web/server.py": 2,
     "src/reyn/dev/dogfood/runner.py": 1,
 }
