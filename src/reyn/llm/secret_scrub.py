@@ -72,6 +72,28 @@ SECRET_KWARG_HINTS: tuple[str, ...] = (
 #: threshold either.
 _MIN_SECRET_VALUE_LENGTH = 12
 
+#: #4343: how many LEADING characters of a known secret value are also
+#: tried as a standalone match — see :func:`scrub_secrets`'s "already
+#: partially masked" fallback. Derived from :data:`_MIN_SECRET_VALUE_LENGTH`
+#: itself (two-thirds of it, floor-divided: 12 * 2 // 3 == 8), the SAME
+#: no-value-inspection discipline that constant's own docstring states —
+#: chosen by reasoning about the trade-off shape, not by looking at what
+#: any real provider's masking actually reveals:
+#:   - too SHORT (close to a bare provider prefix like ``sk-``, 3-4 chars)
+#:     risks matching ordinary text that happens to start the same way —
+#:     the over-redaction failure mode, the false-positive twin of the
+#:     ``TOKEN_LIMIT=4096`` problem the length filter above already guards.
+#:   - too LONG (close to the FULL ``_MIN_SECRET_VALUE_LENGTH``) stops
+#:     matching once an upstream masker (litellm's own exception
+#:     construction, observed structurally in #4343 — not by value —
+#:     to sometimes reveal only a short leading span before masking the
+#:     rest) has already replaced the tail with its own marker characters.
+#: Deriving it as a fraction of the existing threshold ties the two
+#: constants together instead of adding an unrelated magic number, and
+#: keeps both adjustable from one place if real-world masking behavior
+#: (still not inspected here) is measured later and this needs revisiting.
+_SECRET_PREFIX_LENGTH = _MIN_SECRET_VALUE_LENGTH * 2 // 3
+
 
 def _looks_like_a_real_secret(value: str) -> bool:
     """False for a short and/or purely-numeric string — see
@@ -114,16 +136,33 @@ def collect_secret_values(base_kwargs: dict) -> list[str]:
 
 
 def scrub_secrets(value: object, secrets: list[str]) -> object:
-    """Replace any known secret VALUE occurring in a string with a marker,
-    recursing through dict/list structure to reach every string leaf — same
-    contract as the function #3830/#4259 established in ``llm.py`` (moved
-    here, not duplicated, so both call sites share one implementation)."""
+    """Replace any known secret VALUE (or, failing that, its known PREFIX)
+    occurring in a string with a marker, recursing through dict/list
+    structure to reach every string leaf — same contract as the function
+    #3830/#4259 established in ``llm.py`` (moved here, not duplicated, so
+    both call sites share one implementation).
+
+    #4343: the full-value pass alone misses a secret that an upstream
+    intermediary (litellm's own exception construction, for one measured
+    case) has ALREADY partially masked by the time reyn's exact-match
+    ``str.replace`` runs — the full known value is no longer a literal
+    substring of the text once its tail has been replaced by someone
+    else's mask characters, so nothing matches and the marker never
+    appears. The prefix pass is still "the actual value at hand", not
+    pattern-guessing: it derives from the SAME known secret this function
+    was already given, just a leading slice of it — never a guessed
+    format like "anything starting with sk-" (this module's own docstring
+    rejects that class of scrubbing).
+    """
     if not secrets:
         return value
     if isinstance(value, str):
         for s in secrets:
             if s:
                 value = value.replace(s, "***REDACTED***")
+        for s in secrets:
+            if s and len(s) >= _SECRET_PREFIX_LENGTH:
+                value = value.replace(s[:_SECRET_PREFIX_LENGTH], "***REDACTED***")
         return value
     if isinstance(value, dict):
         return {k: scrub_secrets(v, secrets) for k, v in value.items()}

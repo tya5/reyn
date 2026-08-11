@@ -137,6 +137,36 @@ def test_scrub_secrets_is_a_noop_with_no_secrets() -> None:
     assert scrub_secrets(f"token {_FAKE_TOKEN}", []) == f"token {_FAKE_TOKEN}"
 
 
+def test_scrub_secrets_catches_a_value_an_upstream_intermediary_already_partially_masked(
+) -> None:
+    """Tier 1: #4343 — a known secret value that no longer appears IN FULL
+    (because something upstream of reyn — litellm's own exception
+    construction, measured structurally in #4343's dogfood pass, not by
+    inspecting a real value — already replaced its tail with masking
+    characters before reyn ever sees the text) is still caught, via its
+    known PREFIX.
+
+    ``masked`` below is a SYNTHETIC string shaped like that class of
+    upstream masking (prefix visible, tail replaced by asterisks) — not a
+    literal reproduction of any specific provider's real format, since
+    this module's own discipline is deriving from the known VALUE, not
+    from an inspected real-world mask pattern."""
+    masked = f"Incorrect API key provided: {_FAKE_TOKEN[:8]}{'*' * 10}"
+    scrubbed = scrub_secrets(masked, [_FAKE_TOKEN])
+    assert _FAKE_TOKEN[:8] not in scrubbed, f"prefix survived unredacted: {scrubbed!r}"
+    assert "***REDACTED***" in scrubbed
+
+
+def test_scrub_secrets_full_value_match_still_wins_when_both_could_apply() -> None:
+    """Tier 1: #4343 accept-side — when the FULL value is still present
+    (the common case, no upstream masking involved), the full-value pass
+    replaces it; the prefix pass finding nothing left to match afterward
+    is not a second, redundant redaction artifact in the output."""
+    scrubbed = scrub_secrets(f"token {_FAKE_TOKEN} rejected", [_FAKE_TOKEN])
+    assert scrubbed == "token ***REDACTED*** rejected"
+    assert scrubbed.count("REDACTED") == 1
+
+
 # ── scrub_exception_in_place — the load-bearing boundary fix ───────────────
 
 
