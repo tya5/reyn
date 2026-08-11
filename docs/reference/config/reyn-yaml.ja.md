@@ -47,6 +47,17 @@ reload）、`reyn.yaml` 側に書いた同じキーは他と同じく再起動�
 **セッション面**（`<session-state-dir>/config.yaml`）にも書けます。
 そちらは [permission-model](../../concepts/runtime/permission-model.md) を参照。
 
+**置き場の原理(#4174 T7)**: ある設定が**その subsystem 自身のコードパスからしか
+読まれない**なら、所有ブロックの下にネストします（例: `embedding.cost_warn_threshold`
+— embedding/indexing パイプライン内の 1 箇所でしか読まれない）。**単一の subsystem
+に収まらない複数の場所から読まれる**なら、トップレベルの独立ブロックにします（例:
+`cost_warn` — セッションが何をしていようと、chat router が `/model` 切り替え時と
+セッション起動時のどちらでも読む）。**2 つのキー名に共通する部分文字列があっても、
+それは「同じ設定である」証拠にはなりません** — 名前ではなく、誰がその値を何箇所から
+読むかで判断します。この原則を書くきっかけになった具体例（名前は似ているが無関係な
+`cost_warn` と `embedding.cost_warn_threshold`）は EN 版の
+[`cost_warn` block](reyn-yaml.md#cost_warn-block) 節を参照してください。
+
 | キー | 型 | 書く面 / 再読込 | 説明 |
 |-----|------|-----|-------------|
 | `model` | 文字列 | PRJ のみ・**再起動** | デフォルトのモデルクラス。`models` を通じて解決されます。`--model` でオーバーライド。 |
@@ -1083,7 +1094,7 @@ embedding:
 | `max_retries` | int | `3` | バッチ呼び出しごとの一時的エラーリトライ数。有効範囲: 0–10。 |
 | `retry_backoff` | 文字列 | `exponential` | バックオフ戦略: `exponential` または `linear`。 |
 | `tokenizer` | 文字列 | `cl100k_base` | チャンクサイズ推定に使用する tiktoken エンコーディング。 |
-| `cost_warn_threshold` | int | `10000` | インデックス作成前に `ask_user` ゲートが起動する推定チャンク数の閾値。 |
+| `cost_warn_threshold` | int | `10000` | インデックス作成前に `ask_user` ゲートが起動する推定チャンク数の閾値。トップレベルの `cost_warn:` ブロック（モデル選択時の USD/1M トークン価格警告、EN 版参照）とは無関係 — `cost_warn` という名前の一致は偶然で、単位（チャンク数 vs USD）・発火契機（indexing vs モデル選択）・読み手（embedding パイプライン vs router）がすべて異なります。 |
 
 ### `embedding.classes` エントリ
 

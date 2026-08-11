@@ -50,6 +50,19 @@ can additionally be written on an **agent** surface (`.reyn/agents/<name>/`,
 (`<session-state-dir>/config.yaml`) — see
 [permission-model](../../concepts/runtime/permission-model.md).
 
+**Placement principle (#4174 T7)**: a setting nests under an owning block when
+only that subsystem's own code path ever reads it (e.g. `embedding.cost_warn_threshold`
+— read once, inside the embedding/indexing pipeline, nowhere else). It gets a
+top-level block of its own when it's read by code outside any single subsystem
+— reachable from more than one place a session can be, at more than one moment
+(e.g. `cost_warn` — read by the chat router at any `/model` switch and at
+session startup, unrelated to which subsystem, if any, is running). **A shared
+substring in two keys' names is not evidence they're the same setting** — check
+who reads the value and from how many call sites, not what it's called. See the
+[`cost_warn` block](#cost_warn-block) for the specific pair that motivated writing
+this down: `cost_warn` and `embedding.cost_warn_threshold` sound related and
+aren't.
+
 | Key | Type | Written on / reload | Description |
 |-----|------|-----|-------------|
 | `model` | string | PRJ only · **restart** | Default model class. Resolved via `models`. Override with `--model`. |
@@ -1575,6 +1588,17 @@ cost:
 
 High-cost model pre-selection awareness. Surfaces a `[⚠ high-cost model: …]` marker in the conversation pane when the resolved model's input cost per 1M tokens exceeds the configured threshold. Fires at `/model <class>` switch and once at session startup. De-duped per session — the same model class is warned at most once per session. Orthogonal to the [`cost` block](#cost-block) (= cumulative spend caps) and `ContextBudgetAdvisor` (= per-turn token ceiling).
 
+> **Not the same setting as `embedding.cost_warn_threshold`** (below) — the shared
+> `cost_warn` substring is a naming coincidence, not a shared concept. This block
+> gates a USD/1M-token model **price** threshold, read by the chat router at any
+> `/model` switch or session startup, regardless of what the session is doing.
+> `embedding.cost_warn_threshold` gates a **chunk-count** threshold read only
+> inside the embedding/indexing pipeline before a batch embed call. Different
+> unit (USD vs. count), different trigger (model selection vs. indexing), different
+> reader (router vs. embedding pipeline) — placement follows *that*, not the name:
+> a top-level block for a setting any part of the session can trigger, nested
+> under its owning block for a setting only that subsystem's own code path reads.
+
 ```yaml
 cost_warn:
   enabled: true
@@ -1848,7 +1872,7 @@ embedding:
 
 > **`embedding.timeout` does not reduce what you are billed for.** It caps how long reyn *waits*; it does not cap how many requests the provider *receives*. One attempt can put up to **3** HTTP requests on the wire — the OpenAI SDK client retries internally (`max_retries=2` by default), underneath litellm and underneath this knob — so `max_retries: 3` can deliver up to **9** requests for a single `embed`. Measured against a fast-erroring provider, all 9 are delivered in ~7.6s with the default `timeout: 60.0`: the bound never engages at all. **Lowering `timeout` does not lower that count**, and reyn's own retry log (`attempt 1/3`) counts attempts, not requests. reyn's embedding cost report records at most one response per `embed`, so it is a lower bound on requests delivered. See [#3047](https://github.com/tya5/reyn/issues/3047) for the measurements and the open decisions.
 | `tokenizer` | string | `cl100k_base` | tiktoken encoding used for chunk-size estimation. |
-| `cost_warn_threshold` | int | `10000` | Estimated chunk count above which the `ask_user` gate fires before indexing. |
+| `cost_warn_threshold` | int | `10000` | Estimated chunk count above which the `ask_user` gate fires before indexing. Unrelated to the top-level [`cost_warn` block](#cost_warn-block) — see the note there on why they're separate despite the shared name. |
 
 ### `embedding.classes` entries
 
