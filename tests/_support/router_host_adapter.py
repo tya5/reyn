@@ -113,6 +113,10 @@ def make_adapter(
     intervention_answer: "str | None" = None,  # #2175: interactive-mode bus answer (choice_id, e.g. "yes")
     peek_mid_turn_injection: "object | None" = None,  # #3792
     commit_mid_turn_injection: "object | None" = None,  # #3792
+    # #4159: RouterHostAdapter's own ctor param no longer defaults (closes the
+    # implicit-False/config-True mismatch); this shared test builder keeps its
+    # own False default so existing callers of make_adapter() are unaffected.
+    universal_wrappers_enabled: bool = False,
 ) -> RouterHostAdapter:
     """Construct a minimal RouterHostAdapter with real collaborators."""
     if events is None:
@@ -212,4 +216,5 @@ def make_adapter(
         environment_backend=environment_backend,
         peek_mid_turn_injection=peek_mid_turn_injection,  # #3792
         commit_mid_turn_injection=commit_mid_turn_injection,  # #3792
+        universal_wrappers_enabled=universal_wrappers_enabled,  # #4159
     )

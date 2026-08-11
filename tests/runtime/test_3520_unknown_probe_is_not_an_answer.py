@@ -151,6 +151,7 @@ def _make_adapter(*, tmp_path: Path, state_dir: Path, probe) -> RouterHostAdapte
             session_id=None, live_session_id_fn=None,
         ),
         state_dir=state_dir,
+        universal_wrappers_enabled=False,  # #4159: preserves prior implicit default
     )
     # #3447 / existing convention in this suite: mcp_list_tools is a real
     # RouterHostAdapter method, so the probe is wired by shadowing that one
