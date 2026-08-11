@@ -283,6 +283,59 @@ def test_embed_verify_write_refuses_partial_write(monkeypatch: pytest.MonkeyPatc
     assert stat["chunk_count"] == 0, "no partial write must have reached the backend"
 
 
+def test_embed_verify_write_carries_the_embed_ops_own_cost_fields(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    """Tier 2: #4157 — EmbedWriteResult carries total_tokens/cost_usd from
+    the embed op's OWN result (EmbedBatchResult.total_tokens +
+    estimate_embedding_cost), not re-measured. "standard" isn't a real
+    litellm-priced model name, so cost_usd correctly comes back None
+    (unpriced != free, #1829) while total_tokens is still the real count —
+    proving the two are threaded independently, not one derived from the
+    other's presence."""
+    ctx = _ctx_for(_FakeEmbeddingProvider(), monkeypatch)
+    backend = SqliteIndexBackend(workspace_root=tmp_path)
+    items = [{"id": "a", "text": "alpha"}, {"id": "b", "text": "beta"}]
+
+    result = _run(embed_verify_write(
+        ctx=ctx, texts=[it["text"] for it in items], model_class="standard",
+        items=items, to_chunk_record=_to_chunk_record, backend=backend,
+        source="cost_test", mode="replace", item_noun="items", label="build",
+    ))
+
+    assert result.total_tokens == 2, "one token per item, from the fake provider"
+    assert result.cost_usd is None, "unpriced model — None, not fabricated 0.0"
+
+
+def test_build_complete_event_carries_cost_fields_not_just_chunk_count(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    """Tier 2: #4157 — embedding_index_build_complete's audit-event payload
+    reports total_tokens/cost_usd/embedding_model, not chunk_count alone.
+    Before this fix the event carried only chunk_count (1609 in the
+    owner-witnessed live report) — the same values EmbedWriteResult now
+    carries are asserted on the actual EMITTED event, not just the return
+    value, since the event is what the audit trail actually persists."""
+    from tests._support.events import collect_events
+
+    events = EventLog()
+    collected = collect_events(events)
+    coord = IndexCoordinator(tmp_path)
+    ctx = _ctx_for(_FakeEmbeddingProvider(), monkeypatch)
+    items = [{"id": "a", "text": "alpha"}, {"id": "b", "text": "beta"}]
+    coord.register_builder("skill", _working_build_fn(ctx, items), kind="dynamic")
+
+    _run(coord.ensure_built("skill", await_completion=True, events=events))
+
+    (complete,) = [e for e in collected if e.type == "embedding_index_build_complete"]
+    assert complete.data["chunk_count"] == 2
+    assert complete.data["total_tokens"] == 2, (
+        f"the event must carry total_tokens, not just chunk_count: {complete.data}"
+    )
+    assert complete.data["embedding_model"] == "standard"
+    assert "cost_usd" in complete.data
+
+
 def test_strip_falsify_neutered_guard_accepts_partial_write(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """Tier 2: (strip-falsify, #3247 architect-required) neutering the
     unified all-or-nothing guard (monkeypatch it to a no-op) causes the

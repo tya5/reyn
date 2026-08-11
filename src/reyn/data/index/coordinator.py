@@ -123,10 +123,20 @@ __all__ = [
 class EmbedWriteResult:
     """Return shape of ``embed_verify_write`` — the write outcome plus the
     embed op's resolved model id (some callers, e.g. ``index_update``, must
-    record the resolved model on subsequent chunk metadata / the manifest)."""
+    record the resolved model on subsequent chunk metadata / the manifest).
+
+    #4157: ``total_tokens``/``cost_usd`` are the embed op's OWN already-
+    computed values (``op_runtime/embed.py``'s result dict, sourced from
+    ``EmbedBatchResult.total_tokens`` + ``estimate_embedding_cost``) —
+    threaded through here rather than re-measured, so a build's audit trail
+    can report what it actually cost without a second cost computation.
+    ``cost_usd`` is ``None`` when the model has no known pricing (mirrors
+    the op's own ``priced`` flag)."""
 
     write_result: WriteResult
     resolved_model: str
+    total_tokens: int
+    cost_usd: float | None
 
 
 def assert_vector_count_match(
@@ -201,7 +211,14 @@ async def embed_verify_write(
         for item, vector in zip(items, vectors)
     ]
     write_result = await backend.write(source, records, mode=mode)  # type: ignore[arg-type]
-    return EmbedWriteResult(write_result=write_result, resolved_model=resolved_model)
+    return EmbedWriteResult(
+        write_result=write_result,
+        resolved_model=resolved_model,
+        # #4157: already computed by the embed op itself — carried through,
+        # not re-measured.
+        total_tokens=int(result.get("total_tokens", 0)),
+        cost_usd=result.get("cost_usd"),
+    )
 
 
 # ── IndexCoordinator public interface (#3247 firm §1) ──────────────────────
@@ -533,6 +550,15 @@ class IndexCoordinator:
                     self._emit(
                         events, "embedding_index_build_complete",
                         source_id=source_id, chunk_count=chunk_count,
+                        # #4157: no fresh embed call happened on this path
+                        # (disk-adopt cache hit) — None, not 0, so the audit
+                        # trail doesn't read as "a build ran and cost
+                        # nothing" when no build ran at all.
+                        embedding_model=(
+                            entry.embedding_model if entry is not None else None
+                        ),
+                        total_tokens=None,
+                        cost_usd=None,
                     )
                     outcome = BuildOutcome(
                         source_id=source_id, triggered=True, background=False,
@@ -585,6 +611,14 @@ class IndexCoordinator:
         self._emit(
             events, "embedding_index_build_complete",
             source_id=source_id, chunk_count=chunk_count,
+            # #4157: total_tokens/cost_usd/model were already computed by the
+            # embed op (EmbedWriteResult carries them through, not
+            # re-measured) — previously dropped here, leaving only
+            # chunk_count in the audit trail and no way to reconstruct what
+            # a build actually cost after the fact.
+            embedding_model=result.resolved_model,
+            total_tokens=result.total_tokens,
+            cost_usd=result.cost_usd,
         )
         outcome = BuildOutcome(
             source_id=source_id, triggered=True, background=False, chunk_count=chunk_count,
