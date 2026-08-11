@@ -34,7 +34,14 @@ def test_web_fetch_allow_private_ips_true_exports_the_env_var(
     real loader, sets REYN_FETCH_ALLOW_PRIVATE_IPS so the config-less SSRF-guard
     surfaces (safe.http subprocess / registry main-process modules) see the
     operator's opt-in."""
-    monkeypatch.delenv("REYN_FETCH_ALLOW_PRIVATE_IPS", raising=False)
+    # monkeypatch.setenv (not delenv) — delenv on a var that was never set
+    # records nothing to restore, so load_config()'s raw os.environ[...] = "1"
+    # write below would leak REYN_FETCH_ALLOW_PRIVATE_IPS=1 into every later
+    # test in this worker (caught by lead-coder's review: the SSRF guard's
+    # deny-private default would silently flip to opt-in process-wide).
+    # setenv("") IS tracked for teardown restore and "" is falsy, so the
+    # export block below still fires exactly as if the var were absent.
+    monkeypatch.setenv("REYN_FETCH_ALLOW_PRIVATE_IPS", "")
     (tmp_path / "reyn.yaml").write_text(
         "llm:\n  model: standard\nweb_fetch:\n  allow_private_ips: true\n"
     )
@@ -50,6 +57,11 @@ def test_web_fetch_allow_private_ips_absent_leaves_the_env_var_unset(
     """Tier 2c: the fail-secure default — no `web_fetch.allow_private_ips` in
     yaml, and no pre-set env var, leaves REYN_FETCH_ALLOW_PRIVATE_IPS unset (the
     guard's own deny-private default governs)."""
+    # delenv is fine here (unlike the test above): this config has no
+    # web_fetch.allow_private_ips, so load_config()'s export block never
+    # performs a raw os.environ write — there's nothing for monkeypatch to
+    # fail to track, and using setenv("") instead would pre-seed the var and
+    # break the `is None` assertion below.
     monkeypatch.delenv("REYN_FETCH_ALLOW_PRIVATE_IPS", raising=False)
     (tmp_path / "reyn.yaml").write_text("llm:\n  model: standard\n")
 
