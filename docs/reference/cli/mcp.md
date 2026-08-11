@@ -183,18 +183,20 @@ reyn mcp install --source https://github.com/modelcontextprotocol/servers/tree/m
 
 ### Permission interaction: `mcp_install`
 
-Before writing anything to disk, `install` checks the `mcp_install` permission gate. The default behaviour is `ask` — a prompt appears on first install:
+There is no dedicated `mcp_install` permission axis — that bool form (`ask`/`allow`/`deny`) was removed in the #571 collapse arc Phase 5; declaring it today establishes no runtime authority (`_LEGACY_BOOL_AXIS_KEYS` in `permissions.py` only warns on the key). `install` is gated the same way any other write-and-fetch action is:
 
-```
-[approval] install MCP server 'io.github.modelcontextprotocol/server-github'?
+- `file.write` on `.reyn/config/mcp.yaml` (the install target)
+- `http.get` on the registry host (the manifest fetch)
+- `secret.write` on any `isSecret` env var the server declares
 
-  [y] allow this install only
-  [j] persist approval for this server
-  [r] allow all future installs
-  [N] deny
-```
-
-Enterprise teams can set `permissions.mcp_install: deny` in `reyn.yaml` to prevent any server additions, or `allow` to skip the prompt entirely. See [Concepts: permission model — `mcp_install`](../../concepts/runtime/permission-model.md#mcp_install-permission) for full details.
+Each carries its own ask/allow/deny behaviour and JIT interactive prompt — an
+uninteractive default `file.write` scope prompts on first install outside it,
+same as any other out-of-scope write. Enterprise teams can set `file.write: deny`
+or `http.get: deny` on the relevant targets in `reyn.yaml` to block all
+installs project-wide, or `allow` both to skip the prompt entirely. See
+[Concepts: permission model — `mcp_install`](../../concepts/runtime/permission-model.md#mcp_install-permission)
+and [Reference: `reyn.yaml` — MCP install](../config/reyn-yaml.md) for the full
+gate shape and worked examples.
 
 ---
 
@@ -396,6 +398,6 @@ Wire into Claude Code's `mcp.json` (stdio transport):
 - [Concepts: secret handling](../../concepts/runtime/secret-handling.md) — `~/.reyn/secrets.env` and `${VAR}` interpolation
 - [Concepts: permission model](../../concepts/runtime/permission-model.md) — `mcp_install` permission
 - [Reference: `reyn secret`](secret.md) — universal secret management
-- [Reference: `reyn.yaml`](../config/reyn-yaml.md) — `mcp.servers:` schema and `permissions.mcp_install:`
+- [Reference: `reyn.yaml`](../config/reyn-yaml.md) — `mcp.servers:` schema and the `file.write` + `http.get` install gate
 - [Reference: common flags](common-flags.md) — flags shared across CLI commands
 
