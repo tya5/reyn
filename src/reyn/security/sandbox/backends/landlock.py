@@ -535,10 +535,14 @@ class LandlockBackend:
             except OSError:
                 pass
 
+        # #4271/#4277: inner timeout must exceed the outer asyncio.wait's own
+        # timeout below — see container_backend.py's identical comment for
+        # the full "who owns the deadline" story.
         comm_future: asyncio.Future = loop.run_in_executor(
             None,
             lambda: communicate_capped(
-                proc, max_bytes=policy.max_output_bytes, timeout=policy.timeout_seconds,
+                proc, max_bytes=policy.max_output_bytes,
+                timeout=policy.timeout_seconds + POST_KILL_DRAIN_GRACE_SECONDS,
             ),
         )
         cancel_task = asyncio.create_task(cancel_event.wait())
