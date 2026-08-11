@@ -29,7 +29,7 @@ so registered commands are immediately available everywhere.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Awaitable, Callable, Iterable
 
 if TYPE_CHECKING:

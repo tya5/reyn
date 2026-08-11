@@ -14,7 +14,7 @@ from pathlib import Path
 
 from reyn.core.events.state_log import StateLog
 from reyn.runtime.profile import AgentProfile
-from reyn.runtime.registry import DEFAULT_AGENT_NAME, AgentRegistry, _validate_agent_name
+from reyn.runtime.registry import DEFAULT_AGENT_NAME, AgentRegistry
 
 
 def register(sub) -> None:
