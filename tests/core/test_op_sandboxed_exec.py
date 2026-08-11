@@ -31,6 +31,7 @@ from reyn.security.sandbox import (
 )
 from reyn.security.sandbox import noop_backend as _noop_module
 from tests._support.events import collect_events
+from tests._support.sandbox_backend import FULLY_ENFORCING_AXES
 
 # ─── 1. SandboxPolicy ────────────────────────────────────────────────────────
 
@@ -152,6 +153,7 @@ class _RecordingBackend:
     this reversal must not recreate)?"""
 
     name = "recording-backend"
+    enforced_axes = FULLY_ENFORCING_AXES
 
     def __init__(self) -> None:
         self.received_policy: "SandboxPolicy | None" = None
@@ -463,6 +465,7 @@ class _StubBackend:
     """
 
     name = "stub-injected"
+    enforced_axes = FULLY_ENFORCING_AXES
 
     def __init__(self) -> None:
         self.received_cwd: str | None = None

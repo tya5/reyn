@@ -15,6 +15,7 @@ from reyn.core.offload.canonical import sandboxed_exec_to_canonical
 from reyn.security.sandbox.backend import SandboxResult
 from reyn.security.sandbox.denial import DENIAL_FORK, classify_denial
 from tests._support.events import collect_events
+from tests._support.sandbox_backend import FULLY_ENFORCING_AXES
 
 # The exact stderr the incident produced (bare ``python3`` → pyenv shim → pyenv
 # forks under (deny process-fork)). Captured, not synthesized.
@@ -98,6 +99,7 @@ class _ForkDenyingBackend:
     fork-denial result — proves the handler classifies + surfaces it end-to-end."""
 
     name = "fake-forkdeny"
+    enforced_axes = FULLY_ENFORCING_AXES
 
     def available(self) -> bool:
         return True

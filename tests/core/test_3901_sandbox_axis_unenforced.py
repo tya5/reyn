@@ -1,70 +1,136 @@
-"""Tier 2: #3901 §4③ — sandbox_axis_unenforced audit-event.
+"""Tier 2: #3901 §4③ / #4039 — sandbox_axis_unenforced audit-event.
 
-Landlock cannot express a read/write deny-list (LSM allowlist-only constraint,
-``landlock.py``'s own module docstring: "you cannot carve a subpath out of an
-allowed parent"), so a configured ``read_deny_paths``/``write_deny_paths``
-silently does nothing there — a real backend capability gap that cannot be
-fixed, only made visible. Doc-only visibility reads as "written but nobody
-checks it" (the #3899 pattern this issue's own thread names), so the OS emits
-``sandbox_axis_unenforced`` instead — the same precedent as
-``sandbox_policy_narrowed`` (#2978).
+#4039 generalised the predicate from "can this backend express a deny-list"
+(which only ever caught Landlock's structural LSM constraint — a configured
+``read_deny_paths``/``write_deny_paths`` silently doing nothing there) to
+"does this backend enforce what you configured" — reading each backend's own
+:class:`~reyn.security.sandbox.backend.AxisEnforcementDeclaration`
+(``enforced_axes``, D1: the backend's own declaration, never probed) rather
+than a hardcoded "deny-list-incapable" backend-name set. This closes the
+founding bug #4039 named: Noop enforces NOTHING yet the OLD predicate
+reported nothing either, so a quiet Noop run and a quiet Landlock run were
+indistinguishable from the audit signal alone.
 
 Deliberately NOT wired into ``enforcement_self_test`` (CLAUDE.md hard rule:
 that function is the PRODUCTION gate, blast radius every sandboxed op on
 every host, deny-leg × write/spawn axes only) — this is audit visibility for
-a DECLARED backend limitation, a different mechanism entirely.
+a DECLARED gap, not a self-test probe.
 
-The pure ``unenforced_axes()`` function is tested directly (no backend/events
+The pure ``unenforced_axes()`` function is tested directly (no events
 needed); the audit-event wiring is driven through the REAL op handler + real
-OpContext with a real (non-mock) backend stand-in named "landlock" (the
-platform-dependent real LandlockBackend is exercised by
-tests/security/test_sandbox_landlock.py; injecting a stand-in with the same ``.name``
-lets this test run cross-platform without a real Linux kernel).
+OpContext with a real (non-mock) backend stand-in — the platform-dependent
+real backends (LandlockBackend/SeatbeltBackend) are exercised by
+tests/security/test_sandbox_landlock.py / test_sandbox_seatbelt.py; a
+stand-in reusing each real class's own ``enforced_axes`` (not a hand-typed
+duplicate — see :func:`_landlock_shaped`/:func:`_seatbelt_shaped`) lets this
+run cross-platform without a real Linux kernel or macOS host, while staying
+faithful to what the real backend actually declares.
 """
 from __future__ import annotations
 
 import pytest
 
 from reyn.security.sandbox.backend import SandboxResult
+from reyn.security.sandbox.backends.landlock import LandlockBackend
+from reyn.security.sandbox.backends.seatbelt import SeatbeltBackend
+from reyn.security.sandbox.noop_backend import NoopBackend
 from reyn.security.sandbox.policy import SandboxPolicy, unenforced_axes
 
 # ── the pure classifier ───────────────────────────────────────────────────────
 
 
+class _BackendStandIn:
+    """A real (non-mock) SandboxBackend stand-in — ``name`` + ``enforced_axes``
+    only (this classifier reads nothing else), reusing a REAL backend
+    class's own ``enforced_axes`` value so the stand-in cannot drift from
+    what that backend actually declares."""
+
+    def __init__(self, name: str, enforced_axes) -> None:
+        self.name = name
+        self.enforced_axes = enforced_axes
+
+    def available(self) -> bool:
+        return True
+
+    async def run(self, argv, policy, *, stdin=None, cwd=None, cancel_event=None):
+        return SandboxResult(returncode=0, stdout=b"ok\n", stderr=b"")
+
+
+def _landlock_shaped() -> _BackendStandIn:
+    return _BackendStandIn("landlock", LandlockBackend.enforced_axes)
+
+
+def _seatbelt_shaped() -> _BackendStandIn:
+    return _BackendStandIn("seatbelt", SeatbeltBackend.enforced_axes)
+
+
+def _noop_shaped() -> _BackendStandIn:
+    return _BackendStandIn("noop", NoopBackend.enforced_axes)
+
+
 def test_landlock_with_read_deny_paths_is_unenforced():
-    """Tier 2: a configured read_deny_paths on landlock is reported unenforced."""
+    """Tier 2: a configured read_deny_paths on landlock is reported unenforced
+    (Landlock's structural LSM allowlist-only constraint)."""
     policy = SandboxPolicy(read_deny_paths=["~/.ssh"])
-    assert unenforced_axes("landlock", policy) == ["read_deny_paths"]
+    assert unenforced_axes(_landlock_shaped(), policy) == ["read_deny_paths"]
 
 
 def test_landlock_with_write_deny_paths_is_unenforced():
     """Tier 2: a configured write_deny_paths on landlock is reported unenforced."""
     policy = SandboxPolicy(write_deny_paths=["~/.aws"])
-    assert unenforced_axes("landlock", policy) == ["write_deny_paths"]
+    assert unenforced_axes(_landlock_shaped(), policy) == ["write_deny_paths"]
 
 
 def test_landlock_with_no_deny_lists_reports_nothing():
-    """Tier 2: an empty (compat-default) policy has nothing to report — the
-    event fires only when the operator actually configured an axis this
-    backend cannot enforce, not unconditionally on every landlock dispatch."""
-    assert unenforced_axes("landlock", SandboxPolicy()) == []
+    """Tier 2: an empty (compat-default) policy has nothing to report on
+    landlock — write_deny_paths/read_deny_paths are landlock's only
+    DOES_NOT_ENFORCE axes, and neither is configured here. (write_paths IS
+    always configured (the workspace floor) but landlock DOES enforce it,
+    so it never reports.)"""
+    assert unenforced_axes(_landlock_shaped(), SandboxPolicy()) == []
 
 
 def test_seatbelt_with_deny_lists_is_not_unenforced():
     """Tier 2: ★ the backend-capability falsification — the SAME policy that
     is unenforced on landlock is fully enforced on seatbelt (SBPL
-    deny-after-allow), so seatbelt never appears in the report. Proves the
-    classifier keys off backend CAPABILITY, not merely "a deny-list is set"."""
+    deny-after-allow, every axis ENFORCES), so seatbelt never appears in the
+    report. Proves the classifier keys off the backend's OWN declaration,
+    not merely "a deny-list is set"."""
     policy = SandboxPolicy(read_deny_paths=["~/.ssh"], write_deny_paths=["~/.aws"])
-    assert unenforced_axes("seatbelt", policy) == []
+    assert unenforced_axes(_seatbelt_shaped(), policy) == []
 
 
-def test_noop_with_deny_lists_is_not_reported_as_landlock_incapable():
-    """Tier 2: noop is not in the deny-list-incapable set either — its
-    non-enforcement is a documented, separate contract (the one-shot WARN),
-    not this axis-capability gap."""
-    policy = SandboxPolicy(read_deny_paths=["~/.ssh"])
-    assert unenforced_axes("noop", policy) == []
+def test_noop_enforces_nothing_it_is_configured_to_restrict():
+    """Tier 2: #4039's founding bug, now fixed — Noop enforces NOTHING (bar
+    the two env fields), so a policy that configures write/network/subprocess
+    restrictions is reported in full. Under the OLD predicate this returned
+    [] silently (Noop was never in the deny-list-incapable set)."""
+    policy = SandboxPolicy(
+        write_deny_paths=["~/.aws"],
+        network=False,
+        deny_subprocess=True,
+    )
+    assert unenforced_axes(_noop_shaped(), policy) == [
+        "write_deny_paths", "network", "deny_subprocess",
+    ]
+
+
+def test_noop_enforces_env_deny_names():
+    """Tier 2: Noop's ONE real enforcement mechanism (resolve_passthrough_env,
+    shared with every other backend) — env_deny_names/allow_env_names do NOT
+    appear in the report even though every other configured axis does."""
+    policy = SandboxPolicy(env_deny_names=["SECRET"], allow_env_names=["PATH"])
+    assert unenforced_axes(_noop_shaped(), policy) == []
+
+
+def test_write_paths_configured_and_unenforced_is_reported():
+    """Tier 2: #4039 — write_paths (the grant, not a deny-list) is now part
+    of the reported domain. Noop enforces nothing on write, so a
+    non-default write_paths grant is reported unenforced — the SandboxPolicy
+    floor always sets write_paths to something, so this is the common case
+    on a real Noop dispatch, not an edge case."""
+    policy = SandboxPolicy(write_paths=["/repo"])
+    assert unenforced_axes(_noop_shaped(), policy) == ["write_paths"]
 
 
 # ── the audit-event, driven through the real op handler ──────────────────────
@@ -76,6 +142,7 @@ class _LandlockShapedBackend:
     lets the audit-event wiring run cross-platform without a Linux kernel."""
 
     name = "landlock"
+    enforced_axes = LandlockBackend.enforced_axes
 
     def available(self) -> bool:
         return True
@@ -161,16 +228,20 @@ async def test_unenforced_axis_also_emits_a_warn_log_line(tmp_path, caplog):
 def test_unenforced_axis_reason_names_the_structural_cause() -> None:
     """Tier 1: #3823 — the reason string is per-backend prose, not a bare
     axis-name echo; a future backend with a DIFFERENT reason for the same
-    unenforced state gets its own text (owner: a Docker-shaped backend
-    "not enforcing env" is the SAME 2-value state as Landlock's deny-list
-    gap, but a DIFFERENT reason — the image decides, not a kernel
-    constraint). Falls back to a generic statement for an unlisted backend
-    rather than raising, matching unenforced_axes' own defensive posture."""
+    unenforced state gets its own text (#4039: Docker's real entry is the
+    landed instance of exactly this — "the container's own launch-time
+    boundary decides, not the policy field", a different reason than
+    Landlock's LSM constraint for the SAME 2-value classification). Falls
+    back to a generic statement for an unlisted backend rather than
+    raising, matching unenforced_axes' own defensive posture."""
     from reyn.security.sandbox.policy import unenforced_axis_reason
 
     landlock_reason = unenforced_axis_reason("landlock")
     assert "Landlock" in landlock_reason or "landlock" in landlock_reason
     assert "allowlist" in landlock_reason
+
+    docker_reason = unenforced_axis_reason("docker")
+    assert "container" in docker_reason
 
     fallback_reason = unenforced_axis_reason("some-future-backend")
     assert "some-future-backend" in fallback_reason
@@ -180,8 +251,8 @@ def test_unenforced_axis_reason_names_the_structural_cause() -> None:
 async def test_enforced_axis_emits_no_unenforced_event(tmp_path):
     """Tier 2: ★∩-falsification pair — the SAME policy on a backend that CAN
     express the deny-list (a stand-in named "seatbelt") emits no event.
-    Proves the emission is keyed on backend capability, not merely on the
-    policy carrying a deny-list."""
+    Proves the emission is keyed on the backend's OWN declaration, not
+    merely on the policy carrying a deny-list."""
     from reyn.core.events.events import EventLog
     from reyn.core.op_runtime.context import OpContext
     from reyn.core.op_runtime.sandboxed_exec import handle
@@ -192,6 +263,7 @@ async def test_enforced_axis_emits_no_unenforced_event(tmp_path):
 
     class _SeatbeltShapedBackend(_LandlockShapedBackend):
         name = "seatbelt"
+        enforced_axes = SeatbeltBackend.enforced_axes
 
     events = EventLog()
     collected = collect_events(events)
