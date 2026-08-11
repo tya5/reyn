@@ -108,12 +108,22 @@ def _resolve_default(config: Any, available: list[dict]) -> str | None:
     """Resolve the default design slug using priority order.
 
     #4317: was a raw ``yaml.safe_load`` of ``reyn.yaml`` reading the
-    (pre-#4174-T4, now stale) ``web.default_design`` key — bypassing the
-    config loader entirely, so a schema break at T4 went unnoticed here (it
-    just kept reading the same never-`web:`-anymore raw dict, silently
-    returning nothing). Reads ``config.gateway.default_design`` from the
-    already-loaded ``ReynConfig`` instead: loader-validated, and the same
-    dependency every other router on this app already uses.
+    (pre-#4174-T4) ``web.default_design`` key — bypassing the config loader
+    entirely. Because that parse never went through the typed schema, T4
+    splitting ``web:`` did NOT break it: ``cfg.get("web")["default_design"]``
+    kept resolving against the raw YAML dict regardless of what the schema
+    considered a known key, so an operator's `web.default_design:` silently
+    kept working post-T4 with no schema validation ever seeing it — the
+    loader-bypass's real cost wasn't "stopped returning a value", it was
+    "should have broken when the schema changed underneath it, and silently
+    didn't." Reads ``config.gateway.default_design`` from the already-loaded
+    ``ReynConfig`` instead: loader-validated, and the same dependency every
+    other router on this app already uses. **This is a genuine behavior
+    change**, not a pure bugfix — an operator still on `web.default_design:`
+    now gets nothing here (falls through to env var / alphabetical) instead
+    of the old raw-read value; `reyn config validate`/`migrate` surface the
+    rename via the `"web"` `RenamedKeyHint` in `config_schema.py` (already
+    covers `default_design` alongside `auth`/`ws_max_size`/`surfaces`).
     """
     # 1. env var
     env_val = os.environ.get("REYN_WEB_DEFAULT_DESIGN", "").strip()

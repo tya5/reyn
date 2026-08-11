@@ -193,8 +193,10 @@ def test_web_config_default_design_gateway_yaml(
 ) -> None:
     """Tier 2c: `gateway.default_design` in reyn.yaml, through the real config
     loader, is reflected in default_design when no env var is set (#4317 —
-    `default_design` had no address in the typed schema at all post-#4174-T4,
-    so this path returned nothing regardless of what reyn.yaml said).
+    `default_design` had no address in the typed schema at all post-#4174-T4;
+    the OLD `web.default_design` raw-yaml read kept working regardless, since
+    it bypassed the loader/schema entirely — this test is about the NEW
+    schema-validated path, not about the old one having broken).
 
     Uses "warm", NOT "coral" — "coral" sorts alphabetically first among
     {coral, warm}, so it would also be the level-3 fallback's answer and the
