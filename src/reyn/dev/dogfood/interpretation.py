@@ -28,7 +28,6 @@ so the run never fails on this auxiliary surface.
 """
 from __future__ import annotations
 
-import json
 from typing import TYPE_CHECKING
 
 # reyn.prompt.dogfood (SP prompt-package, Phase 3 §H) — imported and re-bound
