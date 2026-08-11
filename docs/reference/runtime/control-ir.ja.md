@@ -13,8 +13,9 @@ Control IR は LLM が artifact と並行して出力できる副作用 op の�
 > （`mcp_read_resource` / `mcp_subscribe_resource` / `mcp_unsubscribe_resource` /
 > `mcp_get_prompt` / `render_template` / `mcp_drop_server` / `embed` / `index_update` /
 > `compact` / `skill_install` / `load_skill` / `pipeline_install` / `presentation_install` /
-> `plugin_install` / `plugin_uninstall` / `emit_hook_event`）は**このページに一切記載がありません**
-> （「翻訳が古い」のではなく、そもそも節が存在しません）。それらの op を調べる際は
+> `plugin_install` / `plugin_uninstall` / `emit_hook_event`）は**専用の節がありません**
+> （「翻訳が古い」のではなく、そもそも節が存在しません — 一部は他 op の説明文中に言及される
+> だけで、それ自体の記述は持ちません）。それらの op を調べる際は
 > [英語版 Control IR reference](control-ir.md) を参照してください。
 > CLAUDE.md は en/ja の一律ミラーを義務としていません（ja は意図的な部分 subset）——
 > この注記は「未翻訳であること」自体を欠陥だと言っているのではなく、**部分訳であることを
