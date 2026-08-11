@@ -198,6 +198,10 @@ class ContentFenceCellScheme:
             timeout=extra.get("timeout", 30.0),
             cwd=extra.get("cwd"),
             allow_unsandboxed=extra.get("allow_unsandboxed", False),
+            # #4166: the same per-turn cancel_event the sibling (non-CodeAct)
+            # sandboxed_exec op already races via ctx.cancel_event — None
+            # (the key absent) is byte-identical to before.
+            cancel_event=extra.get("cancel_event"),
         )
         return ExecutionResult(tool_results=[out])
 
