@@ -16,25 +16,33 @@ comment or doc link is covered automatically.
 
 Two renderers, two slug algorithms — the caveat this gate exists to encode:
 
-- **mkdocs** (`markdown.extensions.toc.slugify` — the ASCII-only default;
-  ``.mkdocs/mkdocs.yml``'s ``toc:`` block sets only ``permalink: true``, no
-  ``slugify:`` override, so `TocExtension`'s own default applies, confirmed
-  live: ``TocExtension().getConfig("slugify")`` returns ``slugify``, not
-  ``slugify_unicode``): collapses consecutive hyphens, so an em-dash with a
-  space on each side produces a *single* hyphen, AND strips non-ASCII
-  characters entirely — a CJK-only heading slugifies to ``""``, which
-  `unique()` (imported for real, same as mkdocs' own treeprocessor calls)
-  turns into an opaque, order-dependent ``_1``/``_2``/... fallback id. This
-  gate previously imported ``slugify_unicode`` instead and asserted a pure-CJK
-  heading survives unchanged (#3667 co-vet, lead-coder + docs-maintainer,
-  2026-08): that model was never actually checked against a real mkdocs
-  build, only against itself — a live build showed real ids like
-  ``ad-hoc-inline`` (CJK suffix dropped) where the old model computed
-  ``ad-hoc-inline-起動``, so citations correct under the old model were
-  silently broken on the published site. Confirmed the real function
-  produces the exact real-world id in both cases before making this fix.
+- **mkdocs**: ``.mkdocs/mkdocs.yml`` wires a custom ``slugify`` (#4173's
+  ``.mkdocs/reyn_slugify_hook.py``, injected via mkdocs' ``hooks:`` config
+  option — not `markdown.extensions.toc`'s own default) into the ``toc``
+  extension's config at ``on_config`` time. This module IMPORTS that real
+  function (loaded from its file path, since ``.mkdocs/`` is not an
+  installed package) rather than assuming which algorithm mkdocs uses —
+  the exact mistake this gate made twice before: it originally hardcoded
+  ``markdown.extensions.toc.slugify`` (correct when written, since mkdocs
+  had no override then); #3667 co-vet swapped in a hand-written
+  ``slugify_unicode`` model, checked only against itself, never against a
+  real build, and asserted a pure-CJK heading survives unchanged — wrong
+  (a live build showed real ids like ``ad-hoc-inline``, CJK suffix
+  dropped, where that model computed ``ad-hoc-inline-起動``); #4173 then
+  changed what mkdocs ACTUALLY uses again, and this gate's own re-derived
+  ``markdown.extensions.toc.slugify`` import (from the #3667 fix) went
+  stale within the same night, RED against #4173's own PR (`hooks.ja.md`'s
+  real, mkdocs-built anchor ``#pipeline-起動pipeline_launch`` reading as a
+  nonexistent slug under the gate's separately-hardcoded old rule) — three
+  incidents, one shape: this file re-declaring which function mkdocs uses
+  instead of asking mkdocs' own config for it. Importing the function
+  object directly closes that recurrence — the next mkdocs-side slugify
+  change needs no matching edit here.
 - **GitHub's own renderer**: does NOT collapse consecutive hyphens, so the
-  same em-dash heading gets a *double* hyphen there.
+  same em-dash heading gets a *double* hyphen there. Modeled separately
+  (`_github_slugify`, below) — GitHub's algorithm has no config knob this
+  gate could import from; it stays a maintained model of what GitHub's
+  renderer actually does, unrelated to mkdocs' own choice of function.
 
 ``docs/deep-dives/**`` (plus any other ``.mkdocs/mkdocs.yml``
 ``exclude_docs:`` entry, read from that file at test time — never
@@ -56,12 +64,13 @@ implementation-level pin.
 """
 from __future__ import annotations
 
+import importlib.util
 import re
 from pathlib import Path
 
 import pytest
 import yaml
-from markdown.extensions.toc import slugify, unique
+from markdown.extensions.toc import unique
 
 from tests._support.paths import REPO_ROOT
 
@@ -69,6 +78,25 @@ _REPO_ROOT = REPO_ROOT
 _DOCS = _REPO_ROOT / "docs"
 _SRC = _REPO_ROOT / "src" / "reyn"
 _MKDOCS_CFG = _REPO_ROOT / ".mkdocs" / "mkdocs.yml"
+_SLUGIFY_HOOK = _REPO_ROOT / ".mkdocs" / "reyn_slugify_hook.py"
+
+
+def _load_real_mkdocs_slugify():
+    """Import ``slugify`` from the SAME file mkdocs' own ``hooks:`` config
+    option loads (``.mkdocs/reyn_slugify_hook.py``) — not a re-derived
+    model of it. ``.mkdocs/`` is not an installed package, so this mirrors
+    what mkdocs' own ``Hooks`` config option does internally
+    (``importlib.util.spec_from_file_location`` on the file path) rather
+    than adding it to ``sys.path`` and using a bare ``import``, which would
+    risk colliding with an unrelated top-level module of the same name."""
+    spec = importlib.util.spec_from_file_location("reyn_slugify_hook", _SLUGIFY_HOOK)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.slugify
+
+
+slugify = _load_real_mkdocs_slugify()
 
 _FENCE_RE = re.compile(r"^\s*```")
 _HEADING_RE = re.compile(r"^(#{1,6})\s+(.*)$")
@@ -471,21 +499,23 @@ def test_caveat_github_and_mkdocs_diverge_on_consecutive_hyphens(
     assert "faking-a-datastate-object--same-ban-sharper-failure-mode" in github_slugs
 
 
-def test_pure_cjk_heading_falls_back_to_opaque_ordered_id(tmp_path: Path) -> None:
-    """Tier 1: mkdocs' actual runtime slugify (the ASCII-only default —
-    ``.mkdocs/mkdocs.yml`` sets no ``slugify:`` override) strips a pure-CJK
-    heading's text to ``""``; `unique()` then assigns an opaque,
-    ORDER-DEPENDENT ``_1``/``_2``/... id — the same fallback mkdocs' own
-    treeprocessor uses, since `unique` is imported for real, not
-    reimplemented. Confirmed against a live build: this is why a
-    pure-Japanese heading's citation must use an explicit
-    ``{#custom-id}`` override, never the heading text itself, and why
-    inserting a heading above shifts every anchor below it silently."""
+def test_pure_cjk_heading_slugs_to_its_own_text_not_an_opaque_ordered_id(
+    tmp_path: Path,
+) -> None:
+    """Tier 1: mkdocs' actual runtime slugify (#4173's
+    ``.mkdocs/reyn_slugify_hook.py``, imported for real above — never
+    reimplemented) keeps a pure-CJK heading's text as its own slug, rather
+    than folding it to ``""`` and falling back to an opaque, ORDER-DEPENDENT
+    ``_1``/``_2``/... id (the pre-#4173 behavior this file's own docstring
+    describes as the recurrence this gate exists to catch). Two distinct
+    CJK headings must produce two distinct, stable, citable slugs — the
+    positive case for #4173's fix, using the same imported function this
+    whole gate stands on, not a model of it."""
     doc = tmp_path / "sample.md"
     doc.write_text("## 判断フロー\n## 別の見出し\n", encoding="utf-8")
     slugs = heading_slugs(doc, use_github=False)
-    assert "判断フロー" not in slugs
-    assert {"_1", "_2"} <= slugs
+    assert {"判断フロー", "別の見出し"} <= slugs
+    assert not slugs & {"_1", "_2"}
 
 
 def test_attr_list_explicit_id_overrides_autoslug(tmp_path: Path) -> None:
