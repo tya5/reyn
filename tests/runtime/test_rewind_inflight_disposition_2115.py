@@ -32,7 +32,7 @@ async def test_inflight_disposition_counts_cancelled_vs_finished():
         return None
 
     async def _hangs() -> None:
-        await asyncio.sleep(60)
+        await asyncio.Event().wait()
 
     finished_t = asyncio.ensure_future(_finishes())
     await asyncio.gather(finished_t, return_exceptions=True)   # let it complete
@@ -64,11 +64,11 @@ async def test_await_quiescent_redrains_append_scheduled_during_join(tmp_path):
     follow_up: list[asyncio.Task] = []
 
     async def _second() -> None:
-        await asyncio.sleep(60)   # hangs — only the re-drain's cancel settles it
+        await asyncio.Event().wait()   # hangs — only the re-drain's cancel settles it
 
     async def _first() -> None:
         try:
-            await asyncio.sleep(60)
+            await asyncio.Event().wait()
         finally:
             # Scheduled WHILE _first is being joined (after a one-shot snapshot
             # would have been taken) — the race the re-drain must catch.

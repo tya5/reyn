@@ -175,9 +175,10 @@ async def test_cancel_cancels_task_and_sets_status() -> None:
     registry = _make_registry()
     entry = _make_entry(registry)
 
-    # Create a long-running task so it doesn't finish before we cancel
+    # Keep the task alive until cancelled — no timed wait, no observation;
+    # this is pure filler so cancel() has something to act on.
     async def _long_running() -> None:
-        await asyncio.sleep(999)
+        await asyncio.Event().wait()
 
     task = asyncio.create_task(_long_running())
     registry.attach_task(entry.run_id, task)
