@@ -3744,6 +3744,19 @@ class RouterLoop:
                 # default, owner ruling B) — PATH passes by default now,
                 # where the old allow-list had to name it explicitly.
                 or {"network": False, "deny_subprocess": True},
+                # #4166: the SAME per-turn cancel_event the non-CodeAct
+                # sandboxed_exec op already races via ctx.cancel_event
+                # (make_router_op_context() is the public factory that
+                # builds that same OpContext — reusing it here rather than
+                # adding a second cancel_event holder on the adapter).
+                # getattr-guarded like sandbox_config above: a phase/test
+                # host that doesn't implement it degrades to cancel_event=
+                # None (byte-identical — the pre-#4166 behaviour).
+                "cancel_event": (
+                    self.host.make_router_op_context().cancel_event
+                    if callable(getattr(self.host, "make_router_op_context", None))
+                    else None
+                ),
             },
         )
         exec_res = await self._scheme.execute(interp, exec_ctx, ops=self)

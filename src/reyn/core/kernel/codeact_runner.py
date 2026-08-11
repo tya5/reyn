@@ -121,12 +121,24 @@ class CodeActRunner:
         timeout: float = 30.0,
         cwd: str | None = None,
         allow_unsandboxed: bool = False,
+        cancel_event: "asyncio.Event | None" = None,
     ) -> dict[str, Any]:
         """Execute ``code`` in the CodeAct harness; service its tool() proxy via
         ``dispatch``. Returns the harness response dict
         (``{ok: True, result}`` | ``{ok: False, kind, error, traceback?}``), plus a
-        ``status`` field (``ok`` | ``error`` | ``timeout`` | ``sandbox_unavailable``)
-        for the scheme layer.
+        ``status`` field (``ok`` | ``error`` | ``timeout`` | ``cancelled`` |
+        ``sandbox_unavailable``) for the scheme layer.
+
+        ``cancel_event`` (#4166, mirrors #1470's ``noop_backend``/``landlock``
+        cancel-aware ``run()`` race): when provided, races the harness's
+        completion against ``cancel_event.wait()`` the SAME way the sibling
+        ``sandboxed_exec`` op's non-CodeAct subprocess launches already do —
+        this runner did its own ``Popen`` instead of going through
+        ``SandboxBackend.run()`` (see the module docstring for why: it needs a
+        duplex control channel live during execution), so it never got the
+        cancel-aware race the shared backend path has carried since #1470.
+        ``cancel_event=None`` (the default) is byte-identical to before —
+        only the wall-clock ``timeout`` bounds the run.
 
         **Fail-closed** (owner-signed): CodeAct runs ONLY under an available OS
         sandbox (Seatbelt / Landlock). When no real backend is available the run is
@@ -209,28 +221,63 @@ class CodeActRunner:
         # a snippet printing in a loop is an ordinary mistake rather than an exotic
         # one.
         request_bytes = json.dumps(request).encode("utf-8")
-        comm_future = loop.run_in_executor(
+        comm_future: asyncio.Future = loop.run_in_executor(
             None, lambda: communicate_capped(proc, input=request_bytes),
         )
         timed_out = False
+        cancelled = False
         truncated = False
+        # #4166: cancel_event=None is the byte-identical original path
+        # (asyncio.wait_for against the wall-clock timeout alone). When
+        # provided, race BOTH the timeout and the event — mirrors
+        # noop_backend.py's cancel-aware run() (#1470) exactly, so a
+        # cancel_inflight() during a running snippet kills the subprocess
+        # instead of completing it out from under the (already-settled)
+        # task, the gap #4166 measured live.
         try:
-            stdout_b, stderr_b, truncated = await asyncio.wait_for(
-                comm_future, timeout=timeout
-            )
-        except asyncio.TimeoutError:
-            timed_out = True
-            service_task.cancel()
-            await kill_process_tree(proc)
-            stdout_b, stderr_b = b"", b""
-        else:
-            # Normal exit: the child sent op="final" then closed the channel (EOF), so
-            # DRAIN the service task (bounded) to populate final_box, rather than
-            # cancelling it mid-frame.
-            try:
-                await asyncio.wait_for(service_task, timeout=2.0)
-            except Exception:  # noqa: BLE001 — drain best-effort; cancel if it hangs
-                service_task.cancel()
+            if cancel_event is None:
+                try:
+                    stdout_b, stderr_b, truncated = await asyncio.wait_for(
+                        comm_future, timeout=timeout
+                    )
+                except asyncio.TimeoutError:
+                    timed_out = True
+                    service_task.cancel()
+                    await kill_process_tree(proc)
+                    stdout_b, stderr_b = b"", b""
+                else:
+                    # Normal exit: the child sent op="final" then closed the channel
+                    # (EOF), so DRAIN the service task (bounded) to populate
+                    # final_box, rather than cancelling it mid-frame.
+                    try:
+                        await asyncio.wait_for(service_task, timeout=2.0)
+                    except Exception:  # noqa: BLE001 — drain best-effort; cancel if it hangs
+                        service_task.cancel()
+            else:
+                cancel_task = asyncio.create_task(cancel_event.wait())
+                done, _ = await asyncio.wait(
+                    {comm_future, cancel_task},
+                    timeout=timeout,
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+                if cancel_task in done:
+                    cancelled = True
+                    service_task.cancel()
+                    await kill_process_tree(proc)
+                    stdout_b, stderr_b = b"", b""
+                elif not done:
+                    timed_out = True
+                    cancel_task.cancel()
+                    service_task.cancel()
+                    await kill_process_tree(proc)
+                    stdout_b, stderr_b = b"", b""
+                else:
+                    cancel_task.cancel()
+                    stdout_b, stderr_b, truncated = comm_future.result()
+                    try:
+                        await asyncio.wait_for(service_task, timeout=2.0)
+                    except Exception:  # noqa: BLE001 — drain best-effort; cancel if it hangs
+                        service_task.cancel()
         finally:
             try:
                 parent_sock.close()
@@ -239,6 +286,11 @@ class CodeActRunner:
             if cleanup is not None:
                 cleanup()
 
+        if cancelled:
+            return {
+                "ok": False, "status": "cancelled",
+                "kind": "Cancelled", "error": "codeact run was cancelled",
+            }
         if timed_out:
             return {
                 "ok": False, "status": "timeout",
