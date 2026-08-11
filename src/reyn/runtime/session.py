@@ -2030,10 +2030,27 @@ class Session:
         mode). Returns a human-readable summary string.
 
         #1468 cooperative layer: sets the cooperative cancellation flag so the
-        turn's run_loop breaks at the next tool-iteration boundary. A slow tool
-        already in flight completes before the cancel takes effect (subprocess
-        kill is a follow-up scope). Any spawned tasks are cancelled immediately
-        via asyncio task cancellation (existing behaviour, preserved here).
+        turn's run_loop breaks at the next tool-iteration boundary, AND sets
+        the per-turn ``cancel_event`` (``RouterLoopDriver.cancel_event``,
+        threaded onto the router's OpContext via
+        ``RouterHostAdapter._set_cancel_event`` — #1470) that a currently-
+        running sandboxed subprocess tool races against. Any spawned tasks
+        are cancelled immediately via asyncio task cancellation (existing
+        behaviour, preserved here).
+
+        #4166 correction (this docstring previously said "subprocess kill is
+        a follow-up scope" — that was stale even when written: the regular
+        ``sandboxed_exec`` op's non-CodeAct launches have raced
+        ``cancel_event`` and killed the process group since #1470;
+        ``CodeActRunner`` was the one launch route that reinvented its own
+        ``Popen`` instead of going through ``SandboxBackend.run()`` and so
+        never got it — #4166 closed that gap). A tool NOT wired to
+        ``cancel_event`` at all (this Session's set is #1470's
+        ``sandboxed_exec``/CodeAct plus whatever else threads
+        ``OpContext.cancel_event`` through — MCP calls, embed, plugin
+        install; grep ``cancel_event=ctx.cancel_event`` for the current
+        list) still only observes the cooperative flag at the next
+        iteration boundary, same as before.
 
         #2242 hard layer: ALSO cancels ``_turn_owner_task`` directly (the
         per-turn sub-task ``run_one_iteration`` spawns to run ``_run_turn_body``
