@@ -450,11 +450,6 @@
     "class": "never-existed"
   },
   {
-    "file": "src/reyn/_network.py",
-    "literal": "tests/network/test_egress_env_completeness.py",
-    "class": "never-existed"
-  },
-  {
     "file": "src/reyn/prompt/__init__.py",
     "literal": "tests/scaffold/test_sp_prompt_package_phase1_byte_identical.py",
     "class": "never-existed"
