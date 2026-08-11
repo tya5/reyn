@@ -153,7 +153,7 @@ rows: 500          # #3664: すべての行状スロット(table/list と keyval
 
 ## `sandboxed_exec`
 
-Control IR の op kind は `sandboxed_exec` のまま変わりません（`OP_KIND_MODEL_MAP["sandboxed_exec"]` / `SandboxedExecIROp`）。この op に到達する router/phase ツールは `sandboxed_exec` から **`exec`** へ改名されました（#3226 Phase 3、catalog qualified name は **`exec`**）— この改名は tool/qualified-name のみで、この op のスキーマ・イベント・結果形状には影響しません。
+Control IR の op kind は `sandboxed_exec` のまま変わりません（`OP_KIND_MODEL_MAP["sandboxed_exec"]` / `SandboxedExecIROp`）。この op に到達する router/phase ツールは `sandboxed_exec` から **`exec`** へ改名されました（#3226 Phase 3、catalog qualified name は **`exec`**）— この改名は tool/qualified-name のみで、この op のスキーマ・イベント・結果形状には影響しません。op kind と tool 名はそれ以来異なります。2つの文字列を橋渡しするテーブル（`op_runtime.contextual_gate._OP_KIND_TOOLS`）がかつて存在しましたが、#3513 で削除されました — 唯一の consumer だった `control_ir_executor` / `preprocessor_executor` が #2434 でファイルごと削除され、`src/` 内に呼び出し元が無くなっていたためです。op dispatch が独自の contextual narrowing を要するかどうかは #3546 で追跡中で、ここでは未解決です。
 
 宣言された `SandboxPolicy` と OS が選択した `SandboxBackend` を介して `argv` を実行します。分離強制が必要な（または将来必要になる）ケースで `shell` を置き換えます。
 
@@ -161,23 +161,19 @@ Control IR の op kind は `sandboxed_exec` のまま変わりません（`OP_KI
 {
   "kind": "sandboxed_exec",
   "argv": ["echo", "hello"],
-  "network": false,
-  "read_paths": ["{{workspace}}"],
-  "write_paths": ["{{workspace}}/output"],
-  "allow_subprocess": false,
-  "env_passthrough": ["PATH"],
-  "timeout_seconds": 60
+  "stdin": null,
+  "timeout_seconds": null
 }
 ```
 
 フィールド:
 - `argv`（必須）— コマンドと引数。`argv[0]` が実行可能ファイル。
-- `network`（省略可、デフォルト `false`）— アウトバウンドネットワークを許可。
-- `read_paths`（省略可）— プロセスが読み取り可能なファイルシステムパス（glob パターン可）。
-- `write_paths`（省略可）— プロセスが書き込み可能なファイルシステムパス。
-- `allow_subprocess`（省略可、デフォルト `true`）— 子プロセス生成の許可。
-- `env_passthrough`（省略可）— 引き渡す環境変数名（それ以外は除去）。
-- `timeout_seconds`（省略可、デフォルト `60`）— ウォールクロック上限。
+- `stdin`（省略可、デフォルト `None`）— プロセスの stdin に書き込むバイト列（pipeline `tool` step は前ステップの pipe-data を `args: {argv: [...], stdin_pipe: !expr pipe}` 経由で JSON としてここに渡せる — [Pipeline DSL](pipeline-dsl.ja.md#tool) 参照）。
+- `timeout_seconds`（省略可、デフォルト `None`）— **#3903①（2026-08-11、下の段落からの意図的な方針転換）**: LLM は `SandboxPolicy.timeout_seconds` 自身のデフォルトを超える前景ウォールクロックタイムアウトを、`SandboxPolicy.max_timeout_seconds`（operator 自身が設定する上限 — ハードコード値ではない）まで要求できます（`max_timeout_seconds` をデフォルトの 600 秒より狭めた operator にはその上限が実際に強制される。LLM が operator 自身の狭い設定を広げることはできない）。`None`（デフォルト）は policy 自身の `timeout_seconds` を使う。上限を超える値は**拒否**され（`status: "error"`、実際に設定された上限を名指し）、静かに切り詰められることはない — それをすると、下の段落で閉じたはずの「advertised だが無視される」形が、フィールドが黙って落とされる代わりに値が黙って変わる形で再来してしまう。非正の値も同様に拒否される。
+
+**他の policy フィールドは無い**（`network` / `read_paths` / `write_paths` / `allow_subprocess` / `env_passthrough` — #3907 で削除）: 実際に run を統制する sandbox policy の他の軸は、この op からは**一切**設定できません。agent レベル（operator）の `sandbox.policy`（`reyn.yaml`、`resolve_sandbox_policy` 経由で解決 — [`sandbox` config block](../config/reyn-yaml.ja.md#sandbox-ブロック) 参照）、それが無ければ operator の compat/strict デフォルトが使われます — いずれにせよ LLM には見えず広げられない値です（#1326/#1339: operator-or-default policy は op が要求するどんな値にも常に勝つ）。この op はかつて、operator policy が解決されなかった場合のフォールバック source として 5 つの policy フィールドを持っていましたが、#3907① の実測でそのパスは production で到達不能（すべての context-building path が具体的な policy を解決する）と判明したため、advertised-but-ignored な knob として残すのではなく削除されました。
+
+`timeout_seconds` もかつて同じ道をたどりました（#3962 で同じ defect class として削除 — ただし 1 issue 遅れて。ウォールクロック上限は permission 軸ではないため #3907 の一掃を生き延び、1 issue 分長く dead のまま残った）が、上の 5 つとは**異なる軸**です: boundedness であって permission ではない（#3903 自身の framing）。今回は本物の reader を伴って戻ってきました（上記参照） — これが、この方針転換を #3962 が閉じたギャップの再開と区別する点です。
 
 **バックエンド選択**: `get_default_backend()` がプラットフォームに応じて選択します。macOS < 26 では `SeatbeltBackend`（sandbox-exec SBPL）。Linux ≥ 5.13 かつ `sandbox-linux` extra インストール済みの場合は `LandlockBackend`（+ オプションの seccomp-BPF スタック）。その他のプラットフォームまたは選択バックエンドが利用不可の場合は `NoopBackend`（監査のみ、強制なし）にフォールバック — 初回使用時に一行 WARN を出力。`reyn.yaml` の `sandbox.backend`（`auto` | `seatbelt` | `landlock` | `noop`）および `sandbox.on_unsupported`（`warn` | `error` | `ignore`）で上書き可能。
 
