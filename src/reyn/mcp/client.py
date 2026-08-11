@@ -31,26 +31,37 @@ now-DELETED ``reyn.mcp._fastmcp_boundary`` module — a strict subclass of
 ``mcp.types.ElicitResult`` adding zero fields (verified via its MRO), so
 it was switched to construct the official SDK's own base type directly.
 An AST scan of the whole ``src/reyn/`` tree (excluding
-``src/reyn/builtin/plugins/rag/scripts/``, see below) now finds ZERO
-``import fastmcp`` / ``from fastmcp...`` statements anywhere — reyn's own
-venv has no source-level fastmcp dependency left at all.
+``src/reyn/builtin/plugins/rag/scripts/``, see below) found ZERO
+``import fastmcp`` / ``from fastmcp...`` statements anywhere — this part
+was actually scanned and is accurate as far as it goes. What it does NOT
+cover, and must not be read as covering (per architect/lead-coder's #4302
+review of this exact overreach): ``tests/`` was never included in that
+scan, and the CONCLUSION drawn from "zero in ``src/reyn/``" — that
+fastmcp/``mcp<2.0`` becomes droppable — does not follow, because
+``tests/_support/`` (outside the scanned tree) is where fastmcp's real
+remaining role lives. See below.
 
+⚠️ **This does NOT mean fastmcp/the ``mcp<2.0`` pin can be dropped from
+``pyproject.toml``, and does NOT mean #3698 stage 2 (``mcp>=2.0``
+adoption) is unblocked — #4302 (architect, filed after re-checking #4299's
+own claim) found the real remaining blocker:**
 ``src/reyn/builtin/plugins/rag/scripts/chunker_server.py`` /
-``vector_store_server.py`` DO import ``fastmcp.FastMCP()`` to build MCP
-SERVERS, but that is not evidence against removing fastmcp from THIS
-pyproject.toml — those scripts run in an operator-created, SEPARATE venv
-(``src/reyn/builtin/plugins/rag/requirements.txt``'s own header:
-"Install these into your OWN venv -- ``plugin_install`` is register-only
-(ADR 0064 §3.11b, #3209) and never reads or installs this file itself"),
-never reyn's own venv. So "#4282 is #3698 stage 2's precondition"
-(mcp>=2.0 adoption) still stands as originally planned: whether
-``fastmcp``/the ``mcp<2.0`` pin can actually be DROPPED from
-``pyproject.toml`` — as opposed to merely unreferenced in source — is a
-separate, deliberate step (adding ``mcp`` as reyn's own DIRECT
-dependency with its own version choice, not just inheriting fastmcp's
-transitive floor; touches every user's install) not performed in this
-commit — reported to lead-coder as the concrete next decision point
-rather than made unilaterally.
+``vector_store_server.py`` import ``fastmcp.FastMCP()`` to build MCP
+SERVERS, but run in an operator-created SEPARATE venv (that directory's
+own ``requirements.txt`` header) and do NOT constrain reyn's own venv —
+that part of the original finding held. What does NOT hold: ``tests/
+_support/`` still builds 5 MCP SERVER test-doubles
+(``mcp_fastmcp_echo_server.py``, ``mcp_elicitation_server.py``, and 3
+others) on fastmcp's server framework — as long as reyn's own dev/CI venv
+installs those, fastmcp (and its own hard ``mcp<2.0`` floor, present in
+every fastmcp version) stays present in THAT venv regardless of the
+client path being fastmcp-free. Porting those test-doubles to the
+official SDK's own server API (``Context``/decorator shape — untested,
+own cost) is #4302's scope and the ACTUAL precondition for dropping
+fastmcp from ``pyproject.toml`` — not just an unreferenced client-side
+import, which is all this PR achieved. "#4282 is #3698 stage 2's
+precondition" was true as originally planned, but #4282 landing does not
+itself satisfy that precondition — see #4302 for the corrected plan.
 
 Each ``MCPClient`` owns a single connection opened on :meth:`initialize` and
 torn down on :meth:`close`, held open via a ``contextlib.AsyncExitStack``
