@@ -249,8 +249,16 @@ class AgUiTransport(ClientTransport):
         # echoes render locally through the renderer, not this seam. No-op here.
         return None
 
-    async def cancel_inflight(self) -> None:
+    async def cancel_inflight(self) -> str:
+        # #3903: fire-and-forget over the wire (no response frame in this
+        # protocol) — this is the Esc/Ctrl+C keyboard path only. /cancel
+        # (the slash command) does NOT route through here: ClientTransport.
+        # run_slash_command's own docstring says AgUiTransport POSTs the
+        # slash command for the SERVER to run via execute_slash_command,
+        # which calls Session.cancel_inflight() directly and gets the real
+        # summary — this generic string is never what a /cancel reply shows.
         await self._send({"type": "cancel_inflight"})
+        return "cancel requested"
 
     async def cancel_queued(self, msg_id: str) -> bool:
         # #3300 P3 (Y-server) remote parity: POST the cancel-by-id op; the
