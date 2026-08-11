@@ -14,16 +14,19 @@ from reyn.runtime.budget.budget import CostConfig, CostLimitConfig
 class VoiceConfig:
     """`voice:` — chat TUI voice-input (Whisper) settings.
 
-    Lazy-loaded only when the user presses the record key (Ctrl+R) so the
-    optional deps (`sounddevice`, `faster-whisper`) stay opt-in. See the
-    user guide at `docs/guide/for-users/chat-and-web-ui.md`.
+    Lazy-loaded only when the user presses the record key (F2, #4187 — the
+    retired Textual TUI's Ctrl+R was NOT reused on revival, per #4187's own
+    measurement that it collides with reverse-history-search, a convention
+    users bring to any text-input surface) so the optional deps
+    (`sounddevice`, `faster-whisper`) stay opt-in. See the user guide at
+    `docs/guide/for-users/chat-and-web-ui.md`.
 
     Defaults reflect Reyn's Japanese-enterprise focus (project_reyn_vision):
     `language="ja"` so short clips don't get auto-detected as a wrong
     language and produce empty transcripts. Set `language: ""` (empty
     string) or `null` in YAML to opt back into auto-detect.
     """
-    enabled: bool = True              # set False to hard-disable Ctrl+R even if deps installed
+    enabled: bool = True              # set False to hard-disable F2 even if deps installed
     model: str = "small"              # tiny | base | small | medium | large-v3
     language: str | None = "ja"       # ISO code; "" or null in YAML = auto-detect
     device: str = "cpu"               # cpu | cuda  (faster-whisper has no metal backend
