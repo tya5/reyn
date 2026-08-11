@@ -24,7 +24,7 @@ from .backend import (
     SandboxResult,
     WrappedCommand,
 )
-from .policy import SandboxPolicy, resolve_passthrough_env
+from .policy import POST_KILL_DRAIN_GRACE_SECONDS, SandboxPolicy, resolve_passthrough_env
 
 _logger = logging.getLogger(__name__)
 
@@ -208,8 +208,17 @@ class NoopBackend:
                 pass
 
         loop = asyncio.get_running_loop()
+        # #4271/#4277: inner timeout must exceed the outer asyncio.wait's own
+        # timeout below (see container_backend.py's identical comment for
+        # the full "who owns the deadline" story) — same value let
+        # subprocess.TimeoutExpired escape uncaught through this function's
+        # plain `await comm_future` normal-completion branch.
         comm_future: asyncio.Future = loop.run_in_executor(
-            None, lambda: communicate_capped(proc, max_bytes=policy.max_output_bytes)
+            None,
+            lambda: communicate_capped(
+                proc, max_bytes=policy.max_output_bytes,
+                timeout=policy.timeout_seconds + POST_KILL_DRAIN_GRACE_SECONDS,
+            ),
         )
         cancel_task = asyncio.create_task(cancel_event.wait())
 

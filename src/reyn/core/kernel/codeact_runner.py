@@ -35,6 +35,7 @@ from typing import TYPE_CHECKING, Any, Awaitable, Callable
 
 from reyn.security.sandbox import kill_process_tree
 from reyn.security.sandbox._subprocess_io import communicate_capped
+from reyn.security.sandbox.policy import POST_KILL_DRAIN_GRACE_SECONDS
 
 if TYPE_CHECKING:
     from reyn.security.sandbox import SandboxPolicy
@@ -221,8 +222,22 @@ class CodeActRunner:
         # a snippet printing in a loop is an ordinary mistake rather than an exotic
         # one.
         request_bytes = json.dumps(request).encode("utf-8")
+        # #4271/#4277: the inner communicate_capped timeout must be STRICTLY
+        # LARGER than every outer asyncio.wait_for/asyncio.wait timeout that
+        # also races this future — same value means "who reaches their own
+        # deadline first" decides the outcome, not the outer deadline that
+        # OWNS it. Passing the SAME `timeout` here let subprocess.TimeoutExpired
+        # (raised inside the executor thread) escape through the no-cancel
+        # branch's `except asyncio.TimeoutError` (a DIFFERENT exception type),
+        # bypassing the status='timeout' envelope entirely (#4277 CI RED:
+        # test_codeact_timeout_kill_no_attributeerror_without_killpg). The
+        # inner value's only job is "never unbounded" — not "enforce the
+        # deadline", which the outer wait_for/wait already owns.
         comm_future: asyncio.Future = loop.run_in_executor(
-            None, lambda: communicate_capped(proc, input=request_bytes),
+            None,
+            lambda: communicate_capped(
+                proc, input=request_bytes, timeout=timeout + POST_KILL_DRAIN_GRACE_SECONDS,
+            ),
         )
         timed_out = False
         cancelled = False

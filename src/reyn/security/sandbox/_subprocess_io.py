@@ -49,7 +49,7 @@ def communicate_capped(
     *,
     input: bytes | None = None,
     max_bytes: int = MAX_SUBPROCESS_OUTPUT_BYTES,
-    timeout: float | None = None,
+    timeout: "float | None",
 ) -> tuple[bytes, bytes, bool]:
     """Drain ``proc`` like ``proc.communicate(input, timeout)`` but cap stdout and
     stderr at ``max_bytes`` each (drain-and-discard the excess → bounded memory,
@@ -59,6 +59,25 @@ def communicate_capped(
     :class:`subprocess.TimeoutExpired` (carrying the partial captured output) if
     ``timeout`` elapses before both streams close — parity with
     ``communicate(timeout=)``; the caller kills the process and handles it.
+
+    #4271: ``timeout`` has NO default — every caller must decide. This was a
+    ``None`` default (unbounded wait) until a real production defect surfaced:
+    when a caller runs this via ``loop.run_in_executor`` (every async cancel-
+    aware path does) and the child's pipe never reaches EOF (a killed process
+    whose OWN child inherited the fd and stayed alive — #3862's exact bug
+    shape, or any other case where the process being drained isn't the one
+    actually holding the pipe open), the blocking read inside the executor's
+    THREAD never returns. Because that thread is not a daemon thread, it
+    blocks the whole interpreter from exiting — not just the awaiting
+    coroutine, which DOES correctly give up at whatever `asyncio.wait_for`
+    the caller wraps it in. A hang surfaces as a CI job timeout, not a test
+    failure — the failure's own content is lost (`tests/environment/
+    test_container_backend_cancel_3862.py`, discovered during #4264 ②'s
+    falsify-verify). Removing the ``None`` default makes "wait forever"
+    something every call site must write down, not something that happens
+    by omission — the same class of hole stays closed for the NEXT caller,
+    not just the ones fixed here. A caller for whom unbounded really is
+    correct still can — write ``timeout=None`` explicitly.
 
     Platform dispatch: the POSIX selectors path uses ``select()``, which on Windows only polls
     SOCKETS, not pipe fds (``OSError [WinError 10038] not a socket``) — so on Windows we drain via
@@ -165,7 +184,7 @@ def _communicate_capped_selectors(
     *,
     input: bytes | None = None,
     max_bytes: int = MAX_SUBPROCESS_OUTPUT_BYTES,
-    timeout: float | None = None,
+    timeout: "float | None",
 ) -> tuple[bytes, bytes, bool]:
     """POSIX drain via a selectors loop (3-way stdin/stdout/stderr concurrency), per-stream capped.
     The proven reference path (CPython POSIX ``Popen._communicate`` structure); see the public

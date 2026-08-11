@@ -205,6 +205,21 @@ DEFAULT_SANDBOX_NETWORK: bool = True
 DEFAULT_EXEC_TIMEOUT_SECONDS: int = 120
 DEFAULT_MAX_EXEC_TIMEOUT_SECONDS: int = 600
 
+# #4271: how long to wait for a FRESH ``communicate_capped`` drain call
+# issued strictly AFTER the process has already been killed (or the kill
+# has already been attempted) — e.g. landlock.py's post-``TimeoutExpired``
+# re-drain of whatever partial output remains. Distinct from
+# DEFAULT_EXEC_TIMEOUT_SECONDS above (that governs the WHOLE run, before
+# any kill decision) and from ``kill_process_tree``'s own
+# ``grace_seconds=2.0`` (_subprocess_io.py — SIGTERM-to-SIGKILL escalation
+# grace, a different wait around a different part of the same kill).
+# Deliberately short: by this point the process has already been signalled
+# (often SIGKILL, which is not interruptible), so what remains is draining
+# whatever the OS already buffered before the pipe closes — not waiting for
+# more work to run. 3 seconds is generous margin over ordinary pipe-close
+# latency without reintroducing an unbounded wait (#4271's own defect).
+POST_KILL_DRAIN_GRACE_SECONDS: float = 3.0
+
 # #3903 a-2 (owner ruling 2026-08-11, on top of #3903① above): foreground and
 # background exec are DIFFERENT resource envelopes and get their OWN default
 # + ceiling — 4 values total, not the single shared field #3903's own issue

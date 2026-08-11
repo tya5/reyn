@@ -50,7 +50,7 @@ from reyn.security.sandbox.backend import (
     SandboxResult,
     WrappedCommand,
 )
-from reyn.security.sandbox.policy import SandboxPolicy
+from reyn.security.sandbox.policy import POST_KILL_DRAIN_GRACE_SECONDS, SandboxPolicy
 
 # Sync runner: execute argv (optionally stdin), return SandboxResult. Injected so
 # the FS-op orchestration is testable without Docker; default = _sync_runner.
@@ -670,8 +670,21 @@ class DockerEnvironmentBackend:
                 pass
 
         loop = asyncio.get_running_loop()
+        # #4271/#4277: the inner communicate_capped timeout must be STRICTLY
+        # LARGER than the outer asyncio.wait's own timeout below — same value
+        # means whichever deadline is reached first decides the outcome, not
+        # the outer one that OWNS it. A same-value regression let
+        # subprocess.TimeoutExpired escape uncaught through the plain
+        # `await comm_future` in the normal-completion branch below (#4277 CI
+        # RED, same shape in codeact_runner.py). The inner value only needs
+        # to guarantee "never unbounded" — the outer wait already enforces
+        # the real deadline.
         comm_future: asyncio.Future = loop.run_in_executor(
-            None, lambda: communicate_capped(proc, max_bytes=policy.max_output_bytes),
+            None,
+            lambda: communicate_capped(
+                proc, max_bytes=policy.max_output_bytes,
+                timeout=policy.timeout_seconds + POST_KILL_DRAIN_GRACE_SECONDS,
+            ),
         )
         cancel_task = asyncio.create_task(cancel_event.wait())
 

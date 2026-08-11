@@ -21,9 +21,16 @@ from reyn.security.sandbox._subprocess_io import (
     MAX_SUBPROCESS_OUTPUT_BYTES,
     communicate_capped,
 )
+from reyn.security.sandbox.policy import DEFAULT_EXEC_TIMEOUT_SECONDS
 
 PY = sys.executable
 _CAP = 1000  # small cap for the over-limit cases
+# #4271: timeout is now required (no ``None`` default — see communicate_capped's
+# own docstring). These tests exercise fast, normally-completing subprocesses,
+# not the timeout mechanism itself (that's test_timeout_raises_timeoutexpired's
+# own job, which passes its own explicit short value) — so they reuse the
+# sandbox's existing exec-timeout default rather than inventing a new number.
+_NORMAL_TIMEOUT = DEFAULT_EXEC_TIMEOUT_SECONDS
 
 
 def _popen(code: str, *, with_stdin: bool = False) -> subprocess.Popen:
@@ -38,7 +45,7 @@ def _popen(code: str, *, with_stdin: bool = False) -> subprocess.Popen:
 def test_small_output_full_not_truncated():
     """Tier 2: output within the cap → returned in full, truncated=False."""
     out, err, trunc = communicate_capped(
-        _popen("import sys;sys.stdout.write('x'*100)"), max_bytes=_CAP
+        _popen("import sys;sys.stdout.write('x'*100)"), max_bytes=_CAP, timeout=_NORMAL_TIMEOUT,
     )
     assert out == b"x" * 100
     assert err == b""
@@ -49,7 +56,7 @@ def test_huge_stdout_capped_and_truncated():
     """Tier 2: stdout over cap → bounded to <= max_bytes, truncated=True, child
     still exits 0 (drain-and-discard preserves the return code)."""
     proc = _popen("import sys;sys.stdout.write('x'*5_000_000)")
-    out, _err, trunc = communicate_capped(proc, max_bytes=_CAP)
+    out, _err, trunc = communicate_capped(proc, max_bytes=_CAP, timeout=_NORMAL_TIMEOUT)
     out_len = len(out)
     assert out_len <= _CAP
     assert trunc is True
@@ -59,7 +66,7 @@ def test_huge_stdout_capped_and_truncated():
 def test_huge_stderr_capped_and_truncated():
     """Tier 2: stderr over cap → bounded + truncated (both streams are capped)."""
     proc = _popen("import sys;sys.stderr.write('e'*5_000_000)")
-    _out, err, trunc = communicate_capped(proc, max_bytes=_CAP)
+    _out, err, trunc = communicate_capped(proc, max_bytes=_CAP, timeout=_NORMAL_TIMEOUT)
     err_len = len(err)
     assert err_len <= _CAP
     assert trunc is True
@@ -72,7 +79,7 @@ def test_both_streams_huge_no_deadlock():
     proc = _popen(
         "import sys\nfor _ in range(5000):\n sys.stdout.write('o'*1000);sys.stderr.write('e'*1000)"
     )
-    out, err, trunc = communicate_capped(proc, max_bytes=_CAP)
+    out, err, trunc = communicate_capped(proc, max_bytes=_CAP, timeout=_NORMAL_TIMEOUT)
     out_len = len(out)
     err_len = len(err)
     assert out_len <= _CAP
@@ -87,7 +94,9 @@ def test_stdin_and_stdout_concurrent_no_deadlock():
     proc = _popen(
         "import sys;d=sys.stdin.read();sys.stdout.write(str(len(d)))", with_stdin=True
     )
-    out, _err, _trunc = communicate_capped(proc, input=b"z" * 1_000_000, max_bytes=_CAP)
+    out, _err, _trunc = communicate_capped(
+        proc, input=b"z" * 1_000_000, max_bytes=_CAP, timeout=_NORMAL_TIMEOUT,
+    )
     assert out == b"1000000"
     assert proc.returncode == 0
 
