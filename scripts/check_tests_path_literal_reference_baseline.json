@@ -445,6 +445,11 @@
     "class": "never-existed"
   },
   {
+    "file": "scripts/pytest_skip_census.py",
+    "literal": "tests/foo.py",
+    "class": "never-existed"
+  },
+  {
     "file": "scripts/test_tier_audit.py",
     "literal": "tests/test_foo.py",
     "class": "never-existed"
@@ -577,6 +582,16 @@
   {
     "file": "tests/scripts/test_flat_tests_disposition_check_3879.py",
     "literal": "tests/x/test_a.py",
+    "class": "never-existed"
+  },
+  {
+    "file": "tests/scripts/test_pytest_skip_census_4331.py",
+    "literal": "tests/broken.py",
+    "class": "never-existed"
+  },
+  {
+    "file": "tests/scripts/test_pytest_skip_census_4331.py",
+    "literal": "tests/foo.py",
     "class": "never-existed"
   },
   {
