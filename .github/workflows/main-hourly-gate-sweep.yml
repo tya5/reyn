@@ -55,22 +55,31 @@ jobs:
           python-version: "3.11"
 
       # All 5 are stdlib-only (ast / pathlib / sys) — no pip install needed,
-      # same as their per-PR counterparts. Run in sequence; any non-zero
-      # exit fails the job (default `run:` behaviour, no `continue-on-error`)
-      # so a single red gate is enough to redden the whole sweep — #4257's
-      # own test-plan requirement ("a red gate you can't fail is a gate that
-      # says nothing").
+      # same as their per-PR counterparts. Any non-zero exit fails its own
+      # step (default `run:` behaviour), which reddens the job overall — a
+      # single red gate is enough, #4257's own test-plan requirement ("a
+      # red gate you can't fail is a gate that says nothing"). Each step
+      # still carries `if: ${{ !cancelled() }}` so a step 1 failure does
+      # NOT skip steps 2-5 (the default without it) — this runs once an
+      # hour, so knowing all 5 outcomes from one run matters more here than
+      # in a per-PR gate: without it, only the first failure is visible and
+      # recovery has to wait a full cycle to learn about the rest.
       - name: bare-tests-import-reference
+        if: ${{ !cancelled() }}
         run: python scripts/check_bare_tests_import_reference.py
 
       - name: fastmcp-import-boundary
+        if: ${{ !cancelled() }}
         run: python scripts/check_fastmcp_import_boundary.py
 
       - name: file-depth-reference
+        if: ${{ !cancelled() }}
         run: python scripts/check_file_depth_reference.py
 
       - name: tests-path-literal-reference
+        if: ${{ !cancelled() }}
         run: python scripts/check_tests_path_literal_reference.py
 
       - name: flat-tests-ratchet
+        if: ${{ !cancelled() }}
         run: python scripts/flat_tests_ratchet.py
