@@ -512,13 +512,16 @@ MENUBAR_KEYS: "list[tuple[str, str]]" = [
 #: ``ctrl+o``/``ctrl+w`` panel, ``ctrl+1``..``ctrl+7`` tab jump, ``f3``/``f4``/
 #: ``f7``/``f9``) are NOT listed: #2193 was re-scoped to voice alone, so those
 #: features are explicitly dropped and their keys are free.
-RESERVED_KEYS: "dict[str, str]" = {
-    # #2193 — voice input (Whisper STT). The `voice:` config block exists in
-    # `config/media.py` with nothing reading it; the retired TUI bound
-    # `voice_toggle` to Ctrl+R with F2 as its alias.
-    "ctrl+r": "voice input (STT) — #2193",
-    "f2": "voice input (STT), alias of ctrl+r — #2193",
-}
+#:
+#: #4187: voice input LANDED (F2, declared in ``app.py``'s own ``BINDINGS`` —
+#: findable there, no reservation needed) — so its entry is removed from here
+#: rather than left stale. ``ctrl+r``, the retired TUI's primary binding for
+#: the same feature, is NOT re-claimed: #4187 measured it as colliding with
+#: reverse-history-search, a terminal-wide convention the Composer's own
+#: users bring with them (see ``app.py``'s ``BINDINGS`` comment on the F2
+#: entry for the full reasoning). It is free, not reserved — nothing has an
+#: open claim on it.
+RESERVED_KEYS: "dict[str, str]" = {}
 
 #: The sent-queue region's navigation keys (#3300 Y-client,
 #: ``SentQueue.BINDINGS`` — declarative, but the Help pane still sources them

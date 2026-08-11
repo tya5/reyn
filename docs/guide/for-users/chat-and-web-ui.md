@@ -134,6 +134,7 @@ or not you see the banner.
 | `Ctrl+J` | Insert a newline — the guaranteed-works fallback on any terminal, for pasting or writing a multi-line prompt |
 | `↑` | On the first line: focus a pending question, else the sent-message queue. Otherwise move the cursor up |
 | `↓` | On the last line: focus the menu row below the input. Otherwise move the cursor down |
+| `F2` | Start/stop voice dictation — transcribed text lands at the cursor, never auto-sent. Requires `pip install "reyn[voice]"`; see [Concepts: Voice input](../../concepts/tools-integrations/voice.md) |
 
 #### Completing `/` commands and `:` skills
 
