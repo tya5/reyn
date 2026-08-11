@@ -20,8 +20,8 @@ and a measured detection, it doesn't belong in this doc.
 | Face | What's missing | Instance |
 |---|---|---|
 | **Record is a lie** | The claim itself is false | `landlock.py` blamed network denial on "the no-network-fd / proxy gate" — a named mechanism that appears nowhere in the repo but that one comment (#3031). What actually denied `connect()` was a seccomp default-deny, itself skipped under `allow_subprocess=True` (#3030). |
-| **Environment can't witness** | A green test never ran the risky path | The Landlock shim called `Ruleset` APIs (`add_path_beneath_rule` etc.) that don't exist in the pinned `landlock==1.0.0.dev5` — every call raised `AttributeError` in production for 41 days, while its own test called the shim's internals directly, bypassing the broken production entry point (#2980). |
-| **Claim has no owner** | No one on the claimed subsystem's side checks it | Same `landlock.py` case: a doc/comment in subsystem A asserting subsystem B's behavior, with no owner on B's side to catch it wrong — "plausible and unowned" is why it survived. |
+| **Environment can't witness** | A green test never ran the risky path | The Landlock shim called `Ruleset` APIs (`add_path_beneath_rule` etc.) that don't exist in the pinned `landlock==1.0.0.dev5` — every call raised `AttributeError` in production for 41 days, while its own test called the shim's internals directly, bypassing the broken production entry point (#2980). A repro can fail the SAME way a test can: investigating whether a secret leaks through `Session._run_router_loop`'s TUI/outbox path (#3830), a reproduction was built that raised the exception WITHOUT going through `scrub_exception_in_place` — the actual production path — and reported the fixed code as still leaking. Self-corrected once rebuilt to raise through the real call path, which produced the REDACTED text the first repro never could have shown either way (#4343). The repro environment, not a test, was the thing that couldn't witness the real path this time. |
+| **Claim has no owner** | No one on the claimed subsystem's side checks it | Same `landlock.py` case: a doc/comment in subsystem A asserting subsystem B's behavior, with no owner on B's side to catch it wrong — "plausible and unowned" is why it survived. CLAUDE.md asserted the sandbox 3-tuple axis contract (deny/exception-boundary/workload) was "CI-conformance-only" — a claim about subsystem B (CI) written in subsystem A (the hard-rules doc) — with no one on B's side ever checking it was true: `test_sandbox_axis_contract_2983.py`'s network-axis arms skipped in every pytest job (no `sandbox-linux` extra) and were never collected by the one job that DID have Landlock available, so the "CI-conformance" layer ran on zero jobs, not the CI-conformance-only-but-still-real coverage the sentence implied. Distinct from the "environment can't witness" row above: the deny-gate job's environment COULD witness the risky path fine — once the file was added to its `pytest` invocation it ran and passed (34/34) — the gap was never a capability gap, only that nothing on the CI side had ever checked the claim against what actually ran (#4333, found via #4331's skip census cross-referenced against which job collects which file). |
 | **Observed-target identity unverified** | Green about the wrong object | Agent worktrees share the main checkout's `.venv` (0 of 136 have their own) — in-process and subprocess-imported `reyn` are two different trees "by construction, not staleness" (#3033). Separately: the same heading anchor resolves to two different slugs on GitHub vs mkdocs — "valid" is renderer-specific (#3039). Separately again: a SHARED venv's editable install can be silently re-pointed to a DIFFERENT worktree by someone else's concurrent `uv pip install -e .` (`VIRTUAL_ENV` resolves to the parent venv from inside a worktree, so the parent's `.pth` re-links to that worktree) — a strip-falsify then measures a tree nobody touched (#3363/#3370, 2026-07-27). Central audit can't catch this: a session can only resolve its OWN `python`'s import, never another session's PATH. The fix is measurement-time self-check, not a periodic audit — `python -c "import reyn; assert reyn.__file__.startswith('$PWD/src')"` before trusting any local strip result, reading the RESOLVED path (`reyn.__file__`), not the DECLARED one (the `.pth` file's contents). CI is structurally exempt (`actions/checkout` + a fresh editable install every run leaves no other tree to point at) — only local strip results are at risk. A second axis of the same identity question, this time TEMPORAL rather than spatial: analyzing a central file (`session.py`) on a shared tree, then applying that analysis later by line number, silently broke when `main` moved underneath the analysis (+107 lines from 3 intervening merges) — the same file at two different times is as much "a different object" as two different worktrees are. Caught only because the applying agent inserted a content-based line-anchor check before applying and got 87/100 mismatches; without that check the file would have been silently corrupted. Recovery reached 381/389 sites, and the 8 unrecoverable ones all fell inside the one region a concurrent merge had actually touched — a mechanistic explanation, not randomness (2026-07-28). Line numbers are not identifiers across a moving `main`; re-anchor by content immediately before applying whenever measurement and use are separated in time. A third axis, this time about the isolation boundary itself rather than what's inside it: a session's dedicated worktree can vanish MID-SESSION (the cause was never established — only that a registered tree later no longer existed), and because a tool-calling agent's shell `cwd` resets between calls, every subsequent command silently fell back to the shared checkout instead of erroring — a commit believed isolated was made on the shared tree (#3581). "Worktree-isolated" is a fact true at session START, not an invariant that holds for its duration. The only way to catch this is a self-check at the moment of measuring, committing, or pushing — `pwd`, `git worktree list`, and venv/`reyn.__file__` identity — not trusting that isolation, once true, stays true. |
 | **Run doesn't support the claim** | The execution was real; the CONDITION or the FAILURE wasn't | A flake documented as *load-sensitive* passed 25/25 — run sequentially, one test, on a quiet machine: the condition was avoided, not created, and it read as "fixed" (2026-07-30). Correcting for that by running six copies of the SAME test concurrently produced 17/18 red — all `FileExistsError: agent 'operator' already exists`, six copies fighting over one workspace. That number would have contradicted a peer's bisect, first blamed on an artefact of the harness — but it was a real single-occupancy defect in the test itself (a machine-global base dir it wipes on entry, #3473/#3519): a valid reproduction of a DIFFERENT defect than the one being asked about, not a broken measurement. Only the third attempt — DIFFERENT tests in parallel, the actual CI shape — was evidence for the ORIGINAL question, and it surfaced a third failure face (`No fixture entry for model=…`) distinct from both tracked causes, redirecting a peer who was hunting a symptom that no longer reproduced. Same family, counting rather than conditions: "the residue is 2 cells" counted OCCURRENCES of an SGR escape; one had no following text and SGR runs to end of line, so the number understated it — the count was executed, the unit was never settled (#3504/#3505). A fourth mechanism, same face: green can mean the EXECUTION MODE itself changed the condition. The same race-prone test read 2/30 and 8/30 failed in a fast, in-process regime (short pauses, tight timing window), then 0/20 failed when run the normal way, through `pytest` — the wrapper's own overhead widened the timing window enough to make the race stop landing (#3581). A local `pytest` re-run reading green after a fix therefore proves nothing about the defect; it only shows the race's condition wasn't present in THAT regime, same as the sequential flake above. |
 
@@ -86,12 +86,28 @@ ERE, which does not understand `\s` — so even a known hit
 Neither zero was distinguishable from a real zero without recognizing the
 query itself was narrow, then broken.
 
+The other side of the same coin: **a nonzero hit is not itself an answer
+either** — it's a classification that isn't decided until the hit is opened.
+Auditing whether two issues were already landed, one search returned zero
+hits and correctly meant "not started" (#4285) — but the SAME method applied
+to a second issue returned one hit and was classified, from the search
+result alone, as "just a mention in context," without opening the PR
+(#4287). The PR had actually landed dead-code removal, a test retarget, and
+a falsify record — all of it, complete, sitting behind that one hit. Running
+the check was not the safety measure; reading the hit as evidence was. Zero
+and nonzero are not symmetric: **zero can settle a question (once you've
+confirmed it's the searchable kind, above); a nonzero count never settles
+anything by itself — it only earns the right to open the result and read it.**
+
 **Apply**: before trusting a "zero hits" result, ask whether the thing you're
 checking for would leave a positive trace if present, or only an absence —
 only the first kind makes zero a real answer. Then calibrate the instrument
 itself: run the same query against one KNOWN hit before trusting a null
 result on the rest, and prefer `-P`/PCRE or a portable class like
-`[[:space:]]` over ERE metacharacters that vary by grep flavor.
+`[[:space:]]` over ERE metacharacters that vary by grep flavor. And when the
+count comes back nonzero, don't stop at the count — open every hit and read
+it before classifying it as "just a mention"; the classification isn't
+decided by the search, only by what's actually in the hit.
 
 ## 4. Census vs. structure — extrapolation dies on use, not on review
 
@@ -142,8 +158,31 @@ made a gate claim — the regex is probably wrong"` — without it, a silently
 broken extraction regex would produce a permanently green, permanently
 meaningless test.
 
+**Vacuity doesn't require an empty set — a RANDOM one can be just as silent.**
+A retry test's own docstring claimed "a failed build's pool retries with a
+different effect" and drew its 2-item pool via `random.sample` — an exact
+permutation of a 2-item list, so "the failing effect lands first" (the
+precondition the claim needed to be exercised) held only HALF the time.
+The other half, the real effect sampled first, retry-after-failure never
+ran, and the test passed anyway — "some effect eventually varies" is true
+either way, so the assertion couldn't tell the two runs apart. Compounding
+it: the file carried `@requires_tte`, so CI (no `effects` extra) skipped
+the whole file regardless — a coin-flip-vacuous test that was ALSO never
+run. The fix monkeypatched `random.sample` to preserve list order (the
+failing effect deterministically first, every run) and replaced the real
+TTE-effect pool member with a same-contract test double, which incidentally
+also removed the `@requires_tte` skip (#4291/#4330).
+
 **Apply**: any test that iterates a derived set and asserts per-element
-needs an explicit non-empty assertion on the set itself.
+needs an explicit non-empty assertion on the set itself. When a test's own
+precondition is drawn by randomness (a `random.sample`/`random.choice` over
+a small pool), ask what fraction of runs actually exercise the claimed
+scenario — a "sometimes runs the interesting case" test is vacuous on every
+OTHER run, silently, the same as an empty set is. Pin the ordering
+(monkeypatch the random draw) rather than accepting a probabilistic
+precondition, and check the file isn't ALSO structurally unreachable in CI
+(an optional-extra skip marker) — a fixed vacuity inside a skipped file is
+still a vacuous test, just one layer further from being seen.
 
 ## 7. Falsifiable-event root: does divergence produce an event?
 
@@ -725,6 +764,16 @@ missing one.
   qualifies — an unconditional abort here was tried first and rejected,
   because "not itself forbidden" needs a way to say so, not just a bigger
   hammer.
+- The COMMAND used to inspect a file can decide, by itself, whether the
+  version actually read gets recorded anywhere. `git show origin/main:
+  <path>` names the ref in both the command and (implicitly) the output —
+  self-documenting. `python3 <path>` run directly names no ref at all: it
+  silently reads the WORKING TREE, and "I ran it and confirmed" carries no
+  record of which version that was (#4215). Same root as the mis-pinned-
+  flowview bullet above — a result whose provenance was never captured —
+  but the fix here is choosing the inspecting command itself, not adding a
+  separate identity-check step: prefer a command whose own invocation
+  states the ref over one that defaults to an ambient, unstated state.
 
 **This is where B combines with §16**, not a coincidence: the sessions that
 trusted a stale environment did so *because* their result matched `main`'s
@@ -894,9 +943,9 @@ correct throughout, and the verdicts attached to its members were not.
 §20 is about a population that was closed and verdicts that were not. This
 section is the step before: the population itself was never whole, because
 the *form* of the search — not its scope, not its spelling — excluded a class
-of item silently. Three independent mechanisms hit this on one night
-(2026-08-09/10), each in a different form, and **no two of them would have
-been caught by fixing the other**.
+of item silently. Four independent mechanisms hit this shape (three on one
+night, 2026-08-09/10; a fourth on 2026-08-11), each in a different form, and
+**no two of them would have been caught by fixing the other**.
 
 - **A two-branch predicate with a gap between the branches (#4019).** The
   `b` gate's `_references_a_fixed_tests_location()` asked
@@ -928,11 +977,30 @@ been caught by fixing the other**.
   census-scope shape wearing a third face, and is included here only because
   it fired the same night through a third mechanism.
 
-**Why these are three axes and not one.** Widening the file-set (§17) fixes
-the third and neither of the first two. Fixing the predicate's branches fixes
-the first and neither of the others. Reversing the direction fixes the second
-alone. They share a single sentence — *the form of the search decided which
-items could ever appear* — and share no remedy.
+- **Two lists, each independently incomplete, cross-checked and STILL wrong
+  once (#4337, 2026-08-11).** A `.reyn/config/` reference doc listed 5
+  files; the runtime's own `_HOT_RELOAD_FILES` listed 6. Neither list was
+  wrong by scope or by spelling — each was simply missing entries the OTHER
+  list happened to have (the doc lacked `skills.yaml`/`pipelines.yaml`/
+  `presentations.yaml`; the runtime list lacked `integrations.yaml`/
+  `index/sources.yaml`, by design — a hot-reload IN-set is a narrower
+  question than "everything in config/"). Cross-referencing the two got to
+  8. Re-measured against the actual reader/writer code for EACH candidate
+  (not the doc, not the runtime list — the real installer call sites), the
+  true count was 7 wired + 1 (`integrations.yaml`) that had never been read
+  or written by anything, anywhere — a THIRD number, different from both
+  starting lists and from their union. Two incomplete populations, unioned,
+  is not automatically the true population; each one can be missing
+  something the other is ALSO missing.
+
+**Why these are four axes and not one.** Widening the file-set (§17) fixes
+the third and none of the other three. Fixing the predicate's branches fixes
+the first alone. Reversing the direction fixes the second alone. Grounding
+BOTH sides in the real underlying code (not just cross-referencing them
+against each other) fixes the fourth alone — union-of-two-lists silently
+inherited whatever both lists agreed to omit. They share a single sentence —
+*the form of the search decided which items could ever appear* — and share
+no remedy.
 
 ⚠️ **The author of this section committed the second one while writing the
 surrounding work.** The #4021 link-gate specification, written the same night,
@@ -946,7 +1014,7 @@ axis.**
 
 ### What actually closed them
 
-Not a checklist. All three were caught by a mechanism performing the real
+Not a checklist. All four were caught by a mechanism performing the real
 operation and observing the result:
 
 - #4019 — a **pre-move audit that actually moved files**, not a predicate about
@@ -954,6 +1022,8 @@ operation and observing the result:
 - #4025 — **CI's own pytest run** after the move landed
 - #4006 — a **re-measurement triggered by #4025's red**, not by re-reading the
   original grep
+- #4337 — **reading the actual reader/writer code for each candidate**, not
+  cross-referencing the two lists against each other one more time
 
 This is §20's last bullet at population scope: the sweep does not find its own
 blind spot. It is also why `a′` (#4009) is the shape to copy — it **re-resolves
