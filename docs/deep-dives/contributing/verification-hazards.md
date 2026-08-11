@@ -385,6 +385,27 @@ allow-list gate needs its OWN allow-listed target proven correct by a second,
 independent assertion** — "the gate's target exists" is not the same claim
 as "the gate's target still does what the gate assumes."
 
+This trap doesn't need a gate to recur — the same asymmetry lives in a
+conclusion, not just in code: investigating whether a tool was reachable
+under a config mode, a reviewer enumerated ONE seam that strips entries
+(`ExposureDeviation.excluded_names`, six module-level construction sites,
+the tool in none of them) and concluded the tool was reachable — a
+conclusion about the *seam axis* drawn from counting one seam. A second,
+architecturally separate strip seam existed one layer away
+(`_WRAPPER_SUPERSEDED_BASE_TOOLS` in `router_tools.py`, #3429) and DID
+name the tool. The retraction's own words: "`excluded_names` が唯一の
+seam」と書いたのは私の誤りです。registry を1本列挙して、seamの軸について
+結論しました" (#3896) — this doc already named the exact shape, and having
+read it did not stop the same session from doing it anyway, because
+nothing in the moment of writing "I enumerated the seam" asked whether
+"the seam" meant *a* seam or *every* seam.
+
+🔴 **Active trigger**: before writing "I counted/enumerated all the X," stop
+and say out loud which axis X names — is X *the* seam/registry/mechanism,
+or *a* seam/registry/mechanism among others that might exist? A silent
+axis (the one you didn't have to name because you only found one instance
+of it) is the one this section is about.
+
 **Apply**: before trusting a registry-enumerated coverage claim, name the
 axis the registry actually counts (usually identity/name) and ask whether
 the known defect classes live on that axis or a different one (a shape, a
