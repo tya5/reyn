@@ -230,6 +230,36 @@ async def test_sandboxed_exec_timeout_seconds_non_positive_is_rejected():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("fractional_timeout", [0.5, 1.9])
+async def test_sandboxed_exec_timeout_seconds_fractional_is_rejected_not_truncated(
+    fractional_timeout: float,
+):
+    """Tier 2: #3903① — architect + lead-coder co-vet (#4179): a fractional
+    timeout_seconds must NOT be silently truncated by int() — int(0.5) == 0,
+    an IMMEDIATE timeout the LLM never asked for; int(1.9) == 1, a silently
+    SHORTER duration than requested. Both are the exact "silently changed
+    value" shape this whole feature exists to reject. Rejected outright,
+    same posture as the over-cap/non-positive cases — backend.run() must
+    never be called. Parametrized on 0.5 (the immediate-timeout case) AND
+    1.9 (the merely-shortened case) — the earlier 45/900/0/120 test inputs
+    were all integers and could never have caught this."""
+    ctx, _events = _make_ctx()
+    backend = _RecordingBackend()
+    ctx.sandbox_backend = backend
+    op = SandboxedExecIROp(
+        kind="sandboxed_exec", argv=["/bin/echo", "x"], timeout_seconds=fractional_timeout,
+    )
+
+    result = await execute_op(op, ctx)
+
+    assert result["status"] == "error"
+    assert backend.run_called is False, (
+        "a fractional timeout must be rejected before dispatch, never "
+        "truncated into a (possibly zero or shortened) integer and run anyway"
+    )
+
+
+@pytest.mark.asyncio
 async def test_sandboxed_exec_respects_an_operator_narrowed_max():
     """Tier 2: #3903① — architect's conditional-approval requirement,
     verified at the dispatch layer: an operator who configured a LOWER
