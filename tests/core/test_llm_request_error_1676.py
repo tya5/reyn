@@ -140,6 +140,41 @@ def test_error_event_redacts_secret_value(monkeypatch) -> None:
     assert data["params"]["api_key"] == "***REDACTED***"
 
 
+def test_error_event_redacts_secret_value_in_dict_shaped_body(monkeypatch) -> None:
+    """Tier 2: #3830 — a secret value echoed inside a DICT-shaped provider body
+    (litellm's parsed JSON error, the common real-world shape) is scrubbed the
+    same as a string body, WITHOUT flattening the structure — the non-secret
+    keys/values (root-cause detail #1676 exists to capture) survive unchanged."""
+    monkeypatch.setattr(
+        litellm, "acompletion",
+        _raising_acompletion(
+            message="Auth failed",
+            status_code=401,
+            body={
+                "error": {
+                    "message": "rejected token sk-supersecret-123",
+                    "type": "invalid_request_error",
+                },
+            },
+            response_text="",
+        ),
+    )
+    log = EventLog()
+    collected = collect_events(log)
+    set_llm_request_event_log(log)
+
+    with pytest.raises(_FakeProviderError):
+        _call(monkeypatch, api_key="sk-supersecret-123")
+
+    (err,) = [e for e in collected if e.type == "llm_request_error"]
+    data = err.data
+    assert "sk-supersecret-123" not in repr(data), "secret value must be scrubbed"
+    # The structure and non-secret detail survive — this is a value scrub, not
+    # a blanket "drop the dict body" redaction.
+    assert data["provider_body"]["error"]["type"] == "invalid_request_error"
+    assert "***REDACTED***" in data["provider_body"]["error"]["message"]
+
+
 def test_no_event_when_ambient_log_unset_but_still_raises(monkeypatch) -> None:
     """Tier 2: #1676 — with no ambient EventLog (tests / CLI), no event is emitted
     but the exception STILL propagates (capture is best-effort; re-raise is not)."""
