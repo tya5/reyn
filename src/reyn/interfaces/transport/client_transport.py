@@ -144,8 +144,15 @@ class ClientTransport(ABC):
         into the display stream, in order with the session's own output."""
 
     @abstractmethod
-    async def cancel_inflight(self) -> None:
-        """Cooperatively cancel the in-flight turn (ctrl-c seam)."""
+    async def cancel_inflight(self) -> str:
+        """Cooperatively cancel the in-flight turn (ctrl-c seam).
+
+        Returns a human-readable summary of WHAT was cancelled (#3903's
+        ``/cancel`` slash command surfaces it verbatim) — never a claim of
+        success unconditionally: a transport that cannot observe the real
+        outcome (e.g. a fire-and-forget wire message) returns a
+        best-effort/generic string rather than asserting something was
+        actually stopped."""
 
     async def run_slash_command(self, name: str, args: str) -> bool:
         """Run the registered slash command ``name`` with ``args``; ``True`` iff

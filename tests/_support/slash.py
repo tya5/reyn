@@ -116,8 +116,8 @@ class RecordingTransport(ClientTransport):
             )
         return bool(await self._session.answer_oldest_intervention_choice(choice_id))
 
-    async def cancel_inflight(self) -> None:
-        await self._session.cancel_inflight()
+    async def cancel_inflight(self) -> str:
+        return await self._session.cancel_inflight()
 
     async def run_slash_command(self, name: str, args: str) -> bool:
         # The SAME one line ``InProcessTransport.run_slash_command`` runs — the
