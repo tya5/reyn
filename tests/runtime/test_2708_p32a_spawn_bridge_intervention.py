@@ -148,7 +148,7 @@ async def test_attached_ask_user_reaches_parent_operator_and_answer_flows_back(
         # The bridged ask_user dispatches on the PARENT: its iv lands in the PARENT's
         # active-intervention queue (proof the ask reached the parent, not the driver's
         # own listener-less registry which would have auto-refused instantly).
-        await wait_until(lambda: bool(caller.interventions.list_active()), timeout=15.0)
+        await wait_until(lambda: bool(caller.interventions.list_active()))
         # Capture the driver session while it is still live (the persistent driver is
         # removed from the registry once the attached run completes).
         driver_sid = _driver_sid_from(caller_collected)
@@ -223,7 +223,7 @@ async def test_attached_ask_user_not_stalled_uses_live_parent_listener(
 
     run_task = asyncio.ensure_future(_drive())
     try:
-        await wait_until(lambda: bool(caller.interventions.list_active()), timeout=15.0)
+        await wait_until(lambda: bool(caller.interventions.list_active()))
         # Delivered (active), NOT stalled — the parent's live listener owns it.
         assert caller.list_stalled_interventions() == [], (
             "the bridged ask_user was parked in the parent's stalled queue instead of "
