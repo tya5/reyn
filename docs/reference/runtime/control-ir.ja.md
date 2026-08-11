@@ -9,10 +9,10 @@ audience: [human, agent]
 Control IR は LLM が artifact と並行して出力できる副作用 op のリストです。OS は各 op をディスパッチし、LLM（または次の Phase）が消費するために結果を返します。
 
 > ⚠️ **このページは部分訳です（#4196）。** `OP_KIND_MODEL_MAP`（`src/reyn/schemas/models.py`）が
-> 定義する op kind は現在 32 件ですが、このページが記述しているのは 20 件のみです — 残り 12 件
-> （`render_template` / `mcp_drop_server` / `embed` / `index_update` /
-> `compact` / `skill_install` / `load_skill` / `pipeline_install` / `presentation_install` /
-> `plugin_install` / `plugin_uninstall` / `emit_hook_event`）は**専用の節がありません**
+> 定義する op kind は現在 32 件ですが、このページが記述しているのは 24 件のみです — 残り 8 件
+> （`render_template` / `skill_install` / `load_skill` / `pipeline_install` /
+> `presentation_install` / `plugin_install` / `plugin_uninstall` /
+> `emit_hook_event`）は**専用の節がありません**
 > （「翻訳が古い」のではなく、そもそも節が存在しません — 一部は他 op の説明文中に言及される
 > だけで、それ自体の記述は持ちません）。それらの op を調べる際は
 > [英語版 Control IR reference](control-ir.md) を参照してください。
@@ -40,9 +40,13 @@ Control IR は LLM が artifact と並行して出力できる副作用 op の�
 | `mcp_unsubscribe_resource` | 既存の `mcp_subscribe_resource` をキャンセルする | Skill frontmatter の `permissions.mcp: [server_name]`（`mcp` と同じ軸） |
 | `mcp_get_prompt` | 設定済み MCP server から名前で 1 件の rendered prompt（messages）を取得する | Skill frontmatter の `permissions.mcp: [server_name]`（`mcp` と同じ軸） |
 | `mcp_install` | レジストリから MCP server をプロジェクト設定にインストールする | Skill frontmatter の `permissions.mcp_install: true` |
+| `mcp_drop_server` | MCP server をプロジェクト/local/user 設定から削除する（`mcp_install` の逆） | Skill frontmatter の `permissions.mcp_drop_server: true` |
+| `embed` | 生の embedding primitive: テキストのバッチ → ベクトル | なし（デフォルト許可; embedding API コスト） |
 | `index_query` | インデックス済みソース 1 件に対してセマンティック検索を行う | なし |
 | `semantic_search` | マクロ（FP-0057 Phase 2a; `recall` から rename）: embed → 各ソースに index_query → トップ K をマージ | なし |
 | `index_drop` | インデックス済みソースを完全削除する（破壊的） | Skill frontmatter の `permissions.index_drop: ask` |
+| `index_update` | ソースの index への差分/delta-reconcile ingestion（add/update/remove/skip） | なし（デフォルト許可；own-write；embedding API コスト） |
+| `compact` | 会話履歴を任意で今すぐ圧縮する（advisory） | なし（LLM コスト；必須の `retry_loop` backstop とは独立） |
 
 ## 共通エンベロープ
 
@@ -355,7 +359,65 @@ OS は server のトランスポートを解決し、`MCPClient.get_prompt`（se
 5. 対象スコープの設定ファイルに `mcp.servers.<name>` を書き込む
 6. `mcp_server_installed` イベントを発行（P6）— キー名のみ。値は含まない
 
-> **このセクションは stale です — 現行状態は英語版 [Control IR § mcp_install](control-ir.md#mcp_install) 内のノート、および [`embed`](control-ir.md#embed) / [`index_update`](control-ir.md#index_update) / [`semantic_search`](control-ir.md#semantic_search) の各セクションを参照してください。** 要点: `index_write` op は削除されたままですが、`embed` op は FP-0057 Phase 1 で再導入され（ユーザー向け raw embedding primitive）、FP-0057 Phase 2a で `index_update`（差分 reconcile ingestion）が追加されました。safe-mode の `python` step は今や `reyn.api.safe.index_update()`（`index_update` op への薄いディスパッチ）を呼びます — 旧 `reyn.api.safe.embed_index.embed_and_index()`（provider-direct、append/replace）は FP-0057 Phase 2b で **clean-break で削除**されました(shim なし)。`index_update`（ingestion）と `semantic_search`（旧 `recall`、query）はどちらも embed 呼び出しを共有の `embed` op 経由でディスパッチします(provider-direct ではありません)。`EmbeddingProvider` と `SqliteIndexBackend` のプリミティブは変わっていません。
+## `mcp_drop_server`
+
+MCP server をプロジェクト/local/user 設定から削除します — `mcp_install` の counter-op です（FP-0034 §D23）。純粋に機械的（LLM の推論は不要）で、universal catalog では `mcp.operation__drop_server` に属します。Skill frontmatter に `permissions.mcp_drop_server: true` が必要です — `mcp_install` とは**別の** decl フィールドなので、install intent だけでは drop intent を含意しません（install のみ許可された agent が誤ってユーザー設定済みの server を壊すのを防ぎます）。
+
+```json
+{
+  "kind": "mcp_drop_server",
+  "server": "filesystem",
+  "clear_secrets": true
+}
+```
+
+フィールド:
+- `server`（必須）— 短い設定キー（例: `"filesystem"`）。
+- `scope`（省略可、デフォルト `None` = 自動検出）— どの設定層から削除するか（`"local"` / `"project"` / `"user"`、`mcp_install` の `scope` と同じマッピング）。省略時は dynamic → local → project → user の順に走査し、`server` を含む最初の層から削除します。
+- `clear_secrets`（省略可、デフォルト `true`）— server の `${KEY}=value` シークレットエントリも `~/.reyn/secrets.env` から削除します（削除時点のエントリの `env` ブロックでキー付け）。CLI 自身のデフォルトは安全のためシークレットを残しますが、LLM 側のパスは「LLM の drop intent はより意図的である」という前提でデフォルトでクリーンアップします。
+
+ハンドラーのライフサイクル:
+1. scope を解決 — 明示的（`op.scope`）または自動検出で `server` を含む最初の層を探す；どこにも見つからない場合は例外ではなく構造化された `{status: "not_found"}` 結果を返す（LLM は `list_actions`/リトライできる。ターンをクラッシュさせない）。
+2. scope の設定ファイルに対して `PermissionResolver.require_file_write` でゲート — `mcp_install` のゲートを反映。旧来の per-server bool-axis `require_mcp_drop_server` プロンプトは #571 permission-collapse arc により廃止済み（per-server の粒度は operator の設定レベルの関心事になり、per-op のランタイム関心事ではなくなった）。
+3. エントリの `env` ブロックのキー名を（変更前に）キャプチャし、ステップ 5 のシークレットクリーンアップで使用。
+4. scope の YAML からエントリを削除し、空になった `mcp.servers`/`mcp` コンテナを整理；`record_config_generation`（recovery-core: 切り詰め耐性スナップショット、#2259 / CLAUDE.md gate）。
+5. `clear_secrets` が `true` の場合、`reyn.security.secrets.store.clear_secret` 経由でキャプチャしたキーを削除 — シークレットの**値**は読まれることも発行されることもなく、キー名のみ。
+6. `mcp_server_removed` イベントを発行（P6 監査証跡）。
+
+結果フィールド: `status`（`"ok"` / `"not_found"`）、`server`、`scope`、`removed_path`、`env_keys_cleared`、`secrets_cleared`。
+
+## `embed`
+
+生の embedding primitive（FP-0057 Phase 1）: テキストのバッチを入力し、順序を保ったまま 1 テキストにつき 1 ベクトルを出力します。`embed` は**ユーザー向け** primitive です — ユーザーは `embed` を自分の外部 MCP vector-DB の store/search ツールへ pipeline で組み合わせます（reyn 自身はユーザー向け RAG store をホストしません）。同時に、後続の内部 RAG op（`index_update` / `semantic_search`、FP-0057 Phase 2）が呼ぶ SHARED ロジックでもあります — 同じ `EmbeddingProvider`、embed ロジックの重複無し、audience サーフェスによる分割のみです。
+
+```json
+{
+  "kind": "embed",
+  "texts": ["first chunk of text", "second chunk of text"],
+  "embedding_model": "standard"
+}
+```
+
+フィールド:
+
+- `texts`（list[str]、必須）— embed するテキスト。返されるベクトルはこの順序を保持します。
+- `embedding_model`（str、デフォルト `"standard"`）— モデルクラス（light/standard/strong）または provider のモデル id リテラル。`EmbeddingProvider.embed` に転送されます。
+
+返り値: `{"kind": "embed", "vectors": list[list[float]], "model": str, "total_tokens": int, "cost_usd": float | None, "priced": bool}`。cancel 時: `{"kind": "embed", "status": "cancelled", "model": str}`（下記の**Bound + cancel** 参照）。
+
+`cost_usd` / `priced`（FP-0063 PC）: 呼び出しのコストは `estimate_embedding_cost` で価格付けされます（chat completion 向けに既に `pricing.py` が使っている同じ `litellm.model_cost` ルックアップを embedding モードのエントリに拡張したもの — 新しいレートテーブルではありません）。litellm が `model` を価格付けできない場合は `priced=False` + `cost_usd=None` — 未価格 / 未知のモデルは VISIBLE に degrade します（既存の `estimate_cost` 未知モデル sentinel、#1829 と同様、決して黙って `$0.00` にはなりません）。この支出は独立した embedding-cost aggregate（`llm/pricing.py` の `EmbeddingCost`）に `ctx.budget_gateway`（配線済みの場合）経由で記録されます — 単一の記録エントリポイント（`BudgetGateway.record_embedding`）が全 scope へ自ら fan-out します: session（gateway 自身の aggregate）と agent/project（gateway が保持する process-shared `BudgetTracker`）。fan-out が gateway に存在するのは、tracker とセッションの agent NAME（per-agent カウンタが使うキー）の両方を保持する唯一のオブジェクトだからです — op handler が持つのは `ctx.agent_id`（FP-0016 の host identity、別の値）のみなので、そこから記録すると誰も参照しないキーの下に支出が記録されてしまいます。意図的に chat の `CostBreakdown` には折り込まれません（embedding は input-only / 構造的に uncacheable であり、そうすると chat-call 専用の figure である `cache_hit_rate` / `cache_savings` が希釈されてしまいます）。per-scope の reader は `Registry.agent_embedding_cost` / `.project_embedding_cost` と `BudgetGateway.embedding_cost` を参照してください。
+
+既存の `EmbeddingProvider`（`get_provider` 経由の `LiteLLMEmbeddingProvider` — 唯一の embedder。#3128 でプロセス内 sentence-transformers backend とその `RoutingEmbeddingProvider` prefix-dispatch wrapper が削除されたため、`get_provider` は今や litellm-backed provider を直接返します）を再利用します；この op は薄い typed envelope であり、再実装ではありません。バッチング（`embedding.batch_size`、デフォルト 100）は provider 内部で行われます — op 契約自体は list-in/list-out、batch 粒度です。
+
+**Redaction-egress シーム**: API-backed provider 経由の embedding は外部 embedding API へテキスト content を送信します — データ egress ポイントです。バッチ内のすべてのテキストは、`provider.embed()` が呼ばれる**前に**、無条件に（呼び出し側による bypass 無し）PRE-embed スキャン（`redact_secrets`、既存の FP-0050 secret-redaction primitive）を通過します。redaction hit は `embed_secret_redacted` 監査イベントを発火します。これは既存の汎用 secret-redaction パスを使った Phase 1 の scaffold であり、完全な firm な ephemeral-attachment content policy は FP-0057 Phase 3 です。
+
+**Bound + cancel**（#3043）: OS の他のあらゆる provider 呼び出しと同様に、embed は bound かつ cancellable です。**bound** は `embedding.timeout`（デフォルト 60.0 秒、`<= 0` で無効化）で、provider 内部で**試行ごと**に適用されます — つまりこの op だけでなく provider のすべての呼び出し元をカバーします。これが無いと唯一の上限は litellm 自身の `request_timeout` デフォルト（6000 秒/試行、`max_retries` 全体で約 5 時間）で、operator にはハングと区別がつきません。
+
+この bound は**レイテンシ**の不変条件であり、**コスト**の不変条件ではありません: reyn が待つ時間を制限するのであって、provider が受け取るリクエスト数を制限するものではありません。修正前は OpenAI SDK クライアント自身のリトライ（`max_retries=2`、litellm の暗黙のデフォルト）が bound の**内側**にあったため、1 回の試行で最大 3 リクエストが送られ、`max_retries: 3` は最大 9 リクエストになり得ました — デフォルトの 60.0 秒 bound 下で 7.6 秒で配信されたと計測されており、bound は一切作動しません。[#3054](https://github.com/tya5/reyn/issues/3054) がこのレバーを閉じました: `_aembedding_bounded` が `litellm.DEFAULT_MAX_RETRIES = 0` を設定する（`max_retries=0` という falsy な kwarg 単独では `x or DEFAULT` の罠が復活する）ため、SDK 内部のリトライは無効化され、reyn 自身の `_embed_batch_with_retry` ループが唯一のリトライ層になります — `max_retries: 3` は今や 9 でなく 3 の配信リクエストを意味します。`timeout` を下げてもこのカウントは変わりません。両者は別のレバーです。*残余*の under-count — コストトラッカーは返された ONE レスポンスのトークンのみを記録するため、成功前に N 回リトライした呼び出しは N 件中 1 件の配信リクエストしか報告しません — は `embed_attempts` 監査イベント（#3047 (c)、observation-only: コスト集計には一切触れないため二重カウントし得ない）によって OBSERVABLE に（価格付けはされず）なります。**cancel** シームはこの op にあります: `provider.embed()` は `race_cancellable`（`mcp` と `sandboxed_exec` が使うのと同じ primitive）経由で `ctx.cancel_event` と競走されるため、Ctrl-C は bound を待ちきる代わりに進行中の HTTP read を即座に中断します。この op が cancel 側の正しい altitude であるのは、すべての embedding egress がこの op を経由するからです（`semantic_search`、`index_update`、action-index はすべて `provider.embed()` を provider-direct で呼ばずに `embed` op を dispatch します — redaction-egress シームが依存しているのと同じ性質）。
+
+イベント: PRE-embed スキャンが 1 件以上のテキストを redact した場合の `embed_secret_redacted`（`count`、`model`）。`cancel_event` が embed 中に発火した場合の `embed_cancelled`（`model`）— provider fault とは別の cancelled outcome（`mcp_cancelled` / `sandboxed_exec_cancelled` をミラー）。成功した embed ごとの `embed_attempts`（`model`、`attempts`、`successful_batches`、#3047 (c)）: `attempts` は reyn 自身のリトライループが provider 呼び出しに到達した回数（内部バッチを通算）、`successful_batches` は返された回数 — つまり `attempts - successful_batches` がコストトラッカーには見えないリトライオーバーヘッドです（返されたレスポンスのみ価格付けするため）。リトライがゼロでも成功時は常に発行される（`attempts == successful_batches`）ため、イベントが無いことは「instrumented されていない」を意味し、「リトライがゼロ」を意味しません。provider が供給する `attempts` は `EmbedBatchResult` 上で `NotRequired` です — loopless な provider はこれを省略し、op は単に発行しません（`attempts=1` を捏造しない）；op はこれを defensive に読みます。これは reyn のリトライループの altitude であって、生の wire-request カウントではありません — 両者が一致するのは #3054 の `max_retries=0` が SDK 内部リトライを 0 に保っている間だけです。
+
+Default-**ALLOW**（compute op — コストは embedding API/compute であって workspace への書き込みではない）；登録済みの router-callable ツールとして、RouterLoop ゲート（`effective.tool_contextually_denied`）での per-session の contextual narrowing により個別に name-gate 可能です。Phase 1 では、この op は追加的であり `embed_and_index`（`reyn.api.safe.embed_index`、CodeAct 専用の ingestion entry）を retire しませんでした；そのクリーンブレイクは FP-0057 Phase 2b で着地しました — `embed_and_index` は削除され、`index_update`（ingestion）と `semantic_search`（query）はどちらも今や embed 呼び出しをこの op 経由でディスパッチします（下記の [`index_update`](#index_update) 参照）。
 
 ## `index_query`
 
@@ -425,6 +487,69 @@ OS は server のトランスポートを解決し、`MCPClient.get_prompt`（se
 戻り値: `{"kind": "index_drop", "source": str, "chunks_dropped": int}`.
 
 イベント: `index_dropped`（`source`、`chunks_dropped`）。
+
+## `index_update`
+
+ソースの `IndexBackend` への差分 / delta-reconcile ingestion です（FP-0057 Phase 2a）。**フルリビルドモードはありません** — ゼロからのリビルドは `index_drop` → 空になったソースへの `index_update` です。呼び出し元（chunker）は事前に chunk 化した `chunks` を供給します；各 chunk はその `metadata` に `content_hash` + `source_path` を持ちます。ソースの現在の index と、各 `source_path` 内で `content_hash` によって content-addressed で reconcile されます:
+
+- **add** — 新しい `content_hash`、新しい `source_path` → embed（`embed` op 経由 — 同じ primitive、embed ロジックの重複無し）+ insert。
+- **update** — 新しい `content_hash`、`source_path` は既に index 済み（content が変わった）→ embed + insert；同じパスの古い hash は同じパスで削除されます。
+- **remove** — index 済みの hash で、その `source_path` が今回の呼び出しの chunks に含まれるが hash が含まれない → 削除。今回の呼び出しが chunks を供給する `source_path` にスコープされます — 一切言及されないパスは触れられません（少数ファイルの部分的な再 ingest がソースの残りを大量削除することはありません）。
+- **skip** — `content_hash` が既に index 済み → no-op（再 embed 無し）。
+
+```json
+{
+  "kind": "index_update",
+  "source": "project_docs",
+  "chunks": [
+    {"text": "...", "metadata": {"content_hash": "abc123", "source_path": "docs/a.md"}}
+  ],
+  "embedding_model": "standard"
+}
+```
+
+フィールド:
+
+- `source`（str、必須）— ingest 先の論理ソース名。
+- `chunks`（list[dict]、デフォルト `[]`）— reconcile する chunk；それぞれ `{text, metadata}` で `metadata.content_hash` / `metadata.source_path` が必須。
+- `embedding_model`（str、デフォルト `"standard"`）— このソースにまだ記録済みのモデルが無い場合（新しいソースへの最初の `index_update`）にのみ使用されます — 既に index 済みのソースの記録済みモデルが常に優先します（ソースは 1 つの embedding space です）。
+- `description` / `path`（str、省略可）— `SourceManifest` のフィールド。最初の index 時に設定するか、上書きします。
+
+**ソース・モデル束縛**: ソースの embedding モデルは最初の ingestion 時に記録され、そのソースへの以降のすべての `index_update` 呼び出しで再利用されます。
+
+**コストの可視化**: `EmbeddingProvider.estimate_tokens` が embed 対象バッチ（PRE-embed dedup skip 後）に対して照会され、`embedding.cost_warn_threshold`（`reyn.yaml`）と比較されます。超過しても op はブロックされません — `index_update_cost_warning` 監査イベントを発行し、返される envelope が `cost_warning` フィールドを持つため、大きな ingestion は黙って embed されるのではなくコストを可視化します。
+
+戻り値: `{"kind": "index_update", "source": str, "added": int, "updated": int, "removed": int, "skipped": int, "chunk_count": int, "embedding_model": str, "cost_warning": dict | null}`。
+
+イベント: embed 対象バッチが設定済み閾値を超えた場合の `index_update_cost_warning`（`source`、`chunk_count`、`estimated_tokens`、`threshold`）；完了時の `index_updated`（`source`、`added`、`updated`、`removed`、`skipped`）。
+
+Default-**ALLOW**（own-write op — 書き込むのはソース自身の index + manifest のみで、`index_drop` のような破壊的な cross-cutting op ではありません）。
+
+## `compact`
+
+会話履歴を*今*任意で圧縮し、コンテキストウィンドウを解放します。ウィンドウが埋まりつつあるとき、OS は**コンテキストサイズシグナル**（正確なトークン数の空きウィンドウを示す `## Context window` ヘッダー）を注入します；モデルは必須の `retry_loop` backstop を待つ代わりに `compact` を発行して応答できます。この op は呼び出し元が配線した圧縮（`force_compact_now`）へルーティングされ、その後の解放トークン数と空きウィンドウを正確なトークン数で報告します（media load-contract エラーと単位を揃えているため、「圧縮すべきか」と「今何が収まるか」が同じスケールを使います）。
+
+```json
+{
+  "kind": "compact"
+}
+```
+
+フィールド:
+- `reason`（str、省略可）: 監査証跡向けの、モデルが供給する短い根拠。OS はこれを一切解釈しません。
+
+戻り値:
+- `status: "ok" | "error"`
+- `freed_tokens: int` — 正確なトークン数の削減量。**構造上ほぼ 0**: router prompt は head+tail の*ターン*数で bound されている（`_build_history_for_router`）ため、圧縮しても bound されたビューは縮みません — 既に elide された中間部分を summary bridge に圧縮するだけです。ここでの `freed_tokens` を前面に出さないでください — 下記の圧縮メトリクスを参照。
+- `free_window_after` / `free_window_before: int` — 圧縮後/前の正確なトークン数の空き容量。
+- **圧縮メトリクス**（意味のあるシグナル）: `summarized_turns: int`（bridge に折り畳まれた古いターン数）、`compressed_tokens: int`（それらの生のトークンコスト）、`bridge_tokens: int`（summary のトークンコスト）。意味を持つのは `compressed_tokens → bridge_tokens` の圧縮であり、`freed_tokens` ではありません。
+- エラー時: `error_kind`（ここに圧縮コンテキストが配線されていない場合の `compaction_unavailable`；`compaction_failed`）+ `error`。
+
+**イベント**: `compact_op_requested` / `compact_op_completed`（`freed_tokens`、`free_window_after`、`summarized_turns` / `compressed_tokens` / `bridge_tokens`）/ `compact_op_failed` / `compact_op_unavailable`（P6）。内部の圧縮エンジンは自身の圧縮監査イベントを発行します。
+
+**Permission**: 不要（LLM コストのみ）。任意であり、常に実行される involuntary な `retry_loop` backstop とは独立です。
+
+**可視性**: ウィンドウが埋まりつつあるときのみ LLM に提示されます（tool / `available_control_ops`）— コンテキストサイズシグナルと対で — 圧縮するものが無いときには提示されません（`search_actions` の可視性ゲートを反映）。permission ゲートは常に「allow」のままで、*提示されるかどうか*のみがゲートされます。
 
 ---
 
