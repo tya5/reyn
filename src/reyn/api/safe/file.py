@@ -180,6 +180,43 @@ def _check_read(path: str) -> None:
         )
 
 
+def _project_root_for_gate() -> str:
+    """Walk up from ``os.getcwd()`` looking for ``reyn.yaml``, same
+    algorithm as ``reyn.config.loader._find_project_root`` — deliberately
+    NOT imported from there (or from ``reyn.security.permissions``): this
+    module runs inside the python-harness SUBPROCESS (see the module-level
+    comment above ``_RECOVERY_CORE_WRITE_PREFIXES``), and stays
+    self-contained rather than depending on the rest of the reyn package
+    being importable there. Falls back to ``os.getcwd()`` if no ancestor
+    carries ``reyn.yaml`` (mirrors ``_find_project_root(...) or
+    Path.cwd()``, the convention every other correctly-behaving reyn call
+    site uses).
+
+    #4204 bucket C: this module's cwd-anchored write-gate check
+    (``_is_canonical_protected_write``/``_is_under_recovery_core_prefix``
+    below) previously used raw ``os.getcwd()`` directly. Reachability
+    confirmed live: ``codeact_runner.py``'s ``Runner.run(cwd=...)`` reads
+    it from ``exec_ctx.extra.get("cwd")`` (``_content_fence_cell.py``),
+    and NOTHING in the codebase ever populates that key — grepped for
+    every producer, zero hits — so ``cwd`` is always ``None``, and
+    ``subprocess.Popen(cwd=None)`` inherits the PARENT reyn process's own
+    cwd. A subdirectory launch (this issue's condition ①) therefore
+    reaches this subprocess unchanged, and the write-gate's ``os.getcwd()``
+    silently anchored to the wrong directory — the recovery-core
+    write-gate could fail to fire for the real ``.reyn/config``/``.reyn/
+    state`` (or fire for a phantom ``<subdir>/.reyn/config`` that doesn't
+    exist), the same class of defect this issue's other buckets found.
+    """
+    current = _os.path.realpath(_os.getcwd())
+    while True:
+        if _os.path.exists(_os.path.join(current, "reyn.yaml")):
+            return current
+        parent = _os.path.dirname(current)
+        if parent == current:
+            return _os.getcwd()
+        current = parent
+
+
 def _is_canonical_protected_write(path: str) -> bool:
     """Return True if ``path`` resolves to one of the #571 protected paths.
 
@@ -188,9 +225,9 @@ def _is_canonical_protected_write(path: str) -> bool:
     explicitly in ``_write_paths`` (not via a parent-directory prefix).
     """
     abs_path = _os.path.realpath(path)
-    cwd = _os.getcwd()
+    root = _project_root_for_gate()
     for rel in _CANONICAL_PROTECTED_WRITE_PATHS:
-        if abs_path == _os.path.realpath(_os.path.join(cwd, rel)):
+        if abs_path == _os.path.realpath(_os.path.join(root, rel)):
             return True
     return False
 
@@ -199,12 +236,17 @@ def _is_under_recovery_core_prefix(path: str) -> bool:
     """#2248 PR-C: True if ``path`` is under a recovery-core write-gate prefix
     (``.reyn/config/`` or ``.reyn/state/``) — a raw file.write there requires an explicit
     declaration (the dedicated WAL-emitting ops provide it), never the broad ``.reyn/``
-    default zone. Mirrors ``permissions._is_under_recovery_core_prefix``."""
+    default zone. Mirrors ``permissions._is_under_recovery_core_prefix``.
+
+    #4204 bucket C: anchored on the actual project root (see
+    :func:`_project_root_for_gate`), not raw ``os.getcwd()`` — a
+    subdirectory launch used to silently anchor this gate to the wrong
+    directory."""
     abs_path = _os.path.realpath(path)
-    cwd = _os.getcwd()
+    root = _project_root_for_gate()
     for prefix in _RECOVERY_CORE_WRITE_PREFIXES:
-        root = _os.path.realpath(_os.path.join(cwd, prefix))
-        if abs_path == root or abs_path.startswith(root + _os.sep):
+        gate_root = _os.path.realpath(_os.path.join(root, prefix))
+        if abs_path == gate_root or abs_path.startswith(gate_root + _os.sep):
             return True
     return False
 
