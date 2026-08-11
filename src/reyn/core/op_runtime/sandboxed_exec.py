@@ -101,6 +101,22 @@ async def handle(
                     f"timeout_seconds must be positive, got {op.timeout_seconds}"
                 ),
             }
+        # architect co-vet (#4179): SandboxPolicy.timeout_seconds is int —
+        # int(op.timeout_seconds) on a fractional request silently changes
+        # the value (0.5 -> 0, an IMMEDIATE timeout; 1.9 -> 1), the exact
+        # "the LLM believes it got what it asked for but didn't" shape this
+        # whole feature exists to reject, not recreate. Reject a
+        # non-integer request outright — same reject-not-silently-change
+        # posture already applied above/below, not a special case.
+        if op.timeout_seconds != int(op.timeout_seconds):
+            return {
+                "kind": "sandboxed_exec",
+                "status": "error",
+                "error": (
+                    f"timeout_seconds must be a whole number of seconds, "
+                    f"got {op.timeout_seconds}"
+                ),
+            }
         if op.timeout_seconds > policy.max_timeout_seconds:
             return {
                 "kind": "sandboxed_exec",
