@@ -143,7 +143,7 @@ def build_policy_tier_config(cwd: Path | None = None) -> dict:
     return merged
 
 
-def _warn_unknown_config_keys(policy_tier_merged: dict) -> None:
+def _warn_unknown_config_keys(policy_tier_merged: dict) -> int:
     """#4174 T0: log ONE warning naming every unknown/renamed config key
     found in the policy-tier config (``user_global`` + ``project`` +
     ``project_local`` merged — the operator-editable files; the 5
@@ -162,12 +162,18 @@ def _warn_unknown_config_keys(policy_tier_merged: dict) -> None:
     resolved sandbox policy — dropping a policy key makes the config
     LOOSER, not silently inert like an ordinary dropped key, so an
     operator relying on it must see what's actually in force.
+
+    Returns the unknown-key count (#4194: the log-only warning is invisible
+    in the interactive CUI — ``_setup_interactive_logging`` redirects all
+    logs to a file, per architect's live measurement — so the count is
+    also returned for :func:`load_config` to attach to the ``ReynConfig``
+    it builds, giving the CUI's bottom chrome something to read).
     """
     from reyn.config import config_schema
 
     unknown = config_schema.unknown_config_keys(policy_tier_merged)
     if not unknown:
-        return
+        return 0
 
     import logging
     log = logging.getLogger(__name__)
@@ -195,6 +201,7 @@ def _warn_unknown_config_keys(policy_tier_merged: dict) -> None:
         )
 
     log.warning("Unrecognized config key(s) found:\n" + "\n".join(f"  - {line}" for line in lines))
+    return len(unknown)
 
 
 def _as_config_dict(val: object, key: str) -> dict:
@@ -612,7 +619,7 @@ def load_config(cwd: Path | None = None) -> ReynConfig:
         # registry files below are merged in — those are checked separately
         # at their own load points (runtime.hot_reload.validate_in_set),
         # not duplicated here.
-        _warn_unknown_config_keys(merged)
+        unknown_config_key_count = _warn_unknown_config_keys(merged)
 
         # Issue #470: dynamic MCP registry separated from static config.
         # ``.reyn/mcp.yaml`` carries op-managed server entries; merged
@@ -679,7 +686,7 @@ def load_config(cwd: Path | None = None) -> ReynConfig:
         # #4174 T0: no project root — only builtin + user_global are in
         # `merged`, still worth checking (a mistyped ~/.reyn/config.yaml
         # key should not go unreported just because there's no project).
-        _warn_unknown_config_keys(merged)
+        unknown_config_key_count = _warn_unknown_config_keys(merged)
 
     # ADR-0030: apply ${VAR} interpolation across all string fields of the
     # merged config dict.  At this point os.environ already contains values
@@ -818,6 +825,10 @@ def load_config(cwd: Path | None = None) -> ReynConfig:
         skills=_as_config_dict(merged.get("skills"), "skills"),
         pipelines=_as_config_dict(merged.get("pipelines"), "pipelines"),
         presentations=_as_config_dict(merged.get("presentations"), "presentations"),
+        # #4194: policy-tier unknown-key count — see the field's own
+        # docstring in root.py for why this is `schema_internal` (a
+        # runtime-computed fact, not an operator-settable key).
+        unknown_config_key_count=unknown_config_key_count,
     )
     _validate_retrieval_scheme_embedding(_cfg)
     _validate_skill_visibility(_cfg)

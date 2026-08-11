@@ -296,6 +296,13 @@ def project_remote_snapshot(values: "dict | None") -> dict:
         "queue": v.get("queue", []),
         "turn_active": v.get("turn_active", False),
         "queue_seq": v.get("queue_seq", 0),
+        # #4194: session-local (the ReynConfig each side loaded from ITS OWN
+        # reyn.yaml — not projected onto the wire, same frame-sufficiency
+        # boundary as model_classes/agent_names above). A remote client's
+        # policy-tier config is the SERVER's, not the client's, so there is
+        # nothing meaningful to report here; 0 degrades gracefully (no
+        # indicator shown) rather than fabricating a count.
+        "unknown_config_key_count": 0,
     }
 
 

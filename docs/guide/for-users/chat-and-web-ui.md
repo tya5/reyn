@@ -218,6 +218,26 @@ consistent with the renderer's own state.
 > Slash commands are documented in the
 > [`reyn chat` reference](../../reference/cli/chat.md#slash-commands).
 
+### Config-warning indicator
+
+If `reyn.yaml` / `reyn.local.yaml` / `~/.reyn/config.yaml` contains a key
+`reyn` does not recognize (a typo, or a key from a since-renamed config
+version), it is not applied — and a one-line indicator appears in the
+bottom chrome, above the menu row, naming how many keys were skipped:
+
+```
+⚠ 2 config keys not applied → reyn config validate
+```
+
+It stays visible for the whole session (fixing this requires a restart —
+`reyn.yaml` is read once at startup) and never scrolls away with the
+conversation. Run `reyn config validate` for the detail this line
+deliberately omits: which key, why, and — for a renamed key — the exact new
+name to use. This covers `reyn.yaml`'s operator-editable config only; the
+separately hot-reloaded `.reyn/*.yaml` registries (mcp/cron/skills/
+pipelines/presentations) warn to the log on the same unknown-key check but
+are not (yet) reflected in this indicator.
+
 ---
 
 ## Choosing which surfaces are hosted (`--enable` / `--disable`)

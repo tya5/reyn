@@ -1351,6 +1351,42 @@ def status_line_text(
     return base
 
 
+def config_warning_text(count: int) -> "str | None":
+    """The bottom-chrome config-warning indicator's text, or ``None`` when
+    there is nothing to show (#4194).
+
+    Architect's ruling (#4194 issue thread, 2026-08-11) fixes exactly THREE
+    properties, form left to the implementer: ①doesn't
+    scroll away with the conversation ②stays visible for as long as the
+    condition holds ③directs the operator to ``reyn config validate`` for
+    the 4-element detail (result / destination / full list / fix command) —
+    this line deliberately carries NONE of that detail itself, only a count
+    and the command name. Scope: the POLICY TIER only (``reyn.yaml`` /
+    ``reyn.local.yaml`` / ``~/.reyn/config.yaml``) — the same scope
+    ``reyn config validate`` itself checks (``config.py``'s ``_validate``
+    uses ``build_policy_tier_config``), so the indicator's own guidance is
+    always answerable by the command it names. The hot-reload IN-set
+    (``.reyn/*.yaml`` — mcp/cron/skills/pipelines/presentations) has its
+    OWN separate unknown-key warning path that ``validate`` does NOT cover
+    (lead-coder's explicit scoping call, #4194) — deliberately not counted
+    here; that remaining silence is real and tracked separately (#4235).
+
+    ``count`` (not a snapshot dict, unlike :func:`status_line_text`): this
+    value is CONFIG-derived, not session/live-state-derived — it is fixed
+    for the whole session lifetime once ``load_config()`` runs (``reyn.yaml``
+    changes need a restart to take effect, unlike the hot-reload IN-set),
+    so there is no live snapshot to route through, only
+    ``ReynConfig.unknown_config_key_count`` itself.
+
+    ``⚠`` matches the existing ``HALTED`` banner glyph above (same
+    single-cell-width class of symbol, same "something needs attention"
+    register) rather than introducing a new one."""
+    if not count:
+        return None
+    plural = "" if count == 1 else "s"
+    return f"⚠ {count} config key{plural} not applied → reyn config validate"
+
+
 def build_drawer_pane(tab_id: str, rows: "Sequence[str]") -> Widget:
     """Build the mounted drawer pane widget for ``tab_id`` from its display
     ``rows``: an :class:`OptionList` for a picker pane, a Rich :class:`Static`
@@ -1392,6 +1428,34 @@ class StatusLine(Static):
     menu row has room for it (usually the last), or given its own extra row
     when none does. Never yielded directly by the app; see
     :meth:`MenuBar._repack`."""
+
+
+class ConfigWarningLine(Static):
+    """#4194: the bottom-chrome config-warning indicator — a persistent,
+    non-scrolling row naming how many policy-tier ``reyn.yaml`` keys were
+    NOT applied, pointing at ``reyn config validate`` for detail. See
+    :func:`config_warning_text` for the scope and content rules.
+
+    A plain top-level sibling of :class:`MenuBar` in the app's compose
+    order (unlike :class:`StatusLine`, which MenuBar itself owns and
+    positions) — real-terminal geometry measurement (headless
+    ``App.run_test``, #4194) confirmed a fixed ``height: 1`` sibling here
+    is absorbed cleanly by ``textual_flowview.FlowView``'s (the
+    conversation pane) ``1fr`` sizing at both 80×24 and 60×20 — no overlap, no clipping,
+    every other chrome row just shifts down by one. The app's own
+    ``compose()``/``_refresh_status`` mount and update it conditionally
+    (absent entirely when there is nothing to warn about, not merely
+    hidden — see the app for why: an EMPTY always-visible row would still
+    occupy the layout slot the measurement showed the conversation pane
+    giving up)."""
+
+    DEFAULT_CSS = """
+    ConfigWarningLine {
+        height: 1;
+        text-style: bold;
+        padding: 0 1;
+    }
+    """
 
 
 #: Horizontal cells a :class:`Tab` adds around its label (``Tab``'s own
