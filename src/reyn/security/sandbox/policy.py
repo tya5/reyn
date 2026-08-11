@@ -154,6 +154,44 @@ def resolve_passthrough_env(policy: "SandboxPolicy") -> dict[str, str]:
 DEFAULT_SANDBOX_NETWORK: bool = True
 
 
+# #3903①: the foreground exec wall-clock timeout — a boundedness axis, not a
+# permission axis (#3907/#3962 scoped the operator-only "LLM cannot set it"
+# rule to the 5 PERMISSION fields + timeout separately; timeout's own
+# boundedness is a DIFFERENT axis whose LLM-facing extensibility is owner-
+# ruled — SandboxedExecIROp.timeout_seconds is back, LLM-settable, since
+# #3962 removed it). Owner ruling (2026-08-11): raise the prior 60s default
+# to 120s / let the LLM extend up to 600s, matching industry precedent
+# (Claude Code: 120s default foreground, 600s max) rather than a measured
+# need — "#3903 is about realizing a SPEC, not something a measurement
+# should block."
+#
+# architect ruling (2026-08-11, conditional approval of the #3962 reversal):
+# ``timeout_seconds`` is ALREADY operator-settable
+# (``_SANDBOX_POLICY_CONFIG_KEY_TO_FIELD``) — if the LLM could always widen
+# it to a HARDCODED 600 regardless of what the operator configured, the LLM
+# would be widening the operator's own envelope, a Security pass-line
+# violation (an operator who set a tighter cap would have it silently
+# defeated). So DEFAULT_EXEC_TIMEOUT_SECONDS/DEFAULT_MAX_EXEC_TIMEOUT_SECONDS
+# below are DEFAULTS ONLY — what ``SandboxPolicy.timeout_seconds`` /
+# ``.max_timeout_seconds`` resolve to when the OPERATOR leaves them unset —
+# never hardcoded ceilings a running policy is measured against. The LLM's
+# actual ceiling on any given deployment is ``policy.max_timeout_seconds``,
+# whatever the operator configured it to (600 only when they left it at the
+# default). Single source: SandboxPolicy's own field defaults below and the
+# LLM-supplied op-level override's reject-not-clamp check
+# (op_runtime/sandboxed_exec.py) both read the RESOLVED SandboxPolicy
+# fields, not these two constants directly (these two are only the
+# dataclass defaults). The exec tool's SCHEMA TEXT (tools/descriptions/
+# execution.py) deliberately carries no number at all (lead-coder ruling,
+# option (b)) — it does not read these constants or the resolved policy;
+# exec.py has no schema_enricher (that mechanism only reaches tools on the
+# router_tools.build_tools() ToolSpec path, not universal_catalog's
+# describe path exec uses — dynamic per-session schema injection, option
+# (a), was considered and explicitly deferred, not implemented).
+DEFAULT_EXEC_TIMEOUT_SECONDS: int = 120
+DEFAULT_MAX_EXEC_TIMEOUT_SECONDS: int = 600
+
+
 @dataclass
 class SandboxPolicy:
     """Declarative sandbox policy. See module docstring for field semantics.
@@ -235,7 +273,16 @@ class SandboxPolicy:
     # ``None`` (default) keeps the deny-list-only behavior above unchanged;
     # see :func:`resolve_passthrough_env`.
     allow_env_names: "list[str] | None" = None
-    timeout_seconds: int = 60
+    # #3903①: owner ruling 2026-08-11 — 60 -> 120, matching industry
+    # foreground precedent (Claude Code: 120s default). Applied when the LLM's
+    # `exec` call omits `timeout` (SandboxedExecIROp.timeout_seconds is None).
+    timeout_seconds: int = DEFAULT_EXEC_TIMEOUT_SECONDS
+    # #3903①: the ceiling `SandboxedExecIROp.timeout_seconds` (the LLM's
+    # optional per-call override) is checked against — architect ruling: an
+    # OPERATOR-settable ceiling, not a hardcoded 600, so the LLM can never
+    # widen an operator's own configured envelope. See
+    # DEFAULT_MAX_EXEC_TIMEOUT_SECONDS's docstring above.
+    max_timeout_seconds: int = DEFAULT_MAX_EXEC_TIMEOUT_SECONDS
     max_output_bytes: int = MAX_SUBPROCESS_OUTPUT_BYTES
 
 
@@ -378,6 +425,7 @@ _SANDBOX_POLICY_CONFIG_KEY_TO_FIELD: dict[str, str] = {
     "allow_env_names": "allow_env_names",
     "deny_env_names": "env_deny_names",
     "timeout_seconds": "timeout_seconds",
+    "max_timeout_seconds": "max_timeout_seconds",
     "max_output_bytes": "max_output_bytes",
 }
 
@@ -393,7 +441,8 @@ def _translate_sandbox_policy_config(config_policy: "dict | None") -> dict:
     vocabulary: ``allow_write_paths`` / ``deny_read_paths`` /
     ``deny_write_paths`` / ``subprocess`` / ``allow_env_names`` /
     ``deny_env_names`` / ``network`` / ``timeout_seconds`` /
-    ``max_output_bytes`` — #3823's ``<direction>_<axis>_<unit>`` word order,
+    ``max_timeout_seconds`` / ``max_output_bytes`` — #3823's
+    ``<direction>_<axis>_<unit>`` word order,
     a bool axis using the bare axis name) into ``SandboxPolicy`` constructor
     kwargs (the #3916 internal deny-vocabulary shape, unchanged).
 
@@ -422,6 +471,22 @@ def _translate_sandbox_policy_config(config_policy: "dict | None") -> dict:
             out[field_name] = not value
         else:
             out[field_name] = value
+
+    # #3903① (architect ruling): timeout_seconds/max_timeout_seconds is a
+    # self-consistency check, NOT a hardcoded ceiling — an operator sets
+    # BOTH the default and the LLM-extensible cap; the only invariant this
+    # layer enforces is default <= max (an operator-declared default ABOVE
+    # their own configured max is a config error, same fail-loud posture
+    # this function already applies to unknown keys — never silently
+    # resolved by picking one value over the other).
+    effective_timeout = out.get("timeout_seconds", DEFAULT_EXEC_TIMEOUT_SECONDS)
+    effective_max = out.get("max_timeout_seconds", DEFAULT_MAX_EXEC_TIMEOUT_SECONDS)
+    if effective_timeout > effective_max:
+        raise ValueError(
+            f"sandbox.policy.timeout_seconds ({effective_timeout}) exceeds "
+            f"sandbox.policy.max_timeout_seconds ({effective_max}) — the "
+            f"default cannot be above the LLM-extensible cap"
+        )
     return out
 
 

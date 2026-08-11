@@ -526,7 +526,8 @@ sandbox:
 | `write_deny_paths` | list[文字列] | `[]` | 書き込み軸専用の deny リスト（#3901）、`read_deny_paths` と対をなす。`write_paths` のエントリがこれらと重なる・包含する場合でも deny を無効化しない — Seatbelt 上では deny が常に勝ち（#2978）、`sandbox_policy_narrowed` audit-event が縮小を記録します。書き込み軸のみを deny。 |
 | `deny_subprocess` | bool | `false`（compat） | 子プロセスの spawn を deny するか — #3901 以前の `allow_subprocess` の deny-list 形の逆（owner decision 2026-07-22, #3202: UX-blocking な軸は deny-by-default ではなく opt-in restrict）。適用（enforced）— on の時 `process-fork` を deny。 |
 | `env_deny_names` | list[文字列] | `[]`（compat） | サンドボックスプロセスへ引き渡さない環境変数名 — #3901 以前の `env_passthrough` allowlist の deny-list 形の逆。デフォルト（空）は環境全体が引き渡される、つまり起動元シェルと同じ信頼レベルを意味します。 |
-| `timeout_seconds` | int | `60` | バックエンドが強制する実時間上限。 |
+| `timeout_seconds` | int | `120`（#3903①、2026-08-11 — 以前は `60`） | LLM の `exec` 呼び出しが override を指定しない場合の前景ウォールクロックタイムアウト。`max_timeout_seconds` を超えて設定すると config load が失敗する。 |
+| `max_timeout_seconds` | int | `600`（#3903①） | LLM が per-call で要求できる `timeout`（`exec` の任意引数）の上限 — **operator が制御**、ハードコード値ではない。上限を超える要求は静かに切り詰めず拒否し、実際に設定された上限を名指しする。`600` より下げれば LLM が要求できる範囲が実際に狭まる。LLM がこれを広げることはできない。 |
 
 [リファレンス: control-ir — `sandboxed_exec`](../runtime/control-ir.md#sandboxed_exec) で op スキーマとバックエンド選択の詳細を参照してください。
 

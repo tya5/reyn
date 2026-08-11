@@ -309,10 +309,28 @@ class SandboxedExecIROp(BaseModel):
     readers, LLM-advertised and silently ignored, the exact gap #3907
     closed for the other 5. Removed rather than left as a second
     advertised-but-ignored knob.
+
+    #3903① (2026-08-11): `timeout_seconds` is BACK — a deliberate, narrow
+    reversal of #3962, not a repeat of the gap it closed. Owner ruling: the
+    LLM should be able to extend the foreground wall-clock timeout past its
+    default (`SandboxPolicy.timeout_seconds`), up to the OPERATOR's own
+    configured ceiling (`SandboxPolicy.max_timeout_seconds` — never a
+    hardcoded value; architect's conditional approval of this reversal
+    required the ceiling stay operator-settable, since `timeout_seconds`
+    was already an operator-config key, so a hardcoded LLM ceiling would
+    let the LLM widen an operator's own narrower configuration, a Security
+    pass-line violation). Unlike the removed field, THIS one is actually
+    read (`op_runtime/sandboxed_exec.py`'s handler): `None` (default) uses
+    the policy's own `timeout_seconds`; a value above
+    `policy.max_timeout_seconds` is REJECTED (typed error naming the
+    actual configured max), never silently clamped — a silent clamp would
+    recreate #3962's advertised-but-ignored shape in a new form (the LLM
+    would believe it got what it asked for).
     """
     kind: Literal["sandboxed_exec"]
     argv: list[str]                                      # command + args; argv[0] is the executable
     stdin: bytes | None = None                           # #2593: bytes written to the process's stdin, if any
+    timeout_seconds: float | None = None                 # #3903①: optional LLM override, checked against SandboxPolicy.max_timeout_seconds
 
 
 

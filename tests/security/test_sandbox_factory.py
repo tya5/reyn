@@ -155,6 +155,53 @@ def test_config_rejects_an_unknown_policy_key_rather_than_dropping_it() -> None:
         SandboxConfig(policy={"unknown_totally_made_up_key": True})
 
 
+def test_config_rejects_a_default_timeout_above_the_default_cap() -> None:
+    """Tier 2: #3903① — with max_timeout_seconds left unset (defaults to 600,
+    DEFAULT_MAX_EXEC_TIMEOUT_SECONDS), an operator-declared timeout_seconds
+    above it is a self-consistency error (default > the LLM-extensible cap
+    makes no sense), not silently accepted. Real SandboxConfig(policy=...)
+    construction, not a bare _translate_sandbox_policy_config() call — the
+    config load path is what an operator actually exercises."""
+    with pytest.raises(ValueError, match="timeout_seconds"):
+        SandboxConfig(policy={"timeout_seconds": 601})
+
+
+def test_config_accepts_a_timeout_exactly_at_the_default_cap() -> None:
+    """Tier 2: #3903① — the check is inclusive: exactly
+    DEFAULT_MAX_EXEC_TIMEOUT_SECONDS (600) is a valid operator
+    timeout_seconds value when max_timeout_seconds is left unset, not
+    rejected."""
+    from reyn.security.sandbox.policy import resolve_sandbox_policy
+
+    cfg = SandboxConfig(policy={"timeout_seconds": 600})
+    resolved = resolve_sandbox_policy(cfg.policy, write_paths=[], mode=cfg.mode)
+    assert resolved["timeout_seconds"] == 600
+
+
+def test_config_max_timeout_seconds_is_operator_settable_below_the_default() -> None:
+    """Tier 2: #3903① — architect's conditional-approval requirement: the
+    LLM's timeout ceiling is the OPERATOR's own configured
+    max_timeout_seconds, never a hardcoded 600 — an operator narrowing it
+    below the 600 default must actually take effect (this is the whole
+    point of the ruling: a hardcoded LLM ceiling would let the LLM widen
+    an operator's own envelope, a Security pass-line violation)."""
+    from reyn.security.sandbox.policy import resolve_sandbox_policy
+
+    cfg = SandboxConfig(policy={"timeout_seconds": 30, "max_timeout_seconds": 90})
+    resolved = resolve_sandbox_policy(cfg.policy, write_paths=[], mode=cfg.mode)
+    assert resolved["timeout_seconds"] == 30
+    assert resolved["max_timeout_seconds"] == 90
+
+
+def test_config_rejects_default_timeout_above_an_explicit_lower_max() -> None:
+    """Tier 2: #3903① — the self-consistency check reads BOTH operator-
+    declared values, not just timeout_seconds against the 600 default: a
+    default of 100 against an explicitly-lowered max of 90 is still
+    rejected."""
+    with pytest.raises(ValueError, match="max_timeout_seconds"):
+        SandboxConfig(policy={"timeout_seconds": 100, "max_timeout_seconds": 90})
+
+
 def test_config_guides_an_old_internal_vocabulary_key_by_name_not_as_unknown() -> None:
     """Tier 2: #3823 — an operator on a pre-#3823 (or pre-#3901) config who
     still writes an OLD internal-vocabulary key (`write_paths`, the pre-#3823
