@@ -24,7 +24,8 @@ Reyn のサンドボックスレイヤーは、ワークフローが宣言した
 | `write_deny_paths` | `list[str]` | `[]` | 書き込み軸専用の deny リスト（#3901）、`read_deny_paths` と対をなす。#3901 以前は Seatbelt が `read_deny_paths` の未文書化の副作用として書き込みも deny していたが、Landlock はその副作用を再現しておらず OS ごとに同一ポリシーの意味が違っていた — このフィールドが両バックエンドの読む real field を1つにしてそのギャップを閉じます。書き込み軸のみ deny。 |
 | `deny_subprocess` | `bool` | `false`（compat） | サンドボックス対象プロセスの子プロセス生成を deny — #3901 以前の `allow_subprocess` の deny-list 形の逆。Linux (seccomp) / macOS (Seatbelt: `true` の時 `process-fork` を deny、対象自身の exec は `process-exec*` で動作) で適用。 |
 | `env_deny_names` | `list[str]` | `[]`（compat） | サブプロセスへ引き渡さない環境変数名 — #3901 以前の `env_passthrough` allowlist の deny-list 形の逆。デフォルト（空）は環境全体が引き渡される、つまり起動元シェルと同じ信頼レベルを意味する。 |
-| `timeout_seconds` | `int` | `60` | ウォールクロック上限（超過時にプロセスを強制終了） |
+| `timeout_seconds` | `int` | `120`（#3903①、2026-08-11 — 以前は `60`） | ウォールクロック上限（超過時にプロセスを強制終了）。LLM の `exec` 呼び出しは `max_timeout_seconds` までより高い値を要求できる。 |
+| `max_timeout_seconds` | `int` | `600`（#3903①） | `timeout_seconds`（policy のデフォルトと LLM が要求する override の両方）が照合される operator 制御の上限 — 狭めれば LLM が要求できる範囲が実際に狭まる。LLM がこれを広げることはできない。拒否（切り詰めない）の挙動は [`sandboxed_exec` op リファレンス](../../reference/runtime/control-ir.ja.md#sandboxed_exec) を参照。 |
 
 ## バックエンド選択テーブル
 
