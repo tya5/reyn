@@ -503,3 +503,12 @@ def test_migrate_value_identity_survives_a_multi_key_rewrite(project, monkeypatc
         for k, v in before_flat.items()
     }
     assert renamed_before == after_flat
+    # Concrete values too, not just the equality check above — lead-coder's
+    # nit: the two sides use different derivation methods (rename-the-flat-
+    # dict vs. re-parse-the-file), so a concrete assert here isn't the
+    # transcribed-implementation trap (six questions §2); it's a second,
+    # independent statement of what "correct" means.
+    assert after_flat["llm.model"] == "standard"
+    assert after_flat["llm.api_base"] == "http://localhost:8000"
+    assert after_flat["audit_events.keep_days"] == 30
+    assert after_flat["unrelated_key"] == [1, 2, 3]
