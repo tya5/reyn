@@ -54,6 +54,7 @@ from reyn.runtime.session import DEFAULT_CHAT_CHANNEL_ID, Session
 from reyn.runtime.session_api import _build_agent_step_narrowing, spawn_ephemeral_session
 from reyn.runtime.session_params import PresentationWiring
 from reyn.runtime.spawn_routing import AuditOnlyNoSurface, BridgeToParent
+from tests._async_wait import wait_until
 from tests._support.agent_session import make_session
 
 
@@ -127,14 +128,7 @@ async def test_attached_driver_budget_exceed_prompt_reaches_originator_operator(
     check = BudgetCheck(allowed=False, hard_dimension="test_budget")
     gate = asyncio.ensure_future(_budget_exceed_allows_continue(check, "worker"))
 
-    loop = asyncio.get_event_loop()
-    deadline = loop.time() + 5.0
-    while loop.time() < deadline and not originator.interventions.list_active():
-        await asyncio.sleep(0.02)
-    assert originator.interventions.list_active(), (
-        "the driver's budget-exceed prompt never reached the ORIGINATOR operator's active "
-        "queue — it auto-refused on the driver's own listener-less registry (the #3053 gap)."
-    )
+    await wait_until(lambda: bool(originator.interventions.list_active()))
     assert originator.list_stalled_interventions() == [], (
         "the bridged budget-exceed prompt was parked in the originator's stalled queue "
         "instead of its live listener."
