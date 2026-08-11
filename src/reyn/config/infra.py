@@ -1,4 +1,4 @@
-"""reyn.config.infra — infra config: Agent/Auth/Sandbox/Events/Eval/Cron/Python. (#1682 #3 split)."""
+"""reyn.config.infra — infra config: AgentId/Auth/Sandbox/AuditEvents/Eval/Cron/Python. (#1682 #3 split)."""
 from __future__ import annotations
 
 import socket
@@ -10,7 +10,8 @@ from reyn.runtime.budget.budget import CostConfig, CostLimitConfig
 
 
 def _default_agent_id() -> str:
-    """Compute the default agent_id used when reyn.yaml ``agent.id`` is unset.
+    """Compute the default ``agent_id`` used when reyn.yaml's ``agent_id:`` is
+    unset.
 
     Format: ``reyn/<hostname>``. Pure function so the default is
     inspectable / overridable in tests via the same call site.
@@ -18,44 +19,31 @@ def _default_agent_id() -> str:
     return f"reyn/{socket.gethostname()}"
 
 
-@dataclass
-class AgentConfig:
-    """``agent:`` — runtime agent identity for audit trail + HTTP propagation.
+def _build_agent_id(raw: object) -> str:
+    """Parse the top-level ``agent_id:`` scalar from reyn.yaml.
 
-    FP-0016 Component E. The ``id`` value is stamped onto every P6 event
-    payload (via ``EventLog`` auto-injection) and is added as the
-    ``X-Reyn-Agent-Id`` header on outgoing MCP / A2A / external HTTP
-    requests. Default ``reyn/<hostname>`` so a fresh install has a usable
-    identity without operator action; override in reyn.yaml when running
-    multi-agent fleets or enterprise deployments that need a stable
-    per-role identifier.
+    #4174 T5: ``agent:`` (a namespace wrapping a single field, ``id``) is
+    flattened to a plain top-level scalar — same disposition as T1's
+    ``python:`` (a single-field wrapper that added indirection without
+    adding structure; #4174's own diagnosis of the OLD shape was "the
+    substance is only `id`", so keeping a nested block after the rename
+    would leave that exact redundancy in a new name, `agent_id.id`).
+    Registered in ``config_schema._RENAMED_CONFIG_KEYS`` with
+    ``destination=None`` (a value TRANSFORM — dict to scalar — not a
+    plain rename `reyn config migrate` can auto-rewrite; reported for
+    manual review instead, same category as
+    ``_RENAMED_SANDBOX_POLICY_KEYS``'s boolean-inversion entries).
+
+    ``None`` / missing key / empty string → default (``reyn/<hostname>``),
+    matching the old ``agent.id`` blank-falls-back-to-default behavior so
+    an operator who migrates by hand and leaves the value blank does not
+    end up with an empty ``agent_id`` leaking into events / headers.
     """
-
-    id: str = field(default_factory=_default_agent_id)
-
-
-def _build_agent_config(raw: object) -> AgentConfig:
-    """Parse ``agent:`` from reyn.yaml.
-
-    ``None`` / missing block / empty dict → default (= ``reyn/<hostname>``).
-    Empty string ``id:`` also falls back to default so operators who
-    leave the field blank don't end up with an empty agent_id leaking
-    into events / headers.
-    """
-    if raw is None:
-        return AgentConfig()
-    if not isinstance(raw, dict):
-        raise ValueError(
-            f"agent must be a mapping, got {type(raw).__name__}"
-        )
-    raw_id = raw.get("id")
-    if raw_id is None or raw_id == "":
-        return AgentConfig()
-    if not isinstance(raw_id, str):
-        raise ValueError(
-            f"agent.id must be a string, got {type(raw_id).__name__}"
-        )
-    return AgentConfig(id=raw_id)
+    if raw is None or raw == "":
+        return _default_agent_id()
+    if not isinstance(raw, str):
+        raise ValueError(f"agent_id must be a string, got {type(raw).__name__}")
+    return raw
 
 
 @dataclass
@@ -362,8 +350,13 @@ def _build_auth_config(raw: object) -> AuthConfig:
 
 
 @dataclass
-class EventsConfig:
-    """`events:` — audit log rotation policy (PR20).
+class AuditEventsConfig:
+    """`audit_events:` — audit log rotation policy (PR20).
+
+    #4174 T5: renamed from `events:` / `EventsConfig` — bare "event" is the
+    exact shape CLAUDE.md's cross-cutting-band note bans ("event" is three
+    distinct things: audit-event / WAL-event / hook-event; this class was
+    always audit-event only, never any of the other two).
 
     Chat session events are appended to a folder under
     `.reyn/events/agents/<name>/chat/<YYYY-MM>/` and rotated when either
@@ -810,8 +803,9 @@ def _build_fs_watch_config(raw: object) -> FsWatchConfig:
     return FsWatchConfig(paths=paths, debounce_seconds=debounce_seconds)
 
 
-def _build_events_config(raw: object) -> EventsConfig:
-    defaults = EventsConfig()
+def _build_audit_events_config(raw: object) -> AuditEventsConfig:
+    """Parse `audit_events:` from reyn.yaml (#4174 T5, renamed from `events:`)."""
+    defaults = AuditEventsConfig()
     if not isinstance(raw, dict):
         return defaults
     cleanup = raw.get("cleanup_period_days", defaults.cleanup_period_days)
@@ -819,13 +813,13 @@ def _build_events_config(raw: object) -> EventsConfig:
         # Reject the Claude-Code-style "0 disables writes" footgun.
         # Use null/None to disable automatic cleanup; positive ints to enable.
         raise ValueError(
-            "events.cleanup_period_days=0 is not allowed; "
+            "audit_events.cleanup_period_days=0 is not allowed; "
             "use null to disable automatic cleanup, or a positive int."
         )
     cleanup_val: int | None = None
     if cleanup is not None:
         cleanup_val = int(cleanup)
-    return EventsConfig(
+    return AuditEventsConfig(
         max_bytes=int(raw.get("max_bytes", defaults.max_bytes)),
         max_age_seconds=int(raw.get("max_age_seconds", defaults.max_age_seconds)),
         cleanup_period_days=cleanup_val,

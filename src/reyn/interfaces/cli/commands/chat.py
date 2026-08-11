@@ -665,7 +665,7 @@ def _run(args: argparse.Namespace) -> None:
             reasoning_config=session_cfg.config.chat.reasoning,  # #1652
             registry=registry,  # back-reference for :agents / :attach + PR11 messaging
             allowed_mcp=profile.allowed_mcp,
-            events_config=session_cfg.config.events,
+            events_config=session_cfg.config.audit_events,
             cost_warn_config=session_cfg.config.cost_warn,  # #2230: wire the warn/block gate
             offload_config=session_cfg.config.offload,  # tool-result-schema-redesign §5
             render_template_config=session_cfg.config.render_template,  # #2679: render_template output bounds
@@ -679,7 +679,7 @@ def _run(args: argparse.Namespace) -> None:
             # tool-use-scheme) — one source point for all five sites.
             factory_config=factory_config,
             eager_embedding_build=getattr(args, "eager_embedding_build", False),
-            agent_id=session_cfg.config.agent.id,  # FP-0016 E
+            agent_id=session_cfg.config.agent_id,  # FP-0016 E
             exclude_tools=_exclude_tools,  # #187: hide tools (e.g. web) from the LLM catalog
             excluded_categories=frozenset(_excluded_categories or ()) | _profile_excluded,  # #1667 + #1827 S3 profile view
             contextual_permission=_ctx_perm,  # #1827 S3: capability_profile enforcement → live tool gate

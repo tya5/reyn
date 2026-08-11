@@ -46,14 +46,14 @@ from reyn.config.execution import (
     ToolUseConfig,
 )
 from reyn.config.infra import (
-    AgentConfig,
+    AuditEventsConfig,
     AuthConfig,
     CronConfig,
     DelegationConfig,
-    EventsConfig,
     FsWatchConfig,
     LLMConfig,
     SandboxConfig,
+    _default_agent_id,
 )
 from reyn.config.media import (
     MultimodalConfig,
@@ -177,9 +177,12 @@ class ReynConfig:
     mcp: dict = field(default_factory=dict)
     # FP-0016 Component E — agent identity for audit trail + HTTP header
     # propagation. Default `reyn/<hostname>` when reyn.yaml has no
-    # `agent:` block. Read by Session to construct its EventLog and
+    # `agent_id:` key. Read by Session to construct its EventLog and
     # by mcp_client.MCPClient for the X-Reyn-Agent-Id header.
-    agent: AgentConfig = field(default_factory=AgentConfig)
+    # #4174 T5: flattened from the `agent: {id: ...}` namespace (a
+    # single-field wrapper — same disposition as T1's `python:` deletion)
+    # to a plain top-level scalar.
+    agent_id: str = field(default_factory=_default_agent_id)
     # #2081 — cross-agent delegation policy. ``delegation.capability_default``
     # (inherit|deny, default=inherit) selects the capability floor an UNBOUND
     # delegated agent receives. Default ``inherit`` = byte-identical to pre-#2081.
@@ -190,8 +193,9 @@ class ReynConfig:
     auth: "AuthConfig" = field(default_factory=AuthConfig)
     # Chat-session settings (compaction, etc.)
     chat: ChatConfig = field(default_factory=ChatConfig)
-    # Audit-log rotation policy (PR20).
-    events: EventsConfig = field(default_factory=EventsConfig)
+    # Audit-log rotation policy (PR20). #4174 T5: renamed from `events:` —
+    # bare "event" is the shape CLAUDE.md's cross-cutting-band note bans.
+    audit_events: AuditEventsConfig = field(default_factory=AuditEventsConfig)
     # Downstream observability export (OTLP/OpenTelemetry). Opt-in + off by
     # default: no `observability.otel.endpoint` (and no OTEL_EXPORTER_OTLP_ENDPOINT
     # env) → the OtelExporter is never built and behavior is byte-identical to

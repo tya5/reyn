@@ -272,7 +272,7 @@ reyn auth login <provider>
 
 ## エージェント ID (FP-0016 E)
 
-すべての P6 イベントおよびすべての外部 HTTP 呼び出し（MCP、将来の A2A）はエージェント ID を含みます。ID は `reyn.yaml` の `agent.id` フィールドから取得され、省略時は `reyn/<hostname>` がデフォルトです。
+すべての P6 イベントおよびすべての外部 HTTP 呼び出し（MCP、将来の A2A）はエージェント ID を含みます。ID は `reyn.yaml` の `agent_id` フィールドから取得され、省略時は `reyn/<hostname>` がデフォルトです。
 
 ID が登場する場所：
 

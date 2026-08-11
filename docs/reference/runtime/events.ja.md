@@ -38,7 +38,7 @@ SSoT は `src/reyn/core/events/event_schema.py` の `AUDIT_EVENT_KINDS` で、�
 
 ## Agent ID フィールド（全イベント共通）
 
-`reyn.yaml` で `agent.id` が設定されているセッションから発行されるすべてのイベントのペイロードには、自動的に `agent_id` フィールドが付与されます。デフォルト値は `reyn/<hostname>` です。これにより、SOC2 / ISO 27001 / METI v1.1 要件に準拠した RBAC およびマルチエージェント監査証跡が実現されます。
+`reyn.yaml` で `agent_id` が設定されているセッションから発行されるすべてのイベントのペイロードには、自動的に `agent_id` フィールドが付与されます。デフォルト値は `reyn/<hostname>` です。これにより、SOC2 / ISO 27001 / METI v1.1 要件に準拠した RBAC およびマルチエージェント監査証跡が実現されます。
 
 詳細は [コンセプト: マルチエージェント](../../concepts/multi-agent/multi-agent.md) の「Agent ID 伝播」を参照してください。
 
