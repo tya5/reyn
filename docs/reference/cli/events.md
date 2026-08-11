@@ -20,7 +20,7 @@ reyn events purge [OPTIONS]
 
 | Mode | Description |
 |------|-------------|
-| *(positional PATH)* | Stream events from a JSONL file to stdout. |
+| *(positional PATH)* | Stream events from a `.jsonl` file, or every `.jsonl` file under a directory (walked recursively, oldest first), to stdout. |
 | `purge` | Delete event files older than a given date. |
 
 ## Options — replay mode
@@ -53,6 +53,7 @@ reyn events purge [OPTIONS]
 ```bash
 reyn events .reyn/events/agents/reyn/chat/2026-05/abc123.jsonl
 reyn events .reyn/events/agents/reyn/chat/2026-05/abc123.jsonl --filter permission_denied
+reyn events .reyn/events/agents/ --since 2026-05-01     # every log under a directory
 reyn events purge --before 2026-04-01
 reyn events purge --before 2026-04-01 --dry-run
 ```
