@@ -159,6 +159,7 @@ def test_gemini_streamed_call_records_the_providers_own_token_counts(monkeypatch
     tracker = BudgetTracker(CostConfig())
     response = asyncio.run(recorded_acompletion(
         model=_GATED_MODEL, messages=_MESSAGES, purpose="main",
+        model_class=None,  # #4206 T1: not subject to the axis (pre-existing call)
         recorder=tracker, agent="alpha",
     ))
 

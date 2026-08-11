@@ -27,15 +27,16 @@ pip install -e '.[dev]'
 
 ## モデルを設定する
 
-Reyn は `reyn.yaml` からモデルを選択します。デフォルトは LiteLLM プロキシ経由の Gemini です。別のプロバイダーを使用するには、`models` マップを編集します:
+Reyn は `reyn.yaml` からモデルを選択します。デフォルトは LiteLLM プロキシ経由の Gemini です。別のプロバイダーを使用するには、`llm.models` マップを編集します:
 
 ```yaml
 # reyn.yaml
-model: standard
-models:
-  light:    openai/gpt-4o-mini
-  standard: openai/gpt-4o
-  strong:   anthropic/claude-3-5-sonnet-20241022
+llm:
+  model: standard
+  models:
+    light:    openai/gpt-4o-mini
+    standard: openai/gpt-4o
+    strong:   anthropic/claude-3-5-sonnet-20241022
 ```
 
 上記の shorthand `<value>` は literal な model string (= `/` を含む) です。 Reyn は

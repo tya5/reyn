@@ -568,7 +568,7 @@ logic. Design: [content-threat scan proposal](deep-dives/proposals/0050-content-
 |---------|-------------|---------------|
 | stdio transport | Subprocess `StdioServerParameters` — implemented | [Concepts: MCP](concepts/tools-integrations/mcp.md) |
 | HTTP transport | Streamable HTTP with request headers — implemented | [Concepts: MCP](concepts/tools-integrations/mcp.md) |
-| SSE transport | FastMCP's `SSETransport` — implemented (#2597 S1) | [Concepts: MCP](concepts/tools-integrations/mcp.md) |
+| SSE transport | The official `mcp` SDK's `sse_client` — implemented (#2597 S1; migrated off FastMCP's `SSETransport` at #4283/#4298/#4299) | [Concepts: MCP](concepts/tools-integrations/mcp.md) |
 | `mcp serve` | Expose Reyn agents as an MCP server over stdio JSON-RPC 2.0 | [reyn mcp CLI](reference/cli/mcp.md) |
 | `mcp install` | Fetch from registry, gate permissions, write config, store secrets. Three chat verbs: `mcp_install_registry` (official registry), `mcp_install_package` (npm/pypi/docker/github URL), `mcp_install_local` (direct command). CLI: `reyn mcp install <SERVER_ID>` or `--source <SPEC>`. | [Concepts: MCP](concepts/tools-integrations/mcp.md) · [reyn mcp CLI](reference/cli/mcp.md) |
 | Secret management | Per-server env vars in `~/.reyn/secrets.env` | [reyn secret CLI](reference/cli/secret.md) |

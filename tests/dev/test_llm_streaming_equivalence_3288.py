@@ -138,6 +138,7 @@ def test_stream_equals_whole_result(monkeypatch) -> None:
     streamed = asyncio.run(recorded_acompletion(
         model="gpt-4o-mini", messages=[{"role": "user", "content": "weather?"}],
         purpose="main", recorder=None, extra_kwargs={"tools": _TOOLS},
+        model_class=None,  # #4206 T1: not subject to the axis (pre-existing call)
     ))
     # Witness: the streaming reconstruction loop actually pulled all 5
     # scripted chunks off the async generator — proves this exercised the
@@ -155,6 +156,7 @@ def test_stream_equals_whole_result(monkeypatch) -> None:
     whole = asyncio.run(recorded_acompletion(
         model="o1-pro", messages=[{"role": "user", "content": "weather?"}],
         purpose="main", recorder=None, extra_kwargs={"tools": _TOOLS},
+        model_class=None,  # #4206 T1: not subject to the axis (pre-existing call)
     ))
 
     s_msg = streamed.choices[0].message
@@ -199,6 +201,7 @@ def test_stream_path_actually_used_for_capable_model(monkeypatch) -> None:
     asyncio.run(recorded_acompletion(
         model="gpt-4o-mini", messages=[{"role": "user", "content": "weather?"}],
         purpose="main", recorder=None, extra_kwargs={"tools": _TOOLS},
+        model_class=None,  # #4206 T1: not subject to the axis (pre-existing call)
     ))
     assert seen == [True], "capable model + tools must select the streaming branch"
     assert chunk_witness == [1, 1, 1, 1, 1], (

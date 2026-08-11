@@ -53,6 +53,7 @@ def test_recorded_acompletion_records_with_purpose(monkeypatch) -> None:
     resp = asyncio.run(recorded_acompletion(
         model="gemini/gemini-2.5-flash-lite", messages=[{"role": "user", "content": "hi"}],
         purpose="compaction", recorder=rec, agent="a1",
+        model_class=None,  # #4206 T1: not subject to the axis (pre-existing call)
     ))
     assert resp.choices[0].message.content == "ok", "returns the RAW litellm response"
     # one record, tagged compaction (behavioral — the recorded purpose sequence).
@@ -76,6 +77,7 @@ def test_recorded_acompletion_no_record_when_recorder_none(monkeypatch) -> None:
     resp = asyncio.run(recorded_acompletion(
         model="m", messages=[{"role": "user", "content": "x"}],
         purpose="dogfood", recorder=None,
+        model_class=None,  # #4206 T1: not subject to the axis (pre-existing call)
     ))
     assert called["n"] == 1 and resp.choices[0].message.content == "ok"
 
@@ -96,6 +98,7 @@ def test_recorded_acompletion_response_format_fallback(monkeypatch) -> None:
     rec = _Recorder()
     asyncio.run(recorded_acompletion(
         model="m", messages=[{"role": "user", "content": "x"}], purpose="judge",
+        model_class=None,  # #4206 T1: not subject to the axis (pre-existing call)
         recorder=rec, response_format={"type": "json_object"},
         fallback_without_response_format=True,
     ))
@@ -156,6 +159,7 @@ def test_recorded_acompletion_rejects_unknown_purpose() -> None:
         asyncio.run(recorded_acompletion(
             model="m", messages=[{"role": "user", "content": "x"}],
             purpose="compcation",  # typo of "compaction"
+            model_class=None,  # #4206 T1: not subject to the axis (pre-existing call)
             recorder=None,
         ))
     # every advertised purpose is accepted (guards against the list drifting out

@@ -1027,7 +1027,7 @@ mcp:
 
 サーバーは設定ソースをまたいでマージされます: `~/.reyn/config.yaml` ⊕ `reyn.yaml` ⊕ `reyn.local.yaml`。マージは `mcp.servers` キーの shallow union です。マシンごとの `reyn.local.yaml` が残りを再宣言せずに単一サーバーを追加・上書きできます。
 
-MCP ランタイムはコアインストールに同梱されます。`fastmcp` はコア依存（MCP クライアントは各セッションで構築されます）なので extra は不要です。（既存の `pip install -e ".[mcp]"` が解決し続けられるよう、空の `[mcp]` extra を後方互換エイリアスとして残しています。）
+MCP ランタイムはコアインストールに同梱されます。各セッションの MCP クライアントは公式 `mcp` SDK の上に直接構築されるようになりました（#4283/#4298/#4299: クライアント経路から `fastmcp` は完全に退役）。この `mcp` SDK がコア依存なので extra は不要です。（`fastmcp` 自体がコア依存として残っているのは、`tests/_support/` の MCP サーバー test-double が今も fastmcp のサーバーフレームワークに依存しているためだけです——これらを公式 SDK のサーバー API へ移植することが #4302 自身のスコープであり、依存を外す実際の前提条件です。以前の下書きが誤って主張していた「同梱 RAG プラグインのため」ではありません——RAG プラグインの `requirements.txt` は register-only で、reyn が読み込みも install もしません。既存の `pip install -e ".[mcp]"` が解決し続けられるよう、空の `[mcp]` extra を後方互換エイリアスとして残しています。）
 
 [コンセプト: MCP](../../concepts/tools-integrations/mcp.md) でプロトコル概要を参照してください。
 

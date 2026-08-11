@@ -190,6 +190,12 @@ The default design is set at `reyn web` startup, in priority order:
    web:
      default_design: <slug>
    ```
+   (#4174 T4 split `web:` into `web_fetch:` (tool) and `gateway:` (server), but
+   `default_design` was never given a new address — `_build_gateway_config`
+   only reads `ws_max_size`/`auth`/`surfaces`. The key above still works
+   because the runtime itself still reads the old `web:` location. See #4317
+   for the tracked follow-up; do not "fix" this to `gateway:` until that
+   lands — it would document a key the schema doesn't parse.)
 4. None — fall through to "first available alphabetically".
 
 The host exposes the resolved default and the full available roster via

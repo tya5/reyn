@@ -2,11 +2,12 @@
 # Drop into your project root to enable the read_local_files stdlib skill
 # (and any future skills that target these servers).
 
-model: standard
-models:
-  light:    gemini-flash-lite
-  standard: gemini-flash-lite
-  strong:   gemini-pro
+llm:
+  model: standard
+  models:
+    light:    gemini-flash-lite
+    standard: gemini-flash-lite
+    strong:   gemini-pro
 
 permissions:
   python.pure: allow

@@ -1993,6 +1993,8 @@ async def recorded_acompletion(
     model: str,
     messages: list,
     purpose: str,
+    model_class: "str | None",
+    model_class_ceiling: "str | None" = None,
     recorder: object | None = None,
     agent: str | None = None,
     response_format: dict | None = None,
@@ -2018,6 +2020,27 @@ async def recorded_acompletion(
     Replay-safe: the call still bottoms out at ``litellm.acompletion``, which
     ``LLMReplay`` monkeypatches.
 
+    ``model_class`` / ``model_class_ceiling`` (#4206 T1 — ②bounding axis,
+    ``model``): REQUIRED (no default) so a caller must explicitly say
+    whether THIS call is subject to class-based ceiling enforcement —
+    ``model_class=None`` opts a call OUT (e.g. compaction, which follows
+    ``Session.model`` directly and never goes through ``class_for_purpose``,
+    #3785; or the dogfood/eval auxiliary surfaces, which use a fixed literal
+    model string, not a class). A caller that forgets to pass it gets a
+    ``TypeError`` at the call site, not a silently-unenforced bound — the
+    same "no default that means the same thing as forgetting" discipline
+    #4271 applied to ``timeout``. The check runs HERE, inside the #1190
+    chokepoint, deliberately — not at each call site — so a NEW call site
+    added later cannot forget to enforce it (#3903①'s
+    reject-not-clamp shape, moved to the one place enforcement cannot be
+    bypassed by construction, not by convention). ``model_class_ceiling``
+    defaults to ``None`` (unbounded) — the compat default every other
+    bounding axis in reyn uses; a caller only supplies a real ceiling when
+    one is actually configured. When ``model_class`` is over ceiling, this
+    function raises :class:`~reyn.llm.model_resolver.
+    ModelClassExceedsCeilingError` BEFORE ``litellm.acompletion`` is ever
+    called — no partial call, no charge, no record.
+
     ``on_content_delta`` (#3288 ③b): an OPT-IN, per-call callback invoked
     SYNCHRONOUSLY with each non-empty content-delta string as ``_stream_and_reconstruct``
     (③a) drains the chunk stream — never invoked on the whole-collect (non-streaming)
@@ -2029,6 +2052,18 @@ async def recorded_acompletion(
     unaffected either way — this is purely an additional notification channel, not a
     change to what this function returns or records.
     """
+    # #4206 T1: enforce BEFORE anything else — before ensure_litellm_ready(),
+    # before litellm is even imported, so a rejected call touches litellm in
+    # NO way (falsify target: litellm.acompletion is provably never invoked).
+    if model_class is not None and model_class_ceiling is not None:
+        from reyn.llm.model_resolver import (
+            ModelClassExceedsCeilingError,
+            model_class_exceeds_ceiling,
+        )
+
+        if model_class_exceeds_ceiling(model_class, model_class_ceiling):
+            raise ModelClassExceedsCeilingError(model_class, model_class_ceiling, purpose)
+
     # perf: litellm's own import is ~1.5s and is kept off the chat startup
     # path (input box renders before any LLM use). ``ensure_litellm_ready``
     # is the single chokepoint that applies the #2929 console-log routing +
@@ -2501,6 +2536,8 @@ async def call_llm_tools(
     emit_cost_events: bool = False,  # #1683: forwarded to recorded_acompletion (chat opts in)
     response_format: "dict | None" = None,  # 0062: RouterLoop's separate no-tools structured-answer turn ONLY — every op-loop tool-decision call leaves this None (ADR-0035 D2 separate-decide preserved: never combined with a non-empty `tools`)
     on_content_delta: "Callable[[str], None] | None" = None,  # #3288 ③b: forwarded to recorded_acompletion — see its docstring
+    model_class: "str | None" = None,  # #4206 T1: forwarded to recorded_acompletion — see its docstring (None = not subject to ceiling enforcement)
+    model_class_ceiling: "str | None" = None,  # #4206 T1: the caller's effective ceiling, if any (None = unbounded)
 ) -> LLMToolCallResult:
     """Tool-use variant of call_llm. Returns raw assistant message.
 
@@ -2527,6 +2564,14 @@ async def call_llm_tools(
     ``on_content_delta`` (#3288 ③b): forwarded verbatim to ``recorded_acompletion``
     — see its docstring. ``None`` (every call site except ``RouterLoop``'s
     primary reply call) is byte-identical to before ③b.
+
+    ``model_class`` / ``model_class_ceiling`` (#4206 T1): forwarded verbatim to
+    ``recorded_acompletion`` — see its docstring for the ②bounding enforcement
+    contract. Defaulted to ``None`` here (unlike ``recorded_acompletion``'s own
+    required param) because this wrapper has many pre-existing non-RouterLoop
+    callers (tests, other op-loop shapes) that are not subject to the ceiling
+    axis at all; ``RouterLoop`` — the one caller whose calls ARE class-based —
+    passes its resolved ``router_model`` class explicitly at every call site.
     """
     # Normalize model to ModelSpec — accept both str (backward compat) and ModelSpec.
     spec: ModelSpec = model if isinstance(model, ModelSpec) else ModelSpec(model=model, kwargs={})
@@ -2684,6 +2729,8 @@ async def call_llm_tools(
             response_format=response_format,  # 0062: None for every op-loop tool call
             on_content_delta=on_content_delta,  # #3288 ③b: forwarded straight through
             stream_override=spec.stream,  # operator policy from the model class
+            model_class=model_class,  # #4206 T1: forwarded straight through
+            model_class_ceiling=model_class_ceiling,  # #4206 T1: forwarded straight through
         )
 
     # #2210 HIGH layer: when the per-call HTTP timeout + the Router/Reyn retries are ALL

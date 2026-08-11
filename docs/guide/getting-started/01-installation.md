@@ -27,15 +27,16 @@ The `reyn` CLI is now on your PATH.
 
 ## Configure a model
 
-reyn picks the model from `reyn.yaml`. The shipped default uses Gemini via a LiteLLM proxy. To use a different provider, edit the `models` map:
+reyn picks the model from `reyn.yaml`. The shipped default uses Gemini via a LiteLLM proxy. To use a different provider, edit the `llm.models` map:
 
 ```yaml
 # reyn.yaml
-model: standard
-models:
-  light:    openai/gpt-4o-mini
-  standard: openai/gpt-4o
-  strong:   anthropic/claude-3-5-sonnet-20241022
+llm:
+  model: standard
+  models:
+    light:    openai/gpt-4o-mini
+    standard: openai/gpt-4o
+    strong:   anthropic/claude-3-5-sonnet-20241022
 ```
 
 The shorthand `<value>` above is a literal model string (= contains `/`). Reyn also

@@ -57,6 +57,7 @@ def _call(monkeypatch, **extra_kwargs):
             model="gpt-5.4",
             messages=[{"role": "user", "content": "secret message body"}],
             purpose="main",
+            model_class=None,  # #4206 T1: not subject to the axis (pre-existing call)
             recorder=None,
             response_format={"type": "json_object"},
             extra_kwargs=extra_kwargs,

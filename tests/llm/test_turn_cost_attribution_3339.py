@@ -252,11 +252,13 @@ def test_ambient_turn_scope_reaches_the_cost_chokepoint(monkeypatch) -> None:
             await recorded_acompletion(
                 model=_MODEL, messages=[{"role": "user", "content": "hi"}],
                 purpose="main", recorder=tracker, agent="alpha",
+                model_class=None,  # #4206 T1: not subject to the axis (pre-existing call)
             )
         assert get_active_turn_chain_id() is None, "scope must not outlive the turn"
         await recorded_acompletion(
             model=_MODEL, messages=[{"role": "user", "content": "hi"}],
             purpose="main", recorder=tracker, agent="alpha",
+            model_class=None,  # #4206 T1: not subject to the axis (pre-existing call)
         )
 
     asyncio.run(_call())

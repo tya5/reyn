@@ -90,6 +90,7 @@ async def test_recorded_acompletion_enables_modify_params(monkeypatch) -> None:
         model="openai/gpt-4o",
         messages=[{"role": "user", "content": "hi"}],
         purpose="main",
+        model_class=None,  # #4206 T1: not subject to the axis (pre-existing call)
         recorder=None,
     )
     assert litellm.modify_params is True

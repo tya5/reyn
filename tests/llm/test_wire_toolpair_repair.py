@@ -262,6 +262,7 @@ async def test_recorded_acompletion_repairs_before_provider_call(monkeypatch):
     with pytest.raises(_StopBeforeProvider):
         await recorded_acompletion(
             model="openai/gpt-4o", messages=assembled, purpose="main", routing={},
+            model_class=None,  # #4206 T1: not subject to the axis (pre-existing call)
         )
 
     wire = captured["messages"]

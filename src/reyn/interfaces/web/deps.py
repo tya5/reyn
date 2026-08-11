@@ -314,6 +314,7 @@ def _get_registry():
             config.llm.models,
             default_class=config.llm.model,
             purpose_classes=config.llm.model_class_by_purpose,
+            model_max_class=config.llm.model_max_class,  # #4206 T1 (②bounding)
         )
         model = config.llm.model
         output_language = config.output_language
