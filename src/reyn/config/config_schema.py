@@ -140,6 +140,134 @@ def resolve_config_value(config: Any, key: str) -> tuple[bool, Any]:
     return True, obj
 
 
+#: #4174 T0: a renamed config key (dotted, any level) -> its new dotted
+#: location, so an unknown-key warning can NAME the destination
+#: ("`model:` moved to `llm.model:`") rather than just say "unknown".
+#: Starts EMPTY — no renames have landed yet; T1-T6 (#4174) populate this
+#: incrementally as each rename lands, in the SAME PR as the rename itself
+#: (co-locate the rename with the hint that explains it, not a second
+#: registry someone has to remember to update). Single source: both
+#: :func:`unknown_config_keys` (what's currently valid) and this map (what
+#: USED to be valid and where it went) are read wherever an unknown key
+#: needs explaining — never hand-duplicated into a warning string. A key
+#: absent from this map is NOT a rename — see :func:`unknown_config_keys`'s
+#: own docstring for why that distinction is a first-class case, not an
+#: empty-string placeholder.
+_RENAMED_CONFIG_KEYS: dict[str, str] = {}
+
+
+#: #4174 T0 (owner ruling: "don't special-case sandbox.policy" — one
+#: unknown-key handling across every level, no exception): free-form dict
+#: leaves in the ``ReynConfig`` schema (``is_dict_leaf=True`` — the
+#: operator may write ANY sub-key, so the generic recursive walk in
+#: :func:`unknown_config_keys` correctly stops there) can still have their
+#: OWN internal vocabulary — ``sandbox.policy`` is the one example today
+#: (#3823's ``_SANDBOX_POLICY_CONFIG_KEYS``, a DIFFERENT vocabulary than
+#: ``SandboxPolicy``'s own field names, decoupled on purpose — see that
+#: module). This registry lets such a leaf plug its own validator in
+#: WITHOUT becoming a second unknown-key code path: the recursive walker
+#: calls it and folds the result into the SAME return dict, same message
+#: shape, same caller. Keyed by the leaf's dotted key.
+_FREEFORM_LEAF_VALIDATORS: "dict[str, Any]" = {}
+
+
+def register_freeform_leaf_validator(
+    dotted_key: str, validator: "Any",
+) -> None:
+    """Plug a free-form dict leaf's own inner-vocabulary check into the
+    shared #4174 T0 unknown-key walk.
+
+    *validator* is ``Callable[[dict], dict[str, str | None]]`` — same
+    return shape as :func:`unknown_config_keys` itself (``{sub_key:
+    rename_hint_or_None}``, keys relative to *dotted_key*'s own dict, NOT
+    yet prefixed — :func:`unknown_config_keys` does the prefixing).
+    Registration, not a hardcoded dict literal here, so ``security.sandbox
+    .policy`` (a leaf module ``config_schema.py`` must not import — that
+    would invert the module's own dependency direction) can register
+    itself instead of this module reaching into it.
+    """
+    _FREEFORM_LEAF_VALIDATORS[dotted_key] = validator
+
+
+def known_top_level_keys() -> frozenset[str]:
+    """The full set of valid top-level ``ReynConfig`` keys, derived from the
+    SAME live schema :func:`walk_config_schema` already provides to
+    ``reyn config fields`` — #4174 T0's explicit requirement: no second
+    source of truth for "what's a known key"."""
+    return frozenset(node.key.split(".", 1)[0] for node in walk_config_schema())
+
+
+def _schema_index() -> "tuple[frozenset[str], frozenset[str], frozenset[str]]":
+    """Derive ``(namespace_keys, dict_leaf_keys, scalar_leaf_keys)`` from the
+    SAME live :func:`walk_config_schema` list — the recursive walk's only
+    input, so it can never drift from what ``reyn config fields`` shows.
+
+    ``namespace_keys`` are dotted prefixes with children (a nested
+    dataclass, e.g. ``"llm"``, ``"llm.router"``) — :func:`unknown_config_keys`
+    recurses into a raw dict found there. ``dict_leaf_keys`` accept any
+    sub-key (free-form, e.g. ``"mcp.servers"``) — the walk stops and
+    accepts everything, except for a registered
+    :func:`register_freeform_leaf_validator`. ``scalar_leaf_keys`` are
+    exact, non-recursing valid keys.
+    """
+    nodes = walk_config_schema()
+    scalar_leaves = frozenset(n.key for n in nodes if not n.is_dict_leaf)
+    dict_leaves = frozenset(n.key for n in nodes if n.is_dict_leaf)
+    namespaces: set[str] = set()
+    for node in nodes:
+        parts = node.key.split(".")
+        for i in range(1, len(parts)):
+            namespaces.add(".".join(parts[:i]))
+    return frozenset(namespaces), dict_leaves, scalar_leaves
+
+
+def unknown_config_keys(
+    raw: "dict | None", *, prefix: str = "",
+) -> "dict[str, str | None]":
+    """Return ``{dotted_key: rename_hint_or_None}`` for every key in *raw*
+    (recursively, at every nesting level) that is not a valid
+    ``ReynConfig`` field — #4174 T0's ONE unknown-key implementation,
+    called from ``reyn config validate``, the config-load startup path,
+    AND the hot-reload validator (:func:`reyn.runtime.hot_reload.validate_in_set`)
+    — never separate hand-written checks per call site.
+
+    Recurses into a namespace (a nested dataclass, e.g. ``llm.router``);
+    stops at a free-form dict-leaf (e.g. ``mcp.servers`` — any sub-key is
+    valid there) UNLESS that leaf has a
+    :func:`register_freeform_leaf_validator` registered (``sandbox.policy``
+    is the one example — #3823's own vocabulary, folded in rather than
+    duplicated).
+
+    A ``None`` hint means "this key matches none of the known keys — see
+    ``reyn config fields``" (today's ONLY case: no rename has landed yet).
+    A non-``None`` hint means the key was intentionally renamed (see
+    :data:`_RENAMED_CONFIG_KEYS`) and the caller should say so explicitly.
+    Collects every unknown key in one pass — callers must NOT early-return
+    on the first hit (owner requirement: report all problems at once, not
+    one-fix-restart-repeat).
+    """
+    if not isinstance(raw, dict):
+        return {}
+    namespaces, dict_leaves, scalar_leaves = _schema_index()
+    result: "dict[str, str | None]" = {}
+    for key, value in raw.items():
+        dotted = f"{prefix}.{key}" if prefix else key
+        if dotted in scalar_leaves:
+            continue
+        if dotted in dict_leaves:
+            validator = _FREEFORM_LEAF_VALIDATORS.get(dotted)
+            if validator is not None and isinstance(value, dict):
+                for sub_key, hint in validator(value).items():
+                    result[f"{dotted}.{sub_key}"] = hint
+            continue
+        if dotted in namespaces:
+            if isinstance(value, dict):
+                result.update(unknown_config_keys(value, prefix=dotted))
+            continue
+        result[dotted] = _RENAMED_CONFIG_KEYS.get(dotted)
+    return result
+
+
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
