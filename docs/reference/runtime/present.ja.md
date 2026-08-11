@@ -63,7 +63,7 @@ guard/renderer の分割）については [コンセプト: Present レイヤ](
 | `keyvalue` | `rows: [{label, value}]` |
 | `table` | `rows`（bind → 配列）, `columns: [{header, path}]` |
 | `list` | `items`（bind → 配列）, `item_path?`（項目単位パス） |
-| `image` | `src`, `alt?` — v1 では `[image: <alt>]` という dim テキストのプレースホルダーのみ描画され、マルチモーダル配送経路へはまだルーティングされない |
+| `image` | `src`, `alt?` — TUI（`textual_chat`）は `src` を取得し（owner 裁定 C — client 自身が URL を取得、#3846）実ピクセルを描画する（Kitty/WezTerm の実ピクセル、または Sixel。それ以外は半ブロック/unicode 近似 — 端末ごとに自動判定、#3846 ③）。resolution stage の無いサーフェス（`reyn chat --cui`、`reyn pipe`）は `[image: <alt>]` という dim テキストのプレースホルダーを表示する。取得/デコード失敗時は区別可能な `[image failed: ...]` 状態を表示し、プレースホルダーと同じテキストにはならない |
 
 v1 に**対話コンポーネント**（ボタン / フォーム）は存在しない。
 

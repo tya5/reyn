@@ -208,6 +208,35 @@ dependencies = [
                               # Windows backend writes CF_UNICODETEXT directly.
                               # Linux still needs xclip/xsel/wl-clipboard on
                               # PATH — pyperclip does not vendor them either.
+    # #3846 ③ / #3970: owner-approved REGULAR dependency (not extra) —
+    # "入れた瞬間に効く" (UX/predictability > a silent text-only fallback,
+    # owner's own standing policy). pip resolvability measured (#3970):
+    # manylinux(3.11/3.12) / win_amd64(3.11) / macosx_11_0_arm64(3.12) all
+    # have prebuilt wheels (no compiler needed); the one gap is
+    # macosx_10_9_x86_64 (Intel Mac, source build needs libjpeg/zlib
+    # headers) — neither CI nor the owner's machine is affected.
+    "pillow>=11.0",
+    # `textual_image.renderable` (NOT `.widget`) — measured (#3970): imports
+    # NO textual module at all (0/147 `sys.modules` entries), a real Rich
+    # renderable (`__rich_console__`) buildable straight from a PIL.Image
+    # already in this process — same shape `present_renderer.py` already
+    # returns for every other node kind. pillow is the dominant dependency
+    # weight either way (14MB); textual-image itself is close to free on top
+    # of it and is the ONLY option of the measured candidates that reaches
+    # real pixels (Kitty/WezTerm TGP, Sixel) rather than a half-block/unicode
+    # approximation only — see #3970's own reinvention-comparison for why a
+    # hand-rolled half-block renderer is not a "lighter version" of this
+    # (different feature, not a smaller implementation of the same one).
+    # Floor is 0.12 (not 0.13+): 0.13.0+ declares `Requires-Python >=3.12`,
+    # unsatisfiable on reyn's own Python 3.11 CI leg/support floor — a real
+    # install-stage failure caught only by testing a CLEAN venv on 3.11 (a
+    # venv with the package already installed, or a 3.12-only check, both
+    # stay green and miss this). Verified 0.12.0 has the identical API
+    # surface this file uses (`renderable.Image(pil_image, width=...)`, the
+    # same import-time no-textual / terminal-auto-detection module
+    # structure, and the same TextualImage-constructor-forces-eager-decode
+    # behavior `present_renderer.py`'s decode-failure path relies on).
+    "textual-image>=0.12",
 ]
 
 [project.urls]

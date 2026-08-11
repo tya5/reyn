@@ -1,11 +1,13 @@
-"""Tier 2: #3846 ①②③(scoped) — end-to-end image `src` resolution through the
+"""Tier 2: #3846 ①②③ — end-to-end image `src` resolution through the
 REAL TextualChatApp -> ReynPresenter -> render_presentation_nodes chain.
 
 Drives a real ``kind="presentation"`` frame with an ``image`` component node
 through ``TextualChatApp`` (not a hand-authored unit call), confirming:
 - the placeholder renders BEFORE resolution settles;
 - the SAME entry re-renders with the loaded state AFTER the background
-  fetch completes (proves the redraw-trigger, not just the cache write);
+  fetch completes (proves the redraw-trigger, not just the cache write) —
+  #3846 ③'s real-pixel rendering path (a real PNG body, not a magic-byte
+  stub) is exercised here;
 - a failed fetch renders a distinguishable failure state, not the same
   placeholder text a fetch that never started would show (the #3688 "two
   different things look the same" class).
@@ -122,7 +124,7 @@ async def test_loaded_state_replaces_the_placeholder_after_resolution(monkeypatc
     """Tier 2: ★ the redraw witness — after the background fetch settles, the
     entry's ``revision`` (flowview's own public, monotonic "was ``.update()``
     called" counter — bumped by NOTHING else in this test) has advanced, AND
-    the SAME entry now renders the loaded state.
+    the SAME entry now renders the loaded (real-pixel, #3846 ③) state.
 
     ``revision`` is the load-bearing half: calling ``present()`` directly (as
     :func:`_entry_text` does, to read content) would show the loaded state
@@ -130,8 +132,24 @@ async def test_loaded_state_replaces_the_placeholder_after_resolution(monkeypatc
     of this test asserted content only and stayed GREEN with
     ``entry.update()`` deleted from the implementation (caught by falsifying
     it directly). Content is still asserted too — a bumped revision with the
-    WRONG content displayed would be an equally real bug."""
-    body = b"\x89PNG-bytes-here"
+    WRONG content displayed would be an equally real bug.
+
+    A REAL PNG body (not a bare magic-byte stub) is required here: ③ decodes
+    the fetched body via PIL before rendering, so a fake body now degrades
+    to the failure-to-render text — this test's own job is the SUCCESS path."""
+    import io
+
+    from PIL import Image as PILImage
+
+    buf = io.BytesIO()
+    # 32x32, not e.g. 4x4: a real textual-image 0.12.0 bug (the version pip
+    # resolves on reyn's own Python 3.11 floor) raises at PRINT time for a
+    # very small source image — a tiny fixture here would make this
+    # SUCCESS-path test exercise the failure path instead, depending on
+    # which textual-image version pip resolved (see present_renderer's own
+    # test file for the dedicated, version-independent failure-path test).
+    PILImage.new("RGB", (32, 32), color=(200, 20, 60)).save(buf, format="PNG")
+    body = buf.getvalue()
     monkeypatch.setattr(
         httpx, "AsyncClient", _client_factory(_StreamResp(body=body, content_type="image/png"))
     )
@@ -149,9 +167,15 @@ async def test_loaded_state_replaces_the_placeholder_after_resolution(monkeypatc
             "entry.revision never advanced — the redraw trigger did not fire"
         )
         text = await _entry_text(app, entry)
-        assert "[image loaded: a cat" in text, text
-        assert str(len(body)) in text, text
+        # Real-pixel rendering is a third party's promise (textual_image's
+        # own — see the module docstring rule against pinning it), so this
+        # only asserts what's reyn's own to keep: the placeholder is gone,
+        # no failure/decode-error text appeared, and SOMETHING non-empty
+        # replaced it (the loaded state, not a crash swallowed to blank).
         assert "[image: a cat]" not in text, "the placeholder never cleared: " + text
+        assert "could not render" not in text, text
+        assert "[image failed" not in text, text
+        assert text.strip(), "loaded state rendered empty output"
 
 
 @pytest.mark.asyncio
