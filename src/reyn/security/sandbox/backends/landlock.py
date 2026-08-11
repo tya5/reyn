@@ -433,6 +433,12 @@ class LandlockBackend:
         env = resolve_passthrough_env(policy)
         if "PATH" not in env and "PATH" in os.environ:
             env["PATH"] = os.environ["PATH"]
+        # #4204 bucket E: see NoopBackend.run's matching comment — a direct
+        # exec (no shell) never resets $PWD the way a real shell would, so
+        # the whole parent env's stale value would otherwise leak through
+        # unmodified to a child whose actual cwd is `cwd`.
+        if cwd:
+            env["PWD"] = cwd
 
         # THE shared builder — the same call the landlock_exec shim makes, so the
         # two seams cannot drift apart again (#2980).

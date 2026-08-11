@@ -140,6 +140,16 @@ class NoopBackend:
         _warn_once()
 
         env = _build_env(policy)
+        # #4204 bucket E: a real shell resets $PWD to its own cwd at startup;
+        # a direct exec (no shell in between) does not — the whole parent
+        # env passes through (resolve_passthrough_env, #3901 PR-B ④)
+        # unmodified, so a stale $PWD (reyn's own launch directory) would
+        # otherwise reach a child whose ACTUAL cwd is `cwd` (e.g. a
+        # subdirectory-launch's real project root, #4204 condition ①). A
+        # tool that trusts $PWD instead of calling getcwd() would see the
+        # wrong directory with no way to detect it.
+        if cwd:
+            env["PWD"] = cwd
 
         if cancel_event is None:
             # No cancel support: original blocking path (byte-identical).
