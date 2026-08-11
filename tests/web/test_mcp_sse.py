@@ -8,16 +8,16 @@ the SDK is correct).
 
 We do NOT exercise the full JSON-RPC handshake here — that's owned
 by the upstream ``mcp`` SDK. The backing impl the two transports share
-(``src/reyn/mcp/server.py``) is NOT uniformly covered: ``send_to_agent_impl``
-is called for real by ``tests/runtime/test_transport_ref.py`` (plus
-exercised, faked, elsewhere) — but ``list_agents_impl`` has NO test that
-calls it directly (#4081; production caller: ``server.py``'s ``_call_tool``
-handler). Don't confuse this with the SAME-NAMED but unrelated
-``list_agents`` router tool (``src/reyn/tools/catalog.py``'s
-``LIST_AGENTS``/``_handle_list_agents``) — grepping for ``list_agents``
-alone finds that tool's own tests and reads as coverage of this one.
-``tests/test_mcp_server.py``, the file this docstring used to cite, does
-not exist.
+(``src/reyn/mcp/server.py``) is covered directly, not through this file:
+``send_to_agent_impl`` by ``tests/runtime/test_transport_ref.py`` (plus
+exercised, faked, elsewhere), and ``list_agents_impl`` by
+``tests/mcp/test_4189_list_agents_impl_real_consumer.py`` (#4189/#4199 —
+closed the gap #4081 originally found here). Don't confuse either with the
+SAME-NAMED but unrelated ``list_agents`` router tool
+(``src/reyn/tools/catalog.py``'s ``LIST_AGENTS``/``_handle_list_agents``)
+— grepping for ``list_agents`` alone finds that tool's own tests and reads
+as coverage of this one. ``tests/test_mcp_server.py``, the file this
+docstring used to cite before #4081, does not exist.
 """
 from __future__ import annotations
 
