@@ -172,6 +172,6 @@ cron:
 ## 関連情報
 
 - [Reference: `reyn.yaml`](../config/reyn-yaml.md) — `cron:` 設定ブロック
-- [コンセプト: Operational Intelligence](../../concepts/data-retrieval/operational-intelligence.md) — スケジュール実行のユースケース
+- [Guide: Monitor and improve with cron](../../guide/for-users/monitor-and-improve-with-cron.md) — スケジュール実行のユースケース例: 監視・改善エージェントを起こす（EN のみ）
 - [コンセプト: A2A プロトコル](../../concepts/multi-agent/a2a.md) — `RunRegistry` パターンと将来の Web モードステータス API
 - [Reference: `reyn run-once`](run-once.md) — ヘッドレス単発 agent 実行(cron の inbox メッセージ配送とは別の dispatch パス)
