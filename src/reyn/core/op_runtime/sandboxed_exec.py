@@ -81,17 +81,33 @@ async def handle(
     )
     policy = SandboxPolicy(**ctx.default_sandbox_policy)
 
+    # #3903 a-2 ③: which timeout pair applies. ``ctx.ephemeral`` carries
+    # ``Session._ephemeral`` (see OpContext.ephemeral's own docstring for
+    # the precise, one-directional claim this licenses — an ephemeral
+    # exec gets the background pair; this is NOT a general "is this call
+    # background" test, and a PERSISTENT spawn still gets the foreground
+    # pair here, a known gap tracked in #4193, not covered by this PR).
+    import dataclasses
+    if ctx.ephemeral:
+        effective_default = policy.background_timeout_seconds
+        effective_max = policy.background_max_timeout_seconds
+    else:
+        effective_default = policy.timeout_seconds
+        effective_max = policy.max_timeout_seconds
+
     # #3903① (2026-08-11 owner ruling, architect-conditioned): the LLM may
-    # extend the foreground wall-clock timeout past the operator's default
-    # (policy.timeout_seconds), up to the OPERATOR's own configured ceiling
-    # (policy.max_timeout_seconds — never a hardcoded value, so the LLM can
-    # never widen an operator's own narrower configuration). A request above
-    # the ceiling is REJECTED (typed error naming the actual max), not
-    # silently clamped — a silent clamp would recreate #3962's advertised-
-    # but-ignored shape in a new form (the LLM would believe it got the
-    # duration it asked for). A non-positive request is also rejected —
-    # "wait 0 seconds" is not a meaningful override, and negative durations
-    # invert the meaning of the field.
+    # extend the wall-clock timeout past the operator's default
+    # (``effective_default`` above), up to the OPERATOR's own configured
+    # ceiling (``effective_max`` — never a hardcoded value, so the LLM can
+    # never widen an operator's own narrower configuration; ``None`` for
+    # the background ceiling means no cap, owner ruling #3903 a-2 — the
+    # check below is skipped entirely in that case, there is nothing to
+    # exceed). A request above the ceiling is REJECTED (typed error naming
+    # the actual max), not silently clamped — a silent clamp would
+    # recreate #3962's advertised-but-ignored shape in a new form (the LLM
+    # would believe it got the duration it asked for). A non-positive
+    # request is also rejected — "wait 0 seconds" is not a meaningful
+    # override, and negative durations invert the meaning of the field.
     if op.timeout_seconds is not None:
         if op.timeout_seconds <= 0:
             return {
@@ -117,22 +133,28 @@ async def handle(
                     f"got {op.timeout_seconds}"
                 ),
             }
-        if op.timeout_seconds > policy.max_timeout_seconds:
+        if effective_max is not None and op.timeout_seconds > effective_max:
             return {
                 "kind": "sandboxed_exec",
                 "status": "error",
                 "error": (
                     f"timeout_seconds ({op.timeout_seconds}) exceeds this "
                     f"deployment's configured maximum of "
-                    f"{policy.max_timeout_seconds} seconds. For a longer-"
+                    f"{effective_max} seconds. For a longer-"
                     f"running command, run it in the background instead "
                     f"(spawn an ephemeral session, or run_pipeline with "
                     f"collect=\"async\") — background work runs on a "
                     f"separate budget from this foreground wall-clock cap."
                 ),
             }
-        import dataclasses
         policy = dataclasses.replace(policy, timeout_seconds=int(op.timeout_seconds))
+    else:
+        # The LLM omitted timeout_seconds — apply the resolved DEFAULT for
+        # this exec's own pair (ephemeral -> background, else foreground).
+        # ``policy.timeout_seconds`` is the ONE field the backend actually
+        # reads (below) — this resolves WHICH value flows into it, the
+        # backend stays unaware of the fg/bg distinction entirely.
+        policy = dataclasses.replace(policy, timeout_seconds=effective_default)
 
     # Anchor the working directory to the run's workspace base_dir — parity with
     # the legacy `shell` op (FP-0008 PR-I). Without this, repo-relative `git` /
