@@ -16,6 +16,9 @@ reyn config [show]
 reyn config fields
 reyn config get <key>
 reyn config set <key> <value>
+reyn config validate
+reyn config migrate [--dry-run]
+reyn config migrate-mcp [--dry-run]
 ```
 
 ## Subcommands
@@ -26,17 +29,44 @@ reyn config set <key> <value>
 | `fields` | List all known keys with types and defaults. |
 | `get <key>` | Print the value of a single dot-path key. |
 | `set <key> <value>` | Write a key to `reyn.local.yaml`. Value is parsed as YAML. |
+| `validate` | Report unrecognized/renamed keys (policy tier + the hot-reload IN-set) and known keys currently disabled by another key's value. Never fails the exit code — see [Notes](#notes). |
+| `migrate [--dry-run]` | Rewrite renamed top-level config keys to their current location, in place, in whichever file each was found. |
+| `migrate-mcp [--dry-run]` | Move legacy `mcp.servers` entries out of `reyn.yaml`/`reyn.local.yaml`/`~/.reyn/config.yaml` into `.reyn/mcp.yaml` (#470 config separation). |
 
 ## Exit codes
 
 | Code | Meaning |
 |------|---------|
-| `0` | Success. |
-| `1` | Unknown key, or I/O error. |
+| `0` | Success — including `validate` reporting findings (see [Notes](#notes)). |
+| `1` | Unknown key (`get`/`set`), no project root found (`migrate-mcp`), or I/O error. |
 
 ## Notes
 
 `reyn config set` always writes to `reyn.local.yaml` (gitignored) — never to `reyn.yaml`.
+
+`reyn config validate` always exits `0`, even when it reports findings — it REPORTS, it
+never gates (owner ruling: warn, never hard-fail, anywhere). It checks three things,
+each printed as its own labeled section (never merged into one list — the fix differs
+per section, and merging would lose "which one do I fix, and how"):
+
+- **Unrecognized/renamed keys, policy tier** (`reyn.yaml` / `reyn.local.yaml` /
+  `~/.reyn/config.yaml`) — the same check `load_config`'s own startup warning runs.
+  Fix: edit the file and restart, or run `reyn config migrate` for a renamed key with
+  an automatic destination.
+- **Known keys currently disabled by another key's value** — the key is real and
+  correctly spelled, but the current configuration makes it a no-op (e.g.
+  `action_retrieval.universal_wrappers_enabled` has no effect while `tool_use.scheme`
+  resolves to `enumerate-all`). Each entry names the key it depends on and the fix.
+- **Unrecognized/renamed keys, the hot-reload IN-set** (`.reyn/{mcp,cron,hooks,skills,
+  pipelines,presentations}.yaml`) — same unknown-key check, run against the merged
+  IN-set instead of the policy tier. Fix: edit the `.reyn/*.yaml` file directly — it
+  applies on the next turn automatically, no restart and no `reyn config migrate`
+  support for this tier (a different remedy than the policy tier above, which is
+  exactly why this is its own section).
+
+`reyn config migrate` only rewrites an entry whose registered rename has an automatic
+destination (a plain rename, no value transform); a rename that also transforms the
+value is reported as "needs manual review" instead, never guessed at.
 
 ## Examples
 
@@ -46,6 +76,9 @@ reyn config fields
 reyn config get safety.loop.max_router_iterations
 reyn config set model strong
 reyn config set safety.loop.max_router_iterations 50
+reyn config validate
+reyn config migrate --dry-run
+reyn config migrate-mcp --dry-run
 ```
 
 ## See also
