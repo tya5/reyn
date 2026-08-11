@@ -207,7 +207,7 @@ async def test_remove_session_teardown_closes_held_connections(tmp_path: Path):
     from reyn.runtime.registry import AgentRegistry
     from reyn.runtime.session import Session
 
-    (tmp_path / "reyn.yaml").write_text("model: standard\n", encoding="utf-8")
+    (tmp_path / "reyn.yaml").write_text("llm:\n  model: standard\n", encoding="utf-8")
     cfg_path = tmp_path / ".reyn" / "config" / "mcp.yaml"
     cfg_path.parent.mkdir(parents=True, exist_ok=True)
     cfg_path.write_text(yaml.safe_dump({"mcp": {"servers": {"srv": _CFG}}}), encoding="utf-8")

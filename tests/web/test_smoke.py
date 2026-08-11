@@ -98,7 +98,7 @@ def tmp_project(tmp_path: Path) -> Path:
     agents_dir.mkdir(parents=True)
 
     # Minimal reyn.yaml so _find_project_root() matches this directory.
-    (tmp_path / "reyn.yaml").write_text("model: standard\n", encoding="utf-8")
+    (tmp_path / "reyn.yaml").write_text("llm:\n  model: standard\n", encoding="utf-8")
 
     # Minimal agent profile.
     (agents_dir / "profile.yaml").write_text(

@@ -112,7 +112,7 @@ def test_validate_reports_the_disabled_key_with_all_four_elements(project, capsy
 
     _write_yaml(
         project / "reyn.yaml",
-        "model: standard\naction_retrieval:\n  universal_wrappers_enabled: true\n",
+        "llm:\n  model: standard\naction_retrieval:\n  universal_wrappers_enabled: true\n",
     )
     _validate()
     out = capsys.readouterr().out
@@ -129,7 +129,7 @@ def test_validate_does_not_flag_universal_category_scheme(project, capsys):
 
     _write_yaml(
         project / "reyn.yaml",
-        "model: standard\n"
+        "llm:\n  model: standard\n"
         "action_retrieval:\n  universal_wrappers_enabled: true\n"
         "tool_use:\n  scheme: universal-category\n",
     )

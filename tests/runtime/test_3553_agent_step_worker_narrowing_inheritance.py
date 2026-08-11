@@ -112,7 +112,7 @@ def _registry(tmp_path: Path, scripted: "_WritesOnceLLM") -> AgentRegistry:
     real ``PermissionResolver`` (with ``file.write`` approved, so a denial observed
     below is the capability narrowing and not the write gate)."""
     if not (tmp_path / "reyn.yaml").exists():
-        (tmp_path / "reyn.yaml").write_text("model: standard\n", encoding="utf-8")
+        (tmp_path / "reyn.yaml").write_text("llm:\n  model: standard\n", encoding="utf-8")
     state_log = StateLog(tmp_path / ".reyn" / "wal.jsonl")
     holder: dict = {}
     resolver = ModelResolver({"standard": "gemini/gemini-2.5-flash-lite"})

@@ -226,6 +226,38 @@ _RENAMED_CONFIG_KEYS: "dict[str, RenamedKeyHint]" = {
              "a new top-level `gateway:` block (same field names, just "
              "renested there)",
     ),
+    # #4174 T3. All 5 are plain renames — same shape, only the top-level key
+    # moved under `llm:` (which already existed for router/retry) — so
+    # `destination` is set on each and `reyn config migrate` auto-rewrites
+    # them. `llm:` itself is a known key (LLMConfig), so these entries are
+    # only reached when the OLD top-level key is used — `unknown_config_keys`
+    # never recurses past a key it already knows, so `llm.model` etc. being
+    # valid doesn't shadow `model` still being flagged at the top level.
+    "model": RenamedKeyHint(
+        note="`model:` moved to `llm.model:` (LLM-domain settings — "
+             "model selection now lives alongside `llm.router`/`llm.retry`)",
+        destination="llm.model",
+    ),
+    "models": RenamedKeyHint(
+        note="`models:` moved to `llm.models:` (same shape — map of model "
+             "class name to LiteLLM model string)",
+        destination="llm.models",
+    ),
+    "model_class_by_purpose": RenamedKeyHint(
+        note="`model_class_by_purpose:` moved to "
+             "`llm.model_class_by_purpose:` (same shape — purpose → model "
+             "class)",
+        destination="llm.model_class_by_purpose",
+    ),
+    "api_base": RenamedKeyHint(
+        note="`api_base:` moved to `llm.api_base:` (LiteLLM proxy base URL)",
+        destination="llm.api_base",
+    ),
+    "prompt_cache_enabled": RenamedKeyHint(
+        note="`prompt_cache_enabled:` moved to `llm.prompt_cache_enabled:` "
+             "(same bool)",
+        destination="llm.prompt_cache_enabled",
+    ),
 }
 
 

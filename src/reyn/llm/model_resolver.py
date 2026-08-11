@@ -2,7 +2,8 @@
 ModelResolver: resolves model class names to LiteLLM model strings.
 
 Standard classes: light, standard, strong.
-Mapping is provided by ReynConfig.models (loaded from reyn.yaml).
+Mapping is provided by ReynConfig.llm.models (loaded from reyn.yaml, #4174 T3:
+moved from top-level ReynConfig.models).
 Unknown names pass through unchanged (backward compatible with raw LiteLLM strings).
 
 PR-MODEL-SPEC-EXTENDS: adds ``extends`` field + built-in catalog support.
@@ -163,7 +164,9 @@ class ModelSpec:
 
     @classmethod
     def from_config(cls, value: object) -> "ModelSpec":
-        """Parse a reyn.yaml models: entry into a ModelSpec.
+        """Parse a reyn.yaml llm.models: entry into a ModelSpec.
+
+        #4174 T3: moved from top-level `models:` — same entry shape.
 
         Accepted forms:
           str  -> ModelSpec(model=value, kwargs={})
@@ -297,17 +300,21 @@ class ModelResolver:
         """Build a ModelResolver.
 
         Args:
-            mapping:  User-declared models from reyn.yaml (``ReynConfig.models``).
+            mapping:  User-declared models from reyn.yaml (``ReynConfig.llm.models``,
+                      #4174 T3: moved from top-level ``.models``).
             builtin:  Built-in catalog.  Defaults to ``BUILTIN_MODELS``.
                       User entries in *mapping* override entries with the same
                       name.  Pass ``{}`` to disable built-ins (useful in tests).
             default_class: #1672 — the configured default model class
-                      (``ReynConfig.model``) returned by ``class_for_purpose`` for
-                      any unset purpose. Defaults to ``"standard"`` so resolvers
-                      built without it stay byte-identical to the old hardcodes.
+                      (``ReynConfig.llm.model``, #4174 T3: moved from top-level
+                      ``.model``) returned by ``class_for_purpose`` for any unset
+                      purpose. Defaults to ``"standard"`` so resolvers built
+                      without it stay byte-identical to the old hardcodes.
             purpose_classes: #1672 — per-purpose class overrides
-                      (``ReynConfig.model_class_by_purpose``). A purpose present
-                      here wins over ``default_class`` in ``class_for_purpose``.
+                      (``ReynConfig.llm.model_class_by_purpose``, #4174 T3: moved
+                      from top-level ``.model_class_by_purpose``). A purpose
+                      present here wins over ``default_class`` in
+                      ``class_for_purpose``.
         """
         if builtin is None:
             builtin = BUILTIN_MODELS
@@ -359,7 +366,9 @@ class ModelResolver:
     def _warn_on_partial_tier_declaration(
         self, mapping: dict[str, Any], builtin: dict[str, str | dict],
     ) -> None:
-        """#3374: warn when ``models:`` declares SOME but not ALL generic tiers.
+        """#3374: warn when ``llm.models:`` declares SOME but not ALL generic tiers.
+
+        #4174 T3: moved from top-level ``models:`` — same shape.
 
         The built-in tier aliases (#3368) mean an undeclared tier still resolves,
         which is the point — but it resolves to *reyn's* default rather than the
@@ -394,12 +403,12 @@ class ModelResolver:
         import logging
 
         logging.getLogger(__name__).warning(
-            "reyn.yaml `models:` declares the %s tier(s) but omits %s — the "
+            "reyn.yaml `llm.models:` declares the %s tier(s) but omits %s — the "
             "omitted tier(s) still resolve, via reyn's built-in defaults: %s. "
             "A project that maps some tiers usually means to map all of them, "
             "so an omitted tier is typically an oversight: those calls silently "
             "use a different model than the tiers you declared. To take "
-            "control, add under `models:` in reyn.yaml:\n%s",
+            "control, add under `llm.models:` in reyn.yaml:\n%s",
             ", ".join(declared),
             ", ".join(missing),
             "; ".join(f"{t} -> {self._resolved[t].model}" for t in missing),
@@ -415,7 +424,7 @@ class ModelResolver:
         # gemini-2.5-flash-lite` bypassing the class system) — but it is
         # ALSO what a mistyped or unregistered CLASS name silently falls
         # into: nothing here can tell the two apart, so a typo or a config
-        # that failed to load its `models:` section (see `_load_yaml`) never
+        # that failed to load its `llm.models:` section (see `_load_yaml`) never
         # surfaces as an error here — only much later, as a confusing raw
         # provider-side rejection once litellm itself receives the
         # unresolved name (#3368). Logged (not raised) so the passthrough
@@ -433,7 +442,7 @@ class ModelResolver:
                 "model class %r not found among known classes (%s) — passing it "
                 "through unchanged as a literal LiteLLM model string. If this "
                 "was meant to be a configured class, check reyn.yaml/"
-                "reyn.local.yaml's `models:` section for a typo or a load "
+                "reyn.local.yaml's `llm.models:` section for a typo or a load "
                 "failure. (This warning fires once per distinct name.)",
                 name, ", ".join(sorted(self._resolved)) or "none",
             )
@@ -510,9 +519,10 @@ class ModelResolver:
         This is the "standard gate" promotion of :meth:`is_known_class` — every
         op- or phase-supplied model field (``op.model``) routes through here rather
         than each call site re-implementing the guard. Operator-config model
-        references (``cfg.model`` etc., from reyn.yaml) deliberately do NOT use
-        this gate: literal LiteLLM strings there are an intentional
-        backward-compat passthrough (see :meth:`resolve`).
+        references (``cfg.llm.model`` etc., from reyn.yaml — #4174 T3: moved
+        from top-level ``cfg.model``) deliberately do NOT use this gate:
+        literal LiteLLM strings there are an intentional backward-compat
+        passthrough (see :meth:`resolve`).
         """
         if requested and not self.is_known_class(requested):
             import logging
@@ -520,7 +530,7 @@ class ModelResolver:
             logging.getLogger(__name__).warning(
                 "%s: model %r is not a known model class — ignoring and using "
                 "%r instead. Use a model class (e.g. light / standard / strong, "
-                "or one defined in reyn.yaml models:) so the proxy config stays "
+                "or one defined in reyn.yaml llm.models:) so the proxy config stays "
                 "the single source of truth.",
                 where or "model selection", requested, fallback or "standard",
             )

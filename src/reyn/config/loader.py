@@ -41,7 +41,7 @@ from reyn.config.media import (  # #1682 #3 cross-section
 from reyn.config.observability import (
     _build_observability_config,
 )
-from reyn.config.root import ReynConfig, _build_model_class_by_purpose  # #1682 #3 cross-section
+from reyn.config.root import ReynConfig  # #1682 #3 cross-section
 from reyn.runtime.budget.budget import CostConfig, CostLimitConfig
 
 
@@ -143,7 +143,10 @@ def build_policy_tier_config(cwd: Path | None = None) -> dict:
     called from both places").
     """
     cwd = (cwd or Path.cwd()).resolve()
-    merged: dict = {"model": "standard", "models": {}, "permissions": {}, "mcp": {}}
+    # #4174 T3: model/models seed moved under llm — _build_llm_config's own
+    # defaults (model="standard", models={}) apply when llm/llm.model/
+    # llm.models are absent, so no seed is needed for them here anymore.
+    merged: dict = {"permissions": {}, "mcp": {}}
 
     from reyn.builtin.registry import build_builtin_config
     merged = _merge(merged, build_builtin_config(), tier_label="builtin")
@@ -261,6 +264,13 @@ def _merge(base: dict, override: dict, *, tier_label: str | None = None) -> dict
     for key, val in override.items():
         if val is None:
             continue
+        # #4174 T3: top-level `models:` is a renamed (now-unknown) key — this
+        # branch still shallow-merges it if present (harmless: the merged
+        # raw dict is never read into ReynConfig anymore, only surfaced by
+        # the unknown-key walk), so a legacy config's cross-tier behavior
+        # doesn't change shape while the operator migrates. The LIVE
+        # location is `llm.models`, handled in the `key == "llm"` branch
+        # below.
         if key in ("models", "permissions") and isinstance(val, dict):
             result[key] = {**result.get(key, {}), **val}
         elif key == "mcp" and isinstance(val, dict):
@@ -343,6 +353,12 @@ def _merge(base: dict, override: dict, *, tier_label: str | None = None) -> dict
             for sub_key, sub_val in val.items():
                 if sub_key == "router" and isinstance(sub_val, dict):
                     merged_llm["router"] = {**existing.get("router", {}), **sub_val}
+                # #4174 T3: llm.models shallow-merges by key, same as the
+                # legacy top-level `models:` special-case above — a project
+                # tier adding one model class must not drop a user-global
+                # class it didn't mention.
+                elif sub_key == "models" and isinstance(sub_val, dict):
+                    merged_llm["models"] = {**existing.get("models", {}), **sub_val}
                 else:
                     merged_llm[sub_key] = sub_val
             result["llm"] = merged_llm
@@ -760,7 +776,9 @@ def load_config(cwd: Path | None = None) -> ReynConfig:
     # inline copies (``invocation_context.py`` / ``web/deps.py``) are now
     # redundant but harmless (same ``setdefault`` value); their removal + a
     # single-writer AST/CI guard is #2683.
-    _api_base = str(merged.get("api_base") or "")
+    # #4174 T3: ``api_base`` moved from top-level to ``llm.api_base``.
+    _llm_raw = merged.get("llm")
+    _api_base = str((_llm_raw.get("api_base") if isinstance(_llm_raw, dict) else None) or "")
     if _api_base:
         _os_for_mcp.environ.setdefault("LITELLM_API_BASE", _api_base)
 
@@ -780,24 +798,13 @@ def load_config(cwd: Path | None = None) -> ReynConfig:
     cost_warn = _build_cost_warn_config(merged.get("cost_warn"))
     offload = _build_offload_config(merged.get("offload"))
     render_template = _build_render_template_config(merged.get("render_template"))
+    # #4174 T3: model / models / model_class_by_purpose / api_base /
+    # prompt_cache_enabled moved from top-level ReynConfig fields into
+    # ``llm:`` — _build_llm_config parses all of it (router/retry AND the
+    # T3 fields) from the SAME raw ``llm`` dict, in one place.
     _cfg = ReynConfig(
-        model=str(merged.get("model", "standard")),
         output_language=output_language,
-        models={
-            str(k): (v if isinstance(v, dict) else str(v))
-            for k, v in _as_config_dict(merged.get("models"), "models").items()
-        },
-        model_class_by_purpose=_build_model_class_by_purpose(
-            merged.get("model_class_by_purpose"),
-        ),
         llm=_build_llm_config(merged.get("llm")),
-        api_base=str(merged.get("api_base") or ""),
-        # prompt_cache_enabled / project_context_path were declared as
-        # ReynConfig fields + consumed (llm.py / session.py / agent.py /
-        # _read_project_context) but never read here, so operator config was
-        # silently ignored (always the dataclass default = a no-op set). Wire
-        # them through merged so the operator-set value actually takes effect.
-        prompt_cache_enabled=bool(merged.get("prompt_cache_enabled", True)),
         # Absent → None (auto-resolve AGENTS.md → REYN.md in
         # load_project_context). Present → pin that path ("" disables).
         project_context_path=(

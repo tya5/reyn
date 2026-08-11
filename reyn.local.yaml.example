@@ -49,13 +49,6 @@
 
 
 # -----------------------------------------------------------------------------
-# model: default model class when --model is not specified on the CLI
-# Built-in default: "standard"
-# -----------------------------------------------------------------------------
-# model: standard
-
-
-# -----------------------------------------------------------------------------
 # output_language: forced LLM reply language (chat router enforces strictly).
 # Unset (default) → no directive added (= LLM follows user message language).
 # Examples: "ja", "en"
@@ -71,15 +64,23 @@
 
 
 # -----------------------------------------------------------------------------
-# models: model-class → LiteLLM model string. A class reference (no "/")
-# resolves against the built-in catalog or ``reyn.yaml`` ``models:``; a
+# llm: the LLM-layer domain — model selection (#4174 T3: model / models /
+# model_class_by_purpose / api_base / prompt_cache_enabled moved here from
+# top-level keys of the same name) + litellm.Router resilience (#1829) +
+# self-retry backoff timing (#1835).
+#
+# llm.model: default model class when --model is not specified on the CLI.
+# Built-in default: "standard".
+#
+# llm.models: model-class → LiteLLM model string. A class reference (no "/")
+# resolves against the built-in catalog or ``reyn.yaml`` ``llm.models:``; a
 # string containing "/" is passed through to LiteLLM as-is.
-# -----------------------------------------------------------------------------
+#
 # An entry may also be a MAPPING. ``model`` is the only required key; every
 # other key except ``extends`` / ``api_base`` / ``provider`` is forwarded to
 # ``litellm.acompletion`` unchanged and unvalidated (a typo therefore surfaces
 # as a litellm failure, not a reyn config error). Full field table:
-# docs/reference/config/reyn-yaml.md § `models` block.
+# docs/reference/config/reyn-yaml.md § `llm` block.
 #
 # The passthrough is also the escape hatch for when litellm does not RECOGNISE
 # a model (``my-new-model`` below). Litellm fetches its model catalog over the
@@ -116,38 +117,16 @@
 #
 #   EmptyLLMResponseError: LLM returned a 200 response with empty choices
 #   (model=...); provider response: <...CustomStreamWrapper object...>
-# -----------------------------------------------------------------------------
-# models:
-#   light:    openai/gpt-4o-mini
-#   standard: claude-sonnet            # built-in catalog reference
 #
-#   strong:                            # mapping form
-#     model: anthropic/claude-3-7-sonnet
-#     temperature: 0.0
-#     max_completion_tokens: 16000     # preferred over max_tokens
+# llm.model_class_by_purpose: per-purpose model-class override (#1672). Reyn
+# makes internal LLM calls beyond the main reply, each tied to a purpose
+# (router / control_ir / tool / judge). By DEFAULT every purpose follows
+# `llm.model` (no hidden cheaper tier). Override a purpose here; an unset
+# purpose falls back to `llm.model`. The per-turn router is a common cost
+# knob — opt into a cheaper class explicitly. `compaction` is NOT a valid key
+# (#3785) — compaction always follows the conversation's active model; a
+# config that still sets it fails to load.
 #
-#   my-new-model:
-#     model: some-model-too-new-for-litellm
-#     allowed_openai_params: ["tool_choice"]
-#     stream: true                     # reyn field — the catalog has no row to read
-
-
-# -----------------------------------------------------------------------------
-# model_class_by_purpose: per-purpose model-class override (#1672).
-# Reyn makes internal LLM calls beyond the main reply, each tied to a purpose
-# (router / control_ir / tool / judge). By DEFAULT every purpose
-# follows `model` (no hidden cheaper tier). Override a purpose here; an unset
-# purpose falls back to `model`. The per-turn router is a common cost knob —
-# opt into a cheaper class explicitly:
-# `compaction` is NOT a valid key (#3785) — compaction always follows the
-# conversation's active model; a config that still sets it fails to load.
-# -----------------------------------------------------------------------------
-# model_class_by_purpose:
-#   router: light            # cheaper per-turn router (explicit opt-in)
-#   # control_ir / tool / judge unset → follow `model`
-
-
-# -----------------------------------------------------------------------------
 # llm.router: litellm.Router provider-resilience (#1829). DEFAULT OFF
 # (use=false → direct litellm.acompletion, byte-identical to no-Router).
 # When on, the Router owns infra-exception retry (with native Retry-After
@@ -155,8 +134,35 @@
 # self-implemented retry/cooldown/fallback. `use` / `num_retries` supersede the
 # legacy REYN_LLM_USE_ROUTER / REYN_LLM_ROUTER_NUM_RETRIES env vars (which remain
 # a back-compat fallback when this block is absent).
+#
+# llm.retry: backoff timing for the Reyn self-retry layer (#1835).
+#
+# llm.api_base: LiteLLM proxy / direct provider base URL. Empty (default) →
+# providers' own endpoints. A local proxy is the most common override.
+#
+# llm.prompt_cache_enabled: when true (default), attach Anthropic-style
+# ``cache_control`` markers to the system prompt so providers that support
+# prompt caching (Anthropic, AWS Bedrock Claude) can reuse the prefix across
+# calls. Ignored by providers that don't recognize the marker.
 # -----------------------------------------------------------------------------
 # llm:
+#   model: standard
+#   models:
+#     light:    openai/gpt-4o-mini
+#     standard: claude-sonnet            # built-in catalog reference
+#
+#     strong:                            # mapping form
+#       model: anthropic/claude-3-7-sonnet
+#       temperature: 0.0
+#       max_completion_tokens: 16000     # preferred over max_tokens
+#
+#     my-new-model:
+#       model: some-model-too-new-for-litellm
+#       allowed_openai_params: ["tool_choice"]
+#       stream: true                     # reyn field — the catalog has no row to read
+#   model_class_by_purpose:
+#     router: light            # cheaper per-turn router (explicit opt-in)
+#     # control_ir / tool / judge unset → follow `model`
 #   router:
 #     use: false             # master switch (REYN_LLM_USE_ROUTER fallback)
 #     num_retries: 3         # infra-exception retries (Retry-After aware)
@@ -182,14 +188,8 @@
 #     respect_retry_after: true  # honour provider Retry-After header on 429/503.
 #                            # Caps the wait at llm_retry_max_backoff (16 s).
 #                            # Falls back to jittered backoff when header absent.
-
-
-# -----------------------------------------------------------------------------
-# api_base: LiteLLM proxy / direct provider base URL.
-# Empty (default) → providers' own endpoints. A local proxy is the most
-# common override:
-# -----------------------------------------------------------------------------
-# api_base: http://localhost:4000
+#   api_base: http://localhost:4000
+#   prompt_cache_enabled: true
 
 
 # -----------------------------------------------------------------------------
@@ -703,15 +703,6 @@
 #   cpu_threads: 4
 #   num_workers: 1
 #   max_duration_s: 300.0       # auto-cancel recordings longer than this
-
-
-# -----------------------------------------------------------------------------
-# prompt_cache_enabled: when true (default), attach Anthropic-style
-# ``cache_control`` markers to the system prompt so providers that support
-# prompt caching (Anthropic, AWS Bedrock Claude) can reuse the prefix
-# across calls. Ignored by providers that don't recognize the marker.
-# -----------------------------------------------------------------------------
-# prompt_cache_enabled: true
 
 
 # -----------------------------------------------------------------------------

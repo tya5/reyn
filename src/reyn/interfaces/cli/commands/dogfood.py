@@ -487,11 +487,11 @@ def _build_live_runner(agent_name: str, *, env_backend=None, ws_base_dir=None, w
     project_root = _find_project_root(Path.cwd()) or Path.cwd()
     config = load_config()
     resolver = ModelResolver(
-        config.models,
-        default_class=config.model,
-        purpose_classes=config.model_class_by_purpose,
+        config.llm.models,
+        default_class=config.llm.model,
+        purpose_classes=config.llm.model_class_by_purpose,
     )
-    model = config.model
+    model = config.llm.model
     output_language = config.output_language
     safety = config.safety
     project_context = load_project_context(config, project_root)
@@ -547,7 +547,7 @@ def _build_live_runner(agent_name: str, *, env_backend=None, ws_base_dir=None, w
                 safety=safety,
                 mcp_servers=config.mcp,
                 output_language=output_language,
-                prompt_cache_enabled=config.prompt_cache_enabled,
+                prompt_cache_enabled=config.llm.prompt_cache_enabled,
                 project_context=project_context,
                 project_context_path=project_context_path,
                 agent_role=profile.role,

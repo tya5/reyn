@@ -170,7 +170,7 @@ def _agent_registry(tmp_path: Path, state_log: "StateLog") -> AgentRegistry:
     """Real ``AgentRegistry`` + real ``Session`` factory (the harness shape
     ``tests/runtime/test_3093_pipeline_registry_spawn_propagation.py`` uses)."""
     if not (tmp_path / "reyn.yaml").exists():
-        (tmp_path / "reyn.yaml").write_text("model: standard\n", encoding="utf-8")
+        (tmp_path / "reyn.yaml").write_text("llm:\n  model: standard\n", encoding="utf-8")
     holder: dict = {}
 
     def _factory(profile, *, presentation_consumer=None, intervention_bridge=None) -> Session:

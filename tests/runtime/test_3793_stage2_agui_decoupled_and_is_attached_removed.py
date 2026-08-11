@@ -178,7 +178,7 @@ async def test_real_agui_endpoint_boot_does_not_touch_registry_focus(tmp_path, m
 
     monkeypatch.chdir(tmp_path)
     state_log = StateLog(tmp_path / "state.wal")
-    (tmp_path / "reyn.yaml").write_text("model: standard\n", encoding="utf-8")
+    (tmp_path / "reyn.yaml").write_text("llm:\n  model: standard\n", encoding="utf-8")
 
     def _factory(profile, *, presentation_consumer=None, intervention_bridge=None):
         return make_session(

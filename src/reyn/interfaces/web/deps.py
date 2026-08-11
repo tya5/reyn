@@ -311,11 +311,11 @@ def _get_registry():
 
         from reyn.llm.model_resolver import ModelResolver
         resolver = ModelResolver(
-            config.models,
-            default_class=config.model,
-            purpose_classes=config.model_class_by_purpose,
+            config.llm.models,
+            default_class=config.llm.model,
+            purpose_classes=config.llm.model_class_by_purpose,
         )
-        model = config.model
+        model = config.llm.model
         output_language = config.output_language
 
         # registry is referenced inside the factory closure — defined below.
@@ -355,7 +355,7 @@ def _get_registry():
                 safety=config.safety,
                 mcp_servers=config.mcp,
                 output_language=output_language,
-                prompt_cache_enabled=config.prompt_cache_enabled,
+                prompt_cache_enabled=config.llm.prompt_cache_enabled,
                 project_context=project_context,
                 project_context_path=project_context_path,
                 agent_role=profile.role,

@@ -165,7 +165,7 @@ def test_load_config_reads_dynamic_cron_yaml(tmp_path, monkeypatch):
     """
     from reyn.config import load_config
 
-    _write_yaml(tmp_path / "reyn.yaml", "model: standard\n")
+    _write_yaml(tmp_path / "reyn.yaml", "llm:\n  model: standard\n")
     _write_yaml(
         tmp_path / ".reyn" / "config" / "cron.yaml",
         "cron:\n  jobs:\n"
@@ -190,7 +190,7 @@ def test_load_config_unions_legacy_and_dynamic_cron_jobs(tmp_path, monkeypatch):
 
     _write_yaml(
         tmp_path / "reyn.yaml",
-        "model: standard\n"
+        "llm:\n  model: standard\n"
         "cron:\n  jobs:\n"
         "    - name: static_job\n      to: static_agent\n      message: run\n"
         "      schedule: '0 * * * *'\n",
@@ -220,7 +220,7 @@ def test_load_config_dynamic_cron_yaml_overrides_legacy_on_name_collision(
 
     _write_yaml(
         tmp_path / "reyn.yaml",
-        "model: standard\n"
+        "llm:\n  model: standard\n"
         "cron:\n  jobs:\n"
         "    - name: shared\n      to: old_agent\n      message: old message\n"
         "      schedule: '0 * * * *'\n",
@@ -251,7 +251,7 @@ def test_load_config_works_without_dynamic_cron_yaml(tmp_path, monkeypatch):
 
     _write_yaml(
         tmp_path / "reyn.yaml",
-        "model: standard\n"
+        "llm:\n  model: standard\n"
         "cron:\n  jobs:\n"
         "    - name: static_only\n      to: some_agent\n      message: run\n"
         "      schedule: '0 * * * *'\n",

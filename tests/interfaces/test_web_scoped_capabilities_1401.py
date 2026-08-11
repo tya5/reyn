@@ -162,7 +162,7 @@ def test_factory_threads_holder_to_build_scoped_chat_session():
 
 
 def _write_reyn_yaml(tmp_path: Path, *, permissions: dict | None = None) -> None:
-    lines = ["model: standard"]
+    lines = ["llm:\n  model: standard"]
     if permissions is not None:
         lines.append("permissions:")
         for key, value in permissions.items():

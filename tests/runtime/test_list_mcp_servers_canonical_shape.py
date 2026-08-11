@@ -34,7 +34,7 @@ from tests._support.agent_session import make_session
 
 
 def _session(tmp_path: Path) -> Session:
-    (tmp_path / "reyn.yaml").write_text("model: standard\n", encoding="utf-8")
+    (tmp_path / "reyn.yaml").write_text("llm:\n  model: standard\n", encoding="utf-8")
     (tmp_path / "reyn.local.yaml").write_text(
         "mcp:\n  servers:\n"
         "    s1:\n      command: /usr/bin/true\n      description: server 1\n"

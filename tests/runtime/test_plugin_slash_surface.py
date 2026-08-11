@@ -89,7 +89,7 @@ def _make_session(
     writes OUTSIDE the workspace (``~/.reyn/plugins/``), so exercising that
     path for real requires the operator-equivalent explicit
     ``sandbox.policy.write_paths`` grant, supplied here."""
-    (tmp_path / "reyn.yaml").write_text("model: standard\n", encoding="utf-8")
+    (tmp_path / "reyn.yaml").write_text("llm:\n  model: standard\n", encoding="utf-8")
     session = make_session(
         agent_name=agent_name,
         state_log=StateLog(tmp_path / "state.wal"),

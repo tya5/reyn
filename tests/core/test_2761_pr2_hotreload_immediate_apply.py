@@ -72,7 +72,7 @@ def _make_session(tmp_path: Path, *, agent_name: str = "pr2-agent") -> Session:
     """Minimal real Session rooted at *tmp_path* (chdir before calling). Builds
     ``available_skills`` + ``pipeline_registry`` from ``load_config`` so entries already
     written to ``.reyn/config/*.yaml`` are adopted — mirroring session-factory."""
-    (tmp_path / "reyn.yaml").write_text("model: standard\n", encoding="utf-8")
+    (tmp_path / "reyn.yaml").write_text("llm:\n  model: standard\n", encoding="utf-8")
     from reyn.config.loader import load_config
     from reyn.data.pipelines.registry import build_pipeline_registry
     from reyn.data.skills.registry import build_skill_registry

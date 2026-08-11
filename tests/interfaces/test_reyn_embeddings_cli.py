@@ -171,7 +171,7 @@ def test_status_from_a_subdirectory_still_reads_the_project_index(
     real ``run_status`` CLI dispatch (not the pure ``_collect_status_rows``
     helper other tests here call directly), so it exercises the actual
     defect site."""
-    (tmp_path / "reyn.yaml").write_text("model: standard\n", encoding="utf-8")
+    (tmp_path / "reyn.yaml").write_text("llm:\n  model: standard\n", encoding="utf-8")
     _write_index_db(
         _unified_index_dir(tmp_path),
         class_name="light",

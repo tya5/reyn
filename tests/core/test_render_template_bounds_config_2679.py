@@ -67,7 +67,7 @@ def test_operator_yaml_bounds_cap_the_op_through_a_real_session(tmp_path: Path) 
     regression is now caught.
     """
     (tmp_path / "reyn.yaml").write_text(
-        "model: standard\n"
+        "llm:\n  model: standard\n"
         "render_template:\n"
         "  max_output_chars: 20\n"
         "  wall_clock_seconds: 1.5\n"

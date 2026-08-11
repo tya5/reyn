@@ -31,7 +31,7 @@ def test_gateway_auth_non_default_values_round_trip(tmp_path, monkeypatch):
     cfg = _load(
         tmp_path,
         (
-            "model: standard\n"
+            "llm:\n  model: standard\n"
             "gateway:\n"
             "  auth:\n"
             "    token: my-secret-token\n"
@@ -50,7 +50,7 @@ def test_gateway_auth_non_default_values_round_trip(tmp_path, monkeypatch):
 
 def test_gateway_auth_defaults_are_secure(tmp_path, monkeypatch):
     """Tier 1: a missing gateway.auth section defaults to no token + loopback token required."""
-    cfg = _load(tmp_path, "model: standard\n", monkeypatch)
+    cfg = _load(tmp_path, "llm:\n  model: standard\n", monkeypatch)
     auth = cfg.gateway.auth
     assert auth.token is None
     assert auth.require_token_on_loopback is True
@@ -63,7 +63,7 @@ def test_require_token_on_loopback_truthy_strings(tmp_path, monkeypatch, value):
     """Tier 1: an interpolated truthy string for require_token_on_loopback parses True."""
     cfg = _load(
         tmp_path,
-        f"model: standard\ngateway:\n  auth:\n    require_token_on_loopback: '{value}'\n",
+        f"llm:\n  model: standard\ngateway:\n  auth:\n    require_token_on_loopback: '{value}'\n",
         monkeypatch,
     )
     assert cfg.gateway.auth.require_token_on_loopback is True

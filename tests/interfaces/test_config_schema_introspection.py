@@ -33,7 +33,7 @@ from reyn.config.config_schema import (
 
 def _project_root(tmp_path: Path) -> Path:
     """Create a minimal reyn.yaml so _find_project_root succeeds."""
-    (tmp_path / "reyn.yaml").write_text("model: standard\n", encoding="utf-8")
+    (tmp_path / "reyn.yaml").write_text("llm:\n  model: standard\n", encoding="utf-8")
     return tmp_path
 
 
@@ -76,8 +76,9 @@ def test_walk_includes_free_form_dict_leaves() -> None:
     """Tier 2: known free-form dict fields are present with is_dict_leaf=True."""
     nodes = walk_config_schema()
     dict_keys = {n.key for n in nodes if n.is_dict_leaf}
-    # permissions, mcp, models are the three documented free-form dicts at top level
-    for expected in ("permissions", "mcp", "models"):
+    # permissions, mcp are top-level free-form dicts; llm.models moved there
+    # from top-level `models` (#4174 T3).
+    for expected in ("permissions", "mcp", "llm.models"):
         assert expected in dict_keys, f"{expected!r} not in dict_leaf keys: {sorted(dict_keys)}"
 
 
@@ -261,13 +262,14 @@ def test_get_nested_key_resolves_correctly(tmp_path: Path, capsys) -> None:
 
 
 def test_get_top_level_scalar(tmp_path: Path, capsys) -> None:
-    """Tier 2: _get('model') prints 'standard'."""
+    """Tier 2: _get('llm.model') prints 'standard' (#4174 T3: moved from
+    top-level `model`)."""
     root = _project_root(tmp_path)
     old_cwd = os.getcwd()
     os.chdir(root)
     try:
         from reyn.interfaces.cli.commands.config import _get
-        _get("model")
+        _get("llm.model")
         captured = capsys.readouterr()
         assert "standard" in captured.out
         assert captured.err == ""

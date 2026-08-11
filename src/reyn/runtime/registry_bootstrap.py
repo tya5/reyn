@@ -130,7 +130,7 @@ def build_agent_registry_from_project(
       widening.
     - **``interactive=not non_interactive``** on the ``PermissionResolver`` —
       a one-shot caller has no one to answer an interactive approval prompt.
-    - **Default model tier** (``config.model``) + a fresh ``ModelResolver``
+    - **Default model tier** (``config.llm.model``) + a fresh ``ModelResolver``
       built straight from ``config`` — no CLI ``--model`` surface for v1.
 
     ``agent_name``, if given, is not verified to exist here (registry
@@ -169,9 +169,9 @@ def build_agent_registry_from_project(
     # hot-reload IN-set.
     project_context_path = resolve_project_context_path(config, project_root)
     resolver = ModelResolver(
-        config.models,
-        default_class=config.model,
-        purpose_classes=config.model_class_by_purpose,
+        config.llm.models,
+        default_class=config.llm.model,
+        purpose_classes=config.llm.model_class_by_purpose,
     )
     factory_config = SessionFactoryConfig.from_config(config, project_root)
     ws_base_dir = project_root
@@ -193,13 +193,13 @@ def build_agent_registry_from_project(
             # operator; None (default / non-spawn / detached) = self-bound fail-closed.
             intervention_bridge=intervention_bridge,
             agent_name=profile.name,
-            model=config.model,
+            model=config.llm.model,
             resolver=resolver,
             permission_resolver=perm_resolver,
             safety=config.safety,
             mcp_servers=config.mcp,
             output_language=config.output_language,
-            prompt_cache_enabled=config.prompt_cache_enabled,
+            prompt_cache_enabled=config.llm.prompt_cache_enabled,
             project_context=project_context,
             project_context_path=project_context_path,
             agent_role=profile.role,

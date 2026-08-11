@@ -269,7 +269,7 @@ auth:
 def test_load_config_without_auth_block_uses_defaults(tmp_path: Path) -> None:
     """Tier 2: omitting auth: block in reyn.yaml → empty AuthConfig."""
     (tmp_path / "reyn.yaml").write_text(
-        "model: standard\n",
+        "llm:\n  model: standard\n",
         encoding="utf-8",
     )
 

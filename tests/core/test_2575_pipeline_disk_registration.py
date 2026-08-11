@@ -335,7 +335,7 @@ def test_from_config_builds_populated_registry_from_project_root(tmp_path: Path)
 
     _write(tmp_path / "pipelines", "hello.yaml", _HELLO_DSL)
     (tmp_path / "reyn.yaml").write_text(
-        "model: standard\npipelines:\n  entries:\n    hello:\n      path: pipelines/hello.yaml\n",
+        "llm:\n  model: standard\npipelines:\n  entries:\n    hello:\n      path: pipelines/hello.yaml\n",
         encoding="utf-8",
     )
     config = load_config(tmp_path)
@@ -372,7 +372,7 @@ def test_from_config_without_project_root_is_empty(tmp_path: Path, monkeypatch) 
 
     _write(tmp_path / "pipelines", "hello.yaml", _HELLO_DSL)
     (tmp_path / "reyn.yaml").write_text(
-        "model: standard\npipelines:\n  entries:\n    hello:\n      path: pipelines/hello.yaml\n",
+        "llm:\n  model: standard\npipelines:\n  entries:\n    hello:\n      path: pipelines/hello.yaml\n",
         encoding="utf-8",
     )
     monkeypatch.chdir(tmp_path)

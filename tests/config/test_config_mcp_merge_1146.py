@@ -26,7 +26,7 @@ from reyn.config import load_config
 
 
 def _root(tmp_path: Path) -> Path:
-    (tmp_path / "reyn.yaml").write_text("model: standard\n", encoding="utf-8")
+    (tmp_path / "reyn.yaml").write_text("llm:\n  model: standard\n", encoding="utf-8")
     return tmp_path
 
 
@@ -72,7 +72,7 @@ def test_mcp_servers_union_preserved_across_layers(tmp_path: Path) -> None:
     """
     root = tmp_path
     (root / "reyn.yaml").write_text(
-        "model: standard\n"
+        "llm:\n  model: standard\n"
         "mcp:\n  search_threshold: 5\n  servers:\n    alpha:\n      type: stdio\n      command: a\n",
         encoding="utf-8",
     )

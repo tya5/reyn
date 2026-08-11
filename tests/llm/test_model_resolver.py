@@ -216,17 +216,20 @@ def test_is_known_class_mixed_mapping():
 
 
 def test_reyn_config_models_accepts_dict_form():
-    """Tier 2: ReynConfig.models field allows dict-form values through config layer."""
-    from reyn.config import ReynConfig
-    cfg = ReynConfig(models={
+    """Tier 2: ReynConfig.llm.models field allows dict-form values through
+    config layer (#4174 T3: moved from top-level `.models`)."""
+    import dataclasses
+
+    from reyn.config import LLMConfig, ReynConfig
+    cfg = dataclasses.replace(ReynConfig(), llm=LLMConfig(models={
         "light": "openai/gemini-2.5-flash-lite",
         "strong": {
             "model": "anthropic/claude-3-7-sonnet",
             "temperature": 0.0,
             "extra_body": {"thinking": {"type": "enabled", "budget_tokens": 8000}},
         },
-    })
-    r = ModelResolver(cfg.models)
+    }))
+    r = ModelResolver(cfg.llm.models)
     light_spec = r.resolve("light")
     assert light_spec.model == "openai/gemini-2.5-flash-lite"
     assert light_spec.kwargs == {}
@@ -345,7 +348,7 @@ def test_partial_tier_declaration_warns_naming_tier_and_its_fallback_model(
     )
 
     # (c) tells the operator what to write to take control.
-    assert "reyn.yaml" in msg and "models:" in msg
+    assert "reyn.yaml" in msg and "llm.models:" in msg
     assert f"{omitted}: {fallback_model}" in msg, (
         f"warning must include a copy-pasteable `{omitted}: <model>` line: {msg}"
     )

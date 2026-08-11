@@ -56,13 +56,13 @@ def test_invocation_context_seam_still_exports_api_base() -> None:
     api_base = "http://localhost:4000/reyn-2683-seam"
     with TemporaryDirectory() as td:
         project = Path(td)
-        (project / "reyn.yaml").write_text(f"api_base: {api_base}\n", encoding="utf-8")
+        (project / "reyn.yaml").write_text(f"llm:\n  api_base: {api_base}\n", encoding="utf-8")
         with _clean_env_and_cwd(project):
             # Real seam, no mock: from_args → load_config() → the single writer.
             ctx = InvocationContext.from_args(argparse.Namespace())
             # Config carries the value AND the env var was materialized — proving
             # the removed inline copy's job is now done by load_config().
-            assert ctx.config.api_base == api_base
+            assert ctx.config.llm.api_base == api_base
             assert os.environ.get(_KEY) == api_base
 
 
@@ -70,9 +70,9 @@ def test_absent_api_base_leaves_env_unset() -> None:
     """Tier 2: no api_base configured → the seam leaves LITELLM_API_BASE unset."""
     with TemporaryDirectory() as td:
         project = Path(td)
-        (project / "reyn.yaml").write_text("model: standard\n", encoding="utf-8")
+        (project / "reyn.yaml").write_text("llm:\n  model: standard\n", encoding="utf-8")
         with _clean_env_and_cwd(project):
             ctx = InvocationContext.from_args(argparse.Namespace())
-            assert not ctx.config.api_base
+            assert not ctx.config.llm.api_base
             # The ``if _api_base`` guard means no empty/spurious export.
             assert _KEY not in os.environ

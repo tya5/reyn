@@ -168,10 +168,92 @@ class RetryConfig:
 
 @dataclass
 class LLMConfig:
-    """``llm:`` — LLM-layer config (#1829 router, #1835 retry)."""
+    """``llm:`` — LLM-layer config (#1829 router, #1835 retry, #4174 T3 the
+    model-selection domain).
+
+    #4174 T3: ``model`` / ``models`` / ``model_class_by_purpose`` / ``api_base``
+    / ``prompt_cache_enabled`` moved here from top-level ``ReynConfig`` fields —
+    they were always LLM-domain settings scattered at the top level while
+    ``llm.router`` / ``llm.retry`` (also LLM-domain) already lived in their own
+    block. Plain rename, same shapes, registered in
+    ``config_schema._RENAMED_CONFIG_KEYS`` so ``reyn config migrate`` rewrites
+    old top-level keys automatically.
+    """
 
     router: RouterConfig = field(default_factory=RouterConfig)
     retry: RetryConfig = field(default_factory=RetryConfig)
+    # #1672 default model class used when a phase has no model_class.
+    model: str = field(
+        default="standard",
+        metadata={"desc": "Default model class used when a phase has no model_class."},
+    )
+    # Map of model class names to LiteLLM model strings.
+    models: dict[str, "str | dict"] = field(
+        default_factory=dict,
+        metadata={"desc": "Map of model class names to LiteLLM model strings."},
+    )
+    # #1672 per-purpose model-class override (router / control_ir / tool / judge).
+    # Unset purpose -> `model` (see MODEL_CLASS_PURPOSES / ReynConfig.model_class_for).
+    model_class_by_purpose: dict[str, str] = field(default_factory=dict)
+    # LiteLLM proxy: non-secret base URL only. API keys must be env vars
+    # (OPENAI_API_KEY, ANTHROPIC_API_KEY, etc.) — never stored in config files.
+    api_base: str = field(
+        default="",
+        metadata={"desc": "LiteLLM proxy base URL. Set this if you route requests through a local proxy."},
+    )
+    # Attach Anthropic-style cache_control markers to the system prompt so
+    # providers that support prompt caching (Anthropic, AWS Bedrock Claude) can
+    # reuse the prefix across calls. Ignored by providers that don't recognize
+    # cache_control (Gemini / OpenAI proxies pass-through).
+    prompt_cache_enabled: bool = True
+
+
+# #1672: the logical purposes whose model class is configurable via
+# ``model_class_by_purpose``. A typo'd key would silently never apply (the call
+# sites look up fixed keys), so the parser warns on an unknown key rather than
+# hard-failing (forward-compatible — a future purpose key is a warn, not a crash).
+# #3785: ``compaction`` deliberately excluded — see
+# ``_build_model_class_by_purpose``'s dedicated (hard-failing) handling below,
+# not the generic unknown-key warn path.
+MODEL_CLASS_PURPOSES: frozenset[str] = frozenset({
+    "router", "control_ir", "tool", "judge",
+})
+
+
+def _build_model_class_by_purpose(raw: object) -> dict[str, str]:
+    """#1672: parse ``llm.model_class_by_purpose`` (purpose → model class).
+    Unknown purpose keys WARN (not error) — a typo would silently never apply,
+    so flag it decision-enablingly while staying forward-compatible with future
+    purposes.
+
+    #3785: ``compaction`` is the ONE exception — it used to be a valid key
+    (removed) and its presence is not a typo but a stale belief ("compaction
+    runs on its own model"), which a warning would leave uncorrected (the
+    config keeps silently doing nothing every session). Refuses to load
+    instead, with the remedy in the message.
+    """
+    if not isinstance(raw, dict):
+        return {}
+    out: dict[str, str] = {}
+    for k, v in raw.items():
+        key = str(k)
+        if key == "compaction":
+            raise ValueError(
+                "llm.model_class_by_purpose.compaction is no longer "
+                "configurable (#3785) — compaction always follows the "
+                "conversation's active model now (it did not track a "
+                "`/model` switch before, which this removal fixes). Remove "
+                "this key from your reyn.yaml/reyn.local.yaml."
+            )
+        if key not in MODEL_CLASS_PURPOSES:
+            import logging
+            logging.getLogger(__name__).warning(
+                "llm.model_class_by_purpose.%s is not a known purpose %s — "
+                "it will never be applied; check for a typo.",
+                key, sorted(MODEL_CLASS_PURPOSES),
+            )
+        out[key] = str(v)
+    return out
 
 
 def _build_retry_config(raw: object) -> RetryConfig:
@@ -240,14 +322,36 @@ def _build_router_config(raw: object) -> RouterConfig:
 
 
 def _build_llm_config(raw: object) -> LLMConfig:
-    """Parse ``llm:`` from reyn.yaml. None/missing → defaults."""
+    """Parse ``llm:`` from reyn.yaml. None/missing → defaults.
+
+    #4174 T3: also parses ``model`` / ``models`` / ``model_class_by_purpose`` /
+    ``api_base`` / ``prompt_cache_enabled`` — moved here from top-level
+    ``ReynConfig`` fields (see ``LLMConfig``'s own docstring)."""
     if raw is None:
         return LLMConfig()
     if not isinstance(raw, dict):
         raise ValueError(f"llm must be a mapping, got {type(raw).__name__}")
+    _models_raw = raw.get("models")
+    if _models_raw is not None and not isinstance(_models_raw, dict):
+        import logging
+        logging.getLogger(__name__).warning(
+            "llm.models must be a mapping; got %s — ignoring it.",
+            type(_models_raw).__name__,
+        )
+        _models_raw = {}
     return LLMConfig(
         router=_build_router_config(raw.get("router")),
         retry=_build_retry_config(raw.get("retry")),
+        model=str(raw.get("model", "standard")),
+        models={
+            str(k): (v if isinstance(v, dict) else str(v))
+            for k, v in (_models_raw or {}).items()
+        },
+        model_class_by_purpose=_build_model_class_by_purpose(
+            raw.get("model_class_by_purpose"),
+        ),
+        api_base=str(raw.get("api_base") or ""),
+        prompt_cache_enabled=bool(raw.get("prompt_cache_enabled", True)),
     )
 
 

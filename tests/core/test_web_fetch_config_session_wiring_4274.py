@@ -83,7 +83,7 @@ def test_tight_max_download_bytes_reaches_the_op_through_both_builders(
     1000-byte response (default cap is 10 MiB — this response would pass
     uncapped)."""
     (tmp_path / "reyn.yaml").write_text(
-        "model: standard\nweb_fetch:\n  max_download_bytes: 5\n"
+        "llm:\n  model: standard\nweb_fetch:\n  max_download_bytes: 5\n"
     )
 
     cfg = load_config(cwd=tmp_path)
@@ -126,7 +126,7 @@ def test_default_config_leaves_the_response_uncapped_through_a_real_session(
     default (10 MiB), so the same 1000-byte response is NOT capped through
     either builder — the operator config is opt-in, default behaviour
     unchanged by #4274's wiring."""
-    (tmp_path / "reyn.yaml").write_text("model: standard\n")
+    (tmp_path / "reyn.yaml").write_text("llm:\n  model: standard\n")
 
     cfg = load_config(cwd=tmp_path)
     assert cfg.web_fetch == WebFetchConfig()

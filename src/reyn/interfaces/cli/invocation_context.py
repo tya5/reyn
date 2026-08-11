@@ -27,16 +27,16 @@ class InvocationContext:
         # idempotent ``setdefault``); a single-writer AST guard now enforces this.
         config = load_config()
         return cls(config=config, resolver=ModelResolver(
-            config.models,
-            default_class=config.model,
-            purpose_classes=config.model_class_by_purpose,
+            config.llm.models,
+            default_class=config.llm.model,
+            purpose_classes=config.llm.model_class_by_purpose,
         ))
 
     # ── argparse-aware setting resolution (CLI > config) ─────────────────────
 
     def model_for(self, args: argparse.Namespace) -> tuple[str, str]:
         """Return (model_class_or_string, resolved_litellm_string)."""
-        m = getattr(args, "model", None) or self.config.model
+        m = getattr(args, "model", None) or self.config.llm.model
         return m, self.resolver.resolve(m).model
 
     def output_language_for(self, args: argparse.Namespace) -> str | None:

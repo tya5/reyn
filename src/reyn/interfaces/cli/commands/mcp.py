@@ -463,7 +463,7 @@ def run_serve(args: argparse.Namespace) -> None:
             safety=safety,
             mcp_servers=session_cfg.config.mcp,
             output_language=output_language,
-            prompt_cache_enabled=session_cfg.config.prompt_cache_enabled,
+            prompt_cache_enabled=session_cfg.config.llm.prompt_cache_enabled,
             project_context=project_context,
             project_context_path=project_context_path,
             agent_role=profile.role,
