@@ -98,6 +98,54 @@ async def test_spawn_session_recorded_no_narrowing_is_inert(tmp_path: Path) -> N
     assert any(e.get("kind") == "session_spawned" for e in reg.state_log.iter_from(0))
 
 
+@pytest.mark.asyncio
+async def test_spawn_session_recorded_attended_false_reaches_the_sessions_op_context(
+    tmp_path: Path,
+) -> None:
+    """Tier 2: #4193 ① — the end-to-end wiring witness. ``attended=False`` passed
+    to ``spawn_session_recorded`` (the parameter ``RouterHostAdapter.spawn_session``
+    — the ``session_spawn`` LLM tool's dispatch target — sets unconditionally,
+    regardless of ``mode``, see that method's own comment) reaches the SPAWNED
+    session's own live-built ``OpContext`` — not just ``Session._attended`` in
+    isolation, but the actual value ``sandboxed_exec.handle`` would read for an
+    op running inside that session. Read via ``_make_router_op_context()``, the
+    same accessor a dozen other tests in this suite already use as the public
+    product of a Session (not private state — it's the OpContext ITSELF, this
+    just triggers its on-demand construction)."""
+    reg = _registry(tmp_path)
+    sid = await reg.spawn_session_recorded(
+        "worker", mode="persistent", attended=False,
+        presentation_consumer=None, intervention_bridge=None,
+    )
+    session = reg.get_session("worker", sid)
+    assert session is not None
+    ctx = session._make_router_op_context()
+    assert ctx.attended is False, (
+        "attended=False at spawn time did not reach the spawned session's own "
+        "OpContext — sandboxed_exec would still pick the foreground pair for "
+        "this fire-and-forget session, the exact #4193 gap"
+    )
+
+
+@pytest.mark.asyncio
+async def test_spawn_session_recorded_default_attended_stays_true(tmp_path: Path) -> None:
+    """Tier 2: accept-side sibling — a spawn that does NOT pass ``attended``
+    (the attached pipeline driver's and the agent-step worker's own call
+    sites, neither of which name it) leaves the spawned session's OpContext
+    at ``attended=True``, the common "someone is waiting" case. Isolates the
+    branch actually exercised by the test above: same call, only the
+    ``attended`` argument differs."""
+    reg = _registry(tmp_path)
+    sid = await reg.spawn_session_recorded(
+        "worker", mode="persistent",
+        presentation_consumer=None, intervention_bridge=None,
+    )
+    session = reg.get_session("worker", sid)
+    assert session is not None
+    ctx = session._make_router_op_context()
+    assert ctx.attended is True
+
+
 # ── the tool: registration + schema + handler dispatch ──────────────────────
 
 

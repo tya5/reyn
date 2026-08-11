@@ -978,6 +978,14 @@ class Session:
         # The vanish-scheduling state (_vanish_scheduled / _vanish_task) is owned by
         # SpawnTracker, constructed below (see #3133 P3 Extract Class, spawn_tracker.py).
         self._ephemeral: bool = False
+        # #4193 ①: whether the caller that spawned this session is itself waiting
+        # on it — a SEPARATE axis from ``_ephemeral`` above, set post-construction
+        # by ``AgentRegistry.spawn_session_recorded`` from an explicit CALLER
+        # decision, never derived from ``mode``. True by default: the common case
+        # (an interactive chat session, direct/test construction) has someone
+        # waiting. See ``OpContext.attended``'s own docstring for the full
+        # 3-state table this feeds.
+        self._attended: bool = True
         # Lazily-resolved minimal _untrusted profile cache (#1827 S4b, see docs/reference/runtime/session-construction.md#capability-permission-visibility)
         self._untrusted_contextual_cache = None
         # excluded_categories (#1667) + the visibility override (#2285) are owned by
@@ -3994,6 +4002,10 @@ class Session:
             # above and the existing ``ephemeral_fn`` this Session already
             # threads to the MCP gateway (``_mcp_list_via_gateway``, below).
             ephemeral_fn=lambda: self._ephemeral,
+            # #4193 ①: live — ``_attended`` is reassigned post-construction the
+            # same way ``_ephemeral`` is (``AgentRegistry.spawn_session_recorded``,
+            # not mode-derived — see ``Session._attended``'s own docstring).
+            attended_fn=lambda: self._attended,
         )
         # #3482/#3447: the 3-param mcp-gateway cluster (sole reader:
         # RouterHostAdapter._mcp_list_via_gateway) — a real consumer-set

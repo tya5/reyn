@@ -65,6 +65,7 @@ def build_router_op_context(
     run_id: str | None = None,  # chat router is outside run scope (#FP-0021)
     cancel_event: Any = None,  # #1470: asyncio.Event for mid-subprocess cancel
     ephemeral: bool = False,  # #3903 a-2 ③: Session._ephemeral, live — see OpContext.ephemeral's own docstring for what this DOES and does NOT mean
+    attended: bool = True,  # #4193 ①: Session._attended, live — a SEPARATE axis from ephemeral, see OpContext.attended's own docstring
     threat_scan: Any = None,  # FP-0050/#1822 S5 (EP4): exec command-scan config
     contextual_permission: Any = None,  # #1827 S3: per-session capability narrowing → OpContext
     session_id: str | None = None,
@@ -168,6 +169,7 @@ def build_router_op_context(
         ),
         cancel_event=cancel_event,
         ephemeral=ephemeral,
+        attended=attended,
         threat_scan=threat_scan,
         contextual_permission=contextual_permission,
         session_id=session_id,
@@ -250,6 +252,7 @@ class RouterOpContextSource:
         budget_gateway: Any,
         available_skills_fn: Any,
         ephemeral_fn: Any,  # #3903 a-2 ③: Session._ephemeral, live — same reason turn_origin_fn/session_id_fn are `_fn`s, not values (reassigned post-construction)
+        attended_fn: Any,  # #4193 ①: Session._attended, live — same reason as ephemeral_fn above
     ) -> None:
         self._events = events
         self._permission_resolver = permission_resolver
@@ -280,6 +283,7 @@ class RouterOpContextSource:
         self._budget_gateway = budget_gateway
         self._available_skills_fn = available_skills_fn
         self._ephemeral_fn = ephemeral_fn
+        self._attended_fn = attended_fn
         self._cancel_event: Any = None
 
     @property
@@ -334,6 +338,7 @@ class RouterOpContextSource:
             compact_now=self._compact_now,
             cancel_event=self._cancel_event,
             ephemeral=self._resolve(self._ephemeral_fn, False),
+            attended=self._resolve(self._attended_fn, True),
             threat_scan=self._threat_scan,
             contextual_permission=self._resolve(self._contextual_permission_fn),
             session_id=self._resolve(self._session_id_fn),

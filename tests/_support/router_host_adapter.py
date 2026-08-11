@@ -54,6 +54,7 @@ _INERT_OP_CONTEXT_SOURCE_FIELDS: dict = {
     "budget_gateway": None,
     "available_skills_fn": None,
     "ephemeral_fn": None,  # #3903 a-2 ③
+    "attended_fn": None,  # #4193 ①
 }
 
 
