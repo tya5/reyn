@@ -23,6 +23,8 @@ from pathlib import Path
 
 import pytest
 
+from tests._support.minimal_reyn_yaml import MINIMAL_REYN_YAML
+
 # Skip entire module if fastapi / httpx are not installed (same guard as
 # the other web tests).
 pytest.importorskip("fastapi", reason="fastapi not installed ([web] extra missing)")
@@ -65,7 +67,7 @@ def _make_bare_app():
 @pytest.mark.asyncio
 async def test_no_cron_block_scheduler_is_none(tmp_path, monkeypatch):
     """Tier 2: lifespan sets cron_scheduler=None when reyn.yaml has no cron: block."""
-    _write_reyn_yaml(tmp_path, "llm:\n  model: standard\n")
+    _write_reyn_yaml(tmp_path, MINIMAL_REYN_YAML)
     monkeypatch.chdir(tmp_path)
 
     app = _make_bare_app()
@@ -84,7 +86,7 @@ async def test_empty_cron_jobs_scheduler_is_none(tmp_path, monkeypatch):
     """Tier 2: lifespan sets cron_scheduler=None when cron.jobs is empty."""
     _write_reyn_yaml(
         tmp_path,
-        "llm:\n  model: standard\ncron:\n  jobs: []\n",
+        MINIMAL_REYN_YAML + "cron:\n  jobs: []\n",
     )
     monkeypatch.chdir(tmp_path)
 
@@ -105,7 +107,7 @@ async def test_all_jobs_disabled_scheduler_is_none(tmp_path, monkeypatch):
     _write_reyn_yaml(
         tmp_path,
         (
-            "llm:\n  model: standard\n"
+            MINIMAL_REYN_YAML +
             "cron:\n"
             "  jobs:\n"
             "    - name: nightly_disabled\n"
@@ -135,7 +137,7 @@ async def test_enabled_job_scheduler_is_cron_scheduler_instance(tmp_path, monkey
     _write_reyn_yaml(
         tmp_path,
         (
-            "llm:\n  model: standard\n"
+            MINIMAL_REYN_YAML +
             "cron:\n"
             "  jobs:\n"
             "    - name: far_future_job\n"
@@ -188,7 +190,7 @@ async def test_shutdown_stops_scheduler(tmp_path, monkeypatch):
     _write_reyn_yaml(
         tmp_path,
         (
-            "llm:\n  model: standard\n"
+            MINIMAL_REYN_YAML +
             "cron:\n"
             "  jobs:\n"
             "    - name: stop_test_job\n"
@@ -234,7 +236,7 @@ async def test_run_registry_is_set_in_lifespan(tmp_path, monkeypatch):
     """Tier 2: lifespan sets app.state.run_registry (FP-0001 not regressed by move)."""
     from reyn.interfaces.web.run_registry import RunRegistry
 
-    _write_reyn_yaml(tmp_path, "llm:\n  model: standard\n")
+    _write_reyn_yaml(tmp_path, MINIMAL_REYN_YAML)
     monkeypatch.chdir(tmp_path)
 
     app = _make_bare_app()
@@ -270,7 +272,7 @@ async def test_malformed_cron_schedule_does_not_prevent_boot(tmp_path, monkeypat
     _write_reyn_yaml(
         tmp_path,
         (
-            "llm:\n  model: standard\n"
+            MINIMAL_REYN_YAML +
             "cron:\n"
             "  jobs:\n"
             "    - name: bad_job\n"

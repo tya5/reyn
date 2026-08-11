@@ -36,6 +36,7 @@ from reyn.config import (
     _build_action_retrieval_config,
     load_config,
 )
+from tests._support.minimal_reyn_yaml import MINIMAL_REYN_YAML
 
 # ── 1. Default values ─────────────────────────────────────────────────────
 
@@ -209,7 +210,7 @@ def test_load_config_without_action_retrieval_uses_defaults(tmp_path: Path) -> N
     ``universal_wrappers_enabled: false`` in reyn.yaml.
     """
     (tmp_path / "reyn.yaml").write_text(
-        "llm:\n  model: standard\n",
+        MINIMAL_REYN_YAML,
         encoding="utf-8",
     )
 
@@ -254,7 +255,7 @@ def test_load_config_hot_list_n_explicit_opt_in(tmp_path: Path) -> None:
     """Tier 2: N=0 default flip — explicit hot_list_n: 10 in reyn.yaml enables
     the hot-list (symmetric pin: default off, explicit on)."""
     (tmp_path / "reyn.yaml").write_text(
-        "llm:\n  model: standard\naction_retrieval:\n  hot_list_n: 10\n",
+        MINIMAL_REYN_YAML + "action_retrieval:\n  hot_list_n: 10\n",
         encoding="utf-8",
     )
     cfg = load_config(cwd=tmp_path)
@@ -263,6 +264,6 @@ def test_load_config_hot_list_n_explicit_opt_in(tmp_path: Path) -> None:
 
 def test_load_config_hot_list_n_default_is_zero(tmp_path: Path) -> None:
     """Tier 2: N=0 default flip — bare reyn.yaml with no hot_list_n gives 0."""
-    (tmp_path / "reyn.yaml").write_text("llm:\n  model: standard\n", encoding="utf-8")
+    (tmp_path / "reyn.yaml").write_text(MINIMAL_REYN_YAML, encoding="utf-8")
     cfg = load_config(cwd=tmp_path)
     assert cfg.action_retrieval.hot_list_n == 0

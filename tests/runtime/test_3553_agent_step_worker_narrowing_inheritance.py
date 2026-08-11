@@ -62,6 +62,7 @@ from reyn.runtime.session_params import PresentationWiring
 from reyn.runtime.spawn_routing import AuditOnlyNoSurface
 from reyn.security.permissions.capability_profile import compose_narrowing_mappings
 from tests._support.agent_session import make_session
+from tests._support.minimal_reyn_yaml import MINIMAL_REYN_YAML
 from tests._support.permissions import make_resolver
 
 #: The capability under test: a real, catalog-listed, side-effecting tool whose
@@ -112,7 +113,7 @@ def _registry(tmp_path: Path, scripted: "_WritesOnceLLM") -> AgentRegistry:
     real ``PermissionResolver`` (with ``file.write`` approved, so a denial observed
     below is the capability narrowing and not the write gate)."""
     if not (tmp_path / "reyn.yaml").exists():
-        (tmp_path / "reyn.yaml").write_text("llm:\n  model: standard\n", encoding="utf-8")
+        (tmp_path / "reyn.yaml").write_text(MINIMAL_REYN_YAML, encoding="utf-8")
     state_log = StateLog(tmp_path / ".reyn" / "wal.jsonl")
     holder: dict = {}
     resolver = ModelResolver({"standard": "gemini/gemini-2.5-flash-lite"})

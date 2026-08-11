@@ -44,6 +44,7 @@ from reyn.runtime.outbox import OutboxMessage
 from reyn.runtime.profile import AgentProfile
 from reyn.runtime.registry import _DEFAULT_SID, AgentRegistry
 from tests._support.agent_session import make_session
+from tests._support.minimal_reyn_yaml import MINIMAL_REYN_YAML
 
 
 def _registry(tmp_path):
@@ -178,7 +179,7 @@ async def test_real_agui_endpoint_boot_does_not_touch_registry_focus(tmp_path, m
 
     monkeypatch.chdir(tmp_path)
     state_log = StateLog(tmp_path / "state.wal")
-    (tmp_path / "reyn.yaml").write_text("llm:\n  model: standard\n", encoding="utf-8")
+    (tmp_path / "reyn.yaml").write_text(MINIMAL_REYN_YAML, encoding="utf-8")
 
     def _factory(profile, *, presentation_consumer=None, intervention_bridge=None):
         return make_session(

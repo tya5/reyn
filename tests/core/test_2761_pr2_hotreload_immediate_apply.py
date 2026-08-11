@@ -48,6 +48,7 @@ from reyn.runtime.session_params import CapabilityScope
 from reyn.security.permissions.permissions import PermissionDecl
 from tests._support.agent_session import make_session
 from tests._support.events import collect_events
+from tests._support.minimal_reyn_yaml import MINIMAL_REYN_YAML
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -72,7 +73,7 @@ def _make_session(tmp_path: Path, *, agent_name: str = "pr2-agent") -> Session:
     """Minimal real Session rooted at *tmp_path* (chdir before calling). Builds
     ``available_skills`` + ``pipeline_registry`` from ``load_config`` so entries already
     written to ``.reyn/config/*.yaml`` are adopted — mirroring session-factory."""
-    (tmp_path / "reyn.yaml").write_text("llm:\n  model: standard\n", encoding="utf-8")
+    (tmp_path / "reyn.yaml").write_text(MINIMAL_REYN_YAML, encoding="utf-8")
     from reyn.config.loader import load_config
     from reyn.data.pipelines.registry import build_pipeline_registry
     from reyn.data.skills.registry import build_skill_registry

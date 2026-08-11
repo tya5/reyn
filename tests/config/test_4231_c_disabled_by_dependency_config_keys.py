@@ -26,6 +26,7 @@ from pathlib import Path
 import pytest
 
 from reyn.config.config_schema import disabled_config_keys
+from tests._support.minimal_reyn_yaml import MINIMAL_REYN_YAML
 
 # ── the pure primitive ───────────────────────────────────────────────────
 
@@ -112,7 +113,7 @@ def test_validate_reports_the_disabled_key_with_all_four_elements(project, capsy
 
     _write_yaml(
         project / "reyn.yaml",
-        "llm:\n  model: standard\naction_retrieval:\n  universal_wrappers_enabled: true\n",
+        MINIMAL_REYN_YAML + "action_retrieval:\n  universal_wrappers_enabled: true\n",
     )
     _validate()
     out = capsys.readouterr().out
@@ -129,7 +130,7 @@ def test_validate_does_not_flag_universal_category_scheme(project, capsys):
 
     _write_yaml(
         project / "reyn.yaml",
-        "llm:\n  model: standard\n"
+        MINIMAL_REYN_YAML +
         "action_retrieval:\n  universal_wrappers_enabled: true\n"
         "tool_use:\n  scheme: universal-category\n",
     )

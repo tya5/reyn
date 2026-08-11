@@ -19,6 +19,7 @@ from pathlib import Path
 from reyn.config.media import AuthConfig, GatewayConfig
 from reyn.config.root import ReynConfig
 from reyn.interfaces.cli.commands.web import _apply_auth_startup
+from tests._support.minimal_reyn_yaml import MINIMAL_REYN_YAML
 
 
 def test_uds_run_dir_created_at_the_project_root_from_a_subdirectory(
@@ -31,7 +32,7 @@ def test_uds_run_dir_created_at_the_project_root_from_a_subdirectory(
     UDS mode is the minimal path to isolate this (no token generation, no
     TLS provisioning branch to also stand up) — `_apply_auth_startup`
     returns early right after `run_dir.mkdir()` for a UDS bind."""
-    (tmp_path / "reyn.yaml").write_text("llm:\n  model: standard\n", encoding="utf-8")
+    (tmp_path / "reyn.yaml").write_text(MINIMAL_REYN_YAML, encoding="utf-8")
     subdir = tmp_path / "src" / "nested"
     subdir.mkdir(parents=True)
     monkeypatch.chdir(subdir)

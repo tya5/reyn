@@ -26,6 +26,7 @@ from pathlib import Path
 
 import pytest
 
+from tests._support.minimal_reyn_yaml import MINIMAL_REYN_YAML
 from tests._support.paths import REPO_ROOT
 
 # Same path-bootstrap pattern as tests/web/test_smoke.py — keep the
@@ -50,7 +51,7 @@ def tmp_project(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     agents_dir = reyn_dir / "agents" / "researcher"
     agents_dir.mkdir(parents=True)
 
-    (tmp_path / "reyn.yaml").write_text("llm:\n  model: standard\n", encoding="utf-8")
+    (tmp_path / "reyn.yaml").write_text(MINIMAL_REYN_YAML, encoding="utf-8")
     (agents_dir / "profile.yaml").write_text(
         "name: researcher\nrole: ''\ncreated_at: '2026-01-01T00:00:00+00:00'\n",
         encoding="utf-8",

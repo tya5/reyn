@@ -20,6 +20,7 @@ from reyn.config import (
     _build_auth_config,
     load_config,
 )
+from tests._support.minimal_reyn_yaml import MINIMAL_REYN_YAML
 
 # ── 1. Default values ─────────────────────────────────────────────────────────
 
@@ -269,7 +270,7 @@ auth:
 def test_load_config_without_auth_block_uses_defaults(tmp_path: Path) -> None:
     """Tier 2: omitting auth: block in reyn.yaml → empty AuthConfig."""
     (tmp_path / "reyn.yaml").write_text(
-        "llm:\n  model: standard\n",
+        MINIMAL_REYN_YAML,
         encoding="utf-8",
     )
 

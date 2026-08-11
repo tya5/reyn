@@ -32,13 +32,14 @@ from reyn.tools.mcp_verbs import (
     _handle_mcp_install_registry,
 )
 from reyn.tools.types import RouterCallerState, ToolContext
+from tests._support.minimal_reyn_yaml import MINIMAL_REYN_YAML
 
 # ── Layer A: --project + resolve-once + fail-loud ───────────────────────────
 
 
 def test_resolve_project_root_from_explicit_project(tmp_path):
     """Tier 2: #1442 A — --project resolves to that root (not cwd)."""
-    (tmp_path / "reyn.yaml").write_text("llm:\n  model: standard\n", encoding="utf-8")
+    (tmp_path / "reyn.yaml").write_text(MINIMAL_REYN_YAML, encoding="utf-8")
     assert _resolve_install_project_root(str(tmp_path)) == tmp_path.resolve()
 
 

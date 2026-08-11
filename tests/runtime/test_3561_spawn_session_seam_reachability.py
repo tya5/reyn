@@ -110,6 +110,7 @@ from reyn.runtime.session_api import run_agent_step
 from reyn.runtime.session_params import PresentationWiring
 from reyn.runtime.spawn_routing import AuditOnlyNoSurface
 from tests._support.agent_session import make_session
+from tests._support.minimal_reyn_yaml import MINIMAL_REYN_YAML
 from tests._support.permissions import make_resolver
 from tests._support.slash import RecordingTransport
 
@@ -153,7 +154,7 @@ def _registry(
     auto-vanish, and its real-litellm-name resolver so a spawned session's
     model-support pre-check has a name to resolve."""
     if not (tmp_path / "reyn.yaml").exists():
-        (tmp_path / "reyn.yaml").write_text("llm:\n  model: standard\n", encoding="utf-8")
+        (tmp_path / "reyn.yaml").write_text(MINIMAL_REYN_YAML, encoding="utf-8")
     state_log = StateLog(tmp_path / ".reyn" / "wal.jsonl")
     holder: dict = {}
     resolver = ModelResolver({"standard": "gemini/gemini-2.5-flash-lite"})

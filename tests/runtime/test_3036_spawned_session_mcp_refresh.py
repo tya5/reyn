@@ -44,6 +44,7 @@ from reyn.runtime.profile import AgentProfile
 from reyn.runtime.registry import AgentRegistry
 from reyn.runtime.session import Session
 from tests._support.agent_session import make_session
+from tests._support.minimal_reyn_yaml import MINIMAL_REYN_YAML
 
 
 def _install_server_in_config(project_root: Path, name: str) -> None:
@@ -64,7 +65,7 @@ def _make_registry(tmp_path: Path) -> AgentRegistry:
     (main + every programmatic spawn) starts with this EMPTY snapshot; only the fix
     under test (a spawn-time `refresh_mcp_servers()` call) can make a freshly
     spawned session see a server installed after the registry was built."""
-    (tmp_path / "reyn.yaml").write_text("llm:\n  model: standard\n", encoding="utf-8")
+    (tmp_path / "reyn.yaml").write_text(MINIMAL_REYN_YAML, encoding="utf-8")
     state_log = StateLog(tmp_path / "wal.jsonl")
     holder: dict = {}
 

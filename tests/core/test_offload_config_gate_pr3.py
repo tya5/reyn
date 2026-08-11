@@ -24,6 +24,7 @@ from pathlib import Path
 from reyn.config import CompactionConfig, OffloadConfig, _build_offload_config
 from reyn.data.workspace.media_store import MediaStore, MediaStoreConfig
 from reyn.runtime.services.context_budget_advisor import ContextBudgetAdvisor
+from tests._support.minimal_reyn_yaml import MINIMAL_REYN_YAML
 
 
 def _write_yaml(path: Path, content: str) -> None:
@@ -61,7 +62,7 @@ def test_load_config_reads_offload_enabled_true(tmp_path):
 
     _write_yaml(
         tmp_path / "reyn.yaml",
-        "llm:\n  model: standard\noffload:\n  enabled: true\n",
+        MINIMAL_REYN_YAML + "offload:\n  enabled: true\n",
     )
     config = load_config(cwd=tmp_path)
     assert config.offload.enabled is True

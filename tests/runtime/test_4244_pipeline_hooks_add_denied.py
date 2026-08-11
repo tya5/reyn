@@ -53,10 +53,11 @@ from reyn.runtime.registry import AgentRegistry
 from reyn.runtime.services.pipeline_executor_driver import PipelineExecutorDriver
 from reyn.runtime.session import Session
 from tests._support.agent_session import make_session
+from tests._support.minimal_reyn_yaml import MINIMAL_REYN_YAML
 
 
 def _registry(tmp_path: Path) -> AgentRegistry:
-    (tmp_path / "reyn.yaml").write_text("llm:\n  model: standard\n", encoding="utf-8")
+    (tmp_path / "reyn.yaml").write_text(MINIMAL_REYN_YAML, encoding="utf-8")
     state_log = StateLog(tmp_path / ".reyn" / "wal.jsonl")
     holder: dict = {}
 

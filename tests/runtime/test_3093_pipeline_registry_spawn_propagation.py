@@ -82,6 +82,7 @@ from reyn.runtime.session_params import PresentationWiring
 from reyn.tools.pipeline_verbs import _handle_run_pipeline
 from reyn.tools.types import RouterCallerState, ToolContext
 from tests._support.agent_session import make_session
+from tests._support.minimal_reyn_yaml import MINIMAL_REYN_YAML
 
 
 def _scripted_llm():
@@ -108,7 +109,7 @@ def _agent_registry(tmp_path: Path, state_log: "StateLog") -> AgentRegistry:
     from reyn.data.pipelines.registry import build_pipeline_registry
 
     if not (tmp_path / "reyn.yaml").exists():
-        (tmp_path / "reyn.yaml").write_text("llm:\n  model: standard\n", encoding="utf-8")
+        (tmp_path / "reyn.yaml").write_text(MINIMAL_REYN_YAML, encoding="utf-8")
     holder: dict = {}
     frozen_registry = build_pipeline_registry(load_config(tmp_path).pipelines, tmp_path)
 

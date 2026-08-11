@@ -48,6 +48,7 @@ from reyn.security.permissions.permissions import PermissionDecl
 from reyn.tools.mcp_verbs import _handle_mcp_install_local
 from reyn.tools.types import RouterCallerState, ToolContext
 from tests._support.agent_session import make_session
+from tests._support.minimal_reyn_yaml import MINIMAL_REYN_YAML
 from tests._support.paths import REPO_ROOT
 
 _PID_SERVER = REPO_ROOT / "tests" / "_support" / "mcp_tools_only_pid_server.py"
@@ -101,7 +102,7 @@ def _Ctx(root: Path, rs: "RouterCallerState | None") -> ToolContext:
 
 
 def _session(tmp: Path) -> Session:
-    (tmp / "reyn.yaml").write_text("llm:\n  model: standard\n", encoding="utf-8")
+    (tmp / "reyn.yaml").write_text(MINIMAL_REYN_YAML, encoding="utf-8")
     return make_session(
         agent_name="mcp-pr3",
         state_log=StateLog(tmp / "s.wal"),
