@@ -146,6 +146,15 @@ if TYPE_CHECKING:
 # (capability_profile.py) to add each tool's second, catalog-qualified spelling.
 _DELEGATION_DENY_TOOLS: tuple[str, ...] = (
     "run_pipeline",
+    # #4244: kept in lock-step with ``pipeline_verbs._PIPELINE_STEP_DENY_TOOLS``
+    # — see that set's own comment for the confused-deputy reason (an LLM-
+    # authored pipeline `tool: hooks_add` step, run by a wider-authority
+    # principal via reyn pipe run's session-less context, writing into the
+    # shared GLOBAL hooks.yaml). A DIFFERENT hazard shape than
+    # ``run_pipeline``'s R6 S3 nesting reason, but the two sets are required
+    # to stay equal (``test_pipeline_step_deny_sets_are_equal``) so a tool
+    # denied in one dispatch context is denied in the other too.
+    "hooks_add",
 )
 
 # MessageBus.request has no default — an agent step needs one so callers
