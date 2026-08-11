@@ -76,7 +76,21 @@ def _resolve_action_index_dir(project_root: Path) -> Path:
 
 
 def _get_project_root() -> Path:
-    """Return cwd as the project root (consistent with other reyn commands)."""
+    """Return raw cwd as the project root.
+
+    #4204: this does NOT match the convention every other CLI command
+    module (chat.py / config.py / dogfood.py / mcp.py / memory.py /
+    permissions.py / pipe.py / plugin.py) converges on —
+    ``_find_project_root(Path.cwd()) or Path.cwd()``, which walks up from
+    cwd to find the actual project root (a `reyn.yaml`/`.reyn/` marker)
+    rather than anchoring wherever the operator happened to launch from.
+    A prior version of this docstring claimed the opposite ("consistent
+    with other reyn commands") — false, and left uncorrected long enough
+    that the false claim was itself the risk (the next reader who trusted
+    it would copy this shape believing it matched the rest of the CLI).
+    Fixing the underlying cwd-vs-project_root gap is tracked separately
+    (#4204 bucket A); this docstring only stops asserting something untrue.
+    """
     return Path.cwd()
 
 
