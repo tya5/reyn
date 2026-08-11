@@ -284,6 +284,55 @@ def test_config_background_timeout_defaults_independently_of_foreground() -> Non
     assert policy.background_max_timeout_seconds is None
 
 
+def test_config_background_max_timeout_seconds_operator_settable() -> None:
+    """Tier 2: #3903 a-2 ③ — an operator CAN configure a real background
+    ceiling (overriding the None/"no cap" default) — the field is `int |
+    None`, not `None`-only. Registered now that ③ gives these keys a real
+    reader (sandboxed_exec.py's ctx.ephemeral branch)."""
+    from reyn.security.sandbox.policy import resolve_sandbox_policy
+
+    cfg = SandboxConfig(
+        policy={"background_timeout_seconds": 300, "background_max_timeout_seconds": 900}
+    )
+    resolved = resolve_sandbox_policy(cfg.policy, write_paths=[], mode=cfg.mode)
+    assert resolved["background_timeout_seconds"] == 300
+    assert resolved["background_max_timeout_seconds"] == 900
+
+
+def test_config_clamps_background_default_above_an_explicit_background_max(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Tier 2: #3903 a-2 ③ — the default<=max self-consistency check applies
+    to the background pair too, matching #4174 T0's warn+clamp posture
+    (not the raise #4186's own first draft used, since T0 landed on main
+    between #4186 and this PR — see test_config_clamps_default_timeout_above_an_explicit_lower_max
+    above, the foreground sibling this mirrors)."""
+    from reyn.security.sandbox.policy import resolve_sandbox_policy
+
+    cfg = SandboxConfig(
+        policy={"background_timeout_seconds": 1000, "background_max_timeout_seconds": 900}
+    )
+    with caplog.at_level(logging.WARNING):
+        resolved = resolve_sandbox_policy(cfg.policy, write_paths=[], mode=cfg.mode)
+    assert resolved["background_timeout_seconds"] == 900
+    messages = [r.getMessage() for r in caplog.records]
+    assert any("background_max_timeout_seconds" in m for m in messages), messages
+
+
+def test_config_background_max_timeout_seconds_none_skips_the_consistency_check() -> None:
+    """Tier 2: #3903 a-2 ③ — an explicit background_max_timeout_seconds=None
+    (the "no cap" case, the actual default) must not warn/clamp regardless
+    of how large background_timeout_seconds is — there is no ceiling to
+    exceed."""
+    from reyn.security.sandbox.policy import resolve_sandbox_policy
+
+    cfg = SandboxConfig(
+        policy={"background_timeout_seconds": 999999, "background_max_timeout_seconds": None}
+    )
+    resolved = resolve_sandbox_policy(cfg.policy, write_paths=[], mode=cfg.mode)
+    assert resolved["background_timeout_seconds"] == 999999
+
+
 def test_unknown_config_keys_flags_a_renamed_sandbox_policy_key_with_guidance() -> None:
     """Tier 2: #3823 / #4174 T0 — an operator on a pre-#3823 (or pre-#3901)
     config who still writes an OLD internal-vocabulary key (`write_paths`,
