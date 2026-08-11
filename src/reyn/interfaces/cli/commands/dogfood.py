@@ -465,7 +465,12 @@ def _build_live_runner(agent_name: str, *, env_backend=None, ws_base_dir=None, w
     from dataclasses import replace
     from pathlib import Path
 
-    from reyn.config import _find_project_root, load_config, load_project_context
+    from reyn.config import (
+        _find_project_root,
+        load_config,
+        load_project_context,
+        resolve_project_context_path,
+    )
     from reyn.core.events.event_store import EventStore
     from reyn.dev.dogfood.runner import ScenarioRunResult
     from reyn.llm.model_resolver import ModelResolver
@@ -490,6 +495,8 @@ def _build_live_runner(agent_name: str, *, env_backend=None, ws_base_dir=None, w
     output_language = config.output_language
     safety = config.safety
     project_context = load_project_context(config, project_root)
+    # #3787: read-only turn-boundary edit-detection watcher target.
+    project_context_path = resolve_project_context_path(config, project_root)
     perm_config = getattr(config, "permissions", {}) or {}
 
     perm_resolver = PermissionResolver(
@@ -542,6 +549,7 @@ def _build_live_runner(agent_name: str, *, env_backend=None, ws_base_dir=None, w
                 output_language=output_language,
                 prompt_cache_enabled=config.prompt_cache_enabled,
                 project_context=project_context,
+                project_context_path=project_context_path,
                 agent_role=profile.role,
                 compaction_config=config.chat.compaction,
                 reasoning_config=config.chat.reasoning,  # #1652

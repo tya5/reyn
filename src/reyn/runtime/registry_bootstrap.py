@@ -139,7 +139,7 @@ def build_agent_registry_from_project(
     against (e.g. an ``AgentStep``'s own ``identity`` narrows further, or
     falls back to the pipeline run's ``default_identity``).
     """
-    from reyn.config import load_project_context
+    from reyn.config import load_project_context, resolve_project_context_path
     from reyn.llm.model_resolver import ModelResolver
     from reyn.runtime.factory_config import SessionFactoryConfig
     from reyn.runtime.presentation_consumer import OutboxPresentationConsumer
@@ -163,6 +163,11 @@ def build_agent_registry_from_project(
     )
 
     project_context = load_project_context(config, project_root)
+    # #3787: the resolved path (not just the content) so Session can watch it
+    # for edits at the turn boundary — read-only detection, see
+    # ProjectContextWatcher's module docstring for why this is not the #2073
+    # hot-reload IN-set.
+    project_context_path = resolve_project_context_path(config, project_root)
     resolver = ModelResolver(
         config.models,
         default_class=config.model,
@@ -196,6 +201,7 @@ def build_agent_registry_from_project(
             output_language=config.output_language,
             prompt_cache_enabled=config.prompt_cache_enabled,
             project_context=project_context,
+            project_context_path=project_context_path,
             agent_role=profile.role,
             compaction_config=config.chat.compaction,
             reasoning_config=config.chat.reasoning,

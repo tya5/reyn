@@ -346,6 +346,7 @@ AUDIT_EVENT_KINDS: frozenset[str] = frozenset({
     "presentation_installed",
     "presentation_load_failed",
     "presented",
+    "project_context_changed",
     "router_context_overflow_detected",
     "router_context_overflow_unrecovered",
     "router_empty_response_detected",
