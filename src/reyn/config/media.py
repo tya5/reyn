@@ -40,7 +40,8 @@ class VoiceConfig:
                                       # Silicon. Override per-machine if needed.
     num_workers: int = 1              # parallel transcribe streams; we only ever run
                                       # one at a time, so 1 keeps memory + threads low
-    max_duration_s: float = 300.0     # auto-cancel recordings longer than this
+    max_duration_s: float = 300.0     # auto-stop AND TRANSCRIBE (not cancel) a
+                                      # recording left open longer than this
 
 
 @dataclass
