@@ -36,7 +36,12 @@ import signal
 import subprocess
 
 from .._subprocess_io import communicate_capped, kill_process_tree
-from ..backend import SandboxResult, WrappedCommand
+from ..backend import (
+    AxisEnforcement,
+    AxisEnforcementDeclaration,
+    SandboxResult,
+    WrappedCommand,
+)
 from ..policy import SandboxPolicy, expand_policy_path, resolve_passthrough_env
 from .seccomp import load_seccomp_filter, preload_native_dependency
 
@@ -259,6 +264,29 @@ class LandlockBackend:
     """
 
     name: str = "landlock"
+
+    # #4039 (D1/D2): write is Landlock's own LSM path-beneath enforcement.
+    # write_deny_paths/read_deny_paths are DOES_NOT_ENFORCE — the module
+    # docstring's own structural constraint (allowlist-only, cannot carve a
+    # subpath out of an allowed parent), the ORIGINAL gap
+    # _DENY_LIST_INCAPABLE_BACKENDS existed to name. network + deny_subprocess
+    # ARE enforced here despite Landlock's LSM itself having no net-port API —
+    # this backend also always loads a seccomp-BPF filter (see module
+    # docstring, #3030) that gates both; the Protocol's "name" is "landlock"
+    # even though the witness for these two axes is internally seccomp-BPF —
+    # a different, finer-grained provenance detail axis_contract.py's
+    # witness_strength dict tracks, not this declaration's concern. Both env
+    # fields flow through resolve_passthrough_env (this module's own env
+    # resolution call).
+    enforced_axes: AxisEnforcementDeclaration = AxisEnforcementDeclaration(
+        write_paths=AxisEnforcement.ENFORCES,
+        write_deny_paths=AxisEnforcement.DOES_NOT_ENFORCE,
+        read_deny_paths=AxisEnforcement.DOES_NOT_ENFORCE,
+        network=AxisEnforcement.ENFORCES,
+        deny_subprocess=AxisEnforcement.ENFORCES,
+        env_deny_names=AxisEnforcement.ENFORCES,
+        allow_env_names=AxisEnforcement.ENFORCES,
+    )
 
     def __init__(self) -> None:
         self._abi_version: int | None = None  # populated on first available() call

@@ -210,7 +210,7 @@ async def handle(
     # backend actually did with it (owner: "sandbox 抽象は ポリシを 保証できない.
     # backend が できる 範囲で 保証するしか ない"). Deliberately NOT wired into
     # enforcement_self_test (CLAUDE.md hard rule).
-    unenforced = unenforced_axes(backend.name, policy)
+    unenforced = unenforced_axes(backend, policy)
     if unenforced:
         reason = unenforced_axis_reason(backend.name)
         ctx.events.emit(

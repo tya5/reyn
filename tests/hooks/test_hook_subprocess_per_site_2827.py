@@ -26,6 +26,7 @@ import pytest
 
 from reyn.hooks.loader import HookConfigError, load_hooks
 from reyn.security.sandbox.backend import SandboxResult
+from tests._support.sandbox_backend import FULLY_ENFORCING_AXES
 
 
 class _RecordingBackend:
@@ -36,6 +37,7 @@ class _RecordingBackend:
     """
 
     name = "recording"
+    enforced_axes = FULLY_ENFORCING_AXES
 
     def __init__(self) -> None:
         self.calls: list[tuple[list[str], object]] = []
