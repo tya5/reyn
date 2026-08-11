@@ -69,7 +69,6 @@ can additionally be written on an **agent** surface (`.reyn/agents/<name>/`,
 | `observability` | map | PRJ only · **restart** | Opt-in OpenTelemetry (OTLP) export of P6 audit-events. Off by default. See below. |
 | `tool_use` | map | PRJ only · **restart** | Chat-layer tool-use scheme x transport selector (`scheme`, `transport`). See below. |
 | `mcp` | map | both (`.reyn/config/mcp.yaml` side is **hot-reloaded**) | MCP server definitions. See below. |
-| `python` | map | PRJ only · **restart** | Additional modules the Python preprocessor may import (`python.allowed_modules`) — that one list is the whole key. See below. |
 | `agent` | map | PRJ only · **restart** | Agent **identity** only (`agent.id`) — stamped on the P6 audit trail and the outgoing HTTP header. Does **not** define or configure agents; agent definitions live in `.reyn/agents/<name>/`. See below. |
 | `auth` | map | PRJ only · **restart** | OAuth provider configurations for `reyn auth login`. See below. |
 | `cron` | map | both (`.reyn/config/cron.yaml` side is **hot-reloaded**) | Scheduled skill executions. See below. |
@@ -2009,25 +2008,6 @@ voice:
 | `cpu_threads` | int | `4` | CPU threads for faster-whisper. `0` = OpenMP default. Pinning to 4 avoids OpenMP/Python-threading deadlocks on Apple Silicon. |
 | `num_workers` | int | `1` | Parallel transcription streams. `1` keeps memory + thread usage low. |
 | `max_duration_s` | float | `300.0` | Auto-cancel recordings longer than this (seconds). Prevents runaway memory growth from unattended recordings. |
-
-## `python` block
-
-Python preprocessor settings. Extends the built-in safe-mode allowlist of importable modules.
-
-```yaml
-python:
-  allowed_modules:
-    - math
-    - statistics
-    - json
-    - re
-```
-
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `allowed_modules` | list[string] | `[]` | Additional module names that safe-mode Python preprocessor steps may import, on top of the built-in stdlib allowlist. Libraries with internal I/O (e.g. `pandas`, `requests`) defeat safe-mode sandboxing — curate carefully. |
-
-> Python steps are always sandboxed. A `mode: unsafe` declaration is rejected at load — split raw I/O out via a `run_op` step, or use the permission-gated `reyn.api.safe.*` surface. See [Reference: permissions](permissions.md) for the full permission grammar.
 
 ## `multimodal` block
 
