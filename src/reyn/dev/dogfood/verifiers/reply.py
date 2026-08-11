@@ -56,6 +56,10 @@ async def _default_judge_fn(rubric: list[str], reply_text: str) -> dict:
         model="gemini-2.5-flash-lite",
         messages=messages,
         purpose="dogfood",
+        # #4206 T1: a fixed literal model string, never resolved via
+        # class_for_purpose — not subject to the ②bounding model-class
+        # ceiling axis.
+        model_class=None,
         recorder=None,
         response_format={"type": "json_object"},
         fallback_without_response_format=True,

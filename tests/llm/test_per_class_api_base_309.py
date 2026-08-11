@@ -102,6 +102,7 @@ def test_per_class_routing_overrides_global_proxy(monkeypatch) -> None:
     asyncio.run(recorded_acompletion(
         model="gemini/x", messages=[{"role": "user", "content": "hi"}],
         purpose="main", recorder=None,
+        model_class=None,  # #4206 T1: not subject to the axis (pre-existing call)
         routing={"api_base": "https://PERCLASS.endpoint", "custom_llm_provider": "openai", "api_key": "k"},
     ))
     assert box["api_base"] == "https://PERCLASS.endpoint"  # per-class, not GLOBAL
@@ -117,5 +118,6 @@ def test_global_proxy_used_when_no_per_class_routing(monkeypatch) -> None:
     asyncio.run(recorded_acompletion(
         model="gemini/x", messages=[{"role": "user", "content": "hi"}],
         purpose="main", recorder=None,  # routing defaults None → global
+        model_class=None,  # #4206 T1: not subject to the axis (pre-existing call)
     ))
     assert box["api_base"] == "https://GLOBAL.proxy"

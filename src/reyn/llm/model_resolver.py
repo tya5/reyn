@@ -31,6 +31,42 @@ from reyn.llm.builtin_models import BUILTIN_MODELS, BUILTIN_TIER_ALIASES
 #: drift shape that bit #3363's key sweep.
 STANDARD_CLASSES = tuple(BUILTIN_TIER_ALIASES)
 
+
+def model_class_exceeds_ceiling(class_name: str, ceiling: "str | None") -> bool:
+    """#4206 T1 (②bounding): True iff *class_name* is strictly MORE expensive
+    than *ceiling*, per ``STANDARD_CLASSES``'s own cost order (light <
+    standard < strong — the same order ``BUILTIN_TIER_ALIASES``, its single
+    producer, already declares its keys in).
+
+    ``ceiling=None`` means no ceiling is configured (the compat default —
+    every other bounding axis in reyn defaults to unbounded) -> always
+    False, never a violation. A *class_name* or *ceiling* that is not one
+    of the three known tiers (e.g. a raw ``provider/model`` string, or a
+    project-declared custom class name outside light/standard/strong) is
+    NOT comparable on this axis -> also False: this predicate can only
+    judge violations it can actually order, never guess. Callers that need
+    a ceiling to also constrain custom class names would need a richer
+    per-class cost declaration — out of #4206 T1's scope (one axis: the 3
+    standard tiers).
+
+    Scope limit (#4324, part of #4206): this axis only ever sees a class
+    when the CALLER resolved one via ``class_for_purpose``/``model_class``.
+    A caller that received an explicit raw model string (e.g.
+    ``--router-model openai/gpt-4o`` bypassing class resolution entirely)
+    has nothing to compare — the ceiling is a silent no-op for that call, by
+    construction, not a bug in this predicate. Likewise a call that declared
+    ``model_class=None`` (dogfood's real-cost calls included, not just
+    compaction) is permanently outside the axis. "a ceiling is configured"
+    does NOT mean "every LLM spend is bounded" — only class-resolved calls
+    are.
+    """
+    if ceiling is None:
+        return False
+    if class_name not in STANDARD_CLASSES or ceiling not in STANDARD_CLASSES:
+        return False
+    return STANDARD_CLASSES.index(class_name) > STANDARD_CLASSES.index(ceiling)
+
+
 #: #1650: valid values for the per-model ``reasoning_effort`` field. These are
 #: litellm's accepted reasoning-effort levels for the gemini provider, each of
 #: which maps to a native thinking budget (low→1024, medium→2048, high→4096,
@@ -239,6 +275,26 @@ def _deep_merge(base: dict, override: dict) -> dict:
     return result
 
 
+class ModelClassExceedsCeilingError(ValueError):
+    """#4206 T1: raised by :func:`reyn.llm.llm.recorded_acompletion` when a
+    call's declared ``model_class`` exceeds the caller's effective
+    ``model_class_ceiling`` (##bounding axis — restrict-only, reject-not-
+    clamp, same shape as #3903①'s ``timeout_seconds`` ceiling). Carries the
+    actual ceiling so the caller can build a legible error naming it,
+    mirroring #3903①'s "reject with the real max named" contract rather
+    than a bare denial."""
+
+    def __init__(self, requested: str, ceiling: str, purpose: str) -> None:
+        self.requested = requested
+        self.ceiling = ceiling
+        self.purpose = purpose
+        super().__init__(
+            f"model class {requested!r} (purpose={purpose!r}) exceeds this "
+            f"session's configured ceiling of {ceiling!r}. Use {ceiling!r} "
+            f"or a cheaper class, or ask the operator to raise the ceiling."
+        )
+
+
 def model_family(model: str) -> str:
     """#1791 A2: coarse model-family classifier for SP gating (the SINGLE place
     family is classified — do NOT scatter ``"gemini" in x`` across SP builders).
@@ -296,6 +352,7 @@ class ModelResolver:
         builtin: dict[str, str | dict] | None = None,
         default_class: str = "standard",
         purpose_classes: dict[str, str] | None = None,
+        model_max_class: "str | None" = None,
     ) -> None:
         """Build a ModelResolver.
 
@@ -315,7 +372,14 @@ class ModelResolver:
                       from top-level ``.model_class_by_purpose``). A purpose
                       present here wins over ``default_class`` in
                       ``class_for_purpose``.
+            model_max_class: #4206 T1 (②bounding, ``model`` key) — the
+                      project-declared ceiling (``ReynConfig.llm.model_max_class``).
+                      ``None`` (default) means unbounded, byte-identical to
+                      before this field existed. Exposed via ``class_ceiling()``;
+                      enforcement itself happens at ``recorded_acompletion``, not
+                      here — this class only carries the configured value.
         """
+        self._model_max_class = model_max_class
         if builtin is None:
             builtin = BUILTIN_MODELS
 
@@ -447,6 +511,15 @@ class ModelResolver:
                 name, ", ".join(sorted(self._resolved)) or "none",
             )
         return ModelSpec(model=name, kwargs={})
+
+    def class_ceiling(self) -> "str | None":
+        """#4206 T1: the project-declared ``model_max_class`` ceiling, or
+        ``None`` when unbounded. Read by a caller (RouterLoop) that already
+        knows the resolved class it's about to use, and passes both to
+        ``recorded_acompletion`` for enforcement — this accessor does not
+        itself enforce anything.
+        """
+        return self._model_max_class
 
     def class_for_purpose(self, purpose: str) -> str:
         """#1672: the model CLASS for a logical call *purpose* (router / control_ir

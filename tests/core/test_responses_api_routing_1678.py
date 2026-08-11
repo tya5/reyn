@@ -89,6 +89,7 @@ def test_openai_reasoning_combo_model_passed_through_unchanged(monkeypatch) -> N
     asyncio.run(recorded_acompletion(
         model="openai/gpt-5.4", messages=[{"role": "user", "content": "hi"}],
         purpose="main", recorder=None,
+        model_class=None,  # #4206 T1: not subject to the axis (pre-existing call)
         extra_kwargs={"tools": [{"type": "function"}], "reasoning_effort": "low"},
     ))
     assert captured["model"] == "openai/gpt-5.4"
@@ -108,6 +109,7 @@ def test_gemini_combo_model_passed_through_unchanged(monkeypatch) -> None:
     asyncio.run(recorded_acompletion(
         model="gemini/gemini-2.5-flash-lite", messages=[{"role": "user", "content": "hi"}],
         purpose="main", recorder=None,
+        model_class=None,  # #4206 T1: not subject to the axis (pre-existing call)
         extra_kwargs={"tools": [{"type": "function"}], "reasoning_effort": "low"},
     ))
     assert captured["model"] == "gemini/gemini-2.5-flash-lite"
@@ -178,6 +180,7 @@ def test_openai_shaped_405_raises_decision_enabling_error(monkeypatch) -> None:
         asyncio.run(recorded_acompletion(
             model="openai/gpt-5.4", messages=[{"role": "user", "content": "hi"}],
             purpose="main", recorder=None,
+            model_class=None,  # #4206 T1: not subject to the axis (pre-existing call)
             extra_kwargs={"tools": [{"type": "function"}], "reasoning_effort": "low"},
         ))
     msg = str(ei.value).lower()
@@ -208,6 +211,7 @@ def test_gemini_shaped_405_is_not_wrapped_since_provider_unbridgeable(monkeypatc
         asyncio.run(recorded_acompletion(
             model="gemini/gemini-2.5-flash-lite", messages=[{"role": "user", "content": "hi"}],
             purpose="main", recorder=None,
+            model_class=None,  # #4206 T1: not subject to the axis (pre-existing call)
             extra_kwargs={"tools": [{"type": "function"}], "reasoning_effort": "low"},
         ))
 
@@ -224,6 +228,7 @@ def test_405_without_tools_or_reasoning_effort_not_wrapped(monkeypatch) -> None:
         asyncio.run(recorded_acompletion(
             model="openai/gpt-5.4", messages=[{"role": "user", "content": "hi"}],
             purpose="main", recorder=None,
+            model_class=None,  # #4206 T1: not subject to the axis (pre-existing call)
             extra_kwargs={"reasoning_effort": "low"},  # no tools
         ))
 
@@ -243,6 +248,7 @@ def test_405_still_captures_raw_via_1676(monkeypatch) -> None:
         asyncio.run(recorded_acompletion(
             model="openai/gpt-5.4", messages=[{"role": "user", "content": "hi"}],
             purpose="main", recorder=None,
+            model_class=None,  # #4206 T1: not subject to the axis (pre-existing call)
             extra_kwargs={"tools": [{"type": "function"}], "reasoning_effort": "low"},
         ))
     (err,) = [e for e in collected if e.type == "llm_request_error"]

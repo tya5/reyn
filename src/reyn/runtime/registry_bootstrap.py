@@ -172,6 +172,7 @@ def build_agent_registry_from_project(
         config.llm.models,
         default_class=config.llm.model,
         purpose_classes=config.llm.model_class_by_purpose,
+        model_max_class=config.llm.model_max_class,  # #4206 T1 (②bounding)
     )
     factory_config = SessionFactoryConfig.from_config(config, project_root)
     ws_base_dir = project_root

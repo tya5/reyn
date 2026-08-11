@@ -127,6 +127,13 @@
 # (#3785) — compaction always follows the conversation's active model; a
 # config that still sets it fails to load.
 #
+# llm.model_max_class: operator-declared CEILING (#4206 T1) on the model
+# class any call may use (light/standard/strong, same order every tier list
+# uses) — restrict-only, reject-not-clamp (same shape as
+# `sandbox.max_timeout_seconds`'s LLM-extensible ceiling). Unset (default) =
+# unbounded. A call whose resolved class exceeds this is REJECTED before
+# litellm is ever touched, naming the actual ceiling in the error.
+#
 # llm.router: litellm.Router provider-resilience (#1829). DEFAULT OFF
 # (use=false → direct litellm.acompletion, byte-identical to no-Router).
 # When on, the Router owns infra-exception retry (with native Retry-After
@@ -163,6 +170,7 @@
 #   model_class_by_purpose:
 #     router: light            # cheaper per-turn router (explicit opt-in)
 #     # control_ir / tool / judge unset → follow `model`
+#   model_max_class: standard  # ceiling — a call resolving to "strong" is rejected
 #   router:
 #     use: false             # master switch (REYN_LLM_USE_ROUTER fallback)
 #     num_retries: 3         # infra-exception retries (Retry-After aware)

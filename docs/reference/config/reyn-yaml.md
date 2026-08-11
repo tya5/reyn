@@ -406,6 +406,27 @@ configurable here but never tracked a `/model` switch mid-session, so it always
 follows the conversation's active model now, and a config that still sets this
 key is refused with a remedy rather than silently ignored.
 
+### `llm.model_max_class` — model-class ceiling (#4206 T1)
+
+`model_max_class` declares an operator ceiling on the model class any call may
+use (`light` / `standard` / `strong`, the same cost order every tier list
+uses). It is **restrict-only, reject-not-clamp** — the same shape as
+`sandbox.max_timeout_seconds`'s LLM-extensible ceiling: a call whose resolved
+class exceeds the ceiling is REJECTED, naming the actual ceiling, before
+`litellm.acompletion` is ever invoked — never silently downgraded to a
+cheaper class.
+
+```yaml
+llm:
+  model: standard
+  model_max_class: standard    # a call resolving to "strong" is rejected
+```
+
+Unset (default) means unbounded — byte-identical to every deployment before
+this field existed. Enforcement happens once, inside `recorded_acompletion`
+(the single #1190 cost-observability chokepoint every LLM call passes
+through) — a new call site cannot forget to apply it.
+
 ## `llm` block
 
 LLM-layer config: **`llm.router`** (opt-in litellm.Router) and

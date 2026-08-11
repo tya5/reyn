@@ -87,6 +87,7 @@ def test_usage_recorded_exactly_once_when_streamed(monkeypatch) -> None:
     response = asyncio.run(recorded_acompletion(
         model="gpt-4o-mini", messages=[{"role": "user", "content": "hi"}],
         purpose="main", recorder=rec, agent="a1",
+        model_class=None,  # #4206 T1: not subject to the axis (pre-existing call)
     ))
     # Witness: all 4 scripted chunks were actually consumed — the usage
     # summation this test pins genuinely ran across chunks, not via the
@@ -138,5 +139,6 @@ def test_usage_recorded_once_for_whole_collect_baseline(monkeypatch) -> None:
     asyncio.run(recorded_acompletion(
         model="o1-pro", messages=[{"role": "user", "content": "hi"}],
         purpose="main", recorder=rec, agent="a1",
+        model_class=None,  # #4206 T1: not subject to the axis (pre-existing call)
     ))
     assert [c["purpose"] for c in rec.calls] == ["main"]

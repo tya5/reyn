@@ -134,6 +134,7 @@ def test_cost_event_carries_flat_cache_tokens(monkeypatch, _reset_event_log) -> 
         model="openai/gpt-4o",
         messages=[{"role": "user", "content": "hi"}],
         purpose="main",
+        model_class=None,  # #4206 T1: not subject to the axis (pre-existing call)
         recorder=None,
         emit_cost_events=True,
     ))
