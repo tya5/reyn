@@ -21,12 +21,17 @@ This file pins the contract independently of the mcp SDK:
      redundant with this one once ``_open_stdio`` itself was removed —
      see git history if you need the old form).
 
-End-to-end repro of a self-made server crash is out of scope (= would
-require spinning a subprocess); the SDK-level integration is verified
-by the existing ``tests/mcp/test_mcp_client.py`` round-trip.
+  5. #4285: ``test_initialize_failure_with_real_subprocess_captures_its_
+     actual_stderr`` — a REAL child process's stderr actually reaches the
+     ``errlog`` file the official SDK's ``stdio_client`` is given (the
+     handoff item 4 above does not cover, since it fakes the CM instead of
+     spinning a process; the SDK-level round-trip in
+     ``tests/mcp/test_mcp_client.py`` never drives a failing server, so this
+     gap was real and unwitnessed until now).
 """
 from __future__ import annotations
 
+import sys
 import tempfile
 
 import pytest
@@ -185,4 +190,41 @@ def test_initialize_failure_includes_stderr_tail_in_error(monkeypatch) -> None:
     assert "MCP initialize failed" in msg
     assert "Traceback: ImportError: missing dep 'foo'" in msg
     # After error path, capture is closed.
+    assert client.stderr_capture is None
+
+
+def test_initialize_failure_with_real_subprocess_captures_its_actual_stderr() -> None:
+    """Tier 2: #4285 — end-to-end witness of the OFFICIAL SDK's real
+    ``errlog`` handoff, not reyn's own wiring of it.
+
+    The test above (``test_initialize_failure_includes_stderr_tail_in_error``)
+    proves reyn's OWN contract: whatever text lands in the ``errlog`` file
+    ``stdio_client`` is given gets surfaced into the ``MCPError`` message —
+    but it drives that via a fake CM that writes into the file handle
+    directly, never starting a real child process. It never witnesses that
+    a real subprocess's actual stderr output REACHES that file in the first
+    place — post-#3698 that plumbing is the official ``mcp`` SDK's
+    ``mcp.client.stdio.stdio_client``'s job, not reyn's; a regression there
+    (or in a future SDK upgrade) would go undetected by the fake-CM test
+    alone. This spins a REAL child process that writes to stderr and exits
+    nonzero, closing that gap.
+    """
+    pytest.importorskip("mcp")
+    client = MCPClient({
+        "type": "stdio",
+        "command": sys.executable,
+        "args": [
+            "-c",
+            "import sys; sys.stderr.write('boom-from-a-real-child-process\\n'); sys.exit(1)",
+        ],
+    })
+
+    import asyncio
+    with pytest.raises(MCPError) as excinfo:
+        asyncio.run(client.initialize())
+    msg = str(excinfo.value)
+    assert "boom-from-a-real-child-process" in msg, (
+        f"the real child's actual stderr output did not reach the MCPError "
+        f"message via the official SDK's errlog plumbing: {msg!r}"
+    )
     assert client.stderr_capture is None
