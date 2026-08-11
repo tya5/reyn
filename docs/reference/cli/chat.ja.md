@@ -79,6 +79,7 @@ reyn chat researcher
 | `/answer <id-prefix> <text>` | 保留中の `ask_user` / Permission プロンプトに回答(id-prefix: intervention id の任意の一意な prefix) |
 | `/attach <name>` | REPL ポインターを別の agent に切り替える(前の agent はバックグラウンドで実行し続ける) |
 | `/budget [reset]` | 完全な budget 内訳; `/budget reset` はプロセス単位のカウンタをクリア([config/budget](../config/budget.md) 参照) |
+| `/cancel` | 進行中のターンをキャンセル(Esc / Ctrl+C と同じ)— 実際に何がキャンセルされたか、または何も実行中でなかったかを報告 |
 | `/clear-history`(alias `/clear`) | チャット履歴を消去(**破壊的**; メモリ内 + 永続履歴 + action-usage テーブルをクリア。events/run-state/profile は保持) |
 | `/compact` | コンテキストウィンドウを空けるため今すぐ会話履歴を圧縮する([chat-compaction](../../concepts/data-retrieval/chat-compaction.md) 参照) |
 | `/concept <term>` | 用語集のインライン参照 |

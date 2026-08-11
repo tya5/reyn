@@ -78,6 +78,7 @@ While a session is active, lines starting with `/` are intercepted and never rou
 | `/answer <id-prefix> <text>` | Answer a pending `ask_user` / permission prompt (id-prefix: any unique prefix of the intervention id) |
 | `/attach <name>` | Switch the REPL pointer to another agent (the previous one keeps running in the background) |
 | `/budget [reset]` | Full budget breakdown; `/budget reset` clears per-process counters (see [config/budget](../config/budget.md)) |
+| `/cancel` | Cancel the in-flight turn (same as Esc / Ctrl+C) — reports what was actually cancelled, or that nothing was running |
 | `/clear-history` (alias `/clear`) | Wipe chat history (**destructive**; clears in-memory + persistent history and the action-usage table; events/run-state/profile preserved) |
 | `/compact` | Compact the conversation history now to free up the context window (see [chat-compaction](../../concepts/data-retrieval/chat-compaction.md)) |
 | `/concept <term>` | Inline glossary lookup |
