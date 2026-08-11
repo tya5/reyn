@@ -70,7 +70,8 @@ def test_adapter_exposes_reserve_when_engine_present() -> None:
     """Tier 2: with a turn_budget engine, wrap_up_output_reserve ==
     engine.budget.output_reserve (the cap RouterLoop._force_close_call applies)."""
     eng = build_default_turn_budget_engine("gpt-4o-mini", use_chars4=True)
-    adapter = _make_adapter(turn_budget_engine=eng)
+    adapter = _make_adapter(universal_wrappers_enabled=False,  # #4159: not exercised by this test
+        turn_budget_engine=eng)
     assert adapter.wrap_up_output_reserve == eng.budget.output_reserve
     assert adapter.wrap_up_output_reserve == DEFAULT_WRAP_UP_OUTPUT_RESERVE_TOKENS
 
@@ -78,7 +79,7 @@ def test_adapter_exposes_reserve_when_engine_present() -> None:
 def test_adapter_reserve_none_without_engine() -> None:
     """Tier 2: no engine (legacy / test paths) → None → no cap (== the
     pre-PR-F chat behaviour; the cap only engages once an engine is wired)."""
-    adapter = _make_adapter()
+    adapter = _make_adapter(universal_wrappers_enabled=False)
     assert adapter.wrap_up_output_reserve is None
 
 
@@ -87,7 +88,7 @@ def test_adapter_does_not_expose_proactive_trigger() -> None:
     (the wrap-up cap) but NOT should_force_close (the proactive trigger). This is
     the deliberate per-axis choice: phase force-closes proactively, chat only at
     the F2 floor-exhausted terminal."""
-    adapter = _make_adapter(
+    adapter = _make_adapter(universal_wrappers_enabled=False,  # #4159: not exercised by this test
         turn_budget_engine=build_default_turn_budget_engine("gpt-4o-mini", use_chars4=True)
     )
     assert not hasattr(adapter, "should_force_close")

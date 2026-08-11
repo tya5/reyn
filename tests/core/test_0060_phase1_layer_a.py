@@ -172,7 +172,7 @@ def test_turn_origin_maps_every_known_kind_and_fails_safe_on_unmapped(tmp_path):
     kind fell through to "user_directed", this test goes RED (a Phase-4-gate
     bypass — 0060 SS2.7)."""
     s = make_session(agent_name="alice", state_log=StateLog(tmp_path / "wal.jsonl"))
-    adapter = make_adapter(
+    adapter = make_adapter(universal_wrappers_enabled=False,  # #4159: not exercised by this test
         agent_name="alice", turn_origin_fn=lambda: s._current_turn_origin,
     )
 
@@ -288,7 +288,7 @@ async def test_hook_turn_through_real_tool_path_stamps_auto_improvement(tmp_path
     # a REAL autonomous turn: a hook self-continuation (NOT a user turn).
     s._stamp_execution_context("hook", {"text": "autonomous continuation"})
 
-    adapter = make_adapter(
+    adapter = make_adapter(universal_wrappers_enabled=False,  # #4159: not exercised by this test
         agent_name="alice",
         turn_origin_fn=lambda: s._current_turn_origin,
         workspace_base_dir=tmp_path,

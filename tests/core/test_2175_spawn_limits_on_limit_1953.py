@@ -41,7 +41,8 @@ async def test_depth_unattended_rejects(tmp_path):
     await reg.create_agent("a0")
     await reg.create_agent("a1", parent="a0")
     await reg.create_agent("a2", parent="a1")  # at depth 2 == max
-    adapter = make_adapter(agent_name="a2", agent_registry=reg,
+    adapter = make_adapter(universal_wrappers_enabled=False,  # #4159: not exercised by this test
+        agent_name="a2", agent_registry=reg,
                            on_limit=OnLimitConfig(mode="unattended"))
     res = await adapter.spawn_agent(name="a3", role="")  # depth 3 > 2
     assert res["status"] == "error" and res["kind"] == "spawn_limit_exceeded"
@@ -60,7 +61,7 @@ async def test_depth_interactive_approve_extends_and_proceeds(tmp_path):
     await reg.create_agent("a1", parent="a0")
     await reg.create_agent("a2", parent="a1")  # depth 2 == max
     ext: dict = {}
-    adapter = make_adapter(
+    adapter = make_adapter(universal_wrappers_enabled=False,  # #4159: not exercised by this test
         agent_name="a2", agent_registry=reg,
         on_limit=OnLimitConfig(mode="interactive", ask_timeout_seconds=0.0),
         safety_extensions=ext, intervention_answer="yes",
@@ -78,7 +79,7 @@ async def test_depth_interactive_decline_rejects(tmp_path):
     await reg.create_agent("a0")
     await reg.create_agent("a1", parent="a0")
     await reg.create_agent("a2", parent="a1")
-    adapter = make_adapter(
+    adapter = make_adapter(universal_wrappers_enabled=False,  # #4159: not exercised by this test
         agent_name="a2", agent_registry=reg,
         on_limit=OnLimitConfig(mode="interactive", ask_timeout_seconds=0.0),
         intervention_answer="no",
@@ -96,7 +97,7 @@ async def test_fanout_auto_extend_then_exhausts(tmp_path):
     (spawned), the next exhausts the budget and rejects."""
     reg = _registry(tmp_path, max_children=2)
     await reg.create_agent("p")
-    adapter = make_adapter(
+    adapter = make_adapter(universal_wrappers_enabled=False,  # #4159: not exercised by this test
         agent_name="p", agent_registry=reg,
         on_limit=OnLimitConfig(mode="auto_extend", auto_extend_times=1),
         safety_extensions={},
@@ -124,7 +125,7 @@ async def test_fanout_and_topology_use_separate_extension_keys(tmp_path):
     await reg.create_agent("w2", parent="coord")
     ext: dict = {}
     # approve a 3rd direct child (fan-out extension)
-    spawn_adapter = make_adapter(
+    spawn_adapter = make_adapter(universal_wrappers_enabled=False,  # #4159: not exercised by this test
         agent_name="coord", agent_registry=reg,
         on_limit=OnLimitConfig(mode="interactive", ask_timeout_seconds=0.0),
         safety_extensions=ext, intervention_answer="yes",
@@ -134,7 +135,7 @@ async def test_fanout_and_topology_use_separate_extension_keys(tmp_path):
     # topology-members extension is UNTOUCHED by the fan-out approval
     assert ext.get("max_topology_members:coord", 0) == 0
     # a 4-member topology (> base 2) under UNATTENDED → still rejected (its own key)
-    topo_adapter = make_adapter(
+    topo_adapter = make_adapter(universal_wrappers_enabled=False,  # #4159: not exercised by this test
         agent_name="coord", agent_registry=reg,
         on_limit=OnLimitConfig(mode="unattended"), safety_extensions=ext,
     )
@@ -155,6 +156,9 @@ async def test_no_approval_means_base_limit_holds(tmp_path):
     reg = _registry(tmp_path, max_depth=1)
     await reg.create_agent("a0")
     await reg.create_agent("a1", parent="a0")  # depth 1 == max
-    adapter = make_adapter(agent_name="a1", agent_registry=reg)  # no on_limit → no checkpoint
+    adapter = make_adapter(
+        universal_wrappers_enabled=False,  # #4159: not exercised by this test
+        agent_name="a1", agent_registry=reg,
+    )  # no on_limit → no checkpoint
     res = await adapter.spawn_agent(name="a2", role="")  # depth 2 > 1
     assert res["status"] == "error" and res["kind"] == "spawn_limit_exceeded"

@@ -70,12 +70,14 @@ async def test_spawn_rejected_beyond_max_depth(tmp_path):
     await reg.create_agent("a2", parent="a1")       # depth 2 (== max)
 
     # boundary: spawning under a1 (depth 1) → child depth 2 == max → ALLOWED
-    res_ok = await make_adapter(agent_name="a1", agent_registry=reg).spawn_agent(
+    res_ok = await make_adapter(universal_wrappers_enabled=False,  # #4159: not exercised by this test
+        agent_name="a1", agent_registry=reg).spawn_agent(
         name="a1b", role="")
     assert res_ok["status"] == "spawned"
 
     # spawning under a2 (depth 2) → child depth 3 > max → REJECTED
-    res = await make_adapter(agent_name="a2", agent_registry=reg).spawn_agent(
+    res = await make_adapter(universal_wrappers_enabled=False,  # #4159: not exercised by this test
+        agent_name="a2", agent_registry=reg).spawn_agent(
         name="a3", role="")
     assert res["status"] == "error"
     assert res["kind"] == "spawn_limit_exceeded"
@@ -90,7 +92,8 @@ async def test_spawn_rejected_beyond_max_children(tmp_path):
     next is rejected. RED if the fan-out bound isn't enforced."""
     reg = _registry(tmp_path, max_children=2)
     await reg.create_agent("p")
-    adapter = make_adapter(agent_name="p", agent_registry=reg)
+    adapter = make_adapter(universal_wrappers_enabled=False,  # #4159: not exercised by this test
+        agent_name="p", agent_registry=reg)
 
     assert (await adapter.spawn_agent(name="c1", role=""))["status"] == "spawned"
     assert (await adapter.spawn_agent(name="c2", role=""))["status"] == "spawned"
@@ -118,7 +121,8 @@ async def test_fan_out_count_is_identity_keyed_not_name(tmp_path):
     assert reg.spawn_child_count("par") == 0          # identity-keyed (a name count → 1)
 
     # so the reused par gets its FULL fan-out budget (not charged for the orphan)
-    adapter = make_adapter(agent_name="par", agent_registry=reg)
+    adapter = make_adapter(universal_wrappers_enabled=False,  # #4159: not exercised by this test
+        agent_name="par", agent_registry=reg)
     assert (await adapter.spawn_agent(name="n1", role=""))["status"] == "spawned"
     assert (await adapter.spawn_agent(name="n2", role=""))["status"] == "spawned"
     assert (await adapter.spawn_agent(name="n3", role=""))["status"] == "error"  # now at cap
@@ -138,7 +142,8 @@ async def test_topology_create_rejected_beyond_max_children(tmp_path):
     await reg.create_agent("w1", parent="coord")
     await reg.create_agent("w2", parent="coord")
     await reg.create_agent("w3", parent="coord")
-    adapter = make_adapter(agent_name="coord", agent_registry=reg)
+    adapter = make_adapter(universal_wrappers_enabled=False,  # #4159: not exercised by this test
+        agent_name="coord", agent_registry=reg)
 
     res = await adapter.create_topology(
         name="big", kind="network", members=["coord", "w1", "w2", "w3"],  # 4 > 2

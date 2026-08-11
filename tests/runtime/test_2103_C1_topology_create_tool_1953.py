@@ -102,7 +102,8 @@ async def test_create_topology_accepts_subtree_members_and_routes_through_emit_s
     reg = _registry(tmp_path)
     reg.create("coord")
     await reg.create_agent("worker", parent="coord")
-    adapter = make_adapter(agent_name="coord", agent_registry=reg)
+    adapter = make_adapter(universal_wrappers_enabled=False,  # #4159: not exercised by this test
+        agent_name="coord", agent_registry=reg)
 
     res = await adapter.create_topology(
         name="myteam", kind="network", members=["coord", "worker"],
@@ -125,7 +126,8 @@ async def test_create_topology_rejects_non_subtree_member(tmp_path):
     reg.create("coord")
     await reg.create_agent("worker", parent="coord")
     reg.create("outsider")  # exists, but NOT spawned by coord (operator-top peer)
-    adapter = make_adapter(agent_name="coord", agent_registry=reg)
+    adapter = make_adapter(universal_wrappers_enabled=False,  # #4159: not exercised by this test
+        agent_name="coord", agent_registry=reg)
 
     res = await adapter.create_topology(
         name="grab", kind="network", members=["coord", "outsider"],
@@ -151,7 +153,8 @@ async def test_create_topology_rejects_non_subtree_member_in_profile_binding(tmp
     reg.create("coord")
     await reg.create_agent("worker", parent="coord")
     reg.create("outsider")
-    adapter = make_adapter(agent_name="coord", agent_registry=reg)
+    adapter = make_adapter(universal_wrappers_enabled=False,  # #4159: not exercised by this test
+        agent_name="coord", agent_registry=reg)
 
     res = await adapter.create_topology(
         name="grab2", kind="network",
