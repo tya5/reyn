@@ -28,7 +28,6 @@ footgun where a client kills the server).
 """
 from __future__ import annotations
 
-import asyncio
 from typing import AsyncIterator, Awaitable, Callable
 
 from reyn.interfaces.transport.agui.protocol import (

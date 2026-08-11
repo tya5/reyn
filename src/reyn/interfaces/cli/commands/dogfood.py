@@ -460,7 +460,6 @@ def _build_live_runner(agent_name: str, *, env_backend=None, ws_base_dir=None, w
       events are harvested by filesystem scan after the turn, not by
       chain-id filtering.
     """
-    import asyncio
     import shutil
     from dataclasses import replace
     from pathlib import Path
@@ -944,7 +943,6 @@ def run_publish(args: argparse.Namespace) -> None:
     try:
         from reyn.dev.dogfood.publish import (
             _DEFAULT_TEMPLATE_PATH,
-            DEFAULT_CATEGORY_SLUG,
             DEFAULT_REPO,
             PublishConfig,
             detect_repo_from_git,

@@ -19,7 +19,6 @@ from __future__ import annotations
 import argparse
 import asyncio
 import sys
-from pathlib import Path
 
 
 def register(sub) -> None:
@@ -236,7 +235,7 @@ async def _run_scheduler() -> None:
     # reyn.core.events.asyncio_diagnostics.
     install_asyncio_exception_handler(asyncio.get_running_loop())
 
-    from reyn.runtime.cron import CronJob, CronScheduler
+    from reyn.runtime.cron import CronScheduler
 
     job_configs = _load_jobs()
     jobs = _jobs_to_cron_jobs(job_configs)

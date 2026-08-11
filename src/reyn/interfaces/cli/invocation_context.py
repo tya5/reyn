@@ -60,7 +60,6 @@ class InvocationContext:
         safety.timeout fields while preserving everything else from the loaded
         config.
         """
-        from reyn.config import TimeoutConfig
         base = self.config.safety
         llm_timeout = getattr(args, "llm_timeout", None)
         llm_max_retries = getattr(args, "llm_max_retries", None)
