@@ -99,6 +99,34 @@ def test_mcp_install_regrant_flagged_high(tmp_path: Path, monkeypatch) -> None:
     assert _by(_findings(monkeypatch, tmp_path), severity="HIGH", contains="mcp-install")
 
 
+def test_reachable_regrant_still_flagged_from_a_subdirectory(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    """Tier 2: #4204 bucket A — `reyn audit` launched from a subdirectory of
+    the project must still scan the PROJECT's `.reyn/topologies` /
+    `.reyn/capability_profiles`, not a phantom pair under the subdirectory.
+    `_gateway_delegation` previously anchored directly on `Path.cwd()`
+    (verified: zero `_find_project_root` calls in the whole file) — a real
+    defect, not just a docstring claim: a delegation-unsafe re-grant that
+    should be a HIGH finding would silently vanish (both dirs absent under
+    the subdirectory → no topologies to scan → nothing to flag) the moment
+    an operator ran `reyn audit` from anywhere but the project root."""
+    _reyn_yaml(tmp_path, "deny")
+    (_topos(tmp_path) / "t.yaml").write_text(
+        "name: t\nkind: network\nmembers: [worker, peer]\nprofiles:\n  worker: loose\n",
+        encoding="utf-8",
+    )
+    (_profiles(tmp_path) / "loose.yaml").write_text(
+        "name: loose\ntool_deny: []\n", encoding="utf-8",
+    )
+    subdir = tmp_path / "src" / "nested"
+    subdir.mkdir(parents=True)
+    monkeypatch.chdir(subdir)
+
+    high = _by(audit._gateway_delegation(), severity="HIGH", contains="re-delegation")
+    assert high and "worker" in high[0].location
+
+
 # ── OPT-A correctness: an outbound-only role is NOT a target → NOT flagged ───
 
 

@@ -160,6 +160,43 @@ def test_status_rows_attribute_count_to_on_disk_class_only(
     assert by_name["standard"].last_built == "(never)"
 
 
+def test_status_from_a_subdirectory_still_reads_the_project_index(
+    tmp_path: Path, monkeypatch, capsys,
+) -> None:
+    """Tier 2: #4204 bucket A — ``reyn embeddings status`` launched from a
+    subdirectory of the project must still read the PROJECT's action-index
+    cache, not a phantom one under the subdirectory. ``_get_project_root()``
+    previously returned bare ``Path.cwd()`` — a real defect, not just the
+    docstring claim #4211 fixed separately: this call goes through the
+    real ``run_status`` CLI dispatch (not the pure ``_collect_status_rows``
+    helper other tests here call directly), so it exercises the actual
+    defect site."""
+    (tmp_path / "reyn.yaml").write_text("model: standard\n", encoding="utf-8")
+    _write_index_db(
+        _unified_index_dir(tmp_path),
+        class_name="light",
+        vectors={"read_file": [0.1, 0.2]},
+    )
+    subdir = tmp_path / "src" / "nested"
+    subdir.mkdir(parents=True)
+    monkeypatch.chdir(subdir)
+
+    run_status(Namespace(json=False))
+
+    out = capsys.readouterr().out
+    real_index_dir = str(_unified_index_dir(tmp_path))
+    phantom_index_dir = str(_unified_index_dir(subdir))
+    # The printed CACHE_PATH column is the positive witness: it must be
+    # the real project's index dir, not a phantom one under the
+    # subdirectory (that assertion alone would have passed even with the
+    # bug, since "light" is printed regardless of whether its cache was
+    # found — the cache_path value is what actually distinguishes a real
+    # read from a phantom one).
+    assert real_index_dir in out
+    assert phantom_index_dir not in out
+    assert not (subdir / ".reyn").exists()
+
+
 # ── 3. status / --json output ───────────────────────────────────────────────
 
 
