@@ -196,11 +196,15 @@ class RouterOpContextSource:
     is constructed — the per-turn provenance (``turn_origin``), a spawned
     session's real id, the operator's capability narrowing (built after the
     router waist, so it does not even exist yet at construction), the resolved
-    sandbox policy, and the two hot-reloadable registries. A plain value in any
-    of those slots is correct on the first turn and silently stale on every
-    turn after it. A ``None`` supplier means "this Session wires no such
-    value" and yields ``None`` (``mcp_servers_flat`` yields ``{}`` — its
-    consumer indexes it).
+    sandbox policy, the two hot-reloadable registries, and (#4200)
+    ``workspace_base_dir`` — a spawned session's real per-session base_dir
+    override is fixed up by the registry AFTER this object is constructed,
+    same shape as the real session id. A plain value in any of those slots is
+    correct on the first turn and silently stale on every turn after it (or,
+    for the spawn-time fields, correct for the PARENT and silently wrong for
+    every spawned CHILD forever). A ``None`` supplier means "this Session
+    wires no such value" and yields ``None`` (``mcp_servers_flat`` yields
+    ``{}`` — its consumer indexes it).
 
     No parameter has a default: a caller that silently omits one would absorb a
     wiring change unnoticed, which is the failure mode #3482's default-free
@@ -221,7 +225,7 @@ class RouterOpContextSource:
         mcp_servers_fn: Any,
         mcp_servers_flat_fn: Any,
         allowed_mcp_fn: Any,
-        workspace_base_dir: Any,
+        workspace_base_dir_fn: Any,
         workspace_state_dir: Any,
         environment_backend: Any,
         sandbox_backend: Any,
@@ -250,7 +254,7 @@ class RouterOpContextSource:
         self._mcp_servers_fn = mcp_servers_fn
         self._mcp_servers_flat_fn = mcp_servers_flat_fn
         self._allowed_mcp_fn = allowed_mcp_fn
-        self._workspace_base_dir = workspace_base_dir
+        self._workspace_base_dir_fn = workspace_base_dir_fn
         self._workspace_state_dir = workspace_state_dir
         self._environment_backend = environment_backend
         self._sandbox_backend = sandbox_backend
@@ -312,7 +316,7 @@ class RouterOpContextSource:
             mcp_servers=self._resolve(self._mcp_servers_fn),
             mcp_servers_flat=self._resolve(self._mcp_servers_flat_fn, {}),
             allowed_mcp=self._resolve(self._allowed_mcp_fn),
-            workspace_base_dir=self._workspace_base_dir,
+            workspace_base_dir=self._resolve(self._workspace_base_dir_fn),
             workspace_state_dir=self._workspace_state_dir,
             environment_backend=self._environment_backend,
             sandbox_backend=self._sandbox_backend,

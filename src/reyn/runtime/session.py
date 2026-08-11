@@ -1700,8 +1700,77 @@ class Session:
     def _perm(self) -> "PermissionResolver | None":
         return self._agent.permission_resolver
 
+    def _read_base_dir_override(self, path: "Path") -> "Path | None":
+        """#4200: read a ``base_dir:`` override from *path* — either this
+        session's own per-session config or the calling agent's own
+        capability_profile — or ``None`` when absent/unset/malformed.
+
+        Deliberately NOT routed through
+        :func:`reyn.security.permissions.capability_profile.load_capability_profile`:
+        that loader's own docstring says unknown keys are ignored
+        (forward-compat), which for THIS key means it would silently DROP
+        ``base_dir:`` rather than surface it — a raw read is required, same
+        shape ``AgentRegistry.per_session_narrowing`` already uses for the
+        SAME file (a key ``CapabilityProfile``'s dataclass doesn't model).
+        A malformed file is surfaced (stderr-adjacent log, not a crash) and
+        skipped — a typo must not crash session construction, and
+        (restrict-only) skipping it only WIDENS toward the next fallback
+        layer, never past the effective floor."""
+        if not path.is_file():
+            return None
+        import yaml
+        try:
+            raw = yaml.safe_load(path.read_text(encoding="utf-8"))
+        except Exception as e:  # noqa: BLE001 — hand/LLM-written yaml, surface not crash
+            logger.warning(
+                "#4200: skipping malformed base_dir override config %s: %s", path, e,
+            )
+            return None
+        if not isinstance(raw, dict):
+            return None
+        value = raw.get("base_dir")
+        if not value:
+            return None
+        return Path(str(value))
+
     @property
     def _workspace_base_dir(self) -> "Path | None":
+        """#4200: this session's EFFECTIVE base_dir.
+
+        A session-layer override (this session's own
+        ``<session_state_dir>/config.yaml``) sits IN FRONT OF an agent-layer
+        default (``.reyn/capability_profiles/<name>.yaml``), which sits IN
+        FRONT OF the Agent's own value (``self._agent.workspace_base_dir`` —
+        the pre-#4200 default, unchanged for every caller that sets
+        neither override) — the SAME "layer in front of the shared Agent
+        identity" shape #2103-S1a capability narrowing already uses. A
+        spawned session's identity stays a SHARED ``Agent`` object; only
+        the RESOLVED VALUE differs per session, never the object — #4200's
+        own issue measured that duplicating the Agent per session is not
+        the design.
+
+        Both override reads are direct file reads, no ``AgentRegistry``
+        access needed: the session config lives at the same directory
+        :meth:`_read_per_session_hooks` already reads (a sibling of
+        ``self._snapshot_path``), and the agent config lives at the same
+        ``.reyn/capability_profiles/<name>.yaml`` the topology-binding read
+        path already uses (``self._reyn_state_root`` is the SAME anchor).
+
+        This is a live re-read on every access (a plain ``@property``, not
+        cached) — a CALLER holding this value across a spawn-time fixup
+        must re-read it, not cache it; see ``RouterOpContextSource``'s own
+        ``workspace_base_dir_fn`` for why a frozen capture of this value is
+        wrong for a spawned child."""
+        session_override = self._read_base_dir_override(
+            Path(self._snapshot_path).parent / "config.yaml"
+        )
+        if session_override is not None:
+            return session_override
+        agent_override = self._read_base_dir_override(
+            self._reyn_state_root / "capability_profiles" / f"{self.agent_name}.yaml"
+        )
+        if agent_override is not None:
+            return agent_override
         return self._agent.workspace_base_dir
 
     @property
@@ -3691,6 +3760,19 @@ class Session:
                 # `Path.cwd()`, silently ignoring it. `None` (Agent's own
                 # documented "→ host cwd" default) preserves prior behavior
                 # for callers that never set it.
+                # #4200 KNOWN GAP (same eager-capture class as
+                # RouterOpContextSource's own workspace_base_dir_fn fix,
+                # not applied here): ActionEmbeddingIndex takes a plain
+                # `Path`, not a supplier — its constructor has no lazy
+                # variant, so it CANNOT read a spawned session's real
+                # per-session base_dir override (fixed up by the registry
+                # AFTER this line runs). A spawned child's search_actions
+                # index is rooted at the PARENT's base_dir until
+                # ActionEmbeddingIndex itself is restructured to defer its
+                # workspace_root read — out of scope here (not in #4200's
+                # own "auto-follows" list; this is the action-embedding
+                # cache location, not the permission/exec surface #4200
+                # targets). Tracked, not silently dropped.
                 action_embedding_index = ActionEmbeddingIndex(
                     workspace_root=self._workspace_base_dir or Path.cwd(),
                 )
@@ -3843,7 +3925,15 @@ class Session:
             # allowlist mid-session, and a narrowing that only reached one of
             # the two op-context doors is not a narrowing.
             allowed_mcp_fn=lambda: self._allowed_mcp,
-            workspace_base_dir=self._workspace_base_dir,
+            # #4200: LIVE — was a frozen value (`self._workspace_base_dir`),
+            # captured at construction time, before a spawned session's real
+            # base_dir override (#4200's own session-config-layer read,
+            # which depends on `self._snapshot_path`) is fixed up by the
+            # registry's post-construction spawn fixup. Same staleness
+            # class `session_id_fn`/`turn_origin_fn` above already guard
+            # against — a plain value here would silently freeze the
+            # PARENT's base_dir onto every child forever.
+            workspace_base_dir_fn=lambda: self._workspace_base_dir,
             workspace_state_dir=self._workspace_state_dir,
             environment_backend=self._environment_backend,
             sandbox_backend=self._sandbox_backend,
