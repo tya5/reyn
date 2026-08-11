@@ -113,6 +113,37 @@ def load_project_context(config: ReynConfig, project_root: Path) -> str:
     return ""
 
 
+def build_policy_tier_config(cwd: Path | None = None) -> dict:
+    """Rebuild JUST the operator-editable policy tier (builtin +
+    user_global + project + project_local, merged) — the same dict
+    :func:`load_config` validates via :func:`_warn_unknown_config_keys`
+    right after ``project_local``, before the 5 dynamic registry files
+    merge in.
+
+    #4174 T0b: the one call `reyn config validate` (CLI) uses so it checks
+    EXACTLY what startup checks, not a second hand-reconstructed merge —
+    architect's explicit requirement ("same implementation as startup,
+    called from both places").
+    """
+    cwd = (cwd or Path.cwd()).resolve()
+    merged: dict = {"model": "standard", "models": {}, "permissions": {}, "mcp": {}}
+
+    from reyn.builtin.registry import build_builtin_config
+    merged = _merge(merged, build_builtin_config(), tier_label="builtin")
+
+    user_global = _load_yaml(Path.home() / ".reyn" / "config.yaml")
+    merged = _merge(merged, user_global, tier_label="user_global")
+
+    project_root = _find_project_root(cwd)
+    if project_root:
+        project = _load_yaml(project_root / "reyn.yaml")
+        merged = _merge(merged, project, tier_label="project")
+        project_local = _load_yaml(project_root / "reyn.local.yaml")
+        merged = _merge(merged, project_local, tier_label="project_local")
+
+    return merged
+
+
 def _warn_unknown_config_keys(policy_tier_merged: dict) -> None:
     """#4174 T0: log ONE warning naming every unknown/renamed config key
     found in the policy-tier config (``user_global`` + ``project`` +
@@ -565,33 +596,18 @@ def load_config(cwd: Path | None = None) -> ReynConfig:
     # can distinguish "user did not configure" (= None, chat router will
     # skip the language directive) from "user explicitly set it" (= str,
     # router prompt enforces it strictly). See `ReynConfig.output_language`.
-    merged: dict = {"model": "standard",
-                    "models": {}, "permissions": {},
-                    "mcp": {}}
-
-    # proposal 0060 Phase 1 F3a: the builtin tier — code-shipped
-    # skills/pipelines/presentations (Addendum A1/A3), merged FIRST so every
-    # operator config file below wins on same-name collision (mirrors
-    # ``reyn.hooks.schema_registry.BUILTIN_HOOK_SCHEMAS``'s "code ships the
-    # floor, config overrides it" shape). ``build_builtin_config`` stamps
-    # ``provenance="builtin"`` at THIS loader path (A9) — never via an
-    # install op — and ships EMPTY in F3a (mechanism only; F3b populates the
-    # exemplar content), so this merge is presently a no-op.
-    from reyn.builtin.registry import build_builtin_config
-    merged = _merge(merged, build_builtin_config(), tier_label="builtin")
-
-    # User global
-    user_global = _load_yaml(Path.home() / ".reyn" / "config.yaml")
-    merged = _merge(merged, user_global, tier_label="user_global")
+    #
+    # proposal 0060 Phase 1 F3a: the builtin tier (code-shipped
+    # skills/pipelines/presentations) is merged FIRST, then user_global,
+    # then project + project_local — this is the operator-editable
+    # "policy tier" #4174 T0 validates. build_policy_tier_config is the
+    # SAME construction `reyn config validate` (CLI) uses, so the two
+    # never independently drift apart.
+    merged = build_policy_tier_config(cwd)
 
     # Project + local
     project_root = _find_project_root(cwd)
     if project_root:
-        project = _load_yaml(project_root / "reyn.yaml")
-        merged = _merge(merged, project, tier_label="project")
-        project_local = _load_yaml(project_root / "reyn.local.yaml")
-        merged = _merge(merged, project_local, tier_label="project_local")
-
         # #4174 T0: unknown-key WARN check on the policy tier ONLY (builtin
         # + user_global + project + project_local), before the 5 dynamic
         # registry files below are merged in — those are checked separately

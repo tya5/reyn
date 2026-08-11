@@ -37,6 +37,20 @@ def register(sub) -> None:
         help="Show what would move without writing any files.",
     )
 
+    csub.add_parser(
+        "validate",
+        help="Check reyn.yaml/reyn.local.yaml/~/.reyn/config.yaml for unknown or renamed keys",
+    )
+
+    mg = csub.add_parser(
+        "migrate",
+        help="Rewrite renamed config keys to their current location (#4174 T0b)",
+    )
+    mg.add_argument(
+        "--dry-run", action="store_true",
+        help="Show what would change without writing any files.",
+    )
+
 
 def run(args: argparse.Namespace) -> None:
     sub = getattr(args, "config_cmd", None)
@@ -50,6 +64,10 @@ def run(args: argparse.Namespace) -> None:
         _set(args.key, args.value)
     elif sub == "migrate-mcp":
         _migrate_mcp(dry_run=bool(getattr(args, "dry_run", False)))
+    elif sub == "validate":
+        _validate()
+    elif sub == "migrate":
+        _migrate(dry_run=bool(getattr(args, "dry_run", False)))
     else:
         _show()
 
@@ -251,6 +269,175 @@ def _migrate_mcp(*, dry_run: bool = False) -> None:
         except ValueError:
             src_label = str(src)
         print(f"Removed mcp.servers from {src_label}")
+
+
+def _validate() -> None:
+    """#4174 T0: report every unknown/renamed config key found in the
+    operator-editable policy tier (reyn.yaml / reyn.local.yaml /
+    ~/.reyn/config.yaml).
+
+    Uses ``build_policy_tier_config`` — the SAME construction
+    ``load_config``'s own startup warning uses (architect's explicit
+    requirement: this command must check exactly what startup checks, not
+    a second hand-reconstructed merge). Exits 0 regardless of findings
+    (owner ruling: warn, never hard-fail — this command REPORTS, it does
+    not gate anything)."""
+    from reyn.config.config_schema import unknown_config_keys
+    from reyn.config.loader import build_policy_tier_config
+
+    merged = build_policy_tier_config()
+    unknown = unknown_config_keys(merged)
+    if not unknown:
+        print("No unknown or renamed config keys found.")
+        return
+
+    print(f"Found {len(unknown)} unrecognized config key(s):\n")
+    for key, hint in sorted(unknown.items()):
+        print(f"  {key}")
+        if hint:
+            print(f"    -> {hint}")
+        else:
+            print("    -> not applied; see 'reyn config fields' for valid keys.")
+    print("\nRun 'reyn config migrate' to fix renamed keys automatically.")
+
+
+def _migrate(*, dry_run: bool = False) -> None:
+    """#4174 T0b: rewrite renamed top-level config keys (per
+    ``config_schema._RENAMED_CONFIG_KEYS``) to their current location, in
+    place, in whichever file each key was actually found (reyn.yaml /
+    reyn.local.yaml / ~/.reyn/config.yaml — the same 3 files
+    ``migrate-mcp`` scans).
+
+    Generalizes ``_migrate_mcp``'s pattern (architect's explicit precedent)
+    to the renamed-key registry rather than one hand-written mcp-only
+    migration. Correctly reports "nothing to migrate" both when no renames
+    are registered yet AND when a project's config has no renamed key in
+    use — the two are different reasons for the same outcome, both real
+    (lead-coder's explicit requirement: this must not be silently vacuous).
+
+    Scope note: ``_RENAMED_CONFIG_KEYS`` values are free-form GUIDANCE
+    PROSE for the human-facing warning (``reyn config validate`` /
+    load_config's own startup warning), not a machine-parseable
+    destination — "'deny_subprocess' was renamed to 'subprocess' ... the
+    VALUE INVERTS BACK" cannot be safely auto-rewritten (the value
+    transform itself varies per key, e.g. ``_RENAMED_SANDBOX_POLICY_KEYS``'s
+    boolean inversion). This command therefore only auto-rewrites an entry
+    whose hint is UNAMBIGUOUSLY a bare new dotted key (no spaces — a plain
+    rename, no value transform) and reports every other renamed key it
+    finds as "needs manual review" instead of guessing at a rewrite that
+    could silently invert an operator's intent. ``_RENAMED_CONFIG_KEYS`` is
+    empty today (T1-T6 populate it incrementally); ``_RENAMED_SANDBOX_POLICY_KEYS``
+    (already populated, prose-only) is intentionally NOT auto-rewritten by
+    this command — an operator on an old sandbox.policy key sees the
+    guidance via ``reyn config validate`` and fixes it by hand.
+    """
+    import yaml
+
+    from reyn.config import _find_project_root
+    from reyn.config.config_schema import _RENAMED_CONFIG_KEYS
+
+    if not _RENAMED_CONFIG_KEYS:
+        print(
+            "No config key renames are registered yet (nothing to migrate "
+            "— #4174 T1-T6 populate this registry incrementally)."
+        )
+        return
+
+    # Only entries whose hint is unambiguously a bare dotted key (no
+    # spaces) are safe to auto-rewrite — see the docstring above.
+    auto_rewritable = {
+        old: new for old, new in _RENAMED_CONFIG_KEYS.items()
+        if new and " " not in new
+    }
+    needs_manual = sorted(set(_RENAMED_CONFIG_KEYS) - set(auto_rewritable))
+
+    project_root = _find_project_root(Path.cwd())
+    candidates = [Path.home() / ".reyn" / "config.yaml"]
+    if project_root is not None:
+        candidates = [project_root / "reyn.yaml", project_root / "reyn.local.yaml", *candidates]
+
+    def _read(p: Path) -> dict:
+        if not p.exists():
+            return {}
+        try:
+            data = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
+            return data if isinstance(data, dict) else {}
+        except Exception:
+            return {}
+
+    def _pop_dotted(d: dict, dotted: str):
+        """Remove *dotted* from *d* if present; return (found, value)."""
+        parts = dotted.split(".")
+        node = d
+        for part in parts[:-1]:
+            if not isinstance(node, dict) or part not in node:
+                return False, None
+            node = node[part]
+        if not isinstance(node, dict) or parts[-1] not in node:
+            return False, None
+        return True, node.pop(parts[-1])
+
+    def _set_dotted(d: dict, dotted: str, value) -> None:
+        parts = dotted.split(".")
+        node = d
+        for part in parts[:-1]:
+            nxt = node.get(part)
+            if not isinstance(nxt, dict):
+                nxt = {}
+                node[part] = nxt
+            node = nxt
+        node[parts[-1]] = value
+
+    def _label(path: Path) -> str:
+        try:
+            return str(path.relative_to(project_root)) if project_root else str(path)
+        except ValueError:
+            return str(path)
+
+    any_changes = False
+    manual_found: list[tuple[str, str]] = []
+    for path in candidates:
+        cfg = _read(path)
+        if not cfg:
+            continue
+        changed_here = []
+        for old_key, new_key in auto_rewritable.items():
+            found, value = _pop_dotted(cfg, old_key)
+            if not found:
+                continue
+            _set_dotted(cfg, new_key, value)
+            changed_here.append((old_key, new_key))
+        for old_key in needs_manual:
+            found, _value = _pop_dotted(dict(cfg), old_key)  # peek, don't mutate
+            if found:
+                manual_found.append((_label(path), old_key))
+        if not changed_here:
+            continue
+        any_changes = True
+        print(f"{_label(path)}:")
+        for old_key, new_key in changed_here:
+            print(f"  {old_key} -> {new_key}")
+        if not dry_run:
+            path.write_text(
+                yaml.dump(cfg, allow_unicode=True, default_flow_style=False, sort_keys=False),
+                encoding="utf-8",
+            )
+
+    if manual_found:
+        print("\nThe following renamed key(s) need manual review (value "
+              "transform, not a plain rename — see 'reyn config validate' "
+              "for guidance):")
+        for label, old_key in manual_found:
+            print(f"  {label}: {old_key} — {_RENAMED_CONFIG_KEYS[old_key]}")
+
+    if not any_changes and not manual_found:
+        print("No renamed keys found in your config — nothing to migrate.")
+        return
+    if any_changes:
+        if dry_run:
+            print("\nDry run only — no files written. Re-run without --dry-run to apply.")
+        else:
+            print("\nDone.")
 
 
 def _set(key: str, value: str) -> None:
