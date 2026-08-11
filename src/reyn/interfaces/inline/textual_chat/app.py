@@ -1288,6 +1288,17 @@ class TextualChatApp(App):
             # (overriding ``App.copy_to_clipboard``) caught every
             # Textual-originated copy in the app to fix one widget's.
             clipboard=self._write_clipboard,
+            # flowview 0.17.0 / #4171: without this, `*`/`n`/`N` search reads
+            # rows through the render path, so an entry that has never
+            # scrolled into view has no Presentation yet and search sees the
+            # "Loading..." placeholder instead of its content — silently
+            # missing matches above the rendered window. This hands flowview
+            # the raw message text so it can search the whole model directly,
+            # not just what's been rendered. Deliberately `msg.text`, not
+            # what the gutter decorates onto it — the gutter prefix is
+            # decoration, not message content, and a match there would be a
+            # confusing result to land a search cursor on.
+            search_text=lambda msg: msg.text,
         )
         # #3352: apply the configured START state. flowview has no constructor
         # parameter for gutter visibility (both flags initialise True), so the

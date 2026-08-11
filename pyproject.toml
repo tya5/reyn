@@ -157,7 +157,37 @@ dependencies = [
     # The SHA is the *commit*, not the tag object: v0.13.1/v0.12.0 are
     # LIGHTWEIGHT tags (no `^{}` peel in `git ls-remote`), same as v0.9.0,
     # unlike the annotated v0.7.0/v0.8.0.
-    "textual-flowview @ git+https://github.com/tya5/textual-flowview.git@3b256640678e3905cc67d6f7ba977eb79c96009b",
+    # 0.16.2/0.16.4: paint caches (body strips 0.16.2; gutter + separator
+    # caches 0.16.4) are released when an entry leaves the visible band
+    # instead of only on removal/resize/model-clear — memory now tracks
+    # what's on screen, not everything ever scrolled past. reyn configures a
+    # decorator (ReynGutter/ReynRightGutter), so the 0.16.4 gutter half is
+    # directly relevant, but both decorators already read live state off the
+    # app each repaint (`_streaming_replies`, `_turn_usage`, ...) rather than
+    # caching anything themselves, so trimming flowview's OWN paint cache
+    # underneath them changes nothing observable — they're just called again.
+    # 0.16.3: an off-screen `update()` (the swap-to-a-light-body-while-hidden
+    # pattern, driven from `track_visibility`'s `on_hide`) now releases the
+    # superseded presentation immediately instead of only on next re-present
+    # — makes that pattern actually reclaim memory. reyn does not currently
+    # use this pattern; picked up for when it does.
+    # 0.17.0 (#4171, `feat!`): text search (`*`/`n`/`N`, live via the
+    # `_CursorFlowView` cursor reyn enables) read rows through the RENDER
+    # path — an entry that had never scrolled into view had no
+    # `Presentation` yet, so search saw the "Loading..." placeholder instead
+    # of its content and silently missed it, with no indication the result
+    # was partial. New optional `FlowView(search_text=lambda item: ...)`
+    # lets FlowView read an un-rendered entry's text directly: the matching
+    # entry is found from that cheap text (no rendering), then only that one
+    # entry is presented to resolve the exact row/column. Adopted here as
+    # `search_text=lambda msg: msg.text` (`OutboxMessage.text`) —
+    # deliberately the raw text, not what the gutter prefixes onto it, since
+    # a search match on gutter decoration (not message content) would be a
+    # confusing result. Breaking: `search`/`search_next`/`search_previous`/
+    # `search_selection` are now `async` (a match may need its entry
+    # presented first) — inert for reyn, which never calls these
+    # programmatically (only via FlowView's own key bindings).
+    "textual-flowview @ git+https://github.com/tya5/textual-flowview.git@ae6a40679bfc6ddbdf8adf6df0e243643ccf3573",
     "numpy>=1.24",           # RAG index backend cosine similarity (ADR-0033)
     "croniter>=2.0",         # cron expression parsing for FP-0009 Component B
     "charset-normalizer>=3.0",  # #1452 read_file encoding detection (MIT, pure-python)

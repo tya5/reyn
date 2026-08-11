@@ -968,7 +968,11 @@ Two decisions worth stating because the obvious alternative is wrong:
 - The predicate reads the **model** text (`entry.item.text`), never
   `FlowView.entry_text()`. The latter returns the *rendered* body and is `""`
   for an entry that has not been presented yet, which would silently exclude
-  every never-scrolled-to row from the search domain.
+  every never-scrolled-to row from the search domain. (#4171: flowview 0.17.0
+  fixed this same gap in its OWN `*`/`n`/`N` search — see "Textual TUI text
+  cursor" below — via an optional `search_text=` reyn now supplies; the two
+  searches stay independent features, not a shared implementation, but
+  neither is limited to the rendered band any more.)
 - Opening the bar first materialises the **entire** lazily-held older prefix
   (one `insert_many`). A hit that exists in the restored history but not in
   the materialised page would otherwise read as "no results" — a lie, and the
