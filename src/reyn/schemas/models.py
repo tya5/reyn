@@ -3,9 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import TYPE_CHECKING, Annotated, Any, Literal, Union
 
-from pydantic import BaseModel, Field, model_serializer, model_validator
-
-from reyn.security.permissions.permissions import PermissionDecl
+from pydantic import BaseModel, Field, model_validator
 
 
 class FileIROp(BaseModel):
