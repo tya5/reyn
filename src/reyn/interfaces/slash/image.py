@@ -144,8 +144,17 @@ async def image_cmd(ctx: "SlashContext", args: str) -> None:
         )
         return
 
-    # Resolve relative to CWD (= the same scope Session uses for
-    # file reads). Absolute paths are honoured as-is.
+    # Resolve relative to CWD. #4204: this is NOT the same scope Session
+    # uses for file reads, despite a prior version of this comment
+    # claiming so — Session._workspace_base_dir is the actual value other
+    # Session file-read call sites resolve against
+    # (session.py:3695/4133, `self._workspace_base_dir or Path.cwd()`),
+    # and ctx.session is reachable from this handler (see the
+    # getattr(ctx.session, ...) calls elsewhere in this file), so this
+    # site could read it too but does not. Absolute paths are honoured
+    # as-is. Fixing the scope mismatch itself is tracked separately
+    # (#4204 bucket A); this comment only stops asserting something
+    # untrue.
     path = Path(path_str).expanduser()
     if not path.is_absolute():
         path = Path.cwd() / path
