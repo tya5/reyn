@@ -79,6 +79,33 @@ class _SlowRaisingEffect(_RaisingEffect):
         raise RuntimeError("simulated failure after real work")
 
 
+class _SentinelEffect:
+    """A TTE-shaped effect (same contract as :class:`_RaisingEffect`) that
+    succeeds immediately, yielding one frame with content the pulse can
+    never produce (#4291).
+
+    Used in place of a real TTE effect as the pool's "the retry worked"
+    member: the ONLY claim
+    ``test_a_failed_build_is_retried_with_a_different_effect`` makes is that
+    ``frame_factory``'s pool loop reaches a DIFFERENT, distinct effect after
+    the first one fails — not that a real effect's rendering varies frame to
+    frame (TTE's own promise, not reyn's — #4291, same discriminator as
+    #3872). The sentinel content proves retry specifically reached THIS
+    class; no real TTE effect, and no frame-content diversity count, is
+    needed to prove that.
+    """
+
+    class terminal_config:
+        canvas_width = 0
+        canvas_height = 0
+
+    def __init__(self, art: str) -> None:
+        pass
+
+    def __iter__(self):
+        yield "\x1b[0m__SENTINEL__"
+
+
 def test_the_pulse_returns_to_where_it_started() -> None:
     """Tier 1: one cycle ends adjacent to its own beginning.
 
@@ -193,40 +220,49 @@ def test_closing_the_overlay_cancels_the_build() -> None:
         time.sleep(0.02)
 
 
-@requires_tte
-def test_a_failed_build_is_retried_with_a_different_effect() -> None:
-    """Tier 2: one effect failing is not the operator's problem.
+def test_a_failed_build_is_retried_with_a_different_effect(monkeypatch) -> None:
+    """Tier 2: a build failure retries with a DIFFERENT pool member, not the
+    one that just failed — reyn's own claim, narrowed to exactly that (#4291).
 
-    The pool for one press is DISTINCT effects (``random.sample``, not
-    ``random.choice`` repeated) — retrying the SAME failing effect would just
-    fail again for the same reason. Verified end to end: with the failing
-    class first in the pool and a real effect second, the real effect plays.
+    The prior version pulled up to 300 real frames with a real
+    ``time.sleep(1 / DEFAULT_FPS)`` between each (a wait-budget constant,
+    banned by the owner's standing instruction — testing.md § Time) and then
+    asserted the played frames had more than 5 distinct text contents. That
+    assertion pinned a REAL TTE effect's own frame-to-frame animation
+    variance — a third-party property, not reyn's (the same discriminator
+    #3872 named, same TTE-effects file family CLAUDE.md's Test review
+    section already flags this file for). It also silently assumed the
+    failing effect landed FIRST in the pool, but the pool is built by
+    ``random.sample`` over a plain 2-item list — an exact permutation, so
+    "failing first" held only half the time; the other half, the REAL effect
+    was sampled first and the retry path was never exercised at all, yet the
+    test passed anyway (because SOME effect eventually produced varying
+    frames — true regardless of whether retry-after-failure specifically
+    ran).
+
+    This version needs no real TTE dependency at all — both pool members are
+    reyn-authored test doubles sharing ``_CacheBuilder``'s exact
+    construction/iteration contract, so ``@requires_tte`` no longer applies
+    and this test is never skipped for a missing optional extra.
+    ``random.sample`` is pinned to preserve list order so the failing effect
+    is deterministically first, and the assertion is driven by sentinel
+    content only the retried-to class can produce — not a count of how many
+    frames differed.
     """
-    from terminaltexteffects.effects import effect_rain
+    import random
 
     import reyn.interfaces.inline.textual_chat.text_effect as mod
 
-    original = mod.effect_classes
-    mod.effect_classes = lambda: [_RaisingEffect, effect_rain.Rain]
-    try:
-        generator = text_effect.frame_factory()(60, len(_COVERED), _COVERED)
-        frames = []
-        try:
-            for _ in range(300):
-                frames.append(next(generator))
-                time.sleep(1 / text_effect.DEFAULT_FPS)
-        finally:
-            generator.close()
-    finally:
-        mod.effect_classes = original
+    monkeypatch.setattr(mod, "effect_classes", lambda: [_RaisingEffect, _SentinelEffect])
+    monkeypatch.setattr(random, "sample", lambda population, k: list(population)[:k])
 
-    # The real effect actually ran: its frames differ from one another (a
-    # held static screen, which is what a total failure falls back to, would
-    # not).
-    distinct = len({f.plain for f in frames[10:80]})
-    assert distinct > 5, (
-        f"only {distinct} distinct frames — the real effect never played"
-    )
+    generator = text_effect.frame_factory()(60, len(_COVERED), _COVERED)
+    try:
+        frame = next(f for f in generator if "__SENTINEL__" in f.plain)
+    finally:
+        generator.close()
+
+    assert "__SENTINEL__" in frame.plain
 
 
 @requires_tte
