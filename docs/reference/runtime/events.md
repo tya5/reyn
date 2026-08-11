@@ -275,6 +275,7 @@ See [Concepts: multi-agent](../../concepts/multi-agent/multi-agent.md) — "Agen
 |------|-------------|
 | `llm_called` | `model` (+ `chain_id` when the call belongs to a delegation chain) |
 | `llm_response_received` | `prompt_tokens`, `completion_tokens`, `cached_tokens`, `cache_creation_tokens`, `cost_usd`, `usage_source` (+ `chain_id`) |
+| `embedding_index_build_complete` | `source_id`, `chunk_count`, `total_tokens`, `cost_usd`, `embedding_model` (a disk-adopt/no-fresh-build completion carries `total_tokens`/`cost_usd` as `null` — no embed call happened that run, not a cost of zero) |
 
 `usage_source` says where the token counts came from: `provider` (the provider
 reported them) or `estimated` (the provider's stream carried no usage, so
