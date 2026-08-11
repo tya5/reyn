@@ -161,6 +161,7 @@ def _make_adapter(
         ),
         state_dir=state_dir,
         project_root=project_root,
+        universal_wrappers_enabled=False,  # #4159: preserves prior implicit default
     )
 
 
@@ -588,6 +589,7 @@ async def test_session_handle_user_message_calls_yaml_watch_before_reload(
         ),
         state_dir=state_dir,
         project_root=None,
+        universal_wrappers_enabled=False,  # #4159: preserves prior implicit default
     )
 
     # Simulate the turn-boundary calls that session._handle_user_message makes.

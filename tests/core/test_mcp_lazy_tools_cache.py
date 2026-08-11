@@ -120,6 +120,7 @@ def _make_adapter_with_mcp(
             session_id=None, live_session_id_fn=None,
         ),
         state_dir=tmp_path / "state",
+        universal_wrappers_enabled=False,  # #4159: preserves prior implicit default
     )
     # #3447: mcp_list_tools is now a real RouterHostAdapter method (folded off
     # Session's former callback-injected _mcp_list_tools). This test suite's

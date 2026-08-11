@@ -199,6 +199,7 @@ def test_adapter_put_outbox_persist_false_skips_history_append(tmp_path):
         live_session_id_inputs=LiveSessionIdInputs(
             session_id=None, live_session_id_fn=None,
         ),
+        universal_wrappers_enabled=False,  # #4159: preserves prior implicit default
     )
 
     asyncio.run(adapter.put_outbox(

@@ -231,6 +231,7 @@ def test_adapter_exposes_permission_resolver_property(tmp_path):
         live_session_id_inputs=LiveSessionIdInputs(
             session_id=None, live_session_id_fn=None,
         ),
+        universal_wrappers_enabled=False,  # #4159: preserves prior implicit default
     )
 
     assert adapter.permission_resolver is sentinel, (
@@ -290,6 +291,7 @@ def test_make_router_op_context_wires_intervention_bus(tmp_path):
             session_id=None, live_session_id_fn=None,
         ),
         intervention_bus_factory=lambda: sentinel_bus,
+        universal_wrappers_enabled=False,  # #4159: preserves prior implicit default
     )
 
     op_ctx = adapter.make_router_op_context()
@@ -344,6 +346,7 @@ def test_make_router_op_context_no_factory_leaves_bus_none(tmp_path):
         live_session_id_inputs=LiveSessionIdInputs(
             session_id=None, live_session_id_fn=None,
         ),
+        universal_wrappers_enabled=False,  # #4159: preserves prior implicit default
     )
 
     op_ctx = adapter.make_router_op_context()
@@ -413,6 +416,7 @@ def test_get_inbox_depth_tolerates_a_registry_without_get_session(tmp_path):
         live_session_id_inputs=LiveSessionIdInputs(
             session_id=None, live_session_id_fn=None,
         ),
+        universal_wrappers_enabled=False,  # #4159: preserves prior implicit default
     )
 
     assert adapter.get_inbox_depth() is None
