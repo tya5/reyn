@@ -21,36 +21,74 @@ models:
 
 ## Top-level keys
 
-| Key | Type | Description |
-|-----|------|-------------|
-| `model` | string | Default model class. Resolved via `models`. Override with `--model`. |
-| `models` | map | Class name → LiteLLM model string **or** dict (see below). |
-| `model_class_by_purpose` | map | Per-purpose model-class override (`router` / `control_ir` / `tool` / `judge`). Unset purpose → `model`. `compaction` is NOT a valid key (#3785) — compaction always follows the conversation model. See below. |
-| `output_language` | string | Default output language code (e.g. `en`, `ja`). Override with `--output-language`. |
-| `safety` | map | Runtime stop conditions: loop-detection caps, timeouts, on-limit policy. See below. |
-| `cost` | map | Budget caps and rate limits (per-agent, daily, monthly). See below. |
-| `web` | map | SSL settings for `web_fetch` and MCP registry calls, the gateway auth model, and (`web.surfaces`) which `reyn web` surfaces are mounted. See below. |
-| `sandbox` | map | Sandboxed-exec backend selection, unsupported-platform policy, and the agent-level sandbox policy. See below. |
-| `hooks` | list | Agent-lifecycle hooks — template_push / exec / exec_capture hooks at lifecycle points. See below. |
-| `action_retrieval` | map | Universal catalog visibility + retrieval settings. See below. |
-| `embedding` | map | RAG embedding model classes and batch settings. See below. |
-| `chat` | map | Chat-session compaction settings. See below. |
-| `voice` | map | ⚠️ Currently unavailable (no consumer). See below. |
-| `events` | map | Audit-log rotation policy for chat-session event files. See below. |
-| `observability` | map | Opt-in OpenTelemetry (OTLP) export of P6 audit-events. Off by default. See below. |
-| `tool_use` | map | Chat-layer tool-use scheme x transport selector (`scheme`, `transport`). See below. |
-| `mcp` | map | MCP server definitions. See below. |
-| `python` | map | Python preprocessor additional allowed-modules. See below. |
-| `agent` | map | Agent identity for P6 event audit trail and outgoing HTTP header. See below. |
-| `auth` | map | OAuth provider configurations for `reyn auth login`. See below. |
-| `cron` | map | Scheduled skill executions. See below. |
-| `external_transports` | map | Inbound transport → MCP tool routing for chat (Slack / LINE / Discord etc.). See below. |
-| `multimodal` | map | Binary media (image/audio) size cap, on-oversize behaviour, and artefact storage paths. See below. |
-| `permissions` | map | Default permission policy. See below. |
-| `prompt_cache_enabled` | bool | Attach Anthropic prompt-cache markers to system prompts. Default `true`. |
-| `project_context_path` | string | Markdown file injected into every phase system prompt. Unset (default): auto-resolves the cross-tool standard — `AGENTS.md` if present, else `REYN.md` (legacy fallback). Set an explicit path to pin one file; set `""` to disable. See note below. |
-| `api_base` | string | LiteLLM proxy base URL. Typically set in `reyn.local.yaml` (gitignored). |
-| `tool_calls_op_loop_skills` | list | **Transitional.** Skill names opted into the native-tools op-loop — the phase act-loop drives the shared `RouterLoop.run_loop` (the converged op-loop): ops are emitted as native `tool_calls`, run through the shared executor, and threaded as native tool-role message-history. Default empty = all skills use json-mode (unchanged). Removed once the op-loop becomes the default. |
+**How to read the "Written on / reload" column.** Most keys can only be written
+in `reyn.yaml` / `reyn.local.yaml` (= **PRJ scope**), which `load_config` reads
+**once at startup** — editing them mid-run has no effect **until a restart**.
+
+The exception is the runtime-mutable registries, which may also be written in
+`.reyn/config/<name>.yaml`. **Only what is written on that side is re-read at the
+turn boundary** (= hot reload); the same key written in `reyn.yaml` waits for a
+restart like everything else. **The file split *is* the write-gate boundary**
+(#2073), so the hot-reload loader structurally never opens `reyn.yaml` — to make
+a setting hot-reloadable, put it under `.reyn/config/` rather than adding to
+`reyn.yaml`.
+
+**`_HOT_RELOAD_FILES` in `src/reyn/config/loader.py` is the source of which keys
+are in that exception.** The rows below are derived from it, but **do not read a
+count or a name list out of this prose** — it does not follow the registry when
+one is added.
+
+⚠️ **One exception to the exception**: `composers` is read from the same 4-layer
+combine as `hooks` (`reyn.yaml` ∪ `.reyn/config/hooks.yaml` ∪ per-agent ∪
+per-session) but is **not** hot-reloaded — added or removed entries take effect
+at the next session start.
+
+Note that this table's axis is only the two **project-level** surfaces
+(`reyn.yaml` and `.reyn/config/`). `hooks`, `composers`, and the permission keys
+can additionally be written on an **agent** surface (`.reyn/agents/<name>/`,
+`.reyn/capability_profiles/<name>.yaml`) and a **session** surface
+(`<session-state-dir>/config.yaml`) — see
+[permission-model](../../concepts/runtime/permission-model.md).
+
+| Key | Type | Written on / reload | Description |
+|-----|------|-----|-------------|
+| `model` | string | PRJ only · **restart** | Default model class. Resolved via `models`. Override with `--model`. |
+| `models` | map | PRJ only · **restart** | Class name → LiteLLM model string **or** dict (see below). |
+| `model_class_by_purpose` | map | PRJ only · **restart** | Per-purpose model-class override (`router` / `control_ir` / `tool` / `judge`). Unset purpose → `model`. `compaction` is NOT a valid key (#3785) — compaction always follows the conversation model. See below. |
+| `output_language` | string | PRJ only · **restart** | Default output language code (e.g. `en`, `ja`). Override with `--output-language`. |
+| `safety` | map | PRJ only · **restart** | Runtime stop conditions: loop-detection caps, timeouts, on-limit policy. See below. |
+| `cost` | map | PRJ only · **restart** | Budget caps and rate limits (per-agent, daily, monthly). See below. |
+| `web` | map | PRJ only · **restart** | SSL settings for `web_fetch` and MCP registry calls, the gateway auth model, and (`web.surfaces`) which `reyn web` surfaces are mounted. See below. |
+| `sandbox` | map | PRJ only · **restart** | Sandboxed-exec backend selection, unsupported-platform policy, and the agent-level sandbox policy. See below. |
+| `hooks` | list | both (`.reyn/config/hooks.yaml` side is **hot-reloaded**) | Agent-lifecycle hooks — template_push / exec / exec_capture hooks at lifecycle points. See below. |
+| `action_retrieval` | map | PRJ only · **restart** | Universal catalog visibility + retrieval settings. See below. |
+| `embedding` | map | PRJ only · **restart** | RAG embedding model classes and batch settings. See below. |
+| `chat` | map | PRJ only · **restart** | Chat-session compaction settings. See below. |
+| `voice` | map | PRJ only · **restart** | ⚠️ Currently unavailable (no consumer). See below. |
+| `events` | map | PRJ only · **restart** | Audit-log rotation policy for chat-session event files. See below. |
+| `observability` | map | PRJ only · **restart** | Opt-in OpenTelemetry (OTLP) export of P6 audit-events. Off by default. See below. |
+| `tool_use` | map | PRJ only · **restart** | Chat-layer tool-use scheme x transport selector (`scheme`, `transport`). See below. |
+| `mcp` | map | both (`.reyn/config/mcp.yaml` side is **hot-reloaded**) | MCP server definitions. See below. |
+| `python` | map | PRJ only · **restart** | Python preprocessor additional allowed-modules. See below. |
+| `agent` | map | PRJ only · **restart** | Agent identity for P6 event audit trail and outgoing HTTP header. See below. |
+| `auth` | map | PRJ only · **restart** | OAuth provider configurations for `reyn auth login`. See below. |
+| `cron` | map | both (`.reyn/config/cron.yaml` side is **hot-reloaded**) | Scheduled skill executions. See below. |
+| `external_transports` | map | PRJ only · **restart** | Inbound transport → MCP tool routing for chat (Slack / LINE / Discord etc.). See below. |
+| `multimodal` | map | PRJ only · **restart** | Binary media (image/audio) size cap, on-oversize behaviour, and artefact storage paths. See below. |
+| `permissions` | map | PRJ only · **restart** | Default permission policy. See below. |
+| `prompt_cache_enabled` | bool | PRJ only · **restart** | Attach Anthropic prompt-cache markers to system prompts. Default `true`. |
+| `project_context_path` | string | PRJ only · **restart** | Markdown file injected into every phase system prompt. Unset (default): auto-resolves the cross-tool standard — `AGENTS.md` if present, else `REYN.md` (legacy fallback). Set an explicit path to pin one file; set `""` to disable. See note below. |
+| `api_base` | string | PRJ only · **restart** | LiteLLM proxy base URL. Typically set in `reyn.local.yaml` (gitignored). |
+| `llm` | map | PRJ only · **restart** | LLM-layer config: routing (#1829) and retry (#1835). |
+| `delegation` | map | PRJ only · **restart** | Cross-agent delegation policy (#2081). |
+| `cost_warn` | map | PRJ only · **restart** | Pre-selection awareness for high-cost models (#1830 / FP-0052). |
+| `offload` | map | PRJ only · **restart** | Opt-in switch for the tool-result size gates. |
+| `render_template` | map | PRJ only · **restart** | Operator-tunable output bounds for the `render_template` op (FP-0055 / #2679). |
+| `fs_watch` | map | PRJ only · **restart** | Operator-declared filesystem watch paths (#2608 H4). |
+| `composers` | list | both (but **not** hot-reloaded · **restart**) | Composer definitions. Empty (default) → `start_composers` is never called. |
+| `skills` | map | both (`.reyn/config/skills.yaml` side is **hot-reloaded**) | Skill declarations. Merged across config tiers by name (an explicit entry wins a collision). |
+| `pipelines` | map | both (`.reyn/config/pipelines.yaml` side is **hot-reloaded**) | Pipeline declarations. Same union-merge shape as `skills`. |
+| `presentations` | map | both (`.reyn/config/presentations.yaml` side is **hot-reloaded**) | Presentation-template declarations. Same union-merge shape as `skills` / `pipelines`. |
 
 > **Project context file (`project_context_path`).** Left unset, Reyn reads
 > `AGENTS.md` — the cross-tool convention that Claude Code, Codex, opencode and

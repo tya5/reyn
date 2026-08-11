@@ -21,33 +21,71 @@ models:
 
 ## トップレベルキー
 
-| キー | 型 | 説明 |
-|-----|------|-------------|
-| `model` | 文字列 | デフォルトのモデルクラス。`models` を通じて解決されます。`--model` でオーバーライド。 |
-| `models` | マップ | クラス名 → LiteLLM モデル文字列 **または** dict（以下参照）。 |
-| `output_language` | 文字列 | デフォルトの出力言語コード（例: `en`、`ja`）。`--output-language` でオーバーライド。 |
-| `safety` | マップ | ランタイムの停止条件: ループ検出上限、タイムアウト、上限超過時ポリシー。以下参照。 |
-| `cost` | マップ | バジェット上限とレート制限（エージェントごと、日次、月次）。以下参照。 |
-| `web` | マップ | `web_fetch` と MCP レジストリ呼び出しの SSL 設定。以下参照。 |
-| `sandbox` | マップ | `sandboxed_exec` のバックエンド選択・非対応プラットフォームポリシー・agent-level サンドボックスポリシー。以下参照。 |
-| `action_retrieval` | マップ | ユニバーサルカタログの可視化 + 検索設定。以下参照。 |
-| `embedding` | マップ | RAG 埋め込みモデルクラスとバッチ設定。以下参照。 |
-| `chat` | マップ | チャットセッションの Head/Body/Tail 圧縮設定。以下参照。 |
-| `voice` | マップ | ⚠️ 現在利用不可(consumerなし)。以下参照。 |
-| `events` | マップ | チャットセッションイベントファイルの監査ログローテーションポリシー。以下参照。 |
-| `observability` | マップ | P6 監査イベントの OpenTelemetry (OTLP) エクスポート（オプトイン）。デフォルトは無効。以下参照。 |
-| `tool_use` | マップ | chat レイヤーの tool-use scheme x transport セレクタ（`scheme`、`transport`）。以下参照。 |
-| `mcp` | マップ | MCP サーバー定義。以下参照。 |
-| `python` | マップ | Python preprocessor の追加許可モジュール。以下参照。 |
-| `agent` | マップ | P6 イベント監査証跡と送信 HTTP ヘッダー用のエージェント識別子。以下参照。 |
-| `auth` | マップ | `reyn auth login` 用の OAuth プロバイダー設定。以下参照。 |
-| `cron` | マップ | スケジュール付きスキル実行。以下参照。 |
-| `external_transports` | マップ | チャット向け受信トランスポート → MCP ツールルーティング（Slack / LINE / Discord など）。以下参照。 |
-| `multimodal` | マップ | バイナリメディア（画像・音声）のサイズ上限・超過時の挙動・アーティファクト保存先。以下参照。 |
-| `permissions` | マップ | デフォルトの Permission ポリシー。以下参照。 |
-| `prompt_cache_enabled` | bool | システムプロンプトに Anthropic プロンプトキャッシュマーカーを付与。デフォルト `true`。 |
-| `project_context_path` | 文字列 | すべての Phase システムプロンプトに注入する Markdown ファイル。未設定（デフォルト）: cross-tool 標準を auto-resolve — `AGENTS.md` があればそれ、なければ `REYN.md`（legacy fallback）。明示パスで 1 ファイルに固定、`""` で無効化。下記の注記参照。 |
-| `api_base` | 文字列 | LiteLLM プロキシベース URL。通常は `reyn.local.yaml`（gitignored）に設定。 |
+**「書く面 / 再読込」列の読み方。** ほとんどのキーは `reyn.yaml` /
+`reyn.local.yaml`（＝ **PRJ スコープ**）にしか書けず、`load_config` が
+**起動時に一度だけ**読みます — 実行中に編集しても、**再起動するまで効きません**。
+
+例外はランタイム可変なレジストリ群で、これらは `.reyn/config/<名前>.yaml` にも
+書けます。**`.reyn/config/` 側に書いた分だけがターン境界で読み直され**（= hot
+reload）、`reyn.yaml` 側に書いた同じキーは他と同じく再起動待ちです。
+**ファイル分割そのものが write-gate の境界**であるため（#2073）、hot reload の
+ローダは `reyn.yaml` を構造的に読みません — 「hot reload される設定」を増やしたい
+場合は、`reyn.yaml` に書き足すのではなく `.reyn/config/` 側へ置きます。
+
+**どのキーがこの例外に入るかの一次の出所は `src/reyn/config/loader.py` の
+`_HOT_RELOAD_FILES`** です。下の表の各行はそこから引いていますが、**個数や
+名前の一覧をここから読み取らず、`_HOT_RELOAD_FILES` を読んでください** — 追加
+されてもこの散文は自動追随しません。
+
+⚠️ **例外の例外**: `composers` は `hooks` と同じ 4 層の結合（`reyn.yaml` ∪
+`.reyn/config/hooks.yaml` ∪ エージェントごと ∪ セッションごと）で読まれますが、
+**hot reload されません** — 追加・削除は次のセッション開始で効きます。
+
+なお、この表が扱う軸は **PRJ（`reyn.yaml`）と `.reyn/config/` の 2 面だけ**です。
+`hooks` / `composers` / permission 系はさらに**エージェント面**
+（`.reyn/agents/<名前>/`、`.reyn/capability_profiles/<名前>.yaml`）と
+**セッション面**（`<session-state-dir>/config.yaml`）にも書けます。
+そちらは [permission-model](../../concepts/runtime/permission-model.md) を参照。
+
+| キー | 型 | 書く面 / 再読込 | 説明 |
+|-----|------|-----|-------------|
+| `model` | 文字列 | PRJ のみ・**再起動** | デフォルトのモデルクラス。`models` を通じて解決されます。`--model` でオーバーライド。 |
+| `models` | マップ | PRJ のみ・**再起動** | クラス名 → LiteLLM モデル文字列 **または** dict（以下参照）。 |
+| `output_language` | 文字列 | PRJ のみ・**再起動** | デフォルトの出力言語コード（例: `en`、`ja`）。`--output-language` でオーバーライド。 |
+| `safety` | マップ | PRJ のみ・**再起動** | ランタイムの停止条件: ループ検出上限、タイムアウト、上限超過時ポリシー。以下参照。 |
+| `cost` | マップ | PRJ のみ・**再起動** | バジェット上限とレート制限（エージェントごと、日次、月次）。以下参照。 |
+| `web` | マップ | PRJ のみ・**再起動** | `web_fetch` と MCP レジストリ呼び出しの SSL 設定。以下参照。 |
+| `sandbox` | マップ | PRJ のみ・**再起動** | `sandboxed_exec` のバックエンド選択・非対応プラットフォームポリシー・agent-level サンドボックスポリシー。以下参照。 |
+| `action_retrieval` | マップ | PRJ のみ・**再起動** | ユニバーサルカタログの可視化 + 検索設定。以下参照。 |
+| `embedding` | マップ | PRJ のみ・**再起動** | RAG 埋め込みモデルクラスとバッチ設定。以下参照。 |
+| `chat` | マップ | PRJ のみ・**再起動** | チャットセッションの Head/Body/Tail 圧縮設定。以下参照。 |
+| `voice` | マップ | PRJ のみ・**再起動** | ⚠️ 現在利用不可(consumerなし)。以下参照。 |
+| `events` | マップ | PRJ のみ・**再起動** | チャットセッションイベントファイルの監査ログローテーションポリシー。以下参照。 |
+| `observability` | マップ | PRJ のみ・**再起動** | P6 監査イベントの OpenTelemetry (OTLP) エクスポート（オプトイン）。デフォルトは無効。以下参照。 |
+| `tool_use` | マップ | PRJ のみ・**再起動** | chat レイヤーの tool-use scheme x transport セレクタ（`scheme`、`transport`）。以下参照。 |
+| `mcp` | マップ | 両方（`.reyn/config/mcp.yaml` 側は **hot reload**） | MCP サーバー定義。以下参照。 |
+| `python` | マップ | PRJ のみ・**再起動** | Python preprocessor の追加許可モジュール。以下参照。 |
+| `agent` | マップ | PRJ のみ・**再起動** | P6 イベント監査証跡と送信 HTTP ヘッダー用のエージェント識別子。以下参照。 |
+| `auth` | マップ | PRJ のみ・**再起動** | `reyn auth login` 用の OAuth プロバイダー設定。以下参照。 |
+| `cron` | マップ | 両方（`.reyn/config/cron.yaml` 側は **hot reload**） | スケジュール付きスキル実行。以下参照。 |
+| `external_transports` | マップ | PRJ のみ・**再起動** | チャット向け受信トランスポート → MCP ツールルーティング（Slack / LINE / Discord など）。以下参照。 |
+| `multimodal` | マップ | PRJ のみ・**再起動** | バイナリメディア（画像・音声）のサイズ上限・超過時の挙動・アーティファクト保存先。以下参照。 |
+| `permissions` | マップ | PRJ のみ・**再起動** | デフォルトの Permission ポリシー。以下参照。 |
+| `prompt_cache_enabled` | bool | PRJ のみ・**再起動** | システムプロンプトに Anthropic プロンプトキャッシュマーカーを付与。デフォルト `true`。 |
+| `project_context_path` | 文字列 | PRJ のみ・**再起動** | すべての Phase システムプロンプトに注入する Markdown ファイル。未設定（デフォルト）: cross-tool 標準を auto-resolve — `AGENTS.md` があればそれ、なければ `REYN.md`（legacy fallback）。明示パスで 1 ファイルに固定、`""` で無効化。下記の注記参照。 |
+| `api_base` | 文字列 | PRJ のみ・**再起動** | LiteLLM プロキシベース URL。通常は `reyn.local.yaml`（gitignored）に設定。 |
+| `llm` | マップ | PRJ のみ・**再起動** | LLM 層の設定（ルーティング #1829 / リトライ #1835）。 |
+| `model_class_by_purpose` | マップ | PRJ のみ・**再起動** | 用途名 → モデルクラス。用途ごとに既定クラスを差し替えます。 |
+| `delegation` | マップ | PRJ のみ・**再起動** | エージェント間委任のポリシー（#2081）。 |
+| `cost_warn` | マップ | PRJ のみ・**再起動** | 高コストモデルを選ぶ前の事前警告（#1830 / FP-0052）。 |
+| `offload` | マップ | PRJ のみ・**再起動** | tool 結果のサイズゲートの opt-in スイッチ。 |
+| `render_template` | マップ | PRJ のみ・**再起動** | `render_template` op の出力上限（FP-0055 / #2679）。 |
+| `fs_watch` | マップ | PRJ のみ・**再起動** | オペレータが宣言するファイル監視パス（#2608 H4）。 |
+| `hooks` | リスト | 両方（`.reyn/config/hooks.yaml` 側は **hot reload**） | hook 定義。Session 構築時に `load_hooks` が解析。空（既定）→ HookDispatcher は no-op。 |
+| `composers` | リスト | 両方（ただし **hot reload されない**・再起動） | composer 定義。空（既定）→ `start_composers` は呼ばれません。 |
+| `skills` | マップ | 両方（`.reyn/config/skills.yaml` 側は **hot reload**） | skill 宣言。設定層をまたいで名前でマージ（明示エントリが衝突時に勝つ）。 |
+| `pipelines` | マップ | 両方（`.reyn/config/pipelines.yaml` 側は **hot reload**） | pipeline 宣言。`skills` と同じ union-merge。 |
+| `presentations` | マップ | 両方（`.reyn/config/presentations.yaml` 側は **hot reload**） | presentation テンプレート宣言。`skills` / `pipelines` と同じ union-merge。 |
 
 > **プロジェクトコンテキストファイル（`project_context_path`）。** 未設定のとき
 > Reyn は `AGENTS.md` を読みます — Claude Code・Codex・opencode 等も読む cross-tool
