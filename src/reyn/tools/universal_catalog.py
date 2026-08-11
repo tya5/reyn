@@ -485,6 +485,27 @@ def _enumerate_category(category: str, ctx: ToolContext) -> list[dict[str, str]]
     The output items each carry ``action_name`` (= what
     invoke_action / describe_action expects) and ``short_description``
     (= LLM-facing summary, truncated per _MAX_SHORT_DESC).
+
+    #4154: this used to require an explicit ``if category in (...)`` (or its
+    own ``if category == "...":`` branch) per category before that category's
+    static verbs became reachable through ``list_actions``/``tools=`` — even
+    though every one of those branches did nothing but call
+    ``_enumerate_static_category(category)`` unconditionally. That "must add a
+    branch" step was forgotten SEVEN times (#2032, #2589/#2621, the three
+    management categories the comments below used to name individually,
+    #3083, #3465, and finally ``task`` in #4154 itself, discovered because
+    describe_task/list_tasks/cancel_task were registered + dispatch-wired via
+    ``universal_dispatch`` and listed in ``CATEGORIES``, yet invisible to
+    every scheme's ``tools=``): a category can be fully dispatchable via
+    ``invoke_action`` while remaining permanently undiscoverable here, and
+    the existing #3083 regression test only checked ``CATEGORIES`` MEMBERSHIP
+    (a category is *listed*), never enumeration REACHABILITY (a category's
+    verbs actually come back non-empty) — so ``task`` passed that gate while
+    still being invisible. Closing the class instead of the 7th instance:
+    ``knowledge``/``exec`` are the only two categories with a genuine runtime
+    availability gate (embedding / sandbox backend); every other category —
+    present or future — falls through to the unconditional static branch at
+    the bottom with nothing left to remember to wire in.
     """
     rs = ctx.router_state
 
@@ -501,60 +522,6 @@ def _enumerate_category(category: str, ctx: ToolContext) -> list[dict[str, str]]
     excluded = getattr(rs, "excluded_categories", None) or frozenset()
     if category in excluded:
         return []
-
-    if category in (
-        "file", "web", "memory_operation", "reyn_repo",
-        "multi_agent",
-        # Pre-existing #2032-class gap found + closed while adding
-        # pipeline_management: skill_management had a static membership-table
-        # entry + dispatch route but was NEVER added to this enumeration list —
-        # list_actions(category=["skill_management"]) silently returned empty
-        # even though skill_install_local/_source were fully
-        # dispatchable via invoke_action (the exact "registered + dispatchable
-        # but LLM-invisible" bug class, same root cause as #2589/#2621).
-        # pipeline_management is added alongside it so the new verbs don't
-        # repeat the same gap.
-        "skill_management",
-        "pipeline_management",
-        # proposal 0060 Phase 1 Layer A (A8): same enumeration wiring as
-        # skill_management / pipeline_management so
-        # list_actions(category=["presentation_management"]) surfaces the
-        # install verb (not just dispatchable-but-invisible).
-        "presentation_management",
-        # #3083: same enumeration wiring for plugin_management — closes the
-        # dogfood-witnessed 0/75 gap (plugin_install / plugin_uninstall
-        # were registered + dispatch-wired but never enumerated).
-        "plugin_management",
-        # #3465: same enumeration wiring for the 2 new always-visible
-        # categories (embed / hooks) — neither has a runtime-availability
-        # gate the way ``exec``/``knowledge`` do, so they belong in this
-        # unconditional-static branch, not a dedicated ``if`` below.
-        "embedding",
-        "hooks",
-    ):
-        return _enumerate_static_category(category)
-
-    # #3026: the ``mcp`` category is its static verbs and nothing else. #1647
-    # additionally emitted one action per tool on every
-    # connected server, so the payload scaled with the operator's MCP surface.
-    # Its own commit called that layer "purely a catalog/args ergonomics layer
-    # over call_mcp_tool" — zero capability of its own. See the module docstring
-    # for why the ergonomics argument no longer holds either.
-    if category == "mcp":
-        return _enumerate_static_category("mcp")
-
-    if category == "pipeline":
-        # #2589: the static launch verbs (run_pipeline / _async / _inline /
-        # _inline_async) live in the membership table but were never enumerated,
-        # so a default enumerate-all agent could dispatch them yet never
-        # discover them. #3026: this is now the WHOLE of the category — the IS-5
-        # per-registered-pipeline entries are gone, because
-        # one action per registered pipeline made the payload scale with the
-        # operator's pipelines. They cost no capability to remove (each merely
-        # curried ``name`` into the ``run_pipeline`` this list already carries);
-        # the one thing they did uniquely — NAMING the registered pipelines — is
-        # now ``pipeline_list``, a single fixed verb.
-        return _enumerate_static_category("pipeline")
 
     # knowledge category — search_knowledge (FP-0066 P3c,
     # #3247 firm §3/§6). Visible only when embedding is configured, mirroring
@@ -596,7 +563,18 @@ def _enumerate_category(category: str, ctx: ToolContext) -> list[dict[str, str]]
             }
         ]
 
-    return []
+    # Every other category (file / web / memory_operation / reyn_repo /
+    # multi_agent / mcp / pipeline / skill_management / pipeline_management /
+    # presentation_management / plugin_management / embedding / hooks / task
+    # / any future addition) has no runtime availability gate — it is always
+    # a fixed verb set, always visible once past the exclusion check above.
+    # Callers only ever reach this function with a name already validated
+    # against CATEGORIES (list_actions / catalog_entries both filter through
+    # ``_validate_category_filter`` first), so an unrecognized name here would
+    # be a caller bug, not reachable from the LLM; ``_enumerate_static_category``
+    # degrades to ``[]`` for it either way (#3026: driven by
+    # ``action_names_for_category``, empty for an unknown category).
+    return _enumerate_static_category(category)
 
 
 # ── Category validation (#934 stale-enum explicit error) ────────────────────
