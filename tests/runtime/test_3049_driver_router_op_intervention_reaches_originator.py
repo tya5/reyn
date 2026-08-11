@@ -42,6 +42,7 @@ from reyn.runtime.session_api import _build_agent_step_narrowing, spawn_ephemera
 from reyn.runtime.session_params import PresentationWiring
 from reyn.runtime.spawn_routing import AuditOnlyNoSurface, BridgeToParent
 from reyn.security.permissions.permissions import PermissionDecl, PermissionResolver
+from tests._async_wait import wait_until
 from tests._support.agent_session import make_session
 
 _SERVER = "reyn3049_probe_server"
@@ -112,14 +113,7 @@ async def test_attached_driver_mcp_permission_reaches_originator_operator(tmp_pa
 
     gate = asyncio.ensure_future(resolver.require_mcp(decl, _SERVER, bus))
 
-    loop = asyncio.get_event_loop()
-    deadline = loop.time() + 5.0
-    while loop.time() < deadline and not originator.interventions.list_active():
-        await asyncio.sleep(0.02)
-    assert originator.interventions.list_active(), (
-        "the driver's MCP permission prompt never reached the ORIGINATOR operator's active queue — "
-        "it orphaned on the driver's own listener-less registry (the #3049 stall)."
-    )
+    await wait_until(lambda: bool(originator.interventions.list_active()))
     # Delivered to the LIVE listener, not parked stalled on the parent (the bridge stamps the
     # channel the operator actually listens on).
     assert originator.list_stalled_interventions() == [], (
@@ -153,14 +147,7 @@ async def test_attached_driver_permission_kind_agnostic_same_bus(tmp_path: Path)
     decl = PermissionDecl(tool=[_TOOL])
 
     gate = asyncio.ensure_future(resolver.require_tool(decl, _TOOL, bus))
-    loop = asyncio.get_event_loop()
-    deadline = loop.time() + 5.0
-    while loop.time() < deadline and not originator.interventions.list_active():
-        await asyncio.sleep(0.02)
-    assert originator.interventions.list_active(), (
-        "a tool-authority permission prompt on the same driver bus did NOT reach the originator — "
-        "delivery must ride the bus seam uniformly, not per permission-gate."
-    )
+    await wait_until(lambda: bool(originator.interventions.list_active()))
     consumed = await originator.answer_oldest_intervention_choice(YES)
     assert consumed is True
     await asyncio.wait_for(gate, timeout=5.0)
