@@ -44,7 +44,12 @@ from typing import Any, Awaitable, Callable, Pattern
 
 from reyn.environment.backend import GrepResult
 from reyn.security.sandbox._subprocess_io import MAX_SUBPROCESS_OUTPUT_BYTES, communicate_capped
-from reyn.security.sandbox.backend import SandboxResult, WrappedCommand
+from reyn.security.sandbox.backend import (
+    AxisEnforcement,
+    AxisEnforcementDeclaration,
+    SandboxResult,
+    WrappedCommand,
+)
 from reyn.security.sandbox.policy import SandboxPolicy
 
 # Sync runner: execute argv (optionally stdin), return SandboxResult. Injected so
@@ -351,6 +356,28 @@ class DockerEnvironmentBackend:
     """Repo FS + exec inside a Docker container (dual-Protocol, bridge-free)."""
 
     name: str = "docker"
+
+    # #4039 (D1/D2 — architect's "sharpest instance" example): every axis is
+    # DOES_NOT_ENFORCE. run() reads only policy.timeout_seconds /
+    # policy.max_output_bytes (its own docstring); write/network isolation
+    # comes from FIXED container-launch flags (--read-only, --tmpfs /tmp,
+    # --network none), not from the policy fields an operator writes —
+    # measured directly (#4042, real execution): deny_subprocess=True does
+    # not stop a nested spawn, env_deny_names has nothing to filter (the
+    # container never sees host env at all — #4042/#4047). Docker is the
+    # backend that most needs this declaration: unlike Noop (whose name and
+    # docstring warn a reader to expect no enforcement), an operator choosing
+    # Docker specifically FOR isolation has no reason to suspect these axes
+    # pass straight through.
+    enforced_axes: AxisEnforcementDeclaration = AxisEnforcementDeclaration(
+        write_paths=AxisEnforcement.DOES_NOT_ENFORCE,
+        write_deny_paths=AxisEnforcement.DOES_NOT_ENFORCE,
+        read_deny_paths=AxisEnforcement.DOES_NOT_ENFORCE,
+        network=AxisEnforcement.DOES_NOT_ENFORCE,
+        deny_subprocess=AxisEnforcement.DOES_NOT_ENFORCE,
+        env_deny_names=AxisEnforcement.DOES_NOT_ENFORCE,
+        allow_env_names=AxisEnforcement.DOES_NOT_ENFORCE,
+    )
 
     def __init__(
         self,

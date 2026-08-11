@@ -69,8 +69,12 @@ import logging
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from ._subprocess_io import MAX_SUBPROCESS_OUTPUT_BYTES
+
+if TYPE_CHECKING:
+    from .backend import SandboxBackend
 
 _log = logging.getLogger(__name__)
 
@@ -384,51 +388,57 @@ def deny_narrowed_write_grants(policy: SandboxPolicy) -> list[tuple[str, str]]:
     return narrowed
 
 
-#: Backend names that cannot express a read/write deny-list at all (#3901 §4③):
-#: Landlock is allowlist-only (LSM path-beneath grants; you cannot carve a
-#: subpath out of an allowed parent — landlock.py's own module docstring),
-#: so a configured ``read_deny_paths``/``write_deny_paths`` is silently
-#: unenforced there, unlike Seatbelt's deny-after-allow SBPL rules. This is a
-#: structural backend limitation, not a bug to fix — see the module docstring.
-#:
-#: #3951: this frozenset — and everything ``unenforced_axes()`` below reports
-#: — covers ONLY the deny-list-incapable-backend gap. It does NOT report a
-#: backend that simply does not enforce an axis at all (e.g. the Docker
-#: launch backend currently enforces none of write_paths/network/subprocess
-#: — measured, #3823 co-vet). A caller reading a clean ``unenforced_axes()``
-#: result must not read it as "this backend enforces everything configured."
-_DENY_LIST_INCAPABLE_BACKENDS: frozenset[str] = frozenset({"landlock"})
+def unenforced_axes(backend: "SandboxBackend", policy: SandboxPolicy) -> list[str]:
+    """Return the policy axis names *configured* but *not enforced* by
+    ``backend`` — the visibility mechanism #3901 §4③ names, generalised by
+    #4039 from "can this backend express a deny-list" (which missed a
+    backend that simply enforces NOTHING, e.g. Noop/Docker reporting a
+    clean result while enforcing zero configured axes) to "does this
+    backend enforce what you configured."
 
+    Reads ``backend.enforced_axes`` (a :class:`~.backend.AxisEnforcementDeclaration`,
+    D1: the backend's own declaration, never probed here) — pure function of
+    the policy + backend (no I/O, no events), same shape as
+    :func:`deny_narrowed_write_grants`, so a caller with an events sink
+    emits a ``sandbox_axis_unenforced`` audit-event when this is non-empty.
+    Deliberately NOT wired into ``enforcement_self_test`` (CLAUDE.md hard
+    rule: that function is the PRODUCTION gate, blast radius every
+    sandboxed op on every host, deny-leg × write/spawn axes only — this is
+    audit visibility for a DECLARED gap, not a self-test probe).
 
-def unenforced_axes(backend_name: str, policy: SandboxPolicy) -> list[str]:
-    """Return the policy axis names *configured* but *structurally unenforceable*
-    on ``backend_name`` — the visibility mechanism #3901 §4③ names for a backend
-    capability gap that cannot be fixed (Landlock's LSM constraint), only made
-    observable.
-
-    Pure function of the policy + backend name (no I/O, no events) — same shape
-    as :func:`deny_narrowed_write_grants` — so a caller with an events sink emits
-    a ``sandbox_axis_unenforced`` audit-event when this is non-empty. Landlock is
-    the only backend in this set today; Seatbelt enforces both deny-lists via
-    SBPL deny-after-allow, so it never appears here. Deliberately NOT wired into
-    ``enforcement_self_test`` (CLAUDE.md hard rule: that function is the
-    PRODUCTION gate, blast radius every sandboxed op on every host, deny-leg ×
-    write/spawn axes only — this is audit visibility for a DECLARED gap, not a
-    self-test probe).
-
-    #3951: an empty return is NOT a claim that ``backend_name`` enforces every
-    configured axis — it only means this backend isn't in
-    :data:`_DENY_LIST_INCAPABLE_BACKENDS`. A backend that enforces nothing at
-    all for a given axis (the Docker launch backend today, for
-    write_paths/network/subprocess) also returns ``[]`` here, silently.
+    #4039 (architect correction — a prior reader of #3951's own text
+    misread exactly this): this function's return is **not** the complement
+    of ``backend.enforced_axes`` (a 7-axis FULL domain, D2). This function
+    reports only the SUBSET of that domain the operator actually
+    *configured* on this call's policy (e.g. ``network`` only when
+    ``policy.network is False`` — the operator asked for a restriction;
+    Noop's default-permissive ``network=True`` has nothing to report even
+    though Noop's declaration says ``DOES_NOT_ENFORCE``). An empty return
+    means "nothing you configured on this call went unenforced" — it does
+    NOT mean "this backend enforces every axis" (read
+    ``backend.enforced_axes`` directly for that claim).
     """
-    if backend_name not in _DENY_LIST_INCAPABLE_BACKENDS:
-        return []
+    declared = backend.enforced_axes.as_dict()
+    from .backend import AxisEnforcement  # noqa: PLC0415 — avoid a module-level cycle
+
+    def _unenforced(axis: str) -> bool:
+        return declared[axis] is AxisEnforcement.DOES_NOT_ENFORCE
+
     axes: list[str] = []
-    if policy.read_deny_paths:
-        axes.append("read_deny_paths")
-    if policy.write_deny_paths:
+    if policy.write_paths and _unenforced("write_paths"):
+        axes.append("write_paths")
+    if policy.write_deny_paths and _unenforced("write_deny_paths"):
         axes.append("write_deny_paths")
+    if policy.read_deny_paths and _unenforced("read_deny_paths"):
+        axes.append("read_deny_paths")
+    if policy.network is False and _unenforced("network"):
+        axes.append("network")
+    if policy.deny_subprocess and _unenforced("deny_subprocess"):
+        axes.append("deny_subprocess")
+    if policy.env_deny_names and _unenforced("env_deny_names"):
+        axes.append("env_deny_names")
+    if policy.allow_env_names is not None and _unenforced("allow_env_names"):
+        axes.append("allow_env_names")
     return axes
 
 
@@ -447,6 +457,24 @@ _UNENFORCED_AXIS_REASONS: dict[str, str] = {
         "this backend cannot express a deny-list here — Landlock is an LSM "
         "allowlist-only constraint (you cannot carve a subpath out of an "
         "allowed parent)"
+    ),
+    # #4039: Noop's non-enforcement is total, not a single-axis capability
+    # gap — its own module docstring already tells the operator this
+    # backend provides no isolation at all.
+    "noop": (
+        "this backend provides no isolation — it runs the command with no "
+        "policy enforcement, recording the policy for audit only"
+    ),
+    # #4039 (architect: the sharpest instance — an operator choosing Docker
+    # SPECIFICALLY for isolation has no reason to suspect these axes pass
+    # straight through). Isolation here comes from the container's FIXED
+    # launch-time boundary (image + mounts + --network none + --read-only),
+    # never from the sandbox.* policy fields you write — this backend's
+    # run() does not read them.
+    "docker": (
+        "this backend's isolation comes from the container's fixed "
+        "launch-time boundary (image + mounts), not from your sandbox.policy "
+        "fields — this axis's field is not read here at all"
     ),
 }
 
