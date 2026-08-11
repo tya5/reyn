@@ -210,6 +210,18 @@ jobs:
       - name: Check doc anchors
         run: timeout 2m python scripts/check_doc_anchors.py
 
+      # #4327: a retired top-level reyn.yaml key (renamed via #4174 T1-T7)
+      # must not appear, at YAML top level, in operator-facing docs or the
+      # shipped reyn.local.yaml.example — see
+      # scripts/check_retired_config_keys_denylist.py's module docstring
+      # for the full design (denylist sourced from
+      # reyn.config.config_schema._RENAMED_CONFIG_KEYS, column-0 anchoring,
+      # the two exclusion classes). Needs `reyn` importable (this job's
+      # `pip install -e ".[docs]"` above already provides that), unlike the
+      # stdlib-only tests-path-literal-reference gate.
+      - name: Check retired config keys denylist
+        run: timeout 2m python scripts/check_retired_config_keys_denylist.py
+
   audit:
     name: test-tier audit
     runs-on: ubuntu-latest
