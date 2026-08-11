@@ -45,6 +45,18 @@ If a tutorial wants to explain *why* something works, link to a concept page ins
 - Use **relative links** within `docs/` (e.g. `../reference/dsl/skill-md.md`).
 - Link forward and backward: a tutorial points to relevant reference; a reference page links to the concept that explains it.
 - Don't link to source files.
+- **A section you expect to be linked needs a stable anchor.** When a page
+  repeats the same heading text more than once (e.g. two `## chat block`
+  sections, or a `Synopsis`/`Options` pair per CLI subcommand), mkdocs
+  slugifies every heading after the first occurrence to a positional id
+  (`_1`, `_2`, ...) — which points at "the Nth heading with this text",
+  not at the section itself, so inserting one more heading anywhere above
+  it silently retargets the link. Give the section an explicit id instead:
+  `` ## `chat` block {#chat-compaction-block} ``. Repeated headings that
+  nobody links to (a page's Nth `## Synopsis`/`## Options`, one per
+  subcommand) don't need this — only give an id to a section you're
+  actually citing from elsewhere. A real instance:
+  [`reyn-yaml.md`'s second `chat` block](../../reference/config/reyn-yaml.md#chat-compaction-block).
 
 ## Code examples
 
