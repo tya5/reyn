@@ -13,7 +13,7 @@ class 名で代表的な model を reference できます。
 
 > **これらは example であり推奨ではありません**。 built-in catalog は便利な
 > starting point を提供するもので、 真の source of truth は常に `reyn.yaml`
-> です。 同名の entry を `models:` 配下で declare すれば override 可能。
+> です。 同名の entry を `llm.models:` 配下で declare すれば override 可能。
 
 ## Catalog entries
 
@@ -43,12 +43,13 @@ extended thinking 有効化済 (`budget_tokens: 8000`) の Claude Sonnet。 reas
 cost variant を作るには `extends` を使う:
 
 ```yaml
-models:
-  reasoning-light:
-    extends: claude-sonnet-thinking
-    extra_body:
-      thinking:
-        budget_tokens: 4000   # 8000 を override; type: enabled は base から carry
+llm:
+  models:
+    reasoning-light:
+      extends: claude-sonnet-thinking
+      extra_body:
+        thinking:
+          budget_tokens: 4000   # 8000 を override; type: enabled は base から carry
 ```
 
 ### `claude-haiku`
@@ -235,13 +236,14 @@ user-declared entry が常に勝つ:
 
 ```yaml
 # reyn.yaml
-models:
-  # built-in claude-sonnet を project 固有 variant で override
-  claude-sonnet:
-    model: anthropic/claude-3-7-sonnet
-    max_completion_tokens: 4096   # この project では tighter な budget
+llm:
+  models:
+    # built-in claude-sonnet を project 固有 variant で override
+    claude-sonnet:
+      model: anthropic/claude-3-7-sonnet
+      max_completion_tokens: 4096   # この project では tighter な budget
 ```
 
 ## See also
 
-- `reference/config/reyn-yaml.md` — `models:` block、 `extends` syntax、 deep merge
+- `reference/config/reyn-yaml.md` — `llm.models:` block、 `extends` syntax、 deep merge

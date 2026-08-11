@@ -38,16 +38,15 @@ reyn のすべての YAML ファイルのすべての文字列フィールドで
 
 ```yaml
 # reyn.yaml — 以下の ${VAR} 参照はすべて secrets.env またはシェル環境変数から解決されます
-models:
-  default-sonnet:
-    model: claude-sonnet-4-5
-    api_key: ${ANTHROPIC_API_KEY}          # LLM API キー
-    extra_body:
-      headers:
-        Authorization: ${LITELLM_PROXY_TOKEN}
-
-litellm:
-  api_base: ${LITELLM_API_BASE}
+llm:
+  models:
+    default-sonnet:
+      model: claude-sonnet-4-5
+      api_key: ${ANTHROPIC_API_KEY}          # LLM API キー
+      extra_body:
+        headers:
+          Authorization: ${LITELLM_PROXY_TOKEN}
+  api_base: ${LITELLM_API_BASE}            # llm: の下にネストする（別の litellm: キーではない）
 
 mcp:
   servers:
