@@ -58,6 +58,7 @@ voice:
   compute_type: int8        # int8 | float16 | float32
   cpu_threads: 4             # pin to 4 to avoid OpenMP deadlock on Apple Silicon
   num_workers: 1              # parallel transcribe streams — 1 keeps memory/threads low
+  sample_rate: 16000            # Whisper expects 16 kHz mono — leave this alone
   max_duration_s: 300.0        # auto-stop+transcribe a forgotten recording after this long
 ```
 

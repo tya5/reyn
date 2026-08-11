@@ -58,6 +58,7 @@ voice:
   compute_type: int8             # int8 | float16 | float32
   cpu_threads: 4                  # Apple Silicon での OpenMP デッドロック回避のため 4 に固定
   num_workers: 1                    # 並列変換ストリーム数 — 1 でメモリ/スレッドを抑制
+  sample_rate: 16000                  # Whisper は 16 kHz モノラルを期待 — 変更しないこと
   max_duration_s: 300.0               # 消し忘れた録音をこの秒数後に自動停止・変換
 ```
 
