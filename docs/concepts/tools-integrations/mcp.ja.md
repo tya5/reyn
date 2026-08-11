@@ -127,7 +127,7 @@ phase frontmatter         LLM が Control IR を発行    OS がディスパッ�
 - `subscribe_mcp_resource(server, uri)` / `unsubscribe_mcp_resource(server, uri)` — いずれも `read_mcp_resource` と同じ方法でゲートされます(`mcp_subscribe_resource` / `mcp_unsubscribe_resource` Control IR op、`permissions.mcp: [server_name]`)。さらに、サーバーがネゴシエートした `resources.subscribe` サブケイパビリティによる追加ゲートがあります — サーバーは `subscribe` を広告せずに `resources` を広告できます(list/read は動作する)(例えば、今日 FastMCP の高レベル `FastMCP()` クラスで構築されたすべてのサーバー — 基盤となる SDK は、FastMCP サーバーがどんなハンドラを登録していても `resources.subscribe=False` をハードコードします)。
 - **永続接続が必須です。** 購読は held(セッション寿命の)接続の上でのみ意味を持ちます — 購読中の URI 集合は `MCPConnectionService` 上にインメモリで存在します(ランタイムのみ; 購読はそれ自体のデータを持たないため、完全に再確立可能で、WAL 化されません)。エフェメラルなチャットセッションは、両方の op を、1 回限りの接続が閉じた瞬間に消える購読を受け入れるのではなく、明確なエラーで拒否します。
 - **トランスポート断からの reconnect を生き延びます。** 接続が切れる(サブプロセス死亡、HTTP 切断)と、以前の購読の記憶を持たない新しい MCP セッションが開かれます。`MCPConnectionService` は、追跡していたすべての購読を新しい接続に対して自動的に再発行するため、切断前にセットアップされた購読は、reyn が接続を回復した後もプッシュを届け続けます。
-- **プッシュはツール結果ではなく EventLog に着地します。** `resources/updated` 通知が届くたびに、どの Control IR op 呼び出しとも独立して `mcp_resource_updated`(`server`、`uri`、`resync`)が非同期に発行されます。この通知は同時に**フックディスパッチャーにも配線**されており、`mcp_resource_updated` を購読するフックが直接反応できます([フック § 外部イベントポイント](../runtime/hooks.ja.md#_2)参照)— EventLog はワークフロー作者が読み戻せる監査トレイルのシグナルであり続けます。
+- **プッシュはツール結果ではなく EventLog に着地します。** `resources/updated` 通知が届くたびに、どの Control IR op 呼び出しとも独立して `mcp_resource_updated`(`server`、`uri`、`resync`)が非同期に発行されます。この通知は同時に**フックディスパッチャーにも配線**されており、`mcp_resource_updated` を購読するフックが直接反応できます([フック § 外部イベントポイント](../runtime/hooks.ja.md#外部イベントポイント)参照)— EventLog はワークフロー作者が読み戻せる監査トレイルのシグナルであり続けます。
 
 ### Prompts: 一覧 + 取得
 
@@ -355,5 +355,5 @@ MCP は *外部ケイパビリティへのアクセス* に適したツールで
 - [コンセプト: シークレット管理](../runtime/secret-handling.md) — `~/.reyn/secrets.env` と `${VAR}` interpolation
 - [リファレンス: `reyn.yaml`](../../reference/config/reyn-yaml.md#mcp-servers) — `mcp.servers:` の完全なスキーマ
 - [コンセプト: パーミッションモデル](../runtime/permission-model.md) — `file.write` / `http.get` / `permissions.mcp` と collapse arc
-- [コンセプト: フック](../runtime/hooks.ja.md#_2) — `mcp_resource_updated` 外部イベントフックポイント
+- [コンセプト: フック](../runtime/hooks.ja.md#外部イベントポイント) — `mcp_resource_updated` 外部イベントフックポイント
 - [modelcontextprotocol.io](https://modelcontextprotocol.io) — 仕様、サーバーレジストリ、公式 SDK

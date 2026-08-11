@@ -20,7 +20,7 @@ steps:
 - pipeline は `pipeline:` キーの名前(`greet`)の下に登録されます。ファイル名ではありません — `pipelines/greet.yaml` は何にリネームしても `greet` として登録され続けます。
 - 各ステップは、自身の種別(`transform`、`tool`、`agent`、または合成プリミティブ(Pipeline DSL リファレンス参照)のいずれか)を名前とする単一キーのマッピングです。
 - `ctx.name` はこの pipeline が期待する seed input です。`greeting` は最初のステップの `output` で書き込まれた後、それ以降のすべてのステップから `ctx.greeting` として利用可能になります。bare name のショートカットはありません — `ctx.greeting` の代わりに bare な `greeting` として読もうとするとステップが失敗します。すべての expression は `ctx`(すべての named store)と `pipe`(直前のステップ自身の結果)の 2 つだけをトップレベルキーとして持つコンテキストに対して評価されるためです。完全なルールと実例のトレースは [ステップ間のデータフロー](../../reference/runtime/pipeline-dsl.ja.md#data-flow-between-steps) を参照してください。
-- `!expr` は `argv` をリテラルのリストではなく評価すべき expression としてマークします — [リテラル vs `!expr`](../../reference/runtime/pipeline-dsl.ja.md#vs-expr) 参照。
+- `!expr` は `argv` をリテラルのリストではなく評価すべき expression としてマークします — [リテラル vs `!expr`](../../reference/runtime/pipeline-dsl.ja.md#リテラル-vs-expr) 参照。
 - `exec` は operator のサンドボックスの中で `argv` を実行します(argv のみ — シェル解釈はありません)。前のステップの pipe data は `stdin_pipe: !expr pipe` 引数で STDIN に渡せます — この pipeline はその入力を使いませんが、完全な STDIN/STDOUT の契約は[リファレンスの `exec` ステップの説明](../../reference/runtime/pipeline-dsl.ja.md#tool-step-results)を参照してください。
 
 ## 2. 登録する
@@ -79,7 +79,7 @@ run_pipeline(
 )
 ```
 
-定義は parse され、静的解析ゲートを通されます — schema 参照が解決すること、ツール名が解決すること、どのステップも別の pipeline を起動したり delegate したりしないこと、`agent` ステップが起動者自身の identity の下でのみ実行されること — **何かが spawn される前に**。不正な定義は明確に失敗し何も spawn しません。良い定義は、登録済み pipeline と全く同様に crash-recoverable です。その完全な定義が run 自身の recovery 状態と共に移動するためです。同じ `collect=`/`on_settle=` の同期 vs 非同期の選択が、登録済み `name=` 起動と同様に inline `definition=` 起動にも適用されます。完全なゲートのチェックリストは [Ad-hoc inline 起動](../../reference/runtime/pipeline-dsl.ja.md#ad-hoc-inline) を参照してください。
+定義は parse され、静的解析ゲートを通されます — schema 参照が解決すること、ツール名が解決すること、どのステップも別の pipeline を起動したり delegate したりしないこと、`agent` ステップが起動者自身の identity の下でのみ実行されること — **何かが spawn される前に**。不正な定義は明確に失敗し何も spawn しません。良い定義は、登録済み pipeline と全く同様に crash-recoverable です。その完全な定義が run 自身の recovery 状態と共に移動するためです。同じ `collect=`/`on_settle=` の同期 vs 非同期の選択が、登録済み `name=` 起動と同様に inline `definition=` 起動にも適用されます。完全なゲートのチェックリストは [Ad-hoc inline 起動](../../reference/runtime/pipeline-dsl.ja.md#ad-hoc-inline-起動) を参照してください。
 
 ## 実践例: fan out してから merge する
 
