@@ -203,8 +203,8 @@ class _ErrorWatchingTransport(ClientTransport):
             choice_id, intervention_id=intervention_id
         )
 
-    async def cancel_inflight(self) -> None:
-        await self._inner.cancel_inflight()
+    async def cancel_inflight(self) -> str:
+        return await self._inner.cancel_inflight()
 
     async def cancel_queued(self, msg_id: str) -> bool:
         return await self._inner.cancel_queued(msg_id)

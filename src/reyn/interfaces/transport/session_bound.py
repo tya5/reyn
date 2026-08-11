@@ -124,8 +124,8 @@ class SessionBoundTransport(ClientTransport):
     def put_display(self, msg: "OutboxMessage") -> None:
         self._display_sink(msg)
 
-    async def cancel_inflight(self) -> None:
-        await self._session.cancel_inflight()
+    async def cancel_inflight(self) -> str:
+        return await self._session.cancel_inflight()
 
     async def cancel_queued(self, msg_id: str) -> bool:
         return bool(await self._session.cancel_queued(msg_id))

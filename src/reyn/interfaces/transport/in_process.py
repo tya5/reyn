@@ -236,13 +236,15 @@ class InProcessTransport(ClientTransport):
         # in FIFO order with the session's own output, then re-tagged by the pump.
         self._registry.repl_outbox.put_nowait(msg)
 
-    async def cancel_inflight(self) -> None:
+    async def cancel_inflight(self) -> str:
         s = self._attached()
         if s is None:
-            return
+            return "no session attached"
         cancel_fn = getattr(s, "cancel_inflight", None)
         if callable(cancel_fn):
-            await cancel_fn()
+            result = await cancel_fn()
+            return result if isinstance(result, str) else "✗ cancelled turn"
+        return "nothing was running"
 
     async def cancel_queued(self, msg_id: str) -> bool:
         s = self._attached()

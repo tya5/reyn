@@ -293,6 +293,7 @@ async def reply_error(ctx: SlashContext, text: str) -> None:
 from reyn.interfaces.slash import agent as _agent_mod  # noqa: E402, F401
 from reyn.interfaces.slash import agents as _agents_mod  # noqa: E402, F401
 from reyn.interfaces.slash import budget as _budget_mod  # noqa: E402, F401
+from reyn.interfaces.slash import cancel as _cancel_mod  # noqa: E402, F401
 from reyn.interfaces.slash import chat as _chat_mod  # noqa: E402, F401
 from reyn.interfaces.slash import clear_history as _clear_history_mod  # noqa: E402, F401
 from reyn.interfaces.slash import compact as _compact_mod  # noqa: E402, F401

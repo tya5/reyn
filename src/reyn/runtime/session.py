@@ -2030,10 +2030,27 @@ class Session:
         mode). Returns a human-readable summary string.
 
         #1468 cooperative layer: sets the cooperative cancellation flag so the
-        turn's run_loop breaks at the next tool-iteration boundary. A slow tool
-        already in flight completes before the cancel takes effect (subprocess
-        kill is a follow-up scope). Any spawned tasks are cancelled immediately
-        via asyncio task cancellation (existing behaviour, preserved here).
+        turn's run_loop breaks at the next tool-iteration boundary, AND sets
+        the per-turn ``cancel_event`` (``RouterLoopDriver.cancel_event``,
+        threaded onto the router's OpContext via
+        ``RouterHostAdapter._set_cancel_event`` — #1470) that a currently-
+        running sandboxed subprocess tool races against. Any spawned tasks
+        are cancelled immediately via asyncio task cancellation (existing
+        behaviour, preserved here).
+
+        #4166 correction (this docstring previously said "subprocess kill is
+        a follow-up scope" — that was stale even when written: the regular
+        ``sandboxed_exec`` op's non-CodeAct launches have raced
+        ``cancel_event`` and killed the process group since #1470;
+        ``CodeActRunner`` was the one launch route that reinvented its own
+        ``Popen`` instead of going through ``SandboxBackend.run()`` and so
+        never got it — #4166 closed that gap). A tool NOT wired to
+        ``cancel_event`` at all (this Session's set is #1470's
+        ``sandboxed_exec``/CodeAct plus whatever else threads
+        ``OpContext.cancel_event`` through — MCP calls, embed, plugin
+        install; grep ``cancel_event=ctx.cancel_event`` for the current
+        list) still only observes the cooperative flag at the next
+        iteration boundary, same as before.
 
         #2242 hard layer: ALSO cancels ``_turn_owner_task`` directly (the
         per-turn sub-task ``run_one_iteration`` spawns to run ``_run_turn_body``
@@ -2076,16 +2093,25 @@ class Session:
         other caller (Ctrl-C via the transport, the AG-UI endpoint,
         ``remove_session``) runs on a different task and is unaffected.
         """
-        self._loop_driver.request_cancel()
-        if (
+        # #3903: was anything actually running, BEFORE the cancel attempt —
+        # the return value used to say "✗ cancelled turn" unconditionally,
+        # even when there was nothing in flight (the same shape #4166 found
+        # live in cancel_task's own reply: an accepted request that reports
+        # success regardless of whether anything was actually stopped).
+        running_turn = (
             self._turn_owner_task is not None
             and asyncio.current_task() is not self._turn_owner_task
-            and self._turn_owner_task.cancel()
-        ):
+            and not self._turn_owner_task.done()
+        )
+        self._loop_driver.request_cancel()
+        if running_turn and self._turn_owner_task.cancel():
             self._turn_cancel_self_initiated = True
-        for forward in list(self._cancel_forward_targets):
+        forwards = list(self._cancel_forward_targets)
+        for forward in forwards:
             forward()
-        return "✗ cancelled turn"
+        if running_turn or forwards:
+            return "✗ cancelled turn"
+        return "nothing was running"
 
     def register_cancel_forward(self, forward: "Callable[[], None]") -> "Callable[[], None]":
         """#2588: register ``forward`` to also fire on the next ``cancel_inflight``.
