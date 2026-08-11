@@ -7,8 +7,6 @@ with pre-PR32 reyn.yaml files.
 """
 from __future__ import annotations
 
-from typing import Literal
-
 from reyn.schemas.models import MCPIROp
 
 from . import register

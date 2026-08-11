@@ -9,8 +9,6 @@ the handler emits a free-text `UserIntervention` and awaits the answer.
 """
 from __future__ import annotations
 
-from typing import Literal
-
 from reyn.core.events.event_schema import RETIRED_PHASE_FIELD
 from reyn.schemas.models import AskUserIROp
 from reyn.user_intervention import InterventionChoice, UserIntervention

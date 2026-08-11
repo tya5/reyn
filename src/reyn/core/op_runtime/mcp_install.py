@@ -39,7 +39,7 @@ from __future__ import annotations
 
 import shutil
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING
 
 from reyn.schemas.models import MCPInstallIROp
 
