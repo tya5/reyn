@@ -379,6 +379,16 @@ class ToolContext:
     # (added for the SAME tool's needs). None in non-session/test contexts → the
     # handler falls back to the pre-#2088 global-only write (backward-compatible).
     agent_name: Any | None = None                    # str | None
+    # #4215①: the CALLING session's OWN per-(agent, sid) state dir (the parent
+    # of ``Session._snapshot_path`` — #2285's "4th, most-specific" hook layer),
+    # threaded so a session-scoped self-write tool (hooks_add) targets THIS
+    # session's isolated layer instead of a layer shared with every other
+    # session (the global runtime layer, or #2088's shared per-agent layer —
+    # both replaced by this field). Same threading pattern as
+    # hot_reloader/state_log/agent_name above (added for the SAME tool's
+    # needs). None in non-session/test contexts → the handler falls back to
+    # the pre-#4215 global-only write (backward-compatible).
+    session_state_dir: Any | None = None              # Path | None
 
 
 def parameters_for_export(parameters: Mapping[str, Any]) -> dict[str, Any]:
