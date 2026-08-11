@@ -194,20 +194,31 @@ def test_initialize_failure_includes_stderr_tail_in_error(monkeypatch) -> None:
 
 
 def test_initialize_failure_with_real_subprocess_captures_its_actual_stderr() -> None:
-    """Tier 2: #4285 — end-to-end witness of the OFFICIAL SDK's real
-    ``errlog`` handoff, not reyn's own wiring of it.
+    """Tier 2: #4285 — the subject is reyn's own boundary contract with the
+    ``mcp`` SDK, NOT the SDK's own redirect implementation.
+
+    Framed carefully because the naive framing ("does the SDK correctly
+    redirect a child's stderr into errlog?") is a THIRD-PARTY property — the
+    exact discriminator #3872 and #4291 both had to strip out of a test
+    tonight. The question this test actually asks is reyn's own: **does the
+    ``errlog`` reyn passes to ``stdio_client`` end up carrying the stderr of
+    the child reyn told the SDK to start** — i.e. did #3698's fastmcp→SDK
+    swap silently change the contract reyn depends on. If this assertion
+    fails, that's reyn's problem either way: either reyn is no longer passing
+    ``errlog`` correctly, or reyn is depending on an SDK contract that no
+    longer holds — both are reyn's own integration boundary to notice, not
+    the SDK's internals to verify.
 
     The test above (``test_initialize_failure_includes_stderr_tail_in_error``)
-    proves reyn's OWN contract: whatever text lands in the ``errlog`` file
-    ``stdio_client`` is given gets surfaced into the ``MCPError`` message —
-    but it drives that via a fake CM that writes into the file handle
-    directly, never starting a real child process. It never witnesses that
-    a real subprocess's actual stderr output REACHES that file in the first
-    place — post-#3698 that plumbing is the official ``mcp`` SDK's
-    ``mcp.client.stdio.stdio_client``'s job, not reyn's; a regression there
-    (or in a future SDK upgrade) would go undetected by the fake-CM test
-    alone. This spins a REAL child process that writes to stderr and exits
-    nonzero, closing that gap.
+    proves the OTHER half of reyn's contract: whatever text lands in the
+    ``errlog`` file gets surfaced into the ``MCPError`` message — but it
+    drives that via a fake CM that writes into the file handle directly,
+    never starting a real child process, so it never witnesses the handoff
+    THIS test covers: a real subprocess's actual stderr output reaching that
+    file in the first place. This spins a REAL child process that writes to
+    stderr and exits nonzero — no fake CM, no wait-budget constant (the
+    subprocess's own exit is the only thing waited on, via
+    ``asyncio.run``'s normal await chain).
     """
     pytest.importorskip("mcp")
     client = MCPClient({
