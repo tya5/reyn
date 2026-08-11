@@ -147,7 +147,7 @@ schema を既に返すため。 edge case 用にのみ残す: 単一名 lookup�
 
 ### `invoke_action(action_name, args) → <target の result>`
 
-membership table (下記 [Membership](#membership-action) 参照) 経由で
+membership table (下記 [Membership](#membership-action-名の意味) 参照) 経由で
 target tool に dispatch する。 wrapper は transparent: target handler は
 完全な `ToolContext` 下で動くので、 permission gate / events / budget /
 workspace 効果は legacy tool を直接 call した場合と完全に同一。 未知の
@@ -401,4 +401,4 @@ action_retrieval:
 - [`src/reyn/runtime/router_tools.py`](https://github.com/anthropics/reyn) — `build_tools` integration (flag-gate された wrapper)
 - [`src/reyn/runtime/router_system_prompt.py`](https://github.com/anthropics/reyn) — `## Action categories` section
 - [`src/reyn/config/embedding.py`](https://github.com/anthropics/reyn) — `ActionRetrievalConfig`
-- [`docs/reference/config/reyn-yaml.ja.md`](../../reference/config/reyn-yaml.ja.md#action_retrieval) — config reference
+- [`docs/reference/config/reyn-yaml.ja.md`](../../reference/config/reyn-yaml.ja.md#action_retrieval-ブロック) — config reference
