@@ -33,6 +33,7 @@ from reyn.tools.universal_catalog import (
     INVOKE_ACTION,
     LIST_ACTIONS,
     SEARCH_ACTIONS,
+    _enumerate_category,
     is_exec_available,
     is_search_available,
     visible_categories,
@@ -154,6 +155,66 @@ def test_categories_covers_every_dispatch_wired_category() -> None:
         f"invoke_action but will never appear in an enumerated tools= "
         f"payload (see #3083)"
     )
+
+
+def test_every_dispatch_wired_category_actually_enumerates() -> None:
+    """Tier 2: every dispatch-wired category ENUMERATES its verbs — not just
+    that its name is listed in CATEGORIES.
+
+    #4154: ``task`` passed ``test_categories_covers_every_dispatch_wired_category``
+    above (it WAS in ``CATEGORIES``) while remaining permanently invisible to
+    every catalog scheme — ``_enumerate_category("task", ctx)`` had no
+    matching branch and fell through to an unconditional ``return []``. The
+    #3083 test's own derivation (membership in the tuple) cannot catch this
+    class of gap; it needs the CALL made, not the name looked up. This test
+    calls ``_enumerate_category`` for every dispatch-wired category, under
+    conditions favorable to every runtime gate (a real sandbox backend +
+    embedding configured), and asserts each comes back non-empty.
+
+    Real ``ToolContext`` + real ``RouterCallerState`` (populated, not a hand
+    stub) — no mocks.
+    """
+    from reyn.tools.types import RouterCallerState
+    from reyn.tools.universal_dispatch import KNOWN_ACTION_NAMES_SORTED, category_of
+
+    dispatch_wired_categories = {
+        category_of(name) for name in KNOWN_ACTION_NAMES_SORTED
+    }
+    # Guard the derivation itself (lead-coder review, mirroring #4153's
+    # vacuity guard): if this set is empty, every category below would
+    # trivially pass with nothing checked.
+    assert dispatch_wired_categories, (
+        "dispatch-wired category derivation returned nothing — the gate "
+        "would pass vacuously"
+    )
+    favorable_state = RouterCallerState(
+        excluded_categories=frozenset(),
+        sandbox_backend="seatbelt",
+        embedding_provider=object(),
+        embedding_model_class="some-model",
+    )
+    ctx = ToolContext(
+        events=_NullEventsForCategorySweep(),
+        permission_resolver=None,
+        workspace=None,
+        caller_kind="router",
+        router_state=favorable_state,
+    )
+    empty = [
+        cat for cat in sorted(dispatch_wired_categories)
+        if _enumerate_category(cat, ctx) == []
+    ]
+    assert empty == [], (
+        f"categories {empty} are dispatch-wired and listed in CATEGORIES "
+        f"but _enumerate_category returns [] even under favorable "
+        f"conditions — dispatchable via invoke_action, undiscoverable via "
+        f"list_actions/tools= (see #4154)"
+    )
+
+
+class _NullEventsForCategorySweep:
+    """Minimal events stub satisfying ToolContext.events typing."""
+    subscribers: list[Any] = []
 
 
 def test_action_categories_sp_slot_covers_every_category() -> None:
