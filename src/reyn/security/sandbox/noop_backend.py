@@ -17,7 +17,13 @@ import signal
 import subprocess
 
 from ._subprocess_io import communicate_capped, kill_process_tree
-from .backend import SandboxBackend, SandboxResult, WrappedCommand
+from .backend import (
+    AxisEnforcement,
+    AxisEnforcementDeclaration,
+    SandboxBackend,
+    SandboxResult,
+    WrappedCommand,
+)
 from .policy import SandboxPolicy, resolve_passthrough_env
 
 _logger = logging.getLogger(__name__)
@@ -65,6 +71,22 @@ class NoopBackend:
     """
 
     name: str = "noop"
+
+    # #4039 (D1/D2): the founding bug this declaration exists to close —
+    # Noop enforced nothing yet unenforced_axes() reported nothing, so a
+    # quiet Noop run and a quiet Landlock run were indistinguishable from
+    # the audit signal alone. Only env_deny_names/allow_env_names are
+    # ENFORCES — both flow through resolve_passthrough_env (this class's
+    # own _build_env), the one policy mechanism Noop actually applies.
+    enforced_axes: AxisEnforcementDeclaration = AxisEnforcementDeclaration(
+        write_paths=AxisEnforcement.DOES_NOT_ENFORCE,
+        write_deny_paths=AxisEnforcement.DOES_NOT_ENFORCE,
+        read_deny_paths=AxisEnforcement.DOES_NOT_ENFORCE,
+        network=AxisEnforcement.DOES_NOT_ENFORCE,
+        deny_subprocess=AxisEnforcement.DOES_NOT_ENFORCE,
+        env_deny_names=AxisEnforcement.ENFORCES,
+        allow_env_names=AxisEnforcement.ENFORCES,
+    )
 
     def available(self) -> bool:
         return True

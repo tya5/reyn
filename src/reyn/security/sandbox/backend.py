@@ -9,10 +9,87 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
+from enum import Enum
 from typing import Protocol, runtime_checkable
 
 from .policy import SandboxPolicy
+
+
+class AxisEnforcement(Enum):
+    """Whether a backend enforces one ``SandboxPolicy`` axis — #4039.
+
+    Two values, not three: the founding design draft (#4039, architect)
+    considered a third ``NOT_APPLICABLE`` for "this axis has no meaning on
+    this backend" but found no real instance across the 4 current backends
+    (noop/seatbelt/landlock/docker) × 7 axes — every cell is a definite
+    ENFORCES or DOES_NOT_ENFORCE. A third value withdrawn for lack of a
+    driving case is the same call #3823 made for sandbox.mode's "custom"
+    value; add it back if a real NOT_APPLICABLE case appears, not
+    speculatively.
+    """
+
+    ENFORCES = "enforces"
+    DOES_NOT_ENFORCE = "does_not_enforce"
+
+
+@dataclass(frozen=True)
+class AxisEnforcementDeclaration:
+    """A backend's full per-axis enforcement claim — #4039 (D1/D2).
+
+    Every field is REQUIRED, no defaults anywhere in this class — mirrors
+    :class:`~reyn.security.sandbox.axis_contract.AxisContract`'s own
+    discipline (that module's docstring: "a new axis registered here must
+    say EXPLICITLY whether it has exceptions ... there is no default that
+    would let a forgotten field read as 'none'"). A backend that forgets an
+    axis fails to CONSTRUCT its declaration — a ``TypeError`` at backend
+    module import time, not a silent "not reported" (#4039's own founding
+    bug: ``NoopBackend`` enforced nothing yet ``unenforced_axes()`` reported
+    nothing, because the OLD predicate's domain was never full).
+
+    Keyed to :class:`~reyn.security.sandbox.policy.SandboxPolicy`'s own
+    FIELD names (``deny_subprocess``, not the config-vocabulary
+    ``subprocess`` — #3823 deliberately split those two vocabularies;
+    ``axis_contract.AXIS_REGISTRY``'s coarser ``write``/``spawn``/``network``
+    names are a DIFFERENT, CI-conformance-only vocabulary — see D1/D3 in
+    #4039 for why this module does not reuse it), not
+    :mod:`~reyn.security.sandbox.axis_contract`'s coarser 3-axis vocabulary —
+    the two are separate registries at separate layers (CLAUDE.md's 2-layer
+    sandbox rule: this declaration is read by the production predicate
+    (:func:`~reyn.security.sandbox.policy.unenforced_axes`), CI conformance
+    is a different, CI-only consumer of ``axis_contract``).
+
+    ``allow_env_names`` is declared separately from ``env_deny_names``
+    (architect co-vet, #4039) even though every backend today enforces both
+    identically (both flow through
+    :func:`~reyn.security.sandbox.policy.resolve_passthrough_env`) — they
+    are genuinely distinct ``SandboxPolicy`` fields with distinct semantics
+    (a deny-list vs. an axis-mode switch to allow-list), and a future
+    backend could plausibly diverge on one without the other.
+    """
+
+    write_paths: AxisEnforcement
+    write_deny_paths: AxisEnforcement
+    read_deny_paths: AxisEnforcement
+    network: AxisEnforcement
+    deny_subprocess: AxisEnforcement
+    env_deny_names: AxisEnforcement
+    allow_env_names: AxisEnforcement
+
+    def as_dict(self) -> "dict[str, AxisEnforcement]":
+        """The declaration as a plain ``{axis_name: AxisEnforcement}`` dict —
+        what :func:`~reyn.security.sandbox.policy.unenforced_axes` and CI
+        conformance both actually consume."""
+        return {f.name: getattr(self, f.name) for f in fields(self)}
+
+
+#: Every axis name :class:`AxisEnforcementDeclaration` covers — the full
+#: domain D2 requires. Derived from the dataclass's own fields (not a
+#: hand-duplicated literal) so this constant can never drift from the type
+#: it describes.
+SANDBOX_POLICY_AXES: "frozenset[str]" = frozenset(
+    f.name for f in fields(AxisEnforcementDeclaration)
+)
 
 
 @dataclass
@@ -72,6 +149,16 @@ class SandboxBackend(Protocol):
     """
 
     name: str
+
+    #: #4039 (D1/D2): this backend's own per-axis enforcement claim, over
+    #: the FULL domain (:data:`SANDBOX_POLICY_AXES`) — no default anywhere
+    #: (:class:`AxisEnforcementDeclaration` has none), so a backend that
+    #: forgets an axis fails to construct this at module import time. Read
+    #: by :func:`~reyn.security.sandbox.policy.unenforced_axes` (production,
+    #: declaration-only, never probed) — never by
+    #: ``enforcement_self_test`` (CLAUDE.md hard rule: that gate's blast
+    #: radius stays narrow, deny-leg only, write+spawn only).
+    enforced_axes: AxisEnforcementDeclaration
 
     def available(self) -> bool:
         """Return True if this backend's enforcement mechanism is PRESENT on the
