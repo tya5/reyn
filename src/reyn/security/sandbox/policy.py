@@ -58,11 +58,14 @@ Fields:
 """
 from __future__ import annotations
 
+import logging
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from ._subprocess_io import MAX_SUBPROCESS_OUTPUT_BYTES
+
+_log = logging.getLogger(__name__)
 
 
 def expand_policy_path(raw: str) -> Path:
@@ -436,6 +439,23 @@ _SANDBOX_POLICY_CONFIG_KEYS: frozenset[str] = frozenset(
 )
 
 
+def unknown_sandbox_policy_config_keys(config_policy: "dict | None") -> frozenset[str]:
+    """Return the subset of *config_policy*'s keys that are not in the
+    ``sandbox.policy`` config vocabulary (:data:`_SANDBOX_POLICY_CONFIG_KEYS`).
+
+    The one detection primitive both :func:`_translate_sandbox_policy_config`
+    (silent-filter, see its docstring for why it no longer raises) and the
+    #4174 T0 unified unknown-key WARN mechanism (registered onto
+    ``config_schema`` from ``reyn.config.infra`` — this module does not
+    import ``config_schema`` itself, preserving the leaf's dependency
+    direction) read from — never two independently-maintained "is this key
+    known" checks.
+    """
+    if not isinstance(config_policy, dict):
+        return frozenset()
+    return frozenset(config_policy) - _SANDBOX_POLICY_CONFIG_KEYS
+
+
 def _translate_sandbox_policy_config(config_policy: "dict | None") -> dict:
     """Translate an operator-written ``sandbox.policy`` dict (config
     vocabulary: ``allow_write_paths`` / ``deny_read_paths`` /
@@ -446,47 +466,61 @@ def _translate_sandbox_policy_config(config_policy: "dict | None") -> dict:
     a bool axis using the bare axis name) into ``SandboxPolicy`` constructor
     kwargs (the #3916 internal deny-vocabulary shape, unchanged).
 
-    #3823 (lead-coder review): an operator typo must fail LOUDLY, not
-    silently resolve to "no restriction" — ``SandboxPolicy(**config_dict)``
-    used to get "unknown key -> TypeError" FOR FREE from ``**`` unpacking
-    (config vocabulary WAS the internal signature); a naive ``dict.get``-
-    shaped translation would silently drop an unknown/misspelled key instead,
-    which for a security-relevant deny-list means the typo reads as "nothing
-    to deny" — a fail-OPEN regression, the one direction a sandbox translation
-    layer must never take. So this function re-derives that same strictness
-    explicitly: an unknown key raises, it is never dropped.
+    #4174 T0 (owner ruling — "no hard-fail anywhere, don't special-case
+    sandbox.policy"): an unknown/misspelled key is now SILENTLY FILTERED
+    here, not raised — this supersedes #3823's original "an operator typo
+    must fail LOUDLY" posture. The loud half of that promise now happens
+    earlier and non-fatally: at config-load / hot-reload / ``reyn config
+    validate`` time (:func:`reyn.config.config_schema.unknown_config_keys`,
+    fed by :func:`unknown_sandbox_policy_config_keys` via a registered
+    freeform-leaf validator), which names ALL unknown keys across the WHOLE
+    config in one pass and reports the effective resolved policy alongside
+    — the loosening-risk this axis carries (dropping a policy key makes the
+    config LOOSER, not silently inert, unlike an ordinary unknown key
+    elsewhere). By the time this function runs (every
+    ``resolve_sandbox_policy`` call, i.e. every sandboxed op), that warning
+    has already had its chance to surface; re-raising here would crash a
+    live op on a key that was already reported, not newly discovered — the
+    exact "an already-warned condition takes the session down anyway" gap
+    the OS-wide warn-not-fail posture (#4174) exists to close. See
+    ``SandboxConfig.__post_init__`` for the construction-time side of the
+    same change.
     """
     if config_policy is None:
         return {}
-    unknown = set(config_policy) - _SANDBOX_POLICY_CONFIG_KEYS
-    if unknown:
-        raise ValueError(
-            f"sandbox.policy: unknown key(s) {sorted(unknown)} — allowed: "
-            f"{sorted(_SANDBOX_POLICY_CONFIG_KEYS)}"
-        )
+    unknown = unknown_sandbox_policy_config_keys(config_policy)
     out: dict = {}
     for key, value in config_policy.items():
+        if key in unknown:
+            continue
         field_name = _SANDBOX_POLICY_CONFIG_KEY_TO_FIELD[key]
         if key == "subprocess":
             out[field_name] = not value
         else:
             out[field_name] = value
 
-    # #3903① (architect ruling): timeout_seconds/max_timeout_seconds is a
-    # self-consistency check, NOT a hardcoded ceiling — an operator sets
-    # BOTH the default and the LLM-extensible cap; the only invariant this
-    # layer enforces is default <= max (an operator-declared default ABOVE
-    # their own configured max is a config error, same fail-loud posture
-    # this function already applies to unknown keys — never silently
-    # resolved by picking one value over the other).
+    # #3903① / #4174 T0 (architect flag — folding this into the same
+    # warn-not-fail scope so it isn't the one hard-fail left standing once
+    # the unknown-key raise above is removed): timeout_seconds/
+    # max_timeout_seconds is a self-consistency check, not a hardcoded
+    # ceiling — an operator-declared default ABOVE their own configured max
+    # is a config error, but per the owner's blanket "no hard-fail
+    # anywhere" ruling this now WARNS and clamps the effective default down
+    # to the max, rather than crashing every sandboxed op on this
+    # deployment. Clamping (not silently keeping the over-max value) is the
+    # loosening-risk-safe direction — the operator's own ceiling still
+    # wins.
     effective_timeout = out.get("timeout_seconds", DEFAULT_EXEC_TIMEOUT_SECONDS)
     effective_max = out.get("max_timeout_seconds", DEFAULT_MAX_EXEC_TIMEOUT_SECONDS)
     if effective_timeout > effective_max:
-        raise ValueError(
-            f"sandbox.policy.timeout_seconds ({effective_timeout}) exceeds "
-            f"sandbox.policy.max_timeout_seconds ({effective_max}) — the "
-            f"default cannot be above the LLM-extensible cap"
+        _log.warning(
+            "sandbox.policy.timeout_seconds (%s) exceeds "
+            "sandbox.policy.max_timeout_seconds (%s) — the default cannot "
+            "be above the LLM-extensible cap; using %s as the effective "
+            "default instead of failing this op",
+            effective_timeout, effective_max, effective_max,
         )
+        out["timeout_seconds"] = effective_max
     return out
 
 
