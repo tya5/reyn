@@ -27,7 +27,6 @@ import shutil
 import signal
 import subprocess
 import tempfile
-from pathlib import Path
 
 from reyn.security.sandbox._subprocess_io import communicate_capped, kill_process_tree
 from reyn.security.sandbox.backend import (
