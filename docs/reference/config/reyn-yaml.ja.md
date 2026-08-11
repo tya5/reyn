@@ -55,9 +55,9 @@ reload）、`reyn.yaml` 側に書いた同じキーは他と同じく再起動�
 | `safety` | マップ | PRJ のみ・**再起動** | ランタイムの上限**と content 層の防御**: ループ検出上限、タイムアウト、上限超過時ポリシー、非信頼コンテンツの threat scan + fence（`safety.threat_scan`、FP-0050）、LLM spawn ツリーの上限（`safety.spawn`、DoS ガード）。以下参照。 |
 | `cost` | マップ | PRJ のみ・**再起動** | バジェット上限とレート制限（エージェントごと、日次、月次）。以下参照。 |
 | `web` | マップ | PRJ のみ・**再起動** | **無関係な 2 つのサブシステムが同居しています。** (a) `web_fetch` ツールと MCP レジストリ呼び出しの SSL 設定（`web.fetch`）、(b) `reyn web` ゲートウェイ: 認証モデル（`web.auth`）、WebSocket 受信フレーム上限（`web.ws_max_size`）、マウントするサーフェス（`web.surfaces`）。以下参照。 |
-| `sandbox` | マップ | PRJ のみ・**再起動** | `sandboxed_exec` のバックエンド選択・非対応プラットフォームポリシー・agent-level サンドボックスポリシー。以下参照。 |
+| `sandbox` | マップ | PRJ のみ・**再起動** | バックエンド選択（`backend`）、非対応プラットフォームポリシー（`on_unsupported`）、強制モード（`mode`: compat / strict / custom）、agent-level サンドボックスポリシー（`policy`）。以下参照。 |
 | `action_retrieval` | マップ | PRJ のみ・**再起動** | ユニバーサルカタログの可視化 + 検索設定。以下参照。 |
-| `embedding` | マップ | PRJ のみ・**再起動** | RAG 埋め込みモデルクラスとバッチ設定。以下参照。 |
+| `embedding` | マップ | PRJ のみ・**再起動** | RAG 埋め込み: マスタースイッチ（`enabled`）、モデルクラス、バッチサイズと並列度、リトライ / バックオフ / タイムアウト、トークナイザ、コスト警告閾値。以下参照。 |
 | `chat` | マップ | PRJ のみ・**再起動** | チャットセッションのランタイム設定: 履歴の圧縮、reasoning（"thinking"）テキストの扱い、対話レンダラ（`render_mode`）、TUI の gutter、body の neutralize、許可する画像 URL スキーム。以下参照。 |
 | `voice` | マップ | PRJ のみ・**再起動** | ⚠️ 現在利用不可(consumerなし)。以下参照。 |
 | `events` | マップ | PRJ のみ・**再起動** | `.reyn/events` 配下の P6 **audit-event** ファイルのローテーション（サイズ / 経過時間 / 掃除周期）。WAL-event でも hook-event でもありません。以下参照。 |
@@ -69,7 +69,7 @@ reload）、`reyn.yaml` 側に書いた同じキーは他と同じく再起動�
 | `auth` | マップ | PRJ のみ・**再起動** | `reyn auth login` 用の OAuth プロバイダー設定。以下参照。 |
 | `cron` | マップ | 両方（`.reyn/config/cron.yaml` 側は **hot reload**） | スケジュール付きスキル実行。以下参照。 |
 | `external_transports` | マップ | PRJ のみ・**再起動** | チャット向け受信トランスポート → MCP ツールルーティング（Slack / LINE / Discord など）。以下参照。 |
-| `multimodal` | マップ | PRJ のみ・**再起動** | バイナリメディア（画像・音声）のサイズ上限・超過時の挙動・アーティファクト保存先。以下参照。 |
+| `multimodal` | マップ | PRJ のみ・**再起動** | バイナリメディア（画像・音声）のサイズ上限、超過時の挙動、アーティファクト保存先、およびそれらを配信する `base_url`。以下参照。 |
 | `permissions` | マップ | PRJ のみ・**再起動** | デフォルトの Permission ポリシー。以下参照。 |
 | `prompt_cache_enabled` | bool | PRJ のみ・**再起動** | システムプロンプトに Anthropic プロンプトキャッシュマーカーを付与。デフォルト `true`。 |
 | `project_context_path` | 文字列 | PRJ のみ・**再起動** | すべての Phase システムプロンプトに注入する Markdown ファイル。未設定（デフォルト）: cross-tool 標準を auto-resolve — `AGENTS.md` があればそれ、なければ `REYN.md`（legacy fallback）。明示パスで 1 ファイルに固定、`""` で無効化。下記の注記参照。 |
@@ -81,7 +81,7 @@ reload）、`reyn.yaml` 側に書いた同じキーは他と同じく再起動�
 | `offload` | マップ | PRJ のみ・**再起動** | tool 結果のサイズゲートの opt-in スイッチ。 |
 | `render_template` | マップ | PRJ のみ・**再起動** | `render_template` op の出力上限（FP-0055 / #2679）。 |
 | `fs_watch` | マップ | PRJ のみ・**再起動** | オペレータが宣言するファイル監視パス（#2608 H4）。 |
-| `hooks` | リスト | 両方（`.reyn/config/hooks.yaml` 側は **hot reload**） | hook 定義。Session 構築時に `load_hooks` が解析。空（既定）→ HookDispatcher は no-op。 |
+| `hooks` | リスト | 両方（`.reyn/config/hooks.yaml` 側は **hot reload**） | hook 定義。アクションは 4 種: `template_push` / `exec` / `exec_capture` / `pipeline_launch`。空（既定）→ HookDispatcher は no-op。以下参照。 |
 | `composers` | リスト | 両方（ただし **hot reload されない**・再起動） | composer 定義。空（既定）→ `start_composers` は呼ばれません。 |
 | `skills` | マップ | 両方（`.reyn/config/skills.yaml` 側は **hot reload**） | skill 宣言。設定層をまたいで名前でマージ（明示エントリが衝突時に勝つ）。 |
 | `pipelines` | マップ | 両方（`.reyn/config/pipelines.yaml` 側は **hot reload**） | pipeline 宣言。`skills` と同じ union-merge。 |
