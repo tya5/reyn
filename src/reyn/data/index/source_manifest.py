@@ -11,7 +11,7 @@ import json
 import os
 import time
 from contextlib import asynccontextmanager
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, AsyncIterator, Literal
 

@@ -87,7 +87,7 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Awaitable, Callable, Mapping
+from typing import TYPE_CHECKING, Any, Awaitable, Callable
 
 from reyn.data.index import ChunkRecord, IndexBackend, WriteResult, get_backend
 from reyn.data.index.backend import cache_dir_for_source
