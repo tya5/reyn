@@ -1077,8 +1077,19 @@ class RouterLoop:
         # config-aware ModelResolver. Explicit router_model still wins, so the
         # chat router follows config from this single resolution point.
         from reyn.llm.model_resolver import resolve_purpose_class
+        _resolver = getattr(host, "resolver", None)
         self.router_model = resolve_purpose_class(
-            router_model, getattr(host, "resolver", None), "router",
+            router_model, _resolver, "router",
+        )
+        # #4206 T1 (②bounding): the project-declared ceiling, if any — read
+        # once here (not re-fetched per call) since the resolver is
+        # process-wide and its ceiling doesn't change mid-session. A host
+        # whose resolver has no ``class_ceiling`` (a test double / stub) is
+        # unbounded, same as today.
+        self._model_class_ceiling = (
+            _resolver.class_ceiling()
+            if _resolver is not None and hasattr(_resolver, "class_ceiling")
+            else None
         )
         self.budget = budget
         # When set, RouterLoop skips ``build_system_prompt(host=...)`` and uses
@@ -2052,6 +2063,11 @@ class RouterLoop:
                         # (③a's capability gate decides whether this ever fires —
                         # a non-streaming call never invokes it).
                         on_content_delta=self._emit_agent_delta,
+                        # #4206 T1 (②bounding): this call resolved its model
+                        # class via ``class_for_purpose`` (self.router_model)
+                        # — subject to the ceiling.
+                        model_class=self.router_model,
+                        model_class_ceiling=self._model_class_ceiling,
                     )
                 # Record the fresh result for future resume hit. Defensive:
                 # never let recording failure break the loop. NOT for a
@@ -2737,6 +2753,10 @@ class RouterLoop:
                     trace_caller="router_structured_output",
                     emit_cost_events=True,
                     response_format=self._response_format,
+                    # #4206 T1 (②bounding): same router-purpose class as the
+                    # main tool-turn call.
+                    model_class=self.router_model,
+                    model_class_ceiling=self._model_class_ceiling,
                 )
             except Exception as exc:
                 if attempt == 0:
@@ -2820,6 +2840,10 @@ class RouterLoop:
             trace_caller="router_force_close",
             # #1683: chat path emits cost events for the TUI cost tab.
             emit_cost_events=True,
+            # #4206 T1 (②bounding): the wrap-up call still resolves the
+            # router-purpose class — same ceiling applies.
+            model_class=self.router_model,
+            model_class_ceiling=self._model_class_ceiling,
         )
 
     async def _force_close_call_with_retry(

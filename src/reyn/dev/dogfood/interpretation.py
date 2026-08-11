@@ -140,6 +140,10 @@ async def generate_interpretation(
             model=model,
             messages=messages,
             purpose="dogfood",
+            # #4206 T1: caller passes a raw model string, not a
+            # class_for_purpose-resolved class — not subject to the
+            # ②bounding model-class ceiling axis.
+            model_class=None,
             recorder=None,
             extra_kwargs={"timeout": timeout, "num_retries": 1},
         )

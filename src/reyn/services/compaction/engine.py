@@ -1118,6 +1118,10 @@ class CompactionEngine:
             model=self._model,
             messages=messages,
             purpose="compaction",
+            # #4206 T1 / #3785: compaction always follows Session.model
+            # directly, never class_for_purpose — not subject to the
+            # ②bounding model-class ceiling axis.
+            model_class=None,
             recorder=self._recorder,
             agent=self._recorder_agent,
             response_format=response_format,

@@ -83,6 +83,7 @@ def test_on_content_delta_fires_per_real_content_chunk(monkeypatch) -> None:
     result = asyncio.run(recorded_acompletion(
         model="gpt-4o-mini", messages=[{"role": "user", "content": "hi"}],
         purpose="main", recorder=None,
+        model_class=None,  # #4206 T1: not subject to the axis (pre-existing call)
         on_content_delta=deltas.append,
     ))
 
@@ -113,6 +114,7 @@ def test_on_content_delta_never_fires_on_the_whole_collect_path(monkeypatch) -> 
         # ③a's own equivalence test uses for the whole-collect branch.
         model="o1-pro", messages=[{"role": "user", "content": "hi"}],
         purpose="main", recorder=None,
+        model_class=None,  # #4206 T1: not subject to the axis (pre-existing call)
         on_content_delta=deltas.append,
     ))
 
@@ -138,6 +140,7 @@ def test_failing_on_content_delta_does_not_break_the_call(monkeypatch) -> None:
     result = asyncio.run(recorded_acompletion(
         model="gpt-4o-mini", messages=[{"role": "user", "content": "hi"}],
         purpose="main", recorder=None,
+        model_class=None,  # #4206 T1: not subject to the axis (pre-existing call)
         on_content_delta=_boom,
     ))
 
@@ -230,6 +233,7 @@ def test_silent_zero_delta_stream_logs_once_per_stream(monkeypatch, caplog) -> N
         result = asyncio.run(recorded_acompletion(
             model="gpt-4o-mini", messages=[{"role": "user", "content": "hi"}],
             purpose="main", recorder=None,
+            model_class=None,  # #4206 T1: not subject to the axis (pre-existing call)
             on_content_delta=deltas.append,
         ))
 
@@ -279,6 +283,7 @@ def test_default_shaped_gemini_call_actually_enters_the_streaming_branch(monkeyp
     result = asyncio.run(recorded_acompletion(
         model="gemini/gemini-2.5-flash-lite", messages=[{"role": "user", "content": "hi"}],
         purpose="main", recorder=None,
+        model_class=None,  # #4206 T1: not subject to the axis (pre-existing call)
         on_content_delta=deltas.append,
         # The default-config primary-reply shape: tools attached AND
         # reasoning_effort set (reyn.yaml's default model classes all carry
@@ -307,6 +312,7 @@ def test_silent_zero_delta_guard_does_not_fire_when_deltas_do(monkeypatch, caplo
         asyncio.run(recorded_acompletion(
             model="gpt-4o-mini", messages=[{"role": "user", "content": "hi"}],
             purpose="main", recorder=None,
+            model_class=None,  # #4206 T1: not subject to the axis (pre-existing call)
             on_content_delta=lambda _t: None,
         ))
 

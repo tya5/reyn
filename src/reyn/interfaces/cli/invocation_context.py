@@ -30,6 +30,7 @@ class InvocationContext:
             config.llm.models,
             default_class=config.llm.model,
             purpose_classes=config.llm.model_class_by_purpose,
+            model_max_class=config.llm.model_max_class,  # #4206 T1 (②bounding)
         ))
 
     # ── argparse-aware setting resolution (CLI > config) ─────────────────────

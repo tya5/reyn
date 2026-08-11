@@ -195,6 +195,16 @@ class LLMConfig:
     # #1672 per-purpose model-class override (router / control_ir / tool / judge).
     # Unset purpose -> `model` (see MODEL_CLASS_PURPOSES / ReynConfig.model_class_for).
     model_class_by_purpose: dict[str, str] = field(default_factory=dict)
+    # #4206 T1 (②bounding, ``model`` key): operator-declared CEILING on the
+    # model class a call may use — restrict-only, reject-not-clamp (same
+    # shape as #3903①'s ``SandboxPolicy.max_timeout_seconds``). ``None``
+    # (default) means unbounded, byte-identical to before this field existed.
+    # Enforced at ``recorded_acompletion`` (#1190 chokepoint), never at a
+    # call site, so a future call site cannot forget it.
+    model_max_class: "str | None" = field(
+        default=None,
+        metadata={"desc": "Ceiling on the model class calls may use (light/standard/strong). Unset = unbounded."},
+    )
     # LiteLLM proxy: non-secret base URL only. API keys must be env vars
     # (OPENAI_API_KEY, ANTHROPIC_API_KEY, etc.) — never stored in config files.
     api_base: str = field(
@@ -254,6 +264,25 @@ def _build_model_class_by_purpose(raw: object) -> dict[str, str]:
             )
         out[key] = str(v)
     return out
+
+
+def _build_model_max_class(raw: object) -> "str | None":
+    """#4206 T1: parse ``llm.model_max_class`` — a ceiling, so (unlike
+    ``model_class_by_purpose``'s per-key warn-only tolerance) an unrecognized
+    value is a hard fail-fast, not a silent pass-through: a ceiling that
+    silently doesn't apply is a widened bound, not a typo you can shrug off.
+    """
+    if raw is None:
+        return None
+    from reyn.llm.model_resolver import STANDARD_CLASSES
+
+    value = str(raw)
+    if value not in STANDARD_CLASSES:
+        raise ValueError(
+            f"llm.model_max_class must be one of {list(STANDARD_CLASSES)}, "
+            f"got {value!r}"
+        )
+    return value
 
 
 def _build_retry_config(raw: object) -> RetryConfig:
@@ -350,6 +379,7 @@ def _build_llm_config(raw: object) -> LLMConfig:
         model_class_by_purpose=_build_model_class_by_purpose(
             raw.get("model_class_by_purpose"),
         ),
+        model_max_class=_build_model_max_class(raw.get("model_max_class")),
         api_base=str(raw.get("api_base") or ""),
         prompt_cache_enabled=bool(raw.get("prompt_cache_enabled", True)),
     )

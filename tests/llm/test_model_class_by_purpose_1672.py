@@ -160,3 +160,40 @@ llm:
 """.lstrip())
     with pytest.raises(ValueError, match="model_class_by_purpose.compaction"):
         load_config(cwd=tmp_path)
+
+
+# ── #4206 T1: llm.model_max_class (②bounding ceiling) ─────────────────────────
+
+
+def test_yaml_model_max_class_round_trip(tmp_path, monkeypatch) -> None:
+    """Tier 2: #4206 T1 — model_max_class parses from reyn.yaml and is exposed
+    on LLMConfig; a config that never sets it stays None (unbounded, byte-
+    identical to before this field existed)."""
+    monkeypatch.chdir(tmp_path)
+    _write(tmp_path / "reyn.yaml", """
+llm:
+  model: standard
+  model_max_class: light
+""".lstrip())
+    cfg = load_config(cwd=tmp_path)
+    assert cfg.llm.model_max_class == "light"
+
+    _write(tmp_path / "reyn.yaml", "llm:\n  model: standard\n")
+    cfg2 = load_config(cwd=tmp_path)
+    assert cfg2.llm.model_max_class is None
+
+
+def test_yaml_model_max_class_rejects_unknown_value(tmp_path, monkeypatch) -> None:
+    """Tier 2: #4206 T1 — an unrecognized model_max_class value fails to load
+    (hard fail-fast, unlike model_class_by_purpose's per-key warn-only
+    tolerance): a ceiling that silently doesn't apply is a widened bound, so
+    it cannot be treated as a shrug-off-able typo the way an unused purpose
+    key can."""
+    monkeypatch.chdir(tmp_path)
+    _write(tmp_path / "reyn.yaml", """
+llm:
+  model: standard
+  model_max_class: extra-strong
+""".lstrip())
+    with pytest.raises(ValueError, match="model_max_class"):
+        load_config(cwd=tmp_path)

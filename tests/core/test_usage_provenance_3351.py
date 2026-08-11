@@ -95,6 +95,7 @@ def _run_turn(tracker: BudgetTracker, chain_id: str) -> Any:
     with active_turn(chain_id):
         return asyncio.run(recorded_acompletion(
             model=_MODEL, messages=_MESSAGES, purpose="main",
+            model_class=None,  # #4206 T1: not subject to the axis (pre-existing call)
             recorder=tracker, agent="alpha", emit_cost_events=True,
         ))
 
@@ -292,6 +293,7 @@ def test_a_non_streamed_call_records_the_provider_as_the_origin(monkeypatch, tmp
     with active_turn("turn-whole"):
         asyncio.run(recorded_acompletion(
             model="o1-pro", messages=_MESSAGES, purpose="main",
+            model_class=None,  # #4206 T1: not subject to the axis (pre-existing call)
             recorder=tracker, agent="alpha",
         ))
 

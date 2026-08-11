@@ -182,6 +182,7 @@ async def test_cost_records_actual_model_on_fallback() -> None:
         await recorded_acompletion(
             model=_PRIMARY, messages=[{"role": "user", "content": "x"}],
             purpose="dogfood", recorder=tracker,
+            model_class=None,  # #4206 T1: not subject to the axis (pre-existing call)
         )
     assert [m.rsplit("/", 1)[-1] for m in _recorded_models(tracker)] == [
         _FALLBACK.rsplit("/", 1)[-1]
@@ -244,6 +245,7 @@ async def test_fallback_declared_under_the_prefixed_class_name_still_resolves_un
         await recorded_acompletion(
             model=_PRIMARY, messages=[{"role": "user", "content": "x"}],
             purpose="dogfood", recorder=tracker,
+            model_class=None,  # #4206 T1: not subject to the axis (pre-existing call)
         )
     assert _recorded_models(tracker) == [bare_fallback], (
         "a fallback declared under the operator's prefixed class-name spelling "
@@ -277,6 +279,7 @@ async def test_cost_records_requested_model_when_router_off() -> None:
         await recorded_acompletion(
             model=_PRIMARY, messages=[{"role": "user", "content": "x"}],
             purpose="dogfood", recorder=tracker,
+            model_class=None,  # #4206 T1: not subject to the axis (pre-existing call)
         )
     recorded = _recorded_models(tracker)
     assert [m.rsplit("/", 1)[-1] for m in recorded] == [_PRIMARY.rsplit("/", 1)[-1]], (
