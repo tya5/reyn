@@ -451,58 +451,85 @@ def _migrate(*, dry_run: bool = False) -> None:
             return False, None
         return True, node.pop(parts[-1])
 
-    def _set_dotted(d: dict, dotted: str, value) -> None:
-        parts = dotted.split(".")
-        node = d
-        for part in parts[:-1]:
-            nxt = node.get(part)
-            if not isinstance(nxt, dict):
-                nxt = {}
-                node[part] = nxt
-            node = nxt
-        node[parts[-1]] = value
-
     def _label(path: Path) -> str:
         try:
             return str(path.relative_to(project_root)) if project_root else str(path)
         except ValueError:
             return str(path)
 
+    from reyn.config.migrate_check import verify_rewrite
+    from reyn.config.migrate_text import rewrite_text
+
+    _VALUE_TRANSFORM = "value transform, not a plain rename"
+    _UNSUPPORTED_SHAPE = (
+        "could not confidently rewrite this key's YAML in place "
+        "(unsupported shape — e.g. nested source key, >1 level of nesting "
+        "in the destination, or the key wasn't found in an unambiguous "
+        "top-level form)"
+    )
+    _VERIFY_FAILED = (
+        "the rewrite's own self-check disagreed with the expected result — "
+        "refused rather than risk writing a wrong value"
+    )
+
     any_changes = False
-    manual_found: list[tuple[str, str]] = []
+    manual_found: list[tuple[str, str, str]] = []  # (label, old_key, reason)
     for path in candidates:
         cfg = _read(path)
         if not cfg:
             continue
-        changed_here = []
-        for old_key, new_key in auto_rewritable.items():
-            found, value = _pop_dotted(cfg, old_key)
-            if not found:
-                continue
-            _set_dotted(cfg, new_key, value)
-            changed_here.append((old_key, new_key))
+        # Peek (on the PARSED structure) which auto-rewritable keys are
+        # actually present in this file — decides WHAT to attempt, not
+        # how to write it (that part moved to the text-level rewrite
+        # below, #4295: yaml.safe_load + yaml.dump round-tripped the
+        # WHOLE file through PyYAML's comment-blind loader, silently
+        # dropping every operator comment on every migrate run — not
+        # just on the renamed keys, on every key in the file).
+        present_here = {
+            old_key: new_key for old_key, new_key in auto_rewritable.items()
+            if _pop_dotted(dict(cfg), old_key)[0]  # peek, don't mutate
+        }
         for old_key in needs_manual:
             found, _value = _pop_dotted(dict(cfg), old_key)  # peek, don't mutate
             if found:
-                manual_found.append((_label(path), old_key))
-        if not changed_here:
+                manual_found.append((_label(path), old_key, _VALUE_TRANSFORM))
+        if not present_here:
             continue
+
+        raw_text = path.read_text(encoding="utf-8")
+        result = rewrite_text(raw_text, present_here)
+        # Refused per-key (out of this rewriter's deliberately narrow
+        # scope — see migrate_text's module docstring) fall back to
+        # manual review rather than being silently skipped.
+        for old_key in result.refused:
+            manual_found.append((_label(path), old_key, _UNSUPPORTED_SHAPE))
+        if not result.applied or result.text is None:
+            continue
+        applied_map = dict(result.applied)
+        if not verify_rewrite(raw_text, result.text, applied_map):
+            # The independent structural re-check disagrees with the
+            # text-level rewrite — refuse to write a file we can't
+            # confirm is value-preserving. #4295's hard requirement:
+            # never silently corrupt an operator's config.
+            for old_key in applied_map:
+                manual_found.append((_label(path), old_key, _VERIFY_FAILED))
+            continue
+
         any_changes = True
         print(f"{_label(path)}:")
-        for old_key, new_key in changed_here:
+        for old_key, new_key in result.applied:
             print(f"  {old_key} -> {new_key}")
         if not dry_run:
-            path.write_text(
-                yaml.dump(cfg, allow_unicode=True, default_flow_style=False, sort_keys=False),
-                encoding="utf-8",
-            )
+            path.write_text(result.text, encoding="utf-8")
 
     if manual_found:
-        print("\nThe following renamed key(s) need manual review (value "
-              "transform, not a plain rename — see 'reyn config validate' "
-              "for guidance):")
-        for label, old_key in manual_found:
-            print(f"  {label}: {old_key} — {_RENAMED_CONFIG_KEYS[old_key].note}")
+        print("\nThe following renamed key(s) need manual review:")
+        for label, old_key, reason in manual_found:
+            note = (
+                _RENAMED_CONFIG_KEYS[old_key].note
+                if reason is _VALUE_TRANSFORM else reason
+            )
+            print(f"  {label}: {old_key} — {note}")
 
     if not any_changes and not manual_found:
         print("No renamed keys found in your config — nothing to migrate.")
