@@ -180,7 +180,7 @@ def test_router_adapter_factory_resolves_concrete_policy():
     carries a concrete default_sandbox_policy (wire-full-path — both factories)."""
     from tests._support.router_host_adapter import make_adapter
 
-    adapter = make_adapter()
+    adapter = make_adapter(universal_wrappers_enabled=False)  # #4159: not exercised by this test
     pol = adapter.make_router_op_context().default_sandbox_policy
     assert pol is not None
     assert pol["network"] is DEFAULT_SANDBOX_NETWORK

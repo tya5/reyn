@@ -95,6 +95,7 @@ def null_append_history(msg) -> None:
 
 
 def make_adapter(
+    *,
     agent_name: str = "test-agent",
     agent_workspace_dir: Path | None = None,
     events: EventLog | None = None,
@@ -113,10 +114,15 @@ def make_adapter(
     intervention_answer: "str | None" = None,  # #2175: interactive-mode bus answer (choice_id, e.g. "yes")
     peek_mid_turn_injection: "object | None" = None,  # #3792
     commit_mid_turn_injection: "object | None" = None,  # #3792
-    # #4159: RouterHostAdapter's own ctor param no longer defaults (closes the
-    # implicit-False/config-True mismatch); this shared test builder keeps its
-    # own False default so existing callers of make_adapter() are unaffected.
-    universal_wrappers_enabled: bool = False,
+    # #4159 (remainder recorded on the issue, closed out here): this test
+    # builder used to keep its OWN False default one layer above
+    # RouterHostAdapter's own now-required kwarg — the exact same
+    # implicit/config mismatch shape one level removed, and the exact
+    # "vacuous pass" risk a wrapper-visibility assertion could silently
+    # exercise the wrong path under. No default now; every caller states
+    # what it means. All params are keyword-only (the bare ``*`` above) so
+    # this doesn't need to move in the parameter list.
+    universal_wrappers_enabled: bool,
 ) -> RouterHostAdapter:
     """Construct a minimal RouterHostAdapter with real collaborators."""
     if events is None:
