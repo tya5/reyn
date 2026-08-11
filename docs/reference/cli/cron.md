@@ -172,6 +172,6 @@ All times are UTC. The scheduler uses [`croniter`](https://pypi.org/project/cron
 ## Related
 
 - [Reference: `reyn.yaml`](../config/reyn-yaml.md) — `cron:` configuration block
-- [Concepts: Operational Intelligence](../../concepts/data-retrieval/operational-intelligence.md) — use-cases for scheduled execution
+- [Guide: Monitor and improve with cron](../../guide/for-users/monitor-and-improve-with-cron.md) — a scheduled-execution use-case: waking a monitoring/improvement agent
 - [Concepts: A2A protocol](../../concepts/multi-agent/a2a.md) — `RunRegistry` pattern and future web-mode status API
 - [Reference: `reyn run-once`](run-once.md) — headless single-shot agent invocation (a different dispatch path from cron's inbox-message delivery)
