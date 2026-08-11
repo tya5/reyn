@@ -43,7 +43,7 @@ def _make_ctx() -> Any:
         events=_FakeEventLog(),      # type: ignore[arg-type]
         permission_decl=PermissionDecl(),
         permission_resolver=None,
-        web_config=None,
+        web_fetch_config=None,
     )
 
 

@@ -205,6 +205,27 @@ _RENAMED_CONFIG_KEYS: "dict[str, RenamedKeyHint]" = {
              "one level and rename the key, e.g. `agent: {id: X}` -> "
              "`agent_id: X`",
     ),
+    # #4174 T4. NOT a plain rename — `web:` conflated two unrelated
+    # subsystems (the web_fetch TOOL's TLS settings, `web.fetch`, and the
+    # `reyn web` GATEWAY's own settings, `web.auth`/`web.ws_max_size`/
+    # `web.surfaces`) that now split to TWO different destinations
+    # (`web_fetch:` / `gateway:`). A single old key mapping to more than
+    # one new key cannot be expressed as one `destination` — `migrate`
+    # cannot guess which sub-keys the operator's block actually has, so
+    # `destination` stays None and this reports for manual review, same
+    # category as `agent` above. (The unknown-key walk also never
+    # recurses PAST an already-unknown top-level key — see
+    # `unknown_config_keys`'s own docstring — so a per-sub-key entry like
+    # `"web.fetch"` would never be reached anyway; one entry on `"web"`
+    # is the only reachable shape here.)
+    "web": RenamedKeyHint(
+        note="`web:` split into two keys: move `web.fetch.*` to the "
+             "top-level `web_fetch.*` (unchanged fields — verify_ssl / "
+             "ca_bundle / max_download_bytes / allow_private_ips), and "
+             "move `web.auth` / `web.ws_max_size` / `web.surfaces` under "
+             "a new top-level `gateway:` block (same field names, just "
+             "renested there)",
+    ),
 }
 
 

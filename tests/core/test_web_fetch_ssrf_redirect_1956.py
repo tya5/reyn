@@ -16,7 +16,7 @@ from typing import Any
 
 import pytest
 
-from reyn.config.media import WebConfig, WebFetchConfig
+from reyn.config.media import WebFetchConfig
 from reyn.core.op_runtime.web import handle_web_fetch
 from reyn.schemas.models import WebFetchIROp
 
@@ -53,7 +53,7 @@ def _make_ctx(allow_private: bool = False) -> Any:
         events=_Ev(),                    # type: ignore[arg-type]
         permission_decl=PermissionDecl(),
         permission_resolver=None,
-        web_config=WebConfig(fetch=WebFetchConfig(allow_private_ips=allow_private)),
+        web_fetch_config=WebFetchConfig(allow_private_ips=allow_private),
     )
 
 

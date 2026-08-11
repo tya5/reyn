@@ -265,7 +265,7 @@ DuckDuckGo を使って公開ウェブを検索し、構造化された結果を
 
 フィールド: `url`（必須）、`prompt`（省略可 — 何を抽出するかの LLM 向けヒント。OS は実行しない）、`timeout`（省略可、デフォルト `30` 秒）。
 
-HTML レスポンスはテキスト抽出されます（script、style、非コンテンツタグは除去）。非 HTML レスポンスはそのまま返されます。**抽出したテキストはそのまま全量返されます — `web_fetch` 自身のサイズ上限はありません**（#3580: `max_length` 引数と `truncated`/`next_start`/`start_index` のページングフィールドを撤去。`start_index` はツールスキーマに一度も露出しておらず、LLM はページングできませんでした）。別の上限は 2 つ残ります: `reyn.yaml` の `web.fetch.max_download_bytes` がダウンロードする HTTP ボディを制限し（デフォルト 10 MiB、超過は `status: "too_large"`）、結果のどれだけがモデルの文脈に入るかは OS レベルの tool-result cap（`offload.enabled`、デフォルト `false` = 無制限）が決めます — この op ではありません。
+HTML レスポンスはテキスト抽出されます（script、style、非コンテンツタグは除去）。非 HTML レスポンスはそのまま返されます。**抽出したテキストはそのまま全量返されます — `web_fetch` 自身のサイズ上限はありません**（#3580: `max_length` 引数と `truncated`/`next_start`/`start_index` のページングフィールドを撤去。`start_index` はツールスキーマに一度も露出しておらず、LLM はページングできませんでした）。別の上限は 2 つ残ります: `reyn.yaml` の `web_fetch.max_download_bytes`（#4174 T4、`web.fetch.max_download_bytes` から改名）がダウンロードする HTTP ボディを制限し（デフォルト 10 MiB、超過は `status: "too_large"`）、結果のどれだけがモデルの文脈に入るかは OS レベルの tool-result cap（`offload.enabled`、デフォルト `false` = 無制限）が決めます — この op ではありません。
 
 ## `mcp`
 

@@ -205,7 +205,7 @@ def _resolve_ssl_verify(ctx: OpContext) -> bool | str:
     ensure_litellm_ready()
     from litellm.llms.custom_httpx.http_handler import get_ssl_verify
 
-    cfg = ctx.web_config.fetch if ctx.web_config is not None else None
+    cfg = ctx.web_fetch_config
     if cfg is not None:
         if cfg.ca_bundle:
             return cfg.ca_bundle  # custom CA bundle path (corporate PKI)
@@ -230,9 +230,9 @@ async def handle_web_fetch(op: WebFetchIROp, ctx: OpContext) -> dict:
     # loopback / private target (e.g. 169.254.169.254 → cloud IAM creds). We now
     # follow redirects MANUALLY and re-gate EACH hop: Layer 1 = allowlist
     # re-validate (require_http_get), Layer 2 = IP-deny (reyn._ssrf_guard).
-    # ``allow_private`` is the operator opt-in (web.fetch.allow_private_ips).
+    # ``allow_private`` is the operator opt-in (web_fetch.allow_private_ips).
     _allow_private = (
-        ctx.web_config.fetch.allow_private_ips if ctx.web_config is not None else False
+        ctx.web_fetch_config.allow_private_ips if ctx.web_fetch_config is not None else False
     )
 
     async def _gate_hop(hop_url: str) -> dict | None:
@@ -267,8 +267,8 @@ async def handle_web_fetch(op: WebFetchIROp, ctx: OpContext) -> dict:
     # DoS. Stream instead, rejecting on a declared Content-Length over the cap
     # and on the running byte total exceeding it (covers chunked / no-CL).
     _max_dl = (
-        ctx.web_config.fetch.max_download_bytes
-        if ctx.web_config is not None
+        ctx.web_fetch_config.max_download_bytes
+        if ctx.web_fetch_config is not None
         else 10 * 1024 * 1024
     )
 

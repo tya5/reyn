@@ -24,7 +24,7 @@ from typing import Any
 import httpx
 import pytest
 
-from reyn.config.media import WebConfig, WebFetchConfig
+from reyn.config.media import WebFetchConfig
 from reyn.core.op_runtime.web import handle_web_fetch
 from reyn.schemas.models import WebFetchIROp
 
@@ -42,7 +42,7 @@ def _make_ctx(max_download_bytes: int) -> Any:
         events=_FakeEventLog(),          # type: ignore[arg-type]
         permission_decl=PermissionDecl(),
         permission_resolver=None,
-        web_config=WebConfig(fetch=WebFetchConfig(max_download_bytes=max_download_bytes)),
+        web_fetch_config=WebFetchConfig(max_download_bytes=max_download_bytes),
     )
 
 

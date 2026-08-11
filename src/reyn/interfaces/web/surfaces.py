@@ -265,9 +265,11 @@ def mount_all(app: FastAPI, config: "ReynConfig | None") -> None:
     """
     cli_enable, cli_disable = cli_overrides_from_env()
     surfaces_config = SurfacesConfig()
-    web_cfg = getattr(config, "web", None)
-    if web_cfg is not None:
-        surfaces_config = getattr(web_cfg, "surfaces", None) or SurfacesConfig()
+    # #4174 T4: renamed from config.web.surfaces — web: split into web_fetch:
+    # (unrelated tool settings) + gateway: (this gateway's own settings).
+    gateway_cfg = getattr(config, "gateway", None)
+    if gateway_cfg is not None:
+        surfaces_config = getattr(gateway_cfg, "surfaces", None) or SurfacesConfig()
 
     for spec in build_registry():
         enabled = resolve_enabled(

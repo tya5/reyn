@@ -444,7 +444,7 @@ Fetches a single URL and returns its text-extracted content. **Tier 1** — defa
 
 Fields: `url` (required), `prompt` (optional hint describing what to extract — informational for the LLM, not executed by the OS), `timeout` (optional, default `30` seconds).
 
-HTML responses are text-extracted (scripts, styles, and non-content tags stripped); non-HTML responses are returned as-is. **The extracted text is returned whole — `web_fetch` has no size cap of its own** (#3580: the `max_length` argument and the `truncated`/`next_start`/`start_index` paging fields were removed; the `start_index` half never reached the tool schema, so the LLM could never page). Two other bounds still apply: `web.fetch.max_download_bytes` in `reyn.yaml` caps the HTTP body downloaded (default 10 MiB, rejected as `status: "too_large"`), and how much of the result reaches the model's context is governed by the OS-level tool-result cap (`offload.enabled`, default `false` = uncapped) — not by this op.
+HTML responses are text-extracted (scripts, styles, and non-content tags stripped); non-HTML responses are returned as-is. **The extracted text is returned whole — `web_fetch` has no size cap of its own** (#3580: the `max_length` argument and the `truncated`/`next_start`/`start_index` paging fields were removed; the `start_index` half never reached the tool schema, so the LLM could never page). Two other bounds still apply: `web_fetch.max_download_bytes` in `reyn.yaml` (#4174 T4, renamed from `web.fetch.max_download_bytes`) caps the HTTP body downloaded (default 10 MiB, rejected as `status: "too_large"`), and how much of the result reaches the model's context is governed by the OS-level tool-result cap (`offload.enabled`, default `false` = uncapped) — not by this op.
 
 ## `mcp`
 

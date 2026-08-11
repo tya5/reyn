@@ -56,9 +56,10 @@ from reyn.config.infra import (
     _default_agent_id,
 )
 from reyn.config.media import (
+    GatewayConfig,
     MultimodalConfig,
     VoiceConfig,
-    WebConfig,
+    WebFetchConfig,
 )
 from reyn.config.observability import (
     ObservabilityConfig,
@@ -253,9 +254,20 @@ class ReynConfig:
     # (max_output_chars / wall_clock_seconds). Default → the safe in-handler bounds.
     render_template: RenderTemplateConfig = field(default_factory=RenderTemplateConfig)
     # FP-0022 follow-up: declarative SSL config for web_fetch + MCP registry.
-    # Priority: web.fetch.ca_bundle → web.fetch.verify_ssl → SSL_VERIFY env →
+    # Priority: web_fetch.ca_bundle → web_fetch.verify_ssl → SSL_VERIFY env →
     # litellm.ssl_verify → SSL_CERT_FILE → True (default).
-    web: WebConfig = field(default_factory=WebConfig)
+    # #4174 T4: this field was `web` (renamed here, unchanged shape). The
+    # OTHER half of the old `web:` key — the `reyn web` gateway's own
+    # settings — is the SEPARATE `gateway` field below; #4274 tracks that
+    # this OpContext.web_fetch_config wiring is not actually consumed by
+    # any live session today (a pre-existing gap this rename does not fix
+    # or worsen).
+    web_fetch: WebFetchConfig = field(default_factory=WebFetchConfig)
+    # #4174 T4: the `reyn web` gateway's own settings (auth model, WS frame
+    # ceiling, per-surface mount overrides) — split from `web:` because that
+    # key conflated this with the unrelated web_fetch TOOL's TLS settings
+    # above. See GatewayConfig's own docstring for the full split rationale.
+    gateway: GatewayConfig = field(default_factory=GatewayConfig)
     # Issue #364 — multi-modal cluster: cap binary media size (= images from
     # web_fetch / read_file / MCP) + iv-gated user permission when exceeded.
     multimodal: MultimodalConfig = field(default_factory=MultimodalConfig)

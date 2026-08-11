@@ -28,11 +28,11 @@ def _write_reyn_yaml(directory: Path, content: str) -> None:
 
 @pytest.mark.asyncio
 async def test_lifespan_builds_auth_context_from_configured_token(tmp_path, monkeypatch):
-    """Tier 2: lifespan sets app.state.auth using the configured web.auth.token."""
+    """Tier 2: lifespan sets app.state.auth using the configured gateway.auth.token."""
     monkeypatch.delenv(TOKEN_ENV_VAR, raising=False)
     _write_reyn_yaml(
         tmp_path,
-        "model: standard\nweb:\n  auth:\n    token: operator-configured-secret\n",
+        "model: standard\ngateway:\n  auth:\n    token: operator-configured-secret\n",
     )
     monkeypatch.chdir(tmp_path)
 

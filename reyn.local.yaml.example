@@ -842,9 +842,14 @@
 
 
 # -----------------------------------------------------------------------------
-# web.fetch: SSL verification for ``web_fetch`` + MCP
+# web_fetch: SSL verification for the ``web_fetch`` tool + MCP
 # registry. Priority: ``ca_bundle`` > ``verify_ssl`` > ``SSL_VERIFY`` env >
 # ``litellm.ssl_verify`` > ``SSL_CERT_FILE`` > true.
+#
+# (#4174 T4: this used to be nested under ``web.fetch:`` — ``web:`` was split
+# into this top-level ``web_fetch:`` scalar-namespace and the separate
+# ``gateway:`` block below, since the old key conflated the web_fetch TOOL's
+# settings here with the unrelated ``reyn web`` GATEWAY's own settings.)
 #
 # Set ``ca_bundle`` for corporate MITM / custom PKI; set
 # ``verify_ssl: false`` only in controlled test environments.
@@ -864,13 +869,21 @@
 # bounce to an internal target. Also exported to REYN_FETCH_ALLOW_PRIVATE_IPS
 # for the safe.http subprocess + registry clients.
 # -----------------------------------------------------------------------------
-# web:
-#   fetch:
-#     verify_ssl: null              # null = delegate to env / litellm fallback
-#     ca_bundle: null               # absolute / cwd-relative PEM path
-#     max_download_bytes: 10485760  # 10MB wire-byte ceiling (DoS guard)
-#     allow_private_ips: false      # #1956 SSRF: opt-in to private IPs (link-local/metadata/loopback always denied)
-#   ws_max_size: 16777216           # 16MB WebSocket inbound-frame ceiling (reyn web gateway)
+# web_fetch:
+#   verify_ssl: null              # null = delegate to env / litellm fallback
+#   ca_bundle: null               # absolute / cwd-relative PEM path
+#   max_download_bytes: 10485760  # 10MB wire-byte ceiling (DoS guard)
+#   allow_private_ips: false      # #1956 SSRF: opt-in to private IPs (link-local/metadata/loopback always denied)
+
+
+# -----------------------------------------------------------------------------
+# gateway: the ``reyn web`` gateway's own settings — authentication model,
+# WebSocket inbound-frame ceiling, and per-surface mount overrides.
+# (#4174 T4: split from ``web:`` — see the ``web_fetch:`` block above for
+# the other half that key used to conflate.)
+# -----------------------------------------------------------------------------
+# gateway:
+#   ws_max_size: 16777216           # 16MB WebSocket inbound-frame ceiling
 #   auth:                           # reyn web gateway authentication (server-side)
 #     token: null                   # cross-machine (T3) bearer token; REQUIRED for a non-loopback bind (else fail-closed)
 #     require_token_on_loopback: true  # also require the token on loopback TCP (secure default for shared hosts)

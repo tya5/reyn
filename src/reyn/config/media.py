@@ -1,4 +1,4 @@
-"""reyn.config.media — media config: Voice/Multimodal/Web/WebFetch. (#1682 #3 split)."""
+"""reyn.config.media — media config: Voice/Multimodal/WebFetch/Gateway. (#1682 #3 split)."""
 from __future__ import annotations
 
 import socket
@@ -46,7 +46,10 @@ class VoiceConfig:
 
 @dataclass
 class WebFetchConfig:
-    """`web.fetch:` — SSL verification settings for web_fetch and MCP registry.
+    """`web_fetch:` — SSL verification settings for web_fetch and MCP registry
+    (#4174 T4: flattened from `web.fetch:` — this is the web_fetch TOOL's own
+    settings, unrelated to the `reyn web` gateway's `gateway:` block below;
+    the old `web:` key held both, unnamed as two subsystems sharing one key).
 
     Priority order (highest to lowest):
       1. ``ca_bundle`` set → use that file path as the CA bundle (``verify=<path>``).
@@ -95,13 +98,14 @@ class WebFetchConfig:
 # Default WebSocket max frame size (bytes) for the `reyn web` gateway. Pins
 # uvicorn/websockets' implicit 16 MiB default EXPLICITLY so a uvicorn version
 # bump or an operator server override can't silently drop the bound. Operator-
-# tunable via ``web.ws_max_size``.
+# tunable via ``gateway.ws_max_size`` (#4174 T4, renamed from ``web.ws_max_size``).
 DEFAULT_WS_MAX_SIZE = 16 * 1024 * 1024
 
 
 @dataclass
 class AuthConfig:
-    """`web.auth:` — gateway authentication settings (server-side auth model).
+    """`gateway.auth:` — gateway authentication settings (server-side auth
+    model). #4174 T4: renamed from `web.auth:`.
 
     ``token`` is the T3 cross-machine bearer secret. Leaving it unset keeps a
     loopback gateway usable (a token is generated at startup for the browser
@@ -119,7 +123,8 @@ class AuthConfig:
 
 @dataclass
 class SurfacesConfig:
-    """`web.surfaces:` — FP-0058 P2 per-surface opt-in/opt-out overrides.
+    """`gateway.surfaces:` — FP-0058 P2 per-surface opt-in/opt-out overrides.
+    #4174 T4: renamed from `web.surfaces:`.
 
     Launch-time-only, operator-owned config (protect-at-use, per
     ``permission-model.md``): the LLM has no launch authority over which
@@ -136,7 +141,7 @@ class SurfacesConfig:
 
     Example::
 
-        web:
+        gateway:
           surfaces:
             a2a: {enabled: true}    # opt in to A2A
             mcp: {enabled: true}    # opt in to MCP
@@ -145,23 +150,29 @@ class SurfacesConfig:
 
 
 @dataclass
-class WebConfig:
-    """`web:` — web settings.
+class GatewayConfig:
+    """`gateway:` — the `reyn web` gateway's own settings.
 
-    Aggregates the ``web.fetch`` sub-section (web_fetch operation knobs),
-    ``ws_max_size`` (the gateway WebSocket inbound-frame ceiling),
-    ``web.auth`` (the gateway authentication model), and ``web.surfaces``
-    (FP-0058 P2: per-surface opt-in/opt-out mount overrides). Extend here
-    when ``web.search`` gets its own knobs.
+    #4174 T4: split from the old `web:` key, which conflated TWO unrelated
+    subsystems under one name — the ``web_fetch`` TOOL's TLS settings
+    (now the top-level ``web_fetch:`` scalar-namespace, see
+    :class:`WebFetchConfig`) and the ``reyn web`` GATEWAY's own settings
+    (this class). ``web:`` never named which of the two an operator was
+    reading/writing; ``gateway:`` unambiguously means the server.
+
+    Aggregates ``ws_max_size`` (the gateway WebSocket inbound-frame
+    ceiling), ``auth`` (the gateway authentication model), and
+    ``surfaces`` (FP-0058 P2: per-surface opt-in/opt-out mount overrides).
+    Extend here when ``gateway.search`` gets its own knobs.
     """
-    fetch: WebFetchConfig = field(default_factory=WebFetchConfig)
     ws_max_size: int = DEFAULT_WS_MAX_SIZE
     auth: AuthConfig = field(default_factory=AuthConfig)
     surfaces: SurfacesConfig = field(default_factory=SurfacesConfig)
 
 
 def _build_web_fetch_config(raw: object) -> WebFetchConfig:
-    """Parse the ``web.fetch:`` sub-section."""
+    """Parse the top-level ``web_fetch:`` section (#4174 T4, renamed from
+    ``web.fetch:``)."""
     if not isinstance(raw, dict):
         return WebFetchConfig()
     ca_bundle_raw = raw.get("ca_bundle")
@@ -192,7 +203,8 @@ def _build_web_fetch_config(raw: object) -> WebFetchConfig:
 
 
 def _build_auth_config(raw: object) -> AuthConfig:
-    """Parse the ``web.auth:`` sub-section. Empty / missing returns defaults."""
+    """Parse the ``gateway.auth:`` sub-section (#4174 T4, renamed from
+    ``web.auth:``). Empty / missing returns defaults."""
     if not isinstance(raw, dict):
         return AuthConfig()
     token_raw = raw.get("token")
@@ -234,19 +246,21 @@ def _build_surfaces_config(raw: object) -> SurfacesConfig:
     return SurfacesConfig(enabled=overrides)
 
 
-def _build_web_config(raw: object) -> WebConfig:
-    """Parse the ``web:`` section. Empty / missing returns full defaults."""
+def _build_gateway_config(raw: object) -> GatewayConfig:
+    """Parse the top-level ``gateway:`` section (#4174 T4, split from the
+    old ``web:`` section — this half is the ``reyn web`` GATEWAY's own
+    settings; the TOOL half is ``web_fetch:``, built by
+    :func:`_build_web_fetch_config`). Empty / missing returns full
+    defaults."""
     if not isinstance(raw, dict):
-        return WebConfig()
-    fetch_raw = raw.get("fetch")
+        return GatewayConfig()
     try:
         ws_max_size = int(raw.get("ws_max_size", DEFAULT_WS_MAX_SIZE))
         if ws_max_size <= 0:
             ws_max_size = DEFAULT_WS_MAX_SIZE
     except (TypeError, ValueError):
         ws_max_size = DEFAULT_WS_MAX_SIZE
-    return WebConfig(
-        fetch=_build_web_fetch_config(fetch_raw),
+    return GatewayConfig(
         ws_max_size=ws_max_size,
         auth=_build_auth_config(raw.get("auth")),
         surfaces=_build_surfaces_config(raw.get("surfaces")),

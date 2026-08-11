@@ -230,7 +230,7 @@ def run(args: argparse.Namespace) -> None:
     # web.ws_max_size) so the inbound-frame bound is explicit + version-independent.
     from reyn.config import load_config
     _config = load_config()
-    _ws_max_size = _config.web.ws_max_size
+    _ws_max_size = _config.gateway.ws_max_size
 
     # ── Server-side auth (ADR-0039 P0): fail-closed bind + token + TLS ─────────
     uvicorn_kwargs = _apply_auth_startup(args, _config)
@@ -275,7 +275,7 @@ def _apply_auth_startup(args: argparse.Namespace, config) -> dict:
 
     host = args.host
     uds_path = getattr(args, "uds", None)
-    auth_cfg = config.web.auth
+    auth_cfg = config.gateway.auth
     configured_token = auth_cfg.token
 
     # Fail-closed guard: a non-loopback bind with no configured token refuses

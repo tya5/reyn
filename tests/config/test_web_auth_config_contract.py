@@ -1,9 +1,13 @@
-"""Tier 1: the ``web.auth`` reyn.yaml schema (ADR-0039 P0 auth config surface).
+"""Tier 1: the ``gateway.auth`` reyn.yaml schema (ADR-0039 P0 auth config surface).
 
 Operators configure the gateway auth model in reyn.yaml. This pins the config
-contract: the ``web.auth`` keys parse to typed fields, non-default values
+contract: the ``gateway.auth`` keys parse to typed fields, non-default values
 round-trip, and a missing section yields secure defaults (token unset,
 loopback token required).
+
+#4174 T4: renamed from ``web.auth`` — ``web:`` conflated the web_fetch TOOL's
+TLS settings with the ``reyn web`` GATEWAY's own settings under one key;
+this is the gateway half, now under its own ``gateway:`` top-level key.
 """
 from __future__ import annotations
 
@@ -22,13 +26,13 @@ def _load(tmp_path: Path, yaml: str, monkeypatch):
     return load_config()
 
 
-def test_web_auth_non_default_values_round_trip(tmp_path, monkeypatch):
-    """Tier 1: every web.auth key parses to its typed field with the given value."""
+def test_gateway_auth_non_default_values_round_trip(tmp_path, monkeypatch):
+    """Tier 1: every gateway.auth key parses to its typed field with the given value."""
     cfg = _load(
         tmp_path,
         (
             "model: standard\n"
-            "web:\n"
+            "gateway:\n"
             "  auth:\n"
             "    token: my-secret-token\n"
             "    require_token_on_loopback: false\n"
@@ -37,17 +41,17 @@ def test_web_auth_non_default_values_round_trip(tmp_path, monkeypatch):
         ),
         monkeypatch,
     )
-    auth = cfg.web.auth
+    auth = cfg.gateway.auth
     assert auth.token == "my-secret-token"
     assert auth.require_token_on_loopback is False
     assert auth.tls_certfile == "/etc/certs/server.pem"
     assert auth.tls_keyfile == "/etc/certs/server.key"
 
 
-def test_web_auth_defaults_are_secure(tmp_path, monkeypatch):
-    """Tier 1: a missing web.auth section defaults to no token + loopback token required."""
+def test_gateway_auth_defaults_are_secure(tmp_path, monkeypatch):
+    """Tier 1: a missing gateway.auth section defaults to no token + loopback token required."""
     cfg = _load(tmp_path, "model: standard\n", monkeypatch)
-    auth = cfg.web.auth
+    auth = cfg.gateway.auth
     assert auth.token is None
     assert auth.require_token_on_loopback is True
     assert auth.tls_certfile is None
@@ -59,7 +63,7 @@ def test_require_token_on_loopback_truthy_strings(tmp_path, monkeypatch, value):
     """Tier 1: an interpolated truthy string for require_token_on_loopback parses True."""
     cfg = _load(
         tmp_path,
-        f"model: standard\nweb:\n  auth:\n    require_token_on_loopback: '{value}'\n",
+        f"model: standard\ngateway:\n  auth:\n    require_token_on_loopback: '{value}'\n",
         monkeypatch,
     )
-    assert cfg.web.auth.require_token_on_loopback is True
+    assert cfg.gateway.auth.require_token_on_loopback is True

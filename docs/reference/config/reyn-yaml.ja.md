@@ -65,7 +65,8 @@ reload）、`reyn.yaml` 側に書いた同じキーは他と同じく再起動�
 | `output_language` | 文字列 | PRJ のみ・**再起動** | デフォルトの出力言語コード（例: `en`、`ja`）。`--output-language` でオーバーライド。 |
 | `safety` | マップ | PRJ のみ・**再起動** | ランタイムの上限**と content 層の防御**: ループ検出上限、タイムアウト、上限超過時ポリシー、非信頼コンテンツの threat scan + fence（`safety.threat_scan`、FP-0050）、LLM spawn ツリーの上限（`safety.spawn`、DoS ガード）。以下参照。 |
 | `cost` | マップ | PRJ のみ・**再起動** | バジェット上限とレート制限（エージェントごと、日次、月次）。以下参照。 |
-| `web` | マップ | PRJ のみ・**再起動** | **無関係な 2 つのサブシステムが同居しています。** (a) `web_fetch` ツールと MCP レジストリ呼び出しの SSL 設定（`web.fetch`）、(b) `reyn web` ゲートウェイ: 認証モデル（`web.auth`）、WebSocket 受信フレーム上限（`web.ws_max_size`）、マウントするサーフェス（`web.surfaces`）。以下参照。 |
+| `web_fetch` | マップ | PRJ のみ・**再起動** | `web_fetch` ツールと MCP レジストリ呼び出しの SSL 設定。以下参照。 |
+| `gateway` | マップ | PRJ のみ・**再起動** | `reyn web` ゲートウェイ自身の設定: 認証モデル、WebSocket 受信フレーム上限、マウントするサーフェス。旧 `web:` キー（`web_fetch` と同居していた）から分割。以下参照。 |
 | `sandbox` | マップ | PRJ のみ・**再起動** | バックエンド選択（`backend`）、非対応プラットフォームポリシー（`on_unsupported`）、強制モード（`mode`: compat / strict / custom）、agent-level サンドボックスポリシー（`policy`）。以下参照。 |
 | `action_retrieval` | マップ | PRJ のみ・**再起動** | ユニバーサルカタログの可視化 + 検索設定。以下参照。 |
 | `embedding` | マップ | PRJ のみ・**再起動** | RAG 埋め込み: マスタースイッチ（`enabled`）、モデルクラス、バッチサイズと並列度、リトライ / バックオフ / タイムアウト、トークナイザ、コスト警告閾値。以下参照。 |
@@ -452,36 +453,50 @@ scheme は `tools=` payload の構築方法、SP の tool-use 指示、LLM 応�
 CodeAct vs デフォルト）については
 [Tool-Use Schemes](../../concepts/tools-integrations/tool-use-schemes.ja.md) を参照してください。
 
-## `web` ブロック
+## `web_fetch` ブロック
 
-`web_fetch` と MCP パッケージレジストリの SSL 設定。
+`web_fetch` ツールと MCP パッケージレジストリの SSL 設定。
+
+`web.fetch:` から改名（#4174 T4）— 旧 `web:` キーはこれ（web_fetch ツール自身の設定）と、
+無関係な `reyn web` ゲートウェイ自身の設定（`gateway:` に分割）を同居させていました。
 
 ```yaml
-web:
-  fetch:
-    verify_ssl: true     # true | false | 省略（デフォルト: 環境変数チェーン）
-    ca_bundle: /path/to/ca-bundle.pem   # 省略可; カスタム CA バンドル
-    max_download_bytes: 10485760        # ワイヤバイト上限（デフォルト 10MB）
-    allow_private_ips: false            # SSRF: プライベート IP への opt-in（デフォルト deny）
-  ws_max_size: 16777216  # WebSocket インバウンドフレーム上限（デフォルト 16MB）
+web_fetch:
+  verify_ssl: true     # true | false | 省略（デフォルト: 環境変数チェーン）
+  ca_bundle: /path/to/ca-bundle.pem   # 省略可; カスタム CA バンドル
+  max_download_bytes: 10485760        # ワイヤバイト上限（デフォルト 10MB）
+  allow_private_ips: false            # SSRF: プライベート IP への opt-in（デフォルト deny）
 ```
 
 優先度チェーン（高い順）:
 
 | 優先度 | 条件 | 有効な SSL 設定 |
 |--------|------|----------------|
-| 1 | `web.fetch.ca_bundle` 設定あり | カスタム CA バンドルファイル（`verify=<path>`） |
-| 2 | `web.fetch.verify_ssl: false` | SSL 検証を無効化（`verify=False`）— **管理された環境のみ** |
-| 3 | `web.fetch.verify_ssl: true` | SSL 検証を強制（`verify=True`） |
+| 1 | `web_fetch.ca_bundle` 設定あり | カスタム CA バンドルファイル（`verify=<path>`） |
+| 2 | `web_fetch.verify_ssl: false` | SSL 検証を無効化（`verify=False`）— **管理された環境のみ** |
+| 3 | `web_fetch.verify_ssl: true` | SSL 検証を強制（`verify=True`） |
 | 4 | 両方省略 | フォールスルー: `SSL_VERIFY` 環境変数 → `litellm.ssl_verify` → `SSL_CERT_FILE` → `True` |
 
 `verify_ssl` と `ca_bundle` は MCP レジストリの HTTP 呼び出し（パッケージインストール）にも適用されます。
 
-`web.fetch.max_download_bytes`（int, デフォルト `10485760` = 10MB）は `web_fetch` がワイヤから読み取るレスポンスの最大バイト数。`Content-Length` がこの値を超えるレスポンスは本文ダウンロード前に拒否され、chunked / 長さ不明の本文はストリームが上限を超えた時点で中断されます（ステータス `too_large`）。悪意ある / 暴走 URL による無制限な本文のメモリ枯渇を防ぎます。`<= 0` / 非整数はデフォルトにフォールバック。
+`web_fetch.max_download_bytes`（int, デフォルト `10485760` = 10MB）は `web_fetch` がワイヤから読み取るレスポンスの最大バイト数。`Content-Length` がこの値を超えるレスポンスは本文ダウンロード前に拒否され、chunked / 長さ不明の本文はストリームが上限を超えた時点で中断されます（ステータス `too_large`）。悪意ある / 暴走 URL による無制限な本文のメモリ枯渇を防ぎます。`<= 0` / 非整数はデフォルトにフォールバック。
 
-`web.fetch.allow_private_ips`（bool, デフォルト `false`）は SSRF 対策。`true` のとき `web_fetch` / `safe.http` がプライベート RFC1918/ULA アドレスへ到達できます（エンタープライズの内部 fetch 向け opt-in）。link-local / クラウドメタデータ（`169.254.169.254`）/ ループバックはこのフラグに関わらず**常に**拒否されます。HTTP リダイレクトは hop ごとに再検証（allowlist + IP-deny）されるため、allowlist 済みホストが内部ターゲットへリダイレクトすることはできません。`REYN_FETCH_ALLOW_PRIVATE_IPS` 環境変数にもエクスポートされ、safe.http サブプロセス + レジストリクライアントが同じ opt-in を参照します。
+`web_fetch.allow_private_ips`（bool, デフォルト `false`）は SSRF 対策。`true` のとき `web_fetch` / `safe.http` がプライベート RFC1918/ULA アドレスへ到達できます（エンタープライズの内部 fetch 向け opt-in）。link-local / クラウドメタデータ（`169.254.169.254`）/ ループバックはこのフラグに関わらず**常に**拒否されます。HTTP リダイレクトは hop ごとに再検証（allowlist + IP-deny）されるため、allowlist 済みホストが内部ターゲットへリダイレクトすることはできません。`REYN_FETCH_ALLOW_PRIVATE_IPS` 環境変数にもエクスポートされ、safe.http サブプロセス + レジストリクライアントが同じ opt-in を参照します。
 
-`web.ws_max_size`（int, デフォルト `16777216` = 16MB）は `reyn web` ゲートウェイが受け付ける単一 WebSocket インバウンドフレームの最大バイト数。サーバーライブラリの暗黙デフォルトに依存せず上限を明示的に固定するため、ライブラリアップグレード後も bound が維持されます。operator は tighten / loosen 可能。`<= 0` / 非整数はデフォルトにフォールバック。
+> ⚠️ **#4274（未対応）**: `web_fetch.*` は現在、実際のチャットセッションの op 実行には配線されていません — `web_fetch.verify_ssl: false`（や `ca_bundle` / `allow_private_ips`）を設定しても、パース・validate は通りますが、実際の `web_fetch` 呼び出しには届きません（常に環境変数 / デフォルト経路にフォールスルーします）。これは #4174 T4 の改名が作った・悪化させたものではない既存のギャップで、別途追跡されています。
+
+## `gateway` ブロック
+
+`reyn web` ゲートウェイ自身の設定。
+
+`web:` から分割（#4174 T4）— 上の `web_fetch` を参照してください。
+
+```yaml
+gateway:
+  ws_max_size: 16777216  # WebSocket インバウンドフレーム上限（デフォルト 16MB）
+```
+
+`gateway.ws_max_size`（int, デフォルト `16777216` = 16MB）は `reyn web` ゲートウェイが受け付ける単一 WebSocket インバウンドフレームの最大バイト数。サーバーライブラリの暗黙デフォルトに依存せず上限を明示的に固定するため、ライブラリアップグレード後も bound が維持されます。operator は tighten / loosen 可能。`<= 0` / 非整数はデフォルトにフォールバック。
 
 ## `sandbox` ブロック
 

@@ -105,7 +105,7 @@ def _op_context(tmp_path: Path, events: Any) -> Any:
         events=events,
         permission_decl=PermissionDecl(),
         permission_resolver=None,
-        web_config=None,
+        web_fetch_config=None,
         media_store=MediaStore(MediaStoreConfig(), project_root=tmp_path),
     )
 

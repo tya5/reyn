@@ -142,9 +142,10 @@ class RegistryClient:
          (``SSL_VERIFY`` env → ``litellm.ssl_verify`` → ``SSL_CERT_FILE`` → ``True``).
 
     Callers that have a ``ReynConfig`` available should pass the resolved
-    value from ``_resolve_ssl_verify_from_config(config.web.fetch)``
-    (see ``reyn.core.op_runtime.web``).  The default ``None`` preserves the
-    existing env-var behaviour so all current callers remain unaffected.
+    value derived from ``config.web_fetch`` (#4174 T4, renamed from
+    ``config.web.fetch``; see ``reyn.core.op_runtime.web``).  The default
+    ``None`` preserves the existing env-var behaviour so all current
+    callers remain unaffected.
     """
 
     def __init__(
