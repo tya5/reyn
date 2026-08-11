@@ -114,17 +114,45 @@ def test_mcp_headers_optional_back_compat(tmp_path, monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-def test_mcp_headers_reach_http_transport() -> None:
-    """Tier 2: framework boundary — a config with resolved headers reaches the real
-    ``StreamableHttpTransport`` with the exact post-expansion header dict.
+def _capture_streamablehttp_client_kwargs(monkeypatch) -> dict:
+    """#4282: the pre-#4282 form of the two tests below inspected the
+    constructed ``fastmcp.client.transports.StreamableHttpTransport``
+    object's ``.headers``/``.url`` directly (via the now-removed
+    ``_open_transport``); that helper no longer exists —
+    ``_initialize_http_or_sse`` calls ``mcp.client.streamable_http.
+    streamablehttp_client(url, headers=..., ...)`` inline instead. Captures
+    the REAL function's kwargs by wrapping it (still calls through to the
+    real one, so the connection attempt proceeds exactly as it would
+    unmodified) rather than faking the SDK — same seam
+    ``test_mcp_client_stderr_capture.py``'s stdio_client patch already
+    established, applied to the http transport function instead."""
+    import mcp.client.streamable_http as sh_mod
 
-    This pins the contract: whatever the caller puts in ``cfg['headers']``, MCPClient
-    passes through to the transport — no filtering, no rewriting. Inspects the
-    transport's own public ``.headers`` / ``.url`` attributes (a real fastmcp object
-    built by ``_open_transport()``), not a mocked SDK call.
+    captured: dict = {}
+    real_fn = sh_mod.streamablehttp_client
+
+    def _capturing(url, headers=None, timeout=30, **kwargs):
+        captured["url"] = url
+        captured["headers"] = headers
+        return real_fn(url, headers=headers, timeout=timeout, **kwargs)
+
+    monkeypatch.setattr(sh_mod, "streamablehttp_client", _capturing)
+    return captured
+
+
+def test_mcp_headers_reach_http_transport(monkeypatch) -> None:
+    """Tier 2: framework boundary — a config with resolved headers reaches the
+    real ``streamablehttp_client`` call with the exact post-expansion header
+    dict. This pins the contract: whatever the caller puts in
+    ``cfg['headers']``, MCPClient passes through unfiltered/unrewritten. The
+    target host doesn't exist, so ``initialize()`` fails at connect time —
+    the headers are already captured by then.
     """
-    from reyn.mcp.client import MCPClient
+    import asyncio
 
+    from reyn.mcp.client import MCPClient, MCPError
+
+    captured = _capture_streamablehttp_client_kwargs(monkeypatch)
     cfg = {
         "type": "http",
         "url": "https://api.example.com/mcp",
@@ -133,24 +161,40 @@ def test_mcp_headers_reach_http_transport() -> None:
             "X-API-Version": "2024-01-01",
         },
         "timeout": 45,
+        "init_timeout": 1,
     }
 
     client = MCPClient(cfg)
-    transport = client._open_transport()
+    try:
+        asyncio.run(client.initialize())
+    except MCPError:
+        pass  # expected — api.example.com is not a real MCP server
+    finally:
+        asyncio.run(client.close())
 
-    assert transport.url == "https://api.example.com/mcp"
-    assert transport.headers == {
+    assert captured["url"] == "https://api.example.com/mcp"
+    assert captured["headers"] == {
         "Authorization": "Bearer abc123",
         "X-API-Version": "2024-01-01",
     }
 
 
-def test_mcp_headers_default_empty_when_omitted() -> None:
-    """Tier 2: framework boundary — an http MCP config without ``headers`` yields
-    an empty header dict at the transport (no spurious headers injected)."""
-    from reyn.mcp.client import MCPClient
+def test_mcp_headers_default_empty_when_omitted(monkeypatch) -> None:
+    """Tier 2: framework boundary — an http MCP config without ``headers``
+    reaches ``streamablehttp_client`` with an empty header dict (no
+    spurious headers injected)."""
+    import asyncio
 
-    cfg = {"type": "http", "url": "http://x/mcp"}
+    from reyn.mcp.client import MCPClient, MCPError
+
+    captured = _capture_streamablehttp_client_kwargs(monkeypatch)
+    cfg = {"type": "http", "url": "http://x/mcp", "init_timeout": 1}
     client = MCPClient(cfg)
-    transport = client._open_transport()
-    assert transport.headers == {}
+    try:
+        asyncio.run(client.initialize())
+    except MCPError:
+        pass
+    finally:
+        asyncio.run(client.close())
+
+    assert captured["headers"] == {}

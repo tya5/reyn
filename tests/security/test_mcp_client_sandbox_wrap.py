@@ -1,24 +1,39 @@
 """Tier 2: stdio MCP server subprocess is sandbox-wrapped (#1344, uniformly
 rerouted through the abstraction #2620).
 
-The MCP server launched by ``_open_stdio`` must run under the platform sandbox
-so an LLM-invoked MCP tool cannot escape via the server. ``_sandbox_wrap_stdio``
-now routes UNIFORMLY through ``backend.wrap_command()`` — no per-backend-name
-branching. This file pins: the Seatbelt command-wrap (macOS), the Landlock
-re-exec shim (Linux, #1344-E), NoopBackend's argv-unchanged PASSTHROUGH (still
-routed THROUGH the abstraction — the owner-acceptable no-enforcement case, NOT
-a bypass), the per-server network default (single-source
-DEFAULT_SANDBOX_NETWORK, #1339-D) with operator opt-in / opt-out, and the
-temp-profile cleanup.
+The MCP server launched by ``_initialize_stdio`` must run under the platform
+sandbox so an LLM-invoked MCP tool cannot escape via the server.
+``_sandbox_wrap_stdio`` now routes UNIFORMLY through ``backend.wrap_command()``
+— no per-backend-name branching. This file pins: the Seatbelt command-wrap
+(macOS), the Landlock re-exec shim (Linux, #1344-E), NoopBackend's
+argv-unchanged PASSTHROUGH (still routed THROUGH the abstraction — the
+owner-acceptable no-enforcement case, NOT a bypass), the per-server network
+default (single-source DEFAULT_SANDBOX_NETWORK, #1339-D) with operator
+opt-in / opt-out, and the temp-profile cleanup.
 
 No mocks: the REAL ``NoopBackend`` / ``SeatbeltBackend`` / ``LandlockBackend``
 classes are used (monkeypatched in as ``get_default_backend``'s return value) —
 ``wrap_command`` is pure/local-I/O-only and does not require the host platform
 to match (SeatbeltBackend.wrap_command builds an SBPL profile as plain text;
 it does not itself invoke ``sandbox-exec``).
+
+#4282 / architect finding #4287: #3698 stage 1 moved stdio's live
+initialize path from fastmcp's ``_open_stdio``/``_open_transport`` (this
+file's original target) to ``_initialize_stdio`` — but the witness here
+kept pointing at ``_sandbox_wrap_stdio`` called DIRECTLY, never at
+``_initialize_stdio``'s own call to it. Every test above this comment still
+correctly exercises ``_sandbox_wrap_stdio`` itself (a real, still-live
+method — nothing wrong with those); what was missing was proof that
+``_initialize_stdio`` actually CALLS it on the real live path. Measured:
+deleting the call site in ``_initialize_stdio`` left every pre-#4287 test
+in this file green (#4283 landed with a security suite that would not have
+caught it). ``test_initialize_stdio_actually_invokes_the_sandbox_wrap``
+and the retargeted env test below close that gap — both falsify-verified
+(stripping the call site under test sends them RED; see each docstring).
 """
 from __future__ import annotations
 
+import asyncio
 import sys
 import warnings
 from pathlib import Path
@@ -28,6 +43,9 @@ import pytest
 from reyn.mcp.client import MCPClient
 from reyn.security.sandbox.backends.landlock import LandlockBackend
 from reyn.security.sandbox.backends.seatbelt import SeatbeltBackend
+from tests._support.paths import REPO_ROOT
+
+_ECHO_SERVER = REPO_ROOT / "tests" / "_support" / "mcp_fastmcp_echo_server.py"
 from reyn.security.sandbox.noop_backend import NoopBackend
 
 
@@ -240,22 +258,86 @@ def test_sandbox_env_is_none_when_the_wrap_itself_fails(monkeypatch):
     assert client.sandbox_env is None  # second call failed -> reset, not stale
 
 
-def test_open_stdio_env_is_still_driven_by_config_not_sandbox_env(monkeypatch):
+def test_initialize_stdio_env_is_still_driven_by_config_not_sandbox_env(monkeypatch):
     """Tier 2: #3848 stage 1 — carrying the allowlist through must NOT change
     today's default launch behavior (owner ruling: default stays "pass
-    everything"). _open_stdio's real StdioTransport(env=...) call is driven
-    ONLY by self._config.get("env"), never by self._sandbox_env, in this
-    stage. Real StdioTransport throughout — construction is pure attribute
-    storage (no I/O, no subprocess spawn until connect()), so there is no
-    reason to fake it."""
+    everything"). #4282/#4287: retargeted from the removed ``_open_stdio``
+    to the live ``_initialize_stdio`` path — its real
+    ``StdioServerParameters(env=...)`` call is driven ONLY by
+    ``self._config.get("env")``, never by ``self._sandbox_env``, in this
+    stage. Captures the REAL ``mcp.client.stdio.StdioServerParameters``
+    class's kwargs by wrapping it (still constructs the real object,
+    exactly what ``_initialize_stdio`` would build unmodified) rather than
+    faking the SDK type — same seam
+    ``test_initialize_failure_includes_stderr_tail_in_error`` in
+    ``test_mcp_client_stderr_capture.py`` already established (a local
+    ``from mcp.client.stdio import ...`` re-resolves the source module's
+    attribute on every call, so patching it there is what a fresh call
+    actually sees). A real connection to the real echo server (same
+    fixture ``test_mcp_client.py`` uses) drives ``initialize()`` end to
+    end — the NoopBackend keeps the sandbox wrap itself a passthrough so
+    only the env-plumbing claim is under test here."""
+    import mcp.client.stdio as stdio_mod
+
     backend = NoopBackend()
     _patch_backend(monkeypatch, backend)
-    client = _stdio_client()
+    captured: dict = {}
+    real_params_cls = stdio_mod.StdioServerParameters
 
-    transport = client._open_stdio()
+    def _capturing_params(*args, **kwargs):
+        captured.update(kwargs)
+        return real_params_cls(*args, **kwargs)
+
+    monkeypatch.setattr(stdio_mod, "StdioServerParameters", _capturing_params)
+
+    cfg = {"type": "stdio", "command": sys.executable, "args": [str(_ECHO_SERVER)]}
+    client = MCPClient(cfg)
+
+    async def _run() -> None:
+        await client.initialize()
+        await client.close()
+
+    asyncio.run(_run())
 
     # config declared no `env:` key -> today's default (env=None, full
     # parent inherit) must be untouched by the now-populated _sandbox_env.
     assert client.sandbox_env is not None  # the mechanism DID run
-    assert transport.env is None  # but did not drive the real launch
-    client.close_stderr_capture()
+    assert captured.get("env") is None  # but did not drive the real launch
+
+
+def test_initialize_stdio_actually_invokes_the_sandbox_wrap(monkeypatch):
+    """Tier 2: #4287 (architect finding on #4283) — every OTHER test in this
+    file calls ``_sandbox_wrap_stdio`` DIRECTLY, which proves the method
+    itself works but never proves ``_initialize_stdio`` (the live path
+    since #3698 stage 1 moved stdio off fastmcp's ``_open_stdio``) actually
+    CALLS it. Falsify-verified: commenting out client.py's
+    ``command, args = self._sandbox_wrap_stdio(command, args)`` line inside
+    ``_initialize_stdio`` leaves every pre-#4287 test in this file green
+    while THIS one goes red (``calls`` stays empty even though the
+    connection still succeeds unwrapped) — reproduced by hand before
+    writing this docstring, not assumed.
+
+    Spies on the SUT's own method (wraps, still delegates to the real
+    implementation for every call) rather than faking a collaborator — the
+    subprocess really is sandbox-wrapped by NoopBackend's real (passthrough)
+    ``wrap_command``; only the CALL itself is additionally recorded."""
+    backend = NoopBackend()
+    _patch_backend(monkeypatch, backend)
+    cfg = {"type": "stdio", "command": sys.executable, "args": [str(_ECHO_SERVER)]}
+    client = MCPClient(cfg)
+    calls = []
+    real_wrap = client._sandbox_wrap_stdio
+
+    def _spy(command, args):
+        calls.append((command, args))
+        return real_wrap(command, args)
+
+    client._sandbox_wrap_stdio = _spy
+
+    async def _run() -> None:
+        await client.initialize()
+        await client.close()
+
+    asyncio.run(_run())
+
+    assert calls == [(sys.executable, [str(_ECHO_SERVER)])]

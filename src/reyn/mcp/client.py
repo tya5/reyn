@@ -1,48 +1,59 @@
 """
-MCP client (v#2597 S1; #3698 stage 1).
+MCP client (v#2597 S1; #3698 stage 1; #4282 stage 2 — fastmcp retired).
 
 Supports two transports today: ``stdio`` and ``http`` (Streamable HTTP);
-``sse`` uses the SSE client (previously ``NotImplementedError`` — a free
-win from the original fastmcp swap: no incremental cost to wire once
-FastMCP's own transport inference existed).
+``sse`` uses the SSE client.
 
-#3698 stage 1: ``stdio`` and non-OAuth-configured ``http``/``sse`` now go
-through the official ``mcp`` SDK DIRECTLY (``mcp.client.session.
-ClientSession`` + ``mcp.client.{stdio,streamable_http,sse}``) — fastmcp is
-no longer in those paths at all. An OAuth-configured ``http`` server still
-goes through fastmcp's ``Client`` (:meth:`_initialize_fastmcp`), split out
-to its own issue (#4282) rather than attempted here — the official SDK's
-``OAuthClientProvider`` needs a caller-supplied browser-redirect +
-localhost-callback implementation fastmcp currently provides internally,
-PLUS a second adapter for reyn's own token storage (fastmcp's
-``AsyncKeyValue`` protocol vs. the official SDK's ``TokenStorage``
-protocol — genuinely different shapes, not a rename) — materially more
-than the method-name/kwarg differences the other transports needed. The
-"OAuth 2.1" section below is still accurate for that path.
+#4282: EVERY transport — ``stdio``, ``http``/``sse`` with or without OAuth
+configured — now goes through the official ``mcp`` SDK DIRECTLY
+(``mcp.client.session.ClientSession`` + ``mcp.client.{stdio,
+streamable_http,sse}``). fastmcp is no longer constructed anywhere in this
+module. #3698 stage 1 had already migrated stdio and non-OAuth http/sse;
+#4282 closed the remaining OAuth-configured-http gap by building the
+official SDK's own ``mcp.client.auth.OAuthClientProvider`` directly
+instead of fastmcp's ``OAuth`` wrapper around it — this needed two things
+fastmcp provided internally: a browser-redirect + localhost-callback
+implementation (now :mod:`reyn.mcp.oauth_browser_flow`, built from
+starlette/uvicorn — zero NEW dependency surface, since fastmcp's own
+``fastmcp-slim[server]`` requirement already pulls both in unconditionally
+regardless of reyn's own optional ``[web]`` extra — verified by reading
+``fastmcp``'s/``fastmcp-slim``'s declared requirements directly, not
+assumed) and a token-storage adapter matching the official SDK's simpler
+``TokenStorage`` protocol (``get_tokens``/``set_tokens``/
+``get_client_info``/``set_client_info``, scoped per ``server_url`` — see
+:mod:`reyn.mcp.oauth_token_storage`, rewritten from fastmcp's
+``AsyncKeyValue``-shaped adapter, which became dead code once fastmcp's
+``OAuth`` was no longer constructed anywhere).
 
-⚠️ **This module is a HYBRID, not a completed migration** — a state a
-future reader could easily misread as "done" without this paragraph:
-  - ``fastmcp`` stays a REQUIRED dependency (not optional, not vendored)
-    until #4282 lands, because the OAuth path still needs it.
-  - The ``mcp<2.0`` pin (owned by ``fastmcp-slim``'s own dependency
-    constraint, not reyn's) CANNOT be relaxed until #4282 lands either —
-    #3698's own stage 2 (adopting ``mcp>=2.0`` for ``2026-07-28`` support)
-    is gated on #4282, not on "the remaining transports": there are no
-    remaining transports once this PR lands, only the remaining
-    DEPENDENCY that #4282 removes.
-  - Do not read "stage 1 landed" as "fastmcp can be removed from
-    pyproject.toml" — that is #4282's own landing condition, not this
-    one's.
+This module (the MCP CLIENT path) no longer imports ``fastmcp`` for
+transport/session/OAuth construction — only :mod:`reyn.mcp.elicitation`
+still imports one fastmcp type (``fastmcp.client.elicitation.
+ElicitResult``, a strict subclass of ``mcp.types.ElicitResult`` — verified
+via its MRO — so it satisfies the official SDK's ``ElicitationFnT``
+return-type contract unmodified; kept rather than switched to the SDK's
+own base type, since switching would touch elicitation.py for no
+behavioral gain).
+
+⚠️ **``fastmcp`` stays a REQUIRED reyn dependency — do NOT read this
+module's fastmcp-free CLIENT path as "fastmcp can be removed from
+pyproject.toml."** That premise (repeated through #3698/#4282's own
+planning) turned out to be wrong: ``src/reyn/builtin/plugins/rag/scripts/
+chunker_server.py`` and ``vector_store_server.py`` build MCP SERVERS via
+``fastmcp.FastMCP()`` directly — entirely unrelated to the CLIENT path
+this module owns. The ``mcp<2.0`` pin (``fastmcp-slim[server]``'s own
+floor) is equally unremovable for the same reason. Discovered while
+finishing #4282's own cleanup sweep, reported before touching
+``pyproject.toml`` — see the PR body / issue thread for the correction
+to the earlier "stage 2 is gated on #4282" framing.
 
 Each ``MCPClient`` owns a single connection opened on :meth:`initialize` and
-torn down on :meth:`close`. The official-SDK path holds it open via an
-``contextlib.AsyncExitStack`` (see :meth:`_initialize_stdio`'s docstring for
-why — the SDK expresses the SAME connection as two SEPARATE async context
-managers, not fastmcp's one reentrant object); the fastmcp/OAuth path still
-enters ``fastmcp.Client`` directly. Either way, the connection stays open
-for the object's lifetime (matching the previous hand-rolled client's
-caching semantics on ``OpContext.mcp_clients`` / the pool's subprocess-reuse
-contract — persistent-subprocess semantics for stdio either way).
+torn down on :meth:`close`, held open via a ``contextlib.AsyncExitStack``
+(see :meth:`_initialize_stdio`'s docstring for why — the official SDK
+expresses one connection as TWO separate async context managers, not a
+single reentrant object) for the object's lifetime (matching the previous
+hand-rolled client's caching semantics on ``OpContext.mcp_clients`` / the
+pool's subprocess-reuse contract — persistent-subprocess semantics for
+stdio either way).
 
 Environment variable expansion:
   ``${VAR_NAME}`` in any string config value is replaced with
@@ -57,11 +68,11 @@ Capability / version gate (#2597 capability slice):
   across reyn, :meth:`initialize` captures both ONCE, right after the
   handshake completes. #3698 stage 1 re-measured this against the official
   SDK directly (live probe, not read from docs): ``ClientSession.
-  initialize()`` RETURNS the ``mcp.types.InitializeResult`` directly (a plain
-  return value, not a property read off a separate object the way fastmcp's
-  ``Client.initialize_result`` — populated by ``client.__aenter__()``,
-  verified against fastmcp 3.4.2 — worked; that description stays accurate
-  for the OAuth/fastmcp path only). :meth:`supports` answers "did the server
+  initialize()`` RETURNS the ``mcp.types.InitializeResult`` directly (a
+  plain return value — #4282 removed the last path, fastmcp's OAuth
+  transport, that instead read it off a separate ``Client.
+  initialize_result`` property populated by ``client.__aenter__()``; every
+  path is the plain-return-value shape now). :meth:`supports` answers "did the server
   advertise capability X" (conservative False before initialize / on a
   missing result); :func:`require_capability` is the enforcement seam —
   call it before issuing a request for a gated feature so an unsupported
@@ -74,21 +85,22 @@ Capability / version gate (#2597 capability slice):
   matrix, just makes the version + capabilities readable and gated.
 
 Elicitation (#2597 slice ③ — server->client ``elicitation/create``):
-  an optional ``elicitation_handler`` (constructor kwarg, same shape as
-  ``message_handler``) — on the fastmcp/OAuth path, forwarded verbatim to
-  ``fastmcp.Client(..., elicitation_handler=...)``. #3698 stage 1: on the
-  official-SDK path, ``_adapt_elicitation_handler`` wraps it first — reyn's
-  own handler is shaped ``(message, response_type, params, context)``
-  (fastmcp's ``ElicitationHandler`` protocol), while the official SDK's
-  ``ElicitationFnT`` is ``(context, params)`` — 2 args, opposite order,
-  entirely different shape (measured by reading both protocols directly,
-  not assumed). Passing ANY non-None (adapted or not) handler is itself
-  what declares the ``elicitation`` client capability during the initialize
-  handshake, on both paths. See :mod:`reyn.mcp.elicitation` for the handler
-  that routes a server's structured question through reyn's consent path
-  (:class:`~reyn.mcp.connection_service.MCPConnectionService` builds one per
-  held connection); this module only plumbs the constructor kwarg through
-  (adapted or not).
+  an optional ``elicitation_handler`` (constructor kwarg) — reyn's own
+  handler is shaped ``(message, response_type, params, context)``
+  (fastmcp's old ``ElicitationHandler`` protocol, kept as reyn's own
+  handler shape rather than churning every caller when the transport
+  changed), while the official SDK's ``ElicitationFnT`` is ``(context,
+  params)`` — 2 args, opposite order, entirely different shape (measured
+  by reading both protocols directly, not assumed). ``_adapt_elicitation_
+  handler`` wraps it to bridge the two on every transport now (#4282:
+  there is no longer a fastmcp path that would take it unadapted). Passing
+  ANY non-None handler is itself what declares the ``elicitation`` client
+  capability during the initialize handshake. See
+  :mod:`reyn.mcp.elicitation` for the handler that routes a server's
+  structured question through reyn's consent path
+  (:class:`~reyn.mcp.connection_service.MCPConnectionService` builds one
+  per held connection); this module only plumbs the constructor kwarg
+  through, adapted.
 
 OAuth 2.1 (#2597 slice ④ — the umbrella's LAST slice, hosted MCP servers like
 GitHub MCP / Atlassian that require browser-based OAuth rather than a static
@@ -106,29 +118,33 @@ bearer token):
   existing lazy-validate-at-connect-time posture (``type``/``url`` are
   validated the same way).
 
-  :meth:`_open_http` builds a ``fastmcp.client.auth.OAuth(mcp_url=url,
-  scopes=..., client_id=..., client_secret=..., token_storage=
-  MCPOAuthTokenStorage())`` (see :mod:`reyn.mcp.oauth_token_storage` for the
-  exact verified FastMCP contract — NOT the ``mcp.client.auth.TokenStorage``
-  ABC the umbrella issue originally assumed; FastMCP 3.4.2 instead wants a
-  generic ``key_value.aio`` ``AsyncKeyValue`` store) and passes it as
-  ``StreamableHttpTransport(url, headers=..., auth=oauth)`` — FastMCP's own
-  ``OAuth`` object IS an ``httpx.Auth`` (via ``OAuthClientProvider``), so it
-  slots into the same ``auth=`` parameter ``StreamableHttpTransport`` already
-  exposed (unused pre-④). FastMCP's ``OAuth`` runs the full Authorization
-  Code Grant + PKCE + browser-open + localhost-callback dance internally on
-  first use — reyn does NOT reimplement any of that; it only supplies the
-  token_storage backend + the pre-flight headless check below.
+  :meth:`_build_oauth_provider` builds the official SDK's
+  ``mcp.client.auth.OAuthClientProvider(server_url=url, client_metadata=...,
+  storage=MCPOAuthTokenStorage(url), redirect_handler=..., callback_handler=
+  ..., timeout=...)`` directly (#4282: fastmcp's own ``OAuth`` wrapper
+  around this same class is no longer in the path) and passes it as
+  ``streamablehttp_client(url, headers=..., auth=provider)`` —
+  ``OAuthClientProvider`` IS an ``httpx.Auth``, so it slots into the SDK
+  transport's own ``auth=`` kwarg directly, no wrapper object needed.
+  ``redirect_handler``/``callback_handler`` (the browser-open + localhost-
+  callback round trip fastmcp's ``OAuth`` ran internally) are reyn's own
+  implementation now — :mod:`reyn.mcp.oauth_browser_flow`, built from
+  starlette/uvicorn (both already core reyn dependencies). A static
+  ``client_id`` (skip Dynamic Client Registration) is supported by
+  pre-seeding the token storage's ``client_info`` before constructing the
+  provider — see :meth:`_build_oauth_provider`'s own docstring for how
+  that suppresses DCR (verified by reading the official SDK's
+  ``async_auth_flow`` directly).
 
-  Headless graceful failure: before constructing ``OAuth``,
-  :meth:`_open_http` checks :func:`~reyn.mcp.oauth_token_storage.
+  Headless graceful failure: before constructing the provider,
+  :meth:`_build_oauth_provider` checks :func:`~reyn.mcp.oauth_token_storage.
   has_stored_token` for this URL. If no usable token is cached AND this
   client is running non-interactively (``non_interactive`` constructor kwarg,
   or auto-detected via ``sys.stdin.isatty()`` when not explicitly passed —
   mirrors ``reyn.runtime.session``'s own ``non_interactive`` flag's "no user
-  to ask" rationale), :meth:`_open_http` raises :class:`MCPError` immediately
-  with a clear message rather than let FastMCP open a browser + wait (bounded
-  only by ``OAuth``'s own ``callback_timeout``, default 300s) for a callback
+  to ask" rationale), it raises :class:`MCPError` immediately with a clear
+  message rather than let the OAuth flow open a browser + wait (bounded
+  only by the provider's own ``timeout``, default 300s) for a callback
   nobody can complete.
 """
 from __future__ import annotations
@@ -522,19 +538,18 @@ def _is_transport_death(exc: BaseException) -> bool:
     own logic needed ZERO code changes — it already reads
     ``mcp.shared.exceptions.McpError``/``mcp.types.CONNECTION_CLOSED``
     directly from the official SDK, never through a fastmcp-shaped
-    wrapper, so the classification below is unchanged for the
-    stdio/non-OAuth-http/sse call sites that now go through
-    ``ClientSession`` directly. Re-confirmed live against the official
-    SDK path (``_initialize_stdio`` + a killed-subprocess probe): the
+    wrapper. Re-confirmed live against the official SDK path
+    (``_initialize_stdio`` + a killed-subprocess probe): the
     ``McpError``/``CONNECTION_CLOSED`` branch fires exactly the same way
     as it did for fastmcp, since both sit on the same underlying
-    ``mcp.shared.session.BaseSession`` receive loop. The
+    ``mcp.shared.session.BaseSession`` receive loop. **#4282**: fastmcp is
+    no longer constructed anywhere in this module, so the
     ``RuntimeError("Server session was closed unexpectedly")`` branch
-    remains fastmcp-specific (fastmcp's ``Client._context_manager`` wraps
-    the error in this exact message) — it is dead weight for the
-    stdio/non-OAuth-http/sse call sites now that they bypass fastmcp
-    entirely, but is kept because the OAuth-http path (``_initialize_fastmcp``)
-    still routes through fastmcp's ``Client`` and can still raise it:
+    fastmcp's own ``Client._context_manager`` used to wrap a closed session
+    in — dead weight since #3698 for the transports it had already
+    migrated — is now dead for EVERY transport and has been removed
+    outright rather than kept "just in case" (no test pinned it; nothing
+    in this codebase can raise that exact message anymore):
 
       - ``mcp.shared.exceptions.McpError`` whose ``.error.code`` equals
         ``mcp.types.CONNECTION_CLOSED`` (``-32000``). ``mcp.shared.session.
@@ -548,15 +563,6 @@ def _is_transport_death(exc: BaseException) -> bool:
         ``MCPError('MCP tools/call error: Connection closed')`` whose
         ``__cause__`` was ``McpError(error=ErrorData(code=-32000,
         message='Connection closed', ...))`` — exactly this branch.
-      - ``RuntimeError("Server session was closed unexpectedly")`` — fastmcp's
-        ``Client._context_manager`` (client.py) wraps a
-        ``anyio.ClosedResourceError`` leaking out of the session's context
-        scope in this EXACT message. Not observed directly in the stdio-die
-        probe above (that death surfaced via the McpError branch instead),
-        but included defensively per fastmcp's own source — a different
-        failure timing (e.g. mid-``initialize``, or the read stream closing
-        while the caller is inside the ``async with`` scope rather than
-        mid-request) could route through this wrapper instead.
       - Raw ``anyio.ClosedResourceError`` / ``anyio.BrokenResourceError`` /
         ``ConnectionError`` — defensive: these are anyio's/stdlib's own
         dead-stream / dead-socket signal types; not observed leaking
@@ -578,8 +584,6 @@ def _is_transport_death(exc: BaseException) -> bool:
     import anyio
 
     if isinstance(exc, (anyio.ClosedResourceError, anyio.BrokenResourceError, ConnectionError)):
-        return True
-    if isinstance(exc, RuntimeError) and str(exc) == "Server session was closed unexpectedly":
         return True
     try:
         from mcp.shared.exceptions import McpError as _SdkMcpError
@@ -640,7 +644,8 @@ def _extract_stdio_child_pid(stdio_cm: "Any") -> int | None:
 # ── Client ───────────────────────────────────────────────────────────────────
 
 class MCPClient:
-    """Thin async wrapper around ``fastmcp.Client``.
+    """Thin async wrapper around the official ``mcp`` SDK's ``ClientSession``
+    (#4282: fastmcp is no longer constructed anywhere in this class).
 
     Construct with the *raw* server config dict from ``reyn.yaml`` (the
     caller is responsible for env-var expansion via :func:`expand_env`).
@@ -674,7 +679,7 @@ class MCPClient:
             )
         # #2597 slice ④: 'auth' (OAuth) only makes sense over Streamable HTTP —
         # reject it eagerly at construction time for stdio/sse rather than
-        # silently ignoring it (only _open_http ever reads 'auth').
+        # silently ignoring it (only _build_oauth_provider ever reads 'auth').
         if config.get("auth") and srv_type != "http":
             raise ValueError(
                 f"MCP server 'auth' config is only supported for 'http' "
@@ -721,40 +726,45 @@ class MCPClient:
         # docstring rather than left for a reader to discover from the wiring.
         self._emit_event: Callable[..., Any] | None = emit_event
         # #2597 S2b: optional async server->client notifications bridge — a
-        # ReynMCPMessageHandler (#3698 P3: composes fastmcp's message-handler
-        # contract rather than subclassing it — see reyn.mcp.message_handler's
-        # module docstring) that receives tools/prompts list_changed +
+        # ReynMCPMessageHandler (#3698 P3: composes the message-handler
+        # contract fastmcp originally defined, rather than subclassing it —
+        # see reyn.mcp.message_handler's module docstring) that receives
+        # tools/prompts list_changed +
         # progress notifications on this client's held connection and emits them onto
         # reyn's EventLog. None (default) preserves pre-S2b behaviour — no bridge, no
         # behaviour change for callers that don't pass one (e.g. the ephemeral
         # per-call MCPClientPool path never installs a handler).
         self._message_handler: Any = message_handler
-        # #2597 slice ③: optional FastMCP ``ElicitationHandler`` (see
-        # ``reyn.mcp.elicitation.build_elicitation_handler``) — routes a
-        # server->client ``elicitation/create`` request through reyn's
-        # consent path. Passing ANY non-None handler to ``fastmcp.Client``
-        # is itself what causes FastMCP to declare the ``elicitation`` client
-        # capability during the initialize handshake (D6 — held connections
-        # always install one; the ephemeral per-call ``MCPClientPool`` path
-        # never does, same None-default no-op pattern as ``message_handler``).
+        # #2597 slice ③: optional elicitation handler (see
+        # ``reyn.mcp.elicitation.build_elicitation_handler``, shaped to
+        # fastmcp's original ``ElicitationHandler`` protocol — reyn kept
+        # that shape as its own rather than churning callers when the
+        # transport changed; ``_adapt_elicitation_handler`` bridges it to
+        # the official SDK's own shape) — routes a server->client
+        # ``elicitation/create`` request through reyn's consent path.
+        # Passing ANY non-None handler is itself what declares the
+        # ``elicitation`` client capability during the initialize handshake
+        # (D6 — held connections always install one; the ephemeral per-call
+        # ``MCPClientPool`` path never does, same None-default no-op
+        # pattern as ``message_handler``).
         self._elicitation_handler: Any = elicitation_handler
-        # #2597 slice ④: explicit override for the headless-OAuth pre-flight check
-        # in _open_http (see module docstring's "Headless graceful failure").
-        # None (default) means auto-detect via sys.stdin.isatty() at the point
-        # _open_http actually needs the answer — see _is_non_interactive().
+        # #2597 slice ④: explicit override for the headless-OAuth pre-flight
+        # check in _build_oauth_provider (see module docstring's "Headless
+        # graceful failure"). None (default) means auto-detect via
+        # sys.stdin.isatty() at the point _build_oauth_provider actually
+        # needs the answer — see _is_non_interactive().
         self._non_interactive_override: bool | None = non_interactive
-        self._client: Any = None  # official mcp.ClientSession (stdio) or fastmcp.Client (http/sse, pending #3698 stage 1) when initialized
-        # #3698 stage 1: holds the entered stdio_client + ClientSession async
-        # context managers open for this object's lifetime — the official
-        # SDK's connection lifecycle is a pair of async context managers, not
-        # fastmcp.Client's single reentrant __aenter__/close() object, so an
-        # AsyncExitStack is what reproduces the same "open once, use across
-        # many calls, close later" pattern (live-verified: initialize() then
-        # TWO separate call_tool()s against the SAME held session, then a
-        # clean stack.aclose() — see the commit message for the probe). None
-        # until initialize() actually opens a stdio connection; the http/sse
-        # paths still use fastmcp's own Client (pending stage-1 follow-up
-        # commits) and leave this None.
+        self._client: Any = None  # official mcp.ClientSession when initialized
+        # #3698 stage 1 / #4282: holds the entered transport + ClientSession
+        # async context managers open for this object's lifetime — the
+        # official SDK's connection lifecycle is a pair of async context
+        # managers, not fastmcp.Client's old single reentrant
+        # __aenter__/close() object, so an AsyncExitStack is what reproduces
+        # the same "open once, use across many calls, close later" pattern
+        # (live-verified: initialize() then TWO separate call_tool()s
+        # against the SAME held session, then a clean stack.aclose() — see
+        # the commit message for the probe). None until initialize()
+        # actually opens a connection (every transport now).
         self._exit_stack: "Any | None" = None
         self._initialized = False
         # Captures subprocess stderr for stdio transport so initialize
@@ -776,19 +786,19 @@ class MCPClient:
         # #3848 stage 1: the allowlisted env wrap_command() computes (#3850),
         # carried through instead of being silently dropped the way it was
         # before this — _sandbox_wrap_stdio used to project only .argv out of
-        # WrappedCommand. NOT yet consumed by _open_stdio's actual launch
+        # WrappedCommand. NOT yet consumed by _initialize_stdio's actual launch
         # (the owner ruling's default is "pass everything", which #3850's
         # allowlist is narrower than) — this is the seam stage 2's opt-in
         # whitelist/blacklist config will read from. None when the wrap
         # failed (fail-open with a warning + audit-event, #3821) — there is
         # no allowlisted value to offer in that case.
         self._sandbox_env: dict[str, str] | None = None
-        # #2597 capability/version gate: captured in initialize() right after
-        # ``client.__aenter__()`` completes FastMCP's initialize handshake (verified
-        # against fastmcp 3.4.2: ``fastmcp.Client.initialize_result`` is populated at
-        # that point — see client.py module docstring's fact-check). None until then
-        # (or if the server's InitializeResult was unavailable — handled defensively,
-        # never raises).
+        # #2597 capability/version gate: captured right after the official
+        # SDK's ClientSession.initialize() handshake completes (a plain
+        # return value — see the module docstring's "Capability / version
+        # gate" section). None until then (or if the server's
+        # InitializeResult was unavailable — handled defensively, never
+        # raises).
         self._negotiated_version: str | None = None
         self._server_capabilities: Any = None  # mcp.types.ServerCapabilities | None
         # #2714 belt-and-suspenders: the OS pid of the stdio subprocess this client
@@ -893,46 +903,27 @@ class MCPClient:
                 break
         return items
 
-    @property
-    def _uses_official_sdk(self) -> bool:
-        """#3698 stage 1: True once ``self._client`` is the official SDK's
-        ``ClientSession`` directly (stdio, migrated) rather than fastmcp's
-        ``Client`` (http/sse, pending their own stage-1 commits). The two
-        expose a few operations under different names/paths for the SAME
-        protocol call (``call_tool_mcp`` vs ``call_tool``, ``.session.
-        subscribe_resource`` vs ``.subscribe_resource`` directly) — this is
-        the single dispatch point every such call site branches on, so the
-        distinction disappears in one place once http/sse migrate too rather
-        than needing to be re-found at each call site. ``self._exit_stack``
-        is only ever set by ``_initialize_stdio`` — a reliable proxy with no
-        separate bookkeeping."""
-        return self._exit_stack is not None
-
     async def initialize(self) -> None:
         """Open the transport and complete the MCP handshake.
 
         Idempotent: a second call is a no-op.
 
-        #3698 stage 1: ``stdio``/``http``/``sse`` all go through the official
-        ``mcp`` SDK directly now (:meth:`_initialize_stdio` /
-        :meth:`_initialize_http_or_sse`) — fastmcp is only still in the path
-        for an OAuth-configured http server (:meth:`_initialize_fastmcp`),
-        pending OAuth's own follow-up commit: the official SDK's
-        ``OAuthClientProvider`` needs a ``redirect_handler``/
-        ``callback_handler`` pair implementing the actual browser-flow
-        orchestration fastmcp's own ``OAuth`` class currently does
-        internally — a materially bigger, separately-scoped lift than the
-        method-name/kwarg-shape differences the other transports needed
-        (flagged to lead-coder before starting it).
+        #4282: every transport — ``stdio``, ``http``/``sse`` with or
+        without OAuth configured — now goes through the official ``mcp``
+        SDK directly (:meth:`_initialize_stdio` /
+        :meth:`_initialize_http_or_sse`). fastmcp is no longer constructed
+        anywhere in this dispatch; see the module docstring's HYBRID
+        warning for what that does and does NOT mean yet (``fastmcp``
+        stays a declared dependency until this PR also removes it from
+        ``pyproject.toml`` — a separate, later step in the same PR, not a
+        follow-up).
         """
         if self._initialized:
             return
         if self._type == "stdio":
             await self._initialize_stdio()
-        elif self._type in ("http", "sse") and not self._config.get("auth"):
-            await self._initialize_http_or_sse()
         else:
-            await self._initialize_fastmcp()
+            await self._initialize_http_or_sse()
 
     async def _initialize_stdio(self) -> None:
         """#3698 stage 1: stdio via the official ``mcp`` SDK, no fastmcp.
@@ -1124,6 +1115,13 @@ class MCPClient:
         stack = AsyncExitStack()
         try:
             if self._type == "http":
+                # #4282: OAuth (if configured — __init__ already rejects it
+                # for sse) is now built as the official SDK's own
+                # OAuthClientProvider (an httpx.Auth) and passed straight
+                # into streamablehttp_client's own auth= kwarg, same as any
+                # other httpx.Auth — no more fastmcp Client/transport
+                # wrapper needed to carry it.
+                auth = await self._build_oauth_provider(url)
                 # Deliberately the deprecated headers/timeout/auth-kwarg
                 # `streamablehttp_client`, not its replacement
                 # `streamable_http_client` — the latter takes a pre-built
@@ -1134,7 +1132,9 @@ class MCPClient:
                 from mcp.client.streamable_http import streamablehttp_client
 
                 read, write, _get_session_id = await stack.enter_async_context(
-                    streamablehttp_client(url, headers=headers, timeout=read_timeout)
+                    streamablehttp_client(
+                        url, headers=headers, timeout=read_timeout, auth=auth,
+                    )
                 )
             else:
                 from mcp.client.sse import sse_client
@@ -1181,144 +1181,6 @@ class MCPClient:
         self._client = session
         self._exit_stack = stack
         self._initialized = True
-        if init_result is not None:
-            self._negotiated_version = str(init_result.protocolVersion)
-            self._server_capabilities = init_result.capabilities
-        else:
-            self._negotiated_version = None
-            self._server_capabilities = None
-
-    async def _initialize_fastmcp(self) -> None:
-        """http/sse transports — unchanged fastmcp path, pending #3698 stage
-        1's own follow-up commits for these two transports."""
-        try:
-            from reyn.mcp._fastmcp_boundary import import_fastmcp_client
-
-            FastMCPClient = import_fastmcp_client()
-        except ImportError as exc:
-            raise MCPError(
-                "The 'fastmcp' package is required for MCP support. "
-                "It is a core reyn dependency, so this usually means a broken "
-                "install — reinstall reyn (e.g. pip install -e .)."
-            ) from exc
-
-        try:
-            transport = self._open_transport()
-            client_kwargs: dict[str, Any] = {}
-            if self._type in ("http", "sse"):
-                # Client-level default read timeout — see _open_http docstring:
-                # the pre-swap connect-level ``timeout=`` kwarg on
-                # ``streamablehttp_client`` maps to FastMCP's Client-level
-                # default ``read_timeout_seconds`` (same knob call_tool's
-                # per-call ``timeout_seconds`` overrides).
-                client_kwargs["timeout"] = self._config.get("timeout", 30)
-            # #3028: bound the handshake itself, on EVERY transport. Distinct from
-            # the ``timeout`` above in both scope and reach:
-            #
-            #   * scope — ``timeout`` is the session's default read timeout, so it
-            #     bounds every later ``call_tool`` too. Reusing it to bound a launch
-            #     would silently cap tool RUNTIME as a side effect, killing the
-            #     legitimately long call (a RAG ingest over a large folder) to fix a
-            #     launch bug. ``init_timeout`` is FastMCP's dedicated handshake knob
-            #     (``Client.initialize()`` wraps ``session.initialize()`` in
-            #     ``anyio.fail_after``), so it bounds the launch and nothing else.
-            #   * reach — it is set unconditionally, not under the http/sse branch.
-            #     stdio was the transport that hung (#3028) precisely because it fell
-            #     through both: no ``timeout``, and FastMCP's ``client_init_timeout``
-            #     defaults to None = disabled. HTTP only looked protected because its
-            #     ``timeout`` happens to bound the handshake's read as one more
-            #     request — an accident of the read timeout, not a handshake bound.
-            #     Setting this for all three makes "we give up eventually" a property
-            #     of the client rather than of which transport you happened to pick.
-            client_kwargs["init_timeout"] = self._config.get(
-                "init_timeout", _DEFAULT_INIT_TIMEOUT_SECONDS
-            )
-            # #2597 S2b: install the notifications bridge, if one was supplied. Passed
-            # as a constructor kwarg per FastMCP's own contract (Client(transport,
-            # message_handler=...)); ReynMCPMessageHandler's weakref binding to THIS
-            # client is completed via bind_client() right below — see
-            # reyn/mcp/message_handler.py's module docstring ("two-phase client
-            # binding") for why that two-step is necessary.
-            if self._message_handler is not None:
-                client_kwargs["message_handler"] = self._message_handler
-            # #2597 slice ③: same constructor-kwarg contract as message_handler —
-            # FastMCP's ``Client(transport, elicitation_handler=...)``.
-            if self._elicitation_handler is not None:
-                client_kwargs["elicitation_handler"] = self._elicitation_handler
-            client = FastMCPClient(transport, **client_kwargs)
-            if self._message_handler is not None:
-                self._message_handler.bind_client(client)
-            await client.__aenter__()
-        except MCPError:
-            self.close_stderr_capture()
-            raise
-        except Exception as exc:
-            tail = self.read_stderr_tail()
-            self.close_stderr_capture()
-            # #1344/#1339-D migration hint: a sandboxed stdio server defaults to
-            # the single-source network posture (DEFAULT_SANDBOX_NETWORK); the
-            # operator isolates a server with `network: false`. If a server was
-            # isolated and fails init for a network reason, point the operator at
-            # the knob rather than leave an opaque error.
-            from reyn.security.sandbox.policy import DEFAULT_SANDBOX_NETWORK
-
-            hint = ""
-            # #3698 stage 1: the stdio-gated hints below are now unreachable —
-            # this method only ever runs for http/sse (stdio moved to
-            # _initialize_stdio above) — kept as dead-but-harmless conditions
-            # rather than restructured, since this whole method is itself
-            # temporary pending http/sse's own stage-1 follow-up commits.
-            if self._type == "stdio" and not self._config.get(
-                "network", DEFAULT_SANDBOX_NETWORK
-            ):
-                hint = (
-                    "\nHint (#1344): this MCP server is sandboxed with network "
-                    "DISABLED (`network: false` in its config). If it needs "
-                    "network access, set `network: true` (or remove the override)."
-                )
-            # #2976: same shape as the network hint — a sandbox write denial is
-            # the one failure the operator can always fix, but ONLY if the error
-            # names the knob. This is what makes the per-runtime default map
-            # (_RUNTIME_DEFAULT_WRITE_PATHS) safe to leave incomplete: an unknown
-            # runtime, or a relocated cache (XDG_CACHE_HOME / npm_config_cache),
-            # surfaces as "add this path" rather than an opaque EPERM.
-            if self._type == "stdio" and _looks_like_write_denial(tail):
-                hint += (
-                    "\nHint (#2976): the sandbox DENIED a write to a path outside "
-                    "this server's granted write scope (the stderr below names "
-                    "the exact path). A launcher that bootstraps into a per-user "
-                    "cache needs that cache granted. Add the path to this "
-                    "server's `write_paths` in its MCP config, e.g.\n"
-                    "    write_paths: [\"~/.npm\"]\n"
-                    "Declaring `write_paths` replaces the built-in per-runtime "
-                    "defaults; the server's working directory is always granted."
-                )
-            if tail:
-                # #2976: the hint goes BEFORE the stderr dump, not after it. The
-                # message is later summarised by pool.describe_fault(limit=600),
-                # which truncates from the END — a trailing hint is therefore the
-                # FIRST thing dropped, and precisely on the verbose failures that
-                # need it most (npm's cache EPERM alone exceeds the limit, which
-                # is how this was found: the hint reached uvx's short error and
-                # was silently cut from npx's long one). The actionable knob
-                # outranks the tail of a log the operator can re-read.
-                raise MCPError(
-                    f"MCP initialize failed: {exc}{hint}\n"
-                    f"--- subprocess stderr (tail) ---\n{tail}"
-                ) from exc
-            raise MCPError(f"MCP initialize failed: {exc}{hint}") from exc
-
-        self._client = client
-        self._initialized = True
-        # #2597 capability/version gate: read the negotiated version + capabilities
-        # right after the handshake completes. ``initialize_result`` is populated by
-        # ``client.__aenter__()`` above (fastmcp 3.4.2: ``Client.initialize_result``
-        # property backed by ``_session_state.initialize_result``, set inside
-        # ``Client.initialize()`` which ``__aenter__`` calls) — but read it
-        # defensively: None here would mean FastMCP's own contract changed
-        # underneath us, not a reyn bug, so degrade to "unknown" (supports() ->
-        # False, negotiated_version -> None) rather than raise.
-        init_result = getattr(client, "initialize_result", None)
         if init_result is not None:
             self._negotiated_version = str(init_result.protocolVersion)
             self._server_capabilities = init_result.capabilities
@@ -1373,38 +1235,25 @@ class MCPClient:
         # server never advertised "tools" rather than let the request reach the
         # server and bounce back as a confusing raw protocol error.
         require_capability(self, "tools")
-        # #3698 stage 1: fastmcp's call_tool_mcp and the official SDK's plain
-        # call_tool take the SAME two concepts (a progress callback, a
-        # per-call read timeout) under DIFFERENT kwarg names
-        # (progress_handler/timeout vs progress_callback/read_timeout_seconds
-        # — measured by reading ClientSession.call_tool's own signature) —
-        # NOT interchangeable via **kwargs, so each branch builds its own.
+        # #4282: fastmcp is gone from every live path (OAuth was the last
+        # holdout) — self._client is always the official SDK's
+        # ClientSession now, so this only ever builds ONE kwargs shape.
+        # progress_callback / read_timeout_seconds are ClientSession.
+        # call_tool's own kwarg names (measured by reading its signature).
         kwargs: dict[str, Any] = {}
-        if self._uses_official_sdk:
-            if progress_callback is not None:
-                kwargs["progress_callback"] = progress_callback
-            if timeout_seconds is not None:
-                from datetime import timedelta
-                kwargs["read_timeout_seconds"] = timedelta(seconds=timeout_seconds)
-        else:
-            if progress_callback is not None:
-                kwargs["progress_handler"] = progress_callback
-            if timeout_seconds is not None:
-                from datetime import timedelta
-                kwargs["timeout"] = timedelta(seconds=timeout_seconds)
+        if progress_callback is not None:
+            kwargs["progress_callback"] = progress_callback
+        if timeout_seconds is not None:
+            from datetime import timedelta
+            kwargs["read_timeout_seconds"] = timedelta(seconds=timeout_seconds)
         try:
-            # call_tool_mcp (not FastMCP's raise_on_error-by-default call_tool)
-            # returns the RAW mcp.types.CallToolResult unchanged — same object
-            # shape _result_to_dict already flattens, so op_runtime/mcp.py's
-            # consumed shape stays byte-identical. #3698 stage 1: the official
-            # SDK's OWN plain call_tool() is already the raw/no-raise variant
-            # (measured by reading ClientSession.call_tool's source: it
-            # returns CallToolResult unconditionally, never raises on
-            # isError) — no _mcp-suffixed name exists there to begin with.
-            if self._uses_official_sdk:
-                result = await self._client.call_tool(name, args or {}, **kwargs)
-            else:
-                result = await self._client.call_tool_mcp(name, args or {}, **kwargs)
+            # ClientSession.call_tool() is already the raw/no-raise variant
+            # fastmcp needed a call_tool_mcp-suffixed method to reach
+            # (measured by reading its source: it returns CallToolResult
+            # unconditionally, never raises on isError) — same object shape
+            # _result_to_dict already flattens, so op_runtime/mcp.py's
+            # consumed shape stays byte-identical to the pre-#3698 one.
+            result = await self._client.call_tool(name, args or {}, **kwargs)
         except Exception as exc:
             _classify_and_raise(exc, f"MCP tools/call error: {exc}")
         return self._annotate_write_denial(_result_to_dict(result))
@@ -1454,24 +1303,19 @@ class MCPClient:
     async def list_tools(self) -> list[dict[str, Any]]:
         """Return the tools advertised by this server as plain dicts.
 
-        Uses FastMCP's auto-paginating ``Client.list_tools()`` (follows
-        ``nextCursor`` up to a 250-page guard) instead of a single page-1
-        request — #2597 S1 free win: servers with >1 page of tools no
-        longer silently truncate.
-
-        #3698 stage 1: the official SDK's raw ``ClientSession.list_tools()``
-        has no such auto-pagination (measured: it returns ONE
-        ``ListToolsResult`` page, not a flat list) — see
-        :meth:`_paginate_official_sdk`, which reproduces fastmcp's behavior.
+        The official SDK's raw ``ClientSession.list_tools()`` returns ONE
+        ``ListToolsResult`` page, not an auto-paginated flat list (measured
+        — see :meth:`_paginate_official_sdk`, which reproduces the
+        auto-pagination fastmcp's old convenience wrapper did, following
+        ``nextCursor`` up to a 250-page guard) — #2597 S1's free win
+        (servers with >1 page of tools no longer silently truncate)
+        preserved across #3698/#4282's transport swap.
         """
         await self.initialize()
         # #2597 capability/version gate: same seam as call_tool — see there.
         require_capability(self, "tools")
         try:
-            if self._uses_official_sdk:
-                tools = await self._paginate_official_sdk(self._client.list_tools, "tools")
-            else:
-                tools = await self._client.list_tools()
+            tools = await self._paginate_official_sdk(self._client.list_tools, "tools")
         except Exception as exc:
             _classify_and_raise(exc, f"MCP tools/list error: {exc}")
         return [_tool_to_dict(t) for t in tools]
@@ -1481,19 +1325,16 @@ class MCPClient:
     async def list_resources(self) -> list[dict[str, Any]]:
         """Return the resources advertised by this server as plain dicts.
 
-        Mirrors :meth:`list_tools`: uses FastMCP's auto-paginating
-        ``Client.list_resources()`` (follows ``nextCursor``) and gates on the
-        ``"resources"`` capability before issuing the request.
+        Mirrors :meth:`list_tools`: paginates via :meth:`_paginate_official_sdk`
+        (follows ``nextCursor``) and gates on the ``"resources"`` capability
+        before issuing the request.
         """
         await self.initialize()
         require_capability(self, "resources")
         try:
-            if self._uses_official_sdk:
-                resources = await self._paginate_official_sdk(
-                    self._client.list_resources, "resources",
-                )
-            else:
-                resources = await self._client.list_resources()
+            resources = await self._paginate_official_sdk(
+                self._client.list_resources, "resources",
+            )
         except Exception as exc:
             _classify_and_raise(exc, f"MCP resources/list error: {exc}")
         return [_resource_to_dict(r) for r in resources]
@@ -1505,12 +1346,9 @@ class MCPClient:
         await self.initialize()
         require_capability(self, "resources")
         try:
-            if self._uses_official_sdk:
-                templates = await self._paginate_official_sdk(
-                    self._client.list_resource_templates, "resourceTemplates",
-                )
-            else:
-                templates = await self._client.list_resource_templates()
+            templates = await self._paginate_official_sdk(
+                self._client.list_resource_templates, "resourceTemplates",
+            )
         except Exception as exc:
             _classify_and_raise(exc, f"MCP resources/templates/list error: {exc}")
         return [_resource_to_dict(t) for t in templates]
@@ -1520,27 +1358,20 @@ class MCPClient:
         its contents flattened to a dict: ``{"contents": [...]}`` — each
         entry a flattened ``TextResourceContents``/``BlobResourceContents``.
 
-        Uses FastMCP's raw ``read_resource_mcp`` (not the convenience
-        ``read_resource``, which strips the ``ReadResourceResult`` envelope
-        down to just ``.contents``) so the shape-flattening lives in ONE
-        place (:func:`_read_resource_result_to_dict`), mirroring how
-        :meth:`call_tool` uses ``call_tool_mcp`` for the same reason.
-
-        #3698 stage 1: the official SDK's OWN plain ``read_resource`` never
-        had fastmcp's convenience-stripping layer to begin with — it already
-        returns the full ``ReadResourceResult`` (live-verified: called
-        against the real echo server's ``resource://pid``, ``.contents``
-        reachable directly, no fastmcp in the path). ``uri`` is typed
-        ``AnyUrl`` on that method but accepts a plain ``str`` — pydantic
-        coerces it at the request-params model boundary (also live-verified).
+        ``ClientSession.read_resource`` returns the full
+        ``ReadResourceResult`` (live-verified: called against the real echo
+        server's ``resource://pid``, ``.contents`` reachable directly) —
+        the shape-flattening lives in ONE place
+        (:func:`_read_resource_result_to_dict`), mirroring how
+        :meth:`call_tool` flattens ``CallToolResult`` for the same reason.
+        ``uri`` is typed ``AnyUrl`` on that method but accepts a plain
+        ``str`` — pydantic coerces it at the request-params model boundary
+        (live-verified).
         """
         await self.initialize()
         require_capability(self, "resources")
         try:
-            if self._uses_official_sdk:
-                result = await self._client.read_resource(uri)
-            else:
-                result = await self._client.read_resource_mcp(uri)
+            result = await self._client.read_resource(uri)
         except Exception as exc:
             _classify_and_raise(exc, f"MCP resources/read error: {exc}")
         return _read_resource_result_to_dict(result)
@@ -1550,17 +1381,14 @@ class MCPClient:
     async def list_prompts(self) -> list[dict[str, Any]]:
         """Return the prompts advertised by this server as plain dicts.
 
-        Mirrors :meth:`list_resources`: uses FastMCP's auto-paginating
-        ``Client.list_prompts()`` (follows ``nextCursor``) and gates on the
-        ``"prompts"`` capability before issuing the request.
+        Mirrors :meth:`list_resources`: paginates via
+        :meth:`_paginate_official_sdk` (follows ``nextCursor``) and gates
+        on the ``"prompts"`` capability before issuing the request.
         """
         await self.initialize()
         require_capability(self, "prompts")
         try:
-            if self._uses_official_sdk:
-                prompts = await self._paginate_official_sdk(self._client.list_prompts, "prompts")
-            else:
-                prompts = await self._client.list_prompts()
+            prompts = await self._paginate_official_sdk(self._client.list_prompts, "prompts")
         except Exception as exc:
             _classify_and_raise(exc, f"MCP prompts/list error: {exc}")
         return [_prompt_to_dict(p) for p in prompts]
@@ -1570,24 +1398,17 @@ class MCPClient:
         dict: ``{"description": str | None, "messages": [...]}`` — each entry
         a flattened ``PromptMessage``.
 
-        Uses FastMCP's raw ``get_prompt_mcp`` (not the convenience
-        ``get_prompt``, which additionally supports background-task /
-        version kwargs this slice does not need) so the shape-flattening
-        lives in ONE place (:func:`_get_prompt_result_to_dict`), mirroring
-        how :meth:`read_resource` uses ``read_resource_mcp`` for the same
-        reason.
-
-        #3698 stage 1: the official SDK's OWN plain ``get_prompt`` has no
-        such extra convenience kwargs to begin with — same signature shape
-        (``name``, ``arguments``), full ``GetPromptResult`` returned.
+        ``ClientSession.get_prompt`` takes the same ``name``/``arguments``
+        shape and returns the full ``GetPromptResult`` — the
+        shape-flattening lives in ONE place
+        (:func:`_get_prompt_result_to_dict`), mirroring how
+        :meth:`read_resource` flattens ``ReadResourceResult`` for the
+        same reason.
         """
         await self.initialize()
         require_capability(self, "prompts")
         try:
-            if self._uses_official_sdk:
-                result = await self._client.get_prompt(name=name, arguments=arguments)
-            else:
-                result = await self._client.get_prompt_mcp(name=name, arguments=arguments)
+            result = await self._client.get_prompt(name=name, arguments=arguments)
         except Exception as exc:
             _classify_and_raise(exc, f"MCP prompts/get error: {exc}")
         return _get_prompt_result_to_dict(result)
@@ -1610,15 +1431,15 @@ class MCPClient:
         module docstring for the full fact-check). This is a REFUSAL, the same
         shape as :func:`require_capability` — not a transport failure.
 
-        **#3698 stage 1 re-measurement**: this declaration was already reading
-        ``mcp.types.ServerCapabilities``/``ResourcesCapability`` directly — the
-        official SDK's own types, not a fastmcp-shaped projection — since
+        **#3698/#4282 re-measurement**: this declaration was always reading
+        ``mcp.types.ServerCapabilities``/``ResourcesCapability`` directly —
+        the official SDK's own types, not a fastmcp-shaped projection.
         ``self._server_capabilities`` is populated from ``ClientSession.
-        initialize()``'s ``InitializeResult.capabilities`` on the stdio/
-        non-OAuth-http/sse path (and from fastmcp's ``Client.initialize_result.
-        capabilities`` — same underlying SDK type — on the OAuth/fastmcp path).
-        No code or behavior change; re-confirmed by re-reading both call sites'
-        population code, not just this predicate's read side.
+        initialize()``'s ``InitializeResult.capabilities`` on every
+        transport now (#4282 closed the last path — OAuth-configured http —
+        that instead read it off fastmcp's ``Client.initialize_result.
+        capabilities``, same underlying SDK type). No code or behavior
+        change; re-confirmed by re-reading the population code.
         """
         server = self.server_name or "<unknown>"
         version = self.negotiated_version or "<unknown>"
@@ -1638,41 +1459,32 @@ class MCPClient:
         :meth:`_require_resources_subscribe_capability`) — a server may support
         reading resources without supporting subscriptions to them.
 
-        Uses the RAW ``mcp.ClientSession.subscribe_resource`` (verified: FastMCP's
-        ``Client`` has no subscribe convenience method of its own — only the
-        underlying ``mcp.ClientSession``, reached via ``Client.session``, does).
-        The notification itself carries no payload (just ``uri``) — callers
-        re-read the resource to see the new content; see
-        :mod:`reyn.mcp.message_handler`'s ``on_resource_updated`` for the
-        EventLog bridge.
-
-        #3698 stage 1: once ``self._client`` IS the ``ClientSession`` directly
-        (stdio), the ``.session`` indirection fastmcp needed is gone — call
-        the method on ``self._client`` itself.
+        ``self._client`` IS the ``ClientSession`` directly (#4282: every
+        transport, OAuth included), so ``subscribe_resource`` is called on
+        it directly — no ``.session`` indirection needed (that was
+        fastmcp's own ``Client`` exposing it only via ``Client.session``,
+        never on ``Client`` itself). The notification itself carries no
+        payload (just ``uri``) — callers re-read the resource to see the
+        new content; see :mod:`reyn.mcp.message_handler`'s
+        ``on_resource_updated`` for the EventLog bridge.
         """
         await self.initialize()
         require_capability(self, "resources")
         self._require_resources_subscribe_capability()
         try:
-            if self._uses_official_sdk:
-                await self._client.subscribe_resource(uri)
-            else:
-                await self._client.session.subscribe_resource(uri)
+            await self._client.subscribe_resource(uri)
         except Exception as exc:
             _classify_and_raise(exc, f"MCP resources/subscribe error: {exc}")
 
     async def unsubscribe_resource(self, uri: str) -> None:
         """Unsubscribe from server-pushed updates for ``uri``. Same gating as
-        :meth:`subscribe_resource`; mirrors it via the raw
+        :meth:`subscribe_resource`; mirrors it via
         ``mcp.ClientSession.unsubscribe_resource``."""
         await self.initialize()
         require_capability(self, "resources")
         self._require_resources_subscribe_capability()
         try:
-            if self._uses_official_sdk:
-                await self._client.unsubscribe_resource(uri)
-            else:
-                await self._client.session.unsubscribe_resource(uri)
+            await self._client.unsubscribe_resource(uri)
         except Exception as exc:
             _classify_and_raise(exc, f"MCP resources/unsubscribe error: {exc}")
 
@@ -1694,7 +1506,6 @@ class MCPClient:
             self.close_stderr_capture()
             self._reap_child_process()  # nothing opened, or already closed once — still idempotent
             return
-        client = self._client
         exit_stack = self._exit_stack
         self._client = None
         self._exit_stack = None
@@ -1706,17 +1517,16 @@ class MCPClient:
         self._negotiated_version = None
         self._server_capabilities = None
         try:
-            # #3698 stage 1: stdio was opened via self._exit_stack (the official
-            # SDK's stdio_client + ClientSession, entered as two separate async
-            # context managers — see _initialize_stdio) — closing means exiting
-            # THAT stack, not calling .close() on the ClientSession object
-            # (which has no such method; only __aexit__ via the stack it was
-            # entered through). http/sse still open via fastmcp's Client,
-            # which owns its own close().
-            if exit_stack is not None:
-                await exit_stack.aclose()
-            else:
-                await client.close()
+            # #4282: every transport (stdio, http/sse with or without OAuth)
+            # opens via self._exit_stack now — the official SDK's transport
+            # + ClientSession, entered as two separate async context
+            # managers (see _initialize_stdio / _initialize_http_or_sse) —
+            # closing means exiting THAT stack. ClientSession itself has no
+            # .close() method; only __aexit__ via the stack it was entered
+            # through. exit_stack is always set alongside self._client (both
+            # init paths set them together), so this is no longer a branch.
+            assert exit_stack is not None  # narrows the type; see comment above
+            await exit_stack.aclose()
         except (Exception, asyncio.CancelledError):
             # Best-effort graceful cleanup; transport may already be down. The
             # belt-and-suspenders reap in the finally still terminates the OS
@@ -1847,22 +1657,6 @@ class MCPClient:
             pass
 
     # ── transport dispatch ──────────────────────────────────────────────────
-
-    def _open_transport(self) -> "Any":
-        """Build the ``fastmcp.client.transports.ClientTransport`` for this server.
-
-        Unlike the pre-swap ``mcp`` SDK version, this returns a constructed
-        transport OBJECT (not an entered async context manager / stream
-        tuple) — FastMCP's ``Client(transport)`` owns opening it.
-        """
-        if self._type == "stdio":
-            return self._open_stdio()
-        if self._type == "http":
-            return self._open_http()
-        if self._type == "sse":
-            return self._open_sse()
-        # Unreachable due to __init__ validation, but keep defensive.
-        raise ValueError(f"Unsupported MCP server type: {self._type!r}")
 
     def _build_mcp_sandbox_policy(self):
         """SandboxPolicy for a sandboxed stdio MCP server (#1344).
@@ -2049,58 +1843,9 @@ class MCPClient:
         self._sandbox_env = wrapped.env
         return wrapped.argv[0], list(wrapped.argv[1:])
 
-    def _open_stdio(self) -> "Any":
-        from reyn.mcp._fastmcp_boundary import import_stdio_transport
-
-        StdioTransport = import_stdio_transport()
-
-        command = self._config.get("command")
-        if not command:
-            raise MCPError("stdio MCP server config requires 'command'")
-        args = list(self._config.get("args") or [])
-        # #1344: wrap the server subprocess in the platform sandbox (Seatbelt)
-        # so an LLM-invoked MCP tool cannot escape the sandbox via the server.
-        command, args = self._sandbox_wrap_stdio(command, args)
-        # #3848 stage 1: self._sandbox_env (the allowlisted env, now carried
-        # through rather than dropped) is intentionally NOT consumed here —
-        # the owner ruling's default is "pass everything" (unchanged), which
-        # the allowlist is narrower than. Stage 2's opt-in whitelist mode
-        # will read self._sandbox_env; opt-in blacklist mode will filter
-        # os.environ against an operator-declared name set instead.
-        env = self._config.get("env")
-        # Subprocess stderr capture for diagnostic readback on init
-        # failure. FastMCP's ``StdioTransport`` accepts ``log_file`` (a
-        # Path or TextIO) and passes it straight through to the underlying
-        # ``anyio.open_process(stderr=...)``, which requires a real
-        # fileno — ``io.StringIO`` doesn't work. ``tempfile.TemporaryFile``
-        # auto-deletes on close. Text-mode + utf-8 matches the SDK's
-        # default (= sys.stderr). On failure to open the temp file we
-        # fall through to no capture (= behavior degrades gracefully
-        # to the pre-fix opaque error wording, never blocks the call).
-        try:
-            self._stderr_capture = tempfile.TemporaryFile(
-                mode="w+t", encoding="utf-8",
-            )
-        except Exception:  # noqa: BLE001 — temp-file failure is non-fatal
-            self._stderr_capture = None
-            log_file = None
-        else:
-            log_file = self._stderr_capture
-        return StdioTransport(
-            command=command,
-            args=args,
-            env=dict(env) if env else None,
-            cwd=self._config.get("cwd"),
-            # keep_alive=True matches the pre-swap subprocess-reuse contract:
-            # MCPClient/pool open once and hold the same transport/subprocess
-            # for the object's lifetime (a359 P2 task-affine caching).
-            keep_alive=True,
-            log_file=log_file,
-        )
-
     def _is_non_interactive(self) -> bool:
         """Resolve the effective headless/non-interactive posture for the
-        #2597 slice ④ OAuth pre-flight check (see :meth:`_build_oauth_auth`).
+        #2597 slice ④ OAuth pre-flight check (see :meth:`_build_oauth_provider`).
 
         The explicit constructor kwarg wins when given; otherwise auto-detect
         via ``sys.stdin.isatty()`` — no attached TTY means there is no human
@@ -2116,15 +1861,18 @@ class MCPClient:
         except Exception:  # noqa: BLE001
             return True
 
-    def _build_oauth_auth(self, url: str) -> "Any":
-        """Build the ``fastmcp.client.auth.OAuth`` object for ``self._config
-        ["auth"]``, or return None if this server config carries no ``auth``
-        key at all (the pre-④ static-bearer-via-``headers`` path, unchanged).
+    async def _build_oauth_provider(self, url: str) -> "Any":
+        """Build the official SDK's ``mcp.client.auth.OAuthClientProvider``
+        for ``self._config["auth"]``, or return None if this server config
+        carries no ``auth`` key at all (the pre-④ static-bearer-via-
+        ``headers`` path, unchanged). #4282: replaces the retired
+        ``_build_oauth_auth`` (which built fastmcp's ``OAuth`` object) — the
+        validation contract below is unchanged from it.
 
-        See the module docstring's "OAuth 2.1 (#2597 slice ④)" section for
-        the full contract this implements. Raises :class:`MCPError` eagerly
-        (this module's existing lazy-validate-at-connect-time posture, same
-        as the ``type``/``url`` checks above) for: a non-``oauth`` ``auth``
+        See the module docstring's "OAuth 2.1" section for the full
+        contract this implements. Raises :class:`MCPError` eagerly (this
+        module's existing lazy-validate-at-connect-time posture, same as
+        the ``type``/``url`` checks above) for: a non-``oauth`` ``auth``
         type, an ``auth`` key on a non-``http`` transport, or a headless
         caller with no cached token yet.
         """
@@ -2153,8 +1901,8 @@ class MCPClient:
             )
         # Note: the http-only restriction is already enforced eagerly in
         # __init__ (config.get("auth") + srv_type != "http" raises there) —
-        # this method is only ever reached via _open_http, so self._type is
-        # guaranteed "http" here.
+        # this method is only ever reached via _initialize_http_or_sse's
+        # http branch, so self._type is guaranteed "http" here.
 
         from reyn.mcp.oauth_token_storage import (
             MCPOAuthTokenStorage,
@@ -2171,85 +1919,73 @@ class MCPClient:
                 "subsequent headless/non-interactive runs."
             )
 
-        from reyn.mcp._fastmcp_boundary import import_oauth
+        from mcp.client.auth import OAuthClientProvider
+        from mcp.shared.auth import OAuthClientInformationFull, OAuthClientMetadata
+        from pydantic import AnyHttpUrl
 
-        OAuth = import_oauth()
-
-        scopes = auth_cfg.get("scopes")
-        return OAuth(
-            mcp_url=url,
-            scopes=scopes,
-            client_id=auth_cfg.get("client_id"),
-            client_secret=auth_cfg.get("client_secret"),
-            token_storage=MCPOAuthTokenStorage(),
+        from reyn.mcp.oauth_browser_flow import (
+            find_available_port,
+            redirect_handler,
+            run_callback_server,
         )
 
-    def _open_http(self) -> "Any":
-        """Open the Streamable HTTP transport.
+        storage = MCPOAuthTokenStorage(url)
 
-        Reads from ``self._config``:
-          - ``url`` (required) — full MCP endpoint URL.
-          - ``headers`` (optional dict[str, str]) — HTTP headers sent on
-            every request to the server. Used for ``Authorization: Bearer
-            <token>`` and API-key style auth required by hosted MCP servers
-            (GitHub MCP, Atlassian MCP, internal enterprise MCPs).  This is
-            FP-0016 Component A. Values are passed through verbatim;
-            ``${VAR}`` interpolation is the caller's responsibility (the
-            standard load_config path applies ``expand_env`` recursively
-            across the whole merged config — see ADR-0030).
-          - ``auth`` (optional — #2597 slice ④) — ``"oauth"`` or
-            ``{"type": "oauth", "scopes": [...], "client_id": ..., "client_secret":
-            ...}``. Mutually additive with ``headers`` (both can be set; a
-            server that also needs a static header alongside OAuth is
-            supported). See :meth:`_build_oauth_auth`.
-          - ``timeout`` (optional, default 30) — request timeout in seconds.
-            FastMCP's ``StreamableHttpTransport`` has no per-transport
-            connect timeout (its ``sse_read_timeout`` ctor kwarg is
-            deprecated/unused by the new streamable-http client); the
-            equivalent bound is the ``Client``-level default read timeout
-            (``fastmcp.Client(transport, timeout=...)``), which flows into
-            every request's ``read_timeout_seconds`` exactly like the
-            per-call ``timeout_seconds`` kwarg on :meth:`call_tool` — same
-            SDK knob, applied as this transport's default instead of the
-            old connect-level timeout.
-        """
-        from reyn.mcp._fastmcp_boundary import import_streamable_http_transport
+        scopes = auth_cfg.get("scopes")
+        if isinstance(scopes, list):
+            scope_str = " ".join(scopes)
+        elif scopes:
+            scope_str = str(scopes)
+        else:
+            scope_str = ""
 
-        StreamableHttpTransport = import_streamable_http_transport()
+        port = find_available_port()
+        redirect_uri = f"http://127.0.0.1:{port}/callback"
+        client_metadata = OAuthClientMetadata(
+            client_name="reyn",
+            redirect_uris=[AnyHttpUrl(redirect_uri)],
+            grant_types=["authorization_code", "refresh_token"],
+            response_types=["code"],
+            scope=scope_str,
+        )
 
-        url = self._config.get("url")
-        if not url:
-            raise MCPError("http MCP server config requires 'url'")
-        headers = {
-            str(k): str(v) for k, v in (self._config.get("headers") or {}).items()
-        }
-        # FP-0016 Component E: inject the agent_id as X-Reyn-Agent-Id so
-        # downstream MCP servers can attribute requests to a specific
-        # Reyn agent (= RBAC + audit trail requirement per the issue
-        # シナリオ 5 Enterprise Agent ID pattern). Explicit operator
-        # headers win when they already set the field — operators may
-        # need to spoof in tests or proxy in production.
-        if self._agent_id and "X-Reyn-Agent-Id" not in headers:
-            headers["X-Reyn-Agent-Id"] = self._agent_id
-        auth = self._build_oauth_auth(url)
-        return StreamableHttpTransport(url, headers=headers, auth=auth)
+        # Static client_id (skip Dynamic Client Registration) — mirrors
+        # fastmcp's own OAuth._bind's static-client-info shortcut. Pre-
+        # seeding storage.set_client_info() BEFORE constructing the
+        # provider works because OAuthClientProvider only runs DCR when
+        # ``self.context.client_info`` is still None after ``_initialize()``
+        # loads it via ``storage.get_client_info()`` (verified by reading
+        # ``mcp/client/auth/oauth2.py``'s async_auth_flow directly: "Step 4:
+        # Register client or use URL-based client ID" is gated on
+        # ``if not self.context.client_info:``).
+        client_id = auth_cfg.get("client_id")
+        client_secret = auth_cfg.get("client_secret")
+        if client_id:
+            metadata_dict = client_metadata.model_dump(exclude_none=True)
+            metadata_dict.setdefault(
+                "token_endpoint_auth_method",
+                "client_secret_post" if client_secret else "none",
+            )
+            static_info = OAuthClientInformationFull(
+                client_id=client_id, client_secret=client_secret, **metadata_dict,
+            )
+            await storage.set_client_info(static_info)
 
-    def _open_sse(self) -> "Any":
-        """Open the SSE transport (#2597 S1 free win — FastMCP ships it, so no
-        incremental cost to wire vs. leaving the pre-swap ``NotImplementedError``)."""
-        from reyn.mcp._fastmcp_boundary import import_sse_transport
+        callback_timeout = float(auth_cfg.get("callback_timeout", 300.0))
 
-        SSETransport = import_sse_transport()
+        async def _callback_handler() -> tuple[str, str | None]:
+            return await run_callback_server(
+                host="127.0.0.1", port=port, timeout=callback_timeout,
+            )
 
-        url = self._config.get("url")
-        if not url:
-            raise MCPError("sse MCP server config requires 'url'")
-        headers = {
-            str(k): str(v) for k, v in (self._config.get("headers") or {}).items()
-        }
-        if self._agent_id and "X-Reyn-Agent-Id" not in headers:
-            headers["X-Reyn-Agent-Id"] = self._agent_id
-        return SSETransport(url, headers=headers)
+        return OAuthClientProvider(
+            server_url=url,
+            client_metadata=client_metadata,
+            storage=storage,
+            redirect_handler=redirect_handler,
+            callback_handler=_callback_handler,
+            timeout=callback_timeout,
+        )
 
 
 # ── helpers ──────────────────────────────────────────────────────────────────
