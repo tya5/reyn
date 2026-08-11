@@ -3,12 +3,18 @@
 An MCP server can send ``elicitation/create`` mid-session to ask the human a
 structured question (a flat, primitive-only JSON-object schema per the
 2025-11-25 spec — string / number / integer / boolean / enum; NO nesting).
-FastMCP's ``fastmcp.Client(elicitation_handler=...)`` (verified against the
-installed fastmcp 3.4.2, ``fastmcp/client/elicitation.py``) is the
-capability-declaring seam: passing a handler is what causes FastMCP to
-declare the ``elicitation`` client capability during the initialize
-handshake. The handler signature (verified against
-``fastmcp.client.elicitation.ElicitationHandler``)::
+The official SDK's ``ClientSession(elicitation_callback=...)`` is the
+capability-declaring seam: passing a (possibly-adapted) handler is what
+causes the SDK to declare the ``elicitation`` client capability during
+the initialize handshake — see :mod:`reyn.mcp.client`'s
+``_adapt_elicitation_handler``. This module's own handler keeps
+fastmcp's original ``ElicitationHandler`` calling convention (verified
+against the installed fastmcp 3.4.2, ``fastmcp/client/elicitation.py``,
+back when it was built) rather than the official SDK's own 2-arg
+``ElicitationFnT`` shape — a deliberate choice to avoid churning every
+call site when the transport later changed, not a live fastmcp
+dependency (#4282: this module no longer imports anything from
+fastmcp). The handler signature::
 
     async def handler(
         message: str,
@@ -34,8 +40,8 @@ SDK. So awaiting a human answer here blocks THAT server's receive loop for as
 long as the wait takes (bounded by ``timeout_seconds`` below) — other
 notifications/responses on the SAME connection queue behind it. Since each
 held MCP connection (:class:`~reyn.mcp.connection_service.MCPConnectionService`)
-owns its own ``fastmcp.Client``/``ClientSession`` with its own receive-loop
-task, this block is contained to the ONE server connection that asked the
+owns its own ``ClientSession`` with its own receive-loop task, this block
+is contained to the ONE server connection that asked the
 question — every other held server connection (and the rest of reyn) keeps
 running. Cleanly spinning the wait onto a separate asyncio Task would not
 avoid the block: the SDK requires this callback's coroutine to complete
@@ -269,10 +275,18 @@ def build_elicitation_handler(
     ``"auto_decline"`` (per-server config override ``elicitation:
     auto_decline``) always auto-declines, even with a live listener attached.
     """
-    from reyn.mcp._fastmcp_boundary import import_elicit_result
-
-    ElicitResult = import_elicit_result()
-    from mcp.types import ElicitRequestFormParams
+    # #4282 follow-up: constructs the official SDK's OWN ElicitResult
+    # directly now — fastmcp.client.elicitation.ElicitResult (previously
+    # reached via reyn.mcp._fastmcp_boundary.import_elicit_result) adds
+    # ZERO new fields over mcp.types.ElicitResult (verified: it's
+    # `class ElicitResult(MCPElicitResult, Generic[T]): content: T | None
+    # = None` — pure Generic[T] typing sugar, no new runtime field or
+    # behavior), so building the base type directly satisfies the official
+    # SDK's ElicitationFnT return-type contract identically. This was
+    # reyn's LAST source-level fastmcp import outside the RAG plugin
+    # scripts (which run in a separate, operator-created venv, not reyn's
+    # own) — see client.py's module docstring for the fuller picture.
+    from mcp.types import ElicitRequestFormParams, ElicitResult
 
     async def _emit(event: str, **fields: Any) -> None:
         if emit_sink is None:

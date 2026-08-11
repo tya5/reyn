@@ -25,26 +25,32 @@ assumed) and a token-storage adapter matching the official SDK's simpler
 ``AsyncKeyValue``-shaped adapter, which became dead code once fastmcp's
 ``OAuth`` was no longer constructed anywhere).
 
-This module (the MCP CLIENT path) no longer imports ``fastmcp`` for
-transport/session/OAuth construction — only :mod:`reyn.mcp.elicitation`
-still imports one fastmcp type (``fastmcp.client.elicitation.
-ElicitResult``, a strict subclass of ``mcp.types.ElicitResult`` — verified
-via its MRO — so it satisfies the official SDK's ``ElicitationFnT``
-return-type contract unmodified; kept rather than switched to the SDK's
-own base type, since switching would touch elicitation.py for no
-behavioral gain).
+#4282 follow-up (same PR): ``reyn.mcp.elicitation`` used to import ONE
+fastmcp type (``fastmcp.client.elicitation.ElicitResult``) via the
+now-DELETED ``reyn.mcp._fastmcp_boundary`` module — a strict subclass of
+``mcp.types.ElicitResult`` adding zero fields (verified via its MRO), so
+it was switched to construct the official SDK's own base type directly.
+An AST scan of the whole ``src/reyn/`` tree (excluding
+``src/reyn/builtin/plugins/rag/scripts/``, see below) now finds ZERO
+``import fastmcp`` / ``from fastmcp...`` statements anywhere — reyn's own
+venv has no source-level fastmcp dependency left at all.
 
-⚠️ **``fastmcp`` stays a REQUIRED reyn dependency — do NOT read this
-module's fastmcp-free CLIENT path as "fastmcp can be removed from
-pyproject.toml."** That premise (repeated through #3698/#4282's own
-planning) turned out to be wrong: ``src/reyn/builtin/plugins/rag/scripts/
-chunker_server.py`` and ``vector_store_server.py`` build MCP SERVERS via
-``fastmcp.FastMCP()`` directly — entirely unrelated to the CLIENT path
-this module owns. The ``mcp<2.0`` pin (``fastmcp-slim[server]``'s own
-floor) is equally unremovable for the same reason. Discovered while
-finishing #4282's own cleanup sweep, reported before touching
-``pyproject.toml`` — see the PR body / issue thread for the correction
-to the earlier "stage 2 is gated on #4282" framing.
+``src/reyn/builtin/plugins/rag/scripts/chunker_server.py`` /
+``vector_store_server.py`` DO import ``fastmcp.FastMCP()`` to build MCP
+SERVERS, but that is not evidence against removing fastmcp from THIS
+pyproject.toml — those scripts run in an operator-created, SEPARATE venv
+(``src/reyn/builtin/plugins/rag/requirements.txt``'s own header:
+"Install these into your OWN venv -- ``plugin_install`` is register-only
+(ADR 0064 §3.11b, #3209) and never reads or installs this file itself"),
+never reyn's own venv. So "#4282 is #3698 stage 2's precondition"
+(mcp>=2.0 adoption) still stands as originally planned: whether
+``fastmcp``/the ``mcp<2.0`` pin can actually be DROPPED from
+``pyproject.toml`` — as opposed to merely unreferenced in source — is a
+separate, deliberate step (adding ``mcp`` as reyn's own DIRECT
+dependency with its own version choice, not just inheriting fastmcp's
+transitive floor; touches every user's install) not performed in this
+commit — reported to lead-coder as the concrete next decision point
+rather than made unilaterally.
 
 Each ``MCPClient`` owns a single connection opened on :meth:`initialize` and
 torn down on :meth:`close`, held open via a ``contextlib.AsyncExitStack``
