@@ -46,8 +46,13 @@ Everything else is excluded, by one of four reasons:
 │   ├── mcp.yaml            MCP servers   (mcp_install / mcp_drop_server)
 │   ├── cron.yaml           cron jobs     (cron_register / …)
 │   ├── hooks.yaml          push hooks    (hooks_add)
-│   ├── integrations.yaml   integrations
-│   └── index/sources.yaml  index source manifest (index ops)
+│   ├── skills.yaml         skill install/registration entries (skill_install, #2548 PR-B)
+│   ├── pipelines.yaml      pipeline install/registration entries (pipeline_install)
+│   ├── presentations.yaml  presentation-template entries (presentation_install, FP-0054 PR-C)
+│   ├── index/sources.yaml  index source manifest (index ops)
+│   └── integrations.yaml   ⏳ designed, not yet wired — no reader/writer exists (#4337);
+│                           `external_transports` config is read from reyn.yaml's own
+│                           `external_transports:` section only
 ├── memory/                 PERSIST — agent knowledge; survives rewind, never reverted
 ├── approvals.yaml          PERSIST — user-authored permission grants; survive rewind
 ├── events/ traces/ logs/   AUDIT — append-only forensic record; never restored
@@ -93,10 +98,14 @@ mixed in at the top level) should know things moved:
 
 | Was | Now |
 |---|---|
-| `.reyn/mcp.yaml`, `.reyn/cron.yaml`, `.reyn/hooks.yaml`, `.reyn/integrations.yaml` | `.reyn/config/<x>.yaml` |
+| `.reyn/mcp.yaml`, `.reyn/cron.yaml`, `.reyn/hooks.yaml` | `.reyn/config/<x>.yaml` |
 | `.reyn/index/sources.yaml` | `.reyn/config/index/sources.yaml` |
 | `.reyn/index/` (data), `.reyn/action_index/`, `.reyn/registry-cache/` | `.reyn/cache/…` |
 | `.reyn/approvals.yaml` | **unchanged** (top-level — it is *persist*, not recovery-core config) |
+
+`integrations.yaml` is deliberately absent from this table (#4337): no reader/writer for it
+exists at either the old or the new location, so there is nothing that actually moved — see
+the `config/` entry above.
 
 ## <a id="recovery-core"></a>Recovery-core: what the WAL + snapshot generators write
 

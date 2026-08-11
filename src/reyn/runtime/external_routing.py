@@ -9,9 +9,11 @@ calls happen on the MCP server side.
 Components:
 
   ``ExternalTransportRouting`` — config dataclass mapping transport
-    name → MCP tool name + args template. Parsed from
-    ``reyn.yaml`` / ``.reyn/integrations.yaml`` ``external_transports``
-    section.
+    name → MCP tool name + args template. Parsed from ``reyn.yaml``'s
+    own ``external_transports`` section (#4337: an earlier draft of this
+    docstring also named ``.reyn/integrations.yaml`` as a source — no
+    reader for that path was ever wired; ``reyn.yaml`` is the only real
+    source).
 
   ``route_to_mcp(transport, destination, text, ...)`` — async
     routing function. Looks up the MCP tool from config, builds
@@ -248,7 +250,7 @@ async def route_to_mcp(
             mcp_tool="",
             detail=(
                 f"No external_transports entry for {transport!r}; "
-                f"add it under reyn.yaml or .reyn/integrations.yaml."
+                f"add it under reyn.yaml's external_transports: section."
             ),
         )
     args = build_mcp_args(
