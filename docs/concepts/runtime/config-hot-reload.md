@@ -124,20 +124,26 @@ the reload is scheduled and will apply at the next turn boundary.
 The `hooks_add` LLM-op writes a push hook and schedules a reload. The hook takes
 effect at the next turn boundary via the `hooks` reapply seam.
 
-**Scope-aware write target (#2088).** The write lands at exactly one of two fixed
-paths, chosen by the CALLING session's own identity — never by LLM input:
+**Session-local write target (#4215①, superseding #2088's scope-aware
+write).** The write lands at exactly ONE fixed path, chosen by the CALLING
+session's own identity — never by LLM input: every session (named agent or
+default, "main" or spawned) writes its OWN per-session layer
+`<session_state_dir>/hooks.yaml` — the same file the per-session COMBINE
+layer above already reads.
 
-- the default/unnamed agent (`ctx.agent_name` absent, or `== DEFAULT_AGENT_NAME`)
-  writes the GLOBAL runtime layer `.reyn/config/hooks.yaml`;
-- any other (named-agent) session writes its OWN per-agent layer
-  `.reyn/agents/<name>/hooks.yaml` — the same file the per-agent COMBINE layer
-  above already reads.
-
-This closes the #2073 follow-up: operator-authored per-agent hooks were
-read+combined since #2073's per-agent-hooks add-on, but `hooks_add` itself always
-wrote the global layer regardless of which agent called it (deferred to avoid
-scope-detection complexity in the crown-jewel op). Precedence between the two
-scopes is ADDITIVE, not override — see the 3/4-layer COMBINE above.
+#2088 closed the #2073 follow-up (operator-authored per-agent hooks were
+read+combined since #2073's per-agent-hooks add-on, but `hooks_add` itself
+always wrote the global layer) by giving a named agent its own per-agent
+write target — but that target was still SHARED across every session of
+that agent, and the default/unnamed agent still wrote the shared GLOBAL
+layer. #4215① closes both remaining leaks: hooks are reyn's one *reactive*
+corner (the OS acting on someone else's registration rather than the
+agent's own decision), so a session's self-expanded hooks must never leak
+into, or be leaked into by, a sibling session. Precedence between the
+per-session layer and every other layer (startup, global runtime,
+per-agent) is ADDITIVE, not override — see the COMBINE above. The
+operator-facing global and per-agent layers are unchanged and still read;
+`hooks_add` simply no longer writes to either.
 
 `hooks_add` parameters:
 
@@ -177,11 +183,11 @@ write on an exact match.
 Hot-reload is safe-by-construction through five layers:
 
 1. **Write-gate by construction.** `load_hot_reload_config` never opens `reyn.yaml`.
-   `hooks_add` hardcodes the write target to one of exactly two paths — the global
-   `.reyn/config/hooks.yaml` or the calling agent's own `.reyn/agents/<name>/hooks.yaml`
-   (#2088, scope chosen by the calling session's own identity) — never derived from
-   LLM input. An LLM-triggered reload structurally cannot touch the OUT-set, nor any
-   other agent's per-agent layer.
+   `hooks_add` hardcodes the write target to exactly one path — the calling
+   session's OWN per-session layer `<session_state_dir>/hooks.yaml` (#4215①,
+   chosen by the calling session's own identity) — never derived from LLM
+   input. An LLM-triggered reload structurally cannot touch the OUT-set, the
+   global runtime layer, nor any other session's or agent's layer.
 2. **Validate-before-apply.** A malformed IN-set rejects the whole reload atomically —
    no half-apply, live config unchanged.
 3. **Boot resilience.** Per-layer independent try-add for untrusted layers: a bad
