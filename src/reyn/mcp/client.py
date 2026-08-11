@@ -793,16 +793,24 @@ class MCPClient:
 
         Idempotent: a second call is a no-op.
 
-        #3698 stage 1: ``stdio`` now goes through the official ``mcp`` SDK
-        directly (:meth:`_initialize_stdio`) — fastmcp is no longer in this
-        transport's path at all. ``http``/``sse`` still go through
-        :meth:`_initialize_fastmcp` pending their own stage-1 follow-up
-        commits (same PR, reported per-transport — see the commit history).
+        #3698 stage 1: ``stdio``/``http``/``sse`` all go through the official
+        ``mcp`` SDK directly now (:meth:`_initialize_stdio` /
+        :meth:`_initialize_http_or_sse`) — fastmcp is only still in the path
+        for an OAuth-configured http server (:meth:`_initialize_fastmcp`),
+        pending OAuth's own follow-up commit: the official SDK's
+        ``OAuthClientProvider`` needs a ``redirect_handler``/
+        ``callback_handler`` pair implementing the actual browser-flow
+        orchestration fastmcp's own ``OAuth`` class currently does
+        internally — a materially bigger, separately-scoped lift than the
+        method-name/kwarg-shape differences the other transports needed
+        (flagged to lead-coder before starting it).
         """
         if self._initialized:
             return
         if self._type == "stdio":
             await self._initialize_stdio()
+        elif self._type in ("http", "sse") and not self._config.get("auth"):
+            await self._initialize_http_or_sse()
         else:
             await self._initialize_fastmcp()
 
@@ -943,6 +951,94 @@ class MCPClient:
         # a later object, unlike fastmcp's Client.initialize_result) — never
         # None on a successful call, but read defensively anyway in case a
         # future SDK version's contract changes underneath us.
+        if init_result is not None:
+            self._negotiated_version = str(init_result.protocolVersion)
+            self._server_capabilities = init_result.capabilities
+        else:
+            self._negotiated_version = None
+            self._server_capabilities = None
+
+    async def _initialize_http_or_sse(self) -> None:
+        """#3698 stage 1: http/sse (no OAuth configured) via the official
+        ``mcp`` SDK, no fastmcp. Same ``AsyncExitStack`` lifetime model as
+        :meth:`_initialize_stdio` (see its docstring); no stdio-only hints
+        (network-disabled / write-denial / stderr tail) since neither
+        transport spawns a subprocess.
+
+        ``streamablehttp_client`` yields a 3-tuple (``read, write,
+        get_session_id``) — one MORE element than stdio's/sse's 2-tuple
+        (measured via its own return-type annotation); ``sse_client``
+        matches stdio's 2-tuple shape exactly (measured by reading its
+        source's own ``yield read_stream, write_stream``). Only the
+        ``read``/``write`` pair is needed here; the session-id callable
+        (http-only, used for session resumption) is not currently consumed
+        by anything in reyn — same scope as this stage's other transports,
+        where only what reyn ALREADY read off the fastmcp wrapper carries
+        over, not the full surface a future caller might eventually want.
+        """
+        from contextlib import AsyncExitStack
+
+        from mcp.client.session import ClientSession
+
+        init_timeout = float(self._config.get("init_timeout", _DEFAULT_INIT_TIMEOUT_SECONDS))
+        url = self._config.get("url")
+        if not url:
+            raise MCPError(f"{self._type} MCP server config requires 'url'")
+        headers = {str(k): str(v) for k, v in (self._config.get("headers") or {}).items()}
+        if self._agent_id and "X-Reyn-Agent-Id" not in headers:
+            headers["X-Reyn-Agent-Id"] = self._agent_id
+        read_timeout = self._config.get("timeout", 30)
+
+        stack = AsyncExitStack()
+        try:
+            if self._type == "http":
+                # Deliberately the deprecated headers/timeout/auth-kwarg
+                # `streamablehttp_client`, not its replacement
+                # `streamable_http_client` — the latter takes a pre-built
+                # `httpx.AsyncClient` instead, which would mean
+                # reimplementing headers/timeout wiring by hand for no
+                # behavioral gain right now (a real future improvement, out
+                # of this PR's scope: a like-for-like swap, not a redesign).
+                from mcp.client.streamable_http import streamablehttp_client
+
+                read, write, _get_session_id = await stack.enter_async_context(
+                    streamablehttp_client(url, headers=headers, timeout=read_timeout)
+                )
+            else:
+                from mcp.client.sse import sse_client
+
+                read, write = await stack.enter_async_context(
+                    sse_client(url, headers=headers, timeout=read_timeout)
+                )
+            elicitation_callback = None
+            if self._elicitation_handler is not None:
+                elicitation_callback = _adapt_elicitation_handler(self._elicitation_handler)
+            session = await stack.enter_async_context(
+                ClientSession(
+                    read, write,
+                    message_handler=self._message_handler,
+                    elicitation_callback=elicitation_callback,
+                )
+            )
+            if init_timeout > 0:
+                init_result = await asyncio.wait_for(session.initialize(), timeout=init_timeout)
+            else:
+                init_result = await session.initialize()
+        except MCPError:
+            await stack.aclose()
+            raise
+        except Exception as exc:
+            await stack.aclose()
+            hint = ""
+            if isinstance(exc, (TimeoutError, asyncio.TimeoutError)):
+                hint = _INIT_TIMEOUT_HINT.format(
+                    seconds=init_timeout, server=self._server_name or "<server-name>",
+                )
+            raise MCPError(f"MCP initialize failed: {exc}{hint}") from exc
+
+        self._client = session
+        self._exit_stack = stack
+        self._initialized = True
         if init_result is not None:
             self._negotiated_version = str(init_result.protocolVersion)
             self._server_capabilities = init_result.capabilities
