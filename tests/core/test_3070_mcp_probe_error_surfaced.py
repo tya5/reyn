@@ -26,9 +26,9 @@ text as content). Three swallow points hid that real exception end to end:
      ABSENCE, never WHY.
 
 Each test below pins one closed swallow point. Real `EventLog` / `MCPClient`
-/ `PipelineExecutor` / `SchemaRegistry` throughout (only the deepest fastmcp
-transport is faked, mirroring `test_mcp_progress_and_timeout.py`'s own
-precedent for this exact seam) -- no mocks of reyn's own collaborators.
+/ `PipelineExecutor` / `SchemaRegistry` throughout (only the deepest SDK
+client transport is faked, mirroring `test_mcp_progress_and_timeout.py`'s
+own precedent for this exact seam) -- no mocks of reyn's own collaborators.
 """
 from __future__ import annotations
 
@@ -96,15 +96,18 @@ def _bypass_initialize(client: MCPClient, fake_fastmcp_client: Any) -> None:
 
 
 class _ErroringFastMCPClient:
-    """Stands in for the deepest `fastmcp.Client` transport (see
+    """Stands in for the deepest ``mcp.ClientSession`` transport (see
     `test_mcp_progress_and_timeout.py`'s own precedent for faking this ONE
-    seam): the tool call itself REPORTS an error (as a real FastMCP-wrapped
-    ImportError would from a missing `builtin-rag` extra), it does not raise."""
+    seam, #4282: renamed from ``call_tool_mcp`` to the official SDK's own
+    ``call_tool`` once fastmcp was no longer constructed anywhere in
+    client.py): the tool call itself REPORTS an error (as a real
+    SDK-wrapped ImportError would from a missing `builtin-rag` extra), it
+    does not raise."""
 
     def __init__(self, error_text: str) -> None:
         self._error_text = error_text
 
-    async def call_tool_mcp(
+    async def call_tool(
         self, name: str, arguments: "dict | None" = None, **kwargs: Any,
     ) -> Any:
         # `_result_to_dict` (reyn.mcp.client) reads `.content`/`.isError` as
@@ -173,7 +176,7 @@ def test_mcp_completed_event_carries_no_error_text_on_success() -> None:
     client = MCPClient({"type": "stdio", "command": "/bin/true"})
 
     class _OkFastMCPClient:
-        async def call_tool_mcp(self, name: str, arguments=None, **kwargs: Any) -> Any:
+        async def call_tool(self, name: str, arguments=None, **kwargs: Any) -> Any:
             class _Result:
                 content = [{"type": "text", "text": "ok"}]
                 isError = False

@@ -106,32 +106,64 @@ def test_event_log_agent_id_property_readable() -> None:
 # ── 3. MCPClient X-Reyn-Agent-Id header ────────────────────────────────────
 
 
-def test_mcp_client_injects_x_reyn_agent_id_header() -> None:
-    """Tier 2: MCPClient(agent_id=...) adds X-Reyn-Agent-Id to HTTP headers.
+def _capture_http_headers(monkeypatch) -> dict:
+    """#4282: the pre-#4282 form of the three tests below inspected the
+    constructed ``StreamableHttpTransport`` object's ``.headers`` directly
+    (via the now-removed ``_open_http``); ``_initialize_http_or_sse`` calls
+    ``mcp.client.streamable_http.streamablehttp_client(url, headers=...)``
+    inline instead. Captures the REAL function's kwargs by wrapping it
+    (still calls through to the real one) rather than faking the SDK —
+    same seam ``test_config_mcp_headers.py`` already established."""
+    import mcp.client.streamable_http as sh_mod
 
-    #2597 S1: inspects the real ``StreamableHttpTransport.headers`` built by
-    ``_open_http()`` directly (a real fastmcp object), not a mocked SDK call.
-    """
+    captured: dict = {}
+    real_fn = sh_mod.streamablehttp_client
+
+    def _capturing(url, headers=None, timeout=30, **kwargs):
+        captured["headers"] = headers
+        return real_fn(url, headers=headers, timeout=timeout, **kwargs)
+
+    monkeypatch.setattr(sh_mod, "streamablehttp_client", _capturing)
+    return captured
+
+
+def _initialize_and_swallow_connect_failure(client) -> None:
+    import asyncio
+
+    from reyn.mcp.client import MCPError
+
+    try:
+        asyncio.run(client.initialize())
+    except MCPError:
+        pass  # expected — example.com is not a real MCP server
+    finally:
+        asyncio.run(client.close())
+
+
+def test_mcp_client_injects_x_reyn_agent_id_header(monkeypatch) -> None:
+    """Tier 2: MCPClient(agent_id=...) adds X-Reyn-Agent-Id to HTTP headers."""
     from reyn.mcp.client import MCPClient
 
+    captured = _capture_http_headers(monkeypatch)
     client = MCPClient(
-        {"type": "http", "url": "https://example.com/mcp"},
+        {"type": "http", "url": "https://example.com/mcp", "init_timeout": 1},
         agent_id="reyn/test-agent",
     )
-    transport = client._open_http()
-    assert transport.headers.get("X-Reyn-Agent-Id") == "reyn/test-agent"
+    _initialize_and_swallow_connect_failure(client)
+    assert captured["headers"].get("X-Reyn-Agent-Id") == "reyn/test-agent"
 
 
-def test_mcp_client_no_agent_id_no_header() -> None:
+def test_mcp_client_no_agent_id_no_header(monkeypatch) -> None:
     """Tier 2: agent_id=None → no X-Reyn-Agent-Id header (= backwards compat)."""
     from reyn.mcp.client import MCPClient
 
-    client = MCPClient({"type": "http", "url": "https://example.com/mcp"})
-    transport = client._open_http()
-    assert "X-Reyn-Agent-Id" not in transport.headers
+    captured = _capture_http_headers(monkeypatch)
+    client = MCPClient({"type": "http", "url": "https://example.com/mcp", "init_timeout": 1})
+    _initialize_and_swallow_connect_failure(client)
+    assert "X-Reyn-Agent-Id" not in captured["headers"]
 
 
-def test_mcp_client_operator_header_wins() -> None:
+def test_mcp_client_operator_header_wins(monkeypatch) -> None:
     """Tier 2: operator-set X-Reyn-Agent-Id in config wins over agent_id arg.
 
     Operators may need to spoof for tests or proxy in production; respect
@@ -139,16 +171,18 @@ def test_mcp_client_operator_header_wins() -> None:
     """
     from reyn.mcp.client import MCPClient
 
+    captured = _capture_http_headers(monkeypatch)
     client = MCPClient(
         {
             "type": "http",
             "url": "https://example.com/mcp",
             "headers": {"X-Reyn-Agent-Id": "reyn/spoofed"},
+            "init_timeout": 1,
         },
         agent_id="reyn/auto",
     )
-    transport = client._open_http()
-    assert transport.headers["X-Reyn-Agent-Id"] == "reyn/spoofed"
+    _initialize_and_swallow_connect_failure(client)
+    assert captured["headers"]["X-Reyn-Agent-Id"] == "reyn/spoofed"
 
 
 # ── 4. OpContext.agent_id field ────────────────────────────────────────────

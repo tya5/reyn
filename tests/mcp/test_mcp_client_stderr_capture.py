@@ -10,15 +10,16 @@ stderr to a ``tempfile.TemporaryFile`` and includes the tail in the
 ``MCPError`` raised on init failure.
 
 This file pins the contract independently of the mcp SDK:
-  1. ``_open_stdio()`` creates a temp file and passes it as
-     ``errlog`` to ``stdio_client`` (= verified via signature
-     introspection + the stand-in in ``test_mcp_client.py``).
-  2. ``read_stderr_tail()`` returns captured text up to the configured
+  1. ``read_stderr_tail()`` returns captured text up to the configured
      byte cap; truncates with a ``...(truncated)`` prefix.
-  3. ``close_stderr_capture()`` is idempotent and never raises.
-  4. ``read_stderr_tail()`` on a missing / closed capture returns ``""``.
-  5. The init-failure branch in ``initialize()`` enriches MCPError
-     with the captured tail when present.
+  2. ``close_stderr_capture()`` is idempotent and never raises.
+  3. ``read_stderr_tail()`` on a missing / closed capture returns ``""``.
+  4. The init-failure branch in ``_initialize_stdio()`` enriches MCPError
+     with the captured tail when present — this ALSO proves the capture
+     gets allocated and written to (#4282: the standalone allocation-only
+     test that used to target ``_open_stdio()`` directly was removed as
+     redundant with this one once ``_open_stdio`` itself was removed —
+     see git history if you need the old form).
 
 End-to-end repro of a self-made server crash is out of scope (= would
 require spinning a subprocess); the SDK-level integration is verified
@@ -134,32 +135,6 @@ def test_http_transport_does_not_allocate_capture() -> None:
     client = _client("http")
     assert client.stderr_capture is None
     client.close_stderr_capture()  # safe
-
-
-# ── 5. open_stdio sets up the capture as a side effect ──────────────────
-
-
-def test_open_stdio_allocates_stderr_capture() -> None:
-    """Tier 2: calling _open_stdio sets _stderr_capture to a TemporaryFile.
-
-    Doesn't actually exercise the mcp SDK; we just observe the
-    side-effect on the client instance. The returned context manager
-    isn't entered.
-    """
-    pytest.importorskip("mcp")  # requires the optional dep
-    client = _client()
-    assert client.stderr_capture is None
-    cm = client._open_stdio()
-    try:
-        assert client.stderr_capture is not None
-        # writable text file with utf-8
-        client.stderr_capture.write("hello")
-        client.stderr_capture.flush()
-        assert client.read_stderr_tail() == "hello"
-    finally:
-        client.close_stderr_capture()
-        # cm is an async generator; we never entered it so no awaitable cleanup needed
-        del cm
 
 
 def test_initialize_failure_includes_stderr_tail_in_error(monkeypatch) -> None:
