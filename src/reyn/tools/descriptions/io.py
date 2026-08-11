@@ -8,7 +8,7 @@ its origin tool module; the origin module now aliases its
 ``_X_DESCRIPTION`` module constant to ``io.NAME.text`` so every call
 site is unchanged.
 
-Covers: file.py's 6 verbs (read_file / write_file / delete_file /
+Covers: file.py's 7 verbs (read_file / write_file / delete_file /
 edit_file / list_directory / grep_files / glob_files).
 
 FP-0066 P1b: ``drop_source`` and ``index_update`` — the agent-facing
