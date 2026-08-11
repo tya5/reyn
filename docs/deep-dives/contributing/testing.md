@@ -1049,7 +1049,9 @@ JSONL, one record per line:
 
 ### Monkeypatch lifecycle
 
-`tests/conftest.py` installs `LLMReplay` for tests with `@pytest.mark.replay` and restores in `try/finally`. Tests without the marker see real `litellm.acompletion`. Verified by `test_no_monkeypatch_leak` in `tests/test_replay_skill_router.py`.
+`tests/conftest.py` installs `LLMReplay` for tests with `@pytest.mark.replay` and restores in `try/finally`. Tests without the marker see real `litellm.acompletion`.
+
+#4081: this section used to cite `test_no_monkeypatch_leak` in `tests/test_replay_skill_router.py` as the test that verifies the try/finally restore — that file was deleted in the #2435 skill/phase decouple (no successor; the deletion was a whole-subsystem removal, not a rename) and nothing replaced the specific test. The mechanism above is still live (read `tests/conftest.py`'s `_llm_replay` fixture to confirm), but no dedicated test currently pins the no-leak guarantee.
 
 ---
 
@@ -1059,15 +1061,11 @@ JSONL, one record per line:
 # All tests
 python -m pytest tests/ -v
 
-# Only replay tests
-python -m pytest tests/test_replay_*.py -v
-
-# Only OS invariant tests (Tier 2)
-python -m pytest tests/test_os_invariants.py -v
-
 # Force record mode (live LLM required)
 REYN_LLM_RECORD=1 python -m pytest tests/ -v
 ```
+
+#4081: this block used to also show `python -m pytest tests/test_replay_*.py -v` and `python -m pytest tests/test_os_invariants.py -v` — both the glob and the literal path resolve to nothing today (the `tests/test_replay_skill_router.py` family and `tests/test_os_invariants.py` were removed in the #2435/#2438 skill/phase-engine bulk deletions, no successor). Dropped rather than replaced with an unverified new example — scope your own run to the files/keywords your change actually touches (see "Before you push" below).
 
 ---
 

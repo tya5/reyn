@@ -435,7 +435,9 @@ JSONL、1 行 1 レコード:
 
 ### モンキーパッチのライフサイクル
 
-`tests/conftest.py` は `@pytest.mark.replay` を持つテストに対して `LLMReplay` をインストールし、`try/finally` で復元します。マーカーを持たないテストは本物の `litellm.acompletion` を参照します。`tests/test_replay_skill_router.py` の `test_no_monkeypatch_leak` で検証済みです。
+`tests/conftest.py` は `@pytest.mark.replay` を持つテストに対して `LLMReplay` をインストールし、`try/finally` で復元します。マーカーを持たないテストは本物の `litellm.acompletion` を参照します。
+
+#4081: この節は以前 `tests/test_replay_skill_router.py` の `test_no_monkeypatch_leak` を「検証済み」の根拠として引用していましたが、そのファイルは #2435 の skill/phase decouple で削除され（サブシステム丸ごとの削除で、リネームではありません）、後継のテストもありません。上記の機構自体は今も生きています（`tests/conftest.py` の `_llm_replay` fixture で確認できます）が、no-leak 保証を専門に固定するテストは現在存在しません。
 
 ---
 
@@ -445,15 +447,11 @@ JSONL、1 行 1 レコード:
 # すべてのテスト
 python -m pytest tests/ -v
 
-# リプレイテストのみ
-python -m pytest tests/test_replay_*.py -v
-
-# OS 不変条件テストのみ（Tier 2）
-python -m pytest tests/test_os_invariants.py -v
-
 # 強制記録モード（稼働中の LLM が必要）
 REYN_LLM_RECORD=1 python -m pytest tests/ -v
 ```
+
+#4081: このブロックは以前 `python -m pytest tests/test_replay_*.py -v` と `python -m pytest tests/test_os_invariants.py -v` も示していましたが、glob もリテラルパスも今は何にも一致しません（`tests/test_replay_skill_router.py` 系と `tests/test_os_invariants.py` は #2435/#2438 の skill/phase engine 一括削除で消え、後継はありません）。未検証の新しい例に差し替えるのではなく削除しました——自分の変更が実際に触るファイル/キーワードにスコープを絞って実行してください（下の「プッシュ前」参照）。
 
 ---
 
