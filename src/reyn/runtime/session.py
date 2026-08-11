@@ -4039,6 +4039,11 @@ class Session:
             op_context_source=self._router_op_context_source,  # #3607
             state_log=self._state_log,  # #2259 PR-1 → config generation emit from config ops
             live_session_id_inputs=_live_session_id_inputs,  # #3482
+            # #4215①: LAZY — a spawned session's real ``_snapshot_path`` is
+            # assigned by the registry's spawn-time fixup, AFTER this
+            # constructor runs (same reason ``session_id_fn`` above is a
+            # callable, not a value).
+            session_state_dir_fn=lambda: Path(self._snapshot_path).parent,
             agent_name=self.agent_name,
             agent_role=self._agent_role,
             output_language=self.output_language,
