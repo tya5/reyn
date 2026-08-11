@@ -39,7 +39,7 @@ valid in one is not necessarily valid in the other:
 | `file_changed` | `builtin:external:file_changed` | a watched path changes ([`fs_watch`](../../reference/config/reyn-yaml.md#fs_watch-block) required) | ✅ | ✅ |
 | `cron_fired` | `builtin:external:cron_fired` | a message-based `cron:` job delivers | ✅ | ✅ |
 | `webhook_received` | `builtin:external:webhook_received` | an inbound webhook resolves to this session | ✅ | ✅ |
-| `task_settled` | `builtin:task:task_settled` | an async task (today: a `run_pipeline` async launch) reaches a terminal disposition | ✅ | ✅ |
+| `task_settled` | `builtin:task:task_settled` | an async task (see below for its producers) reaches a terminal disposition | ✅ | ✅ |
 | — (open) | `composed:<name>` | a Composer (see below) publishes its correlated output | ✅ | ✅ (chaining — another Composer's output) |
 | — (open) | `llm:<session_id>:<event_name>` | the LLM itself emits one via `emit_hook_event` (always its own session) | ❌ **rejected at load** (`HookConfigError`) | ✅ |
 
@@ -379,9 +379,9 @@ hooks:
   `path`, which match via a shell-style glob (`fnmatch`) — so
   `file:///repo/**` matches any URI under that prefix, and `/repo/src/**`
   matches any watched path under that directory.
-- For the 9 **builtin** hook points (the 4 lifecycle points + `mcp_resource_updated` /
-  `file_changed` / `cron_fired` / `webhook_received` + `task_settled`), a matcher field must be
-  one the point's builtin schema actually carries — a typo'd or nonexistent
+- For a **builtin** hook point (the lifecycle + external + task points listed
+  in the table above), a matcher field must be one the point's builtin schema
+  actually carries — a typo'd or nonexistent
   field name (e.g. a lifecycle point's matcher naming `server`/`uri`, or
   `payload.srever`) is a **load-time `HookConfigError`**, rejected before the
   hook can ever run (a schema-external matcher would otherwise never fire —
