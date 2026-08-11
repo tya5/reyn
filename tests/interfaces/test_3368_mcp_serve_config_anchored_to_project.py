@@ -33,9 +33,10 @@ from reyn.interfaces.cli.commands.mcp import _anchor_project_root
 from reyn.interfaces.cli.invocation_context import InvocationContext
 
 _PROJECT_YAML = """\
-model: standard
-models:
-  standard: openai/probe-standard-model
+llm:
+  model: standard
+  models:
+    standard: openai/probe-standard-model
 permissions:
   file.read: allow
 """

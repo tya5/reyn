@@ -64,7 +64,7 @@ def test_migrate_no_legacy_entries_is_noop(project, capsys):
     """Tier 2: no ``mcp.servers`` anywhere → command prints "nothing to
     migrate" and doesn't write any files.
     """
-    _write_yaml(project / "reyn.yaml", "model: standard\n")
+    _write_yaml(project / "reyn.yaml", "llm:\n  model: standard\n")
 
     _run_migrate()
 
@@ -83,7 +83,7 @@ def test_migrate_moves_reyn_yaml_servers_to_dynamic(project, capsys):
     """
     _write_yaml(
         project / "reyn.yaml",
-        "model: standard\n"
+        "llm:\n  model: standard\n"
         "mcp:\n  servers:\n    sqlite:\n      type: stdio\n      command: npx\n",
     )
 
@@ -97,7 +97,7 @@ def test_migrate_moves_reyn_yaml_servers_to_dynamic(project, capsys):
 
     # Source file no longer has mcp.servers — model stays.
     src = yaml.safe_load((project / "reyn.yaml").read_text())
-    assert src.get("model") == "standard"
+    assert src.get("llm", {}).get("model") == "standard"
     # Empty mcp section dropped entirely.
     assert "mcp" not in src
 
@@ -113,7 +113,7 @@ def test_migrate_moves_from_both_reyn_yaml_and_local(project, capsys):
     """
     _write_yaml(
         project / "reyn.yaml",
-        "model: standard\n"
+        "llm:\n  model: standard\n"
         "mcp:\n  servers:\n    sqlite:\n      type: stdio\n      command: npx\n",
     )
     _write_yaml(
@@ -172,7 +172,7 @@ def test_migrate_dry_run_does_not_write_files(project, capsys):
     """
     _write_yaml(
         project / "reyn.yaml",
-        "model: standard\n"
+        "llm:\n  model: standard\n"
         "mcp:\n  servers:\n    sqlite:\n      type: stdio\n      command: npx\n",
     )
 

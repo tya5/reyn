@@ -40,7 +40,7 @@ async def _registry_with_live_parent(
     style — the registry's own agent-level "main" session is a
     non-loading accessor and is never auto-constructed by ``create()``
     alone, so a genuinely-live spawner needs to come from a real spawn)."""
-    (tmp_path / "reyn.yaml").write_text("model: standard\n", encoding="utf-8")
+    (tmp_path / "reyn.yaml").write_text("llm:\n  model: standard\n", encoding="utf-8")
     state_log = StateLog(tmp_path / ".reyn" / "wal.jsonl")
     holder: dict = {}
 

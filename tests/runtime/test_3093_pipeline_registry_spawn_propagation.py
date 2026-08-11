@@ -108,7 +108,7 @@ def _agent_registry(tmp_path: Path, state_log: "StateLog") -> AgentRegistry:
     from reyn.data.pipelines.registry import build_pipeline_registry
 
     if not (tmp_path / "reyn.yaml").exists():
-        (tmp_path / "reyn.yaml").write_text("model: standard\n", encoding="utf-8")
+        (tmp_path / "reyn.yaml").write_text("llm:\n  model: standard\n", encoding="utf-8")
     holder: dict = {}
     frozen_registry = build_pipeline_registry(load_config(tmp_path).pipelines, tmp_path)
 

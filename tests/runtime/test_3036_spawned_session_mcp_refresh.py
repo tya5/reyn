@@ -64,7 +64,7 @@ def _make_registry(tmp_path: Path) -> AgentRegistry:
     (main + every programmatic spawn) starts with this EMPTY snapshot; only the fix
     under test (a spawn-time `refresh_mcp_servers()` call) can make a freshly
     spawned session see a server installed after the registry was built."""
-    (tmp_path / "reyn.yaml").write_text("model: standard\n", encoding="utf-8")
+    (tmp_path / "reyn.yaml").write_text("llm:\n  model: standard\n", encoding="utf-8")
     state_log = StateLog(tmp_path / "wal.jsonl")
     holder: dict = {}
 

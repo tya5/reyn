@@ -14,9 +14,14 @@ remaining enforcement gap:
     default-valued round-trip passes trivially for such a field; a non-default
     value exposes it.
   - **Every** free-form dict leaf accepts an arbitrary sub-key.
-  - The 6 top-level descriptions migrated out of the deleted ``CONFIG_FIELDS``
-    allowlist into ``field(metadata={'desc': ...})`` are preserved (regression
-    guard for the list deletion + metadata migration).
+  - The 6 descriptions migrated out of the deleted ``CONFIG_FIELDS`` allowlist
+    into ``field(metadata={'desc': ...})`` are preserved (regression guard for
+    the list deletion + metadata migration). #4174 T3 moved 3 of the 6
+    (``model`` / ``models`` / ``api_base``) from top-level ``ReynConfig``
+    fields to nested ``LLMConfig`` fields (``llm.model`` etc.) — the guard
+    keys below use the schema-walk's dotted path, and the anchoring test
+    checks each key's OWN dataclass (``ReynConfig`` for the 3 that stayed
+    top-level, ``LLMConfig`` for the 3 that moved), not just ``ReynConfig``.
 
 These iterate the *live* ``walk_config_schema()`` output rather than a
 hardcoded key list, so they auto-extend as config fields are added/removed —
@@ -87,9 +92,9 @@ def _nondefault_candidate(node: SchemaNode) -> object | None:
 # Top-level fields whose human descriptions were migrated from the (now
 # deleted) hand-maintained ``CONFIG_FIELDS`` allowlist into field metadata.
 _MIGRATED_DESC_KEYS = (
-    "model",
-    "models",
-    "api_base",
+    "llm.model",
+    "llm.models",
+    "llm.api_base",
     "output_language",
     "permissions",
 )
@@ -97,7 +102,7 @@ _MIGRATED_DESC_KEYS = (
 
 def _project_root(tmp_path: Path) -> Path:
     """Create a minimal reyn.yaml so _find_project_root / load_config succeed."""
-    (tmp_path / "reyn.yaml").write_text("model: standard\n", encoding="utf-8")
+    (tmp_path / "reyn.yaml").write_text("llm:\n  model: standard\n", encoding="utf-8")
     return tmp_path
 
 
@@ -144,7 +149,7 @@ def test_every_scalar_leaf_takes_effect_on_nondefault_set(tmp_path: Path) -> Non
                 continue
             root = tmp_path / f"leaf{i}"
             root.mkdir()
-            (root / "reyn.yaml").write_text("model: standard\n", encoding="utf-8")
+            (root / "reyn.yaml").write_text("llm:\n  model: standard\n", encoding="utf-8")
             os.chdir(root)
             _set(node.key, yaml.safe_dump(cand, default_flow_style=True).strip())
             try:
@@ -229,12 +234,25 @@ def test_migrated_desc_keys_are_real_reynconfig_fields() -> None:
     """Tier 2: the migrated-desc guard list stays anchored to real fields.
 
     Prevents the description guard above from going silently vacuous if a field
-    is renamed — every name in ``_MIGRATED_DESC_KEYS`` must remain a real
-    top-level ``ReynConfig`` field.
+    is renamed — every dotted key in ``_MIGRATED_DESC_KEYS`` must remain a
+    real field on the dataclass its OWN path names: a bare name (no dot) is a
+    top-level ``ReynConfig`` field; a dotted ``llm.<leaf>`` name (#4174 T3:
+    ``model`` / ``models`` / ``api_base`` moved from top-level to nested)
+    must be a real ``LLMConfig`` field instead.
     """
-    field_names = {f.name for f in dataclasses.fields(ReynConfig)}
-    stale = [k for k in _MIGRATED_DESC_KEYS if k not in field_names]
+    from reyn.config import LLMConfig
+
+    reyn_field_names = {f.name for f in dataclasses.fields(ReynConfig)}
+    llm_field_names = {f.name for f in dataclasses.fields(LLMConfig)}
+    stale = []
+    for k in _MIGRATED_DESC_KEYS:
+        if "." in k:
+            prefix, leaf = k.split(".", 1)
+            if prefix != "llm" or leaf not in llm_field_names:
+                stale.append(k)
+        elif k not in reyn_field_names:
+            stale.append(k)
     assert not stale, (
-        f"_MIGRATED_DESC_KEYS names that are no longer ReynConfig fields "
-        f"(update the guard): {stale}"
+        f"_MIGRATED_DESC_KEYS names that are no longer real fields on the "
+        f"dataclass their own path names (update the guard): {stale}"
     )

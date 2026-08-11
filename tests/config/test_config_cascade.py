@@ -37,15 +37,15 @@ def test_legacy_dot_reyn_config_emits_warning(tmp_path, monkeypatch, capsys):
     """
     # Create a minimal project root.
     reyn_yaml = tmp_path / "reyn.yaml"
-    _write_yaml(reyn_yaml, {"model": "standard"})
+    _write_yaml(reyn_yaml, {"llm": {"model": "standard"}})
 
     # Write a .reyn/config.yaml with a sentinel value.
     legacy_cfg = tmp_path / ".reyn" / "config.yaml"
-    _write_yaml(legacy_cfg, {"model": "legacy-only-model"})
+    _write_yaml(legacy_cfg, {"llm": {"model": "legacy-only-model"}})
 
     # Write a reyn.local.yaml with a different sentinel.
     local_yaml = tmp_path / "reyn.local.yaml"
-    _write_yaml(local_yaml, {"model": "local-model"})
+    _write_yaml(local_yaml, {"llm": {"model": "local-model"}})
 
     monkeypatch.chdir(tmp_path)
 
@@ -62,8 +62,8 @@ def test_legacy_dot_reyn_config_emits_warning(tmp_path, monkeypatch, capsys):
     assert ".reyn/config.yaml" in captured.err or str(legacy_cfg) in captured.err
 
     # Legacy file value must NOT override anything — reyn.local.yaml wins.
-    assert cfg.model == "local-model", (
-        f"Expected 'local-model' from reyn.local.yaml, got {cfg.model!r}. "
+    assert cfg.llm.model == "local-model", (
+        f"Expected 'local-model' from reyn.local.yaml, got {cfg.llm.model!r}. "
         "The legacy .reyn/config.yaml must not be loaded."
     )
 
@@ -75,10 +75,10 @@ def test_legacy_dot_reyn_config_not_loaded_when_no_local_yaml(tmp_path, monkeypa
     override values from reyn.yaml.
     """
     reyn_yaml = tmp_path / "reyn.yaml"
-    _write_yaml(reyn_yaml, {"model": "project-model"})
+    _write_yaml(reyn_yaml, {"llm": {"model": "project-model"}})
 
     legacy_cfg = tmp_path / ".reyn" / "config.yaml"
-    _write_yaml(legacy_cfg, {"model": "legacy-only-model"})
+    _write_yaml(legacy_cfg, {"llm": {"model": "legacy-only-model"}})
 
     # No reyn.local.yaml — default from reyn.yaml should survive.
     monkeypatch.chdir(tmp_path)
@@ -92,8 +92,8 @@ def test_legacy_dot_reyn_config_not_loaded_when_no_local_yaml(tmp_path, monkeypa
     assert "deprecated" in captured.err.lower() or "ADR-0031" in captured.err
 
     # Legacy value must not bleed in.
-    assert cfg.model == "project-model", (
-        f"Expected 'project-model', got {cfg.model!r}. "
+    assert cfg.llm.model == "project-model", (
+        f"Expected 'project-model', got {cfg.llm.model!r}. "
         "The legacy .reyn/config.yaml value must not be applied."
     )
 
@@ -101,7 +101,7 @@ def test_legacy_dot_reyn_config_not_loaded_when_no_local_yaml(tmp_path, monkeypa
 def test_no_warning_when_dot_reyn_config_absent(tmp_path, monkeypatch, capsys):
     """Tier 2: no deprecation warning is emitted when .reyn/config.yaml does not exist."""
     reyn_yaml = tmp_path / "reyn.yaml"
-    _write_yaml(reyn_yaml, {"model": "standard"})
+    _write_yaml(reyn_yaml, {"llm": {"model": "standard"}})
 
     monkeypatch.chdir(tmp_path)
 
@@ -117,18 +117,18 @@ def test_no_warning_when_dot_reyn_config_absent(tmp_path, monkeypatch, capsys):
 def test_reyn_local_yaml_still_loaded(tmp_path, monkeypatch):
     """Tier 2: reyn.local.yaml is loaded and overrides reyn.yaml (3-layer cascade intact)."""
     reyn_yaml = tmp_path / "reyn.yaml"
-    _write_yaml(reyn_yaml, {"model": "standard"})
+    _write_yaml(reyn_yaml, {"llm": {"model": "standard"}})
 
     local_yaml = tmp_path / "reyn.local.yaml"
-    _write_yaml(local_yaml, {"model": "strong"})
+    _write_yaml(local_yaml, {"llm": {"model": "strong"}})
 
     monkeypatch.chdir(tmp_path)
 
     from reyn.config import load_config
 
     cfg = load_config(tmp_path)
-    assert cfg.model == "strong", (
-        f"Expected 'strong' from reyn.local.yaml, got {cfg.model!r}."
+    assert cfg.llm.model == "strong", (
+        f"Expected 'strong' from reyn.local.yaml, got {cfg.llm.model!r}."
     )
 
 

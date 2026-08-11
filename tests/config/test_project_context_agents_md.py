@@ -90,7 +90,7 @@ def test_yaml_omitted_resolves_to_none_default(tmp_path: Path) -> None:
     """
     from reyn.config import load_config
 
-    (tmp_path / "reyn.yaml").write_text("prompt_cache_enabled: true\n", encoding="utf-8")
+    (tmp_path / "reyn.yaml").write_text("llm:\n  prompt_cache_enabled: true\n", encoding="utf-8")
     _write(tmp_path, "AGENTS.md", _AGENTS)
     cfg = load_config(tmp_path)
     assert cfg.project_context_path is None

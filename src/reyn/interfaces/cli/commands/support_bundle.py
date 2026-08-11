@@ -177,10 +177,11 @@ def _meta(session, since_raw, manifest) -> dict:
     try:
         from reyn.config import load_config
         cfg = load_config()
+        _llm = getattr(cfg, "llm", None)
         config_summary = {
-            "model": getattr(cfg, "model", None),
-            "models": list(getattr(cfg, "models", {}) or {}),
-            "api_base_set": bool(getattr(cfg, "api_base", "")),
+            "model": getattr(_llm, "model", None),
+            "models": list(getattr(_llm, "models", {}) or {}),
+            "api_base_set": bool(getattr(_llm, "api_base", "")),
         }
     except Exception as exc:  # never let config-load break the bundle
         config_summary = {"_unavailable": str(exc)}

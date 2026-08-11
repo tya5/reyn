@@ -91,9 +91,9 @@ def _show() -> None:
     import yaml
     config = load_config()
     effective = {
-        "model":           config.model,
-        "models":          config.models,
-        "api_base":        config.api_base or "(not set)",
+        "model":           config.llm.model,
+        "models":          config.llm.models,
+        "api_base":        config.llm.api_base or "(not set)",
         "output_language": config.output_language or "(not set — chat router skips language directive; phase paths default to ja)",
         "permissions":     config.permissions,
         "mcp":             config.mcp if config.mcp else "(not configured)",

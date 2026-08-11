@@ -27,10 +27,14 @@ def test_a_well_formed_config_produces_no_unknown_key_warning(tmp_path, caplog) 
     """Tier 2: #4174 T0 accept-side (lead-coder's explicit false-positive-noise
     concern) — a real, valid reyn.yaml touching several nested sections
     never trips the warning. If it did, operators would learn to ignore the
-    warning entirely, defeating its purpose."""
+    warning entirely, defeating its purpose.
+
+    #4174 T3: `model:` moved under `llm:` — this fixture uses the live
+    location so the accept-side guard isn't itself tripping the T3 rename."""
     cfg = _load(
         tmp_path,
-        "model: standard\n"
+        "llm:\n"
+        "  model: standard\n"
         "sandbox:\n"
         "  mode: strict\n"
         "  policy:\n"
@@ -58,18 +62,22 @@ def test_an_unrecognized_top_level_key_warns_not_applied(tmp_path, caplog) -> No
     ), messages
 
 
-def test_llm_model_is_flagged_as_a_real_pre_existing_dead_key(tmp_path, caplog) -> None:
-    """Tier 2: #4174 T0 — architect's finding (confirmed live, not a T1-T6
-    rename artifact): `_build_llm_config` only reads raw.get("router")/
-    raw.get("retry"); LLMConfig has no `model` field, so an operator writing
-    `llm: {model: ...}` today has it silently discarded. T0's recursive walk
-    catches this as an ordinary unknown key (llm.model) without any
-    special-casing — proving T0 repairs an EXISTING defect, not just future
-    renames."""
+def test_llm_model_is_now_a_known_key_not_flagged(tmp_path, caplog) -> None:
+    """Tier 2: #4174 T3 — accept-side, superseding this test's former pre-T3
+    shape. Architect's #4174 T0 finding was that `llm.model` was a real,
+    pre-existing dead key (`_build_llm_config` only read `router`/`retry`;
+    LLMConfig had no `model` field, so an operator writing `llm: {model:
+    ...}` had it silently discarded, caught by T0's unknown-key walk with no
+    special-casing needed). T3 closed that gap by giving `LLMConfig` a real
+    `model` field and having `_build_llm_config` parse it — so the SAME
+    input that used to warn "NOT APPLIED" must now warn about nothing AND
+    the value must actually reach `cfg.llm.model`, or T3 only moved the
+    silence rather than fixing it."""
     cfg = _load(tmp_path, "llm:\n  model: standard\n  router:\n    use: false\n", caplog)
     assert cfg is not None
+    assert cfg.llm.model == "standard"
     messages = [r.message for r in caplog.records]
-    assert any("llm.model" in m and "NOT APPLIED" in m for m in messages), messages
+    assert not any("llm.model" in m and "NOT APPLIED" in m for m in messages), messages
 
 
 def test_unknown_sandbox_policy_key_warning_names_the_effective_policy(

@@ -57,7 +57,7 @@ def test_purge_from_a_subdirectory_still_reaches_the_project_events(
     prints "No events directory at <phantom path>" and the real
     `old_file` survives untouched — the exact silent-no-op architect
     named."""
-    (tmp_path / "reyn.yaml").write_text("model: standard\n", encoding="utf-8")
+    (tmp_path / "reyn.yaml").write_text("llm:\n  model: standard\n", encoding="utf-8")
     events_dir = tmp_path / ".reyn" / "events"
     old_file = _write_event_file(events_dir, "2026-01-01")
     new_file = _write_event_file(events_dir, "2026-06-01")

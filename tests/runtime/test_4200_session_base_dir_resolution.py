@@ -162,7 +162,7 @@ async def test_a_spawned_childs_op_context_resolves_the_childs_own_override_not_
     child's op-context would resolve the PARENT's base_dir instead."""
     project_root = tmp_path / "project"
     (project_root / "reyn.yaml").parent.mkdir(parents=True, exist_ok=True)
-    (project_root / "reyn.yaml").write_text("model: standard\n", encoding="utf-8")
+    (project_root / "reyn.yaml").write_text("llm:\n  model: standard\n", encoding="utf-8")
     state_log = StateLog(project_root / ".reyn" / "wal.jsonl")
     parent_base_dir = tmp_path / "parent-base-dir"
     parent_base_dir.mkdir(parents=True)

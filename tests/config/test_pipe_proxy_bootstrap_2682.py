@@ -50,9 +50,10 @@ def _restore_litellm_api_base():
 
 
 def _write_project(root, *, api_base: str | None) -> None:
-    lines = ["model: standard", "models:", f"  standard: {_PSEUDO_MODEL}"]
+    # #4174 T3: model/models/api_base moved under `llm:`.
+    lines = ["llm:", "  model: standard", "  models:", f"    standard: {_PSEUDO_MODEL}"]
     if api_base is not None:
-        lines.insert(0, f"api_base: {api_base}")
+        lines.append(f"  api_base: {api_base}")
     (root / "reyn.yaml").write_text("\n".join(lines) + "\n")
 
 
@@ -76,7 +77,7 @@ def test_load_config_exports_litellm_api_base(tmp_path, monkeypatch) -> None:
 
     config = load_config()
 
-    assert config.api_base == _PROXY
+    assert config.llm.api_base == _PROXY
     assert os.environ.get("LITELLM_API_BASE") == _PROXY
 
 
@@ -88,7 +89,7 @@ def test_load_config_no_api_base_leaves_env_unset(tmp_path, monkeypatch) -> None
 
     config = load_config()
 
-    assert config.api_base == ""
+    assert config.llm.api_base == ""
     assert "LITELLM_API_BASE" not in os.environ
 
 

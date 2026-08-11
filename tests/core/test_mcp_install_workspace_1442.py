@@ -38,7 +38,7 @@ from reyn.tools.types import RouterCallerState, ToolContext
 
 def test_resolve_project_root_from_explicit_project(tmp_path):
     """Tier 2: #1442 A — --project resolves to that root (not cwd)."""
-    (tmp_path / "reyn.yaml").write_text("model: standard\n", encoding="utf-8")
+    (tmp_path / "reyn.yaml").write_text("llm:\n  model: standard\n", encoding="utf-8")
     assert _resolve_install_project_root(str(tmp_path)) == tmp_path.resolve()
 
 

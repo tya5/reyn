@@ -80,10 +80,6 @@ def _empty_external_transports():
 
 @dataclass
 class ReynConfig:
-    model: str = field(
-        default="standard",
-        metadata={"desc": "Default model class used when a phase has no model_class."},
-    )
     # Optional. None = user did not configure; downstream callers decide
     # how to handle (chat router skips the language directive in its
     # system prompt; absent means the router defaults to "ja" preserving the
@@ -95,51 +91,19 @@ class ReynConfig:
         default=None,
         metadata={"desc": "Language code injected into the context frame for all LLM outputs."},
     )
-    models: dict[str, str | dict] = field(
-        default_factory=dict,
-        metadata={"desc": "Map of model class names to LiteLLM model strings."},
-    )
     # #1829: LLM-layer config — the litellm.Router resilience surface
     # (llm.router.*: use / num_retries / fallbacks / cooldown_time /
-    # allowed_fails). Default OFF (router.use=False → direct litellm.acompletion).
+    # allowed_fails), AND (#4174 T3) the model-selection domain: model /
+    # models / model_class_by_purpose / api_base / prompt_cache_enabled —
+    # see LLMConfig's own docstring for the T3 move.
     llm: LLMConfig = field(
         default_factory=LLMConfig,
-        metadata={"desc": "LLM-layer config (litellm.Router resilience: llm.router.*)."},
-    )
-    # #1672: per-purpose model-class override. The mapping from a logical call
-    # purpose (router / control_ir / tool / judge) to a model CLASS was
-    # hardcoded in code (router="light", control_ir/tool="standard"), so the
-    # user could set what a class resolves to but NOT which class each purpose
-    # uses — the owner's "don't do things users can't customize" complaint. This
-    # map exposes it: an UNSET purpose falls back to ``model`` (the configured
-    # main), so by default routing follows the configured model — no hidden
-    # cheaper tier. Setting e.g. ``router: light`` is the explicit opt-in to the
-    # cheap per-turn router. Explicit per-call model selection (phase frontmatter
-    # model_class) still wins over this fallback.
-    #
-    # #3785: ``compaction`` is NOT a valid key here anymore — compaction always
-    # follows the conversation's active model (no separate purpose override was
-    # ever kept in sync with a ``/model`` switch; see
-    # ``Session._rebuild_derived_model_engines_for_model``). A config that still
-    # sets ``model_class_by_purpose.compaction`` fails to load
-    # (``_build_model_class_by_purpose`` below) rather than silently ignoring
-    # or warning — the key's presence is itself evidence of a wrong belief
-    # ("compaction runs on a separate model") that a warning would leave intact.
-    model_class_by_purpose: dict[str, str] = field(
-        default_factory=dict,
         metadata={"desc": (
-            "Per-purpose model class override (router / control_ir / tool / "
-            "judge). Unset purpose → the `model` default. `compaction` is not "
-            "a valid key (#3785) — compaction always follows the conversation "
-            "model."
+            "LLM-layer config: litellm.Router resilience (llm.router.*) + "
+            "model selection (llm.model / llm.models / "
+            "llm.model_class_by_purpose / llm.api_base / "
+            "llm.prompt_cache_enabled)."
         )},
-    )
-    # LiteLLM proxy: non-secret base URL only.
-    # API keys must be set as environment variables (OPENAI_API_KEY, ANTHROPIC_API_KEY, etc.)
-    # — never stored in config files.
-    api_base: str = field(
-        default="",
-        metadata={"desc": "LiteLLM proxy base URL. Set this if you route requests through a local proxy."},
     )
     # Pre-declared permissions (same structure as phase frontmatter). Values are
     # "allow" (pre-approve, skip the interactive prompt) or "deny" (block outright).
@@ -216,11 +180,6 @@ class ReynConfig:
     # Voice input (Whisper) settings for the chat TUI. Optional feature gated
     # by the `reyn[voice]` extras; the OS itself never depends on this block.
     voice: VoiceConfig = field(default_factory=VoiceConfig)
-    # When true, attach Anthropic-style cache_control markers to the system
-    # prompt so providers that support prompt caching (Anthropic, AWS Bedrock
-    # Claude) can reuse the prefix across calls. Ignored by providers that
-    # don't recognize cache_control (Gemini / OpenAI proxies pass-through).
-    prompt_cache_enabled: bool = True
     # Path (relative to project root) of a markdown file whose content is
     # injected into the system prompt for every phase. Use this to put
     # project-wide background, conventions, or references somewhere all
@@ -396,57 +355,16 @@ class ReynConfig:
     def model_class_for(self, purpose: str) -> str:
         """#1672: the model CLASS for a logical call *purpose*.
 
-        A per-purpose override in ``model_class_by_purpose`` wins; otherwise the
-        configured default class ``model`` (so unset purposes follow the user's
-        configured model — no hidden cheaper tier). Explicit per-call selections
-        ( ``op.model``, phase frontmatter ``model_class``) are applied by
-        the caller BEFORE this fallback and still win.
+        A per-purpose override in ``llm.model_class_by_purpose`` wins;
+        otherwise the configured default class ``llm.model`` (so unset
+        purposes follow the user's configured model — no hidden cheaper
+        tier). Explicit per-call selections (``op.model``, phase frontmatter
+        ``model_class``) are applied by the caller BEFORE this fallback and
+        still win.
+
+        #4174 T3: ``model_class_by_purpose`` / ``model`` moved from top-level
+        ``ReynConfig`` fields to ``llm.*`` (see ``LLMConfig``'s own
+        docstring) — this method's own signature/behavior is unchanged, only
+        where it reads from.
         """
-        return self.model_class_by_purpose.get(purpose, self.model)
-
-
-# #1672: the logical purposes whose model class is configurable via
-# ``model_class_by_purpose``. A typo'd key would silently never apply (the call
-# sites look up fixed keys), so the parser warns on an unknown key rather than
-# hard-failing (forward-compatible — a future purpose key is a warn, not a crash).
-# #3785: ``compaction`` deliberately excluded — see
-# ``_build_model_class_by_purpose``'s dedicated (hard-failing) handling below,
-# not the generic unknown-key warn path.
-MODEL_CLASS_PURPOSES: frozenset[str] = frozenset({
-    "router", "control_ir", "tool", "judge",
-})
-
-
-def _build_model_class_by_purpose(raw: object) -> dict[str, str]:
-    """#1672: parse ``model_class_by_purpose`` (purpose → model class). Unknown
-    purpose keys WARN (not error) — a typo would silently never apply, so flag it
-    decision-enablingly while staying forward-compatible with future purposes.
-
-    #3785: ``compaction`` is the ONE exception — it used to be a valid key
-    (removed) and its presence is not a typo but a stale belief ("compaction
-    runs on its own model"), which a warning would leave uncorrected (the
-    config keeps silently doing nothing every session). Refuses to load
-    instead, with the remedy in the message.
-    """
-    if not isinstance(raw, dict):
-        return {}
-    out: dict[str, str] = {}
-    for k, v in raw.items():
-        key = str(k)
-        if key == "compaction":
-            raise ValueError(
-                "model_class_by_purpose.compaction is no longer configurable "
-                "(#3785) — compaction always follows the conversation's "
-                "active model now (it did not track a `/model` switch before, "
-                "which this removal fixes). Remove this key from your "
-                "reyn.yaml/reyn.local.yaml."
-            )
-        if key not in MODEL_CLASS_PURPOSES:
-            import logging
-            logging.getLogger(__name__).warning(
-                "model_class_by_purpose.%s is not a known purpose %s — it will "
-                "never be applied; check for a typo.",
-                key, sorted(MODEL_CLASS_PURPOSES),
-            )
-        out[key] = str(v)
-    return out
+        return self.llm.model_class_by_purpose.get(purpose, self.llm.model)

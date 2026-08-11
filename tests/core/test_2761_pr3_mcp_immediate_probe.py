@@ -101,7 +101,7 @@ def _Ctx(root: Path, rs: "RouterCallerState | None") -> ToolContext:
 
 
 def _session(tmp: Path) -> Session:
-    (tmp / "reyn.yaml").write_text("model: standard\n", encoding="utf-8")
+    (tmp / "reyn.yaml").write_text("llm:\n  model: standard\n", encoding="utf-8")
     return make_session(
         agent_name="mcp-pr3",
         state_log=StateLog(tmp / "s.wal"),

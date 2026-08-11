@@ -32,7 +32,7 @@ async def test_lifespan_builds_auth_context_from_configured_token(tmp_path, monk
     monkeypatch.delenv(TOKEN_ENV_VAR, raising=False)
     _write_reyn_yaml(
         tmp_path,
-        "model: standard\ngateway:\n  auth:\n    token: operator-configured-secret\n",
+        "llm:\n  model: standard\ngateway:\n  auth:\n    token: operator-configured-secret\n",
     )
     monkeypatch.chdir(tmp_path)
 
@@ -54,7 +54,7 @@ async def test_lifespan_generates_token_when_none_configured(tmp_path, monkeypat
     unauthenticated instead of gated).
     """
     monkeypatch.delenv(TOKEN_ENV_VAR, raising=False)
-    _write_reyn_yaml(tmp_path, "model: standard\n")
+    _write_reyn_yaml(tmp_path, "llm:\n  model: standard\n")
     monkeypatch.chdir(tmp_path)
 
     from reyn.interfaces.web.server import _lifespan

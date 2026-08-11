@@ -90,18 +90,23 @@ def test_a_model_class_stream_field_is_accepted_and_consumed():
 def test_the_stream_field_survives_the_reyn_config_models_layer():
     """Tier 1: it arrives through the real ``reyn.local.yaml`` load path.
 
-    Asserted through ``ReynConfig.models`` -> ``ModelResolver`` rather than a
-    hand-built mapping, because an operator writes YAML — a field that parsed
-    in isolation but was dropped by the config layer would look identical from
-    a unit test and do nothing in a real run.
+    Asserted through ``ReynConfig.llm.models`` -> ``ModelResolver`` rather than
+    a hand-built mapping, because an operator writes YAML — a field that
+    parsed in isolation but was dropped by the config layer would look
+    identical from a unit test and do nothing in a real run.
+
+    #4174 T3: ``models`` moved from a top-level ``ReynConfig`` field to
+    ``ReynConfig.llm.models``.
     """
-    from reyn.config import ReynConfig
+    import dataclasses
 
-    cfg = ReynConfig(models={
+    from reyn.config import LLMConfig, ReynConfig
+
+    cfg = dataclasses.replace(ReynConfig(), llm=LLMConfig(models={
         "gpt-5.6-luna": {"model": "gpt-5.6-luna", "stream": True},
-    })
+    }))
 
-    spec = ModelResolver(cfg.models).resolve("gpt-5.6-luna")
+    spec = ModelResolver(cfg.llm.models).resolve("gpt-5.6-luna")
 
     assert spec.stream is True
     assert "stream" not in spec.kwargs

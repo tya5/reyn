@@ -232,7 +232,7 @@ def _one_session_registry(tmp_path, monkeypatch) -> "tuple[AgentRegistry, Sessio
     that would run it, which is what lets both legs assert on a real effect."""
     monkeypatch.chdir(tmp_path)
     state_log = StateLog(tmp_path / "state.wal")
-    (tmp_path / "reyn.yaml").write_text("model: standard\n", encoding="utf-8")
+    (tmp_path / "reyn.yaml").write_text("llm:\n  model: standard\n", encoding="utf-8")
     holder: dict = {}
 
     def _factory(profile, *, presentation_consumer=None, intervention_bridge=None):

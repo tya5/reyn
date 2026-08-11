@@ -67,7 +67,7 @@ def _restore_server_singleton():
 @pytest.fixture()
 def tmp_project(tmp_path: Path) -> Path:
     """A minimal project root so the real budget/config/registry deps resolve."""
-    (tmp_path / "reyn.yaml").write_text("model: standard\n", encoding="utf-8")
+    (tmp_path / "reyn.yaml").write_text("llm:\n  model: standard\n", encoding="utf-8")
     agent_dir = tmp_path / ".reyn" / "agents" / "default"
     agent_dir.mkdir(parents=True)
     (agent_dir / "profile.yaml").write_text(

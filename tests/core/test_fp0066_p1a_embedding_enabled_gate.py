@@ -257,7 +257,7 @@ def test_bare_mcp_search_threshold_key_is_ignored_not_erroring(tmp_path) -> None
     from reyn.config import load_config
 
     (tmp_path / "reyn.yaml").write_text(
-        "model: standard\nmcp:\n  search_threshold: 5\n", encoding="utf-8",
+        "llm:\n  model: standard\nmcp:\n  search_threshold: 5\n", encoding="utf-8",
     )
     cfg = load_config(cwd=tmp_path)
     # No derived field reads it anymore; it just survives in the raw dict.

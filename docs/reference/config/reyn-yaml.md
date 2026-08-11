@@ -12,11 +12,12 @@ Project-level configuration. Checked in to git. Personal overrides go in `reyn.l
 ## Minimal example
 
 ```yaml
-model: standard
-models:
-  light:    gemini-flash-lite
-  standard: openai/gpt-4o
-  strong:   anthropic/claude-3-5-sonnet-20241022
+llm:
+  model: standard
+  models:
+    light:    gemini-flash-lite
+    standard: openai/gpt-4o
+    strong:   anthropic/claude-3-5-sonnet-20241022
 ```
 
 ## Top-level keys
@@ -65,9 +66,6 @@ aren't.
 
 | Key | Type | Written on / reload | Description |
 |-----|------|-----|-------------|
-| `model` | string | PRJ only · **restart** | Default model class. Resolved via `models`. Override with `--model`. |
-| `models` | map | PRJ only · **restart** | Class name → LiteLLM model string **or** dict (see below). |
-| `model_class_by_purpose` | map | PRJ only · **restart** | Per-purpose model-class override (`router` / `control_ir` / `tool` / `judge`). Unset purpose → `model`. `compaction` is NOT a valid key (#3785) — compaction always follows the conversation model. See below. |
 | `output_language` | string | PRJ only · **restart** | Default output language code (e.g. `en`, `ja`). Override with `--output-language`. |
 | `safety` | map | PRJ only · **restart** | Runtime bounds **and content-layer defenses**: loop-detection caps, timeouts, on-limit policy, the untrusted-content threat scan + fence (`safety.threat_scan`, FP-0050), and operator bounds on the LLM spawn tree (`safety.spawn`, a DoS guard). See below. |
 | `cost` | map | PRJ only · **restart** | Budget caps and rate limits (per-agent, daily, monthly). See below. |
@@ -89,10 +87,8 @@ aren't.
 | `external_transports` | map | PRJ only · **restart** | Inbound transport → MCP tool routing for chat (Slack / LINE / Discord etc.). See below. |
 | `multimodal` | map | PRJ only · **restart** | Binary media (image/audio) size cap, on-oversize behaviour, artefact storage paths, and the `base_url` those artefacts are served under. See below. |
 | `permissions` | map | PRJ only · **restart** | Default permission policy. See below. |
-| `prompt_cache_enabled` | bool | PRJ only · **restart** | Attach Anthropic prompt-cache markers to system prompts. Default `true`. |
 | `project_context_path` | string | PRJ only · **restart** | Markdown file injected into every phase system prompt. Unset (default): auto-resolves the cross-tool standard — `AGENTS.md` if present, else `REYN.md` (legacy fallback). Set an explicit path to pin one file; set `""` to disable. See note below. |
-| `api_base` | string | PRJ only · **restart** | LiteLLM proxy base URL. Typically set in `reyn.local.yaml` (gitignored). |
-| `llm` | map | PRJ only · **restart** | LLM-layer config: routing (#1829) and retry (#1835). |
+| `llm` | map | PRJ only · **restart** | LLM-layer config: model selection (`llm.model` default class, `llm.models` class → LiteLLM string map, `llm.model_class_by_purpose` per-purpose override, `llm.api_base` proxy URL, `llm.prompt_cache_enabled`), plus routing (#1829) and retry (#1835). See below. |
 | `delegation` | map | PRJ only · **restart** | Cross-agent delegation policy (#2081). |
 | `cost_warn` | map | PRJ only · **restart** | High-cost-model gate (#1830 / FP-0052): warns before an expensive model is selected — and, despite the name, **can block it** (`cost_warn.block_on_high_cost`). See below. |
 | `offload` | map | PRJ only · **restart** | Opt-in switch for the tool-result size gates. |
@@ -115,9 +111,19 @@ aren't.
 > set `project_context_path` to that path; set it to `""` to inject no project
 > context at all.
 
-## `models` block
+## `llm` block
 
-Each entry under `models:` maps a class name to a LiteLLM model string **or** a dict that declares per-class LLM parameters.
+LLM-layer config: model selection (`llm.model` / `llm.models` /
+`llm.model_class_by_purpose` — this section — plus `llm.api_base` /
+`llm.prompt_cache_enabled` below), and `llm.router` / `llm.retry` (further
+below: opt-in litellm.Router + Reyn self-retry backoff timing). #4174 T3:
+model selection moved here from top-level `model:` / `models:` /
+`model_class_by_purpose:` keys of the same name — same shapes, only the
+nesting changed.
+
+### `llm.models` block
+
+Each entry under `llm.models:` maps a class name to a LiteLLM model string **or** a dict that declares per-class LLM parameters.
 
 ### Model classes vs model names — the resolution rule
 
@@ -135,10 +141,11 @@ In one line: **a `_class` / tier position takes a class name (closed-world); a `
 If a str value **contains `/`**, it is treated as a literal LiteLLM model string:
 
 ```yaml
-models:
-  light:    gemini-flash-lite
-  standard: openai/gpt-4o
-  strong:   anthropic/claude-3-5-sonnet-20241022
+llm:
+  models:
+    light:    gemini-flash-lite
+    standard: openai/gpt-4o
+    strong:   anthropic/claude-3-5-sonnet-20241022
 ```
 
 All existing `reyn.yaml` files using str form continue to work without change.
@@ -149,8 +156,9 @@ If a str value **has no `/`**, it is a shorthand for `{extends: <name>}`.  The n
 is resolved against the flat namespace (user entries + built-in catalog):
 
 ```yaml
-models:
-  standard: claude-sonnet-thinking     # equivalent to: standard: {extends: claude-sonnet-thinking}
+llm:
+  models:
+    standard: claude-sonnet-thinking     # equivalent to: standard: {extends: claude-sonnet-thinking}
 ```
 
 An unknown shorthand (name not in user entries or built-ins) is a startup error.
@@ -158,17 +166,18 @@ An unknown shorthand (name not in user entries or built-ins) is a startup error.
 ### dict form — plain kwargs
 
 ```yaml
-models:
-  standard: gemini-flash-lite   # str form still OK alongside dict entries
+llm:
+  models:
+    standard: gemini-flash-lite   # str form still OK alongside dict entries
 
-  strong:
-    model: anthropic/claude-3-7-sonnet      # required
-    temperature: 0.0
-    max_completion_tokens: 16000             # preferred over max_tokens — see note
-    extra_body:
-      thinking:
-        type: enabled
-        budget_tokens: 8000
+    strong:
+      model: anthropic/claude-3-7-sonnet      # required
+      temperature: 0.0
+      max_completion_tokens: 16000             # preferred over max_tokens — see note
+      extra_body:
+        thinking:
+          type: enabled
+          budget_tokens: 8000
 ```
 
 | Field | Required | Description |
@@ -200,13 +209,14 @@ completion funnel (`recorded_acompletion`). `stream:` is the operator's answer,
 and it **wins over the query in both directions**:
 
 ```yaml
-models:
-  my-new-model:
-    model: some-model-too-new-for-litellm
-    stream: true      # stream, whatever the catalog says
-  picky-endpoint:
-    model: openai/gpt-5
-    stream: false     # never stream, even though the catalog allows it
+llm:
+  models:
+    my-new-model:
+      model: some-model-too-new-for-litellm
+      stream: true      # stream, whatever the catalog says
+    picky-endpoint:
+      model: openai/gpt-5
+      stream: false     # never stream, even though the catalog allows it
 ```
 
 Omit the field to leave the decision to reyn. That is the right default; set it
@@ -245,10 +255,11 @@ Set how much the model is allowed to "think" before answering. Declared per mode
 definition so it's explicit and easy to understand:
 
 ```yaml
-models:
-  light:
-    model: gemini-flash-lite
-    reasoning_effort: low      # minimal | low | medium | high | disable | none
+llm:
+  models:
+    light:
+      model: gemini-flash-lite
+      reasoning_effort: low      # minimal | low | medium | high | disable | none
 ```
 
 - **Valid values**: `minimal`, `low`, `medium`, `high`, `disable`, `none`. An invalid
@@ -267,12 +278,13 @@ models:
   optional *summary*, which is **opt-in**. For those models pass the dict form to
   request the summary text:
   ```yaml
-  models:
-    strong:
-      model: openai/gpt-5
-      reasoning_effort:
-        effort: medium      # the budget level (validated, same set as above)
-        summary: detailed   # opt into summary text → rides into reasoning_content
+  llm:
+    models:
+      strong:
+        model: openai/gpt-5
+        reasoning_effort:
+          effort: medium      # the budget level (validated, same set as above)
+          summary: detailed   # opt into summary text → rides into reasoning_content
   ```
   litellm's GPT-5 transformation reads `{effort, summary}`. **Provider difference**:
   Gemini exposes raw reasoning text natively from the string form; OpenAI needs the
@@ -308,22 +320,23 @@ Use `extends` to inherit from another class and override specific fields.  The r
 name is resolved against the same flat namespace (user entries + built-in catalog).
 
 ```yaml
-models:
-  # Inherit claude-sonnet-thinking built-in, reduce budget_tokens from 8000 → 4000.
-  # extra_body.thinking.type: enabled is carried from the base (deep merge).
-  reasoning-light:
-    extends: claude-sonnet-thinking
-    extra_body:
-      thinking:
-        budget_tokens: 4000
+llm:
+  models:
+    # Inherit claude-sonnet-thinking built-in, reduce budget_tokens from 8000 → 4000.
+    # extra_body.thinking.type: enabled is carried from the base (deep merge).
+    reasoning-light:
+      extends: claude-sonnet-thinking
+      extra_body:
+        thinking:
+          budget_tokens: 4000
 
-  # Multi-level: reasoning-heavy extends the user-defined reasoning-light above.
-  reasoning-heavy:
-    extends: reasoning-light
-    extra_body:
-      thinking:
-        budget_tokens: 16000
-    max_completion_tokens: 32000
+    # Multi-level: reasoning-heavy extends the user-defined reasoning-light above.
+    reasoning-heavy:
+      extends: reasoning-light
+      extra_body:
+        thinking:
+          budget_tokens: 16000
+      max_completion_tokens: 32000
 ```
 
 **Deep merge**: nested dicts are merged recursively.  Only the keys you specify under
@@ -359,7 +372,7 @@ is a convenience starting point; your `reyn.yaml` is always the source of truth.
 
 See [Reference: built-in models](../builtin-models.md) for per-entry details.
 
-### `model_class_by_purpose` — per-purpose model class
+### `llm.model_class_by_purpose` — per-purpose model class
 
 Reyn makes several internal LLM calls beyond the main agent reply, each tied to a
 logical **purpose**. By default every purpose uses your configured `model` (the
@@ -374,13 +387,14 @@ specific purpose; an unset purpose falls back to `model`.
 | `judge` | Output-judging / evaluation calls. |
 
 ```yaml
-model: standard                  # the default class for every purpose
-models:
-  standard: openai/gpt-5.4
-  light:    openai/gpt-4o-mini
-model_class_by_purpose:
-  router: light                  # opt INTO a cheaper per-turn router (an explicit choice)
-  # tool / judge unset → follow `model` (gpt-5.4)
+llm:
+  model: standard                  # the default class for every purpose
+  models:
+    standard: openai/gpt-5.4
+    light:    openai/gpt-4o-mini
+  model_class_by_purpose:
+    router: light                  # opt INTO a cheaper per-turn router (an explicit choice)
+    # tool / judge unset → follow `model` (gpt-5.4)
 ```
 
 **Cost note**: the router runs on every turn, so the cheap-router optimisation is
@@ -1496,16 +1510,15 @@ Any string field in any section of `reyn.yaml` (or `reyn.local.yaml` / `~/.reyn/
 
 ```yaml
 # reyn.yaml — ${VAR} works in every string field
-models:
-  default-sonnet:
-    model: claude-sonnet-4-5
-    api_key: ${ANTHROPIC_API_KEY}          # LLM API key — resolved from secrets.env or shell
-    extra_body:
-      headers:
-        Authorization: ${LITELLM_PROXY_TOKEN}
-
-litellm:
-  api_base: ${LITELLM_API_BASE}            # LiteLLM proxy URL
+llm:
+  models:
+    default-sonnet:
+      model: claude-sonnet-4-5
+      api_key: ${ANTHROPIC_API_KEY}          # LLM API key — resolved from secrets.env or shell
+      extra_body:
+        headers:
+          Authorization: ${LITELLM_PROXY_TOKEN}
+  api_base: ${LITELLM_API_BASE}            # LiteLLM proxy URL (#4174 T3: nests under llm:, not a separate litellm: key)
 
 mcp:
   servers:
@@ -1540,20 +1553,36 @@ API keys and tokens MUST come from environment variables, not from literal value
 
 Never paste token values inline in `reyn.yaml` or `reyn.local.yaml` — they are committed to git and readable by anyone with repo access.
 
-## Proxy / `api_base`
+## `llm` block
+
+### Proxy / `llm.api_base`
 
 If you route models through a local LiteLLM proxy, put the URL in `reyn.local.yaml` (gitignored), not `reyn.yaml`. You can reference an env var here too:
 
 ```yaml
 # reyn.local.yaml
-api_base: ${LITELLM_API_BASE}    # or literal: http://localhost:4000
+llm:
+  api_base: ${LITELLM_API_BASE}    # or literal: http://localhost:4000
+```
+
+### `llm.prompt_cache_enabled`
+
+When `true` (the default), reyn attaches Anthropic-style `cache_control`
+markers to the system prompt so providers that support prompt caching
+(Anthropic, AWS Bedrock Claude) can reuse the prefix across calls. Providers
+that don't recognize the marker ignore it (Gemini / OpenAI proxies
+pass-through).
+
+```yaml
+llm:
+  prompt_cache_enabled: true
 ```
 
 ## Resolution order
 
 For each setting, reyn merges these sources, lowest priority first — later layers override earlier:
 
-1. **Built-in defaults** — the values shipped with reyn (e.g. `model: standard`).
+1. **Built-in defaults** — the values shipped with reyn (e.g. `llm.model: standard`).
 2. `~/.reyn/config.yaml` — user-global.
 3. `reyn.yaml` — project, committed.
 4. `reyn.local.yaml` — project, gitignored (machine-local overrides + values written by `reyn config set`).

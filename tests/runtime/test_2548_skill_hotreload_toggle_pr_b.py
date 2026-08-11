@@ -42,7 +42,7 @@ def _make_session(tmp_path: Path, *, agent_name: str = "test-agent") -> Session:
     Builds ``available_skills`` from ``load_config`` so that skills declared in
     ``.reyn/config/skills.yaml`` (written before this call) are included — mirroring
     what ``SessionFactoryConfig.from_config`` does in production."""
-    (tmp_path / "reyn.yaml").write_text("model: standard\n", encoding="utf-8")
+    (tmp_path / "reyn.yaml").write_text("llm:\n  model: standard\n", encoding="utf-8")
     from reyn.config.loader import load_config
     from reyn.data.skills.registry import build_skill_registry
     cfg = load_config()
@@ -158,7 +158,7 @@ async def test_hotreload_noop_when_skills_unchanged(
 @pytest.mark.asyncio
 async def test_hotreload_seam_registered(tmp_path: Path) -> None:
     """Tier 2: the Session registers the skills seam on the HotReloader."""
-    (tmp_path / "reyn.yaml").write_text("model: standard\n", encoding="utf-8")
+    (tmp_path / "reyn.yaml").write_text("llm:\n  model: standard\n", encoding="utf-8")
     session = make_session(
         agent_name="a", state_log=StateLog(tmp_path / "s.wal"),
         snapshot_path=tmp_path / "snap.json",

@@ -289,7 +289,7 @@ def test_merge_skills_base_survives_when_override_has_no_skills() -> None:
 
 def test_load_config_reads_dynamic_skills_yaml(tmp_path: Path) -> None:
     """Tier 1: load_config reads .reyn/config/skills.yaml as the dynamic skills layer."""
-    (tmp_path / "reyn.yaml").write_text("model: standard\n", encoding="utf-8")
+    (tmp_path / "reyn.yaml").write_text("llm:\n  model: standard\n", encoding="utf-8")
     skills_cfg_dir = tmp_path / ".reyn" / "config"
     skills_cfg_dir.mkdir(parents=True)
     (skills_cfg_dir / "skills.yaml").write_text(
@@ -311,7 +311,7 @@ def test_load_config_reads_dynamic_skills_yaml(tmp_path: Path) -> None:
 def test_load_config_skills_explicit_wins_over_dynamic_layer(tmp_path: Path) -> None:
     """Tier 1: explicit skills in reyn.yaml survive + later dynamic layer entry wins on collision."""
     (tmp_path / "reyn.yaml").write_text(
-        "model: standard\n"
+        "llm:\n  model: standard\n"
         "skills:\n  entries:\n"
         "    static-skill:\n      path: skills/static/SKILL.md\n      description: from reyn.yaml\n"
         "    shared:\n      path: skills/shared-static/SKILL.md\n      description: static version\n",
@@ -489,7 +489,7 @@ def test_e2e_config_to_system_prompt_universal_scheme(tmp_path: Path) -> None:
     from reyn.runtime.router_system_prompt import build_system_prompt
 
     (tmp_path / "reyn.yaml").write_text(
-        "model: standard\n"
+        "llm:\n  model: standard\n"
         "skills:\n  entries:\n"
         "    pdf-filler:\n      path: skills/pdf-filler/SKILL.md\n"
         "      description: Fill PDF forms from structured data\n",
@@ -535,7 +535,7 @@ def test_e2e_retrieval_scheme_does_not_clobber_skills_block(tmp_path: Path) -> N
     from reyn.tools.schemes.retrieval import RetrievalScheme
 
     (tmp_path / "reyn.yaml").write_text(
-        "model: standard\n"
+        "llm:\n  model: standard\n"
         "skills:\n  entries:\n"
         "    data-cleaner:\n      path: skills/data-cleaner/SKILL.md\n"
         "      description: Normalize and dedupe tabular data\n",
@@ -585,7 +585,7 @@ def test_e2e_enumerate_scheme_threads_skills(tmp_path: Path) -> None:
     from reyn.runtime.router_system_prompt import build_system_prompt
 
     (tmp_path / "reyn.yaml").write_text(
-        "model: standard\n"
+        "llm:\n  model: standard\n"
         "skills:\n  entries:\n"
         "    linter:\n      path: skills/linter/SKILL.md\n"
         "      description: Run project linters and summarize findings\n",
@@ -617,7 +617,7 @@ def test_e2e_no_skills_config_omits_section(tmp_path: Path) -> None:
     """Tier 2: a config with no skills → registry empty → SP has no ## Skills section."""
     from reyn.runtime.router_system_prompt import build_system_prompt
 
-    (tmp_path / "reyn.yaml").write_text("model: standard\n", encoding="utf-8")
+    (tmp_path / "reyn.yaml").write_text("llm:\n  model: standard\n", encoding="utf-8")
     old = os.getcwd()
     os.chdir(tmp_path)
     try:

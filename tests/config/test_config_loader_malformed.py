@@ -25,15 +25,17 @@ def _load(tmp_path: Path, yaml_text: str):
 
 
 def test_models_as_string_does_not_crash(tmp_path) -> None:
-    """Tier 2: `models: <string>` defaults to empty instead of crashing."""
-    cfg = _load(tmp_path, "models: not-a-dict\n")
-    assert dict(cfg.models) == {}
+    """Tier 2: `llm.models: <string>` defaults to empty instead of crashing.
+
+    #4174 T3: `models:` moved under `llm:`."""
+    cfg = _load(tmp_path, "llm:\n  models: not-a-dict\n")
+    assert dict(cfg.llm.models) == {}
 
 
 def test_models_as_list_does_not_crash(tmp_path) -> None:
-    """Tier 2: `models: [..]` defaults to empty instead of crashing."""
-    cfg = _load(tmp_path, "models: [1, 2, 3]\n")
-    assert dict(cfg.models) == {}
+    """Tier 2: `llm.models: [..]` defaults to empty instead of crashing."""
+    cfg = _load(tmp_path, "llm:\n  models: [1, 2, 3]\n")
+    assert dict(cfg.llm.models) == {}
 
 
 def test_permissions_as_list_does_not_crash(tmp_path) -> None:
@@ -62,8 +64,8 @@ def test_mcp_as_list_does_not_crash(tmp_path) -> None:
 
 def test_valid_models_still_loads(tmp_path) -> None:
     """Tier 2: a well-formed models block is unaffected by the guard (regression)."""
-    cfg = _load(tmp_path, "models:\n  light: openai/gpt-4o\n  standard: claude-sonnet\n")
-    assert dict(cfg.models) == {"light": "openai/gpt-4o", "standard": "claude-sonnet"}
+    cfg = _load(tmp_path, "llm:\n  models:\n    light: openai/gpt-4o\n    standard: claude-sonnet\n")
+    assert dict(cfg.llm.models) == {"light": "openai/gpt-4o", "standard": "claude-sonnet"}
 
 
 def test_fail_loud_sections_still_raise_clear_error(tmp_path) -> None:
@@ -94,5 +96,5 @@ def test_yaml_parse_error_logs_warning_and_falls_back(tmp_path, caplog) -> None:
     (tmp_path / "reyn.yaml").write_text("models: [unterminated\n", encoding="utf-8")
     with caplog.at_level(logging.WARNING, logger="reyn.config.loader"):
         cfg = load_config(tmp_path)
-    assert dict(cfg.models) == {}
+    assert dict(cfg.llm.models) == {}
     assert any("reyn.yaml" in r.message for r in caplog.records)

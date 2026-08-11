@@ -12,11 +12,12 @@ applies_to: [reyn.yaml]
 ## 最小限の例
 
 ```yaml
-model: standard
-models:
-  light:    gemini-flash-lite
-  standard: openai/gpt-4o
-  strong:   anthropic/claude-3-5-sonnet-20241022
+llm:
+  model: standard
+  models:
+    light:    gemini-flash-lite
+    standard: openai/gpt-4o
+    strong:   anthropic/claude-3-5-sonnet-20241022
 ```
 
 ## トップレベルキー
@@ -60,8 +61,6 @@ reload）、`reyn.yaml` 側に書いた同じキーは他と同じく再起動�
 
 | キー | 型 | 書く面 / 再読込 | 説明 |
 |-----|------|-----|-------------|
-| `model` | 文字列 | PRJ のみ・**再起動** | デフォルトのモデルクラス。`models` を通じて解決されます。`--model` でオーバーライド。 |
-| `models` | マップ | PRJ のみ・**再起動** | クラス名 → LiteLLM モデル文字列 **または** dict（以下参照）。 |
 | `output_language` | 文字列 | PRJ のみ・**再起動** | デフォルトの出力言語コード（例: `en`、`ja`）。`--output-language` でオーバーライド。 |
 | `safety` | マップ | PRJ のみ・**再起動** | ランタイムの上限**と content 層の防御**: ループ検出上限、タイムアウト、上限超過時ポリシー、非信頼コンテンツの threat scan + fence（`safety.threat_scan`、FP-0050）、LLM spawn ツリーの上限（`safety.spawn`、DoS ガード）。以下参照。 |
 | `cost` | マップ | PRJ のみ・**再起動** | バジェット上限とレート制限（エージェントごと、日次、月次）。以下参照。 |
@@ -82,11 +81,8 @@ reload）、`reyn.yaml` 側に書いた同じキーは他と同じく再起動�
 | `external_transports` | マップ | PRJ のみ・**再起動** | チャット向け受信トランスポート → MCP ツールルーティング（Slack / LINE / Discord など）。以下参照。 |
 | `multimodal` | マップ | PRJ のみ・**再起動** | バイナリメディア（画像・音声）のサイズ上限、超過時の挙動、アーティファクト保存先、およびそれらを配信する `base_url`。以下参照。 |
 | `permissions` | マップ | PRJ のみ・**再起動** | デフォルトの Permission ポリシー。以下参照。 |
-| `prompt_cache_enabled` | bool | PRJ のみ・**再起動** | システムプロンプトに Anthropic プロンプトキャッシュマーカーを付与。デフォルト `true`。 |
 | `project_context_path` | 文字列 | PRJ のみ・**再起動** | すべての Phase システムプロンプトに注入する Markdown ファイル。未設定（デフォルト）: cross-tool 標準を auto-resolve — `AGENTS.md` があればそれ、なければ `REYN.md`（legacy fallback）。明示パスで 1 ファイルに固定、`""` で無効化。下記の注記参照。 |
-| `api_base` | 文字列 | PRJ のみ・**再起動** | LiteLLM プロキシベース URL。通常は `reyn.local.yaml`（gitignored）に設定。 |
-| `llm` | マップ | PRJ のみ・**再起動** | LLM 層の設定（ルーティング #1829 / リトライ #1835）。 |
-| `model_class_by_purpose` | マップ | PRJ のみ・**再起動** | 用途名 → モデルクラス。用途ごとに既定クラスを差し替えます。 |
+| `llm` | マップ | PRJ のみ・**再起動** | LLM 層の設定: モデル選択（`llm.model` デフォルトクラス、`llm.models` クラス → LiteLLM 文字列マップ、`llm.model_class_by_purpose` 用途別上書き、`llm.api_base` プロキシ URL、`llm.prompt_cache_enabled`）に加え、ルーティング（#1829）とリトライ（#1835）。以下参照。#4174 T3: `model` / `models` / `model_class_by_purpose` / `api_base` / `prompt_cache_enabled` は同名のトップレベルキーからここへ移動しました（形は同じ、ネストが変わっただけ）。 |
 | `delegation` | マップ | PRJ のみ・**再起動** | エージェント間委任のポリシー（#2081）。 |
 | `cost_warn` | マップ | PRJ のみ・**再起動** | 高コストモデルのゲート（#1830 / FP-0052）: 選択前に警告し、名前に反して**ブロックもできます**（`cost_warn.block_on_high_cost`）。以下参照。 |
 | `offload` | マップ | PRJ のみ・**再起動** | tool 結果のサイズゲートの opt-in スイッチ。 |
@@ -109,9 +105,18 @@ reload）、`reyn.yaml` 側に書いた同じキーは他と同じく再起動�
 > を推奨。標準に依らず特定ファイルに固定するには `project_context_path` にそのパスを
 > 設定、`""` でプロジェクトコンテキストを一切注入しない。
 
-## `models` ブロック
+## `llm` ブロック
 
-`models:` の各エントリはクラス名を LiteLLM モデル文字列 **または** per-class LLM パラメータを宣言する dict にマップします。
+LLM 層の設定: モデル選択（`llm.model` / `llm.models` / `llm.model_class_by_purpose`
+— この節 — に加え `llm.api_base` / `llm.prompt_cache_enabled`）、そして
+`llm.router` / `llm.retry`（opt-in litellm.Router + Reyn 自前リトライの
+バックオフタイミング）。#4174 T3: モデル選択は同名のトップレベルキー
+`model:` / `models:` / `model_class_by_purpose:` からここへ移動しました
+（形は同じ、ネストが変わっただけ）。
+
+### `llm.models` ブロック
+
+`llm.models:` の各エントリはクラス名を LiteLLM モデル文字列 **または** per-class LLM パラメータを宣言する dict にマップします。
 
 ### モデルクラス と モデル名 — 解決ルール
 
@@ -129,10 +134,11 @@ config には2種類の位置があり、逆のルールに従います。同じ
 str 値に **`/` が含まれる** 場合、LiteLLM モデル文字列として直接使用されます：
 
 ```yaml
-models:
-  light:    gemini-flash-lite
-  standard: openai/gpt-4o
-  strong:   anthropic/claude-3-5-sonnet-20241022
+llm:
+  models:
+    light:    gemini-flash-lite
+    standard: openai/gpt-4o
+    strong:   anthropic/claude-3-5-sonnet-20241022
 ```
 
 str 形式を使用している既存の `reyn.yaml` はすべて変更なしで動作します。
@@ -143,8 +149,9 @@ str 値に **`/` が含まれない** 場合、`{extends: <name>}` の省略形�
 名前はフラット namespace（ユーザーエントリ + built-in カタログ）で解決されます：
 
 ```yaml
-models:
-  standard: claude-sonnet-thinking     # 等価: standard: {extends: claude-sonnet-thinking}
+llm:
+  models:
+    standard: claude-sonnet-thinking     # 等価: standard: {extends: claude-sonnet-thinking}
 ```
 
 不明な省略形（ユーザーエントリにも built-in にも存在しない名前）は起動エラーになります。
@@ -152,17 +159,18 @@ models:
 ### dict 形式 — plain kwargs
 
 ```yaml
-models:
-  standard: gemini-flash-lite   # str 形式も dict エントリと併用可能
+llm:
+  models:
+    standard: gemini-flash-lite   # str 形式も dict エントリと併用可能
 
-  strong:
-    model: anthropic/claude-3-7-sonnet      # 必須
-    temperature: 0.0
-    max_completion_tokens: 16000             # max_tokens より推奨 — 下記注意
-    extra_body:
-      thinking:
-        type: enabled
-        budget_tokens: 8000
+    strong:
+      model: anthropic/claude-3-7-sonnet      # 必須
+      temperature: 0.0
+      max_completion_tokens: 16000             # max_tokens より推奨 — 下記注意
+      extra_body:
+        thinking:
+          type: enabled
+          budget_tokens: 8000
 ```
 
 | フィールド | 必須 | 説明 |
@@ -202,10 +210,11 @@ EmptyLLMResponseError: LLM returned a 200 response with empty choices
 （`ValueError`、fail-fast）:
 
 ```yaml
-models:
-  strong:
-    model: openai/gpt-5
-    stream: true   # ロード時に ValueError — このキーを削除してください
+llm:
+  models:
+    strong:
+      model: openai/gpt-5
+      stream: true   # ロード時に ValueError — このキーを削除してください
 ```
 
 ### `reasoning_effort`（モデルごとの推論バジェット）
@@ -213,10 +222,11 @@ models:
 モデルが回答前にどれだけ「思考」するかを設定します。分かりやすさのためモデル定義ごとに宣言します:
 
 ```yaml
-models:
-  light:
-    model: gemini-flash-lite
-    reasoning_effort: low      # minimal | low | medium | high | disable | none
+llm:
+  models:
+    light:
+      model: gemini-flash-lite
+      reasoning_effort: low      # minimal | low | medium | high | disable | none
 ```
 
 - **有効な値**: `minimal`, `low`, `medium`, `high`, `disable`, `none`。無効な値は litellm の呼び出し中ではなく**コンフィグロード時に fail-fast**（不正値を示す明確な `ValueError`）。
@@ -239,22 +249,23 @@ models:
 参照される名前はフラット namespace（ユーザーエントリ + built-in カタログ）で解決されます。
 
 ```yaml
-models:
-  # claude-sonnet-thinking built-in を継承し、budget_tokens を 8000 → 4000 に変更。
-  # extra_body.thinking.type: enabled は base から引き継がれます（deep merge）。
-  reasoning-light:
-    extends: claude-sonnet-thinking
-    extra_body:
-      thinking:
-        budget_tokens: 4000
+llm:
+  models:
+    # claude-sonnet-thinking built-in を継承し、budget_tokens を 8000 → 4000 に変更。
+    # extra_body.thinking.type: enabled は base から引き継がれます（deep merge）。
+    reasoning-light:
+      extends: claude-sonnet-thinking
+      extra_body:
+        thinking:
+          budget_tokens: 4000
 
-  # マルチレベル: reasoning-heavy は上で定義した reasoning-light を extends。
-  reasoning-heavy:
-    extends: reasoning-light
-    extra_body:
-      thinking:
-        budget_tokens: 16000
-    max_completion_tokens: 32000
+    # マルチレベル: reasoning-heavy は上で定義した reasoning-light を extends。
+    reasoning-heavy:
+      extends: reasoning-light
+      extra_body:
+        thinking:
+          budget_tokens: 16000
+      max_completion_tokens: 32000
 ```
 
 **Deep merge**: ネストした dict は再帰的にマージされます。`extra_body.thinking` の下に指定したキーのみがオーバーライドされ、兄弟キー（例：`type: enabled`）は base から引き継がれます。スカラーとリストは置換されます（マージされません）。
@@ -832,16 +843,15 @@ permissions:
 
 ```yaml
 # reyn.yaml — ${VAR} はすべての文字列フィールドで使用可能
-models:
-  default-sonnet:
-    model: claude-sonnet-4-5
-    api_key: ${ANTHROPIC_API_KEY}          # LLM API キー — secrets.env またはシェルから解決
-    extra_body:
-      headers:
-        Authorization: ${LITELLM_PROXY_TOKEN}
-
-litellm:
-  api_base: ${LITELLM_API_BASE}            # LiteLLM プロキシ URL
+llm:
+  models:
+    default-sonnet:
+      model: claude-sonnet-4-5
+      api_key: ${ANTHROPIC_API_KEY}          # LLM API キー — secrets.env またはシェルから解決
+      extra_body:
+        headers:
+          Authorization: ${LITELLM_PROXY_TOKEN}
+  api_base: ${LITELLM_API_BASE}            # LiteLLM プロキシ URL（#4174 T3: litellm: ではなく llm: にネスト）
 
 mcp:
   servers:
@@ -876,20 +886,35 @@ API キーとトークンは環境変数から来なければなりません。`
 
 `reyn.yaml` や `reyn.local.yaml` にトークン値をインラインで貼り付けないでください。これらは git にコミットされ、リポジトリへのアクセス権を持つすべての人が読めます。
 
-## プロキシ / `api_base`
+## `llm` ブロック
+
+### プロキシ / `llm.api_base`
 
 モデルをローカルの LiteLLM プロキシ経由でルーティングする場合は、URL を `reyn.yaml` ではなく `reyn.local.yaml`（gitignored）に書きます。環境変数の参照も使えます：
 
 ```yaml
 # reyn.local.yaml
-api_base: ${LITELLM_API_BASE}    # または直接書く: http://localhost:4000
+llm:
+  api_base: ${LITELLM_API_BASE}    # または直接書く: http://localhost:4000
+```
+
+### `llm.prompt_cache_enabled`
+
+デフォルト `true`。システムプロンプトに Anthropic 形式の `cache_control`
+マーカーを付与し、プロンプトキャッシュ対応プロバイダー（Anthropic、AWS
+Bedrock Claude）がプレフィックスを再利用できるようにします。対応しない
+プロバイダー（Gemini / OpenAI プロキシ）はこのマーカーを無視して素通しします。
+
+```yaml
+llm:
+  prompt_cache_enabled: true
 ```
 
 ## 解決順序
 
 各設定について、Reyn は（優先度が低い方から、後の層が前を上書き）マージします:
 
-1. **組み込みデフォルト** — reyn 同梱の値（例: `model: standard`）。
+1. **組み込みデフォルト** — reyn 同梱の値（例: `llm.model: standard`）。
 2. `~/.reyn/config.yaml`（ユーザーグローバル）
 3. `reyn.yaml`（プロジェクト、コミット対象）
 4. `reyn.local.yaml`（プロジェクト、gitignored — マシンローカルの上書き + `reyn config set` が書いた値）

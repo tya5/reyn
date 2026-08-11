@@ -12,11 +12,12 @@ No mocks: real `ReynConfig` / `ModelResolver` instances + `load_config` round-tr
 """
 from __future__ import annotations
 
+import dataclasses
 from pathlib import Path
 
 import pytest
 
-from reyn.config import ReynConfig, load_config
+from reyn.config import LLMConfig, ReynConfig, load_config
 from reyn.llm.model_resolver import ModelResolver, resolve_purpose_class
 
 # ── ReynConfig.model_class_for ─────────────────────────────────────────────────
@@ -25,7 +26,9 @@ from reyn.llm.model_resolver import ModelResolver, resolve_purpose_class
 def test_config_unset_purpose_follows_model() -> None:
     """Tier 2: #1672 — an unset purpose falls back to `model` (the configured
     main) — the owner's default: routing follows the configured model."""
-    cfg = ReynConfig(model="strong", model_class_by_purpose={})
+    cfg = dataclasses.replace(
+        ReynConfig(), llm=LLMConfig(model="strong", model_class_by_purpose={}),
+    )
     assert cfg.model_class_for("router") == "strong"
     assert cfg.model_class_for("control_ir") == "strong"
 
@@ -33,7 +36,10 @@ def test_config_unset_purpose_follows_model() -> None:
 def test_config_override_wins() -> None:
     """Tier 2: #1672 — a per-purpose override wins over `model` (the explicit
     cheap-router opt-in)."""
-    cfg = ReynConfig(model="strong", model_class_by_purpose={"router": "light"})
+    cfg = dataclasses.replace(
+        ReynConfig(),
+        llm=LLMConfig(model="strong", model_class_by_purpose={"router": "light"}),
+    )
     assert cfg.model_class_for("router") == "light"
     # other purposes still follow `model`
     assert cfg.model_class_for("judge") == "strong"
@@ -93,19 +99,22 @@ def _write(path: Path, text: str) -> None:
 
 def test_yaml_round_trip_non_default(tmp_path, monkeypatch) -> None:
     """Tier 2: #1672 — model_class_by_purpose parses from reyn.yaml (a NON-default
-    value pins the parser wiring, not a trivial empty round-trip)."""
+    value pins the parser wiring, not a trivial empty round-trip).
+
+    #4174 T3: model/models/model_class_by_purpose moved under `llm:`."""
     monkeypatch.chdir(tmp_path)
     _write(tmp_path / "reyn.yaml", """
-model: strong
-models:
-  strong: gemini/gemini-2.5-pro
-  light: openai/gpt-4o-mini
-model_class_by_purpose:
-  router: light
-  control_ir: strong
+llm:
+  model: strong
+  models:
+    strong: gemini/gemini-2.5-pro
+    light: openai/gpt-4o-mini
+  model_class_by_purpose:
+    router: light
+    control_ir: strong
 """.lstrip())
     cfg = load_config(cwd=tmp_path)
-    assert cfg.model_class_by_purpose == {"router": "light", "control_ir": "strong"}
+    assert cfg.llm.model_class_by_purpose == {"router": "light", "control_ir": "strong"}
     # And the helper resolves through it.
     assert cfg.model_class_for("router") == "light"
     assert cfg.model_class_for("compaction") == "strong"  # unset → model
@@ -118,13 +127,14 @@ def test_yaml_unknown_purpose_warns_but_loads(tmp_path, monkeypatch, caplog) -> 
 
     monkeypatch.chdir(tmp_path)
     _write(tmp_path / "reyn.yaml", """
-model: standard
-model_class_by_purpose:
-  rooter: light
+llm:
+  model: standard
+  model_class_by_purpose:
+    rooter: light
 """.lstrip())
     with caplog.at_level(logging.WARNING):
         cfg = load_config(cwd=tmp_path)
-    assert "rooter" in cfg.model_class_by_purpose  # preserved (not dropped)
+    assert "rooter" in cfg.llm.model_class_by_purpose  # preserved (not dropped)
     assert any("rooter" in r.getMessage() and "purpose" in r.getMessage()
                for r in caplog.records), "expected a typo warning naming the bad key"
 
@@ -143,9 +153,10 @@ def test_yaml_compaction_purpose_key_refuses_to_load(tmp_path, monkeypatch) -> N
     """
     monkeypatch.chdir(tmp_path)
     _write(tmp_path / "reyn.yaml", """
-model: standard
-model_class_by_purpose:
-  compaction: strong
+llm:
+  model: standard
+  model_class_by_purpose:
+    compaction: strong
 """.lstrip())
     with pytest.raises(ValueError, match="model_class_by_purpose.compaction"):
         load_config(cwd=tmp_path)

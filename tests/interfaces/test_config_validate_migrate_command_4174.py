@@ -46,7 +46,7 @@ def test_validate_reports_no_findings_on_a_well_formed_config(project, capsys):
     category (a well-formed config trips neither)."""
     from reyn.interfaces.cli.commands.config import _validate
 
-    _write_yaml(project / "reyn.yaml", "model: standard\nsandbox:\n  mode: strict\n")
+    _write_yaml(project / "reyn.yaml", "llm:\n  model: standard\nsandbox:\n  mode: strict\n")
     _validate()
     out = capsys.readouterr().out
     assert "No unknown, renamed, or disabled-by-dependency config keys found." in out
@@ -64,16 +64,19 @@ def test_validate_reports_an_unrecognized_top_level_key(project, capsys):
     assert "totally_made_up_top_level_key" in out
 
 
-def test_validate_reports_llm_model_as_a_real_pre_existing_dead_key(project, capsys):
-    """Tier 2: #4174 T0 — architect's confirmed live pre-existing defect
-    (LLMConfig has no `model` field) surfaces through the CLI report too,
-    not just the startup warning — same underlying walk."""
+def test_validate_reports_llm_model_as_known_not_flagged(project, capsys):
+    """Tier 2: #4174 T3 — accept-side, superseding this test's former pre-T3
+    shape (architect's #4174 T0 finding: `LLMConfig` had no `model` field, so
+    `llm: {model: ...}` was silently discarded and flagged unknown by the CLI
+    report too, same walk as the startup warning). T3 gave `LLMConfig` a real
+    `model` field, so the SAME input must now report clean."""
     from reyn.interfaces.cli.commands.config import _validate
 
     _write_yaml(project / "reyn.yaml", "llm:\n  model: standard\n")
     _validate()
     out = capsys.readouterr().out
-    assert "llm.model" in out
+    assert "llm.model" not in out
+    assert "No unknown, renamed, or disabled-by-dependency config keys found." in out
 
 
 def test_validate_subcommand_is_registered():
@@ -111,7 +114,7 @@ def test_migrate_reports_nothing_to_migrate_when_registry_is_empty(
     from reyn.interfaces.cli.commands.config import _migrate
 
     monkeypatch.setattr("reyn.config.config_schema._RENAMED_CONFIG_KEYS", {})
-    _write_yaml(project / "reyn.yaml", "model: standard\n")
+    _write_yaml(project / "reyn.yaml", "llm:\n  model: standard\n")
     _migrate()
     out = capsys.readouterr().out
     assert "No config key renames are registered yet" in out
@@ -133,7 +136,7 @@ def test_migrate_reports_nothing_to_migrate_when_config_has_no_renamed_key(
             note="moved to new_top_level_key", destination="new_top_level_key",
         )},
     )
-    _write_yaml(project / "reyn.yaml", "model: standard\n")
+    _write_yaml(project / "reyn.yaml", "llm:\n  model: standard\n")
     _migrate()
     out = capsys.readouterr().out
     assert "nothing to migrate" in out.lower()
@@ -152,7 +155,7 @@ def test_migrate_rewrites_an_unambiguous_plain_rename(project, capsys, monkeypat
             note="moved to new.nested.key", destination="new.nested.key",
         )},
     )
-    _write_yaml(project / "reyn.yaml", "model: standard\nold_flat_key: hello\n")
+    _write_yaml(project / "reyn.yaml", "llm:\n  model: standard\nold_flat_key: hello\n")
 
     from reyn.interfaces.cli.commands.config import _migrate
     _migrate()

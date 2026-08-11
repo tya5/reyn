@@ -61,7 +61,7 @@ def test_load_config_reads_offload_enabled_true(tmp_path):
 
     _write_yaml(
         tmp_path / "reyn.yaml",
-        "model: standard\noffload:\n  enabled: true\n",
+        "llm:\n  model: standard\noffload:\n  enabled: true\n",
     )
     config = load_config(cwd=tmp_path)
     assert config.offload.enabled is True
