@@ -148,7 +148,7 @@ class ComposerConfigError(ValueError):
 
 
 class ComposerOp(str, Enum):
-    """The seven §5 composition ops."""
+    """The eight §5 composition ops."""
 
     ALL = "all"
     ANY = "any"
