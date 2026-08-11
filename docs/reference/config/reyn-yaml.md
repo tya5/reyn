@@ -59,10 +59,10 @@ can additionally be written on an **agent** surface (`.reyn/agents/<name>/`,
 | `safety` | map | PRJ only · **restart** | Runtime bounds **and content-layer defenses**: loop-detection caps, timeouts, on-limit policy, the untrusted-content threat scan + fence (`safety.threat_scan`, FP-0050), and operator bounds on the LLM spawn tree (`safety.spawn`, a DoS guard). See below. |
 | `cost` | map | PRJ only · **restart** | Budget caps and rate limits (per-agent, daily, monthly). See below. |
 | `web` | map | PRJ only · **restart** | **Two unrelated subsystems share this key.** (a) the `web_fetch` tool and MCP registry calls: SSL settings (`web.fetch`); (b) the `reyn web` gateway: auth model (`web.auth`), WebSocket inbound-frame ceiling (`web.ws_max_size`), and which surfaces are mounted (`web.surfaces`). See below. |
-| `sandbox` | map | PRJ only · **restart** | Sandboxed-exec backend selection, unsupported-platform policy, and the agent-level sandbox policy. See below. |
-| `hooks` | list | both (`.reyn/config/hooks.yaml` side is **hot-reloaded**) | Agent-lifecycle hooks — template_push / exec / exec_capture hooks at lifecycle points. See below. |
+| `sandbox` | map | PRJ only · **restart** | Backend selection (`backend`), unsupported-platform policy (`on_unsupported`), the enforcement mode (`mode`: compat / strict / custom), and the agent-level sandbox policy (`policy`). See below. |
+| `hooks` | list | both (`.reyn/config/hooks.yaml` side is **hot-reloaded**) | Agent-lifecycle hooks. Four action schemes: `template_push` / `exec` / `exec_capture` / `pipeline_launch`. See below. |
 | `action_retrieval` | map | PRJ only · **restart** | Universal catalog visibility + retrieval settings. See below. |
-| `embedding` | map | PRJ only · **restart** | RAG embedding model classes and batch settings. See below. |
+| `embedding` | map | PRJ only · **restart** | RAG embedding: the master switch (`enabled`), model classes, batch sizing and concurrency, retry / backoff / timeout, tokenizer, and a cost-warning threshold. See below. |
 | `chat` | map | PRJ only · **restart** | Chat-session runtime knobs: history compaction, reasoning/"thinking" text handling, the interactive renderer (`render_mode`), TUI gutters, body neutralization, and permitted image-URL schemes. See below. |
 | `voice` | map | PRJ only · **restart** | ⚠️ Currently unavailable (no consumer). See below. |
 | `events` | map | PRJ only · **restart** | Rotation policy (size / age / cleanup period) for the P6 **audit-event** files under `.reyn/events`. Not WAL-events, not hook-events. See below. |
@@ -74,7 +74,7 @@ can additionally be written on an **agent** surface (`.reyn/agents/<name>/`,
 | `auth` | map | PRJ only · **restart** | OAuth provider configurations for `reyn auth login`. See below. |
 | `cron` | map | both (`.reyn/config/cron.yaml` side is **hot-reloaded**) | Scheduled skill executions. See below. |
 | `external_transports` | map | PRJ only · **restart** | Inbound transport → MCP tool routing for chat (Slack / LINE / Discord etc.). See below. |
-| `multimodal` | map | PRJ only · **restart** | Binary media (image/audio) size cap, on-oversize behaviour, and artefact storage paths. See below. |
+| `multimodal` | map | PRJ only · **restart** | Binary media (image/audio) size cap, on-oversize behaviour, artefact storage paths, and the `base_url` those artefacts are served under. See below. |
 | `permissions` | map | PRJ only · **restart** | Default permission policy. See below. |
 | `prompt_cache_enabled` | bool | PRJ only · **restart** | Attach Anthropic prompt-cache markers to system prompts. Default `true`. |
 | `project_context_path` | string | PRJ only · **restart** | Markdown file injected into every phase system prompt. Unset (default): auto-resolves the cross-tool standard — `AGENTS.md` if present, else `REYN.md` (legacy fallback). Set an explicit path to pin one file; set `""` to disable. See note below. |
