@@ -23,7 +23,29 @@ class RetentionPolicy:
     ``keep_generations`` is the primary, user-facing axis ("undo back N
     checkpoints"). ``None`` on every field = **live** (current behaviour, no
     deeper retention). ``keep_duration_secs`` / ``keep_bytes`` are optional
-    secondary axes a config may set; generation-count stays the clean primary.
+    secondary axes; generation-count stays the clean primary.
+
+    No ``from_config`` constructor, deliberately (#3987, 2026-08-11) — this is
+    NOT an oversight, so don't add one back on reflex because a class with
+    tunable knobs and no config reader looks unfinished:
+
+    1. **What's missing**: a way to build a non-live policy from
+       ``reyn.yaml`` (a config reader, i.e. the removed ``from_config``). Every
+       non-default construction in the repo today is in ``tests/`` — production
+       always passes ``retention_policy=None`` (live).
+    2. **Why removed rather than left dead**: measured (#3987) that the WAL/
+       generation GC already runs correctly at the live floor — throttled,
+       every chat-turn boundary (``registry.py``'s ``truncate_wal_if_eligible``
+       via ``maybe_truncate_for_size``) — with no unbounded-disk-growth risk.
+       ``from_config`` sat unwired since ADR-0038 declared this "Implemented"
+       with zero operator complaints about the missing config path.
+    3. **When to reconsider**: a real request for a retention window deeper
+       than live (an operator wanting to keep undo reach past the current
+       compaction floor). Absent that, this class's only two real callers are
+       its own clamp math (``compute_retention_floor``, used unconditionally)
+       and ``AgentRegistry``'s constructor-arg escape hatch (currently
+       test-only) — reintroducing ``from_config`` before a concrete need
+       exists would just recreate the unwired state this note explains.
     """
 
     keep_generations: int | None = None
@@ -37,17 +59,6 @@ class RetentionPolicy:
             self.keep_generations is None
             and self.keep_duration_secs is None
             and self.keep_bytes is None
-        )
-
-    @classmethod
-    def from_config(cls, cfg: dict | None) -> "RetentionPolicy":
-        """Build from a reyn.yaml ``retention:`` block (or ``None`` → live)."""
-        if not cfg:
-            return cls()
-        return cls(
-            keep_generations=cfg.get("keep_generations"),
-            keep_duration_secs=cfg.get("keep_duration_secs"),
-            keep_bytes=cfg.get("keep_bytes"),
         )
 
 

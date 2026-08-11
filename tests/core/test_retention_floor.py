@@ -44,14 +44,6 @@ def test_default_policy_is_live():
     assert RetentionPolicy(keep_duration_secs=10.0).is_live is False
 
 
-def test_from_config():
-    """Tier 2: from_config(None/{}) = live; a config block sets the axes."""
-    assert RetentionPolicy.from_config(None).is_live is True
-    assert RetentionPolicy.from_config({}).is_live is True
-    p = RetentionPolicy.from_config({"keep_generations": 5})
-    assert p.keep_generations == 5 and p.is_live is False
-
-
 # ── compute_retention_floor ──────────────────────────────────────────────────
 
 

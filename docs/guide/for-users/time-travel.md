@@ -55,10 +55,11 @@ When using Reyn through the web interface (AG-UI SSE / A2A), `/rewind` opens the
 | Feature | Status |
 |---------|--------|
 | `/rewind` with in-turn edit (`ctrl+t`) to create a new fork-and-edit branch | ✅ Phase 2c, landed |
-| Retention window config (`retention: keep_generations: N`) to GC old checkpoints | ⏳ designed, not yet wired |
 | Branch **tree view** in the picker (checkpoints on abandoned branches, not just the current one) | ⏳ not yet wired — `/rewind <N>` already fork-switches to an inactive branch's seq |
 | `Esc Esc` double-tap shortcut to open the picker | ⏳ not yet wired — open it with `/rewind` |
 | `/rewind` picker over AG-UI SSE / A2A web surface; web edit via `AskUserMessage` UX | ✅ Phase 2d, landed |
+
+Retention window config (`retention: keep_generations: N`) — considered, decided **not** to wire (#3987, 2026-08-11): the WAL/generation GC already runs correctly on the default live-only floor, throttled at every chat-turn boundary, with no unbounded-growth risk. The only thing a `retention:` config block would have added is a *deeper* undo window than the live floor — a capability nobody had asked for while it sat unconfigurable. `RetentionPolicy.from_config` was removed rather than left dead.
 
 ## See also
 
