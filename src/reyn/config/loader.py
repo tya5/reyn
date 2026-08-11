@@ -30,7 +30,6 @@ from reyn.config.infra import (  # #1682 #3 cross-section
     _build_events_config,
     _build_fs_watch_config,
     _build_llm_config,
-    _build_python_config,
     _build_sandbox_config,
 )
 from reyn.config.media import (  # #1682 #3 cross-section
@@ -783,7 +782,6 @@ def load_config(cwd: Path | None = None) -> ReynConfig:
         ),
         permissions=_as_config_dict(merged.get("permissions"), "permissions"),
         mcp=_as_config_dict(merged.get("mcp"), "mcp"),
-        python=_build_python_config(merged.get("python")),
         agent=_build_agent_config(merged.get("agent")),
         delegation=_build_delegation_config(merged.get("delegation")),
         auth=_build_auth_config(merged.get("auth")),

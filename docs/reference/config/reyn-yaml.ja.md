@@ -64,7 +64,6 @@ reload）、`reyn.yaml` 側に書いた同じキーは他と同じく再起動�
 | `observability` | マップ | PRJ のみ・**再起動** | P6 監査イベントの OpenTelemetry (OTLP) エクスポート（オプトイン）。デフォルトは無効。以下参照。 |
 | `tool_use` | マップ | PRJ のみ・**再起動** | chat レイヤーの tool-use scheme x transport セレクタ（`scheme`、`transport`）。以下参照。 |
 | `mcp` | マップ | 両方（`.reyn/config/mcp.yaml` 側は **hot reload**） | MCP サーバー定義。以下参照。 |
-| `python` | マップ | PRJ のみ・**再起動** | Python preprocessor が import してよい追加モジュール（`python.allowed_modules`）— このリスト 1 つがキーの全体です。以下参照。 |
 | `agent` | マップ | PRJ のみ・**再起動** | エージェントの**識別子のみ**（`agent.id`）— P6 監査証跡と送信 HTTP ヘッダーに刻まれます。**エージェントの定義・設定はしません**（エージェント定義は `.reyn/agents/<名前>/`）。以下参照。 |
 | `auth` | マップ | PRJ のみ・**再起動** | `reyn auth login` 用の OAuth プロバイダー設定。以下参照。 |
 | `cron` | マップ | 両方（`.reyn/config/cron.yaml` 側は **hot reload**） | スケジュール付きスキル実行。以下参照。 |
@@ -1232,25 +1231,6 @@ voice:
 | `cpu_threads` | int | `4` | faster-whisper の CPU スレッド数。`0` = OpenMP デフォルト。Apple Silicon での OpenMP/Python スレッドデッドロックを避けるため 4 に固定しています。 |
 | `num_workers` | int | `1` | 並列転写ストリーム数。`1` でメモリとスレッド使用量を低く保ちます。 |
 | `max_duration_s` | float | `300.0` | この秒数を超える録音を自動キャンセル。放置録音によるメモリ増大を防ぎます。 |
-
-## `python` ブロック
-
-Python preprocessor 設定。セーフモードでインポートできるモジュールの組み込み許可リストを拡張します。
-
-```yaml
-python:
-  allowed_modules:
-    - math
-    - statistics
-    - json
-    - re
-```
-
-| フィールド | 型 | デフォルト | 説明 |
-|-------|------|---------|-------------|
-| `allowed_modules` | list[string] | `[]` | セーフモード Python preprocessor ステップが組み込み stdlib 許可リストに加えてインポートできる追加モジュール名。内部で I/O を行うライブラリ（例: `pandas`、`requests`）はセーフモードのサンドボックスを無効化します — 慎重に管理してください。 |
-
-> Python ステップは常にサンドボックス化されます。`mode: unsafe` の宣言はロード時に拒否されます — 生の I/O は `run_op` ステップに分離するか、permission でゲートされた `reyn.api.safe.*` サーフェスを使用してください。完全な Permission 文法は [Reference: permissions](permissions.md) を参照してください。
 
 ## `multimodal` ブロック
 
