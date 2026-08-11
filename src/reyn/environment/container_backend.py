@@ -671,7 +671,10 @@ class DockerEnvironmentBackend:
 
         loop = asyncio.get_running_loop()
         comm_future: asyncio.Future = loop.run_in_executor(
-            None, lambda: communicate_capped(proc, max_bytes=policy.max_output_bytes),
+            None,
+            lambda: communicate_capped(
+                proc, max_bytes=policy.max_output_bytes, timeout=policy.timeout_seconds,
+            ),
         )
         cancel_task = asyncio.create_task(cancel_event.wait())
 

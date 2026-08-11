@@ -222,7 +222,7 @@ class CodeActRunner:
         # one.
         request_bytes = json.dumps(request).encode("utf-8")
         comm_future: asyncio.Future = loop.run_in_executor(
-            None, lambda: communicate_capped(proc, input=request_bytes),
+            None, lambda: communicate_capped(proc, input=request_bytes, timeout=timeout),
         )
         timed_out = False
         cancelled = False

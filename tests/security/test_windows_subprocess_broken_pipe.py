@@ -24,6 +24,13 @@ from reyn.security.sandbox._subprocess_io import (
     _communicate_capped_threads,
     communicate_capped,
 )
+from reyn.security.sandbox.policy import DEFAULT_EXEC_TIMEOUT_SECONDS
+
+# #4271: timeout is now required on communicate_capped (no ``None`` default).
+# These two dispatch tests exercise a trivial, fast-completing subprocess, not
+# the timeout mechanism — reuse the sandbox's existing exec-timeout default
+# rather than inventing a new number.
+_NORMAL_TIMEOUT = DEFAULT_EXEC_TIMEOUT_SECONDS
 
 
 def _popen(code: str) -> subprocess.Popen:
@@ -106,7 +113,9 @@ def test_dispatch_win32_uses_thread_reader(monkeypatch):
 
     monkeypatch.setattr(_subprocess_io, "_communicate_capped_threads", spy)
     monkeypatch.setattr(_subprocess_io.sys, "platform", "win32")
-    out, _err, _trunc = communicate_capped(_popen("print('ok')"), max_bytes=10**7)
+    out, _err, _trunc = communicate_capped(
+        _popen("print('ok')"), max_bytes=10**7, timeout=_NORMAL_TIMEOUT,
+    )
     assert called.get("threads"), "win32 MUST use the thread-reader"
     assert out.strip() == b"ok"
 
@@ -122,7 +131,7 @@ def test_dispatch_posix_keeps_selectors(monkeypatch):
 
     monkeypatch.setattr(_subprocess_io, "_communicate_capped_selectors", spy)
     monkeypatch.setattr(_subprocess_io.sys, "platform", "linux")
-    communicate_capped(_popen("print('ok')"), max_bytes=10**7)
+    communicate_capped(_popen("print('ok')"), max_bytes=10**7, timeout=_NORMAL_TIMEOUT)
     assert called.get("selectors"), "POSIX MUST keep the selectors path"
 
 
