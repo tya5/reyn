@@ -1146,6 +1146,13 @@ silently start running the full suite locally again without updating it.
    general; a hand-written `importorskip(..., reason="requires the foo
    extra")` slips past silently. Write new `importorskip` calls with a
    default or conventionally-phrased reason, or they won't get this net.
+   **And this covers only `importorskip`-shaped skips** — a
+   `@pytest.mark.skipif(...)` (a missing platform, a missing daemon like
+   docker) doesn't go through `importorskip` at all, phrased well or not,
+   and never enters the tally either. For those, six-question ④ ("would it
+   stay green having never run") still needs a human answer — this
+   mechanism narrows the population that question has to cover, it doesn't
+   replace asking it.
 2. **ruff** — lint + import-sort (`I001`):
    ```bash
    ruff check src tests        # add --fix for autofixable I001 / formatting
