@@ -409,6 +409,70 @@ _INIT_TIMEOUT_HINT = (
     "is not enough)."
 )
 
+async def _close_stack_after_init_failure(exc: BaseException, stack: "Any") -> BaseException:
+    """Close ``stack`` after an ``initialize()`` failure and return the exception
+    the caller should format into :class:`MCPError`'s message — OR re-raise
+    ``exc`` UNCHANGED if it is genuine cancellation of the host task (never
+    swallow / relabel a real cancel as a connection failure).
+
+    #4282-adjacent CI-red root-cause fix (discovered while #4282 was in
+    flight; landed ahead of it since it blocked #4283's own merge):
+    live-verified (disposable probes against a real connection-refused
+    target and a real hung-server target — not assumed) that
+    ``asyncio.wait_for()`` wrapping an anyio-native call tree
+    (``stdio_client``/``streamablehttp_client``/``sse_client`` +
+    ``ClientSession``, all anyio cancel-scope based) corrupts anyio's
+    per-task cancel-scope bookkeeping across ``wait_for``'s internal Task
+    boundary: it surfaces as a bare, uninformative ``CancelledError`` at the
+    ``session.initialize()`` await point, THEN a
+    "Attempted to exit cancel scope in a different task" ``RuntimeError``
+    when the stack is later closed — hiding the REAL failure (e.g. a plain
+    connection-refused) entirely. Switching the caller to
+    ``anyio.fail_after()`` (anyio-native, no such corruption) fixes both
+    halves: the real failure now surfaces cleanly from ``stack.aclose()``
+    as an ``ExceptionGroup`` wrapping the actual exception (e.g.
+    ``httpx.ConnectError``) once the task group's cancel scope unwinds
+    normally.
+
+    Discriminating "genuine external cancel of THIS host task" (e.g.
+    :func:`reyn.core.cancellable.race_cancellable`'s watcher, or any other
+    real ``Task.cancel()`` against us) from "an internal anyio cancel-scope
+    propagating a SIBLING task's failure as ``CancelledError`` at OUR await
+    point" turned out to NOT be answerable via ``Task.cancelling()`` alone
+    — live-measured: it reads 1 in BOTH cases, because anyio's asyncio
+    backend implements cross-task cancel-scope cancellation via the exact
+    same ``Task.cancel()`` primitive an external caller would use, so the
+    counter cannot tell them apart. The reliable signal instead: **whether
+    closing the stack reveals a concrete underlying failure.** A genuinely
+    externally-cancelled task group has no failed child to report —
+    ``stack.aclose()`` completes with NO exception (live-verified: cancel a
+    real host task mid-``session.initialize()`` against a hung server,
+    ``aclose()`` closes clean). An internally-failed one DOES (the
+    ``ExceptionGroup`` above). So: if ``exc`` is ``CancelledError`` AND
+    ``stack.aclose()`` closes clean, this was genuine cancellation —
+    re-raise ``exc`` untouched so it reaches ``race_cancellable``'s own
+    (correct) translation to :class:`~reyn.core.cancellable.Cancelled`
+    unmolested, never becoming a misleading ``MCPError``.
+    """
+    real_exc: BaseException = exc
+    try:
+        await stack.aclose()
+    except BaseException as close_exc:
+        real_exc = close_exc
+    else:
+        if isinstance(exc, asyncio.CancelledError):
+            raise exc
+    # Unwrap a single-member ExceptionGroup down to its one real leaf so the
+    # MCPError message names the actual failure (e.g. "ConnectError: All
+    # connection attempts failed") instead of anyio's generic "unhandled
+    # errors in a TaskGroup" wrapper text. A multi-member group is left
+    # as-is — its own str() is still more informative than picking one
+    # arbitrary member.
+    while isinstance(real_exc, BaseExceptionGroup) and len(real_exc.exceptions) == 1:
+        real_exc = real_exc.exceptions[0]
+    return real_exc
+
+
 # #2597 capability/version gate slice: the ``ServerCapabilities`` fields FastMCP's
 # ``mcp.types.InitializeResult.capabilities`` may carry — each is either a capability
 # object (server advertises it) or None (server does not). ``experimental`` and
@@ -887,6 +951,7 @@ class MCPClient:
         """
         from contextlib import AsyncExitStack
 
+        import anyio
         from mcp.client.session import ClientSession
         from mcp.client.stdio import StdioServerParameters, stdio_client
 
@@ -932,26 +997,36 @@ class MCPClient:
                 )
             )
             # #3028/#3698 stage 1: reyn now owns the handshake bound directly
-            # (asyncio.wait_for) instead of relying on fastmcp's opaque
-            # init_timeout constructor kwarg (anyio.fail_after wrapped in two
-            # layers of RuntimeError — see the removed _looks_like_init_timeout
-            # for why that indirection existed and why it no longer does).
-            # init_timeout == 0 disables THIS bound (#3028's own documented
-            # escape hatch) — asyncio.wait_for(timeout=0) means "fire almost
-            # immediately", the OPPOSITE of disabled, so 0 must skip the
+            # instead of relying on fastmcp's opaque init_timeout constructor
+            # kwarg (anyio.fail_after wrapped in two layers of RuntimeError —
+            # see the removed _looks_like_init_timeout for why that
+            # indirection existed and why it no longer does).
+            # #4282-adjacent fix: anyio.fail_after(), not asyncio.wait_for() —
+            # see _close_stack_after_init_failure's docstring for the full
+            # root-cause (asyncio.wait_for corrupts anyio's per-task
+            # cancel-scope bookkeeping across an anyio-native call tree like
+            # this one). init_timeout == 0 disables THIS bound (#3028's own
+            # documented escape hatch) — anyio.fail_after(0), like
+            # asyncio.wait_for(timeout=0), means "fire almost immediately"
+            # (live-verified), the OPPOSITE of disabled, so 0 must skip the
             # wrapper entirely rather than being passed through.
             if init_timeout > 0:
-                init_result = await asyncio.wait_for(session.initialize(), timeout=init_timeout)
+                with anyio.fail_after(init_timeout):
+                    init_result = await session.initialize()
             else:
                 init_result = await session.initialize()
         except MCPError:
             self.close_stderr_capture()
             await stack.aclose()
             raise
-        except Exception as exc:
+        except (Exception, asyncio.CancelledError) as exc:
             tail = self.read_stderr_tail()
             self.close_stderr_capture()
-            await stack.aclose()
+            # A fresh name, not a rebind of `exc` — _close_stack_after_init_failure
+            # returns `BaseException` (broader than the `Exception | CancelledError`
+            # this except clause narrowed `exc` to), so reassigning `exc` itself
+            # would widen its statically-known type for every later reference.
+            real_exc = await _close_stack_after_init_failure(exc, stack)
             from reyn.security.sandbox.policy import DEFAULT_SANDBOX_NETWORK
 
             hint = ""
@@ -972,23 +1047,23 @@ class MCPClient:
                     "Declaring `write_paths` replaces the built-in per-runtime "
                     "defaults; the server's working directory is always granted."
                 )
-            # #3698 stage 1: no more chain-walking predicate — asyncio.wait_for
+            # #3698 stage 1: no more chain-walking predicate — anyio.fail_after
             # raises a plain TimeoutError (__cause__=None) directly, live-
             # verified against a stdio server that starts and never speaks
             # (see this commit's message for the probe output). The old
             # fastmcp-only branch needed _looks_like_init_timeout because
             # fastmcp implemented its OWN init_timeout via anyio.fail_after,
             # re-wrapped in two layers of RuntimeError before it reached us.
-            if isinstance(exc, (TimeoutError, asyncio.TimeoutError)):
+            if isinstance(real_exc, (TimeoutError, asyncio.TimeoutError)):
                 hint += _INIT_TIMEOUT_HINT.format(
                     seconds=init_timeout, server=self._server_name or "<server-name>",
                 )
             if tail:
                 raise MCPError(
-                    f"MCP initialize failed: {exc}{hint}\n"
+                    f"MCP initialize failed: {real_exc}{hint}\n"
                     f"--- subprocess stderr (tail) ---\n{tail}"
-                ) from exc
-            raise MCPError(f"MCP initialize failed: {exc}{hint}") from exc
+                ) from real_exc
+            raise MCPError(f"MCP initialize failed: {real_exc}{hint}") from real_exc
 
         self._client = session
         self._exit_stack = stack
@@ -1034,6 +1109,7 @@ class MCPClient:
         """
         from contextlib import AsyncExitStack
 
+        import anyio
         from mcp.client.session import ClientSession
 
         init_timeout = float(self._config.get("init_timeout", _DEFAULT_INIT_TIMEOUT_SECONDS))
@@ -1076,21 +1152,31 @@ class MCPClient:
                     elicitation_callback=elicitation_callback,
                 )
             )
+            # #4282-adjacent fix: anyio.fail_after(), not asyncio.wait_for() —
+            # see _close_stack_after_init_failure's docstring for the full
+            # root-cause (this is the exact bug that made #4283's CI red:
+            # asyncio.wait_for corrupts anyio's per-task cancel-scope
+            # bookkeeping across an anyio-native call tree like this one,
+            # turning a plain connection-refused into an uninformative bare
+            # CancelledError instead of a reportable MCPError).
             if init_timeout > 0:
-                init_result = await asyncio.wait_for(session.initialize(), timeout=init_timeout)
+                with anyio.fail_after(init_timeout):
+                    init_result = await session.initialize()
             else:
                 init_result = await session.initialize()
         except MCPError:
             await stack.aclose()
             raise
-        except Exception as exc:
-            await stack.aclose()
+        except (Exception, asyncio.CancelledError) as exc:
+            # A fresh name, not a rebind of `exc` — see the matching comment in
+            # _initialize_stdio's except clause for why.
+            real_exc = await _close_stack_after_init_failure(exc, stack)
             hint = ""
-            if isinstance(exc, (TimeoutError, asyncio.TimeoutError)):
+            if isinstance(real_exc, (TimeoutError, asyncio.TimeoutError)):
                 hint = _INIT_TIMEOUT_HINT.format(
                     seconds=init_timeout, server=self._server_name or "<server-name>",
                 )
-            raise MCPError(f"MCP initialize failed: {exc}{hint}") from exc
+            raise MCPError(f"MCP initialize failed: {real_exc}{hint}") from real_exc
 
         self._client = session
         self._exit_stack = stack

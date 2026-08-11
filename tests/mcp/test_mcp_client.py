@@ -214,6 +214,65 @@ def test_close_releases_resources() -> None:
     asyncio.run(_run_it())
 
 
+def test_initialize_against_unreachable_http_raises_mcp_error_not_cancelled() -> None:
+    """Tier 1: #4282-adjacent falsify direction ① — a genuinely unreachable
+    remote (connection refused, port 1) surfaces as MCPError, not a bare
+    asyncio.CancelledError leaking past every except clause. #4283's CI red
+    was exactly this: the official SDK's streamablehttp_client internally
+    fails a POST-request task inside its OWN anyio task group, which cancels
+    the sibling task our initialize() is awaiting on — asyncio.wait_for (the
+    pre-fix code) corrupted anyio's per-task cancel-scope bookkeeping across
+    that boundary, hiding the real ConnectError behind an uninformative
+    CancelledError. See _close_stack_after_init_failure's docstring in
+    client.py for the full root-cause and live-probe evidence."""
+    cfg = {"type": "http", "url": "http://127.0.0.1:1/mcp", "timeout": 3}
+
+    async def _run_it():
+        client = MCPClient(cfg)
+        await client.initialize()
+
+    with pytest.raises(MCPError, match="MCP initialize failed"):
+        asyncio.run(_run_it())
+
+
+def test_initialize_cancelled_externally_propagates_as_cancellation_not_mcp_error(
+    tmp_path,
+) -> None:
+    """Tier 1: #4282-adjacent falsify direction ② — a GENUINE external
+    cancellation of the task running initialize() (mirrors
+    reyn.core.cancellable.race_cancellable's watcher / Session's own
+    hard-cancel calling Task.cancel()) must propagate as CancelledError, NOT
+    get mistranslated into MCPError. Without this direction, a fix for ①
+    that broadly caught every CancelledError and wrapped it in MCPError
+    would make "the user pressed cancel" indistinguishable from "the server
+    is unreachable" — exactly the trap lead-coder flagged on #4283's review.
+
+    Uses the SAME real "silent stdio server" pattern (a subprocess that
+    spawns and sleeps forever, never touching stdin/stdout) as
+    ``test_3028_mcp_stdio_init_timeout.py`` — so initialize() is genuinely
+    blocked waiting on I/O when the external cancel() lands, the same shape
+    a Ctrl-C mid-handshake would hit in production. Exercises the stdio
+    path specifically (lead-coder's review asked to check it alongside
+    http/sse — its exception handling shares the same
+    _close_stack_after_init_failure helper, so a discriminator bug here
+    would misreport a stdio cancel too)."""
+    server = tmp_path / "silent_server.py"
+    server.write_text("import time\nwhile True:\n    time.sleep(3600)\n", encoding="utf-8")
+    cfg = {"type": "stdio", "command": sys.executable, "args": [str(server)]}
+
+    async def _run_it():
+        client = MCPClient(cfg)
+        task = asyncio.ensure_future(client.initialize())
+        # Give initialize() a moment to actually reach the blocked I/O wait
+        # (not cancel it before it has even spawned the subprocess).
+        await asyncio.sleep(0.2)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+    asyncio.run(_run_it())
+
+
 def test_call_tool_propagates_tool_error_not_transport_crash() -> None:
     """Tier 1: framework boundary — a tool that raises server-side surfaces as
     ``isError: True`` in the result (MCP protocol-level tool error), not an MCPError —
