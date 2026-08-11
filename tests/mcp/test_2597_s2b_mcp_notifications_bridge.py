@@ -116,6 +116,7 @@ def _make_adapter(*, tmp_path: Path, events: EventLog) -> RouterHostAdapter:
             session_id=None, live_session_id_fn=None,
         ),
         state_dir=tmp_path / "state",
+        universal_wrappers_enabled=False,  # #4159: preserves prior implicit default
     )
     # #3447: mcp_list_tools is now a real RouterHostAdapter method — see the
     # same-shaped note in test_mcp_lazy_tools_cache.py's _make_adapter_with_mcp.
