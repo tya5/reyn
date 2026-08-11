@@ -2802,17 +2802,25 @@ class AgentRegistry:
             attach_anchor(anchors)
         return session
 
-    def _persist_session_narrowing(self, name: str, sid: str, narrowing: dict) -> None:
-        """Write ``narrowing`` to ``(name, sid)``'s own ``config.yaml`` — the #2103-S1a
-        per-session capability layer, workspace-backed (P5).
+    def _persist_session_narrowing(
+        self, name: str, sid: str, narrowing: dict, *, base_dir: "Path | None" = None,
+    ) -> None:
+        """Write ``narrowing`` (+ optionally #4200's ``base_dir`` override) to
+        ``(name, sid)``'s own ``config.yaml`` — the #2103-S1a per-session capability
+        layer, workspace-backed (P5), now ALSO the #4200 per-session ``base_dir``
+        override layer (a SIBLING key in the SAME file — ``Session._workspace_base_dir``
+        reads it directly, not through this narrowing-specific code path).
 
         The single WRITER of that file, so the two spawn entry points cannot drift from
-        each other or from its reader (``_load_per_session_capability_profile`` /
-        ``per_session_narrowing``, both keyed through ``_session_state_dir``). The
-        synthetic ``name`` key is what ``per_session_narrowing`` strips back off, so the
-        parent→child round-trip is exact.
+        each other or from its readers (``_load_per_session_capability_profile`` /
+        ``per_session_narrowing`` / ``Session._read_base_dir_override``, all keyed
+        through ``_session_state_dir``). The synthetic ``name`` key is what
+        ``per_session_narrowing`` strips back off, so the parent→child round-trip is
+        exact.
 
-        Writing the file is not by itself enforcement: the live session's
+        Writing the file is not by itself enforcement (for the narrowing half — the
+        ``base_dir`` half is read live on every ``Session._workspace_base_dir`` access,
+        so no separate injection step applies to it): the live session's
         ``_contextual_permission`` was resolved by the factory with ``sid=None`` and has
         never seen this file. Each of the two callers re-resolves WITH the sid and
         injects — ``spawn_session`` immediately after calling this, and
@@ -2823,10 +2831,10 @@ class AgentRegistry:
         import yaml
         cfg_path = self._session_state_dir(name, sid) / "config.yaml"
         cfg_path.parent.mkdir(parents=True, exist_ok=True)
-        cfg_path.write_text(
-            yaml.safe_dump({"name": f"_session_{sid}", **narrowing}),
-            encoding="utf-8",
-        )
+        payload: dict = {"name": f"_session_{sid}", **narrowing}
+        if base_dir is not None:
+            payload["base_dir"] = str(base_dir)
+        cfg_path.write_text(yaml.safe_dump(payload), encoding="utf-8")
 
     def spawn_session(
         self, name: str, sid: "str | None" = None,
@@ -3003,6 +3011,7 @@ class AgentRegistry:
     async def spawn_session_recorded(
         self, name: str, *, mode: str = "persistent",
         narrowing: "dict | None" = None,
+        base_dir: "Path | None" = None,
         presentation_consumer: "object | None",
         intervention_bridge: "object | None",
     ) -> str:
@@ -3016,6 +3025,16 @@ class AgentRegistry:
         it. Mirrors ``create_agent`` (the agent CREATE seam): the mechanism stays sync;
         the event marks the LLM action. ``session_spawned`` is config-complete
         (mode + narrowing) for symmetric re-materialise. Returns the new sid.
+
+        ``base_dir`` (#4200 2/2) is a SIBLING persisted value, not composed the way
+        ``narrowing`` is: this method does NOT validate it — restrict-only enforcement
+        (the child's resolved value must fall under the SPAWNER's own effective
+        ``base_dir``) is the CALLER's job (``RouterHostAdapter.spawn_session``, the
+        LLM-facing entry point), because this primitive has no notion of "the
+        spawner's session" to validate against and is also called directly by
+        non-LLM callers (crash-recovery re-wake, ``/session new``) that have no LLM
+        input to restrict in the first place. Pass an already-validated (or
+        operator-trusted) value.
 
         Does NOT submit a task — that is the caller (the spawn op), separable from the
         record. Emit no-ops without a WAL.
@@ -3108,12 +3127,15 @@ class AgentRegistry:
                 # the "proceed with assumption" SP branch instead of wasting
                 # its one turn asking a question no one can answer.
                 spawned_session._non_interactive = True
-        if narrowing:
+        if narrowing or base_dir is not None:
             # #3562: the file write itself is the primitive's ``_persist_session_narrowing``
             # — one writer for both spawn entry points, so the two cannot drift from each
             # other or from the reader. Only the CALL SITE stays here; see the note above
             # this method's ``spawn_session`` call for the measurement that keeps it here.
-            self._persist_session_narrowing(name, sid, narrowing)
+            # #4200 2/2: base_dir alone (no narrowing) must still reach the write — the
+            # pre-#4200 condition (``if narrowing:``) would silently drop a base_dir-only
+            # spawn request.
+            self._persist_session_narrowing(name, sid, narrowing or {}, base_dir=base_dir)
             # #2126: ENFORCE the narrowing just written. The per-session capability
             # layer (#1827 / #2103-S1a) only resolves WITH a sid, and every
             # construction-time factory caller resolves sid=None — so the live spawned
@@ -3131,6 +3153,7 @@ class AgentRegistry:
             await self._state_log.append(
                 "session_spawned", entity_kind="session", name=name, sid=sid,
                 mode=mode, narrowing=narrowing,
+                base_dir=str(base_dir) if base_dir is not None else None,
             )
         return sid
 

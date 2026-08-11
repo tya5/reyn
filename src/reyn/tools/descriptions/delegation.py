@@ -214,6 +214,22 @@ PARAMS: dict[str, dict[str, ParamDescription]] = {
                 "サブセット、例 {\"tool_deny\": [\"exec\"]}。"
             ),
         ),
+        "base_dir": ParamDescription(
+            text=(
+                "Optional working-directory override for the spawned session "
+                "(restrict-only — must resolve inside YOUR OWN base_dir; a path "
+                "outside it is rejected, not clamped). Relative paths resolve "
+                "against your own base_dir. Omit to inherit your own base_dir "
+                "unchanged (the default)."
+            ),
+            ja=(
+                "任意の、スポーンするセッションの作業ディレクトリの上書き"
+                "（restrict-only——自分自身の base_dir の配下に解決される必要が"
+                "あり、範囲外のパスは拒否される。clamp はされない）。相対パスは"
+                "自分自身の base_dir を基準に解決される。省略すると自分自身の"
+                "base_dir をそのまま継承する（既定）。"
+            ),
+        ),
     },
     "create_topology": {
         "name": ParamDescription(

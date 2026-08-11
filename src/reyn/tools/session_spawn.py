@@ -28,6 +28,17 @@ wider envelope than its own. Measured by
 ``tests/runtime/test_3556_session_spawn_narrowing_inheritance.py``; the layers this does NOT
 carry (the #2285 ``/visibility`` toggle, the #1827-S4b ephemeral untrusted-context
 narrowing) are the same ones the sibling spawn sites leave behind.
+
+``base_dir`` (optional, #4200 2/2) is the spawn-time SPECIFICATION mechanism for the
+session-layer ``base_dir`` override #4200 1/2 taught ``Session._workspace_base_dir`` to
+read: LLM-authored, so restrict-only in the SAME sense as ``narrowing`` — resolved and
+validated against the SPAWNER's own EFFECTIVE ``base_dir`` (not the spawner's Agent
+default; ``Session._workspace_base_dir``'s own resolved value, so a chain of
+restrict-only spawns cannot compound-widen) BEFORE the child's ``config.yaml`` is
+written. A requested path outside that subtree is REJECTED (never silently clamped into
+it, per the #4179 lesson on LLM-writable bounded surfaces) with a message naming the
+actual boundary. Omitted → the child inherits the spawner's own ``base_dir`` unchanged
+(#4200's own required default).
 """
 from __future__ import annotations
 
@@ -58,6 +69,10 @@ _SESSION_SPAWN_PARAMETERS: dict[str, Any] = {
             "type": "object",
             "description": _delegation_descriptions.PARAMS["spawn_session"]["narrowing"].text,
         },
+        "base_dir": {
+            "type": "string",
+            "description": _delegation_descriptions.PARAMS["spawn_session"]["base_dir"].text,
+        },
     },
     "required": ["request"],
 }
@@ -84,6 +99,7 @@ async def _handle(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
         }
     return await rs.spawn_session_fn(
         request=args["request"], mode=mode, narrowing=args.get("narrowing"),
+        base_dir=args.get("base_dir"),
     )
 
 
