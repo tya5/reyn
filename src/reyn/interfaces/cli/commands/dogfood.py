@@ -247,7 +247,14 @@ def _no_subcommand(args: argparse.Namespace) -> None:  # pragma: no cover
 # ---------------------------------------------------------------------------
 
 def _dogfood_base_dir() -> Path:
-    return Path.cwd() / ".reyn" / "dogfood"
+    # #4204: was bare Path.cwd() — a real defect (the file's OWN :475 in
+    # the same module correctly uses _find_project_root, so this wasn't
+    # even an internally consistent convention). reyn dogfood launched
+    # from a subdirectory of the project silently reads/writes runs +
+    # baselines under a phantom .reyn/dogfood/ instead of the real
+    # project's.
+    from reyn.config import _find_project_root
+    return (_find_project_root(Path.cwd()) or Path.cwd()) / ".reyn" / "dogfood"
 
 
 def _runs_dir() -> Path:
