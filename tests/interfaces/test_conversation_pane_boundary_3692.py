@@ -180,7 +180,11 @@ async def test_motions_reach_flowview_not_witnessing_flowviews_own_contract() ->
         await pilot.press("l")
         await pilot.pause()
         after_col = _cursor_col(flow, cursor_row)
-        assert after_col == before_col + 1, (
+        # #4304 (part of #3880): weakened from `== before_col + 1` — that pinned
+        # flowview's own cursor-right STEP MAGNITUDE (its business, would break
+        # on any upstream retune), not reyn's actual claim, which per this
+        # test's own docstring is only that the key REACHED flowview's action.
+        assert after_col != before_col, (
             f"'l' did not reach flowview's cursor-right action: "
             f"{before_col!r} -> {after_col!r}"
         )

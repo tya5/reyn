@@ -93,27 +93,11 @@ async def _seeded(pilot, app, texts=("older reply", "newest reply")):
     return app.query_one(FlowView)
 
 
-@pytest.mark.asyncio
-async def test_c_shows_the_cursor_on_the_highlighted_entry() -> None:
-    """Tier 2b: ``c`` from the conversation pane shows flowview's text cursor
-    (0.13's ``toggle_cursor``, retargeted from the removed 0.7.0 "enter copy
-    mode" surface — #3692 PR-A), and it starts on the entry the highlight is
-    already on — so the cursor appears where the user was looking rather than
-    at the top of the log."""
-    app = TextualChatApp(transport=_Transport())
-    async with app.run_test(size=(80, 20)) as pilot:
-        flow = await _seeded(pilot, app)
-        assert not flow.cursor_visible, "test setup: cursor already visible"
-        started_on = flow.current
-        assert started_on is not None and started_on.item.text == "newest reply"
-
-        await pilot.press("c")
-        await pilot.pause()
-        assert flow.cursor_visible, "'c' did not show the text cursor"
-        assert flow.current is started_on, (
-            "showing the text cursor moved the highlight off the entry the "
-            "user was on"
-        )
+# test_c_shows_the_cursor_on_the_highlighted_entry removed (#4304, part of #3880):
+# per this module's own docstring, reyn declares NO binding for "c" — it falls
+# through entirely to flowview's own default keymap. Both asserts (cursor_visible
+# flips, current is preserved) pinned flowview's own toggle_cursor behavior, not
+# any reyn wiring — if either failed, it would be flowview's bug, not reyn's.
 
 
 @pytest.mark.asyncio

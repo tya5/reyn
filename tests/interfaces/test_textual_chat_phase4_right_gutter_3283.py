@@ -48,8 +48,6 @@ import re
 from typing import AsyncIterator
 
 import pytest
-from textual.geometry import Offset
-from textual.selection import Selection
 from textual_flowview import EntryState, FlowModel, FlowView
 
 from reyn.interfaces.inline.textual_chat import (
@@ -195,16 +193,6 @@ class QueueTransport(ClientTransport):
 
     async def shutdown(self) -> None:  # pragma: no cover - trivial
         pass
-
-
-def _full_selection(flow: "FlowView[OutboxMessage]") -> Selection:
-    """A :class:`Selection` spanning the FlowView's ENTIRE virtual content
-    (every row of every entry, not just the painted viewport) — the installed
-    textual-flowview pin's ``get_selection`` requires explicit bounds (unlike
-    a newer upstream ``Selection(None, None)`` "to the edge" form), so this
-    reads the widget's own public ``virtual_size`` to build them."""
-    height = max(0, flow.virtual_size.height - 1)
-    return Selection(Offset(0, 0), Offset(flow.virtual_size.width, height))
 
 
 def _painted_lines(flow: "FlowView[OutboxMessage]") -> "list[str]":
@@ -467,13 +455,10 @@ async def test_right_gutter_wired_end_to_end_settled_tool_vs_plain_row() -> None
         assert agent_lines, f"no rendered row found for the agent row: {lines!r}"
         assert not any(re.search(r"\d+[smh]$", ln) for ln in agent_lines), agent_lines
 
-        # Complement: a SELECTION over the same rows yields the body text and
-        # no gutter glyph — flowview 0.9.0 confines selection to the body.
-        result = flow.get_selection(_full_selection(flow))
-        assert result is not None
-        selected, _sep = result
-        assert "grep" in selected, selected
-        assert not re.search(r"\d+[smh]\s*$", selected, re.MULTILINE), selected
+        # A "Complement" block asserting flow.get_selection() excludes the
+        # gutter glyphs was removed here (#4304, part of #3880): per its own
+        # comment, that's "flowview 0.9.0 confines selection to the body" —
+        # flowview's own selection-scoping contract, not any reyn behavior.
 
 
 # ── Gate 3: left gutter unchanged (#3273 state contract) ──────────────────────
@@ -663,12 +648,10 @@ async def test_narrow_terminal_keeps_gutters_fixed_and_squashes_the_body() -> No
             assert region.y >= 0
             assert region.y + region.height <= screen_height
 
-        # The right gutter stays WIRED (never conditionally dropped below a
-        # width threshold) — proven on the PUBLIC rendered surface: the
-        # RUNNING tool row's elapsed label is still readable in the composed
-        # row text even at this extreme width (flowview's own body-width
-        # floor absorbs the squeeze instead of hiding the gutter).
-        painted = "\n".join(_painted_lines(flow))
-        assert re.search(r"\d+[smh]\s*$", painted, re.MULTILINE), (
-            f"elapsed label not found in narrow-terminal render:\n{painted!r}"
-        )
+        # A trailing assert on the elapsed label's continued readability was
+        # removed here (#4304, part of #3880): its own comment described it as
+        # pinning "flowview's own body-width floor absorbs the squeeze" — while
+        # reyn's own "never conditionally hide the gutter" decision is also
+        # causally present, the assertion itself measured flowview's floor
+        # formula's output, not reyn's decision directly. The mount/containment
+        # checks above (reyn's own layout not crashing at extreme width) stay.
