@@ -320,6 +320,70 @@ async def test_sandboxed_exec_non_ephemeral_omitted_timeout_stays_foreground():
 
 
 @pytest.mark.asyncio
+async def test_sandboxed_exec_unattended_omitted_timeout_gets_the_background_default():
+    """Tier 2: #4193 ① — the gap this issue closes. A NON-ephemeral,
+    UNATTENDED session's exec (the ``session_spawn`` LLM tool's
+    fire-and-forget dispatch — nobody is waiting, regardless of
+    ``mode``) gets the background pair, same as an ephemeral exec does —
+    proving ``not ctx.attended`` alone (independent of ``ctx.ephemeral``)
+    routes to the background default. Before #4193 this ctx (ephemeral
+    stays at its own False default) got the foreground pair, the exact
+    bug this issue opened on."""
+    import dataclasses
+
+    ctx, _events = _make_ctx()
+    ctx = dataclasses.replace(ctx, attended=False)
+    backend = _RecordingBackend()
+    ctx.sandbox_backend = backend
+    op = SandboxedExecIROp(kind="sandboxed_exec", argv=["/bin/echo", "x"])
+
+    await execute_op(op, ctx)
+
+    assert backend.received_policy is not None
+    assert backend.received_policy.timeout_seconds == 3600, (
+        f"an unattended (fire-and-forget) exec must get the background "
+        f"default (3600), got {backend.received_policy.timeout_seconds}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_sandboxed_exec_ephemeral_and_attended_still_gets_the_background_default():
+    """Tier 2: #4193 ① — the falsify witness architect's own review of this
+    fix required (#4193 co-vet, 2026-08-11): ``ctx.ephemeral or not
+    ctx.attended`` has TWO disjuncts and neither is redundant, despite how
+    it looks. The real predicate the pair approximates is "is a HUMAN
+    waiting", and there are three states, not two — an agent-step leaf
+    worker (``spawn_ephemeral_session`` + ``run_agent_step``'s synchronous
+    ``MessageBus.request``) is the one case where BOTH ``ephemeral=True``
+    AND ``attended=True`` are real at once: a PROGRAM is waiting
+    (attended), but that worker's own execs still need the background
+    pair (ephemeral) because no human is at the other end of that wait.
+
+    This is the ONE case a naive simplification to ``not ctx.attended``
+    alone (dropping the ``ephemeral`` disjunct as "apparently redundant")
+    would break — narrowing an agent-step exec from 3600s to 120s and
+    failing any agent step that itself runs a long exec. A gate that does
+    not pin this exact combination does not protect the fix at all."""
+    import dataclasses
+
+    ctx, _events = _make_ctx()
+    ctx = dataclasses.replace(ctx, ephemeral=True, attended=True)
+    backend = _RecordingBackend()
+    ctx.sandbox_backend = backend
+    op = SandboxedExecIROp(kind="sandboxed_exec", argv=["/bin/echo", "x"])
+
+    await execute_op(op, ctx)
+
+    assert backend.received_policy is not None
+    assert backend.received_policy.timeout_seconds == 3600, (
+        f"an ephemeral-AND-attended exec (the agent-step leaf worker shape) "
+        f"must still get the background default (3600) — a 'not attended "
+        f"alone' simplification would have narrowed this to 120, got "
+        f"{backend.received_policy.timeout_seconds}"
+    )
+
+
+@pytest.mark.asyncio
 async def test_sandboxed_exec_ephemeral_llm_override_checked_against_background_max():
     """Tier 2: #3903 a-2 ③ — an ephemeral exec's LLM-supplied timeout is
     checked against policy.background_max_timeout_seconds (None = no cap

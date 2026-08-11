@@ -81,14 +81,18 @@ async def handle(
     )
     policy = SandboxPolicy(**ctx.default_sandbox_policy)
 
-    # #3903 a-2 ③: which timeout pair applies. ``ctx.ephemeral`` carries
-    # ``Session._ephemeral`` (see OpContext.ephemeral's own docstring for
-    # the precise, one-directional claim this licenses — an ephemeral
-    # exec gets the background pair; this is NOT a general "is this call
-    # background" test, and a PERSISTENT spawn still gets the foreground
-    # pair here, a known gap tracked in #4193, not covered by this PR).
+    # #3903 a-2 ③ / #4193 ①: which timeout pair applies. ``ctx.ephemeral or
+    # not ctx.attended`` — architect ruling, #4193, 2026-08-11. See
+    # ``OpContext.attended``'s own docstring for the full 3-state table this
+    # approximates ("is a human waiting") and why BOTH disjuncts are load-
+    # bearing, not redundant: `ephemeral` alone would miss an unattended
+    # persistent spawn (#4193's opening gap); `not attended` alone would
+    # break an agent-step leaf worker (ephemeral=True, attended=True — a
+    # program, not a human, is waiting via `MessageBus.request`), narrowing
+    # it from the background pair to the foreground one and failing any
+    # agent step that itself runs a long exec.
     import dataclasses
-    if ctx.ephemeral:
+    if ctx.ephemeral or not ctx.attended:
         effective_default = policy.background_timeout_seconds
         effective_max = policy.background_max_timeout_seconds
     else:

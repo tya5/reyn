@@ -257,15 +257,16 @@ class OpContext:
     # NOT a `background` field, deliberately (architect/lead-coder ruling,
     # #3903 issue thread, 2026-08-11): ephemeral and background are NOT the
     # same predicate. `spawn_session`'s tool dispatch is fire-and-forget
-    # regardless of mode, so a PERSISTENT spawn is also unwaited-on and
-    # still gets the foreground pair here (tracked gap, #4193). A single
-    # bool cannot represent both axes correctly, so this field carries only
-    # what it actually measures. Direction of the implication this field
-    # licenses: "an ephemeral exec gets the background timeout pair" is
-    # correct; "background-ness is decided by this field" is NOT — a
-    # reader who inverts that direction will misjudge the persistent-spawn
-    # gap as already covered. False by default (direct/test construction,
-    # non-chat OpContext).
+    # regardless of mode, so a PERSISTENT spawn is also unwaited-on and used
+    # to still get the foreground pair here — closed by #4193, see
+    # :attr:`attended` below. A single bool cannot represent both axes
+    # correctly, so this field carries only what it actually measures.
+    # Direction of the implication this field licenses: "an ephemeral exec
+    # gets the background timeout pair" is correct; "background-ness is
+    # decided by this field" is NOT — a reader who inverts that direction
+    # will misjudge #4193's persistent-spawn gap as already covered by this
+    # field alone. False by default (direct/test construction, non-chat
+    # OpContext).
     #
     # #4193 co-vet correction (2026-08-11, docs-maintainer): an earlier
     # revision of this comment claimed `run_pipeline_attached`'s driver
@@ -279,6 +280,39 @@ class OpContext:
     # (attached ⇒ someone is waiting), for the ordinary reason a plain
     # boolean read would suggest, not despite one.
     ephemeral: bool = False
+
+    # #4193 ①: whether the caller that spawned this SESSION is itself
+    # waiting on it — a SEPARATE axis from :attr:`ephemeral` (session-sticky,
+    # decided by the spawning CALLER at spawn time, not derived from `mode`).
+    # `session_spawn`'s tool dispatch (`RouterHostAdapter.spawn_session`)
+    # sets this False regardless of mode — it returns a spawn-ack and submits
+    # the task without awaiting completion, so mode="persistent" through
+    # that one path was the exact gap #4193 opened on (persistent ⇏
+    # attended). Every other spawn path (the attached pipeline driver, the
+    # `agent`-step ephemeral worker) leaves the default True. True by
+    # default: the common case (an interactive chat turn, direct/test
+    # construction) has someone waiting.
+    #
+    # `sandboxed_exec.handle` combines this with `ephemeral` as
+    # `ephemeral or not attended` — architect ruling, #4193, 2026-08-11.
+    # ⚠️ THE TWO TERMS ARE NOT REDUNDANT — do not simplify to `not attended`
+    # alone. The true predicate this pair approximates is "is a HUMAN
+    # waiting", and there are three states, not two:
+    #   interactive chat turn   a human waits              → foreground
+    #   agent-step leaf worker  a PROGRAM waits (ephemeral  → background
+    #                           =True, attended=True — MessageBus.request
+    #                           synchronously awaits ONE prompt, but the
+    #                           thing on the other end isn't a human)
+    #   session_spawn           nobody waits (attended=False) → background
+    # `ephemeral` carries the middle row; `not attended` carries the last
+    # row. Removing the `ephemeral` disjunct breaks the middle row: an
+    # agent-step worker's execs would narrow from the background pair
+    # (3600s) to the foreground pair (120s), and an agent step that itself
+    # runs a long exec would start failing — the falsify witness is
+    # `tests/core/test_op_sandboxed_exec.py`'s own
+    # ephemeral-and-attended-still-gets-background case (#4193), which a
+    # naive `not attended`-only rule fails.
+    attended: bool = True
 
     # #1800 slice 5c: the awaited HookDispatcher (the Session's instance, with the
     # loaded hooks registry + the _put_inbox/_stage/_run_shell seams from 5b),

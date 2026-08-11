@@ -1402,6 +1402,13 @@ class RouterHostAdapter:
         sid = await self._registry.spawn_session_recorded(
             self._agent_name, mode=mode, narrowing=narrowing,
             base_dir=resolved_base_dir,
+            # #4193 ①: this method returns a spawn-ack and submits the task
+            # below WITHOUT awaiting its completion — regardless of ``mode``.
+            # A persistent spawn through this one path is exactly the gap
+            # #4193 opened (fire-and-forget, but used to get the foreground
+            # timeout pair as if someone were waiting). See
+            # ``OpContext.attended``'s own docstring for the full picture.
+            attended=False,
             presentation_consumer=_routing.presentation_consumer,
             intervention_bridge=_routing.intervention_bridge,
         )

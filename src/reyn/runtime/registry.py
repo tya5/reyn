@@ -3012,6 +3012,7 @@ class AgentRegistry:
         self, name: str, *, mode: str = "persistent",
         narrowing: "dict | None" = None,
         base_dir: "Path | None" = None,
+        attended: bool = True,
         presentation_consumer: "object | None",
         intervention_bridge: "object | None",
     ) -> str:
@@ -3025,6 +3026,16 @@ class AgentRegistry:
         it. Mirrors ``create_agent`` (the agent CREATE seam): the mechanism stays sync;
         the event marks the LLM action. ``session_spawned`` is config-complete
         (mode + narrowing) for symmetric re-materialise. Returns the new sid.
+
+        ``attended`` (#4193 ①, default ``True``): whether THIS CALLER is going to
+        wait on the spawned session — a CALLER decision, never derived from
+        ``mode``. The one caller that passes ``False`` is
+        ``RouterHostAdapter.spawn_session`` (the ``session_spawn`` LLM tool's
+        dispatch target): it returns a spawn-ack and submits the task without
+        awaiting completion, regardless of ``mode``. Every other caller
+        (the attached pipeline driver, the ``agent``-step ephemeral worker)
+        leaves the default — see ``Session._attended``'s own docstring and
+        ``OpContext.attended``'s for what this feeds.
 
         ``base_dir`` (#4200 2/2) is a SIBLING persisted value, not composed the way
         ``narrowing`` is: this method does NOT validate it — restrict-only enforcement
@@ -3110,6 +3121,12 @@ class AgentRegistry:
         spawned_session = self._peek_session(name, sid)
         if spawned_session is not None:
             await spawned_session.refresh_config_projections()
+            # #4193 ①: caller-declared, NOT mode-derived — unlike ``_ephemeral``
+            # below, this is set unconditionally from the ``attended`` argument
+            # every time (default True leaves the Session's own True default
+            # unchanged; ``RouterHostAdapter.spawn_session`` is the one caller
+            # that passes False).
+            spawned_session._attended = attended
         if mode == "ephemeral":
             # #2103: mark the live session so it auto-vanishes once its task is done
             # (Session._maybe_schedule_ephemeral_vanish, via this registry's
