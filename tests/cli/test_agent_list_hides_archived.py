@@ -58,3 +58,35 @@ def test_list_all_shows_archived_marked(tmp_path: Path, monkeypatch, capsys) -> 
     out = capsys.readouterr().out
     assert "alpha" in out
     assert "beta (archived)" in out
+
+
+def test_list_from_a_subdirectory_still_finds_the_project_agents(
+    tmp_path: Path, monkeypatch, capsys,
+) -> None:
+    """Tier 2: #4204 bucket A — `reyn agent list` launched from a subdirectory
+    of the project must still resolve `.reyn/agents/` at the PROJECT ROOT,
+    not create/read a phantom `.reyn/agents/` under the subdirectory. Every
+    other CLI command module already converges on
+    `_find_project_root(Path.cwd()) or Path.cwd()`; this module previously
+    anchored directly on raw `Path.cwd()` instead — a real defect, not just
+    a docstring claim.
+
+    Falsify-worthy shape: without the fix, this test's `_cmd_list` call
+    would print the "no agents yet" message (it would look under
+    `<subdir>/.reyn/agents/`, which is empty/absent) instead of listing the
+    real agent created at the project root."""
+    (tmp_path / "reyn.yaml").write_text("model: standard\n", encoding="utf-8")
+    reg = AgentRegistry(project_root=tmp_path, session_factory=_no_factory)
+    reg.create("alpha", role="coordinator")
+
+    subdir = tmp_path / "src" / "nested"
+    subdir.mkdir(parents=True)
+    monkeypatch.chdir(subdir)
+
+    _cmd_list(argparse.Namespace(all=False))
+
+    out = capsys.readouterr().out
+    assert "alpha" in out
+    assert not (subdir / ".reyn" / "agents").exists(), (
+        "must not create a phantom .reyn/agents/ under the subdirectory"
+    )
