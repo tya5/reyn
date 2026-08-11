@@ -4,6 +4,16 @@ on:
   push:
     branches: [main]
   pull_request:
+  # #4239: the merge queue evaluates required checks on a synthetic
+  # `merge_group` ref (main + the queued PRs), NOT on the PR branch — a
+  # required check that never fires there leaves every queued PR waiting
+  # forever. Only the 4 REQUIRED contexts live in this workflow (pytest
+  # 3.11/3.12, ruff, test-tier audit), so this trigger is the whole of what
+  # the queue needs. The steps that branch on `github.event_name ==
+  # "pull_request"` fall through to their full-tree arm here, which is the
+  # correct behaviour for a merge group: there is no single "base" PR to
+  # scope a changed-files diff against.
+  merge_group:
 
 jobs:
   test:

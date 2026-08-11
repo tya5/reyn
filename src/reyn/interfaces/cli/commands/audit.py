@@ -125,7 +125,15 @@ def _gateway_delegation() -> list[Finding]:
     )
 
     findings: list[Finding] = []
-    root = Path.cwd()
+    # #4204: was bare Path.cwd() — a real defect, not just a docstring
+    # claim (verified: this file had no _find_project_root call at all).
+    # `reyn audit` launched from a subdirectory of the project silently
+    # scanned a phantom (usually absent) `.reyn/topologies` /
+    # `.reyn/capability_profiles` under the subdirectory instead of the
+    # real project's — a security-relevant instance, since this scan's
+    # whole purpose is to surface a delegation-capability re-grant.
+    from reyn.config import _find_project_root
+    root = _find_project_root(Path.cwd()) or Path.cwd()
     try:
         from reyn.config import load_config
         cap_default = load_config().delegation.capability_default

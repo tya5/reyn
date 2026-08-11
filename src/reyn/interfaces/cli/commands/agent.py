@@ -59,8 +59,23 @@ def register(sub) -> None:
     p_show.set_defaults(func=_cmd_show)
 
 
+def _project_root() -> Path:
+    """The actual project root, walking up from cwd — the convention every
+    other CLI command module converges on (chat/config/dogfood/mcp/memory/
+    permissions/pipe/plugin: ``_find_project_root(Path.cwd()) or
+    Path.cwd()``). #4204: this module previously anchored every path
+    directly on raw ``Path.cwd()`` instead — a real defect (not just a
+    docstring claim, unlike embeddings.py's/slash/image.py's false-claim
+    siblings this issue also names) that silently resolves to the wrong
+    ``.reyn/agents/`` / ``.reyn/state/wal.jsonl`` when ``reyn agent ...``
+    is launched from a subdirectory of the project."""
+    from reyn.config import _find_project_root
+
+    return _find_project_root(Path.cwd()) or Path.cwd()
+
+
 def _agents_dir() -> Path:
-    return Path.cwd() / ".reyn" / "agents"
+    return _project_root() / ".reyn" / "agents"
 
 
 def _cmd_list(args: argparse.Namespace) -> None:
@@ -78,7 +93,7 @@ def _cmd_list(args: argparse.Namespace) -> None:
     def _no_factory(profile):  # pragma: no cover — never invoked for a read-only list
         raise RuntimeError("session factory not used in agent CLI")
 
-    reg = AgentRegistry(project_root=Path.cwd(), session_factory=_no_factory)
+    reg = AgentRegistry(project_root=_project_root(), session_factory=_no_factory)
     active = set(reg.list_active_names())
 
     rows: list[tuple[str, str, str]] = []
@@ -135,10 +150,10 @@ def _cmd_new(args: argparse.Namespace) -> None:
     # (read-only scan → current_seq) is attached so the emit records an accurate seq.
     def _no_factory(profile):
         raise RuntimeError("session factory not used in agent CLI")
-    wal_path = Path.cwd() / ".reyn" / "state" / "wal.jsonl"
+    wal_path = _project_root() / ".reyn" / "state" / "wal.jsonl"
     state_log = StateLog(wal_path) if wal_path.is_file() else None
     reg = AgentRegistry(
-        project_root=Path.cwd(), session_factory=_no_factory, state_log=state_log,
+        project_root=_project_root(), session_factory=_no_factory, state_log=state_log,
     )
     target = _agents_dir() / args.name
     try:
@@ -185,10 +200,10 @@ def _cmd_rm(args: argparse.Namespace) -> None:
     # archival seq — slice-2's WAL-window GC hinge (#1954).
     def _no_factory(profile):
         raise RuntimeError("session factory not used in agent CLI")
-    wal_path = Path.cwd() / ".reyn" / "state" / "wal.jsonl"
+    wal_path = _project_root() / ".reyn" / "state" / "wal.jsonl"
     state_log = StateLog(wal_path) if wal_path.is_file() else None
     reg = AgentRegistry(
-        project_root=Path.cwd(), session_factory=_no_factory, state_log=state_log,
+        project_root=_project_root(), session_factory=_no_factory, state_log=state_log,
     )
     # #2103 S2b: route the delete through archive_agent (emit agent_archived |
     # agent_purged) so rewind reconstructs the as-of-cut archived-state / honors the

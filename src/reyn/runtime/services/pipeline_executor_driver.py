@@ -393,6 +393,15 @@ class PipelineExecutorDriver:
             hot_reloader=getattr(host, "hot_reloader", None),
             state_log=getattr(host, "state_log", None),
             agent_name=getattr(host, "agent_name", None),  # #2088: scope-aware hooks_add
+            # #4215①: this driver IS bound to a live session's host (the
+            # guard above requires it) — session_state_dir is readily
+            # available there, so a pipeline `tool: hooks_add` step lands
+            # in THIS driver-session's own isolated layer, not the global
+            # one. Found via architect's reachability sweep (#4215):
+            # missing this field here is the same gap pipe.py's
+            # session-less `reyn pipe run` has, but THIS site has no
+            # excuse — the value already exists on `host`.
+            session_state_dir=getattr(host, "session_state_dir", None),
         )
         # #3546: the driver-session's LIVE contextual narrowing — read off the
         # bound Session (public accessor), NOT off ``host``, whose own
