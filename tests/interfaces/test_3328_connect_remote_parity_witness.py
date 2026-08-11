@@ -147,7 +147,7 @@ class _RealServer:
         self._orig_get_registry = endpoint_mod.get_registry
         endpoint_mod.get_registry = lambda: self._registry
         self._task = asyncio.create_task(self._server.serve())
-        await wait_until(lambda: self._server.started, timeout=10.0)
+        await wait_until(lambda: self._server.started)
         return self
 
     async def __aexit__(self, *exc_info) -> None:
@@ -249,7 +249,7 @@ async def test_connect_over_real_socket_reconstructs_history_like_local_hydrate(
         # input loop's readline() against the SSE handshake + backlog
         # delivery (the input loop can win, ending the client having
         # rendered nothing at all, a false pass this guards against).
-        await wait_until(lambda: len(renderer.messages) >= len(local_oracle), timeout=10.0)
+        await wait_until(lambda: len(renderer.messages) >= len(local_oracle))
         stdin.send_line("/quit")
         await asyncio.wait_for(remote_task, timeout=10.0)
         stdin.close()
@@ -340,7 +340,7 @@ async def test_connect_intervention_round_trip_matches_local_unfenced_answer(
                 # dispatching (mirrors production: a real client always
                 # connects, THEN a turn may raise an intervention).
                 await wait_until(
-                    lambda: session._interventions.has_active_listener(), timeout=5.0,
+                    lambda: session._interventions.has_active_listener(),
                 )
 
                 remote_iv = UserIntervention(kind="ask_user", prompt="Proceed?", run_id="r-remote")
@@ -348,7 +348,7 @@ async def test_connect_intervention_round_trip_matches_local_unfenced_answer(
                     session._intervention_handler.dispatch(remote_iv)
                 )
                 await wait_until(
-                    lambda: transport.pending_intervention_head() is not None, timeout=5.0,
+                    lambda: transport.pending_intervention_head() is not None,
                 )
                 assert renderer.messages, "the intervention prompt must render before it is answered"
 
@@ -371,8 +371,7 @@ async def test_connect_intervention_round_trip_matches_local_unfenced_answer(
     session.register_intervention_listener("test-local")
     local_iv = UserIntervention(kind="ask_user", prompt="Proceed?", run_id="r-local")
     local_task = asyncio.ensure_future(session._intervention_handler.dispatch(local_iv))
-    got_local = await wait_until(lambda: bool(session._interventions.list_active()), timeout=5.0)
-    assert got_local, "local intervention never reached pending"
+    await wait_until(lambda: bool(session._interventions.list_active()))
     local_answered = await session.answer_oldest_intervention_text("yes-locally")
     assert local_answered is True
     local_answer = await asyncio.wait_for(local_task, timeout=5.0)
