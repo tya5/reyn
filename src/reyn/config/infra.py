@@ -473,6 +473,56 @@ _RENAMED_SANDBOX_POLICY_KEYS: dict[str, str] = {
 }
 
 
+def _sandbox_policy_freeform_validator(
+    config_policy: dict,
+) -> "dict[str, object]":
+    """#4174 T0: ``sandbox.policy``'s own registered
+    :func:`~reyn.config.config_schema.register_freeform_leaf_validator` —
+    the ONE place ``sandbox.policy`` plugs its inner vocabulary
+    (``security.sandbox.policy._SANDBOX_POLICY_CONFIG_KEYS``) into the
+    shared unknown-key walk, so it stops being a hand-maintained special
+    case (#3823's original ``SandboxConfig.__post_init__`` raise, now
+    removed — see that method). Reuses the existing rich per-key rename
+    guidance in :data:`_RENAMED_SANDBOX_POLICY_KEYS` as the
+    :class:`~reyn.config.config_schema.RenamedKeyHint` note rather than
+    discarding it — an operator on a pre-#3823 config still gets told
+    exactly where a key moved (and, where it applies, that its value sense
+    inverted), not just "unknown".
+
+    Every hint here sets ``destination=None`` (lead-coder's block on
+    #4190) — a sandbox.policy rename's guidance describes a per-key VALUE
+    TRANSFORM (e.g. a boolean inversion), not a plain relocation, so
+    ``reyn config migrate`` must never auto-rewrite it; the operator fixes
+    it by hand per the shown note.
+
+    Defined here (the config layer, which already imports from
+    ``security.sandbox.policy``) rather than in ``config_schema.py``
+    itself, which must NOT import a leaf module — see
+    ``register_freeform_leaf_validator``'s own docstring for why.
+    """
+    from reyn.config.config_schema import RenamedKeyHint
+    from reyn.security.sandbox.policy import unknown_sandbox_policy_config_keys
+
+    result: "dict[str, object]" = {}
+    for key in unknown_sandbox_policy_config_keys(config_policy):
+        note = _RENAMED_SANDBOX_POLICY_KEYS.get(key)
+        result[key] = RenamedKeyHint(note=note) if note is not None else None
+    return result
+
+
+def _register_sandbox_policy_validator() -> None:
+    """Register :func:`_sandbox_policy_freeform_validator` onto
+    ``config_schema`` at import time — called once, below, at module load."""
+    from reyn.config import config_schema
+
+    config_schema.register_freeform_leaf_validator(
+        "sandbox.policy", _sandbox_policy_freeform_validator
+    )
+
+
+_register_sandbox_policy_validator()
+
+
 @dataclass
 class SandboxConfig:
     """`sandbox:` — backend selection and unsupported-platform policy (FP-0017).
@@ -565,40 +615,24 @@ class SandboxConfig:
             raise ValueError(
                 f"sandbox.mode {self.mode!r} is not one of {sorted(_SANDBOX_MODES)}"
             )
-        if self.policy is not None:
-            # Fail-fast on a malformed operator policy: translate + construct
-            # a SandboxPolicy to validate the keys (an unknown key raises a
-            # clear ValueError — see _translate_sandbox_policy_config's own
-            # docstring for why this must be an explicit raise, never a
-            # silent drop).
-            from reyn.security.sandbox.policy import (
-                SandboxPolicy,
-                _translate_sandbox_policy_config,
+        # #4174 T0 (owner ruling — "no hard-fail anywhere, don't
+        # special-case sandbox.policy"): this used to also fail-fast on an
+        # unknown/renamed policy key (a renamed-key guard against
+        # _RENAMED_SANDBOX_POLICY_KEYS, then a translate+construct
+        # round-trip against SandboxPolicy). Both raises are REMOVED —
+        # sandbox.policy is no longer a special case among config sections,
+        # it goes through the same unified warn-not-fail unknown-key path
+        # every other section does (see the config_schema.
+        # register_freeform_leaf_validator("sandbox.policy", ...) call
+        # below, and _translate_sandbox_policy_config's own docstring for
+        # the runtime-translation side of this same change). Only the
+        # structural "policy must be a mapping" check stays here — that one
+        # isn't a vocabulary question the unified walk can answer, since a
+        # non-dict value has no keys to check at all.
+        if self.policy is not None and not isinstance(self.policy, dict):
+            raise ValueError(
+                f"sandbox.policy must be a mapping, got {type(self.policy).__name__}"
             )
-
-            if not isinstance(self.policy, dict):
-                raise ValueError(
-                    f"sandbox.policy must be a mapping, got {type(self.policy).__name__}"
-                )
-            # #3823: reyn.yaml's config vocabulary is now DECOUPLED from
-            # SandboxPolicy's internal field names (was: a direct
-            # transcription by design, #3901 PR-B ④ — see
-            # _translate_sandbox_policy_config's own docstring for why that
-            # coupling was the thing to fix, not the 700+ call-site rename
-            # the coupling would otherwise have forced). A renamed-key guard
-            # still runs FIRST and separately from the translation layer's
-            # own "unknown key" error, because a rename can carry a VALUE
-            # inversion (deny_subprocess -> subprocess) the generic "unknown
-            # key" message cannot explain — silently mis-translating an old
-            # key's value would be worse than refusing it outright.
-            for old_key, guidance in _RENAMED_SANDBOX_POLICY_KEYS.items():
-                if old_key in self.policy:
-                    raise ValueError(f"sandbox.policy is invalid: {guidance}")
-            try:
-                translated = _translate_sandbox_policy_config(self.policy)
-                SandboxPolicy(**translated)
-            except (TypeError, ValueError) as exc:
-                raise ValueError(f"sandbox.policy is invalid: {exc}") from exc
 
 
 def _build_sandbox_config(raw: object) -> SandboxConfig:

@@ -50,6 +50,39 @@ def test_validate_rejects_malformed(bad, needle) -> None:
     assert reason is not None and needle in reason
 
 
+def test_validate_warns_but_does_not_reject_an_unknown_in_set_key(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Tier 2: #4174 T0 — an unrecognized key inside an otherwise well-shaped
+    IN-set logs a warning but does NOT reject the reload (still returns
+    None) — an unknown key is a vocabulary problem (owner's "no hard-fail
+    anywhere" ruling), not the structural malformation validate_in_set's
+    reject path exists for. A misspelled key must not roll back a reload
+    the operator/LLM is actively waiting on."""
+    import logging
+
+    with caplog.at_level(logging.WARNING, logger="reyn.runtime.hot_reload"):
+        reason = validate_in_set({"mcp": {"servers": {}}, "totally_made_up_key": 1})
+    assert reason is None
+    messages = [r.message for r in caplog.records]
+    assert any(
+        "totally_made_up_key" in m and "NOT APPLIED" in m for m in messages
+    ), messages
+
+
+def test_validate_is_silent_for_a_well_formed_in_set(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Tier 2: #4174 T0 accept-side — a well-formed IN-set produces no
+    unknown-key warning (lead-coder's false-positive-noise concern)."""
+    import logging
+
+    with caplog.at_level(logging.WARNING, logger="reyn.runtime.hot_reload"):
+        reason = validate_in_set({"mcp": {"servers": {"fs": {"type": "stdio"}}}})
+    assert reason is None
+    assert not any("NOT APPLIED" in r.message for r in caplog.records)
+
+
 @pytest.mark.asyncio
 async def test_bad_in_set_is_rejected_no_seam_runs(tmp_path: Path) -> None:
     """Tier 2: validate-before-apply rollback — a malformed .reyn/cron.yaml is
