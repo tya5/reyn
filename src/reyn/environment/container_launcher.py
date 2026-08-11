@@ -46,7 +46,6 @@ from pathlib import Path
 from typing import Any
 
 from reyn.environment.container_backend import SyncRunner, _sync_runner
-from reyn.security.sandbox.backend import SandboxResult
 
 # The bundled reyn base image (#1324): a minimal generic agent runtime built ON
 # DEMAND from reyn_base.Dockerfile (local-build, no registry). The tag is local
