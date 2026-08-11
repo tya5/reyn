@@ -182,9 +182,11 @@ class OpContext:
     # here. #4174 T4: renamed from `web_config: WebConfig | None` (the type
     # ITSELF is now WebFetchConfig directly, not a `.fetch`-nested wrapper —
     # WebConfig no longer exists, split into WebFetchConfig + GatewayConfig).
-    # #4274: no real construction site actually sets this today (checked:
-    # zero `web_fetch_config=` / `web_config=` call sites in src/ outside
-    # this declaration) — a pre-existing gap this rename does not fix.
+    # #4274: wired live — reaches every chat-router OpContext via
+    # SessionFactoryConfig.web_fetch_config → Session._web_fetch_config →
+    # RouterOpContextSource → build_router_op_context. BEHAVIOR CHANGE: an
+    # operator's `web_fetch:` block in reyn.yaml (verify_ssl / allow_private_ips /
+    # max_download_bytes) was silently ignored before this and now takes effect.
     web_fetch_config: "WebFetchConfig | None" = None
 
     # FP-0017 follow-up: declarative sandbox config for sandboxed_exec op.

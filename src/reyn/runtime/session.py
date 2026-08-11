@@ -32,6 +32,7 @@ from reyn.config import (  # noqa: F401
     RenderTemplateConfig,
     RouterConfig,
     SafetyConfig,
+    WebFetchConfig,
 )
 from reyn.core.events.agent_snapshot import AgentSnapshot
 from reyn.core.events.anchor_store import truncate_anchor as _truncate_anchor
@@ -903,6 +904,10 @@ class Session:
         budget_tracker: BudgetTracker | None = None,
         snapshot_path: "Path | None" = None,
         multimodal_config: "MultimodalConfig | None" = None,
+        # #4274: reyn.yaml web_fetch.* → the chat-router OpContext's web_fetch_config
+        # (verify_ssl / allow_private_ips / max_download_bytes). Plain value, same
+        # shape as multimodal_config — not a per-turn supplier.
+        web_fetch_config: "WebFetchConfig | None" = None,
         action_retrieval_config: "ActionRetrievalConfig | None" = None,
         # Chat-layer tool-use scheme name, threaded to RouterLoop (#1593 PR-2, default per #1657)
         chat_tool_use_scheme: str = "enumerate-all",
@@ -1003,6 +1008,8 @@ class Session:
         self._non_interactive = bool(non_interactive)
         # Media-size gate config, plumbed to spawned Agents + router host adapter (#364, see session-construction.md#multimodal-media)
         self._multimodal_config = multimodal_config
+        # #4274: stored so RouterOpContextSource can thread it into OpContext.web_fetch_config.
+        self._web_fetch_config = web_fetch_config
         # Single MediaStore instance per Session (#383 PR-C, see session-construction.md#multimodal-media)
         from reyn.data.workspace.media_store import MediaStore, MediaStoreConfig
         if multimodal_config is not None:
@@ -3979,6 +3986,7 @@ class Session:
             # so a newly-registered template is visible on the next op.
             presentation_registry_fn=lambda: self._presentation_registry,
             multimodal_config=self._multimodal_config,
+            web_fetch_config=self._web_fetch_config,  # #4274
             media_store_fn=lambda: self._media_store,  # #383/#2409
             compact_now=self._compact_now_for_op,  # #272/#1128
             threat_scan=self._safety.threat_scan,  # FP-0050/#1822

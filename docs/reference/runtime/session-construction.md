@@ -760,6 +760,14 @@ trust decision on a specific skill, discovered later if at all.
   or `--image PATH`, drained on the next user-message turn (attached to that
   `ChatMessage`'s `media` field). litellm-style content parts:
   `{"type": "image_url", "image_url": {"url": "data:...;base64,..."}}`.
+- `_web_fetch_config` (#4274) — `reyn.yaml` `web_fetch.*` (SSL verify / private-IP
+  opt-in / download-byte cap), plumbed straight into the router `OpContext.web_fetch_config`
+  the `web_fetch` op reads. Same shape as `_multimodal_config` above (a plain value, not a
+  per-turn supplier — `WebFetchConfig` doesn't change mid-session). Threaded from
+  `SessionFactoryConfig.web_fetch_config` (#2093 bundle), so it reaches all five
+  session-factory sites uniformly; before #4274 the field existed on `OpContext` (#4174 T4)
+  but no factory site ever populated it, so every real session silently ignored an
+  operator's `web_fetch:` block.
 
 ## Safety, limits & interactive mode
 

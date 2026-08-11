@@ -791,13 +791,14 @@ Priority chain (highest first):
 | `web_fetch.max_download_bytes` | int | `10485760` (10MB) | Maximum response bytes `web_fetch` reads off the wire. A response whose `Content-Length` exceeds this is rejected before any body is downloaded; a chunked / unknown-length body is aborted once the stream passes the ceiling (status `too_large`). Guards against an unbounded-body memory blow-up from a hostile or runaway URL. `<= 0` or non-integer falls back to the default. |
 | `web_fetch.allow_private_ips` | bool | `false` | SSRF opt-in. When `true`, `web_fetch` / `safe.http` may fetch **private** RFC1918/ULA addresses (enterprise internal-fetch). Link-local, cloud-metadata (`169.254.169.254`), and loopback are **always** denied regardless of this flag. HTTP redirects are re-validated per hop (both the host allowlist and the IP-deny), so an allowlisted host cannot redirect to an internal target. Also exported to the `REYN_FETCH_ALLOW_PRIVATE_IPS` env var so the safe.http subprocess and registry clients honor the same opt-in. |
 
-> ⚠️ **#4274 (open)**: `web_fetch.*` is not currently wired to a live chat
-> session's op execution — an operator setting `web_fetch.verify_ssl: false`
-> (or `ca_bundle` / `allow_private_ips`) sees it parse and validate clean,
-> but the value never reaches a real `web_fetch` call today (it always
-> falls through to the env-var / default path instead). This is a
-> pre-existing gap the #4174 T4 rename did not fix or worsen — tracked
-> separately.
+> ℹ️ **#4274**: `web_fetch.*` now reaches every live chat session's
+> `web_fetch` op execution (`SessionFactoryConfig.web_fetch_config` →
+> `Session` → the router `OpContext`). Before this landed, the block parsed
+> and validated clean but never reached a real `web_fetch` call — a
+> pre-existing gap the #4174 T4 rename did not itself fix or worsen. An
+> operator who set a non-default value (e.g. `verify_ssl: false` or
+> `allow_private_ips: true`) and never noticed it doing nothing will now
+> see it actually take effect.
 
 ## `gateway` block
 
