@@ -5,6 +5,15 @@ are production (see `docs/feature-map.md` § Time-Travel / Rewind); concurrent-l
 is owner-rejected out-of-scope. Authored design-first for issue
 #1533; flow-trace verified by docs-maintainer (5/5 seams); ADR + plan reviewed and
 signed off by lead-coder.
+**Status correction** (2026-08-11, docs-maintainer): "Implemented" above does not
+cover **2b's tree-layout UI** (`branch_tree.py::build_branch_tree_rows` has no
+production caller — only its own unit test) or **D5's retention-window config**
+(`RetentionPolicy.from_config` has no caller anywhere in `src/`; the sole
+construction site always uses the bare default). Both re-verified unwired as of
+this correction, against `origin/main`. The "5/5 seams" flow-trace above verified
+where a rewind must hook into existing code, not end-to-end config/UI wiring for
+these two — the two claims read together implied more than the trace established.
+Tracked in #3987; current state in `docs/feature-map.md`.
 **Track**: Core state-model — successor seam to ADR-0001 (WAL+snapshot),
 ADR-0002 (forward-replay), ADR-0023 (PlanSnapshot).
 **Owner status**: design judgments co-designed + confirmed with owner (issue
