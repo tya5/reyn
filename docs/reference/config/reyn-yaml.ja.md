@@ -755,11 +755,12 @@ permissions:
   file.write: [".reyn/state/", "reyn/local/"]  # {read:, write:} は読まれません。
                                                 # PermissionDecl.from_dict() が見るのは
                                                 # ここに示すフラットなキーのみです。
-  python:
-    safe: allow            # `permissions.python` が読む唯一のキー — python ステップは
-                            # 常にサンドボックス化されます（safe モードのみ）。`python:` の
-                            # 下にそれ以外を書いても（例: module allowlist）何も付与しません
-                            # — `PermissionDecl` に対応するフィールドがありません。
+  python:                  # LIST（{function, mode} のエントリ列）としてしか読まれません
+    - function: compute     # — マッピング（`{safe: allow}`）は素通りされ 1 バイトも
+      mode: safe             # 読まれません。用途は唯一つ: `mode: unsafe`（撤去済み）を
+                              # 弾いて load を fail させること。実行時の権限は一切
+                              # 付与しません — python ステップはこのキーに関わらず常に
+                              # サンドボックス化されます。
 ```
 
 MCP サーバーのインストールも同じ方式でゲートされます — `file.write`（宣言的パスリスト、上記と同じ）＋ `http.get`（宣言的ホストリスト）で、`permissions.mcp_install` の bool ではありません。下記「MCP install」を参照（そちらは blanket `allow`/`deny` スカラーで、ここで示したリスト形とは同じキーの別の使い方です）。

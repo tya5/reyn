@@ -1381,11 +1381,11 @@ permissions:
   file.read:  [".reyn/", "src/stdlib/"]   # flat dotted key — `file:` nested {read:, write:}
   file.write: [".reyn/state/", "reyn/local/"]  # is NOT read; PermissionDecl.from_dict()
                                                 # only looks at the flat keys shown here.
-  python:
-    safe: allow           # the only key `permissions.python` reads — python steps are
-                           # always sandboxed (safe mode only). Anything else nested
-                           # under `python:` (e.g. a module allowlist) grants nothing;
-                           # `PermissionDecl` has no field for it.
+  python:                 # ONLY read as a LIST of {function, mode} entries (never a
+    - function: compute    # mapping — `{safe: allow}` is silently skipped, 0 bytes
+      mode: safe            # read). The sole use: fail load if any entry says
+                             # `mode: unsafe` (removed). Grants no runtime authority —
+                             # python steps are always sandboxed regardless of this key.
 ```
 
 MCP server install is gated the same way — via `file.write` (declarative path list, as
