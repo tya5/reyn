@@ -855,29 +855,37 @@ context (`wake: false`), without a restart.
 - `name` (optional) — a label surfaced as a `[hook:name]` attribution prefix
   in history.
 
-**Write target and gating**: the hook is written to one of exactly two hardcoded
-runtime IN-set targets — never derived from LLM input, only from the calling
-session's own identity (#2088):
+**Write target and gating**: the hook is written to exactly one hardcoded
+target — never derived from LLM input, only from the CALLING SESSION's own
+identity (#4215①, superseding #2088's scope-aware write):
 
-- the default/unnamed agent writes the GLOBAL `.reyn/config/hooks.yaml`;
-- a named-agent session writes ITS OWN per-agent layer
-  `.reyn/agents/<name>/hooks.yaml` — the same file an operator-authored
-  per-agent hooks file already lives at.
+- **every session — named agent or default, "main" or spawned — writes ITS
+  OWN per-session layer**, `<session_state_dir>/hooks.yaml` (#2285's "4th,
+  most-specific" COMBINE layer), never a layer any OTHER session (of the
+  same agent or a different one) also writes to or reads from.
 
-Either way this structurally can never touch `reyn.yaml` (the OUT-set) nor
-another agent's per-agent layer. The hook joins the existing hooks
-ADDITIVELY (the two scopes never override one another) and takes effect at
-the next turn boundary. The tool itself is write-gated (`permissions.tool`)
-and can be denied per-agent via a capability profile's `tool_deny`. Full
-hot-reload mechanics — the layered COMBINE, validate-before-apply, boot
-resilience — are covered in
-[Concepts: Config hot-reload](config-hot-reload.md).
+This is a deliberate isolation guarantee, not merely a path choice: hooks
+are reyn's one *reactive* corner (the OS acting on someone else's
+registration, not the agent's own decision), so a session's own
+self-expanded hooks must never leak into — or be leaked into by — a sibling
+session. #2088 gave a NAMED agent its own per-agent layer, but that layer was
+still SHARED across every session of that agent, and the default/unnamed
+agent still wrote the GLOBAL layer, shared across every session, named or
+not — #4215① closes both leaks.
 
-**Decision, not an oversight**: the default agent writes the GLOBAL layer
-(`.reyn/config/hooks.yaml`) for backward compatibility and the unnamed scope
-— `.reyn/agents/default/hooks.yaml` **is** read (an operator can hand-place
-one there and it is combined in), but `hooks_add` never generates one, by
-design.
+This structurally can never touch `reyn.yaml` (the OUT-set), the GLOBAL
+runtime layer, or any other session's per-agent/per-session layer. The
+per-session hook joins the other layers (startup, global runtime, per-agent)
+ADDITIVELY — none override one another — and takes effect at the next turn
+boundary. The tool itself is write-gated (`permissions.tool`) and can be
+denied per-agent via a capability profile's `tool_deny`. Full hot-reload
+mechanics — the layered COMBINE, validate-before-apply, boot resilience —
+are covered in [Concepts: Config hot-reload](config-hot-reload.md).
+
+**The operator-facing GLOBAL (`.reyn/config/hooks.yaml`) and per-agent
+(`.reyn/agents/<name>/hooks.yaml`) layers are unchanged and still read** — an
+operator can still hand-place hooks in either, and they still combine in.
+`hooks_add` simply no longer writes to either.
 
 ## LLM-authored hook-events (`emit_hook_event`)
 
