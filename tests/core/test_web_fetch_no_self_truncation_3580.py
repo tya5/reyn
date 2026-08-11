@@ -19,7 +19,7 @@ and 「既存機能があるのに別機構を足すな」 (don't add a second m
 already exists). The surviving ceiling on what a fetch puts into the model's
 context is the OS-level tool-result cap (``offload.enabled``, shipped ``false``),
 which is unchanged by this file. Download volume is still bounded separately by
-``web.fetch.max_download_bytes`` (10 MiB).
+``web_fetch.max_download_bytes`` (10 MiB).
 
 The tests below therefore assert the SEAM, not the absent field: a body far over
 the old cap arrives whole from the handler, and then behaves like any other tool

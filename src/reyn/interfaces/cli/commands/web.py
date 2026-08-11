@@ -106,7 +106,7 @@ def register(sub) -> None:
     )
     # FP-0058 P2: per-surface opt-in/opt-out mount toggles. Repeatable
     # per-surface flags (NOT a comma-list) — `--enable a2a --enable mcp`.
-    # Precedence: CLI > `web.surfaces` config > secure-default. Surface
+    # Precedence: CLI > `gateway.surfaces` config > secure-default. Surface
     # names: agui / webui / health / api / resources (secure-default ON),
     # a2a / mcp (secure-default OFF, opt-in). See
     # reyn.interfaces.web.surfaces.build_registry for the authoritative list.
@@ -227,7 +227,7 @@ def run(args: argparse.Namespace) -> None:
     # Explicit WebSocket frame ceiling: previously this relied on uvicorn's
     # implicit ~16 MiB default, which a uvicorn version bump or operator server
     # override could silently drop. Pin it from config (operator-tunable via
-    # web.ws_max_size) so the inbound-frame bound is explicit + version-independent.
+    # gateway.ws_max_size) so the inbound-frame bound is explicit + version-independent.
     from reyn.config import load_config
     _config = load_config()
     _ws_max_size = _config.gateway.ws_max_size
@@ -254,7 +254,7 @@ def _apply_auth_startup(args: argparse.Namespace, config) -> dict:
       - **Loopback TCP**: browser surface; a token is generated (Jupyter-style)
         when none is configured and embedded in the printed launch URL.
       - **Non-loopback TCP**: T3 network. **Fail-closed** — refuses to start
-        without an explicitly configured ``web.auth.token``. Provisions
+        without an explicitly configured ``gateway.auth.token``. Provisions
         self-signed TLS (TOFU) when the operator supplies no certificate and
         prints the fingerprint to pin.
 

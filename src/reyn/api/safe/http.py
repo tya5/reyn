@@ -83,7 +83,7 @@ def _check_host(url: str) -> None:
 
     L1: the declared ``http_hosts`` allowlist. L2 (#1956 SSRF): the host's
     resolved IP must not be link-local / metadata / loopback / private (private
-    allowed only via the ``web.fetch.allow_private_ips`` operator opt-in). L2
+    allowed only via the ``web_fetch.allow_private_ips`` operator opt-in). L2
     runs on the allowlisted host too — an allowlisted host can still resolve to,
     or (via a redirect hop) BE, an internal IP. ``SSRFBlocked`` is a
     ``PermissionError`` subclass, so callers catching ``PermissionError`` handle

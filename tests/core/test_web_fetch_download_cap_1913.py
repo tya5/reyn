@@ -5,7 +5,7 @@ extracted-text cap applied — so a hostile URL (or a benign one that redirects
 to a huge payload) could exhaust memory. (#3580 ③ later removed web_fetch's
 own extracted-text cap entirely, which makes THIS bound the only size gate on
 the fetch itself.) web_fetch now
-streams with a byte ceiling (`web.fetch.max_download_bytes`), rejecting a
+streams with a byte ceiling (`web_fetch.max_download_bytes`), rejecting a
 response whose `Content-Length` exceeds the cap (early, before download) or
 whose streamed body runs past it (chunked / no Content-Length).
 

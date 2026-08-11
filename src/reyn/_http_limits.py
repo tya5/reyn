@@ -2,7 +2,7 @@
 
 Single source of truth for the download-byte cap used by the urllib-based HTTP
 helpers (``reyn.api.safe.http`` / ``reyn.mcp.registry``)
-and the ``web.fetch.max_download_bytes`` config default. Stdlib-only (no reyn
+and the ``web_fetch.max_download_bytes`` config default. Stdlib-only (no reyn
 imports) so any layer — config, api, mcp — can import it without a cycle.
 
 A bare ``response.read()`` materialises the ENTIRE body into memory, so a

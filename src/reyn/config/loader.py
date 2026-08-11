@@ -747,7 +747,7 @@ def load_config(cwd: Path | None = None) -> ReynConfig:
             if urls:
                 _os_for_mcp.environ["REYN_MCP_REGISTRY_URLS"] = ",".join(urls)
 
-    # #1956: propagate ``web.fetch.allow_private_ips`` into the
+    # #1956: propagate ``web_fetch.allow_private_ips`` into the
     # ``REYN_FETCH_ALLOW_PRIVATE_IPS`` env var so the config-less SSRF-guard
     # surfaces read the operator opt-in: the safe.http subprocess (inherits
     # parent env) and the registry main-process modules (reyn.mcp.registry /
@@ -755,10 +755,19 @@ def load_config(cwd: Path | None = None) -> ReynConfig:
     # export above. Explicit operator-set env var wins; absent → unset → the
     # guard's fail-secure deny-private default. Only the truthy case is exported
     # (deny is the default, so a False/absent value leaves the var unset).
+    #
+    # #4174 T4/#4317: was ``merged.get("web").get("fetch")`` (the pre-T4
+    # nested key) — T4 split ``web:`` into a top-level ``web_fetch:``
+    # scalar-namespace (see :func:`reyn.config.media._build_web_fetch_config`,
+    # already reading the correct top-level key below at ``web_fetch=``) and
+    # a top-level ``gateway:`` block. This export block was never updated,
+    # so ``merged.get("web")`` always resolved to the unknown-key ``None``
+    # after T4 landed and the export silently stopped firing — fail-secure
+    # (the guard's own deny-private default took over), but "configured yet
+    # not applied" is its own bug distinct from a hole.
     if not _os_for_mcp.environ.get("REYN_FETCH_ALLOW_PRIVATE_IPS"):
-        _web_cfg = merged.get("web")
-        _fetch_cfg = _web_cfg.get("fetch") if isinstance(_web_cfg, dict) else None
-        _ap = _fetch_cfg.get("allow_private_ips") if isinstance(_fetch_cfg, dict) else None
+        _web_fetch_cfg = merged.get("web_fetch")
+        _ap = _web_fetch_cfg.get("allow_private_ips") if isinstance(_web_fetch_cfg, dict) else None
         if _ap is True or (isinstance(_ap, str) and _ap.strip().lower() in ("1", "true", "yes", "on")):
             _os_for_mcp.environ["REYN_FETCH_ALLOW_PRIVATE_IPS"] = "1"
 
