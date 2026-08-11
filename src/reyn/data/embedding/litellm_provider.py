@@ -35,6 +35,7 @@ import os
 from typing import Any
 
 from reyn.data.embedding.provider import EmbedBatchResult
+from reyn.llm.secret_scrub import scrub_exception_in_place
 
 logger = logging.getLogger(__name__)
 
@@ -498,10 +499,23 @@ class LiteLLMEmbeddingProvider:
         """
         litellm.DEFAULT_MAX_RETRIES = 0
         kwargs.setdefault("max_retries", 0)
-        if self._timeout is None:
-            return await litellm.aembedding(**kwargs)
-        async with asyncio.timeout(self._timeout):
-            return await litellm.aembedding(timeout=self._timeout, **kwargs)
+        try:
+            if self._timeout is None:
+                return await litellm.aembedding(**kwargs)
+            async with asyncio.timeout(self._timeout):
+                return await litellm.aembedding(timeout=self._timeout, **kwargs)
+        except Exception as exc:
+            # #3830: this is the ONE place reyn first receives an exception
+            # litellm constructed from an embedding call's HTTP response —
+            # both call sites above raise up to here. Scrub the exception
+            # OBJECT itself (reyn.llm.secret_scrub, the same shared
+            # boundary helper `recorded_acompletion` uses on the
+            # completions side — one implementation, two call sites) before
+            # it reaches the retry loop's own `logger.warning("embed batch
+            # attempt %d/%d failed: %s", ..., exc)` above, or any other
+            # consumer.
+            scrub_exception_in_place(exc, kwargs)
+            raise
 
     @staticmethod
     def _parse_response(response: Any, fallback_model: str) -> EmbedBatchResult:
