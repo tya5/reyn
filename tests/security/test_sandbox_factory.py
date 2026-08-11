@@ -284,44 +284,6 @@ def test_config_background_timeout_defaults_independently_of_foreground() -> Non
     assert policy.background_max_timeout_seconds is None
 
 
-def test_config_background_max_timeout_seconds_operator_settable() -> None:
-    """Tier 2: #3903 a-2 — an operator CAN configure a real background
-    ceiling (overriding the None/"no cap" default) — the field is `int |
-    None`, not `None`-only."""
-    from reyn.security.sandbox.policy import resolve_sandbox_policy
-
-    cfg = SandboxConfig(
-        policy={"background_timeout_seconds": 300, "background_max_timeout_seconds": 900}
-    )
-    resolved = resolve_sandbox_policy(cfg.policy, write_paths=[], mode=cfg.mode)
-    assert resolved["background_timeout_seconds"] == 300
-    assert resolved["background_max_timeout_seconds"] == 900
-
-
-def test_config_rejects_background_default_above_an_explicit_background_max() -> None:
-    """Tier 2: #3903 a-2 — the default<=max self-consistency check applies to
-    the background pair too, same posture as the foreground pair
-    (test_config_rejects_default_timeout_above_an_explicit_lower_max
-    above). ``match`` is anchored on "exceeds", not just the field name —
-    the field name alone also appears in the unrelated "unknown key(s)"
-    error the pre-#3903-a-2 code raises for these keys, which would let
-    that wrong-reason rejection pass this test too."""
-    with pytest.raises(ValueError, match="exceeds sandbox.policy.background_max_timeout_seconds"):
-        SandboxConfig(
-            policy={"background_timeout_seconds": 1000, "background_max_timeout_seconds": 900}
-        )
-
-
-def test_config_background_max_timeout_seconds_none_skips_the_consistency_check() -> None:
-    """Tier 2: #3903 a-2 — an explicit background_max_timeout_seconds=None
-    (the "no cap" case, the actual default) must not raise the default<=max
-    check regardless of how large background_timeout_seconds is — there is
-    no ceiling to exceed."""
-    SandboxConfig(
-        policy={"background_timeout_seconds": 999999, "background_max_timeout_seconds": None}
-    )
-
-
 def test_unknown_config_keys_flags_a_renamed_sandbox_policy_key_with_guidance() -> None:
     """Tier 2: #3823 / #4174 T0 — an operator on a pre-#3823 (or pre-#3901)
     config who still writes an OLD internal-vocabulary key (`write_paths`,

@@ -86,10 +86,7 @@ sandbox:
 | `env_deny_names` | 文字列のリスト | `[]`（compat） | プロセスに引き渡さない環境変数名。デフォルト（空）は環境全体が引き渡される、つまり起動元シェルと同じ信頼レベルを意味します。 |
 | `timeout_seconds` | int | `120` | 前景 exec のウォールクロック既定（期限超過でプロセスを終了）── LLM の `exec` 呼び出しが独自の timeout を省略した場合に適用。`#3903①` で旧 `60` から引き上げ。 |
 | `max_timeout_seconds` | int | `600` | 前景 exec の LLM 拡張可能な上限 ── LLM は自身の `timeout` でこの値まで要求できるが、超えることはできない。超過は無言のクランプではなく型付きエラー。 |
-| `background_timeout_seconds` | int | `1800` | 背景 exec 専用の既定値（`#3903` a-2）── `timeout_seconds` とは別のフィールドで、背景作業に同じフィールドを使い回すことはない。 |
-| `background_max_timeout_seconds` | int \| `null` | `null`（上限なし） | 背景 exec 専用の上限 ── `null`/未設定は無制限を意味する。整数を設定すれば上限を課せる。 |
-
-🔴 **`background_timeout_seconds`/`background_max_timeout_seconds` は現時点で設定可能だが、どの exec 経路からも読まれていません**（`#3903` a-2、作業中）── `sandboxed_exec` のハンドラは現状、呼び出しが前景か背景かに関わらず前景側のペア（`timeout_seconds`/`max_timeout_seconds`）だけを読みます。この 2 フィールドの設定自体は安全（検証・保存される）ですが、その配線が着地するまでは実効果を持ちません。
+🔴 **背景 exec にはまだ `reyn.yaml` から設定可能な専用 timeout がありません**（`#3903` a-2、作業中）。`SandboxPolicy` は内部的に `background_timeout_seconds`/`background_max_timeout_seconds` を既に持っていますが、`reyn.yaml sandbox.policy` からはまだ設定できません ── `sandboxed_exec` のハンドラが呼び出しを前景か背景かまだ区別していないため、その配線より前に operator 向けキーを公開すると、書いた値が検証・保存されるのに何の効果も持たない状態になります（このプロジェクトが化粧的なギャップではなく欠陥クラスとして扱う「宣言された config、読む者がいない」という形そのものです）。この配線が着地するまでは、前景・背景を問わずすべての exec が上記の `timeout_seconds`/`max_timeout_seconds` に従います。
 
 **`deny_subprocess: true` は、exec を一切必要としない workload にとって最も安価で最も予測可能な hardening です。** 設定は単一の boolean で、その効果は全面的かつ即時です — 子プロセス生成が完全に拒否され、後から状態がずれて驚くことはありません。exec が本当に必要な workload（ビルドステップ、CLI ラッパー等）にはこの設定は向きません — その場合はサンドボックス境界と、exec のたびに残る監査証跡（`sandboxed_exec_started`/`_completed`/`_cancelled` が `argv` を記録します — [Reference: events](../../reference/runtime/events.md) 参照）で bound されます。
 

@@ -482,11 +482,18 @@ _SANDBOX_POLICY_CONFIG_KEY_TO_FIELD: dict[str, str] = {
     "deny_env_names": "env_deny_names",
     "timeout_seconds": "timeout_seconds",
     "max_timeout_seconds": "max_timeout_seconds",
-    # #3903 a-2: background exec's own pair, pure renames like the
-    # foreground pair above — the fg/bg distinction lives in the FIELD
-    # name, not a translated sense.
-    "background_timeout_seconds": "background_timeout_seconds",
-    "background_max_timeout_seconds": "background_max_timeout_seconds",
+    # #3903 a-2: `background_timeout_seconds`/`background_max_timeout_seconds`
+    # deliberately NOT registered here yet (lead-coder review, #4186) —
+    # `SandboxPolicy` carries the fields (below) and the self-consistency
+    # check for them already exists (`_translate_sandbox_policy_config`),
+    # but nothing yet reads them (③ — "is this exec foreground or
+    # background" isn't wired to `sandboxed_exec.handle`). Registering the
+    # config-vocabulary keys before ③ lands would let an operator write
+    # `background_timeout_seconds: 300` to reyn.yaml, have it validate and
+    # save, and have it silently do nothing — the exact "declared config,
+    # no reader" class #4159/#4165 are open instances of (CLAUDE.md Q3: "who
+    # would miss this" was honestly "nobody" until ③ exists). Add these two
+    # lines back in the SAME PR that wires ③ — do not add them alone.
     "max_output_bytes": "max_output_bytes",
 }
 

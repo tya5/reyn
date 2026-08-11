@@ -100,16 +100,6 @@ def test_policy_custom_fields():
     assert p.background_max_timeout_seconds == 7200
 
 
-def test_policy_background_max_timeout_accepts_none_explicitly():
-    """Tier 2: #3903 a-2 — an operator can set ``background_max_timeout_seconds``
-    to ``None`` explicitly (not just via omission), the same "no ceiling"
-    outcome as leaving it unset — the field's type is ``int | None`` all the
-    way through, not "int, defaulting to a magic None-like sentinel"."""
-    p = SandboxPolicy(background_timeout_seconds=999999, background_max_timeout_seconds=None)
-    assert p.background_max_timeout_seconds is None
-    assert p.background_timeout_seconds == 999999
-
-
 # ─── 1b. SandboxedExecIROp no longer carries policy fields (#3907) ───────────
 
 
