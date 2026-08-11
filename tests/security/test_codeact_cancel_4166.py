@@ -1,0 +1,88 @@
+"""Tier 2: #4166 — CodeActRunner.run(cancel_event=...) actually kills a
+running snippet's subprocess, mirroring the cancel-aware race
+``noop_backend``/``landlock`` already carry for the sibling (non-CodeAct)
+sandboxed_exec op since #1470.
+
+Real subprocess, real asyncio.Event, real wall-clock — no fakes of the
+process or the race. The falsifying witness is elapsed time: the snippet
+sleeps far longer than the test waits before cancelling, so if the kill
+did NOT happen the run would take (and this test would observe) the full
+sleep duration instead of returning promptly.
+"""
+from __future__ import annotations
+
+import asyncio
+import time
+
+import pytest
+
+from reyn.core.kernel.codeact_runner import CodeActRunner
+
+
+async def _dispatch(name: str, args: dict) -> dict:
+    return {"status": "ok", "data": None}
+
+
+@pytest.mark.asyncio
+async def test_cancel_event_kills_a_running_snippet_promptly() -> None:
+    """Tier 2: cancel_event.set() during a long-running snippet returns
+    status='cancelled' well before the snippet's own sleep would finish —
+    the process was actually killed, not merely marked cancelled while
+    left running to completion."""
+    runner = CodeActRunner()
+    cancel_event = asyncio.Event()
+    code = "import time\ntime.sleep(30)\nresult = 'never gets here'"
+
+    async def _cancel_soon() -> None:
+        await asyncio.sleep(0.3)
+        cancel_event.set()
+
+    canceller = asyncio.create_task(_cancel_soon())
+    start = time.monotonic()
+    out = await runner.run(
+        code=code, dispatch=_dispatch, allow_unsandboxed=True,
+        timeout=30.0, cancel_event=cancel_event,
+    )
+    elapsed = time.monotonic() - start
+    await canceller
+
+    assert out["status"] == "cancelled", out
+    assert out["ok"] is False, out
+    # The falsifying witness: if kill_process_tree did NOT actually run,
+    # the 30s sleep would have to complete (or the 30s timeout would fire)
+    # before this returns. Cancelling within 0.3s must not cost anywhere
+    # near that — generous margin, not pinning exact timing.
+    assert elapsed < 5.0, (
+        f"took {elapsed:.1f}s after a 0.3s cancel — the subprocess was not "
+        "actually killed, only marked cancelled while left running"
+    )
+
+
+@pytest.mark.asyncio
+async def test_cancel_event_never_set_runs_to_completion_unaffected() -> None:
+    """Tier 2: accept-side sibling — cancel_event is provided (not None) but
+    never fires, so the run must complete normally exactly as if no
+    cancel_event had been passed at all. Proves the new race arm doesn't
+    change behaviour for the ordinary (uncancelled) case."""
+    runner = CodeActRunner()
+    cancel_event = asyncio.Event()
+    code = "result = 1 + 1"
+    out = await runner.run(
+        code=code, dispatch=_dispatch, allow_unsandboxed=True,
+        cancel_event=cancel_event,
+    )
+    assert out["ok"] is True, out
+    assert out["result"] == 2
+    assert cancel_event.is_set() is False
+
+
+@pytest.mark.asyncio
+async def test_cancel_event_omitted_still_runs_the_pre_4166_call_shape() -> None:
+    """Tier 2: the default (cancel_event=None, the call shape every existing
+    caller used before #4166) still works — the new parameter is additive."""
+    runner = CodeActRunner()
+    out = await runner.run(
+        code="result = 'ok'", dispatch=_dispatch, allow_unsandboxed=True,
+    )
+    assert out["ok"] is True, out
+    assert out["result"] == "ok"
