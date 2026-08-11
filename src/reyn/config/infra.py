@@ -522,7 +522,8 @@ class SandboxConfig:
             vocabulary (#3823): ``network`` (bool) / ``subprocess`` (bool,
             positive framing — ``true`` = allowed) / ``allow_write_paths`` /
             ``deny_write_paths`` / ``deny_read_paths`` / ``allow_env_names``
-            / ``deny_env_names`` / ``timeout_seconds`` / ``max_output_bytes``
+            / ``deny_env_names`` / ``timeout_seconds`` / ``max_timeout_seconds``
+            / ``max_output_bytes``
             — ``<direction>_<axis>_<unit>`` word order for a path/name-set
             axis, bare ``<axis>`` for a bool (tool-naming.md R1's word
             order, generalised). This vocabulary is DECOUPLED from
