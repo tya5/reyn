@@ -79,26 +79,35 @@ def test_resolve_explicit_empty_write_paths_is_respected_not_defaulted():
 # ── (A) tool exposes argv-only ────────────────────────────────────────────────
 
 
-def test_tool_schema_is_argv_only():
-    """Tier 2: #1339 — the exec TOOL exposes only argv — the LLM cannot set
-    network / fs scope / timeout (those are operator-or-default).
+def test_tool_schema_is_argv_and_timeout_only():
+    """Tier 2: #1339 — the exec TOOL exposes only argv (+ timeout, #3903①) —
+    the LLM cannot set network / fs scope (those stay operator-or-default).
 
-    #3962: `timeout_seconds` dropped out of this schema too — it was the
-    same defect class as the other removed fields (LLM-advertised, silently
-    ignored on the real path), just missed by #3907's own sweep since a
-    wall-clock cap isn't a permission axis."""
+    #3962 dropped `timeout_seconds` from this schema too — same defect
+    class as the other removed fields (LLM-advertised, silently ignored on
+    the real path), just missed by #3907's own sweep since a wall-clock cap
+    isn't a permission axis. #3903① (2026-08-11) brought it back as
+    `timeout` — deliberately, with a real reader this time
+    (op_runtime/sandboxed_exec.py) — so it belongs in the EXPECTED set now,
+    not the removed one; every other axis stays removed."""
     from reyn.tools.exec import _EXEC_DESCRIPTION, _EXEC_PARAMETERS
 
     props = set(_EXEC_PARAMETERS["properties"])
-    assert props == {"argv"}
+    assert props == {"argv", "timeout"}
     for removed in (
         "network", "write_paths", "allow_subprocess", "deny_subprocess",
         "env_deny_names", "read_deny_paths", "write_deny_paths",
-        "timeout_seconds",
     ):
         assert removed not in props
     # the description frames the policy as the OPERATOR's (not a settable param)
     assert "operator" in _EXEC_DESCRIPTION.lower()
+    # #3903①: no hardcoded number in the static schema text (lead-coder
+    # ruling — a per-deployment config value baked into static text would
+    # go stale the moment an operator changed it; the authoritative number
+    # surfaces via the rejection error instead, see
+    # op_runtime/sandboxed_exec.py).
+    assert "600" not in _EXEC_DESCRIPTION
+    assert "120" not in _EXEC_DESCRIPTION
 
 
 # ── (C') handler emits the ENFORCED policy network, not the op request ─────────
@@ -236,4 +245,36 @@ async def test_minimal_synthesis_path_enforces_the_floor_not_the_op_default(
         "the minimal-synthesis path enforced the op's own raw default "
         "(network=False) instead of the floor (network=True) — the fix did "
         "not change what the handler actually uses, only that a field is set"
+    )
+
+
+@pytest.mark.asyncio
+async def test_tool_level_timeout_arg_reaches_the_op(tmp_path):
+    """Tier 2: #3903① — the exec TOOL's `timeout` arg (args["timeout"]) is
+    threaded by `exec._handle` into `SandboxedExecIROp.timeout_seconds`,
+    reaching the real dispatch path — the whole tool→op→handler bridge,
+    not just the op-level unit already covered in test_op_sandboxed_exec.py.
+    Asserted via the real sandboxed_exec_started audit-event's
+    timeout_seconds field (what the handler actually enforced), not a
+    private-state read."""
+    from reyn.core.events.events import EventLog
+    from reyn.data.workspace.workspace import Workspace
+    from reyn.tools.exec import _handle
+    from reyn.tools.types import ToolContext
+    from tests._support.events import collect_events
+
+    events = EventLog()
+    collected = collect_events(events)
+    ws = Workspace(events=events, base_dir=tmp_path)
+    tool_ctx = ToolContext(
+        events=events, permission_resolver=None, workspace=ws,
+        caller_kind="router", router_state=None,
+    )
+
+    await _handle({"argv": ["/bin/echo", "x"], "timeout": 45}, tool_ctx)
+
+    (ev,) = [e for e in collected if e.type == "sandboxed_exec_started"]
+    assert ev.data["timeout_seconds"] == 45, (
+        "the tool-level timeout arg must reach the enforced policy via the "
+        f"op bridge, got {ev.data['timeout_seconds']}"
     )
