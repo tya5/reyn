@@ -31,7 +31,7 @@ _INERT_OP_CONTEXT_SOURCE_FIELDS: dict = {
     "mcp_servers_fn": None,
     "mcp_servers_flat_fn": None,
     "allowed_mcp_fn": None,
-    "workspace_base_dir": None,
+    "workspace_base_dir_fn": None,
     "workspace_state_dir": None,
     "environment_backend": None,
     "sandbox_backend": None,
@@ -173,7 +173,13 @@ def make_adapter(
         events=events,
         environment_backend=environment_backend,
         turn_origin_fn=turn_origin_fn,
-        workspace_base_dir=workspace_base_dir,
+        # #4200: RouterOpContextSource now reads this LIVE (workspace_base_dir_fn),
+        # same reason session_id_fn below is a callable — see that class's own
+        # docstring. This test builder's own param stays a plain value (test
+        # ergonomics); wrap it once here at the one forwarding site.
+        workspace_base_dir_fn=(
+            (lambda: workspace_base_dir) if workspace_base_dir is not None else None
+        ),
         session_id_fn=(lambda: session_id) if session_id is not None else None,
     )
     mcp_gateway_inputs = McpGatewayInputs(

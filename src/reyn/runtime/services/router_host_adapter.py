@@ -1251,7 +1251,8 @@ class RouterHostAdapter:
         self._mark_task_pending_cb()
 
     async def spawn_session(self, *, request: str, mode: str,
-                            narrowing: "dict | None", chain_id: str) -> dict:
+                            narrowing: "dict | None", chain_id: str,
+                            base_dir: "str | None" = None) -> dict:
         """#2103 S1bc: spawn a fresh-context SESSION under THIS agent for a task.
 
         Spawns + records the session (rewind-tracked via ``session_spawned`` +
@@ -1356,8 +1357,51 @@ class RouterHostAdapter:
         narrowing = compose_narrowing_mappings(
             self._registry.per_session_narrowing(self._agent_name, from_sid), narrowing,
         )
+        # #4200 2/2: restrict-only ``base_dir`` — LLM-authored (this session's own
+        # ``spawn_session`` tool argument), so validated against THIS spawner's own
+        # EFFECTIVE base_dir (parent_session._workspace_base_dir — #4200 1/2's own
+        # resolved value, not the Agent's bare default) BEFORE the child's
+        # config.yaml is written. Same restrict-only SHAPE as ``narrowing`` above,
+        # but a subtree-containment check rather than a ∩-composition (base_dir is a
+        # scalar, not a set). #4179 lesson: REJECT a request outside the floor
+        # (never silently clamp it in), naming the actual boundary in the message.
+        #
+        # ⚠️ NOT a system-wide invariant: this check gates only the LLM-authored
+        # spawn_session ARGUMENT. An OPERATOR directly hand-editing a session's own
+        # <session_state_dir>/config.yaml (#4200 1/2's session-layer read) never
+        # passes through this method at all — that is correct (the operator owns
+        # the envelope), not a gap. "base_dir never widens" is true only for the
+        # LLM-driven spawn path, not for the config surface as a whole.
+        resolved_base_dir: "Path | None" = None
+        if base_dir is not None:
+            parent_base_dir = getattr(parent_session, "_workspace_base_dir", None)
+            if parent_base_dir is None:
+                return {
+                    "status": "error", "kind": "base_dir_floor_unknown",
+                    "error": (
+                        "base_dir was requested, but this session's own effective "
+                        "base_dir could not be resolved to validate it against — "
+                        "refusing rather than accepting an unvalidated path."
+                    ),
+                }
+            candidate = Path(base_dir)
+            if not candidate.is_absolute():
+                candidate = parent_base_dir / candidate
+            candidate = candidate.resolve()
+            parent_resolved = Path(parent_base_dir).resolve()
+            if candidate != parent_resolved and parent_resolved not in candidate.parents:
+                return {
+                    "status": "error", "kind": "base_dir_outside_parent",
+                    "error": (
+                        f"requested base_dir {str(candidate)!r} resolves outside "
+                        f"your own base_dir {str(parent_resolved)!r} — restrict-only: "
+                        "a spawned session's base_dir must fall under your own."
+                    ),
+                }
+            resolved_base_dir = candidate
         sid = await self._registry.spawn_session_recorded(
             self._agent_name, mode=mode, narrowing=narrowing,
+            base_dir=resolved_base_dir,
             presentation_consumer=_routing.presentation_consumer,
             intervention_bridge=_routing.intervention_bridge,
         )

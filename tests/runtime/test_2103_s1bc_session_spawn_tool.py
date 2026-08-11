@@ -114,12 +114,12 @@ def test_session_spawn_registered_with_schema() -> None:
 
 @pytest.mark.asyncio
 async def test_handle_dispatches_to_spawn_session_fn() -> None:
-    """Tier 2: the handler forwards (request, mode, narrowing) to
+    """Tier 2: the handler forwards (request, mode, narrowing, base_dir) to
     spawn_session_fn and returns its ack (the tool→callback wiring)."""
     seen: dict = {}
 
-    async def _fake_spawn_session_fn(*, request, mode, narrowing):
-        seen.update(request=request, mode=mode, narrowing=narrowing)
+    async def _fake_spawn_session_fn(*, request, mode, narrowing, base_dir=None):
+        seen.update(request=request, mode=mode, narrowing=narrowing, base_dir=base_dir)
         return {"status": "spawned", "sid": "abc", "mode": mode}
 
     ctx = ToolContext(
@@ -127,7 +127,9 @@ async def test_handle_dispatches_to_spawn_session_fn() -> None:
         router_state=RouterCallerState(spawn_session_fn=_fake_spawn_session_fn),
     )
     result = await _handle({"request": "do X", "mode": "ephemeral"}, ctx)
-    assert seen == {"request": "do X", "mode": "ephemeral", "narrowing": None}
+    assert seen == {
+        "request": "do X", "mode": "ephemeral", "narrowing": None, "base_dir": None,
+    }
     assert result["status"] == "spawned" and result["sid"] == "abc"
 
 
