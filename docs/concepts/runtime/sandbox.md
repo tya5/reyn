@@ -116,48 +116,72 @@ The registry also records `witness_strength` per backend — network's deny leg 
 
 **macOS 26.3+ and `SeatbeltBackend`**: `sandbox-exec` remains shipped in macOS 26.3. An SBPL profile that includes `(import "bsd.sb")` and `(allow process-exec*)` is sufficient for the backend to function. See the FP-0017 post-dogfood fix landing notes (commit `b477508`) for details.
 
-### Deny-list visibility: `sandbox_axis_unenforced` — scope, not a general enforcement-gap report
+### Enforcement visibility: `sandbox_axis_unenforced` — declaration-driven, full domain (`#4039`)
 
-A configured `read_deny_paths`/`write_deny_paths` entry is silently
-unenforced on Landlock (allowlist-only — see the field reference above).
-`unenforced_axes()` (`policy.py`) makes that ONE gap observable: when it
-resolves against a deny-list-incapable backend, a `sandbox_axis_unenforced`
-audit-event fires (paired with a WARN log, `#3949`), naming the axis and why
-(`#3823` §4③).
+If you configure a policy axis and the resolved backend does not enforce it,
+`unenforced_axes()` (`policy.py`) makes that observable: a
+`sandbox_axis_unenforced` audit-event fires (paired with a WARN log,
+`#3949`), naming the axis, the backend, and why.
 
-**This is deny-list visibility only, not a general "does this backend
-enforce everything configured" report (`#3951`).** A backend that simply
-does not enforce an axis at all produces no `sandbox_axis_unenforced` event
-and no WARN, because it isn't in the deny-list-incapable set
-`unenforced_axes()` checks (that set names Landlock specifically, not "any
-backend that under-enforces"). Two real examples, reached two different
-ways:
+**`#4039` generalised this from a Landlock-specific deny-list check to a
+full-domain "does this backend enforce what you configured" report.**
+Originally (`#3823`/`#3951`) the predicate only asked "can this backend
+express a deny-list" — true only of `deny_read_paths`/`deny_write_paths` on
+Landlock (allowlist-only, cannot carve a subpath out of an allowed parent).
+A backend that simply enforced NOTHING for an axis (`NoopBackend`,
+`DockerEnvironmentBackend`) produced a clean report while enforcing zero
+configured axes — the exact bug `#4039` is named for.
 
-- **`NoopBackend`** — the intentional no-enforcement fallback. Enforces none
-  of `write_paths`/`network`/`subprocess` (its own docstring: argv is
-  returned UNCHANGED; all other policy fields are recorded for audit only).
-- **`DockerEnvironmentBackend`** (`sandbox.backend`'s container-mode path,
-  `src/reyn/environment/container_backend.py`) — reached via the
-  single-shared-sandbox-instance invariant (`#1200`): a caller that builds
-  one Docker backend for both the FS seam (`environment_backend`) and the
-  exec seam (`sandbox_backend`, `env_backend.py`'s own module docstring)
-  passes it straight into `sandboxed_exec.py`'s `resolve_backend(ctx.
-  sandbox_backend, ...)`, whose result flows to `unenforced_axes(backend.
-  name, policy)` with `backend.name == "docker"` — the same call site the
-  two Seatbelt/Landlock/Noop backends reach, just with an instance the
-  name-based auto-selector never builds on its own. Docker enforces none of
-  `write_paths`/`network`/`subprocess` either, while being a real,
-  operator-selectable execution path — not merely a fallback state, which
-  is what makes it the sharper of the two examples.
+**D1/D2 — each backend now DECLARES its own enforcement, over the full
+7-field domain, no default.** `SandboxBackend.enforced_axes`
+(`security/sandbox/backend.py`'s `AxisEnforcementDeclaration`) covers
+`write_paths` / `write_deny_paths` / `read_deny_paths` / `network` /
+`deny_subprocess` / `env_deny_names` / `allow_env_names` — every field
+required, no default anywhere in the dataclass (mirrors
+`axis_contract.AxisContract`'s own discipline), so a backend that forgets an
+axis fails to construct at module import time rather than silently reading
+as "not reported." `unenforced_axes(backend, policy)` reads this
+declaration directly — it is never probed; production only reads a
+declaration, the same posture `enforcement_self_test` (the PRODUCTION gate,
+deny-leg only, write+spawn axes only, CLAUDE.md hard rule) keeps for its own
+narrow blast radius, unchanged by this mechanism.
 
-Both produce a clean `unenforced_axes()` report while enforcing nothing —
-a clean/absent report from this mechanism does not mean every configured
-axis is being enforced; it means Landlock's specific deny-list limitation
-didn't fire on this call. A quiet run under either and a quiet run under
-`SeatbeltBackend` are indistinguishable from this signal alone — the
-per-backend table above, not this mechanism, is what answers "what does my
-backend actually enforce." Whether to extend `unenforced_axes()`'s own
-coverage to Docker is tracked in `#3951`/`#4039`.
+**D3 — the predicate reports the SUBSET of the domain you actually
+configured.** `unenforced_axes()`'s return is the intersection of "you
+configured this axis" (e.g. `network is False`, not the default-permissive
+`True`) and "the backend declares `DOES_NOT_ENFORCE` for it" — it is **not**
+the complement of `enforced_axes` (a prior reader of this doc's own earlier
+text misread exactly this distinction, `#4039`): an empty return means
+"nothing you configured on this call went unenforced," not "this backend
+enforces every axis." Read `backend.enforced_axes` directly (or the
+per-backend table above) for that claim.
+
+**`DockerEnvironmentBackend` and `NoopBackend` now both warn where they used
+to stay silent.** Docker declares `DOES_NOT_ENFORCE` on every one of the 7
+axes (`run()` honors only `policy.timeout_seconds`/`policy.max_output_bytes`
+— its own docstring); configuring `allow_write_paths`, `network`,
+`subprocess`, or either env field under it now fires the warning for each
+one. Noop enforces `env_deny_names`/`allow_env_names` (the one policy
+mechanism it actually applies, via the shared `resolve_passthrough_env`) but
+nothing else — a configured write/network/subprocess restriction under Noop
+also now warns.
+
+**D4 — declaration ↔ real-execution witness stays a CI-only bridge, never a
+production probe.** `tests/security/test_sandbox_axis_declaration_witness_4039.py`
+asserts that whenever a backend declares `ENFORCES` for a policy field
+mapping to an `axis_contract`-migrated axis (write/spawn/network — see the
+axis-contract section above), that backend has a real `witness_strength`
+entry there; `DOES_NOT_ENFORCE` requires no witness — its ABSENCE from
+`witness_strength` is the correct state (Docker is the concrete instance:
+declares `DOES_NOT_ENFORCE` everywhere, has no `witness_strength` entry
+anywhere, and the CI check accepts that as correct rather than flagging it).
+This is CI-conformance-only, same two-layer split as the axis contract
+itself — it never runs against `enforcement_self_test`.
+
+A quiet run under any backend and a quiet run under Seatbelt are now much
+closer to comparable than before this generalisation — though the warning
+still only fires for axes you actually SET; the per-backend tables above
+remain the authoritative "what does my backend enforce" reference.
 
 ## `reyn.yaml` configuration
 
