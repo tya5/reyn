@@ -17,6 +17,23 @@ from reyn.core.turn_scope import get_active_turn_chain_id
 from reyn.llm.litellm_bootstrap import ensure_litellm_ready
 from reyn.llm.model_resolver import ModelSpec
 from reyn.llm.pricing import TokenUsage, UsageSource, estimate_cost, parse_usage_source
+
+# #3830: the shared scrub-at-the-boundary module (reyn.llm.secret_scrub) —
+# imported here under the original private names so every existing
+# in-file call site is unchanged. See that module's docstring for why
+# this is a single shared implementation, not one copy per consumer.
+from reyn.llm.secret_scrub import (
+    SECRET_KWARG_HINTS as _LLM_REQUEST_SECRET_HINTS,
+)
+from reyn.llm.secret_scrub import (
+    collect_secret_values as _collect_secret_values,
+)
+from reyn.llm.secret_scrub import (
+    scrub_exception_in_place as _scrub_exception_in_place,
+)
+from reyn.llm.secret_scrub import (
+    scrub_secrets as _scrub_secrets,
+)
 from reyn.prompt.loop_control import G12_SIGNAL_ERROR_TEXT as _G12_SIGNAL_ERROR_TEXT
 from reyn.prompt.loop_control import G12_SIGNAL_TEXT as _G12_SIGNAL_TEXT
 
@@ -1618,14 +1635,6 @@ LLM_PURPOSES: tuple[str, ...] = (
 )
 
 
-# #1669: top-level kwarg keys whose VALUE is secret-like and must be redacted
-# from the llm_request observability event (the proxy path injects ``api_key``,
-# see ``proxy_kwargs``). Substring match, case-insensitive.
-_LLM_REQUEST_SECRET_HINTS: tuple[str, ...] = (
-    "api_key", "api-key", "authorization", "secret", "token",
-)
-
-
 def _redact_llm_request_params(base_kwargs: dict, response_format: dict | None) -> dict:
     """#1669: build the non-message, non-tools LLM call params for the
     ``llm_request`` event, with secret-like values redacted.
@@ -1647,56 +1656,6 @@ def _redact_llm_request_params(base_kwargs: dict, response_format: dict | None) 
     if response_format is not None and "response_format" not in out:
         out["response_format"] = response_format
     return out
-
-
-# #1676: env vars whose values are API secrets — scrubbed from the (freeform)
-# provider error text so a captured 405/4xx body never leaks a key.
-_LLM_SECRET_ENV_VARS: tuple[str, ...] = (
-    "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY",
-    "LITELLM_API_KEY", "AZURE_API_KEY",
-)
-
-
-def _collect_secret_values(base_kwargs: dict) -> list[str]:
-    """#1676: the concrete secret VALUES to scrub from freeform provider error
-    text — the secret-keyed kwargs (e.g. the proxy-injected ``api_key``) + known
-    API-key env vars. Scrubbing the actual value is precise (vs guessing patterns
-    in arbitrary provider output)."""
-    vals: list[str] = []
-    for k, v in base_kwargs.items():
-        if isinstance(v, str) and v and any(h in k.lower() for h in _LLM_REQUEST_SECRET_HINTS):
-            vals.append(v)
-    for env in _LLM_SECRET_ENV_VARS:
-        val = os.environ.get(env)
-        if val:
-            vals.append(val)
-    return vals
-
-
-def _scrub_secrets(value: object, secrets: list[str]) -> object:
-    """#1676/#3830: replace any known secret VALUE occurring in a string with a
-    marker, recursing through dict/list structure to reach every string leaf.
-
-    #3830: the original version returned dict/list bodies UNCHANGED on the
-    (wrong) assumption that "providers do not echo your API key in the error
-    body" — a proxy's 401 quoting the token it rejected is ordinary provider
-    behaviour, and litellm's parsed error bodies are dicts, so that branch let
-    a credential straight into the durable audit log. Recursing preserves the
-    root-cause detail #1676 exists to capture (same shape, same non-secret
-    keys/values, nothing truncated or dropped) while closing the leak — a
-    pattern-value scrub, not a blanket redaction of the whole structure."""
-    if not secrets:
-        return value
-    if isinstance(value, str):
-        for s in secrets:
-            if s:
-                value = value.replace(s, "***REDACTED***")
-        return value
-    if isinstance(value, dict):
-        return {k: _scrub_secrets(v, secrets) for k, v in value.items()}
-    if isinstance(value, list):
-        return [_scrub_secrets(v, secrets) for v in value]
-    return value
 
 
 def _emit_llm_request_error(
@@ -2439,6 +2398,16 @@ async def recorded_acompletion(
             else:
                 raise
     except Exception as exc:
+        # #3830: scrub the exception OBJECT itself, first, before it is
+        # emitted, logged, displayed, or re-raised — the boundary fix
+        # (reyn.llm.secret_scrub) so every consumer downstream (the audit
+        # event below, a caller's own logger.exception/str(exc)/repr(exc),
+        # a sink nobody has written yet) reads already-safe text. This is
+        # the ONE place in the completions path where reyn first receives
+        # an exception litellm constructed — every internal `litellm.
+        # acompletion` call site above (streaming, the response_format
+        # retry, the Router branch) raises up to this single `except`.
+        _scrub_exception_in_place(exc, base_kwargs)
         _emit_llm_request_error(effective_model, purpose, exc, base_kwargs)
         # #1678, delegated to litellm at #3288-follow-up: this call shape
         # (reasoning_effort + tools, resolved to the openai/azure provider —
