@@ -179,12 +179,15 @@ class FakeRouterHost:
         self.mark_task_pending_calls += 1
 
     async def spawn_session(self, *, request: str, mode: str,
-                            narrowing: "dict | None", chain_id: str) -> dict:
+                            narrowing: "dict | None", chain_id: str,
+                            base_dir: "str | None" = None) -> dict:
         # #2103 S1bc / #2120: multi-session host hook (duck-typed; RouterLoop binds
         # spawn_session_fn only when this method exists). Records the spawn + returns
         # an ack — lets a dispatch test prove session_spawn reaches the handler.
+        # #4200 2/2: base_dir recorded too, same as narrowing.
         self.spawn_calls.append({"request": request, "mode": mode,
-                                  "narrowing": narrowing, "chain_id": chain_id})
+                                  "narrowing": narrowing, "chain_id": chain_id,
+                                  "base_dir": base_dir})
         return {"status": "ok", "kind": "session_spawned", "mode": mode}
 
     async def send_to_session(self, *, agent: str, session: str,
