@@ -142,11 +142,22 @@ def test_ephemeral_contextual_denied_tools_are_not_advertised() -> None:
 
 def test_ephemeral_contextual_denied_tool_is_rejected_on_every_call_shape() -> None:
     """Tier 2: hiding is NOT denying (#187) — an unadvertised tool named anyway is
-    still rejected, whether called natively or unwrapped from ``invoke_action``."""
+    still rejected, whether called natively or unwrapped from ``invoke_action``.
+
+    #4155: this used to also assert ``host.agent_sends == []`` as proof the denied
+    tool's handler never executed. That field went vacuous during the proposal-0067
+    P4d/P4e migration (#3978) — ``run_prompt`` dispatch moved off ``host.send_to_agent``
+    onto the registry (``run_prompt_result_fn``/``run_prompt_async_fn``), so nothing
+    populates ``agent_sends`` for this tool regardless of whether the gate below works;
+    the assertion could never fail for the reason it named. Dropped rather than
+    rewritten (six-question ③: nobody would miss it) — ``_is_excluded`` below already
+    checks ``error.kind == "tool_excluded"`` specifically, the kind a REAL handler
+    error (e.g. a missing ``run_prompt_result_fn``) would not produce, so it already
+    proves the handler was never reached, not merely that denial was reported.
+    """
     contextual = _untrusted_contextual()
-    host = FakeRouterHost()
     loop = RouterLoop(
-        host=host,
+        host=FakeRouterHost(),
         chain_id="c-3378",
         max_iterations=3,
         contextual_permission=contextual,
@@ -161,7 +172,6 @@ def test_ephemeral_contextual_denied_tool_is_rejected_on_every_call_shape() -> N
     for result in (native, wrapped):
         assert _is_excluded(result), result
         assert target in result["error"]["message"]
-    assert host.agent_sends == [], "the denied tool's handler executed"
 
 
 def test_wrapper_itself_stays_advertised_under_an_allow_list_contextual() -> None:
