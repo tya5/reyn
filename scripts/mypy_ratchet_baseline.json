@@ -640,10 +640,6 @@
     "code": "misc"
   },
   {
-    "file": "src/reyn/runtime/project_context_watch.py",
-    "code": "attr-defined"
-  },
-  {
     "file": "src/reyn/runtime/registry.py",
     "code": "arg-type"
   },

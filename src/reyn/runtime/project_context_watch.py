@@ -31,13 +31,15 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from reyn.core.events.events import EventLog
+
 
 class ProjectContextWatcher:
     """Turn-boundary check: has the project context file's mtime moved since
     construction (or the last detected change)? Read-only — never touches
     the live ``project_context`` string a `Session` was built with."""
 
-    def __init__(self, *, path: "Path | None", events: "object | None") -> None:
+    def __init__(self, *, path: "Path | None", events: "EventLog | None") -> None:
         self._path = path
         self._events = events
         self._last_mtime_ns = self._stat(path)
