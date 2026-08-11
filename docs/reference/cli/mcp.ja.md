@@ -159,18 +159,13 @@ reyn mcp install --source https://github.com/modelcontextprotocol/servers/tree/m
 
 ### パーミッションとの連動: mcp_install {#permission-interaction}
 
-ディスクに書き込む前に、`install` は `mcp_install` パーミッションゲートをチェックします。デフォルトの動作は `ask` です。初回インストール時にプロンプトが表示されます：
+`mcp_install` 専用のパーミッション軸は存在しません — その bool 形式(`ask`/`allow`/`deny`)は #571 collapse arc Phase 5 で撤去済みです。今このキーを宣言しても実行時の権限は一切成立しません(`permissions.py` の `_LEGACY_BOOL_AXIS_KEYS` はこのキーに対して警告を出すだけ)。`install` は他の write-and-fetch アクションと同じ形でゲートされます:
 
-```
-[approval] MCP サーバー 'io.github.modelcontextprotocol/server-github' をインストールしますか？
+- `file.write`(install 対象 `.reyn/config/mcp.yaml` への書き込み)
+- `http.get`(レジストリホストへの manifest fetch)
+- `secret.write`(server が宣言する `isSecret` env var の永続化)
 
-  [y] このインストールのみ許可
-  [j] このサーバーの承認を永続化
-  [r] 今後のすべてのインストールを許可
-  [N] 拒否
-```
-
-エンタープライズチームは `reyn.yaml` で `permissions.mcp_install: deny` を設定してサーバーの追加を防ぐか、`allow` でプロンプトを完全にスキップできます。詳細は [コンセプト: パーミッションモデル](../../concepts/runtime/permission-model.md) を参照してください。
+それぞれが独自の ask/allow/deny 挙動と JIT インタラクティブプロンプトを持ちます — デフォルトスコープ外への `file.write` は、他の out-of-scope 書き込みと同様、初回インストール時にプロンプトが表示されます。エンタープライズチームは `reyn.yaml` で該当ターゲットに `file.write: deny` または `http.get: deny` を設定してプロジェクト全体で install をブロックするか、両方を `allow` にしてプロンプトを完全にスキップできます。完全なゲート形と worked example は [コンセプト: パーミッションモデル — `mcp_install`](../../concepts/runtime/permission-model.ja.md#mcp_install-パーミッション) と [Reference: `reyn.yaml` — MCP install](../config/reyn-yaml.ja.md) を参照してください。
 
 ---
 
@@ -372,6 +367,6 @@ Claude Code の `mcp.json` への組み込み（stdio transport）：
 - [コンセプト: シークレット管理](../../concepts/runtime/secret-handling.md) — `~/.reyn/secrets.env` と `${VAR}` interpolation
 - [コンセプト: パーミッションモデル](../../concepts/runtime/permission-model.md) — `mcp_install` パーミッション
 - [Reference: `reyn secret`](secret.md) — ユニバーサルシークレット管理
-- [Reference: `reyn.yaml`](../config/reyn-yaml.md) — `mcp.servers:` スキーマと `permissions.mcp_install:`
+- [Reference: `reyn.yaml`](../config/reyn-yaml.md) — `mcp.servers:` スキーマと `file.write` + `http.get` install ゲート
 - [Reference: 共通フラグ](common-flags.md) — CLI コマンド共通フラグ
 

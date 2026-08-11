@@ -116,54 +116,33 @@ The reason is composition safety: one actor's approved capability must not trans
 
 ## `mcp_install` permission {#mcp_install-permission}
 
-> Compat-shim form during the [Collapse arc](#collapse-arc-571). The canonical decomposition is `file.write: [.reyn/config/mcp.yaml]` + `http.get: [{host: registry.modelcontextprotocol.io}]` + `secret.write: [<env_key>]`; the bool form below is preserved through Phase 4.
-
 `mcp_install` gates **adding a new MCP server to the configuration** — it is distinct from `permissions.mcp` (which gates runtime tool calls from an already-configured server).
 
-```yaml
-permissions:
-  mcp_install: ask      # deny | ask | allow (default: ask)
-```
+The `permissions.mcp_install: ask | allow | deny` bool axis shown in older docs is
+**gone as of the [Collapse arc](#collapse-arc-571) Phase 5**, not merely deprecated:
+`PermissionDecl.from_dict`'s `_LEGACY_BOOL_AXIS_KEYS` handling (`permissions.py:314-323`)
+only warns on the key now — the compat shim that used to expand it into the
+equivalent list-axis grants was removed along with the `require_*` methods it
+called. Declaring `permissions.mcp_install: <anything>` today establishes **no
+runtime authority**; nothing reads the value.
 
-| Value | Behaviour |
-|-------|-----------|
-| `ask` (default) | Interactive prompt on first install per server ID. Approval persists to `.reyn/approvals.yaml` under `mcp_install:<server_id>`. |
-| `allow` | Install proceeds without a prompt. |
-| `deny` | All install attempts are rejected immediately. |
-
-### Scope tiers
-
-`mcp_install` participates in the standard three-tier merge:
+`mcp_install.handle` (`op_runtime/mcp_install.py`) gates install the same way every
+other write-and-fetch action on the OS does — no dedicated axis:
 
 ```yaml
-# ~/.reyn/config.yaml (user scope)
 permissions:
-  mcp_install: allow     # personal dev machine — no friction
-
-# <project>/reyn.yaml (project scope — committed to git)
-permissions:
-  mcp_install: deny      # team-shared project — server list is centrally managed
-
-# <project>/reyn.local.yaml (local scope — gitignored)
-permissions:
-  mcp_install: ask       # personal override for this project
+  file.write: [.reyn/config/mcp.yaml]                          # write the install target
+  http.get:   [{host: registry.modelcontextprotocol.io}]        # fetch the server manifest
+  secret.write: [<ENV_KEY>]                                     # persist any isSecret env vars
 ```
 
-### Enterprise use case: "approved servers only" policy
-
-Combine `mcp_install: allow` with a private registry to allow installs while restricting which servers are visible:
-
-```yaml
-# enterprise reyn.yaml (project scope)
-mcp:
-  registries:
-    - https://mcp-registry.internal.acme.com/    # private registry (approved servers only)
-    - https://registry.modelcontextprotocol.io/   # public fallback (lower priority)
-permissions:
-  mcp_install: allow
-```
-
-With this configuration, team members can run `reyn mcp install <id>` freely — but only servers registered in the private registry are discoverable. The public registry is a fallback but any server installed from it still goes through the same audit trail (`mcp_server_installed` event). Combining `deny` on the public path via registry ordering creates a layered defence without requiring `deny` permission level.
+`file.write` and `http.get` each carry their own ask/allow/deny behavior (see
+their sections above) — there is no separate `mcp_install`-specific prompt copy
+or scope-tier merge; install approval is exactly file-write approval + fetch
+approval on those two targets. See the [`reyn.yaml` "MCP install" section](../../reference/config/reyn-yaml.md)
+for the current worked examples (block all installs / allow without prompting /
+restrict to certain hosts) and [`reyn mcp`](../../reference/cli/mcp.md) for the
+CLI-side prompt shape.
 
 ### Audit trail
 
@@ -626,10 +605,10 @@ See [reyn-yaml § safety.spawn](../../reference/config/reyn-yaml.md#safetyspawn-
 ## See also
 
 - [Reference: permissions](../../reference/config/permissions.md) — full schema
-- [Reference: reyn.yaml](../../reference/config/reyn-yaml.md) — `permissions:` key and `permissions.mcp_install`
+- [Reference: reyn.yaml](../../reference/config/reyn-yaml.md) — `permissions:` key, including the current `file.write` + `http.get` MCP install gate
 - [Reference: state-dir](../../reference/config/state-dir.md) — `.reyn/approvals.yaml`
 - [Concepts: secret handling](../runtime/secret-handling.md) — credential storage (`~/.reyn/secrets.env`)
-- [Reference: `reyn mcp`](../../reference/cli/mcp.md) — `install` subcommand and `mcp_install` gate interaction
+- [Reference: `reyn mcp`](../../reference/cli/mcp.md) — `install` subcommand and its permission gate
 - [How-to: manage permissions](../../guide/for-users/manage-permissions.md)
 - [Concepts: Capability profile](../runtime/capability-profile.md) — per-agent ProfileLayer spec (workflow / MCP / tool / category axes) and agent self-edit guide
 - [Concepts: LLM org-design tools](../multi-agent/org-design.md) — `spawn_agent` / `spawn_session` / `create_topology` and the ⊆-parent model in practice
