@@ -73,7 +73,7 @@ def test_policy_defaults():
     assert p.env_deny_names == []
     assert p.timeout_seconds == 120
     assert p.max_timeout_seconds == 600
-    assert p.background_timeout_seconds == 1800
+    assert p.background_timeout_seconds == 3600
     assert p.background_max_timeout_seconds is None
 
 
