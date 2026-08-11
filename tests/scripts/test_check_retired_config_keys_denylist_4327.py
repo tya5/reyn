@@ -127,7 +127,7 @@ def test_journal_directory_is_excluded_even_though_tracked(tmp_path) -> None:
     assert offending_lines(tmp_path) == []
 
 
-def test_a_known_different_schema_file_is_excluded_even_though_tracked(tmp_path) -> None:
+def test_a_known_different_schema_file_excludes_only_the_colliding_key(tmp_path) -> None:
     """Tier 1: docs/reference/builtin-models.md's fenced blocks are the
     model-CATALOG entry's own field shape (`{model, max_completion_tokens}`),
     never a `reyn.yaml` example — a real pre-flight scan (#4327) found this
@@ -139,6 +139,23 @@ def test_a_known_different_schema_file_is_excluded_even_though_tracked(tmp_path)
     _git_repo(tmp_path)
     _add(tmp_path)
     assert offending_lines(tmp_path) == []
+
+
+def test_a_known_different_schema_file_still_catches_other_retired_keys(tmp_path) -> None:
+    """Tier 1: lead-coder's #4332 review block — the exclusion is FILE x KEY,
+    not whole-file. `builtin-models.md` colliding on `model:` must not also
+    blind the gate to a genuine `models:` drift in the SAME file — exactly
+    the shape #4322 had to fix there the same night this gate was written."""
+    _write(
+        tmp_path, "docs/reference/builtin-models.md",
+        "model: anthropic/claude-3-7-sonnet\nmodels:\n  standard: foo\n",
+    )
+    _git_repo(tmp_path)
+    _add(tmp_path)
+    offenders = offending_lines(tmp_path)
+    assert [(str(p.relative_to(tmp_path)), n, k) for p, n, k, _ in offenders] == [
+        ("docs/reference/builtin-models.md", 2, "models"),
+    ]
 
 
 # ── single source: the denylist is read from _RENAMED_CONFIG_KEYS, not hand-duplicated ──

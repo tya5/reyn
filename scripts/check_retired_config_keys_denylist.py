@@ -94,13 +94,14 @@ for the identical reason, not a new one:
   already carves out for `CHANGELOG.md` (see that script's own module
   docstring for the identical argument spelled out in full).
 
-**2. Different-schema single files.** Column-0 anchoring solves the
-"legitimate nested key" case, but NOT the case where two UNRELATED schemas
-share a top-level field name — e.g. `reyn.yaml`'s `model:` (moved to
-`llm.model:`) vs. `scripts/dogfood_variant_replay.py`'s OWN config format,
-which also has a top-level `model:` field with a completely different
-meaning (which LLM to replay against), or the built-in model CATALOG
-entry's own per-entry schema (`{model: ..., max_completion_tokens: ...}`,
+**2. Different-schema single files — keyed per FILE × KEY, not per file.**
+Column-0 anchoring solves the "legitimate nested key" case, but NOT the
+case where two UNRELATED schemas share a top-level field name — e.g.
+`reyn.yaml`'s `model:` (moved to `llm.model:`) vs.
+`scripts/dogfood_variant_replay.py`'s OWN config format, which also has a
+top-level `model:` field with a completely different meaning (which LLM to
+replay against), or the built-in model CATALOG entry's own per-entry
+schema (`{model: ..., max_completion_tokens: ...}`,
 `src/reyn/llm/builtin_models.py`'s `BUILTIN_MODELS` dict shape), which is a
 sub-document fragment, not a `reyn.yaml` example, but still starts at
 column 0 in its own fenced block. Measured, not guessed — a real pre-flight
@@ -111,11 +112,18 @@ scan is what surfaced these, not a hypothetical:
 - `docs/reference/builtin-models.md` / `.ja.md` — every fenced block is one
   catalog entry's OWN field shape, never a full `reyn.yaml` document.
 
-A file lands on this list only after being READ and confirmed to contain
-no genuine `reyn.yaml`-shaped example anywhere in it (not just at the
-specific hit line) — see the PR that added each entry for that check.
-Adding a new different-schema doc costs one line here, same order of
-magnitude as the denylist itself.
+`_EXCLUDED_FILE_KEYS` maps `file -> {retired_key, ...}`, NOT `file ->`
+"exclude everything" — lead-coder's #4332 review block, caught by an
+independent re-measurement of exactly which keys collide per file: all 3
+files above collide ONLY on `model` (their own catalog-entry / replay-
+config field of that name); a whole-file exclusion silently stops watching
+the OTHER 7 denylist keys on that file too. `builtin-models.md` is
+precisely the file #4322 had to fix for a `models:` drift the same night
+this gate was written — a whole-file exclusion would have meant this gate
+never watches that file for that exact recurrence again. A file/key pair
+lands here only after the WHOLE file is read and confirmed to contain no
+genuine `reyn.yaml`-shaped example anywhere in it for that key (not just
+the specific hit line).
 
 ## Not a ratchet — a hard gate
 
@@ -152,16 +160,27 @@ _EXCLUDED_DIR_PREFIXES = (
     "docs/deep-dives/journal/",
 )
 
-# Different-schema single files: every top-level-looking key in these is a
-# DIFFERENT vocabulary that happens to share a field name with a retired
-# `reyn.yaml` key, never a `reyn.yaml` example itself. See module docstring
-# "Two exclusion classes" §2. Confirm (read the whole file, not just the
-# hit line) before adding an entry here.
-_EXCLUDED_FILES = frozenset({
-    "docs/deep-dives/contributing/dogfood-tooling.md",
-    "docs/reference/builtin-models.md",
-    "docs/reference/builtin-models.ja.md",
-})
+# Different-schema single files: SPECIFIC retired keys in these files are a
+# DIFFERENT vocabulary that happens to share that one field name with a
+# retired `reyn.yaml` key, never a `reyn.yaml` example itself. See module
+# docstring "Two exclusion classes" §2.
+#
+# Keyed file -> {retired_key, ...}, NOT file -> "exclude everything" —
+# lead-coder's #4332 review block: a whole-file exclusion was measured to
+# be wider than the actual collision. All 3 files below collide ONLY on
+# `model` (their own `{model: ..., max_completion_tokens: ...}` catalog-
+# entry / dogfood-replay-config field); a whole-file exclusion would have
+# silently stopped watching the other 7 denylist keys on these files too —
+# `builtin-models.md` is exactly the file #4322 had to fix for a `models:`
+# drift the same night this gate was written, so silently no longer
+# watching it for exactly that key would defeat the gate's own purpose.
+# Confirm per-key (read the whole file, not just one hit line) before
+# adding or widening an entry here.
+_EXCLUDED_FILE_KEYS: "dict[str, frozenset[str]]" = {
+    "docs/deep-dives/contributing/dogfood-tooling.md": frozenset({"model"}),
+    "docs/reference/builtin-models.md": frozenset({"model"}),
+    "docs/reference/builtin-models.ja.md": frozenset({"model"}),
+}
 
 
 def _retired_keys() -> "dict[str, str]":
@@ -194,8 +213,6 @@ def _iter_scan_files(root: Path = _ROOT):
             continue
         if any(rel_s.startswith(p) for p in _EXCLUDED_DIR_PREFIXES):
             continue
-        if rel_s in _EXCLUDED_FILES:
-            continue
         yield root / rel
 
 
@@ -211,11 +228,16 @@ def offending_lines(root: Path = _ROOT) -> "list[tuple[Path, int, str, str]]":
             text = path.read_text(encoding="utf-8")
         except (OSError, UnicodeDecodeError):
             continue
+        rel_s = str(path.relative_to(root))
+        excluded_keys = _EXCLUDED_FILE_KEYS.get(rel_s, frozenset())
         for lineno, line in enumerate(text.splitlines(), start=1):
             m = pattern.match(line)
-            if m:
-                key = m.group(1)
-                offenders.append((path, lineno, key, keys[key]))
+            if not m:
+                continue
+            key = m.group(1)
+            if key in excluded_keys:
+                continue
+            offenders.append((path, lineno, key, keys[key]))
     return offenders
 
 
