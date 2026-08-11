@@ -155,6 +155,28 @@ def test_config_rejects_an_unknown_policy_key_rather_than_dropping_it() -> None:
         SandboxConfig(policy={"unknown_totally_made_up_key": True})
 
 
+def test_config_rejects_a_timeout_above_the_cap() -> None:
+    """Tier 2: #3903① — an operator cannot raise sandbox.policy.timeout_seconds
+    past MAX_EXEC_TIMEOUT_SECONDS via config; the cap is always in force
+    (owner ruling 2026-08-11, industry-precedent boundedness axis, not a
+    permission axis an operator/compat mode can loosen). Real
+    SandboxConfig(policy=...) construction, not a bare
+    _translate_sandbox_policy_config() call — the config load path is what
+    an operator actually exercises."""
+    with pytest.raises(ValueError, match="timeout_seconds"):
+        SandboxConfig(policy={"timeout_seconds": 601})
+
+
+def test_config_accepts_a_timeout_exactly_at_the_cap() -> None:
+    """Tier 2: #3903① — the cap is inclusive: exactly MAX_EXEC_TIMEOUT_SECONDS
+    (600) is a valid operator value, not rejected."""
+    from reyn.security.sandbox.policy import resolve_sandbox_policy
+
+    cfg = SandboxConfig(policy={"timeout_seconds": 600})
+    resolved = resolve_sandbox_policy(cfg.policy, write_paths=[], mode=cfg.mode)
+    assert resolved["timeout_seconds"] == 600
+
+
 def test_config_guides_an_old_internal_vocabulary_key_by_name_not_as_unknown() -> None:
     """Tier 2: #3823 — an operator on a pre-#3823 (or pre-#3901) config who
     still writes an OLD internal-vocabulary key (`write_paths`, the pre-#3823

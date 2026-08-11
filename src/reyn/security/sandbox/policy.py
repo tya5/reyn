@@ -154,6 +154,22 @@ def resolve_passthrough_env(policy: "SandboxPolicy") -> dict[str, str]:
 DEFAULT_SANDBOX_NETWORK: bool = True
 
 
+# #3903①: the foreground exec wall-clock timeout — a boundedness axis, not a
+# permission axis (#3907/#3962 scoped the operator-only "LLM cannot set it"
+# rule to the 5 PERMISSION fields + timeout separately; timeout's own
+# boundedness is a DIFFERENT axis whose LLM-facing extensibility is owner-
+# ruled, see SandboxedExecIROp.timeout_seconds). Owner ruling (2026-08-11):
+# raise the prior 60s default to 120s / cap at 600s, matching industry
+# precedent (Claude Code: 120s default foreground, 600s max) rather than a
+# measured need — "#3903 is about realizing a SPEC, not something a
+# measurement should block." Single source: SandboxPolicy's own field
+# default below, the exec tool's schema description (exec.py), and the LLM-
+# supplied op-level override's clamp (op_runtime/sandboxed_exec.py) all read
+# these two constants — never a bare 120/600 literal a second time.
+DEFAULT_EXEC_TIMEOUT_SECONDS: int = 120
+MAX_EXEC_TIMEOUT_SECONDS: int = 600
+
+
 @dataclass
 class SandboxPolicy:
     """Declarative sandbox policy. See module docstring for field semantics.
@@ -235,7 +251,10 @@ class SandboxPolicy:
     # ``None`` (default) keeps the deny-list-only behavior above unchanged;
     # see :func:`resolve_passthrough_env`.
     allow_env_names: "list[str] | None" = None
-    timeout_seconds: int = 60
+    # #3903①: owner ruling 2026-08-11 — 60 -> 120, matching industry
+    # foreground precedent (Claude Code: 120s default). See
+    # DEFAULT_EXEC_TIMEOUT_SECONDS's own docstring above for the cap.
+    timeout_seconds: int = DEFAULT_EXEC_TIMEOUT_SECONDS
     max_output_bytes: int = MAX_SUBPROCESS_OUTPUT_BYTES
 
 
@@ -420,6 +439,20 @@ def _translate_sandbox_policy_config(config_policy: "dict | None") -> dict:
         field_name = _SANDBOX_POLICY_CONFIG_KEY_TO_FIELD[key]
         if key == "subprocess":
             out[field_name] = not value
+        elif key == "timeout_seconds":
+            # #3903①: the cap is a boundedness axis (band cost/budget), never
+            # compat/"outside the sandbox" like the 5 permission axes above —
+            # an operator cannot raise it past MAX_EXEC_TIMEOUT_SECONDS, fail
+            # loud rather than silently clamp (same "typo must not silently
+            # resolve" posture this function already applies to unknown
+            # keys).
+            if value > MAX_EXEC_TIMEOUT_SECONDS:
+                raise ValueError(
+                    f"sandbox.policy.timeout_seconds ({value}) exceeds the "
+                    f"maximum of {MAX_EXEC_TIMEOUT_SECONDS} seconds — the cap "
+                    f"is always in force, not liftable via config"
+                )
+            out[field_name] = value
         else:
             out[field_name] = value
     return out

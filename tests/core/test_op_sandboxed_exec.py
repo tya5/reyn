@@ -51,7 +51,11 @@ def test_policy_defaults():
     axis (an operator cannot know it), so #3202's opt-in-restriction
     reasoning does not carry over to it; #3901 left it at its pre-existing
     empty default. ``read_paths`` was retired in the broad-read realignment
-    (#1199) and is no longer a ``SandboxPolicy`` field at all."""
+    (#1199) and is no longer a ``SandboxPolicy`` field at all.
+
+    ``timeout_seconds`` defaults to 120 (#3903①, owner ruling 2026-08-11:
+    60 -> 120, matching industry foreground precedent — see
+    ``DEFAULT_EXEC_TIMEOUT_SECONDS`` in ``reyn.security.sandbox.policy``)."""
     p = SandboxPolicy()
     assert p.network is True
     assert p.write_paths == []
@@ -59,7 +63,7 @@ def test_policy_defaults():
     assert p.write_deny_paths == []
     assert p.deny_subprocess is False
     assert p.env_deny_names == []
-    assert p.timeout_seconds == 60
+    assert p.timeout_seconds == 120
 
 
 def test_policy_custom_fields():
