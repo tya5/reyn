@@ -188,6 +188,52 @@ def test_web_config_default_design_env(
         _cleanup(monkeypatch)
 
 
+def test_web_config_default_design_gateway_yaml(
+    tmp_project: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Tier 2c: `gateway.default_design` in reyn.yaml, through the real config
+    loader, is reflected in default_design when no env var is set (#4317 —
+    `default_design` had no address in the typed schema at all post-#4174-T4;
+    the OLD `web.default_design` raw-yaml read kept working regardless, since
+    it bypassed the loader/schema entirely — this test is about the NEW
+    schema-validated path, not about the old one having broken).
+
+    Uses "warm", NOT "coral" — "coral" sorts alphabetically first among
+    {coral, warm}, so it would also be the level-3 fallback's answer and the
+    assertion would pass even with the config read broken (confirmed:
+    falsify-verified by forcing the config read to always return None, which
+    incorrectly stayed green with "coral" and correctly went red with "warm")."""
+    (tmp_project / "reyn.yaml").write_text(
+        "llm:\n  model: standard\ngateway:\n  default_design: warm\n",
+        encoding="utf-8",
+    )
+    client = _make_client(tmp_project, monkeypatch)
+    try:
+        data = client.get("/api/web/config").json()
+        assert data["default_design"] == "warm", f"Got {data['default_design']}"
+    finally:
+        _cleanup(monkeypatch)
+
+
+def test_web_config_env_wins_over_gateway_yaml(
+    tmp_project: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Tier 2c: REYN_WEB_DEFAULT_DESIGN still outranks `gateway.default_design`
+    (priority order unchanged by #4317 — only the config source moved)."""
+    (tmp_project / "reyn.yaml").write_text(
+        "llm:\n  model: standard\ngateway:\n  default_design: warm\n",
+        encoding="utf-8",
+    )
+    client = _make_client(
+        tmp_project, monkeypatch, env_overrides={"REYN_WEB_DEFAULT_DESIGN": "coral"}
+    )
+    try:
+        data = client.get("/api/web/config").json()
+        assert data["default_design"] == "coral", f"Got {data['default_design']}"
+    finally:
+        _cleanup(monkeypatch)
+
+
 def test_web_config_project_overrides_stdlib(
     tmp_project: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -161,13 +161,19 @@ class GatewayConfig:
     reading/writing; ``gateway:`` unambiguously means the server.
 
     Aggregates ``ws_max_size`` (the gateway WebSocket inbound-frame
-    ceiling), ``auth`` (the gateway authentication model), and
-    ``surfaces`` (FP-0058 P2: per-surface opt-in/opt-out mount overrides).
+    ceiling), ``auth`` (the gateway authentication model), ``surfaces``
+    (FP-0058 P2: per-surface opt-in/opt-out mount overrides), and
+    ``default_design`` (the OpenUI host's default design slug — #4317:
+    T4's split enumerated ws_max_size/auth/surfaces but dropped
+    ``web.default_design`` entirely, leaving it with no address in the
+    new schema at all; ``gateway:`` is where it belongs since it's the
+    `reyn web` gateway's own setting, same category as the other three).
     Extend here when ``gateway.search`` gets its own knobs.
     """
     ws_max_size: int = DEFAULT_WS_MAX_SIZE
     auth: AuthConfig = field(default_factory=AuthConfig)
     surfaces: SurfacesConfig = field(default_factory=SurfacesConfig)
+    default_design: str | None = None
 
 
 def _build_web_fetch_config(raw: object) -> WebFetchConfig:
@@ -260,10 +266,17 @@ def _build_gateway_config(raw: object) -> GatewayConfig:
             ws_max_size = DEFAULT_WS_MAX_SIZE
     except (TypeError, ValueError):
         ws_max_size = DEFAULT_WS_MAX_SIZE
+    default_design_raw = raw.get("default_design")
+    default_design = (
+        str(default_design_raw).strip()
+        if default_design_raw not in (None, "")
+        else None
+    ) or None
     return GatewayConfig(
         ws_max_size=ws_max_size,
         auth=_build_auth_config(raw.get("auth")),
         surfaces=_build_surfaces_config(raw.get("surfaces")),
+        default_design=default_design,
     )
 
 

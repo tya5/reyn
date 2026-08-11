@@ -16,7 +16,10 @@ Response shape:
 
 Default-design resolution priority:
     1. env REYN_WEB_DEFAULT_DESIGN
-    2. reyn.yaml  web.default_design
+    2. reyn.yaml  gateway.default_design (#4317 — was `web.default_design`
+       pre-#4174-T4; T4's split enumerated ws_max_size/auth/surfaces but
+       dropped this field entirely, leaving it unreadable through the typed
+       config for a full cycle)
     3. first available alphabetically
 
 Per P7: no domain-specific strings; design metadata treated as opaque config.
@@ -30,7 +33,7 @@ from typing import Any
 import yaml
 from fastapi import APIRouter, Depends
 
-from reyn.interfaces.web.deps import get_project_root
+from reyn.interfaces.web.deps import get_project_root, get_reyn_config
 
 router = APIRouter(tags=["web"])
 
@@ -101,26 +104,36 @@ def _collect_designs(project_root: Path) -> list[dict[str, Any]]:
     return results
 
 
-def _resolve_default(project_root: Path, available: list[dict]) -> str | None:
-    """Resolve the default design slug using priority order."""
+def _resolve_default(config: Any, available: list[dict]) -> str | None:
+    """Resolve the default design slug using priority order.
+
+    #4317: was a raw ``yaml.safe_load`` of ``reyn.yaml`` reading the
+    (pre-#4174-T4) ``web.default_design`` key — bypassing the config loader
+    entirely. Because that parse never went through the typed schema, T4
+    splitting ``web:`` did NOT break it: ``cfg.get("web")["default_design"]``
+    kept resolving against the raw YAML dict regardless of what the schema
+    considered a known key, so an operator's `web.default_design:` silently
+    kept working post-T4 with no schema validation ever seeing it — the
+    loader-bypass's real cost wasn't "stopped returning a value", it was
+    "should have broken when the schema changed underneath it, and silently
+    didn't." Reads ``config.gateway.default_design`` from the already-loaded
+    ``ReynConfig`` instead: loader-validated, and the same dependency every
+    other router on this app already uses. **This is a genuine behavior
+    change**, not a pure bugfix — an operator still on `web.default_design:`
+    now gets nothing here (falls through to env var / alphabetical) instead
+    of the old raw-read value; `reyn config validate`/`migrate` surface the
+    rename via the `"web"` `RenamedKeyHint` in `config_schema.py` (already
+    covers `default_design` alongside `auth`/`ws_max_size`/`surfaces`).
+    """
     # 1. env var
     env_val = os.environ.get("REYN_WEB_DEFAULT_DESIGN", "").strip()
     if env_val:
         return env_val
 
-    # 2. reyn.yaml  web.default_design
-    reyn_yaml = project_root / "reyn.yaml"
-    if reyn_yaml.exists():
-        try:
-            cfg = yaml.safe_load(reyn_yaml.read_text(encoding="utf-8")) or {}
-            if isinstance(cfg, dict):
-                web_cfg = cfg.get("web") or {}
-                if isinstance(web_cfg, dict):
-                    val = web_cfg.get("default_design", "").strip()
-                    if val:
-                        return val
-        except Exception:
-            pass
+    # 2. reyn.yaml  gateway.default_design
+    val = getattr(getattr(config, "gateway", None), "default_design", None)
+    if val:
+        return val
 
     # 3. first alphabetically
     if available:
@@ -135,10 +148,11 @@ def _resolve_default(project_root: Path, available: list[dict]) -> str | None:
 @router.get("/web/config")
 async def web_config(
     project_root: Path = Depends(get_project_root),
+    config: Any = Depends(get_reyn_config),
 ) -> dict:
     """Return the OpenUI design roster and host schema capabilities."""
     available = _collect_designs(project_root)
-    default_design = _resolve_default(project_root, available)
+    default_design = _resolve_default(config, available)
 
     return {
         "default_design": default_design,

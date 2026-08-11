@@ -187,15 +187,14 @@ The default design is set at `reyn web` startup, in priority order:
 2. Environment variable: `REYN_WEB_DEFAULT_DESIGN=<slug>`
 3. `reyn.yaml`:
    ```yaml
-   web:
+   gateway:
      default_design: <slug>
    ```
-   (#4174 T4 split `web:` into `web_fetch:` (tool) and `gateway:` (server), but
-   `default_design` was never given a new address — `_build_gateway_config`
-   only reads `ws_max_size`/`auth`/`surfaces`. The key above still works
-   because the runtime itself still reads the old `web:` location. See #4317
-   for the tracked follow-up; do not "fix" this to `gateway:` until that
-   lands — it would document a key the schema doesn't parse.)
+   (#4174 T4 split `web:` into `web_fetch:` (tool) and `gateway:` (server) but
+   dropped `default_design` entirely — `_build_gateway_config` only read
+   `ws_max_size`/`auth`/`surfaces` for a full cycle. #4317 gave it the
+   `gateway.default_design` address above and moved `web_config.py`'s reader
+   off a raw `reyn.yaml` parse onto the real config loader.)
 4. None — fall through to "first available alphabetically".
 
 The host exposes the resolved default and the full available roster via

@@ -883,6 +883,7 @@
 # -----------------------------------------------------------------------------
 # gateway:
 #   ws_max_size: 16777216           # 16MB WebSocket inbound-frame ceiling
+#   default_design: null            # OpenUI host's default design slug (#4317); unset -> env REYN_WEB_DEFAULT_DESIGN -> first alphabetically
 #   auth:                           # reyn web gateway authentication (server-side)
 #     token: null                   # cross-machine (T3) bearer token; REQUIRED for a non-loopback bind (else fail-closed)
 #     require_token_on_loopback: true  # also require the token on loopback TCP (secure default for shared hosts)
