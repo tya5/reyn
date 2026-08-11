@@ -512,3 +512,70 @@ def test_migrate_value_identity_survives_a_multi_key_rewrite(project, monkeypatc
     assert after_flat["llm.api_base"] == "http://localhost:8000"
     assert after_flat["audit_events.keep_days"] == 30
     assert after_flat["unrelated_key"] == [1, 2, 3]
+
+
+def test_migrate_does_not_leave_a_doubled_blank_line_between_merged_chunks(
+    project, monkeypatch,
+) -> None:
+    """Tier 2: #4295 follow-up — a blank line sitting BETWEEN two chunks
+    the SAME migrate run removes (and nothing else) must be absorbed into
+    the removal, not left as an orphaned separator.
+
+    Found via real usage (lead-coder's dogfood-verification request):
+    tui-coder's own un-migrated `reyn.yaml` had `model:` and `models:`
+    separated by exactly one blank line; after migrating both into a new
+    `llm:` block, the output had TWO blank lines before the next section
+    — the blank line between the two OLD keys was neither claimed by
+    `model`'s own (single-line, no-block) removal nor by `models`'s
+    (whose own block-value removal already absorbs its OWN trailing
+    blank, per `_block_extent`), so it survived unclaimed and collided
+    with the moved block's own trailing blank. `migrate_text.py`'s
+    promise is "byte-for-byte untouched except the moved keys" — a gap
+    strictly BETWEEN two touched keys is touched by definition once both
+    keys are gone; leaving an extra blank line there is a real
+    (if data-loss-free) violation of that promise, not cosmetic noise to
+    shrug off.
+
+    Pins line-COUNT identity, not just "does it look right": migrate must
+    not add or drop a single line beyond the mechanical rename+reindent
+    the two moved keys' own content requires."""
+    from reyn.config.config_schema import RenamedKeyHint
+
+    monkeypatch.setattr(
+        "reyn.config.config_schema._RENAMED_CONFIG_KEYS",
+        {
+            "model": RenamedKeyHint(note="-> llm.model", destination="llm.model"),
+            "models": RenamedKeyHint(note="-> llm.models", destination="llm.models"),
+        },
+    )
+    original_text = (
+        "# Reyn project configuration\n"
+        "# Committed to git.\n"
+        "\n"
+        "# Default model class when --model is not specified\n"
+        "model: standard\n"
+        "\n"
+        "# Model class -> LiteLLM model string\n"
+        "# Three standard tiers.\n"
+        "models:\n"
+        "  light:    gemini-flash-lite\n"
+        "  standard: gemini-flash-lite\n"
+        "  strong:   gemini-pro\n"
+        "\n"
+        "# Project-wide context injected into the system prompt.\n"
+    )
+    _write_yaml(project / "reyn.yaml", original_text)
+
+    from reyn.interfaces.cli.commands.config import _migrate
+    _migrate()
+
+    text = (project / "reyn.yaml").read_text()
+    lines = text.split("\n")
+    # Exactly one blank line between the moved `models:` block's last
+    # sub-key and the next real section — not two.
+    strong_idx = next(i for i, ln in enumerate(lines) if "strong:" in ln)
+    assert lines[strong_idx + 1] == "", "expected a blank line right after the models: block"
+    assert lines[strong_idx + 2] != "", (
+        f"a second, orphaned blank line survived: {lines[strong_idx:strong_idx + 4]!r}"
+    )
+    assert "# Project-wide context injected into the system prompt." in lines[strong_idx + 2]

@@ -203,6 +203,24 @@ def rewrite_text(text: str, renames: dict[str, str]) -> RewriteResult:
         (extractions[old_key][1], extractions[old_key][2])
         for old_key in extractions
     ]
+    # A blank line that sits BETWEEN two chunks this SAME rewrite is
+    # already removing (and nothing else) was only ever separating those
+    # two keys from each other — once both are gone, that separator has
+    # nothing left to separate. Absorb it into the removal too, or it
+    # survives as an orphaned blank line and collides with whatever
+    # trailing blank the merged/inserted block ends with (byte-for-byte
+    # "untouched" only holds for what this rewrite doesn't touch AT ALL;
+    # a gap strictly between two touched keys is touched by definition).
+    removed_ranges.sort()
+    merged_ranges: list[list[int]] = []
+    for start, end in removed_ranges:
+        if merged_ranges and all(
+            _BLANK_RE.match(lines[i]) for i in range(merged_ranges[-1][1], start)
+        ):
+            merged_ranges[-1][1] = end
+        else:
+            merged_ranges.append([start, end])
+    removed_ranges = [(s, e) for s, e in merged_ranges]
 
     # First pass: does `parent` already exist as a top-level key in the
     # ORIGINAL text (not counting what we're about to remove — a renamed
