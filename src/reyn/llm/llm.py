@@ -1675,15 +1675,28 @@ def _collect_secret_values(base_kwargs: dict) -> list[str]:
 
 
 def _scrub_secrets(value: object, secrets: list[str]) -> object:
-    """#1676: replace any known secret value occurring in a string with a marker.
-    Non-strings pass through unchanged (dict/list provider bodies are kept whole —
-    providers do not echo your API key in the error body, and the full body is the
-    root-cause signal we must NOT truncate)."""
-    if not isinstance(value, str) or not secrets:
+    """#1676/#3830: replace any known secret VALUE occurring in a string with a
+    marker, recursing through dict/list structure to reach every string leaf.
+
+    #3830: the original version returned dict/list bodies UNCHANGED on the
+    (wrong) assumption that "providers do not echo your API key in the error
+    body" — a proxy's 401 quoting the token it rejected is ordinary provider
+    behaviour, and litellm's parsed error bodies are dicts, so that branch let
+    a credential straight into the durable audit log. Recursing preserves the
+    root-cause detail #1676 exists to capture (same shape, same non-secret
+    keys/values, nothing truncated or dropped) while closing the leak — a
+    pattern-value scrub, not a blanket redaction of the whole structure."""
+    if not secrets:
         return value
-    for s in secrets:
-        if s:
-            value = value.replace(s, "***REDACTED***")
+    if isinstance(value, str):
+        for s in secrets:
+            if s:
+                value = value.replace(s, "***REDACTED***")
+        return value
+    if isinstance(value, dict):
+        return {k: _scrub_secrets(v, secrets) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_scrub_secrets(v, secrets) for v in value]
     return value
 
 
@@ -1708,11 +1721,13 @@ def _emit_llm_request_error(
             "status_code": getattr(exc, "status_code", None),
         }
         # litellm exceptions carry the provider body on ``.body`` (often the parsed
-        # error dict) and/or ``.response`` (an httpx.Response). Capture BOTH, whole.
+        # error dict) and/or ``.response`` (an httpx.Response). Capture BOTH, whole
+        # (#3830: "whole" means shape-preserved, not unscrubbed — a dict body is
+        # walked recursively same as a string one).
         body = getattr(exc, "body", None)
         if body is not None:
             detail["provider_body"] = (
-                body if isinstance(body, (dict, list))
+                _scrub_secrets(body, secrets) if isinstance(body, (dict, list))
                 else _scrub_secrets(str(body), secrets)
             )
         resp = getattr(exc, "response", None)
