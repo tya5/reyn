@@ -30,7 +30,12 @@ import tempfile
 from pathlib import Path
 
 from reyn.security.sandbox._subprocess_io import communicate_capped, kill_process_tree
-from reyn.security.sandbox.backend import SandboxResult, WrappedCommand
+from reyn.security.sandbox.backend import (
+    AxisEnforcement,
+    AxisEnforcementDeclaration,
+    SandboxResult,
+    WrappedCommand,
+)
 from reyn.security.sandbox.policy import (
     SandboxPolicy,
     expand_policy_path,
@@ -202,6 +207,22 @@ class SeatbeltBackend:
     """
 
     name: str = "seatbelt"
+
+    # #4039 (D1/D2): Seatbelt enforces every axis — write via SBPL
+    # deny-default + explicit allow rules, both deny-lists via SBPL
+    # deny-after-allow (the one real backend that CAN express them, unlike
+    # Landlock's allowlist-only LSM constraint), network + subprocess via
+    # the generated profile's own deny rules, and both env fields via
+    # resolve_passthrough_env (this module's own env resolution call).
+    enforced_axes: AxisEnforcementDeclaration = AxisEnforcementDeclaration(
+        write_paths=AxisEnforcement.ENFORCES,
+        write_deny_paths=AxisEnforcement.ENFORCES,
+        read_deny_paths=AxisEnforcement.ENFORCES,
+        network=AxisEnforcement.ENFORCES,
+        deny_subprocess=AxisEnforcement.ENFORCES,
+        env_deny_names=AxisEnforcement.ENFORCES,
+        allow_env_names=AxisEnforcement.ENFORCES,
+    )
 
     def available(self) -> bool:
         """Return True iff the sandbox-exec mechanism is PRESENT on this platform.
