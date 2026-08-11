@@ -204,7 +204,17 @@ def run_purge(args: argparse.Namespace) -> None:
     if before is None:
         sys.exit(1)
 
-    root = Path(".reyn") / "events"
+    # #4204: was a bare relative Path(".reyn") (equivalent to anchoring on
+    # raw cwd) — fail-safe in DIRECTION (a subdirectory launch resolves to
+    # a phantom, usually-absent .reyn/events/ rather than some OTHER real
+    # tree, so this never purges the wrong project) but not in EFFECT: the
+    # operator asked for a destructive purge, got exit code 0 and a
+    # "No events directory" message, and the real project's event files
+    # were never touched — silently doing nothing is its own operator-
+    # trust hazard for a destructive command (architect, #4204).
+    from reyn.config import _find_project_root
+
+    root = (_find_project_root(Path.cwd()) or Path.cwd()) / ".reyn" / "events"
     if args.agent:
         root = root / "agents" / args.agent
     if not root.is_dir():
