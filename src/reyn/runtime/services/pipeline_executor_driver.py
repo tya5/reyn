@@ -401,6 +401,18 @@ class PipelineExecutorDriver:
             # missing this field here is the same gap pipe.py's
             # session-less `reyn pipe run` has, but THIS site has no
             # excuse — the value already exists on `host`.
+            #
+            # #4244 note: hooks_add — the only current reader of
+            # ctx.session_state_dir anywhere in src/ — is now denied at
+            # THIS exact dispatch point (pipeline_verbs._PIPELINE_STEP_
+            # DENY_TOOLS), so this field is currently unread by anything
+            # that reaches here. Kept anyway (lead-coder review): the
+            # danger is a FUTURE session_state_dir-reading tool being
+            # dispatched through this SAME path with the field silently
+            # missing again — the field costs one getattr; a future
+            # session_state_dir-sensitive tool dispatched here with it
+            # unset would repeat this exact incident. Do not remove
+            # merely because nothing reads it today.
             session_state_dir=getattr(host, "session_state_dir", None),
         )
         # #3546: the driver-session's LIVE contextual narrowing — read off the
