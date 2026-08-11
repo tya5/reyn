@@ -467,6 +467,16 @@ class RouterHostAdapter:
         # FP-0050 / #1822: content-threat scan + fence config. None (test hosts)
         # → defaults (disabled-safe via the methods' guards).
         threat_scan: Any = None,
+        # #4215①: a lazy callable → this session's OWN per-(agent, sid) state
+        # dir (the parent of `Session._snapshot_path`, #2285's "4th, most-
+        # specific" hook layer — see `Session._read_per_session_hooks`). A
+        # CALLABLE, not a `Path`, for the same reason `session_id_fn` above
+        # is one: a spawned session's real snapshot path is assigned AFTER
+        # this constructor runs (registry's spawn-time fixup), so an eager
+        # read here would freeze the pre-spawn value. None (test hosts / the
+        # legacy if/elif tool-dispatch tree) → `hooks_add`'s write-target
+        # helper falls back to its pre-#4215 global-write behavior.
+        session_state_dir_fn: "Callable[[], Path] | None" = None,
     ) -> None:
         self._op_ctx_source = op_context_source
         self._mcp_gateway = mcp_gateway_inputs
@@ -476,6 +486,7 @@ class RouterHostAdapter:
         self._turn_budget_engine_factory = turn_budget_engine_factory
         self._turn_budget_engine: Any = _TURN_BUDGET_ENGINE_UNSET
         self._turn_cancel_fn = turn_cancel_fn  # #1468
+        self._session_state_dir_fn = session_state_dir_fn  # #4215①
         self._agent_name = agent_name
         self._agent_role = agent_role
         self.output_language = output_language
@@ -784,6 +795,18 @@ class RouterHostAdapter:
         """The process-shared WAL (StateLog) or None — #2259 PR-1: threaded into the
         ToolContext so a recovery-core config tool records a config generation."""
         return self._state_log
+
+    @property
+    def session_state_dir(self) -> "Path | None":
+        """This session's OWN per-(agent, sid) state dir, or None — #4215①:
+        threaded into the ToolContext so ``hooks_add`` can write to the
+        session-local hooks layer instead of the global runtime layer.
+        Calls the stored ``session_state_dir_fn`` LAZILY (not read at
+        construction) — same reason ``live_session_id`` above defers to a
+        fn: a spawned session's real value is assigned by the registry's
+        spawn-time fixup, AFTER this adapter's constructor runs."""
+        fn = self._session_state_dir_fn
+        return fn() if fn is not None else None
 
     @property
     def permission_resolver(self) -> Any:
