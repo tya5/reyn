@@ -256,11 +256,9 @@ class OpContext:
     #
     # NOT a `background` field, deliberately (architect/lead-coder ruling,
     # #3903 issue thread, 2026-08-11): ephemeral and background are NOT the
-    # same predicate. `spawn_ephemeral_session` is fire-and-forget
+    # same predicate. `spawn_session`'s tool dispatch is fire-and-forget
     # regardless of mode, so a PERSISTENT spawn is also unwaited-on and
-    # still gets the foreground pair here (tracked gap, #4193) — and
-    # `run_pipeline_attached`'s ephemeral driver session IS attached
-    # (foreground, someone is waiting) yet is still ephemeral. A single
+    # still gets the foreground pair here (tracked gap, #4193). A single
     # bool cannot represent both axes correctly, so this field carries only
     # what it actually measures. Direction of the implication this field
     # licenses: "an ephemeral exec gets the background timeout pair" is
@@ -268,6 +266,18 @@ class OpContext:
     # reader who inverts that direction will misjudge the persistent-spawn
     # gap as already covered. False by default (direct/test construction,
     # non-chat OpContext).
+    #
+    # #4193 co-vet correction (2026-08-11, docs-maintainer): an earlier
+    # revision of this comment claimed `run_pipeline_attached`'s driver
+    # session was "ephemeral yet attended" as a second counter-example.
+    # Verified false by direct trace: `_spawn_pipeline_driver_session`
+    # (`session_api.py`) always spawns with `mode="persistent"` (so the
+    # crash-recovery re-wake scan can find it), and `_ephemeral` is set
+    # ONLY at `mode == "ephemeral"`'s one assignment site
+    # (`registry.py`'s `spawn_session_recorded`). That driver session is
+    # therefore never ephemeral — it correctly gets the foreground pair
+    # (attached ⇒ someone is waiting), for the ordinary reason a plain
+    # boolean read would suggest, not despite one.
     ephemeral: bool = False
 
     # #1800 slice 5c: the awaited HookDispatcher (the Session's instance, with the
