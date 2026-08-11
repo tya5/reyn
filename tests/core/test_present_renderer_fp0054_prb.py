@@ -94,7 +94,16 @@ def test_unsupported_component_does_not_crash_the_render_loop() -> None:
 # ── 1b. #3846 ③ — image_cache real-pixel rendering ───────────────────────────
 
 
-def _png_bytes(*, size: tuple = (4, 4), color: tuple = (200, 20, 60)) -> bytes:
+def _png_bytes(*, size: tuple = (32, 32), color: tuple = (200, 20, 60)) -> bytes:
+    """A real PNG for the SUCCESS render path. 32x32, not e.g. 4x4: a real
+    `textual-image` 0.12.0 bug (the version pip resolves on reyn's own
+    Python 3.11 floor — 0.13+ requires >=3.12) raises at print time for a
+    very small source image (reproduced: 8x8 and 1x1 fail, 16x16 does not)
+    — a tiny fixture here would make "did the success path render" tests
+    exercise the FAILURE path instead on a 3.11 install, depending on which
+    textual-image version pip happened to resolve. See
+    `test_safe_image_renderable_catches_a_print_time_failure` for the
+    dedicated (version-independent) test of that failure path."""
     import io as _io
 
     from PIL import Image as PILImage
@@ -106,20 +115,20 @@ def _png_bytes(*, size: tuple = (4, 4), color: tuple = (200, 20, 60)) -> bytes:
 
 def test_image_with_resolved_cache_renders_real_pixels_not_the_status_line() -> None:
     """Tier 1: #3846 ③ — a successfully-resolved image (a real ImageResolution
-    in `image_cache`) is wrapped in a `textual_image.renderable.Image`
-    instance, not the pre-③ `[image loaded: ...]` status-line `Text`. This
-    is reyn's OWN dispatch decision (which renderable class `_render_image`
-    picks) — a fact about reyn's wiring, not textual_image's rendering
-    behavior (a third party's promise this file does not pin). Checked on
-    the render-model OBJECT (`Group.renderables`), not on printed glyph
-    output — a Console.print of either class produces terminal-formatted
-    text, so a text-content-only assertion here cannot tell "real pixel
-    path wired" apart from "still the old status line" (confirmed by
-    deliberately reverting `_render_image` to the pre-③ Text return and
-    seeing string-only assertions here stay green — falsify-verified)."""
-    from textual_image.renderable import Image as TextualImage
-
+    in `image_cache`) is wrapped in reyn's own `_SafeImageRenderable` (in
+    turn wrapping a `textual_image.renderable.Image`), not the pre-③
+    `[image loaded: ...]` status-line `Text`. This is reyn's OWN dispatch
+    decision (which renderable class `_render_image` picks) — a fact about
+    reyn's wiring, not textual_image's rendering behavior (a third party's
+    promise this file does not pin). Checked on the render-model OBJECT
+    (`Group.renderables`), not on printed glyph output — a Console.print of
+    either class produces terminal-formatted text, so a text-content-only
+    assertion here cannot tell "real pixel path wired" apart from "still
+    the old status line" (confirmed by deliberately reverting
+    `_render_image` to the pre-③ Text return and seeing string-only
+    assertions here stay green — falsify-verified)."""
     from reyn.core.present.image_fetch import ImageResolution
+    from reyn.interfaces.repl.present_renderer import _SafeImageRenderable
 
     nodes = validate_blueprint({"component": "image", "src": "http://x/y.png", "alt": "a photo"})
     resolved = resolve_bindings(nodes, {}, surface="inline-cui")
@@ -128,8 +137,8 @@ def test_image_with_resolved_cache_renders_real_pixels_not_the_status_line() -> 
     }
     group = render_presentation_nodes(resolved.nodes, image_cache=image_cache)
     (renderable,) = group.renderables
-    assert isinstance(renderable, TextualImage), (
-        f"expected a textual_image renderable, got {type(renderable)!r}"
+    assert isinstance(renderable, _SafeImageRenderable), (
+        f"expected reyn's own image-render wrapper, got {type(renderable)!r}"
     )
 
     # And the printed output is still sane through the real pipeline: no
@@ -141,6 +150,40 @@ def test_image_with_resolved_cache_renders_real_pixels_not_the_status_line() -> 
     assert "could not render" not in out
     assert "[image failed" not in out
     assert out.strip()
+
+
+def test_safe_image_renderable_catches_a_print_time_failure() -> None:
+    """Tier 1: #3846 ③ — `_SafeImageRenderable` degrades to a status line
+    when the WRAPPED renderable's `__rich_console__` raises, not just when
+    `TextualImage(...)`'s own constructor raises.
+
+    This matters because Rich's `__rich_console__` protocol is a generator
+    Console.print() only iterates once it knows the real render width — a
+    failure there happens LATER than `_render_image`'s `try/except` (which
+    only wraps construction) can see. Real instance found during
+    implementation: `textual-image` 0.12.0 (the version pip resolves on
+    reyn's own Python 3.11 floor) raises `ValueError('height and width must
+    be > 0')` from inside `__rich_console__` for a very small source image
+    — `TextualImage(...)` construction itself never raises for these.
+    Tested here against a FAKE inner renderable (reyn's own wrapper
+    behavior, not textual_image's version-specific bug — the dev
+    environment's installed textual_image version may not reproduce that
+    bug at all, so pinning this test to it would be flaky-by-environment)."""
+    from rich.console import Console as _Console
+
+    from reyn.interfaces.repl.present_renderer import _SafeImageRenderable
+
+    class _RaisingInner:
+        def __rich_console__(self, console: object, options: object):
+            raise ValueError("height and width must be > 0")
+            yield  # pragma: no cover — makes this a generator function
+
+    wrapped = _SafeImageRenderable(_RaisingInner(), "a photo")
+    console = _Console(width=100, file=io.StringIO(), force_terminal=True, color_system=None)
+    console.print(wrapped)  # must not raise
+    out = console.file.getvalue()
+    assert "could not render" in out
+    assert "a photo" in out
 
 
 def test_image_with_undecodable_body_falls_back_to_a_distinct_status_line() -> None:

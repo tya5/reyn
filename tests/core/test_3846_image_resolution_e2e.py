@@ -142,7 +142,13 @@ async def test_loaded_state_replaces_the_placeholder_after_resolution(monkeypatc
     from PIL import Image as PILImage
 
     buf = io.BytesIO()
-    PILImage.new("RGB", (4, 4), color=(200, 20, 60)).save(buf, format="PNG")
+    # 32x32, not e.g. 4x4: a real textual-image 0.12.0 bug (the version pip
+    # resolves on reyn's own Python 3.11 floor) raises at PRINT time for a
+    # very small source image — a tiny fixture here would make this
+    # SUCCESS-path test exercise the failure path instead, depending on
+    # which textual-image version pip resolved (see present_renderer's own
+    # test file for the dedicated, version-independent failure-path test).
+    PILImage.new("RGB", (32, 32), color=(200, 20, 60)).save(buf, format="PNG")
     body = buf.getvalue()
     monkeypatch.setattr(
         httpx, "AsyncClient", _client_factory(_StreamResp(body=body, content_type="image/png"))

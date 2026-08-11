@@ -227,7 +227,16 @@ dependencies = [
     # approximation only — see #3970's own reinvention-comparison for why a
     # hand-rolled half-block renderer is not a "lighter version" of this
     # (different feature, not a smaller implementation of the same one).
-    "textual-image>=0.13",
+    # Floor is 0.12 (not 0.13+): 0.13.0+ declares `Requires-Python >=3.12`,
+    # unsatisfiable on reyn's own Python 3.11 CI leg/support floor — a real
+    # install-stage failure caught only by testing a CLEAN venv on 3.11 (a
+    # venv with the package already installed, or a 3.12-only check, both
+    # stay green and miss this). Verified 0.12.0 has the identical API
+    # surface this file uses (`renderable.Image(pil_image, width=...)`, the
+    # same import-time no-textual / terminal-auto-detection module
+    # structure, and the same TextualImage-constructor-forces-eager-decode
+    # behavior `present_renderer.py`'s decode-failure path relies on).
+    "textual-image>=0.12",
 ]
 
 [project.urls]

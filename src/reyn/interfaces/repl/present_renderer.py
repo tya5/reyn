@@ -117,6 +117,39 @@ def _render_node(node: dict, image_cache: "dict[str, Any] | None" = None) -> "An
     return Text(f"<unsupported present component {component!r}>", style="dim")
 
 
+class _SafeImageRenderable:
+    """Wraps a `textual_image` renderable so a PRINT-TIME failure degrades to
+    a status line instead of propagating and breaking the render loop.
+
+    Rich's `__rich_console__` protocol is a generator Console.print() only
+    iterates once it knows the real render width — so a failure inside it
+    happens LATER than `_render_image`'s own `try/except` (which only wraps
+    `TextualImage(...)` construction) can see. This is not hypothetical: a
+    real `textual-image` 0.12.0 bug (the version pip resolves on reyn's
+    Python 3.11 floor — 0.13+ requires >=3.12) raises `ValueError('height
+    and width must be > 0')` from inside `__rich_console__` for a very
+    small source image (reproduced: 8x8 and 1x1 fail, 16x16 does not) —
+    `TextualImage(...)` construction itself never raises for these, so the
+    pre-existing `try/except` in `_render_image` never sees it; this wrapper
+    is the only thing standing between that bug and an uncaught exception
+    reaching whatever Console the presenter/renderer layer owns."""
+
+    def __init__(self, inner: "Any", label: str) -> None:
+        self._inner = inner
+        self._label = label
+
+    def __rich_console__(self, console: "Any", options: "Any"):
+        from rich.text import Text
+
+        try:
+            yield from self._inner.__rich_console__(console, options)
+        except Exception as exc:
+            yield Text(
+                f"[image loaded but could not render: {self._label} — {exc}]",
+                style="dim",
+            )
+
+
 def _render_image(node: dict, image_cache: "dict[str, Any] | None") -> "Any":
     """The `image` component (#3846 ②/③) — a PURE dict lookup + in-memory
     decode, never a fetch.
@@ -169,7 +202,7 @@ def _render_image(node: dict, image_cache: "dict[str, Any] | None") -> "Any":
         # HERE, inside this `try`, not later at paint time (verified: a
         # truncated PNG that `open()` accepts raises `OSError` from
         # `TextualImage(...)` itself).
-        return TextualImage(pil_image, width="auto")
+        return _SafeImageRenderable(TextualImage(pil_image, width="auto"), label)
     except Exception as exc:
         # Anything from a corrupt/unsupported body to a missing optional dep
         # (defensive only — pillow/textual-image are regular deps) degrades
