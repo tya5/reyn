@@ -86,7 +86,10 @@ sandbox:
 | `env_deny_names` | 文字列のリスト | `[]`（compat） | プロセスに引き渡さない環境変数名。デフォルト（空）は環境全体が引き渡される、つまり起動元シェルと同じ信頼レベルを意味します。 |
 | `timeout_seconds` | int | `120` | 前景 exec のウォールクロック既定（期限超過でプロセスを終了）── LLM の `exec` 呼び出しが独自の timeout を省略した場合に適用。`#3903①` で旧 `60` から引き上げ。 |
 | `max_timeout_seconds` | int | `600` | 前景 exec の LLM 拡張可能な上限 ── LLM は自身の `timeout` でこの値まで要求できるが、超えることはできない。超過は無言のクランプではなく型付きエラー。 |
-🔴 **背景 exec にはまだ `reyn.yaml` から設定可能な専用 timeout がありません**（`#3903` a-2、作業中）。`SandboxPolicy` は内部的に `background_timeout_seconds`/`background_max_timeout_seconds` を既に持っていますが、`reyn.yaml sandbox.policy` からはまだ設定できません ── `sandboxed_exec` のハンドラが呼び出しを前景か背景かまだ区別していないため、その配線より前に operator 向けキーを公開すると、書いた値が検証・保存されるのに何の効果も持たない状態になります（このプロジェクトが化粧的なギャップではなく欠陥クラスとして扱う「宣言された config、読む者がいない」という形そのものです）。この配線が着地するまでは、前景・背景を問わずすべての exec が上記の `timeout_seconds`/`max_timeout_seconds` に従います。
+| `background_timeout_seconds` | int | `3600` | 背景 exec 専用の既定値（`#3903` a-2）── exec が **ephemeral** セッション（`spawn_ephemeral_session`）内で実行され、LLM の呼び出しが独自の timeout を省略した場合に `timeout_seconds` の代わりに適用される。 |
+| `background_max_timeout_seconds` | int \| `null` | `null`（上限なし） | 背景 exec 専用の上限 ── `null`/未設定は無制限を意味する。整数を設定すれば上限を課せる。上限超過時は警告をログし、実効値をその上限までクランプする（`#4174` T0 の warn-not-fail posture と同じ）── 無言で無制限に通すことはない。 |
+
+🔴 **ここでいう「背景」は「ephemeral セッション」を意味し、「誰も待っていない」ではありません。** `spawn_ephemeral_session` 自身の exec はこのペアを得ますが、**persistent** な spawn セッションの exec（同じく fire-and-forget で誰も待っていない）はこのペアを得ません ── 依然として上の前景ペアが適用され、既知のギャップとして [#4193](https://github.com/tya5/reyn/issues/4193) に起票済みで、この改修の範囲外です。逆に、**attached** で駆動される ephemeral セッション（`run_pipeline_attached` ── 実際に誰かが待っている）は、依然として背景ペアを得ます ── 実際に読まれるシグナルは ephemeral かどうかであって、「この呼び出しに前景/背景のどちらが選ばれたか」ではないためです。ワークロードの timeout 上、本当に重要な区別が「自分は待たれているか」なら、この表はその近似であって完全な一致ではないと理解してください。
 
 **`deny_subprocess: true` は、exec を一切必要としない workload にとって最も安価で最も予測可能な hardening です。** 設定は単一の boolean で、その効果は全面的かつ即時です — 子プロセス生成が完全に拒否され、後から状態がずれて驚くことはありません。exec が本当に必要な workload（ビルドステップ、CLI ラッパー等）にはこの設定は向きません — その場合はサンドボックス境界と、exec のたびに残る監査証跡（`sandboxed_exec_started`/`_completed`/`_cancelled` が `argv` を記録します — [Reference: events](../../reference/runtime/events.md) 参照）で bound されます。
 

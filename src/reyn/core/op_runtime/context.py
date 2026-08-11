@@ -247,6 +247,29 @@ class OpContext:
     # non-interactive callers, pre-#1470 tests).
     cancel_event: "asyncio.Event | None" = None
 
+    # #3903 a-2 ③: whether the SESSION this op runs in is ephemeral
+    # (``Session._ephemeral`` — set by ``spawn_ephemeral_session``, read
+    # live via a callable the same way ``cancel_event`` isn't but every
+    # other ``_fn``-supplied field on ``RouterOpContextSource`` is).
+    # ``sandboxed_exec.handle`` reads this to pick which ``SandboxPolicy``
+    # timeout pair applies when the LLM's call omits its own ``timeout``.
+    #
+    # NOT a `background` field, deliberately (architect/lead-coder ruling,
+    # #3903 issue thread, 2026-08-11): ephemeral and background are NOT the
+    # same predicate. `spawn_ephemeral_session` is fire-and-forget
+    # regardless of mode, so a PERSISTENT spawn is also unwaited-on and
+    # still gets the foreground pair here (tracked gap, #4193) — and
+    # `run_pipeline_attached`'s ephemeral driver session IS attached
+    # (foreground, someone is waiting) yet is still ephemeral. A single
+    # bool cannot represent both axes correctly, so this field carries only
+    # what it actually measures. Direction of the implication this field
+    # licenses: "an ephemeral exec gets the background timeout pair" is
+    # correct; "background-ness is decided by this field" is NOT — a
+    # reader who inverts that direction will misjudge the persistent-spawn
+    # gap as already covered. False by default (direct/test construction,
+    # non-chat OpContext).
+    ephemeral: bool = False
+
     # #1800 slice 5c: the awaited HookDispatcher (the Session's instance, with the
     # loaded hooks registry + the _put_inbox/_stage/_run_shell seams from 5b),
     # threaded down the SAME Session → router / kernel chain as hook_bus. Lifecycle
