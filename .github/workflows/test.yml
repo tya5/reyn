@@ -79,7 +79,14 @@ jobs:
         # they query for. `12m` (job budget 15m) leaves ~3m headroom for
         # checkout/setup/pip-install (which run before this step and also
         # count against the job's 15m) plus post-job cleanup.
-        run: timeout 12m python -m pytest -q -n auto --timeout=120 -rs
+        # `--durations=25` (#4239): where the 5m23s actually goes has never
+        # been measured — "delete unneeded tests to speed CI" is only true if
+        # the time is proportional to the count, and a handful of real
+        # sleeps / real subprocesses would make it false. Printed by every
+        # run that was going to happen anyway, so the measurement costs no
+        # extra CI cycle; it is also the exact input a duration-balanced
+        # shard split would need.
+        run: timeout 12m python -m pytest -q -n auto --timeout=120 -rs --durations=25
 
   lint:
     name: ruff
