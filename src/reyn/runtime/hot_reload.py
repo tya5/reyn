@@ -70,6 +70,39 @@ def is_pure_addition(name: str, existing_entries: "dict | None") -> bool:
     return name not in (existing_entries or {})
 
 
+def _warn_unknown_hot_reload_keys(in_set: "dict") -> None:
+    """#4174 T0: WARN (never reject) on an unknown/renamed key inside the
+    hot-reload IN-set (mcp / cron / skills / pipelines / presentations —
+    same ``ReynConfig`` schema, just sourced from ``.reyn/*.yaml`` instead
+    of ``reyn.yaml``). Deliberately NOT folded into :func:`validate_in_set`'s
+    reject-triggering return: an unknown key here is a vocabulary problem
+    (the owner's "no hard-fail anywhere" ruling), not a structural one — a
+    misspelled key inside an otherwise well-shaped IN-set must not roll
+    back a reload the operator/LLM is actively waiting on.
+
+    Reuses the SAME :func:`reyn.config.config_schema.unknown_config_keys`
+    walk :func:`reyn.config.loader.load_config`'s startup warning and
+    ``reyn config validate`` both call — one implementation, three call
+    points.
+    """
+    from reyn.config import config_schema
+
+    if not isinstance(in_set, dict):
+        return
+    unknown = config_schema.unknown_config_keys(in_set)
+    if not unknown:
+        return
+    lines = [
+        f"{key!r} is not recognized — it was NOT APPLIED"
+        + (f"; it belongs at {hint}" if hint else ".")
+        for key, hint in sorted(unknown.items())
+    ]
+    _log.warning(
+        "hot-reload IN-set has unrecognized key(s) (reload still proceeds):\n"
+        + "\n".join(f"  - {line}" for line in lines)
+    )
+
+
 def validate_in_set(in_set: "dict") -> "str | None":
     """Validate-before-apply (#2073 S2): a structural check of the re-read IN-set.
 
@@ -77,7 +110,12 @@ def validate_in_set(in_set: "dict") -> "str | None":
     the whole reload: no seam runs, the live config is unchanged = rollback), or
     ``None`` when valid. Permissive — an absent component is a no-op — but rejects a
     malformed shape so a half-written ``.reyn/*.yaml`` can never half-apply. The
-    component checks grow with the IN-set (hooks in S2b)."""
+    component checks grow with the IN-set (hooks in S2b).
+
+    #4174 T0: also runs the (non-rejecting) unknown-key WARN check — see
+    :func:`_warn_unknown_hot_reload_keys`. Runs regardless of the structural
+    outcome below (report everything found in one pass)."""
+    _warn_unknown_hot_reload_keys(in_set)
     if not isinstance(in_set, dict):
         return f"IN-set must be a mapping, got {type(in_set).__name__}"
     cron = in_set.get("cron")
