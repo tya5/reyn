@@ -256,6 +256,10 @@
     "code": "return-value"
   },
   {
+    "file": "src/reyn/interfaces/cli/commands/agent.py",
+    "code": "attr-defined"
+  },
+  {
     "file": "src/reyn/interfaces/cli/commands/audit.py",
     "code": "attr-defined"
   },
