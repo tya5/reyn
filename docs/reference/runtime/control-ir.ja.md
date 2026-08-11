@@ -8,18 +8,6 @@ audience: [human, agent]
 
 Control IR は LLM が artifact と並行して出力できる副作用 op のリストです。OS は各 op をディスパッチし、LLM（または次の Phase）が消費するために結果を返します。
 
-> ⚠️ **このページは部分訳です（#4196）。** `OP_KIND_MODEL_MAP`（`src/reyn/schemas/models.py`）が
-> 定義する op kind は現在 32 件ですが、このページが記述しているのは 24 件のみです — 残り 8 件
-> （`render_template` / `skill_install` / `load_skill` / `pipeline_install` /
-> `presentation_install` / `plugin_install` / `plugin_uninstall` /
-> `emit_hook_event`）は**専用の節がありません**
-> （「翻訳が古い」のではなく、そもそも節が存在しません — 一部は他 op の説明文中に言及される
-> だけで、それ自体の記述は持ちません）。それらの op を調べる際は
-> [英語版 Control IR reference](control-ir.md) を参照してください。
-> CLAUDE.md は en/ja の一律ミラーを義務としていません（ja は意図的な部分 subset）——
-> この注記は「未翻訳であること」自体を欠陥だと言っているのではなく、**部分訳であることを
-> このページ自身が今まで一度も明示していなかった**ことに対するものです。
-
 ## Op の種類
 
 | 種類 | 目的 | 必要な Permission |
@@ -31,6 +19,8 @@ Control IR は LLM が artifact と並行して出力できる副作用 op の�
 | `glob_files` | glob パターンに一致するファイルを列挙する | `file.read` |
 | `grep_files` | 正規表現でファイル内容を検索する | `file.read` |
 | `ask_user` | Phase を一時停止してユーザーに質問する | なし（常に許可） |
+| `present` | バルクデータと宣言的な view を、LLM の出力トークンを介さずにユーザー向けサーフェスへ直接ルーティングする（fire-and-continue） | Tier 0（常に許可）；`data_ref` の read authority は `file.read` と同一 |
+| `render_template` | 構造化データに対して Jinja2 テンプレートをレンダリングし文字列にする（サンドボックス化された producer — 副作用無し、sink 無し） | `template_ref` / `data_ref` の read authority は `file.read` と同一；インラインのみは純粋な計算（ゲート無し） |
 | `sandboxed_exec` | `SandboxPolicy` と `SandboxBackend` を介して argv を実行する(削除済みの `shell` op を置き換え) | バックエンドが強制（`SandboxPolicy`） |
 | `web_search` | DuckDuckGo で公開ウェブを検索する | Tier 1 — デフォルト許可；`reyn.yaml` の `web.search: deny` でブロック |
 | `web_fetch` | 単一 URL を取得してテキストを抽出する | Tier 1 — デフォルト許可；`reyn.yaml` の `web.fetch: deny` でブロック |
@@ -41,12 +31,17 @@ Control IR は LLM が artifact と並行して出力できる副作用 op の�
 | `mcp_get_prompt` | 設定済み MCP server から名前で 1 件の rendered prompt（messages）を取得する | Skill frontmatter の `permissions.mcp: [server_name]`（`mcp` と同じ軸） |
 | `mcp_install` | レジストリから MCP server をプロジェクト設定にインストールする | Skill frontmatter の `permissions.mcp_install: true` |
 | `mcp_drop_server` | MCP server をプロジェクト/local/user 設定から削除する（`mcp_install` の逆） | Skill frontmatter の `permissions.mcp_drop_server: true` |
+| `skill_install` | Skill（ローカルディレクトリまたは git/URL source）をプロジェクトの skills 設定に登録する | Skill frontmatter の `file.write: [.reyn/config/skills.yaml]`；`source` 設定時は `http.get: [{host: <source_host>}]` |
+| `load_skill` | Skill の `SKILL.md` 本体を読み込む — 専用の skill-activation verb（FP-0066 P0、#3247）；登録済み skill の invocation 時 `${REYN_*}`/`${CLAUDE_*}`/`${env:VAR}` トークンを展開する | `file.read` |
+| `pipeline_install` | Pipeline（ローカル DSL ファイルまたは git/URL source）をプロジェクトの pipelines 設定に登録する | Skill frontmatter の `file.write: [.reyn/config/pipelines.yaml]`；`source` 設定時は `http.get: [{host: <source_host>}]` |
+| `presentation_install` | 名前付き presentation テンプレート（インライン blueprint）をプロジェクトの presentations 設定に登録する | `file.write: [.reyn/config/presentations.yaml]` |
 | `embed` | 生の embedding primitive: テキストのバッチ → ベクトル | なし（デフォルト許可; embedding API コスト） |
 | `index_query` | インデックス済みソース 1 件に対してセマンティック検索を行う | なし |
 | `semantic_search` | マクロ（FP-0057 Phase 2a; `recall` から rename）: embed → 各ソースに index_query → トップ K をマージ | なし |
 | `index_drop` | インデックス済みソースを完全削除する（破壊的） | Skill frontmatter の `permissions.index_drop: ask` |
 | `index_update` | ソースの index への差分/delta-reconcile ingestion（add/update/remove/skip） | なし（デフォルト許可；own-write；embedding API コスト） |
 | `compact` | 会話履歴を任意で今すぐ圧縮する（advisory） | なし（LLM コスト；必須の `retry_loop` backstop とは独立） |
+| `emit_hook_event` | LLM が作成する `llm:<session_id>:<event_name>` の hook-event を、呼び出し元自身のセッションの `HookBus` に発行する（Hook-Event Redesign Phase 5 part 2） | なし（構造的な session-binding + 静的な kind ホワイトリストが autonomy boundary をゲート — 下記の専用セクション参照） |
 
 ## 共通エンベロープ
 
@@ -170,6 +165,38 @@ rows: 500          # #3664: すべての行状スロット(table/list と keyval
 発行されるイベント: `presented`(P6 audit) — `{data_ref, view, mode, surface, ingested, bindings_resolved, bindings_dropped, coerced, rows, fallback_stage}`。`view` は登録名、インライン blueprint では `blueprint:<hash>`、両方未指定の場合は `null` です。`fallback_stage`(`null` | `content_type_default` | `generic`)は実際にユーザーへ届いたビューアを記録します — 要求された描画が直接描画されたときは `null`、そうでなければ合成フォールバックの段階です — これにより、要求どおり描画されたリテラルのみビューを、未知 / 全ミスで引き継がれたフォールバックと区別できます(両者とも `bindings_resolved=0` を共有するため)。`ingested`(`none` | `partial` | `full`)は**OS が計算**します(データがインラインだったか、セッション内でそれより前に ref への `read_file` が現れているか) — LLM の自己申告では決してありません。イベントには**ref と統計のみが含まれ、コンテンツバイトは含まれません**(データはすでに ref 内で永続化されています)。
 
 > PR-B: inline-CUI レンダラーが配線されています(chat セッションの `OpContext.presentation_renderer` が設定されていれば `surface: ["inline-cui"]`、そうでなければ `["null"]` — 例えば presentation_renderer 無しで組み立てられた素の `OpContext` は PR-A の元の挙動のまま)。会話のスクロールバック内でワンショットのインラインブロックとして `ResolvedPresentation.nodes` をレンダリングします(`interfaces/repl/present_renderer.py`、既存の Rich `Console` → `StringIO` → `run_in_terminal()` パターンに乗る形)。明示的な per-render terminal width を使用します(Rich は `StringIO` へ書き込む際に幅を自動検出できないため)。`presentations.yaml` レジストリ + 4段階フォールバックチェーンと replay/rewind 再レンダリングは着地済みです。replay(`reyn events <log>`)時、`presented` イベントはまだ有効な ref からベストエフォートで再レンダリングされるか、ref が失われている場合は audit イベントを指す expiry プレースホルダを表示します — display-only な投影であり(状態の再構築ではない)。全体像は [Concepts: Present layer](../../concepts/runtime/present.ja.md) と [Present op & surface reference](present.ja.md) を参照してください。
+
+## `render_template`
+
+構造化データに対して Jinja2 テンプレートをレンダリングし、プレーンな文字列にします。汎用の、サンドボックス化された**producer**です: `data + template → string`、**副作用無し、sink 無し**（レンダリングされた文字列は通常の op 結果として返されます — canonical `text`；大きな出力は chat パスで自動オフロードされます）。呼び出し元はそれを任意の sink へルーティングします: `present`、`write_file`、メッセージ本文、または pipeline の `ctx`。
+
+構造化データをユーザーに見せるには（宣言的な）`present` を優先してください — トークン経済的でポータブルです。`render_template` が必要なのは**計算されたテキスト**が要る場合のみです: ループ / 条件分岐 / 集約が散文に織り込まれる形は、宣言的なバインディングでは意図的に表現できません。
+
+```json
+{
+  "kind": "render_template",
+  "template": "{% for r in data.results %}- {{ r.title }}\n{% endfor %}",
+  "data_ref": "runs/summary.json",
+  "undefined": "strict"
+}
+```
+
+フィールド:
+- `template`（`template_ref` と XOR）— インラインの Jinja2 ソース文字列。
+- `template_ref`（`template` と XOR）— zone-readable なテンプレートファイルパス。`file.read` authority で**生テキスト**として読まれます（テンプレートファイルはソーステキストであり、JSON 再水和はされません）。
+- `data_ref`（`data_inline` と XOR）— zone-readable な任意のパス。`file.read` セマンティクス（`present` が使うのと同じシーム）でフルの値に再水和されます。
+- `data_inline`（`data_ref` と XOR）— 既に LLM のコンテキストにある小さなオブジェクト。
+- `undefined`（省略可、デフォルト `"strict"`）— `"strict"`: 未定義の変数は**欠けている名前を名指しするハードエラー**（デフォルトで loud なので、file sink が黙って壊れた artifact を書くことはない）；`"lenient"`: 未定義は空にレンダリングされ、参照されたが未バインドの名前は結果メタの `undefined_vars` に表れます。
+
+解決されたデータはテンプレートコンテキストの **`data`** 配下にバインドされます（`{{ data.results[0].title }}`）。
+
+**サンドボックスと無害性。** エンジンは常に `jinja2.sandbox.SandboxedEnvironment`（唯一のファクトリ `reyn.security.template_env.make_sandboxed_env` 経由）です — テンプレートは LLM が作成する場合があり、サンドボックス化されていない Jinja2 は任意コード実行（SSTI）です。ブロックされた属性トラバーサル（`{{ ().__class__ }}`）は sandbox violation を raise し、構造化された `error` 結果になります；何も実行されません。`autoescape` は**OFF**です: op は RAW なレンダリング済みバイトを返します。無害化は**sink**の責務です（terminal はガードで制御バイトを除去、file は無害、web サーフェスは HTML エスケープ）— producer 側でのエスケープは file / terminal の artifact を壊してしまいます。
+
+**Read-authority の等価性。** `template_ref` / `data_ref` はまさに `file.read` ゲートを通して解決されます；拒否された read は `status="denied"`。render_template は agent の `file.read` が読める以上のものを読むことは決してできません。インラインのみの呼び出し（`template` + `data_inline`）は純粋な計算です — read ゲート無し。
+
+**リソース bound。** `SandboxedEnvironment` は SSTI を止めますが、リソース枯渇は止めません — `{% for i in range(10**9) %}` のような bound の無いループはまだ溢れます。cap は生成**中**に適用されます（`template.generate(context)` のストリーミング）、max-output-chars バジェットに対してウォールクロック backstop 付きで累積します；どちらかを超えた瞬間にレンダリングは停止し、結果は発火した bound を名指しする `truncated: true` メタフラグとともに TRUNCATED されます（`truncate_reason`）— bound された結果であり、OOM やハングにはなりません。bound はデフォルトで safety-spirit 定数です（`OpContext.render_template_bounds` で operator が調整可能）。
+
+結果フィールド: `rendered`（文字列）、`truncated`、`truncate_reason`（truncated 時）、`undefined_vars`（lenient モード）。エラー結果は `status="error"` + `error_kind`（`template_error` | `security` | `undefined`）+ `error` を持ちます。新しいイベント種別は無し — 標準の op イベントです；(template, data) の純粋な関数なので、通常の memo/replay がそのまま適用されます。
 
 ## `sandboxed_exec`
 
@@ -386,6 +413,220 @@ MCP server をプロジェクト/local/user 設定から削除します — `mcp
 
 結果フィールド: `status`（`"ok"` / `"not_found"`）、`server`、`scope`、`removed_path`、`env_keys_cleared`、`secrets_cleared`。
 
+## `skill_install`
+
+Skill（ローカルディレクトリまたは git/GitHub source URL から）をプロジェクトの `skills.entries` 設定に登録します。2 つの tool surface verb が同じ `op_runtime/skill_install.py` ハンドラーに収束します: `skill_install_local`（ローカルパス）と `skill_install_source`（git/URL、PR-D、#2548）。
+
+ローカルパスの例:
+```json
+{
+  "kind": "skill_install",
+  "path": "skills/my-skill",
+  "name": "my-skill"
+}
+```
+
+Source/git の例:
+```json
+{
+  "kind": "skill_install",
+  "source": "https://github.com/user/skill-repo",
+  "name": "my-skill"
+}
+```
+
+サブディレクトリ規約（Terraform を反映）: `"https://github.com/user/repo//skills/my-skill"` はクローンされたリポジトリ内の `skills/my-skill` サブディレクトリを選択します。
+
+フィールド:
+- `path`（`source` が無い場合は必須）— skill ディレクトリ（`SKILL.md` を含む）へのパス、または `SKILL.md` ファイルへの直接パス。絶対パスまたはプロジェクトルート相対パスが可能です。ディレクトリを指す場合、ハンドラーは `/SKILL.md` を追加します。`source` が設定されている場合は無視されます。
+- `source`（省略可、PR-D）— git または GitHub URL。ハンドラーはリポジトリを `.reyn/skills/<name>/` へシャロークローンします。リポジトリ内のサブディレクトリは `//` セパレータで指定します。呼び出し元の permission 宣言に `http.get: [{host: <source_host>}]` が必要です。
+- `scope`（省略可、デフォルト `".reyn/config/skills.yaml"`）— 後方互換のため保持；現在未使用（すべての install は `.reyn/config/skills.yaml` に書き込みます）。
+- `name`（省略可）— 設定キーの上書き。省略時、ハンドラーは以下の順で解決します: frontmatter の `name:` フィールド → ディレクトリのベース名 → リポジトリ/サブディレクトリのベース名。解決された名前は**安全な単一パスコンポーネントに sanitize されます**（`[A-Za-z0-9._-]`；`/`、`\`、`..`、先頭 `.` は不可）— 安全でない名前（呼び出し元の `op.name` または第三者の SKILL.md frontmatter から）は `status="error"` で**拒否**され、パス構築に決して使われません。
+- `plugin_id`（省略可、ADR 0064 §3.7、plugin model P2）— 設定されると、書き込まれる `skills.yaml` エントリに `entry["plugin_id"]` としてそのまま刻印されます。`plugin_install` が plugin の `skills/` capability を登録するためこのハンドラーを内部的に呼ぶ際にのみ設定されます — この追加的な provenance フィールドは `plugin_uninstall` が特定の plugin が作成したすべてのエントリを見つけるために読み戻します。直接の `skill_install` 呼び出しでは不在（`None`）で、このフィールドが存在する前と変わりません。
+
+ハンドラーのライフサイクル（source パスはステップ 1 の前に 0a〜0d を挿入）:
+0. **Source パスのみ**: (a) source host に対して `require_http_get` でゲート。(b) 候補名を sanitize（`_safe_skill_name`）し、クローン先が `.reyn/skills/` 配下に含まれることを検証（`_contained_under`）— どちらかが失敗した場合、ファイルシステムの変更前に拒否します（path-traversal → arbitrary-rmtree ガード）。リポジトリを `.reyn/skills/<candidate_name>/` へシャロークローン。(c) root またはサブディレクトリで `SKILL.md` を探す。(d) frontmatter の名前が解決され sanitize された後、containment チェック + 名前が candidate と異なる場合はクローンディレクトリをリネーム。
+1. `SKILL.md` パスを解決（ディレクトリ → `<dir>/SKILL.md`、または直接ファイル）
+2. `SKILL.md` を読んで `split_frontmatter()` — `name` と `description` を抽出
+3. 設定されていれば `op.name` の override を適用
+4. `content_guard.scan_for_threats(scope="strict")` で description を threat-scan — blocking-severity のマッチでブロック（source パス: ブロック時はクローンを削除）
+5. `PermissionResolver.require_file_write`（= `.reyn/config/skills.yaml`）でゲート
+6. `.reyn/config/skills.yaml` に `skills.entries.<name>` を `{path, description, enabled: true, visibility: menu}` で書き込み（+ 設定されていれば `source: <url>`）
+7. `record_config_generation` を呼ぶ（recovery-core: 切り詰め耐性スナップショット、#2259 / CLAUDE.md gate）
+8. `skill_installed` イベントを発行（P6 監査証跡）
+9. `get_active_hot_reloader().request_reload(source="skill_install")` 経由で hot-reload をリクエスト
+
+結果フィールド: `status`（`"installed"` / `"blocked"` / `"error"`）、`name`、`path`、`description`、`config_path`、`source`（ローカル install の場合は空文字列）。
+
+発行されるイベント: `skill_install_threat_match`、`skill_install_threat_blocked`（threat scan）、`skill_installed`（成功時 P6）。
+
+## `load_skill`
+
+**FP-0066 P0（#3247）。** 専用の skill-activation verb です — skill の `SKILL.md` 本体を読み込むこと自体が invocation です（#2971 の根拠は今も成立: skill body はモデルへの指示であり、実行されるコードではない；`run_skill` op は今も存在しません）。`read_file` の旧 `is_skill_body_path` 特殊ケースから抽出されました（ADR 0064 §3.5 は元々専用 verb を求めていましたが、#2971 は代わりに通常の read op に折り込みました — これはその drift を逆転させます）。Tool surface: `load_skill`（#3223 naming-convention arc により正式化）。
+
+```json
+{
+  "kind": "load_skill",
+  "path": "skills/my-skill/SKILL.md"
+}
+```
+
+フィールド:
+- `path`（必須）— skill の `SKILL.md` パス。L1 の `## Skills` メニューまたは `skill_list` ツールが提示するもの。
+
+ハンドラーのライフサイクル（`op_runtime/load_skill.py`）:
+1. **一度だけ解決（#3196 co-vet round 2、セキュリティクリティカル）**: `op.path` は `reyn.core.op_runtime.context.resolve_path_for_gate` を通じて**厳密に一度だけ**解決され、`resolved_path` になります；以降のすべての判断（permission ゲート、provenance 分類、実際のバイト読み取り）は THIS SAME 文字列を再利用します。「これは信頼できるか」と「何を読むか」を別々に、独立に解決すると、#3196 が閉じた symlink-swap TOCTOU ウィンドウが再び開いてしまいます。
+2. **Builtin/plugin バイパス**: `read_builtin_body_bytes`（#2913/#2914）/ `read_plugin_body_bytes`（`plugin_install.is_registered_plugin_root`）— `file.py` が自身の（無関係な）汎用 builtin/plugin body 読み取りで使うのと SAME ヘルパーです。`None` でない結果は既にそれ自体が trusted な provenance（`"builtin"` / `"plugin"`）であり、単なる permission-bypass シグナルではなく、通常の `require_file_read` ゲートをスキップします。
+3. **Permission ゲート**: バイパスが発火しなかった場合、`resolved_path` に対して `require_file_read`。
+4. **読み取り + デコード**: `ctx.workspace.read_file_bytes`（またはバイパスのバイト列）→ 共有のテキストコーデックデコードラダー。バイナリ結果はエラーです（skill body はテキストでなければなりません）。
+5. **Provenance 分類（#3196）**: ステップ 2 由来の builtin/plugin、または `resolved_path` が `ctx.available_skills`（`:skill` invocation が解決するのと SAME の registered-skill スナップショット）内のエントリに一致する場合は `config_entry`。3 つのクラスのいずれにも一致しないパスもそのまま返されます — プレーンで、展開されず、イベント無し（fail closed）。
+6. **展開**: provenance が設定されている場合、`reyn.plugins.skill_load.load_skill_body` は `${REYN_PLUGIN_ROOT}`/`${REYN_SKILL_DIR}`/`${REYN_PROJECT_DIR}`/`${CLAUDE_*}` エイリアスを無条件に展開し、`${env:VAR}` は `VAR` が `ctx.permission_decl.env_expand`（#3198、deny-by-default）で宣言されている場合にのみ展開します — 宣言されていない、または未設定の名前のトークンは展開されずに残ります（決して blank にはなりません）。**#3629**: これが `content` として返される完全展開済みの文字列です（モデルがこのターンで読むもので、変更なし）；`load_skill_body` は追加で、`${REYN_SKILL_DIR}`/`${REYN_PLUGIN_ROOT}`（+ `${CLAUDE_*}` エイリアス）を LITERAL のまま残した永続化安全な variant と、location-token map も返します。これはこの op 結果の `content_history`/`token_map`/`skill_source_path` フィールドとして表面化します — 理由はステップ 8 参照。
+7. **自己 bound**: 過大な body はリゾルバーのインラインキャップ（`control_ir_inline_cap`）に truncate され、コンテキストを溢れさせません；そのパスでは `status: "truncated"` + `note`。
+8. **#3629 — 展開済みの値ではなく永続化安全な history**: `content` は現在のターンの LLM 呼び出しが見るものです；`content_history`（provenance が設定された場合のみ存在）は `router_loop.py` の tool-result assembly が代わりに `history.jsonl` に永続化するものです — history は immutable なので、絶対パスをそこに焼き込むと、後の rename/move（#3588 は 1 つの実例）が永遠に stale になり得る値を凍結してしまい、モデルには stale な絶対パスと live なものを区別する方法がありません。wire-serialise パス（`RouterHistoryBuffer._serialise_turn` → `reyn.plugins.skill_load.refresh_location_tokens`）は、永続化されたエントリが replay されるたびに、リテラルトークンを CURRENT のファイルシステムに対して新たに再解決します — `token_map` は監査完全性のためのメタデータのみです（決して再展開の source ではありません）。
+
+結果フィールド: `status`（`"ok"` / `"truncated"` / `"not_found"` / `"error"`）、`path`、`content`、加えて truncated 結果には `total_chars`/`_truncated`/`note`、非 UTF-8 コーデックが使われた場合は `encoding`、provenance クラスが一致した場合（ステップ 6）は（#3629）`content_history`/`token_map`/`skill_source_path`。
+
+発行されるイベント: `tool_executed`（`op="load_skill"`）は常に；`skill_body_loaded`（`provenance`、`env_tokens_expanded`/`env_names_expanded`、`env_tokens_denied`/`env_names_denied` — 名前とカウントのみで展開/拒否された値は決して含まない）は provenance が分類された場合のみ。
+
+## `pipeline_install`
+
+Pipeline（ローカル DSL ファイルまたは git/GitHub source URL から）をプロジェクトの `pipelines.entries` 設定に登録します。2 つの tool surface verb が同じ `op_runtime/pipeline_install.py` ハンドラーに収束します: `pipeline_install_local`（ローカルパス）と `pipeline_install_source`（git/URL）。`skill_install` を可能な限り反映し、その汎用の path-safety + sandboxed git-clone ヘルパーをそのまま再利用します（`_safe_skill_name` / `_contained_under` / `_parse_source_spec` / `_source_host` / `_shallow_clone` / `_read_yaml` / `_write_yaml` / `_resolve_project_root` は skill 固有のロジックを持ちません）。
+
+ローカルパスの例:
+```json
+{
+  "kind": "pipeline_install",
+  "path": "pipelines/hello.yaml"
+}
+```
+
+Source/git の例:
+```json
+{
+  "kind": "pipeline_install",
+  "source": "https://github.com/user/pipeline-repo"
+}
+```
+
+サブディレクトリ規約（Terraform を反映、`skill_install` と同じ）: `"https://github.com/user/repo//pipelines/my-pipeline"` はクローンされたリポジトリ内の `pipelines/my-pipeline` サブディレクトリを選択します。
+
+フィールド:
+- `path`（`source` が無い場合は必須）— pipeline の `*.yaml` DSL ファイルへの直接パス。`skill_install` と異なり、ディレクトリかファイルかの解決はありません — pipeline の登録は常にちょうど 1 ファイルです。source install の場合、`path`（設定時）はリポジトリ root/サブディレクトリ相対で DSL ファイルを選択します；省略時、リポジトリ root/サブディレクトリはちょうど 1 つの `*.yaml` ファイルを含んでいなければなりません。
+- `source`（省略可）— git または GitHub URL。ハンドラーはリポジトリを `.reyn/pipelines/<name>/` へシャロークローンします。リポジトリ内のサブディレクトリは `//` セパレータで指定します。呼び出し元の permission 宣言に `http.get: [{host: <source_host>}]` が必要です。
+- `scope`（省略可、デフォルト `".reyn/config/pipelines.yaml"`）— 後方互換のため保持；現在未使用（すべての install は `.reyn/config/pipelines.yaml` に書き込みます）。
+- `name`（省略可、#2722）— 自由な NAMESPACE キーで、宣言された `pipeline:` 名とは結合されていません。ファイル内のすべての `pipeline:` ドキュメントは `{name}.{declared-name}` として登録されます；`.` は予約済み（namespace セパレータ）で `name` 内では拒否されます。省略時、キーは DSL ファイルの stem（または git install の場合は source のベース名）にデフォルトします。
+- `plugin_id`（省略可、ADR 0064 §3.7、plugin model P2）— `skill_install` の `plugin_id` フィールドをそのまま反映します（同じ stamp-on-entry メカニズム、`plugin_install` の内部呼び出しでのみ設定）。
+
+ハンドラーのライフサイクル（source パスはステップ 1 の前に 0a〜0d を挿入）:
+0. **Source パスのみ**: (a) source host に対して `require_http_get` でゲート。(b) 候補名を sanitize し、クローン先が `.reyn/pipelines/` 配下に含まれることを検証 — どちらかが失敗した場合、ファイルシステムの変更前に拒否します（path-traversal → arbitrary-rmtree ガード）。リポジトリを `.reyn/pipelines/<candidate_name>/` へシャロークローン。(c) DSL ファイルを探す（`path` が選択するか、リポジトリ root/サブディレクトリの唯一の `*.yaml` ファイル）。(d) 宣言された名前が解決され sanitize された後、containment チェック + 名前が candidate と異なる場合はクローンディレクトリをリネーム。
+1. DSL ファイルパスを解決（ローカル: `op.path` を直接；source: located されたクローンファイル）
+2. `parse_pipeline_docs` でパース — 1 ファイルが複数の `pipeline:` ドキュメントを持つ場合があります（#2722）；不正な形式のファイルは拒否され（`status="error"`）、決して登録されません
+3. 登録 namespace キーを解決（#2722）: `op.name` または DSL ファイルの stem（source install の場合: クローン前に導出された sanitize 済み candidate）；`.` は拒否されます
+4. `content_guard.scan_for_threats(scope="strict")` で**すべての** pipeline ドキュメントの description を threat-scan — blocking-severity のマッチでブロック（source パス: ブロック時はクローンを削除）
+5. `PermissionResolver.require_file_write`（= `.reyn/config/pipelines.yaml`）でゲート
+6. `.reyn/config/pipelines.yaml` に `pipelines.entries.<name>` を `{path, description, enabled: true}` で書き込み（+ 設定されていれば `source: <url>` / `plugin_id: <id>`）
+7. `record_config_generation` を呼ぶ（recovery-core: 切り詰め耐性スナップショット、#2259 / CLAUDE.md gate）
+8. `pipeline_installed` イベントを発行（P6 監査証跡）— この install が登録する `{key}.{declared-name}` グローバル名の FULL セットである `registered_names` を持ちます（#2722 H6）
+9. `get_active_hot_reloader().request_reload(source="pipeline_install")` 経由で hot-reload をリクエスト（既存の `"pipelines"` シーム — `Session._reapply_pipelines` — がレジストリを再構築）
+
+結果フィールド: `status`（`"installed"` / `"blocked"` / `"error"`）、`name`、`registered_names`、`path`、`description`、`config_path`、`source`（ローカル install の場合は空文字列）。
+
+発行されるイベント: `pipeline_install_threat_match`、`pipeline_install_threat_blocked`（threat scan）、`pipeline_installed`（成功時 P6）。
+
+## `presentation_install`
+
+名前付きの presentation テンプレート（宣言的なコンポーネントツリー）をプロジェクトの `presentations.entries` 設定に登録します（proposal 0060 Phase 1 Layer A、A8）。1 つの tool surface verb: `presentation_install_local`、`op_runtime/presentation_install.py` が処理します。`skill_install` / `pipeline_install` の STRUCTURE（permission ゲート → 設定書き込み → `record_config_generation` → イベント発行 → hot-reload）を反映しますが、source/git-fetch パスは**無く**（blueprint はインラインで運ばれる小さな宣言的データで、決して file-backed の artifact ではない）、`scan_for_threats` の呼び出しも**ありません** — present blueprint は構造的に非実行であることが保証されています（`reyn.core.present.catalog`: 8 個の固定コンポーネント、非リテラルの値はすべて `$bind` RFC-6901 JSON-Pointer、template-ref/eval/exec のサーフェス無し、`image.src` はラベルとしてレンダリング — fetch/SSRF 無し）；`validate_blueprint`（インラインの `present(blueprint=...)` op が既に通過するのと SAME のゲート）が、skill/pipeline の自由記述 `description` に対する `scan_for_threats` と同じ役割を果たします。
+
+例:
+```json
+{
+  "kind": "presentation_install",
+  "name": "status_card",
+  "blueprint": {
+    "component": "keyvalue",
+    "rows": [{"label": "status", "value": {"$bind": "/status"}}]
+  }
+}
+```
+
+フィールド:
+- `name`（必須）— `presentations.entries` の設定キー；`present(view=<name>)` op が解決する値。
+- `blueprint`（必須）— 宣言的なコンポーネントツリー。インラインの `present(blueprint=...)` の `blueprint` フィールドと同じ形状です。
+
+ハンドラーのライフサイクル:
+1. 構造的な threat ゲート: `validate_blueprint(op.blueprint)` — 不正な形式 / 非カタログの blueprint に対しては、設定変更の**前に**拒否します（`status="blocked"`）。
+2. `PermissionResolver.require_file_write`（= `.reyn/config/presentations.yaml`）でゲート
+3. `.reyn/config/presentations.yaml` に `presentations.entries.<name>` を `{blueprint, enabled: true, provenance: <ctx.turn_origin>}` で書き込み — `provenance` は `ctx.turn_origin` のみから OS が刻印します（A7/A9）、op フィールドからは決して来ません
+4. `record_config_generation` を呼ぶ（既存の設定クラッシュリカバリを継承；新しい recovery-gated obligation は無し — この op に truncate-falsify テストの義務はありません）
+5. `presentation_installed` イベントを発行（P6 監査証跡）
+6. `dispatch_install_reload(source="presentation_install")` 経由で hot-reload をリクエスト（既存の `"presentations"` シーム — `Session._reapply_presentations`、FP-0054 PR-C — がレジストリを再構築；operator が `presentations.yaml` を編集した場合に既に reload されるのと SAME のシーム）
+
+構造的に inert な状態で出荷されます: presentation は名前で invoke されるものです — `present(view=<name>)` op がそれを名指しした時のみレンダリングされるため、install された直後の template は discoverable だが、参照されるまでは dormant です（新しい状態は不要、skill/pipeline の builtin-inert を反映）。
+
+結果フィールド: `status`（`"installed"` / `"blocked"` / `"error"`）、`name`、`config_path`。
+
+発行されるイベント: `presentation_install_blocked`（構造的ゲート）、`presentation_installed`（成功時 P6）。
+
+## `plugin_install` / `plugin_uninstall`
+
+ADR 0064（plugin model）P2 のインストール機構です。plugin は自己完結したディレクトリです（`.reyn-plugin/plugin.json` マニフェスト + 任意の `mcp`/`pipelines`/`skills` サブディレクトリ、ADR §3.1）— `plugin_install` はそれを `~/.reyn/plugins/<name>/`（グローバル、一度）へコピーし、`${REYN_*}` の安定位置トークンを展開し、マニフェストが宣言する capability を、既存の `skill_install` / `pipeline_install` が既に提供する SAME verb を呼ぶことで REGISTER します（加えて、任意の root `.mcp.json` については `.reyn/config/mcp.yaml` への直接書き込み）— これは orchestration 層であり、4 つ目のレジストリではありません。
+
+**Register-only**（#3209 — architect-firm redesign、owner GO 2026-07-23）: `plugin_install` は plugin の外部 Python 依存を決して provision しません。#3209 以前の設計は install 時に per-plugin venv（`<sys.executable> -m venv` + `pip install`）を実体化し、`command: "python"` の mcp エントリをその venv のインタープリタへ書き換えていました — registration op に乗った、本来無関係な env-provisioning の責務でした。そのステップ全体（2 つのインタープリタパス解決子、venv 実体化呼び出し、`_deps_materialised` install-state ステージ）は clean-break で REMOVED、移行 shim 無しです。plugin の `requirements.txt`（存在する場合）は今や plugin_install がコピーはするが決して読まないだけの inert データです: 外部依存は**skill-driven** です — install する skill の SETUP 指示が operator/LLM を自分自身の venv 作成、その中での `pip install -r requirements.txt`、plugin の `.mcp.json` の server `command` をその venv の python インタープリタの絶対パス（Windows: `Scripts\python.exe`）へ直接向けることを案内します。`plugin_install` は plugin の `.mcp.json` が名指す `command` をそのまま登録します — いかなる書き換えもありません。**Fail-fast は維持されます**（#3060 by-construction requirement）: 不完全/欠落した venv を名指す `command` は MCP spawn 時に明確な OS レベルのエラーで失敗します；plugin_install/spawn は決してランタイムフェッチにフォールバックしません。この redesign が置き換えるインタープリタパス解決の歴史は ADR 0064 §3.11a を参照してください。`op_runtime/plugin_install.py` / `op_runtime/plugin_uninstall.py` が処理します。LLM tool surface: `install_plugin` / `uninstall_plugin`（`tools/plugin_management_verbs.py`）— op kind との canonical-declaration 衝突を避けるため別名です（`mcp_install_local` vs. `mcp_install` の op-kind 前例を反映）。
+
+ADR §3.9（P3）: 同じ typed op は slash command（`/plugin install builtin|local|git <SOURCE> [as <INSTALL_NAME>]` / `/plugin uninstall <NAME>`、`interfaces/slash/plugin.py`）と CLI command（`reyn plugin install builtin|local|git <SOURCE>` / `reyn plugin uninstall <NAME>`、`interfaces/cli/commands/plugin.py`）としても公開されています — どちらも `ToolContext` を組み立てて `invoke_tool(get_default_registry(), "install_plugin"/"__uninstall", ...)` を呼ぶ薄いアダプタで、live chat-router の LLM tool call が使うのと SAME の lookup+dispatch です。どのサーフェスもセキュリティロジックを再実装しません: 複合の permission decl は `tools/plugin_management_verbs.py`（tool wrapper）で一度だけ宣言され、`{kind: "git"}` の run-code trust ゲート自体（下記）は 1 層下の `core/op_runtime/plugin_install.py::handle` に存在します — すべてのサーフェスがこの op ハンドラーに流れ込みます。slash サーフェスはセッションの LIVE な `RouterHostAdapter.make_router_op_context` をスレッドします（本物の intervention bus — `{kind: "git"}` install はインタラクティブにプロンプトを出し、OpContext は `#1339` の sandbox floor（`resolve_sandbox_policy`、write_paths はデフォルトで workspace に制限）を持つため、`/plugin` から `{kind: "local"}`/`{kind: "git"}` の plugin を install するには、`~/.reyn/plugins/` をカバーする operator の `reyn.yaml` `sandbox.policy.write_paths` の許可が追加で必要です — live な LLM tool call と同様）。CLI サーフェスは代わりに standalone な `OpContext` を直接構築します（`build_router_op_context` 無し、sandbox floor 無し — `reyn mcp install` の CLI-is-the-operator-trusted-entry-point 前例を反映）。その `interactive` フラグは `not --non-interactive and sys.stdin.isatty()` です。どちらのサーフェスでも、非インタラクティブな呼び出し元（intervention bus 無し）は `{kind: "git"}` の run-code trust ゲートを閉じたまま失敗します — そのゲートは無条件の deny-else です（`require_plugin_git_run_code_trust`）、sandbox floor とは独立です。
+
+CLI の floor-bypass が構造的に安全なのは、LLM の `~/.reyn/plugins/` への到達が 2 つの層で閉じられており、CLI は operator のみが到達可能（LLM は不可）だからです: (1) OpContext 層のゲート — LLM が到達可能などのパス（tool/slash）でも `#1339` の sandbox floor + `require_file_write` が、明示的な operator の許可無しに `~/.reyn/plugins/` への書き込みを拒否します；(2) OS 層 — `~/.reyn/plugins/` へ直接書き込もうとする LLM の `exec` でさえ、強制される exec policy の `write_paths` が workspace-tight（`resolve_sandbox_policy` の floor = `[workspace.base_dir]`、#1326 により LLM op フィールドより operator が勝つ）で、Landlock/Seatbelt は `write_paths` の外への書き込みを deny-by-default で拒否するため、sandbox backend により拒否されます — そして `~/.reyn/plugins/`（`$HOME` 配下）は決して workspace の許可の下にありません。したがって operator のみの CLI が OpContext 層の floor をスキップしても、LLM が到達できたはずのものは何も除去しません。
+
+`plugin_install` の例（typed discriminated `source`、§3.8 — form-sniffed な文字列は決して使いません）:
+```json
+{
+  "kind": "plugin_install",
+  "source": {"kind": "local", "path": "/path/to/my-plugin"},
+  "name": "my-plugin"
+}
+```
+
+`source` は正確に次のいずれか 1 つです:
+- `{kind: "builtin", name: "<name>"}` — reyn 自身が出荷する `src/reyn/builtin/plugins/<name>/` 配下の plugin。RCE trust risk 最低。
+- `{kind: "local", path: "<dir>"}` — LLM が作成/テストしたローカルディレクトリ（ADR §3.2 の主要な日常的「promote」ループ）、または既にディスク上にある手書きの plugin。RCE trust risk 中程度。
+- `{kind: "git", url: "<url>"}` — リモート git URL、シャロークローンされます。RCE trust risk 最高 — 個別の per-install run-code trust 判断（`require_plugin_git_run_code_trust`、下記のゲート 2）でゲートされ、fetch 軸とは分離されています；リモートコードの fetch と実行は明示的な operator-trust の判断であり、決して自動実行されず、決して事前許可できません。
+
+フィールド（`plugin_install`）:
+- `source`（必須）— 上記の discriminated union。
+- `name`（省略可）— マニフェスト自身の `name` を install-directory / registry-provenance キーとして上書きします。
+
+フィールド（`plugin_uninstall`）:
+- `name`（必須）— plugin の install 名。
+
+Permission ゲート（§3.10 — EXISTING ゲートから合成、新しい bool axis 無し；#571 collapse arc が旧 bool-axis パターンを削除）:
+1. **グローバルコピーの書き込み** — `~/.reyn/plugins/<name>/` への `require_file_write`。このパスはデフォルトの書き込みゾーン（CWD 配下の `.reyn/`）の外にあるため、既存ゲートの「zone OR approved」decl-less ルールが、明示的な承認 / JIT ask 無しで既にこれを拒否します — 新しいゲートは不要です。
+2. **`{kind: "git"}` run-code trust** — fetch の前にチェックされる専用の `require_plugin_git_run_code_trust` ゲート。これは RCE trust boundary で、意図的に `require_http_get`（fetch 軸）とは**分離**されています: バイトを fetch することとそれを実行することは別の判断です。`require_http_get` は per-host、PERSISTENT（ALWAYS → `approvals.yaml`）で、`web.fetch` と SHARED です。したがって web fetch のために一度許可された host が、それによって plugin コードの install + 実行まで許可してしまうと、その host は将来のすべての git plugin にとって恒常的な silent-RCE grant になってしまいます。run-code ゲートはどの approvals map も参照/書き込みしません（キー無し、ALWAYS パス無し、`reyn.yaml` の事前許可無し）；その選択肢集合（`plugin_run_code_trust_choices`）は yes/no のみを提供するため、毎回の install で再度尋ねられ、決して事前許可できません（§3.10「決して自動実行しない」）。Fail-closed: 非インタラクティブな呼び出し元は拒否されます。clone host に対する `require_http_get` はその後も実行されます（多層防御としてのネットワーク到達性）が、`{kind: "git"}` を安全にするのは run-code ゲートです。
+
+名前衝突の優先順位（§3.8/§3.10）: `~/.reyn/plugins/<name>/` が既に**別の種類**の完了済み install を保持している場合、`reyn.plugins.source.resolve_name_collision` が勝者を決定します（`builtin <= local << git`）— 信頼度の低い source は拒否され（`status="skipped"`）、決して信頼度の高いものを黙って上書きしません。
+
+`plugin_install` ハンドラーのライフサイクル（one-shot）:
+0. Reconcile: `.reyn-plugin/_install_state.json` マーカーを残した、以前のクラッシュ/中断した install が残した `~/.reyn/plugins/<name>/` は、この install が進む前にロールバックされます（`reconcile_plugin_installs`、§3.11 — 次回の `plugin_install` 呼び出し時の self-healing。このリポジトリには汎用の process-startup フックが無いため、「次回使用時」がドキュメント化された reconcile トリガーです）。ロールバックは uninstall の**drop-registry-first** の順序を反映します: 一部の capability を登録した後にクラッシュした partial install は、これから削除されるディレクトリを指す `plugin_id` タグ付きのレジストリエントリを残しているため、それらのエントリはコピーが削除される**前**に 3 つの `.reyn/config/*.yaml` レジストリすべてから削除されます（ungated — 既に壊れたエントリの OS-internal な修復）。そうしないと dangling なレジストリエントリが残ってしまいます。
+1. `source` をその `kind` に応じてソースディレクトリへ解決し、source のゲートを適用します: `{kind: "git"}` はクローン前に run-code trust ゲート（2）に続いて `require_http_get` を実行；`builtin`/`local` はネットワークに触れません。
+2. `reyn.plugins.manifest.load_plugin_manifest`（P1）経由で `.reyn-plugin/plugin.json` をロード + 検証 — 欠落/不正な形式のマニフェストはコピーの**前**に拒否されます（`status="error"`）。
+3. 名前衝突の優先順位チェック（上記）。
+4. ゲート 1（グローバルコピーの書き込み）。
+5. コピー: `_install_state.json` マーカーを書き込み、その後 source ツリー（VCS メタデータは除外）を `~/.reyn/plugins/<name>/` へコピーします。`plugin_install_copied` を発行。
+6. `${REYN_*}` 安定位置トークンを（P1 の `reyn.plugins.tokens.expand_reyn_tokens`）コピーされた `.mcp.json` / `pipelines/*.yaml` ファイルに展開します（コピー時のコンテキストが値を持つすべてのトークン）。`skills/*/SKILL.md` ファイルはより狭い焼き込みを受けます: `${REYN_PLUGIN_ROOT}` のみ（`plugin_install.py` の `_bake_plugin_root_only`）— `${REYN_SKILL_DIR}` と `${REYN_PROJECT_DIR}` は意図的にリテラルトークンのまま残され、skill-load verb（`reyn.plugins.skill_load.load_skill_body`、P4/#3070）が invocation のたびに新たに解決します。plugin のグローバルな `~/.reyn/plugins/<name>/` コピーは複数のプロジェクトへ enable される可能性がある（§3.3）ためです — 1 回の install 呼び出しのプロジェクトを共有コピーに焼き込んでしまうと、後で enable するすべてのプロジェクトが最初に install したプロジェクトに凍結されてしまいます。
+7. 登録（#3209: register-only、依存の実体化ステップ無し）: マニフェストの各 capability について、skills/pipelines には `skill_install.handle` / `pipeline_install.handle`（各サブ op は `plugin_id=<name>` を持つ、§3.7）を、root の `.mcp.json` には `.reyn/config/mcp.yaml` への直接書き込み（probe-then-commit、`mcp_install_local` を反映）を呼びます — server の `command` はそのまま登録され、venv-interpreter の書き換えはありません。`plugin_install_registered` を発行。
+8. `_install_state.json` マーカーを削除（不在 = 完了）し、`plugin_install_completed` を発行。
+
+`plugin_uninstall` ハンドラーのライフサイクル（drop-registry-first、§3.11 — 中断された uninstall が、削除されたコピーを指す live なレジストリエントリを残すことは決してありません）:
+1. `plugin_id == name` とタグ付けされたすべての `.reyn/config/{mcp,pipelines,skills}.yaml` エントリを削除します（実際に触れた設定ファイルごとに `require_file_write` でゲート）。`plugin_uninstall_registry_dropped` を発行。
+2. `~/.reyn/plugins/<name>/` のコピーを削除します（`require_file_write` でゲート）。`plugin_uninstall_completed` を発行。
+
+**WAL-derived ではありません**（§3.11）: `~/.reyn/plugins/` のコピーは FILES であり、WAL-event-derived な状態ではありません — CLAUDE.md の truncate-falsify recovery gate はこれらには適用されません。上記の reconcile はファイルシステム/レジストリの整合性チェックです；レジストリエントリ自体は `skill_install` / `pipeline_install` 経由の既存の config-generation recovery パスに引き続き乗ります。
+
+結果フィールド（`plugin_install`）: `status`（`"installed"` / `"skipped"` / `"error"`）、`name`、`plugin_root`、`source_kind`、`capabilities`、`registered`（capability ごとのサブ結果）。
+
+結果フィールド（`plugin_uninstall`）: `status`（`"uninstalled"` / `"error"`）、`name`、`removed`（削除されたエントリ名のレジストリごとのリスト）、`copy_removed`。
+
+発行されるイベント: `plugin_install_started` / `_copied` / `_registered` / `_completed`；`plugin_uninstall_started` / `_registry_dropped` / `_completed`。
+
 ## `embed`
 
 生の embedding primitive（FP-0057 Phase 1）: テキストのバッチを入力し、順序を保ったまま 1 テキストにつき 1 ベクトルを出力します。`embed` は**ユーザー向け** primitive です — ユーザーは `embed` を自分の外部 MCP vector-DB の store/search ツールへ pipeline で組み合わせます（reyn 自身はユーザー向け RAG store をホストしません）。同時に、後続の内部 RAG op（`index_update` / `semantic_search`、FP-0057 Phase 2）が呼ぶ SHARED ロジックでもあります — 同じ `EmbeddingProvider`、embed ロジックの重複無し、audience サーフェスによる分割のみです。
@@ -550,6 +791,37 @@ Default-**ALLOW**（own-write op — 書き込むのはソース自身の index 
 **Permission**: 不要（LLM コストのみ）。任意であり、常に実行される involuntary な `retry_loop` backstop とは独立です。
 
 **可視性**: ウィンドウが埋まりつつあるときのみ LLM に提示されます（tool / `available_control_ops`）— コンテキストサイズシグナルと対で — 圧縮するものが無いときには提示されません（`search_actions` の可視性ゲートを反映）。permission ゲートは常に「allow」のままで、*提示されるかどうか*のみがゲートされます。
+
+## `emit_hook_event`
+
+LLM が作成する hook-event の発行です（Hook-Event Redesign Phase 5 part 2、proposal [0059-hook-event-redesign.md](../../deep-dives/proposals/0059-hook-event-redesign.md) §8/§8.4）— LLM が live なセッション単位の `HookBus`（Phase 4a）に `HookEvent` を置ける**最初**の場所です；それ以前のすべての producer（10 の builtin ポイントでの `HookDispatcher.dispatch`、`Composer` の correlated output、Ingress Adapter）は OS-internal なコードであり、LLM の tool call では決してありません。Router 専用（`gates.router="allow"`）— ハンドラーには live な、session-bound な `HookBus` + `session_id` が必要で、それを配線するのは chat-router の `OpContext` のみです。
+
+```json
+{
+  "kind": "emit_hook_event",
+  "event_name": "deploy_ready",
+  "payload": {"artifact": "build-42"}
+}
+```
+
+フィールド:
+
+- `event_name`（str、デフォルト `""`）— イベントの名前；router tool のスキーマはこれと `payload` のみを公開します。発行される kind は常に `llm:<session_id>:<event_name>` です — session コンポーネントは handler 実行時の `OpContext.session_id` のみに由来し、LLM が供給する値には決して由来しません（行儀の良い tool-call パスがこれを設定するための session フィールドはこのスキーマ上に存在しません）。スキーマ制約されています（#2890 F6）: `pattern=^[A-Za-z0-9_.-]*$` + `max_length=200` — 制御文字、改行、無制限の長さは Pydantic 検証時に拒否されます（ハンドラー自身の非空チェックが実行される前に）。したがってこれらは構築される `kind` や `hook_event_emitted` 監査イベントに決して流れ込みません。多層防御: いずれにせよ、kind は既に構造的にこのセッション自身の `llm:{session_id}:` prefix に閉じ込められています。
+- `target_kind`（str | None、デフォルト `None`）— Pydantic モデル上の多層防御のエスケープハッチで、**router tool の JSON スキーマには意図的に露出されません**（通常の LLM tool call からは到達不能）。下記の kind ホワイトリストが、この Op の他の呼び出し元（例えば将来の Control-IR JSON サーフェス）に対する real で exercisable な subject を持つため、また security co-vet suite が reject パスを直接テストできるようにするために存在します。
+- `payload`（dict、デフォルト `{}`）— 発行される `HookEvent` に、matcher / Composer が検査するために運ばれます；この op 自体によって hook message template にレンダリングされることは決してありません（§8.4 item 1 の `context_safe` テンプレート補間規律は Composer/render の関心事であり、emit の関心事ではありません）。
+
+返り値: 成功時 `{"kind": "emit_hook_event", "status": "ok", "emitted_kind": str}`；autonomy boundary が emit を拒否した場合 `{"status": "denied", "error": str}`；不正な形式の `event_name`/`target_kind` の場合 `{"status": "error", "error": str}`。
+
+イベント: `hook_event_emitted`（`kind`、`session_id`、`event_id`）— メタデータのみ。`hook_push_fired` の「メッセージ本文を決して含まない」規律を反映します（payload は LLM が作成した自由記述テキストを運ぶ場合があるため）。
+
+**autonomy boundary（§8.4 item 3、セキュリティの要）は `HookBus.publish` の**前に**、2 つの別々の次元で強制されます**（`HookBus.publish` は同期的で、決して raise せず、すべての live な subscriber へブロードキャストします — イベントが bus に到達した後に下流のゲートはありません；ハンドラー（`reyn.core.op_runtime.emit_hook_event`）が唯一の防衛線です）:
+
+1. **KIND 次元** — 静的な OUT-set ホワイトリスト（`reyn.hooks.schema_registry.is_emittable_llm_kind`、ALLOW-list であり DENY-list ではありません）: このセッション自身の `llm:<session_id>:*` namespace だけが発行され得ます。`builtin:*`（Reyn 自身の lifecycle/ingress イベントを spoof）、`composed:*`（Composer の CORRELATED output を spoof — LLM が Composer の実際の correlation ロジックを一切実行せずに `composed:*` のみの hook、例えば承認ゲート付きの deploy を発火させてしまう）、`webhook:*`/`mcp:*`（外部 ingress を spoof）、そして別セッションの `llm:*` はすべて拒否されます。
+2. **SESSION 次元** — 通常の（`event_name`）パスに対して構造的です: kind の session コンポーネントは `ctx.session_id` のみから構築されます — 行儀の良い tool call がこれを上書きするためのスキーマ上のフィールドはありません。`target_kind` エスケープハッチは代わりに SAME のホワイトリストで検証されます — いずれの場合も、ハンドラーは session id で bus を lookup することは決してありません（`ctx.hook_bus` はこのセッション自身の bus への単一の固定参照です）。したがってホワイトリストチェックが無くても、不一致な kind のイベントを別セッションの bus へルーティングできるコードパスは存在しません。
+
+**`OpContext.hook_bus`**（このセッションの `HookBus`、Phase 4a）は、この op が通す新しいシームです — `OpContext.hook_dispatcher` と同じ Session → router / kernel チェーンを通じてスレッドされます（そのフィールドのスレッディングを正確に反映: `Session.__init__` はセッションごとに 1 つの `HookBus` を構築し、`hook_dispatcher` と全く同じ方法でそれを `RouterHostAdapter` / `build_router_op_context` に渡します）。下流では、Composer が `composed:*` へ correlate した発行済みイベントは、既存の `composed:*` → `ComposedEventConsumer` → `HookDispatcher.dispatch_bus_event` → inbox `kind="hook"` の E-path（Phase 5 part 1、#2881）を変更無く通過します — `max_hook_driven_turns` ループバルブは、emit 起源の wake ターンを、新しい bound ロジックを一切追加せずにカウントします。これは Phase 5 part 1 が既に固定している「すべての wake パスは `kind="hook"` を通過する」不変条件と同じです。
+
+**このフェーズのスコープ外**（#2884 で追跡、別の recovery-gated arc）: `_hook_driven_turns`（loop-valve カウンタ）をクラッシュを跨いで WAL/snapshot-backed にすること。これは in-memory-only のままです（proposal §11 future list item 2）；`emit_hook_event` は hook-driven-turn を生成するパスの数を増やしますが、このカウンタの crash-durability の姿勢は変わりません。#2884 はさらに、このフェーズの producer が表面化させる新しいリスク次元も追跡します: WAL-replay 駆動の再発行（クラッシュリカバリの WAL replay 中に再実行される `emit_hook_event` op）は、カウンタ自身の in-memory リセットとは別のハザードであり、これもここではスコープ外です。
 
 ---
 
