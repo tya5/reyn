@@ -1,0 +1,85 @@
+name: main hourly gate sweep
+
+# #4257: 5 of the whole-tree gate scripts (bare-tests-import-reference,
+# fastmcp-import-boundary, file-depth-reference, tests-path-literal-reference,
+# flat-tests-ratchet) normally run on `pull_request` only. With strict=false
+# (#4239) a PR merges on its own green, so a violation created by the
+# COMBINATION of two independently-green PRs is never caught at merge time —
+# the next PR to touch that path inherits a red gate an innocent change
+# didn't cause. This workflow re-runs those 5 against `main` on an hourly
+# schedule (plus workflow_dispatch for an on-demand check) so that
+# composition gap has a witness, without adding `push: branches: [main]` to
+# the 5 existing per-PR workflows (owner: keep this in ONE new file, don't
+# touch them).
+#
+# Deliberately only 5 of the 7 candidates from #4257's original scan — the
+# other 2 (migration-diff-shape-gate, tests-dir-names-gate) invoke their
+# scripts with a diff/merge-base argument (`--base origin/<PR base ref>` /
+# a merge-base comparison) that has no meaning against `main` alone: there
+# is no "PR" here to diff against, and passing any other ref would not
+# actually stand in for one. Left out, not silently dropped — see the PR
+# body for the same reasoning recorded where a reviewer will read it.
+#
+# `check-pr-closing-intent` / `dogfood-finding-triage` are excluded for the
+# same reason #4257's issue body gives: the former inspects a PR body (main
+# has no such artifact — running it would be an always-green check watching
+# nothing), the latter isn't `pull_request`/`push`-triggered at all.
+#
+# Deliberately NOT a required status check (not referenced from branch
+# protection) — this runs on a schedule independent of any one PR, so
+# folding its result into a PR's merge gate would block merges on an
+# unrelated periodic run.
+on:
+  schedule:
+    # GitHub's own scheduler is best-effort under load — "roughly hourly",
+    # not "always at :00". See the module comment above for why that's fine
+    # here (this is a composition-gap witness, not a merge gate).
+    - cron: "0 * * * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  gate-sweep:
+    name: main hourly gate sweep
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      # All 5 are stdlib-only (ast / pathlib / sys) — no pip install needed,
+      # same as their per-PR counterparts. Any non-zero exit fails its own
+      # step (default `run:` behaviour), which reddens the job overall — a
+      # single red gate is enough, #4257's own test-plan requirement ("a
+      # red gate you can't fail is a gate that says nothing"). Each step
+      # still carries `if: ${{ !cancelled() }}` so a step 1 failure does
+      # NOT skip steps 2-5 (the default without it) — this runs once an
+      # hour, so knowing all 5 outcomes from one run matters more here than
+      # in a per-PR gate: without it, only the first failure is visible and
+      # recovery has to wait a full cycle to learn about the rest.
+      - name: bare-tests-import-reference
+        if: ${{ !cancelled() }}
+        run: python scripts/check_bare_tests_import_reference.py
+
+      - name: fastmcp-import-boundary
+        if: ${{ !cancelled() }}
+        run: python scripts/check_fastmcp_import_boundary.py
+
+      - name: file-depth-reference
+        if: ${{ !cancelled() }}
+        run: python scripts/check_file_depth_reference.py
+
+      - name: tests-path-literal-reference
+        if: ${{ !cancelled() }}
+        run: python scripts/check_tests_path_literal_reference.py
+
+      - name: flat-tests-ratchet
+        if: ${{ !cancelled() }}
+        run: python scripts/flat_tests_ratchet.py
