@@ -175,7 +175,26 @@ def test_env_var_expansion(monkeypatch) -> None:
 
 def test_env_var_expansion_stdio_env(monkeypatch) -> None:
     """Tier 1: framework boundary — expand_env in a stdio env dict propagates expanded
-    values into the real subprocess's environment (proven by the subprocess echoing it back)."""
+    values into the real subprocess's environment.
+
+    #4282: the pre-#4282 form of this test inspected the constructed
+    ``fastmcp.client.transports.StdioTransport`` object's ``.env`` directly
+    (via the now-removed ``_open_transport``); that helper no longer
+    exists — ``_initialize_stdio`` builds
+    ``mcp.client.stdio.StdioServerParameters`` inline instead. The command
+    here (a bare ``python -c ...`` printing text) is not a real MCP server,
+    so driving this through a full ``initialize()`` would fail at the
+    handshake for an unrelated reason; captures the REAL
+    ``StdioServerParameters`` class's kwargs by wrapping it (still
+    constructs the real object — the same seam
+    ``test_mcp_client_stderr_capture.py``'s
+    ``test_initialize_failure_includes_stderr_tail_in_error`` and
+    ``test_mcp_client_sandbox_wrap.py``'s env test both already use) rather
+    than faking the SDK type, and lets the (expected) handshake failure
+    happen and get swallowed — the env is already captured before that
+    point."""
+    import mcp.client.stdio as stdio_mod
+
     monkeypatch.setenv("MY_TOKEN", "t0k")
     cfg = expand_env(
         {
@@ -189,11 +208,25 @@ def test_env_var_expansion_stdio_env(monkeypatch) -> None:
         }
     )
     assert cfg["env"]["API_TOKEN"] == "t0k"
-    # Direct transport-object assertion (real fastmcp.client.transports.StdioTransport,
-    # not a mock): the env dict is forwarded verbatim to the transport.
+
+    captured: dict = {}
+    real_params_cls = stdio_mod.StdioServerParameters
+
+    def _capturing_params(*args, **kwargs):
+        captured.update(kwargs)
+        return real_params_cls(*args, **kwargs)
+
+    monkeypatch.setattr(stdio_mod, "StdioServerParameters", _capturing_params)
+
     client = MCPClient(cfg)
-    transport = client._open_transport()
-    assert transport.env["API_TOKEN"] == "t0k"
+    try:
+        asyncio.run(client.initialize())
+    except MCPError:
+        pass  # expected — the command isn't a real MCP server
+    finally:
+        asyncio.run(client.close())
+
+    assert captured.get("env", {}).get("API_TOKEN") == "t0k"
 
 
 def test_close_releases_resources() -> None:

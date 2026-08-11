@@ -6,6 +6,24 @@ Python SDK v2 target, #3698) had to find and change every one of those call
 sites individually. This module makes them one seam — a future swap edits
 THIS file's function bodies, not 6 scattered call sites.
 
+## #4282: `client.py`'s 5 accessors retired, `elicitation.py`'s 1 remains
+
+#3698 stage 1 + #4282 moved every `client.py` call site (`initialize`,
+transport construction, OAuth) off fastmcp entirely — `import_fastmcp_
+client`/`import_stdio_transport`/`import_streamable_http_transport`/
+`import_sse_transport`/`import_oauth` are gone, along with the `client.py`
+methods that were their only callers. `import_elicit_result` remains: it
+is NOT part of the client-transport swap — `fastmcp.client.elicitation.
+ElicitResult` is a strict subclass of the official SDK's own
+`mcp.types.ElicitResult` (verified via its MRO), so returning one from
+`elicitation.py`'s handler satisfies the official SDK's `ElicitationFnT`
+return-type contract unmodified; there was no reason to touch it. This
+module itself is NOT deletable while that one accessor still has a
+consumer — see `client.py`'s own module docstring for why `fastmcp` (and
+therefore this seam) stays a required reyn dependency regardless of the
+client-transport swap (unrelated server-side fastmcp usage elsewhere in
+the codebase).
+
 ## Why the accessors are functions, not module-level re-exports
 
 Every site here was a DEFERRED import (inside a method body, not at module
@@ -41,45 +59,6 @@ existed to (honestly) describe.
 from __future__ import annotations
 
 from typing import Any
-
-
-def import_fastmcp_client() -> "type[Any]":
-    """``fastmcp.Client`` — client.py's ``initialize()``, wrapped there in a
-    try/except that raises a reyn-specific "package required" error on
-    ``ImportError`` (unchanged by this function; the caller still wraps
-    THIS call the same way)."""
-    from fastmcp import Client
-
-    return Client
-
-
-def import_stdio_transport() -> "type[Any]":
-    """``fastmcp.client.transports.StdioTransport`` — client.py's ``_open_stdio``."""
-    from fastmcp.client.transports import StdioTransport
-
-    return StdioTransport
-
-
-def import_streamable_http_transport() -> "type[Any]":
-    """``fastmcp.client.transports.StreamableHttpTransport`` — client.py's
-    ``_open_http``."""
-    from fastmcp.client.transports import StreamableHttpTransport
-
-    return StreamableHttpTransport
-
-
-def import_sse_transport() -> "type[Any]":
-    """``fastmcp.client.transports.SSETransport`` — client.py's ``_open_sse``."""
-    from fastmcp.client.transports import SSETransport
-
-    return SSETransport
-
-
-def import_oauth() -> "type[Any]":
-    """``fastmcp.client.auth.OAuth`` — client.py's ``_build_oauth_auth``."""
-    from fastmcp.client.auth import OAuth
-
-    return OAuth
 
 
 def import_elicit_result() -> "type[Any]":
