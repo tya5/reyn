@@ -236,7 +236,7 @@ permission system は OS runtime の一部であり、 OS の上に乗る別レ�
 | `mcp` | `list[str]` | per-server | MCP 呼び出し時 implicit | サーバー名の allowlist |
 | `python` | `list[{module, function, mode, timeout}]` | per-step | `require_python_step()` | mode ∈ {`safe`, `unsafe`} |
 | `tool` | `list[str]` | per-tool | `require_tool()` | 名前指定 tool allowlist |
-| `shell` | *(live gate なし)* | — | — | **Doc drift、ここでは未修正のまま flag のみ**: この行はかつて bool `permissions.shell` 軸の gate site として `require_shell()` を挙げていた。`require_shell()` は現行コードベースに存在しない（`grep -rn "require_shell"` は `src/` 全体で 0 件）— この行がかつて指していた subprocess-exec gate は、raw `shell` op が撤廃された際（#1352-A/#1352-L3）に retire 済み。subprocess access は現在、`sandboxed_exec` の seam で `SandboxPolicy.deny_subprocess`（#3901 PR-B ④ で `allow_subprocess` からリネーム・意味反転、`permissions:` dict のエントリではなく sandbox config 側で宣言）により bound される。この行が支えていた、今や stale な rationale については下記 [`shell` だけが bool である理由](#shell-bool) 参照。 |
+| `shell` | *(live gate なし)* | — | — | **Doc drift、ここでは未修正のまま flag のみ**: この行はかつて bool `permissions.shell` 軸の gate site として `require_shell()` を挙げていた。`require_shell()` は現行コードベースに存在しない（`grep -rn "require_shell"` は `src/` 全体で 0 件）— この行がかつて指していた subprocess-exec gate は、raw `shell` op が撤廃された際（#1352-A/#1352-L3）に retire 済み。subprocess access は現在、`sandboxed_exec` の seam で `SandboxPolicy.deny_subprocess`（#3901 PR-B ④ で `allow_subprocess` からリネーム・意味反転、`permissions:` dict のエントリではなく sandbox config 側で宣言）により bound される。この行が支えていた、今や stale な rationale については下記 [`shell` だけが bool である理由](#shell-だけが-bool-である理由) 参照。 |
 | `allowed_mcp` | `list[str] \| None` | ACL filter | MCP 呼び出し時 implicit | per-agent restriction、 `mcp` 軸と cross-cut |
 
 ### `shell` だけが bool である理由
@@ -369,7 +369,7 @@ FP-0016 Component D は、当時 `run_skill` op（現在は削除済み）経由
 — `security/secrets/store.py` の `ScopedSecretStore` / `CredentialScopeError` クラス自体は
 まだ存在しますが、`OpContext.secret_store` は現行ランタイムで常に `None` です。現在
 クレデンシャルスコーピングの enforcement は機能していません。シークレットアクセスは
-[`secret.write` 宣言軸](#taxonomy) と `~/.reyn/secrets.env` に対する
+[`secret.write` 宣言軸](#宣言軸の-taxonomy) と `~/.reyn/secrets.env` に対する
 OS レベルのファイルパーミッションでのみゲートされています。
 
 ## パーミッションシステムではないもの

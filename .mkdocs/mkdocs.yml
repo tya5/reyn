@@ -41,6 +41,17 @@ theme:
     scheme: default
     primary: custom
 
+# #4173: injects a per-character-ASCII-fold-or-keep slugify for the `toc`
+# extension below (config-level `slugify:` can't reach it — a bare-module-name
+# `!!python/name:` YAML tag only resolves if the module happens to already be
+# importable from mkdocs's own CWD, which `.mkdocs/` is not). Byte-identical
+# output to python-markdown's own default slugify for every character it can
+# already ASCII-fold (Latin diacritics, circled numerals, ...); differs only
+# for a character whose fold would be empty (Japanese has none), where it
+# keeps the original character instead of dropping it. See reyn_slugify_hook.py.
+hooks:
+  - reyn_slugify_hook.py
+
 plugins:
   - search
   - i18n:

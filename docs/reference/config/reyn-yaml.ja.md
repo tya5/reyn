@@ -910,7 +910,7 @@ cost:
 | `monthly_tokens` | プロセスグローバル | 台帳ファイル | 月初（現地時間） |
 | `monthly_cost_usd` | プロセスグローバル | 台帳ファイル | 月初（現地時間） |
 
-> **注意**: ルーター呼び出し上限（`max_router_calls_per_turn`）は `safety.loop` 配下にあります。上記の [`safety` ブロック](#safety) を参照してください。
+> **注意**: ルーター呼び出し上限（`max_router_calls_per_turn`）は `safety.loop` 配下にあります。上記の [`safety` ブロック](#safety-ブロック) を参照してください。
 
 **上限の動作:** ハード上限を超えると、LLM の呼び出しが行われる前に拒否されます。現在の使用状況を見るには `/budget`、メモリ内カウンターをクリアするには `/budget reset` を使用します（日次/月次は reset の影響を受けません。永続台帳に基づいています）。
 
@@ -963,7 +963,7 @@ mcp:
 | `call_timeout_seconds` | float | すべて（任意） | **すべての MCP op（list / call / probe）に対する end-to-end の上限**。既定 `120`、`<= 0` で無効化。server への接続と op の実行の両方を含む ∴ **起動（launch）も、この上限で打ち切られる**。特定 server が遅いと分かっている場合は上げ、速いと分かっていて fail-fast したい場合は下げる。per-call としては MCP SDK の `read_timeout_seconds` に渡され、`type: http` で `timeout` が設定する session レベルの既定を override する。 |
 | `init_timeout` | float | すべて（任意） | **server が MCP handshake を完了するまで待つ上限**。既定 `60`、`0` でこの上限を無効化。handshake のみを縛り、tool call は縛らない ∴ 上げても遅い tool が timeout することはない。**起動したが黙っている** server（典型例: `command: uvx <pkg>` — 初回実行時に PyPI から取得する間、何も喋らない）はここで止まる。expire 時、reyn は原因の候補と対処を名指しするエラーを返す。既定が `call_timeout_seconds` の `120` より **下** なのは意図的: 両方が起動を覆うため、**先に発火した方が operator の読むメッセージを決める** — 汎用の per-op timeout は「なぜ起動が止まったか」を語れない。∴ 本当に遅い server に猶予が要るなら **両方を上げる**（`init_timeout` 単独では `call_timeout_seconds` を超える時間は買えない）。初回起動が遅いことへの恒久的な対処は、パッケージを事前 install して `command` を install 済みの実行ファイルに向けること — offline / proxy 越しでも起動できるようになるのも、この形。 |
 | `auth` | string \| map | すべて（任意、`http` のみ） | サーバーごとの OAuth 2.1 設定。文字列 `"oauth"` または `{type: oauth, scopes?, client_id?, client_secret?}`。`http` トランスポート以外(`stdio`/`sse`)で指定するとエラー。詳細は [コンセプト: MCP § OAuth](../../concepts/tools-integrations/mcp.ja.md#oauth) 参照。 |
-| `elicitation` | string | すべて（任意） | `prompt`(デフォルト) — サーバー起動の構造化入力要求(`elicitation/create`)がコンセントプロンプトとして表示される。`auto_decline` — そのようなすべての要求をプロンプトせずに decline する。[コンセプト: MCP § Elicitation](../../concepts/tools-integrations/mcp.ja.md#elicitation) 参照。 |
+| `elicitation` | string | すべて（任意） | `prompt`(デフォルト) — サーバー起動の構造化入力要求(`elicitation/create`)がコンセントプロンプトとして表示される。`auto_decline` — そのようなすべての要求をプロンプトせずに decline する。[コンセプト: MCP § Elicitation](../../concepts/tools-integrations/mcp.ja.md#elicitation-サーバーからの構造化入力要求) 参照。 |
 | `elicitation_timeout_seconds` | float | すべて（任意） | elicitation プロンプトに人間が回答するためのウォールクロック期限。デフォルト `120`。期限を過ぎた未回答の要求はキャンセルされます。 |
 
 サーバーは設定ソースをまたいでマージされます: `~/.reyn/config.yaml` ⊕ `reyn.yaml` ⊕ `reyn.local.yaml`。マージは `mcp.servers` キーの shallow union です。マシンごとの `reyn.local.yaml` が残りを再宣言せずに単一サーバーを追加・上書きできます。

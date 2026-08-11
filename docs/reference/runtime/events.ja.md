@@ -73,13 +73,13 @@ SSoT は `src/reyn/core/events/event_schema.py` の `AUDIT_EVENT_KINDS` で、�
 | 種類 | トリガー | 主要なペイロード |
 |------|---------|-------------|
 | `mcp_initialized` | （再）接続のたびに、サーバーの `initialize` ハンドシェイクが完了した時点で発行。 | `server`、`negotiated_version`、`capabilities` |
-| `mcp_resource_updated` | 購読中の resource のサーバープッシュ `resources/updated` 通知、またはトランスポート断からの reconnect 後に再購読された URI ごとに発火する合成 resync。フックディスパッチャーにも外部イベントフックポイントとして配線されています — [コンセプト: フック](../../concepts/runtime/hooks.ja.md#_2) 参照。 | `server`、`uri`、`resync`（reconnect resync なら `true`、実際のプッシュなら `false`） |
+| `mcp_resource_updated` | 購読中の resource のサーバープッシュ `resources/updated` 通知、またはトランスポート断からの reconnect 後に再購読された URI ごとに発火する合成 resync。フックディスパッチャーにも外部イベントフックポイントとして配線されています — [コンセプト: フック](../../concepts/runtime/hooks.ja.md#外部イベントポイント) 参照。 | `server`、`uri`、`resync`（reconnect resync なら `true`、実際のプッシュなら `false`） |
 | `mcp_elicitation_requested` | サーバーが `elicitation/create` 構造化入力要求を発行。 | `server`、`field_keys`（要求されたスキーマのプロパティ*名*のみ — 値は決して含まない） |
 | `mcp_elicitation_answered` | 要求が `accept` または `decline` に解決される（人間の選択、または `auto_decline` 設定による `decline`）。 | `server`、`field_keys`、`action`（`"accept"` \| `"decline"`） |
 | `mcp_elicitation_timed_out` | `elicitation_timeout_seconds` までに回答が届かなかった。 | `server`、`field_keys` |
 | `mcp_elicitation_auto_declined` | プロンプトせずに decline された — `reason` はサーバーが `elicitation: auto_decline` を設定している場合とヘッドレスコンテキスト（ライブの介入リスナーが無い）を区別する。 | `server`、`field_keys`、`reason`（`"server_configured"` \| `"headless"`） |
 
-これらのイベントはいずれも、人間が入力した回答やフィールドの*値*を一切含みません — 要求されたスキーマのプロパティ名のみです。[コンセプト: MCP § Elicitation](../../concepts/tools-integrations/mcp.ja.md#elicitation) で説明されているセンシティブフィールドの扱いと一致します。
+これらのイベントはいずれも、人間が入力した回答やフィールドの*値*を一切含みません — 要求されたスキーマのプロパティ名のみです。[コンセプト: MCP § Elicitation](../../concepts/tools-integrations/mcp.ja.md#elicitation-サーバーからの構造化入力要求) で説明されているセンシティブフィールドの扱いと一致します。
 
 ## クレデンシャルと OAuth
 

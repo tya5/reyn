@@ -30,7 +30,7 @@ audience: [human, agent]
 
 ### `mcp_resource_updated`
 
-このセッションが `subscribe_mcp_resource` で購読した resource に対して、サーバが `resources/updated` 通知をプッシュしたときに発火します（[Resource subscriptions](../tools-integrations/mcp.ja.md#resource-subscriptions) 参照）。MCP receive-loop タスクから、境界付きキューを介してセッション自身のイベントループ上でドレインされます — エージェント自身のターンの仕組みからではないため、ターン境界だけでなくターンの間でも発火し得ます。
+このセッションが `subscribe_mcp_resource` で購読した resource に対して、サーバが `resources/updated` 通知をプッシュしたときに発火します（[Resource subscriptions](../tools-integrations/mcp.ja.md#resource-subscriptions-非同期プッシュのイベントソース) 参照）。MCP receive-loop タスクから、境界付きキューを介してセッション自身のイベントループ上でドレインされます — エージェント自身のターンの仕組みからではないため、ターン境界だけでなくターンの間でも発火し得ます。
 
 `template_push` / `pipeline_launch` のレンダリングで使えるテンプレート変数:
 
@@ -107,7 +107,7 @@ hooks:
 - **`template_push`** — 設定の Jinja2 テンプレートから組み立てるプッシュ指示。
 - **`exec`** — 純粋な副作用として実行するサンドボックス argv（出力は無視）。#3226 Phase 4 で `shell_exec` からリネーム(命名の誠実化のみ — セキュリティ上の変更ではない。この仕組みは元々 `/bin/sh -c <文字列>` を一度も実行しておらず、常に `shell=False` で argv を実行していた)。payload は **argv リストのみ**(クリーンブレイク — 文字列形式の後方互換は無い)。
 - **`exec_capture`** — **stdout が JSON プッシュ指示**であるサンドボックス argv。`template_push` と同じ経路でプッシュされます(違いは指示のソースのみ: キャプチャした stdout か Jinja2 レンダーか)。#3226 Phase 4 で `shell_push` からリネーム、同じく argv リストのみの payload。
-- **`pipeline_launch`** — 発火イベントのテンプレート変数からレンダリングした input で、登録済みの [pipeline](pipelines.ja.md) を起動します。詳細は下記の [Pipeline launch](#pipeline-pipeline_launch) を参照。
+- **`pipeline_launch`** — 発火イベントのテンプレート変数からレンダリングした input で、登録済みの [pipeline](pipelines.ja.md) を起動します。詳細は下記の [Pipeline launch](#pipeline-起動pipeline_launch) を参照。
 
 ## 4 つのケイパビリティ
 
@@ -302,5 +302,5 @@ hooks:
 - [パーミッションモデル](permission-model.md) — シェルフックのコンセントフロー
 - [サンドボックス](sandbox.md) — シェルフックの実行環境
 - [reyn-yaml § hooks](../../reference/config/reyn-yaml.md#hooks-block) — フル設定リファレンス
-- [MCP § Resource subscriptions](../tools-integrations/mcp.ja.md#resource-subscriptions) — `mcp_resource_updated` 外部イベントポイントの発生源
+- [MCP § Resource subscriptions](../tools-integrations/mcp.ja.md#resource-subscriptions-非同期プッシュのイベントソース) — `mcp_resource_updated` 外部イベントポイントの発生源
 - [Pipeline](pipelines.ja.md) — `pipeline_launch` フックが起動するもの
