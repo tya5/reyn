@@ -26,6 +26,7 @@ from reyn.environment.container_backend import (
     _docker_kill_in_container,
 )
 from reyn.security.sandbox.policy import SandboxPolicy
+from tests._async_wait import wait_until
 
 
 @pytest.fixture
@@ -130,11 +131,9 @@ async def test_cancel_actually_stops_the_real_process_not_just_the_client(
         # variable wall-clock time under test-harness overhead; a fixed
         # delay tuned to pass locally would be exactly the kind of flaky
         # magic-number timing this policy warns against.
-        deadline = asyncio.get_running_loop().time() + 10.0
-        while asyncio.get_running_loop().time() < deadline:
-            if marker.exists() and marker.read_text().strip() not in ("", "0"):
-                break
-            await asyncio.sleep(0.02)
+        await wait_until(
+            lambda: marker.exists() and marker.read_text().strip() not in ("", "0")
+        )
         cancel_event.set()
 
     canceller = asyncio.create_task(_cancel_once_actually_running())  # keep a reference, avoid GC
