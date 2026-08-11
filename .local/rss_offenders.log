@@ -1,0 +1,419 @@
+2026-08-08T15:54:33Z pid=1 rss=16MB vsz=425044MB 1  16704 435244944 01:08:04 /sbin/launchd
+2026-08-08T15:54:33Z pid=111 rss=23MB vsz=425205MB 24000 435409872 01:07:31 /usr/libexec/logd
+2026-08-08T15:54:33Z pid=113 rss=9MB vsz=425145MB  8880 435348784 01:07:31 /usr/libexec/UserEventAgent (System)
+2026-08-08T15:54:33Z pid=115 rss=7MB vsz=425109MB  6800 435311840 01:07:31 /System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/FSEvents.framework/Versions/A/Support/fseventsd
+2026-08-08T15:54:33Z pid=116 rss=4MB vsz=425144MB  4016 435346976 01:07:31 /System/Library/PrivateFrameworks/MediaRemote.framework/Support/mediaremoted
+2026-08-08T15:54:33Z pid=119 rss=5MB vsz=425148MB  5024 435351920 01:07:31 /usr/sbin/systemstats --daemon
+2026-08-08T15:54:33Z pid=123 rss=7MB vsz=425142MB  7328 435345888 01:07:31 /usr/libexec/configd
+2026-08-08T15:54:33Z pid=125 rss=7MB vsz=425138MB  6992 435341280 01:07:31 /System/Library/CoreServices/powerd.bundle/powerd
+2026-08-08T15:54:33Z pid=126 rss=2MB vsz=425103MB  2000 435305888 01:07:31 /usr/libexec/IOMFB_bics_daemon
+2026-08-08T15:54:33Z pid=130 rss=3MB vsz=425136MB  3328 435339104 01:07:31 /usr/libexec/remoted
+2026-08-08T15:54:33Z pid=134 rss=1MB vsz=425130MB  1328 435333424 01:07:31 /System/Library/PrivateFrameworks/CoreSpeech.framework/corespeechd_system
+2026-08-08T15:54:33Z pid=136 rss=2MB vsz=425104MB  2512 435305984 01:07:31 /usr/libexec/watchdogd
+2026-08-08T15:54:33Z pid=140 rss=17MB vsz=425158MB 17120 435361280 01:07:31 /System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mds
+2026-08-08T15:54:33Z pid=142 rss=3MB vsz=425139MB  3024 435342544 01:07:31 /usr/libexec/kernelmanagerd
+2026-08-08T15:54:33Z pid=143 rss=4MB vsz=425136MB  4400 435338960 01:07:31 /usr/libexec/diskarbitrationd
+2026-08-08T15:54:33Z pid=147 rss=2MB vsz=425104MB  1712 435306512 01:07:31 /usr/sbin/syslogd
+2026-08-08T15:54:33Z pid=149 rss=3MB vsz=425136MB  3424 435339312 01:07:31 /usr/libexec/thermalmonitord
+2026-08-08T15:54:33Z pid=150 rss=8MB vsz=425143MB  7936 435346480 01:07:31 /System/Library/PrivateFrameworks/CoreDuetContext.framework/Resources/contextstored
+2026-08-08T15:54:34Z pid=151 rss=4MB vsz=425137MB  3680 435340464 01:07:31 /usr/libexec/xprotectd
+2026-08-08T15:54:34Z pid=152 rss=12MB vsz=425141MB 11776 435343984 01:07:31 /usr/libexec/opendirectoryd
+2026-08-08T15:54:34Z pid=154 rss=13MB vsz=425213MB 12896 435418240 01:07:31 /System/Library/PrivateFrameworks/ApplePushService.framework/apsd
+2026-08-08T15:54:34Z pid=155 rss=9MB vsz=425139MB  9360 435341984 01:07:31 /System/Library/CoreServices/launchservicesd
+2026-08-08T15:54:34Z pid=156 rss=5MB vsz=425136MB  5472 435339712 01:07:31 /usr/libexec/timed
+2026-08-08T15:54:34Z pid=157 rss=2MB vsz=425146MB  2528 435349424 01:07:31 /System/Library/PrivateFrameworks/MobileDevice.framework/Versions/A/Resources/usbmuxd -launchd
+2026-08-08T15:54:34Z pid=158 rss=8MB vsz=425138MB  7904 435341280 01:07:31 /usr/sbin/securityd -i
+2026-08-08T15:54:34Z pid=160 rss=19MB vsz=425161MB 19168 435364784 01:07:31 /usr/libexec/locationd
+2026-08-08T15:54:34Z pid=163 rss=2MB vsz=425099MB  1808 435301760 01:07:31 autofsd
+2026-08-08T15:54:34Z pid=164 rss=15MB vsz=425144MB 15424 435347504 01:07:31 /usr/libexec/dasd
+2026-08-08T15:54:34Z pid=165 rss=2MB vsz=425136MB  2432 435339440 01:07:31 /usr/libexec/corerepaird
+2026-08-08T15:54:34Z pid=167 rss=3MB vsz=425103MB  3136 435305408 01:07:31 /usr/sbin/distnoted daemon
+2026-08-08T15:54:34Z pid=169 rss=14MB vsz=425154MB 13872 435357232 01:07:31 /usr/libexec/PerfPowerServices
+2026-08-08T15:54:34Z pid=171 rss=4MB vsz=425103MB  4288 435305104 01:07:31 /System/Library/CoreServices/logind
+2026-08-08T15:54:34Z pid=172 rss=2MB vsz=425137MB  2432 435340000 01:07:31 /System/Library/PrivateFrameworks/GenerationalStorage.framework/Versions/A/Support/revisiond
+2026-08-08T15:54:34Z pid=173 rss=1MB vsz=425103MB  1232 435305248 01:07:31 /usr/sbin/KernelEventAgent
+2026-08-08T15:54:34Z pid=177 rss=16MB vsz=425158MB 16688 435361408 01:07:31 /usr/sbin/bluetoothd
+2026-08-08T15:54:34Z pid=178 rss=3MB vsz=425103MB  3392 435304976 01:07:31 /usr/sbin/notifyd
+2026-08-08T15:54:34Z pid=180 rss=6MB vsz=425136MB  6272 435339648 01:07:31 /usr/libexec/corebrightnessd --launchd
+2026-08-08T15:54:34Z pid=181 rss=2MB vsz=425104MB  2512 435306928 01:07:31 /usr/libexec/AirPlayXPCHelper
+2026-08-08T15:54:34Z pid=182 rss=4MB vsz=425136MB  4512 435339360 01:07:31 /System/Library/Frameworks/CoreMediaIO.framework/Versions/A/Resources/com.apple.cmio.registerassistantservice
+2026-08-08T15:54:34Z pid=184 rss=74MB vsz=425889MB 75904 436110368 01:07:31 /System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer -daemon
+2026-08-08T15:54:34Z pid=186 rss=5MB vsz=425104MB  5424 435306400 01:07:31 /usr/sbin/cfprefsd daemon
+2026-08-08T15:54:34Z pid=187 rss=32MB vsz=425487MB 32784 435699120 01:07:30 /System/Library/CoreServices/loginwindow.app/Contents/MacOS/loginwindow console
+2026-08-08T15:54:34Z pid=190 rss=13MB vsz=425150MB 13600 435353504 01:07:30 /usr/libexec/runningboardd
+2026-08-08T15:54:34Z pid=191 rss=7MB vsz=425122MB  6912 435325264 01:07:30 /System/Library/CoreServices/coreservicesd
+2026-08-08T15:54:34Z pid=193 rss=10MB vsz=425146MB 10320 435349280 01:07:30 /System/Library/PrivateFrameworks/CoreAnalytics.framework/Support/analyticsd
+2026-08-08T15:54:34Z pid=194 rss=9MB vsz=425147MB  8992 435350960 01:07:30 /usr/libexec/lsd runAsRoot
+2026-08-08T15:54:34Z pid=196 rss=8MB vsz=425163MB  7952 435366560 01:07:30 /usr/sbin/coreaudiod
+2026-08-08T15:54:34Z pid=212 rss=8MB vsz=425140MB  7744 435342928 01:07:30 /usr/libexec/nsurlsessiond --privileged
+2026-08-08T15:54:34Z pid=215 rss=17MB vsz=425153MB 17408 435356352 01:07:30 /usr/libexec/airportd
+2026-08-08T15:54:34Z pid=217 rss=2MB vsz=425102MB  2144 435304656 01:07:30 /usr/libexec/apfsd
+2026-08-08T15:54:34Z pid=220 rss=4MB vsz=425141MB  4176 435344208 01:07:30 /usr/libexec/eligibilityd
+2026-08-08T15:54:34Z pid=224 rss=2MB vsz=425102MB  1776 435304960 01:07:30 /usr/sbin/distnoted agent
+2026-08-08T15:54:34Z pid=227 rss=7MB vsz=425137MB  7248 435340416 01:07:30 /System/Library/Frameworks/Security.framework/Versions/A/XPCServices/authd.xpc/Contents/MacOS/authd
+2026-08-08T15:54:34Z pid=229 rss=19MB vsz=425145MB 19008 435348752 01:07:30 /usr/libexec/syspolicyd
+2026-08-08T15:54:34Z pid=230 rss=2MB vsz=425103MB  1792 435305152 01:07:30 /usr/sbin/distnoted agent
+2026-08-08T15:54:34Z pid=231 rss=2MB vsz=425103MB  1760 435305680 01:07:30 /usr/sbin/distnoted agent
+2026-08-08T15:54:34Z pid=234 rss=11MB vsz=425213MB 10992 435417680 01:07:30 /usr/sbin/mDNSResponder
+2026-08-08T15:54:34Z pid=236 rss=8MB vsz=425526MB  8496 435738416 01:07:30 /usr/libexec/symptomsd
+2026-08-08T15:54:34Z pid=270 rss=3MB vsz=425168MB  2656 435371584 01:07:30 Core Audio Driver (ParrotAudioPlugin.driver)
+2026-08-08T15:54:34Z pid=271 rss=2MB vsz=425103MB  2272 435305104 01:07:30 /usr/libexec/ApplicationFirewall/socketfilterfw
+2026-08-08T15:54:34Z pid=273 rss=2MB vsz=425104MB  1984 435306656 01:07:30 /usr/sbin/mDNSResponderHelper
+2026-08-08T15:54:34Z pid=274 rss=4MB vsz=425137MB  4544 435339888 01:07:30 /usr/libexec/audiomxd
+2026-08-08T15:54:34Z pid=281 rss=2MB vsz=425103MB  1760 435305216 01:07:29 /usr/sbin/distnoted agent
+2026-08-08T15:54:34Z pid=288 rss=8MB vsz=425170MB  7760 435374400 01:07:29 /usr/libexec/modelmanagerd
+2026-08-08T15:54:34Z pid=295 rss=3MB vsz=425140MB  2704 435343808 01:07:29 /usr/libexec/com.apple.cmio.videodriverkithostextension.systemextension/Contents/MacOS/com.apple.cmio.videodriverkithostextension
+2026-08-08T15:54:34Z pid=297 rss=4MB vsz=425140MB  3984 435343696 01:07:29 /usr/sbin/appleh13camerad
+2026-08-08T15:54:34Z pid=301 rss=3MB vsz=425109MB  2768 435311296 01:07:29 /usr/libexec/audioclocksyncd
+2026-08-08T15:54:34Z pid=310 rss=90MB vsz=430192MB 92320 440516560 01:07:29 /System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mds_stores
+2026-08-08T15:54:34Z pid=313 rss=13MB vsz=425406MB 13520 435615872 01:07:29 /usr/libexec/TouchBarServer
+2026-08-08T15:54:34Z pid=315 rss=4MB vsz=425138MB  4384 435340800 01:07:29 /System/Library/CoreServices/SubmitDiagInfo server-init
+2026-08-08T15:54:34Z pid=326 rss=5MB vsz=425136MB  5472 435339280 01:07:29 /System/Library/CoreServices/appleeventsd --server
+2026-08-08T15:54:34Z pid=328 rss=2MB vsz=425103MB  1776 435305472 01:07:29 /usr/sbin/distnoted agent
+2026-08-08T15:54:34Z pid=338 rss=2MB vsz=425103MB  1776 435305664 01:07:29 /usr/sbin/distnoted agent
+2026-08-08T15:54:34Z pid=345 rss=3MB vsz=425136MB  2800 435338800 01:07:28 /usr/libexec/cameracaptured
+2026-08-08T15:54:34Z pid=346 rss=3MB vsz=425136MB  3088 435339440 01:07:28 /System/Library/Frameworks/CoreMediaIO.framework/Versions/A/Resources/UVCAssistant.systemextension/Contents/MacOS/UVCAssistant
+2026-08-08T15:54:34Z pid=348 rss=11MB vsz=425160MB 10912 435363936 01:07:28 /usr/libexec/searchpartyd
+2026-08-08T15:54:34Z pid=349 rss=1MB vsz=425039MB  1456 435240144 01:07:28 /System/Library/DriverExtensions/com.apple.DriverKit-IOUserDockChannelSerial.dext/com.apple.DriverKit-IOUserDockChannelSerial com.apple.IOUserDockChannelSerial 0x100000b24 com.apple.DriverKit-IOUserDockChannelSerial
+2026-08-08T15:54:34Z pid=350 rss=36MB vsz=425089MB 36864 435291632 01:07:28 /System/Library/DriverExtensions/com.apple.DriverKit-AppleBCMWLAN.dext/com.apple.DriverKit-AppleBCMWLAN com.apple.bcmwlan 0x100000b26 com.apple.DriverKit-AppleBCMWLAN
+2026-08-08T15:54:34Z pid=351 rss=3MB vsz=425039MB  2592 435240336 01:07:28 /System/Library/DriverExtensions/com.apple.AppleUserHIDDrivers.dext/com.apple.AppleUserHIDDrivers com.apple.driverkit.AppleUserHIDDrivers 0x100000b28 com.apple.AppleUserHIDDrivers
+2026-08-08T15:54:34Z pid=355 rss=2MB vsz=425102MB  1808 435304912 01:07:28 /usr/sbin/distnoted agent
+2026-08-08T15:54:34Z pid=356 rss=3MB vsz=425106MB  2720 435308976 01:07:28 /System/Library/CoreServices/Software Update.app/Contents/Resources/suhelperd
+2026-08-08T15:54:34Z pid=365 rss=2MB vsz=425103MB  1760 435305152 01:07:27 /usr/sbin/distnoted agent
+2026-08-08T15:54:34Z pid=369 rss=2MB vsz=425102MB  1760 435304816 01:07:27 /usr/sbin/distnoted agent
+2026-08-08T15:54:34Z pid=376 rss=2MB vsz=425103MB  1760 435305008 01:07:26 /usr/sbin/distnoted agent
+2026-08-08T15:54:34Z pid=383 rss=5MB vsz=425114MB  5456 435316720 01:07:26 /usr/sbin/filecoordinationd
+2026-08-08T15:54:34Z pid=384 rss=2MB vsz=425103MB  2176 435305120 01:07:26 /System/Library/Frameworks/CryptoTokenKit.framework/ctkahp.bundle/Contents/MacOS/ctkahp -d
+2026-08-08T15:54:34Z pid=388 rss=3MB vsz=425137MB  3360 435340240 01:07:26 /usr/libexec/wifianalyticsd
+2026-08-08T15:54:34Z pid=390 rss=2MB vsz=425103MB  1920 435305440 01:07:26 /System/Library/Frameworks/CryptoTokenKit.framework/ctkd -st
+2026-08-08T15:54:34Z pid=395 rss=2MB vsz=425104MB  1728 435306128 01:07:26 /usr/sbin/netbiosd
+2026-08-08T15:54:34Z pid=400 rss=2MB vsz=425137MB  2496 435340656 01:07:24 /usr/sbin/systemstats --logger-helper /private/var/db/systemstats
+2026-08-08T15:54:34Z pid=414 rss=3MB vsz=425136MB  2736 435338992 01:07:19 /System/Library/PrivateFrameworks/AmbientDisplay.framework/Versions/A/XPCServices/com.apple.AmbientDisplayAgent.xpc/Contents/MacOS/com.apple.AmbientDisplayAgent
+2026-08-08T15:54:34Z pid=418 rss=1MB vsz=425039MB  1472 435239664 01:07:18 /System/Library/DriverExtensions/IOUserBluetoothSerialDriver.dext/IOUserBluetoothSerialDriver com.apple.IOUserBluetoothSerialDriver 0x100000c79 com.apple.IOUserBluetoothSerialDriver
+2026-08-08T15:54:34Z pid=419 rss=1MB vsz=425039MB  1472 435239920 01:07:18 /System/Library/DriverExtensions/IOUserBluetoothSerialDriver.dext/IOUserBluetoothSerialDriver com.apple.IOUserBluetoothSerialDriver 0x100000c7b com.apple.IOUserBluetoothSerialDriver
+2026-08-08T15:54:34Z pid=420 rss=1MB vsz=425038MB  1472 435239264 01:07:18 /System/Library/DriverExtensions/IOUserBluetoothSerialDriver.dext/IOUserBluetoothSerialDriver com.apple.IOUserBluetoothSerialDriver 0x100000c7d com.apple.IOUserBluetoothSerialDriver
+2026-08-08T15:54:35Z pid=442 rss=4MB vsz=425103MB  4288 435305040 01:06:35 /usr/sbin/distnoted agent
+2026-08-08T15:54:35Z pid=443 rss=2MB vsz=425103MB  1760 435305104 01:06:34 /usr/sbin/distnoted agent
+2026-08-08T15:54:35Z pid=446 rss=9MB vsz=425138MB  9504 435341824 01:06:34 /usr/libexec/UserEventAgent (Aqua)
+2026-08-08T15:54:35Z pid=452 rss=6MB vsz=425165MB  6544 435369152 01:06:34 /usr/sbin/universalaccessd launchd -s
+2026-08-08T15:54:35Z pid=456 rss=6MB vsz=425116MB  6112 435318384 01:06:34 /usr/libexec/pboard
+2026-08-08T15:54:35Z pid=458 rss=9MB vsz=425148MB  9712 435351520 01:06:34 /usr/libexec/lsd
+2026-08-08T15:54:35Z pid=464 rss=11MB vsz=425368MB 11280 435576864 01:06:34 /System/Library/CoreServices/ControlStrip.app/Contents/MacOS/ControlStrip
+2026-08-08T15:54:35Z pid=465 rss=11MB vsz=425152MB 11136 435355312 01:06:34 /usr/libexec/rapportd
+2026-08-08T15:54:35Z pid=466 rss=15MB vsz=425149MB 15808 435352944 01:06:34 /usr/sbin/usernoted
+2026-08-08T15:54:35Z pid=469 rss=4MB vsz=425137MB  4480 435340160 01:06:34 /System/Library/CoreServices/lockoutagent
+2026-08-08T15:54:35Z pid=478 rss=12MB vsz=425309MB 12544 435516624 01:06:34 /System/Library/CoreServices/WiFiAgent.app/Contents/MacOS/WiFiAgent
+2026-08-08T15:54:35Z pid=481 rss=18MB vsz=425169MB 18000 435373536 01:06:34 /System/Library/CoreServices/WindowManager.app/Contents/MacOS/WindowManager
+2026-08-08T15:54:35Z pid=482 rss=9MB vsz=425136MB  9200 435339568 01:06:34 /System/Library/Frameworks/ApplicationServices.framework/Frameworks/ATS.framework/Support/fontd
+2026-08-08T15:54:35Z pid=485 rss=4MB vsz=425137MB  4400 435340416 01:06:34 /usr/libexec/ContinuityCaptureAgent server
+2026-08-08T15:54:35Z pid=486 rss=3MB vsz=425159MB  2656 435362544 01:06:34 /System/Library/Frameworks/ApplicationServices.framework/Versions/A/Frameworks/ATS.framework/Versions/A/Support/fontworker
+2026-08-08T15:54:35Z pid=487 rss=8MB vsz=425148MB  8432 435351200 01:06:34 /System/Library/PrivateFrameworks/UserNotificationsCore.framework/Support/usernotificationsd
+2026-08-08T15:54:35Z pid=491 rss=14MB vsz=425162MB 14704 435366272 01:06:34 /System/Library/PrivateFrameworks/IDS.framework/identityservicesd.app/Contents/MacOS/identityservicesd
+2026-08-08T15:54:35Z pid=501 rss=129MB vsz=432327MB 442702432 01:06:33 /System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/corespotlightd
+2026-08-08T15:54:35Z pid=507 rss=19MB vsz=425547MB 19616 435760160 01:06:33 /usr/libexec/sharingd
+2026-08-08T15:54:35Z pid=518 rss=19MB vsz=425222MB 19344 435426992 01:06:32 /System/Library/CoreServices/Dock.app/Contents/MacOS/Dock
+2026-08-08T15:54:35Z pid=519 rss=41MB vsz=425426MB 42160 435636096 01:06:32 /System/Library/CoreServices/ControlCenter.app/Contents/MacOS/ControlCenter
+2026-08-08T15:54:35Z pid=521 rss=10MB vsz=425320MB 10048 435527312 01:06:32 /System/Library/CoreServices/SystemUIServer.app/Contents/MacOS/SystemUIServer
+2026-08-08T15:54:35Z pid=522 rss=55MB vsz=425448MB 56768 435658864 01:06:32 /System/Library/CoreServices/Finder.app/Contents/MacOS/Finder
+2026-08-08T15:54:35Z pid=525 rss=12MB vsz=425357MB 12208 435566032 01:06:32 /System/Library/CoreServices/AccessibilityUIServer.app/Contents/MacOS/AccessibilityUIServer
+2026-08-08T15:54:35Z pid=526 rss=14MB vsz=425189MB 13920 435393040 01:06:32 /System/Library/CoreServices/WallpaperAgent.app/Contents/MacOS/WallpaperAgent
+2026-08-08T15:54:35Z pid=528 rss=6MB vsz=425142MB  6080 435345056 01:06:32 /System/Library/Frameworks/InputMethodKit.framework/Resources/imklaunchagent
+2026-08-08T15:54:35Z pid=533 rss=8MB vsz=425137MB  7936 435340288 01:06:32 /System/Library/PrivateFrameworks/ViewBridge.framework/Versions/A/XPCServices/ViewBridgeAuxiliary.xpc/Contents/MacOS/ViewBridgeAuxiliary
+2026-08-08T15:54:35Z pid=534 rss=2MB vsz=425104MB  2336 435306704 01:06:32 automountd
+2026-08-08T15:54:35Z pid=535 rss=8MB vsz=425137MB  8528 435340752 01:06:32 /System/Library/CoreServices/sharedfilelistd
+2026-08-08T15:54:35Z pid=536 rss=15MB vsz=425159MB 15392 435363136 01:06:32 /System/Library/PrivateFrameworks/FileProvider.framework/Support/fileproviderd
+2026-08-08T15:54:35Z pid=537 rss=4MB vsz=425148MB  4256 435351216 01:06:32 /System/Library/PrivateFrameworks/AMPDevices.framework/Versions/A/Support/AMPDeviceDiscoveryAgent --launchd
+2026-08-08T15:54:35Z pid=538 rss=116MB vsz=425958MB 436181456 01:06:32 /System/Library/Input Methods/JapaneseIM-RomajiTyping.app/Contents/PlugIns/JapaneseIM-RomajiTyping.appex/Contents/MacOS/JapaneseIM-RomajiTyping -AppleLanguages ("ja-JP")
+2026-08-08T15:54:35Z pid=541 rss=9MB vsz=425164MB  9088 435367440 01:06:32 /System/Library/Input Methods/PressAndHold.app/Contents/PlugIns/PAH_Extension.appex/Contents/MacOS/PAH_Extension -AppleLanguages ("ja-JP")
+2026-08-08T15:54:35Z pid=545 rss=9MB vsz=425163MB  8848 435366832 01:06:32 /System/Library/Input Methods/EmojiFunctionRowIM.app/Contents/PlugIns/EmojiFunctionRowIM_Extension.appex/Contents/MacOS/EmojiFunctionRowIM_Extension -AppleLanguages ("ja-JP")
+2026-08-08T15:54:35Z pid=547 rss=9MB vsz=425202MB  9184 435406960 01:06:32 /System/Library/ExtensionKit/Extensions/WallpaperAerialsExtension.appex/Contents/MacOS/WallpaperAerialsExtension -LaunchArguments eyJlbmhhbmNlZFNlY3VyaXR5IjpmYWxzZSwidHlwZSI6MSwic2VydmljZU5hbWUiOiJjb20uYXBwbGUud2FsbHBhcGVyLmV4dGVuc2lvbi5hZXJpYWxzIn0=
+2026-08-08T15:54:35Z pid=554 rss=3MB vsz=425102MB  3296 435304752 01:06:31 /System/Library/PrivateFrameworks/CommunicationsFilter.framework/CMFSyncAgent
+2026-08-08T15:54:35Z pid=586 rss=2MB vsz=425111MB  1920 435313936 01:06:31 /System/Library/Frameworks/OpenGL.framework/Versions/A/Libraries/CVMServer
+2026-08-08T15:54:35Z pid=610 rss=44MB vsz=425463MB 45216 435674304 01:06:31 /System/Library/CoreServices/NotificationCenter.app/Contents/MacOS/NotificationCenter
+2026-08-08T15:54:35Z pid=615 rss=7MB vsz=425139MB  7248 435342592 01:06:30 /System/Library/PrivateFrameworks/FamilyCircle.framework/Versions/A/Resources/familycircled
+2026-08-08T15:54:35Z pid=616 rss=7MB vsz=425147MB  7360 435350976 01:06:30 /System/Library/PrivateFrameworks/CloudDocs.framework/PlugIns/com.apple.CloudDocs.iCloudDriveFileProvider.appex/Contents/MacOS/com.apple.CloudDocs.iCloudDriveFileProvider -LaunchArguments eyJzZXJ2aWNlTmFtZSI6ImNvbS5hcHBsZS5DbG91ZERvY3MuaUNsb3VkRHJpdmVGaWxlUHJvdmlkZXIiLCJ0eXBlIjoxLCJlbmhhbmNlZFNlY3VyaXR5IjpmYWxzZX0=
+2026-08-08T15:54:35Z pid=621 rss=11MB vsz=425159MB 11600 435363040 01:06:30 /System/Library/PrivateFrameworks/ChronoCore.framework/Support/chronod
+2026-08-08T15:54:35Z pid=667 rss=10MB vsz=425160MB 10176 435363968 01:06:30 /System/Library/CoreServices/Dock.app/Contents/XPCServices/com.apple.dock.extra.xpc/Contents/MacOS/com.apple.dock.extra
+2026-08-08T15:54:35Z pid=669 rss=65MB vsz=425576MB 66608 435789328 01:06:29 /System/Library/CoreServices/Spotlight.app/Contents/MacOS/Spotlight
+2026-08-08T15:54:35Z pid=676 rss=4MB vsz=425148MB  4048 435351424 01:06:29 /usr/libexec/nearbyd
+2026-08-08T15:54:35Z pid=681 rss=21MB vsz=425206MB 21760 435411312 01:06:29 /System/Library/PrivateFrameworks/TextInputUIMacHelper.framework/Versions/A/XPCServices/CursorUIViewService.xpc/Contents/MacOS/CursorUIViewService
+2026-08-08T15:54:35Z pid=687 rss=1MB vsz=425103MB  1328 435305248 01:06:29 /usr/libexec/rosetta/oahd
+2026-08-08T15:54:35Z pid=691 rss=4MB vsz=425142MB  3760 435345120 01:06:29 /System/Library/PrivateFrameworks/StatusKit.framework/StatusKitAgent
+2026-08-08T15:54:35Z pid=693 rss=13MB vsz=425145MB 13072 435348864 01:06:28 /System/Library/PrivateFrameworks/IMCore.framework/imagent.app/Contents/MacOS/imagent
+2026-08-08T15:54:35Z pid=706 rss=4MB vsz=425114MB  3840 435316464 01:06:28 /System/Library/ExtensionKit/Extensions/HostInferenceProviderService.appex/Contents/MacOS/HostInferenceProviderService -LaunchArguments eyJ0eXBlIjo4LCJzZXJ2aWNlTmFtZSI6ImNvbS5hcHBsZS5Ib3N0SW5mZXJlbmNlUHJvdmlkZXJTZXJ2aWNlIiwiZW5oYW5jZWRTZWN1cml0eSI6ZmFsc2V9
+2026-08-08T15:54:35Z pid=707 rss=2MB vsz=425102MB  1760 435304928 01:06:28 /usr/sbin/distnoted agent
+2026-08-08T15:54:35Z pid=714 rss=3MB vsz=425104MB  3152 435307008 01:06:27 /System/Library/PrivateFrameworks/CommerceKit.framework/Versions/A/Resources/commerce
+2026-08-08T15:54:35Z pid=716 rss=6MB vsz=425142MB  5792 435344912 01:06:27 /usr/libexec/milod
+2026-08-08T15:54:35Z pid=725 rss=5MB vsz=425501MB  5536 435713472 01:06:26 /System/Applications/Weather.app/Contents/PlugIns/WeatherWidget.appex/Contents/MacOS/WeatherWidget -LaunchArguments eyJzZXJ2aWNlTmFtZSI6ImNvbS5hcHBsZS53ZWF0aGVyLndpZGdldCIsImVuaGFuY2VkU2VjdXJpdHkiOmZhbHNlLCJ0eXBlIjoxfQ==
+2026-08-08T15:54:35Z pid=735 rss=4MB vsz=425094MB  3840 435296192 01:06:25 /usr/libexec/avconferenced
+2026-08-08T15:54:35Z pid=736 rss=2MB vsz=425098MB  1712 435300416 01:06:25 /System/Library/PrivateFrameworks/MediaRemote.framework/Support/mediaremoteagent
+2026-08-08T15:54:35Z pid=759 rss=7MB vsz=425208MB  6848 435413424 01:06:24 /System/Library/PrivateFrameworks/CoreSpeech.framework/corespeechd
+2026-08-08T15:54:35Z pid=765 rss=3MB vsz=425136MB  2640 435338928 01:06:24 /System/Library/Image Capture/Support/icdd
+2026-08-08T15:54:35Z pid=770 rss=7MB vsz=425161MB  7408 435364896 01:06:24 /System/Library/CoreServices/AirPlayUIAgent.app/Contents/MacOS/AirPlayUIAgent --launchd
+2026-08-08T15:54:35Z pid=771 rss=6MB vsz=425137MB  6464 435340784 01:06:24 /System/Library/CoreServices/diagnostics_agent
+2026-08-08T15:54:35Z pid=772 rss=23MB vsz=425370MB 23200 435578976 01:06:24 /System/Library/CoreServices/TextInputMenuAgent.app/Contents/MacOS/TextInputMenuAgent
+2026-08-08T15:54:35Z pid=778 rss=2MB vsz=425103MB  2128 435305488 01:06:24 /System/Library/Frameworks/CryptoTokenKit.framework/ctkahp.bundle/Contents/MacOS/ctkahp
+2026-08-08T15:54:35Z pid=849 rss=5MB vsz=425147MB  5280 435350912 01:06:23 /System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mdbulkimport -s mdworker-bundle -c MDSImporterBundleFinder -m com.apple.metadata.mdbulkimport
+2026-08-08T15:54:35Z pid=861 rss=1MB vsz=425115MB  1488 435317536 01:06:22 /System/Library/PrivateFrameworks/CoreFP.framework/Versions/A/fairplayd
+2026-08-08T15:54:35Z pid=862 rss=2MB vsz=425103MB  1760 435305504 01:06:21 /usr/sbin/distnoted agent
+2026-08-08T15:54:35Z pid=878 rss=2MB vsz=425102MB  1760 435304896 01:06:19 /usr/sbin/distnoted agent
+2026-08-08T15:54:35Z pid=1026 rss=2MB vsz=425103MB 1760 435305744 01:05:40 /usr/sbin/distnoted agent
+2026-08-08T15:54:35Z pid=1031 rss=2MB vsz=425102MB 1872 435304928 01:05:35 /System/Library/CoreServices/CrashReporterSupportHelper server-init
+2026-08-08T15:54:35Z pid=1039 rss=3MB vsz=425185MB 3280 435389136 01:05:32 /System/Applications/Calendar.app/Contents/PlugIns/CalendarWidgetExtension.appex/Contents/MacOS/CalendarWidgetExtension -LaunchArguments eyJ0eXBlIjoxLCJlbmhhbmNlZFNlY3VyaXR5IjpmYWxzZSwic2VydmljZU5hbWUiOiJjb20uYXBwbGUuaUNhbC5DYWxlbmRhcldpZGdldEV4dGVuc2lvbiJ9
+2026-08-08T15:54:35Z pid=1050 rss=2MB vsz=425103MB 1760 435305280 01:05:14 /usr/sbin/distnoted agent
+2026-08-08T15:54:35Z pid=1060 rss=5MB vsz=425143MB 5440 435346768 01:05:12 /System/Library/Frameworks/ManagedAppDistribution.framework/Support/managedappdistributiond
+2026-08-08T15:54:35Z pid=3234 rss=5MB vsz=425146MB 4784 435349936 01:03:10 /System/Library/PrivateFrameworks/PassKitCore.framework/passd
+2026-08-08T15:54:35Z pid=3830 rss=3MB vsz=425137MB 3504 435340528 01:00:37 /System/Cryptexes/App/usr/libexec/PasswordBreachAgent
+2026-08-08T15:54:35Z pid=9056 rss=20MB vsz=425159MB 435362624    52:27 /usr/libexec/mobileassetd
+2026-08-08T15:54:35Z pid=14635 rss=1MB vsz=425034MB 435234944    45:35 /usr/bin/ssh-agent -l
+2026-08-08T15:54:35Z pid=17015 rss=6MB vsz=425358MB 435566496    41:55 /System/Applications/Photos.app/Contents/PlugIns/PhotosReliveWidget.appex/Contents/MacOS/PhotosReliveWidget -LaunchArguments eyJ0eXBlIjoxLCJzZXJ2aWNlTmFtZSI6ImNvbS5hcHBsZS5QaG90b3MuUGhvdG9zUmVsaXZlV2lkZ2V0IiwiZW5oYW5jZWRTZWN1cml0eSI6ZmFsc2V9
+2026-08-08T15:54:36Z pid=17285 rss=9MB vsz=425144MB 435347872    41:41 /usr/libexec/findmylocateagent
+2026-08-08T15:54:36Z pid=35168 rss=5MB vsz=425135MB 435338640    07:23 /usr/libexec/containermanagerd --runmode=agent --user-container-mode=current --bundle-container-mode=proxy --system-container-mode=none
+2026-08-08T15:54:36Z pid=35175 rss=5MB vsz=425135MB 435337744    07:22 /usr/libexec/containermanagerd --runmode=agent --user-container-mode=current --bundle-container-mode=proxy --system-container-mode=none
+2026-08-08T15:54:36Z pid=36075 rss=17MB vsz=425138MB    05:43 /System/Library/PrivateFrameworks/UsageTracking.framework/Versions/A/UsageTrackingAgent
+2026-08-08T15:54:36Z pid=36100 rss=17MB vsz=425330MB    05:39 /System/Library/CoreServices/Siri.app/Contents/MacOS/Siri launchd
+2026-08-08T15:54:36Z pid=36110 rss=16MB vsz=425224MB    05:39 /usr/libexec/nsurlsessiond
+2026-08-08T15:54:36Z pid=36120 rss=28MB vsz=425225MB    05:39 /System/Library/PrivateFrameworks/CloudKitDaemon.framework/Support/cloudd
+2026-08-08T15:54:36Z pid=36298 rss=7MB vsz=425135MB 435338528    05:38 /usr/libexec/containermanagerd --runmode=agent --user-container-mode=current --bundle-container-mode=proxy --system-container-mode=none
+2026-08-08T15:54:36Z pid=36410 rss=15MB vsz=425147MB    05:33 /usr/libexec/swcd
+2026-08-08T15:54:36Z pid=36449 rss=22MB vsz=425167MB    05:33 /usr/libexec/remindd
+2026-08-08T15:54:36Z pid=36575 rss=15MB vsz=425167MB    05:28 /System/Library/CoreServices/iconservicesagent
+2026-08-08T15:54:36Z pid=36643 rss=6MB vsz=425105MB 435307456    05:28 /usr/sbin/cfprefsd agent
+2026-08-08T15:54:36Z pid=36819 rss=23MB vsz=425156MB    05:18 /System/Library/PrivateFrameworks/CoreSuggestions.framework/Versions/A/Support/suggestd
+2026-08-08T15:54:36Z pid=36835 rss=19MB vsz=425147MB    05:18 /System/Library/PrivateFrameworks/CacheDelete.framework/deleted
+2026-08-08T15:54:36Z pid=36843 rss=36MB vsz=425176MB    05:18 /usr/libexec/duetexpertd
+2026-08-08T15:54:36Z pid=36857 rss=17MB vsz=425148MB    05:18 /System/Library/PrivateFrameworks/TCC.framework/Support/tccd system
+2026-08-08T15:54:36Z pid=36879 rss=9MB vsz=425161MB 435364816    05:18 /System/Library/PrivateFrameworks/ContinuousDialogManagerService.framework/assistant_cdmd
+2026-08-08T15:54:36Z pid=36991 rss=2MB vsz=425102MB 435304928    05:12 caffeinate -i -t 300
+2026-08-08T15:54:36Z pid=36992 rss=2MB vsz=425102MB 435304896    05:12 caffeinate -i -t 300
+2026-08-08T15:54:36Z pid=37002 rss=2MB vsz=425103MB 435305776    05:12 caffeinate -i -t 300
+2026-08-08T15:54:36Z pid=37019 rss=17MB vsz=425157MB    05:10 /System/Library/PrivateFrameworks/AppStoreDaemon.framework/Support/appstoreagent
+2026-08-08T15:54:36Z pid=37028 rss=4MB vsz=425139MB 435341920    05:09 /usr/libexec/containermanagerd_system --runmode=privileged --user-container-mode=current --bundle-container-mode=global --bundle-container-owner=_appinstalld --system-container-mode=none
+2026-08-08T15:54:36Z pid=37073 rss=30MB vsz=425189MB    04:51 /System/Library/PrivateFrameworks/VoiceShortcuts.framework/Versions/A/Support/siriactionsd
+2026-08-08T15:54:36Z pid=37082 rss=67MB vsz=425258MB    04:49 /System/Library/PrivateFrameworks/SiriTTSService.framework/sirittsd
+2026-08-08T15:54:36Z pid=37091 rss=20MB vsz=425155MB    04:48 /System/Library/PrivateFrameworks/CalendarDaemon.framework/Support/calaccessd
+2026-08-08T15:54:36Z pid=37092 rss=13MB vsz=425154MB    04:48 /usr/libexec/networkserviceproxy
+2026-08-08T15:54:36Z pid=37093 rss=17MB vsz=425149MB    04:48 /System/Library/PrivateFrameworks/CloudKitDaemon.framework/Support/cloudd --system
+2026-08-08T15:54:36Z pid=37098 rss=25MB vsz=425318MB    04:48 /System/Library/PrivateFrameworks/WorkflowKit.framework/XPCServices/ShortcutsViewService.xpc/Contents/MacOS/ShortcutsViewService
+2026-08-08T15:54:36Z pid=37099 rss=19MB vsz=425176MB    04:48 /System/Library/CoreServices/talagentd
+2026-08-08T15:54:36Z pid=37101 rss=18MB vsz=425145MB    04:48 /System/Library/PrivateFrameworks/AppleMediaServices.framework/Resources/amsaccountsd
+2026-08-08T15:54:36Z pid=37102 rss=22MB vsz=425147MB    04:48 /System/Library/PrivateFrameworks/iCloudDriveCore.framework/Versions/A/Support/bird
+2026-08-08T15:54:36Z pid=37104 rss=16MB vsz=425137MB    04:48 /System/Library/PrivateFrameworks/BiomeStreams.framework/Support/BiomeAgent
+2026-08-08T15:54:36Z pid=37105 rss=13MB vsz=425143MB    04:48 /usr/libexec/promotedcontentd
+2026-08-08T15:54:36Z pid=37108 rss=104MB vsz=425692MB   04:48 /System/Applications/Utilities/Activity Monitor.app/Contents/MacOS/Activity Monitor
+2026-08-08T15:54:36Z pid=37109 rss=29MB vsz=425186MB    04:48 /System/Library/PrivateFrameworks/TelephonyUtilities.framework/callservicesd
+2026-08-08T15:54:36Z pid=37111 rss=17MB vsz=425145MB    04:48 /usr/libexec/secd
+2026-08-08T15:54:36Z pid=37114 rss=15MB vsz=425150MB    04:48 /System/Library/PrivateFrameworks/AppleMediaServicesUI.framework/amsengagementd
+2026-08-08T15:54:36Z pid=37115 rss=12MB vsz=425136MB    04:48 /System/Library/PrivateFrameworks/GenerativeExperiencesRuntime.framework/Versions/A/generativeexperiencesd
+2026-08-08T15:54:36Z pid=37116 rss=12MB vsz=425143MB    04:48 /System/Library/PrivateFrameworks/CommunicationTrust.framework/Support/communicationtrustd
+2026-08-08T15:54:36Z pid=37118 rss=13MB vsz=425138MB    04:48 /System/Library/PrivateFrameworks/iTunesCloud.framework/Support/itunescloudd
+2026-08-08T15:54:36Z pid=37119 rss=10MB vsz=425138MB    04:48 /usr/libexec/trustd
+2026-08-08T15:54:36Z pid=37120 rss=18MB vsz=425164MB    04:48 /System/Library/CoreServices/Keychain Circle Notification.app/Contents/MacOS/Keychain Circle Notification
+2026-08-08T15:54:36Z pid=37123 rss=5MB vsz=425138MB 435341056    04:48 /usr/libexec/trustd --agent
+2026-08-08T15:54:36Z pid=37127 rss=6MB vsz=425135MB 435338112    04:48 /System/Library/PrivateFrameworks/CoreCDP.framework/Versions/A/Resources/cdpd
+2026-08-08T15:54:36Z pid=37128 rss=5MB vsz=425138MB 435341184    04:48 /usr/libexec/trustd --agent
+2026-08-08T15:54:36Z pid=37129 rss=11MB vsz=425138MB    04:48 /System/Library/PrivateFrameworks/GeoServices.framework/Versions/A/XPCServices/com.apple.geod.xpc/Contents/MacOS/com.apple.geod
+2026-08-08T15:54:36Z pid=37133 rss=33MB vsz=425157MB    04:48 /System/Library/PrivateFrameworks/AssistantServices.framework/Versions/A/Support/assistantd
+2026-08-08T15:54:36Z pid=37140 rss=39MB vsz=425318MB    04:48 /System/Library/PrivateFrameworks/SoftwareUpdate.framework/Resources/SoftwareUpdateNotificationManager.app/Contents/MacOS/SoftwareUpdateNotificationManager
+2026-08-08T15:54:36Z pid=37141 rss=13MB vsz=425140MB    04:48 /System/Library/PrivateFrameworks/CoreParsec.framework/parsecd
+2026-08-08T15:54:36Z pid=37142 rss=14MB vsz=425155MB    04:48 /System/Cryptexes/App/usr/libexec/AuthenticationServicesAgent
+2026-08-08T15:54:36Z pid=37143 rss=9MB vsz=425137MB 435340736    04:48 /System/Library/PrivateFrameworks/ModelCatalogRuntime.framework/Versions/A/modelcatalogd
+2026-08-08T15:54:36Z pid=37145 rss=10MB vsz=425136MB 435338976    04:48 /System/Library/PrivateFrameworks/ModelCatalogRuntime.framework/Versions/A/ModelCatalogAgent
+2026-08-08T15:54:36Z pid=37149 rss=3MB vsz=425136MB 435338848    04:47 /usr/libexec/NRDUpdated
+2026-08-08T15:54:36Z pid=37150 rss=12MB vsz=425137MB    04:47 /System/Library/PrivateFrameworks/GeoServices.framework/Versions/A/XPCServices/com.apple.geod.xpc/Contents/MacOS/com.apple.geod
+2026-08-08T15:54:36Z pid=37151 rss=8MB vsz=425138MB 435341104    04:47 /System/Library/PrivateFrameworks/MobileAccessoryUpdater.framework/Support/accessoryupdaterd 120
+2026-08-08T15:54:36Z pid=37152 rss=12MB vsz=425138MB    04:47 /System/Library/PrivateFrameworks/GeoServices.framework/Versions/A/XPCServices/com.apple.geod.xpc/Contents/MacOS/com.apple.geod
+2026-08-08T15:54:36Z pid=37153 rss=2MB vsz=425103MB 435305280    04:47 /System/Library/PrivateFrameworks/AppStoreDaemon.framework/Versions/A/XPCServices/com.apple.AppStoreDaemon.StorePrivilegedODRService.xpc/Contents/MacOS/com.apple.AppStoreDaemon.StorePrivilegedODRService
+2026-08-08T15:54:36Z pid=37154 rss=31MB vsz=425322MB    04:47 /System/Library/CoreServices/CoreServicesUIAgent.app/Contents/MacOS/CoreServicesUIAgent
+2026-08-08T15:54:36Z pid=37156 rss=13MB vsz=425136MB    04:47 /usr/libexec/triald
+2026-08-08T15:54:36Z pid=37157 rss=9MB vsz=425255MB 435460672    04:47 /System/Library/PrivateFrameworks/ContextKit.framework/Versions/A/XPCServices/ContextService.xpc/Contents/MacOS/ContextService
+2026-08-08T15:54:36Z pid=37160 rss=24MB vsz=425154MB    04:47 /System/Library/PrivateFrameworks/CoreDuetContext.framework/Resources/ContextStoreAgent
+2026-08-08T15:54:36Z pid=37164 rss=10MB vsz=425647MB    04:47 /System/Library/Frameworks/QuickLookThumbnailing.framework/Support/com.apple.quicklook.ThumbnailsAgent
+2026-08-08T15:54:36Z pid=37165 rss=20MB vsz=425146MB    04:47 /usr/libexec/pkd
+2026-08-08T15:54:36Z pid=37168 rss=38MB vsz=425211MB    04:47 /System/Library/PrivateFrameworks/IntelligenceFlowContextRuntime.framework/Versions/A/intelligencecontextd
+2026-08-08T15:54:36Z pid=37169 rss=27MB vsz=425199MB    04:47 /System/Library/CoreServices/TextInputSwitcher.app/Contents/MacOS/TextInputSwitcher
+2026-08-08T15:54:36Z pid=37170 rss=5MB vsz=425138MB 435341232    04:47 /usr/libexec/swtransparencyd
+2026-08-08T15:54:36Z pid=37171 rss=6MB vsz=425140MB 435343104    04:47 /System/Library/PrivateFrameworks/CloudSubscriptionFeatures.framework/FeatureAccessAgent
+2026-08-08T15:54:36Z pid=37172 rss=11MB vsz=425142MB    04:47 /usr/libexec/wifip2pd
+2026-08-08T15:54:36Z pid=37173 rss=8MB vsz=425136MB 435339584    04:47 /usr/libexec/triald_system
+2026-08-08T15:54:36Z pid=37174 rss=28MB vsz=425155MB    04:47 /usr/libexec/routined LAUNCHED_BY_LAUNCHD
+2026-08-08T15:54:36Z pid=37176 rss=5MB vsz=425141MB 435344288    04:47 /usr/libexec/storagekitd
+2026-08-08T15:54:36Z pid=37183 rss=10MB vsz=425136MB    04:47 /System/Library/PrivateFrameworks/CoreRecents.framework/Versions/A/Support/recentsd
+2026-08-08T15:54:36Z pid=37187 rss=14MB vsz=425148MB    04:47 /usr/libexec/gamepolicyd
+2026-08-08T15:54:36Z pid=37201 rss=6MB vsz=425136MB 435339728    04:47 /System/Library/PrivateFrameworks/AXAssetLoader.framework/Support/axassetsd
+2026-08-08T15:54:36Z pid=37202 rss=5MB vsz=425136MB 435339568    04:47 /System/Library/PrivateFrameworks/Ecosystem.framework/Support/ecosystemd
+2026-08-08T15:54:37Z pid=37205 rss=7MB vsz=425104MB 435306544    04:47 /System/Library/PrivateFrameworks/UserActivity.framework/Agents/useractivityd
+2026-08-08T15:54:37Z pid=37206 rss=5MB vsz=425138MB 435341744    04:47 /usr/libexec/AssetCache/AssetCache
+2026-08-08T15:54:37Z pid=37208 rss=19MB vsz=425151MB    04:47 /System/Library/CoreServices/UIKitSystem.app/Contents/MacOS/UIKitSystem system_app_start
+2026-08-08T15:54:37Z pid=37210 rss=5MB vsz=425104MB 435306048    04:47 /System/Library/PrivateFrameworks/ProtectedCloudStorage.framework/Helpers/ProtectedCloudKeySyncing
+2026-08-08T15:54:37Z pid=37228 rss=9MB vsz=425147MB 435350784    04:46 /System/Library/PrivateFrameworks/BackgroundTaskManagement.framework/Resources/backgroundtaskmanagementd -daemon
+2026-08-08T15:54:37Z pid=37233 rss=7MB vsz=425149MB 435352480    04:46 /System/Library/PrivateFrameworks/CoreParsec.framework/parsec-fbf
+2026-08-08T15:54:37Z pid=37234 rss=4MB vsz=425101MB 435303344    04:46 /usr/sbin/spindump
+2026-08-08T15:54:37Z pid=37235 rss=11MB vsz=425147MB    04:46 /System/Library/Frameworks/CryptoTokenKit.framework/ctkd -tw
+2026-08-08T15:54:37Z pid=37243 rss=5MB vsz=425136MB 435338928    04:46 /System/Library/PrivateFrameworks/CoreFollowUp.framework/Versions/A/Support/followupd
+2026-08-08T15:54:37Z pid=37245 rss=5MB vsz=425103MB 435305376    04:46 /System/Library/PrivateFrameworks/CoreThreadCommissionerService.framework/CoreThreadCommissionerServiced
+2026-08-08T15:54:37Z pid=37246 rss=10MB vsz=425136MB 435339248    04:46 /System/Library/PrivateFrameworks/CascadeSets.framework/Versions/A/XPCServices/SetStoreUpdateService.xpc/Contents/MacOS/SetStoreUpdateService
+2026-08-08T15:54:37Z pid=37252 rss=4MB vsz=425137MB 435340080    04:46 /usr/libexec/secinitd
+2026-08-08T15:54:37Z pid=37260 rss=4MB vsz=425136MB 435339424    04:46 /usr/libexec/frauddefensed
+2026-08-08T15:54:37Z pid=37272 rss=14MB vsz=425148MB    04:46 /System/Library/PrivateFrameworks/TCC.framework/Support/tccd
+2026-08-08T15:54:37Z pid=37276 rss=5MB vsz=425136MB 435339200    04:46 /System/Library/CoreServices/osanalyticshelper server-init
+2026-08-08T15:54:37Z pid=37283 rss=6MB vsz=425143MB 435346192    04:46 /System/Library/Frameworks/Security.framework/Versions/A/XPCServices/TrustedPeersHelper.xpc/Contents/MacOS/TrustedPeersHelper
+2026-08-08T15:54:37Z pid=37293 rss=5MB vsz=425138MB 435341488    04:46 /System/Library/PrivateFrameworks/MobileSoftwareUpdate.framework/Support/softwareupdated
+2026-08-08T15:54:37Z pid=37303 rss=10MB vsz=425137MB    04:45 /usr/libexec/ospredictiond
+2026-08-08T15:54:37Z pid=37304 rss=10MB vsz=425136MB    04:45 /System/Library/PrivateFrameworks/BiomeStreams.framework/Support/biomed
+2026-08-08T15:54:37Z pid=37309 rss=4MB vsz=425138MB 435341456    04:45 /System/Library/PrivateFrameworks/MobileSoftwareUpdate.framework/Versions/A/XPCServices/com.apple.MobileSoftwareUpdate.CleanupPreparePathService.xpc/Contents/MacOS/com.apple.MobileSoftwareUpdate.CleanupPreparePathService
+2026-08-08T15:54:37Z pid=37310 rss=4MB vsz=425136MB 435339072    04:45 /System/Library/PrivateFrameworks/AssetCacheServices.framework/Versions/A/XPCServices/AssetCacheLocatorService.xpc/Contents/MacOS/AssetCacheLocatorService -d
+2026-08-08T15:54:37Z pid=37313 rss=4MB vsz=425136MB 435339008    04:45 /System/Library/PrivateFrameworks/AssetCacheServices.framework/Versions/A/XPCServices/AssetCacheLocatorService.xpc/Contents/MacOS/AssetCacheLocatorService -a
+2026-08-08T15:54:37Z pid=37314 rss=5MB vsz=425136MB 435338832    04:45 /usr/libexec/inputanalyticsd
+2026-08-08T15:54:37Z pid=37328 rss=4MB vsz=425136MB 435339440    04:45 /usr/libexec/aned
+2026-08-08T15:54:37Z pid=37332 rss=4MB vsz=425103MB 435305056    04:45 /System/Library/CoreServices/TimeMachine/backupd-helper -launchd
+2026-08-08T15:54:37Z pid=37343 rss=14MB vsz=425152MB    04:45 /System/Library/PrivateFrameworks/SyncedDefaults.framework/Support/syncdefaultsd
+2026-08-08T15:54:37Z pid=37346 rss=10MB vsz=425146MB    04:45 /System/Library/Frameworks/AudioToolbox.framework/AudioComponentRegistrar
+2026-08-08T15:54:37Z pid=37351 rss=22MB vsz=425152MB    04:45 /usr/libexec/coreduetd
+2026-08-08T15:54:37Z pid=37354 rss=11MB vsz=425141MB    04:45 /usr/libexec/dmd
+2026-08-08T15:54:37Z pid=37365 rss=3MB vsz=425103MB 435305632    04:45 /System/Library/PrivateFrameworks/PowerLog.framework/Versions/A/XPCServices/PerfPowerTelemetryClientRegistrationService.xpc/Contents/MacOS/PerfPowerTelemetryClientRegistrationService
+2026-08-08T15:54:37Z pid=37381 rss=26MB vsz=425156MB    04:45 /System/Library/PrivateFrameworks/ScreenTimeCore.framework/Versions/A/ScreenTimeAgent
+2026-08-08T15:54:37Z pid=37383 rss=3MB vsz=425102MB 435304944    04:45 /System/Library/Frameworks/AudioToolbox.framework/AudioComponentRegistrar -daemon
+2026-08-08T15:54:37Z pid=37394 rss=4MB vsz=425138MB 435341040    04:44 /usr/libexec/fairplaydeviceidentityd
+2026-08-08T15:54:37Z pid=37401 rss=4MB vsz=425103MB 435305424    04:44 /System/Library/Frameworks/FamilyControls.framework/Versions/A/FamilyControlsAgent
+2026-08-08T15:54:37Z pid=37408 rss=34MB vsz=425158MB    04:44 /System/Library/PrivateFrameworks/HomeKitDaemon.framework/Support/homed
+2026-08-08T15:54:37Z pid=37411 rss=6MB vsz=425114MB 435317232    04:44 /System/Library/PrivateFrameworks/InstallCoordination.framework/Support/installcoordinationd
+2026-08-08T15:54:37Z pid=37413 rss=5MB vsz=425135MB 435338608    04:44 /usr/libexec/mobileactivationd
+2026-08-08T15:54:37Z pid=37421 rss=5MB vsz=425136MB 435339328    04:44 /System/Library/CoreServices/iconservicesd
+2026-08-08T15:54:37Z pid=37427 rss=3MB vsz=425110MB 435312720    04:44 /System/Library/PrivateFrameworks/AssetCacheServicesExtensions.framework/XPCServices/AssetCacheTetheratorService.xpc/Contents/MacOS/AssetCacheTetheratorService
+2026-08-08T15:54:37Z pid=37437 rss=3MB vsz=425102MB 435304528    04:44 /System/Library/PrivateFrameworks/PackageKit.framework/Resources/installd
+2026-08-08T15:54:37Z pid=37438 rss=6MB vsz=425136MB 435339296    04:44 /usr/libexec/securityd_system
+2026-08-08T15:54:37Z pid=37439 rss=2MB vsz=425102MB 435304544    04:44 /System/Library/Frameworks/MediaAccessibility.framework/Versions/A/XPCServices/com.apple.accessibility.mediaaccessibilityd.xpc/Contents/MacOS/com.apple.accessibility.mediaaccessibilityd
+2026-08-08T15:54:37Z pid=37440 rss=2MB vsz=425102MB 435304368    04:44 /System/Library/PrivateFrameworks/AssetCacheServicesExtensions.framework/XPCServices/AssetCacheManagerService.xpc/Contents/MacOS/AssetCacheManagerService
+2026-08-08T15:54:37Z pid=37445 rss=16MB vsz=425144MB    04:44 /System/Library/Frameworks/Contacts.framework/Support/contactsd
+2026-08-08T15:54:37Z pid=37446 rss=13MB vsz=425290MB    04:44 /System/Library/Frameworks/CoreSpotlight.framework/spotlightknowledged -u
+2026-08-08T15:54:37Z pid=37448 rss=2MB vsz=425103MB 435305072    04:44 /usr/sbin/cfprefsd agent
+2026-08-08T15:54:37Z pid=37449 rss=13MB vsz=425139MB    04:44 /usr/libexec/trustd --agent
+2026-08-08T15:54:37Z pid=37455 rss=3MB vsz=425098MB 435300480    04:44 /System/Library/PrivateFrameworks/PackageKit.framework/Resources/system_installd
+2026-08-08T15:54:37Z pid=37463 rss=28MB vsz=425157MB    04:44 /usr/libexec/knowledge-agent
+2026-08-08T15:54:37Z pid=37468 rss=2MB vsz=425098MB 435300592    04:44 /System/Library/Frameworks/ApplicationServices.framework/Versions/A/Frameworks/HIServices.framework/Versions/A/XPCServices/com.apple.hiservices-xpcservice.xpc/Contents/MacOS/com.apple.hiservices-xpcservice
+2026-08-08T15:54:37Z pid=37469 rss=2MB vsz=425102MB 435304416    04:44 /System/Library/Frameworks/MediaAccessibility.framework/Versions/A/XPCServices/com.apple.accessibility.mediaaccessibilityd.xpc/Contents/MacOS/com.apple.accessibility.mediaaccessibilityd
+2026-08-08T15:54:37Z pid=37470 rss=4MB vsz=425103MB 435305072    04:44 /System/Library/Frameworks/ApplicationServices.framework/Versions/A/Frameworks/HIServices.framework/Versions/A/XPCServices/com.apple.hiservices-xpcservice.xpc/Contents/MacOS/com.apple.hiservices-xpcservice
+2026-08-08T15:54:37Z pid=37485 rss=2MB vsz=425102MB 435304688    04:44 /usr/libexec/colorsyncd
+2026-08-08T15:54:37Z pid=37487 rss=2MB vsz=425103MB 435305056    04:44 /usr/sbin/cfprefsd agent
+2026-08-08T15:54:37Z pid=37488 rss=12MB vsz=425161MB    04:44 /System/Library/CoreServices/Software Update.app/Contents/Resources/softwareupdated
+2026-08-08T15:54:37Z pid=37495 rss=6MB vsz=425102MB 435304464    04:44 /System/Library/PrivateFrameworks/IntelligenceFlowRuntime.framework/Versions/A/intelligenceflowd
+2026-08-08T15:54:37Z pid=37497 rss=20MB vsz=425157MB    04:44 /usr/libexec/linkd
+2026-08-08T15:54:37Z pid=37499 rss=8MB vsz=400554MB 410167616    04:44 /System/Library/PrivateFrameworks/CoreADI.framework/adid
+2026-08-08T15:54:37Z pid=37503 rss=2MB vsz=425103MB 435305120    04:44 /usr/sbin/cfprefsd agent
+2026-08-08T15:54:37Z pid=37517 rss=3MB vsz=425136MB 435339440    04:44 /usr/libexec/trustdFileHelper
+2026-08-08T15:54:37Z pid=37520 rss=2MB vsz=425098MB 435300048    04:44 /System/Library/PrivateFrameworks/GeoServices.framework/geodMachServiceBridge
+2026-08-08T15:54:37Z pid=37523 rss=3MB vsz=425098MB 435300720    04:44 /usr/libexec/spindump_agent
+2026-08-08T15:54:37Z pid=37526 rss=15MB vsz=425150MB    04:43 /System/Library/Frameworks/CoreTelephony.framework/Support/CommCenter -L
+2026-08-08T15:54:37Z pid=37527 rss=24MB vsz=425140MB    04:43 /System/Library/CoreServices/audioaccessoryd
+2026-08-08T15:54:37Z pid=37533 rss=10MB vsz=425147MB 435350784    04:43 /usr/libexec/secinitd
+2026-08-08T15:54:37Z pid=37538 rss=6MB vsz=425136MB 435338768    04:43 /usr/libexec/nehelper
+2026-08-08T15:54:37Z pid=37540 rss=2MB vsz=425099MB 435301360    04:43 /System/Library/PrivateFrameworks/CacheDelete.framework/deleted_helper
+2026-08-08T15:54:37Z pid=37544 rss=17MB vsz=425152MB    04:43 /usr/libexec/replayd
+2026-08-08T15:54:37Z pid=37548 rss=7MB vsz=425137MB 435340032    04:43 /usr/sbin/WirelessRadioManagerd
+2026-08-08T15:54:37Z pid=37550 rss=9MB vsz=425138MB 435341024    04:43 /usr/libexec/biometrickitd --launchd
+2026-08-08T15:54:37Z pid=37552 rss=17MB vsz=425143MB    04:43 /System/Library/Frameworks/Contacts.framework/Support/postersyncd
+2026-08-08T15:54:37Z pid=37556 rss=5MB vsz=425103MB 435305088    04:43 /usr/libexec/usermanagerd -t 15
+2026-08-08T15:54:37Z pid=37557 rss=2MB vsz=425103MB 435305712    04:43 /System/Library/PrivateFrameworks/CoreSymbolication.framework/coresymbolicationd
+2026-08-08T15:54:37Z pid=37558 rss=6MB vsz=425139MB 435341968    04:43 /System/Library/PrivateFrameworks/SystemStatusServer.framework/Support/systemstatusd
+2026-08-08T15:54:37Z pid=37559 rss=6MB vsz=425104MB 435306064    04:43 /usr/libexec/assessmentagent
+2026-08-08T15:54:38Z pid=37560 rss=19MB vsz=425521MB    04:43 /System/Library/PrivateFrameworks/ReplicatorCore.framework/Support/replicatord
+2026-08-08T15:54:38Z pid=37561 rss=6MB vsz=425104MB 435306480    04:43 /System/Library/Frameworks/ManagedSettings.framework/Versions/A/ManagedSettingsAgent
+2026-08-08T15:54:38Z pid=37562 rss=9MB vsz=425136MB 435339264    04:43 /System/Library/PrivateFrameworks/BusinessChatService.framework/businessservicesd
+2026-08-08T15:54:38Z pid=37563 rss=12MB vsz=425147MB    04:43 /usr/libexec/fskitd
+2026-08-08T15:54:38Z pid=37564 rss=13MB vsz=425140MB    04:43 /System/Library/PrivateFrameworks/AuthKit.framework/Versions/A/Support/akd
+2026-08-08T15:54:38Z pid=37565 rss=46MB vsz=425318MB    04:43 /System/Library/CoreServices/CoreLocationAgent.app/Contents/MacOS/CoreLocationAgent
+2026-08-08T15:54:38Z pid=37566 rss=3MB vsz=425099MB 435301312    04:43 /System/Library/CoreServices/ReportCrash agent
+2026-08-08T15:54:38Z pid=37567 rss=21MB vsz=425141MB    04:43 /System/Library/Frameworks/Accounts.framework/Versions/A/Support/accountsd
+2026-08-08T15:54:38Z pid=37568 rss=13MB vsz=425147MB    04:43 /System/Library/PrivateFrameworks/SessionCore.framework/Support/liveactivitiesd
+2026-08-08T15:54:38Z pid=37569 rss=8MB vsz=425140MB 435343264    04:43 /System/Library/PrivateFrameworks/MobileTimer.framework/Executables/mobiletimerd
+2026-08-08T15:54:38Z pid=37570 rss=7MB vsz=425099MB 435301728    04:43 /usr/libexec/feedbackd
+2026-08-08T15:54:38Z pid=37571 rss=3MB vsz=425100MB 435302320    04:43 /usr/libexec/online-auth-agent
+2026-08-08T15:54:38Z pid=37572 rss=5MB vsz=425136MB 435339616    04:43 /usr/libexec/sandboxd
+2026-08-08T15:54:38Z pid=37573 rss=2MB vsz=425102MB 435304000    04:43 /usr/libexec/logd_helper
+2026-08-08T15:54:38Z pid=37574 rss=5MB vsz=425103MB 435305824    04:43 /System/Library/Frameworks/Security.framework/Versions/A/XPCServices/com.apple.CodeSigningHelper.xpc/Contents/MacOS/com.apple.CodeSigningHelper
+2026-08-08T15:54:38Z pid=37575 rss=1MB vsz=425098MB 435300112    04:43 /usr/libexec/sysmond
+2026-08-08T15:54:38Z pid=37576 rss=2MB vsz=425098MB 435300400    04:43 /System/Library/Frameworks/ColorSync.framework/Support/colorsync.useragent
+2026-08-08T15:54:38Z pid=37577 rss=7MB vsz=425137MB 435339792    04:43 /System/Library/PrivateFrameworks/MessagesBlastDoorSupport.framework/Versions/A/XPCServices/MessagesBlastDoorService.xpc/Contents/MacOS/MessagesBlastDoorService
+2026-08-08T15:54:38Z pid=37579 rss=5MB vsz=425136MB 435339648    04:43 /System/Library/PrivateFrameworks/EcosystemAnalytics.framework/Support/ecosystemanalyticsd
+2026-08-08T15:54:38Z pid=37580 rss=7MB vsz=425137MB 435339888    04:42 /usr/libexec/rtcreportingd
+2026-08-08T15:54:38Z pid=37582 rss=8MB vsz=425103MB 435305376    04:42 /System/Library/Frameworks/Security.framework/Versions/A/Resources/CloudKeychainProxy.bundle/Contents/MacOS/CloudKeychainProxy
+2026-08-08T15:54:38Z pid=37583 rss=9MB vsz=425141MB 435344624    04:42 /System/Library/PrivateFrameworks/CloudTelemetry.framework/Versions/A/XPCServices/CloudTelemetryService.xpc/Contents/MacOS/CloudTelemetryService
+2026-08-08T15:54:38Z pid=37584 rss=4MB vsz=425136MB 435339536    04:41 /usr/libexec/secinitd
+2026-08-08T15:54:38Z pid=37586 rss=6MB vsz=425166MB 435370288    04:41 /System/Library/Frameworks/AudioToolbox.framework/XPCServices/com.apple.audio.SandboxHelper.xpc/Contents/MacOS/com.apple.audio.SandboxHelper
+2026-08-08T15:54:38Z pid=37587 rss=6MB vsz=425174MB 435378032    04:39 /System/Library/Frameworks/Metal.framework/Versions/A/XPCServices/MTLCompilerService.xpc/Contents/MacOS/MTLCompilerService
+2026-08-08T15:54:38Z pid=37589 rss=10MB vsz=425145MB    04:39 /usr/libexec/neagent
+2026-08-08T15:54:38Z pid=37590 rss=6MB vsz=425166MB 435370096    04:38 /System/Library/Frameworks/AudioToolbox.framework/XPCServices/com.apple.audio.SandboxHelper.xpc/Contents/MacOS/com.apple.audio.SandboxHelper
+2026-08-08T15:54:38Z pid=37591 rss=4MB vsz=425104MB 435306960    04:38 /System/Library/CoreServices/TimeMachine/backupd
+2026-08-08T15:54:38Z pid=37596 rss=8MB vsz=425139MB 435342816    04:38 /System/Library/PrivateFrameworks/TrialServer.framework/Versions/A/XPCServices/TrialArchivingService.xpc/Contents/MacOS/TrialArchivingService
+2026-08-08T15:54:38Z pid=37598 rss=22MB vsz=425175MB    04:35 /System/Library/CoreServices/Siri.app/Contents/XPCServices/SiriNCService.xpc/Contents/MacOS/SiriNCService
+2026-08-08T15:54:38Z pid=37599 rss=19MB vsz=425136MB    04:35 /usr/libexec/siriknowledged
+2026-08-08T15:54:38Z pid=37600 rss=10MB vsz=425137MB    04:35 /usr/libexec/assetsubscriptiond
+2026-08-08T15:54:38Z pid=37601 rss=6MB vsz=425145MB 435348624    04:35 /System/Library/PrivateFrameworks/CloudTelemetry.framework/Versions/A/XPCServices/CloudTelemetryService.xpc/Contents/MacOS/CloudTelemetryService
+2026-08-08T15:54:38Z pid=37602 rss=5MB vsz=425103MB 435305776    04:34 /usr/libexec/keychainsharingmessagingd
+2026-08-08T15:54:38Z pid=37609 rss=11MB vsz=425146MB    04:31 /System/Library/PrivateFrameworks/iCloudDriveService.framework/XPCServices/ContainerMetadataExtractor.xpc/Contents/MacOS/ContainerMetadataExtractor
+2026-08-08T15:54:38Z pid=37611 rss=7MB vsz=425135MB 435338272    04:21 /System/Library/PrivateFrameworks/iCloudNotification.framework/iCloudNotificationAgent
+2026-08-08T15:54:38Z pid=37612 rss=6MB vsz=425135MB 435338672    04:21 /System/Library/PrivateFrameworks/CoreAnalytics.framework/Support/analyticsagent
+2026-08-08T15:54:38Z pid=37613 rss=14MB vsz=425143MB    04:21 /usr/libexec/appleaccountd
+2026-08-08T15:54:38Z pid=37615 rss=11MB vsz=425137MB    04:20 /System/Library/Frameworks/LocalAuthentication.framework/Support/coreauthd
+2026-08-08T15:54:38Z pid=37616 rss=6MB vsz=425135MB 435338480    04:20 /System/Library/Frameworks/LocalAuthentication.framework/Support/coreauthd
+2026-08-08T15:54:38Z pid=37619 rss=13MB vsz=425147MB    03:34 /usr/libexec/mlhostd
+2026-08-08T15:54:38Z pid=37621 rss=2MB vsz=425163MB 435366448    03:23 /System/Library/Frameworks/NetFS.framework/Versions/A/XPCServices/PlugInLibraryService.xpc/Contents/MacOS/PlugInLibraryService
+2026-08-08T15:54:38Z pid=37622 rss=286MB vsz=404256MB   03:23 /Applications/WezTerm.app/Contents/MacOS/wezterm-gui
+2026-08-08T15:54:38Z pid=37623 rss=2MB vsz=425163MB 435366928    03:23 /System/Library/Frameworks/NetFS.framework/Versions/A/XPCServices/PlugInLibraryService.xpc/Contents/MacOS/PlugInLibraryService
+2026-08-08T15:54:38Z pid=37624 rss=14MB vsz=425148MB    03:22 /usr/libexec/proactived
+2026-08-08T15:54:38Z pid=37625 rss=18MB vsz=425139MB    03:22 /System/Library/PrivateFrameworks/IntelligencePlatformCompute.framework/Versions/A/XPCServices/IntelligencePlatformComputeService.xpc/Contents/MacOS/IntelligencePlatformComputeService
+2026-08-08T15:54:38Z pid=37626 rss=22MB vsz=425153MB    03:22 /System/Library/PrivateFrameworks/DoNotDisturbServer.framework/Support/donotdisturbd
+2026-08-08T15:54:38Z pid=37698 rss=29MB vsz=425202MB    03:22 /System/Library/PrivateFrameworks/SafariPlatformSupport.framework/Versions/A/XPCServices/com.apple.SafariPlatformSupport.Helper.xpc/Contents/MacOS/com.apple.SafariPlatformSupport.Helper
+2026-08-08T15:54:38Z pid=37700 rss=15MB vsz=425137MB    03:22 /System/Library/PrivateFrameworks/EmailDaemon.framework/Versions/A/maild
+2026-08-08T15:54:38Z pid=39050 rss=20MB vsz=425174MB    03:06 /System/Library/Frameworks/AppKit.framework/Versions/C/XPCServices/ThemeWidgetControlViewService.xpc/Contents/MacOS/ThemeWidgetControlViewService
+2026-08-08T15:54:38Z pid=39075 rss=118MB vsz=425476MB   02:35 /Users/yasudatetsuya/.cache/uv/archive-v0/A_iPVpo_PxcHm3JV/bin/python -c from serena.dashboard import SerenaDashboardTrayManager; SerenaDashboardTrayManager().run()
+2026-08-08T15:54:38Z pid=39076 rss=25MB vsz=425174MB    02:35 /opt/homebrew/bin/uv tool uvx -p 3.13 --from pyright==1.1.403 pyright-langserver --stdio
+2026-08-08T15:54:38Z pid=39137 rss=18MB vsz=401635MB    02:34 /opt/homebrew/Cellar/python@3.13/3.13.7/Frameworks/Python.framework/Versions/3.13/Resources/Python.app/Contents/MacOS/Python /Users/yasudatetsuya/.cache/uv/archive-v0/YKiHnBXseCoep74R/bin/pyright-langserver --stdio
+2026-08-08T15:54:38Z pid=39152 rss=342MB vsz=524585MB   02:34 /Applications/Google Chrome.app/Contents/MacOS/Google Chrome
+2026-08-08T15:54:38Z pid=39155 rss=90MB vsz=425941MB    02:34 /opt/homebrew/bin/node /Users/yasudatetsuya/.cache/uv/archive-v0/YKiHnBXseCoep74R/lib/python3.13/site-packages/pyright/dist/langserver.index.js -- --stdio
+2026-08-08T15:54:38Z pid=39157 rss=6MB vsz=474317MB 485700880    02:34 /Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/151.0.7922.76/Helpers/chrome_crashpad_handler --monitor-self-annotation=ptype=crashpad-handler --database=/Users/yasudatetsuya/Library/Application Support/Google/Chrome/Crashpad --url=https://clients2.google.com/cr/report --annotation=channel= --annotation=plat=OS X --annotation=prod=Chrome_Mac --annotation=ver=151.0.7922.76 --handshake-fd=5
+2026-08-08T15:54:38Z pid=39166 rss=131MB vsz=474935MB   02:33 /Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/151.0.7922.76/Helpers/Google Chrome Helper.app/Contents/MacOS/Google Chrome Helper --type=gpu-process --gpu-preferences=WAAAAAAAAAAgAQAEAAAAAAAAAAAAAGAAQAAAAAAAAAADAAAAAAAAADgAAAAAAAAAAAAAAAAAAAACAAAAAAAAAAAAAAAAAAAAKAAAAAAAAAAoAAAAAAAAAAgAAAAAAAAADAAAAAEAAAAAAAAAAAAAAAgAAAAAAAAACAAAAAAAAAA= --shared-files --metrics-shmem-handle=1752395122,r,8603893767639948890,4338981598169078827,262144 --field-trial-handle=1718379636,r,12046090604167679365,344504258431544894,262144 --variations-seed-version=20260808-030039.458000-production --pseudonymization-salt-handle=1935764596,r,9411508081555005681,13256008581147035111,4 --trace-process-track-uuid=3190708988185955192 --seatbelt-client=20
+2026-08-08T15:54:38Z pid=39167 rss=105MB vsz=474727MB   02:33 /Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/151.0.7922.76/Helpers/Google Chrome Helper.app/Contents/MacOS/Google Chrome Helper --type=utility --utility-sub-type=network.mojom.NetworkService --lang=ja --service-sandbox-type=network --shared-files --metrics-shmem-handle=1752395122,r,12107325010118134368,18044734594317838792,524288 --field-trial-handle=1718379636,r,12046090604167679365,344504258431544894,262144 --variations-seed-version=20260808-030039.458000-production --pseudonymization-salt-handle=1935764596,r,9411508081555005681,13256008581147035111,4 --trace-process-track-uuid=3190708989122997041 --seatbelt-client=28
+2026-08-08T15:54:38Z pid=39168 rss=3MB vsz=425099MB 435301568    02:33 /usr/libexec/smd
+2026-08-08T15:54:38Z pid=39169 rss=75MB vsz=474675MB    02:33 /Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/151.0.7922.76/Helpers/Google Chrome Helper.app/Contents/MacOS/Google Chrome Helper --type=utility --utility-sub-type=storage.mojom.StorageService --lang=ja --service-sandbox-type=service --shared-files --metrics-shmem-handle=1752395122,r,17709248442144482582,8144661114750559467,524288 --field-trial-handle=1718379636,r,12046090604167679365,344504258431544894,262144 --variations-seed-version=20260808-030039.458000-production --pseudonymization-salt-handle=1935764596,r,9411508081555005681,13256008581147035111,4 --trace-process-track-uuid=3190708990060038890 --seatbelt-client=38
+2026-08-08T15:54:38Z pid=39171 rss=8MB vsz=425136MB 435339424    02:33 /usr/libexec/amfid
+2026-08-08T15:54:38Z pid=39172 rss=6MB vsz=425136MB 435339344    02:33 /System/Library/CoreServices/pbs
+2026-08-08T15:54:38Z pid=39173 rss=5MB vsz=425098MB 435300784    02:33 /System/Library/PrivateFrameworks/HelpData.framework/Versions/A/Resources/helpd
+2026-08-08T15:54:38Z pid=39178 rss=186MB vsz=1903698MB   02:33 /Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/151.0.7922.76/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer) --type=renderer --origin-trial-disabled-features=CanvasTextNg|WebAssemblyCustomDescriptors --lang=ja --num-raster-threads=4 --enable-zero-copy --enable-gpu-memory-buffer-compositor-resources --enable-main-frame-before-activation --renderer-client-id=7 --time-ticks-at-unix-epoch=-1786200379734621 --launch-time-ticks=3941072373 --shared-files --metrics-shmem-handle=1752395122,r,10429640957841901423,11282970341996832079,2097152 --field-trial-handle=1718379636,r,12046090604167679365,344504258431544894,262144 --variations-seed-version=20260808-030039.458000-production --pseudonymization-salt-handle=1935764596,r,9411508081555005681,13256008581147035111,4 --trace-process-track-uuid=3190708992871164437 --seatbelt-client=84
+2026-08-08T15:54:38Z pid=39180 rss=37MB vsz=425202MB    02:32 /System/Library/PrivateFrameworks/SafariPlatformSupport.framework/Versions/A/XPCServices/com.apple.SafariPlatformSupport.Helper.xpc/Contents/MacOS/com.apple.SafariPlatformSupport.Helper
+2026-08-08T15:54:38Z pid=39181 rss=94MB vsz=1903424MB    02:32 /Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/151.0.7922.76/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer) --type=renderer --origin-trial-disabled-features=CanvasTextNg|WebAssemblyCustomDescriptors --lang=ja --num-raster-threads=4 --enable-zero-copy --enable-gpu-memory-buffer-compositor-resources --enable-main-frame-before-activation --renderer-client-id=8 --time-ticks-at-unix-epoch=-1786200379734621 --launch-time-ticks=3941330441 --shared-files --metrics-shmem-handle=1752395122,r,10799382667203658456,17839034194471810905,2097152 --field-trial-handle=1718379636,r,12046090604167679365,344504258431544894,262144 --variations-seed-version=20260808-030039.458000-production --pseudonymization-salt-handle=1935764596,r,9411508081555005681,13256008581147035111,4 --trace-process-track-uuid=3190708993808206286 --seatbelt-client=66
+2026-08-08T15:54:38Z pid=39182 rss=12MB vsz=425136MB    02:32 /System/Library/PrivateFrameworks/Synapse.framework/Support/contentlinkingd
+2026-08-08T15:54:38Z pid=39183 rss=4MB vsz=425099MB 435300976    02:32 /System/Library/Frameworks/ApplicationServices.framework/Versions/A/Frameworks/SpeechSynthesis.framework/Versions/A/XPCServices/SpeechSynthesisServerXPC.xpc/Contents/MacOS/SpeechSynthesisServerXPC
+2026-08-08T15:54:38Z pid=39185 rss=12MB vsz=425146MB    02:32 /System/Cryptexes/App/usr/libexec/SafariLaunchAgent
+2026-08-08T15:54:38Z pid=39196 rss=20MB vsz=425153MB    02:28 /System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/Metadata.framework/Versions/A/Support/mdworker_shared -s mdworker -c MDSImporterWorker -m com.apple.mdworker.shared
+2026-08-08T15:54:38Z pid=39294 rss=2MB vsz=425105MB 435307904    02:17 /bin/zsh -c source /Users/yasudatetsuya/.claude/shell-snapshots/snapshot-zsh-1786204336438-4p30q9.sh 2>/dev/null || true && setopt NO_EXTENDED_GLOB NO_BARE_GLOB_QUAL 2>/dev/null || true && { uiltin unalias -- 'unsetenv'; uiltin unset -f -- 'unsetenv'; } >/dev/null 2>&1 || true && eval '~/Workspace/reyn_dev/broker/.venv/bin/python ~/Workspace/reyn_dev/broker/session_watcher.py --session=lead-coder' < /dev/null && pwd -P >| /tmp/claude-cbe2-cwd
+2026-08-08T15:54:38Z pid=39296 rss=65MB vsz=425105MB    02:17 /Users/yasudatetsuya/Workspace/reyn_dev/broker/.venv/bin/python /Users/yasudatetsuya/Workspace/reyn_dev/broker/session_watcher.py --session=lead-coder
+2026-08-08T15:54:38Z pid=39525 rss=3MB vsz=425099MB 435301088    01:20 endpointsecurityd
+2026-08-08T15:54:38Z pid=39672 rss=33MB vsz=425166MB    00:19 /usr/libexec/searchpartyuseragent
+2026-08-08T15:54:38Z pid=39673 rss=11MB vsz=425136MB    00:18 /usr/libexec/findmybeaconingd
+2026-08-08T15:54:39Z pid=39693 rss=2MB vsz=425106MB 435308464    00:00 /bin/zsh -c source /Users/yasudatetsuya/.claude/shell-snapshots/snapshot-zsh-1786204336438-4p30q9.sh 2>/dev/null || true && setopt NO_EXTENDED_GLOB NO_BARE_GLOB_QUAL 2>/dev/null || true && { uiltin unalias -- 'unsetenv'; uiltin unset -f -- 'unsetenv'; } >/dev/null 2>&1 || true && eval 'sh ~/Workspace/reyn_dev/lead-coder/.local/rss_watchdog.sh' < /dev/null && pwd -P >| /tmp/claude-b15b-cwd
+2026-08-08T15:54:39Z pid=39695 rss=2MB vsz=425097MB 435299536    00:00 sh /Users/yasudatetsuya/Workspace/reyn_dev/lead-coder/.local/rss_watchdog.sh
+2026-08-08T15:54:39Z pid=39696 rss=1MB vsz=425094MB 435296240    00:00 sh /Users/yasudatetsuya/Workspace/reyn_dev/lead-coder/.local/rss_watchdog.sh
+2026-08-08T15:54:39Z pid=39697 rss=2MB vsz=425097MB 435299440    00:00 ps -eo pid,rss,vsz,etime,args
+2026-08-08T15:54:39Z pid=39698 rss=1MB vsz=425098MB 435299920    00:00 awk -v r 3072000 -v v
+2026-08-08T15:54:39Z pid=37627 rss=2MB vsz=425106MB 435308784    03:22 -zsh
+2026-08-08T15:54:39Z pid=37701 rss=22MB vsz=425119MB    03:17 herdr
+2026-08-08T15:54:39Z pid=37702 rss=43MB vsz=425234MB    03:17 /opt/homebrew/bin/herdr server
+2026-08-08T15:54:39Z pid=37703 rss=3MB vsz=425106MB 435308992    03:17 -zsh
+2026-08-08T15:54:39Z pid=39051 rss=1659MB vsz=431620MB   02:38 claude -c --dangerously-skip-permissions --effort medium --model opus
+2026-08-08T15:54:39Z pid=39063 rss=40MB vsz=425244MB    02:37 /opt/homebrew/bin/uv tool uvx --from git+https://github.com/oraios/serena serena start-mcp-server --context claude-code --project-from-cwd
+2026-08-08T15:54:39Z pid=39068 rss=99MB vsz=425309MB   02:36 /Users/yasudatetsuya/.cache/uv/archive-v0/A_iPVpo_PxcHm3JV/bin/python /Users/yasudatetsuya/.cache/uv/archive-v0/A_iPVpo_PxcHm3JV/bin/serena start-mcp-server --context claude-code --project-from-cwd
+2026-08-08T15:54:39Z pid=39153 rss=2MB vsz=425103MB 435304992    02:34 caffeinate -i -t 300
+2026-08-08T15:54:39Z pid=37704 rss=2MB vsz=425106MB 435308864    03:17 -zsh
+2026-08-08T15:54:39Z pid=37705 rss=2MB vsz=425106MB 435308752    03:17 -zsh
+2026-08-08T15:54:39Z pid=37707 rss=2MB vsz=425107MB 435309408    03:17 -zsh
+2026-08-08T15:54:39Z pid=37710 rss=2MB vsz=425106MB 435308624    03:17 -zsh
+2026-08-08T15:54:39Z pid=37714 rss=2MB vsz=425107MB 435309264    03:17 -zsh
+2026-08-08T15:54:39Z pid=37721 rss=3MB vsz=425106MB 435308560    03:17 -zsh
+2026-08-08T15:54:39Z pid=37728 rss=2MB vsz=425106MB 435308848    03:17 -zsh
+2026-08-08T15:54:39Z pid=37737 rss=2MB vsz=425107MB 435309264    03:17 -zsh
+2026-08-08T15:54:39Z pid=37748 rss=2MB vsz=425107MB 435309200    03:17 -zsh
+2026-08-08T15:54:39Z pid=37758 rss=2MB vsz=425106MB 435308624    03:17 -zsh
+2026-08-08T15:54:39Z pid=37764 rss=2MB vsz=425106MB 435308592    03:17 -zsh
+2026-08-08T15:54:39Z pid=37776 rss=2MB vsz=425107MB 435309152    03:17 -zsh
