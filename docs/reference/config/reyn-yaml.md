@@ -71,7 +71,8 @@ aren't.
 | `output_language` | string | PRJ only · **restart** | Default output language code (e.g. `en`, `ja`). Override with `--output-language`. |
 | `safety` | map | PRJ only · **restart** | Runtime bounds **and content-layer defenses**: loop-detection caps, timeouts, on-limit policy, the untrusted-content threat scan + fence (`safety.threat_scan`, FP-0050), and operator bounds on the LLM spawn tree (`safety.spawn`, a DoS guard). See below. |
 | `cost` | map | PRJ only · **restart** | Budget caps and rate limits (per-agent, daily, monthly). See below. |
-| `web` | map | PRJ only · **restart** | **Two unrelated subsystems share this key.** (a) the `web_fetch` tool and MCP registry calls: SSL settings (`web.fetch`); (b) the `reyn web` gateway: auth model (`web.auth`), WebSocket inbound-frame ceiling (`web.ws_max_size`), and which surfaces are mounted (`web.surfaces`). See below. |
+| `web_fetch` | map | PRJ only · **restart** | The `web_fetch` tool + MCP registry calls: SSL settings. See below. |
+| `gateway` | map | PRJ only · **restart** | The `reyn web` gateway's own settings: auth model, WebSocket inbound-frame ceiling, and which surfaces are mounted. Split from the old `web:` key, which conflated this with `web_fetch` above. See below. |
 | `sandbox` | map | PRJ only · **restart** | Backend selection (`backend`), unsupported-platform policy (`on_unsupported`), the enforcement mode (`mode`: compat / strict / custom), and the agent-level sandbox policy (`policy`). See below. |
 | `hooks` | list | both (`.reyn/config/hooks.yaml` side is **hot-reloaded**) | Agent-lifecycle hooks. Four action schemes: `template_push` / `exec` / `exec_capture` / `pipeline_launch`. See below. |
 | `action_retrieval` | map | PRJ only · **restart** | Universal catalog visibility + retrieval settings. See below. |
@@ -757,17 +758,57 @@ A scheme owns how the `tools=` payload is built, the SP tool-use instructions, h
 
 For what each scheme does and **when to choose which** (`enumerate-all` / `retrieval` / `CodeAct` vs the default), see [Tool-Use Schemes](../../concepts/tools-integrations/tool-use-schemes.md).
 
-## `web` block
+## `web_fetch` block
 
-SSL settings for `web_fetch` and the MCP package registry.
+SSL settings for the `web_fetch` tool and the MCP package registry.
+
+Renamed from `web.fetch:` (#4174 T4) — the old `web:` key conflated this
+(the web_fetch TOOL's own settings) with the unrelated `reyn web` GATEWAY's
+own settings (now `gateway:`, below). `web:` never named which of the two
+an operator was reading or writing.
 
 ```yaml
-web:
-  fetch:
-    verify_ssl: true     # true | false | omit (default: env-var chain)
-    ca_bundle: /path/to/ca-bundle.pem   # optional custom CA bundle
-    max_download_bytes: 10485760        # wire-byte ceiling (default 10MB)
-    allow_private_ips: false            # SSRF: opt-in to private IPs (default deny)
+web_fetch:
+  verify_ssl: true     # true | false | omit (default: env-var chain)
+  ca_bundle: /path/to/ca-bundle.pem   # optional custom CA bundle
+  max_download_bytes: 10485760        # wire-byte ceiling (default 10MB)
+  allow_private_ips: false            # SSRF: opt-in to private IPs (default deny)
+```
+
+Priority chain (highest first):
+
+| Priority | Condition | Effective SSL config |
+|----------|-----------|----------------------|
+| 1 | `web_fetch.ca_bundle` set | Custom CA bundle file (`verify=<path>`) |
+| 2 | `web_fetch.verify_ssl: false` | Disable SSL verification (`verify=False`) — **use only in controlled environments** |
+| 3 | `web_fetch.verify_ssl: true` | Force SSL verification (`verify=True`) |
+| 4 | Both unset | Fall through: `SSL_VERIFY` env var → `litellm.ssl_verify` → `SSL_CERT_FILE` → `True` |
+
+`verify_ssl` and `ca_bundle` also apply to MCP registry HTTP calls (package install).
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `web_fetch.max_download_bytes` | int | `10485760` (10MB) | Maximum response bytes `web_fetch` reads off the wire. A response whose `Content-Length` exceeds this is rejected before any body is downloaded; a chunked / unknown-length body is aborted once the stream passes the ceiling (status `too_large`). Guards against an unbounded-body memory blow-up from a hostile or runaway URL. `<= 0` or non-integer falls back to the default. |
+| `web_fetch.allow_private_ips` | bool | `false` | SSRF opt-in. When `true`, `web_fetch` / `safe.http` may fetch **private** RFC1918/ULA addresses (enterprise internal-fetch). Link-local, cloud-metadata (`169.254.169.254`), and loopback are **always** denied regardless of this flag. HTTP redirects are re-validated per hop (both the host allowlist and the IP-deny), so an allowlisted host cannot redirect to an internal target. Also exported to the `REYN_FETCH_ALLOW_PRIVATE_IPS` env var so the safe.http subprocess and registry clients honor the same opt-in. |
+
+> ⚠️ **#4274 (open)**: `web_fetch.*` is not currently wired to a live chat
+> session's op execution — an operator setting `web_fetch.verify_ssl: false`
+> (or `ca_bundle` / `allow_private_ips`) sees it parse and validate clean,
+> but the value never reaches a real `web_fetch` call today (it always
+> falls through to the env-var / default path instead). This is a
+> pre-existing gap the #4174 T4 rename did not fix or worsen — tracked
+> separately.
+
+## `gateway` block
+
+The `reyn web` gateway's own settings — authentication model, WebSocket
+inbound-frame ceiling, and per-surface mount overrides.
+
+Split from `web:` (#4174 T4) — see `web_fetch` above for the other half
+that key used to conflate.
+
+```yaml
+gateway:
   ws_max_size: 16777216                 # WS inbound-frame ceiling (default 16MB)
   auth:
     token: my-shared-secret             # T3 cross-machine bearer token (required for a non-loopback bind)
@@ -776,30 +817,17 @@ web:
     tls_keyfile: /path/to/key.pem       # operator TLS key (T3); set together with tls_certfile
 ```
 
-Priority chain (highest first):
-
-| Priority | Condition | Effective SSL config |
-|----------|-----------|----------------------|
-| 1 | `web.fetch.ca_bundle` set | Custom CA bundle file (`verify=<path>`) |
-| 2 | `web.fetch.verify_ssl: false` | Disable SSL verification (`verify=False`) — **use only in controlled environments** |
-| 3 | `web.fetch.verify_ssl: true` | Force SSL verification (`verify=True`) |
-| 4 | Both unset | Fall through: `SSL_VERIFY` env var → `litellm.ssl_verify` → `SSL_CERT_FILE` → `True` |
-
-`verify_ssl` and `ca_bundle` also apply to MCP registry HTTP calls (package install).
-
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `web.fetch.max_download_bytes` | int | `10485760` (10MB) | Maximum response bytes `web_fetch` reads off the wire. A response whose `Content-Length` exceeds this is rejected before any body is downloaded; a chunked / unknown-length body is aborted once the stream passes the ceiling (status `too_large`). Guards against an unbounded-body memory blow-up from a hostile or runaway URL. `<= 0` or non-integer falls back to the default. |
-| `web.fetch.allow_private_ips` | bool | `false` | SSRF opt-in. When `true`, `web_fetch` / `safe.http` may fetch **private** RFC1918/ULA addresses (enterprise internal-fetch). Link-local, cloud-metadata (`169.254.169.254`), and loopback are **always** denied regardless of this flag. HTTP redirects are re-validated per hop (both the host allowlist and the IP-deny), so an allowlisted host cannot redirect to an internal target. Also exported to the `REYN_FETCH_ALLOW_PRIVATE_IPS` env var so the safe.http subprocess and registry clients honor the same opt-in. |
-| `web.ws_max_size` | int | `16777216` (16MB) | Maximum size (bytes) of a single inbound WebSocket frame the `reyn web` gateway accepts; a larger frame is rejected by the server before delivery. Pins the WebSocket frame ceiling explicitly instead of relying on the server library's implicit default, so the bound stays in place across server-library upgrades. Operators may tighten or loosen it. `<= 0` or non-integer falls back to the default. |
-| `web.auth.token` | str | `null` | The gateway's cross-machine (T3) bearer token. A **non-loopback bind refuses to start** without it (fail-closed — closes the accidental-exposure hole). A loopback bind generates an ephemeral token at startup when this is unset (printed in the launch URL, Jupyter-style), so no gateway surface is ever left unauthenticated. The token gates **every** functional surface uniformly — the AG-UI chat routes, `/api`, `/a2a`, `/mcp`, and the resource-fetch routes — not the AG-UI surface alone. |
-| `web.auth.require_token_on_loopback` | bool | `true` | When `true`, even loopback TCP connections must present the token (secure default — a shared multi-user host must not leave the browser loopback surface open). Same-machine UDS connections are authenticated by OS peer credentials and never need a token. |
-| `web.auth.tls_certfile` | str | `null` | Operator TLS certificate (PEM) for a T3 network bind. When unset, a self-signed certificate is generated at startup and its SHA-256 fingerprint is printed for trust-on-first-use pinning. Must be set together with `tls_keyfile`. |
-| `web.auth.tls_keyfile` | str | `null` | Operator TLS private key (PEM) paired with `tls_certfile`. Setting only one of the two is a startup error. |
+| `gateway.ws_max_size` | int | `16777216` (16MB) | Maximum size (bytes) of a single inbound WebSocket frame the `reyn web` gateway accepts; a larger frame is rejected by the server before delivery. Pins the WebSocket frame ceiling explicitly instead of relying on the server library's implicit default, so the bound stays in place across server-library upgrades. Operators may tighten or loosen it. `<= 0` or non-integer falls back to the default. |
+| `gateway.auth.token` | str | `null` | The gateway's cross-machine (T3) bearer token. A **non-loopback bind refuses to start** without it (fail-closed — closes the accidental-exposure hole). A loopback bind generates an ephemeral token at startup when this is unset (printed in the launch URL, Jupyter-style), so no gateway surface is ever left unauthenticated. The token gates **every** functional surface uniformly — the AG-UI chat routes, `/api`, `/a2a`, `/mcp`, and the resource-fetch routes — not the AG-UI surface alone. |
+| `gateway.auth.require_token_on_loopback` | bool | `true` | When `true`, even loopback TCP connections must present the token (secure default — a shared multi-user host must not leave the browser loopback surface open). Same-machine UDS connections are authenticated by OS peer credentials and never need a token. |
+| `gateway.auth.tls_certfile` | str | `null` | Operator TLS certificate (PEM) for a T3 network bind. When unset, a self-signed certificate is generated at startup and its SHA-256 fingerprint is printed for trust-on-first-use pinning. Must be set together with `tls_keyfile`. |
+| `gateway.auth.tls_keyfile` | str | `null` | Operator TLS private key (PEM) paired with `tls_certfile`. Setting only one of the two is a startup error. |
 
-**Transport tiers** (secure-by-default). The gateway identifies every connection: **T1** in-process (the operator's own process, no auth); **T2** same-machine cross-process over a UNIX domain socket (`reyn web --uds PATH`) identified by OS peer credentials, or loopback TCP as a fallback; **T3** cross-machine network, which requires `web.auth.token` and runs over TLS. An intervention answer is a permission grant, so an unauthenticated connection cannot answer.
+**Transport tiers** (secure-by-default). The gateway identifies every connection: **T1** in-process (the operator's own process, no auth); **T2** same-machine cross-process over a UNIX domain socket (`reyn web --uds PATH`) identified by OS peer credentials, or loopback TCP as a fallback; **T3** cross-machine network, which requires `gateway.auth.token` and runs over TLS. An intervention answer is a permission grant, so an unauthenticated connection cannot answer.
 
-### `web.surfaces`: per-surface opt-in/opt-out (FP-0058 P2)
+### `gateway.surfaces`: per-surface opt-in/opt-out (FP-0058 P2)
 
 `reyn web` hosts several surfaces on the one gateway process; each can be
 independently enabled or disabled. **Secure-default**: AG-UI, the web UI
@@ -811,7 +839,7 @@ agents / external LLM clients reaching into this process), so they require
 explicit opt-in.
 
 ```yaml
-web:
+gateway:
   surfaces:
     a2a:
       enabled: true   # opt in to the Agent2Agent JSON-RPC surface
@@ -831,7 +859,7 @@ web:
 
 Also settable per-surface from the CLI — `reyn web --enable a2a --enable mcp`
 or `reyn web --disable api` (repeatable per-surface flags, not a comma-list).
-**Precedence: CLI `--enable`/`--disable` > `web.surfaces` config > the
+**Precedence: CLI `--enable`/`--disable` > `gateway.surfaces` config > the
 secure-default table above.** This is launch-time-only, operator-owned
 config — read once when `reyn web` boots, never hot-reloadable and never
 LLM-settable (the LLM has no launch authority over which surfaces this

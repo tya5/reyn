@@ -168,19 +168,21 @@ env var を使わず、設定ファイルレベルで企業 MITM プロキシ / 
 ユースケースを解決します。
 
 ```yaml
-web:
-  fetch:
-    verify_ssl: false          # bool — SSL 検証を完全に無効化
-    ca_bundle: /path/to/ca.pem # str  — カスタム CA バンドルファイルパス
+web_fetch:
+  verify_ssl: false          # bool — SSL 検証を完全に無効化
+  ca_bundle: /path/to/ca.pem # str  — カスタム CA バンドルファイルパス
 ```
+
+（`web_fetch:` — #4174 T4、`web:` が `web_fetch:` / `gateway:` に分割された際に
+`web.fetch:` から改名。）
 
 両フィールドはオプションです。優先順位（高い方から）：
 
 | 優先度 | 設定元 | 効果 |
 |---|---|---|
-| 1 | `web.fetch.ca_bundle` 設定あり | httpx に `verify=<path>` を渡す（カスタム CA） |
-| 2 | `web.fetch.verify_ssl: false` | SSL 検証を無効化（`verify=False`） |
-| 3 | `web.fetch.verify_ssl: true` | SSL 検証を強制（`verify=True`） |
+| 1 | `web_fetch.ca_bundle` 設定あり | httpx に `verify=<path>` を渡す（カスタム CA） |
+| 2 | `web_fetch.verify_ssl: false` | SSL 検証を無効化（`verify=False`） |
+| 3 | `web_fetch.verify_ssl: true` | SSL 検証を強制（`verify=True`） |
 | 4 | 両方未設定（デフォルト） | `SSL_VERIFY` env → `litellm.ssl_verify` → `SSL_CERT_FILE` → `True` |
 
 両方設定された場合、`ca_bundle` が `verify_ssl` より優先されます。

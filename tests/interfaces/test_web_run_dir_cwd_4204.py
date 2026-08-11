@@ -8,7 +8,7 @@ subdirectory of the project, the socket dir would be created under a
 phantom `.reyn/run/` instead of the real project's — a same-machine client
 connecting via the documented `.reyn/run/` path would not find it there.
 
-No mocks — real WebConfig/AuthConfig dataclasses, the real
+No mocks — real GatewayConfig/AuthConfig dataclasses, the real
 `_apply_auth_startup` function, real on-disk directory creation.
 """
 from __future__ import annotations
@@ -16,7 +16,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from reyn.config.media import AuthConfig, WebConfig
+from reyn.config.media import AuthConfig, GatewayConfig
 from reyn.config.root import ReynConfig
 from reyn.interfaces.cli.commands.web import _apply_auth_startup
 
@@ -38,7 +38,7 @@ def test_uds_run_dir_created_at_the_project_root_from_a_subdirectory(
 
     uds_path = tmp_path / "reyn.sock"
     args = argparse.Namespace(host="127.0.0.1", uds=str(uds_path), port=0)
-    config = ReynConfig(web=WebConfig(auth=AuthConfig()))
+    config = ReynConfig(gateway=GatewayConfig(auth=AuthConfig()))
 
     _apply_auth_startup(args, config)
 

@@ -39,7 +39,7 @@ reyn web --port 9000            # ポートを変更
 reyn web --host 0.0.0.0         # 他のマシン (LAN) からの接続を受け付ける
 ```
 
-> **セキュリティ注記**: デフォルトの `127.0.0.1` バインドは localhost からの接続のみを受け付けます。非 loopback バインド(`--host 0.0.0.0` など)はベアラートークン(`reyn.yaml` の `web.auth.token`)が設定されていないと起動を拒否します — ゲートウェイは未認証のままネットワークに公開されることはありません。
+> **セキュリティ注記**: デフォルトの `127.0.0.1` バインドは localhost からの接続のみを受け付けます。非 loopback バインド(`--host 0.0.0.0` など)はベアラートークン(`reyn.yaml` の `gateway.auth.token`)が設定されていないと起動を拒否します — ゲートウェイは未認証のままネットワークに公開されることはありません。
 
 ---
 
@@ -53,7 +53,7 @@ reyn web --host 0.0.0.0         # 他のマシン (LAN) からの接続を受け
 reyn web --host 0.0.0.0 --port 8080
 ```
 
-デフォルトの loopback バインド(`127.0.0.1`)では、reyn が起動トークンを生成し、起動 URL に埋め込んで表示します(`http://127.0.0.1:8080/?token=...`)。非 loopback バインドでは、`reyn.yaml` に `web.auth.token` を設定していないと起動を拒否します — 他所から接続する前にそのトークン(またはURL)をコピーしてください。
+デフォルトの loopback バインド(`127.0.0.1`)では、reyn が起動トークンを生成し、起動 URL に埋め込んで表示します(`http://127.0.0.1:8080/?token=...`)。非 loopback バインドでは、`reyn.yaml` に `gateway.auth.token` を設定していないと起動を拒否します — 他所から接続する前にそのトークン(またはURL)をコピーしてください。
 
 ### 接続する
 
@@ -81,7 +81,7 @@ reyn chat --connect http://<host>:8080 --token <secret> [agent_name]
 ### セキュリティ注記
 
 - 同一マシンでのシンクライアント用途には、トークンの代わりに UNIX ドメインソケットを推奨します: `reyn web --uds /path/to/socket` — 接続は OS のピア資格情報で認証され、トークンは不要です。
-- loopback 以外のネットワークバインドは常に `web.auth.token` を必要とし、TLS 上で動作します(デフォルトは自己署名。reyn が初回接続時にピン留め用の証明書フィンガープリントを表示します)。
+- loopback 以外のネットワークバインドは常に `gateway.auth.token` を必要とし、TLS 上で動作します(デフォルトは自己署名。reyn が初回接続時にピン留め用の証明書フィンガープリントを表示します)。
 - 表示されたトークン/URL はパスワードと同様に扱ってください — それを持つ人は誰でも operator として振る舞えます。
 
 ---
@@ -189,11 +189,11 @@ reyn web --port 8081
 
 **別のデバイスから接続できない**
 
-デフォルトではサーバーは `127.0.0.1`(localhost のみ)にバインドします。LAN 接続を受け付けるには `--host 0.0.0.0` で実行し、先に `reyn.yaml` で `web.auth.token` を設定してください — 非 loopback バインドはトークン無しでは起動を拒否します。
+デフォルトではサーバーは `127.0.0.1`(localhost のみ)にバインドします。LAN 接続を受け付けるには `--host 0.0.0.0` で実行し、先に `reyn.yaml` で `gateway.auth.token` を設定してください — 非 loopback バインドはトークン無しでは起動を拒否します。
 
 **`--connect` が「authentication required / rejected by the server」と表示する**
 
-`--token <secret>`(`reyn web` が起動時に表示したトークン、または設定済みの `web.auth.token`)を渡すか、環境変数 `REYN_WEB_AUTH_TOKEN` を設定してください。
+`--token <secret>`(`reyn web` が起動時に表示したトークン、または設定済みの `gateway.auth.token`)を渡すか、環境変数 `REYN_WEB_AUTH_TOKEN` を設定してください。
 
 ---
 
@@ -201,5 +201,5 @@ reyn web --port 8081
 
 - [リファレンス: CLI / chat](../../reference/cli/chat.md) — TUI スラッシュコマンド、`--connect` / `--token` フラグ
 - [リファレンス: AG-UI transport](../../reference/runtime/agui-transport.md) — `--connect` とブラウザの両方が使うワイヤープロトコル
-- [リファレンス: reyn.yaml § web.auth](../../reference/config/reyn-yaml.md) — トークン / TLS / トランスポート層の設定
+- [リファレンス: reyn.yaml § gateway.auth](../../reference/config/reyn-yaml.md) — トークン / TLS / トランスポート層の設定
 - [コンセプト: A2A](../../concepts/multi-agent/a2a.md) — エージェント間プロトコル

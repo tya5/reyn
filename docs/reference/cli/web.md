@@ -25,7 +25,7 @@ reyn web [OPTIONS]
 | `--log-level LEVEL` | `info` | `critical` / `error` / `warning` / `info` / `debug` / `trace`. |
 | `--default-design SLUG` | unset | Sets `REYN_WEB_DEFAULT_DESIGN` for the OpenUI shell. |
 | `--enable SURFACE` | unset | Opt a surface in (repeatable — `--enable a2a --enable mcp`). Surfaces: `agui` / `webui` / `health` / `api` / `resources` (secure-default ON), `a2a` / `mcp` (secure-default OFF). |
-| `--disable SURFACE` | unset | Opt a surface out (repeatable). Precedence: `--enable`/`--disable` > `web.surfaces` config > secure-default — see [reyn.yaml § web.surfaces](../config/reyn-yaml.md#websurfaces-per-surface-opt-inopt-out-fp-0058-p2). |
+| `--disable SURFACE` | unset | Opt a surface out (repeatable). Precedence: `--enable`/`--disable` > `gateway.surfaces` config > secure-default — see [reyn.yaml § gateway.surfaces](../config/reyn-yaml.md#gatewaysurfaces-per-surface-opt-inopt-out-fp-0058-p2). |
 
 ## Requirements
 
@@ -50,7 +50,7 @@ Exits 1 with an install hint if FastAPI or Uvicorn is missing.
 A2A and MCP are broad machine-integration ports (peer agents / external LLM
 clients reaching into this process) and are **off by default** — every other
 surface above is on by default. See [`--enable`/`--disable`](#options) and
-[reyn.yaml § web.surfaces](../config/reyn-yaml.md#websurfaces-per-surface-opt-inopt-out-fp-0058-p2).
+[reyn.yaml § gateway.surfaces](../config/reyn-yaml.md#gatewaysurfaces-per-surface-opt-inopt-out-fp-0058-p2).
 
 ## Authentication
 
@@ -68,7 +68,7 @@ The tier determines what is required:
   token needed.
 - **Loopback / network TCP** — the bearer token is required, presented as
   `?token=<secret>` or an `Authorization: Bearer <secret>` header. A non-loopback
-  bind refuses to start without `web.auth.token` configured (fail-closed); a
+  bind refuses to start without `gateway.auth.token` configured (fail-closed); a
   loopback bind generates an ephemeral token at startup and prints it in the
   launch URL.
 
@@ -79,7 +79,7 @@ and `/health`. Webhook plugin routes (`/webhook/*`) do their own HMAC
 verification and are not double-gated. A CORS preflight (`OPTIONS`) is answered
 without a token.
 
-See [reyn.yaml § web.auth](../config/reyn-yaml.md) for the token / TLS /
+See [reyn.yaml § gateway.auth](../config/reyn-yaml.md) for the token / TLS /
 transport-tier configuration and [AG-UI transport](../runtime/agui-transport.md)
 for the chat surface's per-handler details.
 

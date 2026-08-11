@@ -5,7 +5,7 @@ OpenUI web shell, ``/health``, the REST ``/api`` control plane, resources,
 A2A, MCP) unconditionally. The ``SurfaceSpec`` registry
 (``reyn.interfaces.web.surfaces``) makes A2A and MCP opt-in (secure-default
 OFF) and every surface's mount decision goes through one seam:
-``resolve_enabled`` (CLI > ``web.surfaces`` config > secure-default) gates
+``resolve_enabled`` (CLI > ``gateway.surfaces`` config > secure-default) gates
 whether ``mount(app, config)`` is even called.
 
 Reachability strip-gate (the load-bearing assertion,
@@ -78,9 +78,10 @@ def tmp_project(tmp_path: Path) -> Path:
 
 
 def _write_surfaces_config(project_root: Path, overrides: dict) -> None:
-    """Append a ``web: surfaces:`` block to the project's reyn.yaml."""
+    """Append a ``gateway: surfaces:`` block to the project's reyn.yaml
+    (#4174 T4, renamed from ``web: surfaces:``)."""
     import yaml
-    lines = ["web:", "  surfaces:"]
+    lines = ["gateway:", "  surfaces:"]
     for name, enabled in overrides.items():
         lines.append(f"    {name}:")
         lines.append(f"      enabled: {str(bool(enabled)).lower()}")
@@ -195,7 +196,7 @@ def test_enabling_a2a_makes_it_reachable(
 def test_cli_disable_beats_config_enabled_true(
     tmp_project: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Tier 2: web.surfaces config enables a2a, but --disable a2a still wins."""
+    """Tier 2: gateway.surfaces config enables a2a, but --disable a2a still wins."""
     _write_surfaces_config(tmp_project, {"a2a": True})
     app = _fresh_app(monkeypatch, tmp_project, disable="a2a")
     client, token = _client_with_token(app)
@@ -211,7 +212,7 @@ def test_cli_disable_beats_config_enabled_true(
 def test_config_enabled_beats_secure_default_off(
     tmp_project: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Tier 2: with no CLI override, web.surfaces config enabling a2a beats the
+    """Tier 2: with no CLI override, gateway.surfaces config enabling a2a beats the
     OFF secure-default."""
     _write_surfaces_config(tmp_project, {"a2a": True})
     app = _fresh_app(monkeypatch, tmp_project)
@@ -231,7 +232,7 @@ def test_config_enabled_beats_secure_default_off(
 def test_fresh_install_default_on_set_excludes_a2a_and_mcp(
     tmp_project: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Tier 2: a project with no web.surfaces config and no CLI overrides gets
+    """Tier 2: a project with no gateway.surfaces config and no CLI overrides gets
     exactly the owner-locked ON set (agui/webui/health/api/resources) —
     A2A and MCP stay off."""
     from reyn.interfaces.web.surfaces import build_registry

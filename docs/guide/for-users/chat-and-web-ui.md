@@ -39,7 +39,7 @@ reyn web --port 9000            # change port
 reyn web --host 0.0.0.0         # accept connections from other machines (LAN)
 ```
 
-> **Security note**: The default `127.0.0.1` binding accepts connections from localhost only. A non-loopback bind (like `--host 0.0.0.0`) refuses to start unless a bearer token is configured (`web.auth.token` in `reyn.yaml`) — the gateway never exposes itself to the network unauthenticated.
+> **Security note**: The default `127.0.0.1` binding accepts connections from localhost only. A non-loopback bind (like `--host 0.0.0.0`) refuses to start unless a bearer token is configured (`gateway.auth.token` in `reyn.yaml`) — the gateway never exposes itself to the network unauthenticated.
 
 ---
 
@@ -53,7 +53,7 @@ reyn web --host 0.0.0.0         # accept connections from other machines (LAN)
 reyn web --host 0.0.0.0 --port 8080
 ```
 
-On the default loopback bind (`127.0.0.1`), reyn generates a launch token and prints it in the startup URL (`http://127.0.0.1:8080/?token=...`). On a non-loopback bind, reyn refuses to start unless you've configured `web.auth.token` in `reyn.yaml` — copy that token (or the printed URL) before connecting from elsewhere.
+On the default loopback bind (`127.0.0.1`), reyn generates a launch token and prints it in the startup URL (`http://127.0.0.1:8080/?token=...`). On a non-loopback bind, reyn refuses to start unless you've configured `gateway.auth.token` in `reyn.yaml` — copy that token (or the printed URL) before connecting from elsewhere.
 
 ### Connect
 
@@ -82,7 +82,7 @@ Replies, tool activity, and status stream in as they happen on the server. A hum
 ### Security notes
 
 - For same-machine thin-client use, prefer a UNIX domain socket instead of a token: `reyn web --uds /path/to/socket` — the connection is authenticated by OS peer credentials, no token needed.
-- Any network bind (anything other than loopback) always requires `web.auth.token` and runs over TLS (self-signed by default; reyn prints the certificate fingerprint to pin on first connect).
+- Any network bind (anything other than loopback) always requires `gateway.auth.token` and runs over TLS (self-signed by default; reyn prints the certificate fingerprint to pin on first connect).
 - Treat the printed token/URL like a password — anyone who has it can act as the operator.
 
 ---
@@ -255,8 +255,8 @@ reyn web --enable a2a --enable mcp # turn on both (repeat the flag per surface)
 reyn web --disable api             # turn off a surface that's on by default
 ```
 
-The same toggles are settable in `reyn.yaml` under `web.surfaces` (see the
-[`reyn.yaml` reference § web.surfaces](../../reference/config/reyn-yaml.md#websurfaces-per-surface-opt-inopt-out-fp-0058-p2))
+The same toggles are settable in `reyn.yaml` under `gateway.surfaces` (see the
+[`reyn.yaml` reference § gateway.surfaces](../../reference/config/reyn-yaml.md#gatewaysurfaces-per-surface-opt-inopt-out-fp-0058-p2))
 so an operator running the same project repeatedly doesn't need to repeat
 the CLI flags every launch. A `--enable`/`--disable` flag on the command
 line always wins over the config file.
@@ -302,15 +302,15 @@ reyn web --port 8081
 
 **Can't connect from another device**
 
-By default the server binds to `127.0.0.1` (localhost only). Run with `--host 0.0.0.0` to accept LAN connections, and configure `web.auth.token` in `reyn.yaml` first — a non-loopback bind refuses to start without one.
+By default the server binds to `127.0.0.1` (localhost only). Run with `--host 0.0.0.0` to accept LAN connections, and configure `gateway.auth.token` in `reyn.yaml` first — a non-loopback bind refuses to start without one.
 
 **`--connect` says "authentication required / rejected by the server"**
 
-Pass `--token <secret>` (the token `reyn web` printed on launch, or your configured `web.auth.token`), or set `REYN_WEB_AUTH_TOKEN` in the environment.
+Pass `--token <secret>` (the token `reyn web` printed on launch, or your configured `gateway.auth.token`), or set `REYN_WEB_AUTH_TOKEN` in the environment.
 
 **A2A / MCP requests 404**
 
-A2A and MCP are off by default (secure-default; see [Choosing which surfaces are hosted](#choosing-which-surfaces-are-hosted-enable-disable) above). Start the server with `--enable a2a` / `--enable mcp`, or set `web.surfaces.a2a.enabled: true` / `web.surfaces.mcp.enabled: true` in `reyn.yaml`.
+A2A and MCP are off by default (secure-default; see [Choosing which surfaces are hosted](#choosing-which-surfaces-are-hosted-enable-disable) above). Start the server with `--enable a2a` / `--enable mcp`, or set `gateway.surfaces.a2a.enabled: true` / `gateway.surfaces.mcp.enabled: true` in `reyn.yaml`.
 
 ---
 
@@ -318,6 +318,6 @@ A2A and MCP are off by default (secure-default; see [Choosing which surfaces are
 
 - [Reference: CLI / chat](../../reference/cli/chat.md) — TUI slash commands, `--connect` / `--token` flags
 - [Reference: AG-UI transport](../../reference/runtime/agui-transport.md) — the wire protocol `--connect` and the browser both use
-- [`reyn.yaml` reference § web.surfaces](../../reference/config/reyn-yaml.md#websurfaces-per-surface-opt-inopt-out-fp-0058-p2) — the full per-surface secure-default table and precedence rules
-- [Reference: reyn.yaml § web.auth](../../reference/config/reyn-yaml.md) — token / TLS / transport-tier config
+- [`reyn.yaml` reference § gateway.surfaces](../../reference/config/reyn-yaml.md#gatewaysurfaces-per-surface-opt-inopt-out-fp-0058-p2) — the full per-surface secure-default table and precedence rules
+- [Reference: reyn.yaml § gateway.auth](../../reference/config/reyn-yaml.md) — token / TLS / transport-tier config
 - [Concepts: A2A](../../concepts/multi-agent/a2a.md) — agent-to-agent protocol

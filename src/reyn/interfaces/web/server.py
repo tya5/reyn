@@ -154,7 +154,7 @@ async def _lifespan(app: FastAPI):
     # ── Server-side authentication context (ADR-0039 P0) ──────────────────────
     # Built once per process; read on every AG-UI SSE connection to gate the
     # answer / permission-grant paths. The effective token is handed in from the
-    # CLI via REYN_WEB_AUTH_TOKEN (or web.auth.token); when neither is set a
+    # CLI via REYN_WEB_AUTH_TOKEN (or gateway.auth.token); when neither is set a
     # token is generated so the surface is never left unauthenticated — the
     # generated value is logged so a direct-uvicorn launch can still connect.
     # Defensive boot (mirrors the cron block below): a config-load failure must
@@ -168,12 +168,12 @@ async def _lifespan(app: FastAPI):
     except Exception as exc:  # noqa: BLE001 — defensive boot; the gate must exist
         app.state.auth = AuthContext.from_env_and_config(None)
         logger.warning(
-            "web.auth: config load failed (%s); using an env/generated token so "
+            "gateway.auth: config load failed (%s); using an env/generated token so "
             "the auth gate is still enforced.", exc,
         )
     if getattr(app.state.auth, "token_was_generated", False):
         logger.warning(
-            "web.auth: no token configured; generated an ephemeral gateway "
+            "gateway.auth: no token configured; generated an ephemeral gateway "
             "token for this run: %s", app.state.auth.token,
         )
 

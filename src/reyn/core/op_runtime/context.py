@@ -15,7 +15,7 @@ if TYPE_CHECKING:
     import asyncio
     from collections.abc import Awaitable, Callable, Sequence
 
-    from reyn.config import MultimodalConfig, SandboxConfig, WebConfig
+    from reyn.config import MultimodalConfig, SandboxConfig, WebFetchConfig
     from reyn.core.events.events import EventLog
     from reyn.core.events.state_log import StateLog
     from reyn.core.op_runtime.render_template import RenderTemplateBounds
@@ -177,9 +177,15 @@ class OpContext:
     hot_reloader: "object | None" = None
 
     # FP-0022 follow-up: declarative SSL config for web_fetch and MCP registry.
-    # Defaults to WebConfig() (= no override, falls through to env-var chain).
-    # Callers that have a ReynConfig available should pass config.web here.
-    web_config: "WebConfig | None" = None
+    # Defaults to None (= no override, falls through to env-var chain).
+    # Callers that have a ReynConfig available should pass config.web_fetch
+    # here. #4174 T4: renamed from `web_config: WebConfig | None` (the type
+    # ITSELF is now WebFetchConfig directly, not a `.fetch`-nested wrapper —
+    # WebConfig no longer exists, split into WebFetchConfig + GatewayConfig).
+    # #4274: no real construction site actually sets this today (checked:
+    # zero `web_fetch_config=` / `web_config=` call sites in src/ outside
+    # this declaration) — a pre-existing gap this rename does not fix.
+    web_fetch_config: "WebFetchConfig | None" = None
 
     # FP-0017 follow-up: declarative sandbox config for sandboxed_exec op.
     # Callers that have a ReynConfig available should pass config.sandbox here.

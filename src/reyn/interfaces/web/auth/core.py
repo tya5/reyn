@@ -170,15 +170,16 @@ class AuthContext:
 
     @classmethod
     def from_env_and_config(cls, config) -> "AuthContext":
-        """Build the context from ``web.auth`` config + the token env var.
+        """Build the context from ``gateway.auth`` config + the token env var
+        (#4174 T4, renamed from ``web.auth``).
 
         The CLI writes the effective token to :data:`TOKEN_ENV_VAR`; an operator
-        may instead set it in ``web.auth.token``. When neither is present a
+        may instead set it in ``gateway.auth.token``. When neither is present a
         token is generated so the surface is never left unauthenticated — the
         generated value is logged by the caller so a direct-``uvicorn`` launch
         can still connect.
         """
-        auth_cfg = getattr(getattr(config, "web", None), "auth", None)
+        auth_cfg = getattr(getattr(config, "gateway", None), "auth", None)
         token = os.environ.get(TOKEN_ENV_VAR) or getattr(auth_cfg, "token", None)
         require_token = getattr(auth_cfg, "require_token_on_loopback", True)
         generated = False

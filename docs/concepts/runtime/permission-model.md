@@ -209,19 +209,21 @@ requests. This solves the corporate MITM proxy / custom PKI use case at config
 level without requiring ad-hoc env-var configuration.
 
 ```yaml
-web:
-  fetch:
-    verify_ssl: false          # bool — disable SSL verification entirely
-    ca_bundle: /path/to/ca.pem # str  — custom CA bundle file path
+web_fetch:
+  verify_ssl: false          # bool — disable SSL verification entirely
+  ca_bundle: /path/to/ca.pem # str  — custom CA bundle file path
 ```
+
+(`web_fetch:` — #4174 T4, renamed from `web.fetch:` when `web:` split into
+`web_fetch:` / `gateway:`.)
 
 Both fields are optional. Priority order (highest to lowest):
 
 | Priority | Source | Effect |
 |---|---|---|
-| 1 | `web.fetch.ca_bundle` set | Pass the path to httpx `verify=<path>` (custom CA) |
-| 2 | `web.fetch.verify_ssl: false` | Disable SSL verification (`verify=False`) |
-| 3 | `web.fetch.verify_ssl: true` | Force SSL verification (`verify=True`) |
+| 1 | `web_fetch.ca_bundle` set | Pass the path to httpx `verify=<path>` (custom CA) |
+| 2 | `web_fetch.verify_ssl: false` | Disable SSL verification (`verify=False`) |
+| 3 | `web_fetch.verify_ssl: true` | Force SSL verification (`verify=True`) |
 | 4 | Neither set (default) | `SSL_VERIFY` env var → `litellm.ssl_verify` → `SSL_CERT_FILE` → `True` |
 
 `ca_bundle` takes precedence over `verify_ssl` when both are set. The existing

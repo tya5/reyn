@@ -33,9 +33,10 @@ from reyn.config.infra import (  # #1682 #3 cross-section
     _build_sandbox_config,
 )
 from reyn.config.media import (  # #1682 #3 cross-section
+    _build_gateway_config,
     _build_multimodal_config,
     _build_voice_config,
-    _build_web_config,
+    _build_web_fetch_config,
 )
 from reyn.config.observability import (
     _build_observability_config,
@@ -820,7 +821,8 @@ def load_config(cwd: Path | None = None) -> ReynConfig:
         cost_warn=cost_warn,
         offload=offload,
         render_template=render_template,
-        web=_build_web_config(merged.get("web")),
+        web_fetch=_build_web_fetch_config(merged.get("web_fetch")),
+        gateway=_build_gateway_config(merged.get("gateway")),
         multimodal=_build_multimodal_config(merged.get("multimodal")),
         sandbox=_build_sandbox_config(merged.get("sandbox")),
         # #1800 slice 5b: the raw ``hooks:`` block, passed through (parsed by
