@@ -748,35 +748,42 @@ cron:
 
 ```yaml
 permissions:
-  exec: deny            # deny | ask | allow — `exec` ツールの事前承認キー
-                         # （#3226 Phase 3 で `shell` から改名。clean-break、
-                         # alias なし — 既存の reyn.yaml の `shell:` は `exec:` へ）
-  file:
-    read:  [".reyn/", "src/stdlib/"]
-    write: [".reyn/state/", "reyn/local/"]
+  exec: deny             # deny | ask | allow — `exec` ツールの事前承認キー
+                          # （#3226 Phase 3 で `shell` から改名。clean-break、
+                          # alias なし — 既存の reyn.yaml の `shell:` は `exec:` へ）
+  file.read:  [".reyn/", "src/stdlib/"]   # フラットな dotted key — `file:` とネストした
+  file.write: [".reyn/state/", "reyn/local/"]  # {read:, write:} は読まれません。
+                                                # PermissionDecl.from_dict() が見るのは
+                                                # ここに示すフラットなキーのみです。
   python:
-    safe:    allow      # python ステップは常にサンドボックス化（safe モードのみ）
-    allowed_modules:
-      - math
-      - statistics
-      - json
-      - re
-  mcp_install: ask      # deny | ask | allow （デフォルト: ask）
+    safe: allow            # `permissions.python` が読む唯一のキー — python ステップは
+                            # 常にサンドボックス化されます（safe モードのみ）。`python:` の
+                            # 下にそれ以外を書いても（例: module allowlist）何も付与しません
+                            # — `PermissionDecl` に対応するフィールドがありません。
 ```
 
-### `permissions.mcp_install`
+MCP サーバーのインストールも同じ方式でゲートされます — `file.write`（宣言的パスリスト、上記と同じ）＋ `http.get`（宣言的ホストリスト）で、`permissions.mcp_install` の bool ではありません。下記「MCP install」を参照（そちらは blanket `allow`/`deny` スカラーで、ここで示したリスト形とは同じキーの別の使い方です）。
 
-`reyn mcp install` または `mcp_install` Control IR op 経由で MCP サーバーを設定に追加できるかを制御します。3 つの値：
+### MCP install
 
-| 値 | 動作 |
-|-------|-----------|
-| `ask`（デフォルト） | サーバーごとの初回インストール時にインタラクティブプロンプト。承認は `mcp_install:<server_id>` キーで `.reyn/approvals.yaml` に永続化されます。 |
-| `allow` | プロンプトなしでインストール。プライベートレジストリと組み合わせて「承認済みサーバーのみ」ポリシーを実現する際に有用。 |
-| `deny` | すべてのインストール試行を拒否。サーバーリストを一元管理するチーム設定のプロジェクトスコープ `reyn.yaml` に適切。 |
+レガシーな `permissions.mcp_install: ask | allow | deny` bool 軸は削除されました。MCP install は他の OS 全体と同じリスト軸でゲートされます:
 
-この設定は標準のスコープ層マージに参加します。プロジェクトスコープの `reyn.yaml` で `deny` を設定し、個々の開発者が `reyn.local.yaml` で `mcp_install: ask` にオーバーライドすることができます。
+```yaml
+# reyn.yaml — install permissions は file.write + http.get で表現
+permissions:
+  file.write: allow      # .reyn/config/mcp.yaml（= install 対象）への blanket allow
+  web.fetch: allow        # レジストリ fetch への blanket allow（= レガシー alias）
+```
 
-エンタープライズパターン — プライベートレジストリへのインストールを制限：
+より細かい制御は skill の `skill.md` が正規のパス・ホストを宣言する形で行います。`startup_guard` が skill+host ごとに初回だけインタラクティブプロンプトを出し、以降はランタイムチェックがサイレントになります（= デフォルトゾーン外のパスは `file.write` モデル、ホストは `http.get` per-host）。
+
+| やりたいこと | 新しい形 |
+|------|-----------|
+| プロジェクト全体で install を全面ブロック | `.reyn/config/mcp.yaml` パスへの `file.write: deny`、またはレジストリホストへの `web.fetch: deny` |
+| プロンプトなしで install を許可 | プロジェクトスコープで `file.write: allow` と `web.fetch: allow` |
+| 特定ホストのみ許可 | skill が `http.get: [{host: "..."}]` を明示的に宣言。wildcard `["*"]` は per-host プロンプトに委ねる |
+
+エンタープライズパターン — プライベート / 企業レジストリを宣言的 config か env-var override で指す:
 
 ```yaml
 # reyn.yaml（プロジェクトスコープ — git にコミット）
@@ -785,10 +792,9 @@ mcp:
     - https://mcp-registry.internal.acme.com/    # プライベートレジストリを先頭に
     - https://registry.modelcontextprotocol.io/   # パブリックフォールバック
 permissions:
-  mcp_install: allow    # チームはインストール可能だが、上記レジストリのサーバーのみ事実上限定
+  web.fetch: allow       # レジストリ fetch への blanket allow
+  file.write: allow      # .reyn/config/mcp.yaml への書き込み blanket allow
 ```
-
-スコープ層との詳細な連動とエンタープライズユースケースは [コンセプト: パーミッションモデル](../../concepts/runtime/permission-model.md#mcp_install-permission) を参照してください。
 
 完全な Permission 文法は `reference/config/permissions.md` に記載されています。
 
