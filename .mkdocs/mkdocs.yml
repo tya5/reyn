@@ -106,6 +106,7 @@ nav:
               - guide/for-users/oauth-login.md
               - guide/for-users/manage-memory.md
               - guide/for-users/write-a-pipeline.md
+              - guide/for-users/monitor-and-improve-with-cron.md
       - For Reyn developers:
           - guide/for-reyn-developers/index.md
           - Concepts & principles:
