@@ -100,12 +100,12 @@ mixed in at the top level) should know things moved:
 |---|---|
 | `.reyn/mcp.yaml`, `.reyn/cron.yaml`, `.reyn/hooks.yaml` | `.reyn/config/<x>.yaml` |
 | `.reyn/index/sources.yaml` | `.reyn/config/index/sources.yaml` |
+| `.reyn/index/` (data), `.reyn/action_index/`, `.reyn/registry-cache/` | `.reyn/cache/…` |
+| `.reyn/approvals.yaml` | **unchanged** (top-level — it is *persist*, not recovery-core config) |
 
 `integrations.yaml` is deliberately absent from this table (#4337): no reader/writer for it
 exists at either the old or the new location, so there is nothing that actually moved — see
 the `config/` entry above.
-| `.reyn/index/` (data), `.reyn/action_index/`, `.reyn/registry-cache/` | `.reyn/cache/…` |
-| `.reyn/approvals.yaml` | **unchanged** (top-level — it is *persist*, not recovery-core config) |
 
 ## <a id="recovery-core"></a>Recovery-core: what the WAL + snapshot generators write
 
