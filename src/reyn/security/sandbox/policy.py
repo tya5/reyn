@@ -504,22 +504,14 @@ _SANDBOX_POLICY_CONFIG_KEY_TO_FIELD: dict[str, str] = {
     "deny_env_names": "env_deny_names",
     "timeout_seconds": "timeout_seconds",
     "max_timeout_seconds": "max_timeout_seconds",
-    # #3903 a-2: `background_timeout_seconds`/`background_max_timeout_seconds`
-    # deliberately NOT registered here yet (lead-coder review, #4186) —
-    # `SandboxPolicy` carries the fields (below), but nothing yet reads
-    # them (③ — "is this exec foreground or background" isn't wired to
-    # `sandboxed_exec.handle`), and their default<=max self-consistency
-    # check ALSO isn't here yet — a check reading these keys would be
-    # unreachable dead code without this registration (see
-    # `_translate_sandbox_policy_config`'s own comment at the return, where
-    # that check was removed for the same reason on a second review pass).
-    # Registering the config-vocabulary keys before ③ lands would let an
-    # operator write `background_timeout_seconds: 300` to reyn.yaml, have
-    # it validate and save, and have it silently do nothing — the exact
-    # "declared config, no reader" class #4159/#4165 are open instances of
-    # (CLAUDE.md Q3: "who would miss this" was honestly "nobody" until ③
-    # exists). Add these two lines AND the self-consistency check back in
-    # the SAME PR that wires ③ — do not add either alone.
+    # #3903 a-2 ③: registered now (deferred out of #4186 specifically
+    # because ③ — "is this exec foreground or background" reaching
+    # `sandboxed_exec.handle` — did not exist yet; it does now, via
+    # `OpContext.ephemeral`, so these two config-vocabulary keys have a
+    # real reader and are no longer the "declared config, no reader" gap
+    # #4159/#4165 named).
+    "background_timeout_seconds": "background_timeout_seconds",
+    "background_max_timeout_seconds": "background_max_timeout_seconds",
     "max_output_bytes": "max_output_bytes",
 }
 
@@ -613,17 +605,32 @@ def _translate_sandbox_policy_config(config_policy: "dict | None") -> dict:
         )
         out["timeout_seconds"] = effective_max
 
-    # #3903 a-2: the SAME default<=max invariant, for the background pair,
-    # is deliberately NOT here yet (lead-coder review, #4186, second pass) —
-    # `background_timeout_seconds`/`background_max_timeout_seconds` aren't
-    # in `_SANDBOX_POLICY_CONFIG_KEY_TO_FIELD` (see that map's own comment),
-    # so `out` can never carry those keys and a check reading them would be
-    # unreachable dead code: exactly the same "claims to exist, cannot ever
-    # run" shape as the config-key registration itself would have been —
-    # the residue's first draft here said "the self-consistency check for
-    # them already exists," which was true of the code but false of its
-    # reachability. Add this check back in the SAME PR that adds the
-    # registration (③) — see the registration comment above for why.
+    # #3903 a-2 ③: the SAME default<=max invariant, for the background
+    # pair — written FRESH here (not resurrected from #4186's removed
+    # draft, per that draft's own residue instruction), matching #4174
+    # T0's warn+clamp posture rather than #4186's original raise (T0
+    # landed on main between #4186 and this PR; a raise here would be a
+    # NEW hard-fail T0's blanket ruling exists to close, in the exact
+    # function T0 already rewrote for the foreground pair immediately
+    # above). `effective_bg_max` is `int | None` — `None` means no
+    # ceiling (owner ruling), so the comparison is skipped entirely, not
+    # clamped against a missing value.
+    effective_bg_timeout = out.get(
+        "background_timeout_seconds", DEFAULT_BACKGROUND_EXEC_TIMEOUT_SECONDS
+    )
+    effective_bg_max = out.get(
+        "background_max_timeout_seconds", DEFAULT_BACKGROUND_MAX_EXEC_TIMEOUT_SECONDS
+    )
+    if effective_bg_max is not None and effective_bg_timeout > effective_bg_max:
+        _log.warning(
+            "sandbox.policy.background_timeout_seconds (%s) exceeds "
+            "sandbox.policy.background_max_timeout_seconds (%s) — the "
+            "default cannot be above the LLM-extensible cap; using %s as "
+            "the effective default instead of failing this op",
+            effective_bg_timeout, effective_bg_max, effective_bg_max,
+        )
+        out["background_timeout_seconds"] = effective_bg_max
+
     return out
 
 

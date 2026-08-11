@@ -53,6 +53,7 @@ _INERT_OP_CONTEXT_SOURCE_FIELDS: dict = {
     "render_template_bounds": None,
     "budget_gateway": None,
     "available_skills_fn": None,
+    "ephemeral_fn": None,  # #3903 a-2 ③
 }
 
 

@@ -64,6 +64,7 @@ def build_router_op_context(
     compact_now: Any = None,  # #272/#1128
     run_id: str | None = None,  # chat router is outside run scope (#FP-0021)
     cancel_event: Any = None,  # #1470: asyncio.Event for mid-subprocess cancel
+    ephemeral: bool = False,  # #3903 a-2 ③: Session._ephemeral, live — see OpContext.ephemeral's own docstring for what this DOES and does NOT mean
     threat_scan: Any = None,  # FP-0050/#1822 S5 (EP4): exec command-scan config
     contextual_permission: Any = None,  # #1827 S3: per-session capability narrowing → OpContext
     session_id: str | None = None,
@@ -166,6 +167,7 @@ def build_router_op_context(
             write_paths=[str(workspace.base_dir)],
         ),
         cancel_event=cancel_event,
+        ephemeral=ephemeral,
         threat_scan=threat_scan,
         contextual_permission=contextual_permission,
         session_id=session_id,
@@ -243,6 +245,7 @@ class RouterOpContextSource:
         render_template_bounds: Any,
         budget_gateway: Any,
         available_skills_fn: Any,
+        ephemeral_fn: Any,  # #3903 a-2 ③: Session._ephemeral, live — same reason turn_origin_fn/session_id_fn are `_fn`s, not values (reassigned post-construction)
     ) -> None:
         self._events = events
         self._permission_resolver = permission_resolver
@@ -272,6 +275,7 @@ class RouterOpContextSource:
         self._render_template_bounds = render_template_bounds
         self._budget_gateway = budget_gateway
         self._available_skills_fn = available_skills_fn
+        self._ephemeral_fn = ephemeral_fn
         self._cancel_event: Any = None
 
     @property
@@ -325,6 +329,7 @@ class RouterOpContextSource:
             media_store=self._resolve(self._media_store_fn),
             compact_now=self._compact_now,
             cancel_event=self._cancel_event,
+            ephemeral=self._resolve(self._ephemeral_fn, False),
             threat_scan=self._threat_scan,
             contextual_permission=self._resolve(self._contextual_permission_fn),
             session_id=self._resolve(self._session_id_fn),
