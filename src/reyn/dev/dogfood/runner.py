@@ -21,11 +21,8 @@ without a live LLM. ``--replay`` mode (F5) also populates this seam.
 """
 from __future__ import annotations
 
-import asyncio
 import json
-import math
 import os
-import shutil
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
