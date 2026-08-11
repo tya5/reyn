@@ -140,36 +140,13 @@ async def test_landlock_runs_echo() -> None:
     assert result.stdout == b"hi\n"
 
 
-@pytest.mark.skipif(sys.platform != "linux", reason="LandlockBackend is Linux-only")
-@pytest.mark.asyncio
-async def test_landlock_blocks_writes_outside_policy() -> None:
-    """Tier 2: on Linux with landlock, writing outside write_paths yields non-zero returncode."""
-    try:
-        import landlock  # noqa: F401
-    except ImportError:
-        pytest.skip("landlock package not installed")
-
-    backend = LandlockBackend()
-    if not backend.available():
-        pytest.skip("LandlockBackend not available on this kernel")
-
-    import os
-    import tempfile
-
-    # Create a temp dir that is NOT in write_paths.
-    with tempfile.TemporaryDirectory() as restricted_dir:
-        target = os.path.join(restricted_dir, "should_fail.txt")
-        policy = SandboxPolicy(
-            write_paths=[],  # no write paths — kernel should deny
-            network=False,
-            timeout_seconds=10,
-        )
-        # Attempt to write a file outside allowed write_paths.
-        result = await backend.run(
-            ["/bin/sh", "-c", f"echo test > {target}"],
-            policy,
-        )
-        # The write should be blocked by Landlock (EACCES/EPERM → non-zero exit):
-        # WRITE_FILE/MAKE_* are in the HANDLED set but granted on no path (empty
-        # write_paths), so writes are denied everywhere (#1693).
-        assert result.returncode != 0
+# test_landlock_blocks_writes_outside_policy removed (#4304, part of #3880): the
+# only assert was `result.returncode != 0`, with no positive control (a grant-path
+# write succeeding) and no check of reyn's own Ruleset construction — if it failed,
+# whose bug is it was undecidable (the Linux kernel's Landlock LSM vs reyn's
+# construction vs the shim crashing before exec, all producing the same signature).
+# The same claim is already correctly proven, twice, with the falsifying controls
+# this test lacked: test_shim_denies_a_write_outside_write_paths
+# (test_landlock_exec_shim_1344e.py) and
+# test_write_axis_deny_leg_fires_against_landlock_and_fails_against_noop
+# (test_sandbox_axis_contract_2983.py).
