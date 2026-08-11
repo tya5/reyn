@@ -739,8 +739,8 @@ cron:
 ### 関連情報
 
 - `docs/reference/cli/cron.md` — `reyn cron run/list/status`
-- `docs/concepts/data-retrieval/operational-intelligence.md` — イベントログの定期
-  indexing agent をスケジュールする
+- `docs/guide/for-users/monitor-and-improve-with-cron.md` — `cron.jobs` と
+  `.reyn/events/` を組み合わせて監視・改善エージェントを起こす方法（EN のみ）
 
 ## `permissions` ブロック
 

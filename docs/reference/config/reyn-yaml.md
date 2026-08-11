@@ -1366,8 +1366,8 @@ cron:
 ### Cross-references
 
 - `docs/reference/cli/cron.md` — `reyn cron run/list/status`
-- `docs/concepts/data-retrieval/operational-intelligence.md` — scheduling a
-  recurring events-log indexing agent
+- `docs/guide/for-users/monitor-and-improve-with-cron.md` — using `cron.jobs`
+  together with `.reyn/events/` to wake a monitoring/improvement agent
 
 ## `permissions` block
 
