@@ -91,6 +91,98 @@ def test_unsupported_component_does_not_crash_the_render_loop() -> None:
     assert "not-a-real-component" in out
 
 
+# ── 1b. #3846 ③ — image_cache real-pixel rendering ───────────────────────────
+
+
+def _png_bytes(*, size: tuple = (4, 4), color: tuple = (200, 20, 60)) -> bytes:
+    import io as _io
+
+    from PIL import Image as PILImage
+
+    buf = _io.BytesIO()
+    PILImage.new("RGB", size, color=color).save(buf, format="PNG")
+    return buf.getvalue()
+
+
+def test_image_with_resolved_cache_renders_real_pixels_not_the_status_line() -> None:
+    """Tier 1: #3846 ③ — a successfully-resolved image (a real ImageResolution
+    in `image_cache`) is wrapped in a `textual_image.renderable.Image`
+    instance, not the pre-③ `[image loaded: ...]` status-line `Text`. This
+    is reyn's OWN dispatch decision (which renderable class `_render_image`
+    picks) — a fact about reyn's wiring, not textual_image's rendering
+    behavior (a third party's promise this file does not pin). Checked on
+    the render-model OBJECT (`Group.renderables`), not on printed glyph
+    output — a Console.print of either class produces terminal-formatted
+    text, so a text-content-only assertion here cannot tell "real pixel
+    path wired" apart from "still the old status line" (confirmed by
+    deliberately reverting `_render_image` to the pre-③ Text return and
+    seeing string-only assertions here stay green — falsify-verified)."""
+    from textual_image.renderable import Image as TextualImage
+
+    from reyn.core.present.image_fetch import ImageResolution
+
+    nodes = validate_blueprint({"component": "image", "src": "http://x/y.png", "alt": "a photo"})
+    resolved = resolve_bindings(nodes, {}, surface="inline-cui")
+    image_cache = {
+        "http://x/y.png": ImageResolution(ok=True, body=_png_bytes(), content_type="image/png"),
+    }
+    group = render_presentation_nodes(resolved.nodes, image_cache=image_cache)
+    (renderable,) = group.renderables
+    assert isinstance(renderable, TextualImage), (
+        f"expected a textual_image renderable, got {type(renderable)!r}"
+    )
+
+    # And the printed output is still sane through the real pipeline: no
+    # placeholder, no failure text, non-empty.
+    console = Console(width=100, file=io.StringIO(), force_terminal=True, color_system=None)
+    console.print(group)
+    out = console.file.getvalue()
+    assert "[image: a photo]" not in out
+    assert "could not render" not in out
+    assert "[image failed" not in out
+    assert out.strip()
+
+
+def test_image_with_undecodable_body_falls_back_to_a_distinct_status_line() -> None:
+    """Tier 1: #3846 ③ — a resolved-but-not-actually-an-image body (corrupt,
+    truncated, or a non-image content type mislabeled by the server) fails
+    to decode and falls back to a status line naming the failure — never a
+    crash, never the same text as a genuine fetch failure or the
+    never-resolved placeholder (the #3688 "different things read as the
+    same" class).
+
+    Uses a TRUNCATED real PNG (valid header, cut off mid-pixel-data), not
+    plain garbage bytes: garbage fails at `PILImage.open()`'s header sniff
+    alone, which would leave the LAZY-decode failure path unexercised — a
+    truncated body passes `open()` (the header parses fine; PIL decodes
+    lazily) and only fails once pixel data is actually read, which
+    `TextualImage(...)`'s own constructor does eagerly (verified directly:
+    `open()` on this exact body returns a valid `Image`; constructing
+    `TextualImage` from it raises `OSError: image file is truncated`) — the
+    case `_render_image`'s `try` block exists to catch."""
+    from rich.console import Console
+
+    from reyn.core.present.image_fetch import ImageResolution
+
+    truncated_png = _png_bytes(size=(50, 50))
+    truncated_png = truncated_png[: len(truncated_png) // 2]
+
+    nodes = validate_blueprint({"component": "image", "src": "http://x/y.png", "alt": "a photo"})
+    resolved = resolve_bindings(nodes, {}, surface="inline-cui")
+    image_cache = {
+        "http://x/y.png": ImageResolution(
+            ok=True, body=truncated_png, content_type="image/png",
+        ),
+    }
+    console = Console(width=100, file=io.StringIO(), force_terminal=True, color_system=None)
+    console.print(render_presentation_nodes(resolved.nodes, image_cache=image_cache))
+    out = console.file.getvalue()
+    assert "could not render" in out
+    assert "a photo" in out
+    assert "[image: a photo]" not in out
+    assert "[image failed" not in out  # distinct from a FETCH failure (res.ok=False)
+
+
 # ── 2. INVARIANT-LOCK: Rich markup never interpreted, full real pipeline ────
 
 

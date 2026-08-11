@@ -4554,6 +4554,31 @@ async def run_textual_chat(
     regardless. Returns so the driver's caller can tear the transport down
     + print the cost summary.
     """
+    # #3846 ③: trigger textual_image.renderable's ONE-TIME, process-global
+    # terminal-capability auto-detection HERE — strictly BEFORE
+    # app.run_async() hands stdin to Textual. That auto-detection (Sixel/TGP
+    # support) sends a raw escape sequence to the real terminal and
+    # synchronously reads the reply off `sys.__stdout__`/stdin; the LIBRARY'S
+    # OWN docstring (`textual_image.renderable.sixel.query_terminal_support`)
+    # warns this "will not work anymore once Textual is started" — Textual
+    # runs its own stdin-reading thread that races (and usually wins) this
+    # read once the app loop is live. `present_renderer.py`'s `_render_image`
+    # imports `textual_image.renderable` lazily (its own "No I/O" module
+    # invariant), which would otherwise defer this exact query to the first
+    # image actually presented — i.e. DURING a live app.run_async() session,
+    # guaranteeing the query loses the race and every image in the TUI falls
+    # back to unicode/half-block even on a real Kitty/WezTerm/Sixel terminal.
+    # Importing here, before Textual owns stdin, lets the query succeed and
+    # the module-level `Image` binding (see that module's own `__init__.py`)
+    # resolve to the real terminal's actual capability once, for the whole
+    # process. A missing/failed import is swallowed — image nodes simply
+    # keep falling back to the pre-③ status-line text, same as an
+    # environment without pillow/textual-image at all.
+    try:
+        import textual_image.renderable  # noqa: F401,PLC0415
+    except Exception:
+        pass
+
     # #3671: the framework's own startup begins here — terminal setup, first
     # layout, first paint. Everything before it is reyn assembling things;
     # everything after it is Textual, and the two were indistinguishable while

@@ -73,7 +73,7 @@ All components are read-only. A blueprint node is `{"component": <name>, ...slot
 | `keyvalue` | `rows: [{label, value}]` |
 | `table` | `rows` (bind → array), `columns: [{header, path}]` |
 | `list` | `items` (bind → array), `item_path?` (per-item path) |
-| `image` | `src`, `alt?` — v1 renders an `[image: <alt>]` dim-text placeholder only, not yet routed to the multimodal delivery path |
+| `image` | `src`, `alt?` — the TUI (`textual_chat`) fetches `src` (owner-decided delivery form C — client fetches the URL itself, #3846) and renders REAL pixels (Kitty/WezTerm true pixels or Sixel, half-block/unicode approximation otherwise, auto-detected per-terminal — #3846 ③). Surfaces without a resolution stage (plain `reyn chat --cui`, `reyn pipe`) show an `[image: <alt>]` dim-text placeholder; a failed fetch/decode shows a distinguishable `[image failed: ...]` state, never the same placeholder text. |
 
 There are **no interactive components** (no buttons / forms) in v1.
 

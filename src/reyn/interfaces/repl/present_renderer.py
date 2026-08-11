@@ -118,19 +118,32 @@ def _render_node(node: dict, image_cache: "dict[str, Any] | None" = None) -> "An
 
 
 def _render_image(node: dict, image_cache: "dict[str, Any] | None") -> "Any":
-    """The `image` component (#3846 ②) — a PURE dict lookup, never a fetch.
+    """The `image` component (#3846 ②/③) — a PURE dict lookup + in-memory
+    decode, never a fetch.
 
     `image_cache` (an app-owned `dict[str, ImageResolution]`, see
     `core/present/image_fetch.py`) is populated ELSEWHERE, by a resolution
     stage kicked off when the frame first arrives (`TextualChatApp.
     _begin_image_resolutions` -> `ReynPresenter.begin_image_resolution`) —
     this module's own docstring bans doing that fetch here (the "Pure: ...
-    No I/O" invariant). `image_cache=None` (every non-TUI caller — plain
-    ``ConsoleChatRenderer``, `reyn pipe`'s `StdoutPresentationRenderer`, and
-    every existing test that calls this function without the new kwarg) gets
-    the pre-#3846 `[image: alt]` text, byte-identical — no resolution stage
-    exists on those surfaces yet (#3846 ③ tracks plain's own sync-fetch
-    follow-up; ③ tracks real pixel rendering, a separate deps decision)."""
+    No I/O" invariant); decoding the already-fetched bytes via PIL is pure
+    CPU, not I/O, so it stays within that invariant. `image_cache=None`
+    (every non-TUI caller — plain ``ConsoleChatRenderer``, `reyn pipe`'s
+    `StdoutPresentationRenderer`, and every existing test that calls this
+    function without the new kwarg) gets the pre-#3846 `[image: alt]` text,
+    byte-identical — no resolution stage exists on those surfaces yet.
+
+    #3846 ③: on a successful resolution, renders REAL pixels via
+    `textual_image.renderable.Image` (owner-approved regular dep, #3970) —
+    Kitty/WezTerm true pixels or Sixel when the terminal supports either,
+    half-block/unicode approximation otherwise (that fallback selection is
+    `textual_image`'s own, made once per process — see
+    `interfaces/inline/textual_chat/app.py`'s `run_textual_chat` for WHY the
+    triggering import must happen there and not lazily here). Falls back to
+    a status-line `Text` if decoding fails (a genuinely non-image or
+    corrupt body) or if `pillow`/`textual-image` are unavailable for any
+    reason (defensive — they are regular deps, so this should not happen in
+    a normal install)."""
     from rich.text import Text
 
     alt = node.get("alt") or ""
@@ -139,16 +152,31 @@ def _render_image(node: dict, image_cache: "dict[str, Any] | None") -> "Any":
     if image_cache is None or not isinstance(src, str) or src not in image_cache:
         return Text(f"[image: {label}]", style="dim")
     res = image_cache[src]
-    if res.ok:
-        # V1 renders a LOADED status line, not real pixels (#3846 ③, a
-        # separate textual-image/pillow-deps decision) — see this
-        # function's own docstring for why that split is deliberate.
+    if not res.ok:
+        return Text(f"[image failed: {label} — {res.error}]", style="dim")
+    try:
+        import io
+
+        from PIL import Image as PILImage
+        from textual_image.renderable import Image as TextualImage
+
+        pil_image = PILImage.open(io.BytesIO(res.body))
+        # `PILImage.open()` alone only parses the header (lazy decode) — a
+        # truncated/corrupt body can open cleanly and only fail once pixel
+        # data is actually read. No separate `.load()` call is needed here
+        # to force that: `TextualImage`'s own constructor reads the pixel
+        # data eagerly (`PixelData.__init__`), so a bad body already raises
+        # HERE, inside this `try`, not later at paint time (verified: a
+        # truncated PNG that `open()` accepts raises `OSError` from
+        # `TextualImage(...)` itself).
+        return TextualImage(pil_image, width="auto")
+    except Exception as exc:
+        # Anything from a corrupt/unsupported body to a missing optional dep
+        # (defensive only — pillow/textual-image are regular deps) degrades
+        # to the pre-③ status line rather than breaking the render loop.
         return Text(
-            f"[image loaded: {label} — {len(res.body)} bytes, "
-            f"{res.content_type or 'unknown type'}]",
-            style="dim",
+            f"[image loaded but could not render: {label} — {exc}]", style="dim",
         )
-    return Text(f"[image failed: {label} — {res.error}]", style="dim")
 
 
 def render_presentation_nodes(
