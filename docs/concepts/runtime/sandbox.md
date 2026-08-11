@@ -49,7 +49,8 @@ action, not re-deciding what the launching shell could already do.
 | `write_deny_paths` | `list[str]` | `[]` | The write axis's own deny-list (#3901), mirroring `read_deny_paths`. Before #3901, Seatbelt denied writes as an undocumented side-effect of `read_deny_paths`; Landlock never replicated that side-effect, so the same policy meant different things per OS — this field closes that gap with one real field both backends read. Denies only the WRITE axis. |
 | `deny_subprocess` | `bool` | `false` (compat) | Deny the sandboxed process from spawning children — the deny-list-shaped inverse of the pre-#3901 `allow_subprocess`. Enforced on Linux (seccomp) and macOS (Seatbelt: `process-fork` denied when `true`; the target's own exec still works via `process-exec*`). |
 | `env_deny_names` | `list[str]` | `[]` (compat) | Environment variable names WITHHELD from the subprocess — the deny-list-shaped inverse of the pre-#3901 `env_passthrough` allowlist. Empty (the default) means the WHOLE environment passes through, the same trust level as the launching shell. |
-| `timeout_seconds` | `int` | `60` | Wall-clock limit; process is killed on expiry. |
+| `timeout_seconds` | `int` | `120` (#3903①, 2026-08-11 — was `60`) | Wall-clock limit; process is killed on expiry. The LLM's `exec` call may request a higher value up to `max_timeout_seconds`. |
+| `max_timeout_seconds` | `int` | `600` (#3903①) | The operator-controlled ceiling `timeout_seconds` (both the policy default and any LLM-requested override) is checked against — narrowing it genuinely narrows what the LLM can ask for; the LLM can never widen it. See the [`sandboxed_exec` op reference](../../reference/runtime/control-ir.md#sandboxed_exec) for the reject-not-clamp behavior. |
 
 ## Backend selection table
 
