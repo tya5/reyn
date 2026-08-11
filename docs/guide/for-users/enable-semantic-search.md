@@ -3,6 +3,8 @@
 `reyn chat` ships with two ways for the LLM to discover what it can do: a fast **`list_actions`** browser (= category-prefix enumeration, always available) and a **`search_actions`** semantic search (= natural-language queries against an embedding index of every action). This guide walks through enabling the semantic path.
 
 > **TL;DR**: `search_actions` is **off by default** (semantic search is opt-in project-wide). If you already have an embedding API key, `reyn secret set OPENAI_API_KEY` then set `embedding.enabled: true` in `reyn.yaml` — no proxy, no extra install. If you'd rather run a local model with no API key, put it behind a **litellm proxy** and point reyn at it (see [Case B](#case-b-no-embedding-api-contract-litellm-proxy-a-local-model) below).
+>
+> **`embedding.enabled` does more than this guide's title suggests.** The same flag also unconditionally schedules a background build of the repo-knowledge index — every doc and source file in the repo, not just the action catalog (see [`embedding.enabled`](../../reference/config/reyn-yaml.md#embedding-fields) in the config reference for the full breakdown and measured chunk count). There is currently no setting that gives you `search_actions` without that second, larger embedding workload riding along — budget your provider quota accordingly (#4156).
 
 ## When you'd want it
 
