@@ -123,25 +123,24 @@ Agent はファーストクラスのアイデンティティと状態です。To
 
 ## Agent ID 伝播 (FP-0016 Component E)
 
-エンタープライズ展開では agent ごとの帰属証明が必要です。SOC2 / ISO27001 / METI v1.1 の監査要件は、人間ユーザーレベルではなく **actor レベルで「どの agent が何をしたか」** を証明することを義務付けています。Reyn はすべての実行インスタンスに `agent.id`（`reyn.yaml` で設定、省略時は `reyn/<hostname>` がデフォルト）を割り当て、3 つのチャンネルを通じて伝播します：
+エンタープライズ展開では agent ごとの帰属証明が必要です。SOC2 / ISO27001 / METI v1.1 の監査要件は、人間ユーザーレベルではなく **actor レベルで「どの agent が何をしたか」** を証明することを義務付けています。Reyn はすべての実行インスタンスに `agent_id`（`reyn.yaml` で設定、省略時は `reyn/<hostname>` がデフォルト）を割り当て、3 つのチャンネルを通じて伝播します：
 
 1. **P6 events**：セッションから発行されるすべての event がペイロードに `agent_id` を含みます。これにより event log は agent 帰属アクションの監査トレイルとして replay 可能になります。
-2. **MCP HTTP 呼び出し**：HTTP モードの MCP サーバーへの送信リクエストに `X-Reyn-Agent-Id: <agent.id>` ヘッダーを付加します。下流の MCP サーバーは呼び出し元 agent の identity に基づいて RBAC を適用できます（= Microsoft の identity model における「Entra Agent ID」パターン）。
+2. **MCP HTTP 呼び出し**：HTTP モードの MCP サーバーへの送信リクエストに `X-Reyn-Agent-Id: <agent_id>` ヘッダーを付加します。下流の MCP サーバーは呼び出し元 agent の identity に基づいて RBAC を適用できます（= Microsoft の identity model における「Entra Agent ID」パターン）。
 
 設定：
 
 ```yaml
 # reyn.yaml
-agent:
-  id: "reyn/acme-corp/code-review-agent"
+agent_id: "reyn/acme-corp/code-review-agent"
 ```
 
-デフォルト動作：`agent.id` を省略した場合、Reyn は `reyn/<hostname>` を使用するため、監査トレイルが空になることはありません。
+デフォルト動作：`agent_id` を省略した場合、Reyn は `reyn/<hostname>` を使用するため、監査トレイルが空になることはありません。
 
 推奨フォーマット：`reyn/<org>/<role>`（= オペレーター定義。Reyn は空でない文字列であること以上の構造を強制しません）。
 
 参照：
-- [`docs/reference/config/reyn-yaml.md`](../../reference/config/reyn-yaml.md) — `agent:` ブロックのフィールドリファレンス
+- [`docs/reference/config/reyn-yaml.md`](../../reference/config/reyn-yaml.md) — `agent_id` フィールドリファレンス
 - [`docs/reference/runtime/events.md`](../../reference/runtime/events.md) — `agent_id` ベース event フィールド
 - [`docs/concepts/runtime/secret-handling.md`](../runtime/secret-handling.md) — credential スコープ + OAuth ライフサイクル（= FP-0016 のもう一方の半分）
 

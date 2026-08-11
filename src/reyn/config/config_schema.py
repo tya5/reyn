@@ -184,7 +184,28 @@ class RenamedKeyHint:
 #: absent from this map is NOT a rename — see :func:`unknown_config_keys`'s
 #: own docstring for why that distinction is a first-class case, not an
 #: empty-string placeholder.
-_RENAMED_CONFIG_KEYS: "dict[str, RenamedKeyHint]" = {}
+_RENAMED_CONFIG_KEYS: "dict[str, RenamedKeyHint]" = {
+    # #4174 T5. A plain rename — same nested shape (`max_bytes` /
+    # `max_age_seconds` / `cleanup_period_days` unchanged), only the
+    # top-level key moved — so `destination` is set and `reyn config
+    # migrate` auto-rewrites it.
+    "events": RenamedKeyHint(
+        note="`events:` moved to `audit_events:` (bare \"event\" is ambiguous "
+             "— reyn's own \"event\" spans audit-event / WAL-event / "
+             "hook-event; this block was always audit-event only)",
+        destination="audit_events",
+    ),
+    # #4174 T5. NOT a plain rename — `agent: {id: X}` (a namespace) became
+    # a top-level scalar `agent_id: X` (a value TRANSFORM, dict-to-scalar),
+    # so `destination` stays None: `reyn config migrate` reports this for
+    # manual review rather than guessing at the unwrap.
+    "agent": RenamedKeyHint(
+        note="`agent:` (a namespace wrapping a single `id` field) moved to "
+             "the top-level scalar `agent_id:` — move the `id:` value up "
+             "one level and rename the key, e.g. `agent: {id: X}` -> "
+             "`agent_id: X`",
+    ),
+}
 
 
 #: #4174 T0 (owner ruling: "don't special-case sandbox.policy" — one

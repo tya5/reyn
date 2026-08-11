@@ -71,11 +71,11 @@ reload）、`reyn.yaml` 側に書いた同じキーは他と同じく再起動�
 | `embedding` | マップ | PRJ のみ・**再起動** | RAG 埋め込み: マスタースイッチ（`enabled`）、モデルクラス、バッチサイズと並列度、リトライ / バックオフ / タイムアウト、トークナイザ、コスト警告閾値。以下参照。 |
 | `chat` | マップ | PRJ のみ・**再起動** | チャットセッションのランタイム設定: 履歴の圧縮、reasoning（"thinking"）テキストの扱い、対話レンダラ（`render_mode`）、TUI の gutter、body の neutralize、許可する画像 URL スキーム。以下参照。 |
 | `voice` | マップ | PRJ のみ・**再起動** | ⚠️ 現在利用不可(consumerなし)。以下参照。 |
-| `events` | マップ | PRJ のみ・**再起動** | `.reyn/events` 配下の P6 **audit-event** ファイルのローテーション（サイズ / 経過時間 / 掃除周期）。WAL-event でも hook-event でもありません。以下参照。 |
+| `audit_events` | マップ | PRJ のみ・**再起動** | `.reyn/events` 配下の P6 **audit-event** ファイルのローテーション（サイズ / 経過時間 / 掃除周期）。WAL-event でも hook-event でもありません。以下参照。 |
 | `observability` | マップ | PRJ のみ・**再起動** | P6 監査イベントの OpenTelemetry (OTLP) エクスポート（オプトイン）。デフォルトは無効。以下参照。 |
 | `tool_use` | マップ | PRJ のみ・**再起動** | chat レイヤーの tool-use scheme x transport セレクタ（`scheme`、`transport`）。以下参照。 |
 | `mcp` | マップ | 両方（`.reyn/config/mcp.yaml` 側は **hot reload**） | MCP サーバー定義。以下参照。 |
-| `agent` | マップ | PRJ のみ・**再起動** | エージェントの**識別子のみ**（`agent.id`）— P6 監査証跡と送信 HTTP ヘッダーに刻まれます。**エージェントの定義・設定はしません**（エージェント定義は `.reyn/agents/<名前>/`）。以下参照。 |
+| `agent_id` | 文字列 | PRJ のみ・**再起動** | エージェントの**識別子**— P6 監査証跡と送信 HTTP ヘッダーに刻まれます。**エージェントの定義・設定はしません**（エージェント定義は `.reyn/agents/<名前>/`）。以下参照。 |
 | `auth` | マップ | PRJ のみ・**再起動** | `reyn auth login` 用の OAuth プロバイダー設定。以下参照。 |
 | `cron` | マップ | 両方（`.reyn/config/cron.yaml` 側は **hot reload**） | スケジュール付きスキル実行。以下参照。 |
 | `external_transports` | マップ | PRJ のみ・**再起動** | チャット向け受信トランスポート → MCP ツールルーティング（Slack / LINE / Discord など）。以下参照。 |
@@ -618,20 +618,21 @@ action_retrieval:
 
 ツールレジストリ / dispatch の背景は Concepts: architecture (architecture doc removed) を参照。
 
-## `agent` ブロック
+## `agent_id`
 
 監査証跡と HTTP ヘッダー伝播のためのランタイムエージェント識別子。
 
 ```yaml
-agent:
-  id: "reyn/acme/code-review-agent"  # デフォルト: reyn/<hostname>
+agent_id: "reyn/acme/code-review-agent"  # デフォルト: reyn/<hostname>
 ```
 
-### `agent` フィールド
+トップレベルの単純なスカラー値（#4174 T5 — 旧 `agent: {id: ...}` 名前空間から
+フラット化。そのブロックはフィールドを 1 つしか持たなかったため、名前空間は
+構造を増やさず間接参照だけを増やしていた）。
 
 | フィールド | 型 | デフォルト | 説明 |
 |-------|------|---------|-------------|
-| `agent.id` | 文字列 | `reyn/<hostname>` | この Reyn インスタンスの安定識別子。すべての P6 イベントペイロードに `agent_id` としてスタンプされ、MCP / A2A / 外部 HTTP リクエストの送信時に `X-Reyn-Agent-Id` ヘッダーとして付与される（SOC2 / ISO27001 / METI v1.1 監査パターン）。推奨フォーマット: `reyn/<org>/<role>`（operator 定義）。空文字列を指定した場合はデフォルトにフォールバックし、空の `agent_id` がイベントやヘッダーに漏れるのを防ぐ。 |
+| `agent_id` | 文字列 | `reyn/<hostname>` | この Reyn インスタンスの安定識別子。すべての P6 イベントペイロードに `agent_id` としてスタンプされ、MCP / A2A / 外部 HTTP リクエストの送信時に `X-Reyn-Agent-Id` ヘッダーとして付与される（SOC2 / ISO27001 / METI v1.1 監査パターン）。推奨フォーマット: `reyn/<org>/<role>`（operator 定義）。空文字列を指定した場合はデフォルトにフォールバックし、空の `agent_id` がイベントやヘッダーに漏れるのを防ぐ。 |
 
 デフォルト `reyn/<hostname>` により、フレッシュインストールでも operator の設定なしに使用可能な識別子が付与されます。マルチエージェントフリートや安定したロール単位の識別子が必要なエンタープライズデプロイでは `reyn.yaml` でオーバーライドしてください。
 
@@ -1200,12 +1201,16 @@ maybe_force_compact`）が毎ターン送信前に有効トークンバジェッ
 これらのキーを設定ファイルから削除してください — head/tail のサイズ管理は `component_weights`
 によるトークンバジェットに移行し、自動圧縮はウィンドウ相対になりました。
 
-## `events` ブロック
+## `audit_events` ブロック
 
 チャットセッションイベントファイルの監査ログローテーションポリシー。Skill 実行イベントはラン 1 つにつき 1 ファイルを使用し、この設定の影響を受けません。
 
+`events:` から改名（#4174 T5）— reyn における素の "event" は曖昧（audit-event /
+WAL-event / hook-event のいずれか）。このブロックは常に audit-event のローテー
+ションのみを扱っていた。
+
 ```yaml
-events:
+audit_events:
   max_bytes: 10485760       # 10 MB でローテーション（デフォルト）
   max_age_seconds: 86400    # 1 日後にローテーション（デフォルト）
   cleanup_period_days: null # null = 自動削除なし（デフォルト）

@@ -1,7 +1,9 @@
 """Tier 2: FP-0016 Component E — agent_id propagation contract.
 
 Covers:
-- AgentConfig default + parser
+- the top-level `agent_id:` scalar default + parser (#4174 T5: flattened
+  from `agent: {id: ...}`, a single-field namespace, to a plain scalar —
+  same disposition as T1's `python:` deletion)
 - EventLog auto-injects agent_id into every emit
 - EventLog caller-provided agent_id wins over the injected one (= delegation)
 - MCPClient adds X-Reyn-Agent-Id to HTTP headers
@@ -18,14 +20,13 @@ from __future__ import annotations
 import pytest
 
 from reyn.config import (
-    AgentConfig,
     ReynConfig,
-    _build_agent_config,
+    _build_agent_id,
     _default_agent_id,
 )
 from reyn.core.events.events import EventLog
 
-# ── 1. AgentConfig + parser ────────────────────────────────────────────────
+# ── 1. the `agent_id:` scalar + parser (#4174 T5) ──────────────────────────
 
 
 def test_default_agent_id_uses_hostname() -> None:
@@ -35,54 +36,37 @@ def test_default_agent_id_uses_hostname() -> None:
     assert _default_agent_id() == expected
 
 
-def test_agent_config_default_id_is_reyn_hostname() -> None:
-    """Tier 2: AgentConfig() defaults to reyn/<hostname>."""
-    cfg = AgentConfig()
-    assert cfg.id.startswith("reyn/")
-    assert cfg.id == _default_agent_id()
-
-
-def test_reyn_config_carries_agent_default() -> None:
-    """Tier 2: ReynConfig default-constructs with AgentConfig."""
+def test_reyn_config_carries_agent_id_default() -> None:
+    """Tier 2: ReynConfig default-constructs agent_id as a plain string,
+    not a namespace — #4174 T5 removed the `AgentConfig` wrapper."""
     cfg = ReynConfig()
-    assert isinstance(cfg.agent, AgentConfig)
-    assert cfg.agent.id.startswith("reyn/")
+    assert isinstance(cfg.agent_id, str)
+    assert cfg.agent_id.startswith("reyn/")
+    assert cfg.agent_id == _default_agent_id()
 
 
 def test_parser_none_returns_default() -> None:
-    """Tier 2: missing agent: block → default agent_id."""
-    cfg = _build_agent_config(None)
-    assert cfg.id == _default_agent_id()
-
-
-def test_parser_empty_dict_returns_default() -> None:
-    """Tier 2: empty agent: dict → default."""
-    cfg = _build_agent_config({})
-    assert cfg.id == _default_agent_id()
+    """Tier 2: missing agent_id: key → default agent_id."""
+    assert _build_agent_id(None) == _default_agent_id()
 
 
 def test_parser_explicit_id_flows_through() -> None:
-    """Tier 2: explicit agent.id is preserved verbatim."""
-    cfg = _build_agent_config({"id": "reyn/acme-corp/code-review-agent"})
-    assert cfg.id == "reyn/acme-corp/code-review-agent"
+    """Tier 2: an explicit agent_id: value is preserved verbatim."""
+    assert _build_agent_id("reyn/acme-corp/code-review-agent") == (
+        "reyn/acme-corp/code-review-agent"
+    )
 
 
 def test_parser_empty_string_falls_back_to_default() -> None:
-    """Tier 2: empty-string id normalises to default (no empty agent_id leaks)."""
-    cfg = _build_agent_config({"id": ""})
-    assert cfg.id == _default_agent_id()
+    """Tier 2: empty-string agent_id normalises to default (no empty
+    agent_id leaks)."""
+    assert _build_agent_id("") == _default_agent_id()
 
 
-def test_parser_rejects_non_dict() -> None:
-    """Tier 2: non-mapping → ValueError."""
-    with pytest.raises(ValueError, match="must be a mapping"):
-        _build_agent_config("not a dict")
-
-
-def test_parser_rejects_non_string_id() -> None:
-    """Tier 2: agent.id with non-string → ValueError."""
-    with pytest.raises(ValueError, match="agent.id must be a string"):
-        _build_agent_config({"id": 42})
+def test_parser_rejects_non_string() -> None:
+    """Tier 2: a non-string agent_id: value → ValueError."""
+    with pytest.raises(ValueError, match="agent_id must be a string"):
+        _build_agent_id(42)
 
 
 # ── 2. EventLog auto-injection ─────────────────────────────────────────────

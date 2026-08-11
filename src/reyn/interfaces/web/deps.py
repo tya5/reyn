@@ -362,7 +362,7 @@ def _get_registry():
                 compaction_config=config.chat.compaction,
                 reasoning_config=config.chat.reasoning,  # #1652
                 registry=registry,
-                events_config=config.events,
+                events_config=config.audit_events,
                 state_log=state_log,
                 budget_tracker=budget_tracker,
                 # #2093: the uniform reyn.yaml-derived per-session config (sandbox /

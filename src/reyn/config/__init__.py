@@ -19,7 +19,7 @@ Submodules (#1682 grouping, by domain concern not yaml-key shape):
     embedding  — Embedding/ActionRetrieval
     media      — Voice/Multimodal/Web/WebFetch
     execution  — Plan/ToolUse
-    infra      — Agent/Auth/Sandbox/Events/Eval/Cron/Python
+    infra      — AgentId/Auth/Sandbox/AuditEvents/Eval/Cron/Python
 """
 # Commit 1 (#1682 #3): all definitions still live in `root`; the submodule split
 # follows. Re-export every name from each section module so the package surface ==

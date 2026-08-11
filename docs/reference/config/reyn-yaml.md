@@ -78,11 +78,11 @@ aren't.
 | `embedding` | map | PRJ only · **restart** | RAG embedding: the master switch (`enabled`), model classes, batch sizing and concurrency, retry / backoff / timeout, tokenizer, and a cost-warning threshold. See below. |
 | `chat` | map | PRJ only · **restart** | Chat-session runtime knobs: history compaction, reasoning/"thinking" text handling, the interactive renderer (`render_mode`), TUI gutters, body neutralization, and permitted image-URL schemes. See below. |
 | `voice` | map | PRJ only · **restart** | ⚠️ Currently unavailable (no consumer). See below. |
-| `events` | map | PRJ only · **restart** | Rotation policy (size / age / cleanup period) for the P6 **audit-event** files under `.reyn/events`. Not WAL-events, not hook-events. See below. |
+| `audit_events` | map | PRJ only · **restart** | Rotation policy (size / age / cleanup period) for the P6 **audit-event** files under `.reyn/events`. Not WAL-events, not hook-events. See below. |
 | `observability` | map | PRJ only · **restart** | Opt-in OpenTelemetry (OTLP) export of P6 audit-events. Off by default. See below. |
 | `tool_use` | map | PRJ only · **restart** | Chat-layer tool-use scheme x transport selector (`scheme`, `transport`). See below. |
 | `mcp` | map | both (`.reyn/config/mcp.yaml` side is **hot-reloaded**) | MCP server definitions. See below. |
-| `agent` | map | PRJ only · **restart** | Agent **identity** only (`agent.id`) — stamped on the P6 audit trail and the outgoing HTTP header. Does **not** define or configure agents; agent definitions live in `.reyn/agents/<name>/`. See below. |
+| `agent_id` | string | PRJ only · **restart** | Agent **identity** — stamped on the P6 audit trail and the outgoing HTTP header. Does **not** define or configure agents; agent definitions live in `.reyn/agents/<name>/`. See below. |
 | `auth` | map | PRJ only · **restart** | OAuth provider configurations for `reyn auth login`. See below. |
 | `cron` | map | both (`.reyn/config/cron.yaml` side is **hot-reloaded**) | Scheduled skill executions. See below. |
 | `external_transports` | map | PRJ only · **restart** | Inbound transport → MCP tool routing for chat (Slack / LINE / Discord etc.). See below. |
@@ -1226,20 +1226,21 @@ Every category enumerates a fixed set of verbs — a resource (a stored memory, 
 
 See Concepts: architecture (architecture doc removed) for the tool registry / dispatch background.
 
-## `agent` block
+## `agent_id`
 
 Runtime agent identity for audit trail and HTTP header propagation.
 
 ```yaml
-agent:
-  id: "reyn/acme/code-review-agent"  # default: reyn/<hostname>
+agent_id: "reyn/acme/code-review-agent"  # default: reyn/<hostname>
 ```
 
-### `agent` fields
+A plain top-level scalar (#4174 T5 — flattened from the old `agent: {id:
+...}` namespace: that block held exactly one field, so the namespace added
+indirection without adding structure).
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `agent.id` | string | `reyn/<hostname>` | Stable identifier for this Reyn instance. Stamped onto every P6 event payload as `agent_id` and injected into outgoing MCP, A2A, and external HTTP requests as the `X-Reyn-Agent-Id` header (SOC2 / ISO27001 / METI v1.1 audit pattern). Recommended format: `reyn/<org>/<role>` (operator-defined). An empty string falls back to the default so leaving the field blank does not emit an empty `agent_id` into events or headers. |
+| `agent_id` | string | `reyn/<hostname>` | Stable identifier for this Reyn instance. Stamped onto every P6 event payload as `agent_id` and injected into outgoing MCP, A2A, and external HTTP requests as the `X-Reyn-Agent-Id` header (SOC2 / ISO27001 / METI v1.1 audit pattern). Recommended format: `reyn/<org>/<role>` (operator-defined). An empty string falls back to the default so leaving the field blank does not emit an empty `agent_id` into events or headers. |
 
 The default `reyn/<hostname>` gives a fresh install a usable identity without operator action. Override in `reyn.yaml` when running multi-agent fleets or enterprise deployments that need a stable per-role identifier.
 
@@ -1985,12 +1986,16 @@ no longer recognised. If present in your `reyn.yaml`, Reyn emits a
 sizing is now token-budget via `component_weights`, and auto-compaction is
 window-relative.
 
-## `events` block
+## `audit_events` block
 
 Audit-log rotation policy for chat-session event files. Skill-run events use one file per run and are not affected by this setting.
 
+Renamed from `events:` (#4174 T5) — bare "event" is ambiguous in reyn (an
+"event" is one of audit-event / WAL-event / hook-event); this block was
+always audit-event rotation only.
+
 ```yaml
-events:
+audit_events:
   max_bytes: 10485760       # rotate at 10 MB (default)
   max_age_seconds: 86400    # rotate after 1 day (default)
   cleanup_period_days: null # null = no automatic deletion (default)

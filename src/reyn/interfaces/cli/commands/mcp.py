@@ -471,7 +471,7 @@ def run_serve(args: argparse.Namespace) -> None:
             reasoning_config=session_cfg.config.chat.reasoning,  # #1652
             registry=registry,
             allowed_mcp=profile.allowed_mcp,
-            events_config=session_cfg.config.events,
+            events_config=session_cfg.config.audit_events,
             state_log=state_log,
             budget_tracker=budget_tracker,
             # #2093: the uniform reyn.yaml-derived per-session config bundle. (The same

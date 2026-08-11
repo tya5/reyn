@@ -92,13 +92,25 @@ def test_validate_subcommand_is_registered():
 # ── migrate ────────────────────────────────────────────────────────────
 
 
-def test_migrate_reports_nothing_to_migrate_when_registry_is_empty(project, capsys):
-    """Tier 2: #4174 T0b — with ``_RENAMED_CONFIG_KEYS`` empty (true today,
-    T1-T6 land renames incrementally), ``reyn config migrate`` says so
-    explicitly rather than silently doing nothing with no output
-    (lead-coder's explicit requirement: must not be silently vacuous)."""
+def test_migrate_reports_nothing_to_migrate_when_registry_is_empty(
+    project, capsys, monkeypatch,
+):
+    """Tier 2: #4174 T0b — with ``_RENAMED_CONFIG_KEYS`` empty, ``reyn
+    config migrate`` says so explicitly rather than silently doing nothing
+    with no output (lead-coder's explicit requirement: must not be
+    silently vacuous).
+
+    Injects an empty registry explicitly (the same ``monkeypatch.setattr``
+    seam the sibling test below already uses for a non-empty one) — #4174
+    T5 populated ``_RENAMED_CONFIG_KEYS`` for real, which falsified this
+    test's original premise that the module-global registry was ITSELF
+    empty at the time the test ran. What this test actually verifies is
+    "what `migrate` says when the registry is empty", not "is the
+    registry currently empty" — those are different claims, and only the
+    first one is this test's to make."""
     from reyn.interfaces.cli.commands.config import _migrate
 
+    monkeypatch.setattr("reyn.config.config_schema._RENAMED_CONFIG_KEYS", {})
     _write_yaml(project / "reyn.yaml", "model: standard\n")
     _migrate()
     out = capsys.readouterr().out

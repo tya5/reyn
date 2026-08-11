@@ -272,7 +272,7 @@ The command prints a user code and verification URL, polls the token endpoint, a
 
 ## Agent identity (FP-0016 E)
 
-Every P6 event and every outbound HTTP call (MCP, future A2A) carries the agent identity. The identity is the `agent.id` field from `reyn.yaml`; when omitted it defaults to `reyn/<hostname>`.
+Every P6 event and every outbound HTTP call (MCP, future A2A) carries the agent identity. The identity is the `agent_id` field from `reyn.yaml`; when omitted it defaults to `reyn/<hostname>`.
 
 The identity appears in:
 

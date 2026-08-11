@@ -555,7 +555,7 @@ def _build_live_runner(agent_name: str, *, env_backend=None, ws_base_dir=None, w
                 reasoning_config=config.chat.reasoning,  # #1652
                 registry=_reg,  # #3593 ②: always the real registry — see the note above
                 allowed_mcp=profile.allowed_mcp,
-                events_config=config.events,
+                events_config=config.audit_events,
                 state_log=None,  # no WAL for dogfood dispatch
                 budget_tracker=budget_tracker,
                 hooks_config=config.hooks,  # #1800 slice 5b (pass-through, not bundled)

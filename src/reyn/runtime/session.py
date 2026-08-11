@@ -23,9 +23,9 @@ from pathlib import Path
 
 from reyn.config import (  # noqa: F401
     ActionRetrievalConfig,
+    AuditEventsConfig,
     CostWarnConfig,
     EmbeddingConfig,
-    EventsConfig,
     MultimodalConfig,
     OffloadConfig,
     OnLimitConfig,
@@ -892,7 +892,7 @@ class Session:
         reasoning_config: "ReasoningConfig | None" = None,  # #1652 chat.reasoning
         registry: "AgentRegistry | None" = None,
         allowed_mcp: list[str] | None = None,
-        events_config: EventsConfig | None = None,
+        events_config: AuditEventsConfig | None = None,
         # cost_warn config (#2230) — see docs/reference/runtime/session-construction.md#family-4-cost-budget
         cost_warn_config: CostWarnConfig | None = None,
         # Debug lever disabling tool-result size gates (see session-construction.md#family-4-cost-budget)
@@ -1073,7 +1073,7 @@ class Session:
             list(allowed_mcp) if allowed_mcp is not None else None
         )
 
-        self._events_config = events_config or EventsConfig()  # PR20: per-chat rotation policy
+        self._events_config = events_config or AuditEventsConfig()  # PR20: per-chat rotation policy
         self._cost_warn_config = cost_warn_config or CostWarnConfig()  # #2230, see session-construction.md#family-4-cost-budget
         self._offload_config = offload_config or OffloadConfig()  # see docs/reference/runtime/session-construction.md#family-4-cost-budget
         # Resolve operator render_template bounds once, threaded to every router OpContext builder (FP-0055 / #2679, see session-construction.md#family-4-cost-budget)

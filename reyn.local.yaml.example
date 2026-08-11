@@ -364,12 +364,13 @@
 
 
 # -----------------------------------------------------------------------------
-# agent: runtime identity used in audit events and the
+# agent_id: runtime identity used in audit events and the
 # ``X-Reyn-Agent-Id`` outbound HTTP header.
 # Default: ``reyn/<hostname>``. Set explicitly for multi-agent fleets.
+# (#4174 T5: flattened from ``agent: {id: ...}`` — a namespace with one
+# field — to this plain top-level scalar.)
 # -----------------------------------------------------------------------------
-# agent:
-#   id: reyn/dogfood-laptop-01
+# agent_id: reyn/dogfood-laptop-01
 
 
 # -----------------------------------------------------------------------------
@@ -500,7 +501,9 @@
 
 
 # -----------------------------------------------------------------------------
-# events: audit-log rotation policy. Chat events land under
+# audit_events: audit-log rotation policy (#4174 T5: renamed from
+# ``events:`` — bare "event" is ambiguous in reyn, and this block was
+# always audit-event rotation only). Chat events land under
 # ``.reyn/events/agents/<name>/chat/<YYYY-MM>/`` and rotate when EITHER the
 # active file exceeds ``max_bytes`` OR the file's age (or local date) exceeds
 # ``max_age_seconds``.
@@ -510,7 +513,7 @@
 # automatic deletion. Setting ``0`` is rejected (= footgun: would silently
 # discard transcript writes).
 # -----------------------------------------------------------------------------
-# events:
+# audit_events:
 #   max_bytes: 10485760              # 10 MB
 #   max_age_seconds: 86400           # 1 day
 #   cleanup_period_days: null        # null = never auto-delete
