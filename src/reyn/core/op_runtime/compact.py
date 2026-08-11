@@ -17,8 +17,6 @@ emits its own events).
 """
 from __future__ import annotations
 
-from typing import Literal
-
 from reyn.core.events.event_schema import RETIRED_PHASE_FIELD
 from reyn.schemas.models import CompactIROp
 

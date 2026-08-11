@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import asyncio
 import html.parser
-from typing import Literal
 
 from reyn._network import build_async_http_client
 from reyn.schemas.models import WebFetchIROp, WebSearchIROp

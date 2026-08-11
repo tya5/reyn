@@ -32,7 +32,6 @@ recorded via event (P6), preserving the audit trail.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Literal
 
 from reyn.schemas.models import MCPDropServerIROp
 

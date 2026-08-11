@@ -5,7 +5,7 @@ import asyncio
 import re
 from collections import defaultdict
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any
 
 from reyn.builtin.docs import read_builtin_body_bytes
 from reyn.data.text_codec import decode_text_or_none, encode_text

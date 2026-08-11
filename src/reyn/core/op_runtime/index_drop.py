@@ -19,8 +19,6 @@ P6 event: emits `index_dropped` after completion (audit trail).
 """
 from __future__ import annotations
 
-from typing import Literal
-
 from reyn.data.index import SqliteIndexBackend
 from reyn.data.index.source_manifest import get_source_manifest
 from reyn.schemas.models import IndexDropIROp

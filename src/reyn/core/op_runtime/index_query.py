@@ -10,7 +10,6 @@ UX gap fix E: SQLite read errors wrapped with actionable hint message.
 from __future__ import annotations
 
 import sqlite3
-from typing import Literal
 
 from reyn.data.index import SqliteIndexBackend
 from reyn.schemas.models import IndexQueryIROp
