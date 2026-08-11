@@ -258,6 +258,11 @@ def test_a_failed_build_is_retried_with_a_different_effect(monkeypatch) -> None:
 
     generator = text_effect.frame_factory()(60, len(_COVERED), _COVERED)
     try:
+        # The oracle lives in the filter above, not in the assert below: if
+        # retry never reaches _SentinelEffect, the generator exhausts
+        # (frame_factory's own fallback path is finite) and next() raises
+        # StopIteration — that IS the failure signal. The assert restates
+        # what the filter already guaranteed once next() succeeds at all.
         frame = next(f for f in generator if "__SENTINEL__" in f.plain)
     finally:
         generator.close()
