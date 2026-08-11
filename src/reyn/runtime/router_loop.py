@@ -3201,6 +3201,7 @@ class RouterLoop:
             hot_reloader=getattr(self.host, "hot_reloader", None),  # #2073 S3
             state_log=getattr(self.host, "state_log", None),  # #2248 PR-A2 (config emit)
             agent_name=getattr(self.host, "agent_name", None),  # #2088: scope-aware hooks_add
+            session_state_dir=getattr(self.host, "session_state_dir", None),  # #4215①
         )
         return [
             {
@@ -3896,6 +3897,7 @@ class RouterLoop:
             hot_reloader=getattr(self.host, "hot_reloader", None),  # #2073 S3
             state_log=getattr(self.host, "state_log", None),  # #2248 PR-A2 (config emit)
             agent_name=getattr(self.host, "agent_name", None),  # #2088: scope-aware hooks_add
+            session_state_dir=getattr(self.host, "session_state_dir", None),  # #4215①
         )
         list_actions_def = get_default_registry().lookup("list_actions")
         if list_actions_def is None:
@@ -4258,6 +4260,7 @@ class RouterLoop:
             hot_reloader=getattr(self.host, "hot_reloader", None),  # #2073 S3
             state_log=getattr(self.host, "state_log", None),  # #2248 PR-A2 (config emit)
             agent_name=getattr(self.host, "agent_name", None),  # #2088: scope-aware hooks_add
+            session_state_dir=getattr(self.host, "session_state_dir", None),  # #4215①
         )
         return await invoke_tool(get_default_registry(), name, args, tool_ctx)
 
