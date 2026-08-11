@@ -213,10 +213,17 @@ def test_neither_gutter_key_collides_with_any_other_key_the_app_can_see() -> Non
 
     ``RESERVED_KEYS`` exists at all because a live-binding sweep is
     structurally blind to a key claimed by an approved-but-unimplemented
-    feature (#2193's ``ctrl+r``/``f2`` for voice STT): the implementation was
-    deleted and the claim survives only in an issue, so the key looks free in
-    every grep of the tree and collides the day the feature lands. That is
-    what this arc's first key choice got wrong.
+    feature: #2193's ``ctrl+r``/``f2`` for voice STT was the original motivating
+    case (the implementation was deleted and the claim survived only in an
+    issue, so the key looked free in every grep of the tree and would have
+    collided the day the feature landed — the mistake this arc's first key
+    choice made). That reservation is gone now, not stale-and-forgotten: #4187
+    landed voice input (as ``f2`` alone, declared in ``app.py``'s own live
+    ``BINDINGS`` — findable there without a reservation) and its own PR removed
+    the entry rather than leaving it. ``RESERVED_KEYS`` is therefore
+    LEGITIMATELY empty at the moment this test runs — property 2 below is
+    vacuously true until some other approved-but-unimplemented feature claims
+    a key here, at which point it starts doing real work again.
 
     Enumerated from the CLASSES and their real key constants, not from a
     hardcoded list, so a future Textual upgrade — or a future reyn widget —
@@ -239,9 +246,12 @@ def test_neither_gutter_key_collides_with_any_other_key_the_app_can_see() -> Non
     # in it. Asserted on ``live`` specifically — asserting it on the union
     # would pass on the strength of RESERVED_KEYS alone.
     assert {"escape", "enter", "tab", "ctrl+c"} <= live
-    assert reserved, "the reserved-key table is empty — property 2 would be vacuous"
 
-    # Property 2: nobody has taken a reserved key.
+    # Property 2: nobody has taken a reserved key. Vacuously true while
+    # RESERVED_KEYS is empty (#4187 resolved its one entry) — the assertion
+    # still runs unconditionally rather than being skipped, so the day a new
+    # reservation is added this property is exercised for real again without
+    # anyone having to remember to re-enable it.
     assert not (reserved & live), (
         f"live bindings have taken reserved keys {sorted(reserved & live)} — "
         f"each is claimed by an unimplemented feature (see RESERVED_KEYS)"

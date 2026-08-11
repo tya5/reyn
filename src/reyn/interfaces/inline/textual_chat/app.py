@@ -115,6 +115,8 @@ if TYPE_CHECKING:
     from reyn.interfaces.transport.client_transport import ClientTransport
     from reyn.runtime.outbox import OutboxMessage
 
+    from .voice import VoiceInput
+
 logger = logging.getLogger(__name__)
 
 # Display kinds that are control sentinels, not conversation content — skipped
@@ -751,6 +753,21 @@ class TextualChatApp(App):
         # record. `Shift+Tab` (Textual's own default cycle-focus) still
         # reaches the pane too — this is a direct jump, not a replacement.
         ("ctrl+o", "focus_conversation", "Focus conversation pane"),
+        # #4187: voice input (Whisper STT) revival. The retired Textual TUI
+        # bound this to Ctrl+R (primary) with F2 as an alias
+        # (``chrome.RESERVED_KEYS``' own comment recorded both as claimed by
+        # #2193). Only F2 is bound here — Ctrl+R is deliberately NOT reused,
+        # per this file's own ctrl+g/ctrl+t enumeration comment above, which
+        # already flagged it: "ctrl+r is ... reverse-history-search in most
+        # shells — an expectation users carry into any text-input surface".
+        # That expectation is exactly what the Composer is (a multi-line
+        # TextArea), so claiming ctrl+r here would collide with a
+        # convention the composer's own users bring with them, not just with
+        # another reyn binding. F2 carries no such prior claim (and was
+        # already the retired TUI's alias, not a fresh pick).
+        # ``priority`` so the focused composer does not swallow it (same
+        # reasoning as ctrl+l's text-effect toggle above).
+        Binding("f2", "voice_toggle", "Voice input (dictate)", priority=True),
     ]
 
     CSS = palette.css("""
@@ -1031,6 +1048,22 @@ class TextualChatApp(App):
         # deterministic args_hash, meta["op_id"]) so a later completion/failure
         # frame transitions the SAME entry RUNNING → SUCCESS/ERROR (CC parity).
         self._running_tools: "dict[object, Entry[OutboxMessage]]" = {}
+        #: #4187: voice input. ``None`` until F2 is first pressed — lazy so an
+        #: install without the ``reyn[voice]`` extra never pays anything for a
+        #: key nobody used (mirrors ``text_effect``'s import-on-press shape).
+        #: The type is import-guarded under ``TYPE_CHECKING`` only — ``.voice``
+        #: itself is imported lazily, inside :meth:`action_voice_toggle`, same
+        #: as ``text_effect`` already is; this annotation costs nothing at
+        #: runtime.
+        self._voice_input: "VoiceInput | None" = None
+        #: True only while a captured recording is being transcribed — guards
+        #: a second F2 press from re-entering ``stop_recording()`` mid-flight.
+        self._voice_busy: bool = False
+        #: Armed while a recording is open, to enforce ``voice.max_duration_s``
+        #: — ``None`` whenever nothing is recording (never left dangling: every
+        #: path that ends a recording before it would fire disarms it first,
+        #: see :meth:`_voice_cancel_timeout_timer`).
+        self._voice_timeout_timer: "Timer | None" = None
         #: Watches how late the event loop runs (#3539). Always on; see
         #: ``loop_probe`` for why it is not opt-in.
         self._loop_tripwire = LoopTripwire()
@@ -2404,6 +2437,163 @@ class TextualChatApp(App):
             loop=False,
         )
 
+    async def action_voice_toggle(self) -> None:
+        """``F2`` — toggle dictation: press to start recording, press again to
+        stop, transcribe, and inject the result into the composer (#4187).
+
+        Same key both ways, mirroring :meth:`action_toggle_text_effect`'s
+        shape. Unlike that toggle, this one is genuinely stateful across the
+        two presses (a mic stream is open in between) — every failure path
+        below surfaces a status/error frame and returns rather than raising,
+        so a transcription error, a missing extra, or a mic that won't open
+        never crashes the app (same promise the retired TUI made, ported).
+        """
+        from reyn.interfaces.inline.textual_chat import voice as voice_mod
+        from reyn.runtime.outbox import OutboxMessage
+
+        if self._voice_busy:
+            return  # a transcription is already in flight — ignore the re-press
+        # Read once per press (not cached on ``self``): cheap, and it means an
+        # operator edit to ``voice.max_duration_s`` takes effect on the VERY
+        # NEXT press rather than only for a freshly-constructed recorder.
+        voice_cfg = getattr(self._config, "voice", None)
+        if self._voice_input is None:
+            if voice_cfg is not None and not voice_cfg.enabled:
+                self._ingest_frame(
+                    OutboxMessage(
+                        kind="status",
+                        text="voice input disabled in config (set voice.enabled: true)",
+                    )
+                )
+                return
+            if not voice_mod.available():
+                self._ingest_frame(
+                    OutboxMessage(kind="status", text=voice_mod.unavailable_message())
+                )
+                return
+            kwargs: dict = {}
+            if voice_cfg is not None:
+                kwargs = {
+                    "model": voice_cfg.model,
+                    "language": voice_cfg.language,
+                    "device": voice_cfg.device,
+                    "compute_type": voice_cfg.compute_type,
+                    "sample_rate": voice_cfg.sample_rate,
+                    "cpu_threads": voice_cfg.cpu_threads,
+                    "num_workers": voice_cfg.num_workers,
+                }
+            self._voice_input = voice_mod.VoiceInput(**kwargs)
+
+        # Narrow explicitly: the branch above either returns or assigns, but
+        # a type checker does not retain that through a ``self.`` attribute
+        # read (unlike a local variable).
+        assert self._voice_input is not None
+        recorder = self._voice_input
+        if not recorder.is_recording:
+            try:
+                recorder.start_recording()
+            except voice_mod.VoiceUnavailable as exc:
+                self._ingest_frame(OutboxMessage(kind="error", text=str(exc)))
+                return
+            self._ingest_frame(
+                OutboxMessage(kind="status", text="🔴 recording — F2 to stop")
+            )
+            # VoiceConfig.max_duration_s's own promise ("auto-cancel recordings
+            # longer than this", its inline comment in config/media.py) —
+            # unenforced in the retired TUI's base commit this module ports
+            # from, but the field exists PRECISELY to bound an operator who
+            # forgot a live mic was open, so leaving it declared-but-unread
+            # would repeat the exact "voice: parses, nothing consumes it" gap
+            # #4187's own issue body raised about the block as a whole.
+            max_duration_s = voice_cfg.max_duration_s if voice_cfg is not None else 300.0
+            self._voice_timeout_timer = self.set_timer(max_duration_s, self._voice_auto_stop)
+            return
+
+        self._voice_cancel_timeout_timer()
+        await self._voice_finish_recording(recorder)
+
+    def _voice_cancel_timeout_timer(self) -> None:
+        """Disarm the max-duration auto-stop timer, if one is armed.
+
+        Called from every path that ends a recording BEFORE the timer would
+        have fired (an ordinary F2-stop, an Esc-cancel) — an armed timer left
+        running past that point would fire against a ``VoiceInput`` that is
+        no longer recording, which :meth:`_voice_auto_stop` already guards,
+        but disarming here is what makes that guard defensive rather than
+        load-bearing.
+        """
+        if self._voice_timeout_timer is not None:
+            self._voice_timeout_timer.stop()
+            self._voice_timeout_timer = None
+
+    def _voice_auto_stop(self) -> None:
+        """``max_duration_s`` elapsed while still recording — stop and
+        transcribe exactly as a second F2 press would, so a forgotten
+        recording does not grow forever. A no-op if the recording already
+        ended some other way (F2 / Esc) before the timer fired — same
+        ``is_recording`` guard :meth:`action_voice_toggle` itself uses."""
+        self._voice_timeout_timer = None
+        recorder = self._voice_input
+        if recorder is not None and recorder.is_recording and not self._voice_busy:
+            self.run_worker(self._voice_finish_recording(recorder), exclusive=False)
+
+    async def _voice_finish_recording(self, recorder: "VoiceInput") -> None:
+        """Stop ``recorder``, transcribe, and either inject the result into
+        the composer or report why there is nothing to inject. Shared by the
+        ordinary F2-to-stop press and the ``max_duration_s`` auto-stop —
+        both end a recording the same way; only what TRIGGERED the stop
+        differs."""
+        from reyn.runtime.outbox import OutboxMessage  # noqa: PLC0415
+
+        self._voice_busy = True
+        self._ingest_frame(OutboxMessage(kind="status", text="⏳ transcribing…"))
+        try:
+            text, diag = await recorder.stop_recording()
+        except Exception as exc:  # noqa: BLE001 — a bad mic frame must not crash the app
+            self._voice_busy = False
+            self._ingest_frame(
+                OutboxMessage(kind="error", text=f"transcription failed: {exc}")
+            )
+            return
+        self._voice_busy = False
+        if not text:
+            # Self-diagnosing (ported from the retired module): the peak/rms
+            # readout tells the operator whether the mic captured anything at
+            # all, so an empty result explains itself instead of reading as a
+            # silent no-op.
+            reason = diag.get("reason", "silent")
+            duration_s = diag.get("duration_s", 0.0)
+            if reason == "no_audio" or duration_s < 0.3:
+                hint = "no audio captured — mic permission? wrong device?"
+            elif reason == "error":
+                hint = "transcription error — see logs"
+            else:
+                peak = diag.get("peak", 0.0)
+                hint = f"silent capture: {duration_s:.1f}s, peak={peak:.3f} — check mic gain"
+            self._ingest_frame(OutboxMessage(kind="status", text=f"({hint})"))
+            return
+        self._insert_into_composer(text)
+
+    def _insert_into_composer(self, text: str) -> None:
+        """Insert ``text`` at the composer's cursor-head, same placement rule
+        as :meth:`_restore_cancelled_text` (#3300 Y-client): prepended even
+        when the composer already holds a draft, a newline boundary keeps the
+        draft intact, and the cursor lands at the end of ``text`` so typing
+        continues right after it. No neutralize here — unlike a cancelled
+        SUBMISSION or a sent-queue row (#3302), this text originates from the
+        same operator's own mic in the same turn, not from a second render of
+        someone else's prior input, so it carries the composer's own ordinary
+        trust level (same as typing it).
+        """
+        composer = self.query_one(Composer)
+        existing = composer.text
+        composer.text = f"{text}\n{existing}" if existing else text
+        lines = text.split("\n")
+        row = len(lines) - 1
+        col = len(lines[-1])
+        composer.move_cursor((row, col))
+        self._completion.close()
+
     def copy_to_clipboard(self, text: str) -> None:
         """#3616②: override ``App.copy_to_clipboard`` so every
         Textual-originated copy goes through reyn's own local-tool sink
@@ -2527,7 +2717,23 @@ class TextualChatApp(App):
         the reason for it is that those interfaces have nowhere but the scroll
         region to show that the message left. reyn does, so the convention
         arrives here without the thing that justified it.
+
+        **#4187, a new top rung**: an ``esc`` while a voice recording is
+        actively open (not merely instantiated — ``VoiceInput`` also exists,
+        transcribing, between presses) discards it without transcribing and
+        stops here, before the drawer/composer-focus/tail-jump rungs below
+        even look at their own state. This mirrors the retired TUI's own
+        Esc-cancels-recording behavior, and fits the ladder's own contract:
+        an open mic stream is exactly the kind of "thing to dismiss" the
+        rungs above are for, and it is silent to every OTHER rung (none of
+        them know voice input exists), so it has to claim its own.
         """
+        if self._voice_input is not None and self._voice_input.is_recording:
+            self._voice_cancel_timeout_timer()
+            self._voice_input.cancel()
+            from reyn.runtime.outbox import OutboxMessage  # noqa: PLC0415
+            self._ingest_frame(OutboxMessage(kind="status", text="voice recording cancelled"))
+            return
         drawer = self.query_one("#drawer", ContentSwitcher)
         if drawer.display:
             self._open_drawer(None)
