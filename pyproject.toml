@@ -68,11 +68,19 @@ dependencies = [
     # Git-pinned to a specific commit of the PUBLIC repo (no auth needed).
     # Phase 1 promotes `textual` to an explicit DIRECT dep now that the app code
     # imports `textual.app`/`textual.widgets` directly (Phase 0 left it transitive
-    # via flowview) — same reasoning that keeps rich direct above. Floor matches
-    # flowview's own requirement (textual>=0.80). The app module is imported
-    # LAZILY on the TTY path only, so the plain / --cui / non-TTY / CI paths never
-    # touch textual or flowview and stay green even if flowview fails to resolve.
-    "textual>=0.80",
+    # via flowview) — same reasoning that keeps rich direct above. The app module
+    # is imported LAZILY on the TTY path only, so the plain / --cui / non-TTY /
+    # CI paths never touch textual or flowview and stay green even if flowview
+    # fails to resolve.
+    # #4077: floor raised from flowview's own bare requirement (textual>=0.80)
+    # to 8.2.8 — a scoped `tests/interfaces/` run at 8.2.0 reproducibly failed
+    # (test_3310_n2_reset_hydrate.py: 9/9 failed; test_textual_chat_intervention_
+    # panel_3299.py: hung) with an AttributeError chain rooted in
+    # `build_presentation`; the SAME scope at 8.2.8 is 9/9 + 25/25 green, no
+    # hang. Confirmed on this env only (not bisected below 8.2.8 to find the
+    # exact minimum) — if you drop this floor, #4077's scoped-run failures can
+    # come back.
+    "textual>=8.2.8",
     # v0.12.0 (5a72da0), up from v0.9.0 (#3624). 0.5.0: animated jumps,
     # body_width/effective gutter widths. 0.6.0: empty state,
     # scroll_to_entry(align=), opt-in keyboard cursor, ReachedTop/ReachedBottom
