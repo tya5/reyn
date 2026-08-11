@@ -484,16 +484,20 @@ _SANDBOX_POLICY_CONFIG_KEY_TO_FIELD: dict[str, str] = {
     "max_timeout_seconds": "max_timeout_seconds",
     # #3903 a-2: `background_timeout_seconds`/`background_max_timeout_seconds`
     # deliberately NOT registered here yet (lead-coder review, #4186) —
-    # `SandboxPolicy` carries the fields (below) and the self-consistency
-    # check for them already exists (`_translate_sandbox_policy_config`),
-    # but nothing yet reads them (③ — "is this exec foreground or
-    # background" isn't wired to `sandboxed_exec.handle`). Registering the
-    # config-vocabulary keys before ③ lands would let an operator write
-    # `background_timeout_seconds: 300` to reyn.yaml, have it validate and
-    # save, and have it silently do nothing — the exact "declared config,
-    # no reader" class #4159/#4165 are open instances of (CLAUDE.md Q3: "who
-    # would miss this" was honestly "nobody" until ③ exists). Add these two
-    # lines back in the SAME PR that wires ③ — do not add them alone.
+    # `SandboxPolicy` carries the fields (below), but nothing yet reads
+    # them (③ — "is this exec foreground or background" isn't wired to
+    # `sandboxed_exec.handle`), and their default<=max self-consistency
+    # check ALSO isn't here yet — a check reading these keys would be
+    # unreachable dead code without this registration (see
+    # `_translate_sandbox_policy_config`'s own comment at the return, where
+    # that check was removed for the same reason on a second review pass).
+    # Registering the config-vocabulary keys before ③ lands would let an
+    # operator write `background_timeout_seconds: 300` to reyn.yaml, have
+    # it validate and save, and have it silently do nothing — the exact
+    # "declared config, no reader" class #4159/#4165 are open instances of
+    # (CLAUDE.md Q3: "who would miss this" was honestly "nobody" until ③
+    # exists). Add these two lines AND the self-consistency check back in
+    # the SAME PR that wires ③ — do not add either alone.
     "max_output_bytes": "max_output_bytes",
 }
 
@@ -587,22 +591,17 @@ def _translate_sandbox_policy_config(config_policy: "dict | None") -> dict:
         )
         out["timeout_seconds"] = effective_max
 
-    # #3903 a-2: same default<=max invariant, for the background pair. The
-    # ceiling here is `int | None` (None = no ceiling, owner ruling) —
-    # skip the comparison when it's None, there is nothing to exceed.
-    effective_bg_timeout = out.get(
-        "background_timeout_seconds", DEFAULT_BACKGROUND_EXEC_TIMEOUT_SECONDS
-    )
-    effective_bg_max = out.get(
-        "background_max_timeout_seconds", DEFAULT_BACKGROUND_MAX_EXEC_TIMEOUT_SECONDS
-    )
-    if effective_bg_max is not None and effective_bg_timeout > effective_bg_max:
-        raise ValueError(
-            f"sandbox.policy.background_timeout_seconds ({effective_bg_timeout}) "
-            f"exceeds sandbox.policy.background_max_timeout_seconds "
-            f"({effective_bg_max}) — the default cannot be above the "
-            f"LLM-extensible cap"
-        )
+    # #3903 a-2: the SAME default<=max invariant, for the background pair,
+    # is deliberately NOT here yet (lead-coder review, #4186, second pass) —
+    # `background_timeout_seconds`/`background_max_timeout_seconds` aren't
+    # in `_SANDBOX_POLICY_CONFIG_KEY_TO_FIELD` (see that map's own comment),
+    # so `out` can never carry those keys and a check reading them would be
+    # unreachable dead code: exactly the same "claims to exist, cannot ever
+    # run" shape as the config-key registration itself would have been —
+    # the residue's first draft here said "the self-consistency check for
+    # them already exists," which was true of the code but false of its
+    # reachability. Add this check back in the SAME PR that adds the
+    # registration (③) — see the registration comment above for why.
     return out
 
 
