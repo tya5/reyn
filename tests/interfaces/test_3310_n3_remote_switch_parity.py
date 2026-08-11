@@ -150,32 +150,28 @@ async def _collect_all(agen) -> "list":
     return [item async for item in agen]
 
 
-async def _collect_within(agen, *, window: float) -> "list":
-    """Collect items off an async generator for a BOUNDED wall-clock window.
+async def _collect_until_barrier(agen) -> "list":
+    """Collect items off an async generator until the ``session_attached``
+    barrier frame is dequeued — the one deterministic thing this test needs.
 
-    #4275 NOTE (not yet converted): unlike ``_collect_all`` above, the one
-    remaining caller of this helper (``test_switch_announce_precedes_any_new_
-    session_audit_event``) drives ``source.frames()`` without ever pushing an
-    ``__end__`` sentinel — there is no natural termination signal to wait on,
-    only a wall-clock settle window after driving the adversary + switch
-    request. This is the same shape as the #4275 issue's still-open inline
-    dedup item, not a mechanical conversion — left bounded pending a real
-    design (e.g. a quiet-period/settle signal) rather than guessed at here.
-    """
+    #4280 ②: ``source.frames()`` has no ``__end__``-style natural EOF (unlike
+    ``AgUiEmitter.stream()``, covered by ``_collect_all`` above), so a
+    wall-clock window (the prior form) was the only stand-in — the exact
+    "bounded because the alternative is an undiagnosable hang" justification
+    the #4145 ruling rejects. The real termination condition is available
+    though: the barrier frame is guaranteed to arrive exactly once (real
+    switch-follow production behaviour), and this test's whole point is
+    checking what arrived BEFORE it — so once it is dequeued, everything
+    relevant is already in ``out`` (the queue is drained strictly in order,
+    and the adversary task has already fully run by the time collection
+    starts, so no adversary frame can still be in flight)."""
     out: list = []
     it = agen.__aiter__()
-    loop = asyncio.get_event_loop()
-    deadline = loop.time() + window
     while True:
-        remaining = deadline - loop.time()
-        if remaining <= 0:
-            break
-        try:
-            item = await asyncio.wait_for(it.__anext__(), timeout=remaining)
-        except (asyncio.TimeoutError, StopAsyncIteration):
-            break
+        item = await it.__anext__()
         out.append(item)
-    return out
+        if isinstance(item, EventFrame) and getattr(item.event, "type", "") == "session_attached":
+            return out
 
 
 async def _run_emitter_to_frames(emitter: AgUiEmitter) -> "list":
@@ -368,7 +364,7 @@ async def test_switch_announce_precedes_any_new_session_audit_event(tmp_path) ->
         await adversary_task
 
         try:
-            collected = await _collect_within(source.frames(), window=2.0)
+            collected = await _collect_until_barrier(source.frames())
         finally:
             source.close()
 
