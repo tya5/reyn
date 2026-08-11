@@ -957,13 +957,34 @@ class RouterHostAdapter:
         against the container repo_dir (frame mismatch + host path leak).
 
         Resolution order (getattr-guarded for forward compat):
-        1. backend.repo_dir  — ContainerBackend (e.g. DockerEnvironmentBackend)
-        2. os.getcwd()       — HostBackend or no backend
+        1. backend.repo_dir      — ContainerBackend (e.g. DockerEnvironmentBackend)
+        2. workspace.base_dir    — HostBackend or no backend (#4204 bucket D)
+        3. os.getcwd()           — defensive fallback if base_dir is unresolvable
+
+        #4204 bucket D: step 2 used to be a bare ``os.getcwd()`` — but the
+        REAL host-side exec op (``sandboxed_exec``, see
+        ``op_runtime/sandboxed_exec.py``) anchors its subprocess's cwd on
+        ``ctx.workspace.base_dir``, not the raw process cwd (measured by
+        reading that op's own source directly). These diverge exactly when
+        reyn is launched from a subdirectory of the project (this issue's
+        condition ①) — the SP told the agent one cwd while every real exec
+        op ran somewhere else, with no way for the agent to detect the
+        mismatch. ``self._op_ctx_source``'s ``workspace_base_dir_fn``
+        supplier is the SAME source ``build_router_op_context`` reads for
+        the real ``OpContext.workspace.base_dir`` value (one supplier, one
+        answer — see ``RouterOpContextSource``'s own docstring for why a
+        supplier, not a snapshot, matters here: a spawned session's real
+        base_dir is fixed up AFTER construction).
         """
         import os
         repo_dir = getattr(self._environment_backend, "repo_dir", None)
         if repo_dir:
             return str(repo_dir)
+        base_dir_fn = getattr(self._op_ctx_source, "_workspace_base_dir_fn", None)
+        if base_dir_fn is not None:
+            base_dir = base_dir_fn()
+            if base_dir:
+                return str(base_dir)
         return os.getcwd()
 
     def get_environment_info(self) -> dict:
