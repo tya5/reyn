@@ -175,7 +175,7 @@ def _warn_unknown_config_keys(policy_tier_merged: dict) -> None:
 
     lines = [
         f"config key {key!r} is not recognized — it was NOT APPLIED"
-        + (f"; it belongs at {hint}" if hint else ".")
+        + (f"; {hint.note}" if hint else ".")
         for key, hint in sorted(unknown.items())
     ]
     lines.append("Run `reyn config migrate` to fix renamed keys automatically.")

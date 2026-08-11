@@ -473,7 +473,9 @@ _RENAMED_SANDBOX_POLICY_KEYS: dict[str, str] = {
 }
 
 
-def _sandbox_policy_freeform_validator(config_policy: dict) -> dict[str, str | None]:
+def _sandbox_policy_freeform_validator(
+    config_policy: dict,
+) -> "dict[str, object]":
     """#4174 T0: ``sandbox.policy``'s own registered
     :func:`~reyn.config.config_schema.register_freeform_leaf_validator` —
     the ONE place ``sandbox.policy`` plugs its inner vocabulary
@@ -481,22 +483,31 @@ def _sandbox_policy_freeform_validator(config_policy: dict) -> dict[str, str | N
     shared unknown-key walk, so it stops being a hand-maintained special
     case (#3823's original ``SandboxConfig.__post_init__`` raise, now
     removed — see that method). Reuses the existing rich per-key rename
-    guidance in :data:`_RENAMED_SANDBOX_POLICY_KEYS` as the hint text
-    rather than discarding it — an operator on a pre-#3823 config still
-    gets told exactly where a key moved (and, where it applies, that its
-    value sense inverted), not just "unknown".
+    guidance in :data:`_RENAMED_SANDBOX_POLICY_KEYS` as the
+    :class:`~reyn.config.config_schema.RenamedKeyHint` note rather than
+    discarding it — an operator on a pre-#3823 config still gets told
+    exactly where a key moved (and, where it applies, that its value sense
+    inverted), not just "unknown".
+
+    Every hint here sets ``destination=None`` (lead-coder's block on
+    #4190) — a sandbox.policy rename's guidance describes a per-key VALUE
+    TRANSFORM (e.g. a boolean inversion), not a plain relocation, so
+    ``reyn config migrate`` must never auto-rewrite it; the operator fixes
+    it by hand per the shown note.
 
     Defined here (the config layer, which already imports from
     ``security.sandbox.policy``) rather than in ``config_schema.py``
     itself, which must NOT import a leaf module — see
     ``register_freeform_leaf_validator``'s own docstring for why.
     """
+    from reyn.config.config_schema import RenamedKeyHint
     from reyn.security.sandbox.policy import unknown_sandbox_policy_config_keys
 
-    return {
-        key: _RENAMED_SANDBOX_POLICY_KEYS.get(key)
-        for key in unknown_sandbox_policy_config_keys(config_policy)
-    }
+    result: "dict[str, object]" = {}
+    for key in unknown_sandbox_policy_config_keys(config_policy):
+        note = _RENAMED_SANDBOX_POLICY_KEYS.get(key)
+        result[key] = RenamedKeyHint(note=note) if note is not None else None
+    return result
 
 
 def _register_sandbox_policy_validator() -> None:

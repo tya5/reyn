@@ -94,7 +94,7 @@ def _warn_unknown_hot_reload_keys(in_set: "dict") -> None:
         return
     lines = [
         f"{key!r} is not recognized — it was NOT APPLIED"
-        + (f"; it belongs at {hint}" if hint else ".")
+        + (f"; {hint.note}" if hint else ".")
         for key, hint in sorted(unknown.items())
     ]
     _log.warning(

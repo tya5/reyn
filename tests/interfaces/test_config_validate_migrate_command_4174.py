@@ -110,11 +110,14 @@ def test_migrate_reports_nothing_to_migrate_when_config_has_no_renamed_key(
     ARE registered, but this project's config doesn't use any of the old
     keys. Distinct code path from the empty-registry case above (both real,
     per lead-coder's requirement)."""
+    from reyn.config.config_schema import RenamedKeyHint
     from reyn.interfaces.cli.commands.config import _migrate
 
     monkeypatch.setattr(
         "reyn.config.config_schema._RENAMED_CONFIG_KEYS",
-        {"old_top_level_key": "new_top_level_key"},
+        {"old_top_level_key": RenamedKeyHint(
+            note="moved to new_top_level_key", destination="new_top_level_key",
+        )},
     )
     _write_yaml(project / "reyn.yaml", "model: standard\n")
     _migrate()
@@ -123,12 +126,17 @@ def test_migrate_reports_nothing_to_migrate_when_config_has_no_renamed_key(
 
 
 def test_migrate_rewrites_an_unambiguous_plain_rename(project, capsys, monkeypatch) -> None:
-    """Tier 2: #4174 T0b — an entry whose hint is a bare dotted key (no
-    spaces = no value transform) is auto-rewritten in place, old key
-    removed."""
+    """Tier 2: #4174 T0b — an entry whose hint has a non-None
+    ``destination`` (a plain rename, no value transform) is auto-rewritten
+    in place, old key removed (lead-coder's block on #4190: the decision
+    is a typed field, not a syntactic proxy)."""
+    from reyn.config.config_schema import RenamedKeyHint
+
     monkeypatch.setattr(
         "reyn.config.config_schema._RENAMED_CONFIG_KEYS",
-        {"old_flat_key": "new.nested.key"},
+        {"old_flat_key": RenamedKeyHint(
+            note="moved to new.nested.key", destination="new.nested.key",
+        )},
     )
     _write_yaml(project / "reyn.yaml", "model: standard\nold_flat_key: hello\n")
 
@@ -146,9 +154,13 @@ def test_migrate_rewrites_an_unambiguous_plain_rename(project, capsys, monkeypat
 def test_migrate_dry_run_does_not_write(project, capsys, monkeypatch) -> None:
     """Tier 2: #4174 T0b — ``--dry-run`` previews the rewrite without
     touching the file (mirrors migrate-mcp's own dry-run contract)."""
+    from reyn.config.config_schema import RenamedKeyHint
+
     monkeypatch.setattr(
         "reyn.config.config_schema._RENAMED_CONFIG_KEYS",
-        {"old_flat_key": "new_flat_key"},
+        {"old_flat_key": RenamedKeyHint(
+            note="moved to new_flat_key", destination="new_flat_key",
+        )},
     )
     _write_yaml(project / "reyn.yaml", "old_flat_key: hello\n")
 
@@ -165,13 +177,17 @@ def test_migrate_dry_run_does_not_write(project, capsys, monkeypatch) -> None:
 def test_migrate_flags_a_value_transforming_rename_for_manual_review(
     project, capsys, monkeypatch,
 ) -> None:
-    """Tier 2: #4174 T0b — an entry whose hint is prose (contains a space —
-    a value transform, not a plain rename) is NOT auto-rewritten; it's
-    reported as needing manual review instead (see _migrate's docstring
-    for why guessing at the transform would be unsafe)."""
+    """Tier 2: #4174 T0b — an entry whose ``destination`` is None (a value
+    transform, not a plain rename) is NOT auto-rewritten; it's reported as
+    needing manual review instead (see _migrate's docstring for why
+    guessing at the transform would be unsafe)."""
+    from reyn.config.config_schema import RenamedKeyHint
+
     monkeypatch.setattr(
         "reyn.config.config_schema._RENAMED_CONFIG_KEYS",
-        {"old_inverting_key": "moved to new_key, value inverts"},
+        {"old_inverting_key": RenamedKeyHint(
+            note="moved to new_key, value inverts", destination=None,
+        )},
     )
     _write_yaml(project / "reyn.yaml", "old_inverting_key: true\n")
 
@@ -185,6 +201,34 @@ def test_migrate_flags_a_value_transforming_rename_for_manual_review(
     out = capsys.readouterr().out
     assert "manual review" in out.lower()
     assert "old_inverting_key" in out
+
+
+def test_migrate_does_not_rewrite_a_space_free_note_with_no_destination(
+    project, capsys, monkeypatch,
+) -> None:
+    """Tier 2: #4174 T0b — lead-coder's exact concern on #4190: the OLD
+    design decided auto-rewrite eligibility from whether the hint STRING
+    happened to contain a space, so a value-transforming rename whose note
+    was accidentally written without one would have been silently
+    auto-applied. With destination as its own typed field, a space-free
+    note with destination=None is correctly left untouched regardless of
+    its text shape."""
+    from reyn.config.config_schema import RenamedKeyHint
+
+    monkeypatch.setattr(
+        "reyn.config.config_schema._RENAMED_CONFIG_KEYS",
+        {"old_key": RenamedKeyHint(note="inverted-no-spaces-here", destination=None)},
+    )
+    _write_yaml(project / "reyn.yaml", "old_key: true\n")
+
+    from reyn.interfaces.cli.commands.config import _migrate
+    _migrate()
+
+    import yaml
+    cfg = yaml.safe_load((project / "reyn.yaml").read_text())
+    assert cfg["old_key"] is True  # untouched
+    out = capsys.readouterr().out
+    assert "manual review" in out.lower()
 
 
 def test_migrate_subcommand_is_registered():

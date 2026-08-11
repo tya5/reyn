@@ -271,9 +271,14 @@ def test_unknown_config_keys_flags_a_renamed_sandbox_policy_key_with_guidance() 
         {"sandbox": {"policy": {"write_paths": ["/x"]}}}
     )
     hint = unknown["sandbox.policy.write_paths"]
-    assert hint is not None and "allow_write_paths" in hint, (
+    assert hint is not None and "allow_write_paths" in hint.note, (
         f"expected the renamed-key guidance naming 'allow_write_paths', got: {hint!r}"
     )
+    # #4174 T0 (lead-coder's block on #4190): a sandbox.policy rename's
+    # guidance describes a per-key VALUE TRANSFORM, not a plain
+    # relocation — `destination` must stay None so `reyn config migrate`
+    # never guesses at the transform.
+    assert hint.destination is None
 
 
 def test_unknown_config_keys_is_silent_for_a_well_formed_sandbox_policy() -> None:

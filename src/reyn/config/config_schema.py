@@ -140,9 +140,40 @@ def resolve_config_value(config: Any, key: str) -> tuple[bool, Any]:
     return True, obj
 
 
-#: #4174 T0: a renamed config key (dotted, any level) -> its new dotted
-#: location, so an unknown-key warning can NAME the destination
-#: ("`model:` moved to `llm.model:`") rather than just say "unknown".
+@_dataclass(frozen=True)
+class RenamedKeyHint:
+    """The reason an unknown config key isn't valid, when known.
+
+    ``destination``: the new dotted key, when this is a PLAIN rename with
+    no value transform — :func:`~reyn.interfaces.cli.commands.config._migrate`
+    (``reyn config migrate``) auto-rewrites ONLY when this is not ``None``.
+    ``note``: human-readable explanation always shown in a warning/report,
+    regardless of whether ``destination`` is set.
+
+    ``destination is not None`` is ``migrate``'s ENTIRE decision for
+    whether to auto-rewrite an entry — lead-coder's block on #4190: the
+    original design used a syntactic proxy (whitespace in the hint string)
+    for this semantic distinction (destination vs. explanation), which a
+    future T1-T6 entry author has no reliable way to know about (documented
+    in one docstring, not enforced) and which fails safe in the WRONG
+    direction (a hint that happens to contain no space gets silently
+    auto-rewritten). Encoding it as a type makes the distinction
+    unrepresentable-wrong instead of merely undocumented.
+
+    A key whose rename carries a VALUE TRANSFORM (e.g.
+    ``_RENAMED_SANDBOX_POLICY_KEYS``'s boolean-inversion renames) sets
+    ``destination=None`` — ``migrate`` reports it for manual review rather
+    than guessing at the transform.
+    """
+
+    note: str
+    destination: "str | None" = None
+
+
+#: #4174 T0: a renamed config key (dotted, any level) -> a :class:`RenamedKeyHint`,
+#: so an unknown-key warning can NAME the destination ("`model:` moved to
+#: `llm.model:`") rather than just say "unknown", and ``reyn config migrate``
+#: can tell a safe plain rename from one it must not guess at.
 #: Starts EMPTY — no renames have landed yet; T1-T6 (#4174) populate this
 #: incrementally as each rename lands, in the SAME PR as the rename itself
 #: (co-locate the rename with the hint that explains it, not a second
@@ -153,7 +184,7 @@ def resolve_config_value(config: Any, key: str) -> tuple[bool, Any]:
 #: absent from this map is NOT a rename — see :func:`unknown_config_keys`'s
 #: own docstring for why that distinction is a first-class case, not an
 #: empty-string placeholder.
-_RENAMED_CONFIG_KEYS: dict[str, str] = {}
+_RENAMED_CONFIG_KEYS: "dict[str, RenamedKeyHint]" = {}
 
 
 #: #4174 T0 (owner ruling: "don't special-case sandbox.policy" — one
@@ -177,14 +208,17 @@ def register_freeform_leaf_validator(
     """Plug a free-form dict leaf's own inner-vocabulary check into the
     shared #4174 T0 unknown-key walk.
 
-    *validator* is ``Callable[[dict], dict[str, str | None]]`` — same
-    return shape as :func:`unknown_config_keys` itself (``{sub_key:
-    rename_hint_or_None}``, keys relative to *dotted_key*'s own dict, NOT
-    yet prefixed — :func:`unknown_config_keys` does the prefixing).
-    Registration, not a hardcoded dict literal here, so ``security.sandbox
-    .policy`` (a leaf module ``config_schema.py`` must not import — that
-    would invert the module's own dependency direction) can register
-    itself instead of this module reaching into it.
+    *validator* is ``Callable[[dict], dict[str, RenamedKeyHint | None]]`` —
+    same return shape as :func:`unknown_config_keys` itself (``{sub_key:
+    hint_or_None}``, keys relative to *dotted_key*'s own dict, NOT yet
+    prefixed — :func:`unknown_config_keys` does the prefixing). A leaf
+    whose renames always carry a value transform (e.g. sandbox.policy)
+    returns every hint with ``destination=None`` — see
+    :class:`RenamedKeyHint`. Registration, not a hardcoded dict literal
+    here, so ``security.sandbox.policy`` (a leaf module ``config_schema.py``
+    must not import — that would invert the module's own dependency
+    direction) can register itself instead of this module reaching into
+    it.
     """
     _FREEFORM_LEAF_VALIDATORS[dotted_key] = validator
 
@@ -223,8 +257,8 @@ def _schema_index() -> "tuple[frozenset[str], frozenset[str], frozenset[str]]":
 
 def unknown_config_keys(
     raw: "dict | None", *, prefix: str = "",
-) -> "dict[str, str | None]":
-    """Return ``{dotted_key: rename_hint_or_None}`` for every key in *raw*
+) -> "dict[str, RenamedKeyHint | None]":
+    """Return ``{dotted_key: hint_or_None}`` for every key in *raw*
     (recursively, at every nesting level) that is not a valid
     ``ReynConfig`` field — #4174 T0's ONE unknown-key implementation,
     called from ``reyn config validate``, the config-load startup path,
@@ -240,16 +274,17 @@ def unknown_config_keys(
 
     A ``None`` hint means "this key matches none of the known keys — see
     ``reyn config fields``" (today's ONLY case: no rename has landed yet).
-    A non-``None`` hint means the key was intentionally renamed (see
-    :data:`_RENAMED_CONFIG_KEYS`) and the caller should say so explicitly.
-    Collects every unknown key in one pass — callers must NOT early-return
-    on the first hit (owner requirement: report all problems at once, not
-    one-fix-restart-repeat).
+    A :class:`RenamedKeyHint` means the key was intentionally renamed (see
+    :data:`_RENAMED_CONFIG_KEYS`) — its ``note`` is always shown; its
+    ``destination`` tells ``reyn config migrate`` whether it's safe to
+    auto-rewrite. Collects every unknown key in one pass — callers must NOT
+    early-return on the first hit (owner requirement: report all problems
+    at once, not one-fix-restart-repeat).
     """
     if not isinstance(raw, dict):
         return {}
     namespaces, dict_leaves, scalar_leaves = _schema_index()
-    result: "dict[str, str | None]" = {}
+    result: "dict[str, RenamedKeyHint | None]" = {}
     for key, value in raw.items():
         dotted = f"{prefix}.{key}" if prefix else key
         if dotted in scalar_leaves:

@@ -295,7 +295,7 @@ def _validate() -> None:
     for key, hint in sorted(unknown.items()):
         print(f"  {key}")
         if hint:
-            print(f"    -> {hint}")
+            print(f"    -> {hint.note}")
         else:
             print("    -> not applied; see 'reyn config fields' for valid keys.")
     print("\nRun 'reyn config migrate' to fix renamed keys automatically.")
@@ -315,21 +315,22 @@ def _migrate(*, dry_run: bool = False) -> None:
     use — the two are different reasons for the same outcome, both real
     (lead-coder's explicit requirement: this must not be silently vacuous).
 
-    Scope note: ``_RENAMED_CONFIG_KEYS`` values are free-form GUIDANCE
-    PROSE for the human-facing warning (``reyn config validate`` /
-    load_config's own startup warning), not a machine-parseable
-    destination — "'deny_subprocess' was renamed to 'subprocess' ... the
-    VALUE INVERTS BACK" cannot be safely auto-rewritten (the value
-    transform itself varies per key, e.g. ``_RENAMED_SANDBOX_POLICY_KEYS``'s
-    boolean inversion). This command therefore only auto-rewrites an entry
-    whose hint is UNAMBIGUOUSLY a bare new dotted key (no spaces — a plain
-    rename, no value transform) and reports every other renamed key it
-    finds as "needs manual review" instead of guessing at a rewrite that
-    could silently invert an operator's intent. ``_RENAMED_CONFIG_KEYS`` is
-    empty today (T1-T6 populate it incrementally); ``_RENAMED_SANDBOX_POLICY_KEYS``
-    (already populated, prose-only) is intentionally NOT auto-rewritten by
-    this command — an operator on an old sandbox.policy key sees the
-    guidance via ``reyn config validate`` and fixes it by hand.
+    Scope note: an entry is only auto-rewritten when its
+    :class:`~reyn.config.config_schema.RenamedKeyHint.destination` is set
+    — a plain rename with no value transform. ``destination=None`` (e.g.
+    ``_RENAMED_SANDBOX_POLICY_KEYS``'s boolean-inversion renames, wrapped
+    via ``config.infra._sandbox_policy_freeform_validator``) means the
+    rename carries a per-key value transform this command must not guess
+    at; those are reported as "needs manual review" instead
+    (lead-coder's block on #4190 — encoding the destination-vs-note
+    distinction as a TYPE field, not a syntactic proxy like "does the hint
+    string contain a space", so a future T1-T6 entry can't accidentally
+    become auto-rewritten by writing a space-free note that was never
+    meant as a destination). ``_RENAMED_CONFIG_KEYS`` is empty today
+    (T1-T6 populate it incrementally); ``_RENAMED_SANDBOX_POLICY_KEYS`` is
+    intentionally NOT auto-rewritten by this command — an operator on an
+    old sandbox.policy key sees the guidance via ``reyn config validate``
+    and fixes it by hand.
     """
     import yaml
 
@@ -343,11 +344,11 @@ def _migrate(*, dry_run: bool = False) -> None:
         )
         return
 
-    # Only entries whose hint is unambiguously a bare dotted key (no
-    # spaces) are safe to auto-rewrite — see the docstring above.
+    # Only entries with a non-None `destination` (a plain rename, no value
+    # transform) are safe to auto-rewrite — see the docstring above.
     auto_rewritable = {
-        old: new for old, new in _RENAMED_CONFIG_KEYS.items()
-        if new and " " not in new
+        old: hint.destination for old, hint in _RENAMED_CONFIG_KEYS.items()
+        if hint.destination is not None
     }
     needs_manual = sorted(set(_RENAMED_CONFIG_KEYS) - set(auto_rewritable))
 
@@ -428,7 +429,7 @@ def _migrate(*, dry_run: bool = False) -> None:
               "transform, not a plain rename — see 'reyn config validate' "
               "for guidance):")
         for label, old_key in manual_found:
-            print(f"  {label}: {old_key} — {_RENAMED_CONFIG_KEYS[old_key]}")
+            print(f"  {label}: {old_key} — {_RENAMED_CONFIG_KEYS[old_key].note}")
 
     if not any_changes and not manual_found:
         print("No renamed keys found in your config — nothing to migrate.")
