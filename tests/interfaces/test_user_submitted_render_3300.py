@@ -68,6 +68,7 @@ from reyn.llm.pricing import TokenUsage
 from reyn.runtime.outbox import OutboxMessage
 from reyn.runtime.session import Session
 from reyn.schemas.models import Event
+from tests._async_wait import wait_until
 from tests._support.agent_session import make_session
 
 _RAW_ESC = "\x1b[31mdanger\x1b[0m"
@@ -91,23 +92,13 @@ def _make_llm_stub_fn(result):  # type: ignore[no-untyped-def]
     return _stub
 
 
-async def _run_n_turns_then_shutdown(session: Session, n: int, timeout: float = 3.0) -> None:
-    turns_done = [0]
-    original_run_one = session.run_one_iteration
-
-    async def _counting_run_one() -> bool:
-        result = await original_run_one()
-        if result:
-            turns_done[0] += 1
-        return result
-
-    session.run_one_iteration = _counting_run_one  # type: ignore[method-assign]
+async def _run_n_turns_then_shutdown(session: Session, n: int) -> None:
+    """#4280: real predicate, not a turns_done count — see test_1800_wake_drain.py's
+    identical helper for the full rationale (a converted counting version hangs
+    when wake=true batching drains more than one message per run_one_iteration())."""
+    del n  # kept for call-site clarity; the real predicate no longer counts
     run_task = asyncio.create_task(session.run())
-    deadline = asyncio.get_event_loop().time() + timeout
-    while turns_done[0] < n:
-        if asyncio.get_event_loop().time() > deadline:
-            break
-        await asyncio.sleep(0.005)
+    await wait_until(lambda: not session.queued_user_messages() and not session.turn_active)
     await session.shutdown()
     try:
         await asyncio.wait_for(run_task, timeout=2.0)

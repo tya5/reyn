@@ -42,6 +42,7 @@ from reyn.interfaces.slash.dispatch import maybe_dispatch_slash
 from reyn.llm.llm import LLMToolCallResult
 from reyn.llm.pricing import TokenUsage
 from reyn.runtime.session import Session
+from tests._async_wait import wait_until
 from tests._support.agent_session import make_session
 from tests._support.slash import local_transport
 
@@ -96,29 +97,23 @@ def _make_llm_stub_fn(result):  # type: ignore[no-untyped-def]
     return _stub
 
 
-async def _run_n_turns_then_shutdown(
-    session: Session,
-    n: int,
-    timeout: float = 5.0,
-) -> None:
-    """Run the session loop until n turns complete, then shutdown."""
-    turns_done = [0]
-    original_run_one = session.run_one_iteration
+async def _run_n_turns_then_shutdown(session: Session, n: int) -> None:
+    """Run the session loop until every submitted user message has been
+    drained and no turn is in flight, then shutdown.
 
-    async def _counting_run_one() -> bool:
-        result = await original_run_one()
-        if result:
-            turns_done[0] += 1
-        return result
-
-    session.run_one_iteration = _counting_run_one  # type: ignore[method-assign]
-
+    #4280: NOT "wait until run_one_iteration() has returned truthy n times" —
+    wake=true batching lets a single run_one_iteration() drain a wake=true
+    trigger AND its wake=False ride-alongs together, so a counted-return
+    version does not map 1:1 to messages submitted. queued_user_messages()
+    + turn_active (both public, documented, in-memory) name the real
+    condition directly: once the wake=True kind="user" trigger is gone from
+    the queue, its ride-alongs were necessarily drained with it (same
+    _drain_to_wake batch), and turn_active confirms the batch's processing
+    has also settled.
+    """
+    del n  # kept for call-site clarity; the real predicate no longer counts
     run_task = asyncio.create_task(session.run())
-    deadline = asyncio.get_event_loop().time() + timeout
-    while turns_done[0] < n:
-        if asyncio.get_event_loop().time() > deadline:
-            break
-        await asyncio.sleep(0.005)
+    await wait_until(lambda: not session.queued_user_messages() and not session.turn_active)
     await session.shutdown()
     try:
         await asyncio.wait_for(run_task, timeout=2.0)
