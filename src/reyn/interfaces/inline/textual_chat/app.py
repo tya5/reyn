@@ -75,9 +75,11 @@ from .activity_row import ActivityRow
 from .chrome import (
     _MENU_TABS,
     Composer,
+    ConfigWarningLine,
     MenuBar,
     _literal_option_content,
     build_drawer_pane,
+    config_warning_text,
     pane_commands,
     pane_needs_literal_rows,
     pane_payload,
@@ -850,6 +852,14 @@ class TextualChatApp(App):
         color: @quiet@;
         padding: 0 1;
     }
+    /* #4194: bold, not a colour — palette.py's own rule (@attention@ is the
+       ONLY semantic colour this CUI claims, for the intervention panel;
+       everything else that must stand out uses an attribute so the hue
+       stays the terminal theme's to choose). ConfigWarningLine's own
+       DEFAULT_CSS sets height/text-style/padding; nothing else to add
+       here — unlike MenuBar/StatusLine, this widget owns its full sheet
+       because it is a plain top-level sibling, not something MenuBar
+       repositions. */
     /* #3326: when StatusLine SHARES a row with Tab widgets (MenuBar._repack's
        merge case), width: auto keeps it sized to its own text instead of
        stretching to consume the row's remaining space (which would push the
@@ -1369,6 +1379,22 @@ class TextualChatApp(App):
                     "Type a message — enter to send · shift+enter to add a line…"
                 )
             )
+        # #4194: the config-warning indicator, mounted BEFORE MenuBar so it
+        # sits above the menu row in compose order (measured, headless
+        # ``App.run_test``: this ordering plus `1fr` FlowView is what leaves
+        # the always-visible last row — MenuBar/StatusLine — untouched,
+        # exactly where #2280's halt banner already depends on it staying).
+        # Conditionally yielded, not yielded-then-hidden: `unknown_config_key_count`
+        # is fixed for the whole session (reyn.yaml needs a restart to
+        # change), so there is no later render tick that would need to grow
+        # this row in — an operator on a clean config never pays even the
+        # empty-row layout cost the #4194 measurement confirmed a present
+        # row would take.
+        config_warning = config_warning_text(
+            getattr(self._config, "unknown_config_key_count", 0)
+        )
+        if config_warning is not None:
+            yield ConfigWarningLine(config_warning, id="config-warning")
         # Bottom chrome: a focusable menu row that also carries the slim
         # status-values segment (#3326: MenuBar owns placing StatusLine on
         # whichever row has room, collapsing the two previously-separate rows

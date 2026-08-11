@@ -355,6 +355,29 @@ class ReynConfig:
     # union-merge shape as ``skills`` / ``pipelines`` (see ``_merge`` in loader.py).
     presentations: dict = field(default_factory=dict)
 
+    # #4194: the policy-tier unknown/renamed config-key COUNT
+    # (``loader._warn_unknown_config_keys``'s return value, attached here
+    # after construction). `schema_internal` because this is the OPPOSITE
+    # of an operator-settable key — it is a runtime-computed FACT about
+    # the config the operator wrote, not something the operator writes
+    # themselves; `walk_config_schema` must never advertise it as a
+    # `reyn.yaml` key (`reyn config set unknown_config_key_count: 5` would
+    # be nonsense). Read by `Session.unknown_config_key_count`, which is
+    # what the interactive CUI's bottom chrome reads — the warning this
+    # counts previously only ever reached a log file
+    # (`_setup_interactive_logging` redirects all logs there), invisible
+    # to the operator. Scope: policy tier only (`reyn.yaml`/
+    # `reyn.local.yaml`/`~/.reyn/config.yaml`) — matches `reyn config
+    # validate`'s own scope exactly, so the indicator's "run reyn config
+    # validate" guidance is always answerable by that command. The
+    # hot-reload IN-set (`.reyn/*.yaml`) has its OWN separate unknown-key
+    # warn path (`hot_reload._warn_unknown_hot_reload_keys`) that this
+    # count does NOT include — that remaining silence is real and is
+    # tracked separately (#4235), not covered by this field.
+    unknown_config_key_count: int = field(
+        default=0, metadata={"schema_internal": True},
+    )
+
     def model_class_for(self, purpose: str) -> str:
         """#1672: the model CLASS for a logical call *purpose*.
 

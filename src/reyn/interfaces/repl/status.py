@@ -453,6 +453,15 @@ def _snapshot(registry, config=None):
         "mcp_servers": _extract_mcp_servers(config) if config is not None else [],
         "hooks": _extract_hooks(config) if config is not None else [],
         "skills": _extract_skills(config) if config is not None else [],
+        # #4194: the policy-tier unknown/renamed config-key count
+        # (ReynConfig.unknown_config_key_count, set once at load_config()
+        # time — see that field's own docstring in root.py). Read every
+        # render tick like every other config-derived field above, so the
+        # bottom-chrome indicator's own render logic stays a pure function
+        # of this snapshot, same as everything else it draws from.
+        "unknown_config_key_count": (
+            getattr(config, "unknown_config_key_count", 0) if config is not None else 0
+        ),
         # #2285: session-scoped capability visibility + hook applicability toggles.
         # #3378: ``visibility_items`` is ``None`` when the session wires no visibility
         # seam (or it raised) and a possibly-empty LIST when it does — the renderer
