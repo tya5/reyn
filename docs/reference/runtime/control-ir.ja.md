@@ -9,9 +9,8 @@ audience: [human, agent]
 Control IR は LLM が artifact と並行して出力できる副作用 op のリストです。OS は各 op をディスパッチし、LLM（または次の Phase）が消費するために結果を返します。
 
 > ⚠️ **このページは部分訳です（#4196）。** `OP_KIND_MODEL_MAP`（`src/reyn/schemas/models.py`）が
-> 定義する op kind は現在 32 件ですが、このページが記述しているのは 16 件のみです — 残り 16 件
-> （`mcp_read_resource` / `mcp_subscribe_resource` / `mcp_unsubscribe_resource` /
-> `mcp_get_prompt` / `render_template` / `mcp_drop_server` / `embed` / `index_update` /
+> 定義する op kind は現在 32 件ですが、このページが記述しているのは 20 件のみです — 残り 12 件
+> （`render_template` / `mcp_drop_server` / `embed` / `index_update` /
 > `compact` / `skill_install` / `load_skill` / `pipeline_install` / `presentation_install` /
 > `plugin_install` / `plugin_uninstall` / `emit_hook_event`）は**専用の節がありません**
 > （「翻訳が古い」のではなく、そもそも節が存在しません — 一部は他 op の説明文中に言及される
@@ -36,6 +35,10 @@ Control IR は LLM が artifact と並行して出力できる副作用 op の�
 | `web_search` | DuckDuckGo で公開ウェブを検索する | Tier 1 — デフォルト許可；`reyn.yaml` の `web.search: deny` でブロック |
 | `web_fetch` | 単一 URL を取得してテキストを抽出する | Tier 1 — デフォルト許可；`reyn.yaml` の `web.fetch: deny` でブロック |
 | `mcp` | 設定済み MCP server のツールを呼び出す | Skill frontmatter の `permissions.mcp: [server_name]` |
+| `mcp_read_resource` | 設定済み MCP server から 1 件の resource（または解決済みの resource-template URI）を読み取る | Skill frontmatter の `permissions.mcp: [server_name]`（`mcp` と同じ軸） |
+| `mcp_subscribe_resource` | 1 つの resource URI に対する server-pushed な `resources/updated` 通知を購読する（永続接続が必要 — 後述） | Skill frontmatter の `permissions.mcp: [server_name]`（`mcp` と同じ軸） |
+| `mcp_unsubscribe_resource` | 既存の `mcp_subscribe_resource` をキャンセルする | Skill frontmatter の `permissions.mcp: [server_name]`（`mcp` と同じ軸） |
+| `mcp_get_prompt` | 設定済み MCP server から名前で 1 件の rendered prompt（messages）を取得する | Skill frontmatter の `permissions.mcp: [server_name]`（`mcp` と同じ軸） |
 | `mcp_install` | レジストリから MCP server をプロジェクト設定にインストールする | Skill frontmatter の `permissions.mcp_install: true` |
 | `index_query` | インデックス済みソース 1 件に対してセマンティック検索を行う | なし |
 | `semantic_search` | マクロ（FP-0057 Phase 2a; `recall` から rename）: embed → 各ソースに index_query → トップ K をマージ | なし |
@@ -253,6 +256,75 @@ HTML レスポンスはテキスト抽出されます（script、style、非コ�
 OS は server のトランスポート（`stdio`、`http`、`sse`）を解決し、`MCPClient` 経由でディスパッチして、ツール結果を返します。呼び出しごとに `mcp_called`、`mcp_completed`、（失敗時）`mcp_failed` イベントが発行されます。
 
 server の設定、トランスポートの選択、セキュリティモデルについては [concepts/tools-integrations/mcp.md](../../concepts/tools-integrations/mcp.md) を参照してください。
+
+## `mcp_read_resource`
+
+設定済み MCP server から 1 件の resource（または解決済みの resource-template URI）を読み取ります。#2597 slice ②a（resources 消費）— `mcp`（call_tool）と**同じ** `permissions.mcp` 軸でゲートされます: resource read は外部の、潜在的にセンシティブな server 発の content を返すため、tool call と同一の permission ゲートがかかります。
+
+```json
+{
+  "kind": "mcp_read_resource",
+  "server": "filesystem",
+  "uri": "file:///README.md"
+}
+```
+
+フィールド: `server`（必須 — `reyn.yaml` の `mcp.servers:` のキーと一致する必要がある）、`uri`（必須 — server の `resources/list` で公開されている resource URI、または解決済みの `resources/templates/list` テンプレート）。
+
+> **提示名。** Phase はこの op を chat-tool 名 `read_mcp_resource` として LLM に提示し、OS がパース境界で `mcp_read_resource` kind にエイリアスし直します — `mcp`/`call_mcp_tool` と同じパターンです。
+
+OS は server のトランスポートを解決し、`MCPClient.read_resource`（server が negotiate した `resources` capability でゲート — `mcp/client.py` の `require_capability` 参照）経由でディスパッチして `{"contents": [...]}` を返します。呼び出しごとに `mcp_resource_read`、`mcp_resource_read_completed`、（失敗時）`mcp_resource_read_failed` イベントが発行されます。
+
+**Discovery はゲートされません。** `list_mcp_resources` / `list_mcp_resource_templates`（`MCPClient.list_resources` / `list_resource_templates` の chat-tool 名）は `list_mcp_tools` をミラーします: `control-ir` op kind も permission ゲートも無い純粋な discovery で、router host adapter から `MCPGateway` へ直接ルーティングされます。content を返す read のみがゲートされた op kind であり、既存の `mcp`（call_tool）vs. discovery（`list_tools`）の分割と一致します。
+
+`resources/subscribe` + `resources/updated` push 通知は下記の `mcp_subscribe_resource` / `mcp_unsubscribe_resource`（#2597 slice ②b）です。
+
+## `mcp_subscribe_resource` / `mcp_unsubscribe_resource`
+
+設定済み MCP server 上の 1 つの resource URI に対して、server-pushed な `notifications/resources/updated` を購読（または既存の購読をキャンセル）します。#2597 slice ②b — 非同期の push イベントソース: MCP の `resources/subscribe` は**state-sync/watch** メカニズムであり、メッセージキューではありません — server は薄い「この URI が変わった」シグナル（payload 無し）を push し、OS が（`mcp_read_resource` / `read_mcp_resource` で）再読み取りして新しい content を確認します。
+
+```json
+{"kind": "mcp_subscribe_resource", "server": "filesystem", "uri": "file:///README.md"}
+```
+
+```json
+{"kind": "mcp_unsubscribe_resource", "server": "filesystem", "uri": "file:///README.md"}
+```
+
+フィールド（両 kind とも）: `server`（必須）、`uri`（必須 — `resources/list` で公開されている resource URI）。
+
+`mcp` / `mcp_read_resource` と**同じ** `permissions.mcp` 軸でゲートされます（購読は server に対するステートフルなアクションです）。加えて、server が negotiate した `resources.subscribe` サブ capability でもゲートされます — `mcp_read_resource` がゲートする、より粗い `resources` capability とは別物です: server は resource の読み取りをサポートしつつ、その購読はサポートしない場合があります（`MCPClient.subscribe_resource` は、server が接続時に `resources.subscribe=True` を advertise していなければ `MCPCapabilityError` で fail fast します）。
+
+**永続接続が必要。** 購読は HELD（セッション寿命の）MCP 接続の上でのみ意味を持ちます — 購読中の URI 集合は `MCPConnectionService` 上でメモリ内追跡されます（runtime-only、WAL 無し: 購読自体はデータを持たないため完全に再確立可能で、gen-store の runtime-only-state 不変条件と一致します）。エフェメラルなセッション（op が返った直後に per-call `MCPClientPool` が接続を閉じる）は、push を決して観測できない購読を静かに受け入れるのではなく、両 op を明確なエラーで拒否します。
+
+**再接続時は自動的に再購読されます。** トランスポート断による再接続（`mcp`/`mcp_read_resource` が使うのと同じ F1 healing パス）は、購読を一切持たない新しい `mcp.ClientSession` を開きます — `MCPConnectionService` は、新しい接続が開いた直後に、その server に対してまだ追跡されている全 URI について `subscribe_resource` を再発行するため、購読はトランスポート断を透過的に生き延びます。
+
+**push 通知自体は `control_ir_results` の値ではなく EventLog イベントです。** server が `notifications/resources/updated {uri}` を送ると、`reyn.mcp.message_handler.ReynMCPMessageHandler.on_resource_updated` がセッションの `EventLog` に `mcp_resource_updated` イベント（`server`、`uri`）を、どの op 呼び出しとも独立に非同期発行します。この slice は意図的に EventLog で止まります: `mcp_resource_updated` を hook dispatcher に配線するのは後続の（hooks-arc の）slice です。切断中に見逃した更新を再接続時に再読み取りして拾う（上記の再**購読**とは別の resync-READ）ことも、この slice ではなく follow-up です。
+
+chat-tool 名 `subscribe_mcp_resource` / `unsubscribe_mcp_resource` として LLM に提示されます — `mcp`/`call_mcp_tool` と同じエイリアスパターンです。
+
+## `mcp_get_prompt`
+
+設定済み MCP server から 1 件の rendered prompt（その messages）を取得します。#2597 slice ②c（prompts 消費）— `mcp`（call_tool）/ `mcp_read_resource` と**同じ** `permissions.mcp` 軸でゲートされます: rendered prompt は外部の、潜在的にセンシティブな server 発の content を返すため、同一の permission ゲートがかかります。
+
+```json
+{
+  "kind": "mcp_get_prompt",
+  "server": "filesystem",
+  "name": "summarize",
+  "arguments": {"style": "brief"}
+}
+```
+
+フィールド: `server`（必須 — `reyn.yaml` の `mcp.servers:` のキーと一致する必要がある）、`name`（必須 — server の `prompts/list` レスポンスで公開されている prompt 名）、`arguments`（省略可、デフォルト `{}` — prompt が宣言する `arguments` スキーマに一致する rendering 引数）。
+
+> **提示名。** Phase はこの op を chat-tool 名 `get_mcp_prompt` として LLM に提示し、OS がパース境界で `mcp_get_prompt` kind にエイリアスし直します — `mcp`/`call_mcp_tool` および `mcp_read_resource`/`read_mcp_resource` と同じパターンです。
+
+OS は server のトランスポートを解決し、`MCPClient.get_prompt`（server が negotiate した `prompts` capability でゲート — `mcp/client.py` の `require_capability` 参照）経由でディスパッチして `{"description": str | None, "messages": [...]}` を返します — 各 message はフラット化された `PromptMessage`（`role` + `content`）です。呼び出しごとに `mcp_prompt_get`、`mcp_prompt_get_completed`、（失敗時）`mcp_prompt_get_failed` イベントが発行されます。
+
+**Discovery はゲートされません。** `list_mcp_prompts`（`MCPClient.list_prompts` の chat-tool 名）は `list_mcp_resources`/`list_mcp_tools` をミラーします: `control-ir` op kind も permission ゲートも無い純粋な discovery で、router host adapter から `MCPGateway` へ直接ルーティングされます。content を返す get のみがゲートされた op kind であり、既存の `mcp`/`mcp_read_resource` vs. discovery の分割と一致します。
+
+**Prompt には subscribe の概念がありません。** resource（`mcp_subscribe_resource`/`mcp_unsubscribe_resource`）とは異なり、MCP の `prompts` capability には特定の prompt の content 変更に対する server-push 通知が無く、より粗い `notifications/prompts/list_changed`（`reyn.mcp.message_handler.ReynMCPMessageHandler.on_prompt_list_changed` が、この op kind とは独立に EventLog イベントへブリッジ）のみです。`mcp_subscribe_prompt` は存在しません。
 
 ## `mcp_install`
 
