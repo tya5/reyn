@@ -62,19 +62,34 @@ async def test_noop_cancel_event_set_kills_subprocess() -> None:
     assert result.returncode != 0  # killed, not clean exit
 
 
+async def _wait_for_file(path) -> None:
+    """#4264 ①: unbounded poll on a real filesystem condition — no attempt
+    cap (testing.md § Time, owner ruling 2026-08-06: a fixed retry count is
+    itself banned, not just a fixed sleep duration; a hang here surfaces via
+    CI's own kill switch, not a silently-exhausted budget)."""
+    while not path.exists():
+        await asyncio.sleep(0.01)
+
+
 @pytest.mark.asyncio
-async def test_noop_cancel_mid_run_kills_subprocess() -> None:
-    """Tier 2: cancel_event set mid-run → subprocess killed before sleep completes."""
+async def test_noop_cancel_mid_run_kills_subprocess(tmp_path) -> None:
+    """Tier 2: cancel_event set mid-run → subprocess killed before sleep completes.
+
+    #4264 ①: cancel fires once the child has WRITTEN A READY MARKER (an
+    observable real condition — the child is actually running, not merely
+    Popen-spawned), not after a fixed sleep guessing the same thing."""
     backend = NoopBackend()
     event = asyncio.Event()
+    ready = tmp_path / "ready"
+    script = f"touch {ready}\nsleep 60\n"
 
     async def _fire_cancel() -> None:
-        await asyncio.sleep(0.05)
+        await _wait_for_file(ready)
         event.set()
 
     fire_task = asyncio.create_task(_fire_cancel())
     result = await backend.run(
-        ["/bin/sleep", "60"], _POLICY, cancel_event=event
+        ["/bin/sh", "-c", script], _POLICY, cancel_event=event
     )
     await fire_task
     assert result.cancelled
@@ -82,20 +97,26 @@ async def test_noop_cancel_mid_run_kills_subprocess() -> None:
 
 
 @pytest.mark.asyncio
-async def test_noop_cancel_partial_stdout() -> None:
-    """Tier 2: cancel after partial output → partial stdout captured."""
+async def test_noop_cancel_partial_stdout(tmp_path) -> None:
+    """Tier 2: cancel after partial output → partial stdout captured.
+
+    #4264 ①: the ready marker is written AFTER ``echo partial_output`` in
+    the same sequential script, so its existence guarantees the echo already
+    ran (and its output already reached the pipe) before cancel can fire —
+    replacing the old "may or may not include the first line" guess with a
+    real ordering guarantee, not just a longer sleep."""
     backend = NoopBackend()
     event = asyncio.Event()
+    ready = tmp_path / "ready"
 
-    # Script writes a line, then sleeps for 60s. Cancel fires after a short
-    # delay so we get the first line but the sleep is interrupted.
-    script = textwrap.dedent("""\
+    script = textwrap.dedent(f"""\
         echo partial_output
+        touch {ready}
         sleep 60
     """)
 
     async def _fire_cancel() -> None:
-        await asyncio.sleep(0.1)
+        await _wait_for_file(ready)
         event.set()
 
     fire_task = asyncio.create_task(_fire_cancel())
@@ -105,9 +126,11 @@ async def test_noop_cancel_partial_stdout() -> None:
     await fire_task
 
     assert result.cancelled
-    # Partial output may or may not include the first line depending on
-    # buffering and timing, but the subprocess must have been killed.
     assert result.returncode != 0
+    assert b"partial_output" in result.stdout, (
+        "the ready marker is written strictly after the echo, so its "
+        "existence guarantees the output was already captured"
+    )
 
 
 @pytest.mark.asyncio
