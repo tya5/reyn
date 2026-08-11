@@ -1012,11 +1012,15 @@ reload-time reconciliation yet).
 
 ## `fs_watch` block
 
-Declares filesystem paths whose changes fire the `file_changed`
-[external-event hook](../../concepts/runtime/hooks.md#file_changed). Restart-only
-(OUT-set) — there is no op or tool verb that lets an agent register or widen
-a watch; a filesystem-wide change feed is treated as the same class of
-concern as sandbox policy.
+Operator-declared filesystem paths whose changes fire the `file_changed`
+[external-event hook](../../concepts/runtime/hooks.md#file_changed) (#2608 H4).
+Each path is watched recursively. To scope a hook to a sub-tree, give it
+`on: file_changed` plus a `matcher: {path: "..."}` glob — see the `hooks:`
+block above.
+
+Restart-only (OUT-set) — there is no op or tool verb that lets an agent
+register or widen a watch; a filesystem-wide change feed is treated as the
+same class of concern as sandbox policy.
 
 ```yaml
 fs_watch:
@@ -1320,7 +1324,7 @@ See also:
 - [Concepts: secret handling](../../concepts/runtime/secret-handling.md) — OAuth lifecycle and credential scoping
 - [Concepts: multi-agent](../../concepts/multi-agent/multi-agent.md) — agent identity propagation
 
-## `cron:` block
+## `cron` block
 
 Schedule recurring message dispatches. The scheduler runs as part of
 `reyn web` (= started in the FastAPI lifespan) or as a foreground
@@ -1364,42 +1368,6 @@ cron:
 - `docs/reference/cli/cron.md` — `reyn cron run/list/status`
 - `docs/concepts/data-retrieval/operational-intelligence.md` — scheduling a
   recurring events-log indexing agent
-
-## `fs_watch:` block
-
-Operator-declared filesystem watch paths (#2608 H4). Each path is watched
-recursively; a create/modify/delete under it fires the `file_changed`
-external-event hook (see the `hooks:` block above — `on: file_changed`, plus
-a `matcher: {path: "..."}` glob to scope a hook to a sub-tree).
-
-```yaml
-fs_watch:
-  paths:
-    - /repo/src
-    - /repo/docs
-  debounce_seconds: 0.2   # coalesce a write-burst on one path into ONE fire
-```
-
-### Fields
-
-- **`paths`** (optional, default `[]`) — list of directories to watch,
-  recursively. Empty (the default) → the watcher never starts.
-- **`debounce_seconds`** (optional, default `0.2`) — a burst of writes to the
-  SAME path within this window coalesces to one hook fire.
-
-### Security
-
-`fs_watch:` is **OUT-set only** — restart-only, loaded from
-`reyn.yaml`/`reyn.local.yaml`, never from a `.reyn/*.yaml` hot-reload file.
-There is no op or tool verb an agent can use to register or widen a watch —
-a filesystem-wide change-notification feed is an info-gathering surface, so
-it gets the same operator-only gate as `sandbox:` policy.
-
-### Requirements
-
-Requires the optional `watchdog` package (`pip install reyn[fs-watch]`). If
-`paths` is configured but `watchdog` isn't installed, the feature logs a
-warning and stays off — the rest of the session is unaffected.
 
 ## `permissions` block
 
@@ -1903,7 +1871,7 @@ Built-in classes (active when `classes:` is empty or absent):
 
 All three built-in classes are OpenAI-backed via litellm. There is no in-process local backend (#3128 removed the `local-mini` / `local-e5` sentence-transformers classes and the `reyn[local-embed]` extras) — an operator who wants a local/offline model adds a custom `embedding.classes` entry naming a model served behind an operator-run litellm proxy. See [Concepts: RAG — Local and offline embedding models](../../concepts/data-retrieval/rag.md#local-and-offline-embedding-models) for the setup.
 
-## `chat` block
+## `chat` block {#chat-compaction-block}
 
 Chat fills the context window with raw turns first; compaction fires when the
 history exceeds the effective trigger (window-relative, derived from

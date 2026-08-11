@@ -703,7 +703,7 @@ auth:
 - [コンセプト: シークレット管理](../../concepts/runtime/secret-handling.md) — OAuth ライフサイクルと認証情報スコープ
 - [コンセプト: マルチエージェント](../../concepts/multi-agent/multi-agent.md) — エージェント識別子伝播
 
-## `cron:` ブロック
+## `cron` ブロック
 
 定期的なメッセージ配信をスケジュールします。スケジューラーは `reyn web` の一部（= FastAPI lifespan で起動）として、または `reyn cron run` 経由のフォアグラウンドプロセスとして実行されます。
 
@@ -1099,7 +1099,7 @@ embedding:
 
 3 つの組み込みクラスはすべて litellm 経由の OpenAI backed です。in-process のローカルバックエンドはありません（#3128 で `local-mini` / `local-e5` sentence-transformers クラスと `reyn[local-embed]` extras を削除済み）— ローカル / オフラインモデルが必要な operator は、自前で立てた litellm proxy 背後のモデルを指す custom `embedding.classes` エントリを追加します。セットアップ手順は [Concepts: RAG — Local and offline embedding models](../../concepts/data-retrieval/rag.md#local-and-offline-embedding-models)（英語）を参照。
 
-## `chat` ブロック
+## `chat` ブロック {#chat-compaction-block}
 
 チャットは最初にコンテキストウィンドウを生のターンで充填し、履歴が
 effective trigger（`component_weights` からモデルの実際のコンテキストウィンドウに対して
