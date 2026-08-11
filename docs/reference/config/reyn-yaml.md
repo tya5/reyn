@@ -1375,23 +1375,23 @@ Project-wide capability defaults. Per-skill permissions in `skill.md` override t
 
 ```yaml
 permissions:
-  exec: deny            # deny | ask | allow — pre-approval key for the `exec` tool
-                         # (renamed from `shell` #3226 Phase 3; existing reyn.yaml
-                         # `shell:` keys are a clean break, no alias — rename to `exec`)
-  file:
-    read:  [".reyn/", "src/stdlib/"]
-    write: [".reyn/state/", "reyn/local/"]
-  python:
-    safe:    allow      # python steps are always sandboxed (safe mode only)
-    allowed_modules:
-      - math
-      - statistics
-      - json
-      - re
-  # MCP server install is gated via file.write on .reyn/config/mcp.yaml +
-  # http.get on the registry host. See "MCP install" below.
-  file.write: allow
+  exec: deny             # deny | ask | allow — pre-approval key for the `exec` tool
+                          # (renamed from `shell` #3226 Phase 3; existing reyn.yaml
+                          # `shell:` keys are a clean break, no alias — rename to `exec`)
+  file.read:  [".reyn/", "src/stdlib/"]   # flat dotted key — `file:` nested {read:, write:}
+  file.write: [".reyn/state/", "reyn/local/"]  # is NOT read; PermissionDecl.from_dict()
+                                                # only looks at the flat keys shown here.
+  python:                 # ONLY read as a LIST of {function, mode} entries (never a
+    - function: compute    # mapping — `{safe: allow}` is silently skipped, 0 bytes
+      mode: safe            # read). The sole use: fail load if any entry says
+                             # `mode: unsafe` (removed). Grants no runtime authority —
+                             # python steps are always sandboxed regardless of this key.
 ```
+
+MCP server install is gated the same way — via `file.write` (declarative path list, as
+above) plus `http.get` (declarative host list) — not a `permissions.mcp_install` bool.
+See "MCP install" below for that shape (a blanket `allow`/`deny` scalar, a different
+use of the same keys from the list form shown here).
 
 ### MCP install
 
