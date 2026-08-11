@@ -616,10 +616,6 @@
     "code": "call-arg"
   },
   {
-    "file": "src/reyn/runtime/hot_reload.py",
-    "code": "attr-defined"
-  },
-  {
     "file": "src/reyn/runtime/inbox_arbiter.py",
     "code": "arg-type"
   },

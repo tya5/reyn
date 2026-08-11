@@ -28,6 +28,8 @@ from reyn.config.loader import load_hot_reload_config
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from reyn.core.events.events import EventLog
+
 _log = logging.getLogger(__name__)
 
 # A component reapply seam: ``(name, async fn(in_set) -> changed: bool)``. #2073 S2
@@ -168,7 +170,7 @@ class HotReloader:
         self,
         *,
         project_root: "Path | None",
-        events: "object | None",
+        events: "EventLog | None",
         seams: "list[ReapplySeam] | None" = None,
         validate: "Callable[[dict], str | None] | None" = None,
     ) -> None:
