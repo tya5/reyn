@@ -215,18 +215,9 @@ DEFAULT_MAX_EXEC_TIMEOUT_SECONDS: int = 600
 # budget bound it instead"; it would remove the only instrument that bounds
 # THIS resource (process wall-clock time is not tokens or dollars).
 #
-# DEFAULT_BACKGROUND_EXEC_TIMEOUT_SECONDS: owner-specified (architect,
-# issue #3903 comment 2026-08-11 — "owner 確認: 背景の既定は 3600 秒、
-# config で変更可能"), not a judgment call this file is making. An
-# earlier version of this comment said 1800 was "a judgment call... not a
-# measured or owner-specified number" — that was true of the FIRST value
-# tried, but the owner ruling existed on the issue thread the whole time;
-# it simply hadn't been relayed over broker yet when the first version
-# landed (architect's own correction, same day: "私は #3903 に owner
-# 確認... と書いています。原因は私です — issue に書いたが broker で流さな
-# かった"). 3600 is the confirmed value; the type/shape (a real int,
-# operator-settable, distinct from foreground) was always the owner
-# ruling, and this magnitude now is too.
+# DEFAULT_BACKGROUND_EXEC_TIMEOUT_SECONDS: owner-specified (#3903,
+# 2026-08-11), operator-settable via config — the type/shape (a real int,
+# distinct from the foreground default) is owner ruling too.
 DEFAULT_BACKGROUND_EXEC_TIMEOUT_SECONDS: int = 3600
 # owner ruling (2026-08-11, relayed via lead-coder): the background CEILING's
 # default is None (no cap) — NOT a large sentinel int. A sentinel (e.g.
