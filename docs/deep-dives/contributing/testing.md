@@ -1139,7 +1139,13 @@ silently start running the full suite locally again without updating it.
    this at the end of any local run that hit one — no action needed to see
    it; it shows in the same terminal output your scoped run already
    produces, and stays silent in CI by construction (every extra is
-   installed there, so there's nothing to report).
+   installed there, so there's nothing to report). **This only catches
+   phrasing it recognizes** — it matches a skip reason containing "not
+   installed" or "could not import" (`importorskip`'s own default and this
+   repo's conventional phrasing), not "is this an optional-extra skip" in
+   general; a hand-written `importorskip(..., reason="requires the foo
+   extra")` slips past silently. Write new `importorskip` calls with a
+   default or conventionally-phrased reason, or they won't get this net.
 2. **ruff** — lint + import-sort (`I001`):
    ```bash
    ruff check src tests        # add --fix for autofixable I001 / formatting
