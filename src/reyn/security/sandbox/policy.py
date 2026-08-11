@@ -51,7 +51,14 @@ Fields:
     env_deny_names: env-var names to withhold from the sandboxed process
         (#3901 PR-B ④, a deny-list — empty means the whole environment passes
         through, same trust level as the launching shell).
-    timeout_seconds: wall-clock cap (enforced by the backend)
+    timeout_seconds: foreground exec wall-clock DEFAULT (enforced by the
+        backend), applied when the LLM's call omits its own timeout.
+    max_timeout_seconds: foreground exec's LLM-extensible CEILING — the LLM
+        may request up to this, never past it.
+    background_timeout_seconds: background exec's OWN default (#3903 a-2) —
+        a distinct value from ``timeout_seconds``, not the same field reused.
+    background_max_timeout_seconds: background exec's OWN ceiling, ``int |
+        None`` — ``None`` (the default) means unbounded.
     max_output_bytes: per-stream cap (bytes) on captured stdout/stderr — output
         beyond it is drained-and-discarded (the ``truncated`` flag is set) so a
         flooding child cannot exhaust host memory. Default 10 MiB; overridable.
@@ -194,6 +201,39 @@ DEFAULT_SANDBOX_NETWORK: bool = True
 DEFAULT_EXEC_TIMEOUT_SECONDS: int = 120
 DEFAULT_MAX_EXEC_TIMEOUT_SECONDS: int = 600
 
+# #3903 a-2 (owner ruling 2026-08-11, on top of #3903① above): foreground and
+# background exec are DIFFERENT resource envelopes and get their OWN default
+# + ceiling — 4 values total, not the single shared field #3903's own issue
+# body named as the problem ("一時セッション内でも同じ 60 秒 ── 待たないは
+# 移るが上限は移らない"). architect's engineering finding (issue #3903
+# comment, 2026-08-11) is why this stays a wall-clock cap rather than being
+# dropped in favor of cost/budget bounding: `CostConfig`'s every axis measures
+# tokens/dollars (`record(tokens=, cost_usd=)` = LLM usage), never wall-clock
+# time, so a subprocess that emits no LLM calls (`exec("sleep 86400")`) never
+# moves the budget needle — the checkpoint would never fire regardless of how
+# often it's evaluated. Removing the wall-clock cap here would not "let
+# budget bound it instead"; it would remove the only instrument that bounds
+# THIS resource (process wall-clock time is not tokens or dollars).
+#
+# DEFAULT_BACKGROUND_EXEC_TIMEOUT_SECONDS is a judgment call (tui-coder,
+# 2026-08-11), not a measured or owner-specified number — the same posture
+# #4179's own 120/600 took ("realizing a spec, not something a measurement
+# should block"), scaled up for the background case: 30 minutes is long
+# enough to cover the class of background work #3903's own reference section
+# describes (a build step, a long-running install) without being unbounded.
+# Open to revision by whoever picks the actual number next; the type/shape
+# (a real int, operator-settable, distinct from foreground) is the owner
+# ruling, this magnitude is not.
+DEFAULT_BACKGROUND_EXEC_TIMEOUT_SECONDS: int = 1800
+# owner ruling (2026-08-11, relayed via lead-coder): the background CEILING's
+# default is None (no cap) — NOT a large sentinel int. A sentinel (e.g.
+# 2**31-1) would still be a real number an LLM-supplied override could be
+# checked against and rejected for exceeding, which is meaningless when the
+# intent is "no ceiling by default"; `None` lets the reject-not-clamp check
+# below (`sandboxed_exec.py`) skip the ceiling comparison entirely rather
+# than compare against an arbitrary large number that means nothing.
+DEFAULT_BACKGROUND_MAX_EXEC_TIMEOUT_SECONDS: "int | None" = None
+
 
 @dataclass
 class SandboxPolicy:
@@ -286,6 +326,19 @@ class SandboxPolicy:
     # widen an operator's own configured envelope. See
     # DEFAULT_MAX_EXEC_TIMEOUT_SECONDS's docstring above.
     max_timeout_seconds: int = DEFAULT_MAX_EXEC_TIMEOUT_SECONDS
+    # #3903 a-2 (owner ruling 2026-08-11): background exec's OWN default —
+    # see DEFAULT_BACKGROUND_EXEC_TIMEOUT_SECONDS's docstring above for why
+    # this is a distinct field rather than reusing `timeout_seconds` (the
+    # single-shared-field shape #3903's own issue body identified as the
+    # problem). Applied when a background exec omits its own timeout, the
+    # same relationship `timeout_seconds` has to a foreground call.
+    background_timeout_seconds: int = DEFAULT_BACKGROUND_EXEC_TIMEOUT_SECONDS
+    # #3903 a-2: background exec's OWN ceiling, `int | None` — `None` (the
+    # default) means no ceiling is enforced, distinct from `max_timeout_seconds`
+    # (foreground) which stays a real int. See
+    # DEFAULT_BACKGROUND_MAX_EXEC_TIMEOUT_SECONDS's docstring above for why
+    # `None` rather than a sentinel large int.
+    background_max_timeout_seconds: "int | None" = DEFAULT_BACKGROUND_MAX_EXEC_TIMEOUT_SECONDS
     max_output_bytes: int = MAX_SUBPROCESS_OUTPUT_BYTES
 
 
@@ -429,6 +482,11 @@ _SANDBOX_POLICY_CONFIG_KEY_TO_FIELD: dict[str, str] = {
     "deny_env_names": "env_deny_names",
     "timeout_seconds": "timeout_seconds",
     "max_timeout_seconds": "max_timeout_seconds",
+    # #3903 a-2: background exec's own pair, pure renames like the
+    # foreground pair above — the fg/bg distinction lives in the FIELD
+    # name, not a translated sense.
+    "background_timeout_seconds": "background_timeout_seconds",
+    "background_max_timeout_seconds": "background_max_timeout_seconds",
     "max_output_bytes": "max_output_bytes",
 }
 
@@ -521,6 +579,23 @@ def _translate_sandbox_policy_config(config_policy: "dict | None") -> dict:
             effective_timeout, effective_max, effective_max,
         )
         out["timeout_seconds"] = effective_max
+
+    # #3903 a-2: same default<=max invariant, for the background pair. The
+    # ceiling here is `int | None` (None = no ceiling, owner ruling) —
+    # skip the comparison when it's None, there is nothing to exceed.
+    effective_bg_timeout = out.get(
+        "background_timeout_seconds", DEFAULT_BACKGROUND_EXEC_TIMEOUT_SECONDS
+    )
+    effective_bg_max = out.get(
+        "background_max_timeout_seconds", DEFAULT_BACKGROUND_MAX_EXEC_TIMEOUT_SECONDS
+    )
+    if effective_bg_max is not None and effective_bg_timeout > effective_bg_max:
+        raise ValueError(
+            f"sandbox.policy.background_timeout_seconds ({effective_bg_timeout}) "
+            f"exceeds sandbox.policy.background_max_timeout_seconds "
+            f"({effective_bg_max}) — the default cannot be above the "
+            f"LLM-extensible cap"
+        )
     return out
 
 
