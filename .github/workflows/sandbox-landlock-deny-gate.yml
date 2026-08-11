@@ -92,3 +92,30 @@ jobs:
       # visible rather than silently absorbed into a pass count.
       - name: Network-gate + io_uring + representative-MCP-server tests (#3030)
         run: python -m pytest tests/security/test_sandbox_seccomp_network_3030.py -v -rs --timeout=180
+
+      # #4333: the 3-tuple axis contract (deny / exception-boundary /
+      # workload) is the RICHER of CLAUDE.md's two deliberately-separate
+      # sandbox witness layers — `enforcement_self_test` (production, deny
+      # leg only, write+spawn axes only, every host) is the other, and this
+      # PR does not touch it (CLAUDE.md names only the direction "fold a
+      # new axis/leg INTO enforcement_self_test" as forbidden; running the
+      # already-existing CI-conformance layer somewhere real is the
+      # opposite of that). Before this step, the 3-tuple contract's
+      # network-axis arms had no job anywhere that both HAD Landlock
+      # available (this job, uniquely, does) AND collected the file — a
+      # declared-vs-actual gap, not a design gap: the design already put
+      # the richer contract in CI, CI just never actually ran it.
+      #
+      # All 3 files skip for the identical root cause
+      # (`LandlockBackend().available()` False — no Linux kernel Landlock
+      # support / package), independently confirmed per-file before adding
+      # this step, not inferred from "same uncovered set": test_sandbox_axis_contract_2983.py's
+      # `@requires_landlock` group (6 arms), test_sandbox_landlock.py's
+      # `test_landlock_runs_echo` (1), test_subprocess_cancel_1470.py's 2
+      # Landlock cancel arms. Same `requires_landlock`-equivalent skip-
+      # safety as the two steps above: the FATAL gate script already ran
+      # this job to completion, so a skip here would mean the gate script
+      # itself should have FATALed and didn't — -rs makes the actual ran/
+      # skipped split legible rather than inferred from a pass count.
+      - name: Sandbox 3-tuple axis-contract CI-conformance tests (#4333, previously never run anywhere)
+        run: python -m pytest tests/security/test_sandbox_axis_contract_2983.py tests/security/test_sandbox_landlock.py tests/security/test_subprocess_cancel_1470.py -v -rs --timeout=120
