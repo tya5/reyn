@@ -76,6 +76,34 @@ def _load_yaml(path: Path) -> dict:
 DEFAULT_PROJECT_CONTEXT_FILES: tuple[str, ...] = ("AGENTS.md", "REYN.md")
 
 
+def resolve_project_context_path(config: ReynConfig, project_root: "Path | None") -> "Path | None":
+    """Resolve WHICH file :func:`load_project_context` would read, without
+    reading it — the same candidate walk, extracted (#3787) so a caller that
+    only needs the path (e.g. the turn-boundary edit-detection watcher) isn't
+    forced to also pay for + discard a full read.
+
+    Same resolution as :func:`load_project_context`'s docstring: ``None`` →
+    auto-resolve (``AGENTS.md`` else ``REYN.md``, first EXISTING wins);
+    explicit non-empty → pin that file; explicit ``""`` → disabled (``None``).
+    Returns ``None`` when disabled or no candidate exists.
+    """
+    if project_root is None:
+        return None
+    rel = config.project_context_path
+    if rel is None:
+        candidates: tuple[str, ...] = DEFAULT_PROJECT_CONTEXT_FILES
+    else:
+        rel = rel.strip()
+        if not rel:
+            return None
+        candidates = (rel,)
+    for name in candidates:
+        target = project_root / name
+        if target.is_file():
+            return target
+    return None
+
+
 def load_project_context(config: ReynConfig, project_root: Path) -> str:
     """Read the project context markdown file for the system prompt.
 
@@ -92,24 +120,13 @@ def load_project_context(config: ReynConfig, project_root: Path) -> str:
     system-prompt section. The first EXISTING candidate is authoritative even
     if empty (AGENTS.md present-but-empty does not fall through to REYN.md).
     """
-    if project_root is None:
+    target = resolve_project_context_path(config, project_root)
+    if target is None:
         return ""
-    rel = config.project_context_path
-    if rel is None:
-        candidates: tuple[str, ...] = DEFAULT_PROJECT_CONTEXT_FILES
-    else:
-        rel = rel.strip()
-        if not rel:
-            return ""
-        candidates = (rel,)
-    for name in candidates:
-        target = project_root / name
-        if target.is_file():
-            try:
-                return target.read_text(encoding="utf-8").strip()
-            except OSError:
-                return ""
-    return ""
+    try:
+        return target.read_text(encoding="utf-8").strip()
+    except OSError:
+        return ""
 
 
 def build_policy_tier_config(cwd: Path | None = None) -> dict:

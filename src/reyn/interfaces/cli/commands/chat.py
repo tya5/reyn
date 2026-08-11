@@ -498,7 +498,7 @@ def _run(args: argparse.Namespace) -> None:
         _run_remote(args)
         return
 
-    from reyn.config import _find_project_root, load_project_context
+    from reyn.config import _find_project_root, load_project_context, resolve_project_context_path
     from reyn.interfaces.repl.repl import run_repl
     from reyn.llm.llm import run_async
     from reyn.runtime.factory_config import SessionFactoryConfig
@@ -599,6 +599,8 @@ def _run(args: argparse.Namespace) -> None:
     # container file-zone anchor (file_zone_root). It isn't used before then.
 
     project_context = load_project_context(session_cfg.config, project_root)
+    # #3787: read-only turn-boundary edit-detection watcher target.
+    project_context_path = resolve_project_context_path(session_cfg.config, project_root)
 
     # #1289: build the agent-level EnvironmentBackend (host / docker attach|launch)
     # and pass the SAME instance to BOTH Session seams (FS environment_backend
@@ -657,6 +659,7 @@ def _run(args: argparse.Namespace) -> None:
             output_language=output_language,
             prompt_cache_enabled=session_cfg.config.prompt_cache_enabled,
             project_context=project_context,
+            project_context_path=project_context_path,
             agent_role=profile.role,
             compaction_config=session_cfg.config.chat.compaction,
             reasoning_config=session_cfg.config.chat.reasoning,  # #1652

@@ -400,7 +400,7 @@ def _anchor_project_root(args: argparse.Namespace) -> Path:
 
 
 def run_serve(args: argparse.Namespace) -> None:
-    from reyn.config import load_project_context
+    from reyn.config import load_project_context, resolve_project_context_path
     from reyn.core.events.state_log import StateLog
     from reyn.llm.llm import run_async
     from reyn.mcp.server import serve_stdio
@@ -442,6 +442,8 @@ def run_serve(args: argparse.Namespace) -> None:
     )
 
     project_context = load_project_context(session_cfg.config, project_root)
+    # #3787: read-only turn-boundary edit-detection watcher target.
+    project_context_path = resolve_project_context_path(session_cfg.config, project_root)
 
     def _session_factory(profile: AgentProfile, *, presentation_consumer=None, intervention_bridge=None):
         # #1827 S3: resolve the agent's topology capability_profile (None/∅ unbound).
@@ -463,6 +465,7 @@ def run_serve(args: argparse.Namespace) -> None:
             output_language=output_language,
             prompt_cache_enabled=session_cfg.config.prompt_cache_enabled,
             project_context=project_context,
+            project_context_path=project_context_path,
             agent_role=profile.role,
             compaction_config=session_cfg.config.chat.compaction,
             reasoning_config=session_cfg.config.chat.reasoning,  # #1652

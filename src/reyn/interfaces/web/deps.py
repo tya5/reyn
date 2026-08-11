@@ -286,7 +286,7 @@ _registry = None
 def _get_registry():
     global _registry
     if _registry is None:
-        from reyn.config import load_project_context
+        from reyn.config import load_project_context, resolve_project_context_path
         from reyn.runtime.factory_config import SessionFactoryConfig
         from reyn.runtime.presentation_consumer import NullPresentationConsumer
         from reyn.runtime.profile import AgentProfile
@@ -299,6 +299,8 @@ def _get_registry():
         budget_tracker = _get_budget_tracker()
         perm_resolver = _get_perm_resolver()
         project_context = load_project_context(config, root)
+        # #3787: read-only turn-boundary edit-detection watcher target.
+        project_context_path = resolve_project_context_path(config, root)
 
         # #2683: ``LITELLM_API_BASE`` export folded into ``load_config()`` — the
         # single canonical writer (universal chokepoint). ``_load_config()`` above
@@ -355,6 +357,7 @@ def _get_registry():
                 output_language=output_language,
                 prompt_cache_enabled=config.prompt_cache_enabled,
                 project_context=project_context,
+                project_context_path=project_context_path,
                 agent_role=profile.role,
                 compaction_config=config.chat.compaction,
                 reasoning_config=config.chat.reasoning,  # #1652

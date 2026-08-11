@@ -883,6 +883,11 @@ class Session:
         output_language: str | None = None,
         prompt_cache_enabled: bool = True,
         project_context: str = "",
+        # #3787: the resolved AGENTS.md/REYN.md path this session's ``project_context``
+        # was read from (``None`` when disabled/absent) — read-only turn-boundary edit
+        # detection ONLY; see ``ProjectContextWatcher``'s module docstring for why this
+        # is not wired through the #2073 hot-reload IN-set.
+        project_context_path: "Path | None" = None,
         compaction_config: "CompactionConfig | None" = None,
         reasoning_config: "ReasoningConfig | None" = None,  # #1652 chat.reasoning
         registry: "AgentRegistry | None" = None,
@@ -1250,6 +1255,13 @@ class Session:
         # Publish as the process-wide active reloader so the hooks-write LLM-op can request_reload (#2073 S3, see session-construction.md#family-3-hook-event-reactivity)
         from reyn.runtime.hot_reload import set_active_hot_reloader
         set_active_hot_reloader(self._hot_reloader)
+        # #3787: project-context (AGENTS.md/REYN.md) read-only edit-detection watcher.
+        # Deliberately NOT the HotReloader above — see ProjectContextWatcher's module
+        # docstring for why this file cannot go through the LLM-writable IN-set.
+        from reyn.runtime.project_context_watch import ProjectContextWatcher
+        self._project_context_watcher = ProjectContextWatcher(
+            path=project_context_path, events=self._audit_events,
+        )
         # Publish this session's EventLog as the ambient LLM-chokepoint sink (#1669, see docs/reference/runtime/session-construction.md#family-1-audit-event-spine-p6)
         from reyn.core.events.events import set_llm_request_event_log
         set_llm_request_event_log(self._audit_events)
@@ -7881,6 +7893,9 @@ class Session:
         # #2073 S1: config hot-reload turn-boundary safe-point (timing-B):
         # docs/concepts/runtime/config-hot-reload.md#turn-boundary-safe-point-timing-b
         await self._hot_reloader.apply_pending()
+        # #3787: project-context edit detection — read-only, emits at most once per
+        # edit; does NOT reload ``self._project_context`` (see ProjectContextWatcher).
+        self._project_context_watcher.check()
         # ADR-0038 Stage 1a: turn boundary = a user-facing checkpoint. #1547: the
         # user message is this checkpoint's anchor for the rewind-timeline preview.
         # #1533 2c: the FULL message is persisted alongside (edit-prefill source).
