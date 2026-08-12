@@ -66,8 +66,22 @@ def _noop_pipeline() -> Pipeline:
 @pytest.mark.asyncio
 async def test_attached_spawn_bridges_child_hook_events_to_the_parent(tmp_path: Path) -> None:
     """Tier 2: an event published on the CHILD driver's hook-bus is observed
-    on the PARENT's bus — the real, end-to-end consequence of the bridge
-    task the ATTACHED spawn now starts."""
+    on the PARENT's bus EXACTLY ONCE — the real, end-to-end consequence of
+    the bridge task the ATTACHED spawn now starts.
+
+    lead-coder review on #4378 (non-blocking, addressed as a same-arc
+    follow-up): the earlier version of this test only checked that AN
+    event arrived, which does not pin the actual defect the "never
+    through a HookDispatcher" design rule exists to prevent — a future
+    edit could route the bridge through a dispatcher WITHOUT changing
+    `bridge_child_bus_to_parent`'s signature (the thing
+    `test_bridge_child_bus_to_parent_never_touches_a_hook_dispatcher`
+    actually checks), and a dispatcher-routed bridge double-delivers to
+    the parent's own bus subscribers (`dispatch_bus_event`'s own
+    docstring: re-publishing a bus-originated event back onto a bus is a
+    duplicate delivery to any sibling subscriber correlating on the same
+    kind) — this test's OLD "at least one arrived" assertion would stay
+    green through exactly that regression."""
     state_log = StateLog(tmp_path / ".reyn" / "wal.jsonl")
     reg = _agent_registry(tmp_path, state_log)
     parent = reg.get_or_load("worker")
@@ -107,8 +121,17 @@ async def test_attached_spawn_bridges_child_hook_events_to_the_parent(tmp_path: 
             # kill-switch is the correct place to catch (owner's standing
             # rule: tests carry no time limit of their own).
             received = await parent_sub.get()
+            assert received.payload.get("marker") == "reyn-4215-probe"
 
-        assert received.payload.get("marker") == "reyn-4215-probe"
+            # Exactly once, checked immediately — no wait needed. Both the
+            # correct bridge and a hypothetical dispatcher-routed double
+            # publish call HookBus.publish SYNCHRONOUSLY; a second
+            # delivery, if it happened, would already be enqueued in the
+            # SAME synchronous chain that delivered the first — this sees
+            # "not there" (a fact true right now), not "hasn't arrived
+            # yet" (which would need a wait to rule out).
+            with pytest.raises(asyncio.QueueEmpty):
+                parent_sub.get_nowait()
     finally:
         driver._hook_bus_bridge_task.cancel()
 
@@ -187,11 +210,20 @@ async def test_removing_the_child_session_cancels_its_bridge_task(tmp_path: Path
 
 def test_bridge_child_bus_to_parent_never_touches_a_hook_dispatcher() -> None:
     """Tier 2: bridge_child_bus_to_parent's own contract — it takes exactly
-    two HookBus instances, nothing dispatcher-shaped. A future edit routing
-    it through a HookDispatcher (the double-delivery bug
-    dispatch_bus_event's own docstring warns against) would change this
-    signature, which this test pins directly rather than trusting the
-    docstring alone."""
+    two HookBus instances, nothing dispatcher-shaped.
+
+    lead-coder review on #4378: this is a speed bump on the SIGNATURE, not
+    a detector of the actual defect — a future edit could route the
+    bridge's body through a HookDispatcher WITHOUT adding a dispatcher
+    parameter (e.g. reaching one off `child_bus` or a module-level
+    singleton), leaving this signature-only check green while
+    double-delivering to the parent's subscribers.
+    `test_attached_spawn_bridges_child_hook_events_to_the_parent`'s own
+    "exactly once" assertion is what actually pins the defect
+    (dispatch_bus_event's own docstring: re-publishing a bus-originated
+    event back onto a bus is a duplicate delivery); this test stays only
+    as an early, cheap signal that a signature change touched this
+    function's contract at all."""
     import inspect
 
     sig = inspect.signature(bridge_child_bus_to_parent)
