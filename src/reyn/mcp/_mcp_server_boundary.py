@@ -2,16 +2,35 @@
 ``lowlevel.Server`` construction goes through.
 
 Before this module, 6 sites across 2 files (`server.py` construction +
-`web/routers/mcp.py`'s SSE transport) each imported directly from
+`interfaces/web/routers/mcp.py`'s SSE transport) each imported directly from
 `mcp.server.*` and registered handlers via that SDK line's own decorator
 API (`@server.list_tools()`/`@server.call_tool()`/`@server.read_resource()`
 -- gone entirely on mcp 2.0, replaced by `Server(...)` constructor kwargs,
 measured live against a real `mcp==2.0.0` install, not assumed). A future
 pin bump has to change how registration happens either way; this module
-makes it ONE seam -- the swap edits THIS file's function body, not every
-call site. Mirrors `_fastmcp_boundary.py`'s own pattern from #3698 P2 (the
-CLIENT-side equivalent, since deleted once its own swap completed --
-#4282/#4299) — architect's explicit precedent for this ruling (#4368).
+makes it ONE seam for the `Server` CONSTRUCTION axis specifically -- the
+swap edits THIS file's function body, not every construction call site.
+
+**This seam's scope is construction only -- 3 other `mcp.server.*` surfaces
+are OUTSIDE it, and their mcp 2.0 shape is UNMEASURED** (architect co-vet,
+#4368, live archaeology after a first-pass `git grep -E "^\\s*from
+mcp\\.server"` silently matched nothing -- POSIX ERE doesn't understand
+`\\s`, so a 0-hit census read as "no imports outside the seam" when it was
+actually "the pattern never fired"; re-run with `[[:space:]]` found these):
+
+```
+interfaces/web/routers/mcp.py:60   from mcp.server.sse import SseServerTransport
+src/reyn/mcp/server.py:1042        from mcp.server import NotificationOptions
+src/reyn/mcp/server.py:1087        from mcp.server.stdio import stdio_server
+```
+
+A pin-bump PR reading only the paragraph above would wrongly conclude "edit
+this one file's function bodies and the swap is done" -- these 3 sites
+still need their own pin-bump pass, whatever mcp 2.0 turns out to require
+of them (not yet measured, not assumed broken). Mirrors
+`_fastmcp_boundary.py`'s own pattern from #3698 P2 (the CLIENT-side
+equivalent, since deleted once its own swap completed -- #4282/#4299) —
+architect's explicit precedent for this ruling (#4368).
 
 ## What this seam covers, and what it deliberately does NOT
 
