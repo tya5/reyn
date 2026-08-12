@@ -20,14 +20,29 @@ crash-recovery — gets a fully-populated ``self.history`` before any consumer
 ``_uncompacted_tool_call_records``, the MCP ``send_to_agent_impl`` baseline
 read, the TUI restore projection, ``ChatReadModel.conversation_history``)
 can observe it — there is no async gap between construction and
-``load_history()`` where a partial-history race could open. ``load_history()``
-itself reads ``history.jsonl`` in full (no lazy/tail read), so "complete"
-means "everything durable on disk at construction time", not "whatever a
-partial replay bucket happened to reach" — #2946 items 1/2/4 (topology-lazy /
-restore_all-bucketing / StateLog-tail-read) touch WAL-derived AgentSnapshot
-state, a SEPARATE substrate from the ``history.jsonl``-derived chat log (see
+``load_history()`` where a partial-history race could open.
+
+**#4387 Phase B ① UPDATE**: ``load_history()`` no longer always reads
+``history.jsonl`` in full — on a file whose last entry carries a real
+assigned ``seq`` (every append does, post-#3704), it reads backward and
+stops once it has collected AT LEAST ``_HISTORY_HYDRATE_MIN_LINES`` (200)
+lines AND has seen the latest ``role="summary"`` entry (or BOF). So
+"complete" for a cold start now means "everything since the latest
+compaction, plus a 200-line minimum floor" — NOT "the entire file" once a
+session exceeds that floor with no compaction having run. This test's own
+fixture (5 turns, no summary) stays well under the floor, so the bounded
+read reaches BOF anyway and this test's completeness assertion still holds
+byte-for-byte — it is not testing the general "whole file" claim the
+sentence above used to make, only "small session ⟹ still fully loaded",
+which remains true. A future test asserting completeness on a fixture
+LARGER than the floor would need to also account for the watermark/floor
+bound, not assume unconditional full-file completeness. #2946 items 1/2/4
+(topology-lazy / restore_all-bucketing / StateLog-tail-read) still touch
+WAL-derived AgentSnapshot state, a SEPARATE substrate from the
+``history.jsonl``-derived chat log (see
 ``interfaces/inline/textual_chat/restore.py``'s docstring: the chat log is
-"derived-at-read... NOT WAL-event-reconstructed state").
+"derived-at-read... NOT WAL-event-reconstructed state") — unaffected by
+this update.
 
 The two intentional exceptions — ``reyn chat --fresh`` / ``--no-restore`` —
 deliberately SKIP the ``load_history()`` call so the session starts with a

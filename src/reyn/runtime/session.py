@@ -238,6 +238,13 @@ def _exec_gate_backend_name(sandbox_backend: Any, sandbox_config: Any) -> str | 
 # see docs/concepts/runtime/intervention-delivery.md#the-single-construction-seam
 DEFAULT_CHAT_CHANNEL_ID = "tui"
 
+# #4387 Phase B ①: the minimum number of lines ``load_history``'s bounded
+# path reads even when the latest compaction watermark is very close to
+# EOF — a reasonable startup scrollback floor so a freshly-compacted
+# session doesn't hydrate to a near-empty view. Mirrors #3476④'s own
+# ``_HYDRATE_PAGE_FRAMES=200`` (the TUI's view-layer paging window).
+_HISTORY_HYDRATE_MIN_LINES = 200
+
 
 # EMPTY_STOP_RETRY_DIRECTIVE (router_loop.py) is imported function-locally at the
 # construction site below: router_loop imports from session, so a module-level
@@ -3198,23 +3205,73 @@ class Session:
             depth=depth, chain_id=chain_id, responder_sid=responder_sid,
         )
 
+    def _append_parsed_history_line(self, line: str) -> None:
+        """Parse one ``history.jsonl`` line and append it to ``self.history``
+        — the per-line body shared by both of :meth:`load_history`'s paths.
+        Malformed lines are skipped (byte-identical to the pre-#4387
+        behavior), never raised."""
+        try:
+            raw = json.loads(line)
+            # Read-time migration for pre-#383 entries (legacy text + media
+            # shape → new content shape).
+            raw = _migrate_legacy_chat_message(raw)
+            self.history.append(ChatMessage(**raw))
+        except Exception:
+            pass
+
     def load_history(self) -> None:
+        """#4387 Phase B ①: hydrate ``self.history`` at startup WITHOUT
+        necessarily reading the whole (potentially huge — owner's real
+        environment measured 500MB) file. Two paths:
+
+        FAST (the common case, post-#3704): peek the file's last complete
+        line cheaply (:func:`read_last_line`, bounded by one line's length).
+        If it carries a real assigned ``seq`` (every append does, post-#3704
+        — see #3704's own history), a bounded backward read
+        (:func:`read_history_tail`) is safe: it is GUARANTEED to include
+        everything since the latest compaction (the same
+        ``_compaction_watermark()`` bound Phase A's narrowing-taint fix
+        already assumes) plus a minimum scrollback floor, and ``_next_seq``
+        derives from that one peeked line directly — O(1), no scan.
+
+        FALLBACK (rare — a file whose last write predates #3704, or one
+        that fails to parse): the ORIGINAL full forward read + full
+        ``max(seq)`` scan, byte-identical to the pre-#4387 behavior. This is
+        the path ``test_3704_seq_assigned_to_every_role.py``'s interleaved
+        ``seq == 0`` fixture exercises — that test needs no change.
+
+        Entries this doesn't load are NOT lost: ``history.jsonl`` is
+        append-only, so anything left unread here stays on disk, reachable
+        later via the on-demand extend path (#4387 Phase B ②, not yet
+        implemented).
+        """
         if not self.history_path.exists():
             return
+        from reyn.runtime.history_tail_reader import read_history_tail, read_last_line
+
+        last_line = read_last_line(self.history_path)
+        last_seq = 0
+        if last_line is not None:
+            try:
+                last_seq = int(json.loads(last_line).get("seq", 0) or 0)
+            except (json.JSONDecodeError, AttributeError, TypeError, ValueError):
+                last_seq = 0
+
+        if last_seq > 0:
+            for line in read_history_tail(
+                self.history_path, min_lines=_HISTORY_HYDRATE_MIN_LINES,
+            ):
+                self._append_parsed_history_line(line)
+            self._next_seq = last_seq + 1
+            return
+
+        # Fallback: full forward read, full scan — see docstring above.
         with self.history_path.open("r", encoding="utf-8") as f:
             for line in f:
                 line = line.strip()
                 if not line:
                     continue
-                try:
-                    raw = json.loads(line)
-                    # Read-time migration for pre-#383 entries (legacy
-                    # text + media shape → new content shape).
-                    raw = _migrate_legacy_chat_message(raw)
-                    self.history.append(ChatMessage(**raw))
-                except Exception:
-                    continue
-        # Initialize the seq counter past any seqs already in the file.
+                self._append_parsed_history_line(line)
         # #3704: entries persisted before the role-gate removal (assistant/
         # tool turns from the old buggy path) have seq==0 and stay that
         # way forever — nothing re-derives or backfills a coordinate for
