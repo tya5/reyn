@@ -291,10 +291,15 @@ def estimate_cost(
         # litellm's own slow, unbounded import on every failure. `None`
         # here is already this function's own documented "cost unknown"
         # sentinel (see the docstring above) — no new fallback shape.
+        # #4395 (seam alignment, owner directive): reads the module off
+        # `ensure_litellm_ready()`'s own return value rather than a
+        # separate `import litellm` statement — the ONLY form the
+        # planned litellm-import gate (#4421) will allow outside
+        # `litellm_bootstrap.py` itself.
         from reyn.llm.litellm_bootstrap import ensure_litellm_ready
-        if ensure_litellm_ready() is None:
+        litellm = ensure_litellm_ready()
+        if litellm is None:
             return None, None
-        import litellm
 
         # #1829 S2 (option 3): a ``litellm.model_cost`` entry can EXIST with None
         # prices — a price-less PLACEHOLDER (e.g. a ``litellm.Router`` deployment
@@ -466,11 +471,13 @@ def estimate_cost_breakdown(
         # litellm` never went through ensure_litellm_ready() before,
         # independently re-attempting litellm's own slow import on every
         # failed cost-breakdown call). `None` is already this function's
-        # own documented "unpriced/unknown" sentinel.
+        # own documented "unpriced/unknown" sentinel. #4395 (seam
+        # alignment): reads the module off the return value — see
+        # estimate_cost's identical fix above.
         from reyn.llm.litellm_bootstrap import ensure_litellm_ready
-        if ensure_litellm_ready() is None:
+        litellm = ensure_litellm_ready()
+        if litellm is None:
             return None
-        import litellm
 
         entry = litellm.model_cost.get(model)
         if (not entry
@@ -543,11 +550,13 @@ def estimate_embedding_cost(
         # bare `import litellm` never went through ensure_litellm_ready()
         # either — a 4th site, beyond the 3 originally measured for this
         # file, found while fixing the other 3). `None` is already this
-        # function's own documented "unpriced/unknown" sentinel.
+        # function's own documented "unpriced/unknown" sentinel. #4395
+        # (seam alignment): reads the module off the return value — see
+        # estimate_cost's identical fix above.
         from reyn.llm.litellm_bootstrap import ensure_litellm_ready
-        if ensure_litellm_ready() is None:
+        litellm = ensure_litellm_ready()
+        if litellm is None:
             return None, None
-        import litellm
 
         entry = litellm.model_cost.get(model)
         if not entry or entry.get("input_cost_per_token") is None:
