@@ -55,7 +55,7 @@ The OS (`kernel/runtime.py`) is the only thing that calls the LLM, executes Cont
 |---|---|
 | `src/reyn/schemas/models.py` | Single source of truth for op kinds — `OP_KIND_MODEL_MAP` (op kind → IROp model) and the `Op` union derived from it |
 | `src/reyn/core/op_runtime/registry.py` | Op-handler registration + the `ALL_OP_KINDS` / tool-name view over the map above |
-| `src/reyn/core/context_builder.py` | The shared window-derived per-result inline read cap (`control_ir_inline_cap`) |
+| `src/reyn/core/context_builder.py` | The shared, model-independent per-result inline read cap (`control_ir_inline_cap`, bytes, config-driven — #4381 PR-5) |
 | `src/reyn/core/events/events.py` | Append-only EventLog (P6) |
 | `src/reyn/data/workspace/workspace.py` | Workspace read/write with permission gating (P5) |
 
