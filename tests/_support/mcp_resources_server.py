@@ -14,6 +14,14 @@ registered (``get_capabilities()``), so a server that registers ONLY
 gets ``resources`` non-None and ``tools`` None — the real differentiator this
 gate slice needs to prove ``MCPClient.supports()`` reads the ACTUAL negotiated
 capabilities rather than a hardcoded reyn-side assumption.
+
+#4368 (mcp 2.0 port, arc #4412): this is a standalone test-only script, not
+production surface the ``_mcp_server_boundary`` seam is scoped to (owner
+ruling via lead-coder, #4368: growing the seam's registration API for every
+test-only handler kind isn't warranted). Written plain, in the CURRENTLY
+INSTALLED pin's own decorator API + field-name vocabulary (1.x today); the
+arc's pin-bump PR flips this file's decorators/field names in the same
+mechanical pass as every other pin-vocabulary call site.
 """
 from __future__ import annotations
 

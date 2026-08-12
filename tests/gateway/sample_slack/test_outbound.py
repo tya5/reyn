@@ -128,13 +128,22 @@ def test_load_webhook_tools_skips_disabled():
 
 def test_build_server_lists_and_dispatches_extra_tool(tmp_path):
     """Tier 2: build_server exposes an extra_tool in list_tools AND dispatches
-    call_tool to its handler (the in-process MCP-server half of the e2e)."""
+    call_tool to its handler (the in-process MCP-server half of the e2e).
+
+    #4444 (mcp 2.0 port, Class A co-vet finding): drives this through a REAL
+    in-process client/server round trip
+    (``mcp.shared.memory.create_connected_server_and_client_session``)
+    rather than calling ``server.request_handlers[...]`` directly — a direct
+    call bypasses the SDK's own request-dispatch loop, which is where
+    ``request_ctx`` (the seam's ``_CtxAdapter`` reads it via
+    ``server.request_context``) gets SET; confirmed live reading
+    ``mcp.server.lowlevel.server``'s own source that this happens deep
+    inside ``Server.run()``'s private per-message handling, with no small
+    public API to set it from outside. See
+    ``tests/runtime/test_mcp_server_resources_adapter.py``'s identical fix
+    for the same finding, full detail."""
     pytest.importorskip("mcp")
-    from mcp.types import (
-        CallToolRequest,
-        CallToolRequestParams,
-        ListToolsRequest,
-    )
+    from mcp.shared.memory import create_connected_server_and_client_session
 
     from reyn.core.events.state_log import StateLog
     from reyn.mcp.extra_tool import ExtraTool
@@ -165,19 +174,17 @@ def test_build_server_lists_and_dispatches_extra_tool(tmp_path):
     )
     server = build_server(registry, extra_tools=[tool])
 
-    list_handler = server.request_handlers[ListToolsRequest]
-    names = {
-        t.name
-        for t in asyncio.run(
-            list_handler(ListToolsRequest(method="tools/list", params=None)),
-        ).root.tools
-    }
+    async def _round_trip():
+        async with create_connected_server_and_client_session(server) as session:
+            await session.initialize()
+            list_result = await session.list_tools()
+            call_result = await session.call_tool("echo_tool", {"msg": "hi"})
+            return list_result, call_result
+
+    list_result, call_result = asyncio.run(_round_trip())
+
+    names = {t.name for t in list_result.tools}
     assert "echo_tool" in names
     assert {"list_agents", "send_to_agent", "answer_intervention"} <= names
 
-    call_handler = server.request_handlers[CallToolRequest]
-    result = asyncio.run(call_handler(CallToolRequest(
-        method="tools/call",
-        params=CallToolRequestParams(name="echo_tool", arguments={"msg": "hi"}),
-    )))
-    assert json.loads(result.root.content[0].text) == {"echo": "hi"}
+    assert json.loads(call_result.content[0].text) == {"echo": "hi"}

@@ -337,17 +337,45 @@ def build_server(
     send tool, #1805): each is exposed in ``list_tools`` and dispatched in
     ``call_tool`` after the built-in tools (built-ins take precedence on a name
     clash).
+
+    #4368 (mcp 2.0 port, arc #4412): registration + ``ctx`` shape go through
+    the ``_mcp_server_boundary.build_mcp_server`` seam — see that module's
+    docstring for the full rationale (mirrors ``_fastmcp_boundary.py``'s
+    #3698 P2 precedent). Handler bodies below are written in the seam's
+    ``(ctx, params) -> Result`` shape (mcp 2.0's real handler signature —
+    the seam adapts this onto the CURRENT pin's decorator API internally,
+    and collapses to a near-passthrough once the pin bumps) and return the
+    typed ``<X>Result`` object the seam expects (``ListToolsResult``/
+    ``CallToolResult``/``ReadResourceResult``).
+
+    Object CONSTRUCTION inside the handler bodies (``Tool(...)``,
+    ``TextResourceContents(...)``, …) is a SEPARATE axis the seam does NOT
+    cover (owner ruling via lead-coder, #4368: reyn adding a constructor
+    function per SDK type would mean reyn's own surface grows every time
+    the SDK's vocabulary grows — not reyn's responsibility, same
+    discriminator as #4354's provider-layer ruling). Construction is
+    written plain, in the CURRENTLY INSTALLED pin's own field-name
+    vocabulary (``inputSchema``/``mimeType``/… — 1.x camelCase today); a
+    pin-bump PR flips every such call site to 2.0's vocabulary in one
+    mechanical pass, alongside this docstring.
     """
-    from mcp.server import Server
-    from mcp.types import TextContent, Tool
+    from mcp.types import (
+        CallToolRequestParams,
+        CallToolResult,
+        ListToolsResult,
+        ReadResourceRequestParams,
+        ReadResourceResult,
+        TextContent,
+        TextResourceContents,
+        Tool,
+    )
+
+    from reyn.mcp._mcp_server_boundary import build_mcp_server
 
     _extra_tools = list(extra_tools or [])
 
-    server = Server("reyn")
-
-    @server.list_tools()
-    async def _list_tools() -> list[Tool]:  # type: ignore[no-redef]
-        return [
+    async def _list_tools(ctx: "object", params: "object") -> "ListToolsResult":  # type: ignore[no-redef]
+        return ListToolsResult(tools=[
             Tool(
                 name="list_agents",
                 description=(
@@ -453,24 +481,25 @@ def build_server(
                 )
                 for et in _extra_tools
             ],
-        ]
+        ])
 
-    @server.call_tool()
     async def _call_tool(  # type: ignore[no-redef]
-        name: str, arguments: dict,
-    ) -> list[TextContent]:
+        ctx: "object", params: "CallToolRequestParams",
+    ) -> "CallToolResult":
+        name = params.name
+        arguments = params.arguments or {}
         if name == "list_agents":
             agents = await list_agents_impl(registry)
             import json
-            return [TextContent(type="text", text=json.dumps(agents))]
+            return CallToolResult(content=[TextContent(type="text", text=json.dumps(agents))])
 
         if name == "send_to_agent":
             agent_name = (arguments or {}).get("agent_name") or ""
             message = (arguments or {}).get("message") or ""
             if not agent_name:
-                return [TextContent(type="text", text="error: agent_name is required")]
+                return CallToolResult(content=[TextContent(type="text", text="error: agent_name is required")])
             if not message:
-                return [TextContent(type="text", text="error: message is required")]
+                return CallToolResult(content=[TextContent(type="text", text="error: message is required")])
 
             # issue #271 M1: progress emit bridge — if the client provided
             # a progressToken in this request's metadata, subscribe a
@@ -487,14 +516,14 @@ def build_server(
             # how the handler exits (= normal return / ValueError /
             # CancelledError from issue #271 M2 client-side cancel).
             bridge = await _make_mcp_progress_bridge(
-                registry, agent_name, server,
+                registry, agent_name, ctx,
             )
             # issue #270 Phase B: build MCP-side iv observer. When a
             # When a UserIntervention is emitted, this bus pushes the
             # iv payload to the peer via progress notification + lets
             # the peer answer via the ``answer_intervention`` tool.
             iv_bus = await _make_mcp_intervention_bus(
-                registry, agent_name, server,
+                registry, agent_name, ctx,
             )
             try:
                 # FP-0043 S4b-6: run the invocation on the agent's SHARED mcp
@@ -513,7 +542,7 @@ def build_server(
                     sid=mcp_session_id(),
                 )
             except (ValueError, FileNotFoundError) as e:
-                return [TextContent(type="text", text=f"error: {e}")]
+                return CallToolResult(content=[TextContent(type="text", text=f"error: {e}")])
             except asyncio.CancelledError:
                 # issue #271 M2: client sent CancelledNotification; the
                 # SDK has already cancelled the responder. Re-raise so
@@ -525,7 +554,7 @@ def build_server(
                 if bridge is not None:
                     bridge.detach()
             import json
-            return [TextContent(type="text", text=json.dumps(result))]
+            return CallToolResult(content=[TextContent(type="text", text=json.dumps(result))])
 
         if name == "answer_intervention":
             import json  # noqa: PLC0415
@@ -542,33 +571,33 @@ def build_server(
                 else None
             )
             if not agent_name:
-                return [TextContent(type="text", text="error: agent_name is required")]
+                return CallToolResult(content=[TextContent(type="text", text="error: agent_name is required")])
             if not run_id:
-                return [TextContent(type="text", text="error: run_id is required")]
+                return CallToolResult(content=[TextContent(type="text", text="error: run_id is required")])
             if not registry.exists(agent_name):
-                return [TextContent(
+                return CallToolResult(content=[TextContent(
                     type="text",
                     text=json.dumps({
                         "answered": False,
                         "reason": f"agent {agent_name!r} not found",
                     }),
-                )]
+                )])
             try:
                 # FP-0043 S4b-6: the run lives on the shared mcp session — resolve
                 # it (not "main") so the pending iv is answered on the right session.
                 from reyn.runtime.mcp_routing import resolve_mcp_session
                 session = resolve_mcp_session(registry, agent_name)
             except Exception as exc:  # noqa: BLE001 — defensive
-                return [TextContent(
+                return CallToolResult(content=[TextContent(
                     type="text",
                     text=json.dumps({
                         "answered": False,
                         "reason": f"agent load failed: {exc}",
                     }),
-                )]
+                )])
             answer = InterventionAnswer(text=text, choice_id=choice_id)
             delivered = await session.answer_pending_intervention(run_id, answer)
-            return [TextContent(
+            return CallToolResult(content=[TextContent(
                 type="text",
                 text=json.dumps({
                     "answered": bool(delivered),
@@ -577,16 +606,16 @@ def build_server(
                         "already answered or no pending intervention"
                     ),
                 }),
-            )]
+            )])
 
         # Plugin-supplied tools (#1805) — dispatched after the built-ins, so a
         # built-in name always wins on a clash.
         for et in _extra_tools:
             if name == et.name:
                 result = await et.handler(arguments or {})
-                return [TextContent(type="text", text=result)]
+                return CallToolResult(content=[TextContent(type="text", text=result)])
 
-        return [TextContent(type="text", text=f"error: unknown tool {name!r}")]
+        return CallToolResult(content=[TextContent(type="text", text=f"error: unknown tool {name!r}")])
 
     # ── resources/read (#385 β core impl sub-task 3d) ──────────────────
     #
@@ -599,27 +628,30 @@ def build_server(
     # host fs read, no HTTP indirection because the MCP server already
     # IS on the producing host.
 
-    @server.read_resource()
-    async def _read_resource(uri):  # type: ignore[no-redef]
+    async def _read_resource(  # type: ignore[no-redef]
+        ctx: "object", params: "ReadResourceRequestParams",
+    ) -> "ReadResourceResult":
         """Resolve a ``reyn-tool-result://<agent>/<artifact>`` URI to its
         body for cross-protocol consumers (= external MCP clients).
 
-        Returns ``[ReadResourceContents(...)]`` — the SDK's non-
-        deprecated shape. Unsupported URI schemes and missing files
-        surface as ``text/plain`` content with an ``error: ...`` body
-        so the client still gets a structured response rather than a
-        transport error. Path-traversal escapes propagate as
-        PermissionError (= the MCP framework wraps as an error to the
-        client).
+        Returns a ``ReadResourceResult`` wrapping ``TextResourceContents``
+        directly — the seam's ``_read_resource`` adapter (see
+        ``_mcp_server_boundary.py``) unwraps this into the CURRENT pin's
+        ``list[ReadResourceContents]`` convenience shape internally, so
+        this handler body always returns the 2.0-shaped typed Result
+        regardless of which pin is installed. Unsupported URI schemes and
+        missing files surface as
+        ``text/plain`` content with an ``error: ...`` body so the client
+        still gets a structured response rather than a transport error.
+        Path-traversal escapes propagate as PermissionError (= the MCP
+        framework wraps as an error to the client).
         """
-        from mcp.server.lowlevel.helper_types import ReadResourceContents
-
         from reyn.data.workspace.media_store import (
             MediaStore,
             MediaStoreConfig,
             parse_resource_uri,
         )
-        uri_str = str(uri)
+        uri_str = str(params.uri)
         parsed = parse_resource_uri(uri_str)
         if parsed is None:
             # Unsupported URI scheme (= not ``reyn-tool-result://...``).
@@ -627,14 +659,15 @@ def build_server(
             # https://); we explicitly only resolve our vendor scheme via
             # this handler. For https:// URLs, the client should fetch
             # directly (= the URL points at our own resources router).
-            return [ReadResourceContents(
-                content=(
+            return ReadResourceResult(contents=[TextResourceContents(
+                uri=uri_str,
+                mimeType="text/plain",
+                text=(
                     f"error: unsupported resource URI scheme: {uri_str!r}. "
                     "Reyn MCP server resolves reyn-tool-result://<agent>/<artifact> only; "
                     "for https:// URLs fetch directly via the resources router."
                 ),
-                mime_type="text/plain",
-            )]
+            )])
         agent_name, _artifact = parsed
         # MediaStore is per-agent-identity, but the file is in a shared
         # tool_results_dir. Construct ad-hoc with the URI-claimed agent
@@ -648,22 +681,30 @@ def build_server(
         )
         body, found = store.read_tool_result_by_uri(uri_str)
         if not found:
-            return [ReadResourceContents(
-                content=(
+            return ReadResourceResult(contents=[TextResourceContents(
+                uri=uri_str,
+                mimeType="text/plain",
+                text=(
                     f"error: tool result not found for URI {uri_str!r} "
                     "(= deleted by user, or never existed on this Reyn instance)"
                 ),
-                mime_type="text/plain",
-            )]
-        return [ReadResourceContents(content=body, mime_type="text/plain")]
+            )])
+        return ReadResourceResult(contents=[TextResourceContents(
+            uri=uri_str, mimeType="text/plain", text=body,
+        )])
 
-    return server
+    return build_mcp_server(
+        "reyn",
+        on_list_tools=_list_tools,
+        on_call_tool=_call_tool,
+        on_read_resource=_read_resource,
+    )
 
 
 async def _make_mcp_intervention_bus(
     registry: "AgentRegistry",
     agent_name: str,
-    server: "object",
+    ctx: "object",
 ) -> "_MCPInterventionBus | None":
     """Build an MCP iv-observer for the duration of one ``send_to_agent``
     call (issue #270 Phase B).
@@ -683,15 +724,16 @@ async def _make_mcp_intervention_bus(
     ``answer_intervention`` MCP tool call that lands at
     ``Session.answer_pending_intervention``.
 
-    Returns ``None`` when the request context is unavailable (= e.g.
-    direct test calls bypassing the MCP server). The caller (= send-
-    to-agent handler) then runs without the override, matching pre-
-    Phase-B behaviour.
+    #4368 (mcp 2.0 port): *ctx* is the ``ServerRequestContext`` mcp 2.0's
+    ``on_call_tool`` handler receives directly as its first argument —
+    see :func:`_make_mcp_progress_bridge`'s docstring for the same note in
+    full (no more ``server.request_context`` lookup, no more unavailable-
+    context defensive catch — the runner never calls a registered handler
+    without a context, so this function no longer has a ``None``-returning
+    path for that reason; kept ``| None`` on the return type only because
+    a future caller could still reasonably want that shape, not because
+    this function itself produces it today).
     """
-    try:
-        ctx = server.request_context  # type: ignore[attr-defined]
-    except (LookupError, AttributeError):
-        return None
     if not registry.exists(agent_name):
         return None
     return _MCPInterventionBus(
@@ -801,28 +843,36 @@ class _MCPInterventionBus:
 async def _make_mcp_progress_bridge(
     registry: "AgentRegistry",
     agent_name: str,
-    server: "object",
+    ctx: "object",
 ) -> "_MCPProgressBridge | None":
     """Build a progress-forwarding bridge for the duration of one
     ``send_to_agent`` call (issue #271 M1).
 
     Returns ``None`` when:
-      - the client didn't set ``_meta.progressToken`` on this request
+      - the client didn't set ``_meta.progress_token`` on this request
         (= peer doesn't care about progress, save the work)
       - the agent ``agent_name`` doesn't exist (= the caller's
         existence check in ``_call_tool`` will produce the standard
         error path; we silently no-op here)
-      - the request context is unavailable for any reason (= defensive)
+
+    #4368 (mcp 2.0 port): *ctx* is the ``ServerRequestContext`` mcp 2.0's
+    ``on_call_tool`` handler receives directly as its first argument — no
+    ``server.request_context`` lookup needed any more (that was the
+    lowlevel decorator API's only way to reach it; the constructor-kwarg
+    handler shape gets it handed in for free, so the old
+    ``try: ... except (LookupError, AttributeError)`` defensive catch
+    around an unavailable context is now dead code, removed). ``ctx.meta``
+    is a ``TypedDict`` on 2.0 (plain ``dict`` at runtime, NOT the 1.x
+    line's pydantic ``BaseModel``) — attribute access
+    (``ctx.meta.progressToken``) raises ``AttributeError``; ``.get(...)``
+    on the renamed ``progress_token`` key is required. Confirmed live
+    against a real ``mcp==2.0.0`` install, not assumed.
 
     The returned bridge has subscribed itself to the agent's chat
     audit-event log; callers MUST call ``bridge.detach()`` in a ``finally``
     to avoid the subscriber leaking across calls.
     """
-    try:
-        ctx = server.request_context  # type: ignore[attr-defined]
-    except (LookupError, AttributeError):
-        return None
-    if ctx.meta is None or ctx.meta.progressToken is None:
+    if ctx.meta is None or ctx.meta.get("progress_token") is None:
         return None
     if not registry.exists(agent_name):
         return None
@@ -833,7 +883,7 @@ async def _make_mcp_progress_bridge(
     bridge = _MCPProgressBridge(
         session=session,
         mcp_session=ctx.session,
-        progress_token=ctx.meta.progressToken,
+        progress_token=ctx.meta.get("progress_token"),
         related_request_id=ctx.request_id,
     )
     bridge.attach()

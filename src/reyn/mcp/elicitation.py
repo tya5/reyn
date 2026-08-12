@@ -21,15 +21,19 @@ fastmcp). The handler signature::
         response_type: type[T] | None,   # a dataclass FastMCP built from the
                                           # server's JSON schema, or None for a
                                           # no-data / URL-based elicitation
-        params: mcp.types.ElicitRequestParams,  # carries the RAW requestedSchema
+        params: mcp.types.ElicitRequestParams,  # carries the RAW requested_schema
         context: RequestContext[ClientSession, LifespanContextT],
     ) -> T | dict[str, Any] | ElicitResult[T | dict[str, Any]]
 
 FastMCP auto-converts the JSON schema to ``response_type`` but ERASES the
 per-field metadata (enum choices, descriptions) needed to prompt one field at
-a time — so this module reads field specs from ``params.requestedSchema``
-(the raw JSON Schema dict) directly, and only uses ``response_type`` as the
-None-vs-not-None signal for "does this elicitation carry a schema at all".
+a time — so this module reads field specs from ``params``'s requested-schema
+field (the raw JSON Schema dict) directly, and only uses ``response_type`` as
+the None-vs-not-None signal for "does this elicitation carry a schema at
+all". #4368 (arc #4412): ``requestedSchema`` (1.x) / ``requested_schema``
+(2.0, confirmed live) — routed through ``_mcp_client_boundary``'s
+``requested_schema()`` seam so this module doesn't hardcode either pin's
+field name.
 
 D2 — receive-loop dispatch (verified by reading the installed mcp SDK):
 ``mcp.shared.session.BaseSession._receive_loop`` awaits
@@ -114,6 +118,7 @@ import time
 from typing import TYPE_CHECKING, Any, Awaitable, Callable
 
 from reyn.intervention_choices import ACCEPT, DECLINE, elicitation_gate_choices
+from reyn.mcp._mcp_client_boundary import requested_schema
 from reyn.user_intervention import InterventionChoice, UserIntervention
 
 if TYPE_CHECKING:
@@ -170,7 +175,7 @@ def _is_sensitive_field(name: str, description: str | None) -> bool:
 
 
 def _schema_fields(requested_schema: dict[str, Any]) -> list[dict[str, Any]]:
-    """Flatten ``requestedSchema["properties"]`` (a flat, primitives-only JSON
+    """Flatten ``requested_schema["properties"]`` (a flat, primitives-only JSON
     object per the MCP spec — verified against the 2025-11-25 spec's
     elicitation section: no nested object/array properties are permitted) into
     an ordered list of per-field specs. Order follows the schema's own
@@ -315,7 +320,7 @@ def build_elicitation_handler(
     ) -> Any:
         field_keys: list[str] = []
         if isinstance(params, ElicitRequestFormParams):
-            field_keys = sorted((params.requestedSchema.get("properties") or {}).keys())
+            field_keys = sorted((requested_schema(params).get("properties") or {}).keys())
 
         await _emit("mcp_elicitation_requested", field_keys=field_keys)
 
@@ -336,7 +341,7 @@ def build_elicitation_handler(
 
         try:
             field_specs = (
-                _schema_fields(params.requestedSchema)
+                _schema_fields(requested_schema(params))
                 if isinstance(params, ElicitRequestFormParams)
                 else []
             )

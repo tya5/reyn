@@ -62,20 +62,34 @@ def _build_registry_with_agent(tmp_path: Path, agent_name: str) -> AgentRegistry
 
 
 def _invoke_read_resource(server, uri_str: str):
-    """Drive the SDK-registered ``resources/read`` handler synchronously.
+    """Drive ``resources/read`` through a REAL in-process client/server round
+    trip (``mcp.shared.memory.create_connected_server_and_client_session``)
+    rather than calling ``server.request_handlers[ReadResourceRequest]``
+    directly.
 
-    The MCP SDK keys handlers by request type in ``request_handlers``;
-    construct the request explicitly and run the coroutine. Returns the
-    handler's wrapped result root (= a ``ReadResourceResult`` whose
-    ``contents`` carries the body).
-    """
-    from mcp.types import ReadResourceRequest, ReadResourceRequestParams
-    handler = server.request_handlers[ReadResourceRequest]
-    req = ReadResourceRequest(
-        method="resources/read",
-        params=ReadResourceRequestParams(uri=uri_str),
-    )
-    return asyncio.run(handler(req))
+    #4444 (mcp 2.0 port, Class A co-vet finding): calling a registered
+    handler directly bypasses the SDK's own request-dispatch loop, which is
+    where ``request_ctx`` (a ``contextvars.ContextVar`` the seam's
+    ``_CtxAdapter`` reads via ``server.request_context``) gets SET —
+    confirmed live by reading ``mcp.server.lowlevel.server``'s own source:
+    the set happens deep inside ``Server.run()``'s private per-message
+    handling, with no small public API to set it from outside. Direct
+    handler calls therefore raise ``LookupError`` under Class A's ported
+    registration shape, even though the OLD decorator-registered inner
+    function tolerated being called bare. Routing through a real client
+    session is the fix, not a workaround — it's the SAME "reuse the real
+    path, not a hand-built shortcut" discipline #4368's own third-axis
+    finding came from (a throwaway test masked a gap; a real fixture caught
+    it)."""
+    from mcp.shared.memory import create_connected_server_and_client_session
+    from mcp.types import AnyUrl
+
+    async def _run() -> "object":
+        async with create_connected_server_and_client_session(server) as session:
+            await session.initialize()
+            return await session.read_resource(AnyUrl(uri_str))
+
+    return asyncio.run(_run())
 
 
 # ── happy path ─────────────────────────────────────────────────────────
@@ -110,7 +124,7 @@ def test_read_resource_returns_body_for_minted_path_ref(
     result = _invoke_read_resource(server, uri)
 
     # ReadResourceResult.contents is a list of resource contents items.
-    contents = result.root.contents
+    contents = result.contents
     assert len(contents) >= 1
     # Single-text-content body — verify the text round-trips.
     item = contents[0]
@@ -136,7 +150,7 @@ def test_read_resource_returns_error_for_unsupported_scheme(
 
     result = _invoke_read_resource(server, "file:///etc/passwd")
 
-    contents = result.root.contents
+    contents = result.contents
     text = getattr(contents[0], "text", "")
     assert "error" in text.lower()
     assert "unsupported" in text.lower() or "scheme" in text.lower()
@@ -160,6 +174,6 @@ def test_read_resource_returns_error_for_missing_file(
 
     result = _invoke_read_resource(server, uri)
 
-    text = getattr(result.root.contents[0], "text", "")
+    text = getattr(result.contents[0], "text", "")
     assert "error" in text.lower()
     assert "not found" in text.lower() or "never existed" in text.lower()
