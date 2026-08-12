@@ -103,7 +103,10 @@ async def test_attached_spawn_bridges_child_hook_events_to_the_parent(tmp_path: 
                 payload={"marker": "reyn-4215-probe"},
             )
             driver._hook_bus.publish(probe)
-            received = await asyncio.wait_for(parent_sub.get(), timeout=5.0)
+            # Unbounded — a genuine hang here is a real defect the CI
+            # kill-switch is the correct place to catch (owner's standing
+            # rule: tests carry no time limit of their own).
+            received = await parent_sub.get()
 
         assert received.payload.get("marker") == "reyn-4215-probe"
     finally:
@@ -117,16 +120,16 @@ async def test_detached_spawn_starts_no_bridge_task(tmp_path: Path) -> None:
     this, a detached driver would silently subscribe to nothing useful (its
     own events forwarded nowhere) while still paying a live task's cost.
 
-    Observed via ``HookBus.subscriber_count`` (already public) rather than
-    a dedicated Session-level property — a public surface is a means to
-    avoid a private-state assertion, not a goal in itself, and a session's
-    own hook-bus subscriber count already says everything this test needs
-    without growing Session's own public member ceiling for a single
-    test's sake."""
+    Checked at TASK-CREATION time, not via a later effect
+    (``subscriber_count``, which only changes once a bridge task has
+    actually RUN its own ``subscribe()`` call): ``asyncio.create_task``
+    registers the task with the event loop SYNCHRONOUSLY, before it ever
+    gets a chance to run — its existence is visible immediately, with no
+    wait needed to rule it out."""
     state_log = StateLog(tmp_path / ".reyn" / "wal.jsonl")
     reg = _agent_registry(tmp_path, state_log)
 
-    driver, _rid, _sid = await _spawn_pipeline_driver_session(
+    _driver, _rid, _sid = await _spawn_pipeline_driver_session(
         reg,
         pipeline=_noop_pipeline(),
         pipeline_name="noop",
@@ -137,14 +140,12 @@ async def test_detached_spawn_starts_no_bridge_task(tmp_path: Path) -> None:
         notify_reply=False,
         attached_parent_session=None,
     )
-    # Give a wrongly-started bridge task a real chance to subscribe before
-    # asserting its absence (same "don't race a real async effect" shape
-    # as the other tests in this file).
-    await asyncio.sleep(0.1)
-    subscriber_count = driver._hook_bus.subscriber_count
-    assert subscriber_count == 0, (
-        "a DETACHED spawn must not start a hook-bus bridge task — nothing "
-        "should have subscribed to the driver's own bus"
+    bridge_tasks = [
+        t for t in asyncio.all_tasks()
+        if "bridge_child_bus_to_parent" in repr(t.get_coro())
+    ]
+    assert bridge_tasks == [], (
+        "a DETACHED spawn must not start a hook-bus bridge task at all"
     )
 
 
