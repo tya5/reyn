@@ -11,113 +11,60 @@ verbatim into an issue/chat from an environment where nothing else can
 leave (the reason this script exists at all: #4395's owner-side repro
 couldn't run a one-off diagnostic command that shows paths).
 
-Distinguishes the 3 ways tiktoken's own cache-hit check
-(``tiktoken/load.py``) can miss, matching #4395's own A/B/C:
+#4422: the judgment itself (locate the cache dir, resolve the expected
+cl100k blob hash, compare) now lives in :mod:`reyn._tiktoken_diag`, shared
+with ``reyn.llm.litellm_bootstrap``'s own runtime failure-message —
+this script is a thin print wrapper over :func:`reyn._tiktoken_diag.diagnose`,
+not a second copy of the algorithm.
 
-  A. bundled_file_exists=False  -> the cache file was never written at all
-     (a fresh install, or something cleared the cache dir).
-  B. sha256_matches=False (bundled_file_exists=True) -> the cached file's
-     content doesn't match what THIS installed tiktoken expects — a
-     version mismatch between whatever wrote the cache and the tiktoken
-     now running. tiktoken deletes a mismatched file and re-fetches over
-     the network on every call until this is resolved.
-  C. custom_cache_dir_set=True -> operator/litellm set
-     CUSTOM_TIKTOKEN_CACHE_DIR themselves; if that path doesn't already
-     have a valid cache, this script's other flags describe THAT
-     directory, not tiktoken's default.
+**Behavior change from the pre-#4422 version**: this script now imports
+``reyn`` (to reach ``reyn._tiktoken_diag``), so it observes the SAME
+environment ``ensure_litellm_ready`` itself sees — including
+``reyn/__init__.py``'s own ``TIKTOKEN_CACHE_DIR``/``CUSTOM_TIKTOKEN_CACHE_DIR``
+redirect, which runs unconditionally before any ``reyn.*`` code, this
+script included, can execute at all. That is deliberate: "why did reyn's
+own litellm import just fail" (the #4422 use case) needs reyn's OWN view,
+not tiktoken's un-redirected default. An operator who specifically wants
+tiktoken's RAW pre-reyn default (bypassing the redirect entirely) needs a
+plain interpreter that never imports ``reyn`` — this script is no longer
+that; run the four ``reyn._tiktoken_diag`` functions by hand from such an
+interpreter instead if that isolated reading is what's needed.
 
 This is a read-only probe: it locates the currently-effective cache
 directory and inspects a candidate file already inside it (if present) —
-it never fetches anything, never writes anything, and never imports
-``litellm``\'s or ``reyn``\'s own package init (so it reports what tiktoken
-would ACTUALLY see, unaffected by reyn's own #4395 TIKTOKEN_CACHE_DIR fix
-in ``reyn/__init__.py`` — run with ``-c`` or from a plain interpreter
-outside this repo's own import chain for that isolated read; run normally
-to see the value reyn itself would set).
+it never fetches anything, never writes anything.
 
 No test file for this script (operator tool, not a reyn invariant — see
-CLAUDE.md's test-review question 1: this fits no Tier). If the underlying
-CACHE MECHANISM itself needs a test, that belongs on ``reyn/__init__.py``'s
-own TIKTOKEN_CACHE_DIR default, not here.
+CLAUDE.md's test-review question 1: this fits no Tier). The judgment
+ALGORITHM it now delegates to is exercised for real by
+``tests/llm/test_4422_litellm_import_failure_diagnosis.py`` (the runtime
+consumer this script shares it with); if the underlying CACHE MECHANISM
+itself needs a test, that belongs on ``reyn/__init__.py``'s own
+TIKTOKEN_CACHE_DIR default, not here.
 """
 from __future__ import annotations
 
-import hashlib
-import importlib.metadata as metadata
-import inspect
-import os
-import re
 import sys
-import tempfile
-
-
-def _installed_version(dist_name: str) -> str:
-    try:
-        return metadata.version(dist_name)
-    except metadata.PackageNotFoundError:
-        return "(not installed)"
-
-
-def _effective_cache_dir() -> "tuple[str, bool]":
-    """Mirrors tiktoken/load.py's own resolution order — returns
-    (cache_dir, came_from_env). Never printed; used only to locate the
-    candidate file for the hash check below."""
-    if "TIKTOKEN_CACHE_DIR" in os.environ:
-        return os.environ["TIKTOKEN_CACHE_DIR"], True
-    if "DATA_GYM_CACHE_DIR" in os.environ:
-        return os.environ["DATA_GYM_CACHE_DIR"], True
-    return os.path.join(tempfile.gettempdir(), "data-gym-cache"), False
-
-
-def _cl100k_expectation() -> "tuple[str, str] | None":
-    """(blobpath, expected_hash) for cl100k_base, read from the INSTALLED
-    tiktoken_ext package's own source text — never hardcoded here, so this
-    stays correct across a tiktoken version bump without editing this
-    script. Static source read only (inspect.getsource), never calls the
-    function — calling it would itself fetch/read the real cache file,
-    defeating the point of a side-effect-free probe."""
-    try:
-        from tiktoken_ext.openai_public import cl100k_base
-    except ImportError:
-        return None
-    src = inspect.getsource(cl100k_base)
-    hash_match = re.search(r'expected_hash="([0-9a-f]+)"', src)
-    url_match = re.search(r'"(https://[^"]+)"', src)
-    if not hash_match or not url_match:
-        return None
-    return url_match.group(1), hash_match.group(1)
 
 
 def main() -> int:
-    print("litellm:", _installed_version("litellm"))
-    print("tiktoken:", _installed_version("tiktoken"))
-    print(
-        "custom_cache_dir_set:",
-        bool(os.getenv("CUSTOM_TIKTOKEN_CACHE_DIR")),
-    )
+    from reyn._tiktoken_diag import diagnose
 
-    expectation = _cl100k_expectation()
-    if expectation is None:
+    d = diagnose()
+    print("litellm:", d.litellm_version)
+    print("tiktoken:", d.tiktoken_version)
+    print("custom_cache_dir_set:", d.custom_cache_dir_set)
+
+    if d.bundled_file_exists is None:
         print("bundled_file_exists: (unknown — could not read tiktoken_ext source)")
         print("sha256_matches: (unknown — could not read tiktoken_ext source)")
         return 0
 
-    blobpath, expected_hash = expectation
-    cache_dir, _ = _effective_cache_dir()
-    cache_key = hashlib.sha1(blobpath.encode()).hexdigest()
-    cache_path = os.path.join(cache_dir, cache_key)
-
-    exists = os.path.exists(cache_path)
-    print("bundled_file_exists:", exists)
-
-    if not exists:
+    print("bundled_file_exists:", d.bundled_file_exists)
+    if d.sha256_matches is None:
         print("sha256_matches: (not applicable — file does not exist)")
-        return 0
-
-    with open(cache_path, "rb", buffering=0) as f:
-        data = f.read()
-    actual_hash = hashlib.sha256(data).hexdigest()
-    print("sha256_matches:", actual_hash == expected_hash)
+    else:
+        print("sha256_matches:", d.sha256_matches)
     return 0
 
 

@@ -220,6 +220,81 @@ _TIKTOKEN_IMPORT_EGRESS_NAME = "tiktoken-import"
 _TIKTOKEN_IMPORT_TIMEOUT_SECONDS = 30.0
 
 
+def _diagnose_import_failure_for_log() -> str:
+    """#4422: turn an ``import litellm`` failure's warn-once log line from
+    "it's broken" into "here's why, and what to try" — reusing #4399's own
+    judgment (:func:`reyn._tiktoken_diag.diagnose`) rather than re-deriving
+    it. Owner + lead-coder spent real hours tracing a real environment's
+    ``import litellm`` failure back to a missing/mismatched tiktoken cache
+    file before this existed; the fix this issue asks for is making reyn
+    say that in ONE line instead of requiring the same multi-hour trace
+    again for the next operator who hits it.
+
+    Three outcomes, matching lead-coder's own review correction (do NOT
+    assert "tiktoken deleted this" as fact when the file is merely absent
+    — absence has more than one cause, and only a DIRECT sha256-mismatch
+    reading is confirmed present-tense fact):
+
+    - bundled_file_exists is False: the cache file is not there NOW. This
+      does not by itself prove why (never written, or deleted after a past
+      mismatch, are both consistent with "not there now") — phrased as a
+      possibility, not asserted, with the same remedy (reinstall) that
+      also serves as the operator's own diagnostic: if the file exists
+      afterward, it was (A) a missing-bundle case; if it goes missing
+      again on next use, that is itself evidence of (B).
+    - bundled_file_exists is True and sha256_matches is False: this IS a
+      directly observed, present-tense mismatch (not inferred) between the
+      installed litellm's bundled blob and what the installed tiktoken
+      expects — tiktoken will delete and re-fetch this exact file on next
+      use, statable as fact because it was just read.
+    - Anything else (including "unknown" — the diagnosis itself could not
+      read the installed tiktoken_ext source): no cache-specific signal:
+      fall back to the #4418 network/cert remedy for a `requests.get`
+      failure with no other explanation available.
+
+    Never raises — this augments a WARN, and a broken diagnostic reading
+    must not turn one warning into two (or a startup crash) when the
+    unaugmented message alone was already good enough for #4395's own
+    original fix.
+    """
+    try:
+        from reyn._tiktoken_diag import diagnose
+
+        d = diagnose()
+    except Exception:  # noqa: BLE001 — best-effort; the plain WARN above already fired
+        return (
+            "(tiktoken-cache diagnosis unavailable — check SSL_VERIFY / "
+            "SSL_CERT_FILE / REQUESTS_CA_BUNDLE if this looks like a "
+            "network/certificate failure.)"
+        )
+
+    if d.bundled_file_exists is False:
+        return (
+            "tiktoken's cache file was not found (litellm=%s, tiktoken=%s) — "
+            "possibly never written, or removed after a past version "
+            "mismatch; not something this check alone can distinguish. Try: "
+            "pip install --force-reinstall --no-deps litellm — if the file "
+            "is present afterward, this was a missing-bundle case; if it "
+            "disappears again on next use, that itself confirms a version "
+            "mismatch." % (d.litellm_version, d.tiktoken_version)
+        )
+    if d.bundled_file_exists is True and d.sha256_matches is False:
+        return (
+            "tiktoken's cache file does not match what the installed "
+            "tiktoken (%s) expects from litellm's bundle (litellm=%s) — a "
+            "version mismatch. tiktoken will delete and re-fetch this file "
+            "over the network on next use. Try: pip install "
+            "--force-reinstall --no-deps litellm to realign the two "
+            "versions." % (d.tiktoken_version, d.litellm_version)
+        )
+    return (
+        "no tiktoken-cache-specific signal found (litellm=%s, tiktoken=%s) "
+        "— if this looks like a network/certificate failure, check "
+        "SSL_VERIFY / SSL_CERT_FILE / REQUESTS_CA_BUNDLE."
+        % (d.litellm_version, d.tiktoken_version)
+    )
+
+
 @contextlib.contextmanager
 def _third_party_import_egress_honours_standard_env(
     events: "EventLog | None",
@@ -499,7 +574,8 @@ def ensure_litellm_ready(
                         "import litellm failed — falling back where a "
                         "fallback exists, retrying on the next call "
                         "where it doesn't. This is a warn-once notice, "
-                        "not a record of a permanent failure.",
+                        "not a record of a permanent failure. %s",
+                        _diagnose_import_failure_for_log(),
                     )
             my_future.set_result(result)
 
