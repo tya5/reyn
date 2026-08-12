@@ -2890,13 +2890,14 @@ class RouterLoop:
         ``maybe_compact_messages`` (the SAME hook json-mode parity uses).
 
         Monotonic termination: each shrink that changes the messages strictly
-        reduces them; when the host can shrink no further it returns the messages
-        unchanged (identity) = the FLOOR. Until PR-D wires the handoff, reaching
-        the floor RAISES (floor-abort) — PR-D replaces that terminal with the
-        consolidate+hand-off (the §2 "UnrecoveredError → 区切って継続" swap), and
-        PR-E establishes by construction that the floor always fits the wrap-up
-        call (floor_content + T_wrap_SP + output_reserve ≤ T_max), so the
-        replacement is total.
+        reduces them; when the host can shrink no further it returns the
+        messages unchanged (identity) = the FLOOR, which RAISES (floor-abort).
+        This used to be a placeholder — "PR-D"/"PR-E", a planned
+        consolidate+hand-off that would replace the raise — but #4381 PR-4
+        (owner ruling: "２の force close 廃止して spill にしよう") undid that
+        plan permanently: the floor-abort is the real terminal now, not a
+        pre-handoff stopgap. The #4381 family (tool-result spill) is what
+        keeps an oversized single result from reaching this floor at all.
         """
         shrink = getattr(self.host, "maybe_compact_messages", None)
         cur = messages
@@ -2914,9 +2915,9 @@ class RouterLoop:
                     raise
                 shrunk = await shrink(cur, model=resolved_model)
                 if shrunk is cur or shrunk == cur:
-                    # Floor: the host can shrink no further. Pre-PR-D this is a
-                    # genuine terminal → re-raise (floor-abort). PR-D replaces it
-                    # with the handoff.
+                    # Floor: the host can shrink no further — genuine
+                    # terminal, re-raise (floor-abort). #4381 PR-4: no
+                    # handoff-and-retry replaces this anymore.
                     raise
                 cur = shrunk
 

@@ -5,8 +5,6 @@ Owns:
   - run_turn(user_text, chain_id)
   - _run_with_shrink(loop, text)
   - _check_cap(user_text)
-  - _force_close_handoff(loop, text)
-  - _force_close_wrap_up(loop, model)
   - is_cancel_requested()
   - request_cancel()               — turn-cancel seam (called by cancel_inflight)
 
@@ -24,9 +22,6 @@ from reyn.runtime.session_pure import render_summary_for_storage
 
 if TYPE_CHECKING:
     pass
-
-# Cap on force-close handoffs per turn (#1092 PR-F2b).
-_MAX_FORCE_CLOSE_HANDOFFS = 1
 
 
 def _narrowing_per_iteration(safety: Any) -> bool:
@@ -210,199 +205,21 @@ class RouterLoopDriver:
             self._budget.extend_router_cap(int(decision.extension))
             self._budget.check_and_increment_router_cap(user_text)
 
-    # ── Force-close overflow handling (#1092 PR-F2b) ─────────────────────────
-
-    async def _force_close_handoff(self, loop: Any, user_text: str) -> None:
-        """Consolidate the working context into a capped force-close summary.
-
-        Fires F2a's durable covers-respecting reset so the re-entry slices
-        ``[consolidation] + new turn`` instead of the raw head/tail that just
-        overflowed.  ``user_text`` is unused here (the new message is re-applied
-        by the loop's next ``_run_with_shrink``); kept for symmetry / future audit.
-
-        #3599: ``covers_through_seq`` used to be ``next_seq()-1`` unconditionally
-        — "everything up to right now is covered" — regardless of whether
-        ``_force_close_wrap_up``'s bounded fallback actually shrank the input
-        below that. Now it is exactly what ``_force_close_wrap_up`` reports it
-        fed the LLM (never more), and any range that fallback shrinkage
-        dropped from the summarisation input is logged on the SAME event so
-        the loss is legible, not silently absorbed into a watermark that
-        claims otherwise.
-        """
-        from reyn.runtime.chat_message import ChatMessage, _now_iso
-
-        resolved_model = self._resolver.resolve(self._effective_router_model_class()).model
-        consolidation, covers, dropped_seq_ranges = await self._force_close_wrap_up(
-            loop, resolved_model
-        )
-        structured = {"consolidation": consolidation}
-        msg = ChatMessage(
-            role="summary",
-            content=render_summary_for_storage(structured),
-            ts=_now_iso(),
-            meta={"structured": structured, "covers_through_seq": covers},
-        )
-        self._append_history_fn(msg)
-        self._events.emit(
-            "router_force_close_handoff",
-            covers_through_seq=covers,
-            consolidation_chars=len(consolidation),
-            # #3599/#3658: [start_seq, end_seq] pairs the fallback shrank OUT
-            # of the summarisation input, PLUS (#3658) any head seqs this
-            # call's own watermark claims covering but never fed — []/[] when
-            # the top-tier candidate (no shrink) succeeded and head had
-            # nothing new. A later reader can tell "summarised" from
-            # "silently dropped" instead of trusting a watermark that no
-            # longer distinguishes them.
-            dropped_seq_ranges=[list(r) for r in dropped_seq_ranges],
-        )
-
-    async def _force_close_wrap_up(
-        self, loop: Any, resolved_model: str
-    ) -> "tuple[str, int, list[tuple[int, int]]]":
-        """Produce the capped consolidation via the force-close wrap-up call.
-
-        Made to FIT by a bounded fallback that shrinks the input if the
-        wrap-up itself would overflow (#1092 PR-F2b Fork 1 — wrap-up-fits).
-        Input candidates, decreasing:
-        ``[summary + raw_middle + tail]`` → ``[summary + tail]`` → ``[summary]``.
-        If even summary-only overflows, the model is RUNTIME sub-viable → raise,
-        surfaced as a genuine dead-end by the handoff loop.
-
-        #3599: returns ``(text, covers_through_seq, dropped_seq_ranges)``.
-        ``covers_through_seq`` is derived from the turns THIS call actually fed
-        the winning candidate to — never ``next_seq()-1`` regardless of which
-        tier won, mirroring the normal-compaction sibling's
-        ``compute_covers_through_seq`` / ``candidates[-1].seq`` bound
-        (``compaction_controller.py``) instead of trusting the global seq
-        counter. Floored at the prior summary's own ``covers_through_seq`` so
-        the watermark never regresses (continuity, same as that sibling's
-        carry-forward). ``dropped_seq_ranges`` names the raw_middle/tail seq
-        span(s) the fallback shrank OUT of the input when a lower tier wins
-        (empty when the top tier succeeds).
-
-        #3658: ``head`` (the earliest token-budget slice from
-        ``decompose_history_for_retry``) is NEVER part of ANY candidate here,
-        in every tier, not only under fallback. ``dropped_seq_ranges`` also
-        names the ``head`` seqs in ``(prev_cover, covers]`` — the ONLY head
-        seqs this call's own watermark claims responsibility for without
-        actually feeding them. A head seq ``<= prev_cover`` is already
-        accounted for by the PRIOR summary (not lost by this call); a head
-        seq ``> covers`` is not claimed as covered by this call EITHER, so
-        reporting it dropped would be a lie in the other direction (claiming
-        coverage this call never asserted). No tier branch is needed: at the
-        summary-only tier, ``covers == prev_cover`` (nothing new got fed, see
-        above), so the interval is empty BY CONSTRUCTION, not by a special
-        case.
-
-        #3658 DECIDED (owner gate skipped — the cost/loss tradeoff it would
-        have raised was measured at 0/0, see below): this is a DELIBERATE
-        exclusion, not an oversight. Why not just feed ``head`` in too?
-        ``head`` can be the WHOLE conversation on a short session (its bound
-        is a token budget, not a turn count) — adding it to every candidate
-        here would make the wrap-up call itself the thing that overflows,
-        working against the fallback ladder's own purpose (finding an input
-        that FITS). Cost of excluding it, stated rather than buried: once
-        force-close fires, ``build_history``'s durable consolidation branch
-        (``router_history_buffer.py``, ``_is_force_close_consolidation``)
-        never re-selects the raw head/tail again on any later turn — so
-        whatever ``head`` held at THIS moment becomes PERMANENTLY
-        unreachable to the router from here on, not merely deferred. This is
-        a real, standing loss, not a hypothetical one avoided by construction
-        — it is simply unrealized so far: measured against the owner's own
-        `.reyn/events`, ``router_force_close_handoff`` has fired 0 times
-        (after removing 61 events that turned out to be test-fixture
-        contamination of that log, not genuine occurrences). Reconsider
-        condition: if ``router_force_close_handoff`` starts firing at a
-        non-trivial rate in real usage, revisit feeding ``head`` in (at the
-        cost measured above) with real frequency numbers instead of a
-        hypothetical — the event already exists and the log is clean, so
-        this is genuinely monitorable, not a "someday" deferral.
-        """
-        from reyn.services.compaction.engine import (
-            ContextOverflowError as _ContextOverflowError,
-        )
-
-        _head, _raw_middle, _tail, _summary_dict, _seq_by_id = (
-            self._history_buffer.decompose_history_for_retry()
-        )
-
-        def _max_seq(_turns: list[dict]) -> int:
-            return max((_seq_by_id.get(id(t), 0) for t in _turns), default=0)
-
-        def _seq_span(_turns: list[dict]) -> "tuple[int, int] | None":
-            _seqs = [s for s in (_seq_by_id.get(id(t), 0) for t in _turns) if s]
-            return (min(_seqs), max(_seqs)) if _seqs else None
-
-        _prev_cover = int((_summary_dict or {}).get("covers_through_seq", 0))
-
-        _summary_msg: list[dict] = []
-        if _summary_dict:
-            _summary_msg = [{
-                "role": "assistant",
-                "content": (
-                    "[summary of earlier conversation]\n"
-                    + render_summary_for_storage(_summary_dict)
-                ),
-            }]
-        # (input, turns actually fed, turns the fallback shrank away) per tier.
-        _candidates = [
-            (_summary_msg + _raw_middle + _tail, _raw_middle + _tail, []),
-            (_summary_msg + _tail, _tail, _raw_middle),
-            (_summary_msg, [], _raw_middle + _tail),
-        ]
-        _last_exc: Exception | None = None
-        for _inp, _fed, _dropped_by_fallback in _candidates:
-            try:
-                _result = await loop._force_close_call(
-                    _inp, resolved_model=resolved_model
-                )
-                _covers = max(_prev_cover, _max_seq(_fed))
-                _dropped_span = _seq_span(_dropped_by_fallback)
-                _dropped: list[tuple[int, int]] = (
-                    [_dropped_span] if _dropped_span is not None else []
-                )
-                # #3658: head seqs THIS call's own watermark claims covering
-                # (prev_cover, covers] but never fed. Empty at the
-                # summary-only tier because covers == prev_cover there —
-                # not a tier branch, the intersection itself is empty.
-                _head_claimed_unfed = [
-                    t for t in _head
-                    if _prev_cover < _seq_by_id.get(id(t), 0) <= _covers
-                ]
-                _head_span = _seq_span(_head_claimed_unfed)
-                if _head_span is not None:
-                    # Appended after the fallback-dropped span — list ORDER
-                    # is not a declared contract, only membership is; a
-                    # caller must not rely on head sorting first/last.
-                    _dropped.append(_head_span)
-                return _result.content or "", _covers, _dropped
-            except Exception as _exc:
-                # #3783 stage 1: single shared predicate (was an inline copy).
-                from reyn.services.compaction.engine import (
-                    is_context_overflow_error as _is_context_overflow_error,
-                )
-                if not _is_context_overflow_error(_exc):
-                    raise
-                _last_exc = _exc
-        raise _ContextOverflowError(
-            "force-close wrap-up overflowed even at summary-only "
-            f"(runtime sub-viable model): {_last_exc}"
-        )
-
     # ── Overflow-resilient router invocation ─────────────────────────────────
 
     async def _run_with_shrink(self, loop: Any, user_text: str) -> Any:
         """Run the router once with the reactive bounded-shrink ``retry_loop``.
 
-        #1092 PR-F2b: returns the router usage, or raises ``_ContextOverflowError``
-        when even the floor overflows (the terminal the F2b handoff loop catches
-        to force-close). Rebuilds the history each call so a force-close re-entry
-        sees the post-handoff (F2a-reset) slice.
+        Returns the router usage, or raises ``_ContextOverflowError`` when
+        even the floor overflows — the caller (#4381 PR-4) treats that as
+        unrecovered on the first attempt; there is no consolidating retry
+        loop here anymore (#1092 PR-F2b's force-close handoff, removed).
+        Still rebuilds the history each call — a plain re-entry after ANY
+        earlier turn's edits (compaction, etc.), not specifically a
+        force-close one.
 
-        No ``router_context_overflow_unrecovered`` event here — the caller emits
-        it ONLY when it actually gives up (cap reached / sub-viable model), so a
-        recoverable handoff is not mislogged as a dead-end.
+        No ``router_context_overflow_unrecovered`` event here — the caller
+        is the one that emits it, on the overflow it treats as terminal.
         """
         from reyn.runtime.usage_shim import _RouterUsageShim
         from reyn.services.compaction.engine import (
@@ -566,24 +383,21 @@ class RouterLoopDriver:
         # PR-N3: pre-frame context-overflow guard.
         await self._budget_advisor.maybe_force_compact(new_msg_text=user_text)
 
-        # #1092 PR-F2b: bounded force-close handoff loop.
-        _handoffs = 0
-        while True:
-            try:
-                router_usage = await self._run_with_shrink(loop, user_text)
-                break
-            except _ContextOverflowError as _overflow_exc:
-                _reserve = getattr(
-                    self._router_host, "wrap_up_output_reserve", None
-                )
-                if _reserve is None or _handoffs >= _MAX_FORCE_CLOSE_HANDOFFS:
-                    self._events.emit(
-                        "router_context_overflow_unrecovered",
-                        error=repr(_overflow_exc),
-                    )
-                    raise
-                await self._force_close_handoff(loop, user_text)
-                _handoffs += 1
+        # #4381 PR-4 (owner ruling, verbatim: "２の force close 廃止して
+        # spill にしよう。予算のための force close は残すで良い"): the
+        # #1092 PR-F2b bounded handoff-and-retry loop is gone — an overflow
+        # that survives ``_run_with_shrink``'s own shrink attempts is
+        # unrecovered on the FIRST attempt, no consolidating retry. The
+        # #4381 family (tool-result spill) is what now keeps an
+        # oversized single result from reaching this point at all.
+        try:
+            router_usage = await self._run_with_shrink(loop, user_text)
+        except _ContextOverflowError as _overflow_exc:
+            self._events.emit(
+                "router_context_overflow_unrecovered",
+                error=repr(_overflow_exc),
+            )
+            raise
 
         # F4 Bug 2 / F4 Bug 1: accumulate router LLM usage into per-session
         # totals via the gateway.

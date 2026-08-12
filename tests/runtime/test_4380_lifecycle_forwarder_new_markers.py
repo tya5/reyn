@@ -1,25 +1,24 @@
-"""Tier 2: ChatLifecycleForwarder — 6 new markers (#4380).
+"""Tier 2: ChatLifecycleForwarder — new markers (#4380).
 
-The audit-event side already declares/emits all 6 kinds (``force_close_
-triggered``, ``router_force_close_handoff``, ``turn_cancelled``,
-``chain_timeout``, ``permission_denied``, ``intervention_denied``) — a
-real owner-reported gap was that NONE of them reached the conv pane, so an
-operator watching the LIVE session saw nothing when any of these fired
-(only the Events tab, closed by default). Owner ruling (#4380): add all 6,
-dim, same visual weight as the existing ``[↑]``/``[✗]``/``[⚠]`` markers —
-"don't stand out." One (``permission_denied``) additionally bundles
-consecutive repeats (a separate PR concern, covered by
-``test_4380_ingest_frame_bundles_permission_denied.py`` — this file pins
-only the PRODUCER side: that the emitted marker's TEXT and ``meta`` are
-correct, not the app-side coalescing that consumes ``meta["lifecycle_
-bundle_key"]``).
+The audit-event side already declares/emits these kinds (``force_close_
+triggered``, ``turn_cancelled``, ``chain_timeout``, ``permission_denied``,
+``intervention_denied``) — a real owner-reported gap was that NONE of them
+reached the conv pane, so an operator watching the LIVE session saw
+nothing when any of these fired (only the Events tab, closed by default).
+Owner ruling (#4380): add all of them, dim, same visual weight as the
+existing ``[↑]``/``[✗]``/``[⚠]`` markers — "don't stand out." One
+(``permission_denied``) additionally bundles consecutive repeats (a
+separate PR concern, covered by ``test_4380_ingest_frame_bundles_
+permission_denied.py`` — this file pins only the PRODUCER side: that the
+emitted marker's TEXT and ``meta`` are correct, not the app-side
+coalescing that consumes ``meta["lifecycle_bundle_key"]``).
 
-Traced before writing (issue #4380 comment thread), not guessed:
-``force_close_triggered``/``router_force_close_handoff`` are two
-INDEPENDENT mechanisms (different files, different layers) that never
-co-fire for the same turn — an earlier hypothesis that they were "one
-event, two co-firing halves" was checked against the actual call sites
-and found wrong before any code was written.
+#4381 PR-4 removed a SIXTH mechanism this file originally also covered,
+``router_force_close_handoff`` (layer②, the router_loop_driver.py outer
+retry) — owner ruling: "２の force close 廃止して spill にしよう。予算の
+ための force close は残すで良い". ``force_close_triggered`` (layer①,
+in-loop cumulative-budget cutoff — a different axis, cost not context
+size) is unaffected and stays covered below.
 """
 from __future__ import annotations
 
@@ -51,24 +50,6 @@ def test_force_close_triggered_emits_a_dim_system_marker() -> None:
     (only,) = msgs
     assert only.kind == "system"
     assert only.text == "[✗ force close: turn ended early to stay within budget]"
-
-
-def test_router_force_close_handoff_emits_a_distinct_marker() -> None:
-    """Tier 2: layer② outer-retry handoff — a DIFFERENT marker text than
-    force_close_triggered's, since they are different mechanisms (traced,
-    not assumed) that a user needs to be able to tell apart."""
-    msgs = _fire(
-        "router_force_close_handoff",
-        {
-            "covers_through_seq": 40,
-            "consolidation_chars": 1200,
-            "dropped_seq_ranges": [[10, 20]],
-        },
-    )
-    (only,) = msgs
-    assert only.kind == "system"
-    assert only.text == "[✗ force close (retry): history consolidated to continue]"
-    assert only.text != "[✗ force close: turn ended early to stay within budget]"
 
 
 def test_turn_cancelled_emits_a_marker() -> None:

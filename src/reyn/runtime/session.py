@@ -522,16 +522,6 @@ def _iv_meta(iv: "UserIntervention") -> dict:
     return out
 
 
-# #1092 PR-F2b: max force-close handoffs per user turn. ONE is enough by
-# construction — after a handoff the F2a reset slices [consolidation (≤
-# output_reserve < threshold)] + new turn, which fits for any turn whose NEW
-# message fits the post-consolidation budget (the normal case). The only input a
-# 2nd handoff couldn't help is a single new message too large to ever fit — so at
-# the cap we raise the genuine dead-end. It is a re-entry bound, made tight (1)
-# by the by-construction floor.
-_MAX_FORCE_CLOSE_HANDOFFS = 1
-
-
 
 class DurabilityHaltError(RuntimeError):
     """#2259 PR-3: raised when an operation is submitted to an agent whose durability has FAILED

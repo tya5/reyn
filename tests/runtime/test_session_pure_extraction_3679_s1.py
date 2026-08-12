@@ -6,9 +6,11 @@
 Zero behavior change — every existing test that exercised these functions
 through `session.py` still passes UNMODIFIED except for the import line
 itself switching to the new module (the tier's own acceptance condition:
-"only the rename differs" — see `tests/runtime/test_force_close_covers_slice_1092.py`
-and `tests/runtime/test_retry_loop_chat_wiring_1125.py`, both updated in this same
-PR to import from the new module, no other diff).
+"only the rename differs" — see `tests/runtime/test_retry_loop_chat_wiring_1125.py`,
+updated in this same PR to import from the new module, no other diff).
+A second such site existed at the time this was written (a force-close②
+test file, removed later by #4381 PR-4 along with the mechanism it
+exercised — not a regression in this promotion).
 
 Three things pinned here, matching the stage-1 acceptance conditions
 (architect-specified):

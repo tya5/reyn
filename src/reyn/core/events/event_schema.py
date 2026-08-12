@@ -353,7 +353,6 @@ AUDIT_EVENT_KINDS: frozenset[str] = frozenset({
     "router_context_overflow_unrecovered",
     "router_empty_response_detected",
     "router_empty_response_retry_injected",
-    "router_force_close_handoff",
     "router_loop_terminated_by_exception",
     "router_represent_round",
     "router_retry_exhausted",
