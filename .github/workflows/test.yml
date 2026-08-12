@@ -65,21 +65,6 @@ jobs:
         #     module silently SKIPS and CI goes green having verified nothing.
         run: pip install -e ".[dev,mcp,web,fs-watch,observability,builtin-rag]"
 
-      # #4302: tests/builtin/test_fp0063_p3_rag_pipelines.py (and
-      # test_fp0063_arc_witness.py) launch chunker_server.py/vector_store_server.py
-      # directly (command=sys.executable — same interpreter running pytest, per
-      # those tests' own docstrings). Those scripts import fastmcp, which the
-      # `builtin-rag` extra above does NOT cover (it's a dev/test convenience for
-      # chonkie/apsw/sqlite-vec only, #3209). fastmcp was a reyn CORE dependency
-      # until #4302 dropped it, which is what quietly kept this job green before —
-      # this is a 3rd real consumer #4302's own follow-up commit missed (it only
-      # covered the sandbox-seccomp gate and the wheel-reachability smoke test).
-      # The plugin declares its OWN dependency floor (`fastmcp>=2.0`) in its own
-      # requirements.txt, so this job installs that directly rather than a
-      # hand-picked subset that would drift from it silently.
-      - name: Install the rag plugin's own requirements (#4302)
-        run: pip install -r src/reyn/builtin/plugins/rag/requirements.txt
-
       - name: Run tests
         # --timeout=120: a per-test wall-clock cap (pytest-timeout). Without it a
         # single hung test (e.g. a stuck subprocess/asyncio test under Linux-3.12)

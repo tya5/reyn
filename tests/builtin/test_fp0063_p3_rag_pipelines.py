@@ -19,9 +19,15 @@ Drives both pipelines end-to-end through the REAL ``reyn pipe run`` CLI path
 (``src/reyn/interfaces/cli/commands/pipe.py::run_run``) against REAL builtin
 MCP servers (``reyn.builtin.plugins.rag.scripts.vector_store_server`` /
 ``chunker_server``, started as real ``python -m ...`` stdio subprocesses --
-the ``builtin-rag`` extra IS installed in this environment, verified by
-``pytest.importorskip`` guarding the whole module so a base install still
-collects). The THIRD server (markitdown) is substituted by a small, real
+the ``builtin-rag`` extra (chonkie/apsw/sqlite-vec, for this module's own
+DIRECT imports of those servers' internals) IS installed in this
+environment, verified by ``pytest.importorskip`` guarding the whole module
+so a base install still collects). #4302 option-A: the SPAWNED servers'
+own ``command`` runs under a dedicated venv instead (see
+``tests/_support/rag_plugin_venv.py``) -- they import standalone
+``fastmcp``, which reyn's own dev venv deliberately does NOT carry, since
+that's the whole point of #4302's "core has no fastmcp" invariant. The
+THIRD server (markitdown) is substituted by a small, real
 FastMCP stdio server written to disk for the test (the real
 ``markitdown-mcp`` PyPI package is not installed here, and fetching it via
 ``uvx`` would need network) -- this substitution is disclosed in the PR
@@ -98,6 +104,7 @@ import reyn.builtin as _builtin_pkg  # noqa: E402
 from reyn.core.pipeline.parser import parse_pipeline_docs  # noqa: E402
 from reyn.core.pipeline.schema import SchemaRegistry  # noqa: E402
 from reyn.interfaces.cli.commands.pipe import run_run  # noqa: E402
+from tests._support.rag_plugin_venv import rag_plugin_python as _rag_plugin_python  # noqa: E402
 
 _RAG_PLUGIN_DIR = Path(_builtin_pkg.__file__).resolve().parent / "plugins" / "rag"
 _INGEST_PATH = _RAG_PLUGIN_DIR / "pipelines" / "rag_ingest.yaml"
@@ -253,13 +260,13 @@ def _write_project(
                         },
                         "reyn_chunker": {
                             "type": "stdio",
-                            "command": sys.executable,
+                            "command": _rag_plugin_python(),
                             "args": ["-m", "reyn.builtin.plugins.rag.scripts.chunker_server"],
                             "env": _server_env(src_root),
                         },
                         vectorstore_server: {
                             "type": "stdio",
-                            "command": sys.executable,
+                            "command": _rag_plugin_python(),
                             "args": ["-m", "reyn.builtin.plugins.rag.scripts.vector_store_server"],
                             "env": _server_env(src_root),
                         },

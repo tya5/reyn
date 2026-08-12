@@ -227,6 +227,21 @@ def out_of_process_reyn() -> str:
     return str(root / "src")
 
 
+@pytest.fixture(scope="session")
+def rag_plugin_python() -> str:
+    """A venv python with the rag plugin's ``requirements.txt`` installed —
+    see ``tests/_support/rag_plugin_venv.py`` for the #4302 option-A
+    rationale. A thin fixture wrapper: the actual build is a process-cached
+    plain function so ``tests/builtin/test_fp0063_p3_rag_pipelines.py``'s
+    own ``_write_project``-style helpers (called from ~20 test bodies, not
+    fixtures themselves) can share the same build without threading this
+    fixture through every one of those call sites.
+    """
+    from tests._support.rag_plugin_venv import rag_plugin_python as _build
+
+    return _build()
+
+
 @pytest.fixture(scope="session", autouse=True)
 def _flowview_pin_verified() -> None:
     """#3723: 4 of 4 sessions on 2026-08-06 measured a full suite against a

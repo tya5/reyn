@@ -187,6 +187,7 @@ pytest.importorskip(
 import reyn.builtin as _builtin_pkg  # noqa: E402
 from tests._support.agent_session import make_session
 from tests._support.paths import REPO_ROOT
+from tests._support.rag_plugin_venv import rag_plugin_python as _rag_plugin_python
 
 _RAG_PLUGIN_DIR = Path(_builtin_pkg.__file__).resolve().parent / "plugins" / "rag"
 
@@ -276,19 +277,23 @@ def _prepare_local_plugin_copy(tmp_path: Path, src_root: str) -> Path:
 
     - DROP ``requirements.txt`` entirely, so ``plugin_install``'s dependency
       materialisation step (real ``python -m venv`` + ``pip install`` + real
-      network fetch) never triggers -- this sandbox's ``builtin-rag`` extra
-      already satisfies apsw/chonkie/sqlite_vec ambient-side, and this is a
-      LOCAL install, not
-      the builtin fast-path, so the copy is what gets network-audited.
+      network fetch) never triggers -- this is a LOCAL install, not the
+      builtin fast-path, so the copy is what gets network-audited.
     - Rewrite ``.mcp.json``: the plugin's own two REAL servers (chunker,
       vector-store -- the ONLY two it declares; markitdown is deliberately
       NOT part of the plugin bundle, per the pipeline's own X1 pre-flight
       message: "install it yourself" -- same as ``test_fp0063_p3_rag_pipelines.py``,
       which wires ``reyn_markitdown`` directly into ``reyn.yaml``'s
-      ``mcp.servers``, not the plugin) get ``command: sys.executable`` + the
-      pinned ``_server_env()`` (so the installed entry runs under THIS
-      interpreter/tree, not whatever bare "python" resolves to on PATH at
-      spawn time).
+      ``mcp.servers``, not the plugin) get ``command:`` a DEDICATED venv's
+      interpreter (``tests/_support/rag_plugin_venv.py``, #4302 option-A) +
+      the pinned ``_server_env()`` (so the installed entry runs under THIS
+      tree via ``PYTHONPATH``, not whatever bare "python" resolves to on
+      PATH at spawn time). Not the ambient sandbox venv: these two servers
+      import standalone ``fastmcp``, which reyn's own dev venv deliberately
+      does NOT carry (#4302's "core has no fastmcp" invariant) -- the
+      dedicated venv is what actually satisfies chonkie/apsw/sqlite_vec +
+      fastmcp for THIS subprocess, independent of what the ambient venv
+      carries for this module's own direct imports.
 
     Returns the prepared plugin source directory (pass as
     ``source={"kind": "local", "path": str(...)}`` to ``install_plugin``).
@@ -303,7 +308,7 @@ def _prepare_local_plugin_copy(tmp_path: Path, src_root: str) -> Path:
     mcp_json = json.loads(mcp_json_path.read_text(encoding="utf-8"))
     env = _server_env(src_root)
     for name, spec in mcp_json["mcpServers"].items():
-        spec["command"] = sys.executable
+        spec["command"] = _rag_plugin_python()
         spec["env"] = env
     mcp_json_path.write_text(json.dumps(mcp_json, indent=2), encoding="utf-8")
     return dest
