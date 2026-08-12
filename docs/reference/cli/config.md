@@ -30,7 +30,7 @@ reyn config migrate-mcp [--dry-run]
 | `get <key>` | Print the value of a single dot-path key. |
 | `set <key> <value>` | Write a key to `reyn.local.yaml`. Value is parsed as YAML. |
 | `validate` | Report unrecognized/renamed keys (policy tier + the hot-reload IN-set) and known keys currently disabled by another key's value. Never fails the exit code — see [Notes](#notes). |
-| `migrate [--dry-run]` | Rewrite renamed top-level config keys to their current location, in place, in whichever file each was found. |
+| `migrate [--dry-run]` | Rewrite renamed top-level config keys to their current location, in place, in whichever file each was found. Also reports (never auto-deletes) any REMOVED key with no successor — #4375. |
 | `migrate-mcp [--dry-run]` | Move legacy `mcp.servers` entries out of `reyn.yaml`/`reyn.local.yaml`/`~/.reyn/config.yaml` into `.reyn/mcp.yaml` (#470 config separation). |
 
 ## Exit codes
@@ -49,15 +49,18 @@ never gates (owner ruling: warn, never hard-fail, anywhere). It checks three thi
 each printed as its own labeled section (never merged into one list — the fix differs
 per section, and merging would lose "which one do I fix, and how"):
 
-- **Unrecognized/renamed keys, policy tier** (`reyn.yaml` / `reyn.local.yaml` /
+- **Unrecognized/renamed/removed keys, policy tier** (`reyn.yaml` / `reyn.local.yaml` /
   `~/.reyn/config.yaml`) — the same check `load_config`'s own startup warning runs.
   Fix: edit the file and restart, or run `reyn config migrate` for a renamed key with
-  an automatic destination.
+  an automatic destination. A REMOVED key (#4375 — no successor exists, unlike a
+  rename) is reported in its own "REMOVED ... delete them" section — `migrate` never
+  auto-rewrites it (there is no destination) and never auto-deletes it either; the
+  operator's next action is "delete this line", not "rewrite it".
 - **Known keys currently disabled by another key's value** — the key is real and
   correctly spelled, but the current configuration makes it a no-op (e.g.
   `action_retrieval.universal_wrappers_enabled` has no effect while `tool_use.scheme`
   resolves to `enumerate-all`). Each entry names the key it depends on and the fix.
-- **Unrecognized/renamed keys, the hot-reload IN-set** (`.reyn/{mcp,cron,hooks,skills,
+- **Unrecognized/renamed/removed keys, the hot-reload IN-set** (`.reyn/{mcp,cron,hooks,skills,
   pipelines,presentations}.yaml`) — same unknown-key check, run against the merged
   IN-set instead of the policy tier. Fix: edit the `.reyn/*.yaml` file directly — it
   applies on the next turn automatically, no restart and no `reyn config migrate`
