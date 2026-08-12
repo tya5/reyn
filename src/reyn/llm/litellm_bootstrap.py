@@ -11,10 +11,19 @@ stderr, so an interactive CUI session's terminal is never corrupted by a
 litellm banner or warning.
 
 ``ensure_litellm_ready()`` is the ONE place that should perform this
-first-import work. Callers that need the ``litellm`` module still do their own
-``import litellm`` afterward (cheap — Python caches the module), but calling
-``ensure_litellm_ready()`` first guarantees the log-routing patch is active
-for whichever call site happens to import litellm first in a given process.
+first-import work — and (#4395 PR-1) the ONE place the actual ``import
+litellm`` statement should live. Callers use the module it RETURNS
+(``None`` on failure) rather than doing their own separate ``import
+litellm`` afterward. An earlier version of this paragraph claimed a
+caller's own subsequent bare ``import litellm`` was "cheap — Python
+caches the module" — true only when the import SUCCEEDED. Python does
+NOT cache a FAILED import (a module whose top-level code raises is
+evicted from ``sys.modules``), so a caller doing its own redundant bare
+``import litellm`` right after this function would re-attempt — and
+re-fail — the exact same slow, unbounded network-touching import this
+function had JUST attempted, silently doubling the cost of every
+failure. See ``ensure_litellm_ready()``'s own docstring for the full
+success/failure contract this fixed.
 
 #3671: this module also owns the #3434 client-cache "pre-existing keys"
 baseline (:func:`reset_client_cache_baseline`/:func:`client_cache_baseline`)
@@ -34,7 +43,7 @@ from __future__ import annotations
 import contextlib
 import logging
 from concurrent.futures import Future
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -89,6 +98,18 @@ _ready_registry: "dict[str, Future]" = {}
 # reading, invalidating its baseline mid-call.
 _baseline_generation = 0
 _baseline_registry: "dict[int, Future]" = {}
+
+
+class LitellmUnavailableError(Exception):
+    """#4395 PR-1: raised by a call site with NO safe fallback (a real
+    completion or embedding call — `llm.py`'s `recorded_acompletion`,
+    `litellm_provider.py`'s `embed_batch`) when `ensure_litellm_ready()`
+    returns `None`. A clear, explicit failure instead of letting a
+    redundant, un-gated bare `import litellm` raise whatever exception
+    litellm's own failed import happened to produce — same underlying
+    cause, a legible error instead of an incidental one. Retriable: the
+    NEXT call gets a fresh attempt (see `ensure_litellm_ready()`'s own
+    docstring — a failure is not permanently cached)."""
 
 
 @contextlib.contextmanager
@@ -162,73 +183,140 @@ def _litellm_import_logs_to_file() -> "Iterator[None]":
             logger.propagate = True
 
 
-def ensure_litellm_ready() -> None:
-    """Idempotent first-touch chokepoint: import litellm + apply its one-time setup.
+_litellm_import_failure_warned = False
 
-    Runs at most once per process. Wraps the (possibly first-ever) ``import
-    litellm`` in ``_litellm_import_logs_to_file`` (preserving the interactive
-    CUI's clean-terminal guarantee — #2929) and sets
-    ``litellm.suppress_debug_info = True`` (litellm prints "Give Feedback /
-    Get Help" banners straight to stderr on a provider error, NOT via
+
+def ensure_litellm_ready() -> "Any | None":
+    """Idempotent first-touch chokepoint: import litellm + apply its
+    one-time setup, returning the imported module — or ``None`` if the
+    import itself failed.
+
+    #4395 (PR-1, the minimal fix): this function's OWN internal ``import
+    litellm`` is the single place that attempt happens; call sites should
+    use the RETURNED module rather than performing their own separate
+    ``import litellm`` afterward. Before this fix, the docstring here
+    claimed "callers still do their own ``import litellm`` afterward
+    (cheap — Python caches the module)" — true only when the import
+    SUCCEEDED. Python does NOT cache a FAILED import (a module whose
+    top-level code raises is evicted from ``sys.modules``), so 4 call
+    sites doing their own redundant bare ``import litellm`` right after
+    calling this function (``model_budget.py``, ``model_cost_rate.py``,
+    ``llm.py``, ``litellm_provider.py``) were each independently
+    re-attempting — and re-failing — the exact same slow, unbounded
+    network-touching import this function had JUST attempted, turning
+    one slow attempt per call into two. A live owner repro (py-spy
+    stack) caught the event-loop/UI thread blocked inside exactly this
+    redundant second attempt. A separate 3 sites in ``pricing.py``
+    bypassed this chokepoint entirely — a different failure mode (never
+    calling this function at all, not a redundant second attempt after
+    calling it).
+
+    THE UNDERLYING MISTAKE (not just the stale prose above): the old
+    docstring's false premise came from conflating two DIFFERENT
+    guarantees — "this chokepoint's one-time setup (log routing,
+    ``suppress_debug_info``, ``aiohttp_trust_env``) has run" is NOT the
+    same guarantee as "``import litellm`` will now succeed for you too".
+    A call site may only assume the SECOND from this function's actual
+    RETURN VALUE (the module, or ``None``) — never from the fact that
+    this function was merely called, or that it didn't raise, or from
+    any other side effect of having reached this chokepoint once before.
+    This is the general shape to watch for at any chokepoint: "setup ran"
+    and "the resource is usable" are separate claims, and only the
+    second is what a caller with no fallback actually needs.
+
+    On SUCCESS: returns the module, and stays ``True``-flagged for the
+    rest of the process — a successfully imported module is real,
+    permanent state (``sys.modules`` itself never re-runs it), so caching
+    "ready" forever is correct. On FAILURE: returns ``None``, and does
+    NOT cache the failure — the next call gets a fresh ownership round
+    and genuinely retries, because an environmental failure (a proxy
+    down) can clear, and callers with no fallback (a real completion or
+    embedding call) must keep trying on the next turn, not be
+    permanently locked out after one bad attempt. Emits a WARNED-ONCE
+    (not every failure — #3368's own "warn once, not every call" lesson)
+    log line the first time this happens in the process, so a
+    permanently-unusable environment is visible rather than silently
+    degrading every downstream fallback with no signal at all.
+
+    Wraps the (possibly first-ever) ``import litellm`` in
+    ``_litellm_import_logs_to_file`` (preserving the interactive CUI's
+    clean-terminal guarantee — #2929) and sets
+    ``litellm.suppress_debug_info = True`` (litellm prints "Give Feedback
+    / Get Help" banners straight to stderr on a provider error, NOT via
     ``logging``, so the file redirect above doesn't catch them; this
     suppresses them instead).
 
-    Call this before any bare ``import litellm`` in a lazy call site that
-    might be the first one to run in a given process — it costs one boolean
-    check on every call after the first, so it is cheap to call defensively.
-
     #3075 chokepoint coverage: this is the sole place the
-    ``litellm.aiohttp_trust_env = True`` flip is applied, and BOTH litellm
-    egress families reach it before their first real call — the completion
-    path via ``recorded_acompletion`` (``reyn.llm.llm``, the #1190 single
-    ``litellm.acompletion`` chokepoint, which calls this before the
-    ``acompletion``) and the embedding path via
-    ``LiteLLMEmbeddingProvider.embed_batch`` (``reyn.data.embedding.
-    litellm_provider``, which calls this before ``_aembedding_bounded`` →
-    ``litellm.aembedding``). So the proxy-trust flip covers every
+    ``litellm.aiohttp_trust_env = True`` flip is applied, and BOTH
+    litellm egress families reach it before their first real call — the
+    completion path via ``recorded_acompletion`` (``reyn.llm.llm``, the
+    #1190 single ``litellm.acompletion`` chokepoint) and the embedding
+    path via ``LiteLLMEmbeddingProvider.embed_batch`` (``reyn.data.
+    embedding.litellm_provider``). So the proxy-trust flip covers every
     litellm-originated request, not just chat.
     """
-    global _litellm_ready
+    global _litellm_ready, _litellm_import_failure_warned
     # Unlocked fast-path read keeps the "cheap on every call after the
-    # first" property this docstring promises — after the owner's Future
-    # resolves this flag is the only thing subsequent calls ever touch.
-    # NOTE: still falls through to `_capture_client_cache_baseline` below —
-    # the process-wide-once setup and the per-`run_async`-call baseline
-    # (#3671/#3434) are different lifetimes, so this early return must not
-    # skip the second one.
-    if not _litellm_ready:
-        my_future: "Future[None]" = Future()
-        winning_future = _ready_registry.setdefault("ready", my_future)
-        if winning_future is not my_future:
-            # Someone else already owns setup — wait for THEM to finish, not
-            # a lock, so we block only as long as the real work actually
-            # takes, never past it (the "started, not finished" bug this
-            # replaces).
-            winning_future.result()
-        else:
-            # We won ownership. Do the real work, then release every waiter.
-            try:
-                with _litellm_import_logs_to_file():
-                    try:
-                        import litellm
-                        litellm.suppress_debug_info = True
-                        # #3075 fix 1: litellm's aiohttp transport defaults
-                        # aiohttp_trust_env=False, so it is proxy-blind even when the
-                        # operator's standard HTTP(S)_PROXY/NO_PROXY env is set — the
-                        # highest-volume egress reyn originates (every LLM/embedding call)
-                        # was the sharpest non-conformer in the #3075 enumeration. Flipping
-                        # this makes litellm read the standard proxy env like every other
-                        # conforming egress; it already honours SSL_CERT_FILE/
-                        # REQUESTS_CA_BUNDLE via get_ssl_verify(), so this is the one
-                        # missing piece for full conformance.
-                        litellm.aiohttp_trust_env = True
-                    except Exception:  # noqa: BLE001 — best-effort; never block the caller on this
-                        pass
-            finally:
+    # first success" property this docstring promises. NOTE: still falls
+    # through to `_capture_client_cache_baseline` below — the
+    # process-wide-once setup and the per-`run_async`-call baseline
+    # (#3671/#3434) are different lifetimes, so this early return must
+    # not skip the second one.
+    if _litellm_ready:
+        _capture_client_cache_baseline()
+        import sys
+        return sys.modules.get("litellm")
+
+    my_future: "Future[Any | None]" = Future()
+    winning_future = _ready_registry.setdefault("ready", my_future)
+    if winning_future is not my_future:
+        # Someone else already owns this attempt — wait for THEM to
+        # finish, not a lock, so we block only as long as the real work
+        # actually takes, never past it (the "started, not finished" bug
+        # this replaces).
+        result = winning_future.result()
+    else:
+        # We won ownership. Do the real work, then release every waiter.
+        result = None
+        try:
+            with _litellm_import_logs_to_file():
+                try:
+                    import litellm
+                    litellm.suppress_debug_info = True
+                    # #3075 fix 1: litellm's aiohttp transport defaults
+                    # aiohttp_trust_env=False, so it is proxy-blind even when the
+                    # operator's standard HTTP(S)_PROXY/NO_PROXY env is set — the
+                    # highest-volume egress reyn originates (every LLM/embedding call)
+                    # was the sharpest non-conformer in the #3075 enumeration. Flipping
+                    # this makes litellm read the standard proxy env like every other
+                    # conforming egress; it already honours SSL_CERT_FILE/
+                    # REQUESTS_CA_BUNDLE via get_ssl_verify(), so this is the one
+                    # missing piece for full conformance.
+                    litellm.aiohttp_trust_env = True
+                    result = litellm
+                except Exception:  # noqa: BLE001 — best-effort; never block the caller on this
+                    result = None
+        finally:
+            if result is not None:
                 _litellm_ready = True
-                my_future.set_result(None)
+            else:
+                # NOT cached — clear ownership so the NEXT call gets a
+                # fresh attempt instead of being permanently stuck on
+                # this one failure (see docstring: callers with no
+                # fallback must keep retrying across turns).
+                _ready_registry.pop("ready", None)
+                if not _litellm_import_failure_warned:
+                    _litellm_import_failure_warned = True
+                    logging.getLogger(__name__).warning(
+                        "import litellm failed — falling back where a "
+                        "fallback exists, retrying on the next call "
+                        "where it doesn't. This is a warn-once notice, "
+                        "not a record of a permanent failure.",
+                    )
+            my_future.set_result(result)
 
     _capture_client_cache_baseline()
+    return result
 
 
 def reset_client_cache_baseline() -> None:

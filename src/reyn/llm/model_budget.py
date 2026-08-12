@@ -43,11 +43,19 @@ def _lookup_max_input(model: str) -> "int | None":
     (e.g. provider-prefix-strip, #1162).
     """
     try:
-        # perf: route through the single litellm-first-touch chokepoint (see
-        # litellm_bootstrap module docstring) so #2929's console-log routing
-        # is active regardless of which call site touches litellm first.
+        # #4395 PR-1: check ensure_litellm_ready()'s own success/failure
+        # BEFORE doing `import litellm` — that used to be an unconditional
+        # bare import right after calling the chokepoint, which
+        # independently re-attempted (and re-failed) the exact same slow,
+        # unbounded import on every call while litellm kept failing (a
+        # failed import isn't cached by Python; only this chokepoint's
+        # own attempt was). `import litellm` below now only ever runs
+        # once success is confirmed, so it's always a cheap sys.modules
+        # cache hit — never a repeat of the failing attempt. See
+        # litellm_bootstrap.py's own docstring for the full contract.
         from reyn.llm.litellm_bootstrap import ensure_litellm_ready
-        ensure_litellm_ready()
+        if ensure_litellm_ready() is None:
+            return None
         import litellm
         info = litellm.get_model_info(model)
         max_input = info.get("max_input_tokens")

@@ -28,12 +28,16 @@ def get_input_cost_per_1m_usd(model: str) -> float | None:
     an unknown cost as "no warning needed" rather than crashing the session.
     """
     try:
-        # perf: route through the single litellm-first-touch chokepoint so the
-        # #2929 console-log routing is active regardless of whether this
-        # session-start check or a later LLM call is the first real litellm
-        # touch in the process (see litellm_bootstrap module docstring).
+        # #4395 PR-1: check ensure_litellm_ready()'s own success/failure
+        # BEFORE doing `import litellm` — see model_budget.py's identical
+        # fix and litellm_bootstrap.py's own docstring for the full
+        # reasoning (a redundant unconditional bare import independently
+        # re-attempts, and re-fails, litellm's own slow unbounded import
+        # every call while it keeps failing; gating it behind a confirmed
+        # success makes it always a cheap sys.modules cache hit instead).
         from reyn.llm.litellm_bootstrap import ensure_litellm_ready
-        ensure_litellm_ready()
+        if ensure_litellm_ready() is None:
+            return None
         import litellm
         entry = litellm.model_cost.get(model, {})
         per_token = entry.get("input_cost_per_token")

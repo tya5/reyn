@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING, Callable, Coroutine, NamedTuple, TypeVar, Unio
 
 logger = logging.getLogger(__name__)
 from reyn.core.turn_scope import get_active_turn_chain_id
-from reyn.llm.litellm_bootstrap import ensure_litellm_ready
+from reyn.llm.litellm_bootstrap import LitellmUnavailableError, ensure_litellm_ready
 from reyn.llm.model_resolver import ModelSpec
 from reyn.llm.pricing import TokenUsage, UsageSource, estimate_cost, parse_usage_source
 from reyn.prompt.loop_control import G12_SIGNAL_ERROR_TEXT as _G12_SIGNAL_ERROR_TEXT
@@ -2002,8 +2002,34 @@ async def recorded_acompletion(
     # path (input box renders before any LLM use). ``ensure_litellm_ready``
     # is the single chokepoint that applies the #2929 console-log routing +
     # ``suppress_debug_info`` the first time ANY call site touches litellm.
-    ensure_litellm_ready()
-    import litellm
+    # #4395 PR-1: use the module it RETURNS rather than a separate bare
+    # ``import litellm`` — that used to independently re-attempt (and
+    # re-fail) litellm's own slow, unbounded import on every completion
+    # call while it kept failing (a failed import isn't cached by Python;
+    # only this chokepoint's own attempt was). No fallback exists here —
+    # a real completion genuinely needs litellm — so failure surfaces as
+    # an explicit, legible error instead of whatever incidental exception
+    # a redundant re-attempt would have produced. Retriable on the NEXT
+    # call (`ensure_litellm_ready()`'s own docstring: a failure is not
+    # permanently cached — an environmental cause can clear, and this
+    # path has no fallback to fall permanently back to).
+    #
+    # #4395: called via ``asyncio.to_thread`` rather than awaited/called
+    # directly in-loop — this function is ``async def`` and a synchronous
+    # ``ensure_litellm_ready()`` call here blocks the WHOLE event loop
+    # (animation + input, not just this coroutine) for as long as the
+    # underlying import takes, which is exactly the owner-reported freeze
+    # (lead-coder correction, #4395: PR-1 must land this call site in an
+    # already-awaitable form so PR-2's dedicated-thread/cooldown mechanism
+    # slots in behind the same await point — writing it as an in-loop
+    # blocking call here would force PR-2 to rewrite every caller instead
+    # of just the chokepoint).
+    litellm = await asyncio.to_thread(ensure_litellm_ready)
+    if litellm is None:
+        raise LitellmUnavailableError(
+            "import litellm failed — see the reyn.llm.litellm_bootstrap "
+            "warn-once log line for the underlying cause",
+        )
 
     # #1652/②: canonical litellm mechanism for reasoning continuity across tool
     # turns — when a thinking-enabled request carries an assistant turn whose

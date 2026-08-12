@@ -389,8 +389,37 @@ class LiteLLMEmbeddingProvider:
                 # be the FIRST litellm import in the process — funnel it through
                 # ensure_litellm_ready() so litellm's import-time console log
                 # routing (#2929) wraps it too (idempotent; cheap on 2nd+ call).
-                from reyn.llm.litellm_bootstrap import ensure_litellm_ready
-                ensure_litellm_ready()
+                # #4395 PR-1: check success BEFORE `import litellm` — that used
+                # to be an unconditional bare import right after the
+                # chokepoint call, independently re-attempting (and
+                # re-failing) litellm's own slow, unbounded import on EVERY
+                # retry-loop iteration while it kept failing (a failed
+                # import isn't cached by Python; only this chokepoint's own
+                # attempt was) — doubling the cost of every already-retried
+                # attempt in this loop. `import litellm` below now only ever
+                # runs once success is confirmed, so it's always a cheap
+                # sys.modules cache hit. The existing `except Exception`
+                # below already handles this failure exactly like any other
+                # attempt failure — same retry/backoff behavior, half the
+                # redundant work per iteration.
+                from reyn.llm.litellm_bootstrap import (
+                    LitellmUnavailableError,
+                    ensure_litellm_ready,
+                )
+                # #4395: `asyncio.to_thread`, not an in-loop call — this is
+                # `async def`, and a synchronous `ensure_litellm_ready()`
+                # here blocks the WHOLE event loop for as long as the
+                # underlying import takes, not just this coroutine (lead-
+                # coder correction, #4395: PR-1 must land this call site
+                # already-awaitable so PR-2's dedicated-thread mechanism
+                # slots in behind the same await point without a rewrite
+                # of this call site).
+                if await asyncio.to_thread(ensure_litellm_ready) is None:
+                    raise LitellmUnavailableError(
+                        "import litellm failed — see the reyn.llm."
+                        "litellm_bootstrap warn-once log line for the "
+                        "underlying cause",
+                    )
                 import litellm
                 response = await self._aembedding_bounded(
                     litellm,
