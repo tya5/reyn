@@ -526,6 +526,27 @@ class CapabilityVisibility:
         name) is this method's OWN addition on top of the composed payload, driven
         by the SAME catalog ingredient the wrapper dispatches against.
         """
+        # #4366: the built-in schemes self-register via an IMPORT-TIME side
+        # effect (each module under ``reyn.tools.schemes.*`` calls
+        # ``register_scheme`` at module scope) -- importing the registry
+        # module alone (``reyn.tools.scheme``, singular, below) never
+        # triggers it; only importing the built-ins package (``schemes``,
+        # plural) or one of its submodules does. In the normal chat path
+        # this happens for free the moment ``RouterLoop`` resolves a scheme
+        # (``router_loop.py``'s own ``import reyn.tools.schemes`` before its
+        # ``get_scheme`` calls, same pattern as here) -- but THIS census can
+        # run before the LLM is ever called (a fresh session's first
+        # status-bar render), when the router loop has not imported
+        # anything yet, so the registry is empty and both ``get_scheme``
+        # calls below silently return ``None``. Declaring the dependency
+        # explicitly (importing it here too, idempotent) rather than
+        # continuing to lean on a side effect nothing in this module ever
+        # named is the fix, not a cost -- measured against a real running
+        # TUI (#4366 comments): ~30 additional small ``reyn`` modules, the
+        # heavy transitive deps (ssl/socket/asyncio/subprocess) already
+        # loaded by then, the increment smaller than run-to-run baseline
+        # variance.
+        import reyn.tools.schemes  # noqa: F401  (register_scheme import-time side effect)
         from reyn.tools.scheme import (
             DEFAULT_SCHEME_NAME,
             advertised_entries,
@@ -534,6 +555,24 @@ class CapabilityVisibility:
         )
 
         scheme = get_scheme(self._chat_tool_use_scheme) or get_scheme(DEFAULT_SCHEME_NAME)
+        if scheme is None:
+            # #4366: the ``or`` above only covers "configured name unknown,
+            # fall back to the default" -- it was never a guard against an
+            # EMPTY registry (the default lookup fails identically to the
+            # configured one in that case). The import above makes an empty
+            # registry unreachable in practice; if this still fires, the
+            # registry itself is broken (e.g. a built-in scheme's own
+            # ``register_scheme`` call was removed) -- an internal
+            # invariant violation, not a per-turn/per-config condition, so
+            # it is raised loudly here rather than silently degraded to a
+            # placeholder census (which would hide exactly that class of
+            # bug behind an empty-looking Tool tab).
+            raise RuntimeError(
+                f"no tool-use scheme registered under "
+                f"{self._chat_tool_use_scheme!r} or the default "
+                f"{DEFAULT_SCHEME_NAME!r} after importing reyn.tools.schemes "
+                "-- the built-in scheme registry is unexpectedly empty."
+            )
         ops = _VisibilityProbeOps(self._router_host, excluded_categories)
         univ_enabled = bool(self._router_host.get_universal_wrappers_enabled())
         # #3378: the census is the UN-narrowed reachable set — the contextual is applied
