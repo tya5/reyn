@@ -109,7 +109,8 @@ def run_replay(args: argparse.Namespace) -> None:
     else:
         files = _collect_files(target, since=since, until=until)
 
-    count = 0
+    matched = 0
+    rendered = 0
     for f in files:
         for lineno, raw in _iter_lines(f):
             event_type = raw.get("type", "")
@@ -122,11 +123,21 @@ def run_replay(args: argparse.Namespace) -> None:
             except Exception as e:
                 print(f"[{f}:{lineno}] Event parse error: {e}", file=sys.stderr)
                 continue
-            logger(event)
-            count += 1
+            matched += 1
+            if logger(event):
+                rendered += 1
 
     where = str(target) if target.is_file() else f"{target} ({len(files)} files)"
-    print(f"\n({count} events replayed from {where})")
+    # #4383: "matched" (found by --filter/--skip) and "rendered" (actually
+    # printed a line) are reported separately — before this they were the
+    # SAME number (matched only), so a handler-less event type being
+    # silently dropped read as "N events replayed" with no indication
+    # anything had been found-but-not-shown. The generic fallback
+    # (reporters.ConsoleLogger._render_unhandled) means rendered == matched
+    # for essentially every real filter now; this line stays honest for
+    # the narrow cases where a handler exists but declines to print (e.g.
+    # --conversation-only handlers reached without --conversation set).
+    print(f"\n({matched} matched, {rendered} rendered from {where})")
 
 
 def _iter_lines(path: Path) -> Iterator[tuple[int, dict]]:
