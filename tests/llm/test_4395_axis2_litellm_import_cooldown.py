@@ -109,6 +109,45 @@ def test_a_call_after_the_cooldown_elapses_attempts_again(
     )
 
 
+def test_ignore_cooldown_attempts_even_during_the_window(
+    _force_litellm_import_failure,
+):
+    """Tier 2: a no-fallback caller (lead-coder review, post-#4417) must
+    still get a genuine attempt during the cooldown — the cooldown exists
+    to protect callers WITH a safe fallback from repeatedly re-attempting;
+    a caller with no fallback was already a "must wait" site before axis②
+    existed, and silently hard-failing it without even trying would
+    regress a transient failure that would have cleared on retry into an
+    unconditional failure for the whole cooldown window."""
+    ensure_litellm_ready()
+    after_first = _force_litellm_import_failure["n"]
+
+    result = ensure_litellm_ready(ignore_cooldown=True)  # still within the cooldown window
+
+    assert result is None  # the (simulated) import genuinely failed again
+    assert _force_litellm_import_failure["n"] > after_first, (
+        "ignore_cooldown=True must attempt a fresh import even during the "
+        "cooldown window"
+    )
+
+
+def test_ignore_cooldown_false_by_default_still_respects_the_window(
+    _force_litellm_import_failure,
+):
+    """Tier 2: accept-side — the default (no-arg) call keeps respecting
+    the cooldown; `ignore_cooldown` is opt-in, not a silent global
+    behavior change for every caller."""
+    ensure_litellm_ready()
+    after_first = _force_litellm_import_failure["n"]
+
+    result = ensure_litellm_ready()  # default: ignore_cooldown=False
+
+    assert result is None
+    assert _force_litellm_import_failure["n"] == after_first, (
+        "the default call must still respect the cooldown"
+    )
+
+
 def test_the_cooldown_check_never_imports_litellm_itself(monkeypatch):
     """Tier 2: accept-side — the cooldown check itself is a cheap
     `time.monotonic()` comparison, not something that could itself touch

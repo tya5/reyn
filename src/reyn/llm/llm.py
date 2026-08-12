@@ -2046,7 +2046,17 @@ async def recorded_acompletion(
     # slots in behind the same await point — writing it as an in-loop
     # blocking call here would force PR-2 to rewrite every caller instead
     # of just the chokepoint).
-    litellm = await asyncio.to_thread(ensure_litellm_ready)
+    #
+    # ``ignore_cooldown=True`` (#4395 PR-2 follow-up, lead-coder review):
+    # the axis② cooldown protects callers WITH a safe fallback from
+    # repeatedly re-attempting a broken import — this call site has NO
+    # fallback and was already a "must wait" site before axis② existed.
+    # Without this flag, a single earlier failure would hard-fail EVERY
+    # completion for the next 60s without even attempting one, silently
+    # dropping any transient failure that would have cleared and
+    # succeeded on retry. See ``ensure_litellm_ready()``'s own docstring
+    # for the full reasoning.
+    litellm = await asyncio.to_thread(ensure_litellm_ready, ignore_cooldown=True)
     if litellm is None:
         raise LitellmUnavailableError(
             "import litellm failed — see the reyn.llm.litellm_bootstrap "
