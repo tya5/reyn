@@ -356,9 +356,24 @@ def estimate_tokens_for_any_turn(
 
 @dataclass
 class HistoryChunkToCompact:
-    """Input to the compaction engine."""
+    """Input to the compaction engine.
+
+    #4389: ``section_token_caps`` is a HINT to the LLM only — it is
+    serialised straight into the compaction prompt's user content (see
+    ``CompactionEngine.compact``) so the model can use it as *guidance* on
+    how much room each section has. It does NOT bound anything
+    deterministically, and a caller passing a tighter value here has no
+    effect on what actually gets trimmed. The value that IS enforced,
+    deterministically, is ``CompactionEngine._budgets.body_budget`` —
+    computed once at ``CompactionEngine.__init__`` from ``CompactionConfig``
+    (see ``compute_budgets``/``ComputedBudgets.section_caps``) and applied to
+    ``topic_arc`` via the T2 (LLM re-summarize) / T3 (``hard_truncate_summary``)
+    passes in ``compact``, independent of whatever this field says on a given
+    call. Confirmed live (real LLM): setting ``topic_arc`` here to ~40 tokens
+    had zero effect on the actual trim.
+    """
     new_turns: list[dict]                          # [{role, text, seq, ...}]
-    section_token_caps: dict                       # {topic_arc, decisions, ...}
+    section_token_caps: dict                       # {topic_arc, decisions, ...} — LLM hint only, see docstring above
     previous_summary: dict | None = None           # prior ChatSummary or None
 
 
