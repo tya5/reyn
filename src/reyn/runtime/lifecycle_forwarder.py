@@ -237,12 +237,134 @@ class ChatLifecycleForwarder:
             else:
                 self._enqueue("[✗ router cap hit]")
 
-    def _enqueue(self, text: str) -> None:
+    # ── Force close (#4380) ────────────────────────────────────────────
+    # Two DISTINCT mechanisms despite the similar names — traced before
+    # implementing (issue #4380 comment thread) because the obvious guess
+    # ("one event, two co-firing halves") turned out to be wrong:
+    #   force_close_triggered      — layer①, router_loop.py: an IN-LOOP,
+    #     per-iteration cumulative-budget cutoff (``should_force_close``).
+    #     Fires at most once per turn (it ends the turn on the same
+    #     iteration it fires).
+    #   router_force_close_handoff — layer②, router_loop_driver.py: an
+    #     OUTER retry, reached ONLY when the wrap-up ITSELF still doesn't
+    #     fit (a ``_ContextOverflowError`` from the whole ``run_loop``).
+    #     Fires at most once per turn (``_MAX_FORCE_CLOSE_HANDOFFS = 1``).
+    # No call site emits both for the same turn — they are never a pair to
+    # bundle; each is its own, independent, at-most-once-per-turn marker.
+
+    def on_force_close_triggered(self, data: dict) -> None:
+        """Surface a ``[✗ force close: …]`` marker — layer① (in-loop) cutoff.
+
+        ``should_force_close`` decided the accumulated cost/tokens already
+        exceed the session's cumulative cap, so this turn's wrap-up
+        suppresses further tool calls and ends early. Without this marker
+        a short/truncated-looking reply has no visible reason attached to
+        it — the user sees a turn end, not WHY.
+        """
+        self._enqueue("[✗ force close: turn ended early to stay within budget]")
+
+    def on_router_force_close_handoff(self, data: dict) -> None:
+        """Surface a ``[✗ force close (retry): …]`` marker — layer② (outer)
+        handoff, the rarer of the two (measured 0 real-world fires as of
+        #4380's own trace — an edge case, not dead code: still worth a
+        marker for the operator who DOES hit it).
+
+        Fires when even the wrap-up itself doesn't fit and the driver
+        consolidates/drops older history to retry once. ``dropped_seq_ranges``
+        names how much was cut; kept out of the marker text itself (an
+        internal seq range means nothing to a user) — the audit event
+        still carries it in full for anyone reading ``.reyn/events``.
+        """
+        self._enqueue(
+            "[✗ force close (retry): history consolidated to continue]"
+        )
+
+    # ── Turn cancelled (#4380) ────────────────────────────────────────────
+
+    def on_turn_cancelled(self, data: dict) -> None:
+        """Surface a ``[✗ turn cancelled]`` marker.
+
+        Before #4380 this had ZERO live visibility: ``router_loop.py``'s own
+        cancel path persists "Turn interrupted by user." via
+        ``append_history_entry``, which is explicitly documented as having
+        "no outbox side-effect" (``router_host_adapter.py``) — visible only
+        on the NEXT restore (``restore.py`` rescues the ``meta["kind"] ==
+        "turn_cancelled"`` entry from the blanket system/summary skip). A
+        user watching the CURRENT session saw nothing at all when they
+        cancelled a turn. This is a genuinely new gap, not a duplicate of
+        that history entry — the two never both render in the same
+        session's lifetime (this one live, that one only after a restart).
+        """
+        self._enqueue("[✗ turn cancelled]")
+
+    # ── Chain timeout (#4380) ────────────────────────────────────────────
+
+    def on_chain_timeout(self, data: dict) -> None:
+        """Surface a ``[✗ chain timeout: waiting on …]`` marker.
+
+        ``waiting_on`` (sorted agent list) + ``timeout_seconds`` come
+        straight off the audit event (``docs/reference/runtime/events.md``'s
+        own documented payload for this kind). A turn that spawned MULTIPLE
+        concurrent delegate chains can fire this once per chain that times
+        out — each is its own independent event (different ``chain_id``,
+        different agents waited on), so each gets its OWN marker, never
+        bundled with another chain's timeout (#4380: only same-(kind, path,
+        reason) ``permission_denied`` bundles; this does not).
+        """
+        waiting = data.get("waiting_on") or []
+        agents = ", ".join(str(a) for a in waiting) if waiting else "?"
+        timeout_s = data.get("timeout_seconds")
+        suffix = f" ({timeout_s}s)" if timeout_s is not None else ""
+        self._enqueue(f"[✗ chain timeout: waiting on {agents}{suffix}]")
+
+    # ── Permission / intervention denied (#4380) ─────────────────────────
+
+    def on_permission_denied(self, data: dict) -> None:
+        """Surface a ``[✗ permission denied: …]`` marker — the ONE kind of
+        this issue's 6 that BUNDLES repeats (owner ruling, #4380): a turn
+        that hits the same denial (same op ``kind``, same ``path``, same
+        ``reason``) repeatedly collapses to one line with a count on the
+        conv-pane side (:meth:`~reyn.interfaces.inline.textual_chat.app.
+        TextualChatApp._ingest_frame`'s ``_last_lifecycle_marker`` coalesce —
+        mirrors ``_coalesce_tool_result``'s own precedent: compare only
+        against the immediately-preceding row, never a turn-wide buffer).
+        A DIFFERENT ``path`` or ``reason`` for the SAME op ``kind`` is a
+        DIFFERENT fact and must NOT collapse into the same line (owner's
+        own constraint, applied literally) — the bundle key carries all
+        three fields for exactly that reason. The audit log itself is
+        UNCHANGED — one event per denial, always; only the DISPLAY
+        collapses consecutive identical ones.
+        """
+        kind = str(data.get("kind") or "?")
+        path = data.get("path")
+        reason = str(data.get("reason") or "")
+        suffix = f" {path}" if path else ""
+        text = f"[✗ permission denied: {kind}{suffix}]"
+        self._enqueue(
+            text,
+            meta={"lifecycle_bundle_key": ("permission_denied", kind, path, reason)},
+        )
+
+    def on_intervention_denied(self, data: dict) -> None:
+        """Surface a ``[✗ intervention denied: …]`` marker — deliberately
+        NOT bundled (#4380 ruling): a different ``intervention_id`` is a
+        different unanswered question, even when the ``kind`` (ask_user /
+        permission / safety-limit) matches — collapsing those would lose
+        which questions went unanswered, not just how many.
+        """
+        kind = str(data.get("kind") or "?")
+        self._enqueue(f"[✗ intervention denied: {kind}]")
+
+    def _enqueue(self, text: str, *, meta: "dict | None" = None) -> None:
         # Fire-and-forget: lifecycle markers are advisory, never block the
         # session loop. Uses ``kind="system"`` so the conv pane's
         # ``_render_system_message`` path styles it as a dim marker line.
+        # ``meta`` (#4380): optional — carries ``lifecycle_bundle_key`` for
+        # the ONE marker kind (``permission_denied``) the conv pane
+        # coalesces consecutive repeats of; every other caller omits it
+        # (``None`` -> ``{}``, byte-identical to every pre-#4380 marker).
         try:
-            self.outbox.put_nowait(OutboxMessage(kind="system", text=text))
+            self.outbox.put_nowait(OutboxMessage(kind="system", text=text, meta=meta or {}))
         except asyncio.QueueFull:
             pass
 
