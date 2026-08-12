@@ -53,11 +53,11 @@ def _run(
     inherited env var would silently defeat."""
     env = {k: v for k, v in os.environ.items() if k not in unset_env}
     env["PYTHONPATH"] = src_root
+    # #4397: no timeout= — CI's own per-test pytest-timeout is the kill switch.
     return subprocess.run(
         [sys.executable, "-c", script],
         capture_output=True,
         text=True,
-        timeout=60,
         env=env,
         cwd=str(cwd),
     )
