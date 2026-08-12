@@ -167,6 +167,9 @@ class _SnapshotSeededReadModel(ChatReadModel):
     def conversation_history(self, *, limit: "int | None" = None):
         return []
 
+    def load_older_conversation_history(self, *, agent=None, session_id=None):
+        return 0
+
 
 # ---------------------------------------------------------------------------
 # 1. Materialize + promote (the core lifecycle)

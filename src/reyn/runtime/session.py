@@ -3283,6 +3283,29 @@ class Session:
         self.history[0:0] = parsed
         return len(parsed)
 
+    def extend_history_backward(self, *, min_lines: int = _HISTORY_HYDRATE_MIN_LINES) -> int:
+        """#4387 Phase B ② (remaining consumers): the PUBLIC paging primitive
+        for callers outside ``Session`` itself — TUI scrollback paging and
+        in-conversation search, via
+        :meth:`reyn.interfaces.repl.read_model.RegistryReadModel.load_older_conversation_history`.
+
+        Thin wrapper over :meth:`_load_older_entries`, deriving ``before_seq``
+        from ``self.history[0].seq`` — "give me more of what's already oldest
+        in memory," the generic paging shape. This differs from
+        :meth:`_active_branch_history`'s own internal use of the private
+        primitive, which derives ``before_seq`` from the WAL rewind
+        threshold instead (a specific correctness bound, not "one more
+        page") — that call stays on the private method directly since it is
+        still ``Session``'s own internal correctness mechanism, not a
+        paging request from outside.
+
+        Returns the count of entries prepended (0 = the file's start was
+        already reached — the sole "nothing more to load" signal a paging
+        caller needs).
+        """
+        oldest_seq = self.history[0].seq if self.history else 0
+        return self._load_older_entries(before_seq=oldest_seq, min_lines=min_lines)
+
     def load_history(self) -> None:
         """#4387 Phase B ①: hydrate ``self.history`` at startup WITHOUT
         necessarily reading the whole (potentially huge — owner's real

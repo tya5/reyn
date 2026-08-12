@@ -399,7 +399,15 @@ def test_no_slash_module_reaches_the_session_outbox() -> None:
 #: is not a regression. What it catches is the one move that would make the
 #: residue registry above look finished while nothing was fixed — publishing a
 #: private member so a handler can keep reaching for it under a new name.
-_PUBLIC_MEMBER_CEILING = 104
+#:
+#: Raised 104 -> 105 for #4387 Phase B ②'s ``extend_history_backward`` — NOT a
+#: slash-handler reach-in (this gate's own failure mode): it is the sanctioned
+#: external accessor :mod:`reyn.interfaces.repl.read_model`'s
+#: ``RegistryReadModel`` needs for TUI scrollback paging / search, the SAME
+#: kind of thin public wrapper ``conversation_history`` already is over
+#: ``self.history`` — a read-model seam reads ``Session`` through public
+#: members by design, unlike a slash handler reaching into private state.
+_PUBLIC_MEMBER_CEILING = 105
 
 
 def test_session_public_surface_does_not_grow() -> None:

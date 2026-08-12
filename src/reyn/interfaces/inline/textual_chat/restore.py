@@ -143,8 +143,13 @@ RESTORED_META_KEY = "_restored"
 
 #: Leading divider row announcing that what follows is the resumed prior
 #: conversation (operator legibility — the Product-Think lens). Emitted once,
-#: only when there is at least one restored turn.
-_RESUME_DIVIDER = "⤺ resumed previous conversation"
+#: only when there is at least one restored turn. Public (#4387 Phase B ②):
+#: ``app.py``'s ``_extend_older_frames_from_disk`` needs to recognise and
+#: strip a SECOND divider a later re-projection call would otherwise add —
+#: this module only ever inserts ONE per call, but a caller re-projecting
+#: the growing log MULTIPLE times (disk-extension) must dedupe across calls
+#: itself, which needs the exact text this module uses.
+RESUME_DIVIDER = "⤺ resumed previous conversation"
 
 
 def _failure_meta(m: "ChatMessage") -> "dict[str, object] | None":
@@ -347,9 +352,9 @@ def project_restored_frames(
     if not frames:
         return frames
     divider = OutboxMessage(
-        kind="system", text=_RESUME_DIVIDER, meta={RESTORED_META_KEY: True}
+        kind="system", text=RESUME_DIVIDER, meta={RESTORED_META_KEY: True}
     )
     return [divider, *frames]
 
 
-__all__ = ["RESTORED_META_KEY", "project_restored_frames"]
+__all__ = ["RESTORED_META_KEY", "RESUME_DIVIDER", "project_restored_frames"]

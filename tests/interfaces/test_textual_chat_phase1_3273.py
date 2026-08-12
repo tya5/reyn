@@ -214,6 +214,7 @@ class RM(ChatReadModel):
     @property
     def history_path(self): return Path("/tmp/reyn_isolation_history")
     def conversation_history(self, *, limit=None): return []
+    def load_older_conversation_history(self, *, agent=None, session_id=None): return 0
 
 
 class R(ChatRenderer):

@@ -225,6 +225,9 @@ class _NoneReadModel(ChatReadModel):
     def conversation_history(self, *, limit=None):
         return []
 
+    def load_older_conversation_history(self, *, agent=None, session_id=None):
+        return 0
+
 
 @pytest.mark.asyncio
 async def test_submit_blocked_while_unattached_preserves_typed_text():
