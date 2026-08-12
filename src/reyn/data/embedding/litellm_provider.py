@@ -417,13 +417,17 @@ class LiteLLMEmbeddingProvider:
                 # up): this loop has no fallback within one attempt — the
                 # axis② cooldown protects fallback-having callers, not
                 # this one; see `ensure_litellm_ready()`'s own docstring.
-                if await asyncio.to_thread(ensure_litellm_ready, ignore_cooldown=True) is None:
+                litellm = await asyncio.to_thread(ensure_litellm_ready, ignore_cooldown=True)
+                if litellm is None:
                     raise LitellmUnavailableError(
                         "import litellm failed — see the reyn.llm."
                         "litellm_bootstrap warn-once log line for the "
                         "underlying cause",
                     )
-                import litellm
+                # #4395/#4421 (seam alignment): reads the module off the
+                # return value rather than a separate `import litellm` —
+                # the only form the litellm-import gate allows outside
+                # `litellm_bootstrap.py` itself.
                 response = await self._aembedding_bounded(
                     litellm,
                     model=effective_model,
