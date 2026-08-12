@@ -57,7 +57,7 @@ def _make_resolver(extra: dict | None = None) -> ModelResolver:
     }
     if extra:
         mapping.update(extra)
-    return ModelResolver(mapping, builtin={})
+    return ModelResolver(mapping)
 
 
 def _ctx(session) -> "SlashContext":

@@ -361,7 +361,6 @@ class ModelResolver:
         self,
         mapping: dict[str, Any],
         *,
-        builtin: dict[str, str | dict] | None = None,
         default_class: str = "standard",
         purpose_classes: dict[str, str] | None = None,
         model_max_class: "str | None" = None,
@@ -370,13 +369,14 @@ class ModelResolver:
 
         Args:
             mapping:  User-declared models from reyn.yaml (``ReynConfig.llm.models``,
-                      #4174 T3: moved from top-level ``.models``).
-            builtin:  Extra namespace entries merged in BELOW *mapping* (user
-                      entries always win on a name collision). Defaults to
-                      ``{}`` — reyn ships no built-in model catalog (#4349).
-                      Exists for tests that want to inject a synthetic
-                      builtin-style entry to exercise the precedence rule
-                      without depending on any real, named model.
+                      #4174 T3: moved from top-level ``.models``). The sole
+                      source of the namespace (#4349: reyn ships no built-in
+                      model catalog to merge underneath it — an earlier
+                      ``builtin=`` parameter existed for exactly that merge
+                      and was removed with the catalog itself once
+                      measurement showed zero production call sites ever
+                      passed it; a caller that wants a synthetic namespace
+                      entry for a test declares it directly in ``mapping``).
             default_class: #1672 — the configured default model class
                       (``ReynConfig.llm.model``, #4174 T3: moved from top-level
                       ``.model``) returned by ``class_for_purpose`` for any unset
@@ -395,14 +395,11 @@ class ModelResolver:
                       here — this class only carries the configured value.
         """
         self._model_max_class = model_max_class
-        if builtin is None:
-            builtin = {}
-
         self._default_class = default_class
         self._purpose_classes: dict[str, str] = dict(purpose_classes or {})
 
-        # Flat namespace: user entries override built-ins.
-        self._namespace: dict[str, Any] = {**builtin, **mapping}
+        # Flat namespace: mapping is the only source (#4349).
+        self._namespace: dict[str, Any] = dict(mapping)
 
         # Resolve all entries at startup (fail-fast).
         self._resolved: dict[str, ModelSpec] = {}
@@ -413,8 +410,8 @@ class ModelResolver:
                 )
 
         # #1454 PR-B: name-position validation. The resolved ``model`` is a NAME
-        # position, which should be ``provider/model`` (the `/`-prefix invariant
-        # — all builtin defaults comply). WARN (not error) for a bare name:
+        # position, which should be ``provider/model`` (the `/`-prefix invariant).
+        # WARN (not error) for a bare name:
         # litellm may accept some bare strings, so bare usage is
         # degraded-but-allowed, flagged so a misroute is diagnosable. (Class
         # positions — tier references — are closed-world via

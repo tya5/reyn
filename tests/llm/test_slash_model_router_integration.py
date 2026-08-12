@@ -62,7 +62,6 @@ class _FakeEvents:
 def _make_resolver(*, default_class: str = "standard") -> ModelResolver:
     return ModelResolver(
         {"light": "openai/gpt-4o-mini", "standard": "openai/gpt-4o", "strong": "openai/gpt-4"},
-        builtin={},
         default_class=default_class,
     )
 

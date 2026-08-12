@@ -9,8 +9,6 @@ Pinned invariants:
   - name position (contains '/') passthrough: ModelSpec(model=name, kwargs={})
   - class position (no '/') that fails to resolve: raises ValueError (#4349)
   - ReynConfig.models accepts dict-form values (config layer check)
-  - [EXTENDS] a synthetic `builtin=` entry can be extended / overridden by a
-    user-declared entry of the same name (#4349: no real catalog to depend on)
   - [EXTENDS] backward compat: existing ``/``-containing str form unchanged
 
 Reference: PR-MODEL-SPEC Task 2 (Tier 2) + PR-MODEL-SPEC-EXTENDS Task 3 (Tier 2).
@@ -142,9 +140,6 @@ def test_is_known_class_str_form():
     """Tier 2: is_known_class True for str-form class, False for unknown."""
     r = ModelResolver({"light": "openai/model-a"})
     assert r.is_known_class("light") is True
-    # #3368: light/standard/strong are now built-in aliases (resolvable with
-    # no user mapping at all), so "strong" is a poor unknown-class example —
-    # use a name that is neither user-declared nor a built-in.
     assert r.is_known_class("totally-unknown-class") is False
 
 
@@ -169,8 +164,6 @@ def test_is_known_class_mixed_mapping():
     })
     assert r.is_known_class("light") is True
     assert r.is_known_class("strong") is True
-    # #3368: "standard" is now a built-in alias, so it is known even though
-    # this mapping doesn't declare it — use a genuinely unrelated name.
     assert r.is_known_class("totally-unknown-class") is False
 
 
@@ -205,39 +198,8 @@ def test_reyn_config_models_accepts_dict_form():
 
 
 # ---------------------------------------------------------------------------
-# PR-MODEL-SPEC-EXTENDS: built-in pre-load + user override (Tier 2)
+# PR-MODEL-SPEC-EXTENDS: backward compat (Tier 2)
 # ---------------------------------------------------------------------------
-
-
-def test_extends_synthetic_builtin_is_preloaded():
-    """Tier 2: [EXTENDS] #4349 — a synthetic `builtin=` entry (not a real,
-    former catalog name — reyn ships no model catalog anymore) is resolvable
-    with an empty user mapping, the same precedence mechanism the deleted
-    concrete catalog used to demonstrate."""
-    r = ModelResolver({}, builtin={
-        "probe-thinking": {
-            "model": "anthropic/probe-model",
-            "extra_body": {"thinking": {"type": "enabled", "budget_tokens": 4000}},
-        },
-    })
-    spec = r.resolve("probe-thinking")
-    assert isinstance(spec, ModelSpec)
-    assert spec.model == "anthropic/probe-model"
-    assert spec.kwargs["extra_body"]["thinking"]["type"] == "enabled"
-
-
-def test_extends_user_override_wins_over_builtin():
-    """Tier 2: [EXTENDS] a user-declared entry with the same name as a
-    `builtin=`-injected entry takes precedence (#4349: verified with a
-    SYNTHETIC builtin, not a former catalog name — the precedence RULE
-    survives the catalog's removal; `model_resolver.py`'s `{**builtin,
-    **mapping}` is unchanged)."""
-    r = ModelResolver(
-        {"probe-x": {"model": "openai/gpt-4o"}},
-        builtin={"probe-x": {"model": "openai/should-be-overridden"}},
-    )
-    spec = r.resolve("probe-x")
-    assert spec.model == "openai/gpt-4o"
 
 
 def test_extends_backward_compat_slash_str_form():
@@ -288,7 +250,7 @@ def test_standard_classes_is_a_plain_ascending_cost_order_literal():
 
 def test_resolve_class_or_fallback_known_class_is_honoured():
     """Tier 2: #1454 — a requested value that IS a known class is returned."""
-    r = ModelResolver({"strong": "openai/gpt-4o"}, builtin={})
+    r = ModelResolver({"strong": "openai/gpt-4o"})
     assert r.resolve_class_or_fallback("strong", "standard", where="t") == "strong"
 
 
@@ -296,7 +258,7 @@ def test_resolve_class_or_fallback_unknown_falls_back():
     """Tier 2: #1454 — a non-class value (e.g. an LLM-injected literal model
     string) is rejected and the trusted fallback is returned (closed-world:
     op/skill-supplied class-typed fields never pass through as a name)."""
-    r = ModelResolver({"standard": "openai/gpt-4o"}, builtin={})
+    r = ModelResolver({"standard": "openai/gpt-4o"})
     assert r.resolve_class_or_fallback(
         "gpt-3.5-turbo", "standard", where="t",
     ) == "standard"
@@ -308,13 +270,13 @@ def test_resolve_class_or_fallback_unknown_falls_back():
 
 def test_resolve_class_or_fallback_none_requested_uses_fallback():
     """Tier 2: #1454 — no requested class → the fallback is used as-is."""
-    r = ModelResolver({"standard": "openai/gpt-4o"}, builtin={})
+    r = ModelResolver({"standard": "openai/gpt-4o"})
     assert r.resolve_class_or_fallback(None, "standard", where="t") == "standard"
 
 
 def test_resolve_class_or_fallback_none_everywhere_defaults_standard():
     """Tier 2: #1454 — requested and fallback both absent → 'standard'."""
-    r = ModelResolver({}, builtin={})
+    r = ModelResolver({})
     assert r.resolve_class_or_fallback(None, None, where="t") == "standard"
 
 
@@ -325,10 +287,10 @@ def test_bare_model_name_warns_prefixed_does_not(caplog):
     import logging
 
     with caplog.at_level(logging.WARNING, logger="reyn.llm.model_resolver"):
-        ModelResolver({"bare": {"model": "gpt-4o-mini"}}, builtin={})
+        ModelResolver({"bare": {"model": "gpt-4o-mini"}})
     assert any("no provider prefix" in r.message for r in caplog.records)
 
     caplog.clear()
     with caplog.at_level(logging.WARNING, logger="reyn.llm.model_resolver"):
-        ModelResolver({"ok": {"model": "openai/gpt-4o"}}, builtin={})
+        ModelResolver({"ok": {"model": "openai/gpt-4o"}})
     assert not any("no provider prefix" in r.message for r in caplog.records)
