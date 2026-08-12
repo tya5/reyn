@@ -186,6 +186,88 @@ def test_safe_image_renderable_catches_a_print_time_failure() -> None:
     assert "a photo" in out
 
 
+def test_safe_image_renderable_delegates_measurement_to_the_inner_renderable() -> None:
+    """Tier 2: #3846 live-verify — `_SafeImageRenderable.__rich_measure__`
+    delegates to the wrapped renderable's own measurement. This is REYN'S
+    OWN wrapper behavior (a claim about which method reyn's dispatch calls),
+    not textual_image's rendering fidelity — the fake inner below has no
+    third-party code in it at all.
+
+    Why this matters (lead-coder review, #4463): without this delegation,
+    Rich has no `__rich_measure__` to find on THIS wrapper, and the
+    enclosing `Group`'s own measurement falls back to `minimum=0` — which
+    then makes `console.render_lines(renderable, options.update_width(0))`
+    return an EMPTY list. The symptom is "the row is completely blank, not
+    even an error line" — exactly what went unnoticed until the owner asked
+    directly (nothing else would have caught a silent regression here).
+    Falsify-verified: removing the `__rich_measure__` override (or making
+    it not delegate) reproduces `minimum == 0`."""
+    from rich.console import Console as _Console
+    from rich.measure import Measurement
+
+    from reyn.interfaces.repl.present_renderer import _SafeImageRenderable
+
+    class _MeasurableInner:
+        def __rich_console__(self, console: object, options: object):
+            yield "unused"
+
+        def __rich_measure__(self, console: object, options: object) -> Measurement:
+            return Measurement(42, 42)
+
+    wrapped = _SafeImageRenderable(_MeasurableInner(), "a photo")
+    console = _Console(width=100, file=io.StringIO(), color_system=None)
+    measured = Measurement.get(console, console.options, wrapped)
+    assert measured.minimum == 42, (
+        f"expected the inner renderable's own measurement (42) to pass through, got {measured}"
+    )
+
+
+def test_safe_image_renderable_normalizes_a_list_control_segment_to_a_tuple() -> None:
+    """Tier 2: #3846 live-verify — `_SafeImageRenderable.__rich_console__`
+    normalizes any yielded `Segment.control` LIST to a tuple before passing
+    it on. This is REYN'S OWN normalization behavior, not a claim about
+    `textual-image`'s own correctness — the fake inner below yields exactly
+    the shape a real `textual-image` sixel bug produces, without importing
+    `textual_image` at all.
+
+    Real bug this guards (found via a real turn through the real
+    render/paint path, #4463): `textual_image/renderable/sixel.py`'s own
+    `_NULL_CONTROL = [(ControlType.CURSOR_FORWARD, 0)]` is a LIST literal.
+    `Segment` is a `NamedTuple`, so a list-valued `control` field makes the
+    whole `Segment` unhashable — and Rich's `Segment._split_cells` is
+    `@lru_cache`-wrapped (keyed on the segment itself), so the crash
+    (`TypeError: unhashable type: 'list'`) only fires the first time
+    something needs to HASH the segment (flowview's own `Strip.crop`,
+    stamping gutter offsets on every row — not image-specific), not at
+    construction or at a plain `Console.print`.
+
+    Residual: if `textual-image` upstream fixes `_NULL_CONTROL` to be a
+    tuple, this normalization becomes a no-op (harmless) and can be
+    removed — same shape as #4458's own upstream-fixed-it-first residual
+    note."""
+    from rich.segment import ControlType, Segment
+
+    from reyn.interfaces.repl.present_renderer import _SafeImageRenderable
+
+    class _SixelLikeInner:
+        def __rich_console__(self, console: object, options: object):
+            # The exact shape a real textual-image sixel Segment carries —
+            # text/style/control as a NamedTuple, control as a plain list.
+            yield Segment("\x1b7", None, [(ControlType.CURSOR_FORWARD, 0)])
+
+    wrapped = _SafeImageRenderable(_SixelLikeInner(), "a photo")
+    segments = list(wrapped.__rich_console__(None, None))
+    (segment,) = segments
+    assert isinstance(segment, Segment)
+    assert isinstance(segment.control, tuple), (
+        f"expected control normalized to a tuple (hashable), got {type(segment.control)!r}"
+    )
+    # And the Segment itself must actually be hashable now — the real crash
+    # this guards is a hash attempt inside Rich's own lru_cache, not merely
+    # a type mismatch.
+    hash(segment)
+
+
 def test_image_with_undecodable_body_falls_back_to_a_distinct_status_line() -> None:
     """Tier 1: #3846 ③ — a resolved-but-not-actually-an-image body (corrupt,
     truncated, or a non-image content type mislabeled by the server) fails

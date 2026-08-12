@@ -282,7 +282,11 @@ def test_pinned_transport_preserves_host_header(monkeypatch):
 
 def test_pinned_transport_sets_sni_hostname_extension(monkeypatch):
     """Tier 2: PinnedAsyncHTTPTransport sets extensions['sni_hostname'] to the
-    original hostname bytes so httpcore uses it for TLS SNI + cert validation
+    original hostname (a STR, #3846 live-verify fix — see _ssrf_pin.py's own
+    comment: httpcore forwards this straight through as `server_hostname` to
+    the backend's `start_tls`, both of which type it `str | None`; a bytes
+    value crashed for real inside anyio's `idna2008_resolve`, which calls
+    `.encode()` on it) so httpcore uses it for TLS SNI + cert validation
     (not the numeric IP that the socket connects to)."""
     import httpx
 
@@ -296,7 +300,7 @@ def test_pinned_transport_sets_sni_hostname_extension(monkeypatch):
 
     assert transport.recorded_request is not None
     sni = transport.recorded_request.extensions.get("sni_hostname")
-    assert sni == b"example.com"
+    assert sni == "example.com"
 
 
 def test_pinned_transport_non_standard_port_host_header(monkeypatch):

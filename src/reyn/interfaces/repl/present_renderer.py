@@ -132,22 +132,86 @@ class _SafeImageRenderable:
     `TextualImage(...)` construction itself never raises for these, so the
     pre-existing `try/except` in `_render_image` never sees it; this wrapper
     is the only thing standing between that bug and an uncaught exception
-    reaching whatever Console the presenter/renderer layer owns."""
+    reaching whatever Console the presenter/renderer layer owns.
+
+    Also implements `__rich_measure__` (#3846 live-verify follow-up) —
+    delegates to the inner `TextualImage`'s own measurement, which computes
+    a real cell width from the decoded image. Without this, Rich has no
+    `__rich_measure__` to find on THIS wrapper and falls back to a
+    `Measurement(minimum=0, maximum=options.max_width)` for the enclosing
+    `Group` (verified directly: `Measurement.get(console, options,
+    render_presentation_nodes(...))` returns `minimum=0` for an image node
+    with no measure delegation). A caller that sizes the row to that
+    measured MINIMUM before rendering (Textual's own auto-width/auto-height
+    layout does this) then renders at width=0, which yields ZERO lines —
+    reproduced directly: `console.render_lines(renderable,
+    options.update_width(0))` returns `[]` — the exact "image row renders
+    as nothing, not even an error line" symptom (#4433's live-verify
+    finding), not a sixel/pty capture artifact."""
 
     def __init__(self, inner: "Any", label: str) -> None:
         self._inner = inner
         self._label = label
 
     def __rich_console__(self, console: "Any", options: "Any"):
+        from rich.segment import Segment
         from rich.text import Text
 
         try:
-            yield from self._inner.__rich_console__(console, options)
+            for segment in self._inner.__rich_console__(console, options):
+                # #3846 live-verify fix: a real `textual-image` 0.12.0/0.13.x
+                # sixel bug (`textual_image/renderable/sixel.py`'s own
+                # module-level `_NULL_CONTROL = [(ControlType.CURSOR_FORWARD,
+                # 0)]`) emits `Segment.control` as a plain LIST, not a tuple.
+                # `Segment` is a `NamedTuple` — a list-valued field makes the
+                # whole tuple unhashable, and Rich's own
+                # `Segment._split_cells` is `@lru_cache`-wrapped (keyed on
+                # the segment itself), so the CONSTRUCTION never raises but
+                # the FIRST time flowview needs to crop this row mid-segment
+                # (`textual_flowview`'s `_decorate_line`, stamping gutter
+                # offsets — every row, not image-specific) it does, with
+                # `TypeError: unhashable type: 'list'` — reproduced directly
+                # end-to-end through a real turn (real LLM tool call -> real
+                # router loop -> real op dispatch -> real TUI paint) once
+                # the two OTHER #3846 live-verify bugs (the SSRF-pin
+                # str/bytes SNI crash, `_ssrf_pin.py`; this class's own
+                # missing `__rich_measure__`, both fixed in the same PR)
+                # were fixed and let a real sixel Segment reach this far.
+                # Normalizing to a tuple here is a one-line, contained fix
+                # for a genuine third-party bug, matching this class's own
+                # established precedent (module docstring) of defending
+                # against real `textual-image` print-time failures rather
+                # than reporting upstream and blocking on it.
+                #
+                # Residual: if `textual-image` upstream fixes `_NULL_CONTROL`
+                # to a tuple, this normalization becomes a no-op (a tuple
+                # `isinstance(..., list)` check is already False) and can be
+                # removed then — same shape as #4458's own upstream-fixed-it
+                # residual note.
+                if isinstance(segment, Segment) and isinstance(segment.control, list):
+                    segment = Segment(segment.text, segment.style, tuple(segment.control))
+                yield segment
         except Exception as exc:
             yield Text(
                 f"[image loaded but could not render: {self._label} — {exc}]",
                 style="dim",
             )
+
+    def __rich_measure__(self, console: "Any", options: "Any") -> "Any":
+        from rich.measure import Measurement
+
+        inner_measure = getattr(self._inner, "__rich_measure__", None)
+        if inner_measure is not None:
+            try:
+                return inner_measure(console, options)
+            except Exception:
+                pass
+        # A measure-less inner or a measure failure still gets a real
+        # (non-zero) width rather than propagating into the enclosing
+        # Group's own minimum=0 fallback — 1 as the floor mirrors Rich's
+        # own default `Measurement(1, max_width)` for an unmeasurable
+        # renderable (see `rich.measure.Measurement.get`'s own fallback).
+        return Measurement(1, options.max_width)
 
 
 def _render_image(node: dict, image_cache: "dict[str, Any] | None") -> "Any":
