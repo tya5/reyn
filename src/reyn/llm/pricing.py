@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
+from typing import Any
 
 
 class UsageSource(str, Enum):
@@ -211,10 +212,28 @@ class TokenUsage:
         )
 
 
-def _usage_object_for(usage: TokenUsage):
+def _usage_object_for(litellm_module: "Any", usage: TokenUsage):
     """Build a ``litellm.types.utils.Usage`` carrying the cache breakdown so
     ``litellm.cost_per_token`` prices cached tokens at the cache rate instead
     of the full input rate.
+
+    #4395: takes the ALREADY-confirmed litellm module (``ensure_litellm_
+    ready()``'s own return value) as a parameter and reads ``Usage`` off it
+    via attribute access, rather than this function doing its own separate
+    ``from litellm.types.utils import Usage`` statement — lead-coder found
+    (with a live measurement) that THAT statement, on its own, in a process
+    where litellm was never successfully imported before, triggers the full
+    parent-package import AND litellm's ``default_encoding`` module-level
+    tiktoken sync fetch — the exact #4395 hazard, in a form (``from litellm.
+    X import Y``, not ``import litellm`` / ``from litellm import``) neither
+    this PR's nor architect's own site census had grepped for. Reading
+    ``litellm_module.types.utils.Usage`` off the confirmed module instead
+    means this function can no longer independently touch litellm at all —
+    it is structurally incapable of bypassing the chokepoint, not just
+    reliant on its current caller happening to gate it first (verified
+    empirically: ``litellm.types.utils`` is already a populated attribute
+    on the module object after a plain successful ``import litellm`` — no
+    separate submodule import statement is needed).
 
     Provider-convention note: reyn's ``TokenUsage.prompt_tokens`` ALREADY
     INCLUDES ``cached_tokens`` and ``cache_creation_tokens`` as subsets — this
@@ -233,9 +252,7 @@ def _usage_object_for(usage: TokenUsage):
     (``text_tokens = prompt_tokens - cache_hit - cache_creation``), which is
     the correct convention for reyn's already-normalized TokenUsage.
     """
-    from litellm.types.utils import Usage
-
-    return Usage(
+    return litellm_module.types.utils.Usage(
         prompt_tokens=usage.prompt_tokens,
         completion_tokens=usage.completion_tokens,
         prompt_tokens_details={
@@ -266,6 +283,17 @@ def estimate_cost(
         return 0.0, None
 
     try:
+        # #4395 PR-1: route through the sole chokepoint (this bare `import
+        # litellm` never did before) so a failure isn't independently
+        # re-attempted — it was previously bypassing ensure_litellm_ready()
+        # entirely, meaning EVERY cost-estimation call (which runs every
+        # turn, unlike model_budget's occasional lookups) re-attempted
+        # litellm's own slow, unbounded import on every failure. `None`
+        # here is already this function's own documented "cost unknown"
+        # sentinel (see the docstring above) — no new fallback shape.
+        from reyn.llm.litellm_bootstrap import ensure_litellm_ready
+        if ensure_litellm_ready() is None:
+            return None, None
         import litellm
 
         # #1829 S2 (option 3): a ``litellm.model_cost`` entry can EXIST with None
@@ -282,7 +310,7 @@ def estimate_cost(
 
         prompt_cost, completion_cost = litellm.cost_per_token(
             model=model,
-            usage_object=_usage_object_for(usage),
+            usage_object=_usage_object_for(litellm, usage),
         )
         total_cost = prompt_cost + completion_cost
 
@@ -433,6 +461,15 @@ def estimate_cost_breakdown(
         return CostBreakdown()
 
     try:
+        # #4395 PR-1: route through the sole chokepoint — see estimate_cost's
+        # identical fix above for the full reasoning (this bare `import
+        # litellm` never went through ensure_litellm_ready() before,
+        # independently re-attempting litellm's own slow import on every
+        # failed cost-breakdown call). `None` is already this function's
+        # own documented "unpriced/unknown" sentinel.
+        from reyn.llm.litellm_bootstrap import ensure_litellm_ready
+        if ensure_litellm_ready() is None:
+            return None
         import litellm
 
         entry = litellm.model_cost.get(model)
@@ -501,6 +538,15 @@ def estimate_embedding_cost(
         return 0.0, None
 
     try:
+        # #4395 PR-1: route through the sole chokepoint — same fix and
+        # reasoning as estimate_cost/estimate_cost_breakdown above (this
+        # bare `import litellm` never went through ensure_litellm_ready()
+        # either — a 4th site, beyond the 3 originally measured for this
+        # file, found while fixing the other 3). `None` is already this
+        # function's own documented "unpriced/unknown" sentinel.
+        from reyn.llm.litellm_bootstrap import ensure_litellm_ready
+        if ensure_litellm_ready() is None:
+            return None, None
         import litellm
 
         entry = litellm.model_cost.get(model)
