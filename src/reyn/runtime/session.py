@@ -1488,16 +1488,6 @@ class Session:
         self._event_store = new_store
 
     @property
-    def has_hook_bus_bridge_to_parent(self) -> bool:
-        """#4215 ②: read-only public surface for whether
-        ``_hook_bus_bridge_task`` is set — lets a caller/test observe
-        whether THIS session's hook-bus events are being forwarded to a
-        parent's bus (an ATTACHED pipeline driver spawn) without reaching
-        into the "private" attribute, mirroring ``non_interactive``'s own
-        pattern just below."""
-        return self._hook_bus_bridge_task is not None
-
-    @property
     def non_interactive(self) -> bool:
         """#2585 PR2: read-only public surface for ``_non_interactive`` (set at
         construction from the frontend's session_factory, and force-overridden

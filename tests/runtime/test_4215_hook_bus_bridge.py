@@ -83,17 +83,18 @@ async def test_attached_spawn_bridges_child_hook_events_to_the_parent(tmp_path: 
         notify_reply=False,
         attached_parent_session=parent,
     )
+    # The bridge task's own `child_bus.subscribe()` must actually run
+    # before a publish on the child can reach it — HookBus is a broadcast
+    # bus with no replay for a subscriber that registers late (bus.py's
+    # own module docstring). `asyncio.create_task` schedules but does not
+    # immediately run the new task, so wait for its subscription to
+    # actually register (the public `subscriber_count` surface, reached
+    # via `driver._hook_bus` — the established convention roughly 20
+    # other tests in this repo already use, since there is no public
+    # `hook_bus` property). This wait doubles as the "a bridge task
+    # started" proof itself — no dedicated public surface needed for
+    # that fact alone.
     try:
-        assert driver.has_hook_bus_bridge_to_parent, (
-            "an ATTACHED spawn must start the child->parent bridge task"
-        )
-        # The bridge task's own `child_bus.subscribe()` must actually run
-        # before a publish on the child can reach it — HookBus is a
-        # broadcast bus with no replay for a subscriber that registers
-        # late (bus.py's own module docstring). `asyncio.create_task`
-        # schedules but does not immediately run the new task, so wait for
-        # its subscription to actually register (the public
-        # `subscriber_count` surface) rather than publishing on a race.
         await wait_until(lambda: driver._hook_bus.subscriber_count >= 1)
 
         async with parent._hook_bus.subscribe() as parent_sub:
@@ -114,7 +115,14 @@ async def test_detached_spawn_starts_no_bridge_task(tmp_path: Path) -> None:
     """Tier 2: scope guard — a DETACHED spawn (no live parent to bridge to,
     `attached_parent_session=None`) starts no bridge task at all. Without
     this, a detached driver would silently subscribe to nothing useful (its
-    own events forwarded nowhere) while still paying a live task's cost."""
+    own events forwarded nowhere) while still paying a live task's cost.
+
+    Observed via ``HookBus.subscriber_count`` (already public) rather than
+    a dedicated Session-level property — a public surface is a means to
+    avoid a private-state assertion, not a goal in itself, and a session's
+    own hook-bus subscriber count already says everything this test needs
+    without growing Session's own public member ceiling for a single
+    test's sake."""
     state_log = StateLog(tmp_path / ".reyn" / "wal.jsonl")
     reg = _agent_registry(tmp_path, state_log)
 
@@ -129,7 +137,15 @@ async def test_detached_spawn_starts_no_bridge_task(tmp_path: Path) -> None:
         notify_reply=False,
         attached_parent_session=None,
     )
-    assert not driver.has_hook_bus_bridge_to_parent
+    # Give a wrongly-started bridge task a real chance to subscribe before
+    # asserting its absence (same "don't race a real async effect" shape
+    # as the other tests in this file).
+    await asyncio.sleep(0.1)
+    subscriber_count = driver._hook_bus.subscriber_count
+    assert subscriber_count == 0, (
+        "a DETACHED spawn must not start a hook-bus bridge task — nothing "
+        "should have subscribed to the driver's own bus"
+    )
 
 
 @pytest.mark.asyncio
@@ -138,7 +154,14 @@ async def test_removing_the_child_session_cancels_its_bridge_task(tmp_path: Path
     child's bridge task. Without this, every attached pipeline run would
     leak one live background task per invocation for the life of the
     process (the exact class of bug the #4376 image-cache fix, landed
-    minutes before this, exists to prevent for a different resource)."""
+    minutes before this, exists to prevent for a different resource).
+
+    Observed via ``HookBus.subscriber_count`` (already public), not the
+    task object itself: cancelling ``bridge_child_bus_to_parent`` unwinds
+    its ``async with child_bus.subscribe()`` block, which calls
+    ``close()`` — the count going back to 0 IS the externally-visible
+    consequence of the cancel actually running (same reasoning as the
+    scope-guard test above)."""
     state_log = StateLog(tmp_path / ".reyn" / "wal.jsonl")
     reg = _agent_registry(tmp_path, state_log)
     parent = reg.get_or_load("worker")
@@ -154,13 +177,11 @@ async def test_removing_the_child_session_cancels_its_bridge_task(tmp_path: Path
         notify_reply=False,
         attached_parent_session=parent,
     )
-    task = driver._hook_bus_bridge_task
-    assert task is not None and not task.done()
+    await wait_until(lambda: driver._hook_bus.subscriber_count >= 1)
 
     await reg.remove_session("worker", sid)
 
-    await wait_until(lambda: task.done())
-    assert task.cancelled()
+    await wait_until(lambda: driver._hook_bus.subscriber_count == 0)
 
 
 def test_bridge_child_bus_to_parent_never_touches_a_hook_dispatcher() -> None:
