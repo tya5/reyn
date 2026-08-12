@@ -147,9 +147,15 @@ def _check_builtin_rag_plugin_install(wheel_path: Path, tmp_root: Path) -> bool:
 
     THREE throwaway venvs:
       * ``venv-rag-plugin`` — wheel-only reyn install; runs the committed
-        probe (this process needs only reyn + yaml to call ``plugin_install``
-        — fastmcp is a core reyn dep, so the MCP client call below works
-        from here too).
+        probe (this process needs reyn + yaml to call ``plugin_install``,
+        PLUS the rag plugin's own ``requirements.txt`` — #4302: fastmcp is
+        no longer a core reyn dep, and the probe's own MCP test-client code
+        (``_call_chunk_tool``) imports fastmcp directly, so this venv now
+        needs the plugin's requirements installed too, same as
+        ``venv-rag-deps`` below — the SAME contract "the gate that runs
+        plugin-dependent code installs the plugin's own requirements.txt",
+        applied to the harness's own client this time, not just the server
+        it talks to).
       * ``venv-no-deps`` — a BARE venv (``with_pip=False``): no fastmcp, no
         chonkie, nothing. Its interpreter is what the fail-fast leg spawns
         the registered chunker command against — deterministically
@@ -164,6 +170,10 @@ def _check_builtin_rag_plugin_install(wheel_path: Path, tmp_root: Path) -> bool:
     ``scripts/wheel_plugin_install_probe.py``, run BY THE WHEEL-ONLY venv's
     interpreter. Returns True iff every check inside the probe passed.
     """
+    rag_requirements = (
+        REPO_ROOT / "src" / "reyn" / "builtin" / "plugins" / "rag" / "requirements.txt"
+    )
+
     rag_venv = tmp_root / "venv-rag-plugin"
     venv.EnvBuilder(with_pip=True, clear=True).create(str(rag_venv))
     rag_bin = rag_venv / "bin"
@@ -177,6 +187,15 @@ def _check_builtin_rag_plugin_install(wheel_path: Path, tmp_root: Path) -> bool:
     # the plugin's own deps (#3209); this venv only needs reyn itself
     # (+ yaml, a core dep) to run the plugin_install op.
     _run([str(rag_python), "-m", "pip", "install", "--quiet", str(wheel_path)])
+    # #4302: this venv also runs the probe's own MCP test-client
+    # (``_call_chunk_tool``, fastmcp-based) — install the plugin's own
+    # requirements.txt (not a hand-picked subset, so a future change to it
+    # is followed automatically) rather than reintroducing fastmcp as a
+    # reyn-side dependency declaration.
+    _run([
+        str(rag_python), "-m", "pip", "install", "--quiet",
+        "-r", str(rag_requirements),
+    ])
 
     # A BARE venv — no third-party packages at all — for the fail-fast leg.
     no_deps_venv = tmp_root / "venv-no-deps"
@@ -197,9 +216,6 @@ def _check_builtin_rag_plugin_install(wheel_path: Path, tmp_root: Path) -> bool:
     rag_deps_python = rag_deps_bin / "python"
     if not rag_deps_python.exists():  # pragma: no cover - Windows layout
         rag_deps_python = rag_deps_bin / "python.exe"
-    rag_requirements = (
-        REPO_ROOT / "src" / "reyn" / "builtin" / "plugins" / "rag" / "requirements.txt"
-    )
     _run([
         str(rag_deps_python), "-m", "pip", "install", "--quiet",
         "-r", str(rag_requirements),
