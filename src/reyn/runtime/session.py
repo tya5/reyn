@@ -8003,37 +8003,59 @@ class Session:
         enum either — but a chain that never runs still primes nothing).
         Running the chain here instead makes the ordering guarantee structural
         rather than kind-dependent.
+
+        #4405: this whole body is the "one turn" a ``REYN_STALL_TRACE=N``
+        stall-trace diagnostic brackets — armed on entry, disarmed in a
+        ``finally`` so an exception path still cancels it. Off by default
+        (env var unset); see ``reyn.runtime.stall_trace`` for why.
         """
-        self._last_turn_chain_id = chain_id
-        await self._router_host.maybe_refresh_mcp_tools_from_yaml()
-        self._router_host.maybe_reload_mcp_tools_cache_from_disk()
-        await self._router_host.ensure_mcp_tools_cached(
-            per_server_timeout=self._safety.timeout.mcp_probe_seconds,
+        from reyn.runtime.stall_trace import (
+            arm as _arm_stall_trace,
         )
-        with active_turn(chain_id):
-            await self._loop_driver.run_turn(user_text, chain_id)
-        # #1800 slice 5a: emit HERE (after `run_turn()` returns), not inside RouterLoop — the
-        # only placement that fires exactly once per turn regardless of which terminal path the
-        # loop took; moving it into RouterLoop risks double-emission or a missed terminal path.
-        self._audit_events.emit("turn_completed", chain_id=chain_id)
-        # #1800 slice 5b: turn_end lifecycle hooks — E self-continuation / C stage / F shell:
-        # docs/concepts/runtime/hooks.md#e-self-continuation-a-push-with-wake-true
-        await self._hook_dispatcher.dispatch(
-            "turn_end",
-            build_hook_payload(
-                "turn_end", agent_name=self.agent_name,
-                chain_id=chain_id, user_text=user_text,
-            ),
+        from reyn.runtime.stall_trace import (
+            disarm as _disarm_stall_trace,
         )
-        # #2073 S1: config hot-reload turn-boundary safe-point (timing-B):
-        # docs/concepts/runtime/config-hot-reload.md#turn-boundary-safe-point-timing-b
-        await self._hot_reloader.apply_pending()
-        # #3787: project-context edit detection — read-only, emits at most once per
-        # edit; does NOT reload ``self._project_context`` (see ProjectContextWatcher).
-        self._project_context_watcher.check()
-        # ADR-0038 Stage 1a: turn boundary = a user-facing checkpoint. #1547: the
-        # user message is this checkpoint's anchor for the rewind-timeline preview.
-        # #1533 2c: the FULL message is persisted alongside (edit-prefill source).
-        await self._journal.cut_generation(
-            anchor=_truncate_anchor(user_text), full_message=user_text,
+        from reyn.runtime.stall_trace import (
+            stall_trace_seconds_from_env,
         )
+
+        _stall_seconds = stall_trace_seconds_from_env()
+        if _stall_seconds is not None:
+            _arm_stall_trace(_stall_seconds)
+        try:
+            self._last_turn_chain_id = chain_id
+            await self._router_host.maybe_refresh_mcp_tools_from_yaml()
+            self._router_host.maybe_reload_mcp_tools_cache_from_disk()
+            await self._router_host.ensure_mcp_tools_cached(
+                per_server_timeout=self._safety.timeout.mcp_probe_seconds,
+            )
+            with active_turn(chain_id):
+                await self._loop_driver.run_turn(user_text, chain_id)
+            # #1800 slice 5a: emit HERE (after `run_turn()` returns), not inside RouterLoop — the
+            # only placement that fires exactly once per turn regardless of which terminal path the
+            # loop took; moving it into RouterLoop risks double-emission or a missed terminal path.
+            self._audit_events.emit("turn_completed", chain_id=chain_id)
+            # #1800 slice 5b: turn_end lifecycle hooks — E self-continuation / C stage / F shell:
+            # docs/concepts/runtime/hooks.md#e-self-continuation-a-push-with-wake-true
+            await self._hook_dispatcher.dispatch(
+                "turn_end",
+                build_hook_payload(
+                    "turn_end", agent_name=self.agent_name,
+                    chain_id=chain_id, user_text=user_text,
+                ),
+            )
+            # #2073 S1: config hot-reload turn-boundary safe-point (timing-B):
+            # docs/concepts/runtime/config-hot-reload.md#turn-boundary-safe-point-timing-b
+            await self._hot_reloader.apply_pending()
+            # #3787: project-context edit detection — read-only, emits at most once per
+            # edit; does NOT reload ``self._project_context`` (see ProjectContextWatcher).
+            self._project_context_watcher.check()
+            # ADR-0038 Stage 1a: turn boundary = a user-facing checkpoint. #1547: the
+            # user message is this checkpoint's anchor for the rewind-timeline preview.
+            # #1533 2c: the FULL message is persisted alongside (edit-prefill source).
+            await self._journal.cut_generation(
+                anchor=_truncate_anchor(user_text), full_message=user_text,
+            )
+        finally:
+            if _stall_seconds is not None:
+                _disarm_stall_trace()
