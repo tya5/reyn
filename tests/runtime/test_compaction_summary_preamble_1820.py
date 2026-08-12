@@ -45,7 +45,10 @@ def _make_controller(history: list[ChatMessage]) -> tuple[CompactionController, 
     ctrl = CompactionController(
         event_log=EventLog(),
         config=CompactionConfig(use_chars4_estimate=True),
-        history_access=lambda: list(history),
+        # #4472: history_from_disk(after_seq), same durable-store contract.
+        history_from_disk=lambda after_seq: [
+            m for m in history if m.seq == 0 or m.seq > after_seq
+        ],
         latest_summary=lambda: None,
         compaction_engine_factory=_SucceedingEngine,
         history_appender=history.append,

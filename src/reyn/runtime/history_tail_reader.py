@@ -146,6 +146,53 @@ def read_history_tail(
     return collected
 
 
+def read_history_after(
+    path: Path, *, after_seq: int, chunk_size: int = 65536,
+) -> list[str]:
+    """#4472: read *path* backward from EOF, collecting every line whose
+    ``seq > after_seq`` (a real, nonzero seq — a ``seq == 0`` legacy line
+    is ALWAYS collected too, matching #4387 Phase A's own precedent for
+    pre-#3704 entries with no assigned coordinate), stopping the moment a
+    line with a real ``seq <= after_seq`` is seen. Safe to stop early
+    because ``seq`` is non-decreasing by file position (every append since
+    #3704 assigns a strictly-increasing coordinate) — once a real seq at or
+    below the threshold is reached, everything further back is too.
+    Returns raw JSON-line strings in FILE order (oldest first). Empty list
+    if the file is missing/empty, or if EOF itself is at/below
+    ``after_seq``.
+
+    #4472's own reason for existing: ``CompactionController`` used to build
+    its candidates from ``Session.history`` (an in-memory, byte-cap-
+    evictable cache — #4387/#4468), so a resource-role eviction could make
+    compaction blind to content it had never actually summarized, silently
+    letting ``covers_through_seq`` claim coverage of a gap (#4470). Reading
+    directly from the DURABLE store here removes residency from the
+    question entirely — compaction always sees the true uncompacted range,
+    regardless of what's currently resident in memory.
+
+    No ``min_lines`` floor (unlike :func:`read_history_tail`/
+    :func:`read_history_before`): compaction needs the COMPLETE range above
+    ``after_seq``, not a bounded page — silently truncating it would
+    reintroduce exactly the "claimed more coverage than it examined" defect
+    this function exists to prevent.
+    """
+    if not path.is_file():
+        return []
+
+    collected: list[str] = []
+    for line in _iter_raw_lines_reverse(path, chunk_size=chunk_size):
+        try:
+            seq = int(json.loads(line).get("seq", 0) or 0)
+        except (json.JSONDecodeError, AttributeError, TypeError, ValueError):
+            seq = 0
+        if seq != 0 and seq <= after_seq:
+            break
+        collected.append(line)
+
+    collected.reverse()
+    return collected
+
+
 def read_history_before(
     path: Path, *, before_seq: int, min_lines: int = 200, chunk_size: int = 65536,
 ) -> list[str]:

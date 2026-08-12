@@ -86,7 +86,16 @@ def _make_controller(
     ctrl = CompactionController(
         event_log=events,
         config=CompactionConfig(use_chars4_estimate=True),
-        history_access=lambda: list(history),
+        # #4472: history_from_disk(after_seq) — this suite's `history` list
+        # already stands in for "the durable source of truth" (it's the
+        # ONLY source these unit tests ever construct), so the real
+        # disk-reading mechanism itself is out of scope here (covered by
+        # tests/runtime/test_4472_compaction_reads_durable_store.py against
+        # a real Session + real history.jsonl instead) — this just narrows
+        # the same list by seq, matching the real method's contract.
+        history_from_disk=lambda after_seq: [
+            m for m in history if m.seq == 0 or m.seq > after_seq
+        ],
         latest_summary=_latest_summary,
         compaction_engine_factory=lambda: engine,
         history_appender=history.append,

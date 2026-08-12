@@ -115,9 +115,19 @@ class CompactionController:
         compaction events are emitted here.
     config:
         :class:`~reyn.config.CompactionConfig` — thresholds and sizing.
-    history_access:
-        Zero-argument callable that returns a read-only snapshot of the
-        current chat history (``list[ChatMessage]``).
+    history_from_disk:
+        Callable ``(after_seq: int) -> list[ChatMessage]`` (#4472) that
+        returns every conversation turn with ``seq > after_seq``, read
+        DIRECTLY from the durable store (``history.jsonl``), branch-
+        visibility filtered, and NEVER residency-gated — so #4387's
+        resident-byte cap can never make compaction blind to content it
+        hasn't actually summarized (#4470's root cause). Every call
+        returns freshly-parsed ``ChatMessage`` instances from ONE source;
+        this class's own :meth:`_select_candidates` excludes head/tail
+        turns by Python object identity (an ``id()`` set), so mixing
+        objects from a second source (e.g. a resident cache) here would
+        silently defeat that exclusion — callers must never combine this
+        with any other history source.
     latest_summary:
         Zero-argument callable that returns the most recent ``"summary"``
         :class:`~reyn.runtime.chat_message.ChatMessage`, or ``None``.
@@ -162,7 +172,7 @@ class CompactionController:
         *,
         event_log: EventLog,
         config: CompactionConfig,
-        history_access: Callable[[], list[ChatMessage]],
+        history_from_disk: Callable[[int], list[ChatMessage]],
         latest_summary: Callable[[], ChatMessage | None],
         compaction_engine_factory: "Callable[[], CompactionEngine]",
         history_appender: Callable[[ChatMessage], None],
@@ -177,7 +187,7 @@ class CompactionController:
         self._events = event_log
         self._config = config
         self._threat_scan = threat_scan
-        self._history_access = history_access
+        self._history_from_disk = history_from_disk
         self._latest_summary = latest_summary
         self._compaction_engine_factory = compaction_engine_factory
         self.__engine_cache: "CompactionEngine | None" = None
@@ -291,7 +301,18 @@ class CompactionController:
             self._events.emit("compaction_check", outcome="already_running")
             return
 
-        history = self._history_access()
+        latest = self._latest_summary()
+        prev_cover = (latest.meta or {}).get("covers_through_seq", 0) if latest else 0
+        # #4472: read the candidate INPUT from the durable store
+        # (history.jsonl), never residency-gated — see
+        # Session._durable_active_history_after's own docstring. This is
+        # the structural fix for #4470 (a resource-role eviction was
+        # silently deciding a semantic-role question — whether content had
+        # been summarized): residency now has NO influence on what
+        # compaction considers, so the "gap" #4470/#4471 had to detect and
+        # skip around cannot occur anymore — there is nothing left for a
+        # gap to be a gap IN.
+        history = self._history_from_disk(prev_cover)
         turns = [
             m for m in history
             if m.role in ("user", "assistant", "tool", "agent")
@@ -299,37 +320,21 @@ class CompactionController:
         if not turns:
             self._events.emit("compaction_check", outcome="forced_sync_no_turns")
             return
-        latest = self._latest_summary()
-        prev_cover = (latest.meta or {}).get("covers_through_seq", 0) if latest else 0
-        # #4470: `history` (= self._history_access()) is now RESIDENT-only
-        # (#4387/#4468's byte-driven eviction can drop entries with
-        # prev_cover < seq <= <the eventual covers_through_seq> before this
-        # scan ever sees them — eviction removes strictly from the front, so
-        # any gap is always a missing PREFIX, never a middle hole).
-        # `covers_through_seq` is read by OTHER consumers (#4468's untrusted-
-        # content narrowing latch among them) as "everything at or below
-        # this seq has genuinely been retired" — so it is not enough to
-        # merely exclude gapped content from THIS pass's candidates
-        # (an earlier version of this fix did only that, and still let
-        # covers_through_seq advance PAST the gap to the highest resident
-        # seq examined — #4468's latch check `evicted_seq > watermark`
-        # then reads the gapped seq as "covered" purely because the
-        # watermark number is now numerically larger, regardless of
-        # whether that specific seq was ever examined). If the entry
-        # immediately after prev_cover is missing from residency, this
-        # pass has NO gap-free run to cover at all — skip compaction
-        # entirely rather than let the watermark skip over unseen
-        # territory. The gap resolves itself once eviction's own natural
-        # forward growth is bridged by a future backward-hydrate
-        # (#4400/#4411) that brings the missing range back into memory;
-        # until then, compaction simply does not run for this agent,
-        # which is the conservative, honest behaviour (bounded resident
-        # memory using more of its budget on OLD content briefly, not a
-        # false "covered" claim).
+        # #4472 architect review, point ③: NOT a normal branch — a defensive
+        # invariant, not a routine outcome. `_history_from_disk` has no
+        # bound/floor on how far back it reads (unlike the old resident
+        # scan), so `turns`'s earliest real seq should always be exactly
+        # `prev_cover + 1` (or the file's own first entry, if prev_cover is
+        # 0). A hit here means something ELSE narrowed the durable read out
+        # from under this method — #4470's silent-coverage-claim defect
+        # would otherwise reopen through that new path. Kept as a LOUD,
+        # named audit outcome (not a silent skip) so a future regression
+        # that reintroduces a bound is caught immediately, not rediscovered
+        # the way #4470 itself was.
         resident_seqs = [t.seq for t in turns if t.seq > 0]
         if resident_seqs and min(resident_seqs) > prev_cover + 1:
             self._events.emit(
-                "compaction_check", outcome="forced_sync_gap_before_earliest_resident",
+                "compaction_check", outcome="compaction_input_gap_invariant_violated",
             )
             return
         candidates = self._select_candidates(turns, prev_cover)
