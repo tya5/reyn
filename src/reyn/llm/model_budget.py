@@ -43,20 +43,17 @@ def _lookup_max_input(model: str) -> "int | None":
     (e.g. provider-prefix-strip, #1162).
     """
     try:
-        # #4395 PR-1: check ensure_litellm_ready()'s own success/failure
-        # BEFORE doing `import litellm` — that used to be an unconditional
-        # bare import right after calling the chokepoint, which
-        # independently re-attempted (and re-failed) the exact same slow,
-        # unbounded import on every call while litellm kept failing (a
-        # failed import isn't cached by Python; only this chokepoint's
-        # own attempt was). `import litellm` below now only ever runs
-        # once success is confirmed, so it's always a cheap sys.modules
-        # cache hit — never a repeat of the failing attempt. See
-        # litellm_bootstrap.py's own docstring for the full contract.
-        from reyn.llm.litellm_bootstrap import ensure_litellm_ready
-        if ensure_litellm_ready() is None:
-            return None
-        import litellm
+        # #4395 PR-2: non-blocking chokepoint variant — this function
+        # already has a safe fallback (128K conservative default, in
+        # `_resolve_max_input` below) for "no answer yet", so there is no
+        # reason to wait for litellm here at all, let alone on the calling
+        # thread. `ensure_litellm_ready_or_defer()` never imports litellm on
+        # this thread if it isn't already warm — it kicks off the one
+        # dedicated background thread instead (litellm_bootstrap.py's own
+        # PR-2 section) and raises immediately, reaching the `except` below
+        # with no wait paid.
+        from reyn.llm.litellm_bootstrap import ensure_litellm_ready_or_defer
+        litellm = ensure_litellm_ready_or_defer()
         info = litellm.get_model_info(model)
         max_input = info.get("max_input_tokens")
         if max_input and int(max_input) > 0:

@@ -59,7 +59,22 @@ def _clean_token_cache():
     assertions aren't polluted by entries other tests warmed. Setup/teardown,
     not an assertion (Tier 4 forbids asserting on private state, not touching
     it for isolation — the same pattern as this session's `_clean_task_polls`
-    for `_TASK_POLLS`)."""
+    for `_TASK_POLLS`).
+
+    #4395 PR-2: `estimate_tokens()` now calls the NON-blocking
+    `ensure_litellm_ready_or_defer()` — its real, intended behavior on the
+    very FIRST call in a process with litellm not yet ready is to defer to
+    the background warming thread and fall back to chars//4 immediately
+    (never block), which would make every test below observe the wrong
+    call count for the `_counting_token_counter` fake below (it never gets
+    invoked at all). Every test in this file's own real-world precondition
+    — litellm already ready, matching every call after the process's
+    first — is made explicit here rather than left to incidental
+    test-order luck, and any cooldown a PRIOR test's simulated failure
+    armed is cleared too."""
+    from reyn.llm.litellm_bootstrap import ensure_litellm_ready
+    ensure_litellm_ready()  # real precondition: litellm already ready
+    engine_mod._token_counter_cooldown_until = 0.0
     engine_mod._token_cache.clear()
     yield
     engine_mod._token_cache.clear()

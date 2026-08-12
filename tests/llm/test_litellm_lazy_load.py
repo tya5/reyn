@@ -269,24 +269,40 @@ def test_sibling_first_import_routes_import_time_warning_to_file(tmp_path, out_o
     stderr StreamHandler and the import-time warning leaks to the console —
     the assertion `not in result.stderr` would fail. (Confirmed by removing
     the wire and re-running: the warning appears on stderr.)
+
+    #4395 PR-2: ``estimate_tokens`` now calls the NON-blocking
+    ``ensure_litellm_ready_or_defer()`` — the FIRST call in a process with
+    litellm not yet ready no longer imports inline; it kicks off the one
+    dedicated background thread and falls back to chars//4 immediately.
+    That thread does the exact same ``ensure_litellm_ready()`` call this
+    test cares about (so the #2929 routing still applies), just off the
+    calling thread — waits for it to actually finish (bounded, unconditional
+    wait on the condition itself) before asserting, instead of assuming the
+    single ``estimate_tokens`` call already did the import synchronously.
     """
     project_root = tmp_path
     script = f"""
-        import os, sys
+        import os, sys, time
         os.environ["LITELLM_LOCAL_MODEL_COST_MAP"] = "False"
         os.environ["LITELLM_MODEL_COST_MAP_URL"] = "http://127.0.0.1:1/unreachable.json"
 
         from pathlib import Path
         from reyn.interfaces.cli.commands.chat import _setup_interactive_logging
+        from reyn.llm.litellm_bootstrap import is_litellm_ready
         from reyn.services.compaction.engine import estimate_tokens
 
         _setup_interactive_logging(Path({str(project_root)!r}))
         assert "litellm" not in sys.modules, "litellm imported before the sibling call"
         # SIBLING-FIRST: the very first litellm import in this process happens
-        # inside estimate_tokens (via its ensure_litellm_ready wire), NOT via
-        # recorded_acompletion / ensure_litellm_ready called directly.
+        # inside estimate_tokens (via its ensure_litellm_ready_or_defer wire),
+        # NOT via recorded_acompletion / ensure_litellm_ready called directly.
+        # #4395 PR-2: this defers to the background warming thread rather
+        # than importing inline — wait for that thread to finish.
         estimate_tokens("some text to size", "gpt-3.5-turbo")
-        assert "litellm" in sys.modules, "sibling call did not import litellm"
+        deadline = time.monotonic() + 10.0
+        while not is_litellm_ready() and time.monotonic() < deadline:
+            time.sleep(0.05)
+        assert "litellm" in sys.modules, "sibling call's background warm did not import litellm"
         """
     result = _run(out_of_process_reyn, script)
     assert result.returncode == 0, result.stderr
