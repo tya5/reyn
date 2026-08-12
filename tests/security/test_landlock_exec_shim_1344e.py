@@ -95,6 +95,60 @@ def test_policy_json_roundtrips_all_fields():
     assert _policy_from_json(_policy_to_json(pol)) == pol
 
 
+@pytest.fixture(autouse=True)
+def _reset_derivation_cache():
+    """Clean process-wide derivation cache per test — see
+    test_sandbox_seatbelt.py's identical fixture for why (id() reuse across
+    tests, not a production concern)."""
+    from reyn.security.sandbox import _derivation_cache
+
+    _derivation_cache._reset_cache_for_tests()
+    yield
+    _derivation_cache._reset_cache_for_tests()
+
+
+def test_build_argv_derives_the_policy_json_only_once_per_policy_object(monkeypatch):
+    """Tier 2: #4434 — Landlock is bound by the SAME "derive once per
+    session" contract Seatbelt's SBPL text is (architect ruling: the axis is
+    derivation vs application, not "does it touch a file"). Two
+    ``build_landlock_exec_argv`` calls with the SAME policy OBJECT must
+    derive the JSON exactly once — witnessed by counting real calls to
+    ``_policy_to_json`` via monkeypatch, not by comparing the two output
+    strings (which would pass even if both calls independently re-derived
+    identical JSON — see test_policy_json_call_count_flips_red_when_the_cache_is_bypassed
+    below for the strip-falsify half of this pair)."""
+    import reyn.security.sandbox.landlock_exec as le
+
+    calls = []
+    real = le._policy_to_json
+    monkeypatch.setattr(le, "_policy_to_json", lambda p: (calls.append(1), real(p))[1])
+
+    pol = SandboxPolicy(write_paths=["/ws"])
+    _exe1, argv1 = build_landlock_exec_argv(pol, "cmd", [])
+    _exe2, argv2 = build_landlock_exec_argv(pol, "cmd", [])
+    json1 = argv1[argv1.index("--policy") + 1]
+    json2 = argv2[argv2.index("--policy") + 1]
+    assert json1 == json2
+    assert calls == [1]
+
+
+def test_policy_json_call_count_flips_red_when_the_cache_is_bypassed(monkeypatch):
+    """Tier 2: strip-falsify — calling the UNCACHED ``_policy_to_json``
+    directly, twice, DOES re-derive each time — proves the previous test's
+    ``calls == [1]`` assertion is actually discriminating cached-vs-not,
+    not a tautology that would pass regardless of whether caching exists."""
+    import reyn.security.sandbox.landlock_exec as le
+
+    calls = []
+    real = le._policy_to_json
+    monkeypatch.setattr(le, "_policy_to_json", lambda p: (calls.append(1), real(p))[1])
+
+    pol = SandboxPolicy(write_paths=["/ws"])
+    le._policy_to_json(pol)
+    le._policy_to_json(pol)
+    assert calls == [1, 1]
+
+
 def test_parse_args_recovers_policy_and_target():
     """Tier 2: _parse_args inverts build_landlock_exec_argv (the shim sees the
     same policy + target the wrap encoded). The leading ``-m <module>`` is

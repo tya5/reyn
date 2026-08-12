@@ -27,7 +27,9 @@ import shutil
 import signal
 import subprocess
 import tempfile
+from pathlib import Path
 
+from reyn.security.sandbox._derivation_cache import cached_derivation
 from reyn.security.sandbox._subprocess_io import communicate_capped, kill_process_tree
 from reyn.security.sandbox.backend import (
     AxisEnforcement,
@@ -185,6 +187,93 @@ def _build_sbpl_profile(policy: SandboxPolicy) -> str:
     return "\n".join(lines) + "\n"
 
 
+# A dedicated subdirectory of the OS temp dir, not the temp dir's root — this
+# keeps the safety check below crisp (one directory to test, not "wherever
+# tempfile.mkstemp happens to land") and keeps reyn's cached profiles visually
+# distinguishable from other processes' temp files.
+_CACHE_SUBDIR_NAME = "reyn-sandbox-profiles"
+
+
+def _seatbelt_cache_dir() -> Path:
+    """Return the directory session-cached SBPL profiles are written under.
+
+    A function, not a module-level constant, so :func:`_profile_is_safe_to_cache`
+    below always re-derives the CURRENT value rather than a value captured at
+    import time — ``tempfile.gettempdir()`` itself never changes within a
+    process, but this keeps the two functions symmetric and re-testable.
+    """
+    return Path(tempfile.gettempdir()) / _CACHE_SUBDIR_NAME
+
+
+def _profile_is_safe_to_cache(policy: SandboxPolicy) -> bool:
+    """True iff :func:`_seatbelt_cache_dir` falls OUTSIDE every write scope
+    *policy* itself grants (#4434's load-bearing precondition, architect
+    ruling: caching a profile turns its lifetime from "one call" to "the
+    session" — a sandboxed child that could WRITE to the cache path could
+    rewrite the profile that governs the NEXT command, i.e. write the key to
+    its own cage from inside it).
+
+    Derives the check from *policy.write_paths* itself (via the same
+    ``expand_policy_path`` + ``resolve`` every emitted ``(allow file-write*
+    (subpath ...))`` rule in :func:`_build_sbpl_profile` uses) rather than a
+    literal path comparison — a relocation of either side (the cache
+    directory, or an operator's write_paths) is caught by construction,
+    where a hardcoded path-string comparison would need to be remembered and
+    updated by hand.
+
+    Only the SUBPATH direction is unsafe: a write grant on ``write_paths``
+    makes that path and everything BELOW it writable, never anything above
+    it, so the cache dir being an *ancestor* of a write_paths entry is fine
+    (e.g. cache dir ``/tmp/reyn-sandbox-profiles`` and a write grant on
+    ``/tmp/reyn-sandbox-profiles/../workspace`` never overlaps the cache
+    dir's own files).
+    """
+    cache_dir = _seatbelt_cache_dir().resolve(strict=False)
+    for raw in policy.write_paths:
+        write_scope = expand_policy_path(raw).resolve(strict=False)
+        if cache_dir == write_scope or cache_dir.is_relative_to(write_scope):
+            return False
+    return True
+
+
+def _cached_profile_path(policy: SandboxPolicy, profile_text: str) -> tuple[str, bool]:
+    """Return ``(profile_path, is_cached)`` for *profile_text*.
+
+    Delegates the "derive once per (backend, policy object)" bookkeeping to
+    :func:`~reyn.security.sandbox._derivation_cache.cached_derivation`
+    (#4434 — shared across every backend that needs this, not Seatbelt-only:
+    see that module's docstring for why identity-keyed, not content-keyed).
+
+    When :func:`_profile_is_safe_to_cache` cannot prove the cache directory
+    is outside *policy*'s own write scope, the UNSAFE fallback path below
+    deliberately bypasses the shared cache entirely rather than caching the
+    "don't cache" answer — memoizing that answer under this policy's
+    identity would hand a SECOND caller the same path a first caller's
+    ``cleanup()`` had already unlinked (each unsafe call gets its own
+    private ``tempfile.NamedTemporaryFile``, unlinked on cleanup, byte-for-
+    byte the pre-#4434 behaviour). ``is_cached`` tells the caller whether
+    the returned path is a shared, session-lifetime file (do NOT unlink it
+    in ``cleanup()``) or a private, call-scoped one (DO unlink it).
+    """
+    if not _profile_is_safe_to_cache(policy):
+        with tempfile.NamedTemporaryFile(
+            suffix=".sb", mode="w", delete=False, encoding="utf-8",
+        ) as fh:
+            fh.write(profile_text)
+            return fh.name, False
+
+    def _write_cached() -> str:
+        cache_dir = _seatbelt_cache_dir()
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        fd, path = tempfile.mkstemp(suffix=".sb", dir=str(cache_dir))
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(profile_text)
+        return path
+
+    path = cached_derivation("seatbelt", policy, _write_cached)
+    return path, True
+
+
 class SeatbeltBackend:
     """macOS sandbox-exec backend (FP-0017 Component C).
 
@@ -252,22 +341,39 @@ class SeatbeltBackend:
 
         return enforcement_self_test(self)
 
+    def session_artifact_outside_write_scope(self, policy: SandboxPolicy) -> bool:
+        """#4434: delegates to :func:`_profile_is_safe_to_cache` — the ONE
+        real implementation of the ``SandboxBackend`` contract (Seatbelt is
+        the only backend that caches a filesystem artifact across calls;
+        see that Protocol method's own docstring)."""
+        return _profile_is_safe_to_cache(policy)
+
     def wrap_command(self, argv: list[str], policy: SandboxPolicy) -> WrappedCommand:
         """Prepend ``sandbox-exec -f <profile>`` to *argv* for a persistent-process
-        launch (e.g. a stdio MCP server, #1344). The SBPL profile is written to a
-        temp ``.sb`` file; the returned ``cleanup`` unlinks it — the caller invokes
-        it once the wrapped subprocess is torn down (mirrors ``run()``'s own
-        temp-profile lifecycle, above). ``env`` is the SAME allowlisted build
-        ``run()`` uses (#3822) — a caller launching the wrapped argv with this
-        env gets the identical env-scoping ``run()``'s callers get."""
+        launch (e.g. a stdio MCP server, #1344).
+
+        #4434 (stage 1): the SBPL profile is now a SESSION-scoped cache keyed
+        on *policy* (via :func:`_cached_profile_path`) rather than a fresh
+        temp file every call — an unchanged policy within one process renders
+        the identical bytes every time (architect measurement), so repeat
+        calls reuse the same on-disk path instead of regenerating + rewriting
+        it. Only genuinely per-call state (the OS temp file itself, when the
+        cache precondition can't be proven for *policy*'s write scope) still
+        gets its own unlink-on-cleanup; a CACHED path is shared across every
+        caller using this policy in the process, so ``cleanup()`` here must
+        NOT unlink it — a second caller reusing the same policy would then
+        launch ``sandbox-exec -f <a path that no longer exists>``. Cached
+        files are cleaned up at process exit (OS temp-dir housekeeping),
+        matching the profile's new session-scoped lifetime rather than the
+        old per-call one. ``env`` is the SAME allowlisted build ``run()``
+        uses (#3822) — a caller launching the wrapped argv with this env
+        gets the identical env-scoping ``run()``'s callers get."""
         profile_text = _build_sbpl_profile(policy)
-        with tempfile.NamedTemporaryFile(
-            suffix=".sb", mode="w", delete=False, encoding="utf-8",
-        ) as fh:
-            fh.write(profile_text)
-            profile_path = fh.name
+        profile_path, is_cached = _cached_profile_path(policy, profile_text)
 
         def _cleanup() -> None:
+            if is_cached:
+                return
             try:
                 os.unlink(profile_path)
             except OSError:

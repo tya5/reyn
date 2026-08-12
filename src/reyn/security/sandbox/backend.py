@@ -191,6 +191,30 @@ class SandboxBackend(Protocol):
         """
         ...
 
+    def session_artifact_outside_write_scope(self, policy: SandboxPolicy) -> bool:
+        """#4434 (stage 1): True iff any on-disk artifact this backend may
+        cache/reuse ACROSS calls for *policy* (e.g. Seatbelt's generated SBPL
+        ``.sb`` profile) lives outside every write scope *policy* itself
+        grants.
+
+        Every backend bears this contract, not just the one that currently
+        has something to cache (owner correction, #4434: "the sandbox
+        abstraction means every backend needs the abstract contract" — a
+        Seatbelt-only precondition would leave a future backend's own
+        session-scoped artifact unguarded by construction). A backend that
+        produces no such artifact (Landlock re-execs via argv, no cleanup
+        resource of its own; NoopBackend wraps nothing) trivially satisfies
+        this and returns True unconditionally — there is nothing a
+        sandboxed child could rewrite.
+
+        Callers derive the answer from *policy* itself (e.g. resolving
+        ``policy.write_paths`` the same way the backend's own enforcement
+        does), never from a literal path comparison — the whole point is
+        that relocating either side (the cached artifact, or an operator's
+        write grant) is caught by construction.
+        """
+        ...
+
     def wrap_command(self, argv: list[str], policy: SandboxPolicy) -> WrappedCommand:
         """Return a command-level sandbox wrap of *argv* for a persistent-process
         launch (e.g. a stdio MCP server) that cannot go through the one-shot

@@ -115,6 +115,15 @@ class NoopBackend:
         """
         return None
 
+    def session_artifact_outside_write_scope(self, policy: SandboxPolicy) -> bool:
+        """Trivially True (#4434): ``wrap_command`` below returns *argv*
+        UNCHANGED — no profile, no wrapper argv, no on-disk artifact of any
+        kind — so there is nothing a sandboxed child could rewrite. Still
+        bears the contract (owner correction, #4434): a future NoopBackend
+        change that starts writing something would need to answer this
+        honestly, not inherit a silent pass by omission."""
+        return True
+
     def wrap_command(self, argv: list[str], policy: SandboxPolicy) -> WrappedCommand:
         """Passthrough: argv is returned UNCHANGED — no enforcement — but the
         call still went THROUGH the sandbox abstraction (the owner-acceptable

@@ -240,8 +240,9 @@ def test_seatbelt_resolve_spawn_delegates_to_wrap_command(monkeypatch) -> None:
     assert "PYTHONPATH" not in resolved_policy.env_deny_names
 
     # Same shape as a direct wrap_command() call: sandbox-exec -f <profile> <base_argv>.
-    # The profile PATH differs (each call gets its own fresh temp file), so compare
-    # everything else — the exact same code path codeact now runs.
+    # The profile PATH differs (#4434: each DISTINCT policy OBJECT gets its own
+    # session-cache entry, even when two objects render identical SBPL text), so
+    # compare everything else — the exact same code path codeact now runs.
     direct = backend.wrap_command(base_argv, SandboxPolicy(network=False, timeout_seconds=30.0))
     assert argv[0] == direct.argv[0] == "sandbox-exec"
     assert argv[1] == direct.argv[1] == "-f"
@@ -250,8 +251,14 @@ def test_seatbelt_resolve_spawn_delegates_to_wrap_command(monkeypatch) -> None:
     profile_path = argv[2]
     assert os.path.exists(profile_path)
     cleanup()
-    assert not os.path.exists(profile_path)  # cleanup unlinks the temp profile
-    direct.cleanup()  # tidy up the independently-created profile too
+    # #4434: this policy has no write_paths, so it's safe to session-cache —
+    # cleanup() on a cached profile is a no-op (a second caller reusing the
+    # same policy object would still need the file); it does NOT unlink.
+    assert os.path.exists(profile_path)
+    os.unlink(profile_path)
+    direct.cleanup()  # no-op too (direct is also cacheable) — tidy up by hand
+    if os.path.exists(direct.argv[2]):
+        os.unlink(direct.argv[2])
 
 
 def test_landlock_resolve_spawn_now_wraps_via_abstraction(monkeypatch) -> None:

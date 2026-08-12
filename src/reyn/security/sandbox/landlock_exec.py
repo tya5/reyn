@@ -41,6 +41,7 @@ import json
 import os
 import sys
 
+from ._derivation_cache import cached_derivation
 from .backends.seccomp import load_seccomp_filter, preload_native_dependency
 from .policy import SandboxPolicy
 
@@ -51,6 +52,20 @@ def _policy_to_json(policy: SandboxPolicy) -> str:
     """Serialize a SandboxPolicy to a single JSON arg (round-trips via
     :func:`_policy_from_json`)."""
     return json.dumps(dataclasses.asdict(policy), separators=(",", ":"))
+
+
+def _cached_policy_json(policy: SandboxPolicy) -> str:
+    """#4434: Landlock's policy-DERIVED representation (the JSON blob the
+    shim's ``--policy`` arg carries) is bound by the same "derive once per
+    session" contract Seatbelt's SBPL text is — architect ruling: the axis
+    is derivation vs application, not "does it touch a file", and Landlock's
+    ``build_landlock_exec_argv`` was re-deriving this JSON on every call. No
+    file is ever written (the derivation travels via argv, straight into the
+    child's own argv), so the write-scope security precondition
+    (``SandboxBackend.session_artifact_outside_write_scope``) is vacuously
+    satisfied here — there is nothing on disk a sandboxed child could
+    rewrite — but the derive-once duty itself still applies."""
+    return cached_derivation("landlock", policy, lambda: _policy_to_json(policy))
 
 
 def _policy_from_json(s: str) -> SandboxPolicy:
@@ -65,7 +80,8 @@ def build_landlock_exec_argv(
     """Return ``(executable, argv)`` that runs ``command`` under this Landlock
     policy via the re-exec shim.
 
-    Pure (no side effects) — the COMMAND-level wrap analog of the Seatbelt
+    No side effects beyond the process-wide derivation cache (#4434) — the
+    COMMAND-level wrap analog of the Seatbelt
     ``("sandbox-exec", ["-f", <profile>, command, *args])`` wrap. The returned
     ``executable`` is the current interpreter so the shim is import-resolvable
     in the same environment; ``--`` separates the shim args from the target.
@@ -74,7 +90,7 @@ def build_landlock_exec_argv(
         "-m",
         _MODULE,
         "--policy",
-        _policy_to_json(policy),
+        _cached_policy_json(policy),
         "--",
         command,
         *args,
