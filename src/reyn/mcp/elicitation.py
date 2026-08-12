@@ -21,15 +21,17 @@ fastmcp). The handler signature::
         response_type: type[T] | None,   # a dataclass FastMCP built from the
                                           # server's JSON schema, or None for a
                                           # no-data / URL-based elicitation
-        params: mcp.types.ElicitRequestParams,  # carries the RAW requestedSchema
+        params: mcp.types.ElicitRequestParams,  # carries the RAW requested_schema
         context: RequestContext[ClientSession, LifespanContextT],
     ) -> T | dict[str, Any] | ElicitResult[T | dict[str, Any]]
 
 FastMCP auto-converts the JSON schema to ``response_type`` but ERASES the
 per-field metadata (enum choices, descriptions) needed to prompt one field at
-a time — so this module reads field specs from ``params.requestedSchema``
+a time — so this module reads field specs from ``params.requested_schema``
 (the raw JSON Schema dict) directly, and only uses ``response_type`` as the
 None-vs-not-None signal for "does this elicitation carry a schema at all".
+#4368 (mcp 2.0 port): ``requestedSchema`` renamed to ``requested_schema``
+(camelCase -> snake_case, verified live against mcp==2.0.0).
 
 D2 — receive-loop dispatch (verified by reading the installed mcp SDK):
 ``mcp.shared.session.BaseSession._receive_loop`` awaits
@@ -170,7 +172,7 @@ def _is_sensitive_field(name: str, description: str | None) -> bool:
 
 
 def _schema_fields(requested_schema: dict[str, Any]) -> list[dict[str, Any]]:
-    """Flatten ``requestedSchema["properties"]`` (a flat, primitives-only JSON
+    """Flatten ``requested_schema["properties"]`` (a flat, primitives-only JSON
     object per the MCP spec — verified against the 2025-11-25 spec's
     elicitation section: no nested object/array properties are permitted) into
     an ordered list of per-field specs. Order follows the schema's own
@@ -315,7 +317,7 @@ def build_elicitation_handler(
     ) -> Any:
         field_keys: list[str] = []
         if isinstance(params, ElicitRequestFormParams):
-            field_keys = sorted((params.requestedSchema.get("properties") or {}).keys())
+            field_keys = sorted((params.requested_schema.get("properties") or {}).keys())
 
         await _emit("mcp_elicitation_requested", field_keys=field_keys)
 
@@ -336,7 +338,7 @@ def build_elicitation_handler(
 
         try:
             field_specs = (
-                _schema_fields(params.requestedSchema)
+                _schema_fields(params.requested_schema)
                 if isinstance(params, ElicitRequestFormParams)
                 else []
             )
