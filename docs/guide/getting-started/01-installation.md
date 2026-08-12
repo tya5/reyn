@@ -44,13 +44,15 @@ ships a built-in catalog (e.g. `claude-sonnet-thinking`, `gemini-flash-lite`) th
 you can reference by short name, and a dict form with `extends` for cost variants.
 See `reference/config/reyn-yaml.md` and `reference/builtin-models.md` for details.
 
-Then export the matching API key:
+Then export your provider's API key, e.g.:
 
 ```bash
 export OPENAI_API_KEY=sk-...
-# or
-export ANTHROPIC_API_KEY=sk-ant-...
 ```
+
+litellm resolves your provider's own variable automatically — see
+[litellm's provider docs](https://docs.litellm.ai/docs/providers) for the
+name yours expects.
 
 !!! warning "Never commit API keys"
     Keys belong only in environment variables. `reyn.yaml` is checked in; put proxy URLs in `reyn.local.yaml` or `~/.reyn/config.yaml` (gitignored).

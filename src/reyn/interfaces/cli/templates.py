@@ -98,10 +98,10 @@ REYN_LOCAL_CONFIG_TEMPLATE = """\
 # LiteLLM proxy base URL (omit if calling providers directly)
 # api_base: http://localhost:4000
 
-# API keys must be set as environment variables, not here:
+# API keys must be set as environment variables, not here — e.g.:
 #   export OPENAI_API_KEY=sk-...
-#   export ANTHROPIC_API_KEY=sk-ant-...
-#   export GEMINI_API_KEY=...
+# litellm resolves your provider's own variable automatically; see
+# https://docs.litellm.ai/docs/providers for the name yours expects.
 
 # Override model mappings for your local setup (optional)
 # models:
