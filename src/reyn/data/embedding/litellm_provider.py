@@ -105,12 +105,19 @@ def _proxy_kwargs() -> dict[str, Any]:
 
     Reads LITELLM_API_BASE from env (same env var as call_llm uses) so the
     same proxy serves both completions and embeddings.
+
+    #4347: no ``api_key`` here — mirrors ``llm.proxy_kwargs()``'s own fix.
+    Naming ``OPENAI_API_KEY`` specifically meant every other provider's user
+    got nothing from this line, the same "reyn can't enumerate providers
+    litellm already abstracts" argument #3905 applied elsewhere. litellm
+    resolves the key itself when set, and raises its own named, actionable
+    error when it isn't — reyn supplying a ``"dummy"`` fallback was silently
+    swallowing that message.
     """
     api_base = os.environ.get("LITELLM_API_BASE")
     if not api_base:
         return {}
-    api_key = os.environ.get("OPENAI_API_KEY", "dummy")
-    return {"api_base": api_base, "custom_llm_provider": "openai", "api_key": api_key}
+    return {"api_base": api_base, "custom_llm_provider": "openai"}
 
 
 # ---------------------------------------------------------------------------

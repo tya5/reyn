@@ -23,14 +23,19 @@ from reyn.llm.model_resolver import ModelSpec
 # ── routing_for_spec resolution ──────────────────────────────────────────────
 
 
-def test_routing_api_base_is_proxy_route(monkeypatch) -> None:
-    """Tier 2: api_base set → proxy route (custom_llm_provider openai default)."""
-    monkeypatch.setenv("OPENAI_API_KEY", "k-proxy")
+def test_routing_api_base_is_proxy_route() -> None:
+    """Tier 2: api_base set → proxy route (custom_llm_provider openai default).
+
+    #4347: no api_key in the returned dict — naming OPENAI_API_KEY specifically
+    meant every other provider's user got nothing from it (litellm abstracts
+    100+ providers; reyn can't enumerate them, same argument #3905 applied
+    elsewhere). litellm resolves the key itself, or raises its own named,
+    actionable error when none is set — no longer silently swallowed by a
+    ``"dummy"`` fallback."""
     r = routing_for_spec(ModelSpec(model="openai/x", api_base="https://proxy.local"))
     assert r == {
         "api_base": "https://proxy.local",
         "custom_llm_provider": "openai",
-        "api_key": "k-proxy",
     }
 
 
