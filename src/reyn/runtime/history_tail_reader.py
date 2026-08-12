@@ -37,6 +37,47 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
+
+
+def _iter_raw_lines_reverse(path: Path, *, chunk_size: int) -> "Iterator[str]":
+    """Yield *path*'s lines one at a time, newest-first, reading backward
+    from EOF in growing-safe chunks. Shared by :func:`read_history_tail`
+    and :func:`read_history_before` (#4387 Phase B ②) so the carry/split
+    handling — the part actually worth getting wrong once, not twice —
+    lives in one place. Caller decides when to stop (this generator itself
+    never stops early; it exhausts to BOF unless the caller breaks)."""
+    size = path.stat().st_size
+    if size == 0:
+        return
+    pos = size
+    # Bytes read from the START of the previous (further-back) chunk that
+    # didn't yet complete a line when that chunk was split — prefixed onto
+    # the NEXT (even-further-back) read so a line straddling a chunk
+    # boundary is never mis-split. Grows without bound only in the
+    # pathological case of one line longer than chunk_size, same tolerance
+    # ``budget.py``'s ``tail_boundary`` gives that case.
+    carry = b""
+    with path.open("rb") as f:
+        while pos > 0:
+            read_size = min(chunk_size, pos)
+            pos -= read_size
+            f.seek(pos)
+            buf = f.read(read_size) + carry
+            parts = buf.split(b"\n")
+            if pos > 0:
+                carry = parts[0]
+                complete = parts[1:]
+            else:
+                carry = b""
+                complete = parts
+            for raw in reversed(complete):
+                line = raw.decode("utf-8", errors="replace").strip()
+                if line:
+                    yield line
 
 
 def read_last_line(path: Path, *, chunk_size: int = 8192) -> "str | None":
@@ -79,69 +120,64 @@ def read_history_tail(
     """
     if not path.is_file():
         return []
-    size = path.stat().st_size
-    if size == 0:
-        return []
 
     collected: list[str] = []
     seen_summary = False
-    pos = size
-    # Bytes read from the START of the previous (further-back) chunk that
-    # didn't yet complete a line when that chunk was split — prefixed onto
-    # the NEXT (even-further-back) read so a line straddling a chunk
-    # boundary is never mis-split. Grows without bound only in the
-    # pathological case of one line longer than chunk_size, same tolerance
-    # ``budget.py``'s ``tail_boundary`` gives that case.
-    carry = b""
+    # Stop condition is (seen_summary AND collected >= min_lines) — NEVER
+    # "collected >= min_lines" alone. Without a summary, we cannot tell
+    # "no compaction has EVER run" (everything is uncompacted, so a
+    # short-circuit here would violate the watermark-completeness invariant
+    # every bounded consumer depends on) apart from "the summary is just
+    # further back than min_lines" (test_read_history_tail_reads_past_the_
+    # floor_to_include_the_latest_summary) — both look identical until BOF
+    # is actually reached, so BOF is the only safe fallback stop.
+    for line in _iter_raw_lines_reverse(path, chunk_size=chunk_size):
+        collected.append(line)
+        if not seen_summary:
+            try:
+                if json.loads(line).get("role") == "summary":
+                    seen_summary = True
+            except (json.JSONDecodeError, AttributeError):
+                pass
+        if len(collected) >= min_lines and seen_summary:
+            break
 
-    with path.open("rb") as f:
-        while pos > 0:
-            read_size = min(chunk_size, pos)
-            pos -= read_size
-            f.seek(pos)
-            buf = f.read(read_size) + carry
-            parts = buf.split(b"\n")
-            if pos > 0:
-                # parts[0] may be a partial line — carry it into the next
-                # (further-back) read rather than treating it as complete.
-                carry = parts[0]
-                complete = parts[1:]
-            else:
-                carry = b""
-                complete = parts
+    collected.reverse()
+    return collected
 
-            # Checked PER LINE, not just per chunk: a chunk can (and for a
-            # small file, on the very first read, always does) contain far
-            # more than min_lines — stopping only at chunk boundaries would
-            # silently ignore the floor whenever one read covers the whole
-            # remaining file.
-            #
-            # Stop condition is (seen_summary AND collected >= min_lines) —
-            # NEVER "collected >= min_lines" alone. Without a summary, we
-            # cannot tell "no compaction has EVER run" (everything is
-            # uncompacted, so a short-circuit here would violate the
-            # watermark-completeness invariant every bounded consumer
-            # depends on) apart from "the summary is just further back than
-            # min_lines" (test_read_history_tail_reads_past_the_floor_to_
-            # include_the_latest_summary) — both look identical until BOF is
-            # actually reached, so BOF is the only safe fallback stop.
-            done = False
-            for raw in reversed(complete):
-                line = raw.decode("utf-8", errors="replace").strip()
-                if not line:
-                    continue
-                collected.append(line)
-                if not seen_summary:
-                    try:
-                        if json.loads(line).get("role") == "summary":
-                            seen_summary = True
-                    except (json.JSONDecodeError, AttributeError):
-                        pass
-                if len(collected) >= min_lines and seen_summary:
-                    done = True
-                    break
-            if done:
-                break
+
+def read_history_before(
+    path: Path, *, before_seq: int, min_lines: int = 200, chunk_size: int = 65536,
+) -> list[str]:
+    """#4387 Phase B ②: read *path* backward from EOF, SKIPPING every line
+    whose ``seq >= before_seq`` (already held in memory by whoever is
+    calling this — see ``Session._load_older_entries``), then collecting
+    up to ``min_lines`` further lines older than that. Returns raw JSON-line
+    strings in FILE order (oldest first). Empty list if the file is
+    missing/empty, or if BOF is reached before any qualifying line is seen.
+
+    Unlike :func:`read_history_tail`, this has NO safety floor analogous to
+    "must include a summary" — a caller extending an ALREADY-loaded prefix
+    backward is, by construction, not making a fresh completeness claim
+    about compaction watermarks (that invariant was already satisfied by
+    whatever got the caller its current ``self.history`` in the first
+    place); it is only answering "give me up to N more lines older than
+    what I already have," which ``min_lines`` alone answers correctly.
+    """
+    if not path.is_file():
+        return []
+
+    collected: list[str] = []
+    for line in _iter_raw_lines_reverse(path, chunk_size=chunk_size):
+        try:
+            seq = int(json.loads(line).get("seq", 0) or 0)
+        except (json.JSONDecodeError, AttributeError, TypeError, ValueError):
+            seq = 0
+        if seq >= before_seq:
+            continue
+        collected.append(line)
+        if len(collected) >= min_lines:
+            break
 
     collected.reverse()
     return collected

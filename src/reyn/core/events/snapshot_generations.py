@@ -228,6 +228,30 @@ def is_active_seq(state_log: StateLog, seq: int) -> bool:
     return _make_is_active(_abandoned_intervals(_rewind_records(state_log)))(seq)
 
 
+def earliest_relevant_wal_seq(state_log: StateLog) -> "int | None":
+    """The lowest ``wal_seq`` any abandoned interval's active-check could
+    possibly need to compare against, or ``None`` if the session has never
+    rewound. #4387 Phase B ②: a consumer holding only a BOUNDED in-memory
+    prefix of ``self.history`` (``Session._active_branch_history``, once
+    ``load_history()`` stopped always reading the whole file) needs to know
+    whether it must extend backward before running ``is_active(seq)`` over
+    what it has — anything with ``seq`` at or below this value is where an
+    abandoned interval's own boundary sits, so a caller already holding
+    everything down to (and including) this value has enough to answer
+    correctly for every seq it will actually test.
+
+    Deliberately the interval LOWER bounds only (each ``(lo, hi)``'s
+    ``lo``), not every seq ever mentioned: ``_make_is_active``'s own check
+    is ``lo < seq < hi`` — a seq at or below every ``lo`` is active by
+    construction, off every interval it could possibly be inside, so
+    nothing OLDER than the lowest ``lo`` changes the answer for it.
+    """
+    abandoned = _abandoned_intervals(_rewind_records(state_log))
+    if not abandoned:
+        return None
+    return min(lo for lo, _hi in abandoned)
+
+
 def build_active_predicate(state_log: StateLog) -> Callable[[int], bool]:
     """Build a reusable ``is_active(seq)`` predicate — ONE derivation for MANY seqs.
 
