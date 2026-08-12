@@ -1742,7 +1742,10 @@ class RouterLoop:
         # is ever wasted on it, whether this turn is a no-capability agent's sole
         # call or a tool-using agent's multi-round turn.
         if self._response_format is not None:
-            from reyn.llm.litellm_bootstrap import ensure_litellm_ready
+            from reyn.llm.litellm_bootstrap import (
+                LitellmUnavailableError,
+                ensure_litellm_ready,
+            )
             from reyn.llm.llm import proxy_kwargs, routing_for_spec
             from reyn.runtime.errors import StructuredOutputUnsupportedModelError
             _spec_fn = getattr(host, "resolve_model_spec", None)
@@ -1763,8 +1766,27 @@ class RouterLoop:
                 if _extra.get("api_base") and "/" in _precheck_spec.model
                 else _precheck_spec.model
             )
-            ensure_litellm_ready()
-            import litellm
+            # #4395: this precheck genuinely needs a real answer (no fallback
+            # exists — structured-output support must actually be known
+            # before the turn's first LLM call) and PREVIOUSLY did its own
+            # unconditional `import litellm` right after `ensure_litellm_
+            # ready()` without checking its return value — a #4395-shaped
+            # double-attempt-on-failure site missed by every census so far
+            # (this call site was in neither PR-1's Set A/B nor #4415's
+            # in-progress recount). `run_loop` is `async def`, so a
+            # synchronous call here blocked the WHOLE event loop for as
+            # long as the underlying import took — via `asyncio.to_thread`
+            # instead, matching `llm.py`'s own `recorded_acompletion` fix
+            # (#4413): only the coroutine waits, not the loop.
+            # `ignore_cooldown=True`: this precheck has no fallback — the
+            # axis② cooldown protects fallback-having callers, not this
+            # one; see `ensure_litellm_ready()`'s own docstring.
+            litellm = await asyncio.to_thread(ensure_litellm_ready, ignore_cooldown=True)
+            if litellm is None:
+                raise LitellmUnavailableError(
+                    "import litellm failed — see the reyn.llm.litellm_bootstrap "
+                    "warn-once log line for the underlying cause",
+                )
             if not litellm.supports_response_schema(_precheck_model):
                 raise StructuredOutputUnsupportedModelError(
                     f"model {_precheck_model!r} does not support structured output "

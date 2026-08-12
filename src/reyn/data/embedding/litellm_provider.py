@@ -413,8 +413,11 @@ class LiteLLMEmbeddingProvider:
                 # coder correction, #4395: PR-1 must land this call site
                 # already-awaitable so PR-2's dedicated-thread mechanism
                 # slots in behind the same await point without a rewrite
-                # of this call site).
-                if await asyncio.to_thread(ensure_litellm_ready) is None:
+                # of this call site). `ignore_cooldown=True` (PR-2 follow-
+                # up): this loop has no fallback within one attempt — the
+                # axis② cooldown protects fallback-having callers, not
+                # this one; see `ensure_litellm_ready()`'s own docstring.
+                if await asyncio.to_thread(ensure_litellm_ready, ignore_cooldown=True) is None:
                     raise LitellmUnavailableError(
                         "import litellm failed — see the reyn.llm."
                         "litellm_bootstrap warn-once log line for the "

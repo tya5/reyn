@@ -205,10 +205,30 @@ _LITELLM_IMPORT_COOLDOWN_SECONDS = 60.0
 _litellm_import_cooldown_until = 0.0
 
 
-def ensure_litellm_ready() -> "Any | None":
+def ensure_litellm_ready(*, ignore_cooldown: bool = False) -> "Any | None":
     """Idempotent first-touch chokepoint: import litellm + apply its
     one-time setup, returning the imported module — or ``None`` if the
     import itself failed.
+
+    ``ignore_cooldown`` (#4395 PR-2 follow-up, lead-coder review): the
+    axis② cooldown below exists to protect callers WITH a safe fallback
+    (``ensure_litellm_ready_or_defer()``'s own callers — a conservative
+    default, an unknown-cost ``None``, chars//4) from repeatedly re-
+    attempting, and re-hanging on, the same broken import. A caller with
+    NO fallback (a real completion/embedding call, or a structured-output
+    precheck that genuinely needs an answer) was ALREADY a "must wait,
+    there is nowhere else to go" site before axis② existed — for THAT
+    caller, the cooldown is not a protection, it is a regression: a
+    transient failure that would have cleared and succeeded on retry
+    instead hard-fails immediately, without even attempting, for the
+    rest of the cooldown window. Pass ``ignore_cooldown=True`` from a
+    no-fallback call site to skip the axis② gate below and always make a
+    genuine attempt — this does NOT reintroduce axis①'s original bug
+    (within-call double-attempt) or spawn a duplicate concurrent import:
+    the `_ready_registry` ownership dance immediately below still applies
+    unchanged, so a genuine attempt already in flight (from the
+    background warming thread, or another no-fallback caller) is still
+    joined via the SAME `Future`, never independently repeated.
 
     #4395 (PR-1, the minimal fix): this function's OWN internal ``import
     litellm`` is the single place that attempt happens; call sites should
@@ -294,7 +314,11 @@ def ensure_litellm_ready() -> "Any | None":
     # contests for it. Unlocked read, same GIL-atomic-single-variable
     # reasoning as the fast path above; the worst race is one caller
     # re-probing slightly early or late, never a wrong result.
-    if _cooldown.in_cooldown(_litellm_import_cooldown_until):
+    # `ignore_cooldown` (see this function's own docstring): a no-fallback
+    # caller opts out of this gate entirely — it was already a "must
+    # wait" site before axis② existed, and the cooldown protects
+    # fallback-having callers, not this one.
+    if not ignore_cooldown and _cooldown.in_cooldown(_litellm_import_cooldown_until):
         return None
 
     my_future: "Future[Any | None]" = Future()
