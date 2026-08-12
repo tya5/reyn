@@ -284,11 +284,27 @@ def _third_party_import_egress_honours_standard_env(
         kwargs.setdefault("timeout", _TIKTOKEN_IMPORT_TIMEOUT_SECONDS)
         return original_request(self, method, url, **kwargs)
 
-    requests.sessions.Session.request = _patched_request  # type: ignore[method-assign]
+    # setattr, not a direct attribute assignment: ``_patched_request``'s
+    # signature is intentionally NARROWER than ``requests``' own real
+    # ``Session.request`` (which carries ~17 named parameters this wrapper
+    # only re-exposes via ``**kwargs``) — the whole point of a monkeypatch
+    # wrapper. A direct ``Session.request = _patched_request`` makes mypy
+    # compare the two signatures structurally and reject the mismatch
+    # ([method-assign]/[assignment], version-dependent which code it picks
+    # — CI and this reviewer's local run disagreed on the exact code,
+    # which is itself evidence a bracketed ``# type: ignore[...]`` is the
+    # wrong fix here). ``setattr`` sidesteps that comparison the same way
+    # every other Python monkeypatch of a class method does, without
+    # hiding the pattern from a reader OR pushing it into the mypy
+    # baseline (lead-coder's review point: the baseline is for findings
+    # nobody chose, not for erasing the visible fact that THIS PR
+    # patches a class method process-wide for an import window — that
+    # fact belongs in the code, not the ratchet's ledger).
+    setattr(requests.sessions.Session, "request", _patched_request)
     try:
         yield
     finally:
-        requests.sessions.Session.request = original_request  # type: ignore[method-assign]
+        setattr(requests.sessions.Session, "request", original_request)
 
 
 def ensure_litellm_ready(
