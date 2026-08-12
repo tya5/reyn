@@ -334,7 +334,9 @@ def render_presentation_nodes(
     own docstring for what it lets this render pass skip."""
     from rich.console import Group
 
-    return Group(*[_render_node(node, image_cache) for node in nodes])
+    return Group(*[
+        _render_node(node, image_cache, decoded_image_cache) for node in nodes
+    ])
 
 
 class StdoutPresentationRenderer:

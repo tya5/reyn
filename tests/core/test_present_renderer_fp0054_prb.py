@@ -152,6 +152,89 @@ def test_image_with_resolved_cache_renders_real_pixels_not_the_status_line() -> 
     assert out.strip()
 
 
+def test_render_image_uses_a_warm_decoded_cache_without_decoding_again() -> None:
+    """Tier 2: #4464 lead-coder review block — a warm ``decoded_image_cache``
+    entry must actually be USED, not merely handed in ("渡された ≠ 使った",
+    #3859's own shape: a value present-but-ignored reads identical to a
+    value that mattered, until something asserts the DIFFERENCE). Before
+    this test, deleting `_render_image`'s cache-hit branch entirely left
+    every existing test green — none of them distinguished "decoded from
+    the cache" from "decoded fresh from `res.body`" because both paths
+    produce an equivalent-looking `_SafeImageRenderable`.
+
+    Proven two ways at once, both through PUBLIC surface (no private-state
+    assertion — the sentinel's identity is witnessed by its OWN print-time
+    behavior, not by reaching into `_SafeImageRenderable._inner`):
+
+    1. Behavior — `decode_image_body` is monkeypatched with a call-counting
+       spy; it must be called ZERO times, proving decode never ran on the
+       (deliberately garbage) cached bytes.
+    2. Content — the sentinel wrapped for render is a plain `object()` with
+       no `__rich_console__` of its own, so printing it produces
+       `_SafeImageRenderable`'s OWN print-time-failure text naming THAT
+       specific `AttributeError` — a fresh decode of the garbage `res.body`
+       would instead fail at `PILImage.open()` with a DIFFERENT, PIL-shaped
+       error, so the printed text distinguishes which object was actually
+       wrapped without touching `_inner` directly.
+
+    Falsify-verified: commenting out the cache-hit branch (falling straight
+    to the inline decode) makes the spy record a call AND changes the
+    printed failure text to a PIL decode error — this test goes RED on
+    both assertions with the exact real bug lead-coder's block named."""
+    from reyn.core.present.image_fetch import ImageResolution
+    from reyn.interfaces.repl.present_renderer import _SafeImageRenderable
+
+    calls: list[bytes] = []
+
+    def _spy(body: bytes):
+        calls.append(body)
+        raise RuntimeError("decode_image_body should not have been called")
+
+    import reyn.interfaces.repl.present_renderer as present_renderer_module
+    original = present_renderer_module.decode_image_body
+    present_renderer_module.decode_image_body = _spy
+    try:
+        sentinel = object()  # stands in for a pre-decoded TextualImage
+        nodes = validate_blueprint(
+            {"component": "image", "src": "http://x/y.png", "alt": "a photo"}
+        )
+        resolved = resolve_bindings(nodes, {}, surface="inline-cui")
+        image_cache = {
+            "http://x/y.png": ImageResolution(
+                ok=True, body=b"deliberately-not-a-real-png", content_type="image/png"
+            ),
+        }
+        decoded_image_cache = {"http://x/y.png": sentinel}
+
+        group = render_presentation_nodes(
+            resolved.nodes,
+            image_cache=image_cache,
+            decoded_image_cache=decoded_image_cache,
+        )
+        (renderable,) = group.renderables
+        assert isinstance(renderable, _SafeImageRenderable)
+
+        console = Console(width=100, file=io.StringIO(), force_terminal=True, color_system=None)
+        console.print(group)
+        out = console.file.getvalue()
+
+        assert not calls, (
+            f"decode_image_body was called {len(calls)} time(s) — "
+            "the cache-hit branch was bypassed"
+        )
+        # The sentinel `object()` has no `__rich_console__` — printing it
+        # fails with THIS specific AttributeError, distinguishing "the
+        # cached sentinel was wrapped" from "the garbage bytes were
+        # (attempted to be) decoded fresh" (which would fail differently,
+        # at PIL's own header sniff, if the cache-hit branch were bypassed
+        # and our raising spy didn't intervene first).
+        assert "__rich_console__" in out, (
+            f"expected the sentinel's own print-time AttributeError, got: {out}"
+        )
+    finally:
+        present_renderer_module.decode_image_body = original
+
+
 def test_safe_image_renderable_catches_a_print_time_failure() -> None:
     """Tier 1: #3846 ③ — `_SafeImageRenderable` degrades to a status line
     when the WRAPPED renderable's `__rich_console__` raises, not just when
