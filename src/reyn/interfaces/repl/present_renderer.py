@@ -182,6 +182,12 @@ class _SafeImageRenderable:
                 # established precedent (module docstring) of defending
                 # against real `textual-image` print-time failures rather
                 # than reporting upstream and blocking on it.
+                #
+                # Residual: if `textual-image` upstream fixes `_NULL_CONTROL`
+                # to a tuple, this normalization becomes a no-op (a tuple
+                # `isinstance(..., list)` check is already False) and can be
+                # removed then — same shape as #4458's own upstream-fixed-it
+                # residual note.
                 if isinstance(segment, Segment) and isinstance(segment.control, list):
                     segment = Segment(segment.text, segment.style, tuple(segment.control))
                 yield segment
