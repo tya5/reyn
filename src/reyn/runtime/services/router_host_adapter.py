@@ -222,6 +222,10 @@ class RouterHostAdapter:
         #3792. Async callback ``(msg_id: str) -> None`` —
         ``Session.commit_mid_turn_injection``. Same ``None``-default contract
         as ``peek_mid_turn_injection``.
+    mark_untrusted_in_flight:
+        #4381 PR-2 stage ③. Sync callback ``() -> None`` —
+        ``Session._mark_untrusted_in_flight``. Same ``None``-default contract
+        as ``peek_mid_turn_injection``.
     """
 
     # RouterLoopHost Protocol attributes (non-property)
@@ -301,6 +305,13 @@ class RouterHostAdapter:
         # exactly like a phase host (no-op seam).
         peek_mid_turn_injection: "Callable[[], Awaitable[dict | None]] | None" = None,
         commit_mid_turn_injection: "Callable[[str], Awaitable[None]] | None" = None,
+        # #4381 PR-2 stage ③: sync callback () -> None — Session.
+        # _mark_untrusted_in_flight. Bare, no shared-consumer partner (mirrors
+        # peek/commit_mid_turn_injection's own bare-ness above). None-default
+        # so pre-existing hand-built adapters (tests, other call sites) stay
+        # valid; router_loop.py getattr-guards the call, same as every other
+        # optional host method.
+        mark_untrusted_in_flight: "Callable[[], None] | None" = None,
         # Proposal 0067 P1' (#3978): mark_task_pending — bare, no shared-
         # consumer partner (same reasoning as the peek/commit pair above).
         # None-default so pre-existing hand-built adapters stay valid;
@@ -567,6 +578,8 @@ class RouterHostAdapter:
         # #3792
         self._peek_mid_turn_injection_cb = peek_mid_turn_injection
         self._commit_mid_turn_injection_cb = commit_mid_turn_injection
+        # #4381 PR-2 stage ③
+        self._mark_untrusted_in_flight_cb = mark_untrusted_in_flight
         # Proposal 0067 P1' (#3978)
         self._mark_task_pending_cb = mark_task_pending
         # FP-0034 PR-3b-iii
@@ -1844,6 +1857,22 @@ class RouterHostAdapter:
             tool_call_id=tool_call_id,
             name=name,
         ))
+
+    def mark_untrusted_in_flight(self) -> None:
+        """#4381 PR-2 stage ③: forward to ``Session._mark_untrusted_in_flight``
+        when wired.
+
+        None-safe (pre-existing hand-built adapters, most test construction)
+        — behaves exactly like a host that never implemented the hook, same
+        convention as ``peek_mid_turn_injection`` above. Called from
+        ``router_loop.py``'s tool-result production, at the SAME line that
+        stamps ``external_source`` onto the persisted ``ChatMessage.meta``
+        (single update point — no second, independently-maintained taint
+        signal to drift out of sync with the one ``metas_have_untrusted``
+        reads once the entry lands in history).
+        """
+        if self._mark_untrusted_in_flight_cb is not None:
+            self._mark_untrusted_in_flight_cb()
 
     async def peek_mid_turn_injection(self) -> "dict | None":
         """#3792: forwards to ``Session.peek_mid_turn_injection`` when wired.

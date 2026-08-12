@@ -3614,6 +3614,18 @@ class RouterLoop:
             }
             if external_source:
                 _tool_meta["external_source"] = True
+                # #4381 PR-2 stage ③: the SAME update point as the meta stamp
+                # above — not a second, independently-set signal. The meta
+                # stamp only becomes visible to `_effective_contextual_for_turn`
+                # once THIS history entry is persisted (`_append_entry` below);
+                # this in-flight flag closes the gap for the CURRENT turn's
+                # own remaining iterations, which see it immediately. Getattr-
+                # guarded: a host that never wired the callback (most test
+                # construction, phase hosts) behaves as a no-op, same
+                # convention as every other optional host method.
+                _mark_untrusted = getattr(host, "mark_untrusted_in_flight", None)
+                if _mark_untrusted is not None:
+                    _mark_untrusted()
             # #73 (Option C, co-vet-directed): stamp the ALREADY-KNOWN success/failure
             # classification as a typed field — never re-derived downstream from the
             # rendered ``content_str`` (a display string is not a stable data contract;
