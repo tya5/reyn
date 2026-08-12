@@ -76,6 +76,16 @@ class _HtmlPreviewParser(html.parser.HTMLParser):
     """
 
     _HEADING_TAGS = {"h1", "h2", "h3"}
+    # #4431: preview-only cap, not a data-loss point — this class builds a
+    # PREVIEW (title/outline/first_paragraph), and the caller already has the
+    # full `extracted_text` alongside it (see `_generate_web_fetch_preview`),
+    # so a heading past #8 is never lost, only left out of the outline
+    # summary. 8 has no measured basis beyond "a preview should stay short";
+    # unlike a hard data cap this doesn't need a config knob (owner ruling:
+    # a knob is for values a real environment could need widened — a preview
+    # length is a display choice, not a correctness bound). What it DID need
+    # (and lacked) is visibility: `result()` now reports `outline_truncated`
+    # so a page with more headings doesn't read as "this IS the whole outline".
     _OUTLINE_MAX = 8
 
     def __init__(self) -> None:
@@ -83,6 +93,7 @@ class _HtmlPreviewParser(html.parser.HTMLParser):
         self._title_parts: list[str] = []
         self._in_title = False
         self._outline: list[tuple[str, list[str]]] = []  # (tag, buf)
+        self._heading_count = 0  # ALL headings seen, uncapped — #4431 visibility
         self._current_heading: tuple[str, list[str]] | None = None
         self._first_paragraph_parts: list[str] = []
         self._in_first_paragraph = False
@@ -92,8 +103,10 @@ class _HtmlPreviewParser(html.parser.HTMLParser):
     def handle_starttag(self, tag: str, attrs: object) -> None:
         if tag == "title":
             self._in_title = True
-        elif tag in self._HEADING_TAGS and len(self._outline) < self._OUTLINE_MAX:
-            self._current_heading = (tag, [])
+        elif tag in self._HEADING_TAGS:
+            self._heading_count += 1
+            if len(self._outline) < self._OUTLINE_MAX:
+                self._current_heading = (tag, [])
         elif (
             tag == "p"
             and not self._first_paragraph_done
@@ -136,12 +149,19 @@ class _HtmlPreviewParser(html.parser.HTMLParser):
         first_paragraph = " ".join(self._first_paragraph_parts).strip()
         if len(first_paragraph) > 280:
             first_paragraph = first_paragraph[:277] + "…"
-        return {
+        out: dict = {
             "title": title,
             "outline": outline,
             "first_paragraph": first_paragraph,
             "link_count": self._link_count,
         }
+        # #4431: the page's own full text is available alongside this preview
+        # (see _generate_web_fetch_preview) — nothing is lost — but the
+        # OUTLINE itself must say when it isn't the whole heading list.
+        if self._heading_count > len(self._outline):
+            out["outline_truncated"] = True
+            out["outline_heading_count"] = self._heading_count
+        return out
 
 
 def _generate_web_fetch_preview(
