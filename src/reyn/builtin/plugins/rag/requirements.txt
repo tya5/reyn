@@ -17,8 +17,16 @@
 #   - chonkie (MIT): recursive/semantic/etc. chunking, ~15 MiB vs LangChain's
 #     ~80 MiB; no bundled model in the default character-tokenizer path used
 #     here -> no network fetch at import or call time.
-#   - fastmcp: the stdio MCP server framework both scripts build on.
+#   - fastmcp: the stdio MCP server framework both scripts build on. #4388:
+#     was `>=2.0` (a lower bound only) -- reyn's old CORE pin, before #4302
+#     dropped fastmcp from core entirely, was the exact `==3.4.5`; nobody
+#     had counted what `>=2.0` alone actually permits (2.x through any
+#     future major, untested here) until a #4371 CI investigation asked
+#     "did the resolved version actually change" and found it hadn't
+#     (3.4.7, same 3.4.x line) -- this time. `>=3.4,<4` keeps patch/minor
+#     updates flowing while blocking the next untested major bump from
+#     resolving silently in CI/dev installs.
 sqlite-vec>=0.1.9
 apsw>=3.51
 chonkie>=1.7
-fastmcp>=2.0
+fastmcp>=3.4,<4
