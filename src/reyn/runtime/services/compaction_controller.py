@@ -301,6 +301,37 @@ class CompactionController:
             return
         latest = self._latest_summary()
         prev_cover = (latest.meta or {}).get("covers_through_seq", 0) if latest else 0
+        # #4470: `history` (= self._history_access()) is now RESIDENT-only
+        # (#4387/#4468's byte-driven eviction can drop entries with
+        # prev_cover < seq <= <the eventual covers_through_seq> before this
+        # scan ever sees them — eviction removes strictly from the front, so
+        # any gap is always a missing PREFIX, never a middle hole).
+        # `covers_through_seq` is read by OTHER consumers (#4468's untrusted-
+        # content narrowing latch among them) as "everything at or below
+        # this seq has genuinely been retired" — so it is not enough to
+        # merely exclude gapped content from THIS pass's candidates
+        # (an earlier version of this fix did only that, and still let
+        # covers_through_seq advance PAST the gap to the highest resident
+        # seq examined — #4468's latch check `evicted_seq > watermark`
+        # then reads the gapped seq as "covered" purely because the
+        # watermark number is now numerically larger, regardless of
+        # whether that specific seq was ever examined). If the entry
+        # immediately after prev_cover is missing from residency, this
+        # pass has NO gap-free run to cover at all — skip compaction
+        # entirely rather than let the watermark skip over unseen
+        # territory. The gap resolves itself once eviction's own natural
+        # forward growth is bridged by a future backward-hydrate
+        # (#4400/#4411) that brings the missing range back into memory;
+        # until then, compaction simply does not run for this agent,
+        # which is the conservative, honest behaviour (bounded resident
+        # memory using more of its budget on OLD content briefly, not a
+        # false "covered" claim).
+        resident_seqs = [t.seq for t in turns if t.seq > 0]
+        if resident_seqs and min(resident_seqs) > prev_cover + 1:
+            self._events.emit(
+                "compaction_check", outcome="forced_sync_gap_before_earliest_resident",
+            )
+            return
         candidates = self._select_candidates(turns, prev_cover)
 
         self._events.emit(
