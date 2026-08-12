@@ -384,6 +384,21 @@ class LandlockBackend:
         self._available = True
         return True
 
+    def session_artifact_outside_write_scope(self, policy: SandboxPolicy) -> bool:
+        """Vacuously True (#4434, architect ruling): Landlock DOES derive a
+        policy representation once per session now
+        (``landlock_exec._cached_policy_json``), same as Seatbelt — the axis
+        that matters is derivation vs application, not "does it touch a
+        file". Landlock's derivation travels via argv straight into the
+        child's own argv, never written to disk, so there is no on-disk
+        artifact a sandboxed child could rewrite and this security clause
+        (which only bites when a derivation is materialised as a file) is
+        vacuous here — self-consciously so, not "not implemented". Still
+        bears the contract: a future Landlock change that starts writing a
+        derivation to disk would need to answer this honestly, no longer
+        vacuously."""
+        return True
+
     def wrap_command(self, argv: list[str], policy: SandboxPolicy) -> WrappedCommand:
         """Prepend the ``landlock_exec`` re-exec shim to *argv* for a
         persistent-process launch (e.g. a stdio MCP server, #1344 follow-up E).

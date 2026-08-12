@@ -555,6 +555,22 @@ class DockerEnvironmentBackend:
         """
         return None
 
+    def session_artifact_outside_write_scope(self, policy: SandboxPolicy) -> bool:
+        """Vacuously True (#4434): neither ``wrap_command`` nor ``run`` below
+        writes a policy-derived representation to disk — the policy travels
+        into fixed container-launch flags (``--read-only``/``--tmpfs
+        /tmp``/``--network none``) baked at container-creation time, not
+        into a file this backend re-reads per call — so there is no on-disk
+        artifact a sandboxed child could rewrite. Still bears the contract
+        (owner ruling, #4434: the sandbox abstraction means every backend
+        answers it, not just the ones that currently have something to
+        cache) — caught missing this method entirely on #4439's first CI
+        run (this class lives in ``environment/``, a different directory
+        from the other 3 backends, and a hand-typed backend census missed
+        it; see ``test_sandbox_session_artifact_contract_4434.py``'s
+        registry-derived census for the structural fix)."""
+        return True
+
     def wrap_command(self, argv: list[str], policy: SandboxPolicy) -> WrappedCommand:
         """Prepend a ``docker exec`` invocation to *argv* for a PERSISTENT-process
         launch (e.g. a stdio MCP server, #2620) inside the SAME container

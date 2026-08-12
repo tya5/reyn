@@ -8,8 +8,12 @@ MCPClient caller, covered separately in test_mcp_client_sandbox_wrap.py):
 
 - NoopBackend: argv unchanged, no cleanup — passthrough THROUGH the
   abstraction, not a bypass.
-- SeatbeltBackend: prepends sandbox-exec -f <profile>; cleanup unlinks the
-  temp profile.
+- SeatbeltBackend: prepends sandbox-exec -f <profile>. #4434 (stage 1): for a
+  policy whose write scope provably excludes the session-cache directory, the
+  profile is a SHARED, session-lifetime file and cleanup() is a no-op (a
+  second caller reusing the same policy still needs it); only when that
+  precondition can't be proven does cleanup() unlink a private, per-call
+  file — see test_sandbox_seatbelt.py's own #4434 section for both cases.
 - LandlockBackend: prepends the landlock_exec re-exec shim; no cleanup
   resource owned.
 
@@ -50,10 +54,16 @@ def test_noop_wrap_command_does_not_mutate_input_argv():
     assert argv == ["cmd", "a"]  # caller's list untouched
 
 
-def test_seatbelt_wrap_command_prepends_sandbox_exec(tmp_path):
+def test_seatbelt_wrap_command_prepends_sandbox_exec():
     """Tier 2: SeatbeltBackend.wrap_command prepends sandbox-exec -f <profile>,
     the profile is a real deny-default SBPL, and the trailing argv is the
-    original command unchanged."""
+    original command unchanged.
+
+    #4434 (stage 1): a bare ``SandboxPolicy()`` (empty write_paths) is safe
+    to session-cache, so its profile is SHARED — cleanup() on it is a no-op
+    by design (a second caller reusing this policy still needs the file);
+    see test_seatbelt_wrap_command_does_not_cache_when_write_scope_is_unsafe
+    in test_sandbox_seatbelt.py for the DOES-unlink case."""
     backend = SeatbeltBackend()
     wrapped = backend.wrap_command(["my-server", "--flag"], SandboxPolicy())
     assert wrapped.argv[0] == "sandbox-exec"
@@ -67,15 +77,29 @@ def test_seatbelt_wrap_command_prepends_sandbox_exec(tmp_path):
     assert wrapped.cleanup is not None
     assert profile_path.exists()
     wrapped.cleanup()
-    assert not profile_path.exists()  # cleanup unlinks the temp profile
+    assert profile_path.exists()  # cached (session-lifetime): cleanup() is a no-op
+
+    import os
+
+    os.unlink(profile_path)  # tidy up the shared cache file this test wrote
 
 
 def test_seatbelt_wrap_command_cleanup_idempotent():
-    """Tier 2: calling cleanup twice must not raise (best-effort unlink)."""
+    """Tier 2: calling cleanup twice must not raise, on both the cached
+    (no-op) path and the uncached (best-effort unlink) path."""
+    from reyn.security.sandbox.backends.seatbelt import _seatbelt_cache_dir
+
     backend = SeatbeltBackend()
-    wrapped = backend.wrap_command(["cmd"], SandboxPolicy())
-    wrapped.cleanup()
-    wrapped.cleanup()  # must not raise on a missing file
+
+    cached = backend.wrap_command(["cmd"], SandboxPolicy())
+    cached.cleanup()
+    cached.cleanup()  # no-op both times — must not raise
+
+    uncached = backend.wrap_command(
+        ["cmd"], SandboxPolicy(write_paths=[str(_seatbelt_cache_dir())]),
+    )
+    uncached.cleanup()
+    uncached.cleanup()  # must not raise on a missing file
 
 
 def test_landlock_wrap_command_uses_reexec_shim():

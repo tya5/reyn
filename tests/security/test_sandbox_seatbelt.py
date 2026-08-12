@@ -327,3 +327,131 @@ async def test_seatbelt_allows_socketpair_sendto_but_denies_addressed_sendto_whe
 def test_seatbelt_conforms_to_sandbox_backend_protocol():
     """Tier 2: SeatbeltBackend satisfies the runtime-checkable SandboxBackend Protocol."""
     assert isinstance(SeatbeltBackend(), SandboxBackend)
+
+
+# ─── 6. Session-scoped profile cache (#4434 stage 1) ─────────────────────────
+
+
+@pytest.fixture(autouse=True)
+def _reset_derivation_cache():
+    """Every test in this module gets a clean process-wide derivation cache —
+    without this, a policy object from an earlier test could still be alive
+    (e.g. held by a still-open temp-file handle) and collide by id() with a
+    freshly-constructed policy in a LATER test, since id() reuse is exactly
+    the failure mode ``_derivation_cache``'s weakref eviction exists to
+    close for production, not for a same-process test run reusing whatever
+    ids happen to be free."""
+    from reyn.security.sandbox import _derivation_cache
+
+    _derivation_cache._reset_cache_for_tests()
+    yield
+    _derivation_cache._reset_cache_for_tests()
+
+
+def test_seatbelt_cache_dir_is_outside_a_realistic_write_scope():
+    """Tier 2: #4434's load-bearing precondition, derived from the policy
+    object (via the same expand_policy_path + resolve every emitted SBPL
+    write-grant uses) — not a literal path comparison. Exercises the 3 real
+    write_paths shapes issue #4434 measured (config/loader.py's empty
+    default, router_op_context.py's workspace dir, and an explicit path)."""
+    from pathlib import Path
+
+    from reyn.security.sandbox.backends.seatbelt import (
+        _profile_is_safe_to_cache,
+        _seatbelt_cache_dir,
+    )
+
+    cache_dir = _seatbelt_cache_dir().resolve(strict=False)
+
+    for write_paths in ([], [str(Path.cwd())], ["~/some/workspace"]):
+        policy = SandboxPolicy(write_paths=write_paths)
+        assert _profile_is_safe_to_cache(policy) is True
+        for raw in policy.write_paths:
+            write_scope = expand_policy_path(raw).resolve(strict=False)
+            assert cache_dir != write_scope
+            assert not cache_dir.is_relative_to(write_scope)
+
+
+def test_seatbelt_cache_unsafe_when_write_scope_relocates_onto_the_cache_dir():
+    """Tier 2: strip-falsify — moving a policy's write_paths to cover the
+    cache directory — the exact relocation #4434's precondition exists to
+    catch — flips ``_profile_is_safe_to_cache`` to False. Proves the check
+    is a real, live derivation from the policy object, not a check that
+    would stay green regardless of what write_paths says."""
+    from reyn.security.sandbox.backends.seatbelt import (
+        _profile_is_safe_to_cache,
+        _seatbelt_cache_dir,
+    )
+
+    cache_dir = _seatbelt_cache_dir()
+
+    # Exact match — the write grant covers the cache dir itself.
+    assert _profile_is_safe_to_cache(SandboxPolicy(write_paths=[str(cache_dir)])) is False
+    # write_scope is an ANCESTOR of the cache dir (grant on the PARENT) —
+    # cache_dir is a descendant of the grant, so it's covered too: unsafe.
+    assert _profile_is_safe_to_cache(
+        SandboxPolicy(write_paths=[str(cache_dir.parent)]),
+    ) is False
+    # write_scope is a DESCENDANT of the cache dir (grant on a CHILD) — the
+    # subpath grant covers only that child and below, never its own parent
+    # (the cache dir itself), so this is safe.
+    assert _profile_is_safe_to_cache(
+        SandboxPolicy(write_paths=[str(cache_dir / "nested")]),
+    ) is True
+
+
+def test_seatbelt_wrap_command_reuses_the_same_profile_path_for_the_same_policy():
+    """Tier 2: #4434 — two wrap_command() calls with the SAME policy object
+    return the same on-disk profile path (the session-cache hit), and the
+    file's content matches what _build_sbpl_profile derives for that policy
+    — a real, on-disk witness that the cached path is not a stale/blank
+    file, not just path-string equality."""
+    from reyn.security.sandbox.backends.seatbelt import _build_sbpl_profile
+
+    backend = SeatbeltBackend()
+    policy = SandboxPolicy(write_paths=[])
+
+    wrapped1 = backend.wrap_command(["/bin/echo", "hi"], policy)
+    wrapped2 = backend.wrap_command(["/bin/echo", "hi"], policy)
+
+    path1 = wrapped1.argv[wrapped1.argv.index("-f") + 1]
+    path2 = wrapped2.argv[wrapped2.argv.index("-f") + 1]
+    assert path1 == path2
+
+    with open(path1, encoding="utf-8") as fh:
+        assert fh.read() == _build_sbpl_profile(policy)
+
+    # cleanup() on a cached path must be a no-op (a second caller sharing
+    # this policy still needs the file); confirmed by asserting it survives.
+    wrapped1.cleanup()
+    assert __import__("os").path.exists(path1)
+
+    import os
+
+    os.unlink(path1)
+
+
+def test_seatbelt_wrap_command_does_not_cache_when_write_scope_is_unsafe():
+    """Tier 2: strip-falsify — a policy whose write_paths covers the cache
+    directory gets an UNCACHED, per-call profile (pre-#4434 behaviour) —
+    two calls get DIFFERENT paths, and cleanup() DOES unlink. Proves the
+    safety check is load-bearing on the actual wrap_command() path, not
+    just on the helper function in isolation."""
+    from reyn.security.sandbox.backends.seatbelt import _seatbelt_cache_dir
+
+    backend = SeatbeltBackend()
+    policy = SandboxPolicy(write_paths=[str(_seatbelt_cache_dir())])
+
+    wrapped1 = backend.wrap_command(["/bin/echo", "hi"], policy)
+    wrapped2 = backend.wrap_command(["/bin/echo", "hi"], policy)
+
+    path1 = wrapped1.argv[wrapped1.argv.index("-f") + 1]
+    path2 = wrapped2.argv[wrapped2.argv.index("-f") + 1]
+    assert path1 != path2
+
+    import os
+
+    assert os.path.exists(path1)
+    wrapped1.cleanup()
+    assert not os.path.exists(path1)
+    wrapped2.cleanup()
