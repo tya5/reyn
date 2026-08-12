@@ -258,10 +258,45 @@ async def handle(op: LoadSkillIROp, ctx: OpContext) -> dict:
         history_fields["skill_source_path"] = op.path
 
     if len(content) > cap:
-        truncated_content = content[:cap]
+        # #4431 (architect correction): was a bare `content[:cap]` char slice
+        # with NO resume position returned at all — the note pointed at "the
+        # full body is on disk" but gave no way to continue from where this
+        # read stopped. load_skill is deliberately NOT a paginated reader
+        # (module docstring) — the fix is not to add offset/limit here, it's
+        # to make the escape hatch this note already promises actually work:
+        # `read_file` (same file, since `op.path` is a real on-disk path for
+        # every provenance class this module and file.py share the same
+        # builtin/plugin bypass for) already supports a 0-indexed LINE
+        # `offset` (#4381/#4432 fixed its own char_offset-within-a-line
+        # sibling). Whole-line accumulation (mirroring op_runtime/file.py's
+        # own #1209/#2335 algorithm) so `next_offset` names a genuine line
+        # boundary `read_file(path=op.path, offset=next_offset)` can resume
+        # from without re-showing or dropping a partial line.
+        all_lines = content.splitlines(keepends=True)
+        shown: list[str] = []
+        acc = 0
+        next_offset = 0
+        for i, line in enumerate(all_lines):
+            if shown and acc + len(line) > cap:
+                next_offset = i
+                break
+            if not shown and len(line) > cap:
+                # A single line alone exceeds the cap (e.g. a minified/
+                # one-line body) — char-truncate it so `content` stays
+                # genuinely bounded; `read_file(offset=0)` on resume hits
+                # this exact same line and returns ITS OWN `next_char_offset`
+                # (file.py's #2335 mechanism), so no new field is needed here.
+                shown.append(line[:cap])
+                acc += cap
+                next_offset = i
+                break
+            shown.append(line)
+            acc += len(line)
+            next_offset = i + 1
+        truncated_content = "".join(shown)
         ctx.events.emit(
             "tool_executed", op="load_skill", path=op.path,
-            truncated=True, total_chars=len(content),
+            truncated=True, total_chars=len(content), next_offset=next_offset,
         )
         return {
             "kind": "load_skill",
@@ -269,11 +304,13 @@ async def handle(op: LoadSkillIROp, ctx: OpContext) -> dict:
             "status": "truncated",
             "content": truncated_content,
             "total_chars": len(content),
+            "next_offset": next_offset,
             "_truncated": True,
             "note": (
                 f"content truncated to fit context ({len(truncated_content)} of "
-                f"{len(content)} chars shown); the full skill body is on disk at "
-                f"{op.path!r}."
+                f"{len(content)} chars shown); the full skill body is on disk "
+                f"at {op.path!r} — continue reading with "
+                f"read_file(path={op.path!r}, offset={next_offset})."
             ),
             **enc_field,
             **history_fields,
