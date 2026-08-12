@@ -45,13 +45,15 @@ built-in catalog (例: `claude-sonnet-thinking` / `gemini-flash-lite`) も ship 
 派生できます。 詳細は `reference/config/reyn-yaml.md` + `reference/builtin-models.md`
 を参照。
 
-対応する API キーをエクスポートします:
+あなたの provider の API キーをエクスポートします。例:
 
 ```bash
 export OPENAI_API_KEY=sk-...
-# または
-export ANTHROPIC_API_KEY=sk-ant-...
 ```
+
+litellm が provider ごとの変数を自動で解決します — あなたの provider が
+どの変数名を使うかは [litellm の provider docs](https://docs.litellm.ai/docs/providers)
+を参照してください。
 
 !!! warning "API キーは絶対にコミットしない"
     キーは環境変数にのみ保存します。`reyn.yaml` はチェックインします。プロキシ URL は `reyn.local.yaml` や `~/.reyn/config.yaml`（gitignored）に書きます。

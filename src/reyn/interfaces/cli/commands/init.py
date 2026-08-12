@@ -71,9 +71,15 @@ def run(args: argparse.Namespace) -> None:
     print("  1. Edit reyn.yaml          — set model mappings for your provider")
     print("  2. Edit reyn.local.yaml    — set api_base if using a proxy (gitignored)")
     print("     (copy from reyn.local.yaml.example if present)")
-    print("  3. Export your API key:")
+    # #4347: an example, not an enumeration — litellm resolves the actual
+    # provider's env var itself; naming a fixed set here reads as "these are
+    # the supported providers" to anyone using a different one. One example
+    # (owner ruling: even 2 items starts reading as a coverage table) plus a
+    # pointer to litellm's own provider docs, which won't go stale as
+    # litellm adds providers reyn never has to know about by name.
+    print("  3. Export your provider's API key, e.g.:")
     print("       export OPENAI_API_KEY=sk-...")
-    print("       export ANTHROPIC_API_KEY=sk-ant-...")
+    print("     (see https://docs.litellm.ai/docs/providers for other providers)")
     print("  4. Try one of these:")
     print("       reyn chat                              # talk to the agent")
     print()
