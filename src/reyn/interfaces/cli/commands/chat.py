@@ -135,6 +135,46 @@ async def _background_attach(registry, name: str, *, skip_restore: bool) -> None
             )
 
 
+def _run_bracketed_by_stall_trace(fn) -> None:
+    """#4405 startup extension: run *fn* (zero-arg, no return value) with
+    reyn's stall-trace diagnostic armed around it, if ``REYN_STALL_TRACE``
+    is set.
+
+    Brackets the WHOLE session (startup through every turn), not just
+    startup — each turn's own arm/disarm (``Session._run_router_loop``)
+    nests safely inside this one via ``stall_trace``'s depth counter (see
+    that module). Armed synchronously, BEFORE *fn* starts the event loop —
+    ``faulthandler.dump_traceback_later`` needs no loop of its own (a
+    dedicated OS thread) — so this covers the startup span
+    ``REYN_STARTUP_TIMING``'s own stages measure but that a per-turn-only
+    bracket used to leave completely unobserved (#4406 closed this gap for
+    turns; this closes it for the startup that precedes them).
+
+    Module-level (not inlined in ``_run``) so the wiring itself is
+    independently testable with a stub *fn* — mirrors
+    ``_background_attach``'s own "module-level, not a nested closure, so
+    it is independently testable" precedent in this file.
+    """
+    from reyn.runtime.stall_trace import (
+        arm as _arm_stall_trace,
+    )
+    from reyn.runtime.stall_trace import (
+        disarm as _disarm_stall_trace,
+    )
+    from reyn.runtime.stall_trace import (
+        stall_trace_seconds_from_env,
+    )
+
+    stall_seconds = stall_trace_seconds_from_env()
+    if stall_seconds is not None:
+        _arm_stall_trace(stall_seconds)
+    try:
+        fn()
+    finally:
+        if stall_seconds is not None:
+            _disarm_stall_trace()
+
+
 def register(sub) -> None:
     p = sub.add_parser("chat", help="Start an interactive chat session")
     p.add_argument(
@@ -910,4 +950,4 @@ def _run(args: argparse.Namespace) -> None:
     from reyn.runtime.startup_timing import mark_async_entered  # noqa: PLC0415
 
     mark_async_entered()
-    run_async(_main_chat())
+    _run_bracketed_by_stall_trace(lambda: run_async(_main_chat()))

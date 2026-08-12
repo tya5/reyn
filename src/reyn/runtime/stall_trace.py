@@ -1,6 +1,10 @@
-"""#4405: an opt-in, off-by-default diagnostic that dumps the process's
-Python stack to reyn's own log if a turn blocks longer than
-``REYN_STALL_TRACE`` seconds.
+"""#4405 (extended to cover startup too, same issue's own follow-up ask):
+an opt-in, off-by-default diagnostic that dumps the process's Python
+stack to reyn's own log if reyn blocks longer than ``REYN_STALL_TRACE``
+seconds — armed for the whole chat session (startup included,
+``chat.py``'s entrypoint) with each turn's own arm/disarm
+(``Session._run_router_loop``) nesting safely inside it, so a stall
+anywhere — not just mid-turn — gets caught.
 
 Born out of #4403's investigation: four independent, real, measured
 hypotheses for an owner-reported ~20s per-message freeze were each
@@ -48,6 +52,20 @@ logger = logging.getLogger(__name__)
 
 _ENV_VAR = "REYN_STALL_TRACE"
 
+#: #4405 startup extension: how many active ``arm()`` callers currently want
+#: the timer running. ``faulthandler.dump_traceback_later`` is ONE global
+#: timer with no reentrancy of its own — a second ``arm()`` call would just
+#: re-point the same timer, and an inner ``disarm()`` would cancel it out
+#: from under an outer caller still relying on it. This makes nesting safe:
+#: the chat entrypoint arms once for the whole session (startup + every
+#: turn), each turn's own arm/disarm (Session._run_router_loop) nests
+#: inside it — only the OUTERMOST arm (0 -> 1) touches the real API, only
+#: the OUTERMOST disarm (1 -> 0) cancels it. An unbalanced disarm (more
+#: disarms than arms) is clamped at 0 rather than going negative, so a
+#: stray extra call can't leave the counter lying about whether anything is
+#: really armed.
+_depth = 0
+
 
 def stall_trace_seconds_from_env() -> "float | None":
     """The configured stall threshold in seconds, or ``None`` if the env var
@@ -83,20 +101,26 @@ def _log_stream():
 
 
 def arm(seconds: float) -> None:
-    """Start the background-thread stall timer. Call at turn entry, paired
-    with :func:`disarm` in a ``finally`` so a turn that raises still
-    disarms it — never call twice without a ``disarm`` in between
-    (``faulthandler`` itself has no such reentrancy guard; overlapping
-    ``arm`` calls would just re-point the SAME single global timer at a
-    new *seconds*/file, which is not this module's problem to solve since
-    only one turn ever runs at a time on a given event loop by
-    construction).
+    """Start the background-thread stall timer, or — if a caller further
+    out already armed it — just record that this caller wants it running
+    too. Pair with :func:`disarm` in a ``finally`` (both the chat
+    entrypoint bracketing the whole session and each turn's own
+    arm/disarm nest safely; see the module-level ``_depth`` docstring for
+    why nesting needs this rather than calling ``faulthandler`` directly).
     """
-    faulthandler.dump_traceback_later(seconds, repeat=True, file=_log_stream(), exit=False)
+    global _depth
+    if _depth == 0:
+        faulthandler.dump_traceback_later(seconds, repeat=True, file=_log_stream(), exit=False)
+    _depth += 1
 
 
 def disarm() -> None:
-    """Cancel the timer armed by :func:`arm`. Safe to call even if nothing
-    is armed (``faulthandler.cancel_dump_traceback_later`` is itself a
-    no-op in that case)."""
-    faulthandler.cancel_dump_traceback_later()
+    """Release one ``arm()`` call. Cancels the real timer only once every
+    caller that armed it has released — safe to call even if nothing is
+    armed (clamped at 0, never goes negative)."""
+    global _depth
+    if _depth == 0:
+        return
+    _depth -= 1
+    if _depth == 0:
+        faulthandler.cancel_dump_traceback_later()
