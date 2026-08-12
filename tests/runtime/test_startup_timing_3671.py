@@ -341,10 +341,24 @@ def test_named_substages_plus_other_equal_the_wide_span(monkeypatch) -> None:
     """Tier 2: coverage invariant — #3671's original single `client-prep` lump
     (`mark_app_constructed` minus `mark_async_entered`) must still be fully
     explained after being broken into 4 named sub-stages + `client-prep:other`
-    (#3735 fix): their sum must equal the wide span, not merely be LESS than
-    or equal to it. Measured against the test's OWN wall clock (not the
-    module's private timestamps) so this is a public-surface witness, not an
-    assertion on internal state."""
+    (#3735 fix): summing them must account for every injected interval,
+    including the gaps NOT wrapped by any `with stage(...)` — the #3735
+    regression shape this module's whole `:other` pattern exists to prevent.
+
+    Lower-bound against the KNOWN injected sleep total, not an upper-bound
+    wall-clock tolerance (lead-coder review on #4363 — the same fix already
+    applied to `test_tui_boot_named_substages_plus_other_equal_the_wide_span`
+    above). `client-prep` has no independently RECORDED wide span the way
+    `tui-boot` does (`tui-boot`'s own wide bracket is recorded
+    unconditionally in `mark_first_frame`; `client-prep`'s never was), so
+    there is no public value to compare against for an exact equality the
+    same way. A monotonic `>=` against the known sleep total is immune to
+    scheduler jitter in either direction — the same shape as
+    `test_the_context_manager_records_elapsed_time` above — and still
+    catches the regression: a broken `:other` computation that drops the
+    unbracketed gaps reports LESS than the known total, not merely a
+    different one.
+    """
     import time
 
     from reyn.runtime import startup_timing
@@ -357,8 +371,8 @@ def test_named_substages_plus_other_equal_the_wide_span(monkeypatch) -> None:
         "client-prep:transport", "client-prep:read-model",
         "client-prep:tui-import", "client-prep:app-construct", "client-prep:other",
     )
+    injected_sleep_total = 0.06  # 6 x time.sleep(0.01) below, bracketed and not
 
-    wall_start = time.perf_counter()
     startup_timing.mark_async_entered()
     time.sleep(0.01)
     with stage("client-prep:transport"):
@@ -371,10 +385,9 @@ def test_named_substages_plus_other_equal_the_wide_span(monkeypatch) -> None:
     startup_timing.mark_tui_import_done()
     time.sleep(0.01)
     startup_timing.mark_app_constructed()
-    wall_end = time.perf_counter()
 
     named_sum = sum(startup_timing.TIMING.elapsed(name) for name in stages)
-    assert abs(named_sum - (wall_end - wall_start)) < 0.02
+    assert named_sum >= injected_sleep_total
 
 
 def test_tui_boot_named_substages_plus_other_equal_the_wide_span(monkeypatch) -> None:
