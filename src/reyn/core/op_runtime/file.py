@@ -88,7 +88,7 @@ async def _read_image_file(op: FileIROp, ctx: OpContext, *, mime_type: str) -> d
             "kind": "file", "op": "read", "path": op.path,
             "status": "not_found",
             "error": f"file not found: {op.path}",
-            "suggestions": _nearby_files(ctx.workspace, op.path),
+            **_suggestions_fields(ctx.workspace, op.path),
             "content": "",
         }
 
@@ -167,12 +167,18 @@ def _nearest_existing_ancestor(ws, start: str) -> "str | None":
     return None
 
 
-def _nearby_files(ws, path: str, *, max_results: int = _NOT_FOUND_SUGGESTIONS_LIMIT) -> list[str]:
+def _nearby_files(
+    ws, path: str, *, max_results: int = _NOT_FOUND_SUGGESTIONS_LIMIT
+) -> "tuple[list[str], int]":
     """List sibling files under the parent of *path*, for use as not_found suggestions.
 
-    Returns project-relative paths from ``Workspace.glob_files`` when the
-    parent directory exists (possibly empty — "no neighbours" legitimately
-    yields ``[]``).
+    Returns ``(suggestions, total_before_cap)`` — project-relative paths from
+    ``Workspace.glob_files_with_total`` when the parent directory exists
+    (possibly empty — "no neighbours" legitimately yields ``([], 0)``).
+    #4431: was the plain (silently-capped) ``glob_files`` — a directory with
+    more than ``_NOT_FOUND_SUGGESTIONS_LIMIT`` siblings always showed exactly
+    8 with no sign more existed. ``_with_total`` is the same #2998 fix the
+    ``glob`` op already uses; the caller reports the cap the same way.
 
     #3629: when the parent directory itself does NOT exist — a rename, a
     move, or a plugin reinstall to a different location, exactly the case
@@ -183,7 +189,7 @@ def _nearby_files(ws, path: str, *, max_results: int = _NOT_FOUND_SUGGESTIONS_LI
     nearest EXISTING ancestor (see :func:`_nearest_existing_ancestor`) as a
     single suggestion, so the model can discover the current structure
     on the spot instead of guessing a replacement path. Permission denials
-    and OS errors at any point still degrade to ``[]``, never raise.
+    and OS errors at any point still degrade to ``([], 0)``, never raise.
     """
     parent = str(Path(path).parent) if str(Path(path).parent) not in ("", ".") else "."
     if parent != ".":
@@ -193,12 +199,27 @@ def _nearby_files(ws, path: str, *, max_results: int = _NOT_FOUND_SUGGESTIONS_LI
             parent_stat = None
         if parent_stat is None or not parent_stat.get("is_dir"):
             ancestor = _nearest_existing_ancestor(ws, parent)
-            return [f"{ancestor}/"] if ancestor is not None else []
+            single = [f"{ancestor}/"] if ancestor is not None else []
+            return single, len(single)
     pattern = f"{parent}/*" if parent != "." else "*"
     try:
-        return ws.glob_files(pattern, max_results=max_results)
+        glob_result = ws.glob_files_with_total(pattern, max_results=max_results)
+        return glob_result.matches, glob_result.total
     except (PermissionError, OSError):
-        return []
+        return [], 0
+
+
+def _suggestions_fields(ws, path: str) -> dict:
+    """Build the ``suggestions`` (+ optional truncation signal) block shared by
+    every ``not_found`` result. #4431: extracted so the #2998-style truncation
+    report (``suggestions_truncated`` / ``suggestions_total``) is written once,
+    not re-derived at each of the 3 call sites with a chance to drift apart."""
+    suggestions, total = _nearby_files(ws, path)
+    fields: dict = {"suggestions": suggestions}
+    if total > len(suggestions):
+        fields["suggestions_truncated"] = True
+        fields["suggestions_total"] = total
+    return fields
 
 
 def _read_inline_cap(ctx: OpContext) -> int:
@@ -358,7 +379,6 @@ async def handle(op: FileIROp, ctx: OpContext) -> dict:
             # not a fresh, independently-resolved lookup.
             raw_bytes, found = ctx.workspace.read_file_bytes(_resolved_read_path)
         if not found:
-            suggestions = _nearby_files(ctx.workspace, op.path)
             ctx.events.emit("tool_executed", op="read_file", path=op.path, found=False)
             return {
                 "kind": "file",
@@ -366,7 +386,7 @@ async def handle(op: FileIROp, ctx: OpContext) -> dict:
                 "path": op.path,
                 "status": "not_found",
                 "error": f"file not found: {op.path}",
-                "suggestions": suggestions,
+                **_suggestions_fields(ctx.workspace, op.path),
                 "content": "",
             }
         # #1452 decode ladder (extends the #1449 binary guard): BOM → UTF-8 fast
@@ -758,14 +778,13 @@ def _execute_edit_sync(op: FileIROp, ctx: OpContext) -> tuple[dict, int | None, 
 
     raw_bytes, found = ctx.workspace.read_file_bytes(op.path)
     if not found:
-        suggestions = _nearby_files(ctx.workspace, op.path)
         return {
             "kind": "file",
             "op": "edit",
             "path": op.path,
             "status": "not_found",
             "error": f"file not found: {op.path}",
-            "suggestions": suggestions,
+            **_suggestions_fields(ctx.workspace, op.path),
         }, None, None
 
     # #1452: decode via the shared codec ladder so a non-UTF-8 text file can be

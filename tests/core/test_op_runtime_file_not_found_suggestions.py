@@ -101,6 +101,41 @@ def test_read_not_found_capped_at_limit(tmp_path, monkeypatch):
     )
 
 
+def test_read_not_found_signals_the_cap_when_it_actually_cuts(tmp_path, monkeypatch):
+    """Tier 2: #4431 — a directory with more siblings than the 8-suggestion cap
+    must SAY so (``suggestions_truncated`` + ``suggestions_total``), not just
+    silently show 8 of 20 with no sign the other 12 exist (owner ruling:
+    a silent cap with no config knob needs the loss to be visible instead —
+    mirrors the ``glob`` op's own #2998 ``truncated``/``total_count`` fields)."""
+    monkeypatch.chdir(tmp_path)
+    for i in range(20):
+        (tmp_path / f"file{i:02d}.md").write_text("x", encoding="utf-8")
+
+    ctx = _make_ctx(tmp_path)
+    result = _run(handle(_read("missing.md"), ctx))
+
+    assert result["status"] == "not_found"
+    assert result["suggestions_truncated"] is True
+    assert result["suggestions_total"] == 20
+
+
+def test_read_not_found_no_truncation_signal_when_everything_fits(tmp_path, monkeypatch):
+    """Tier 2: accept-side twin — with siblings at or under the cap, no
+    truncation actually happened, so ``suggestions_truncated`` must NOT
+    appear (a present-but-False flag would still read as "something was
+    cut"; only its outright absence says nothing was)."""
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "alpha.md").write_text("a", encoding="utf-8")
+    (tmp_path / "beta.md").write_text("b", encoding="utf-8")
+
+    ctx = _make_ctx(tmp_path)
+    result = _run(handle(_read("missing.md"), ctx))
+
+    assert result["status"] == "not_found"
+    assert "suggestions_truncated" not in result
+    assert "suggestions_total" not in result
+
+
 def test_read_ok_still_returns_ok_shape(tmp_path, monkeypatch):
     """Tier 2: existing file read path returns status='ok' with content; no error or suggestions field bloat."""
     monkeypatch.chdir(tmp_path)
