@@ -175,7 +175,7 @@ async def notify_tool_list_changed(ctx: Context) -> str:
 
     # #4302: bundled Context has no ``send_notification`` convenience — go
     # through ``ctx.session`` (the underlying ServerSession) directly.
-    await ctx.session.send_notification(types.ServerNotification(types.ToolListChangedNotification()))
+    await ctx.session.send_notification(types.ToolListChangedNotification())
     return "sent"
 
 
@@ -183,7 +183,7 @@ async def notify_tool_list_changed(ctx: Context) -> str:
 async def notify_prompt_list_changed(ctx: Context) -> str:
     import mcp.types as types
 
-    await ctx.session.send_notification(types.ServerNotification(types.PromptListChangedNotification()))
+    await ctx.session.send_notification(types.PromptListChangedNotification())
     return "sent"
 
 

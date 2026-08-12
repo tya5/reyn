@@ -180,7 +180,15 @@ class ReynMCPMessageHandler:
         ``mcp.client.session.ClientSession`` as ``self._message_handler(req)`` — a
         plain ``Callable``, no base-class contract required (module docstring)."""
         if isinstance(message, mcp.types.ServerNotification):
-            root = message.root
+            # #4412 pin-bump PR: on 1.x, ServerNotification was a RootModel
+            # wrapper class and `.root` unwrapped it to the specific
+            # notification. On 2.0, ServerNotification is a bare
+            # `X | Y | Z` type alias (confirmed live:
+            # `type(mcp.types.ServerNotification) is types.UnionType`) —
+            # `message` (already narrowed by the isinstance check above) IS
+            # the specific notification directly; there is no wrapper left
+            # to unwrap.
+            root = message
             match root:
                 case mcp.types.TaskStatusNotification():
                     client = self._client_ref()
