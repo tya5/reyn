@@ -104,11 +104,33 @@ async def _get_session(
     return registry.get_or_load(name)
 
 
+def _history_baseline_seq(session) -> int:
+    """The ``seq`` watermark to capture BEFORE dispatching a request, so
+    ``_new_agent_history_entries`` can later ask "what's new since then" by
+    coordinate rather than by list position (#4387 architect review on
+    Phase B ②: ``session.history[baseline:]`` — a captured ``len()`` —
+    silently returns the WRONG (older) slice once anything can prepend to
+    ``self.history``, which Phase B's on-demand older-entry loading will do
+    for other consumers; this reads the wrong thing without raising, so it
+    would ship broken).
+
+    Mirrors ``load_history``'s own ``max(seq)`` derivation rather than just
+    reading the last entry's ``seq`` — safe even for a session whose most
+    recent entry happens to be legacy ``seq == 0`` data (pre-#3704): any
+    newly-appended entry always gets a real ``seq`` strictly greater than
+    every ``seq`` that already exists, so the max over everything currently
+    held is always a valid watermark, regardless of ordering quirks in old
+    data.
+    """
+    return max((m.seq for m in session.history if m.seq), default=0)
+
+
 def _new_agent_history_entries(
-    session, baseline: int, *, chain_id: str | None = None,
+    session, baseline_seq: int, *, chain_id: str | None = None,
 ) -> list[str]:
-    """Return text of every history entry past `baseline` whose role is
-    ``agent``. Order-preserving.
+    """Return text of every history entry with ``seq > baseline_seq`` whose
+    role is ``agent``. Order-preserving (``self.history`` is append-ordered
+    by construction; a coordinate-based filter over it stays in that order).
 
     When ``chain_id`` is provided, only entries whose ``meta["chain_id"]``
     matches are returned. This scopes reply harvesting to the caller's
@@ -116,7 +138,9 @@ def _new_agent_history_entries(
     A2A FastAPI router) don't pick up each other's replies.
     """
     out: list[str] = []
-    for msg in session.history[baseline:]:
+    for msg in session.history:
+        if msg.seq <= baseline_seq:
+            continue
         # Issue #383: role rename "agent" → "assistant"; tolerate both.
         if msg.role not in ("assistant", "agent") or not msg.text:
             continue
@@ -127,12 +151,19 @@ def _new_agent_history_entries(
 
 
 async def _await_turn_complete(
-    session, *, baseline: int, timeout: float
+    session, *, baseline_seq: int, timeout: float
 ) -> bool:
     """Wait until the agent has produced at least one new ``role="agent"``
-    history entry past ``baseline`` AND the run loop is back to idle
-    (inbox empty, run loop back to idle). Returns True on completion,
+    history entry with ``seq > baseline_seq`` AND the run loop is back to
+    idle (inbox empty, run loop back to idle). Returns True on completion,
     False on timeout.
+
+    Unused today (dead code — no call site), but fixed alongside
+    ``_new_agent_history_entries`` (#4387 architect review) rather than
+    left as a landmine: it has the exact same ``session.history[baseline:]``
+    position-index shape, which silently returns the WRONG slice once
+    anything can prepend to ``self.history`` — see
+    ``_history_baseline_seq``'s docstring.
 
     The negative-signal-only approach (= "looks idle, no work in flight")
     used to false-positive: between ``submit_user_text`` returning and
@@ -150,7 +181,8 @@ async def _await_turn_complete(
         # bypassed read-time migration.
         has_reply = any(
             msg.role in ("assistant", "agent")
-            for msg in session.history[baseline:]
+            for msg in session.history
+            if msg.seq > baseline_seq
         )
         is_idle = session.inbox.empty()
         if has_reply and is_idle:
@@ -253,7 +285,7 @@ async def send_to_agent_impl(
     # protects THIS session's history, and an agent can have more than one
     # live session; see agent_locks.py's own docstring).
     async with _get_agent_lock(agent_name, sid):
-        baseline = len(session.history)
+        baseline_seq = _history_baseline_seq(session)
         bus = MessageBus()
         # issue #268 Phase 2: when the override exposes a stable
         # ``channel_id`` (= A2AInterventionBus does), register it as
@@ -282,7 +314,7 @@ async def send_to_agent_impl(
                 if override_channel_id is not None:
                     session.unregister_intervention_listener(override_channel_id)
         new_replies = _new_agent_history_entries(
-            session, baseline, chain_id=chain_id,
+            session, baseline_seq, chain_id=chain_id,
         )
 
     # idle = MessageBus returned quiescently (all tasks done, inbox empty).
