@@ -1051,6 +1051,18 @@ class Session:
         # #4387 Phase B ③: bounds self.history's resident footprint —
         # consulted by _append_history's eviction hook (below).
         self._history_resident_config = history_resident_config or HistoryResidentConfig()
+        # #4468 security block (lead-coder review): the highest seq of any
+        # EVICTED entry that carried the untrusted-content marker
+        # (security.permissions.capability_profile.UNTRUSTED_META_KEY) —
+        # an OR-latch mirroring #4381 PR-2's in-flight latch, so
+        # _ephemeral_contextual_for_turn's narrowing scan (which only sees
+        # RESIDENT entries) doesn't silently lose an untrusted-taint signal
+        # to eviction. Monotone: only ever increases via
+        # _evict_oldest_resident_entries; self-clears the same way the
+        # resident scan does (the OR term drops out once the compaction
+        # watermark advances past this seq — see _ephemeral_contextual_for_
+        # turn's own comment on this field).
+        self._max_evicted_untrusted_seq = 0
         # Single MediaStore instance per Session (#383 PR-C, see session-construction.md#multimodal-media)
         from reyn.data.workspace.media_store import MediaStore, MediaStoreConfig
         if multimodal_config is not None:
@@ -2803,7 +2815,22 @@ class Session:
         # #4381 PR-2 stage ③: history scan OR the in-flight latch — the
         # latch covers a same-turn tool result whose history entry has not
         # landed yet (see the flag's own docstring in __init__ for why).
-        if not (metas_have_untrusted(m.meta for m in active) or self._in_flight_untrusted_this_turn):
+        # #4468 (lead-coder security review): OR a THIRD term —
+        # self._max_evicted_untrusted_seq's own OR-latch, covering an
+        # untrusted entry that WAS active (seq > watermark) but has since
+        # been evicted from self.history by #4387's resident-byte cap (the
+        # scan above only ever sees RESIDENT entries, so eviction would
+        # otherwise silently drop this signal — CLAUDE.md's own "removing
+        # one layer regrants a denied capability" shape). Self-clears the
+        # same way the resident scan does: once compaction advances the
+        # watermark past that seq, this term drops out on its own — no
+        # separate clearing logic needed, same monotone comparison either
+        # way.
+        if not (
+            metas_have_untrusted(m.meta for m in active)
+            or self._in_flight_untrusted_this_turn
+            or self._max_evicted_untrusted_seq > watermark
+        ):
             return None
         if self._untrusted_contextual_cache is None:
             root = self._perm.project_root if self._perm is not None else Path.cwd()
@@ -2917,6 +2944,24 @@ class Session:
             total -= sizes[evict_count]
             evict_count += 1
         if evict_count:
+            # #4468 security block (lead-coder review): before dropping
+            # them, latch the highest seq among the evicted entries that
+            # carried the untrusted-content marker — see
+            # self._max_evicted_untrusted_seq's own __init__ comment and
+            # _ephemeral_contextual_for_turn's OR-term for why. Checked
+            # here (not gated behind whether narrowing is enabled) since
+            # the cost is one dict-get per evicted entry regardless, and
+            # gating it would mean narrowing couldn't be turned on
+            # mid-session without a gap for whatever already evicted
+            # before the flag flipped.
+            from reyn.security.permissions.capability_profile import (
+                UNTRUSTED_META_KEY,
+            )
+            for m in self.history[:evict_count]:
+                if isinstance(m.meta, dict) and m.meta.get(UNTRUSTED_META_KEY):
+                    self._max_evicted_untrusted_seq = max(
+                        self._max_evicted_untrusted_seq, m.seq,
+                    )
             del self.history[:evict_count]
         return evict_count
 

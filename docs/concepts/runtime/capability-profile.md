@@ -195,12 +195,27 @@ declaring an empty deny-set.
 stamp it today: an external peer's `ask_user` answer (A2A / webhook), and the
 result of any tool declaring `returns_external_content` (e.g. web fetch) — both
 land in `self.history` meta, and the narrowing check (`metas_have_untrusted`)
-live-scans `self.history` on every turn rather than caching the verdict, so the
-very next dispatch after an external tool-result lands is already narrowed, and
-the narrowing self-clears once that entry compacts out of context. Under
-`iteration` the engagement is additionally *latched* for the rest of the turn, so
-a compaction that evicts the tainted entry mid-turn cannot launder the taint away
-and recover the capability before the turn ends.
+live-scans the RESIDENT `self.history` on every turn rather than caching the
+verdict, so the very next dispatch after an external tool-result lands is
+already narrowed, and the narrowing self-clears once that entry compacts out of
+context. Under `iteration` the engagement is additionally *latched* for the
+rest of the turn, so a compaction that evicts the tainted entry mid-turn
+cannot launder the taint away and recover the capability before the turn ends.
+
+**#4387/#4468: a second, independent latch for a second kind of eviction.**
+Session.history now also has a resident-BYTE cap (#4387), unrelated to
+compaction — it can evict an entry that is still "active" (`seq` above the
+compaction watermark) purely because memory is tight, well before compaction
+would have folded it away. Since the live-scan above only ever sees resident
+entries, that eviction would silently drop the taint signal the same way a
+mid-turn compaction eviction could — so `_evict_oldest_resident_entries`
+latches the highest `seq` among any evicted entry that carried the untrusted
+marker (`Session._max_evicted_untrusted_seq`), and the scan ORs that latch in
+alongside the in-flight one. This latch is monotone and never blocks or
+delays eviction itself (no DoS surface from an attacker stuffing untrusted
+content to make eviction stall) — it self-clears the identical way the live
+scan does, the moment compaction's own watermark advances past the latched
+`seq`.
 
 **Built-in deny-set:** memory writes/deletes, re-delegation, sandboxed
 execution, MCP / skill / pipeline install, session and agent spawn, pipeline run.
