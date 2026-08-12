@@ -880,34 +880,32 @@ class MCPClient:
 
     async def _paginate_official_sdk(self, list_fn: Any, items_attr: str) -> list[Any]:
         """#3698 stage 1: fastmcp's ``Client.list_tools()`` (and its sibling
-        list methods) auto-paginate internally, following ``next_cursor`` —
+        list methods) auto-paginate internally, following the page cursor —
         reyn relied on that. The official SDK's raw ``ClientSession.
-        list_tools(cursor=...)`` returns ONE page (a ``ListToolsResult``
-        object with ``.tools``/``.next_cursor``, not a bare list) and does
-        NOT paginate on its own — measured directly (its own return
-        annotation; ``ClientSession`` has no auto-paginating convenience
-        layer fastmcp added on top). This reproduces fastmcp's behavior:
-        follow ``next_cursor`` until it's ``None``, same 250-page guard
+        list_tools()`` returns ONE page (a ``ListToolsResult`` object, not a
+        bare list) and does NOT paginate on its own — measured directly
+        (its own return annotation; ``ClientSession`` has no auto-paginating
+        convenience layer fastmcp added on top). This reproduces fastmcp's
+        behavior: follow the cursor until it's ``None``, same 250-page guard
         (a malformed/adversarial server cycling cursors forever must not
         hang this call) as the pre-swap comment on the fastmcp path named.
 
-        #4368 (mcp 2.0 port): ``nextCursor`` renamed to ``next_cursor``
-        (camelCase -> snake_case, verified live against mcp==2.0.0). The
-        call shape changed too, not just the result field: mcp 2.0's
-        ``ClientSession.list_tools()``/``list_resources()``/``list_prompts()``
-        take a keyword-only ``params: PaginatedRequestParams | None``
-        instead of a bare positional ``cursor`` (confirmed live via
-        ``inspect.signature`` against mcp==2.0.0 -- the 1.x line's
-        positional ``cursor`` shorthand is gone), so *list_fn* is now
-        called with ``params=`` wrapping the cursor, never bare."""
-        from mcp.types import PaginatedRequestParams
+        #4368 (arc #4412): both the result field name (``nextCursor`` 1.x /
+        ``next_cursor`` 2.0) AND *list_fn*'s own call shape (1.x: bare
+        positional ``cursor``; 2.0: keyword-only ``params:
+        PaginatedRequestParams | None``, confirmed live via
+        ``inspect.signature`` — the positional shorthand is gone entirely)
+        differ between pins. Routed through ``_mcp_client_boundary``'s seam
+        for both — see that module's own docstring for the full
+        rationale."""
+        from reyn.mcp._mcp_client_boundary import call_paginated_list, next_page_cursor
 
         items: list[Any] = []
         cursor: str | None = None
         for _ in range(250):
-            result = await list_fn(params=PaginatedRequestParams(cursor=cursor))
+            result = await call_paginated_list(list_fn, cursor)
             items.extend(getattr(result, items_attr))
-            cursor = result.next_cursor
+            cursor = next_page_cursor(result)
             if cursor is None:
                 break
         return items
@@ -1083,11 +1081,13 @@ class MCPClient:
         # None on a successful call, but read defensively anyway in case a
         # future SDK version's contract changes underneath us.
         if init_result is not None:
-            # #4368 (mcp 2.0 port): protocolVersion renamed to protocol_version
-            # (camelCase -> snake_case, verified live against mcp==2.0.0 --
-            # part of the same broad rename this port fixes across the SDK's
-            # own types, not specific to InitializeResult).
-            self._negotiated_version = str(init_result.protocol_version)
+            # #4368 (arc #4412): protocolVersion (1.x) / protocol_version
+            # (2.0) -- routed through _mcp_client_boundary's seam so this
+            # site doesn't hardcode either pin's field name (see that
+            # module's own docstring for the full rationale).
+            from reyn.mcp._mcp_client_boundary import negotiated_protocol_version
+
+            self._negotiated_version = negotiated_protocol_version(init_result)
             self._server_capabilities = init_result.capabilities
         else:
             self._negotiated_version = None
@@ -1195,11 +1195,13 @@ class MCPClient:
         self._exit_stack = stack
         self._initialized = True
         if init_result is not None:
-            # #4368 (mcp 2.0 port): protocolVersion renamed to protocol_version
-            # (camelCase -> snake_case, verified live against mcp==2.0.0 --
-            # part of the same broad rename this port fixes across the SDK's
-            # own types, not specific to InitializeResult).
-            self._negotiated_version = str(init_result.protocol_version)
+            # #4368 (arc #4412): protocolVersion (1.x) / protocol_version
+            # (2.0) -- routed through _mcp_client_boundary's seam so this
+            # site doesn't hardcode either pin's field name (see that
+            # module's own docstring for the full rationale).
+            from reyn.mcp._mcp_client_boundary import negotiated_protocol_version
+
+            self._negotiated_version = negotiated_protocol_version(init_result)
             self._server_capabilities = init_result.capabilities
         else:
             self._negotiated_version = None

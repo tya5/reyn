@@ -27,11 +27,13 @@ fastmcp). The handler signature::
 
 FastMCP auto-converts the JSON schema to ``response_type`` but ERASES the
 per-field metadata (enum choices, descriptions) needed to prompt one field at
-a time — so this module reads field specs from ``params.requested_schema``
-(the raw JSON Schema dict) directly, and only uses ``response_type`` as the
-None-vs-not-None signal for "does this elicitation carry a schema at all".
-#4368 (mcp 2.0 port): ``requestedSchema`` renamed to ``requested_schema``
-(camelCase -> snake_case, verified live against mcp==2.0.0).
+a time — so this module reads field specs from ``params``'s requested-schema
+field (the raw JSON Schema dict) directly, and only uses ``response_type`` as
+the None-vs-not-None signal for "does this elicitation carry a schema at
+all". #4368 (arc #4412): ``requestedSchema`` (1.x) / ``requested_schema``
+(2.0, confirmed live) — routed through ``_mcp_client_boundary``'s
+``requested_schema()`` seam so this module doesn't hardcode either pin's
+field name.
 
 D2 — receive-loop dispatch (verified by reading the installed mcp SDK):
 ``mcp.shared.session.BaseSession._receive_loop`` awaits
@@ -116,6 +118,7 @@ import time
 from typing import TYPE_CHECKING, Any, Awaitable, Callable
 
 from reyn.intervention_choices import ACCEPT, DECLINE, elicitation_gate_choices
+from reyn.mcp._mcp_client_boundary import requested_schema
 from reyn.user_intervention import InterventionChoice, UserIntervention
 
 if TYPE_CHECKING:
@@ -317,7 +320,7 @@ def build_elicitation_handler(
     ) -> Any:
         field_keys: list[str] = []
         if isinstance(params, ElicitRequestFormParams):
-            field_keys = sorted((params.requested_schema.get("properties") or {}).keys())
+            field_keys = sorted((requested_schema(params).get("properties") or {}).keys())
 
         await _emit("mcp_elicitation_requested", field_keys=field_keys)
 
@@ -338,7 +341,7 @@ def build_elicitation_handler(
 
         try:
             field_specs = (
-                _schema_fields(params.requested_schema)
+                _schema_fields(requested_schema(params))
                 if isinstance(params, ElicitRequestFormParams)
                 else []
             )
