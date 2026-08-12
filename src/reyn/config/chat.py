@@ -486,6 +486,64 @@ def _build_read_cap_config(raw: object) -> "ReadCapConfig":
 
 
 @dataclass
+class HistoryResidentConfig:
+    """`history_resident:` — a RESOURCE-BOUND cap on ``Session.history``'s
+    in-memory footprint (#4387 Phase B ③, applying #4431's role split).
+
+    **Unit is BYTES** — the resource role (#4431: "資源 role = bytes, model
+    非依存, config で可変"), matching ``ReadCapConfig.inline_bytes``'s own
+    unit for the identical reason: a resource bound protects a fixed
+    physical quantity (process memory), which is byte-denominated
+    regardless of any model's context window.
+
+    **Deliberately NOT the same axis as ``_HISTORY_HYDRATE_MIN_LINES``**
+    (``session.py``'s on-demand backward-read granularity, in LINES) — #4387's
+    own architect review named conflating the two as the risk to avoid
+    ("窓の定義が2つになる...混ぜると3つ目の単位が増える"). This cap bounds
+    how much stays RESIDENT; the hydrate window bounds how much is read PER
+    on-demand fetch. Two different questions, two different units, kept
+    separate on purpose.
+
+    **What this does NOT claim**: owner reported a ~6GB memory ceiling: this
+    config gives ``self.history`` a bound where it previously had none
+    (six-question checklist ⑤ — nobody gave it a limit), but whether
+    ``history`` was the ~6GB's actual majority contributor was explicitly
+    left UNMEASURED (#4387's own body says so) and remains so. This closes
+    the "unbounded growth" defect on its own terms, independent of that
+    open question.
+
+    Default is generous (256 MiB) — the whole point (per #4387/#4431's
+    architect derivation) is that eviction is NOT information loss: anything
+    evicted stays durable in ``history.jsonl`` and reloads on demand via the
+    already-shipped backward-hydrate path (#4400/#4411), so a large default
+    costs nothing but memory an operator can already afford, while a too-small
+    one would make ordinary scrollback/rewind pay for reloads more often than
+    necessary.
+    """
+    max_bytes: int = 256 * 1024 * 1024  # 256 MiB
+
+
+def _build_history_resident_config(raw: object) -> "HistoryResidentConfig":
+    """Parse the `history_resident:` section (#4387 Phase B ③).
+
+    Missing or malformed -> default (256 MiB). A non-numeric or non-positive
+    value falls back to the default — same discipline as
+    ``_build_read_cap_config``: an operator typo must not silently disable
+    the cap (zero/negative would evict everything or never fire)."""
+    if not isinstance(raw, dict):
+        return HistoryResidentConfig()
+    defaults = HistoryResidentConfig()
+    max_bytes = raw.get("max_bytes", defaults.max_bytes)
+    try:
+        max_bytes = int(max_bytes)
+        if max_bytes <= 0:
+            max_bytes = defaults.max_bytes
+    except (TypeError, ValueError):
+        max_bytes = defaults.max_bytes
+    return HistoryResidentConfig(max_bytes=max_bytes)
+
+
+@dataclass
 class SpawnConfig:
     """`safety.spawn:` — operator bounds on the LLM spawn tree (#2103 C3).
 

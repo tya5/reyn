@@ -645,6 +645,23 @@
 
 
 # -----------------------------------------------------------------------------
+# history_resident: caps Session.history's in-memory footprint (#4387 Phase B
+# ③, #4431's role split). A RESOURCE BOUND — unit is BYTES, model-INDEPENDENT,
+# same role as read_cap above (never the same axis as the on-demand backward-
+# read window, which is in LINES — deliberately kept separate). Omit the
+# block to keep the 256 MiB default below; a non-positive/non-numeric value
+# falls back to that default too.
+#
+# Eviction is NOT information loss: anything evicted stays durable in
+# history.jsonl and reloads on demand via the already-shipped backward-
+# hydrate path (TUI scrollback paging / search / WAL rewind visibility) —
+# it only bounds what stays resident in memory.
+# -----------------------------------------------------------------------------
+# history_resident:
+#   max_bytes: 268435456   # 256 MiB — ceiling on Session.history's resident size
+
+
+# -----------------------------------------------------------------------------
 # tool_use: the chat-layer tool-use scheme x transport selector (#1593;
 # FP-0066 P4b, #3247). ``scheme`` is the PRESENTATION axis (category /
 # enumerate-all / retrieval — how capabilities are shown/discovered);
