@@ -9,7 +9,6 @@ Owns:
 
 Also owns the module-level helpers:
 
-  - _is_force_close_consolidation
   - _materialise_path_ref_content
   - _read_pathref_image
 
@@ -35,19 +34,6 @@ if TYPE_CHECKING:
 # ``recorded_acompletion``). Per-segment repair was pair-blind across the head/bridge/tail assembly:
 # an intact pair split by the bridge was duplicate-synthesized. The chokepoint repair sees the FULL
 # assembled wire list, so it is the correct single place for the guarantee.
-
-
-def _is_force_close_consolidation(summary: Any) -> bool:
-    """#1092 PR-F2a: True iff a ``summary`` turn is a force-close handoff
-    consolidation — identified by the dedicated ``consolidation`` structured
-    field (set by the F2b handoff). This is the GATE for the durable
-    covers-respecting reset in RouterHistoryBuffer.build_history:
-    when present, the slicer drops the covered raw head/tail and slices
-    ``[consolidation] + post-consolidation turns``. Normal compaction summaries
-    lack the field → the slicer keeps its head/tail+bridge behaviour unchanged
-    (normal chat stays byte-identical)."""
-    structured = (summary.meta or {}).get("structured") or {}
-    return bool(structured.get("consolidation"))
 
 
 def _read_pathref_image(path: str, media_store: Any) -> bytes | None:
@@ -561,46 +547,6 @@ class RouterHistoryBuffer:
             m for m in history
             if m.role in ("user", "assistant", "tool", "agent")
         ]
-
-        # #1092 PR-F2a: durable force-close reset. When the latest summary is a
-        # force-close handoff consolidation (covers-all), the conversation
-        # overflowed even when shrunk to its floor — so the slicer DROPS the
-        # covered raw head/tail permanently and slices [consolidation bridge] +
-        # the turns appended AFTER the consolidation. This is DURABLE (re-applied
-        # every turn, not a one-shot override): the next user turn slices
-        # [consolidation] + recent turns, never re-slicing the dropped raw
-        # head/tail → no immediate re-overflow. Position-based (turns after the
-        # consolidation in history order), NOT seq>covers — #3704 gave every
-        # role a monotonic seq at persist time, but history predating that fix
-        # still has assistant/tool entries stuck at seq==0 forever (no
-        # backfill), so a seq filter would wrongly drop their post-handoff
-        # replies on any session with pre-fix history. Position-based sidesteps
-        # the old/new-history split entirely. GATED to force-close
-        # consolidations only (the dedicated `consolidation` field) — normal
-        # compaction summaries fall through to the unchanged head/tail+bridge
-        # path below, so normal chat stays byte-identical.
-        _fc_summary = self._latest_summary(history)
-        if _fc_summary is not None and _is_force_close_consolidation(_fc_summary):
-            from reyn.runtime.chat_message import ChatMessage
-            _idx = next(
-                (i for i, m in enumerate(history) if m is _fc_summary), -1
-            )
-            _post = [
-                m for m in history[_idx + 1:]
-                if m.role in ("user", "assistant", "tool", "agent")
-            ]
-            _summary_text = (
-                _fc_summary.content if isinstance(_fc_summary.content, str)
-                else json.dumps(_fc_summary.content, ensure_ascii=False)
-            )
-            _bridge = [ChatMessage(
-                role="assistant",
-                content=f"[summary of earlier conversation]\n{_summary_text}",
-                ts=_fc_summary.ts,
-            )]
-            return self._bound_wire_reasoning(
-                [self._serialise_turn(m) for m in (_bridge + _post)]
-            )
 
         effective_trigger, head_budget, tail_budget = self._resolve_budgets()
         use_chars4 = getattr(self._compaction, "use_chars4_estimate", False)

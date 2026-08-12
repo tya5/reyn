@@ -238,22 +238,17 @@ class ChatLifecycleForwarder:
                 self._enqueue("[✗ router cap hit]")
 
     # ── Force close (#4380) ────────────────────────────────────────────
-    # Two DISTINCT mechanisms despite the similar names — traced before
-    # implementing (issue #4380 comment thread) because the obvious guess
-    # ("one event, two co-firing halves") turned out to be wrong:
-    #   force_close_triggered      — layer①, router_loop.py: an IN-LOOP,
-    #     per-iteration cumulative-budget cutoff (``should_force_close``).
-    #     Fires at most once per turn (it ends the turn on the same
-    #     iteration it fires).
-    #   router_force_close_handoff — layer②, router_loop_driver.py: an
-    #     OUTER retry, reached ONLY when the wrap-up ITSELF still doesn't
-    #     fit (a ``_ContextOverflowError`` from the whole ``run_loop``).
-    #     Fires at most once per turn (``_MAX_FORCE_CLOSE_HANDOFFS = 1``).
-    # No call site emits both for the same turn — they are never a pair to
-    # bundle; each is its own, independent, at-most-once-per-turn marker.
+    # #4381 PR-4 (owner ruling, verbatim: "２の force close 廃止して spill
+    # にしよう。予算のための force close は残すで良い") removed the second
+    # of two mechanisms this comment used to distinguish — layer②
+    # (``router_force_close_handoff``, router_loop_driver.py's OUTER retry
+    # when the wrap-up itself still didn't fit) is gone; the overflow case
+    # it used to catch is now a tool-result spill (#4381 family) instead of
+    # a history-consolidating handoff. Only layer① remains:
 
     def on_force_close_triggered(self, data: dict) -> None:
-        """Surface a ``[✗ force close: …]`` marker — layer① (in-loop) cutoff.
+        """Surface a ``[✗ force close: …]`` marker — the in-loop,
+        per-iteration cumulative-budget cutoff (``should_force_close``).
 
         ``should_force_close`` decided the accumulated cost/tokens already
         exceed the session's cumulative cap, so this turn's wrap-up
@@ -262,22 +257,6 @@ class ChatLifecycleForwarder:
         it — the user sees a turn end, not WHY.
         """
         self._enqueue("[✗ force close: turn ended early to stay within budget]")
-
-    def on_router_force_close_handoff(self, data: dict) -> None:
-        """Surface a ``[✗ force close (retry): …]`` marker — layer② (outer)
-        handoff, the rarer of the two (measured 0 real-world fires as of
-        #4380's own trace — an edge case, not dead code: still worth a
-        marker for the operator who DOES hit it).
-
-        Fires when even the wrap-up itself doesn't fit and the driver
-        consolidates/drops older history to retry once. ``dropped_seq_ranges``
-        names how much was cut; kept out of the marker text itself (an
-        internal seq range means nothing to a user) — the audit event
-        still carries it in full for anyone reading ``.reyn/events``.
-        """
-        self._enqueue(
-            "[✗ force close (retry): history consolidated to continue]"
-        )
 
     # ── Turn cancelled (#4380) ────────────────────────────────────────────
 
