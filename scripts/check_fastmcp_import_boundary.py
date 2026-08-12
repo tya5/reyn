@@ -3,15 +3,28 @@
 the convention half).
 
 P2 (#4053) introduced ``src/reyn/mcp/_fastmcp_boundary.py`` as the single
-seam every reyn-side ``fastmcp`` import goes through, but nothing stopped a
+seam every reyn-side ``fastmcp`` import went through, but nothing stopped a
 future direct ``import fastmcp`` anywhere else in ``src/reyn/mcp/`` — the PR
 said so explicitly ("this boundary is a convention, not an enforcement"),
 scoped to land once P3 (#4055) removed the one remaining inheritance-based
 exception (``message_handler.py``'s subclass of ``fastmcp.client.tasks.
 TaskNotificationHandler``, which genuinely needed a direct import at the
-time). Post-P3, the boundary's own starting population is verified zero —
-``_fastmcp_boundary.py`` is the ONLY file under ``src/reyn/mcp/`` that
-imports ``fastmcp`` — so this gate has nothing to grandfather.
+time). Post-P3, the boundary's own starting population was verified zero —
+``_fastmcp_boundary.py`` was the ONLY file under ``src/reyn/mcp/`` that
+imported ``fastmcp`` — so this gate had nothing to grandfather.
+
+#4302: ``_fastmcp_boundary.py`` itself no longer exists — the MCP client
+stack retired its last fastmcp dependency entirely (#4282/#4299/#3698 P3),
+so the seam it existed to hold has nothing left to route through it. The
+invariant this gate enforces tightened as a result: not "only the boundary
+module may import fastmcp" (there is no longer a module for which that is
+true) but "no file under ``src/reyn/mcp/`` imports fastmcp, period" — still
+a real, live check (a regression reintroducing ``import fastmcp`` anywhere
+in this directory still trips it; verified by a live strip-falsify: adding
+a throwaway ``import fastmcp`` file here flips this script's exit code to 1,
+confirming the AST scan itself, not just the docstring, is current). Kept
+scanning the whole directory rather than narrowing to zero files so a
+regression is still caught, not just documented as impossible.
 
 ## Scope: ``src/reyn/mcp/`` only, not the whole repo
 
@@ -39,7 +52,6 @@ from pathlib import Path
 
 _ROOT = Path(__file__).resolve().parent.parent
 _MCP_DIR = _ROOT / "src" / "reyn" / "mcp"
-_BOUNDARY_FILE = "_fastmcp_boundary.py"
 
 
 def _imports_fastmcp_directly(path: Path) -> bool:
@@ -63,16 +75,20 @@ def _imports_fastmcp_directly(path: Path) -> bool:
 
 
 def offending_files(mcp_dir: Path = _MCP_DIR) -> "list[Path]":
-    """Every ``.py`` file directly under *mcp_dir* (not ``_fastmcp_boundary.py``
-    itself) that imports ``fastmcp`` directly — the gate's entire decision,
-    isolated from CLI/printing so it is directly testable."""
-    offenders = []
-    for path in sorted(mcp_dir.glob("*.py")):
-        if path.name == _BOUNDARY_FILE:
-            continue
-        if _imports_fastmcp_directly(path):
-            offenders.append(path)
-    return offenders
+    """Every ``.py`` file directly under *mcp_dir* that imports ``fastmcp``
+    directly — the gate's entire decision, isolated from CLI/printing so it
+    is directly testable.
+
+    #4302: no filename is exempt anymore. ``_fastmcp_boundary.py`` (the one
+    file this used to skip) no longer exists — the client stack's last
+    fastmcp dependency was retired entirely, so there is no longer a
+    legitimate place under this directory for a direct ``import fastmcp``
+    to live."""
+    return [
+        path
+        for path in sorted(mcp_dir.glob("*.py"))
+        if _imports_fastmcp_directly(path)
+    ]
 
 
 def main(argv: "list[str] | None" = None) -> int:
@@ -80,24 +96,21 @@ def main(argv: "list[str] | None" = None) -> int:
     offenders = offending_files(_MCP_DIR)
 
     if not offenders:
-        print(
-            "OK: no file under src/reyn/mcp/ imports fastmcp directly except "
-            "_fastmcp_boundary.py."
-        )
+        print("OK: no file under src/reyn/mcp/ imports fastmcp directly.")
         return 0
 
     print("fastmcp-import-boundary gate FAILED:\n", file=sys.stderr)
     print(
-        f"{len(offenders)} file(s) under src/reyn/mcp/ import fastmcp directly, "
-        "outside the boundary module (#3698 P2/P3):",
+        f"{len(offenders)} file(s) under src/reyn/mcp/ import fastmcp directly "
+        "(#3698 P2/P3, #4302):",
         file=sys.stderr,
     )
     for path in offenders:
         print(f"  {path.relative_to(_ROOT)}", file=sys.stderr)
     print(
-        "\nAdd an accessor function to src/reyn/mcp/_fastmcp_boundary.py "
-        "instead and import from there — that module is the single seam a "
-        "future SDK swap edits, not scattered call sites.\n"
+        "\nThe MCP client stack has no fastmcp dependency left at all "
+        "(#4282/#4299/#3698 P3) — reach for the official mcp SDK directly "
+        "instead of reintroducing fastmcp here.\n"
         "\nThis gate's own starting population is zero, so any hit here is "
         "a new regression, not inherited debt.",
         file=sys.stderr,
