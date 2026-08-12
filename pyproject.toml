@@ -315,8 +315,9 @@ web = [
     "websockets>=12",
 ]
 # `mcp` is now a no-op back-compat alias: the MCP client path runs on the `mcp`
-# SDK directly (core `dependencies` above, `mcp>=1.24,<2.0`; the MCP client is
-# always constructed by `Session.__init__`), not `fastmcp` — #4302 dropped
+# SDK directly (core `dependencies` above, `mcp>=2.0,<3.0` — #4412 bumped this
+# off the prior `>=1.24,<2.0` floor; the MCP client is always constructed by
+# `Session.__init__`), not `fastmcp` — #4302 dropped
 # fastmcp from core (and every extra) entirely. Kept as an empty extra so
 # existing `pip install -e ".[mcp]"` invocations (CI, user docs, `reyn[mcp]`)
 # keep resolving instead of erroring on an unknown extra.

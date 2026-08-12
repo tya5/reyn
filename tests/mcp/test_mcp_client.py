@@ -3,9 +3,10 @@
 Real instances only, per the testing policy: no ``mock.patch`` / ``MagicMock`` on
 the transport or session. Stdio round-trips spawn a REAL subprocess running
 ``tests/_support/mcp_fastmcp_echo_server.py`` (a real FastMCP server, #4302:
-now the official SDK's own bundled ``mcp.server.fastmcp`` — reyn pins
-``mcp>=1.24,<2.0``, see #4302, so this is still the 1.x-line module path,
-not mcp 2.0's renamed ``mcp.server.mcpserver``); http round-trips spin a REAL
+now the official SDK's own bundled server framework — #4412 bumped reyn's
+pin to ``mcp>=2.0,<3.0``, so this is ``mcp.server.mcpserver``'s
+``MCPServer`` on the 2.0 line, not the 1.x ``mcp.server.fastmcp.FastMCP``
+this echo server originally ported onto); http round-trips spin a REAL
 local uvicorn server via ``FastMCP.run_streamable_http_async()`` on an
 ephemeral port. Pagination is proven against a real low-level MCP server
 (``tests/_support/mcp_paginated_tools_server.py``) that serves 2 pages.

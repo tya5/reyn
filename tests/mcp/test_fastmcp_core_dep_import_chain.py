@@ -10,8 +10,10 @@ OS invariant:
   official ``mcp`` SDK directly in #4282/#4299; the last fastmcp-server
   test-doubles were ported in #4302 itself) — the invariant this test pins is
   now (a) the MCP client stack imports cleanly from a core install, AND (b)
-  ``mcp`` itself (the actual core dependency, pinned ``>=1.24,<2.0`` — see
-  #4302 for why the upper bound) is importable there, AND (c) ``fastmcp`` is
+  ``mcp`` itself (the actual core dependency, pinned ``>=2.0,<3.0`` — #4412
+  bumped this off the original ``>=1.24,<2.0`` floor #4302 set; see #4412 for
+  why that upper bound existed and #4368 for the server-side port that
+  lifted it) is importable there, AND (c) ``fastmcp`` is
   explicitly NOT installed as a side effect of a core install — a positive
   assertion that the drop actually took, not just "didn't check".
 
