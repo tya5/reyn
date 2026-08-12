@@ -18,11 +18,12 @@ egress classes, by transport:
   ``reyn._ssrf_pin.ssrf_aware_urllib_opener``.
 * **third-party libs reyn does not own the client for** — ddgs (web_search),
   huggingface_hub (faster-whisper transcription model download, via
-  ``requests``), fastmcp
-  (remote-MCP transport, via ``httpx``). These conform by the lib's own
-  ``trust_env``-style default; the witness tests below RED if a lib ships a
-  transport that stops honouring the env (the exact litellm-``aiohttp_trust_env``
-  degradation, generalised).
+  ``requests``), the official ``mcp`` SDK
+  (remote-MCP transport, via ``httpx`` — #4302: fastmcp dropped, reyn's own
+  client builds no ``httpx.AsyncClient`` of its own for this path either).
+  These conform by the lib's own ``trust_env``-style default; the witness
+  tests below RED if a lib ships a transport that stops honouring the env
+  (the exact litellm-``aiohttp_trust_env`` degradation, generalised).
 * **subprocess** — uvx/npx/uv, via the sandbox child-env forward.
 
 For each class: a behavioral test asserting a SENTINEL value from the standard
@@ -305,19 +306,20 @@ def test_huggingface_hub_session_trusts_env() -> None:
     assert session.trust_env is True
 
 
-def test_fastmcp_remote_transport_built_on_env_trusting_httpx() -> None:
-    """Tier 2: degradation witness — fastmcp's remote-MCP transport
-    (StreamableHttpTransport, which reyn passes to fastmcp.Client without owning
-    the httpx client) is built on httpx and does NOT disable trust_env, so it
-    honours the standard proxy/CA env by httpx's default. RED if fastmcp swaps to
-    a non-env transport or sets trust_env=False."""
+def test_mcp_sdk_remote_transport_built_on_env_trusting_httpx() -> None:
+    """Tier 2: degradation witness — the official ``mcp`` SDK's remote-MCP
+    transport factory (``mcp.shared._httpx_utils.create_mcp_http_client``,
+    which ``mcp.client.streamable_http``/``mcp.client.sse`` build their
+    ``httpx.AsyncClient`` from, and which reyn's own client — #4282, since
+    fastmcp was dropped, #4302 — passes no client of its own to) never sets
+    ``trust_env``, so it honours the standard proxy/CA env by httpx's own
+    default. RED if the SDK starts explicitly setting ``trust_env=False``."""
     import inspect
 
-    pytest.importorskip("fastmcp")
-    from fastmcp.client.transports import StreamableHttpTransport
+    from mcp.shared._httpx_utils import create_mcp_http_client
 
-    src = inspect.getsource(StreamableHttpTransport)
-    assert "httpx" in src
+    src = inspect.getsource(create_mcp_http_client)
+    assert "httpx.AsyncClient" in src
     assert "trust_env=False" not in src
 
 

@@ -45,6 +45,21 @@ jobs:
       - name: Install sandbox-linux + builtin-rag extras
         run: pip install -e ".[dev,sandbox-linux,builtin-rag]"
 
+      # #4302: chunker_server.py/vector_store_server.py (launched directly
+      # by the test above, same interpreter running pytest — see that
+      # test's own docstring) import fastmcp, which the `builtin-rag` extra
+      # above does NOT cover (it's a dev/test convenience for
+      # chonkie/apsw/sqlite-vec only, #3209 — `plugin_install` never reads
+      # this file, so it isn't part of that extra). fastmcp was a reyn CORE
+      # dependency until #4302 dropped it, which is what quietly kept this
+      # job green before; the plugin declares its OWN dependency floor here
+      # (`fastmcp>=2.0`, independent of reyn's former `==3.4.5` core pin),
+      # so the gate that runs the plugin's scripts installs the plugin's
+      # OWN requirements.txt — not a hand-picked subset that would drift
+      # from it silently.
+      - name: Install the rag plugin's own requirements (#4302)
+        run: pip install -r src/reyn/builtin/plugins/rag/requirements.txt
+
       # `uvx` (bundled with the `uv` PyPI package) for the third representative
       # server probe below (markitdown-mcp, #3030) — the RAG server with the
       # widest syscall footprint (network fetch on first run via uvx, then a

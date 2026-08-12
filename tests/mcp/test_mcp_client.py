@@ -2,8 +2,11 @@
 
 Real instances only, per the testing policy: no ``mock.patch`` / ``MagicMock`` on
 the transport or session. Stdio round-trips spawn a REAL subprocess running
-``tests/_support/mcp_fastmcp_echo_server.py`` (a real FastMCP server); http
-round-trips spin a REAL local uvicorn server via ``FastMCP.run_async`` on an
+``tests/_support/mcp_fastmcp_echo_server.py`` (a real FastMCP server, #4302:
+now the official SDK's own bundled ``mcp.server.fastmcp`` — reyn pins
+``mcp>=1.24,<2.0``, see #4302, so this is still the 1.x-line module path,
+not mcp 2.0's renamed ``mcp.server.mcpserver``); http round-trips spin a REAL
+local uvicorn server via ``FastMCP.run_streamable_http_async()`` on an
 ephemeral port. Pagination is proven against a real low-level MCP server
 (``tests/_support/mcp_paginated_tools_server.py``) that serves 2 pages.
 """
@@ -31,10 +34,10 @@ def _free_port() -> int:
 
 
 class _HttpEchoServer:
-    """Runs the real echo FastMCP server in-process via ``run_async`` on an
-    ephemeral port, as a background asyncio task — no subprocess needed for
-    the http-transport tests, but no mock either: a real bound socket serving
-    the real MCP protocol."""
+    """Runs the real echo FastMCP server in-process via ``run_streamable_http_async``
+    on an ephemeral port, as a background asyncio task — no subprocess needed
+    for the http-transport tests, but no mock either: a real bound socket
+    serving the real MCP protocol."""
 
     def __init__(self) -> None:
         self.port = _free_port()
@@ -45,11 +48,17 @@ class _HttpEchoServer:
         sys.path.insert(0, str(_SUPPORT_DIR))
         import mcp_fastmcp_echo_server as server_mod
 
-        self._task = asyncio.create_task(
-            server_mod.mcp.run_async(
-                transport="http", host="127.0.0.1", port=self.port, show_banner=False,
-            )
-        )
+        server_mod.mcp.settings.host = "127.0.0.1"
+        server_mod.mcp.settings.port = self.port
+        # #4302: the bundled FastMCP (1.x line) lazily builds+CACHES a
+        # StreamableHTTPSessionManager on first use, and its own docs say
+        # "can only be called once per instance" — a 2nd http-transport test
+        # importing the SAME cached module-level ``mcp`` object hangs on
+        # startup otherwise (verified: isolated it to exactly this reuse).
+        # Reset so each test gets a fresh session manager, matching this
+        # module's fresh-``_HttpEchoServer``-per-test intent.
+        server_mod.mcp._session_manager = None
+        self._task = asyncio.create_task(server_mod.mcp.run_streamable_http_async())
         # Poll until the socket accepts connections instead of a fixed sleep.
         # Unbounded per the testing policy — a capped attempt count is a wait
         # duration rewritten as a count, and fails the same way on a slow host.
@@ -344,11 +353,9 @@ def test_sse_transport_round_trip() -> None:
         sys.path.insert(0, str(_SUPPORT_DIR))
         import mcp_fastmcp_echo_server as server_mod
 
-        task = asyncio.create_task(
-            server_mod.mcp.run_async(
-                transport="sse", host="127.0.0.1", port=port, show_banner=False,
-            )
-        )
+        server_mod.mcp.settings.host = "127.0.0.1"
+        server_mod.mcp.settings.port = port
+        task = asyncio.create_task(server_mod.mcp.run_sse_async())
         try:
             # Unbounded per the testing policy — see the identical poll in
             # _HttpEchoServer.__aenter__ above for the rationale.
