@@ -465,9 +465,10 @@ def _classify_repo_kind(rel_path: str) -> "str | None":
     return "src"
 
 
-def _iter_repo_entries(wanted_kind: str) -> list[tuple[str, str, str]]:
+def _iter_repo_entries(wanted_kind: str) -> "tuple[list[tuple[str, str, str]], int]":
     """Enumerate ``(kind, rel_path, text)`` for every reachable repo file
-    classified as ``wanted_kind`` ("doc" or "src").
+    classified as ``wanted_kind`` ("doc" or "src"). Returns ``(entries,
+    skipped_for_size_count)``.
 
     Walks ``reyn.runtime.reyn_repo``'s OWN reachable-set root
     (``resolve_reyn_root()`` + ``REACHABLE_TOP_LEVEL_ENTRIES`` — the same
@@ -483,10 +484,15 @@ def _iter_repo_entries(wanted_kind: str) -> list[tuple[str, str, str]]:
     conceptually [repo ingest feeds the same embedding substrate the
     runtime's ``search_actions`` already consumes], not the reverse).
 
-    A file that fails UTF-8 decode, exceeds ``_REPO_INGEST_MAX_BYTES``, or
-    sits under a noise directory (``.git``, ``__pycache__``, etc. — same
-    skip-set ``reyn_repo`` itself applies) is silently skipped, not
-    ingested with placeholder content.
+    A file that fails UTF-8 decode, or sits under a noise directory
+    (``.git``, ``__pycache__``, etc. — same skip-set ``reyn_repo`` itself
+    applies), is skipped without being counted — a decode failure or a VCS/
+    build-artifact path is not a corpus gap, it was never eligible content.
+    A file that exceeds ``_REPO_INGEST_MAX_BYTES`` IS counted (#4431 — was
+    silently dropped with no signal at all; ``_repo_build_fn`` emits a
+    ``repo_ingest_files_skipped`` audit-event off this count when it's
+    nonzero, so a file missing from repo-knowledge search has a trail
+    instead of reading as "was never written").
     """
     from reyn.runtime.reyn_repo import REACHABLE_TOP_LEVEL_ENTRIES, resolve_reyn_root
 
@@ -502,9 +508,10 @@ def _iter_repo_entries(wanted_kind: str) -> list[tuple[str, str, str]]:
         # environment (e.g. a stripped-down test install) — an empty
         # corpus, not an ingest failure; ``embed_verify_write`` handles
         # zero items/texts fine (writes an empty batch).
-        return []
+        return [], 0
 
     out: list[tuple[str, str, str]] = []
+    skipped_for_size = 0
     for top in REACHABLE_TOP_LEVEL_ENTRIES:
         top_path = root / top
         if not top_path.exists():
@@ -525,12 +532,13 @@ def _iter_repo_entries(wanted_kind: str) -> list[tuple[str, str, str]]:
                 continue
             try:
                 if p.stat().st_size > _REPO_INGEST_MAX_BYTES:
+                    skipped_for_size += 1
                     continue
                 text = p.read_text(encoding="utf-8")
             except (OSError, UnicodeDecodeError):
                 continue
             out.append((kind, rel_path, text))
-    return out
+    return out, skipped_for_size
 
 
 def _repo_to_chunk_record(
@@ -556,7 +564,21 @@ def _repo_to_chunk_record(
 
 def _repo_build_fn(wanted_kind: str, op_ctx: "OpContext", model_class: str) -> BuildFn:
     async def _build() -> BuildMaterial:
-        entries = _iter_repo_entries(wanted_kind)
+        entries, skipped_for_size = _iter_repo_entries(wanted_kind)
+        if skipped_for_size:
+            # #4431: the visibility half of the size cap — a file that lost
+            # this way otherwise had no trail at all (see
+            # `_iter_repo_entries`'s docstring). Best-effort, matches every
+            # other op_ctx.events.emit call site in op_runtime — a broken/
+            # absent sink must not fail the build.
+            try:
+                op_ctx.events.emit(
+                    "repo_ingest_files_skipped",
+                    kind=wanted_kind, skipped_count=skipped_for_size,
+                    reason="over_size_cap",
+                )
+            except Exception:
+                pass
         return BuildMaterial(
             items=list(entries),
             texts=[text for (_kind, _rel_path, text) in entries],
