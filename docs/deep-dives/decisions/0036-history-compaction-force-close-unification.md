@@ -1,6 +1,6 @@
 # ADR-0036 (#1092) — chat/plan/phase within-unit history + compaction + force-close unification (Fork 1: RouterLoop convergence)
 
-**Status**: ACCEPTED (user GO 2026-06-02 "懸念点なし、進められるなら進めて"; e2e technical review APPROVE, 3 precisions folded).
+**Status**: ACCEPTED — **"Implementation note: PR-F2b force-close handoff cap" superseded by [ADR-0042](0042-force-close-layer2-removal.md)** (2026-08-12); every other part stands unchanged. (user GO 2026-06-02 "懸念点なし、進められるなら進めて"; e2e technical review APPROVE, 3 precisions folded).
 **Track**: #1092 (umbrella). **Canonical contract / staging**: GitHub issue **#1234** (FD1–FD7 + staging PR-A..E + test discipline + scope boundary).
 **Builds on**: **ADR-0035** (#1212 — phase op-loop / separate-decide / frame-fed; a landed file at `docs/deep-dives/decisions/0035-phase-tool-calls-unification.md`). This ADR **PRESERVES** #1212's separate-decide and converges only the within-unit act-loop history representation (frame-fed → RouterLoop message-history).
 **Recon foundation**: e2e DEEP_DIVE.md / DEEP_DIVE_2.md / DEEP_DIVE_3.md (primary-evidence flow-trace on main).

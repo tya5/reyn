@@ -118,7 +118,8 @@ new ADR.
 | ADR | Topic |
 |---|---|
 | [0035](0035-phase-tool-calls-unification.md) | Phase op-execution via native tool_calls (Phase ↔ chat/planner unification) (**Accepted, fully implemented** 2026-06-02) |
-| [0036](0036-history-compaction-force-close-unification.md) | Chat/plan/phase within-unit history + compaction + force-close unification (Fork 1: RouterLoop convergence) (**Accepted**) |
+| [0036](0036-history-compaction-force-close-unification.md) | Chat/plan/phase within-unit history + compaction + force-close unification (Fork 1: RouterLoop convergence) (**Accepted**) — the PR-F2b force-close handoff cap section superseded by [0042](0042-force-close-layer2-removal.md); the rest stands unchanged |
+| [0042](0042-force-close-layer2-removal.md) | force-close layer② removal — spill replaces the consolidate-and-retry path; **layer① (turn-budget force-close) is unaffected and still live** (**Accepted + Implemented** 2026-08-12; supersedes 0036's PR-F2b section only; see [#4381](https://github.com/tya5/reyn/issues/4381)) |
 | [0039](0039-thin-client-single-writer-server.md) | N thin CUI clients × one single-writer server — UI-path unification, four-surface separation (Proposed) |
 
 ## Format
