@@ -56,6 +56,25 @@ from reyn.llm.llm import (
 )
 from tests._support.events import collect_events
 
+
+@pytest.fixture(autouse=True)
+def _litellm_ready_for_classification():
+    """Tier 2 hygiene: this file's own top-level ``import litellm`` (above)
+    bypasses the `litellm_bootstrap` chokepoint entirely, so `_litellm_
+    ready`/`is_litellm_ready()` stay False even though litellm IS genuinely
+    imported and usable — `_is_retryable_exc`'s own classification helpers
+    (`_get_retryable_litellm_exceptions`, `#4423`) gate on `is_litellm_
+    ready()` and would silently under-classify (return `()` / False) in a
+    test that never established that precondition. Real production code
+    never hits this gap post-#4421 (every real litellm touch routes
+    through the chokepoint, so a completion that raised a genuine litellm
+    exception already confirmed readiness on the way there) — this fixture
+    states the same real precondition explicitly instead of relying on
+    litellm being importable at all."""
+    from reyn.llm.litellm_bootstrap import ensure_litellm_ready
+    ensure_litellm_ready()
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

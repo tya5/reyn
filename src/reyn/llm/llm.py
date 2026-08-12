@@ -472,18 +472,38 @@ async def shutdown_logging() -> None:
       without caller intervention, this function and `run_async` become
       thin wrappers and can be removed.
 
-    #3671: guarded by ``litellm_bootstrap.client_cache_baseline() is not
-    None`` at the call site in ``run_async`` — the queue this drains can
-    only have entries if ``acompletion()`` ran at least once this call
-    (this docstring's own "enqueues ... after every acompletion()"), so a
-    session that never touched the LLM has NOTHING to drain, and the
-    unconditional ``from litellm... import`` below would otherwise force
-    litellm's cold import (#3671's whole cost) just to confirm an empty
-    queue.
+    #3671: guarded at the call site in ``run_async`` by ``is_litellm_ready()``
+    — the queue this drains can only have entries if ``acompletion()`` ran
+    at least once this call (this docstring's own "enqueues ... after every
+    acompletion()"), so a session that never touched the LLM has NOTHING to
+    drain, and an unconditional touch below would otherwise force litellm's
+    cold import (#3671's whole cost) just to confirm an empty queue.
+
+    #4395/#4421 (architect finding): the call-site guard used to be
+    ``"litellm" in sys.modules`` — Python places a module into
+    ``sys.modules`` at the START of import, before its top-level code
+    finishes, so that check only ever proved the import STARTED, not that
+    it FINISHED; #4417's background warming thread turned that into a live
+    race (a shutdown racing a still-in-flight warm-up could grab a
+    genuinely incomplete module). Both the call-site guard and this
+    function's own body were fixed the same way as #4423: gate on
+    ``is_litellm_ready()`` (the real "genuinely finished" signal) before
+    touching litellm at all. ``litellm.litellm_core_utils.logging_worker``
+    is not one of the submodules litellm's own ``__init__`` eagerly
+    populates as an attribute (unlike e.g. ``litellm.types.utils``), so
+    this still needs its own ``import`` statement for that specific
+    submodule — but only ever reached AFTER ``is_litellm_ready()``
+    confirms the TOP-level package finished initializing, so this is a
+    normal, non-racing import (the top package's own import lock has
+    already been released; importing one of its submodules afterward
+    behaves like any other already-safe-to-import module).
     """
+    from reyn.llm.litellm_bootstrap import is_litellm_ready
+    if not is_litellm_ready():
+        return
     try:
-        from litellm.litellm_core_utils.logging_worker import GLOBAL_LOGGING_WORKER
-        await GLOBAL_LOGGING_WORKER.clear_queue()
+        import litellm.litellm_core_utils.logging_worker as _logging_worker_mod
+        await _logging_worker_mod.GLOBAL_LOGGING_WORKER.clear_queue()
     except Exception:
         # Best-effort: never raise from shutdown.
         pass
@@ -622,15 +642,24 @@ def run_async(coro: Coroutine[object, object, T]) -> T:
         finally:
             # #3671: two INDEPENDENT gates, deliberately not one.
             #
-            # `shutdown_logging` gates on `"litellm" in sys.modules` — the
-            # general "was litellm touched AT ALL this call" signal, true
-            # for `recorded_acompletion`/the embedding provider AND for any
-            # other lazy litellm call site in this codebase (there are
-            # several — cost/pricing/budget lookups, `router_loop.py`, the
-            # replay harness) that does not happen to route through
-            # `ensure_litellm_ready`. Draining litellm's logging-worker
-            # queue is safe and idempotent regardless of WHICH path
-            # imported litellm, so the broader signal is correct here.
+            # `shutdown_logging` gates on `is_litellm_ready()` internally
+            # (own function, own docstring) — the general "was litellm
+            # FULLY imported this call" signal, true for `recorded_
+            # acompletion`/the embedding provider AND for any other lazy
+            # litellm call site in this codebase (there are several —
+            # cost/pricing/budget lookups, `router_loop.py`, the replay
+            # harness) that does not happen to route through `ensure_
+            # litellm_ready`. Draining litellm's logging-worker queue is
+            # safe and idempotent regardless of WHICH path imported
+            # litellm, so the broader signal is correct here. #4395/#4421
+            # (architect finding): the call SITE used to re-check
+            # `"litellm" in sys.modules` before calling — Python places a
+            # module into `sys.modules` at the START of import, before
+            # its top-level code finishes, so that check only ever proved
+            # the import STARTED. Removed here — `shutdown_logging()` now
+            # owns its own correct (`is_litellm_ready()`) gate internally,
+            # a single source of truth rather than two checks that could
+            # drift apart.
             #
             # `_close_litellm_async_clients` gates on `client_cache_baseline()
             # is not None` — a NARROWER, TRUSTED-baseline-only signal.
@@ -643,8 +672,7 @@ def run_async(coro: Coroutine[object, object, T]) -> T:
             # created is not closed until GC (#2787's pre-existing risk
             # class, not a new one), never another call's client closed
             # early.
-            if "litellm" in sys.modules:
-                await shutdown_logging()
+            await shutdown_logging()
             pre_existing_keys = client_cache_baseline()
             if pre_existing_keys is not None:
                 await _close_litellm_async_clients(pre_existing_keys)
