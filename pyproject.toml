@@ -237,6 +237,14 @@ dependencies = [
                               # bounded work (~4-5 functions + a context re-plumb, see #4302)
                               # tracked as its own follow-up issue, deliberately NOT folded
                               # into this dependency-hygiene PR.
+    # #4395: was transitive only (Required-by: httpx, mcp, openai,
+    # sse-starlette, starlette, watchfiles — 4.14.0 already installed via
+    # that chain). Owner decision: declare it directly rather than keep
+    # relying on other packages' own pins to keep pulling it in — the same
+    # "make an existing transitive a direct dependency" move as `mcp`'s own
+    # entry above. Floor set to the version already resolved and in use
+    # (4.14.x); not raised for a specific new API this PR relies on.
+    "anyio>=4.14",
     "pyperclip>=1.9",        # #3616 ①: cross-platform clipboard, replacing a
                               # hand-rolled pbcopy/wl-copy/xclip/xsel/clip
                               # dispatch table whose Windows arm piped UTF-8
