@@ -15,7 +15,7 @@ if TYPE_CHECKING:
     import asyncio
     from collections.abc import Awaitable, Callable, Sequence
 
-    from reyn.config import MultimodalConfig, SandboxConfig, WebFetchConfig
+    from reyn.config import MultimodalConfig, ReadCapConfig, SandboxConfig, WebFetchConfig
     from reyn.core.events.events import EventLog
     from reyn.core.events.state_log import StateLog
     from reyn.core.op_runtime.render_template import RenderTemplateBounds
@@ -188,6 +188,19 @@ class OpContext:
     # operator's `web_fetch:` block in reyn.yaml (verify_ssl / allow_private_ips /
     # max_download_bytes) was silently ignored before this and now takes effect.
     web_fetch_config: "WebFetchConfig | None" = None
+
+    # #4381 PR-5: the resource-bound per-result inline cap (architect
+    # design — bytes, model-independent, config-driven). Consulted by
+    # file.py's read op and load_skill.py via
+    # ``context_builder.control_ir_inline_cap(ctx.read_cap_config)``.
+    # None (no ReynConfig threaded, e.g. a direct-OpContext test
+    # construction) falls back to context_builder's own model-independent
+    # default (``MAX_CONTROL_IR_RESULT_INLINE_BYTES``) — same
+    # backward-compatible shape as ``multimodal_config`` above. Reaches
+    # every chat-router OpContext via SessionFactoryConfig.read_cap_config
+    # → Session._read_cap_config → RouterOpContextSource →
+    # build_router_op_context (mirrors #4274's ``web_fetch_config`` wiring).
+    read_cap_config: "ReadCapConfig | None" = None
 
     # FP-0017 follow-up: declarative sandbox config for sandboxed_exec op.
     # Callers that have a ReynConfig available should pass config.sandbox here.

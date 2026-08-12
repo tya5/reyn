@@ -163,6 +163,7 @@ def build_scoped_chat_session(
         ),
         multimodal_config=factory_config.multimodal_config,
         web_fetch_config=factory_config.web_fetch_config,  # #4274
+        read_cap_config=factory_config.read_cap_config,  # #4381 PR-5
         action_retrieval_config=factory_config.action_retrieval_config,
         embedding_config=factory_config.embedding_config,
         router_config=factory_config.router_config,

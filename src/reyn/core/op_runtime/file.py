@@ -223,24 +223,17 @@ def _suggestions_fields(ws, path: str) -> dict:
 
 
 def _read_inline_cap(ctx: OpContext) -> int:
-    """Window-derived inline cap (chars) for an unbounded read (#1209).
+    """The resource-bound inline cap (BYTES) for an unbounded read.
 
-    Resolves ``ctx.model`` (a CLASS like ``"standard"``) to its litellm string
-    BEFORE deriving the window (resolve-before-window — the #1172-correct path;
-    a raw class mis-resolves to the fallback window), then reuses the shared
-    ``control_ir_inline_cap`` — the same window-derived read-bounding cap
-    ``load_skill`` bounds its body against, so both read verbs cut at one
-    place. Falls back to the fixed floor when there is no resolver.
+    #4381 PR-5: model-independent (owner ruling) — reuses the shared
+    ``control_ir_inline_cap``, the same cap ``load_skill`` bounds its body
+    against, so both read verbs cut at one place. Reads ``ctx.read_cap_
+    config``; falls back to the fixed default when no config was threaded
+    to this context (see ``control_ir_inline_cap``'s own docstring).
     """
     from reyn.core.context_builder import control_ir_inline_cap
 
-    model_str: str | None = None
-    if ctx.resolver is not None:
-        try:
-            model_str = ctx.resolver.resolve(ctx.model).model
-        except Exception:
-            model_str = None
-    return control_ir_inline_cap(model_str, events=ctx.events, phase=ctx.actor)
+    return control_ir_inline_cap(ctx.read_cap_config)
 
 
 async def handle(op: FileIROp, ctx: OpContext) -> dict:
@@ -428,7 +421,10 @@ async def handle(op: FileIROp, ctx: OpContext) -> dict:
             # file_read's source already lives on disk at op.path, so duplicating it into an offload
             # file is wasteful (owner steer). Fall through to the self-bounding truncation below —
             # truncate inline + surface a re-read hint; the full content stays at op.path.
-            if len(joined) <= cap:
+            # #4381 PR-5: measured in BYTES (the cap's own unit — architect design)
+            # via UTF-8 encoding, not len(str) — a char count drifts up to ~3x for
+            # multi-byte content against a byte-denominated cap.
+            if len(joined.encode("utf-8")) <= cap:
                 ctx.events.emit("tool_executed", op="read_file", path=op.path)
                 return {
                     "kind": "file",
@@ -442,34 +438,49 @@ async def handle(op: FileIROp, ctx: OpContext) -> dict:
         # #1209 read-bounding (keep-in-decide-context, not offloaded-out-of-view) + #2335 char-level
         # truncation. Accumulate WHOLE lines from (start_line, start_char); a multi-line overflow
         # stops at the LINE boundary (byte-identical to pre-#2335 — next_char_offset stays absent);
-        # a SINGLE line/segment that alone exceeds the cap is CHAR-truncated so `content` is
-        # GENUINELY ≤ cap (#2335 fix), its tail paged via next_char_offset.
+        # a SINGLE line/segment that alone exceeds the cap is TRUNCATED so `content` is GENUINELY
+        # <= cap (#2335 fix), its tail paged via next_char_offset.
+        #
+        # #4381 PR-5: ``cap`` is now BYTES (architect design — a resource bound protects
+        # memory/transfer, byte-denominated regardless of encoding). ``acc``/the per-segment
+        # overflow checks below measure UTF-8 encoded byte length, never len(str) — a
+        # char-denominated accumulator would silently under-count multi-byte content by up
+        # to ~3x, the exact drift this PR closes. The single-oversized-segment branch uses
+        # ``context_builder.byte_safe_prefix`` (never a raw ``seg[:cap]`` char slice, which
+        # could both overshoot the byte budget AND split a multi-byte codepoint mid-character).
+        from reyn.core.context_builder import byte_safe_prefix
+
         all_lines = content.splitlines(keepends=True)
         start_line = op.offset or 0
         start_char = op.char_offset or 0
         shown: list[str] = []
-        acc = 0
+        acc = 0  # bytes
         next_offset: "int | None" = None
         next_char_offset: "int | None" = None
         i = start_line
         seg_start = start_char
         while i < len(all_lines):
             seg = all_lines[i][seg_start:]
-            if shown and acc + len(seg) > cap:
+            seg_bytes = len(seg.encode("utf-8"))
+            if shown and acc + seg_bytes > cap:
                 # A subsequent line overflows → stop at the LINE boundary (exclude it; the
                 # continuation is a normal line read at its start). Pre-#2335 behavior.
                 next_offset = i
                 break
-            if not shown and len(seg) > cap:
-                # #2335: a single line/segment ALONE exceeds the cap → char-truncate for an honest
-                # bound; its tail resumes mid-line via next_char_offset.
-                shown.append(seg[:cap])
-                acc += cap
+            if not shown and seg_bytes > cap:
+                # #2335/#4381: a single line/segment ALONE exceeds the cap → byte-safe
+                # truncate for an honest bound; its tail resumes mid-line via
+                # next_char_offset (a CHARACTER offset — file.py's own read contract —
+                # derived from the truncated prefix's own char length, not the byte cap
+                # value itself, since those two numbers now differ).
+                truncated = byte_safe_prefix(seg, cap)
+                shown.append(truncated)
+                acc += len(truncated.encode("utf-8"))
                 next_offset = i
-                next_char_offset = seg_start + cap
+                next_char_offset = seg_start + len(truncated)
                 break
             shown.append(seg)
-            acc += len(seg)
+            acc += seg_bytes
             i += 1
             seg_start = 0
 
@@ -530,10 +541,11 @@ async def handle(op: FileIROp, ctx: OpContext) -> dict:
                     f"chars shown); the full file is on disk at {op.path!r} — re-read from "
                     f"offset {next_offset}"
                     + (
-                        # #4381: when a SINGLE line was itself char-truncated, plain
-                        # `offset=next_offset` restarts that same line from char 0 and
-                        # truncates identically — an infinite loop. The resume call
-                        # MUST also pass char_offset=next_char_offset; say so.
+                        # #4381: when a SINGLE line was itself truncated (byte-safe,
+                        # #4381 PR-5), plain `offset=next_offset` restarts that same
+                        # line from char 0 and truncates identically — an infinite
+                        # loop. The resume call MUST also pass
+                        # char_offset=next_char_offset; say so.
                         f" and char_offset {next_char_offset}"
                         if next_char_offset is not None else ""
                     )

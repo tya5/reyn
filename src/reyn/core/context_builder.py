@@ -14,56 +14,114 @@ was deleted — its last caller (the ContextFrame-driven phase path,
 offload (``reyn.runtime.services.tool_result_cap.cap_tool_result`` →
 ``.reyn/tool-results/`` via ``MediaStore``), unified onto the canonical
 tool-result mapper (``reyn.core.offload.canonical``) by #2648. Only
-``control_ir_inline_cap`` below survives — it is still the shared window-derived
-read-bounding cap consulted by ``file.py`` / ``load_skill.py``.
+``control_ir_inline_cap`` below survives — it is still the shared read-
+bounding cap consulted by ``file.py`` / ``load_skill.py``.
+
+#4381 PR-5 (architect design, owner ruling) — the RESOURCE-BOUND / BUDGET-
+BOUND role split:
+
+    resource bound   unit = BYTES, model-INDEPENDENT, config-driven
+                      protects: memory / transfer / disk
+                      members: THIS cap, load_skill's cap (shares it),
+                               offload's ``max_inline_bytes``
+    budget bound      unit = TOKENS, model-derived
+                      protects: the model's context window
+                      members: offload/spill trigger, compaction,
+                               reactive shrink
+
+Before PR-5 this cap was window-derived (scaled with the resolved model's
+input window, #1209) and counted in CHARACTERS. Both were architect-
+identified defects: scaling a resource bound by model window conflates the
+two roles above (a resource bound protects a fixed physical resource, not
+a model-relative budget), and counting a byte-denominated resource in
+characters drifts by up to ~3x for non-ASCII content ("多バイト文字で8192
+文字≒24KBになり、資源を守る量として3倍ぶれる"). Both are fixed here: the
+cap is now a plain config value (``ReadCapConfig.inline_bytes``,
+model-independent) and the byte/text-length distinction is the caller's
+job (``op_runtime/file.py`` / ``load_skill.py`` measure UTF-8 encoded
+byte length against this cap, never ``len(str)``).
+
+The ONE named conversion point between the two roles is
+:data:`INLINE_CAP_BYTES_PER_TOKEN` below, consulted by
+``router_history_buffer._check_resource_within_budget`` (PR-1, #4451) —
+never re-derive an equivalent ratio anywhere else (the exact silent-drift
+class #4381 exists to close).
 """
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from reyn.config.chat import ReadCapConfig
 
 # ── control_ir_result per-result inline-cap constant (C5 — FP-0008) ────────────
-# The floor for the window-derived per-result read-bounding cap (below). Also
-# doubles as the model-unresolved default (no model context → this fixed
-# 8KB floor).
-MAX_CONTROL_IR_RESULT_INLINE_BYTES: int = 8_192   # ~8KB threshold
+# The model-independent default resource bound, in BYTES — used whenever no
+# ``ReadCapConfig`` is available (a caller with no config context, or a
+# ``ReadCapConfig`` was never threaded to it). #4381 PR-5: previously also
+# the FLOOR for a window-derived cap that scaled with the model's input
+# window (#1209) — that derivation is gone; this is now the cap, full stop,
+# unless config overrides it via ``read_cap.inline_bytes``.
+MAX_CONTROL_IR_RESULT_INLINE_BYTES: int = 10_240   # 10 KiB default
 
-# Window-derived inline cap (#1209). The fixed 8KB above is a FLOOR; the
-# effective per-result offload trigger scales with the model's input window so
-# that a normal file read (e.g. a 150KB source file under a 1M-token window)
-# stays INLINE instead of being offloaded out of the editing model's view. The
-# fixed 8KB was a root anomaly — same class as #1201/#1172 (fixed-constant →
-# window-derive). The per-RESULT cap is orthogonal to count-axis compaction,
-# which still trims the TOTAL across results.
-#
-# #4381 PR-1: this is THE ONE named chars→tokens conversion (architect
-# design) — the resource boundary (this module, chars) and the budget
+# #4381 PR-1/PR-5: the ONE named bytes→tokens conversion (architect design)
+# — the resource boundary (this module, BYTES as of PR-5) and the budget
 # boundary (`router_history_buffer.resolve_effective_trigger_and_budgets`,
-# tokens) are compared through THIS constant and nowhere else; a second,
-# independently-derived chars-per-token ratio anywhere else would reopen the
-# exact silent-drift class #4381 PR-1 closes. Public (not `_`-prefixed) for
+# TOKENS) are compared through THIS constant and nowhere else; a second,
+# independently-derived bytes-per-token ratio anywhere else would reopen
+# the exact silent-drift class #4381 closes. Public (not `_`-prefixed) for
 # that reason — it is a cross-module conversion point, not a local detail.
-INLINE_CAP_CHARS_PER_TOKEN: int = 4
-_INLINE_CAP_WINDOW_FRACTION: float = 0.08  # one result may inline up to ~8% of the window
+#
+# Superseded name: PR-1 introduced this as ``INLINE_CAP_CHARS_PER_TOKEN``
+# (chars-per-token, matching the cap's char-denominated unit at the time).
+# PR-5 made the cap byte-denominated, so a *chars*-per-token ratio applied
+# to a *bytes* value would silently reopen the exact unit-drift class this
+# constant exists to prevent — renamed rather than reused with a new
+# meaning under the old name (a literal ~4 bytes-per-token approximation
+# for UTF-8-mixed text is the same rough average commonly used for chars,
+# so the NUMBER is unchanged; only the unit label is corrected).
+INLINE_CAP_BYTES_PER_TOKEN: int = 4
 
 
-def control_ir_inline_cap(
-    model_resolved: str | None,
-    *,
-    events: Any = None,
-    phase: str | None = None,
-) -> int:
-    """Window-derived per-result inline cap in chars, floored at the fixed 8KB.
+def control_ir_inline_cap(config: "ReadCapConfig | None" = None) -> int:
+    """The resource-bound per-result inline cap, in BYTES.
 
-    ``model_resolved`` MUST be a litellm model string (already class-resolved).
-    A raw model CLASS like ``"standard"`` mis-resolves to the fallback window
-    (the #1201/#1172 bug) — callers pass the resolved string. ``None`` (no model
-    context) falls back to the fixed floor.
+    #4381 PR-5: model-independent — no longer derived from a resolved
+    model's context window (#1209's window-derive was itself the defect
+    architect's role-split closes: a resource bound protects a fixed
+    physical resource, not a model-relative budget). ``config=None``
+    (no ``ReadCapConfig`` threaded to the caller) falls back to
+    :data:`MAX_CONTROL_IR_RESULT_INLINE_BYTES`.
     """
-    if not model_resolved:
+    if config is None:
         return MAX_CONTROL_IR_RESULT_INLINE_BYTES
-    from reyn.llm.model_budget import get_max_input_tokens
+    return config.inline_bytes
 
-    t_max = get_max_input_tokens(model_resolved, events=events, phase=phase)
-    derived = int(t_max * INLINE_CAP_CHARS_PER_TOKEN * _INLINE_CAP_WINDOW_FRACTION)
-    return max(MAX_CONTROL_IR_RESULT_INLINE_BYTES, derived)
 
+def byte_safe_prefix(text: str, max_bytes: int) -> str:
+    """The longest prefix of ``text`` whose UTF-8 encoding is <= ``max_bytes``,
+    never splitting a multi-byte codepoint.
+
+    #4381 PR-5: the resource bound is byte-denominated (see module
+    docstring); a caller char-truncating with ``text[:max_bytes]`` was the
+    exact ~3x drift architect's design closes (a multi-byte character
+    counted as "1" against a byte budget) — this is the shared, tested
+    replacement both ``op_runtime/file.py`` and ``load_skill.py`` use for
+    their single-oversized-segment truncation branch.
+
+    O(n): encode once, slice the encoded bytes at ``max_bytes``, then back
+    off up to 3 bytes (the longest a UTF-8 codepoint can be minus one) if
+    the cut landed mid-codepoint — a decode error there is expected, not
+    exceptional, so this backs off rather than re-encoding a shrinking
+    prefix in a loop (which would be O(n log n) for a very large single
+    oversized line/segment, the exact case this helper exists for).
+    """
+    encoded = text.encode("utf-8")
+    if len(encoded) <= max_bytes:
+        return text
+    truncated = encoded[:max_bytes]
+    for _ in range(4):  # UTF-8's longest codepoint is 4 bytes
+        try:
+            return truncated.decode("utf-8")
+        except UnicodeDecodeError:
+            truncated = truncated[:-1]
+    return ""

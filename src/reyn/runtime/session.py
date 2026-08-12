@@ -29,6 +29,7 @@ from reyn.config import (  # noqa: F401
     MultimodalConfig,
     OffloadConfig,
     OnLimitConfig,
+    ReadCapConfig,
     RenderTemplateConfig,
     RouterConfig,
     SafetyConfig,
@@ -914,6 +915,9 @@ class Session:
         offload_config: OffloadConfig | None = None,
         # render_template output bounds (FP-0055 / #2679) — see docs/reference/runtime/session-construction.md#family-4-cost-budget
         render_template_config: RenderTemplateConfig | None = None,
+        # #4381 PR-5: the resource-bound per-result inline cap (file.py read op +
+        # load_skill.py). None → context_builder's own model-independent default.
+        read_cap_config: "ReadCapConfig | None" = None,
         state_log: StateLog | None = None,
         budget_tracker: BudgetTracker | None = None,
         snapshot_path: "Path | None" = None,
@@ -1036,6 +1040,10 @@ class Session:
         self._multimodal_config = multimodal_config
         # #4274: stored so RouterOpContextSource can thread it into OpContext.web_fetch_config.
         self._web_fetch_config = web_fetch_config
+        # #4381 PR-5: threaded into RouterHistoryBuffer (read_cap=) for the
+        # resource/budget invariant check, and into OpContext.read_cap_config
+        # for file.py's/load_skill.py's own read op (via RouterOpContextSource).
+        self._read_cap_config = read_cap_config
         # Single MediaStore instance per Session (#383 PR-C, see session-construction.md#multimodal-media)
         from reyn.data.workspace.media_store import MediaStore, MediaStoreConfig
         if multimodal_config is not None:
@@ -4199,6 +4207,7 @@ class Session:
             presentation_registry_fn=lambda: self._presentation_registry,
             multimodal_config=self._multimodal_config,
             web_fetch_config=self._web_fetch_config,  # #4274
+            read_cap_config=self._read_cap_config,  # #4381 PR-5
             media_store_fn=lambda: self._media_store,  # #383/#2409
             compact_now=self._compact_now_for_op,  # #272/#1128
             threat_scan=self._safety.threat_scan,  # FP-0050/#1822
@@ -4477,6 +4486,7 @@ class Session:
             # value ``ctx.workspace.base_dir`` resolves to for the ops this
             # buffer's history entries came from).
             project_dir_fn=lambda: self._workspace_base_dir or Path.cwd(),
+            read_cap=self._read_cap_config,  # #4381 PR-5
         )
 
         # #3671 follow-up: a DEFERRED closure, not an eager construction —

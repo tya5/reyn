@@ -487,7 +487,7 @@ def test_load_skill_truncated_result_carries_a_resumable_offset(tmp_path):
     ctx, _events = _make_ctx(tmp_path)
     big = "".join(f"line {i} {'.' * 60}\n" for i in range(400))
     from reyn.core.context_builder import MAX_CONTROL_IR_RESULT_INLINE_BYTES
-    assert len(big) > MAX_CONTROL_IR_RESULT_INLINE_BYTES  # ensure over the floor cap
+    assert len(big.encode("utf-8")) > MAX_CONTROL_IR_RESULT_INLINE_BYTES  # ensure over the cap
     ctx.workspace.write_file("SKILL.md", big)
 
     result = _run(load_skill_handle(LoadSkillIROp(kind="load_skill", path="SKILL.md"), ctx))
@@ -509,12 +509,13 @@ def test_load_skill_resume_via_read_file_recovers_the_exact_remainder(tmp_path):
     still pass a bare "field is present" check but fail this one."""
     ctx, _events = _make_ctx(tmp_path)
     # Sized to overflow the cap just enough for ONE truncation round (both
-    # load_skill and read_file share the same window-derived cap) — a
-    # bigger body would need this test to loop resume calls, which is a
-    # real thing a caller can do but not what THIS assertion is pinning.
-    big = "".join(f"line {i} {'.' * 60}\n" for i in range(130))
+    # load_skill and read_file share the same config-driven, byte-
+    # denominated cap — #4381 PR-5) — a bigger body would need this test to
+    # loop resume calls, which is a real thing a caller can do but not what
+    # THIS assertion is pinning.
+    big = "".join(f"line {i} {'.' * 60}\n" for i in range(150))
     from reyn.core.context_builder import MAX_CONTROL_IR_RESULT_INLINE_BYTES
-    assert len(big) > MAX_CONTROL_IR_RESULT_INLINE_BYTES
+    assert len(big.encode("utf-8")) > MAX_CONTROL_IR_RESULT_INLINE_BYTES
     ctx.workspace.write_file("SKILL.md", big)
 
     first = _run(load_skill_handle(LoadSkillIROp(kind="load_skill", path="SKILL.md"), ctx))
