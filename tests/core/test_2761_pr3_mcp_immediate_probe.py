@@ -225,24 +225,42 @@ async def test_local_install_new_reachable_is_live_same_turn(
 ) -> None:
     """Tier 2: installing a NEW reachable stdio server probes OK, commits, and applies
     IMMEDIATELY — the server is in the live roster + its tools are cached the SAME turn
-    (no restart, no turn boundary). pending stays False (immediate, not deferred)."""
+    (no restart, no turn boundary). pending stays False (immediate, not deferred).
+
+    #4412 pin-bump PR: an immediate probe-commit installs the server as a HELD
+    connection on the session's ``MCPConnectionService`` (S2a — reused, not
+    reopened, on the next call), the same as any real caller's session. A real
+    caller closes it via ``Session.shutdown()``; this test's own
+    ``try/finally`` mirrors that with the narrower ``aclose_mcp_connections()``
+    (the established pattern in ``tests/mcp/test_2597_s2a_mcp_connection_service.py``).
+    Without it, mcp 2.0's ``stdio_client`` teardown-on-cancel path (unlike 1.x)
+    drains the still-alive child's stdout pipe in a SHIELDED, EOF-only loop
+    (``_drain_stdout``) when the reader task is cancelled directly instead of
+    via its own ``shutdown()`` — and EOF never comes from a process nobody
+    told to die, hanging the interpreter's event-loop teardown indefinitely.
+    Confirmed live via an isolated ``asyncio.Runner`` repro reproducing the
+    exact same hang outside pytest, then resolving it by closing the held
+    connection before the runner tears the loop down."""
     monkeypatch.chdir(tmp_path)
     session = _session(tmp_path)
-    assert "pidsrv" not in _roster_names(session)
+    try:
+        assert "pidsrv" not in _roster_names(session)
 
-    result = await _handle_mcp_install_local(
-        {"name": "pidsrv", **_STDIO}, _session_ctx(session, tmp_path),
-    )
+        result = await _handle_mcp_install_local(
+            {"name": "pidsrv", **_STDIO}, _session_ctx(session, tmp_path),
+        )
 
-    assert result["status"] == "ok"
-    assert "pidsrv" in _roster_names(session), (
-        "a NEW reachable server must be resolvable the same turn (immediate probe-commit)"
-    )
-    snap = session._router_host.mcp_tools_cache_snapshot
-    assert snap is not None and "pidsrv" in snap, "its tools must be live-cached same turn"
-    # Immediate path — nothing left pending for the turn boundary.
-    residual = await session._hot_reloader.apply_pending()
-    assert residual is None, "the immediate probe-commit must not ALSO defer a reload"
+        assert result["status"] == "ok"
+        assert "pidsrv" in _roster_names(session), (
+            "a NEW reachable server must be resolvable the same turn (immediate probe-commit)"
+        )
+        snap = session._router_host.mcp_tools_cache_snapshot
+        assert snap is not None and "pidsrv" in snap, "its tools must be live-cached same turn"
+        # Immediate path — nothing left pending for the turn boundary.
+        residual = await session._hot_reloader.apply_pending()
+        assert residual is None, "the immediate probe-commit must not ALSO defer a reload"
+    finally:
+        await session.aclose_mcp_connections()
 
 
 @pytest.mark.asyncio
@@ -272,29 +290,37 @@ async def test_local_install_same_name_overwrite_defers_and_skips_probe(
     """Tier 2: re-installing an EXISTING server (the documented re-install fix) is NOT
     probe-gated and NOT applied mid-turn — it keeps the deferred turn-boundary path
     (write + schedule). Proven by re-installing over a good server with a BAD command:
-    an overwrite still succeeds (no probe) and schedules a deferred reload."""
+    an overwrite still succeeds (no probe) and schedules a deferred reload.
+
+    #4412 pin-bump PR: the first (good) install holds an open MCP connection on
+    the session — closed via the same ``try/finally`` as
+    ``test_local_install_new_reachable_is_live_same_turn`` above; see that
+    test's docstring for why (mcp 2.0's ``stdio_client`` teardown-on-cancel
+    hang when a held connection is abandoned instead of closed)."""
     monkeypatch.chdir(tmp_path)
     session = _session(tmp_path)
+    try:
+        # First install (addition) → probed + immediately live.
+        await _handle_mcp_install_local(
+            {"name": "srv", **_STDIO}, _session_ctx(session, tmp_path),
+        )
+        assert "srv" in _roster_names(session)
 
-    # First install (addition) → probed + immediately live.
-    await _handle_mcp_install_local(
-        {"name": "srv", **_STDIO}, _session_ctx(session, tmp_path),
-    )
-    assert "srv" in _roster_names(session)
+        # Re-install SAME name with a BAD command — an overwrite skips the probe, so it
+        # does NOT error; it writes + defers (documented re-install workflow preserved).
+        result = await _handle_mcp_install_local(
+            {"name": "srv", "command": "/nonexistent/reyn-xyz", "args": []},
+            _session_ctx(session, tmp_path),
+        )
 
-    # Re-install SAME name with a BAD command — an overwrite skips the probe, so it
-    # does NOT error; it writes + defers (documented re-install workflow preserved).
-    result = await _handle_mcp_install_local(
-        {"name": "srv", "command": "/nonexistent/reyn-xyz", "args": []},
-        _session_ctx(session, tmp_path),
-    )
-
-    assert result["status"] == "ok", "an overwrite must NOT be probe-gated (re-install preserved)"
-    pending = session._hot_reloader.pending
-    assert pending is True, "an overwrite schedules the deferred turn-boundary reload"
-    assert _servers_on_disk(tmp_path)["srv"]["command"] == "/nonexistent/reyn-xyz", (
-        "the overwrite is written to config (clobber-update), applied at the turn boundary"
-    )
+        assert result["status"] == "ok", "an overwrite must NOT be probe-gated (re-install preserved)"
+        pending = session._hot_reloader.pending
+        assert pending is True, "an overwrite schedules the deferred turn-boundary reload"
+        assert _servers_on_disk(tmp_path)["srv"]["command"] == "/nonexistent/reyn-xyz", (
+            "the overwrite is written to config (clobber-update), applied at the turn boundary"
+        )
+    finally:
+        await session.aclose_mcp_connections()
 
 
 @pytest.mark.asyncio
