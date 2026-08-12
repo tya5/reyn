@@ -514,6 +514,104 @@ def test_migrate_value_identity_survives_a_multi_key_rewrite(project, monkeypatc
     assert after_flat["unrelated_key"] == [1, 2, 3]
 
 
+# ── #4349: legacy built-in-catalog shorthand values ──────────────────────
+#
+# `reyn config migrate` also detects (report-only — never auto-rewrite, see
+# `_migrate`'s docstring) `models:` / `llm.models:` tier values (and
+# `extends:` targets) that reference a shorthand name from the now-deleted
+# built-in catalog (`legacy_model_catalog_4349.LEGACY_MODEL_CATALOG`).
+
+
+def test_migrate_flags_a_legacy_catalog_shorthand_model_value(
+    project, capsys,
+) -> None:
+    """Tier 2: #4349 — a `models:` tier whose value is a bare catalog
+    shorthand (no `/`, matches `LEGACY_MODEL_CATALOG`) is reported with the
+    literal replacement value, not silently left alone or auto-rewritten."""
+    from reyn.interfaces.cli.commands.config import _migrate
+
+    _write_yaml(
+        project / "reyn.yaml",
+        "llm:\n  model: standard\n  models:\n    standard: claude-sonnet-thinking\n",
+    )
+    _migrate()
+
+    import yaml
+    cfg = yaml.safe_load((project / "reyn.yaml").read_text())
+    # Report-only: the file is untouched.
+    assert cfg["llm"]["models"]["standard"] == "claude-sonnet-thinking"
+
+    out = capsys.readouterr().out
+    assert "models.standard" in out
+    assert "claude-sonnet-thinking" in out
+    assert "anthropic/claude-3-7-sonnet" in out
+
+
+def test_migrate_flags_a_legacy_catalog_shorthand_extends_target(
+    project, capsys,
+) -> None:
+    """Tier 2: #4349 — an `extends:` target referencing a deleted catalog
+    shorthand is ALSO flagged, not just a bare scalar tier value."""
+    from reyn.interfaces.cli.commands.config import _migrate
+
+    _write_yaml(
+        project / "reyn.yaml",
+        (
+            "llm:\n"
+            "  model: standard\n"
+            "  models:\n"
+            "    standard:\n"
+            "      extends: gemini-pro\n"
+            "      max_completion_tokens: 999\n"
+        ),
+    )
+    _migrate()
+
+    out = capsys.readouterr().out
+    assert "models.standard" in out
+    assert "gemini-pro" in out
+    assert "gemini/gemini-2.5-pro" in out
+
+
+def test_migrate_does_not_flag_an_already_literal_model_string(
+    project, capsys,
+) -> None:
+    """Tier 2: #4349 accept-side — a `models:` tier value that is already a
+    real `provider/model` literal (contains `/`) is not a catalog
+    shorthand and must not be flagged."""
+    from reyn.interfaces.cli.commands.config import _migrate
+
+    _write_yaml(
+        project / "reyn.yaml",
+        "llm:\n  model: standard\n  models:\n    standard: openai/gpt-4o\n",
+    )
+    _migrate()
+
+    out = capsys.readouterr().out
+    assert "openai/gpt-4o" not in out
+    assert "models.standard references" not in out
+
+
+def test_migrate_catalog_check_runs_even_with_an_empty_rename_registry(
+    project, capsys, monkeypatch,
+) -> None:
+    """Tier 2: #4349 — the catalog-shorthand check is independent of
+    `_RENAMED_CONFIG_KEYS`; an empty rename registry must not silently
+    suppress it (the two migrations are unrelated concerns)."""
+    from reyn.interfaces.cli.commands.config import _migrate
+
+    monkeypatch.setattr("reyn.config.config_schema._RENAMED_CONFIG_KEYS", {})
+    _write_yaml(
+        project / "reyn.yaml",
+        "llm:\n  model: standard\n  models:\n    standard: claude-haiku\n",
+    )
+    _migrate()
+
+    out = capsys.readouterr().out
+    assert "claude-haiku" in out
+    assert "anthropic/claude-3-5-haiku" in out
+
+
 def test_migrate_does_not_leave_a_doubled_blank_line_between_merged_chunks(
     project, monkeypatch,
 ) -> None:

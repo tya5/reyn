@@ -399,23 +399,42 @@ def _migrate(*, dry_run: bool = False) -> None:
     distinction as a TYPE field, not a syntactic proxy like "does the hint
     string contain a space", so a future T1-T6 entry can't accidentally
     become auto-rewritten by writing a space-free note that was never
-    meant as a destination). ``_RENAMED_CONFIG_KEYS`` is empty today
-    (T1-T6 populate it incrementally); ``_RENAMED_SANDBOX_POLICY_KEYS`` is
+    meant as a destination). ``_RENAMED_SANDBOX_POLICY_KEYS`` is
     intentionally NOT auto-rewritten by this command — an operator on an
     old sandbox.policy key sees the guidance via ``reyn config validate``
     and fixes it by hand.
+
+    #4349 follow-up: ALSO reports (never auto-rewrites) ``models:`` /
+    ``llm.models:`` tier values, and ``extends:`` targets, that reference a
+    now-deleted built-in catalog shorthand (see
+    ``legacy_model_catalog_4349.LEGACY_MODEL_CATALOG``, a frozen one-time
+    snapshot — see its own module docstring for why it may not be re-derived
+    from anything live). Report-only rather than auto-rewrite, same
+    reasoning as the ``needs_manual`` renames above: turning a scalar
+    (``standard: claude-sonnet-thinking``) into a multi-key block value
+    is a shape of edit ``migrate_text.rewrite_text`` was deliberately never
+    built to attempt (its own docstring's scope is same-depth or one-level
+    renames of a KEY, never a VALUE's own type changing from scalar to
+    block) — guessing at an operator's indentation/comment style for a
+    brand-new nested block risks writing something subtly wrong to a file
+    ``reyn config migrate`` has no way to ask the operator to double-check
+    before it's already been written. This check runs independently of
+    ``_RENAMED_CONFIG_KEYS`` being non-empty — the two migrations are
+    unrelated and one being empty must not silently suppress the other.
     """
     import yaml
 
     from reyn.config import _find_project_root
     from reyn.config.config_schema import _RENAMED_CONFIG_KEYS
+    from reyn.config.legacy_model_catalog_4349 import LEGACY_MODEL_CATALOG
 
     if not _RENAMED_CONFIG_KEYS:
         print(
             "No config key renames are registered yet (nothing to migrate "
-            "— #4174 T1-T6 populate this registry incrementally)."
+            "on that front — #4174 T1-T6 populate this registry "
+            "incrementally). Checking for legacy catalog shorthand values "
+            "separately below."
         )
-        return
 
     # Only entries with a non-None `destination` (a plain rename, no value
     # transform) are safe to auto-rewrite — see the docstring above.
@@ -456,6 +475,32 @@ def _migrate(*, dry_run: bool = False) -> None:
             return str(path.relative_to(project_root)) if project_root else str(path)
         except ValueError:
             return str(path)
+
+    # #4349: report (never auto-rewrite — see docstring above) `models:` /
+    # `llm.models:` tier values and `extends:` targets that reference a
+    # deleted catalog shorthand. Scans whichever location currently holds
+    # the mapping — a project may not have run the (separate, auto-rewritten)
+    # `models:` -> `llm.models:` key-rename yet, so both are checked.
+    catalog_findings: "list[tuple[str, str, str, dict]]" = []  # (label, tier_key, old_name, suggestion)
+    for path in candidates:
+        cfg = _read(path)
+        if not cfg:
+            continue
+        models_block = cfg.get("models")
+        if not isinstance(models_block, dict):
+            llm_block = cfg.get("llm")
+            models_block = llm_block.get("models") if isinstance(llm_block, dict) else None
+        if not isinstance(models_block, dict):
+            continue
+        for tier_key, value in models_block.items():
+            if isinstance(value, str) and "/" not in value and value in LEGACY_MODEL_CATALOG:
+                catalog_findings.append((_label(path), tier_key, value, LEGACY_MODEL_CATALOG[value]))
+            elif isinstance(value, dict):
+                extends_target = value.get("extends")
+                if isinstance(extends_target, str) and extends_target in LEGACY_MODEL_CATALOG:
+                    catalog_findings.append(
+                        (_label(path), tier_key, extends_target, LEGACY_MODEL_CATALOG[extends_target])
+                    )
 
     from reyn.config.migrate_check import verify_rewrite
     from reyn.config.migrate_text import rewrite_text
@@ -531,8 +576,24 @@ def _migrate(*, dry_run: bool = False) -> None:
             )
             print(f"  {label}: {old_key} — {note}")
 
-    if not any_changes and not manual_found:
-        print("No renamed keys found in your config — nothing to migrate.")
+    if catalog_findings:
+        print(
+            "\nThe following model reference(s) use a removed built-in "
+            "catalog shorthand (#4349) and need manual review — replace "
+            "the shorthand with the literal value shown, e.g.\n"
+            "  models:\n"
+            "    <tier>: <the 'model' line below, plus any other lines shown>\n"
+        )
+        for label, tier_key, old_name, suggestion in catalog_findings:
+            suggestion_yaml = yaml.dump(
+                suggestion, allow_unicode=True, default_flow_style=False, sort_keys=False,
+            )
+            indented = "\n".join(f"      {line}" for line in suggestion_yaml.splitlines())
+            print(f"  {label}: models.{tier_key} references '{old_name}' — replace with:")
+            print(indented)
+
+    if not any_changes and not manual_found and not catalog_findings:
+        print("No renamed keys or legacy catalog shorthand values found — nothing to migrate.")
         return
     if any_changes:
         if dry_run:
