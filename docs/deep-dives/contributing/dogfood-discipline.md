@@ -791,6 +791,13 @@ The principles in Section 3 still apply — in particular Principle 4 (build obs
 
 ### 6.5.2 New observation surfaces
 
+**"Spill" is a family name, not one mechanism** (owner-ratified, 2026-08-12): *spill* = content didn't fit, so it goes out to a file — unavoidable, never config-gated off. This is a different axis from *offload* — content WOULD fit but goes out anyway to save context budget — which stays optional (default false, a config knob). Two members of the spill family exist today:
+
+- **Step result spill** (this section, ADR-0024/0025) — a plan step's output/LLM-call record exceeding 32 KB.
+- **Tool result spill** (#4381, `MediaStore.save_tool_result` → `services/offload/store.py`'s `offload_value` — the identifier stays `offload_*`, unrenamed; only the *concept name* "spill" is new) — a chat-turn tool result too big for the router's token-derived cap (`services/tool_result_cap.py`).
+
+Both are triggered by "didn't fit," never by an operator's optimization preference — that's what makes them spill, not offload, regardless of which code module happens to implement the write.
+
 Plan-mode produces durable state across six distinct locations. Each has a different purpose and a different decay lifecycle.
 
 | Surface | Where | What to look for |

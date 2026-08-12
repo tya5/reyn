@@ -249,6 +249,49 @@ class MediaStore:
         # cross-host consumers can fetch via standard HTTP GET. Unset →
         # no ``url`` minted, same-host fast-path only.
         self._base_url = (base_url or "").rstrip("/") or None
+        # #4381: every path this store has itself written via
+        # ``save_tool_result`` (= a "tool result spill" — owner-ratified
+        # term, 2026-08-12: "入らないから出す。不可避・設定で止めない",
+        # distinct from "offload" = "入るけれども節約のために出す。最適化・
+        # 既定 false"). ``op_runtime/file.py``'s read handler queries this
+        # via :meth:`is_tool_result_spill` to detect and break the loop a
+        # *bare* re-read of a spilled file can otherwise cause: reading the
+        # spill file's own content can be too big for ``file.py``'s
+        # window-derived cap AGAIN, and since that cap is INDEPENDENT of
+        # the router's separate token-derived spill trigger
+        # (``services/tool_result_cap.py``), a naive truncate-and-return
+        # can come back oversized under the ROUTER's cap too and get
+        # spilled A SECOND time — a real, unbounded chain, not a
+        # hypothetical.
+        #
+        # In-memory, session-scoped (this store's own lifetime) — the loop
+        # this guards against is a single session's own read-then-spill
+        # cycle, not something that needs to survive a restart. Session-
+        # scoped is also why a manifest FILE (persisted alongside the
+        # spilled artifacts) was rejected: it would need its own lifecycle/
+        # cleanup story for a guard whose failure mode never outlives the
+        # process that could trigger it.
+        self._tool_result_spill_paths: "set[Path]" = set()
+
+    def is_tool_result_spill(self, path: "str | Path") -> bool:
+        """#4381: whether *path* is a file THIS store itself wrote via
+        :meth:`save_tool_result` — i.e. a tool-result spill artifact, not
+        an arbitrary file that merely happens to live under
+        ``tool_results_dir`` (a path-naming/location heuristic would also
+        catch an unrelated file an operator happened to place in the same
+        directory — the reason this checks WHAT WAS ACTUALLY WRITTEN,
+        never where a path merely sits).
+
+        Resolves *path* the same way ``save_tool_result`` resolved the
+        path it recorded (against ``project_root`` when relative), so a
+        caller may pass either the project-relative path a tool result
+        block carries or an absolute one."""
+        p = Path(path)
+        if not p.is_absolute():
+            p = (self._project_root / p).resolve()
+        else:
+            p = p.resolve()
+        return p in self._tool_result_spill_paths
 
     # ── Image storage (= .reyn/media/) ────────────────────────────────
 
@@ -358,6 +401,10 @@ class MediaStore:
         # Convert absolute path_ref to project-relative path for the block.
         abs_path = Path(result.path_ref)
         rel_path = str(abs_path.relative_to(self._project_root))
+        # #4381: record so a later ``read_file`` on this exact path can
+        # detect it's re-reading a spill artifact (see
+        # :meth:`is_tool_result_spill`'s own docstring for why).
+        self._tool_result_spill_paths.add(abs_path.resolve())
         block: dict = {
             "type": "tool_result_ref",
             "path": rel_path,

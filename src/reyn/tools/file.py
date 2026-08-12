@@ -71,6 +71,10 @@ _READ_FILE_PARAMETERS: dict[str, Any] = {
             "type": "integer",
             "description": _io_descriptions.PARAMS["read_file"]["limit"].text,
         },
+        "char_offset": {
+            "type": "integer",
+            "description": _io_descriptions.PARAMS["read_file"]["char_offset"].text,
+        },
     },
     "required": ["path"],
 }
@@ -168,7 +172,12 @@ async def _handle_read(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
 
     Builds FileIROp(op="read") and routes via execute_op. The optional
     ``offset`` / ``limit`` line-slice args are forwarded to FileIROp (=
-    already supported by ``op_runtime/file.py``).
+    already supported by ``op_runtime/file.py``). ``char_offset`` (#4381)
+    is forwarded the same way — ``FileIROp`` and ``op_runtime/file.py``
+    already supported it (the mid-line resume position a previous
+    ``next_char_offset`` in a truncated result names); only THIS schema/
+    handler seam was missing it, which made ``next_char_offset`` a value
+    the tool could return but never receive back.
     """
     from reyn.core.op_runtime import execute_op
     from reyn.schemas.models import FileIROp
@@ -179,6 +188,7 @@ async def _handle_read(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
         path=args["path"],
         offset=args.get("offset"),
         limit=args.get("limit"),
+        char_offset=args.get("char_offset"),
     )
     legacy_ctx = _build_legacy_op_context(ctx)
     return await execute_op(op, legacy_ctx)
