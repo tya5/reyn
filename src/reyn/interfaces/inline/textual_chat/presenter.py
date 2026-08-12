@@ -346,6 +346,8 @@ def _body_and_background(
     *,
     neutralize_body: bool = False,
     image_cache: "dict[str, object] | None" = None,
+    decoded_image_cache: "dict[str, object] | None" = None,
+    now: float | None = None,
 ) -> "tuple[RenderableType, str | None]":
     """The body renderable + optional full-row background for one display frame.
 
@@ -354,7 +356,22 @@ def _body_and_background(
 
     ``image_cache`` (#3846, default None) is forwarded to the ``presentation``
     kind's ``render_presentation_nodes`` call — see that function's own
-    docstring for why it must stay a pure dict lookup.
+    docstring for why it must stay a pure dict lookup. ``decoded_image_cache``
+    (#4464, default None) is forwarded alongside it — see
+    :func:`~reyn.interfaces.repl.present_renderer.render_presentation_nodes`'s
+    own docstring for what it skips.
+
+    ``now`` (#4464, default None) — when the entry carries
+    :data:`_RUNNING_SINCE_KEY` (stamped by :meth:`TextualChatApp.
+    _begin_running_indicator`, called for a ``presentation`` entry that still
+    has an image resolving — see ``_begin_image_resolutions``), an extra
+    :func:`_running_indicator` line is appended below the rendered nodes,
+    reusing the EXACT SAME live-indicator convention the RUNNING tool-call
+    row already uses (no new visual vocabulary — the owner's explicit
+    "受入条件" for #4464 bans inventing one). A blank/unresolved image node
+    otherwise renders its ordinary ``[image: alt]`` placeholder — this line
+    is the only ADDITIONAL signal that something is actively in flight
+    rather than merely not-yet-requested.
 
     Reuses the plain renderer's per-kind body construction (markdown for the
     agent reply, the tool-summary helpers for tool rows, the ``_KIND_LINE`` body
@@ -386,7 +403,14 @@ def _body_and_background(
     meta = msg.meta or {}
     if kind == "presentation":
         from reyn.interfaces.repl.present_renderer import render_presentation_nodes
-        return render_presentation_nodes(meta.get("nodes", []), image_cache=image_cache), None
+        body = render_presentation_nodes(
+            meta.get("nodes", []),
+            image_cache=image_cache,
+            decoded_image_cache=decoded_image_cache,
+        )
+        if meta.get(_RUNNING_SINCE_KEY) is not None and now is not None:
+            body = Group(body, _running_indicator(msg, now))
+        return body, None
     if meta.get(_PIPELINE_RUN_KEY) is not None:
         return _pipeline_row(meta), None
     # kind == "intervention" is intercepted earlier, in ``ReynPresenter.present``
@@ -466,6 +490,15 @@ class ReynPresenter:
         # of a list().
         self._image_cache: "dict[str, object]" = {}
         self._image_inflight: "set[str]" = set()
+        # #4464: the DECODED renderable (a `textual_image.renderable.Image`),
+        # keyed by src — populated by `_resolve_image` on a background
+        # thread once the fetch settles, so the CPU-heavy PIL decode +
+        # `TextualImage(...)` construction (measured directly: ~100-300ms
+        # for a large real photo) never runs on the event loop. Evicted in
+        # lockstep with `_image_cache` (see `_store_image_resolution`) —
+        # a separate cap of its own would drift from the byte cap that
+        # already governs image lifetime here.
+        self._decoded_image_cache: "dict[str, object]" = {}
         from reyn.core.present.image_fetch import DEFAULT_MAX_BYTES
 
         # Derived from DEFAULT_MAX_BYTES rather than a fresh magic number —
@@ -506,6 +539,12 @@ class ReynPresenter:
         while self._image_cache_bytes > self._image_cache_byte_cap and len(self._image_cache) > 1:
             oldest_src = next(iter(self._image_cache))
             evicted = self._image_cache.pop(oldest_src)
+            # #4464: evict the decoded renderable in lockstep — an entry
+            # missing from `_image_cache` but lingering in
+            # `_decoded_image_cache` would be a leak this byte cap exists
+            # to prevent (same #3876/#3872 class the module docstring
+            # already names for the raw-bytes cache).
+            self._decoded_image_cache.pop(oldest_src, None)
             evicted_body = getattr(evicted, "body", b"")
             self._image_cache_bytes -= (
                 len(evicted_body) if isinstance(evicted_body, (bytes, bytearray)) else 0
@@ -535,12 +574,21 @@ class ReynPresenter:
         :attr:`_image_cache` directly."""
         return src in self._image_cache
 
+    def has_decoded_image(self, src: str) -> bool:
+        """Whether *src* currently has a pre-decoded renderable cached
+        (#4464) — mirrors :meth:`has_cached_image`'s own public-accessor
+        pattern, exposed so a caller (or a test) can observe whether the
+        background-thread decode has populated :attr:`_decoded_image_cache`
+        without reaching into it directly."""
+        return src in self._decoded_image_cache
+
     def begin_image_resolution(
         self,
         entry: object,
         src: str,
         *,
         allowed_schemes: "list[str] | None" = None,
+        on_settled: "Callable[[object], None] | None" = None,
     ) -> None:
         """Kick a background fetch for `src` if it is not already cached or
         in flight (#3846 ②) — the ONE mutation point for :attr:`_image_cache`.
@@ -558,17 +606,34 @@ class ReynPresenter:
         ``.update()`` on — the caller (``TextualChatApp``, which already
         depends on flowview) passes the real, correctly-typed object; this
         module only needs the one method.
+
+        ``on_settled`` (#4464, default None) is called with ``entry`` once
+        THIS resolution settles (ok or failed) — the presenter has no
+        ``FlowView`` reference of its own (see this method's own
+        ``entry``-untyped rationale above), so it cannot stop the app's own
+        running-indicator animation itself; the app supplies this callback
+        instead, mirroring how it already supplies ``entry``. Called
+        unconditionally alongside ``entry.update()``, from the same
+        ``finally`` block.
         """
         if src in self._image_cache or src in self._image_inflight:
             return
         import asyncio
 
         self._image_inflight.add(src)
-        asyncio.create_task(self._resolve_image(entry, src, allowed_schemes))
+        asyncio.create_task(
+            self._resolve_image(entry, src, allowed_schemes, on_settled)
+        )
 
     async def _resolve_image(
-        self, entry: object, src: str, allowed_schemes: "list[str] | None",
+        self,
+        entry: object,
+        src: str,
+        allowed_schemes: "list[str] | None",
+        on_settled: "Callable[[object], None] | None" = None,
     ) -> None:
+        import asyncio
+
         from reyn.core.present.image_fetch import (
             ImageFetchError,
             ImageResolution,
@@ -582,6 +647,25 @@ class ReynPresenter:
             self._store_image_resolution(
                 src, ImageResolution(ok=True, body=body, content_type=content_type)
             )
+            # #4464: the CPU-heavy PIL decode + `TextualImage(...)`
+            # construction (measured directly: ~100-300ms for a large real
+            # photo, versus ~10ms for the sixel-encode `_render_image`'s own
+            # inline fallback still does at PAINT time) runs on a background
+            # thread — `_render_image` then only has to WRAP the already-
+            # built renderable (a cache hit), so no CPU-heavy step is left
+            # on the event loop for a resolved image. A decode failure here
+            # is silently skipped (not stored as a separate failure state):
+            # `_render_image`'s own inline fallback re-attempts the SAME
+            # decode on the SAME bytes synchronously and produces the
+            # established "[image loaded but could not render: ...]" text
+            # — one failure path, not two, for identical bytes.
+            try:
+                from reyn.interfaces.repl.present_renderer import decode_image_body
+
+                decoded = await asyncio.to_thread(decode_image_body, body)
+                self._decoded_image_cache[src] = decoded
+            except Exception:
+                pass
         except ImageFetchError as exc:
             self._store_image_resolution(src, ImageResolution(ok=False, error=str(exc)))
         except Exception:
@@ -601,6 +685,11 @@ class ReynPresenter:
                 entry.update()  # type: ignore[attr-defined]
             except Exception:
                 pass
+            if on_settled is not None:
+                try:
+                    on_settled(entry)
+                except Exception:
+                    pass
 
     def _measure(self, renderable: RenderableType, width: int) -> int:
         self._probe.size = (max(width, 1), 200)
@@ -680,7 +769,11 @@ class ReynPresenter:
         if item.kind == "tool_call_started" and meta.get(_RUNNING_SINCE_KEY) is not None:
             return self._present_running_tool(item, width)
         body, background = _body_and_background(
-            item, neutralize_body=self._neutralize_body, image_cache=self._image_cache
+            item,
+            neutralize_body=self._neutralize_body,
+            image_cache=self._image_cache,
+            decoded_image_cache=self._decoded_image_cache,
+            now=self._clock(),
         )
         return Presentation(
             height=self._measure(body, width),
