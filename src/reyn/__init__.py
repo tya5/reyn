@@ -71,11 +71,28 @@ os.environ.setdefault("LITELLM_LOCAL_ANTHROPIC_BETA_HEADERS", "True")
 # survive both the import-order gap and the OS-temp-dir/package-mutation
 # fragility of WHERE it points, for every same-process tiktoken caller, not
 # just the ones that happen to import litellm's token-counting module
-# first. ``setdefault`` — an operator who already set ``TIKTOKEN_CACHE_DIR``
-# still wins; litellm's own later import force-assigns unconditionally
-# (its own ``CUSTOM_TIKTOKEN_CACHE_DIR``-gated logic), so this is only a
-# bridge for the window before litellm's own module happens to run — same
-# reasoning as the LITELLM_LOCAL_* defaults above.
+# first.
+#
+# TWO env vars, because they close two DIFFERENT holes — verified live,
+# not assumed (an earlier draft of this comment claimed litellm's own
+# import "force-assigns... so this is only a bridge", which was WRONG in
+# the one case that matters most: the owner's actual crash happens INSIDE
+# ``import litellm`` itself):
+#   TIKTOKEN_CACHE_DIR (setdefault) — covers hole (a) above: a caller that
+#     never imports litellm's token-counting module at all (direct
+#     ``tiktoken.get_encoding(...)``, as ``litellm_provider.py`` does) only
+#     ever sees this var; ``CUSTOM_TIKTOKEN_CACHE_DIR`` is never read by
+#     anyone in that path.
+#   CUSTOM_TIKTOKEN_CACHE_DIR (setdefault) — covers hole (b): once
+#     ``litellm``'s own ``default_encoding.py`` DOES run (i.e. hole (a)
+#     didn't apply), it OVERWRITES ``TIKTOKEN_CACHE_DIR`` with an
+#     UNCONDITIONAL assignment (not ``setdefault`` — confirmed by reading
+#     its source directly), ignoring whatever this file set moments
+#     earlier. The one input it actually reads before deciding that value
+#     is ``CUSTOM_TIKTOKEN_CACHE_DIR`` — set that instead, and litellm's
+#     own import redirects itself (and even calls ``os.makedirs`` for us).
+# ``setdefault`` on both — an operator who already set either var still
+# wins; this is a default, not an override.
 _tiktoken_cache_dir = os.path.join(
     os.path.expanduser("~"), ".reyn", "cache", "tiktoken",
 )
@@ -85,3 +102,4 @@ except OSError:
     pass  # unwritable $HOME — fall through, tiktoken's own default still applies
 else:
     os.environ.setdefault("TIKTOKEN_CACHE_DIR", _tiktoken_cache_dir)
+    os.environ.setdefault("CUSTOM_TIKTOKEN_CACHE_DIR", _tiktoken_cache_dir)
