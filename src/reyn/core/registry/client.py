@@ -169,7 +169,12 @@ class RegistryClient:
         # litellm's import-time console log routing (#2929) wraps it too
         # (idempotent; cheap on 2nd+ call).
         from reyn.llm.litellm_bootstrap import ensure_litellm_ready
-        ensure_litellm_ready()
+        # #4418: this client already tracks an optional EventLog for its own
+        # verify=False audit below — feed it through so the tiktoken-import
+        # egress (fired inside THIS ensure_litellm_ready call, if litellm
+        # has not been imported anywhere else in the process yet) gets the
+        # same never-silent audit-event when it resolves verify=False.
+        ensure_litellm_ready(events=self._events)
         from litellm.llms.custom_httpx.http_handler import get_ssl_verify
 
         from reyn._network import build_async_http_client

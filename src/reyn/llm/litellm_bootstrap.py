@@ -51,6 +51,8 @@ from reyn import _cooldown
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
+    from reyn.core.events.events import EventLog
+
 _LITELLM_LOGGER_NAMES = ("LiteLLM", "LiteLLM Router", "LiteLLM Proxy")
 
 _litellm_ready = False
@@ -204,8 +206,94 @@ _litellm_import_failure_warned = False
 _LITELLM_IMPORT_COOLDOWN_SECONDS = 60.0
 _litellm_import_cooldown_until = 0.0
 
+# #4418: reyn's own name for this egress class in the #3075 audit hook —
+# ``import litellm`` triggers a THIRD-PARTY (tiktoken) network call this
+# module does not construct the client for, so it is named as its own
+# egress class rather than folded into "litellm" (which would misattribute
+# a disabled-verify audit event to the LLM call path itself).
+_TIKTOKEN_IMPORT_EGRESS_NAME = "tiktoken-import"
+# tiktoken's own ``load.py:17`` call carries no timeout at all (#4395's own
+# finding, generalized) — 30s matches ``reyn._network``'s other best-effort
+# fetch timeouts (none currently sets a *class* default higher), a bound
+# generous enough for a small BPE-vocab blob download over a slow link
+# without leaving a stalled network call to hang the import indefinitely.
+_TIKTOKEN_IMPORT_TIMEOUT_SECONDS = 30.0
 
-def ensure_litellm_ready(*, ignore_cooldown: bool = False) -> "Any | None":
+
+@contextlib.contextmanager
+def _third_party_import_egress_honours_standard_env(
+    events: "EventLog | None",
+) -> "Iterator[None]":
+    """#4418: close the #3075 "zero exceptions" gap ``tiktoken`` opened.
+
+    ``import litellm`` pulls in ``litellm_core_utils/default_encoding.py``,
+    which calls ``tiktoken.get_encoding(...)`` — and on a cache miss,
+    ``tiktoken/load.py:17`` does a bare ``requests.get(blobpath)`` with no
+    ``verify=``/``timeout=`` of its own. This is genuinely reyn-originated
+    egress (it only fires because reyn imports litellm), but reyn cannot
+    pass ``verify=``/``timeout=`` into a THIRD PARTY's call the way
+    ``reyn._network``'s DRY constructors do for reyn's own httpx clients —
+    the only lever available is ``requests``' own per-call DEFAULT.
+
+    So this patches ``requests.sessions.Session.request`` — the one method
+    every ``requests.get``/``.post``/etc. call funnels through — to inject
+    ``verify``/``timeout`` defaults resolved from the SAME standard env
+    ``reyn._network.resolve_ssl_verify_from_env`` already reads for every
+    other egress class (``SSL_VERIFY`` / ``SSL_CERT_FILE`` /
+    ``REQUESTS_CA_BUNDLE``), for the DURATION of this one ``import litellm``
+    call only — not patched globally/forever. reyn's #3075 conformance
+    obligation covers what reyn itself causes (this one import), not every
+    unrelated ``requests`` call a plugin or the host process might make
+    elsewhere in the same interpreter; leaving the patch in place past this
+    scope would be reyn silently weakening TLS verification for code it has
+    no business touching.
+
+    ``kwargs.setdefault`` (not an unconditional override) — an explicit
+    ``verify=``/``timeout=`` a caller already passed (not tiktoken's own
+    call today, but this patch covers every ``requests`` call made during
+    ``import litellm``, not just tiktoken's) is left alone, same "explicit
+    wins" precedent as ``resolve_ssl_verify_from_env``'s own callers.
+
+    A verify=False resolution runs the SAME never-silent audit hook
+    (:func:`reyn._network.note_ssl_verify_disabled`) every other #3075
+    egress class uses — one WARN + one ``network_ssl_verify_disabled`` P6
+    audit-event per process, keyed on
+    :data:`_TIKTOKEN_IMPORT_EGRESS_NAME` so it is distinguishable from a
+    litellm-call-path verify=False in the same log/event stream.
+    """
+    try:
+        import requests.sessions
+    except Exception:
+        # requests is an optional/transitive dependency from reyn's own
+        # perspective (litellm pulls it in) — if it is not importable for
+        # any reason, there is nothing to patch and nothing to protect;
+        # ``import litellm`` proceeds and either works or fails on its own.
+        yield
+        return
+
+    from reyn._network import note_ssl_verify_disabled, resolve_ssl_verify_from_env
+
+    verify = resolve_ssl_verify_from_env()
+    if verify is False:
+        note_ssl_verify_disabled(events, _TIKTOKEN_IMPORT_EGRESS_NAME)
+
+    original_request = requests.sessions.Session.request
+
+    def _patched_request(self: "requests.sessions.Session", method: str, url: str, **kwargs: Any):
+        kwargs.setdefault("verify", verify)
+        kwargs.setdefault("timeout", _TIKTOKEN_IMPORT_TIMEOUT_SECONDS)
+        return original_request(self, method, url, **kwargs)
+
+    requests.sessions.Session.request = _patched_request  # type: ignore[method-assign]
+    try:
+        yield
+    finally:
+        requests.sessions.Session.request = original_request  # type: ignore[method-assign]
+
+
+def ensure_litellm_ready(
+    events: "EventLog | None" = None, *, ignore_cooldown: bool = False
+) -> "Any | None":
     """Idempotent first-touch chokepoint: import litellm + apply its
     one-time setup, returning the imported module — or ``None`` if the
     import itself failed.
@@ -279,11 +367,29 @@ def ensure_litellm_ready(*, ignore_cooldown: bool = False) -> "Any | None":
 
     Wraps the (possibly first-ever) ``import litellm`` in
     ``_litellm_import_logs_to_file`` (preserving the interactive CUI's
-    clean-terminal guarantee — #2929) and sets
+    clean-terminal guarantee — #2929) AND
+    ``_third_party_import_egress_honours_standard_env`` (#4418 — the
+    SAME import triggers a bare, unauthenticated ``tiktoken`` blob
+    download with no ``verify=``/``timeout=`` of its own; see that
+    context manager's own docstring) and sets
     ``litellm.suppress_debug_info = True`` (litellm prints "Give Feedback
     / Get Help" banners straight to stderr on a provider error, NOT via
     ``logging``, so the file redirect above doesn't catch them; this
     suppresses them instead).
+
+    ``events`` (#4418, optional — same posture as ``reyn._network``'s DRY
+    httpx constructors): an ``EventLog`` a caller happens to have in scope,
+    fed straight through to the ``tiktoken-import`` egress's
+    ``verify=False`` audit hook. ``None`` (every call site except
+    ``RegistryClient.__aenter__`` today) still emits the one-time WARN;
+    only the P6 ``network_ssl_verify_disabled`` audit-event is skipped —
+    this function's own idempotent "first caller wins" ownership means a
+    LATER call passing ``events`` after an earlier ``events=None`` call
+    already won ownership does NOT get a second chance at the audit-event
+    for this process (the underlying ``import litellm`` only ever runs
+    once) — an accepted gap, not a promise this parameter breaks; nothing
+    currently depends on being the FIRST call to also be the one with an
+    ``EventLog`` in scope.
 
     #3075 chokepoint coverage: this is the sole place the
     ``litellm.aiohttp_trust_env = True`` flip is applied, and BOTH
@@ -333,7 +439,10 @@ def ensure_litellm_ready(*, ignore_cooldown: bool = False) -> "Any | None":
         # We won ownership. Do the real work, then release every waiter.
         result = None
         try:
-            with _litellm_import_logs_to_file():
+            with (
+                _litellm_import_logs_to_file(),
+                _third_party_import_egress_honours_standard_env(events),
+            ):
                 try:
                     import litellm
                     litellm.suppress_debug_info = True

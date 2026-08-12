@@ -24,6 +24,20 @@ egress classes, by transport:
   These conform by the lib's own ``trust_env``-style default; the witness
   tests below RED if a lib ships a transport that stops honouring the env
   (the exact litellm-``aiohttp_trust_env`` degradation, generalised).
+* **third-party import-time egress** (#4418 — a DIFFERENT axis from the
+  bullet above: not "a lib reyn calls", but "a lib reyn IMPORTS triggers
+  its own network call as a side effect of the import, before reyn ever
+  makes a call of its own") — ``tiktoken`` (``import litellm`` pulls in
+  ``litellm_core_utils/default_encoding.py``, which calls
+  ``tiktoken.get_encoding(...)``; on a cache miss ``tiktoken/load.py``
+  does a bare ``requests.get(blobpath)`` with no ``verify=``/``timeout=``
+  of its own). Unlike the bullet above, reyn CANNOT pass ``verify=`` into
+  this call (it never sees the call site) — ``reyn.llm.litellm_bootstrap.
+  _third_party_import_egress_honours_standard_env`` patches ``requests``'
+  own per-call default for the duration of the triggering import instead.
+  This axis is NOT grep-detectable (the same conclusion #4410 reached for
+  a different import-time hazard) — only running the import and observing
+  the actual network call (or, as here, the patched default) proves it.
 * **subprocess** — uvx/npx/uv, via the sandbox child-env forward.
 
 For each class: a behavioral test asserting a SENTINEL value from the standard
@@ -563,3 +577,118 @@ def test_urllib_dry_constructor_module_actually_calls_build_opener() -> None:
         "reyn._ssrf_pin.ssrf_aware_urllib_opener must call urllib.request."
         "build_opener (the single allowed urllib-opener chokepoint) — none found"
     )
+
+
+# ── #7 tiktoken import-time egress (#4418) ──────────────────────────────────
+
+
+def test_tiktoken_import_egress_injects_env_resolved_defaults_and_restores(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Tier 2: for the duration of the context manager, a ``requests`` call
+    made with NO explicit ``verify``/``timeout`` (tiktoken's own shape —
+    ``requests.get(blobpath)``) receives the standard-env-resolved verify
+    value and a real timeout — and ``Session.request`` is restored to
+    exactly what it was before, once the context exits, so this patch never
+    outlives the one import it exists to cover."""
+    import requests.sessions
+
+    from reyn.llm.litellm_bootstrap import (
+        _TIKTOKEN_IMPORT_TIMEOUT_SECONDS,
+        _third_party_import_egress_honours_standard_env,
+    )
+
+    calls: "list[dict]" = []
+
+    def _recording_original(self, method, url, **kwargs):
+        calls.append(kwargs)
+        return None
+
+    monkeypatch.setattr(requests.sessions.Session, "request", _recording_original)
+    before_patch = requests.sessions.Session.request
+
+    with _third_party_import_egress_honours_standard_env(None):
+        patched = requests.sessions.Session.request
+        assert patched is not before_patch, "the context manager must actually patch Session.request"
+        requests.sessions.Session().request("GET", "https://example.invalid/blob")
+
+    assert requests.sessions.Session.request is before_patch, (
+        "Session.request must be restored to the pre-context value on exit"
+    )
+    assert calls, "the patched request must still call through to the real implementation"
+    assert calls[0]["verify"] is True, "no SSL_VERIFY set -> the default (True)"
+    assert calls[0]["timeout"] == _TIKTOKEN_IMPORT_TIMEOUT_SECONDS, (
+        "tiktoken's own call carries no timeout -- the patch must supply one "
+        "(#4395's own finding: an un-timed-out call can hang the import forever)"
+    )
+
+
+def test_tiktoken_import_egress_honours_ssl_verify_false_and_never_silent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Tier 2: SSL_VERIFY=false resolves to verify=False for this egress too,
+    via the SAME never-silent audit hook every other #3075 egress class uses
+    — one network_ssl_verify_disabled event, keyed on this egress's own
+    name so it is distinguishable from a litellm-call-path disablement."""
+    import requests.sessions
+
+    monkeypatch.setenv("SSL_VERIFY", "false")
+    from reyn._network import reset_ssl_verify_disabled_latch_for_tests
+    from reyn.core.events.events import EventLog
+    from reyn.llm.litellm_bootstrap import (
+        _TIKTOKEN_IMPORT_EGRESS_NAME,
+        _third_party_import_egress_honours_standard_env,
+    )
+    from tests._support.events import collect_events
+
+    reset_ssl_verify_disabled_latch_for_tests()
+    events = EventLog()
+    collected = collect_events(events)
+
+    calls: "list[dict]" = []
+
+    def _recording_original(self, method, url, **kwargs):
+        calls.append(kwargs)
+        return None
+
+    monkeypatch.setattr(requests.sessions.Session, "request", _recording_original)
+
+    with _third_party_import_egress_honours_standard_env(events):
+        requests.sessions.Session().request("GET", "https://example.invalid/blob")
+
+    assert calls[0]["verify"] is False
+
+    matches = [e for e in collected if e.type == "network_ssl_verify_disabled"]
+    assert matches, "expected the never-silent audit event for a verify=False resolution"
+    assert matches[0].data.get("egress") == _TIKTOKEN_IMPORT_EGRESS_NAME
+    reset_ssl_verify_disabled_latch_for_tests()
+
+
+def test_tiktoken_import_egress_never_overrides_an_explicit_verify_or_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Tier 2: accept-side — a caller (real or hypothetical, since tiktoken's
+    own call passes neither today) that DOES pass its own explicit
+    ``verify``/``timeout`` during the patched window keeps it. The patch
+    only fills in a DEFAULT (``setdefault``), never overrides an explicit
+    choice — the same "explicit wins" posture ``resolve_ssl_verify_from_env``'s
+    other callers already follow."""
+    import requests.sessions
+
+    from reyn.llm.litellm_bootstrap import _third_party_import_egress_honours_standard_env
+
+    calls: "list[dict]" = []
+
+    def _recording_original(self, method, url, **kwargs):
+        calls.append(kwargs)
+        return None
+
+    monkeypatch.setattr(requests.sessions.Session, "request", _recording_original)
+
+    with _third_party_import_egress_honours_standard_env(None):
+        requests.sessions.Session().request(
+            "GET", "https://example.invalid/blob", verify="/explicit/ca.pem", timeout=5.0,
+        )
+
+    assert calls[0]["verify"] == "/explicit/ca.pem"
+    assert calls[0]["timeout"] == 5.0
