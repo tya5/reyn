@@ -104,11 +104,22 @@ def test_token_cache_eviction_is_fifo_not_lru(monkeypatch):
     regardless of how recently it was read. Driven entirely through the
     PUBLIC ``estimate_tokens`` surface (never the private cache dict): a
     cache hit/miss is observed indirectly, via whether the underlying
-    ``litellm.token_counter`` gets called again for the same input."""
+    ``litellm.token_counter`` gets called again for the same input.
+
+    #4395 PR-2: ``estimate_tokens`` now calls the NON-blocking
+    ``ensure_litellm_ready_or_defer()`` — its real, intended behavior on
+    the very FIRST call in a process with litellm not yet ready is to
+    defer to the background warming thread and fall back immediately
+    (never block), so this test's own real-world precondition (litellm
+    already ready, matching every call after the process's first) is
+    made explicit here rather than left to incidental test-order luck."""
     import litellm
 
+    from reyn.llm.litellm_bootstrap import ensure_litellm_ready
     from reyn.services.compaction import engine as compaction_engine
 
+    ensure_litellm_ready()  # real precondition: litellm already ready
+    monkeypatch.setattr(compaction_engine, "_token_counter_cooldown_until", 0.0)
     monkeypatch.setattr(compaction_engine, "_TOKEN_CACHE_MAXSIZE", 2)
     compaction_engine._token_cache.clear()
 
@@ -237,10 +248,23 @@ def test_retryable_litellm_exceptions_consistent_under_concurrency(monkeypatch):
     "same shape as the others": the checked global and the assigned global
     are the SAME variable, in one atomic STORE, so a reader only ever
     observes ``None`` or the complete tuple — a concurrent racer can
-    redundantly rebuild it (import litellm + reconstruct the tuple again),
-    never observe a wrong or partial value."""
-    from reyn.llm import llm as llm_module
+    redundantly rebuild it (never a wrong or partial value).
 
+    #4395 PR-2 (architect measurement): this function no longer imports
+    litellm on its own AT ALL — it only reads `sys.modules["litellm"]`
+    once `is_litellm_ready()` confirms it is already there (a second,
+    independent `import litellm` from this function would contend on
+    CPython's own per-module import lock with the dedicated background
+    warming thread's own in-flight import, blocking main for the exact
+    duration that thread exists to avoid). This test's own real-world
+    precondition — this function is only ever reached AFTER a real
+    completion attempt already ran (and so already imported litellm) —
+    is made explicit here rather than left to incidental test-order luck:
+    litellm is confirmed ready BEFORE the concurrent workers start."""
+    from reyn.llm import llm as llm_module
+    from reyn.llm.litellm_bootstrap import ensure_litellm_ready
+
+    ensure_litellm_ready()  # real precondition: litellm already ready
     monkeypatch.setattr(llm_module, "_RETRYABLE_LITELLM_EXCEPTIONS", None)
 
     results: list[tuple] = []

@@ -42,8 +42,11 @@ from __future__ import annotations
 
 import contextlib
 import logging
+import threading
 from concurrent.futures import Future
 from typing import TYPE_CHECKING, Any
+
+from reyn import _cooldown
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -185,6 +188,22 @@ def _litellm_import_logs_to_file() -> "Iterator[None]":
 
 _litellm_import_failure_warned = False
 
+# #4395 axis②/PR-2 (owner-flagged gap in PR-1): PR-1 removed the WITHIN-one-
+# call double attempt (a caller's own redundant bare `import litellm` right
+# after this chokepoint) but a failure is deliberately NOT cached as
+# "ready" — the NEXT call still starts a genuinely fresh attempt, which
+# means a PERSISTENTLY broken environment (the owner's own repro: a TLS
+# handshake that never completes) gets re-attempted, and re-hangs, on
+# EVERY subsequent call, not just once. `_LITELLM_IMPORT_COOLDOWN_SECONDS`
+# closes that: a failure starts a cooldown window (`reyn._cooldown`, the
+# same primitive #4398 already established for the identical shape in
+# `compaction/engine.py`'s `estimate_tokens`) during which every call
+# returns `None` immediately — no import attempted, no wait paid — rather
+# than a permanent give-up (the underlying cause may clear; the window
+# just rate-limits re-probing, it does not stop it).
+_LITELLM_IMPORT_COOLDOWN_SECONDS = 60.0
+_litellm_import_cooldown_until = 0.0
+
 
 def ensure_litellm_ready() -> "Any | None":
     """Idempotent first-touch chokepoint: import litellm + apply its
@@ -255,7 +274,7 @@ def ensure_litellm_ready() -> "Any | None":
     embedding.litellm_provider``). So the proxy-trust flip covers every
     litellm-originated request, not just chat.
     """
-    global _litellm_ready, _litellm_import_failure_warned
+    global _litellm_ready, _litellm_import_failure_warned, _litellm_import_cooldown_until
     # Unlocked fast-path read keeps the "cheap on every call after the
     # first success" property this docstring promises. NOTE: still falls
     # through to `_capture_client_cache_baseline` below — the
@@ -266,6 +285,17 @@ def ensure_litellm_ready() -> "Any | None":
         _capture_client_cache_baseline()
         import sys
         return sys.modules.get("litellm")
+
+    # #4395 axis②: a PERSISTENT failure (e.g. a TLS handshake that never
+    # completes) must not be re-attempted, and re-hung-on, by every single
+    # call across the whole cooldown window — see this module's own
+    # `_LITELLM_IMPORT_COOLDOWN_SECONDS` comment above. Checked BEFORE the
+    # ownership dance below so a call inside the window never even
+    # contests for it. Unlocked read, same GIL-atomic-single-variable
+    # reasoning as the fast path above; the worst race is one caller
+    # re-probing slightly early or late, never a wrong result.
+    if _cooldown.in_cooldown(_litellm_import_cooldown_until):
+        return None
 
     my_future: "Future[Any | None]" = Future()
     winning_future = _ready_registry.setdefault("ready", my_future)
@@ -299,12 +329,21 @@ def ensure_litellm_ready() -> "Any | None":
         finally:
             if result is not None:
                 _litellm_ready = True
+                _litellm_import_cooldown_until = 0.0  # healthy — clear any cooldown
             else:
                 # NOT cached — clear ownership so the NEXT call gets a
                 # fresh attempt instead of being permanently stuck on
                 # this one failure (see docstring: callers with no
-                # fallback must keep retrying across turns).
+                # fallback must keep retrying across turns). #4395 axis②:
+                # that "fresh attempt" is now rate-limited by the cooldown
+                # above rather than happening on literally every call —
+                # ownership is still cleared (so the FIRST call after the
+                # cooldown elapses can win it), just gated by the cooldown
+                # check before it's ever contested.
                 _ready_registry.pop("ready", None)
+                _litellm_import_cooldown_until = _cooldown.new_cooldown_deadline(
+                    _LITELLM_IMPORT_COOLDOWN_SECONDS,
+                )
                 if not _litellm_import_failure_warned:
                     _litellm_import_failure_warned = True
                     logging.getLogger(__name__).warning(
@@ -317,6 +356,147 @@ def ensure_litellm_ready() -> "Any | None":
 
     _capture_client_cache_baseline()
     return result
+
+
+# ── #4395 PR-2: a background warming thread for call sites with a fallback ──
+#
+# PR-1 (#4413) closed the "one attempt per call, forever, while litellm
+# keeps failing" defect above, and made the two call sites with NO fallback
+# (`llm.py`'s `recorded_acompletion`, `litellm_provider.py`'s embed-retry
+# loop) genuinely awaitable (`asyncio.to_thread(ensure_litellm_ready)`) so
+# the wait for a real answer no longer blocks the whole event loop — only
+# the one coroutine that needs the answer. Neither of those two sites is
+# touched by this section: they have no safe fallback, so they must keep
+# waiting for a real result regardless of how that wait is implemented.
+#
+# What PR-1 left: the FIRST-ever `import litellm` in a process can still
+# take however long litellm's own (upstream, un-timed-out) tiktoken fetch
+# takes — owner-observed longer than the local ~7.4s case. `model_budget.py`
+# / `model_cost_rate.py` / `compaction/engine.py`'s two litellm-touching
+# functions all ALREADY have a safe, cheap fallback for "no answer yet"
+# (a conservative token-budget default, an unknown-cost `None`, a chars//4
+# estimate) — for these, there is no reason to wait for litellm at all, let
+# alone on the calling thread. This section gives them a NON-blocking
+# variant: kick off exactly ONE persistent background thread that keeps
+# retrying (with a cooldown between attempts — a failed import isn't cached,
+# so retrying on every single call while litellm stays broken would mean
+# one slow attempt per call, same shape PR-1 already closed for the
+# no-fallback sites) until it succeeds, and have every caller with a
+# fallback fail fast to its own fallback instead of waiting on that thread
+# at all. #3671 P1 (3b113e597) already made the 6 shared-state items a
+# concurrent background thread would touch (this module's own
+# `_ready_registry`/`_litellm_ready`, `llm.py`'s
+# `_RETRYABLE_LITELLM_EXCEPTIONS` / `_HTTPX_EXC_TYPES`,
+# `compaction/engine.py`'s `_token_cache` / `_token_counter_fallback_warned`
+# / `_token_counter_cooldown_until`) thread-safe in preparation for exactly
+# this — verified still true of the current code before writing this
+# section, not assumed from that PR's own description.
+_LITELLM_WARM_POLL_SECONDS = 0.05
+_litellm_warm_thread: "threading.Thread | None" = None
+
+
+class LitellmWarmingInBackgroundError(Exception):
+    """Raised by :func:`ensure_litellm_ready_or_defer` when litellm is not
+    yet importable and the caller has a fallback — the ONE dedicated
+    background thread (:func:`warm_litellm_in_background`) is (or already
+    was) started to keep retrying, with a cooldown between attempts, until
+    it succeeds. A LATER call from any thread will see litellm become
+    ready once that thread succeeds. Callers are expected to catch this
+    (an ordinary ``except Exception`` already does, unmodified) and use
+    their own existing fallback — not an error to surface to an operator.
+    """
+
+
+def is_litellm_ready() -> bool:
+    """Non-blocking read: has the first-ever ``import litellm`` (and its
+    one-time setup) already finished, successfully, in this process?
+
+    Unlike :func:`ensure_litellm_ready`, this never imports litellm and
+    never blocks — the same unlocked-read argument that function's own
+    fast path already relies on (GIL-atomic single-variable read) applies
+    here; this just exposes that same read publicly for the warming
+    thread below to poll.
+    """
+    return _litellm_ready
+
+
+def _litellm_warm_worker() -> None:
+    """Body of the ONE dedicated background thread: retries
+    :func:`ensure_litellm_ready` — unmodified, so it participates in the
+    SAME `_ready_registry` ownership every other caller uses; if some
+    other call (e.g. a no-fallback site's blocking wait) wins ownership of
+    a given attempt first, this thread just observes `_litellm_ready` flip
+    via that attempt instead of redundantly repeating it — until litellm
+    becomes ready, then exits.
+
+    No cooldown/sleep logic of its OWN between real attempts: axis②
+    (`_LITELLM_IMPORT_COOLDOWN_SECONDS`, this module's own chokepoint-level
+    fix above) already makes `ensure_litellm_ready()` self-regulate its own
+    retry cadence — a call during the cooldown returns `None` immediately
+    without attempting a real import, so polling it here every
+    `_LITELLM_WARM_POLL_SECONDS` costs nothing while in cooldown and only
+    triggers a genuine re-attempt once the cooldown naturally elapses.
+    Duplicating that cooldown here would just be the same rate limit
+    enforced twice.
+    """
+    import time
+    while not _litellm_ready:
+        ensure_litellm_ready()  # self-regulates via its own cooldown (see above)
+        if _litellm_ready:
+            return
+        time.sleep(_LITELLM_WARM_POLL_SECONDS)
+
+
+def warm_litellm_in_background() -> None:
+    """Idempotently ensure the ONE dedicated background thread
+    (:func:`_litellm_warm_worker`) is (or already is) running, without
+    blocking the calling thread even briefly.
+
+    Safe to call from anywhere, any number of times, on any thread: once
+    litellm is ready this is a single cheap attribute read; before that,
+    `Thread.is_alive()` makes every call after the first a no-op. The only
+    possible race is two threads BOTH seeing no thread alive yet and both
+    starting one — harmless (both do the exact same idempotent work, and
+    they still rendezvous on the SAME `_ready_registry` Future inside
+    `ensure_litellm_ready`), never an incorrect outcome, and the thread
+    exits on its own once litellm becomes ready — nothing lingers for the
+    rest of the process.
+    """
+    global _litellm_warm_thread
+    if _litellm_ready:
+        return
+    if _litellm_warm_thread is not None and _litellm_warm_thread.is_alive():
+        return
+    _litellm_warm_thread = threading.Thread(
+        target=_litellm_warm_worker, name="reyn-litellm-warm", daemon=True,
+    )
+    _litellm_warm_thread.start()
+
+
+def ensure_litellm_ready_or_defer() -> "Any":
+    """Non-blocking alternative to :func:`ensure_litellm_ready`, for call
+    sites with a safe, cheap fallback for "no answer yet" — see this
+    module's own PR-2 section comment above for which sites qualify and
+    why (`llm.py` / `litellm_provider.py` do NOT — they keep calling the
+    blocking :func:`ensure_litellm_ready` and are unaffected by this
+    function's existence).
+
+    Already-ready case: returns the module immediately (cheap — delegates
+    to :func:`ensure_litellm_ready`'s own fast path). NOT-yet-ready case:
+    never imports litellm on the calling thread — ensures the one
+    dedicated background thread is (or already is) retrying, then raises
+    :class:`LitellmWarmingInBackgroundError` immediately so the caller's
+    own pre-existing ``except Exception`` reaches its fallback with no
+    wait paid, regardless of which thread called this.
+    """
+    if _litellm_ready:
+        return ensure_litellm_ready()
+    warm_litellm_in_background()
+    raise LitellmWarmingInBackgroundError(
+        "litellm is not yet importable in this process; a background "
+        "thread is retrying it (or a recent attempt failed and is "
+        "cooling down) — use the fallback for this call.",
+    )
 
 
 def reset_client_cache_baseline() -> None:

@@ -984,7 +984,7 @@ def _empty_response_diag(response: object) -> str:
 
 
 def _get_retryable_litellm_exceptions() -> tuple:
-    """Return the tuple of retryable litellm exceptions, loading litellm lazily.
+    """Return the tuple of retryable litellm exceptions.
 
     Cached in _RETRYABLE_LITELLM_EXCEPTIONS after first call.
 
@@ -992,13 +992,35 @@ def _get_retryable_litellm_exceptions() -> tuple:
     lock (owner directive: no lock without a real correctness need) — the
     checked global and the assigned global are the SAME variable, in one
     atomic STORE, so a concurrent reader only ever observes ``None`` or the
-    complete tuple. A concurrent racer can redundantly rebuild the tuple
-    (import litellm + reconstruct it again), never observe a wrong or
-    partial value.
+    complete tuple.
+
+    #4395 PR-2 hardening (NOT a required landing condition — architect
+    measured the actual call graph and confirmed this function's only
+    reachable path, `_llm_call_with_retry`'s exception handler ← a real
+    completion attempt that already imported litellm via `recorded_
+    acompletion`'s own readiness check, is never actually racing the
+    background warming thread): this function no longer imports litellm
+    on its own AT ALL — it only reads `sys.modules["litellm"]` once
+    `is_litellm_ready()` confirms it is already there. This removes a
+    CAPABILITY (independently importing litellm) rather than adding a new
+    moving part — the call-order argument above is correct TODAY but is an
+    implicit invariant a future refactor could silently break; this makes
+    it a structural guarantee instead. Same shape as #4413's fix to
+    `pricing.py`'s `_usage_object_for` — "structurally incapable of
+    bypassing the chokepoint," not just reliant on today's caller
+    happening to gate it first. If litellm isn't ready yet, returns an
+    empty tuple — logically correct, not just a safe placeholder: `exc`
+    cannot be a genuine instance of one of litellm's own exception classes
+    if litellm itself was never successfully imported, so `isinstance(exc,
+    ())` (always False) can't misclassify anything.
     """
     global _RETRYABLE_LITELLM_EXCEPTIONS
     if _RETRYABLE_LITELLM_EXCEPTIONS is None:
-        import litellm
+        from reyn.llm.litellm_bootstrap import is_litellm_ready
+        if not is_litellm_ready():
+            return ()
+        import sys
+        litellm = sys.modules["litellm"]
         _RETRYABLE_LITELLM_EXCEPTIONS = (
             litellm.exceptions.Timeout,           # request timed out
             litellm.exceptions.APIConnectionError, # network-level connection failure

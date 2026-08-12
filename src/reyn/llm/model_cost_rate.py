@@ -28,17 +28,14 @@ def get_input_cost_per_1m_usd(model: str) -> float | None:
     an unknown cost as "no warning needed" rather than crashing the session.
     """
     try:
-        # #4395 PR-1: check ensure_litellm_ready()'s own success/failure
-        # BEFORE doing `import litellm` — see model_budget.py's identical
-        # fix and litellm_bootstrap.py's own docstring for the full
-        # reasoning (a redundant unconditional bare import independently
-        # re-attempts, and re-fails, litellm's own slow unbounded import
-        # every call while it keeps failing; gating it behind a confirmed
-        # success makes it always a cheap sys.modules cache hit instead).
-        from reyn.llm.litellm_bootstrap import ensure_litellm_ready
-        if ensure_litellm_ready() is None:
-            return None
-        import litellm
+        # #4395 PR-2: non-blocking chokepoint variant — see
+        # model_budget.py's identical fix and litellm_bootstrap.py's own
+        # PR-2 section comment for the full reasoning. This function
+        # already has a safe fallback (`None` = "cost unknown, no warning")
+        # for "no answer yet", so there is no reason to wait for litellm at
+        # all here.
+        from reyn.llm.litellm_bootstrap import ensure_litellm_ready_or_defer
+        litellm = ensure_litellm_ready_or_defer()
         entry = litellm.model_cost.get(model, {})
         per_token = entry.get("input_cost_per_token")
         if per_token is None:

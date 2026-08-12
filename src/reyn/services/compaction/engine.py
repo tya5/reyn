@@ -53,6 +53,10 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Awaitable, Callable
 
 from reyn.llm.json_parse import loads_lenient
+from reyn.llm.litellm_bootstrap import (
+    LitellmWarmingInBackgroundError,
+    ensure_litellm_ready_or_defer,
+)
 from reyn.prompt import compaction as _prompt_compaction
 
 if TYPE_CHECKING:
@@ -202,14 +206,23 @@ def estimate_tokens(text: str, model: str, *, use_chars4: bool = False) -> int:
     in_cooldown = time.monotonic() < _token_counter_cooldown_until
     if not in_cooldown:
         try:
-            # perf/log-routing chokepoint: per-turn token sizing runs BEFORE
-            # the first completion, so this can be the FIRST litellm import
-            # in the process — funnel it through ensure_litellm_ready() so
-            # litellm's import-time console log routing (#2929) wraps it too
-            # (idempotent; cheap on 2nd+ call).
-            from reyn.llm.litellm_bootstrap import ensure_litellm_ready
-            ensure_litellm_ready()
-            import litellm
+            # #4395 PR-2: non-blocking chokepoint variant — per-turn token
+            # sizing runs BEFORE the first completion, so this can be the
+            # FIRST litellm import in the process, and this function already
+            # has a safe, cheap fallback (chars//4, below) for "no answer
+            # yet". `ensure_litellm_ready_or_defer()` returns immediately
+            # (never imports litellm on THIS thread) if litellm isn't warm,
+            # kicking off the one dedicated background thread instead — see
+            # litellm_bootstrap.py's own PR-2 section comment. Also fixes a
+            # residual instance of PR-1's own defect at this exact site: the
+            # old code called `ensure_litellm_ready()` and then did its own
+            # unconditional `import litellm` right after WITHOUT checking
+            # the return value — on a failure this re-attempted (and
+            # re-failed) litellm's own slow, unbounded import on every call
+            # outside its cooldown window, the same double-attempt shape
+            # PR-1 fixed everywhere else but missed here (this module wasn't
+            # part of PR-1's diff).
+            litellm = ensure_litellm_ready_or_defer()
             m = model or "gpt-3.5-turbo"
             count = litellm.token_counter(model=m, text=text or "")
             # #2961: litellm.token_counter returns 0 (not an exception) for
@@ -799,12 +812,23 @@ def is_context_overflow_error(exc: BaseException) -> bool:
     if getattr(exc, "status_code", None) == 413:
         return True
     try:
-        from reyn.llm.litellm_bootstrap import ensure_litellm_ready
-        ensure_litellm_ready()
-        import litellm
+        # #4395 PR-2: non-blocking chokepoint variant — this classifier
+        # already falls back to the keyword search below when litellm's own
+        # exception class isn't available, so "litellm not warm yet" is a
+        # safe case to defer rather than block on (see
+        # litellm_bootstrap.py's own PR-2 section comment). In practice this
+        # path runs only AFTER a real completion call already failed, so
+        # litellm is almost always already warm by the time this runs — the
+        # defer path exists for correctness, not because this specific site
+        # is where the reported freeze occurred. Also fixes the same
+        # residual PR-1-shaped double-attempt-on-failure defect
+        # ``estimate_tokens`` above had (this module wasn't part of PR-1's
+        # diff): the old code ignored ``ensure_litellm_ready()``'s return
+        # value and did its own unconditional ``import litellm`` right after.
+        litellm = ensure_litellm_ready_or_defer()
         if isinstance(exc, litellm.ContextWindowExceededError):
             return True
-    except ImportError:
+    except (ImportError, LitellmWarmingInBackgroundError):
         pass
     return any(kw in str(exc).lower() for kw in _CONTEXT_OVERFLOW_KEYWORDS)
 
