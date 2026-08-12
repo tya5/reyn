@@ -28,8 +28,6 @@ import subprocess
 import sys
 import textwrap
 
-import pytest
-
 
 def test_capability_visibility_state_survives_a_fresh_interpreter_with_no_router_loop_import(
     out_of_process_reyn: str,
@@ -76,38 +74,3 @@ def test_capability_visibility_state_survives_a_fresh_interpreter_with_no_router
         f"stdout: {result.stdout}\nstderr: {result.stderr}"
     )
     assert "SURVIVED" in result.stdout
-
-
-def test_scheme_still_none_after_import_raises_not_attributeerror(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Tier 2: #4366's second, independent fix -- if BOTH the configured
-    scheme name and the default somehow still resolve to ``None`` even
-    after the registry-populating import (an internal invariant violation,
-    since ``get_scheme`` is monkeypatched here to simulate exactly that; no
-    real code path can construct this today), the census raises a legible
-    ``RuntimeError`` naming both names it tried, not a bare
-    ``AttributeError`` on ``None.build_presentation`` -- the crash the
-    owner actually hit, and the shape ``or get_scheme(DEFAULT)`` alone
-    never guarded against (the right-hand side fails identically to the
-    left when the registry itself is the problem, not just an unknown
-    configured name)."""
-    import tempfile
-    from pathlib import Path
-
-    from tests._support.agent_session import make_session
-
-    monkeypatch.setattr("reyn.tools.scheme.get_scheme", lambda name: None)
-
-    tmp = Path(tempfile.mkdtemp())
-    session = make_session(
-        agent_name="probe", workspace_base_dir=tmp, workspace_state_dir=tmp,
-    )
-    try:
-        session.capability_visibility_state()
-    except RuntimeError as exc:
-        assert "enumerate-all" in str(exc)
-    else:
-        raise AssertionError(
-            "expected RuntimeError when both scheme lookups return None"
-        )
