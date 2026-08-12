@@ -1048,19 +1048,12 @@ class TextualChatApp(App):
         # deterministic args_hash, meta["op_id"]) so a later completion/failure
         # frame transitions the SAME entry RUNNING → SUCCESS/ERROR (CC parity).
         self._running_tools: "dict[object, Entry[OutboxMessage]]" = {}
-        # #4380: the most recently appended lifecycle marker eligible for
-        # count-bundling (currently only ``permission_denied``, the ONE
-        # kind owner ruled bundles — see ``_ingest_frame``'s own docstring
-        # for the full rule). ``None`` whenever the immediately-preceding
-        # frame was anything else — the bundle chain resets on ANY other
-        # frame, by design (owner: "something happened in between" IS the
-        # fact, not a defect to work around). Tuple shape:
-        # ``(bundle_key, entry, count, base_text)`` — ``base_text`` is the
-        # marker's own text BEFORE any ``×N`` suffix, kept separately so
-        # re-deriving the bumped text never re-parses a previous bump.
-        self._last_lifecycle_marker: (
-            "tuple[object, Entry[OutboxMessage], int, str] | None"
-        ) = None
+        # #4380/#4429 originally had a lifecycle-marker bundling tracker
+        # here — removed (2026-08-13): no reachable trigger ever produces
+        # two adjacent occurrences (see ``_ingest_frame``'s own docstring
+        # for the measurement). If a real screen ever DOES show several
+        # denials in a row, that screen is the evidence to redesign
+        # against.
         #: #4187: voice input. ``None`` until F2 is first pressed — lazy so an
         #: install without the ``reyn[voice]`` extra never pays anything for a
         #: key nobody used (mirrors ``text_effect``'s import-on-press shape).
@@ -3152,39 +3145,23 @@ class TextualChatApp(App):
         :meth:`_apply_lifecycle_state`, so nothing regresses for the
         plain-fallback turn sequence.
 
-        #4380: a ``kind="system"`` lifecycle marker carrying
-        ``meta["lifecycle_bundle_key"]`` (currently only
-        ``lifecycle_forwarder.on_permission_denied`` sets this — the ONE
-        marker kind owner ruled bundles) does not append a second row when
-        it matches ``self._last_lifecycle_marker``'s key: it bumps that
-        row's count in place, mirroring ``_coalesce_tool_result``'s own
-        precedent (find the existing entry, ``set_item(replace(...))``, no
-        new append) — the SAME, most-conservative rule that precedent
-        established, applied to a different kind. Compares ONLY against
-        the immediately-preceding frame, never a turn-wide buffer: if
-        anything else — a different marker, a tool call, an agent reply —
-        landed in between, the chain resets and the next matching marker
-        starts its own new row. This is not a limitation to work around:
-        two identical denials with something else between them are not
-        the same fact as two BACK-TO-BACK ones, and the display should
-        say so."""
+        #4380/#4429 originally added a bundling tracker here for
+        ``kind="system"`` lifecycle markers carrying ``meta[
+        "lifecycle_bundle_key"]`` (``lifecycle_forwarder.on_permission_
+        denied``'s marker, the ONE kind owner ruled bundles) — removed by
+        #4380 itself, re-measured 2026-08-13: no reachable trigger ever
+        produces two adjacent occurrences (``router_loop.py``'s
+        ``dispatch()`` runs every tool call SERIALLY, #2344 owner design
+        decision, so a ``tool_call_started`` frame always lands between
+        any two denials, in both a retry-loop AND a same-round parallel-
+        tool_calls path — both traced AND driven through a real TUI to
+        confirm). If a real screen ever DOES show several denials in a
+        row, that screen is the evidence to redesign against — not a
+        speculative comparison rule kept alive for a symptom nobody has
+        observed.
+        """
         kind = msg.kind
         meta = msg.meta or {}
-        bundle_key = meta.get("lifecycle_bundle_key") if kind == "system" else None
-        if bundle_key is not None:
-            last = self._last_lifecycle_marker
-            if last is not None and last[0] == bundle_key:
-                _prev_key, entry, count, base_text = last
-                count += 1
-                entry.set_item(replace(entry.item, text=f"{base_text} ×{count}"))
-                self._last_lifecycle_marker = (bundle_key, entry, count, base_text)
-                return
-        # Any frame that reaches here — bundle-eligible-but-non-matching,
-        # or not bundle-eligible at all — breaks whatever chain was in
-        # progress. Set below (bundle-eligible, first occurrence) or left
-        # ``None`` (everything else) at each of this method's own append/
-        # coalesce points, never left stale from a PRIOR call.
-        self._last_lifecycle_marker = None
         # A pipeline's step frames fold into ONE row, keyed by the run. A
         # 15-step run emits 30 of them (a started/completed pair per step), and
         # appended individually they bury the conversation they are progress
@@ -3228,11 +3205,6 @@ class TextualChatApp(App):
         # #3712: an entry just arrived. Counted HERE, by the thing that
         # produced it — not reconstructed later from two reads of the model.
         self._note_entry_landed()
-        if bundle_key is not None:
-            # First occurrence of this bundle key (no matching PRECEDING
-            # row above, or the chain had already reset) — this row now
-            # becomes the one a later match bumps.
-            self._last_lifecycle_marker = (bundle_key, entry, 1, msg.text)
         if kind == "presentation":
             self._begin_image_resolutions(entry, msg)
         if kind == "intervention":

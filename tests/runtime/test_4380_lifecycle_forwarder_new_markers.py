@@ -7,11 +7,14 @@ reached the conv pane, so an operator watching the LIVE session saw
 nothing when any of these fired (only the Events tab, closed by default).
 Owner ruling (#4380): add all of them, dim, same visual weight as the
 existing ``[↑]``/``[✗]``/``[⚠]`` markers — "don't stand out." One
-(``permission_denied``) additionally bundles consecutive repeats (a
-separate PR concern, covered by ``test_4380_ingest_frame_bundles_
-permission_denied.py`` — this file pins only the PRODUCER side: that the
-emitted marker's TEXT and ``meta`` are correct, not the app-side
-coalescing that consumes ``meta["lifecycle_bundle_key"]``).
+(``permission_denied``) also carries ``meta["lifecycle_bundle_key"]`` —
+originally consumed by an app-side bundling tracker (#4429), removed
+2026-08-13 after direct measurement found no reachable trigger ever
+produces two adjacent occurrences (see app.py's ``_ingest_frame``
+docstring). The producer side pinned below (marker TEXT + this meta
+key) is unchanged by that removal — the key itself is still emitted,
+simply unconsumed for now; if a real screen ever shows several denials
+in a row, that screen is the evidence to redesign the consumer against.
 
 #4381 PR-4 removed a SIXTH mechanism this file originally also covered,
 ``router_force_close_handoff`` (layer②, the router_loop_driver.py outer
