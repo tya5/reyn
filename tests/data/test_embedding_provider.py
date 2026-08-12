@@ -1,12 +1,10 @@
-"""Tier 2: EmbeddingProvider protocol + LiteLLM impl + cost estimator invariants.
+"""Tier 2: EmbeddingProvider protocol + LiteLLM impl invariants.
 
 Pinned invariants (Tier 2b — subsystem invariants):
   - EmbeddingProvider Protocol structural contract (methods present + callable)
   - LiteLLMEmbeddingProvider.estimate_tokens: tiktoken path + char-fallback path
-  - LiteLLMEmbeddingProvider.get_dimension: known models + unknown fallback
   - LiteLLMEmbeddingProvider._resolve_model: class lookup / literal passthrough
   - LiteLLMEmbeddingProvider.embed: empty-list short-circuit (no API call)
-  - estimate_indexing_cost: computation correctness (empty samples + extrapolation)
   - Provider registry: register_provider / get_provider roundtrip
   - Public __init__.py __all__ exports complete
 
@@ -24,20 +22,13 @@ from typing import Any
 import pytest
 
 from reyn.data.embedding import (
-    CostEstimate,
     EmbedBatchResult,
     EmbeddingProvider,
     LiteLLMEmbeddingProvider,
-    estimate_indexing_cost,
     get_provider,
     register_provider,
 )
-from reyn.data.embedding.cost_estimator import _MODEL_COST_PER_M_TOKENS
-from reyn.data.embedding.litellm_provider import (
-    _DEFAULT_DIMENSION,
-    _MODEL_DIMENSIONS,
-    _resolve_model_from_config,
-)
+from reyn.data.embedding.litellm_provider import _resolve_model_from_config
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -67,9 +58,6 @@ class FakeEmbeddingProvider:
     def estimate_tokens(self, texts: list[str]) -> int:
         return max(1, int(sum(len(t) for t in texts) * self._tokens_per_char))
 
-    def get_dimension(self, model: str) -> int:
-        return self._dim
-
 
 # ---------------------------------------------------------------------------
 # Protocol structural contract
@@ -91,7 +79,6 @@ class TestEmbeddingProviderProtocol:
         provider = _make_provider()
         assert callable(getattr(provider, "embed", None))
         assert callable(getattr(provider, "estimate_tokens", None))
-        assert callable(getattr(provider, "get_dimension", None))
 
 
 # ---------------------------------------------------------------------------
@@ -139,56 +126,6 @@ class TestEstimateTokens:
         texts = ["abcdefgh", "xyz"]   # 8 chars → 2 tokens, 3 chars → 0 tokens
         expected_fallback = sum(len(t) // 4 for t in texts)  # 2 + 0 = 2
         assert expected_fallback == 2
-
-
-# ---------------------------------------------------------------------------
-# get_dimension
-# ---------------------------------------------------------------------------
-
-class TestGetDimension:
-    @pytest.mark.parametrize("model,expected", [
-        ("openai/text-embedding-3-small", 1536),
-        ("openai/text-embedding-3-large", 3072),
-        ("openai/text-embedding-ada-002", 1536),
-        ("voyage-3", 1024),
-        ("voyage-3-lite", 512),
-        ("cohere/embed-english-v3.0", 1024),
-    ])
-    def test_get_dimension_known_models(self, model: str, expected: int):
-        """Tier 2: get_dimension returns correct dimension for known models."""
-        provider = _make_provider()
-        assert provider.get_dimension(model) == expected
-
-    def test_get_dimension_unknown_model_defaults_1536(self):
-        """Tier 2: get_dimension returns 1536 for unknown models."""
-        provider = _make_provider()
-        assert provider.get_dimension("unknown/totally-made-up-v99") == 1536
-
-    def test_get_dimension_via_class_lookup(self):
-        """Tier 2: get_dimension resolves class name before table lookup."""
-        config = {
-            "classes": {
-                "standard": "openai/text-embedding-3-small",
-            }
-        }
-        provider = _make_provider(config)
-        assert provider.get_dimension("standard") == 1536
-
-    def test_dimension_table_has_expected_entries(self):
-        """Tier 2: _MODEL_DIMENSIONS table contains all 6 documented models."""
-        expected_keys = {
-            "openai/text-embedding-3-small",
-            "openai/text-embedding-3-large",
-            "openai/text-embedding-ada-002",
-            "voyage-3",
-            "voyage-3-lite",
-            "cohere/embed-english-v3.0",
-        }
-        assert expected_keys.issubset(set(_MODEL_DIMENSIONS.keys()))
-
-    def test_default_dimension_is_1536(self):
-        """Tier 2: _DEFAULT_DIMENSION is 1536."""
-        assert _DEFAULT_DIMENSION == 1536
 
 
 # ---------------------------------------------------------------------------
@@ -317,93 +254,6 @@ class TestEmbedDropParams:
 
 
 # ---------------------------------------------------------------------------
-# estimate_indexing_cost
-# ---------------------------------------------------------------------------
-
-class TestEstimateIndexingCost:
-    def test_empty_samples_returns_zero_cost(self):
-        """Tier 2: empty samples list → CostEstimate with 0 tokens and 0 cost."""
-        provider = FakeEmbeddingProvider()
-        result = estimate_indexing_cost(
-            provider=provider,
-            samples=[],
-            total_chunk_count=1000,
-            model="openai/text-embedding-3-small",
-        )
-        assert isinstance(result, CostEstimate)
-        assert result.chunk_count == 1000
-        assert result.estimated_tokens == 0
-        assert result.estimated_cost_usd == 0.0
-        assert result.model == "openai/text-embedding-3-small"
-
-    def test_extrapolation_scales_with_chunk_count(self):
-        """Tier 2: estimated_tokens scales proportionally with total_chunk_count."""
-        provider = FakeEmbeddingProvider(tokens_per_char=0.25)
-        samples = ["hello"]  # 5 chars → ~1 token at 0.25 ratio
-        result_100 = estimate_indexing_cost(
-            provider=provider, samples=samples,
-            total_chunk_count=100,
-            model="openai/text-embedding-3-small",
-        )
-        result_1000 = estimate_indexing_cost(
-            provider=provider, samples=samples,
-            total_chunk_count=1000,
-            model="openai/text-embedding-3-small",
-        )
-        # 10x more chunks → 10x more estimated tokens
-        assert result_1000.estimated_tokens == result_100.estimated_tokens * 10
-
-    def test_cost_uses_model_rate(self):
-        """Tier 2: estimated_cost_usd uses the correct per-model rate."""
-        provider = FakeEmbeddingProvider(tokens_per_char=1.0)  # 1 token/char
-        samples = ["x" * 1_000_000]  # 1M chars → 1M tokens
-        result = estimate_indexing_cost(
-            provider=provider, samples=samples,
-            total_chunk_count=1,
-            model="openai/text-embedding-3-small",
-        )
-        expected_rate = _MODEL_COST_PER_M_TOKENS["openai/text-embedding-3-small"]
-        assert abs(result.estimated_cost_usd - expected_rate) < 0.001
-
-    def test_cost_unknown_model_uses_default(self):
-        """Tier 2: unknown model uses default cost rate (0.02 USD/1M tokens)."""
-        provider = FakeEmbeddingProvider(tokens_per_char=1.0)
-        samples = ["x" * 1_000_000]  # 1M tokens
-        result = estimate_indexing_cost(
-            provider=provider, samples=samples,
-            total_chunk_count=1,
-            model="unknown/mystery-model",
-        )
-        # Default rate is 0.02
-        assert abs(result.estimated_cost_usd - 0.02) < 0.001
-
-    def test_cost_table_has_expected_entries(self):
-        """Tier 2: cost table contains all 6 documented models."""
-        expected_models = {
-            "openai/text-embedding-3-small",
-            "openai/text-embedding-3-large",
-            "openai/text-embedding-ada-002",
-            "voyage-3",
-            "voyage-3-lite",
-            "cohere/embed-english-v3.0",
-        }
-        assert expected_models.issubset(set(_MODEL_COST_PER_M_TOKENS.keys()))
-
-    def test_multiple_samples_average(self):
-        """Tier 2: estimate uses average tokens per sample, not just first."""
-        provider = FakeEmbeddingProvider(tokens_per_char=1.0)
-        # "a" = 1 char, "aaaaaaaaaa" = 10 chars → avg = 5.5 → 5 * 2 = 10 total
-        samples = ["a", "aaaaaaaaaa"]
-        result = estimate_indexing_cost(
-            provider=provider, samples=samples,
-            total_chunk_count=2,
-            model="openai/text-embedding-3-small",
-        )
-        # avg_per_chunk = (1 + 10) / 2 = 5.5, total_tokens = int(5.5 * 2) = 11
-        assert result.estimated_tokens == 11
-
-
-# ---------------------------------------------------------------------------
 # Provider registry
 # ---------------------------------------------------------------------------
 
@@ -448,9 +298,6 @@ class TestProviderRegistry:
             def estimate_tokens(self, texts: list[str]) -> int:
                 return 0
 
-            def get_dimension(self, model: str) -> int:
-                return 256
-
         register_provider("test-custom", _MyProvider)  # type: ignore[arg-type]
         provider = get_provider("test-custom", config={"x": 1})
         assert isinstance(provider, _MyProvider)
@@ -480,8 +327,6 @@ class TestPublicApi:
             "EmbeddingProvider",
             "EmbedBatchResult",
             "LiteLLMEmbeddingProvider",
-            "CostEstimate",
-            "estimate_indexing_cost",
             "register_provider",
             "get_provider",
         }

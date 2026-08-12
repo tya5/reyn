@@ -63,7 +63,8 @@ class EmbeddingProvider(Protocol):
     def estimate_tokens(self, texts: list[str]) -> int:
         """Rough token count for cost preflight (UX gap B).
 
-        Used by estimate_indexing_cost before starting a large indexing job.
+        Used by ``reyn.core.op_runtime.index_update``'s pre-embed cost
+        warning (an audit-event surfaced before a large index update).
         Does NOT call the API — pure local estimation.
 
         Args:
@@ -71,20 +72,5 @@ class EmbeddingProvider(Protocol):
 
         Returns:
             Estimated total token count across all texts.
-        """
-        ...
-
-    def get_dimension(self, model: str) -> int:
-        """Return vector dimension for a model.
-
-        Used by IndexBackend to pre-allocate storage and validate vector
-        compatibility when mixing models is disallowed.
-
-        Args:
-            model: Model class name or literal LiteLLM model string.
-
-        Returns:
-            Vector dimension (e.g. 1536 for text-embedding-3-small).
-            Falls back to 1536 for unknown models.
         """
         ...

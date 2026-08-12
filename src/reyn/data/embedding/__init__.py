@@ -19,12 +19,17 @@ collapsed away. ``get_provider("litellm")`` now returns
 
 Layers (ADR-0033):
   - LiteLLM passthrough (litellm.aembedding) — ADR-0033 Phase 1
-  - Cost preflight estimator
-  - Static dimension table
+
+Pre-embed cost surfacing (an audit-event warning before a large index
+update) lives in ``reyn.core.op_runtime.index_update``, driven by
+``EmbeddingProvider.estimate_tokens`` — the only production consumer of
+that method. Vector dimension is discovered dynamically from the actual
+embedding response's length at the first real upsert
+(``builtin/plugins/rag/scripts/vector_store_server.py``), not from a static
+table.
 """
 from __future__ import annotations
 
-from reyn.data.embedding.cost_estimator import CostEstimate, estimate_indexing_cost
 from reyn.data.embedding.litellm_provider import LiteLLMEmbeddingProvider
 from reyn.data.embedding.provider import EmbedBatchResult, EmbeddingProvider
 
@@ -74,8 +79,6 @@ __all__ = [
     "EmbeddingProvider",
     "EmbedBatchResult",
     "LiteLLMEmbeddingProvider",
-    "CostEstimate",
-    "estimate_indexing_cost",
     "register_provider",
     "get_provider",
 ]

@@ -20,7 +20,6 @@ Supports:
     measured detail.
   - Exponential-backoff retry on transient errors
   - tiktoken-based token estimation with char-count fallback
-  - Static dimension table with 1536 default for unknown models
 
 Design constraints (from task brief):
   - Does NOT import from op_runtime, index, cli, dispatch (P7 / task scope)
@@ -37,22 +36,6 @@ from typing import Any
 from reyn.data.embedding.provider import EmbedBatchResult
 
 logger = logging.getLogger(__name__)
-
-# ---------------------------------------------------------------------------
-# Dimension table (static; Phase 2 will add dynamic discovery)
-# ---------------------------------------------------------------------------
-
-_MODEL_DIMENSIONS: dict[str, int] = {
-    "openai/text-embedding-3-small": 1536,
-    "openai/text-embedding-3-large": 3072,
-    "openai/text-embedding-ada-002": 1536,
-    "voyage-3": 1024,
-    "voyage-3-lite": 512,
-    "cohere/embed-english-v3.0": 1024,
-}
-
-_DEFAULT_DIMENSION = 1536  # fallback for unknown models
-
 
 # ---------------------------------------------------------------------------
 # Per-attempt bound (#3043)
@@ -293,13 +276,6 @@ class LiteLLMEmbeddingProvider:
         except Exception:
             # Fallback: rough estimate ~4 chars/token
             return sum(len(t) // 4 for t in texts)
-
-    # ── Dimension lookup ───────────────────────────────────────────────────
-
-    def get_dimension(self, model: str) -> int:
-        """Return vector dimension for a model. Uses static table; defaults 1536."""
-        resolved = self.resolve_model(model)
-        return _MODEL_DIMENSIONS.get(resolved, _DEFAULT_DIMENSION)
 
     # ── Core embed ─────────────────────────────────────────────────────────
 
