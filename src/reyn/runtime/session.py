@@ -680,9 +680,10 @@ class _HistoryCompactionBundle:
         ``__init__`` returns, by which point ``self._history_buffer`` IS
         set): kept as ``self.*`` — ``model_fn=lambda:
         self._resolver.resolve(self.model).model`` and
-        ``history_access=lambda: self.history`` (the latter reaches
-        ``history_buffer`` indirectly via ``self.history``, once it
-        exists).
+        ``history_from_disk=self._durable_active_history_after`` (#4472:
+        a bound method, resolved at call time against whatever
+        ``self.history_path``/``self._state_log`` are by then — reaches
+        ``history_buffer`` indirectly the same way).
       - **cross-family** (Families 1/5/6a's already-built outputs, or
         early ``__init__`` params/config, all set on ``self`` before this
         builder runs): kept as ``self._X`` — ``self._audit_events``
@@ -3024,27 +3025,114 @@ class Session:
         def _active(seq: "int | None") -> bool:
             return seq is None or is_active(seq)
 
-        # #2360 (tool-cycle-aware): a GLOBAL cut lands at a WAL seq that may be a turn boundary for
-        # the rewound session but fall MID-tool-cycle for another session's conversation (the
-        # assistant tool_calls turn's anchor ≤ cut while its tool result turns' anchors > cut, or
-        # the reverse). A flat per-turn filter would then emit a dangling tool_calls-without-results
-        # or tool-result-without-tool_calls → provider BadRequest (the #2290/#2289 adjacency class).
-        # So a tool cycle (an assistant tool_calls turn + its immediately-following tool result
-        # turns) is ONE atomic visible unit, governed by the assistant turn's anchor: the whole
-        # cycle is visible iff that anchor is active. Well-formed by construction.
+        return self._filter_visible_on_active_branch(self.history, _active)
+
+    @staticmethod
+    def _filter_visible_on_active_branch(
+        messages: "list[ChatMessage]", is_active: "Callable[[int | None], bool]",
+    ) -> "list[ChatMessage]":
+        """#2360 (tool-cycle-aware) branch-visibility filter — shared by
+        :meth:`_active_branch_history` (over the resident ``self.history``)
+        and :meth:`_durable_active_history_after` (#4472: a durable-store
+        read for compaction) so both apply IDENTICAL filtering logic, never
+        two copies that can silently drift apart (architect's #4472 review,
+        point ①: reading raw disk lines alone is not enough — an
+        abandoned-branch turn would get folded into a summary and never
+        reconsidered once ``covers_through_seq`` passes it).
+
+        A GLOBAL rewind cut lands at a WAL seq that may be a turn boundary
+        for the rewound session but fall MID-tool-cycle for another
+        session's conversation (the assistant tool_calls turn's anchor ≤
+        cut while its tool result turns' anchors > cut, or the reverse). A
+        flat per-turn filter would then emit a dangling
+        tool_calls-without-results or tool-result-without-tool_calls →
+        provider BadRequest (the #2290/#2289 adjacency class). So a tool
+        cycle (an assistant tool_calls turn + its immediately-following
+        tool result turns) is ONE atomic visible unit, governed by the
+        assistant turn's anchor: the whole cycle is visible iff that
+        anchor is active. Well-formed by construction.
+
+        ``messages`` must be in FILE/append order (not necessarily
+        ``self.history`` itself — the durable-read caller passes its own
+        seq-ordered parse) for the cycle-tracking state below to mean
+        anything."""
         out: list[ChatMessage] = []
         governing_seq: "int | None" = None  # the open cycle's assistant-tool_calls anchor
         cycle_open = False
-        for m in self.history:
+        for m in messages:
             if m.role == "tool" and cycle_open:
                 eff = governing_seq  # a tool result inherits its cycle's visibility
             else:
                 eff = m.meta.get("wal_seq")
                 cycle_open = m.role == "assistant" and bool(m.tool_calls)
                 governing_seq = eff if cycle_open else None
-            if _active(eff):
+            if is_active(eff):
                 out.append(m)
         return out
+
+    def _durable_active_history_after(
+        self, after_seq: int,
+    ) -> "tuple[list[ChatMessage], bool]":
+        """#4472: ``CompactionController``'s candidate-selection input —
+        read DIRECTLY from ``history.jsonl`` (the durable store), never
+        residency-gated, so #4387's byte cap can never make compaction
+        blind to content it hasn't actually summarized (#4470's own root
+        cause: ``self.history`` is a byte-capped CACHE, not the source of
+        truth). Returns ``(turns, truncated)`` — ``truncated=True`` means
+        more qualifying content exists past what was returned; the caller
+        (``CompactionController``) must only ever claim coverage up to the
+        highest seq it ACTUALLY examined this pass, never the theoretical
+        full range (see :func:`~reyn.runtime.history_tail_reader.
+        read_history_after`'s own docstring for why a batched read does
+        NOT reopen #4470 — #4470's defect was skipping unseen content, not
+        reading a contiguous prefix of it per call).
+
+        Three correctness properties named across architect's and lead-
+        coder's #4472 review, all satisfied by construction here:
+
+        - **Branch visibility (point ①)**: ``self.history`` is not the raw
+          file — it's already filtered to the ACTIVE branch
+          (:meth:`_active_branch_history`'s own job). Reading the raw file
+          directly would summarize abandoned-branch turns (post-rewind)
+          into a permanent, never-reconsidered coverage claim. So this
+          method applies the SAME :meth:`_filter_visible_on_active_branch`
+          the resident method uses, over the durable-read parse.
+        - **Single provenance (point ④)**: every ``ChatMessage`` returned
+          is freshly parsed from disk in THIS call — never combined with
+          ``self.history``'s resident objects.
+          ``CompactionController._select_candidates``'s head/tail exclusion
+          works by Python object IDENTITY (an ``id()`` set) — mixing
+          objects from two different construction sites would let a
+          seq-identical but object-distinct entry silently evade that
+          exclusion (a should-stay-protected tail turn slipping into
+          candidates). Reading fresh from ONE source each call makes that
+          class of bug structurally unreachable, not just untested.
+        - **Bounded materialization, not bounded examination** (architect's
+          + lead-coder's independent correction of this method's first
+          draft, which read the COMPLETE ``(after_seq, EOF]`` range
+          unconditionally — genuinely unbounded memory when compaction has
+          a large backlog, exactly the class of defect #4387/#4468 exist
+          to close, reintroduced through this new path): the durable read
+          is capped PER CALL (``read_history_after``'s own ``max_bytes``),
+          so a large backlog takes multiple compaction passes to work
+          through — each pass covers exactly what it read, contiguously,
+          never skipping — rather than materializing the whole backlog in
+          one call.
+        """
+        from reyn.runtime.history_tail_reader import read_history_after
+
+        lines, truncated = read_history_after(self.history_path, after_seq=after_seq)
+        parsed = [m for line in lines if (m := self._parse_history_line(line)) is not None]
+        if self._state_log is None:
+            return parsed, truncated
+        from reyn.core.events.snapshot_generations import build_active_predicate
+
+        is_active = build_active_predicate(self._state_log)
+
+        def _active(seq: "int | None") -> bool:
+            return seq is None or is_active(seq)
+
+        return self._filter_visible_on_active_branch(parsed, _active), truncated
 
     def last_sender(self) -> str | None:
         """Return the most-recently-attributed sender label or None if no
@@ -4639,7 +4727,11 @@ class Session:
             config=self._compaction,
             # FP-0050/#1822 S3 (#1820): secret-redact turn text before summary.
             threat_scan=self._safety.threat_scan,
-            history_access=lambda: self.history,
+            # #4472: reads history.jsonl (durable) + branch-filtered,
+            # never residency-gated — see _durable_active_history_after's
+            # own docstring for why (#4470's root cause fixed structurally
+            # rather than papered over with the #4471 skip-branch).
+            history_from_disk=self._durable_active_history_after,
             latest_summary=self._latest_summary,
             compaction_engine_factory=_build_chat_compaction_engine,
             history_appender=self._append_history,

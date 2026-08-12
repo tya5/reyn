@@ -22,31 +22,42 @@ compaction pass that never actually summarized the tainted entry still
 advances the watermark past it, so the latch clears anyway — narrowing
 lifts over content that was genuinely never folded away.
 
-Fixed in ``compaction_controller.py``: when the entry immediately after
-``prev_cover`` is missing from residency (a gap), SKIP this compaction
-pass entirely rather than let ``covers_through_seq`` advance at all — a
-stricter fix than an earlier draft (clamp ``prev_cover`` forward past the
-gap and keep going), which still let the watermark become numerically
-larger than the evicted-untrusted seq (the only thing #4468's latch check
-compares against), reopening the hole even though that pass's own
-candidates excluded the gap. The evicted-and-gapped range stays honestly
-uncovered (safe — durable on disk, reachable again if reloaded) rather
-than falsely marked done. Known, deliberate limitation: compaction cannot
-make ANY progress while this specific gap persists (a functionality/
-performance cost — more raw context reaches the LLM — never a security
-cost); bridging the gap via ``_load_older_entries`` before compacting
-(lead-coder's option 2) is left as a follow-up, not solved here.
+Fixed at the time (#4471): when the entry immediately after ``prev_cover``
+was missing from residency (a gap), SKIP this compaction pass entirely
+rather than let ``covers_through_seq`` advance at all — a stricter fix
+than an earlier draft (clamp ``prev_cover`` forward past the gap and keep
+going), which still let the watermark become numerically larger than the
+evicted-untrusted seq (the only thing #4468's latch check compares
+against), reopening the hole even though that pass's own candidates
+excluded the gap. Known, deliberate limitation AT THE TIME: compaction
+could not make ANY progress while a gap persisted (a functionality/
+performance cost, never a security cost).
+
+**Superseded by #4472** (structural fix, same night): compaction's
+candidate input moved from ``self.history`` (resident, byte-cap-evictable)
+to reading ``history.jsonl`` DIRECTLY (durable, branch-visibility
+filtered) — see ``Session._durable_active_history_after``. Residency now
+has NO influence on what compaction considers at all, so the "gap" #4470/
+#4471 had to detect and skip around cannot occur anymore — there is
+nothing left for a gap to be a gap IN. The first test below, originally
+asserting the #4471 skip-branch fired, is REWRITTEN (not merely patched)
+to assert the correct #4472-era behavior instead: eviction no longer
+prevents coverage at all, and narrowing correctly clears because the
+content genuinely WAS retired this time — the deny-side property this
+whole file exists to protect ("narrowing must never silently lift over
+content that was never truly summarized") now holds for a DIFFERENT
+reason (there's no unexamined content left to silently claim), not
+because compaction refuses to run. See
+``tests/runtime/test_4472_compaction_reads_durable_store.py`` for the
+NEW deny-side case #4472 itself introduces (branch-visibility: an
+abandoned-branch tainted entry must still never be summarized, even
+though it's readable from disk).
 
 Real ``Session`` + real ``CompactionController``/engine (only
 ``litellm.acompletion`` monkeypatched to a scripted summary, same
 discipline ``tests/runtime/test_slash_compact_191.py`` already
 established) + real narrowing config + real #4387 eviction (a small
-``history_resident_config``, not manual ``self.history`` slicing) — this
-is the "evict -> compaction -> narrowing has NOT lifted" test lead-coder's
-dispatch asked for, reusing #4468's own control-arm discipline (assert
-narrowed BEFORE compaction runs, so the post-compaction assertion has a
-real baseline to compare against, not a vacuous "opt-in mechanism that was
-never engaged" pass).
+``history_resident_config``, not manual ``self.history`` slicing).
 """
 from __future__ import annotations
 
@@ -117,35 +128,25 @@ def _narrowed(s: Session) -> bool:
     return s._ephemeral_contextual_for_turn() is not None
 
 
-def test_a_compaction_pass_that_never_saw_the_tainted_entry_does_not_clear_narrowing(
+def test_eviction_no_longer_prevents_compaction_from_covering_the_tainted_entry(
     tmp_path, monkeypatch,
 ):
-    """Tier 2: the exact regression #4470 blocks on. A tainted entry is
-    evicted (never summarized) before compaction ever runs, opening a gap
-    between the compaction watermark (0, nothing compacted yet) and the
-    earliest RESIDENT turn. Chosen fix (implementer's call, per lead-
-    coder's explicit delegation): when that gap exists, compaction skips
-    this pass ENTIRELY rather than let covers_through_seq advance past
-    unseen territory (a stricter reading than clamping prev_cover forward
-    to skip the gap and continuing — an earlier draft of this fix did
-    that, and it still let the watermark become numerically larger than
-    the evicted-untrusted seq, which is ALL #4468's own latch check
-    compares against — so the hole reopened even though this pass's own
-    candidates never included the gap). Narrowing must stay engaged, and
-    the audit trail must show compaction explicitly recognised the gap
-    rather than silently finding nothing to do for an unrelated reason.
-
-    Known, deliberate limitation (documented, not silently assumed away):
-    this means compaction cannot make ANY progress while this specific
-    gap persists, until a future backward-hydrate re-fills it — a
-    functionality/performance cost (more raw context sent to the LLM),
-    never a security cost (no capability is regranted). Left as a
-    follow-up rather than solved here (bridging the gap via
-    ``_load_older_entries`` before compacting, lead-coder's option 2) —
-    see the PR body for the explicit tradeoff record."""
+    """Tier 2: REWRITTEN for #4472 (was: the #4470/#4471 gap-skip case —
+    see this module's own docstring for why that scenario is now
+    unreachable). The tainted entry is evicted from RESIDENCY before
+    compaction ever runs, exactly as #4470 originally exercised — but
+    #4472 moved compaction's candidate input to the durable store
+    (``history.jsonl``), so residency no longer has any influence: this
+    pass genuinely reads the tainted entry from disk, genuinely folds it
+    into a summary, and narrowing correctly clears because it WAS truly
+    retired this time. The deny-side property this file protects
+    ("narrowing must never silently lift over content that was never
+    truly summarized") now holds for a different, stronger reason — there
+    is no unexamined content left for the watermark to silently claim."""
     monkeypatch.chdir(tmp_path)
     # Small enough that the tainted entry + several padding turns are
-    # genuinely evicted from residency once enough padding accumulates.
+    # genuinely evicted from residency once enough padding accumulates —
+    # the exact #4470 setup, now proving RESIDENCY no longer matters.
     s = _make_session(tmp_path, monkeypatch, max_bytes=20_000)
     _script_compaction_llm(monkeypatch)
 
@@ -169,35 +170,30 @@ def test_a_compaction_pass_that_never_saw_the_tainted_entry_does_not_clear_narro
     resident_seqs = [m.seq for m in s.history]
     assert tainted_seq not in resident_seqs, (
         "sanity: the tainted entry must have been genuinely EVICTED (not "
-        "manually removed) before compaction runs, for this test to "
-        "exercise the gap this dispatch is about -- if this fails, shrink "
-        "max_bytes or add more padding"
-    )
-    assert resident_seqs[0] > 1, (
-        "sanity: this test's own premise -- a gap must exist between the "
-        "(never-yet-advanced) watermark of 0 and the earliest resident seq"
+        "manually removed) before compaction runs -- if this fails, "
+        "shrink max_bytes or add more padding"
     )
     assert _narrowed(s), (
         "sanity: eviction alone (#4468's own latch) must still keep "
         "narrowing engaged at this point -- if this fails, #4468 itself "
-        "regressed, not #4470's own fix"
+        "regressed, not this test's own setup"
     )
 
     result = asyncio.run(s._compact_now_for_op())
 
-    assert result["summarized_turns"] == 0, (
-        "compaction must have SKIPPED this pass (a gap exists right after "
-        "the watermark) rather than silently advance covers_through_seq "
-        "past content it never examined"
+    assert result["summarized_turns"] > 0, (
+        "#4472: compaction must genuinely cover the evicted tainted entry "
+        "via the durable read -- residency must have NO influence on "
+        "what compaction considers"
     )
-    assert _narrowed(s), (
-        "narrowing silently lifted after a compaction pass that NEVER "
-        "actually saw the tainted entry (it was evicted, not summarized) "
-        "-- the watermark must not advance past a gap it never examined"
+    assert not _narrowed(s), (
+        "narrowing must clear once compaction genuinely folds the tainted "
+        "entry into a summary (it WAS truly retired, unlike the pre-#4472 "
+        "gap scenario) -- eviction from residency alone must never block "
+        "genuine coverage"
     )
-    assert not any(m.role == "summary" for m in s.history), (
-        "no summary should have been produced at all -- this pass had "
-        "nothing safe to cover"
+    assert any(m.role == "summary" for m in s.history), (
+        "sanity: a real summary must have been produced"
     )
 
 
