@@ -52,7 +52,10 @@ jobs:
       - name: Install dependencies
         # Install all optional extras the test suite touches:
         #   dev  — pytest + pytest-asyncio + ruff + mypy
-        #   mcp  — `fastmcp` (v3.4.2; #2597 S1), used by tests/mcp/test_mcp_client.py
+        #   mcp  — #4302: now a no-op back-compat alias (empty extra); reyn's own
+        #     MCP client path runs on the `mcp` SDK directly (core dependency,
+        #     `mcp>=1.24,<2.0`), not `fastmcp`. Kept in this list only so a stale
+        #     `[mcp]` reference here doesn't start erroring.
         #   web  — fastapi + uvicorn + websockets, used by tests/web/
         #   fs-watch — `watchdog` (#2608 H4), used by tests/runtime/test_2608_h4_fs_watcher.py
         #   observability — opentelemetry SDK, used by tests/observability/
@@ -61,6 +64,21 @@ jobs:
         #     `pytest.importorskip`s all three, so WITHOUT this extra the whole
         #     module silently SKIPS and CI goes green having verified nothing.
         run: pip install -e ".[dev,mcp,web,fs-watch,observability,builtin-rag]"
+
+      # #4302: tests/builtin/test_fp0063_p3_rag_pipelines.py (and
+      # test_fp0063_arc_witness.py) launch chunker_server.py/vector_store_server.py
+      # directly (command=sys.executable — same interpreter running pytest, per
+      # those tests' own docstrings). Those scripts import fastmcp, which the
+      # `builtin-rag` extra above does NOT cover (it's a dev/test convenience for
+      # chonkie/apsw/sqlite-vec only, #3209). fastmcp was a reyn CORE dependency
+      # until #4302 dropped it, which is what quietly kept this job green before —
+      # this is a 3rd real consumer #4302's own follow-up commit missed (it only
+      # covered the sandbox-seccomp gate and the wheel-reachability smoke test).
+      # The plugin declares its OWN dependency floor (`fastmcp>=2.0`) in its own
+      # requirements.txt, so this job installs that directly rather than a
+      # hand-picked subset that would drift from it silently.
+      - name: Install the rag plugin's own requirements (#4302)
+        run: pip install -r src/reyn/builtin/plugins/rag/requirements.txt
 
       - name: Run tests
         # --timeout=120: a per-test wall-clock cap (pytest-timeout). Without it a
