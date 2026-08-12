@@ -1022,6 +1022,18 @@ class Session:
         self._attended: bool = True
         # Lazily-resolved minimal _untrusted profile cache (#1827 S4b, see docs/reference/runtime/session-construction.md#capability-permission-visibility)
         self._untrusted_contextual_cache = None
+        # #4381 PR-2 stage ③: per-turn in-flight taint latch — set the moment
+        # router_loop.py stamps `external_source` on a tool-result's meta
+        # (RouterHostAdapter.mark_untrusted_in_flight, same update point, no
+        # second signal to drift), reset at each turn's start
+        # (`_run_router_loop`). Closes the gap `_ephemeral_contextual_for_turn`'s
+        # `self.history` scan alone cannot see: a same-turn tool result whose
+        # history entry has not yet landed (relevant once #4381's later PR
+        # defers that commit to after the turn's response). Monotonic for the
+        # turn's own remaining iterations, matching the existing
+        # `_untrusted_latched` per-iteration latch's own "narrows, never
+        # un-narrows mid-turn" discipline.
+        self._in_flight_untrusted_this_turn: bool = False
         # excluded_categories (#1667) + the visibility override (#2285) are owned by
         # CapabilityVisibility, constructed below (see #3121 step3 Extract Class).
         # Session-scoped hook APPLICABILITY override, per-session by construction (#2285, see session-construction.md#capability-permission-visibility)
@@ -2783,7 +2795,10 @@ class Session:
             return None
         watermark = self._compaction_watermark()
         active = (m for m in self.history if m.seq == 0 or m.seq > watermark)
-        if not metas_have_untrusted(m.meta for m in active):
+        # #4381 PR-2 stage ③: history scan OR the in-flight latch — the
+        # latch covers a same-turn tool result whose history entry has not
+        # landed yet (see the flag's own docstring in __init__ for why).
+        if not (metas_have_untrusted(m.meta for m in active) or self._in_flight_untrusted_this_turn):
             return None
         if self._untrusted_contextual_cache is None:
             root = self._perm.project_root if self._perm is not None else Path.cwd()
@@ -2792,6 +2807,20 @@ class Session:
                 origin=UNTRUSTED_NARROWING_ORIGIN,
             )[0]
         return self._untrusted_contextual_cache
+
+    def _mark_untrusted_in_flight(self) -> None:
+        """#4381 PR-2 stage ③: set the per-turn in-flight taint latch.
+
+        Wired into ``RouterHostAdapter`` as ``mark_untrusted_in_flight`` and
+        called by ``router_loop.py`` at the SAME point it stamps
+        ``external_source`` onto a tool-result's persisted meta — see that
+        call site's own comment for why this is not a second, independently-
+        maintained signal. Reset to ``False`` at the top of
+        ``_run_router_loop`` (each new turn); never cleared mid-turn (the
+        same "narrows, never un-narrows before the turn boundary" property
+        ``_untrusted_latched`` already has for the per-iteration rung).
+        """
+        self._in_flight_untrusted_this_turn = True
 
     # ── persistence ─────────────────────────────────────────────────────────────
 
@@ -4324,6 +4353,8 @@ class Session:
             # #3792: mid-turn CLIENT_INPUT injection.
             peek_mid_turn_injection=self._inbox_arbiter.peek_mid_turn_injection,
             commit_mid_turn_injection=self._commit_mid_turn_injection,
+            # #4381 PR-2 stage ③: in-flight taint latch.
+            mark_untrusted_in_flight=self._mark_untrusted_in_flight,
             # Proposal 0067 P1' (#3978)
             mark_task_pending=lambda: setattr(self, "current_task", CurrentTask()),
             universal_wrappers_enabled=self._action_retrieval.universal_wrappers_enabled,
@@ -8111,6 +8142,10 @@ class Session:
             _arm_stall_trace(_stall_seconds)
         try:
             self._last_turn_chain_id = chain_id
+            # #4381 PR-2 stage ③: reset the in-flight taint latch for the
+            # NEW turn — never cleared mid-turn (see the flag's own
+            # docstring in __init__).
+            self._in_flight_untrusted_this_turn = False
             await self._router_host.maybe_refresh_mcp_tools_from_yaml()
             self._router_host.maybe_reload_mcp_tools_cache_from_disk()
             await self._router_host.ensure_mcp_tools_cached(
