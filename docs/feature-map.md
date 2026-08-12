@@ -287,7 +287,6 @@ Config-gated `litellm.Router` slot-in for provider-resilience. Default OFF (`llm
 | Per-deployment cooldown | `llm.router.cooldown_time` + `allowed_fails` cools a deployment after repeated failures; subsequent calls route to the fallback chain until recovery | [Config: llm block](reference/config/reyn-yaml.md#llm-block) |
 | Accurate cost on fallback | On fallback the actual responding model is recorded from `response.model` so cost attribution reflects which deployment served the call | [Budget config](reference/config/budget.md) |
 | Config-fingerprint Router cache | Router is cached per event-loop with a `(model, config-fingerprint)` key; a changed `llm.router.*` rebuilds the Router rather than silently reusing a stale instance | [Config: llm block](reference/config/reyn-yaml.md#llm-block) |
-| `llm.router.credentials` rotation | Per-model list of API-key env-var names; the Router cycles through active keys; a declared model with zero resolvable keys fails loudly — never a silent keyless deployment | [Config: llm block](reference/config/reyn-yaml.md#llm-block) |
 
 > **Differentiation vs general agents:** provider-resilience is delegated entirely to litellm.Router (Retry-After, jitter, cooldown, cross-model fallback chain, credential rotation) rather than re-implemented — the on/off gate keeps the direct path byte-identical, so replay and cost-recording work unchanged whether or not the Router is active.
 
