@@ -222,11 +222,15 @@ class R(ChatRenderer):
     def message(self, msg): R.n += 1
 
 
-asyncio.run(asyncio.wait_for(
+# #4445: no timeout= — same #4397 family (a test-owned wait-budget
+# constant), same rule even though this runs inside the subprocess this
+# module's own outer `subprocess.run` spawns (that call already carries
+# no timeout= of its own, per the same #4397 fix) — CI's own per-test
+# pytest-timeout is the kill switch either way.
+asyncio.run(
     run_chat_client(transport=T(), renderer=R(), read_model=RM(),
                     agent_name="default", is_tty=False),
-    timeout=10.0,
-))
+)
 assert R.n >= 2, "plain path did not render the conversation"
 assert "textual_flowview" not in sys.modules, "flowview imported during plain run"
 print("ISOLATION_OK")
@@ -267,10 +271,12 @@ async def test_plain_fallback_equivalence_same_turn_sequence() -> None:
     # Plain side: drive the real output loop with a recording renderer.
     renderer = _RecordingRenderer()
     plain_transport = ScriptedTransport(_CONVERSATION, end=True)
-    await asyncio.wait_for(
-        run_output_loop(plain_transport, renderer, None, command_ui_region=True),
-        timeout=5.0,
-    )
+    # #4445: no timeout= — same #4397 family; CI's own per-test
+    # pytest-timeout is the kill switch. `plain_transport` is a finite
+    # scripted sequence (`end=True`), so `run_output_loop` returns on its
+    # own once drained — the timeout was never load-bearing for a real
+    # condition here.
+    await run_output_loop(plain_transport, renderer, None, command_ui_region=True)
 
     # App side: feed the identical script through the app's frame pump.
     app_transport = ScriptedTransport(_CONVERSATION, end=False)

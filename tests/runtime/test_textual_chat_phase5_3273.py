@@ -567,7 +567,10 @@ async def test_restore_source_is_authoritative_chat_log_gate_na(tmp_path, monkey
         assert session.history_path.name == "history.jsonl"
         assert session.history_path.exists(), "the source file is history.jsonl on disk"
     finally:
-        await asyncio.wait_for(reg.shutdown(), timeout=5.0)
+        # #4445: no timeout= — same #4397 family (a test-owned wait-budget
+        # constant); CI's own per-test pytest-timeout is the kill switch.
+        # `reg.shutdown()` awaited directly, unbounded.
+        await reg.shutdown()
 
 
 @pytest.mark.asyncio
@@ -593,7 +596,10 @@ async def test_retention_is_resume_equivalent(tmp_path, monkeypatch) -> None:
             "limit must keep the most-recent N turns (resume-equivalent)"
         )
     finally:
-        await asyncio.wait_for(reg.shutdown(), timeout=5.0)
+        # #4445: no timeout= — same #4397 family (a test-owned wait-budget
+        # constant); CI's own per-test pytest-timeout is the kill switch.
+        # `reg.shutdown()` awaited directly, unbounded.
+        await reg.shutdown()
 
 
 @pytest.mark.asyncio
@@ -661,7 +667,10 @@ async def test_typed_failure_flag_round_trips_through_disk_history(tmp_path, mon
             "result": "Error: disk full at 03:14, retrying write"
         }
     finally:
-        await asyncio.wait_for(reg.shutdown(), timeout=5.0)
+        # #4445: no timeout= — same #4397 family (a test-owned wait-budget
+        # constant); CI's own per-test pytest-timeout is the kill switch.
+        # `reg.shutdown()` awaited directly, unbounded.
+        await reg.shutdown()
 
 
 # ── Tier 2c: import isolation preserved (accessor adds no always-loaded import) ─
