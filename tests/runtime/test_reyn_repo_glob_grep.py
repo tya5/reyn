@@ -182,3 +182,84 @@ def test_glob_skip_set_matches_list_entries_set() -> None:
     assert ".git" in _SKIP_DIR_NAMES
     assert "__pycache__" in _SKIP_DIR_NAMES
     assert ".venv" in _SKIP_DIR_NAMES
+
+
+# ── 5. #4431 — silent-cap visibility (own tmp_path root, not the real repo) ─
+
+
+def test_glob_truncated_flag_when_cap_hit(tmp_path: Path) -> None:
+    """Tier 2: #4431 — more matches than _MAX_GLOB_MATCHES (200) sets
+    `truncated`, mirroring grep's own contract (owner ruling: a silent cap
+    with no config knob must make the cut visible instead)."""
+    from reyn.runtime.reyn_repo import _MAX_GLOB_MATCHES
+
+    for i in range(_MAX_GLOB_MATCHES + 5):
+        (tmp_path / f"file{i:04d}.md").write_text("x", encoding="utf-8")
+
+    result = glob_entries(tmp_path, "*.md")
+
+    assert result["count"] == _MAX_GLOB_MATCHES
+    assert result["truncated"] is True
+
+
+def test_glob_no_truncation_signal_under_cap(tmp_path: Path) -> None:
+    """Tier 2: accept-side twin — under the cap, `truncated` is False, not
+    just absent (this function has always returned it unconditionally;
+    #4431 doesn't change that shape, only adds a True case)."""
+    (tmp_path / "alpha.md").write_text("a", encoding="utf-8")
+    (tmp_path / "beta.md").write_text("b", encoding="utf-8")
+
+    result = glob_entries(tmp_path, "*.md")
+
+    assert result["count"] == 2
+    assert result["truncated"] is False
+
+
+def test_grep_snippet_truncated_marks_only_long_lines(tmp_path: Path) -> None:
+    """Tier 2: #4431 — a matching line longer than _GREP_SNIPPET_CHARS (200)
+    is cut with NO prior marker; `snippet_truncated` now says so per-match,
+    and a short match must NOT carry the key at all (absence = nothing cut,
+    same convention `truncated`'s sibling fields use elsewhere in #4431)."""
+    from reyn.runtime.reyn_repo import _GREP_SNIPPET_CHARS
+
+    long_line = "needle " + ("x" * (_GREP_SNIPPET_CHARS + 50))
+    (tmp_path / "long.txt").write_text(long_line, encoding="utf-8")
+    (tmp_path / "short.txt").write_text("needle short line", encoding="utf-8")
+
+    result = grep_entries(tmp_path, pattern="needle", max_results=10)
+
+    by_path = {m["path"]: m for m in result["matches"]}
+    assert by_path["long.txt"]["snippet_truncated"] is True
+    assert len(by_path["long.txt"]["snippet"]) == _GREP_SNIPPET_CHARS
+    assert "snippet_truncated" not in by_path["short.txt"]
+
+
+def test_grep_counts_files_skipped_for_size(tmp_path: Path) -> None:
+    """Tier 2: #4431 — a file over `_MAX_READ_BYTES` is excluded from the
+    scan entirely (pre-existing behaviour); before this fix that read
+    identically to "searched, no matches". `skipped_large_file_count` now
+    distinguishes the two."""
+    from reyn.runtime.reyn_repo import _MAX_READ_BYTES
+
+    (tmp_path / "huge.txt").write_text(
+        "needle\n" + ("x" * (_MAX_READ_BYTES + 1)), encoding="utf-8"
+    )
+    (tmp_path / "normal.txt").write_text("needle here too", encoding="utf-8")
+
+    result = grep_entries(tmp_path, pattern="needle", max_results=10)
+
+    assert result["skipped_large_file_count"] == 1
+    matched_paths = {m["path"] for m in result["matches"]}
+    assert "huge.txt" not in matched_paths
+    assert "normal.txt" in matched_paths
+
+
+def test_grep_zero_skipped_large_files_when_none_are_big(tmp_path: Path) -> None:
+    """Tier 2: accept-side twin — `skipped_large_file_count` is 0 (present,
+    not absent — this function has always returned every field
+    unconditionally, e.g. `truncated`) when nothing was actually skipped."""
+    (tmp_path / "normal.txt").write_text("needle here", encoding="utf-8")
+
+    result = grep_entries(tmp_path, pattern="needle", max_results=10)
+
+    assert result["skipped_large_file_count"] == 0

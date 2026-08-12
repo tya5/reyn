@@ -358,6 +358,12 @@ def read_text(
 
 _MAX_GLOB_MATCHES = 200
 _MAX_GREP_RESULTS = 50
+# #4431: no measured basis for 200 beyond "wide enough for a grep line
+# to read as a real preview, narrow enough that one match can't eat the
+# result on its own" — a per-match display choice, not a correctness
+# bound (the full line is always in the source file the ``path``/``line``
+# already names), so this doesn't need a config knob, only the
+# ``snippet_truncated`` marker `grep_entries` now sets per over-length match.
 _GREP_SNIPPET_CHARS = 200
 # Same skip-set the listing path applies (= canonical exclusion for
 # noise / build artifacts). Used by both glob and grep so the surfaces
@@ -393,14 +399,19 @@ def _iter_files_under(root: Path):
 def glob_entries(root: Path, pattern: str) -> dict:
     """Build the ``reyn_repo_glob`` result dict.
 
-    Returns ``{pattern, matches: [str, ...], count: int}`` where each
-    match is a repo-root-relative path. Capped at ``_MAX_GLOB_MATCHES``
-    so a careless ``**`` doesn't blow up the LLM context.
+    Returns ``{pattern, matches: [str, ...], count: int, truncated: bool}``
+    where each match is a repo-root-relative path. Capped at
+    ``_MAX_GLOB_MATCHES`` so a careless ``**`` doesn't blow up the LLM
+    context. #4431: ``truncated`` names the cap the same way
+    :func:`grep_entries` already does — a `**` match set is unbounded by
+    construction (unlike the read cap, which #2998-style totals a bounded
+    directory listing), so this reports THAT more exist, not how many.
     """
     cleaned = (pattern or "").strip()
     if not cleaned:
         return {"error": "reyn_repo_glob: pattern must be non-empty."}
     matches: list[str] = []
+    truncated = False
     try:
         for p in root.glob(cleaned):
             if not p.is_file():
@@ -413,11 +424,15 @@ def glob_entries(root: Path, pattern: str) -> dict:
                 continue
             matches.append(str(p.relative_to(root)))
             if len(matches) >= _MAX_GLOB_MATCHES:
+                truncated = True
                 break
     except (ValueError, OSError) as exc:
         return {"error": f"reyn_repo_glob: pattern {pattern!r} failed: {exc}"}
     matches.sort()
-    return {"pattern": pattern, "matches": matches, "count": len(matches)}
+    return {
+        "pattern": pattern, "matches": matches, "count": len(matches),
+        "truncated": truncated,
+    }
 
 
 def grep_entries(
@@ -430,10 +445,18 @@ def grep_entries(
 ) -> dict:
     """Build the ``reyn_repo_grep`` result dict.
 
-    Returns ``{pattern, matches: [{path, line, snippet}, ...], count: int,
-    truncated: bool}``. ``path`` scopes the search to a sub-tree (default
-    repo root). ``glob`` filters which files are searched (default = all
-    text files under scope).
+    Returns ``{pattern, matches: [{path, line, snippet, ...}, ...], count:
+    int, truncated: bool, skipped_large_file_count: int}``. ``path`` scopes
+    the search to a sub-tree (default repo root). ``glob`` filters which
+    files are searched (default = all text files under scope).
+
+    #4431: two independent cuts happen here, and both must say so —
+    ``truncated`` (the pre-existing ``max_results`` cap on MATCH count) and
+    ``skipped_large_file_count`` (files over ``_MAX_READ_BYTES`` excluded
+    from the scan entirely — before this fix a file above the cap read as
+    "no matches" indistinguishably from a file that was genuinely searched
+    and empty). A per-match ``snippet_truncated`` flag is set when a single
+    line is cut to ``_GREP_SNIPPET_CHARS``.
     """
     import re
 
@@ -469,13 +492,18 @@ def grep_entries(
 
     matches: list[dict] = []
     truncated = False
+    skipped_large_file_count = 0
     for fp in candidates:
         if len(matches) >= max_results:
             truncated = True
             break
         # Skip files larger than the read cap — same discipline as read_text.
+        # #4431: was a bare `continue` — a file this big now COUNTS itself
+        # (skipped_large_file_count) instead of silently reading as "no
+        # matches found", indistinguishable from a file actually searched.
         try:
             if fp.stat().st_size > _MAX_READ_BYTES:
+                skipped_large_file_count += 1
                 continue
         except OSError:
             continue
@@ -485,12 +513,16 @@ def grep_entries(
             continue
         for line_no, line in enumerate(text.splitlines(), start=1):
             if compiled.search(line):
-                snippet = line.strip()[:_GREP_SNIPPET_CHARS]
-                matches.append({
+                stripped = line.strip()
+                snippet = stripped[:_GREP_SNIPPET_CHARS]
+                match: dict = {
                     "path": str(fp.relative_to(root)),
                     "line": line_no,
                     "snippet": snippet,
-                })
+                }
+                if len(stripped) > _GREP_SNIPPET_CHARS:
+                    match["snippet_truncated"] = True
+                matches.append(match)
                 if len(matches) >= max_results:
                     truncated = True
                     break
@@ -500,6 +532,7 @@ def grep_entries(
         "matches": matches,
         "count": len(matches),
         "truncated": truncated,
+        "skipped_large_file_count": skipped_large_file_count,
     }
 
 
