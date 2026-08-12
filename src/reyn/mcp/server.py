@@ -338,27 +338,27 @@ def build_server(
     ``call_tool`` after the built-in tools (built-ins take precedence on a name
     clash).
 
-    #4368 (mcp 2.0 port): 2.0 removes ``lowlevel.Server``'s
-    ``@server.list_tools()``/``@server.call_tool()``/``@server.read_resource()``
-    decorator API entirely — measured live against real ``mcp==2.0.0``. The
-    handlers below are now plain functions passed as ``Server(...)``
-    constructor kwargs (``on_list_tools``/``on_call_tool``/``on_read_resource``)
-    instead of decorating a closure over an already-built ``server``
-    instance — so they are defined FIRST, then handed to ``Server(...)``,
-    inverting the old construction order. Each handler's signature also
-    changed shape: it now receives ``(ctx: ServerRequestContext, params:
-    <X>RequestParams)`` directly (the SDK's own runner builds and passes
-    ``ctx`` per-request; see :func:`_make_mcp_progress_bridge`'s docstring
-    for why this REMOVES the old ``server.request_context`` lookup rather
-    than needing one), and must return the corresponding typed ``<X>Result``
-    object (``ListToolsResult``/``CallToolResult``/``ReadResourceResult``)
-    instead of a bare ``list[Tool]``/``list[TextContent]``/(1.x's
-    convenience) ``list[ReadResourceContents]`` — confirmed live: the 2.0
-    registration path has no wrapping/normalisation layer between the
-    handler's return value and the wire response, unlike the retired
-    decorator sugar.
+    #4368 (mcp 2.0 port, arc #4412): registration + ``ctx`` shape go through
+    the ``_mcp_server_boundary.build_mcp_server`` seam — see that module's
+    docstring for the full rationale (mirrors ``_fastmcp_boundary.py``'s
+    #3698 P2 precedent). Handler bodies below are written in the seam's
+    ``(ctx, params) -> Result`` shape (mcp 2.0's real handler signature —
+    the seam adapts this onto the CURRENT pin's decorator API internally,
+    and collapses to a near-passthrough once the pin bumps) and return the
+    typed ``<X>Result`` object the seam expects (``ListToolsResult``/
+    ``CallToolResult``/``ReadResourceResult``).
+
+    Object CONSTRUCTION inside the handler bodies (``Tool(...)``,
+    ``TextResourceContents(...)``, …) is a SEPARATE axis the seam does NOT
+    cover (owner ruling via lead-coder, #4368: reyn adding a constructor
+    function per SDK type would mean reyn's own surface grows every time
+    the SDK's vocabulary grows — not reyn's responsibility, same
+    discriminator as #4354's provider-layer ruling). Construction is
+    written plain, in the CURRENTLY INSTALLED pin's own field-name
+    vocabulary (``inputSchema``/``mimeType``/… — 1.x camelCase today); a
+    pin-bump PR flips every such call site to 2.0's vocabulary in one
+    mechanical pass, alongside this docstring.
     """
-    from mcp.server import Server
     from mcp.types import (
         CallToolRequestParams,
         CallToolResult,
@@ -370,6 +370,8 @@ def build_server(
         Tool,
     )
 
+    from reyn.mcp._mcp_server_boundary import build_mcp_server
+
     _extra_tools = list(extra_tools or [])
 
     async def _list_tools(ctx: "object", params: "object") -> "ListToolsResult":  # type: ignore[no-redef]
@@ -380,7 +382,7 @@ def build_server(
                     "List the agents registered in the current Reyn project. "
                     "Returns each agent's name and a short role excerpt."
                 ),
-                input_schema={
+                inputSchema={
                     "type": "object",
                     "properties": {},
                     "additionalProperties": False,
@@ -394,7 +396,7 @@ def build_server(
                     "how to respond; multi-turn conversation "
                     "accumulates because per-agent chat history persists."
                 ),
-                input_schema={
+                inputSchema={
                     "type": "object",
                     "properties": {
                         "agent_name": {
@@ -428,7 +430,7 @@ def build_server(
                     "``choice_id`` explicitly; for free-text ask_user "
                     "omit it."
                 ),
-                input_schema={
+                inputSchema={
                     "type": "object",
                     "properties": {
                         "agent_name": {
@@ -475,7 +477,7 @@ def build_server(
                 Tool(
                     name=et.name,
                     description=et.description,
-                    input_schema=et.input_schema,
+                    inputSchema=et.input_schema,
                 )
                 for et in _extra_tools
             ],
@@ -633,13 +635,12 @@ def build_server(
         body for cross-protocol consumers (= external MCP clients).
 
         Returns a ``ReadResourceResult`` wrapping ``TextResourceContents``
-        directly — #4368 (mcp 2.0 port): the 1.x line's convenience
-        wrapper (``mcp.server.lowlevel.helper_types.ReadResourceContents``,
-        returned bare as ``list[ReadResourceContents]``) still exists as a
-        class on 2.0, but the registered-handler contract has no
-        normalisation layer between the handler's return value and the
-        wire response any more (confirmed live) — the raw typed Result is
-        required. Unsupported URI schemes and missing files surface as
+        directly — the seam's ``_read_resource`` adapter (see
+        ``_mcp_server_boundary.py``) unwraps this into the CURRENT pin's
+        ``list[ReadResourceContents]`` convenience shape internally, so
+        this handler body always returns the 2.0-shaped typed Result
+        regardless of which pin is installed. Unsupported URI schemes and
+        missing files surface as
         ``text/plain`` content with an ``error: ...`` body so the client
         still gets a structured response rather than a transport error.
         Path-traversal escapes propagate as PermissionError (= the MCP
@@ -660,7 +661,7 @@ def build_server(
             # directly (= the URL points at our own resources router).
             return ReadResourceResult(contents=[TextResourceContents(
                 uri=uri_str,
-                mime_type="text/plain",
+                mimeType="text/plain",
                 text=(
                     f"error: unsupported resource URI scheme: {uri_str!r}. "
                     "Reyn MCP server resolves reyn-tool-result://<agent>/<artifact> only; "
@@ -682,17 +683,17 @@ def build_server(
         if not found:
             return ReadResourceResult(contents=[TextResourceContents(
                 uri=uri_str,
-                mime_type="text/plain",
+                mimeType="text/plain",
                 text=(
                     f"error: tool result not found for URI {uri_str!r} "
                     "(= deleted by user, or never existed on this Reyn instance)"
                 ),
             )])
         return ReadResourceResult(contents=[TextResourceContents(
-            uri=uri_str, mime_type="text/plain", text=body,
+            uri=uri_str, mimeType="text/plain", text=body,
         )])
 
-    return Server(
+    return build_mcp_server(
         "reyn",
         on_list_tools=_list_tools,
         on_call_tool=_call_tool,

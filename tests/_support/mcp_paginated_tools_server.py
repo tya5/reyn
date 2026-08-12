@@ -15,33 +15,33 @@ import mcp.types as types
 from mcp.server.lowlevel import Server
 from mcp.server.stdio import stdio_server
 
+app = Server("reyn-test-paginated")
+
 _ALL_TOOLS = [
-    types.Tool(name=f"tool_{i}", description=f"tool number {i}", input_schema={"type": "object"})
+    types.Tool(name=f"tool_{i}", description=f"tool number {i}", inputSchema={"type": "object"})
     for i in range(4)
 ]
 _PAGE_SIZE = 2
 
 
-# #4368 (mcp 2.0 port): the 1.x line's @app.list_tools() decorator only
-# supported returning a bare tool list -- page boundaries needed cursor
-# control, so this file bypassed the decorator sugar and installed a raw
-# handler directly via app.request_handlers[ListToolsRequest] = ... (an
-# internal SDK dict, not a public API). On 2.0 that whole workaround is
-# gone: on_list_tools is a single constructor kwarg that already receives
-# (ctx, params: PaginatedRequestParams | None) directly -- one function
-# does what the decorator + raw-handler-dict override used to do together,
-# no internal-attribute reach-in needed.
-async def list_tools(
-    ctx: "object", params: "types.PaginatedRequestParams | None",
-) -> "types.ListToolsResult":
-    cursor = params.cursor if params is not None else None
+@app.list_tools()
+async def list_tools(request: types.PaginatedRequestParams | None = None) -> list[types.Tool]:
+    # The low-level Server API decorator only supports returning the tool list; page
+    # boundaries need the raw request handler for cursor control, so this override goes
+    # through app.request_handlers directly below instead of the decorator sugar.
+    return _ALL_TOOLS
+
+
+async def _handle_list_tools_paginated(req):
+    cursor = req.params.cursor if req.params is not None else None
     start = int(cursor) if cursor else 0
     page = _ALL_TOOLS[start : start + _PAGE_SIZE]
     next_cursor = str(start + _PAGE_SIZE) if start + _PAGE_SIZE < len(_ALL_TOOLS) else None
-    return types.ListToolsResult(tools=page, next_cursor=next_cursor)
+    result = types.ListToolsResult(tools=page, nextCursor=next_cursor)
+    return types.ServerResult(result)
 
 
-app = Server("reyn-test-paginated", on_list_tools=list_tools)
+app.request_handlers[types.ListToolsRequest] = _handle_list_tools_paginated
 
 
 async def main() -> None:

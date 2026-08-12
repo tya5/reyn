@@ -13,21 +13,31 @@ call site. Mirrors `_fastmcp_boundary.py`'s own pattern from #3698 P2 (the
 CLIENT-side equivalent, since deleted once its own swap completed --
 #4282/#4299) — architect's explicit precedent for this ruling (#4368).
 
-## Callers already write handlers in mcp 2.0's OWN shape
+## What this seam covers, and what it deliberately does NOT
 
 `build_mcp_server`'s ``on_list_tools``/``on_call_tool``/``on_read_resource``
-parameters use mcp 2.0's real handler signature directly:
+parameters use mcp 2.0's real handler REGISTRATION signature directly:
 ``async def handler(ctx, params) -> Result`` (``ListToolsResult``/
 ``CallToolResult``/``ReadResourceResult``), the same shape
 ``mcp.server.lowlevel.Server.__init__``'s own ``on_list_tools=``/etc.
-kwargs accept on 2.0 (verified live). This is deliberate: `server.py`'s
-own handler bodies were already ported to this exact shape (falsify-
-verified against real mcp 2.0, see #4368's own commits) BEFORE this seam
-existed -- adopting the seam does not touch them again. Under the CURRENT
-pin (`mcp>=1.24,<2.0`), this function adapts each 2.0-shaped handler onto
-the 1.x line's decorator API internally; once the pin bumps, this
-function's body collapses to a near-passthrough (`Server(name,
+kwargs accept on 2.0 (verified live). Under the CURRENT pin
+(`mcp>=1.24,<2.0`), this function adapts each 2.0-shaped handler onto the
+1.x line's decorator API internally; once the pin bumps, this function's
+body collapses to a near-passthrough (`Server(name,
 on_list_tools=on_list_tools, ...)` directly) and the swap is done.
+
+**Object CONSTRUCTION inside a handler body (`Tool(...)`,
+`TextResourceContents(...)`, …) is a separate axis this seam does NOT
+cover** (owner ruling via lead-coder, #4368: a per-SDK-type constructor
+function here would mean reyn's own surface grows every time the SDK adds
+a type -- not reyn's responsibility to own, same discriminator as #4354's
+provider-layer ruling). Handler bodies write those constructions plain,
+in the CURRENTLY INSTALLED pin's own vocabulary (`inputSchema`/`mimeType`
+today); a pin-bump PR flips every such call site in one mechanical pass
+alongside this module. This is why :func:`_read_resource`'s adapter below
+reads `c.mimeType`, not `c.mime_type` -- it has to track whichever
+vocabulary the handler bodies currently use, and moves in the SAME
+pin-bump PR as they do.
 
 ## The ``ctx`` adaptation this seam owns
 
@@ -130,7 +140,7 @@ def build_mcp_server(
             params = ReadResourceRequestParams(uri=str(uri))  # type: ignore[arg-type]
             result = await on_read_resource(_CtxAdapter(server.request_context), params)  # type: ignore[attr-defined]
             return [
-                ReadResourceContents(content=c.text, mime_type=c.mime_type)
+                ReadResourceContents(content=c.text, mime_type=c.mimeType)
                 for c in result.contents
             ]
 
