@@ -50,16 +50,6 @@ if TYPE_CHECKING:
 # before returning whatever partial output has accumulated.
 DEFAULT_SEND_TIMEOUT_SECONDS: float = 60.0
 
-# Polling interval while waiting for the agent's run loop to drain its
-# inbox and return to idle. Small enough that latency feels instant;
-# large enough that the loop is essentially free.
-_IDLE_POLL_INTERVAL_SECONDS: float = 0.05
-
-# Brief grace period AFTER inbox is empty, before we declare the turn
-# done. Without it we can race the router and miss the final
-# ``kind="agent"`` outbox push.
-_IDLE_GRACE_SECONDS: float = 0.05
-
 
 # Per-(agent, sid) serialization lock (proposal 0067 P1, #3978 — rekeyed
 # from agent_name alone; this lock protects THIS session's history, and an
@@ -148,52 +138,6 @@ def _new_agent_history_entries(
             continue
         out.append(msg.text)
     return out
-
-
-async def _await_turn_complete(
-    session, *, baseline_seq: int, timeout: float
-) -> bool:
-    """Wait until the agent has produced at least one new ``role="agent"``
-    history entry with ``seq > baseline_seq`` AND the run loop is back to
-    idle (inbox empty, run loop back to idle). Returns True on completion,
-    False on timeout.
-
-    Unused today (dead code — no call site), but fixed alongside
-    ``_new_agent_history_entries`` (#4387 architect review) rather than
-    left as a landmine: it has the exact same ``session.history[baseline:]``
-    position-index shape, which silently returns the WRONG slice once
-    anything can prepend to ``self.history`` — see
-    ``_history_baseline_seq``'s docstring.
-
-    The negative-signal-only approach (= "looks idle, no work in flight")
-    used to false-positive: between ``submit_user_text`` returning and
-    the run loop's ``inbox.get()`` actually picking up the message,
-    there's a window where the inbox briefly looks empty even though
-    nothing has been processed yet. Adding the positive signal (= a
-    new agent reply landed in history) closes that race — we only
-    declare done once the agent has measurably emitted something AND
-    the run loop has parked.
-    """
-    deadline = asyncio.get_event_loop().time() + timeout
-    while True:
-        # Issue #383: assistant replies now have role="assistant". "agent"
-        # kept in the predicate for any pre-#383 history entry that
-        # bypassed read-time migration.
-        has_reply = any(
-            msg.role in ("assistant", "agent")
-            for msg in session.history
-            if msg.seq > baseline_seq
-        )
-        is_idle = session.inbox.empty()
-        if has_reply and is_idle:
-            # Grace period to absorb a possible second `agent_response`
-            # follow-up in the same turn (= multi-iteration router loops).
-            await asyncio.sleep(_IDLE_GRACE_SECONDS)
-            if session.inbox.empty():
-                return True
-        if asyncio.get_event_loop().time() >= deadline:
-            return False
-        await asyncio.sleep(_IDLE_POLL_INTERVAL_SECONDS)
 
 
 async def list_agents_impl(registry: "AgentRegistry") -> list[dict]:
