@@ -77,7 +77,11 @@ and the result is appended as a `role: "summary"` entry in `history.jsonl`.
 
 Token budgets use `litellm.token_counter` by default for accuracy; a cheaper
 `len(text) // 4` heuristic is available for latency-sensitive deployments
-(`use_chars4_estimate: true`).
+(`use_chars4_estimate: true`). A third path is automatic, not operator-set:
+if `litellm.token_counter` fails (e.g. a genuinely unreachable network),
+`estimate_tokens()` falls back to the same `len(text) // 4` heuristic for a
+60-second cooldown window, then automatically re-probes the real tokenizer —
+this needs no configuration and is not a permanent switch (#4395).
 
 ## Compaction axis
 
