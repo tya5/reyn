@@ -1438,53 +1438,30 @@ def _router_cache_fingerprint(rcfg) -> tuple:
     by construction).
 
     #1870: includes ``retry_policy`` mapping (None → empty) so a changed
-    retry_policy invalidates the cached Router."""
+    retry_policy invalidates the cached Router.
+
+    #4354: no longer includes credential env-var names — ``llm.router.credentials``
+    is gone (see ``_deployments_for_model``)."""
     rp = rcfg.retry_policy or {}
     return (
         rcfg.num_retries,
         rcfg.cooldown_time,
         rcfg.allowed_fails,
         tuple(sorted((k, tuple(v)) for k, v in rcfg.fallbacks.items())),
-        tuple(sorted(
-            (m, tuple(c.get("api_key_env") for c in (creds or [])))
-            for m, creds in getattr(rcfg, "credentials", {}).items()
-        )),
         tuple(sorted(rp.items())),
     )
 
 
 def _deployments_for_model(model: str, rcfg) -> list:
-    """#1829 S4: the litellm deployment(s) for *model*. With ``llm.router.credentials``
-    configured, one deployment per USABLE key (same ``model_name``, ``api_key``
-    resolved from ``os.environ[api_key_env]``) so the Router rotates / fails over
-    across keys; a missing env var is skipped with a warning. A DECLARED
-    ``credentials[model]`` that resolves to ZERO usable keys raises (fail-loud —
-    never a silent keyless deployment, lead decision 2). No credentials → a single
-    plain deployment (S3b behavior). The key VALUE lives only inside the Router
-    deployment — never in per-call kwargs / events / the cache fingerprint."""
-    creds = getattr(rcfg, "credentials", {}).get(model) or []
-    if not creds:
-        return [{"model_name": model, "litellm_params": {"model": model}}]
-    deployments: list = []
-    for c in creds:
-        env_name = c.get("api_key_env")
-        key = os.environ.get(env_name) if env_name else None
-        if not key:
-            logging.getLogger(__name__).warning(
-                "llm.router.credentials[%s]: env var %r is unset — skipping that key",
-                model, env_name,
-            )
-            continue
-        deployments.append(
-            {"model_name": model, "litellm_params": {"model": model, "api_key": key}}
-        )
-    if not deployments:
-        raise RuntimeError(
-            f"llm.router.credentials[{model!r}] is declared but none of its "
-            f"api_key_env vars resolved to a value "
-            f"({[c.get('api_key_env') for c in creds]}) — set one or remove the block"
-        )
-    return deployments
+    """#4354: the litellm deployment for *model* — always a single plain deployment
+    (no ``api_key``; litellm/the Router resolve credentials itself). #1829 S4's
+    per-model credential-rotation branch (``llm.router.credentials``, one deployment
+    per ``os.environ[api_key_env]``) was removed — the same rotation is expressible
+    in litellm proxy's own ``config.yaml`` (multiple deployments under one
+    ``model_name``), so reyn reading key values just to translate them into Router
+    deployments duplicated litellm's own mechanism while being the last place reyn
+    held a secret VALUE (rather than a name/reference) in memory."""
+    return [{"model_name": model, "litellm_params": {"model": model}}]
 
 
 def _bare_model_name(name: str) -> str:
