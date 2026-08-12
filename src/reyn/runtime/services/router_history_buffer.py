@@ -14,7 +14,12 @@ Also owns the module-level helpers:
   - _read_pathref_image
 
 history_fn dependency: a zero-arg callable that returns the raw history list
-(all ChatMessages including summaries), passed as ``lambda: self.history``.
+(all ChatMessages including summaries) — passed in production as
+``Session._active_branch_history`` (#2360's WAL-rewind-visibility filter,
+NOT a bare ``lambda: self.history``; the two differ after a rewind, and
+#4387 Phase B ② made that filtered view able to shrink/reorder call-to-call
+by extending ``self.history`` backward on demand — see
+``_incremental_elide_total``'s own docstring for why that matters here).
 """
 from __future__ import annotations
 
@@ -241,6 +246,23 @@ class RouterHistoryBuffer:
         # ``None`` (a legacy/test double with no workspace access) degrades to
         # "never refresh location tokens" — _serialise_turn's own None-check.
         self._project_dir_fn = project_dir_fn
+        # #4403: incremental elide-total cache. build_history() used to
+        # re-estimate EVERY turn's token count on EVERY call just to check
+        # "total <= effective_trigger" — O(session length) per turn, forever
+        # (compaction shrinks what's SENT to the LLM, never self.history).
+        # Measured (real litellm tokenizer, the config default): 5.13ms/turn
+        # -> 559s at 108,896 turns (#4403). ``_TOKEN_CACHE_MAXSIZE=8192``'s
+        # per-(model,text) cache cannot help here regardless of size: this
+        # loop visits turns in the SAME order every call, so an 8192-entry
+        # FIFO always evicts the early turns before a 100k-turn pass reaches
+        # them again next call — 100% miss, not a tuning problem.
+        # See ``_incremental_elide_total``'s own docstring for the
+        # invalidation contract these three fields exist to support.
+        self._cached_elide_total: int = 0
+        self._cached_elide_turn_count: int = 0
+        self._cached_elide_last_seq: "int | None" = None
+        self._cached_elide_model: "str | None" = None
+        self._cached_elide_use_chars4: "bool | None" = None
 
     @property
     def _model(self) -> str:
@@ -358,6 +380,74 @@ class RouterHistoryBuffer:
             self._compaction_controller, self._model, self._events,
         )
 
+    def _incremental_elide_total(
+        self, turns: list, wire_turns: list[dict], *, use_chars4: bool,
+    ) -> int:
+        """#4403: the ``total`` build_history needs for its "total <=
+        effective_trigger" elide decision, computed incrementally instead
+        of re-estimating every turn every call.
+
+        ``turns`` (``ChatMessage`` list, pre-serialise) is what
+        ``self._history_fn()`` (``Session._active_branch_history``)
+        returned THIS call — append-only in the common case, but NOT
+        guaranteed monotonic: a rewind/branch-switch can make it shorter
+        or reorder it (``_active_branch_history`` re-derives WAL-branch
+        visibility fresh every call). The cache's validity check is
+        therefore structural, not a bare length comparison:
+
+          - ``len(turns) < cached_turn_count`` -> definitely shrank
+            (rewind past the cached boundary) -> recompute from scratch.
+          - the ``seq`` at the cached boundary position no longer matches
+            what was cached -> the prefix itself changed (branch-switch
+            landing on a same-length-but-different list) -> recompute.
+          - model or use_chars4 changed since the cache was built -> the
+            cached per-turn costs were measured against a different
+            tokenizer -> recompute (an O(1) check, not a reason to distrust
+            the whole mechanism).
+          - otherwise -> the cached prefix is still exactly what it was:
+            add only the cost of the turns appended since, an O(k) pass
+            where k is genuinely new turns, not O(session length).
+
+        Every fallback path recomputes correctly (just not cheaply) — this
+        is a performance cache, not a source of truth: a wrong invalidation
+        guess costs CPU, never correctness, because the ``else`` branch
+        always re-derives ``total`` from the real ``wire_turns`` this call
+        actually has.
+        """
+        from reyn.services.compaction.engine import estimate_tokens_for_any_turn
+
+        model = self._model
+        cache_valid = (
+            len(turns) >= self._cached_elide_turn_count
+            and self._cached_elide_model == model
+            and self._cached_elide_use_chars4 == use_chars4
+            and (
+                self._cached_elide_turn_count == 0
+                or (
+                    turns[self._cached_elide_turn_count - 1].seq
+                    == self._cached_elide_last_seq
+                )
+            )
+        )
+        if cache_valid:
+            new_wire_turns = wire_turns[self._cached_elide_turn_count:]
+            total = self._cached_elide_total + sum(
+                estimate_tokens_for_any_turn(wt, model, use_chars4=use_chars4)
+                for wt in new_wire_turns
+            )
+        else:
+            total = sum(
+                estimate_tokens_for_any_turn(wt, model, use_chars4=use_chars4)
+                for wt in wire_turns
+            )
+
+        self._cached_elide_total = total
+        self._cached_elide_turn_count = len(turns)
+        self._cached_elide_last_seq = turns[-1].seq if turns else None
+        self._cached_elide_model = model
+        self._cached_elide_use_chars4 = use_chars4
+        return total
+
     # ── Public API ────────────────────────────────────────────────────────────
 
     def build_history(self) -> list[dict]:
@@ -385,11 +475,7 @@ class RouterHistoryBuffer:
         Only user/agent conversational turns are included; ``summary``
         remains Reyn-internal and is filtered out.
         """
-        from reyn.services.compaction.engine import (
-            estimate_tokens_for_any_turn,
-            trim_head,
-            trim_tail,
-        )
+        from reyn.services.compaction.engine import trim_head, trim_tail
 
         history = self._history_fn()
         # E-full (#383): include tool-turn entries (= assistant w/ tool_calls,
@@ -479,10 +565,19 @@ class RouterHistoryBuffer:
         # divergence PR-B closed.
         wire_turns = [self._serialise_turn(m) for m in turns]
 
-        total = sum(
-            estimate_tokens_for_any_turn(wt, self._model, use_chars4=use_chars4)
-            for wt in wire_turns
-        )
+        # #4403: the elide-check TOTAL — not the serialise pass above, #3185
+        # already measured and closed that as cheap — is computed
+        # incrementally rather than re-estimating every turn's token cost on
+        # every single call. Measured (real litellm tokenizer, the config
+        # default use_chars4_estimate=False): 5.13ms/turn -> 559s at
+        # 108,896 turns, because build_history() re-summed ALL of them EVERY
+        # call. _TOKEN_CACHE_MAXSIZE=8192's per-(model,text) cache cannot
+        # help here regardless of size: this loop visits turns in the SAME
+        # order every call, so an 8192-entry FIFO always evicts the early
+        # turns before a 100k-turn pass reaches them again next call — 100%
+        # miss, not a tuning problem. See _incremental_elide_total's own
+        # docstring for the invalidation contract.
+        total = self._incremental_elide_total(turns, wire_turns, use_chars4=use_chars4)
         # #2957 PR-B (co-vet follow-up): emit the elide side's own internal
         # total as a public P6 audit-event — the ONLY way a test (or an
         # operator inspecting `reyn events`) can observe what THIS method
