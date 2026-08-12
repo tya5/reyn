@@ -86,12 +86,12 @@ def test_session_pure_importable_without_first_importing_session():
     initialize) would raise the same
     "cannot import name ... from partially initialized module" this stage
     is fixing."""
+    # #4397: no timeout= — CI's own per-test pytest-timeout is the kill switch.
     proc = subprocess.run(
         [sys.executable, "-c", "import reyn.runtime.session_pure; print('OK')"],
         cwd=str(_REPO_ROOT),
         capture_output=True,
         text=True,
-        timeout=30,
     )
     assert proc.returncode == 0, f"stdout={proc.stdout}\nstderr={proc.stderr}"
     assert "OK" in proc.stdout

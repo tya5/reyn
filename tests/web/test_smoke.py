@@ -66,6 +66,7 @@ def test_reyn_web_help(out_of_process_reyn) -> None:
     Uses the reyn._cli:main entry point directly so we don't depend on the
     installed `reyn` shim, which may point to the wrong editable install.
     """
+    # #4397: no timeout= — CI's own per-test pytest-timeout is the kill switch.
     result = subprocess.run(
         [sys.executable, "-c",
          "from reyn._cli import main; import sys; sys.argv=['reyn','web','--help']; main()"],
@@ -75,7 +76,6 @@ def test_reyn_web_help(out_of_process_reyn) -> None:
             **__import__("os").environ,
             "PYTHONPATH": out_of_process_reyn,
         },
-        timeout=15,
     )
     assert result.returncode == 0, f"reyn web --help failed:\n{result.stderr}"
     assert "host" in result.stdout.lower() or "port" in result.stdout.lower(), (

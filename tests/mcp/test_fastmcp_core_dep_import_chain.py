@@ -44,11 +44,11 @@ def test_mcp_import_chain_succeeds_and_fastmcp_is_not_installed(out_of_process_r
         "import fastmcp;"
         "print('FASTMCP_PRESENT')"
     )
+    # #4397: no timeout= — CI's own per-test pytest-timeout is the kill switch.
     result = subprocess.run(
         [sys.executable, "-c", code],
         capture_output=True,
         text=True,
-        timeout=60,
         env={**os.environ, "PYTHONPATH": out_of_process_reyn},
     )
     assert result.returncode != 0, (
@@ -71,7 +71,6 @@ def test_mcp_import_chain_succeeds_and_fastmcp_is_not_installed(out_of_process_r
         [sys.executable, "-c", code_ok],
         capture_output=True,
         text=True,
-        timeout=60,
         env={**os.environ, "PYTHONPATH": out_of_process_reyn},
     )
     assert result_ok.returncode == 0, (

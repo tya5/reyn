@@ -242,12 +242,12 @@ def test_plain_path_survives_flowview_absence() -> None:
     import subprocess
     import sys
 
+    # #4397: no timeout= — CI's own per-test pytest-timeout is the kill switch.
     proc = subprocess.run(
         [sys.executable, "-c", _ISOLATION_SUBPROCESS],
         cwd=str(_REPO_ROOT),
         capture_output=True,
         text=True,
-        timeout=60,
     )
     assert proc.returncode == 0, f"stdout={proc.stdout}\nstderr={proc.stderr}"
     assert "ISOLATION_OK" in proc.stdout, f"stdout={proc.stdout}\nstderr={proc.stderr}"

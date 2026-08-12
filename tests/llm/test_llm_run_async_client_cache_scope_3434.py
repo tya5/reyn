@@ -99,11 +99,11 @@ def test_run_async_never_imports_litellm_without_an_llm_call(out_of_process_reyn
         print("OK")
         """
     env = {**os.environ, "PYTHONPATH": out_of_process_reyn}
+    # #4397: no timeout= — CI's own per-test pytest-timeout is the kill switch.
     result = subprocess.run(
         [sys.executable, "-c", textwrap.dedent(script)],
         capture_output=True,
         text=True,
-        timeout=30,
         env=env,
     )
     assert result.returncode == 0, result.stderr
@@ -155,11 +155,11 @@ def test_constructing_a_session_never_imports_litellm(tmp_path, out_of_process_r
         print("OK")
         """
     env = {**os.environ, "PYTHONPATH": out_of_process_reyn}
+    # #4397: no timeout= — CI's own per-test pytest-timeout is the kill switch.
     result = subprocess.run(
         [sys.executable, "-c", textwrap.dedent(script)],
         capture_output=True,
         text=True,
-        timeout=30,
         env=env,
     )
     assert result.returncode == 0, result.stderr

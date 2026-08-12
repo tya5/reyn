@@ -59,11 +59,11 @@ def _run(
     env = {**os.environ, "PYTHONPATH": src_root, **env_overrides}
     for key in unset:
         env.pop(key, None)
+    # #4397: no timeout= — CI's own per-test pytest-timeout is the kill switch.
     return subprocess.run(
         [sys.executable, "-c", code],
         capture_output=True,
         text=True,
-        timeout=30,
         env=env,
     )
 

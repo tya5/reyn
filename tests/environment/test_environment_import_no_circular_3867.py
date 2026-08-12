@@ -40,11 +40,11 @@ def test_environment_is_importable_as_the_first_reyn_import(out_of_process_reyn)
     initializing. Reproduces via a fresh interpreter where `reyn.environment`
     is the FIRST reyn import (in-process, other already-imported reyn modules
     would mask the partial-init race)."""
+    # #4397: no timeout= — CI's own per-test pytest-timeout is the kill switch.
     result = subprocess.run(
         [sys.executable, "-c", "import reyn.environment; print('OK')"],
         capture_output=True,
         text=True,
-        timeout=30,
         env={**os.environ, "PYTHONPATH": out_of_process_reyn},
     )
     assert result.returncode == 0, (
@@ -59,11 +59,11 @@ def test_data_workspace_is_importable_as_the_first_reyn_import(out_of_process_re
     """Tier 2: #3867 — the reverse direction: `reyn.data.workspace` (which
     constructs a `HostBackend` from `reyn.environment.host_backend`) must also
     be importable standalone, first, in a fresh interpreter."""
+    # #4397: no timeout= — CI's own per-test pytest-timeout is the kill switch.
     result = subprocess.run(
         [sys.executable, "-c", "import reyn.data.workspace; print('OK')"],
         capture_output=True,
         text=True,
-        timeout=30,
         env={**os.environ, "PYTHONPATH": out_of_process_reyn},
     )
     assert result.returncode == 0, (

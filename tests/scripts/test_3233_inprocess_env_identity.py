@@ -116,13 +116,13 @@ def test_a_decoy_reyn_cached_before_pytest_starts_makes_startup_exit_nonzero(
         [str(site_hook), str(tmp_path / "decoy_src"), env.get("PYTHONPATH", "")]
     )
 
+    # #4397: no timeout= — CI's own per-test pytest-timeout is the kill switch.
     proc = subprocess.run(
         [sys.executable, "-m", "pytest", "--collect-only", "-q", "--no-header"],
         cwd=_REPO_ROOT,
         env=env,
         capture_output=True,
         text=True,
-        timeout=120,
     )
 
     assert proc.returncode != 0, (

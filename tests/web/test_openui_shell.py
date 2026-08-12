@@ -361,6 +361,7 @@ def test_design_file_stdlib_warm(tmp_project: Path, monkeypatch: pytest.MonkeyPa
 
 def test_web_help_includes_default_design(out_of_process_reyn) -> None:
     """Tier 2b: `reyn web --help` mentions --default-design."""
+    # #4397: no timeout= — CI's own per-test pytest-timeout is the kill switch.
     result = subprocess.run(
         [sys.executable, "-c",
          "from reyn._cli import main; import sys; sys.argv=['reyn','web','--help']; main()"],
@@ -370,7 +371,6 @@ def test_web_help_includes_default_design(out_of_process_reyn) -> None:
             **__import__("os").environ,
             "PYTHONPATH": out_of_process_reyn,
         },
-        timeout=15,
     )
     assert result.returncode == 0, f"reyn web --help failed:\n{result.stderr}"
     assert "default-design" in result.stdout.lower(), (

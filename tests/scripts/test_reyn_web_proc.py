@@ -86,8 +86,9 @@ def test_group_kill_reaps_child_processes(tmp_path):
 
 def test_selftest_entrypoint_passes():
     """Tier 2: the module's own --selftest smoke returns 0 (spawn->alive->killed)."""
+    # #4397: no timeout= — CI's own per-test pytest-timeout is the kill switch.
     result = subprocess.run(
-        [sys.executable, str(SCRIPT)], capture_output=True, text=True, timeout=60
+        [sys.executable, str(SCRIPT)], capture_output=True, text=True
     )
     assert result.returncode == 0, result.stdout + result.stderr
     assert "killed_after_context=True" in result.stdout
