@@ -61,6 +61,7 @@ def build_router_op_context(
     presentation_registry: Any = None,  # FP-0054 PR-C: operator named-template registry (hot-reloadable)
     multimodal_config: Any = None,  # #364
     web_fetch_config: Any = None,  # #4274: reyn.yaml web_fetch.* → the web_fetch op's SSL/SSRF/size gates
+    read_cap_config: Any = None,  # #4381 PR-5: reyn.yaml read_cap.* → file.py's/load_skill.py's read op cap
     media_store: Any = None,  # #383
     compact_now: Any = None,  # #272/#1128
     run_id: str | None = None,  # chat router is outside run scope (#FP-0021)
@@ -160,6 +161,7 @@ def build_router_op_context(
         presentation_registry=presentation_registry,
         multimodal_config=multimodal_config,
         web_fetch_config=web_fetch_config,  # #4274
+        read_cap_config=read_cap_config,  # #4381 PR-5
         media_store=media_store,
         compact_now=compact_now,
         sandbox_backend=sandbox_backend,
@@ -242,6 +244,7 @@ class RouterOpContextSource:
         presentation_registry_fn: Any,
         multimodal_config: Any,
         web_fetch_config: Any,  # #4274: reyn.yaml web_fetch.* — plain value, same shape as multimodal_config
+        read_cap_config: Any = None,  # #4381 PR-5: reyn.yaml read_cap.* — plain value, same shape as web_fetch_config
         media_store_fn: Any,
         compact_now: Any,
         threat_scan: Any,
@@ -274,6 +277,7 @@ class RouterOpContextSource:
         self._presentation_registry_fn = presentation_registry_fn
         self._multimodal_config = multimodal_config
         self._web_fetch_config = web_fetch_config
+        self._read_cap_config = read_cap_config
         self._media_store_fn = media_store_fn
         self._compact_now = compact_now
         self._threat_scan = threat_scan
@@ -339,6 +343,7 @@ class RouterOpContextSource:
             presentation_registry=self._resolve(self._presentation_registry_fn),
             multimodal_config=self._multimodal_config,
             web_fetch_config=self._web_fetch_config,  # #4274
+            read_cap_config=self._read_cap_config,  # #4381 PR-5
             media_store=self._resolve(self._media_store_fn),
             compact_now=self._compact_now,
             cancel_event=self._cancel_event,

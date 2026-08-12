@@ -408,6 +408,70 @@ def _build_render_template_config(raw: object) -> "RenderTemplateConfig":
 
 
 @dataclass
+class ReadCapConfig:
+    """`read_cap:` — the RESOURCE-BOUND per-result inline cap (#4381 PR-5,
+    architect design).
+
+    Shares ONE cap value across ``file.py``'s read op and ``load_skill.py``
+    (both call ``context_builder.control_ir_inline_cap`` — architect: "同じ
+    整理が当たり... read_file と同じ扱いへ一緒に移る").
+
+    **Unit is BYTES, not characters** — the architect's own correction:
+    "文字は資源境界の単位として使わないこと。多バイト文字で8192文字≒24KBに
+    なり、資源を守る量として3倍ぶれる." A resource bound protects memory/
+    transfer/disk, which are byte-denominated regardless of encoding; a
+    char-denominated cap drifts against that by up to ~3x for non-ASCII
+    content (exactly the drift #4381 traced).
+
+    **Model-INDEPENDENT** (owner ruling) — this used to scale with the
+    resolved model's context window (#1209's window-derive), but a resource
+    bound protects a fixed physical resource, not a model-relative budget;
+    scaling it by model window conflated the two ROLEs #4381's design
+    closes (resource bound = bytes/model-independent/config;
+    budget bound = tokens/model-derived — see ``context_builder.
+    INLINE_CAP_BYTES_PER_TOKEN``, the ONE named conversion point between
+    them, consulted by ``router_history_buffer._check_resource_within_
+    budget``, PR-1/#4451).
+
+    **Why 10 KiB is the shipped default, not the prior 8 KB floor's own
+    number carried forward** (architect, #4381): a cap's affordable size is
+    a function of whether a truncated read has a way BACK IN, not of
+    "what other tools use." Both consumers gained a resume mechanism the
+    same night this design was written — ``read_file`` via ``char_offset``
+    (#4432 wired the schema all the way to the op layer) and
+    ``load_skill`` via deferring to ``read_file(path, offset=next_offset)``
+    instead of inventing its own offset (#4441) — so a truncated read here
+    loses at most ONE round-trip, not the rest of the content. That is the
+    property that justifies a SMALL cap; it is checkable in THIS repo's
+    own code (both resume paths exist and are tested), not an external
+    claim like "another tool uses N" that a reader could dispute without
+    being able to verify it against reyn's own behaviour.
+    """
+    inline_bytes: int = 10_240   # 10 KiB
+
+
+def _build_read_cap_config(raw: object) -> "ReadCapConfig":
+    """Parse the `read_cap:` section (#4381 PR-5).
+
+    Missing or malformed -> default (10_240 bytes). A non-numeric or
+    non-positive value falls back to the default -- same discipline as
+    ``_build_render_template_config``: an operator typo must not silently
+    disable the cap (zero/negative would truncate everything or never fire).
+    """
+    if not isinstance(raw, dict):
+        return ReadCapConfig()
+    defaults = ReadCapConfig()
+    inline_bytes = raw.get("inline_bytes", defaults.inline_bytes)
+    try:
+        inline_bytes = int(inline_bytes)
+        if inline_bytes <= 0:
+            inline_bytes = defaults.inline_bytes
+    except (TypeError, ValueError):
+        inline_bytes = defaults.inline_bytes
+    return ReadCapConfig(inline_bytes=inline_bytes)
+
+
+@dataclass
 class SpawnConfig:
     """`safety.spawn:` — operator bounds on the LLM spawn tree (#2103 C3).
 

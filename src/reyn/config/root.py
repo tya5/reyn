@@ -33,6 +33,7 @@ from reyn.config.chat import (
     LoopConfig,
     OffloadConfig,
     OnLimitConfig,
+    ReadCapConfig,
     ReasoningConfig,
     RenderTemplateConfig,
     SafetyConfig,
@@ -212,6 +213,11 @@ class ReynConfig:
     # FP-0055 / #2679: operator-tunable output bounds for the render_template op
     # (max_output_chars / wall_clock_seconds). Default → the safe in-handler bounds.
     render_template: RenderTemplateConfig = field(default_factory=RenderTemplateConfig)
+    # #4381 PR-5: the resource-bound per-result inline cap (file.py read op +
+    # load_skill.py, both consult context_builder.control_ir_inline_cap) —
+    # bytes, model-independent, config-driven (architect design). Default
+    # 10 KiB.
+    read_cap: ReadCapConfig = field(default_factory=ReadCapConfig)
     # FP-0022 follow-up: declarative SSL config for web_fetch + MCP registry.
     # Priority: web_fetch.ca_bundle → web_fetch.verify_ssl → SSL_VERIFY env →
     # litellm.ssl_verify → SSL_CERT_FILE → True (default).

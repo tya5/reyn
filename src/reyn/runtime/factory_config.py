@@ -39,6 +39,10 @@ class SessionFactoryConfig:
     # site until this field existed. Same shape as multimodal_config: a plain value,
     # not a per-turn supplier (WebFetchConfig doesn't change mid-session).
     web_fetch_config: Any
+    # #4381 PR-5: reyn.yaml read_cap.* (inline_bytes) — the resource-bound
+    # per-result inline cap (file.py's read op + load_skill.py). Same
+    # shape as web_fetch_config: a plain value, not a per-turn supplier.
+    read_cap_config: Any
     action_retrieval_config: Any
     embedding_config: Any
     router_config: Any
@@ -116,6 +120,8 @@ class SessionFactoryConfig:
             multimodal_config=config.multimodal,
             # #4274: the previously-dead web_fetch.* config, now threaded live.
             web_fetch_config=config.web_fetch,
+            # #4381 PR-5: the resource-bound read cap config.
+            read_cap_config=config.read_cap,
             action_retrieval_config=config.action_retrieval,
             embedding_config=config.embedding,
             router_config=config.llm.router,

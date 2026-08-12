@@ -235,15 +235,14 @@ async def handle(op: LoadSkillIROp, ctx: OpContext) -> dict:
     # limit windowing — this is a dedicated "load the whole thing" verb, not
     # a general paginated reader), but an oversized body is still
     # self-bounding rather than blowing the context unconditionally.
-    from reyn.core.context_builder import control_ir_inline_cap
+    #
+    # #4381 PR-5: the cap is a RESOURCE BOUND (bytes, model-independent,
+    # config-driven — architect design) — shares `ctx.read_cap_config` with
+    # `file.py`'s own read op (`load_skill` "同じ整理が当たり... read_file
+    # と同じ扱いへ一緒に移る" — architect). No more model resolution here.
+    from reyn.core.context_builder import byte_safe_prefix, control_ir_inline_cap
 
-    model_str: "str | None" = None
-    if ctx.resolver is not None:
-        try:
-            model_str = ctx.resolver.resolve(ctx.model).model
-        except Exception:
-            model_str = None
-    cap = control_ir_inline_cap(model_str, events=ctx.events, phase=ctx.actor)
+    cap = control_ir_inline_cap(ctx.read_cap_config)
 
     # #3629: `content_history`/`token_map` (set above, only when
     # `load_skill_body` ran) ride along in the SAME field shape regardless of
@@ -252,12 +251,14 @@ async def handle(op: LoadSkillIROp, ctx: OpContext) -> dict:
     history_fields: dict = {}
     if content_history is not None:
         history_fields["content_history"] = (
-            content_history[:cap] if len(content_history) > cap else content_history
+            byte_safe_prefix(content_history, cap)
+            if len(content_history.encode("utf-8")) > cap
+            else content_history
         )
         history_fields["token_map"] = location_token_map
         history_fields["skill_source_path"] = op.path
 
-    if len(content) > cap:
+    if len(content.encode("utf-8")) > cap:
         # #4431 (architect correction): was a bare `content[:cap]` char slice
         # with NO resume position returned at all — the note pointed at "the
         # full body is on disk" but gave no way to continue from where this
@@ -272,26 +273,31 @@ async def handle(op: LoadSkillIROp, ctx: OpContext) -> dict:
         # own #1209/#2335 algorithm) so `next_offset` names a genuine line
         # boundary `read_file(path=op.path, offset=next_offset)` can resume
         # from without re-showing or dropping a partial line.
+        #
+        # #4381 PR-5: measured in BYTES (UTF-8 encoded length), never
+        # len(str) — see file.py's own truncation loop, mirrored here.
         all_lines = content.splitlines(keepends=True)
         shown: list[str] = []
-        acc = 0
+        acc = 0  # bytes
         next_offset = 0
         for i, line in enumerate(all_lines):
-            if shown and acc + len(line) > cap:
+            line_bytes = len(line.encode("utf-8"))
+            if shown and acc + line_bytes > cap:
                 next_offset = i
                 break
-            if not shown and len(line) > cap:
+            if not shown and line_bytes > cap:
                 # A single line alone exceeds the cap (e.g. a minified/
-                # one-line body) — char-truncate it so `content` stays
-                # genuinely bounded; `read_file(offset=0)` on resume hits
-                # this exact same line and returns ITS OWN `next_char_offset`
-                # (file.py's #2335 mechanism), so no new field is needed here.
-                shown.append(line[:cap])
-                acc += cap
+                # one-line body) — byte-safe truncate it so `content` stays
+                # genuinely bounded (never split a multi-byte codepoint);
+                # `read_file(offset=0)` on resume hits this exact same line
+                # and returns ITS OWN `next_char_offset` (file.py's #2335
+                # mechanism), so no new field is needed here.
+                shown.append(byte_safe_prefix(line, cap))
+                acc += len(shown[-1].encode("utf-8"))
                 next_offset = i
                 break
             shown.append(line)
-            acc += len(line)
+            acc += line_bytes
             next_offset = i + 1
         truncated_content = "".join(shown)
         ctx.events.emit(

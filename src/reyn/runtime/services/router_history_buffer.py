@@ -174,41 +174,53 @@ _resource_budget_warned: "set[tuple[str, str | None]]" = set()
 
 
 def _check_resource_within_budget(
-    model: str, phase: "str | None", effective_trigger: int, events: Any,
+    model: str,
+    phase: "str | None",
+    effective_trigger: int,
+    events: Any,
+    read_cap_config: Any = None,
 ) -> None:
-    """#4381 PR-1: the invariant this SSoT now enforces — "a result that
+    """#4381 PR-1/PR-5: the invariant this SSoT enforces — "a result that
     passed the resource boundary must not exceed the budget boundary after
     conversion" (architect design, #4381). Two independent read-cap-vs-
     spill-cap mismatches (#4381's own reported incident, #4432's spill-loop
     guard) trace to this SAME class going unchecked: the resource boundary
-    (``control_ir_inline_cap``, CHARS — memory/transfer-scoped, model-
-    derived today; owner ruling may make it a model-independent config byte
-    value later, at which point THIS function's arguments alone can no
-    longer derive it and a config value must be threaded in — not done in
-    PR-1) and the budget boundary (``effective_trigger``, TOKENS — the
-    model's context window) are never compared anywhere before this PR, so
-    a resource-bounded result that looks "safe" in chars can still overflow
-    the budget boundary once converted.
+    (``control_ir_inline_cap``, BYTES as of PR-5 — memory/transfer-scoped,
+    model-INDEPENDENT config value as of PR-5) and the budget boundary
+    (``effective_trigger``, TOKENS — the model's context window) are never
+    compared anywhere before PR-1, so a resource-bounded result that looks
+    "safe" can still overflow the budget boundary once converted.
 
-    The conversion point is ``context_builder.INLINE_CAP_CHARS_PER_TOKEN``
-    — the ONE named chars→tokens conversion (architect: name it once, don't
-    re-derive the same ratio elsewhere). Rounded UP (ceil): understating the
-    resource bound's token cost would make this check too permissive, the
-    wrong direction for a safety check.
+    ``read_cap_config`` (PR-5): the ``ReadCapConfig`` to check against —
+    threaded from ``RouterHistoryBuffer`` (the caller with a live config
+    reference). ``None`` (a caller with no config threaded, e.g.
+    ``ContextBudgetAdvisor``'s own call today) falls back to
+    ``control_ir_inline_cap``'s own ``config=None`` default
+    (``MAX_CONTROL_IR_RESULT_INLINE_BYTES``) — a known, flagged gap, not a
+    silent one: a config value that DIFFERS from the shipped default is
+    only checked via the caller that threads it.
+
+    The conversion point is ``context_builder.INLINE_CAP_BYTES_PER_TOKEN``
+    — the ONE named bytes→tokens conversion (architect: name it once,
+    don't re-derive the same ratio elsewhere; PR-5 renamed this from
+    ``INLINE_CAP_CHARS_PER_TOKEN`` since the resource bound switched from
+    chars to bytes — reusing the old name under a new unit would silently
+    reopen the exact drift class this constant exists to prevent). Rounded
+    UP (ceil): understating the resource bound's token cost would make
+    this check too permissive, the wrong direction for a safety check.
 
     Warn-once per ``(model, phase)`` (not per call — this SSoT is called on
     every trigger resolution, so warning every time would flood the log)
     via a ``resource_cap_exceeds_budget_trigger`` audit-event. Detection
-    only in PR-1 — no value is clamped; the class closes once the resource
-    boundary itself moves to a model-independent byte value (later PR).
+    only — no value is clamped.
     """
     from reyn.core.context_builder import (
-        INLINE_CAP_CHARS_PER_TOKEN,
+        INLINE_CAP_BYTES_PER_TOKEN,
         control_ir_inline_cap,
     )
 
-    resource_bound_chars = control_ir_inline_cap(model, events=events, phase=phase)
-    resource_bound_tokens = -(-resource_bound_chars // INLINE_CAP_CHARS_PER_TOKEN)  # ceil
+    resource_bound_bytes = control_ir_inline_cap(read_cap_config)
+    resource_bound_tokens = -(-resource_bound_bytes // INLINE_CAP_BYTES_PER_TOKEN)  # ceil
     if resource_bound_tokens <= effective_trigger:
         return
     key = (model, phase)
@@ -219,14 +231,19 @@ def _check_resource_within_budget(
         events.emit(
             "resource_cap_exceeds_budget_trigger",
             model=model, phase=phase or "",
-            resource_bound_chars=resource_bound_chars,
+            resource_bound_bytes=resource_bound_bytes,
             resource_bound_tokens=resource_bound_tokens,
             effective_trigger=effective_trigger,
         )
 
 
 def resolve_effective_trigger_and_budgets(
-    compaction_controller: Any, model: str, events: Any, *, phase: "str | None" = None,
+    compaction_controller: Any,
+    model: str,
+    events: Any,
+    *,
+    phase: "str | None" = None,
+    read_cap_config: Any = None,
 ) -> "tuple[int, int, int]":
     """Return ``(effective_trigger, head_budget, tail_budget)`` — #2957 PR-B
     single SSoT for this lookup.
@@ -247,6 +264,12 @@ def resolve_effective_trigger_and_budgets(
     defaults to ``None`` for both existing callers, neither of which has a
     phase concept today; a future phase-aware caller can pass a real value
     without a signature change.
+
+    ``read_cap_config`` (#4381 PR-5): the ``ReadCapConfig`` to check the
+    resource bound against — threaded from ``RouterHistoryBuffer``, which
+    has a live config reference; ``ContextBudgetAdvisor``'s own call
+    passes none today (falls back to the shipped default — see
+    ``_check_resource_within_budget``'s own docstring for what that means).
     """
     engine = getattr(compaction_controller, "_engine", None) if compaction_controller is not None else None
     budgets = getattr(engine, "budgets", None)
@@ -259,7 +282,7 @@ def resolve_effective_trigger_and_budgets(
         effective_trigger = get_max_input_tokens(model, events=events)
         fallback = effective_trigger // 4
         head_budget, tail_budget = fallback, fallback
-    _check_resource_within_budget(model, phase, effective_trigger, events)
+    _check_resource_within_budget(model, phase, effective_trigger, events, read_cap_config)
     return effective_trigger, head_budget, tail_budget
 
 
@@ -287,6 +310,7 @@ class RouterHistoryBuffer:
         non_interactive: bool,
         reasoning: Any = None,            # ReasoningConfig — .continuity / .recent_turns (#1652/②)
         project_dir_fn: "Callable[[], Any] | None" = None,  # #3629: zero-arg → CURRENT workspace base_dir
+        read_cap: Any = None,             # #4381 PR-5: ReadCapConfig — the resource bound to check budgets against
     ) -> None:
         self._history_fn = history_fn
         self._compaction = compaction
@@ -297,6 +321,9 @@ class RouterHistoryBuffer:
         self._router_host = router_host
         self._action_retrieval = action_retrieval
         self._non_interactive = non_interactive
+        # #4381 PR-5: threaded into resolve_effective_trigger_and_budgets's
+        # resource/budget invariant check (_check_resource_within_budget).
+        self._read_cap = read_cap
         # #1652/②: cross-turn reasoning rides the wire assistant messages
         # (native re-attach) instead of a router-SP text section. ReasoningConfig
         # gates it (.continuity) and bounds it (.recent_turns). None → off.
@@ -439,6 +466,7 @@ class RouterHistoryBuffer:
         """
         return resolve_effective_trigger_and_budgets(
             self._compaction_controller, self._model, self._events,
+            read_cap_config=self._read_cap,
         )
 
     def _incremental_elide_total(

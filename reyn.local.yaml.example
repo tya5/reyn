@@ -626,6 +626,25 @@
 
 
 # -----------------------------------------------------------------------------
+# read_cap: the per-result inline cap for file.read / load_skill (#4381 PR-5,
+# architect design). A RESOURCE BOUND — unit is BYTES, model-INDEPENDENT
+# (never scaled by the resolved model's context window), protecting memory/
+# transfer, not the model's token budget (that's a separate, budget-bound
+# concern: offload/compaction/reactive-shrink). Omit the block to keep the
+# 10 KiB default below (unchanged behaviour); a non-positive/non-numeric
+# value falls back to that default too.
+#
+# Why 10 KiB: both file.read (char_offset, #4432) and load_skill (defers to
+# read_file(offset=next_offset), #4431) gained a resume mechanism the same
+# night this default was set — a truncated read loses at most one
+# round-trip, not the rest of the content, which is what makes a small
+# default a safe default rather than an arbitrary one.
+# -----------------------------------------------------------------------------
+# read_cap:
+#   inline_bytes: 10240   # 10 KiB — ceiling on a single inline read/load result
+
+
+# -----------------------------------------------------------------------------
 # tool_use: the chat-layer tool-use scheme x transport selector (#1593;
 # FP-0066 P4b, #3247). ``scheme`` is the PRESENTATION axis (category /
 # enumerate-all / retrieval — how capabilities are shown/discovered);
