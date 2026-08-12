@@ -47,6 +47,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import time
 from collections import OrderedDict
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Awaitable, Callable
@@ -77,6 +78,22 @@ logger = logging.getLogger(__name__)
 # a crash (unlike the two items below, both of which get a real fix, not a
 # lock).
 _token_counter_fallback_warned: bool = False
+
+# #4395: a FAILURE, not a fallback COUNT, is what needs "between every-time
+# and never-again". litellm.token_counter's own except-clause below already
+# treats "fails once" as possibly transient (retries next call) — correct
+# for a one-off. It becomes the WORST behaviour under a PERSISTENT,
+# environmental failure (SSL egress blocked, no proxy reachable): every
+# distinct text hits an uncached miss and pays the full call+timeout again,
+# and estimate_tokens() runs synchronously from turn processing, so that
+# wait blocks the UI each time (owner-reported: "reyn の UI が固まる",
+# consistent with — not proven caused by — this shape, #4395).
+# A cooldown, not a permanent give-up: an environmental failure CAN clear
+# (a proxy comes up, egress opens) and this must not need a restart to
+# notice. `time.monotonic()` — a wall-clock jump (NTP step, sleep/resume)
+# must never shorten OR lengthen the wait.
+_TOKEN_COUNTER_COOLDOWN_SECONDS = 60.0
+_token_counter_cooldown_until: float = 0.0
 
 # Process-lifetime cache: (model, text_hash) -> int. Keyed by a hash, not the
 # raw text, so an entry stays tiny regardless of the source message's length
@@ -157,16 +174,22 @@ def estimate_tokens(text: str, model: str, *, use_chars4: bool = False) -> int:
     """Estimate tokens for a text string.
 
     Axis 10: uses litellm.token_counter by default; falls back to chars//4
-    only when litellm.token_counter itself raises (a genuine failure), and
-    emits ``token_counter_fallback`` the first time that happens in this
-    process (subsequent calls retry litellm.token_counter as normal — the
-    warning is a warn-once notice, not a record of a permanent fallback).
+    when litellm.token_counter itself raises (a genuine failure), and emits
+    ``token_counter_fallback`` the first time that happens in this process.
 
     ``count == 0`` (e.g. estimating an empty string) is a valid litellm
     result, not a failure, and does NOT trigger the fallback path (#2961).
 
     Results are cached per (model, text-hash) for the process's lifetime,
-    bounded by an LRU eviction policy (see ``_token_cache`` docstring above).
+    bounded by an LRU eviction policy (see ``_token_cache`` docstring above)
+    — but that cache is keyed by TEXT, so it cannot protect a genuinely
+    persistent failure: a new text string is a cache miss regardless.
+    #4395: a failure enters a ``_TOKEN_COUNTER_COOLDOWN_SECONDS`` cooldown —
+    every call inside it skips litellm.token_counter entirely and goes
+    straight to chars//4, no wait paid. This is deliberately a cooldown, not
+    a permanent give-up: the failure MAY be transient (a proxy comes back,
+    egress opens), and estimate_tokens() has no restart hook to notice that
+    on its own — the next call after the cooldown expires re-probes once.
     """
     global _token_counter_fallback_warned
     if use_chars4:
@@ -175,43 +198,54 @@ def estimate_tokens(text: str, model: str, *, use_chars4: bool = False) -> int:
     cached = _token_cache_get(cache_key)
     if cached is not None:
         return cached
-    try:
-        # perf/log-routing chokepoint: per-turn token sizing runs BEFORE the
-        # first completion, so this can be the FIRST litellm import in the
-        # process — funnel it through ensure_litellm_ready() so litellm's
-        # import-time console log routing (#2929) wraps it too (idempotent;
-        # cheap on 2nd+ call).
-        from reyn.llm.litellm_bootstrap import ensure_litellm_ready
-        ensure_litellm_ready()
-        import litellm
-        m = model or "gpt-3.5-turbo"
-        count = litellm.token_counter(model=m, text=text or "")
-        # #2961: litellm.token_counter returns 0 (not an exception) for an
-        # empty string — that is the correct answer, not a failure. Only a
-        # raised exception (the `except` below) is a genuine tokenizer
-        # failure that should fall back to chars//4.
-        if count is not None and count >= 0:
-            _token_cache_put(cache_key, count)
-            return count
-    except Exception:
-        pass
-    # Fallback path — reached only when litellm.token_counter raised (or, in
-    # principle, returned something other than a non-negative int).
+    global _token_counter_cooldown_until
+    in_cooldown = time.monotonic() < _token_counter_cooldown_until
+    if not in_cooldown:
+        try:
+            # perf/log-routing chokepoint: per-turn token sizing runs BEFORE
+            # the first completion, so this can be the FIRST litellm import
+            # in the process — funnel it through ensure_litellm_ready() so
+            # litellm's import-time console log routing (#2929) wraps it too
+            # (idempotent; cheap on 2nd+ call).
+            from reyn.llm.litellm_bootstrap import ensure_litellm_ready
+            ensure_litellm_ready()
+            import litellm
+            m = model or "gpt-3.5-turbo"
+            count = litellm.token_counter(model=m, text=text or "")
+            # #2961: litellm.token_counter returns 0 (not an exception) for
+            # an empty string — that is the correct answer, not a failure.
+            # Only a raised exception (the `except` below) is a genuine
+            # tokenizer failure that should fall back to chars//4.
+            if count is not None and count >= 0:
+                _token_counter_cooldown_until = 0.0  # healthy — clear any cooldown
+                _token_cache_put(cache_key, count)
+                return count
+        except Exception:
+            _token_counter_cooldown_until = (
+                time.monotonic() + _TOKEN_COUNTER_COOLDOWN_SECONDS
+            )
+    # Fallback path — reached when litellm.token_counter raised (or, in
+    # principle, returned something other than a non-negative int), OR the
+    # cooldown above skipped the attempt entirely.
     # #3671 P1: check-then-set on this shared global has no lock — a
     # concurrent caller could also observe False before this one sets it
     # True, firing the warn-once notice more than once. Left unguarded on
     # purpose (owner directive: no lock without a real correctness need):
     # the only consequence is a duplicate log line, never a wrong count or
     # a crash (contrast ``_token_cache`` above and ``ensure_litellm_ready``,
-    # ``_get_httpx_exc_types`` in llm.py — those get real fixes).
+    # ``_get_httpx_exc_types`` in llm.py — those get real fixes). Same
+    # reasoning covers ``_token_counter_cooldown_until`` above: the worst
+    # race is one caller re-probing litellm.token_counter slightly early or
+    # late, never a wrong count.
     if not _token_counter_fallback_warned:
         _token_counter_fallback_warned = True
         logger.warning(
-            "litellm.token_counter failed for model=%r; "
-            "using chars//4 for this call. This is a warn-once notice, not "
-            "a record of a permanent fallback: every subsequent call to "
-            "estimate_tokens() retries litellm.token_counter normally.",
+            "litellm.token_counter failed for model=%r; using chars//4 for "
+            "this call and skipping the next %.0fs of calls (persistent-"
+            "failure cooldown, #4395) — a later call re-probes automatically, "
+            "no restart needed if the underlying cause clears.",
             model,
+            _TOKEN_COUNTER_COOLDOWN_SECONDS,
         )
     result = max(1, len(text or "") // 4)
     _token_cache_put(cache_key, result)
