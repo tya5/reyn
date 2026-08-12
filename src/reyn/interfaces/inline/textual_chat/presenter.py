@@ -452,8 +452,88 @@ class ReynPresenter:
         # begin_image_resolution's own docstring. A plain dict (present() is
         # only ever awaited from the app's own single-threaded event loop, so
         # no lock is needed for this read/write pattern).
+        #
+        # #4376: reyn's chat FlowView model never sheds an individual entry
+        # mid-session (only a full ``conversation.clear()`` on session
+        # switch) — so there is no "left the model" signal to bind this
+        # cache's lifetime to, the way flowview's own v0.17.0 memory-control
+        # guide recommends for ITS OWN caches. Falling back to a total-byte
+        # cap instead (see :meth:`_store_image_resolution`): without one,
+        # every unique image `src` a session has ever resolved stays cached
+        # for the session's full lifetime — #3876/#3872's class of bug
+        # (unbounded accumulation, no eviction path), this time via image
+        # bodies (up to 5MB each, ``image_fetch.DEFAULT_MAX_BYTES``) instead
+        # of a list().
         self._image_cache: "dict[str, object]" = {}
         self._image_inflight: "set[str]" = set()
+        from reyn.core.present.image_fetch import DEFAULT_MAX_BYTES
+
+        # Derived from DEFAULT_MAX_BYTES rather than a fresh magic number —
+        # lead-coder's explicit requirement (#4376): a per-entry cap and a
+        # total cap that are independently-chosen numbers drift out of sync
+        # the moment only one of them is retuned. 10x is a starting bound
+        # (matches DEFAULT_MAX_BYTES's own "a starting number, not a
+        # measured one" spirit) — room for a normal chat's worth of images
+        # without holding every image body a long session has ever shown.
+        self._image_cache_byte_cap = DEFAULT_MAX_BYTES * 10
+        self._image_cache_bytes = 0
+
+    def _store_image_resolution(self, src: str, resolution: object) -> None:
+        """The ONE mutation point for :attr:`_image_cache` writes (#4376),
+        wrapping the dict assignment every call site used to do directly.
+        Enforces :attr:`_image_cache_byte_cap` by evicting the OLDEST
+        entries (FIFO — dict preserves insertion order, and `del` + re-
+        assign moves an updated key to the end) until the new total fits.
+
+        A single very-large entry (already itself over the cap — the file
+        size cap is per-entry, so this cannot happen with a well-behaved
+        fetch, but a future change to either constant should not corrupt
+        state) is kept rather than evicted-then-immediately-re-evicted:
+        with everything else already gone, evicting it too would leave the
+        src the caller JUST resolved unexpectedly absent from its own
+        cache.
+        """
+        body = getattr(resolution, "body", b"")
+        size = len(body) if isinstance(body, (bytes, bytearray)) else 0
+        if src in self._image_cache:
+            old_body = getattr(self._image_cache[src], "body", b"")
+            self._image_cache_bytes -= (
+                len(old_body) if isinstance(old_body, (bytes, bytearray)) else 0
+            )
+            del self._image_cache[src]  # re-inserted below, now the newest
+        self._image_cache[src] = resolution
+        self._image_cache_bytes += size
+        while self._image_cache_bytes > self._image_cache_byte_cap and len(self._image_cache) > 1:
+            oldest_src = next(iter(self._image_cache))
+            evicted = self._image_cache.pop(oldest_src)
+            evicted_body = getattr(evicted, "body", b"")
+            self._image_cache_bytes -= (
+                len(evicted_body) if isinstance(evicted_body, (bytes, bytearray)) else 0
+            )
+
+    @property
+    def image_cache_size_bytes(self) -> int:
+        """Public, snapshot-style read of the current total cached image
+        body bytes (#4376) — mirrors ``HookBus.subscriber_count``'s own
+        "public, non-private surface for tests/observability" pattern, so
+        the bound this class enforces on itself is externally checkable
+        without reaching into :attr:`_image_cache` directly."""
+        return self._image_cache_bytes
+
+    @property
+    def image_cache_byte_cap(self) -> int:
+        """Public, read-only view of the total-byte cap this instance
+        enforces (#4376) — set once at construction, derived from
+        ``image_fetch.DEFAULT_MAX_BYTES``."""
+        return self._image_cache_byte_cap
+
+    def has_cached_image(self, src: str) -> bool:
+        """Whether *src* currently has a settled resolution in the cache
+        (#4376) — the same membership check :meth:`begin_image_resolution`
+        uses internally, exposed so a caller (or a test) can observe
+        whether an entry survived eviction without reaching into
+        :attr:`_image_cache` directly."""
+        return src in self._image_cache
 
     def begin_image_resolution(
         self,
@@ -499,11 +579,11 @@ class ReynPresenter:
             body, content_type = await fetch_image_bytes(
                 src, allowed_schemes=allowed_schemes
             )
-            self._image_cache[src] = ImageResolution(
-                ok=True, body=body, content_type=content_type
+            self._store_image_resolution(
+                src, ImageResolution(ok=True, body=body, content_type=content_type)
             )
         except ImageFetchError as exc:
-            self._image_cache[src] = ImageResolution(ok=False, error=str(exc))
+            self._store_image_resolution(src, ImageResolution(ok=False, error=str(exc)))
         except Exception:
             # Cosmetic (a failed image render must never break the pump) —
             # same guard shape as _begin_running_indicator's own try/except.
@@ -512,8 +592,8 @@ class ReynPresenter:
             logging.getLogger(__name__).exception(
                 "textual chat: image resolution crashed for %r", src
             )
-            self._image_cache[src] = ImageResolution(
-                ok=False, error="internal error resolving the image"
+            self._store_image_resolution(
+                src, ImageResolution(ok=False, error="internal error resolving the image")
             )
         finally:
             self._image_inflight.discard(src)
