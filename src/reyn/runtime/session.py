@@ -26,6 +26,7 @@ from reyn.config import (  # noqa: F401
     AuditEventsConfig,
     CostWarnConfig,
     EmbeddingConfig,
+    HistoryResidentConfig,
     MultimodalConfig,
     OffloadConfig,
     OnLimitConfig,
@@ -918,6 +919,9 @@ class Session:
         # #4381 PR-5: the resource-bound per-result inline cap (file.py read op +
         # load_skill.py). None → context_builder's own model-independent default.
         read_cap_config: "ReadCapConfig | None" = None,
+        # #4387 Phase B ③: the resource-bound cap on self.history's resident
+        # footprint (bytes). None → HistoryResidentConfig's own default (256 MiB).
+        history_resident_config: "HistoryResidentConfig | None" = None,
         state_log: StateLog | None = None,
         budget_tracker: BudgetTracker | None = None,
         snapshot_path: "Path | None" = None,
@@ -1044,6 +1048,9 @@ class Session:
         # resource/budget invariant check, and into OpContext.read_cap_config
         # for file.py's/load_skill.py's own read op (via RouterOpContextSource).
         self._read_cap_config = read_cap_config
+        # #4387 Phase B ③: bounds self.history's resident footprint —
+        # consulted by _append_history's eviction hook (below).
+        self._history_resident_config = history_resident_config or HistoryResidentConfig()
         # Single MediaStore instance per Session (#383 PR-C, see session-construction.md#multimodal-media)
         from reyn.data.workspace.media_store import MediaStore, MediaStoreConfig
         if multimodal_config is not None:
@@ -2856,6 +2863,62 @@ class Session:
         self.history.append(msg)
         with self.history_path.open("a", encoding="utf-8") as f:
             f.write(json.dumps(asdict(msg), ensure_ascii=False) + "\n")
+        self._evict_oldest_resident_entries()
+
+    def _evict_oldest_resident_entries(self) -> int:
+        """#4387 Phase B ③: cap ``self.history``'s in-memory footprint at
+        ``self._history_resident_config.max_bytes``, evicting from the FRONT
+        (oldest first) — the symmetric, opposite-direction operation of
+        :meth:`_load_older_entries`'s prepend (architect's #4387 derivation:
+        "追い出しは既に在って動いている操作の逆" — eviction is not
+        information loss, since ``history.jsonl`` is untouched and anything
+        evicted reloads on demand via the already-shipped backward-hydrate
+        path, #4400/#4411).
+
+        Recomputes the total resident size from scratch each call rather
+        than maintaining a running counter deliberately: ``self.history`` has
+        multiple direct-mutation call sites elsewhere (assignment, slicing —
+        e.g. ``_load_older_entries``'s own ``self.history[0:0] = parsed``,
+        and tests that reassign ``s.history`` directly to simulate a bounded
+        load), so an incrementally-maintained counter would silently drift
+        from the true resident set the first time any of those paths ran
+        without also updating it. Recomputing is O(n) per append, but n is
+        bounded by construction (that is the entire point of this cap), so
+        the cost stays small — and the invariant "resident size <= cap after
+        every append" holds by construction, with no cached state that could
+        desync from reality.
+
+        ONLY called from the tail-growth path (:meth:`_append_history`, a
+        normal turn appending the newest entry) — deliberately NOT called
+        after :meth:`_load_older_entries`'s backward-prepend. A caller that
+        explicitly asks to page further back (TUI scrollback / search /
+        ``_active_branch_history``'s rewind-visibility extension) wants those
+        entries resident; evicting them again immediately would silently
+        defeat the very feature #4400/#4411 built, thrashing between
+        "extend backward" and "evict the same entries straight back out."
+        A deep page-back can therefore transiently exceed the cap — that is
+        an explicit, bounded (by ``min_lines``) request the caller made, not
+        the unbounded tail-growth this cap exists to bound.
+
+        Returns the count evicted (0 = already within budget)."""
+        cap = self._history_resident_config.max_bytes
+        sizes = [
+            len(json.dumps(asdict(m), ensure_ascii=False).encode("utf-8"))
+            for m in self.history
+        ]
+        total = sum(sizes)
+        evict_count = 0
+        # Never evict the newest (last) entry, even if it alone exceeds the
+        # cap on its own — the entry just appended must stay resident so the
+        # turn that produced it remains immediately usable; an oversized
+        # single entry is a cap-sizing question for the operator, not
+        # something this method silently drops.
+        while total > cap and evict_count < len(sizes) - 1:
+            total -= sizes[evict_count]
+            evict_count += 1
+        if evict_count:
+            del self.history[:evict_count]
+        return evict_count
 
     def _active_branch_history(self) -> "list[ChatMessage]":
         """#2360: the conversation turns visible on the current active branch.

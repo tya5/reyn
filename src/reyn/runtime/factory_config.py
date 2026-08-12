@@ -43,6 +43,11 @@ class SessionFactoryConfig:
     # per-result inline cap (file.py's read op + load_skill.py). Same
     # shape as web_fetch_config: a plain value, not a per-turn supplier.
     read_cap_config: Any
+    # #4387 Phase B ③: reyn.yaml history_resident.* (max_bytes) — the
+    # resource-bound cap on Session.history's in-memory footprint. Same
+    # shape/role as read_cap_config (#4431's role split): bytes,
+    # model-independent, config-driven.
+    history_resident_config: Any
     action_retrieval_config: Any
     embedding_config: Any
     router_config: Any
@@ -122,6 +127,8 @@ class SessionFactoryConfig:
             web_fetch_config=config.web_fetch,
             # #4381 PR-5: the resource-bound read cap config.
             read_cap_config=config.read_cap,
+            # #4387 Phase B ③: the resource-bound history-resident cap config.
+            history_resident_config=config.history_resident,
             action_retrieval_config=config.action_retrieval,
             embedding_config=config.embedding,
             router_config=config.llm.router,

@@ -126,6 +126,30 @@ def _new_agent_history_entries(
     matches are returned. This scopes reply harvesting to the caller's
     own chain so concurrent ``send_to_agent_impl`` calls (e.g. via the
     A2A FastAPI router) don't pick up each other's replies.
+
+    #4387 Phase B ③ re-audit (checked, not assumed — lead-coder's explicit
+    instruction: "prepend で通る ≠ evict で通る"): ``self.history`` can now
+    also shrink from the FRONT (oldest-first eviction, bounding resident
+    memory — the symmetric, opposite-direction operation of the #4404
+    prepend fix this function's ``seq``-based filter was originally built
+    for). Eviction removes only the entries with the LOWEST ``seq`` values
+    currently resident, so the common case — normal turn-by-turn growth
+    evicting entries OLDER than any live ``baseline_seq`` — is safe by the
+    same construction #4404 already relies on (a coordinate filter, immune
+    to ANY reshuffling of position, prepend or evict alike).
+
+    One genuine, narrow limitation this re-audit surfaced (see
+    ``tests/runtime/test_4387_history_resident_eviction.py::
+    test_mcp_baseline_harvest_narrow_gap_when_the_harvest_window_itself_exceeds_the_cap``):
+    if growth BETWEEN capturing ``baseline_seq`` and calling this function
+    itself exceeds the resident byte cap, eviction can remove even
+    post-baseline entries (whichever are oldest among what's resident at
+    eviction time) — this function would then under-report, silently
+    missing an early reply from a very large harvest window. Inherent to
+    any byte-bounded resident cache, not a defect fixable here without
+    unbounding the cache entirely (which would reopen #4387's own reason
+    for existing) — documented as a checked, honest boundary rather than
+    assumed safe.
     """
     out: list[str] = []
     for msg in session.history:

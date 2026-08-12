@@ -30,6 +30,7 @@ from reyn.config.chat import (
     ChatConfig,
     CompactionConfig,
     CostWarnConfig,
+    HistoryResidentConfig,
     LoopConfig,
     OffloadConfig,
     OnLimitConfig,
@@ -218,6 +219,10 @@ class ReynConfig:
     # bytes, model-independent, config-driven (architect design). Default
     # 10 KiB.
     read_cap: ReadCapConfig = field(default_factory=ReadCapConfig)
+    # #4387 Phase B ③: the resource-bound cap on Session.history's resident
+    # footprint — bytes, model-independent, config-driven (#4431's role
+    # split, same shape as read_cap above). Default 256 MiB.
+    history_resident: HistoryResidentConfig = field(default_factory=HistoryResidentConfig)
     # FP-0022 follow-up: declarative SSL config for web_fetch + MCP registry.
     # Priority: web_fetch.ca_bundle → web_fetch.verify_ssl → SSL_VERIFY env →
     # litellm.ssl_verify → SSL_CERT_FILE → True (default).

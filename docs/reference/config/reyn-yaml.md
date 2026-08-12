@@ -1747,6 +1747,21 @@ read_cap:
 
 **Why 10 KiB**: both consumers gained a resume mechanism the same night this default was chosen — `file.read` via `char_offset` (#4432), `load_skill` via deferring to `read_file(offset=next_offset)` (#4431). A truncated read loses at most one round-trip, not the rest of the content, which is what makes a small default safe rather than arbitrary. Omitting the block keeps this default (behaviour unchanged).
 
+## `history_resident` block
+
+Caps `Session.history`'s in-memory footprint (#4387 Phase B ③, applying #4431's resource/budget role split — see the `read_cap` block above for the full rationale). Same role as `read_cap`: a **resource bound**, measured in **bytes**, **model-independent**. Deliberately a different axis from the on-demand backward-read window (`_HISTORY_HYDRATE_MIN_LINES`, measured in lines) — the two answer different questions ("how much stays resident" vs. "how much is read per on-demand fetch") and are kept as separate knobs on purpose, per #4387's own architect review naming the risk of conflating them.
+
+```yaml
+history_resident:
+  max_bytes: 268435456   # 256 MiB — ceiling on Session.history's resident size
+```
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `max_bytes` | int | `268435456` (256 MiB) | Ceiling, in bytes, on `Session.history`'s in-memory footprint. Once exceeded, the oldest resident entries are evicted (never the just-appended newest one) until the cap is met again. A non-positive or non-numeric value falls back to the default. |
+
+Eviction is not information loss: `Session.history` is a cache, not the source of truth — `history.jsonl` (append-only, on disk) is, and every entry evicted from memory reloads on demand via the already-shipped backward-hydrate path (TUI scrollback paging, in-conversation search, and WAL rewind visibility all already page older entries back in as needed). This closes an unbounded-growth defect (`self.history` previously had no cap at all — see #4387) independent of any claim about what fraction of a given memory ceiling `history` itself accounts for, which this config does not measure or claim to fix.
+
 ## MCP servers
 
 External tool servers reyn can call via the [Model Context Protocol](../../concepts/tools-integrations/mcp.md). Each entry under `mcp.servers:` is keyed by a short name (the same name the skill declares in `permissions.mcp` and emits in `mcp` ops).

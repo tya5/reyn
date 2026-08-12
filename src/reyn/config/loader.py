@@ -11,6 +11,7 @@ from reyn.config.chat import (  # #1682 #3 cross-section
     _build_chat_config,
     _build_cost_config,  # #1682 #3: cost builder lives in chat
     _build_cost_warn_config,
+    _build_history_resident_config,
     _build_offload_config,
     _build_read_cap_config,
     _build_render_template_config,
@@ -820,6 +821,7 @@ def load_config(cwd: Path | None = None) -> ReynConfig:
     offload = _build_offload_config(merged.get("offload"))
     render_template = _build_render_template_config(merged.get("render_template"))
     read_cap = _build_read_cap_config(merged.get("read_cap"))
+    history_resident = _build_history_resident_config(merged.get("history_resident"))
     # #4174 T3: model / models / model_class_by_purpose / api_base /
     # prompt_cache_enabled moved from top-level ReynConfig fields into
     # ``llm:`` — _build_llm_config parses all of it (router/retry AND the
@@ -851,6 +853,7 @@ def load_config(cwd: Path | None = None) -> ReynConfig:
         offload=offload,
         render_template=render_template,
         read_cap=read_cap,
+        history_resident=history_resident,
         web_fetch=_build_web_fetch_config(merged.get("web_fetch")),
         gateway=_build_gateway_config(merged.get("gateway")),
         multimodal=_build_multimodal_config(merged.get("multimodal")),
