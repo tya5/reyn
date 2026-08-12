@@ -20,11 +20,11 @@ import time
 
 def _run(src_root: str, code: str) -> subprocess.CompletedProcess:
     env = {**os.environ, "PYTHONPATH": src_root}
+    # #4397: no timeout= — CI's own per-test pytest-timeout is the kill switch.
     return subprocess.run(
         [sys.executable, "-c", code],
         capture_output=True,
         text=True,
-        timeout=30,
         env=env,
     )
 

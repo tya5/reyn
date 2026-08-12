@@ -53,10 +53,10 @@ pytestmark = [
 
 def _container_exists(container_id: str) -> bool:
     """True if a container with ``container_id`` still exists (running or not)."""
+    # #4397: no timeout= — CI's own per-test pytest-timeout is the kill switch.
     res = subprocess.run(
         ["docker", "ps", "-a", "-q", "--filter", f"id={container_id}"],
         capture_output=True,
-        timeout=30,
         check=False,
     )
     return bool(res.stdout.strip())
@@ -79,11 +79,11 @@ def _require_shared_bind_mount(tmp_path_factory: pytest.TempPathFactory) -> None
     """
     probe_dir = tmp_path_factory.mktemp("mount_probe")
     (probe_dir / "sentinel").write_text("mount-ok")
+    # #4397: no timeout= — CI's own per-test pytest-timeout is the kill switch.
     res = subprocess.run(
         ["docker", "run", "--rm", "-v", f"{probe_dir}:/probe:ro", _E2E_IMAGE,
          "cat", "/probe/sentinel"],
         capture_output=True,
-        timeout=180,
         check=False,
     )
     if res.returncode != 0 or res.stdout.strip() != b"mount-ok":

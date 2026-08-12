@@ -30,11 +30,13 @@ import textwrap
 
 def _run(src_root: str, script: str) -> subprocess.CompletedProcess:
     env = {**os.environ, "PYTHONPATH": src_root}
+    # #4397: no timeout= here — a hung subprocess is CI's own per-test
+    # pytest-timeout kill switch's job, not a shorter test-owned bound
+    # duplicating it (testing.md).
     return subprocess.run(
         [sys.executable, "-c", textwrap.dedent(script)],
         capture_output=True,
         text=True,
-        timeout=30,
         env=env,
     )
 

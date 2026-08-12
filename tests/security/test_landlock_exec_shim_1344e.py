@@ -134,8 +134,9 @@ def test_main_subprocess_refuses_when_unavailable(out_of_process_reyn: str):
     # Run the shim against the reyn under test (not a venv-installed copy) by
     # pinning PYTHONPATH to this checkout's src root (env-dependent path lesson).
     env = {**os.environ, "PYTHONPATH": out_of_process_reyn}
+    # #4397: no timeout= — CI's own per-test pytest-timeout is the kill switch.
     proc = subprocess.run(
-        [exe, *argv], capture_output=True, text=True, timeout=30, env=env,
+        [exe, *argv], capture_output=True, text=True, env=env,
     )
     assert proc.returncode == 2  # the refuse exit code
     assert "Landlock unavailable" in proc.stderr
@@ -168,11 +169,11 @@ def _shim_run(
     from reyn.security.sandbox.backends.landlock import LandlockBackend
 
     wrapped = LandlockBackend().wrap_command(argv, policy)
+    # #4397: no timeout= — CI's own per-test pytest-timeout is the kill switch.
     return subprocess.run(
         wrapped.argv,
         capture_output=True,
         text=True,
-        timeout=60,
         stdin=subprocess.DEVNULL,
         env={"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "PYTHONPATH": src_root},
     )

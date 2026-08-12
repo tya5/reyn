@@ -173,7 +173,8 @@ def test_tilde_write_grant_actually_permits_the_write(tmp_path):
             SandboxPolicy(write_paths=[f"~/{target_dir.name}"], deny_subprocess=False),
         )
         try:
-            result = subprocess.run(wrapped.argv, capture_output=True, timeout=30)
+            # #4397: no timeout= — CI's own per-test pytest-timeout is the kill switch.
+            result = subprocess.run(wrapped.argv, capture_output=True)
         finally:
             wrapped.cleanup()
 
@@ -242,7 +243,8 @@ def test_default_mcp_policy_still_denies_credential_paths(deny_path):
     policy = MCPClient(_stdio(command="npx"))._build_mcp_sandbox_policy()
     wrapped = backend.wrap_command([*probe, str(target)], policy)
     try:
-        result = subprocess.run(wrapped.argv, capture_output=True, timeout=30)
+        # #4397: no timeout= — CI's own per-test pytest-timeout is the kill switch.
+        result = subprocess.run(wrapped.argv, capture_output=True)
     finally:
         wrapped.cleanup()
 

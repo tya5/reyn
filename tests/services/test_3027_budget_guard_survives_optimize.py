@@ -46,7 +46,8 @@ def _run(src_root: str, script: str, *, optimize: bool) -> subprocess.CompletedP
     args += ["-c", script]
     env = dict(os.environ)
     env["PYTHONPATH"] = src_root + os.pathsep + env.get("PYTHONPATH", "")
-    return subprocess.run(args, capture_output=True, text=True, timeout=60, env=env)
+    # #4397: no timeout= — CI's own per-test pytest-timeout is the kill switch.
+    return subprocess.run(args, capture_output=True, text=True, env=env)
 
 
 def test_effective_trigger_guard_fires_under_dash_o(out_of_process_reyn) -> None:

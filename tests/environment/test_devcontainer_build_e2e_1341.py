@@ -58,15 +58,15 @@ def _write_build_devcontainer(ws: Path, marker: str, *, extra_run: str = "") -> 
 
 
 def _exec(container_id: str, *cmd: str) -> subprocess.CompletedProcess:
+    # #4397: no timeout= — CI's own per-test pytest-timeout is the kill switch.
     return subprocess.run(
         ["docker", "exec", container_id, *cmd],
-        capture_output=True, timeout=60, check=False,
+        capture_output=True, check=False,
     )
 
 
 def _rmi(tag: str) -> None:
-    subprocess.run(["docker", "rmi", "-f", tag], capture_output=True,
-                   timeout=60, check=False)
+    subprocess.run(["docker", "rmi", "-f", tag], capture_output=True, check=False)
 
 
 def test_build_based_devcontainer_builds_and_runs(tmp_path: Path) -> None:
@@ -94,7 +94,7 @@ def test_build_based_devcontainer_builds_and_runs(tmp_path: Path) -> None:
         # the content-addressed image tag actually exists locally
         inspect = subprocess.run(
             ["docker", "image", "inspect", tag],
-            capture_output=True, timeout=60, check=False,
+            capture_output=True, check=False,
         )
         assert inspect.returncode == 0
     finally:

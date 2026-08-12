@@ -95,11 +95,11 @@ def _shim_run(
     from reyn.security.sandbox.backends.landlock import LandlockBackend
 
     wrapped = LandlockBackend().wrap_command(argv, policy)
+    # #4397: no timeout= — CI's own per-test pytest-timeout is the kill switch.
     return subprocess.run(
         wrapped.argv,
         capture_output=True,
         text=True,
-        timeout=60,
         stdin=subprocess.DEVNULL,
         env={"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "PYTHONPATH": src_root},
     )
@@ -353,9 +353,10 @@ def _bare_io_uring_supported() -> bool:
     arm below cannot distinguish "denied by our filter" from "ENOSYS" and must
     be skipped rather than mis-scored."""
     try:
+        # #4397: no timeout= — CI's own per-test pytest-timeout is the kill switch.
         proc = subprocess.run(
             [sys.executable, "-c", _IO_URING_PROBE_SRC],
-            capture_output=True, text=True, timeout=10,
+            capture_output=True, text=True,
         )
     except Exception:  # noqa: BLE001
         return False
@@ -659,9 +660,10 @@ async def test_markitdown_mcp_starts_and_responds_under_seccomp_allowlist(
         pytest.skip("uvx not on PATH")
 
     try:
+        # #4397: no timeout= — CI's own per-test pytest-timeout is the kill switch.
         subprocess.run(
             [uvx, "markitdown-mcp", "--help"],
-            capture_output=True, timeout=120, check=False,
+            capture_output=True, check=False,
         )
     except Exception as exc:  # noqa: BLE001
         pytest.skip(f"could not prewarm uvx's markitdown-mcp cache: {exc!r}")

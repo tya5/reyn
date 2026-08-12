@@ -215,6 +215,7 @@ def test_install_command_warns_on_tmp_args_on_darwin(tmp_path, reyn_console_scri
     # (error-not-silent-cwd), so give tmp_path a reyn.yaml — the #320 /tmp-args
     # warning fires inside the source install, past project resolution.
     (tmp_path / "reyn.yaml").write_text(MINIMAL_REYN_YAML, encoding="utf-8")
+    # #4397: no timeout= — CI's own per-test pytest-timeout is the kill switch.
     result = subprocess.run(
         [
             reyn_bin, "mcp", "install",
@@ -225,7 +226,6 @@ def test_install_command_warns_on_tmp_args_on_darwin(tmp_path, reyn_console_scri
         cwd=str(tmp_path),
         capture_output=True,
         text=True,
-        timeout=30,
     )
     combined = result.stdout + result.stderr
     assert "/tmp" in combined

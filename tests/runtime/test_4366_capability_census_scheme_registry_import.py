@@ -67,8 +67,9 @@ def test_capability_visibility_state_survives_a_fresh_interpreter_with_no_router
         )
         print("SURVIVED")
     """)
+    # #4397: no timeout= — CI's own per-test pytest-timeout is the kill switch.
     result = subprocess.run(
-        [sys.executable, "-c", code], capture_output=True, text=True, timeout=60,
+        [sys.executable, "-c", code], capture_output=True, text=True,
     )
     assert result.returncode == 0, (
         f"stdout: {result.stdout}\nstderr: {result.stderr}"
