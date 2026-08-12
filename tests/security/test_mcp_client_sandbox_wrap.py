@@ -207,68 +207,21 @@ def test_profile_cleaned_on_close(monkeypatch):
     client.close_stderr_capture()
 
 
-# ── #3848 stage 1: the allowlisted env wrap_command() computes (#3850) is
-# carried through to the client instance instead of being silently dropped —
-# _sandbox_wrap_stdio used to project only .argv out of WrappedCommand. Not
-# yet CONSUMED by _open_stdio's actual launch (owner ruling: default stays
-# "pass everything"). These pin that the MECHANISM is genuinely reached, not
-# just that observable behavior is unchanged — a dead/no-op mechanism would
-# produce the identical "everything still passes through" result under
-# today's default, so asserting only the final launch behavior would not
-# distinguish "wired and working" from "still silently dropped". ──────────
-
-
-def test_sandbox_env_is_captured_from_the_real_allowlist(monkeypatch):
-    """Tier 2: #3848 stage 1 — after a successful wrap, client.sandbox_env
-    equals the SAME allowlisted env wrap_command() itself computed (#3850) —
-    not a copy, not a re-derivation, the real value the mechanism produced.
-    Strip the `self._sandbox_env = wrapped.env` assignment and this goes RED
-    (client.sandbox_env stays None even though the wrap succeeded)."""
-    backend = NoopBackend()
-    _patch_backend(monkeypatch, backend)
-    client = _stdio_client()
-    client._sandbox_wrap_stdio("my-mcp", ["--flag"])
-
-    expected = backend.wrap_command(["my-mcp", "--flag"], client._build_mcp_sandbox_policy()).env
-    assert client.sandbox_env is not None
-    assert client.sandbox_env == expected
-
-
-def test_sandbox_env_is_none_when_the_wrap_itself_fails(monkeypatch):
-    """Tier 2: #3848 stage 1 — the fail-open (backend-probe-failure) path
-    explicitly RESETS _sandbox_env to None rather than leaving a stale value
-    from a previous successful call. A fresh client already starts at None
-    (__init__'s own default), so a successful wrap runs FIRST here — without
-    the explicit reset in the except branch, a second, failing call would
-    silently keep the first call's real allowlist value, which is the
-    dangerous direction (a caller reading _sandbox_env after a failed wrap
-    would see a value that was never actually applied to THIS launch)."""
-
-    def _boom(config=None):
-        raise RuntimeError("backend probe exploded")
-
-    _patch_backend(monkeypatch, NoopBackend())
-    client = _stdio_client()
-    client._sandbox_wrap_stdio("my-mcp", ["--flag"])
-    assert client.sandbox_env is not None  # first call: real value captured
-
-    monkeypatch.setattr("reyn.security.sandbox.get_default_backend", _boom)
-    with pytest.warns(UserWarning, match="UNSANDBOXED"):
-        client._sandbox_wrap_stdio("my-mcp", ["--flag"])
-    assert client.sandbox_env is None  # second call failed -> reset, not stale
-
-
-def test_initialize_stdio_env_is_still_driven_by_config_not_sandbox_env(monkeypatch):
-    """Tier 2: #3848 stage 1 — carrying the allowlist through must NOT change
-    today's default launch behavior (owner ruling: default stays "pass
-    everything"). #4282/#4287: retargeted from the removed ``_open_stdio``
-    to the live ``_initialize_stdio`` path — its real
-    ``StdioServerParameters(env=...)`` call is driven ONLY by
-    ``self._config.get("env")``, never by ``self._sandbox_env``, in this
-    stage. Captures the REAL ``mcp.client.stdio.StdioServerParameters``
-    class's kwargs by wrapping it (still constructs the real object,
-    exactly what ``_initialize_stdio`` would build unmodified) rather than
-    faking the SDK type — same seam
+def test_initialize_stdio_env_is_driven_by_config_alone(monkeypatch):
+    """Tier 2: ``_initialize_stdio``'s real ``StdioServerParameters(env=...)``
+    call is driven ONLY by ``self._config.get("env")`` — nothing else
+    computes or substitutes an env for the real launch. (#3848 closed with
+    no fix needed, owner ruling: the official ``mcp`` SDK's own
+    ``DEFAULT_INHERITED_ENV_VARS`` allowlist is correct here as-is, and an
+    earlier stage-1 mechanism that held a WIDER allowlist for a planned
+    stage 2 that never landed — ``self._sandbox_env`` — was removed; see
+    ``_sandbox_wrap_stdio``'s own docstring for why MCP stdio's trust
+    relationship differs from reyn's own sandbox path.) #4282/#4287:
+    retargeted from the removed ``_open_stdio`` to the live
+    ``_initialize_stdio`` path. Captures the REAL
+    ``mcp.client.stdio.StdioServerParameters`` class's kwargs by wrapping it
+    (still constructs the real object, exactly what ``_initialize_stdio``
+    would build unmodified) rather than faking the SDK type — same seam
     ``test_initialize_failure_includes_stderr_tail_in_error`` in
     ``test_mcp_client_stderr_capture.py`` already established (a local
     ``from mcp.client.stdio import ...`` re-resolves the source module's
@@ -299,10 +252,9 @@ def test_initialize_stdio_env_is_still_driven_by_config_not_sandbox_env(monkeypa
 
     asyncio.run(_run())
 
-    # config declared no `env:` key -> today's default (env=None, full
-    # parent inherit) must be untouched by the now-populated _sandbox_env.
-    assert client.sandbox_env is not None  # the mechanism DID run
-    assert captured.get("env") is None  # but did not drive the real launch
+    # config declared no `env:` key -> today's default: env=None, so the
+    # official SDK fills its own DEFAULT_INHERITED_ENV_VARS allowlist.
+    assert captured.get("env") is None
 
 
 def test_initialize_stdio_actually_invokes_the_sandbox_wrap(monkeypatch):

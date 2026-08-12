@@ -800,16 +800,6 @@ class MCPClient:
         # Invoked in close_stderr_capture(). None when the backend's wrap owns
         # no such resource (Noop / Landlock).
         self._sandbox_cleanup: Callable[[], None] | None = None
-        # #3848 stage 1: the allowlisted env wrap_command() computes (#3850),
-        # carried through instead of being silently dropped the way it was
-        # before this — _sandbox_wrap_stdio used to project only .argv out of
-        # WrappedCommand. NOT yet consumed by _initialize_stdio's actual launch
-        # (the owner ruling's default is "pass everything", which #3850's
-        # allowlist is narrower than) — this is the seam stage 2's opt-in
-        # whitelist/blacklist config will read from. None when the wrap
-        # failed (fail-open with a warning + audit-event, #3821) — there is
-        # no allowlisted value to offer in that case.
-        self._sandbox_env: dict[str, str] | None = None
         # #2597 capability/version gate: captured right after the official
         # SDK's ClientSession.initialize() handshake completes (a plain
         # return value — see the module docstring's "Capability / version
@@ -833,16 +823,6 @@ class MCPClient:
         the caller didn't supply one at construction. Used only for error-message
         context (:func:`require_capability`) — never for lookup."""
         return self._server_name
-
-    @property
-    def sandbox_env(self) -> "dict[str, str] | None":
-        """The allowlisted env ``wrap_command()`` computed for this client's
-        stdio launch (#3848 stage 1), or ``None`` if the wrap failed or
-        hasn't run yet. NOT the env actually used to launch the subprocess
-        in this stage — see ``self._sandbox_env``'s own docstring for why;
-        this accessor exists so the mechanism is inspectable through a
-        public surface rather than only via private state."""
-        return self._sandbox_env
 
     @property
     def negotiated_version(self) -> str | None:
@@ -1816,10 +1796,26 @@ class MCPClient:
         silently unsandboxed" is true of the warning on every path, and of the
         audit trail only where a sink was wired.
 
-        #3848 stage 1: also stores ``self._sandbox_env`` (the allowlisted env
-        ``wrap_command()`` computes, #3850) — carried through rather than
-        dropped, but not yet CONSUMED by ``_open_stdio``'s actual launch (see
-        ``self._sandbox_env``'s own docstring for why).
+        #3848: ``wrapped.env`` (the allowlisted env ``wrap_command()``
+        computes, #3850) is deliberately NOT carried into the launch here —
+        an earlier stage held it for a planned stage 2 that never landed
+        (owner ruling, #3848's closing comment). MCP stdio's actual launch
+        (``_open_stdio``) passes ``env=None`` when the operator's own
+        per-server config doesn't set one, and the OFFICIAL ``mcp`` SDK fills
+        that with its own narrow ``DEFAULT_INHERITED_ENV_VARS`` allowlist
+        (``HOME``/``LOGNAME``/``PATH``/``SHELL``/``TERM``/``USER``) — this is
+        CORRECT and deliberately different from reyn's own sandbox path
+        (``resolve_passthrough_env``, which passes everything by default,
+        owner ruling B): the trust relationship is not the same. reyn's own
+        sandbox path launches a command on the OPERATOR's behalf — the same
+        trust level as the operator typing it into their own shell, so
+        "pass everything" is correct there. MCP stdio launches a THIRD
+        PARTY's server program — the SDK limiting what that program inherits
+        is the SDK correctly exercising its OWN responsibility, and reyn
+        substituting a wider allowlist (or reyn's own "pass everything")
+        would be reyn overriding a decision that isn't reyn's to make. Do
+        not apply ruling B here — the two paths differ on WHO is trusted,
+        not on what mechanism sandboxes them.
         """
         from reyn.security.sandbox import get_default_backend
 
@@ -1853,11 +1849,9 @@ class MCPClient:
                         command,
                         emit_exc,
                     )
-            self._sandbox_env = None
             return command, args
 
         self._sandbox_cleanup = wrapped.cleanup
-        self._sandbox_env = wrapped.env
         return wrapped.argv[0], list(wrapped.argv[1:])
 
     def _is_non_interactive(self) -> bool:
