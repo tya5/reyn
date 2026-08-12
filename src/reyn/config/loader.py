@@ -164,7 +164,9 @@ def build_policy_tier_config(cwd: Path | None = None) -> dict:
     return merged
 
 
-def _warn_unknown_config_keys(policy_tier_merged: dict) -> int:
+def _warn_unknown_config_keys(
+    policy_tier_merged: dict,
+) -> "dict[str, Any]":
     """#4174 T0: log ONE warning naming every unknown/renamed config key
     found in the policy-tier config (``user_global`` + ``project`` +
     ``project_local`` merged — the operator-editable files; the 5
@@ -184,17 +186,26 @@ def _warn_unknown_config_keys(policy_tier_merged: dict) -> int:
     LOOSER, not silently inert like an ordinary dropped key, so an
     operator relying on it must see what's actually in force.
 
-    Returns the unknown-key count (#4194: the log-only warning is invisible
-    in the interactive CUI — ``_setup_interactive_logging`` redirects all
-    logs to a file, per architect's live measurement — so the count is
-    also returned for :func:`load_config` to attach to the ``ReynConfig``
-    it builds, giving the CUI's bottom chrome something to read).
+    Returns the full ``{dotted_key: hint_or_None}`` dict — #4357: this
+    used to return only the bare COUNT (#4194: the log-only warning is
+    invisible in the interactive CUI — ``_setup_interactive_logging``
+    redirects all logs to a file, per architect's live measurement — so
+    the count was returned for :func:`load_config` to attach to the
+    ``ReynConfig`` it builds). The count alone gave the CUI's bottom
+    chrome something to show, but not WHICH keys — an operator reading
+    "3 config keys not applied" cannot act on it without separately
+    running ``reyn config validate``, and #4357 measured that in practice
+    nobody did (5 real instances of a moved key going unfixed for months,
+    including this repo's own ``reyn.yaml``). ``unknown_config_keys()``
+    already carries per-key ``RenamedKeyHint``/``RemovedKeyHint`` detail
+    (#4375/#4402) — the data was never the gap, only how far it traveled.
+    Callers that only need the count use ``len(...)`` on the return value.
     """
     from reyn.config import config_schema
 
     unknown = config_schema.unknown_config_keys(policy_tier_merged)
     if not unknown:
-        return 0
+        return {}
 
     import logging
     log = logging.getLogger(__name__)
@@ -222,7 +233,7 @@ def _warn_unknown_config_keys(policy_tier_merged: dict) -> int:
         )
 
     log.warning("Unrecognized config key(s) found:\n" + "\n".join(f"  - {line}" for line in lines))
-    return len(unknown)
+    return unknown
 
 
 def _as_config_dict(val: object, key: str) -> dict:
@@ -653,7 +664,7 @@ def load_config(cwd: Path | None = None) -> ReynConfig:
         # registry files below are merged in — those are checked separately
         # at their own load points (runtime.hot_reload.validate_in_set),
         # not duplicated here.
-        unknown_config_key_count = _warn_unknown_config_keys(merged)
+        unknown_config_keys_found = _warn_unknown_config_keys(merged)
 
         # Issue #470: dynamic MCP registry separated from static config.
         # ``.reyn/mcp.yaml`` carries op-managed server entries; merged
@@ -720,7 +731,7 @@ def load_config(cwd: Path | None = None) -> ReynConfig:
         # #4174 T0: no project root — only builtin + user_global are in
         # `merged`, still worth checking (a mistyped ~/.reyn/config.yaml
         # key should not go unreported just because there's no project).
-        unknown_config_key_count = _warn_unknown_config_keys(merged)
+        unknown_config_keys_found = _warn_unknown_config_keys(merged)
 
     # ADR-0030: apply ${VAR} interpolation across all string fields of the
     # merged config dict.  At this point os.environ already contains values
@@ -863,7 +874,12 @@ def load_config(cwd: Path | None = None) -> ReynConfig:
         # #4194: policy-tier unknown-key count — see the field's own
         # docstring in root.py for why this is `schema_internal` (a
         # runtime-computed fact, not an operator-settable key).
-        unknown_config_key_count=unknown_config_key_count,
+        unknown_config_key_count=len(unknown_config_keys_found),
+        # #4357: the full `{dotted_key: hint}` dict the count above is
+        # derived from — see the field's own docstring in root.py for why
+        # the count alone wasn't enough (an operator can't act on a bare
+        # number).
+        unknown_config_keys=unknown_config_keys_found,
     )
     _validate_retrieval_scheme_embedding(_cfg)
     _validate_skill_visibility(_cfg)
