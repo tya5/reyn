@@ -64,6 +64,24 @@ Everything else is excluded, by one of four reasons:
 │   │                       implementation pre-consolidation; clean-break,
 │   │                       no migration — see `reyn.tools.action_index`)
 │   ├── registry-cache/     mcp registry cache
+│   ├── tool_result_spills.jsonl  persisted provenance of tool-result SPILL
+│   │                       artifacts under `tool-results/` (#4381/#4432) —
+│   │                       one JSON line per `MediaStore.save_tool_result`
+│   │                       write, read back at every `MediaStore`
+│   │                       construction so a bare re-read of a spilled
+│   │                       file (in this process or a later one — a
+│   │                       reference can outlive the process that wrote
+│   │                       it, sitting in `history.jsonl`) is detected
+│   │                       and errors instead of re-spilling. NOT in
+│   │                       `tool-results/` itself: every file there is
+│   │                       written through the exact same call, so a
+│   │                       consumer counting "N spill artifacts" via a
+│   │                       directory listing is entitled to get exactly
+│   │                       N (#4432 round 3 — mixing the ledger in broke
+│   │                       that count). NOT recovery-core (no dedicated
+│   │                       op) — same ordinary-writable-zone exposure as
+│   │                       everything else under `cache/`, an open gap
+│   │                       flagged, not silently closed by this move.
 │   └── budget_checkpoint.json  compacted per-agent budget totals (#2945),
 │                           anchored to a byte position in
 │                           `state/budget_ledger.jsonl` — fully

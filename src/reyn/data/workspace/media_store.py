@@ -67,11 +67,37 @@ from reyn.services.offload.store import offload_value, read_offloaded
 
 #: #4381: one JSON object per line (``{"path": "<absolute path>"}``), one
 #: line per :meth:`MediaStore.save_tool_result` write — the persisted
-#: cross-process spill-provenance manifest. Lives alongside the spill
-#: artifacts themselves under ``tool_results_dir``, never under
-#: ``project_root`` directly, so it shares their (already-manual, already-
-#: accepted) cleanup story rather than needing its own.
-_SPILL_MANIFEST_FILENAME = ".tool_result_spills.jsonl"
+#: cross-process spill-provenance manifest.
+#:
+#: Lives under ``.reyn/cache/``, NOT under ``tool_results_dir`` (where it
+#: first landed — lead-coder review, #4432 round 3): every file
+#: ``tool_results_dir`` holds is written through this exact path
+#: (``offload_value`` in :meth:`save_tool_result` is its ONLY writer), so a
+#: consumer that lists that directory and expects "N spill artifacts" is
+#: entitled to get exactly N — mixing the ledger into the same namespace
+#: broke that (``tests/runtime/test_2425_step1c_chat_chokepoint.py``'s
+#: ``sorted(store.tool_results_dir.iterdir())`` unpack). ``.reyn/tool-
+#: results/`` is also classified *audit* (append-only forensic record,
+#: never read back) in ``reyn-dir-layout.md`` — this manifest IS read back,
+#: every process start, so it does not belong in an audit-only namespace
+#: either. ``.reyn/cache/`` fits the *derived* classification's spirit
+#: (ordinary writable zone, not recovery-core, ``budget_checkpoint.json``
+#: precedent) even though this manifest is not literally rebuildable from
+#: other state the way that ledger-derived total is.
+#:
+#: NOT a fix for a from-the-sandbox spoof: ``.reyn/cache/`` sits in the
+#: SAME default agent file-write zone as ``.reyn/tool-results/`` did
+#: (``security/permissions/file_scope.py``'s ``ZoneStateDir`` carves out
+#: only ``.reyn/config/`` + ``.reyn/state/`` + ``approvals.yaml`` —
+#: confirmed by reading ``_RECOVERY_CORE_WRITE_PREFIXES`` /
+#: ``_CANONICAL_PROTECTED_WRITE_PATHS`` in
+#: ``security/permissions/permissions.py``, not assumed). A safe-mode
+#: ``file.write`` could still inject or erase a line here before or after
+#: this move. Closing THAT requires ``.reyn/state/`` behind a dedicated
+#: WAL-emitting op — a bigger design call, deliberately not made in this
+#: fixup (same "flag, don't silently half-fix" call as this PR's own
+#: ``MAX_CONTROL_IR_RESULT_INLINE_BYTES`` note).
+_SPILL_MANIFEST_FILENAME = "tool_result_spills.jsonl"
 
 # Conservative mapping from MIME type to file extension; unknown types
 # fall back to ``""`` so the storage layer still writes a file (= user
@@ -284,16 +310,14 @@ class MediaStore:
         # process. Loaded once at construction from
         # :data:`_SPILL_MANIFEST_FILENAME` under ``tool_results_dir``,
         # appended to (one line per write) by :meth:`save_tool_result`.
-        # No NEW cleanup/lifecycle story: this file lives alongside the
-        # spill artifacts themselves, which already have none (this
-        # class's own docstring already tells operators to ``ls -la
-        # .reyn/tool-results/`` and clean up by hand) — the manifest just
-        # inherits that same, already-accepted lack of automatic GC rather
-        # than introducing a new one.
+        # No NEW cleanup story beyond what ``.reyn/cache/`` already has
+        # (rebuilt/pruned like every other cache entry — see
+        # :data:`_SPILL_MANIFEST_FILENAME`'s own module-level docstring
+        # for why it lives there and not alongside the spill artifacts).
         self._tool_result_spill_paths: "set[Path]" = self._load_spill_manifest()
 
     def _spill_manifest_path(self) -> Path:
-        return self._tool_results_dir / _SPILL_MANIFEST_FILENAME
+        return self._project_root / ".reyn" / "cache" / _SPILL_MANIFEST_FILENAME
 
     def _load_spill_manifest(self) -> "set[Path]":
         manifest = self._spill_manifest_path()
@@ -457,7 +481,9 @@ class MediaStore:
         resolved_path = abs_path.resolve()
         self._tool_result_spill_paths.add(resolved_path)
         try:
-            with self._spill_manifest_path().open("a", encoding="utf-8") as f:
+            manifest_path = self._spill_manifest_path()
+            manifest_path.parent.mkdir(parents=True, exist_ok=True)
+            with manifest_path.open("a", encoding="utf-8") as f:
                 f.write(json.dumps({"path": str(resolved_path)}) + "\n")
         except OSError:
             pass
