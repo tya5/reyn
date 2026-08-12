@@ -31,7 +31,7 @@ from reyn.services.turn_budget import (
     wrap_up_system_prompt,
 )
 
-_MODEL = "gpt-4o-mini"  # a real catalog entry (T_max looked up, not hardcoded)
+_MODEL = "openai/gpt-4o-mini"  # a real litellm-recognized model (T_max looked up, not hardcoded)
 
 
 # ── threshold formula (§5) ───────────────────────────────────────────────────

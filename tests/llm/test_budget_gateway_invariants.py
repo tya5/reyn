@@ -287,7 +287,7 @@ def test_add_router_usage_strips_proxy_prefix(monkeypatch):
     monkeypatch.setattr(pricing_mod, "estimate_cost", capturing_estimate)
 
     # Resolver maps "light" → "openai/gpt-4o-mini" (simulates proxy config).
-    resolver = ModelResolver({"light": "openai/gpt-4o-mini"}, builtin={})
+    resolver = ModelResolver({"light": "openai/gpt-4o-mini"})
     gw, _ = _make_gateway()
 
     usage = TokenUsage(prompt_tokens=100, completion_tokens=50)
@@ -323,7 +323,7 @@ def test_add_router_usage_no_strip_without_proxy(monkeypatch):
 
     monkeypatch.setattr(pricing_mod, "estimate_cost", capturing_estimate)
 
-    resolver = ModelResolver({"light": "openai/gpt-4o-mini"}, builtin={})
+    resolver = ModelResolver({"light": "openai/gpt-4o-mini"})
     gw, _ = _make_gateway()
 
     usage = TokenUsage(prompt_tokens=50, completion_tokens=25)
@@ -348,7 +348,7 @@ def test_add_router_usage_uses_explicit_last_call_usage_not_turn_total():
     the ctx chip's "current context size" would double/triple-count nearly
     the same growing context each tool-loop iteration re-sends (the bug this
     param was added to fix)."""
-    resolver = ModelResolver({"light": "openai/gpt-4o-mini"}, builtin={})
+    resolver = ModelResolver({"light": "openai/gpt-4o-mini"})
     gw, _ = _make_gateway()
 
     # A 3-call turn: usage is the SUM (300 prompt tokens across 3 calls), but
@@ -368,7 +368,7 @@ def test_add_router_usage_falls_back_to_turn_total_when_last_call_usage_omitted(
     """Tier 2: last_call_usage is optional (default None) — omitting it (as an
     older/non-UI caller might) falls back to the turn total, so nothing
     breaks for callers that don't care about the ctx-chip distinction."""
-    resolver = ModelResolver({"light": "openai/gpt-4o-mini"}, builtin={})
+    resolver = ModelResolver({"light": "openai/gpt-4o-mini"})
     gw, _ = _make_gateway()
 
     u = TokenUsage(prompt_tokens=40, completion_tokens=5, cached_tokens=5)

@@ -4,16 +4,26 @@ ModelResolver: resolves model class names to LiteLLM model strings.
 Standard classes: light, standard, strong.
 Mapping is provided by ReynConfig.llm.models (loaded from reyn.yaml, #4174 T3:
 moved from top-level ReynConfig.models).
-Unknown names pass through unchanged (backward compatible with raw LiteLLM strings).
+A name in a NAME position (contains ``/``) passes through unchanged (backward
+compatible with raw LiteLLM strings); a name in a CLASS position (no ``/``)
+that fails to resolve raises — see ``resolve()``'s own docstring (#4349).
 
-PR-MODEL-SPEC-EXTENDS: adds ``extends`` field + built-in catalog support.
+PR-MODEL-SPEC-EXTENDS: adds ``extends`` field support.
 
 Disambiguation heuristic for str-form values:
   - value contains ``/``  -> literal LiteLLM model string (backward compat)
   - value has no ``/``    -> class reference shorthand (resolved via namespace)
 
-Built-in catalog (``BUILTIN_MODELS``) is pre-loaded into the internal namespace.
-User-declared entries override built-ins with the same name.
+#4349: there is no built-in MODEL catalog anymore — owner ruling (c), "the
+class of thing that grows (concrete provider/model targets) leaves the code;
+the class that doesn't (the 3 tier NAMES and their cost ORDER, reyn's own
+vocabulary) stays." A project maps its own tier targets under `llm.models:`
+in reyn.yaml (the project template `reyn init` writes already does this —
+see ``interfaces/cli/templates.py``); with no config at all, `light`/
+`standard`/`strong` are simply unresolved class names, which now raises a
+legible error (the #3368 class of confusing-error this used to paper over
+for exactly 3 names, leaving every OTHER typo/load-failure just as opaque —
+see ``resolve()``).
 
 Startup fail-fast: all entries are resolved at ``__init__`` time.  Unresolvable
 references, cycles, and missing ``model`` fields raise ``ValueError``.
@@ -23,13 +33,15 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-from reyn.llm.builtin_models import BUILTIN_MODELS, BUILTIN_TIER_ALIASES
-
-#: The standard model tiers. Users should map these in reyn.yaml. DERIVED from
-#: ``BUILTIN_TIER_ALIASES`` (the single producer of the tier set) rather than
-#: hand-listed, so a tier added there cannot silently escape this tuple — the
-#: drift shape that bit #3363's key sweep.
-STANDARD_CLASSES = tuple(BUILTIN_TIER_ALIASES)
+#: The standard model tiers, in ascending cost order (light < standard <
+#: strong) — reyn's own vocabulary (the CLI's `--model` flag, `ReynConfig.
+#: llm.model`'s default, #4206 T1's ceiling comparison), not a third-party
+#: catalog: unlike a concrete provider/model target, this set does not grow
+#: every time a provider adds a model (#4349, owner ruling (c) — the
+#: judgment call from #4347/#4348: "does reyn have to add code every time
+#: the THIRD PARTY grows?" here the answer is no, so it stays a plain literal
+#: rather than moving to config).
+STANDARD_CLASSES = ("light", "standard", "strong")
 
 
 def model_class_exceeds_ceiling(class_name: str, ceiling: "str | None") -> bool:
@@ -349,7 +361,6 @@ class ModelResolver:
         self,
         mapping: dict[str, Any],
         *,
-        builtin: dict[str, str | dict] | None = None,
         default_class: str = "standard",
         purpose_classes: dict[str, str] | None = None,
         model_max_class: "str | None" = None,
@@ -358,10 +369,14 @@ class ModelResolver:
 
         Args:
             mapping:  User-declared models from reyn.yaml (``ReynConfig.llm.models``,
-                      #4174 T3: moved from top-level ``.models``).
-            builtin:  Built-in catalog.  Defaults to ``BUILTIN_MODELS``.
-                      User entries in *mapping* override entries with the same
-                      name.  Pass ``{}`` to disable built-ins (useful in tests).
+                      #4174 T3: moved from top-level ``.models``). The sole
+                      source of the namespace (#4349: reyn ships no built-in
+                      model catalog to merge underneath it — an earlier
+                      ``builtin=`` parameter existed for exactly that merge
+                      and was removed with the catalog itself once
+                      measurement showed zero production call sites ever
+                      passed it; a caller that wants a synthetic namespace
+                      entry for a test declares it directly in ``mapping``).
             default_class: #1672 — the configured default model class
                       (``ReynConfig.llm.model``, #4174 T3: moved from top-level
                       ``.model``) returned by ``class_for_purpose`` for any unset
@@ -380,22 +395,11 @@ class ModelResolver:
                       here — this class only carries the configured value.
         """
         self._model_max_class = model_max_class
-        if builtin is None:
-            builtin = BUILTIN_MODELS
-
         self._default_class = default_class
         self._purpose_classes: dict[str, str] = dict(purpose_classes or {})
-        # #3368: names already warned about in resolve()'s passthrough branch.
-        # resolve() sits on the per-LLM-call hot path (called once per
-        # request for the session's configured model class) — without this,
-        # a single mistyped/unregistered class name would log one warning
-        # PER CALL for the lifetime of the session, which is its own defect
-        # (log spam masking the signal it's meant to surface). Warn once per
-        # distinct unresolved name per resolver instance instead.
-        self._warned_unresolved: set[str] = set()
 
-        # Flat namespace: user entries override built-ins.
-        self._namespace: dict[str, Any] = {**builtin, **mapping}
+        # Flat namespace: mapping is the only source (#4349).
+        self._namespace: dict[str, Any] = dict(mapping)
 
         # Resolve all entries at startup (fail-fast).
         self._resolved: dict[str, ModelSpec] = {}
@@ -406,8 +410,8 @@ class ModelResolver:
                 )
 
         # #1454 PR-B: name-position validation. The resolved ``model`` is a NAME
-        # position, which should be ``provider/model`` (the `/`-prefix invariant
-        # — all builtin defaults comply). WARN (not error) for a bare name:
+        # position, which should be ``provider/model`` (the `/`-prefix invariant).
+        # WARN (not error) for a bare name:
         # litellm may accept some bare strings, so bare usage is
         # degraded-but-allowed, flagged so a misroute is diagnosable. (Class
         # positions — tier references — are closed-world via
@@ -425,92 +429,43 @@ class ModelResolver:
                     _name, _spec.model,
                 )
 
-        self._warn_on_partial_tier_declaration(mapping, builtin)
-
-    def _warn_on_partial_tier_declaration(
-        self, mapping: dict[str, Any], builtin: dict[str, str | dict],
-    ) -> None:
-        """#3374: warn when ``llm.models:`` declares SOME but not ALL generic tiers.
-
-        #4174 T3: moved from top-level ``models:`` — same shape.
-
-        The built-in tier aliases (#3368) mean an undeclared tier still resolves,
-        which is the point — but it resolves to *reyn's* default rather than the
-        project's, so a project that mapped `light` and `strong` and forgot
-        `standard` silently routes every default-class call to a different
-        provider than the two it deliberately chose. That is an oversight, not a
-        choice, and the aliases now hide it. Warn so it is visible.
-
-        Deliberately NOT warned:
-          - **Zero tiers declared** — the normal zero-config case the aliases
-            exist to serve. Warning there would fire for every new user.
-          - **All tiers declared** — nothing is falling back.
-          - **A tier declared as something unresolvable** — that is a hard
-            ``ValueError`` from the resolution loop above (fail-fast), or, for a
-            name that reaches ``resolve()`` unresolved, #3372's passthrough
-            warning. This check runs AFTER resolution so it never pre-empts
-            either, and it cannot double-warn with #3372's: a tier present in
-            *builtin* is by definition in ``self._resolved``, so ``resolve()``
-            never takes its unknown-name branch for one.
-
-        Tier names are enumerated from ``BUILTIN_TIER_ALIASES`` (the single
-        producer), intersected with the *effective* ``builtin`` catalog — a
-        caller that passed ``builtin={}`` to disable built-ins has no fallback
-        to point at, so there is nothing to warn about.
-        """
-        available_tiers = [t for t in BUILTIN_TIER_ALIASES if t in builtin]
-        declared = [t for t in available_tiers if t in mapping]
-        missing = [t for t in available_tiers if t not in mapping]
-        if not declared or not missing:
-            return
-
-        import logging
-
-        logging.getLogger(__name__).warning(
-            "reyn.yaml `llm.models:` declares the %s tier(s) but omits %s — the "
-            "omitted tier(s) still resolve, via reyn's built-in defaults: %s. "
-            "A project that maps some tiers usually means to map all of them, "
-            "so an omitted tier is typically an oversight: those calls silently "
-            "use a different model than the tiers you declared. To take "
-            "control, add under `llm.models:` in reyn.yaml:\n%s",
-            ", ".join(declared),
-            ", ".join(missing),
-            "; ".join(f"{t} -> {self._resolved[t].model}" for t in missing),
-            "\n".join(f"  {t}: {self._resolved[t].model}" for t in missing),
-        )
-
     def resolve(self, name: str) -> ModelSpec:
-        """Return the ModelSpec for name. Pass through as a no-kwargs ModelSpec if not in namespace."""
+        """Return the ModelSpec for *name*.
+
+        #4349 (the resolve() rewrite): *name* arrives in one of two
+        positions, and this function now tells them apart the same way the
+        rest of this module already does for str-form namespace VALUES
+        (``_resolve_entry``'s own ``"/" in value`` disambiguation) — no new
+        concept, the same heuristic applied at the entry point:
+
+          - contains ``/`` -> a NAME position: a literal LiteLLM model
+            string (e.g. an explicit ``--model openai/gpt-4o``, or a
+            resolved entry's own ``model`` value re-resolved). Passthrough,
+            unchanged from before.
+          - no ``/`` and not a known class -> a CLASS position that failed
+            to resolve: a typo, or a config whose ``llm.models:`` section
+            didn't load. This used to fall into the SAME passthrough as the
+            name-position case above — indistinguishable until litellm
+            itself rejected the raw class name much later with a confusing
+            provider-side error (#3368). Now raises immediately, here, with
+            the unresolved name and the known-classes list in the message —
+            the same information the removed warning carried, but as the
+            legible, load-bearing error the class position always should
+            have gotten (``resolve_class_or_fallback`` already treats a
+            class-typed position as closed-world for op/phase-supplied
+            selections; this closes the SAME gap for config-declared ones).
+        """
         if name in self._resolved:
             return self._resolved[name]
-        # Unknown name: passthrough — the name IS the LiteLLM model string.
-        # This is the sanctioned raw-model-string path (e.g. `--model
-        # gemini-2.5-flash-lite` bypassing the class system) — but it is
-        # ALSO what a mistyped or unregistered CLASS name silently falls
-        # into: nothing here can tell the two apart, so a typo or a config
-        # that failed to load its `llm.models:` section (see `_load_yaml`) never
-        # surfaces as an error here — only much later, as a confusing raw
-        # provider-side rejection once litellm itself receives the
-        # unresolved name (#3368). Logged (not raised) so the passthrough
-        # behavior is unchanged, but the case is no longer fully silent.
-        # Warned once per distinct name (not per call): resolve() is called
-        # once per LLM request for the session's model class, so an
-        # unresolved name would otherwise log on every single turn for the
-        # rest of the session — spam that buries the one warning that
-        # matters, not additional signal.
-        if name not in self._warned_unresolved:
-            self._warned_unresolved.add(name)
-            import logging
-
-            logging.getLogger(__name__).warning(
-                "model class %r not found among known classes (%s) — passing it "
-                "through unchanged as a literal LiteLLM model string. If this "
-                "was meant to be a configured class, check reyn.yaml/"
-                "reyn.local.yaml's `llm.models:` section for a typo or a load "
-                "failure. (This warning fires once per distinct name.)",
-                name, ", ".join(sorted(self._resolved)) or "none",
-            )
-        return ModelSpec(model=name, kwargs={})
+        if "/" in name:
+            return ModelSpec(model=name, kwargs={})
+        raise ValueError(
+            f"model class {name!r} not found among known classes "
+            f"({', '.join(sorted(self._resolved)) or 'none'}). Check reyn.yaml/"
+            "reyn.local.yaml's `llm.models:` section for a typo or a load "
+            "failure — or, if this was meant to be a literal LiteLLM model "
+            "string, it must include a provider prefix (e.g. 'openai/gpt-4o')."
+        )
 
     def class_ceiling(self) -> "str | None":
         """#4206 T1: the project-declared ``model_max_class`` ceiling, or

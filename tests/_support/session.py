@@ -13,11 +13,30 @@ from pathlib import Path
 import reyn.llm.model_budget as _mb
 from reyn.config import CompactionConfig
 from reyn.core.events.state_log import StateLog
+from reyn.llm.model_resolver import ModelResolver
 from reyn.runtime.agent import Agent
 from reyn.runtime.budget.budget import BudgetTracker, CostConfig
 from reyn.runtime.chat_message import ChatMessage
 from reyn.runtime.services.recovery import build_recovery
 from reyn.runtime.session import Session
+
+#: #4349: Session's own default when no ``resolver=`` is given is
+#: ``ModelResolver({})`` — genuinely empty, no built-in catalog to fall back
+#: to (reyn ships none anymore). A test helper building a Session with no
+#: opinion on models used to get "standard"/"light"/"strong" for free via
+#: that catalog; now an actual call to ``resolve()`` on an unconfigured
+#: class raises. Shared across this module's ``make_session`` and
+#: ``tests/_support/agent_session.py``'s (imported from there) so every
+#: caller of either gets a resolver that actually works for the 3 standard
+#: tiers, without each of the ~300 call sites needing to configure one
+#: itself — the model strings are synthetic placeholders (never a real
+#: provider/model pairing anyone would bill against), since these tests
+#: exercise session/compaction/router plumbing, not real LLM calls.
+TEST_MODEL_RESOLVER = ModelResolver({
+    "light": "openai/test-light-model",
+    "standard": "openai/test-standard-model",
+    "strong": "openai/test-strong-model",
+})
 
 
 def now() -> str:
@@ -58,6 +77,7 @@ def make_session(
     agent: Agent | None = None,
     state_log: StateLog | None = None,
     snapshot_path: Path | None = None,
+    resolver: ModelResolver | None = None,
 ) -> Session:
     """Create a Session whose compaction engine uses a synthetic T_max.
 
@@ -141,6 +161,7 @@ def make_session(
         state_log=state_log,
         compaction_config=cfg,
         snapshot_path=snapshot_path,
+        resolver=resolver or TEST_MODEL_RESOLVER,
     )
 
 

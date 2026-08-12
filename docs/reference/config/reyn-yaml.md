@@ -258,7 +258,7 @@ definition so it's explicit and easy to understand:
 llm:
   models:
     light:
-      model: gemini-flash-lite
+      model: gemini/gemini-2.5-flash-lite
       reasoning_effort: low      # minimal | low | medium | high | disable | none
 ```
 
@@ -348,29 +348,20 @@ from the base.  Scalars and lists are replaced, not merged.
 **Cycle detection**: circular `extends` references (e.g. `A extends B, B extends A`) are
 detected at startup and raise a configuration error.
 
-**Unknown references**: referencing a name not in the namespace (user entries or
-built-in catalog) is a startup error.
+**Unknown references**: referencing a name not in the namespace is a startup error —
+including `light` / `standard` / `strong` themselves if your `reyn.yaml` doesn't map
+them (see below).
 
-### Built-in catalog
+### No built-in model catalog
 
-Reyn ships a built-in catalog of common model classes pre-loaded into the namespace.
-You can reference them by name without declaring them in `reyn.yaml`:
-
-| Class name | Provider / model | Notes |
-|---|---|---|
-| `claude-sonnet` | `anthropic/claude-3-7-sonnet` | |
-| `claude-sonnet-thinking` | `anthropic/claude-3-7-sonnet` + thinking enabled | budget_tokens=8000 |
-| `claude-haiku` | `anthropic/claude-3-5-haiku` | |
-| `gpt-4o-mini` | `openai/gpt-4o-mini` | |
-| `gpt-4o` | `openai/gpt-4o` | |
-| `gemini-flash-lite` | `gemini/gemini-2.5-flash-lite` | |
-| `gemini-3.1-flash-preview` | `gemini/gemini-3.1-flash-preview` | |
-| `gemini-2.0-flash` | `gemini/gemini-2.0-flash` | thinking disabled via `thinking_budget=0` |
-
-User-declared entries **override** built-ins with the same name.  The built-in catalog
-is a convenience starting point; your `reyn.yaml` is always the source of truth.
-
-See [Reference: built-in models](../builtin-models.md) for per-entry details.
+Reyn ships **no** built-in catalog of concrete provider/model targets — `light`,
+`standard`, and `strong` are reyn's own vocabulary (the 3 standard tiers, in
+ascending cost order), but what each one actually points to is entirely up to your
+`llm.models:` mapping above. `reyn init` writes a starting mapping into the
+`reyn.yaml` it generates; edit it to match your provider. A class with no mapping
+in effect (no `reyn.yaml`, no `reyn.local.yaml`, or a `models:` block that omits
+it) is a startup error naming the missing class — reyn does not silently fall back
+to a hidden default for any class, tier or custom.
 
 ### `llm.model_class_by_purpose` — per-purpose model class
 

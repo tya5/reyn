@@ -87,7 +87,7 @@ def test_compact_does_not_clear_the_token_cache(monkeypatch) -> None:
     compact() returns — the load-bearing fix. A regression to
     `_token_cache.clear()` at the top of `compact()` would make this fail
     (the tokenizer would be called again for the same text)."""
-    model = "test-model-cache-a"
+    model = "test/test-model-cache-a"
     warm_text = "this text was estimated before any compaction ran"
     counts: dict = {}
     monkeypatch.setattr("litellm.token_counter", _counting_token_counter(counts))
@@ -132,7 +132,7 @@ def test_repeated_estimate_of_unchanged_text_is_a_cache_hit_across_compactions(m
     separate compact() calls invokes the real tokenizer only ONCE. This is the
     actual UX property the fix restores: repeated history turns are priced
     once, not re-priced every compaction cycle."""
-    model = "test-model-cache-b"
+    model = "test/test-model-cache-b"
     text = "a stable historical turn that never changes"
     counts: dict = {}
     monkeypatch.setattr("litellm.token_counter", _counting_token_counter(counts))

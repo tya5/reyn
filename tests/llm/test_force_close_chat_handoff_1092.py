@@ -52,7 +52,10 @@ class _FakeRouterLoop:
     ``always_overflow`` it never converges (the irreducible-message case)."""
 
     def __init__(self, *args: Any, always_overflow: bool = False, **kwargs: Any) -> None:
-        self.router_model = "fake-model"
+        # #4349: contains '/' so ModelResolver.resolve() treats it as an
+        # already-resolved literal (name position) rather than an
+        # unresolved class reference that now raises.
+        self.router_model = "fake/fake-model"
         self.force_close_calls = 0
         self.always_overflow = always_overflow
         # Mirrors RouterLoop.last_call_usage (status-bar ctx chip's single-most-

@@ -225,7 +225,7 @@ llm:
 llm:
   models:
     light:
-      model: gemini-flash-lite
+      model: gemini/gemini-2.5-flash-lite
       reasoning_effort: low      # minimal | low | medium | high | disable | none
 ```
 
@@ -274,27 +274,19 @@ llm:
 
 **サイクル検出**: 循環する `extends` 参照（例：`A extends B, B extends A`）は起動時に検出され、設定エラーが発生します。
 
-**不明な参照**: namespace（ユーザーエントリまたは built-in カタログ）に存在しない名前の参照は起動エラーになります。
+**不明な参照**: namespace に存在しない名前の参照は起動エラーになります — `reyn.yaml` が
+`light` / `standard` / `strong` 自体をマップしていない場合、それらも対象です（次項参照）。
 
-### Built-in カタログ
+### Built-in カタログは無い
 
-Reyn には、namespace にプリロードされた一般的なモデルクラスの built-in カタログが付属しています。
-`reyn.yaml` に宣言せずに名前で参照できます：
-
-| クラス名 | プロバイダー / モデル | 備考 |
-|---|---|---|
-| `claude-sonnet` | `anthropic/claude-3-7-sonnet` | |
-| `claude-sonnet-thinking` | `anthropic/claude-3-7-sonnet` + thinking 有効 | budget_tokens=8000 |
-| `claude-haiku` | `anthropic/claude-3-5-haiku` | |
-| `gpt-4o-mini` | `openai/gpt-4o-mini` | |
-| `gpt-4o` | `openai/gpt-4o` | |
-| `gemini-flash-lite` | `gemini/gemini-2.5-flash-lite` | |
-| `gemini-3.1-flash-preview` | `gemini/gemini-3.1-flash-preview` | |
-| `gemini-2.0-flash` | `gemini/gemini-2.0-flash` | `thinking_budget=0` で thinking 無効化 |
-
-ユーザー宣言エントリは同名の built-in を**上書き**します。built-in カタログは便利な出発点であり、`reyn.yaml` が常に source of truth です。
-
-詳細は [Reference: built-in models](../builtin-models.md) を参照してください。
+Reyn には、具体的な provider/model のターゲットを持つ built-in カタログは**ありません** —
+`light` / `standard` / `strong` は reyn 自身の語彙（コスト順に並んだ 3 つの標準 tier）ですが、
+それぞれが実際に何を指すかは、上記の `llm.models:` マッピング次第です。`reyn init` が生成
+する `reyn.yaml` には出発点となるマッピングが書き込まれます — provider に合わせて編集して
+ください。有効なマッピングが無いクラス（`reyn.yaml` も `reyn.local.yaml` も無い、または
+`models:` ブロックがそのクラスを省略している）は、欠けているクラス名を明示した起動エラーに
+なります — reyn はどのクラス（tier もカスタムも）についても、隠れた既定値へ黙ってフォール
+バックしません。
 
 ## `chat` ブロック
 

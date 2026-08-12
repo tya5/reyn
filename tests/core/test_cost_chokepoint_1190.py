@@ -126,7 +126,7 @@ def test_compaction_engine_records_compaction_purpose(monkeypatch) -> None:
 
     rec = _Recorder()
     engine = CompactionEngine(
-        model="gpt-4o", events=EventLog(),
+        model="openai/gpt-4o", events=EventLog(),
         cfg=CompactionConfig(use_chars4_estimate=True), recorder=rec,
     )
     asyncio.run(engine.compact(HistoryChunkToCompact(
@@ -185,7 +185,7 @@ def test_compaction_engine_threads_agent(monkeypatch) -> None:
 
     rec = _Recorder()
     engine = CompactionEngine(
-        model="gpt-4o", events=EventLog(),
+        model="openai/gpt-4o", events=EventLog(),
         cfg=CompactionConfig(use_chars4_estimate=True),
         recorder=rec, recorder_agent="researcher",
     )

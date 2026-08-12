@@ -13,8 +13,6 @@ Pinned invariants (Tier 1 — contract):
   - missing ``model`` field after extends resolution raises ValueError
 
 Pinned invariants (Tier 2 — OS invariant):
-  - built-in pre-load: ModelResolver() with empty user mapping resolves built-ins
-  - user override: user entry wins over built-in with the same name
   - backward compat: ``/``-containing str form unchanged
 
 Reference: PR-MODEL-SPEC-EXTENDS Task 3 (Tier 1 + Tier 2).
@@ -23,18 +21,19 @@ from __future__ import annotations
 
 import pytest
 
-from reyn.llm.model_resolver import ModelResolver, ModelSpec
+from reyn.llm.model_resolver import ModelResolver
 
 # ---------------------------------------------------------------------------
-# Helper: resolver with built-ins disabled for isolation
+# Helper: builds a resolver from *mapping* alone
 # ---------------------------------------------------------------------------
 
-def make_resolver(mapping: dict, *, with_builtin: bool = False) -> ModelResolver:
-    """Create a ModelResolver with optional built-in catalog."""
-    if with_builtin:
-        return ModelResolver(mapping)
-    # Disable built-ins so tests are self-contained.
-    return ModelResolver(mapping, builtin={})
+def make_resolver(mapping: dict) -> ModelResolver:
+    """Create a ModelResolver from *mapping* (#4349: reyn ships no built-in
+    model catalog — ModelResolver takes no `builtin=` parameter at all now,
+    so this is a thin, purely-cosmetic wrapper around the plain
+    constructor, kept as a named helper since most tests in this file read
+    more clearly calling it)."""
+    return ModelResolver(mapping)
 
 
 # ---------------------------------------------------------------------------
@@ -192,7 +191,7 @@ def test_extends_deep_merge_scalar_replaced():
 
 
 def test_extends_multi_level_two_hops():
-    """Tier 1: multi-level extends (A extends B, B extends builtin-like C) resolves fully."""
+    """Tier 1: multi-level extends (A extends B, B extends a base C) resolves fully."""
     r = make_resolver({
         "base": {
             "model": "anthropic/claude-3-7-sonnet",
@@ -229,95 +228,6 @@ def test_extends_multi_level_base_only_field_carried():
     })
     spec = r.resolve("top")
     assert spec.kwargs["seed"] == 42
-
-
-# ---------------------------------------------------------------------------
-# Tier 1: extends with built-in catalog (real built-ins)
-# ---------------------------------------------------------------------------
-
-
-def test_extends_builtin_claude_sonnet_thinking():
-    """Tier 1: dict form extends claude-sonnet-thinking built-in, overrides budget_tokens."""
-    r = ModelResolver({
-        "reasoning-light": {
-            "extends": "claude-sonnet-thinking",
-            "extra_body": {"thinking": {"budget_tokens": 4000}},
-        }
-    })
-    spec = r.resolve("reasoning-light")
-    assert spec.model == "anthropic/claude-3-7-sonnet"
-    thinking = spec.kwargs["extra_body"]["thinking"]
-    assert thinking["budget_tokens"] == 4000
-    assert thinking["type"] == "enabled"  # carried from builtin
-
-
-def test_str_shorthand_with_builtin():
-    """Tier 1: str shorthand without '/' resolves against built-in catalog."""
-    r = ModelResolver({"standard": "claude-sonnet-thinking"})
-    spec = r.resolve("standard")
-    assert spec.model == "anthropic/claude-3-7-sonnet"
-
-
-# ---------------------------------------------------------------------------
-# Tier 2: built-in pre-load (OS invariant)
-# ---------------------------------------------------------------------------
-
-
-def test_builtin_preload_no_user_mapping():
-    """Tier 2: ModelResolver() with empty user mapping resolves built-in entries."""
-    r = ModelResolver({})
-    spec = r.resolve("claude-sonnet-thinking")
-    assert spec.model == "anthropic/claude-3-7-sonnet"
-    assert spec.kwargs["extra_body"]["thinking"]["type"] == "enabled"
-
-
-def test_builtin_preload_all_8_are_resolvable():
-    """Tier 2: all 8 built-in entries are resolvable from ModelResolver({})."""
-    r = ModelResolver({})
-    expected_names = [
-        "claude-sonnet",
-        "claude-sonnet-thinking",
-        "claude-haiku",
-        "gpt-4o-mini",
-        "gpt-4o",
-        "gemini-flash-lite",
-        "gemini-3.1-flash-preview",
-        "gemini-2.0-flash",
-    ]
-    for name in expected_names:
-        spec = r.resolve(name)
-        assert isinstance(spec, ModelSpec), f"resolve({name!r}) should return ModelSpec"
-        assert spec.model  # non-empty LiteLLM model string
-
-
-def test_builtin_is_known_class():
-    """Tier 2: built-in entries appear in is_known_class even with empty user mapping."""
-    r = ModelResolver({})
-    assert r.is_known_class("claude-sonnet") is True
-    assert r.is_known_class("nonexistent-class") is False
-
-
-# ---------------------------------------------------------------------------
-# Tier 2: user override of built-in (OS invariant — user always wins)
-# ---------------------------------------------------------------------------
-
-
-def test_user_override_replaces_builtin():
-    """Tier 2: user-declared entry with same name as built-in takes precedence."""
-    r = ModelResolver({
-        "claude-sonnet": {
-            "model": "openai/gpt-4o",  # intentional override to different provider
-        }
-    })
-    spec = r.resolve("claude-sonnet")
-    assert spec.model == "openai/gpt-4o"
-
-
-def test_user_override_partial_builtin_name_unchanged():
-    """Tier 2: user override of one built-in does not affect other built-ins."""
-    r = ModelResolver({"claude-sonnet": {"model": "openai/gpt-4o"}})
-    spec = r.resolve("claude-haiku")
-    assert spec.model == "anthropic/claude-3-5-haiku"
 
 
 # ---------------------------------------------------------------------------
@@ -365,12 +275,12 @@ def test_unknown_str_shorthand_raises_value_error():
 def test_missing_model_field_after_extends_raises_value_error():
     """Tier 1: if base has no model and extends chain cannot supply one, ValueError."""
     # This case arises if someone bypasses from_config and puts an invalid entry.
-    # We simulate by passing a malformed dict (no model) directly as builtin.
+    # We simulate by declaring a malformed entry (no 'model') directly in mapping.
     with pytest.raises(ValueError):
-        ModelResolver(
-            {"derived": {"extends": "empty-base"}},
-            builtin={"empty-base": {"max_completion_tokens": 4096}},  # no 'model'
-        )
+        make_resolver({
+            "empty-base": {"max_completion_tokens": 4096},  # no 'model'
+            "derived": {"extends": "empty-base"},
+        })
 
 
 # ---------------------------------------------------------------------------

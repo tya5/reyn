@@ -45,6 +45,13 @@ def _run_chat_once(tmp_path, monkeypatch):
     from reyn.interfaces.cli.commands.chat import register as chat_register
 
     monkeypatch.chdir(tmp_path)
+    # #4349: reyn ships no built-in model catalog — a minimal reyn.yaml is
+    # needed for the real config-load path this helper drives (mirrors
+    # test_chat_cli_flags.py's own copy of this fix).
+    (tmp_path / "reyn.yaml").write_text(
+        "llm:\n  models:\n    standard: openai/test-standard-model\n",
+        encoding="utf-8",
+    )
     top = argparse.ArgumentParser()
     sub = top.add_subparsers()
     chat_register(sub)
