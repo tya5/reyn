@@ -452,8 +452,11 @@ IS the reply. For an autonomous run-once agent step, it meant the step ended
 mid-edit with no diagnosable trace: no logged LLM response, `req=resp+1`,
 nothing to point a fix at. The fix logs the full traceback (`logger.exception`)
 AND emits a `router_loop_terminated_by_exception` audit event (`chain_id`,
-`error_type`, `repr(exc)[:500]`) — both kept unconditionally, on top of the
-(unchanged) classified outbox summary.
+`error_type`, `repr(exc)[:500]`, and — #4381 stage 1 — `cause`, the deepest
+`__cause__` in the exception chain's type name, so reyn's own wrapper type
+(e.g. `ContextOverflowError`) never hides what actually happened underneath
+it) — both kept unconditionally, on top of the (unchanged) classified outbox
+summary.
 
 **#2732 — the classified-summary path silently produced a successful-looking
 empty answer for agent steps.** The catch-all `except Exception` in

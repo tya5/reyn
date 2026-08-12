@@ -260,6 +260,23 @@ def _ts_iso_to_epoch(ts: str | None) -> float | None:
         return None
 
 
+def _deepest_cause(exc: BaseException) -> "BaseException | None":
+    """#4381 stage 1 (B): the DEEPEST ``__cause__`` in *exc*'s chain, or
+    ``None`` if *exc* has no ``__cause__`` at all (it IS the root — the
+    common case for most exceptions, which never wrap another).
+
+    A pure helper (no session state) so the "reyn's own wrapper type is
+    not what actually happened" gap can be tested directly, without
+    driving a full turn through ``_run_router_loop``'s except block. See
+    that call site's own comment for the concrete motivating case
+    (``ContextOverflowError`` wrapping the real ``APIError`` that never
+    reached ``reyn.log``)."""
+    root = exc
+    while root.__cause__ is not None:
+        root = root.__cause__
+    return root if root is not exc else None
+
+
 def _extract_tool_call_records(
     messages: "list[ChatMessage]",
 ) -> list[tuple[str, float]]:
@@ -6132,9 +6149,25 @@ class Session:
             # trace (req=resp+1, no logged response). Surface the FULL exception
             # (stderr traceback + a P6 event) so the root error is primary-evidence
             # for the fix; the classified summary still goes to the outbox unchanged.
+            #
+            # #4381 stage 1 (B): reyn's own retry_loop re-wraps a real failure into
+            # ContextOverflowError/UnrecoveredError at each escalation (router_loop_
+            # driver.py's `raise X(...) from original_exc` chain) — so this except's
+            # own `exc` is often reyn's OWN wrapper type, not what actually happened
+            # (owner's real-environment observation: reyn.log showed only
+            # `ContextOverflowError`, while the audit trail's `compaction_shrink_
+            # recovered.cause` — a SEPARATE event, from a SEPARATE code path — held
+            # the real answer, `APIError`, the whole time). Walking `__cause__` to
+            # the end of the chain (every wrap site in that file uses `from`, so the
+            # chain is always intact) and naming it explicitly here means an operator
+            # reading EITHER `reyn.log` or this ONE audit event's own `cause` field
+            # gets the real answer without needing to know a second event exists.
+            _root_cause = _deepest_cause(exc)
+            _cause_name = type(_root_cause).__name__ if _root_cause is not None else None
             logger.exception(
-                "router loop terminated by unhandled exception (chain_id=%s)",
+                "router loop terminated by unhandled exception (chain_id=%s)%s",
                 chain_id,
+                f" — cause: {_cause_name}: {_root_cause}" if _root_cause is not None else "",
             )
             try:
                 self._audit_events.emit(
@@ -6142,6 +6175,7 @@ class Session:
                     chain_id=chain_id,
                     error_type=type(exc).__name__,
                     error=repr(exc)[:500],
+                    cause=_cause_name,
                 )
             except Exception:  # noqa: BLE001 — instrumentation must never break the path
                 pass
