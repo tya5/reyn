@@ -17,23 +17,6 @@ from reyn.core.turn_scope import get_active_turn_chain_id
 from reyn.llm.litellm_bootstrap import ensure_litellm_ready
 from reyn.llm.model_resolver import ModelSpec
 from reyn.llm.pricing import TokenUsage, UsageSource, estimate_cost, parse_usage_source
-
-# #3830: the shared scrub-at-the-boundary module (reyn.llm.secret_scrub) —
-# imported here under the original private names so every existing
-# in-file call site is unchanged. See that module's docstring for why
-# this is a single shared implementation, not one copy per consumer.
-from reyn.llm.secret_scrub import (
-    SECRET_KWARG_HINTS as _LLM_REQUEST_SECRET_HINTS,
-)
-from reyn.llm.secret_scrub import (
-    collect_secret_values as _collect_secret_values,
-)
-from reyn.llm.secret_scrub import (
-    scrub_exception_in_place as _scrub_exception_in_place,
-)
-from reyn.llm.secret_scrub import (
-    scrub_secrets as _scrub_secrets,
-)
 from reyn.prompt.loop_control import G12_SIGNAL_ERROR_TEXT as _G12_SIGNAL_ERROR_TEXT
 from reyn.prompt.loop_control import G12_SIGNAL_TEXT as _G12_SIGNAL_TEXT
 
@@ -1647,6 +1630,14 @@ LLM_PURPOSES: tuple[str, ...] = (
     "main", "compaction", "judge", "dogfood",
 )
 
+#: #1676 request-param redaction (kept, #3830-follow-up did not touch this —
+#: see ``_redact_llm_request_params``). Was imported from the now-removed
+#: ``reyn.llm.secret_scrub`` module; inlined here as its sole remaining
+#: consumer.
+_LLM_REQUEST_SECRET_HINTS: tuple[str, ...] = (
+    "api_key", "api-key", "authorization", "secret", "token",
+)
+
 
 def _redact_llm_request_params(base_kwargs: dict, response_format: dict | None) -> dict:
     """#1669: build the non-message, non-tools LLM call params for the
@@ -1678,35 +1669,30 @@ def _emit_llm_request_error(
     (status_code + whole message/body, NOT truncated — the owner's 405 root-cause
     signal) so an LLM-call failure is visible in the event tab. Same ambient
     EventLog (ContextVar) + ``model``/``purpose`` context as ``llm_request``
-    (#1669). Secret values are scrubbed from the freeform text. Wrapped so the
-    audit emit can never mask the real exception (the caller re-raises regardless)."""
+    (#1669). Wrapped so the audit emit can never mask the real exception (the
+    caller re-raises regardless)."""
     try:
         from reyn.core.events.events import get_llm_request_event_log
         log = get_llm_request_event_log()
         if log is None:
             return
-        secrets = _collect_secret_values(base_kwargs)
         detail: dict = {
             "error_type": type(exc).__name__,
-            "error_message": _scrub_secrets(str(exc), secrets),
+            "error_message": str(exc),
             "status_code": getattr(exc, "status_code", None),
         }
         # litellm exceptions carry the provider body on ``.body`` (often the parsed
         # error dict) and/or ``.response`` (an httpx.Response). Capture BOTH, whole
-        # (#3830: "whole" means shape-preserved, not unscrubbed — a dict body is
-        # walked recursively same as a string one).
+        # (#3830 origin, scrub dropped #3830-follow-up: reyn never passes api_key
+        # to litellm since #4348, so there is nothing of reyn's to scrub here —
+        # litellm's own error text is already provider-scrubbed, #4343).
         body = getattr(exc, "body", None)
         if body is not None:
-            detail["provider_body"] = (
-                _scrub_secrets(body, secrets) if isinstance(body, (dict, list))
-                else _scrub_secrets(str(body), secrets)
-            )
+            detail["provider_body"] = body if isinstance(body, (dict, list)) else str(body)
         resp = getattr(exc, "response", None)
         if resp is not None:
             text = getattr(resp, "text", None)
-            detail["provider_response"] = _scrub_secrets(
-                text if isinstance(text, str) else str(resp), secrets,
-            )
+            detail["provider_response"] = text if isinstance(text, str) else str(resp)
         log.emit(
             "llm_request_error",
             model=model,
@@ -2411,16 +2397,10 @@ async def recorded_acompletion(
             else:
                 raise
     except Exception as exc:
-        # #3830: scrub the exception OBJECT itself, first, before it is
-        # emitted, logged, displayed, or re-raised — the boundary fix
-        # (reyn.llm.secret_scrub) so every consumer downstream (the audit
-        # event below, a caller's own logger.exception/str(exc)/repr(exc),
-        # a sink nobody has written yet) reads already-safe text. This is
-        # the ONE place in the completions path where reyn first receives
-        # an exception litellm constructed — every internal `litellm.
-        # acompletion` call site above (streaming, the response_format
-        # retry, the Router branch) raises up to this single `except`.
-        _scrub_exception_in_place(exc, base_kwargs)
+        # #3830 origin, scrub dropped #3830-follow-up: reyn never passes
+        # api_key to litellm since #4348, so there was nothing of reyn's
+        # left for this boundary to scrub — litellm's own error text is
+        # already provider-scrubbed (#4343).
         _emit_llm_request_error(effective_model, purpose, exc, base_kwargs)
         # #1678, delegated to litellm at #3288-follow-up: this call shape
         # (reasoning_effort + tools, resolved to the openai/azure provider —
