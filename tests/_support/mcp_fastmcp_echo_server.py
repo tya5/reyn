@@ -41,12 +41,27 @@ Usage:
   stdio: ``python mcp_fastmcp_echo_server.py``
   http:  ``python mcp_fastmcp_echo_server.py http <port>``
   sse:   ``python mcp_fastmcp_echo_server.py sse <port>``
+
+#4302: ported from the standalone ``fastmcp`` package to the official ``mcp``
+SDK's own bundled ``mcp.server.fastmcp`` (same decorator API, in-tree in the
+1.x line — #4302's option 2: reyn pins ``mcp>=1.24,<2.0``, since mcp 2.0
+breaks reyn's own production MCP server, see #4302 for the full finding and
+the follow-up issue tracking the 2.0 port). This is the last real
+fastmcp-server dependent, and porting it off the standalone ``fastmcp``
+package is the actual precondition for dropping ``fastmcp`` from
+``pyproject.toml``'s core dependencies. Two ergonomic gaps vs standalone
+fastmcp, both closed below: ``fastmcp.server.dependencies.get_http_headers()``
+has no bundled equivalent (``show_headers`` reads the raw transport
+``Request`` off ``ctx.request_context.request`` instead), and bundled
+``Context`` has no ``send_notification`` convenience (the notify tools go
+through ``ctx.session.send_notification`` directly — the same primitive
+standalone fastmcp's own convenience wraps).
 """
 from __future__ import annotations
 
 import sys
 
-from fastmcp import Context, FastMCP
+from mcp.server.fastmcp import Context, FastMCP
 
 mcp = FastMCP("reyn-test-echo")
 
@@ -128,10 +143,19 @@ def bump_then_die(path: str) -> str:
 
 
 @mcp.tool()
-def show_headers() -> dict:
-    from fastmcp.server.dependencies import get_http_headers
-
-    return dict(get_http_headers(include_all=True))
+def show_headers(ctx: Context) -> dict[str, str]:
+    # #4302: ``fastmcp.server.dependencies.get_http_headers()`` has no
+    # bundled equivalent — the raw transport ``Request`` (a Starlette
+    # request for http/sse) is threaded through ``RequestContext.request``
+    # instead, carrying the same header data directly. Also: unlike
+    # standalone fastmcp, a bare ``-> dict`` return annotation does NOT
+    # auto-generate a structured-output schema on the bundled SDK — a
+    # parametrized ``dict[str, str]`` is required for ``structuredContent``
+    # to populate (verified against mcp 1.29.0).
+    request = ctx.request_context.request
+    if request is None:
+        return {}
+    return dict(request.headers)
 
 
 @mcp.tool()
@@ -149,7 +173,9 @@ async def progress(steps: int, ctx: Context) -> str:
 async def notify_tool_list_changed(ctx: Context) -> str:
     import mcp.types as types
 
-    await ctx.send_notification(types.ToolListChangedNotification())
+    # #4302: bundled Context has no ``send_notification`` convenience — go
+    # through ``ctx.session`` (the underlying ServerSession) directly.
+    await ctx.session.send_notification(types.ServerNotification(types.ToolListChangedNotification()))
     return "sent"
 
 
@@ -157,13 +183,20 @@ async def notify_tool_list_changed(ctx: Context) -> str:
 async def notify_prompt_list_changed(ctx: Context) -> str:
     import mcp.types as types
 
-    await ctx.send_notification(types.PromptListChangedNotification())
+    await ctx.session.send_notification(types.ServerNotification(types.PromptListChangedNotification()))
     return "sent"
 
 
 if __name__ == "__main__":
     if len(sys.argv) >= 3:
-        transport, port = sys.argv[1], int(sys.argv[2])
-        mcp.run(transport=transport, host="127.0.0.1", port=port)
+        cli_transport, port = sys.argv[1], int(sys.argv[2])
+        # #4302: the bundled ``mcp.server.fastmcp.FastMCP`` (1.x line) takes
+        # host/port as constructor-time ``.settings``, not per-``.run()``
+        # kwargs, and its transport literal is "streamable-http" — this
+        # file's own CLI ("http"/"sse" + port) stays unchanged for every
+        # caller.
+        mcp.settings.host = "127.0.0.1"
+        mcp.settings.port = port
+        mcp.run(transport="streamable-http" if cli_transport == "http" else cli_transport)
     else:
         mcp.run(transport="stdio")

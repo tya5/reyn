@@ -200,12 +200,12 @@ _INGEST_QUERY_FIXTURE_PATH = _FIXTURE_DIR / "turn2_ingest_query.jsonl"
 _STUB_MARKITDOWN_SERVER = '''
 import base64
 from urllib.parse import urlsplit
-from fastmcp import FastMCP
+from mcp.server.fastmcp import FastMCP
 
 mcp = FastMCP("stub-markitdown")
 
 
-@mcp.tool
+@mcp.tool()
 def convert_to_markdown(uri: str) -> str:
     if uri.startswith("data:"):
         _, _, payload = uri.partition(",")

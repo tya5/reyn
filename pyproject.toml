@@ -199,7 +199,35 @@ dependencies = [
     "numpy>=1.24",           # RAG index backend cosine similarity (ADR-0033)
     "croniter>=2.0",         # cron expression parsing for FP-0009 Component B
     "charset-normalizer>=3.0",  # #1452 read_file encoding detection (MIT, pure-python)
-    "fastmcp==3.4.5",        # #4282/#4299: the MCP CLIENT path (session -> mcp.connection_service -> mcp.message_handler -> ...) no longer imports fastmcp at all -- #3698 stage 1 + #4282 moved every transport to the official `mcp` SDK directly, and #4299 removed the last source-level fastmcp import outside tests/_support/. This entry stays a CORE dependency ONLY because `tests/_support/`'s MCP server test-doubles (mcp_fastmcp_echo_server.py, mcp_elicitation_server.py, and 3 others -- #4302) still build on fastmcp's SERVER framework -- porting those to the official SDK's server API is #4302's own scope, and IS the actual precondition for dropping this dependency (not just unreferenced client-side imports, which #4299 already achieved). Do not read "client path retired" as "mcp>=2.0 is unblocked" -- fastmcp's own dependency floor still pins mcp<2.0 in this venv as long as this entry ships. See #4302 for the plan.
+    "mcp>=1.24,<2.0",         # #4302: fastmcp DROPPED entirely (#3698 stage 1 + #4282 moved
+                              # the MCP CLIENT path off it onto this SDK directly; #4299
+                              # removed the last source-level fastmcp import outside
+                              # tests/_support/; #4302 itself ported the remaining 4
+                              # fastmcp-SERVER test-doubles -- mcp_fastmcp_echo_server.py,
+                              # mcp_elicitation_server.py, and 2 embedded stub-markitdown
+                              # servers, not 3 as an earlier count claimed -- onto this
+                              # SDK's own bundled `mcp.server.fastmcp` (the 1.x-line module;
+                              # NOT `mcp.server.mcpserver`, mcp 2.0's rename of it). `mcp`
+                              # becomes an EXPLICIT direct dependency here because it was
+                              # previously only transitive (via fastmcp-slim, which pinned
+                              # the same `mcp<2.0,>=1.24.0` range this now declares directly).
+                              #
+                              # `<2.0` is a DELIBERATE, load-bearing upper bound, not a
+                              # leftover floor -- #4302 measured (live) that mcp 2.0 is a
+                              # MAJOR breaking release: it renames `mcp.server.fastmcp.FastMCP`
+                              # to `mcp.server.mcpserver.MCPServer`, and (more importantly)
+                              # `mcp.server.lowlevel.Server` LOSES its `@list_tools()`/
+                              # `@call_tool()` decorator API entirely, replaced by a generic
+                              # `add_request_handler(...)` registration shape. reyn's own MCP
+                              # SERVER (`src/reyn/mcp/server.py:372/482`, built on
+                              # `lowlevel.Server`) uses exactly those decorators and would
+                              # raise `AttributeError` at construction time under mcp 2.0 --
+                              # measured live, not assumed. This pin is an accurate
+                              # description of that fact ("reyn does not support mcp 2.0
+                              # today"), not a bandaid hiding it -- the 2.0 port is real,
+                              # bounded work (~4-5 functions + a context re-plumb, see #4302)
+                              # tracked as its own follow-up issue, deliberately NOT folded
+                              # into this dependency-hygiene PR.
     "pyperclip>=1.9",        # #3616 ①: cross-platform clipboard, replacing a
                               # hand-rolled pbcopy/wl-copy/xclip/xsel/clip
                               # dispatch table whose Windows arm piped UTF-8
