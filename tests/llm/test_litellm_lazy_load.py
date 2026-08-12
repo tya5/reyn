@@ -276,8 +276,9 @@ def test_sibling_first_import_routes_import_time_warning_to_file(tmp_path, out_o
     dedicated background thread and falls back to chars//4 immediately.
     That thread does the exact same ``ensure_litellm_ready()`` call this
     test cares about (so the #2929 routing still applies), just off the
-    calling thread — waits for it to actually finish (bounded, unconditional
-    wait on the condition itself) before asserting, instead of assuming the
+    calling thread — waits for it to actually finish (unbounded wait on the
+    condition itself, no wait-budget constant of this test's own; CI's own
+    kill switch is the backstop) before asserting, instead of assuming the
     single ``estimate_tokens`` call already did the import synchronously.
     """
     project_root = tmp_path
@@ -299,8 +300,11 @@ def test_sibling_first_import_routes_import_time_warning_to_file(tmp_path, out_o
         # #4395 PR-2: this defers to the background warming thread rather
         # than importing inline — wait for that thread to finish.
         estimate_tokens("some text to size", "gpt-3.5-turbo")
-        deadline = time.monotonic() + 10.0
-        while not is_litellm_ready() and time.monotonic() < deadline:
+        # Unbounded wait on the condition itself — no wait-budget constant
+        # of this test's own (CI's own --timeout=120 kill switch is the
+        # backstop; a script needing longer than that to warm should be
+        # investigated, not silently capped here).
+        while not is_litellm_ready():
             time.sleep(0.05)
         assert "litellm" in sys.modules, "sibling call's background warm did not import litellm"
         """

@@ -26,7 +26,6 @@ module's own function, not a mock of any object model.
 from __future__ import annotations
 
 import threading
-import time
 
 import pytest
 
@@ -89,23 +88,29 @@ def _clean_litellm_bootstrap_state():
 
 
 def test_repeated_calls_during_a_persistent_failure_never_block(monkeypatch):
-    """Tier 2: THE core defect. Every call must return in effectively zero
-    time, even while litellm keeps failing to import on every attempt."""
+    """Tier 2: THE core defect — the CALLING thread must never itself
+    attempt the import; only the dedicated background worker thread may.
+    Observed at the CAUSE (which thread actually invoked the fake import
+    function), not an inferred EFFECT (elapsed wall-clock time — a
+    time-based assertion this repo's testing policy bans; "fast" is a
+    consequence of "never attempted here", not the thing itself)."""
+    calling_thread_names: list[str] = []
+
     def _always_failing_ensure_ready():
+        calling_thread_names.append(threading.current_thread().name)
         return None  # matches the real function's own contract: never
         # raises, returns None on failure, does not flip `_litellm_ready`.
 
     monkeypatch.setattr(lb_mod, "ensure_litellm_ready", _always_failing_ensure_ready)
 
-    start = time.monotonic()
+    this_thread_name = threading.current_thread().name
     for _ in range(20):
         with pytest.raises(LitellmWarmingInBackgroundError):
             ensure_litellm_ready_or_defer()
-    elapsed = time.monotonic() - start
 
-    assert elapsed < 1.0, (
-        f"20 calls during a persistent failure took {elapsed:.3f}s — the "
-        f"calling thread must never wait on the import attempt"
+    assert this_thread_name not in calling_thread_names, (
+        "the calling thread must never itself invoke ensure_litellm_ready — "
+        "only the dedicated background worker thread may"
     )
     _let_worker_thread_finish_and_reap_it()
 
