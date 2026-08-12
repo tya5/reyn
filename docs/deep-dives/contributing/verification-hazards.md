@@ -1082,6 +1082,64 @@ it has not yet touched.
   scope: "287, matched by `<pattern>`, over `<file-set>`, in the `<direction>`
   direction." A bare count carries none of the three.
 
+## 22. CI-green is not main-green when a test reads process-global state — the reverse direction from `pytest-green ≠ CI-green`
+
+CLAUDE.md's PR-workflow section already names one direction of this: a
+scoped `pytest` run passing locally is not the same claim as CI passing
+(`ruff` and Tier-4 gates can fail while `pytest` itself is green). This
+section is the **reverse** direction, found the same night (#4395/#4421):
+**a test passing when run as part of the FULL suite is not the same claim
+as that test passing on its own** — and the gap runs the opposite way from
+what the name suggests. It is not "the full suite catches more"; it is
+that **running the full suite can make an individually-broken test look
+green**, because some OTHER test, earlier in file/collection order,
+happens to satisfy a precondition this test never states.
+
+**The shape:** `litellm_bootstrap.py`'s `ensure_litellm_ready()` exposes
+`is_litellm_ready()` — a process-global flag, True only once THIS
+module's own chokepoint has genuinely imported litellm. Two existing test
+files (`test_llm_call_retry.py`, `test_3905_cli_authentication_error_
+boundary.py`) each did their own direct `import litellm` /
+`from litellm.exceptions import X` at the top — a reasonable-looking way
+to get a real exception instance to test against — which puts litellm in
+`sys.modules` but never touches `is_litellm_ready()`'s own bookkeeping.
+Functions gated on `is_litellm_ready()` (`_is_retryable_exc`,
+`_is_llm_timeout_exc`, the CLI's `AuthenticationError` boundary) silently
+under-classified in these tests as a result — not a crash, a wrong,
+overly-conservative answer that happened to still satisfy some of the
+assertions.
+
+**Why the full suite hid it:** in a full-repo `pytest` run, dozens of
+OTHER test files call the real chokepoint before these two files' tests
+ever execute, leaving `is_litellm_ready()` True by the time collection
+reaches them — the precondition these two files never state gets
+satisfied by accident, from outside the file, by whatever ran first. Run
+either file **alone** (`pytest tests/llm/test_llm_call_retry.py`, no
+other file in the invocation) and the same tests go red — the process
+starts fresh, nothing upstream has touched the chokepoint yet, and the
+gap is no longer hidden by borrowed state.
+
+**The detection technique:** run the SPECIFIC file(s) touched by a change
+in isolation, not folded into a broader scoped run — a passing scoped
+`pytest tests/llm/` can still hide a single file that only passes because
+of what ran before it in that same invocation. `git stash` the source
+change and re-run the SAME isolated file to confirm the failure is real
+and not an artifact of the stash itself (the technique this repo already
+uses to distinguish "was already broken" from "I just broke it" —
+confirmed here that the 4 failures predated this PR, on the currently
+merged `main`, not introduced by it).
+
+**The general form:** any test that depends on process-global state (a
+readiness flag, a warm cache, a singleton's own "have I run yet" bit)
+without EITHER establishing that state itself OR asserting it as an
+explicit precondition is riding on collection order — and a full-suite
+run's order is exactly the kind of incidental, unstated dependency this
+repo's own testing policy already bans for other reasons (Tier 4:
+"internal cache structure, exact... order"). The fix is the same shape
+every time: state the real precondition explicitly in the test (call the
+real chokepoint, or reset the relevant global in an autouse fixture)
+instead of relying on some other file having already done it first.
+
 ## See also
 
 - [Testing policy](testing.md) — Tier model, Mock vs Fake, decision flow.
