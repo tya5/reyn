@@ -94,6 +94,9 @@ class _HistoryReadModel(ChatReadModel):
     def conversation_history(self, *, limit=None):
         return self._messages[-limit:] if limit is not None else list(self._messages)
 
+    def load_older_conversation_history(self, *, agent=None, session_id=None):
+        return 0
+
 
 class ScriptedTransport(ClientTransport):
     """A real, minimal :class:`ClientTransport`. ``end=False`` keeps the stream

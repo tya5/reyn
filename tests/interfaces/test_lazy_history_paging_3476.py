@@ -111,6 +111,9 @@ class _HistoryReadModel(ChatReadModel):
     def conversation_history(self, *, limit=None):
         return self._messages[-limit:] if limit is not None else list(self._messages)
 
+    def load_older_conversation_history(self, *, agent=None, session_id=None):
+        return 0
+
 
 def _turns(n_turns: int) -> "list[ChatMessage]":
     return [

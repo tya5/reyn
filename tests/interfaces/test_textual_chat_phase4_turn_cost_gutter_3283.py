@@ -685,6 +685,9 @@ class _TurnUsageReadModel(ChatReadModel):
     def conversation_history(self, *, limit=None, agent=None, session_id=None):
         return []
 
+    def load_older_conversation_history(self, *, agent=None, session_id=None):
+        return 0
+
 
 class _QueueTransport(ClientTransport):
     """A real :class:`ClientTransport` fed one frame at a time from a queue, so

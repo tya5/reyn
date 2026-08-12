@@ -171,6 +171,9 @@ class SessionReadModel(ChatReadModel):
     def conversation_history(self, *, limit=None, agent=None, session_id=None):
         return []
 
+    def load_older_conversation_history(self, *, agent=None, session_id=None):
+        return 0
+
 
 def _real_session(tmp_path: Path, *, skills=None):
     """A real ``Session`` with ``skills`` registered — the object a

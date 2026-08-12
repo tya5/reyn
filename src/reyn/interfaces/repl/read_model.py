@@ -134,6 +134,37 @@ class ChatReadModel(ABC):
         method's; passing a target here on a remote client is accepted but
         inert."""
 
+    @abstractmethod
+    def load_older_conversation_history(
+        self,
+        *,
+        agent: "str | None" = None,
+        session_id: "str | None" = None,
+    ) -> int:
+        """#4387 Phase B ② (remaining consumers): extend the ON-DISK-backed
+        prefix of :meth:`conversation_history` further into the past, for a
+        caller that has exhausted what it already paged in and needs to know
+        whether more exists — the Textual app's scrollback-top paging
+        (:meth:`~reyn.interfaces.inline.textual_chat.app.ChatApp.on_flow_view_reached_top`)
+        and search-open (:meth:`~reyn.interfaces.inline.textual_chat.app.ChatApp._materialise_all_older`).
+
+        Unlike ``conversation_history``, which only slices what is ALREADY
+        loaded, this actually reads more of ``history.jsonl`` (via
+        :meth:`~reyn.runtime.session.Session.extend_history_backward`) —
+        because #4387 Phase B ① bounded ``Session.load_history()``'s
+        startup read to a tail, a caller that wants to page further back
+        than that tail needs a way to ask for more, not just re-slice the
+        same bounded list. Returns the count of NEWLY available turns (0 =
+        the true start of the conversation was reached — the caller's ONLY
+        way to distinguish that from "just haven't paged that far yet").
+        The caller then re-reads ``conversation_history()`` for the full
+        (now-longer) list.
+
+        **Frame-sufficiency boundary**, same as ``conversation_history``: a
+        remote client holds no session and no on-disk history to extend
+        into — the remote impl always returns 0 (already-exhausted, never a
+        fabricated count)."""
+
     def completion_session(self) -> "object | None":
         """The LOCAL ``Session`` the TUI's completion popup needs (#3354), or
         ``None`` when this client holds none.
@@ -236,6 +267,30 @@ class RegistryReadModel(ChatReadModel):
         if limit is not None and limit >= 0:
             return history[-limit:]
         return history
+
+    def load_older_conversation_history(
+        self,
+        *,
+        agent: "str | None" = None,
+        session_id: "str | None" = None,
+    ) -> int:
+        # Same target-resolution shape as ``conversation_history`` above —
+        # the currently attached session unless a specific (agent,
+        # session_id) is named.
+        if agent is not None:
+            s = (
+                self._registry.get_session(agent, session_id)
+                if session_id is not None
+                else self._registry.get_session(agent)
+            )
+        else:
+            s = self._attached()
+        if s is None:
+            return 0
+        extend = getattr(s, "extend_history_backward", None)
+        if extend is None:
+            return 0
+        return extend()
 
 
 def project_remote_snapshot(values: "dict | None") -> dict:
@@ -366,6 +421,17 @@ class RemoteReadModel(ChatReadModel):
         # switch-hydrate is #3310 N3's job, not this accessor's. Restore-on-
         # restart / switch-rehydrate is a local-attach affordance today.
         return []
+
+    def load_older_conversation_history(
+        self,
+        *,
+        agent: "str | None" = None,
+        session_id: "str | None" = None,
+    ) -> int:
+        # Frame-sufficiency: no session, no on-disk history to extend into.
+        # 0 reads as "nothing more to load," never a fabricated count — the
+        # same graceful-degrade every other session-local accessor here uses.
+        return 0
 
 
 __all__ = [

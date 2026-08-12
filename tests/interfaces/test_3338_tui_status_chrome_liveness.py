@@ -593,6 +593,9 @@ class _MutableSnapshotReadModel(ChatReadModel):
     def conversation_history(self, *, limit=None, agent=None, session_id=None):
         return []
 
+    def load_older_conversation_history(self, *, agent=None, session_id=None):
+        return 0
+
 
 class _EventOnlyTransport(ClientTransport):
     """A real, minimal :class:`ClientTransport` fed one frame at a time. The

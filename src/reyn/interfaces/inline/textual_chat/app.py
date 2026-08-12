@@ -1201,6 +1201,17 @@ class TextualChatApp(App):
         # switch), so a switch can never page in the previous session's
         # leftovers.
         self._older_frames: "list[OutboxMessage]" = []
+        # #4387 Phase B ② (remaining consumers): the running total of frames
+        # already accounted for (materialised into ``self.conversation`` PLUS
+        # whatever remains in ``self._older_frames``) as of the last
+        # ``project_restored_frames`` call over the currently loaded message
+        # log. :meth:`_extend_older_frames_from_disk` uses this to cut a
+        # freshly re-projected (now possibly longer) frame list at the right
+        # boundary — projection is not 1:1 with messages (some project to
+        # nothing, tool-call correlation looks back a message), so this must
+        # be a frame-count delta, never a raw-message-count one. Reset
+        # alongside ``self._older_frames`` on every hydrate/switch.
+        self._history_frame_count = 0
         # #3490: the entries the addressed-row rail is currently painted on.
         # flowview's Highlighted/Selected report only the entry MOVED TO, so the
         # one moved AWAY from is tracked here — it needs its gutter re-derived
@@ -1833,6 +1844,10 @@ class TextualChatApp(App):
         # small at realistic history sizes — this is deliberate owner-chosen
         # forward infrastructure, and the split costs one slice.
         self._older_frames = frames[:-_HYDRATE_PAGE_FRAMES]
+        # #4387 Phase B ②: the boundary :meth:`_extend_older_frames_from_disk`
+        # cuts future re-projections at — see its own docstring for why this
+        # must be a frame count, not the message count ``messages`` carries.
+        self._history_frame_count = len(frames)
         tail = frames[-_HYDRATE_PAGE_FRAMES:]
         # #3476 ②: batch append — ``extend`` reflows the view ONCE for the
         # whole appended page instead of once per entry (flowview 0.6.0;
@@ -1864,6 +1879,47 @@ class TextualChatApp(App):
             if msg.kind == "agent":
                 self._recent_replies.appendleft(msg.text)
 
+    def _extend_older_frames_from_disk(self) -> bool:
+        """#4387 Phase B ② (remaining consumers): when ``self._older_frames``
+        (#3476 ④'s lazily-held prefix) is exhausted, ask the read model for
+        MORE of ``history.jsonl``
+        (:meth:`~reyn.interfaces.repl.read_model.ChatReadModel.load_older_conversation_history`)
+        before concluding the true start of the conversation was reached —
+        closing the gap #4387 Phase B ① opened when ``Session.load_history()``
+        stopped necessarily loading the whole file at startup.
+
+        Re-projects the FULL (now possibly longer) message log rather than
+        projecting only the newly-read messages: :func:`project_restored_frames`
+        is NOT 1:1 with messages (some — ``system``/``summary`` — project to
+        nothing; tool-call correlation looks back at the PRECEDING message),
+        so slicing the raw message list at the read model's own returned
+        count would cut in the wrong place. Slicing the re-projected FRAME
+        list at the delta against ``self._history_frame_count`` (the running
+        total already accounted for) is the only cut that is correct
+        regardless of how projection folds messages. Returns whether any new
+        frames became available (``False`` = true start of history, or the
+        read model/projection failed — fully guarded, same as
+        :meth:`_hydrate_from_history`)."""
+        if self._read_model is None:
+            return False
+        try:
+            extended = self._read_model.load_older_conversation_history()
+        except Exception:
+            logger.exception("textual chat: history backward-extend failed")
+            return False
+        if extended <= 0:
+            return False
+        try:
+            messages = self._read_model.conversation_history()
+            frames = project_restored_frames(messages)
+        except Exception:
+            logger.exception("textual chat: history backward-extend projection failed")
+            return False
+        new_prefix = frames[: len(frames) - self._history_frame_count]
+        self._older_frames = new_prefix + self._older_frames
+        self._history_frame_count = len(frames)
+        return bool(new_prefix)
+
     def on_flow_view_reached_top(self, event: "FlowView.ReachedTop") -> None:
         """#3476 ④: page the next-older slice of the restored history in when
         the user scrolls near the top. ``insert_many(0, …)`` reflows once and
@@ -1871,9 +1927,16 @@ class TextualChatApp(App):
         the page lands invisibly above. Fires once per approach and re-arms on
         retreat (flowview's edge-trigger contract); with nothing left to page
         in this is a no-op. Live frames are unaffected — they append at the
-        bottom through the frame pump, never through this path."""
+        bottom through the frame pump, never through this path.
+
+        #4387 Phase B ② (remaining consumers): when the held prefix is
+        exhausted this no longer concludes "nothing more exists" on the
+        spot — it asks :meth:`_extend_older_frames_from_disk` for more of
+        ``history.jsonl`` first, so a real conversation start and a merely
+        bounded in-memory load are no longer indistinguishable to the user."""
         if not self._older_frames:
-            return
+            if not self._extend_older_frames_from_disk():
+                return
         page = self._older_frames[-_HYDRATE_PAGE_FRAMES:]
         try:
             entries = self.conversation.insert_many(0, page)
@@ -1892,7 +1955,17 @@ class TextualChatApp(App):
         history — a hit that exists in history but not in the materialised
         page would read as "no match", a lie — and the measured full-hydrate
         cost is negligible (#3476 issue comment), so search-open simply pays
-        it all at once rather than teaching search a second, virtual domain."""
+        it all at once rather than teaching search a second, virtual domain.
+
+        #4387 Phase B ② (remaining consumers): "full restored history" used
+        to mean only what #4387 Phase B ① bounded ``load_history()`` loaded
+        at startup — a hit older than that tail silently read as "no match"
+        too, contradicting this very docstring's promise. Drains
+        :meth:`_extend_older_frames_from_disk` to the true start of
+        ``history.jsonl`` FIRST, so what gets materialised really is the
+        full history, not just the bounded in-memory slice of it."""
+        while self._extend_older_frames_from_disk():
+            pass
         if not self._older_frames:
             return
         rest = self._older_frames

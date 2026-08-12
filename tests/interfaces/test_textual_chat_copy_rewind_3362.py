@@ -107,6 +107,9 @@ class _PickerReadModel(ChatReadModel):
     def conversation_history(self, *, limit=None, agent=None, session_id=None):
         return self._messages[-limit:] if limit is not None else list(self._messages)
 
+    def load_older_conversation_history(self, *, agent=None, session_id=None):
+        return 0
+
 
 class _RemoteishReadModel(_PickerReadModel):
     """The REMOTE shape: command-UI is not on the AG-UI wire, so
