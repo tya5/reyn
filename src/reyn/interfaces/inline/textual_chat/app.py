@@ -3528,21 +3528,64 @@ class TextualChatApp(App):
         will call ``.update()`` on once settled" (the presenter has no
         reference to any Entry/FlowView on its own; the app owns those).
         Fully guarded, same rationale as :meth:`_begin_running_indicator`:
-        a broken image render must never break the frame pump."""
+        a broken image render must never break the frame pump.
+
+        #4464: if at least one image node actually needs resolving (not
+        already cached from a prior resolution — same-src reuse across
+        entries is real, e.g. a repeated screenshot URL), starts the SAME
+        live spinner + elapsed indicator :meth:`_begin_running_indicator`
+        already gives a RUNNING tool row — no new visual vocabulary, per the
+        owner's explicit "受入条件" for #4464. Each image's
+        ``on_settled`` callback re-checks every image src this SAME entry
+        still owns; only once none remain unresolved does it stop the
+        animation and strip :data:`_RUNNING_SINCE_KEY` (mirroring
+        :meth:`_coalesce_tool_result`'s own settle-time stripping) — an
+        entry with two images doesn't flip back to static after the FIRST
+        one settles while the second is still preparing."""
         try:
             nodes = (msg.meta or {}).get("nodes") or []
             allowed = list(
                 getattr(getattr(self._config, "chat", None), "image_url_schemes", None)
                 or []
             ) or None
-            for node in nodes:
-                if not isinstance(node, dict) or node.get("component") != "image":
-                    continue
-                src = node.get("src")
-                if isinstance(src, str) and src:
-                    self._presenter.begin_image_resolution(
-                        entry, src, allowed_schemes=allowed
+            image_srcs = [
+                node.get("src")
+                for node in nodes
+                if isinstance(node, dict)
+                and node.get("component") == "image"
+                and isinstance(node.get("src"), str)
+                and node.get("src")
+            ]
+            needs_resolution = [
+                src for src in image_srcs if not self._presenter.has_cached_image(src)
+            ]
+            if needs_resolution:
+                self._begin_running_indicator(entry)
+
+            def _on_image_settled(settled_entry: object) -> None:
+                if any(not self._presenter.has_cached_image(s) for s in image_srcs):
+                    return  # another image on this entry is still resolving
+                try:
+                    self._flow.stop_entry_animation(settled_entry)  # type: ignore[arg-type]
+                except Exception:
+                    logger.exception(
+                        "textual chat: could not stop image-preparing animation"
                     )
+                try:
+                    item = settled_entry.item  # type: ignore[attr-defined]
+                    stripped = {
+                        k: v for k, v in (item.meta or {}).items() if k != _RUNNING_SINCE_KEY
+                    }
+                    settled_entry.set_item(replace(item, meta=stripped))  # type: ignore[attr-defined]
+                except Exception:
+                    logger.exception(
+                        "textual chat: could not settle image-preparing entry"
+                    )
+
+            for src in image_srcs:
+                self._presenter.begin_image_resolution(
+                    entry, src, allowed_schemes=allowed, on_settled=_on_image_settled,
+                )
         except Exception:
             logger.exception("textual chat: could not start image resolution")
 

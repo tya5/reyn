@@ -91,7 +91,11 @@ def _render_code_or_diff(node: dict, *, lexer: str) -> "Any":
     return Syntax(node.get("text", ""), lexer, word_wrap=True, background_color="default")
 
 
-def _render_node(node: dict, image_cache: "dict[str, Any] | None" = None) -> "Any":
+def _render_node(
+    node: dict,
+    image_cache: "dict[str, Any] | None" = None,
+    decoded_image_cache: "dict[str, Any] | None" = None,
+) -> "Any":
     from rich.markdown import Markdown
     from rich.text import Text
 
@@ -112,7 +116,7 @@ def _render_node(node: dict, image_cache: "dict[str, Any] | None" = None) -> "An
     if component == "list":
         return _render_list(node)
     if component == "image":
-        return _render_image(node, image_cache)
+        return _render_image(node, image_cache, decoded_image_cache)
     # Unregistered/future component — never crash the render loop over one bad node.
     return Text(f"<unsupported present component {component!r}>", style="dim")
 
@@ -214,7 +218,36 @@ class _SafeImageRenderable:
         return Measurement(1, options.max_width)
 
 
-def _render_image(node: dict, image_cache: "dict[str, Any] | None") -> "Any":
+def decode_image_body(body: bytes) -> "Any":
+    """Decode a fetched image body into a `textual_image.renderable.Image`
+    (#4464) — the CPU-heavy step `_render_image`'s own inline fallback below
+    does synchronously; extracted here so the presenter (`ReynPresenter.
+    _resolve_image`, `interfaces/inline/textual_chat/presenter.py`) can run
+    it via `asyncio.to_thread` instead of on the event loop, WITHOUT
+    duplicating the decode logic across the two modules.
+
+    Raises on a corrupt/undecodable body or a missing optional dep (PIL /
+    textual-image) — the caller (both this module's own inline fallback and
+    the presenter's off-thread path) is responsible for turning that into
+    the established distinguishable failure state; this function itself
+    stays a pure decode step with no fallback text of its own."""
+    import io
+
+    from PIL import Image as PILImage
+    from textual_image.renderable import Image as TextualImage
+
+    pil_image = PILImage.open(io.BytesIO(body))
+    # See `_render_image`'s own inline fallback for why no separate
+    # `.load()` call is needed — `TextualImage`'s constructor reads pixel
+    # data eagerly, so a bad body already raises HERE.
+    return TextualImage(pil_image, width="auto")
+
+
+def _render_image(
+    node: dict,
+    image_cache: "dict[str, Any] | None",
+    decoded_image_cache: "dict[str, Any] | None" = None,
+) -> "Any":
     """The `image` component (#3846 ②/③) — a PURE dict lookup + in-memory
     decode, never a fetch.
 
@@ -229,6 +262,18 @@ def _render_image(node: dict, image_cache: "dict[str, Any] | None") -> "Any":
     `StdoutPresentationRenderer`, and every existing test that calls this
     function without the new kwarg) gets the pre-#3846 `[image: alt]` text,
     byte-identical — no resolution stage exists on those surfaces yet.
+
+    `decoded_image_cache` (#4464, an app-owned `dict[str, TextualImage]`,
+    default None) is consulted FIRST when present — the presenter's own
+    `_resolve_image` now does the PIL decode + `TextualImage(...)`
+    construction (the CPU-heavy step this docstring already called out) on
+    a background thread (`asyncio.to_thread`) as part of "preparing" an
+    image, so THIS function's own job shrinks to "wrap the already-built
+    renderable" on the cache-hit path — no decode work left to do here at
+    all. Falling through to the inline decode below on a cache MISS (the
+    key absent, or `decoded_image_cache=None` entirely) keeps every
+    existing caller's behavior unchanged — this is an accelerator, not a
+    new required input.
 
     #3846 ③: on a successful resolution, renders REAL pixels via
     `textual_image.renderable.Image` (owner-approved regular dep, #3970) —
@@ -251,22 +296,18 @@ def _render_image(node: dict, image_cache: "dict[str, Any] | None") -> "Any":
     res = image_cache[src]
     if not res.ok:
         return Text(f"[image failed: {label} — {res.error}]", style="dim")
+    if decoded_image_cache is not None and src in decoded_image_cache:
+        return _SafeImageRenderable(decoded_image_cache[src], label)
     try:
-        import io
-
-        from PIL import Image as PILImage
-        from textual_image.renderable import Image as TextualImage
-
-        pil_image = PILImage.open(io.BytesIO(res.body))
-        # `PILImage.open()` alone only parses the header (lazy decode) — a
-        # truncated/corrupt body can open cleanly and only fail once pixel
-        # data is actually read. No separate `.load()` call is needed here
-        # to force that: `TextualImage`'s own constructor reads the pixel
-        # data eagerly (`PixelData.__init__`), so a bad body already raises
-        # HERE, inside this `try`, not later at paint time (verified: a
-        # truncated PNG that `open()` accepts raises `OSError` from
-        # `TextualImage(...)` itself).
-        return _SafeImageRenderable(TextualImage(pil_image, width="auto"), label)
+        # #4464: this inline decode is now a FALLBACK (the presenter's
+        # `_resolve_image` decodes on a background thread via the SAME
+        # `decode_image_body` helper and populates `decoded_image_cache`
+        # above on the hit path) — kept so callers with no
+        # `decoded_image_cache` (every pre-#4464 caller, and any future one
+        # that doesn't opt in) still work byte-identically, just back on the
+        # event loop for this CPU step as before. See `decode_image_body`'s
+        # own docstring for why a bad body raises HERE, not at paint time.
+        return _SafeImageRenderable(decode_image_body(res.body), label)
     except Exception as exc:
         # Anything from a corrupt/unsupported body to a missing optional dep
         # (defensive only — pillow/textual-image are regular deps) degrades
@@ -277,7 +318,10 @@ def _render_image(node: dict, image_cache: "dict[str, Any] | None") -> "Any":
 
 
 def render_presentation_nodes(
-    nodes: list[dict], *, image_cache: "dict[str, Any] | None" = None
+    nodes: list[dict],
+    *,
+    image_cache: "dict[str, Any] | None" = None,
+    decoded_image_cache: "dict[str, Any] | None" = None,
 ) -> "Any":
     """Convert a `ResolvedPresentation.nodes` render model into ONE Rich renderable
     (a `Group` of per-node renderables) — the one-shot inline block `present` prints
@@ -285,7 +329,9 @@ def render_presentation_nodes(
     invariant every branch here must preserve.
 
     `image_cache` (#3846 ②, default None) is forwarded to the `image`
-    component branch — see :func:`_render_image`."""
+    component branch — see :func:`_render_image`. `decoded_image_cache`
+    (#4464, default None) is forwarded alongside it — see that function's
+    own docstring for what it lets this render pass skip."""
     from rich.console import Group
 
     return Group(*[_render_node(node, image_cache) for node in nodes])
