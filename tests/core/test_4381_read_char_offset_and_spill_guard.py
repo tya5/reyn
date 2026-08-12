@@ -23,7 +23,14 @@ router's separate, independent token-derived spill trigger
 unbounded chain (traced before writing this fix, not assumed), broken by
 detecting the spill-path re-read and erroring with the exact remedy
 ("specify char_offset and re-read") instead of truncating into the same
-loop.
+loop. The provenance registry is PERSISTED (lead-coder review round 2):
+a reference to a spill path can outlive the process that wrote it (it
+can sit in ``history.jsonl``, replayed as a plain ``read_file`` after a
+restart) — an in-memory-only registry would silently stop recognizing a
+real spill the moment the process that wrote it exits, reopening the
+exact loop this file exists to close. Verified directly against a
+SECOND, independently-constructed ``MediaStore`` instance, not by
+inspecting the first one's own state.
 
 Real ``OpContext`` + real files + a real ``MediaStore`` (no fakes) — the
 same construction ``test_read_single_line_char_truncation_2335.py``
@@ -171,6 +178,39 @@ async def test_bare_reread_of_a_spilled_file_errors_with_the_remedy(tmp_path: Pa
         f"the remedy must name char_offset, not just say 'too big': {result['error']!r}"
     )
     assert "spill" in result["error"].lower()
+
+
+@pytest.mark.asyncio
+async def test_spill_guard_survives_a_fresh_media_store_instance(tmp_path: Path) -> None:
+    """Tier 2: lead-coder review (#4432) — a REFERENCE to a spill path can
+    outlive the process that wrote it (it can sit in ``history.jsonl``,
+    read back and re-issued as a plain ``read_file`` after a restart). An
+    in-memory-ONLY registry would be empty in the next process and the
+    guard would silently not fire — the loop this issue closes would
+    reopen across the restart boundary. Simulated here with a SECOND,
+    independently-constructed ``MediaStore`` pointed at the same
+    ``project_root`` (the same object a fresh process would build) rather
+    than reusing the first instance — this is what actually falsifies
+    "in-memory only" if the persistence regresses."""
+    writer = MediaStore(project_root=tmp_path)
+    huge = "line content here, " * 5000
+    block = writer.save_tool_result(huge, tool="some_tool")
+    spill_path = block["path"]
+
+    reader = MediaStore(project_root=tmp_path)  # a FRESH instance — simulates a new process
+    assert reader.is_tool_result_spill(spill_path), (
+        "a fresh MediaStore instance (same project_root) must recognize a spill "
+        "written by an earlier instance — the guard must survive a restart"
+    )
+
+    result = await handle(
+        FileIROp(kind="file", op="read", path=spill_path),
+        _ctx(tmp_path, media_store=reader),
+    )
+    assert result["status"] == "error", (
+        "the read-time guard must fire through the FRESH instance too, not just "
+        "the one that wrote the spill"
+    )
 
 
 @pytest.mark.asyncio

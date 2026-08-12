@@ -58,11 +58,20 @@ Out of scope (= future work):
 from __future__ import annotations
 
 import hashlib
+import json
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
 from reyn.services.offload.store import offload_value, read_offloaded
+
+#: #4381: one JSON object per line (``{"path": "<absolute path>"}``), one
+#: line per :meth:`MediaStore.save_tool_result` write — the persisted
+#: cross-process spill-provenance manifest. Lives alongside the spill
+#: artifacts themselves under ``tool_results_dir``, never under
+#: ``project_root`` directly, so it shares their (already-manual, already-
+#: accepted) cleanup story rather than needing its own.
+_SPILL_MANIFEST_FILENAME = ".tool_result_spills.jsonl"
 
 # Conservative mapping from MIME type to file extension; unknown types
 # fall back to ``""`` so the storage layer still writes a file (= user
@@ -264,14 +273,46 @@ class MediaStore:
         # spilled A SECOND time — a real, unbounded chain, not a
         # hypothetical.
         #
-        # In-memory, session-scoped (this store's own lifetime) — the loop
-        # this guards against is a single session's own read-then-spill
-        # cycle, not something that needs to survive a restart. Session-
-        # scoped is also why a manifest FILE (persisted alongside the
-        # spilled artifacts) was rejected: it would need its own lifecycle/
-        # cleanup story for a guard whose failure mode never outlives the
-        # process that could trigger it.
-        self._tool_result_spill_paths: "set[Path]" = set()
+        # PERSISTED (lead-coder review, #4381): a REFERENCE to a spill
+        # path survives across a restart — it can sit in ``history.jsonl``
+        # (the LLM's own past ``read_file(path=<spill>)`` call, or a tool-
+        # result-ref block from a still-open turn) long after the process
+        # that wrote the spill has exited. An in-memory-only set is EMPTY
+        # in the next process, so the guard would silently not fire for a
+        # path that genuinely is a spill — the loop this exists to close
+        # reopens across the restart boundary, not just within one
+        # process. Loaded once at construction from
+        # :data:`_SPILL_MANIFEST_FILENAME` under ``tool_results_dir``,
+        # appended to (one line per write) by :meth:`save_tool_result`.
+        # No NEW cleanup/lifecycle story: this file lives alongside the
+        # spill artifacts themselves, which already have none (this
+        # class's own docstring already tells operators to ``ls -la
+        # .reyn/tool-results/`` and clean up by hand) — the manifest just
+        # inherits that same, already-accepted lack of automatic GC rather
+        # than introducing a new one.
+        self._tool_result_spill_paths: "set[Path]" = self._load_spill_manifest()
+
+    def _spill_manifest_path(self) -> Path:
+        return self._tool_results_dir / _SPILL_MANIFEST_FILENAME
+
+    def _load_spill_manifest(self) -> "set[Path]":
+        manifest = self._spill_manifest_path()
+        if not manifest.exists():
+            return set()
+        paths: "set[Path]" = set()
+        try:
+            for line in manifest.read_text(encoding="utf-8").splitlines():
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    entry = json.loads(line)
+                    paths.add(Path(entry["path"]))
+                except (json.JSONDecodeError, KeyError, TypeError):
+                    continue  # one malformed line never invalidates the rest
+        except OSError:
+            return set()  # best-effort — an unreadable manifest degrades to empty, not a crash
+        return paths
 
     def is_tool_result_spill(self, path: "str | Path") -> bool:
         """#4381: whether *path* is a file THIS store itself wrote via
@@ -280,7 +321,9 @@ class MediaStore:
         ``tool_results_dir`` (a path-naming/location heuristic would also
         catch an unrelated file an operator happened to place in the same
         directory — the reason this checks WHAT WAS ACTUALLY WRITTEN,
-        never where a path merely sits).
+        never where a path merely sits). Persisted (see the manifest note
+        in ``__init__``) — recognizes a spill written by an EARLIER
+        process too, not just this one.
 
         Resolves *path* the same way ``save_tool_result`` resolved the
         path it recorded (against ``project_root`` when relative), so a
@@ -401,10 +444,23 @@ class MediaStore:
         # Convert absolute path_ref to project-relative path for the block.
         abs_path = Path(result.path_ref)
         rel_path = str(abs_path.relative_to(self._project_root))
-        # #4381: record so a later ``read_file`` on this exact path can
-        # detect it's re-reading a spill artifact (see
-        # :meth:`is_tool_result_spill`'s own docstring for why).
-        self._tool_result_spill_paths.add(abs_path.resolve())
+        # #4381: record so a later ``read_file`` on this exact path — in
+        # THIS process or a LATER one (a reference to it can sit in
+        # ``history.jsonl`` past a restart) — can detect it's re-reading a
+        # spill artifact (see :meth:`is_tool_result_spill`'s own
+        # docstring for why). The in-memory set update and the manifest
+        # append are independent, best-effort: a manifest-write failure
+        # (e.g. a read-only ``tool_results_dir``) must never fail the
+        # spill write itself, which is the load-bearing operation here —
+        # it only means a FUTURE process's guard won't recognize this one
+        # path, not that this write failed.
+        resolved_path = abs_path.resolve()
+        self._tool_result_spill_paths.add(resolved_path)
+        try:
+            with self._spill_manifest_path().open("a", encoding="utf-8") as f:
+                f.write(json.dumps({"path": str(resolved_path)}) + "\n")
+        except OSError:
+            pass
         block: dict = {
             "type": "tool_result_ref",
             "path": rel_path,
