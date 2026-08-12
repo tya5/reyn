@@ -196,14 +196,6 @@ def _resolve_ssl_verify(ctx: OpContext) -> bool | str:
       4. Both unset (None) → falls through to litellm.get_ssl_verify()
          (= SSL_VERIFY env → litellm.ssl_verify → SSL_CERT_FILE → True).
     """
-    # perf/log-routing chokepoint: a web op (e.g. the flagship web_search→agent
-    # pipeline) can be the FIRST litellm import in the process — funnel it
-    # through ensure_litellm_ready() so litellm's import-time console log
-    # routing (#2929) wraps this import too (idempotent; cheap on 2nd+ call).
-    from reyn.llm.litellm_bootstrap import ensure_litellm_ready
-    ensure_litellm_ready()
-    from litellm.llms.custom_httpx.http_handler import get_ssl_verify
-
     cfg = ctx.web_fetch_config
     if cfg is not None:
         if cfg.ca_bundle:
@@ -212,8 +204,35 @@ def _resolve_ssl_verify(ctx: OpContext) -> bool | str:
             return False
         if cfg.verify_ssl is True:
             return True
-        # cfg.verify_ssl is None → fall through to env-var chain
-    return get_ssl_verify()
+        # cfg.verify_ssl is None → fall through to litellm's own env-var chain
+    # perf/log-routing chokepoint: a web op (e.g. the flagship web_search→agent
+    # pipeline) can be the FIRST litellm import in the process — funnel it
+    # through ensure_litellm_ready() so litellm's import-time console log
+    # routing (#2929) wraps this import too (idempotent; cheap on 2nd+ call).
+    # Only reached here (not unconditionally at the top) — an explicit
+    # ca_bundle/verify_ssl config above never needs litellm at all.
+    #
+    # #4395 (owner-observed, live: `AttributeError: module 'litellm' has no
+    # attribute 'exceptions'` from a different chokepoint-bypass site):
+    # this used to call `ensure_litellm_ready()` and ignore its return
+    # value, then do its own unconditional `from litellm... import
+    # get_ssl_verify` right after — a chokepoint-bypass with a NEW failure
+    # mode PR-2's background warming thread exposed (Python places a
+    # module into `sys.modules` at the START of import, before its
+    # top-level code finishes; a second, independent import touch while
+    # the warming thread is mid-import can observe the same, genuinely
+    # incomplete module). Fixed the same way as `pricing.py`'s
+    # `_usage_object_for` (#4413): read `get_ssl_verify` off the
+    # ALREADY-confirmed module returned by `ensure_litellm_ready()`
+    # instead of a separate import statement. If litellm is unavailable,
+    # falls back to `True` (verify SSL) — the safe default, matching what
+    # this same fallback chain would eventually resolve to anyway absent
+    # any litellm-side override.
+    from reyn.llm.litellm_bootstrap import ensure_litellm_ready
+    litellm = ensure_litellm_ready()
+    if litellm is None:
+        return True
+    return litellm.llms.custom_httpx.http_handler.get_ssl_verify()
 
 
 async def handle_web_fetch(op: WebFetchIROp, ctx: OpContext) -> dict:

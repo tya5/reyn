@@ -164,24 +164,49 @@ class RegistryClient:
         self._events = events
 
     async def __aenter__(self) -> "RegistryClient":
+        from reyn._network import build_async_http_client
+
+        # Resolve the verify value: explicit arg takes priority; None falls
+        # through to litellm's own env-var chain (same as web_fetch handler).
+        #
         # perf/log-routing chokepoint: this client can be the FIRST litellm
         # import in the process — funnel it through ensure_litellm_ready() so
         # litellm's import-time console log routing (#2929) wraps it too
-        # (idempotent; cheap on 2nd+ call).
-        from reyn.llm.litellm_bootstrap import ensure_litellm_ready
+        # (idempotent; cheap on 2nd+ call). Only reached here (not
+        # unconditionally at the top) — an explicit ``verify`` constructor
+        # arg never needs litellm at all.
+        #
+        # #4395 (owner-observed, live: `AttributeError: module 'litellm' has
+        # no attribute 'exceptions'` from a different chokepoint-bypass
+        # site): this used to call `ensure_litellm_ready()` and ignore its
+        # return value, then do its own unconditional `from litellm...
+        # import get_ssl_verify` right after — a chokepoint-bypass with a
+        # NEW failure mode PR-2's background warming thread exposed
+        # (Python places a module into `sys.modules` at the START of
+        # import, before its top-level code finishes; a second, independent
+        # import touch while the warming thread is mid-import can observe
+        # the same, genuinely incomplete module). Fixed the same way as
+        # `pricing.py`'s `_usage_object_for` (#4413) and `web.py`'s
+        # identical fix: read `get_ssl_verify` off the ALREADY-confirmed
+        # module instead of a separate import statement. If litellm is
+        # unavailable, falls back to `True` (verify SSL) — the safe
+        # default.
+        #
         # #4418: this client already tracks an optional EventLog for its own
         # verify=False audit below — feed it through so the tiktoken-import
         # egress (fired inside THIS ensure_litellm_ready call, if litellm
         # has not been imported anywhere else in the process yet) gets the
         # same never-silent audit-event when it resolves verify=False.
-        ensure_litellm_ready(events=self._events)
-        from litellm.llms.custom_httpx.http_handler import get_ssl_verify
-
-        from reyn._network import build_async_http_client
-
-        # Resolve the verify value: explicit arg takes priority; None falls
-        # through to the litellm env-var chain (same as web_fetch handler).
-        verify = self._verify if self._verify is not None else get_ssl_verify()
+        if self._verify is not None:
+            verify = self._verify
+        else:
+            from reyn.llm.litellm_bootstrap import ensure_litellm_ready
+            litellm = ensure_litellm_ready(events=self._events)
+            verify = (
+                litellm.llms.custom_httpx.http_handler.get_ssl_verify()
+                if litellm is not None
+                else True
+            )
         # SSL verification — priority: constructor arg → litellm env-var chain.
         # #1972/#3075: pin_ssrf=True routes through PinnedAsyncHTTPTransport —
         # it both validates (L2 SSRF IP-deny, #1956) AND pins the connect-time

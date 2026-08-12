@@ -904,12 +904,39 @@ def _is_llm_timeout_exc(exc: BaseException) -> bool:
     """#2210: True for a per-call HTTP TIMEOUT (a hung/slow provider) — ``litellm`` Timeout or
     an ``httpx`` read timeout, the timeout subset of ``_is_retryable_exc``. Used to route ONLY
     a persistent timeout through the on_limit policy (other infra errors surface as-is).
-    ``litellm`` is lazy-imported (this module avoids a module-level ``import litellm``),
-    and ``httpx`` likewise (avoids a module-level ``import httpx`` — see
-    ``_get_httpx_exc_types``)."""
-    import litellm  # noqa: PLC0415
+    ``httpx`` is lazy-imported (avoids a module-level ``import httpx`` — see
+    ``_get_httpx_exc_types``).
+
+    #4395 (owner-observed, live: ``AttributeError: module 'litellm' has no
+    attribute 'exceptions'``): this used to do its own bare ``import
+    litellm`` — a chokepoint-bypass with a NEW failure mode PR-2's
+    background warming thread exposed. Python places a module into
+    ``sys.modules`` at the START of import, before its top-level code
+    finishes — a bare ``import litellm`` on the main thread while the
+    warming thread is mid-import can observe the SAME (still-executing,
+    genuinely incomplete) module object, missing attributes litellm's own
+    ``__init__`` hasn't assigned yet. Before PR-2, every import was
+    synchronous on whichever thread triggered it, so this race was latent,
+    never live. Fixed the same way as ``pricing.py``'s
+    ``_usage_object_for`` (#4413) and ``_get_retryable_litellm_exceptions``
+    (#4417 hardening): gate on ``is_litellm_ready()`` — which is only
+    True once the chokepoint's OWN attempt (real ownership via
+    ``_ready_registry``'s Future, not a bare ``import`` racing it) has
+    genuinely finished — and read the module from ``sys.modules`` only
+    then. If litellm isn't ready yet, ``exc`` cannot be a genuine
+    ``litellm.exceptions.Timeout`` instance (you cannot instantiate a
+    class from a module that was never successfully imported), so
+    returning False here is correct, not just a safe placeholder.
+    """
+    from reyn.llm.litellm_bootstrap import is_litellm_ready
     _, read_timeout_exc = _get_httpx_exc_types()
-    return isinstance(exc, (litellm.exceptions.Timeout, read_timeout_exc))
+    if isinstance(exc, read_timeout_exc):
+        return True
+    if not is_litellm_ready():
+        return False
+    import sys
+    litellm = sys.modules["litellm"]
+    return isinstance(exc, litellm.exceptions.Timeout)
 
 
 def _resolve_llm_call_bounds(
