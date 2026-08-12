@@ -4,12 +4,12 @@
 # Copy this file to ``reyn.local.yaml`` (which is gitignored) and uncomment the
 # blocks you want to set. Any field omitted falls back to (a) ``reyn.yaml`` if
 # the project sets it, (b) ``~/.reyn/config.yaml`` for user-global defaults,
-# (c) the built-in defaults declared in ``src/reyn/config.py``.
+# (c) the built-in defaults declared in ``src/reyn/config/root.py``.
 #
 #   cp reyn.local.yaml.example reyn.local.yaml
 #
 # Sections are ordered to mirror ``ReynConfig`` field order so a future
-# version-sync diff against ``src/reyn/config.py`` is straightforward.
+# version-sync diff against ``src/reyn/config/root.py`` is straightforward.
 #
 # API keys are NEVER stored in YAML. Set them as environment variables — the
 # variable name is determined by the LiteLLM provider prefix in ``models:``:
@@ -54,13 +54,6 @@
 # Examples: "ja", "en"
 # -----------------------------------------------------------------------------
 # output_language: ja
-
-
-# -----------------------------------------------------------------------------
-# shell_allowed: whether ``shell`` op is unblocked without per-call permission.
-# Default false — operator approves each shell call interactively.
-# -----------------------------------------------------------------------------
-# shell_allowed: false
 
 
 # -----------------------------------------------------------------------------
@@ -358,20 +351,6 @@
 
 
 # -----------------------------------------------------------------------------
-# skill_search: BM25 skill pre-filter.
-# When the catalog has more than ``threshold`` skills, the router narrows
-# ``invoke_skill.name`` enum to the top-``top_k`` BM25 keyword matches before
-# building the tools list. Defaults: threshold 20 / top_k 5 / backend "bm25".
-# (``embedding`` / ``hybrid`` backends reserved for Components C/D.)
-# -----------------------------------------------------------------------------
-# skill_search:
-#   threshold: 20
-#   top_k: 5
-#   backend: bm25
-
-
-
-# -----------------------------------------------------------------------------
 # agent_id: runtime identity used in audit events and the
 # ``X-Reyn-Agent-Id`` outbound HTTP header.
 # Default: ``reyn/<hostname>``. Set explicitly for multi-agent fleets.
@@ -647,27 +626,6 @@
 
 
 # -----------------------------------------------------------------------------
-# time_travel: cost knobs for the time-travel (rewind/resume) feature (#1582).
-#
-# workspace_capture (default true): when true, every checkpoint boundary (turn /
-# plan-step) captures the workspace into a shadow-git generation so a rewind can
-# restore the repo files too. This is time-travel's LARGEST constant cost (a
-# ``git add -A`` + commit per boundary; in container mode a ``docker exec`` per
-# boundary). Set to false for "runtime-only rewind": rewind/checkout restore the
-# agent + conversation state but NOT repo files — a documented escape for large
-# workspaces / container runs / no-file-rewind use. Run-level (read at startup).
-# -----------------------------------------------------------------------------
-# time_travel:
-#   workspace_capture: true
-#   # act_turn_capture (default false): opt-in per-step capture. When true, each
-#   # skill-run op (step_completed) also snapshots the workspace (a cheap
-#   # write-tree) so a rewind can land mid-skill-run, not just at turn/plan-step
-#   # boundaries. High-frequency (per op) → opt-in. No-op when workspace_capture
-#   # is false.
-#   act_turn_capture: false
-
-
-# -----------------------------------------------------------------------------
 # tool_use: the chat-layer tool-use scheme x transport selector (#1593;
 # FP-0066 P4b, #3247). ``scheme`` is the PRESENTATION axis (category /
 # enumerate-all / retrieval — how capabilities are shown/discovered);
@@ -918,28 +876,6 @@
 
 
 # -----------------------------------------------------------------------------
-# eval: trace export adapters. Empty list (default) =
-# no export. Supported types:
-#   - file        : local JSONL dumps under ``path``
-#   - langfuse    : push to a Langfuse instance (public_key / secret_key / host)
-#   - otlp        : push to an OTLP collector (endpoint)
-#   - ietf_audit  : IETF-shaped audit trail under ``path``
-# -----------------------------------------------------------------------------
-# eval:
-#   exporters:
-#     - type: file
-#       path: .reyn/traces/
-#     - type: langfuse
-#       public_key: ${LANGFUSE_PUBLIC_KEY}
-#       secret_key: ${LANGFUSE_SECRET_KEY}
-#       host: https://your-langfuse.example.com
-#     - type: otlp
-#       endpoint: http://localhost:4317
-#     - type: ietf_audit
-#       path: .reyn/audit-trail/
-
-
-# -----------------------------------------------------------------------------
 # sandbox: which enforcement backend to use + what to do when the
 # requested backend isn't available on the host platform, plus the
 # operator-level sandbox policy applied to sandboxed ops.
@@ -1057,20 +993,6 @@
 #       - { kind: mcp:approval-server:approved }
 #     policy: { capacity: 10, overflow: reject, ttl: 5m }
 #     emit: { kind: composed:deploy_approved }
-
-
-# -----------------------------------------------------------------------------
-# self_improvement: skill_improver behavior knobs.
-#
-#   on_propose:   ask_user (default; pause + prompt before applying)
-#                 auto      (skip prompt; for CI / unattended)
-#                 disabled  (do not apply; log dry-run event)
-#   max_versions: cap on ``.reyn/skill-versions/<name>/v<N>.md`` snapshots
-#                 (default 10; oldest deleted when exceeded; 0 = disable pruning)
-# -----------------------------------------------------------------------------
-# self_improvement:
-#   on_propose: ask_user
-#   max_versions: 10
 
 
 # -----------------------------------------------------------------------------
