@@ -137,6 +137,27 @@ _CLIENT_PREP_NAMED_STAGES: "tuple[str, ...]" = (
 )
 
 
+#: #3671 follow-up (owner git-bash re-measurement: ``tui-boot`` = 93.7% of a
+#: 25.5s startup, previously a single unbroken span). The SAME shape as
+#: ``_CLIENT_PREP_NAMED_STAGES`` above, and the SAME #3735 discipline
+#: applies: these are narrow brackets around specific reyn calls inside
+#: ``tui-boot`` (``TextualChatApp.__init__``, ``compose()``,
+#: ``_hydrate_from_history()``) — not the whole span. ``tui-boot`` itself
+#: stays the wide ground-truth bracket (recorded unconditionally in
+#: :func:`mark_first_frame`, exactly as before this breakdown existed —
+#: not replaced, not removed, per the owner's own explicit ask not to lose
+#: the number already being compared to the macOS baseline in
+#: ``session.py``'s history), and whatever these three do NOT explain of
+#: it is recorded as ``tui-boot:other`` — never spilling into the
+#: process-wide ``unaccounted``, which stays reserved for stages outside
+#: this bracket's own concern.
+_TUI_BOOT_NAMED_STAGES: "tuple[str, ...]" = (
+    "tui-boot:construct",
+    "tui-boot:compose",
+    "tui-boot:hydrate",
+)
+
+
 #: When the lazily-imported ``run_textual_chat`` module finished importing
 #: (``textual``/``textual_flowview`` and everything they pull in — NOT
 #: covered by the ``import`` stage above, which closes at ``mark_cli_reached``
@@ -165,12 +186,21 @@ def mark_tui_import_done() -> None:
 
 
 def mark_app_constructed() -> None:
-    """Record that the TUI object exists and the framework is about to boot.
+    """Record that the TUI object is about to be constructed.
 
-    Paired with :func:`mark_first_frame` to bracket the framework's own startup
-    — terminal setup, first layout, first paint — as ``tui-boot``. Two marks
-    rather than a ``with`` block because the region spans a return out of one
-    function and into a framework callback, which no context manager can hold.
+    Paired with :func:`mark_first_frame` to bracket ``tui-boot``. #3671
+    follow-up (owner real-machine re-measurement, git-bash: ``tui-boot`` =
+    93.7% of a 25.5s startup): this docstring used to call the span "the
+    framework's own startup — terminal setup, first layout, first paint",
+    which is INACCURATE — the owner's own question ("does reyn's own
+    callback run inside that one chunk?") caught it. The span also runs
+    ``TextualChatApp.__init__``, ``compose()`` (reyn builds the entire
+    widget tree here), and ``on_mount()`` (theme setup + reyn's own
+    ``_hydrate_from_history()``) — reyn's code, not Textual's, for most of
+    it. See ``_TUI_BOOT_NAMED_STAGES`` for the breakdown this now supports.
+    Two marks rather than a ``with`` block because the region spans a
+    return out of one function and into a framework callback, which no
+    context manager can hold.
 
     Also closes ``client-prep:app-construct`` (P4, paired with
     :func:`mark_tui_import_done`) — #3671's original single ``client-prep``
@@ -229,12 +259,21 @@ def mark_first_frame() -> None:
     Idempotent: only the FIRST call counts. A surface that re-mounts (a session
     switch, a resize that rebuilds the app) must not move the end of startup to
     a later moment and shrink every share that came before it.
+
+    #3671 follow-up: also computes ``tui-boot:other`` — see
+    ``_TUI_BOOT_NAMED_STAGES``'s own docstring for why (the same
+    #3735-shaped "keep the wide bracket as ground truth, name what the
+    narrow sub-brackets do NOT explain" discipline ``client-prep:other``
+    already established, applied to this span).
     """
     global _FIRST_FRAME_AT
     if _FIRST_FRAME_AT is None:
         _FIRST_FRAME_AT = time.perf_counter()
         if _APP_CONSTRUCTED_AT is not None:
-            TIMING.record("tui-boot", _FIRST_FRAME_AT - _APP_CONSTRUCTED_AT)
+            wide = _FIRST_FRAME_AT - _APP_CONSTRUCTED_AT
+            TIMING.record("tui-boot", wide)
+            named = sum(TIMING.elapsed(s) for s in _TUI_BOOT_NAMED_STAGES)
+            TIMING.record("tui-boot:other", max(0.0, wide - named))
 
 
 def first_frame_reached() -> bool:
@@ -301,6 +340,10 @@ STAGES: "tuple[str, ...]" = (
     "client-prep:app-construct",
     "client-prep:other",
     "tui-boot",
+    "tui-boot:construct",
+    "tui-boot:compose",
+    "tui-boot:hydrate",
+    "tui-boot:other",
 )
 
 
@@ -347,7 +390,23 @@ class StartupTiming:
 
     @property
     def total_seconds(self) -> float:
-        return sum(self._elapsed.values())
+        """Sum of every recorded stage EXCEPT ``tui-boot`` itself.
+
+        #3671 follow-up: ``tui-boot`` is the wide ground-truth bracket for
+        the SAME span its own ``tui-boot:construct``/``:compose``/
+        ``:hydrate``/``:other`` sub-stages break down exactly (see
+        ``_TUI_BOOT_NAMED_STAGES``) — summing both the wide bracket AND its
+        full breakdown would count that one interval twice, inflating
+        ``total_seconds`` past ``wall_seconds`` and making
+        ``unaccounted_seconds`` clamp to 0 even when a real coverage gap
+        exists elsewhere in the startup. Excluded here rather than never
+        recorded (the ``client-prep`` precedent) because ``tui-boot`` is
+        also printed as its own report line — an operator already compares
+        it directly to a known macOS baseline (``session.py``'s history) —
+        and removing that line would look like "this step took no time"
+        under this module's own stated design rule.
+        """
+        return sum(v for k, v in self._elapsed.items() if k != "tui-boot")
 
     def unaccounted_seconds(self, wall_seconds: float) -> float:
         """Wall time the stages do not explain.
