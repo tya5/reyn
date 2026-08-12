@@ -1410,12 +1410,24 @@ def proxy_kwargs() -> dict:
     api_base is read from LITELLM_API_BASE (set by CLI from reyn.yaml).
     API keys are read automatically by litellm from provider env vars
     (OPENAI_API_KEY, ANTHROPIC_API_KEY, etc.) — never passed explicitly here.
+
+    #4347: an earlier version DID read+pass ``OPENAI_API_KEY`` explicitly
+    (7efd505f6) without updating this docstring, so doc and code disagreed.
+    Removed on the owner's own framing: litellm abstracts 100+ providers, so
+    reyn naming ONE provider's env var here means every OTHER provider's user
+    (ANTHROPIC_API_KEY-only, etc.) got nothing from this line — the same
+    "reyn can't enumerate providers litellm already abstracts" argument
+    #3905 applied to ``_PROVIDER_ENV_VARS`` and closed there, not here.
+    Measured on a live proxy (#4347's issue comments, armB/armC): omitting
+    ``api_key`` entirely lets litellm resolve OPENAI_API_KEY itself when set
+    (proxy call succeeds, reyn passed nothing), and when unset litellm raises
+    its own named-and-actionable error telling the operator what to set —
+    which the removed ``"dummy"`` fallback was silently swallowing.
     """
     api_base = os.environ.get("LITELLM_API_BASE")
     if not api_base:
         return {}
-    api_key = os.environ.get("OPENAI_API_KEY", "dummy")
-    return {"api_base": api_base, "custom_llm_provider": "openai", "api_key": api_key}
+    return {"api_base": api_base, "custom_llm_provider": "openai"}
 
 
 # #1829 S2: loop-aware single-deployment Router cache. A ``litellm.Router`` binds
@@ -1604,8 +1616,10 @@ def routing_for_spec(spec: "ModelSpec | None") -> dict | None:
     Enables simultaneous multi-provider use (e.g. router=light on a Gemini proxy
     + capable on Anthropic-direct):
       - ``api_base`` set → route to that endpoint; ``custom_llm_provider`` =
-        ``spec.provider`` or ``"openai"`` (OpenAI-compatible proxy). api_key from
-        OPENAI_API_KEY (litellm standard — never a literal secret in config).
+        ``spec.provider`` or ``"openai"`` (OpenAI-compatible proxy). No
+        ``api_key`` here (#4347, mirrors ``proxy_kwargs()``'s own fix) —
+        litellm resolves it itself from OPENAI_API_KEY (litellm standard —
+        never a literal secret in config).
       - ``provider`` set, no ``api_base`` → DIRECT to that provider (no api_base
         override); litellm resolves the key from its standard env var
         (ANTHROPIC_API_KEY / GEMINI_API_KEY / …). This opts the class OUT of the
@@ -1620,7 +1634,6 @@ def routing_for_spec(spec: "ModelSpec | None") -> dict | None:
         return {
             "api_base": api_base,
             "custom_llm_provider": provider or "openai",
-            "api_key": os.environ.get("OPENAI_API_KEY", "dummy"),
         }
     if provider:
         return {"custom_llm_provider": provider}
