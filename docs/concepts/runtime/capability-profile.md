@@ -195,23 +195,38 @@ declaring an empty deny-set.
 stamp it today: an external peer's `ask_user` answer (A2A / webhook), and the
 result of any tool declaring `returns_external_content` (e.g. web fetch) — both
 land in `self.history` meta, and the narrowing check (`metas_have_untrusted`)
-live-scans the RESIDENT `self.history` on every turn rather than caching the
-verdict, so the very next dispatch after an external tool-result lands is
-already narrowed, and the narrowing self-clears once that entry compacts out of
-context. Under `iteration` the engagement is additionally *latched* for the
-rest of the turn, so a compaction that evicts the tainted entry mid-turn
-cannot launder the taint away and recover the capability before the turn ends.
+scans the logical ACTIVE window (every entry with `seq` above the compaction
+watermark) on every turn rather than caching the verdict — **resident-ness is
+a resource concern, not the decision criterion**: whether an entry currently
+happens to be resident in memory is orthogonal to whether it is still
+logically part of the active conversation, and the scan's job is the latter,
+never the former. So the very next dispatch after an external tool-result
+lands is already narrowed, and the narrowing self-clears once that entry
+**compacts out** — a semantic operation (its content is genuinely replaced by
+a summary and leaves the model's context) — never merely because it stopped
+being resident. Under `iteration` the engagement is additionally *latched*
+for the rest of the turn, so a compaction that evicts the tainted entry
+mid-turn cannot launder the taint away and recover the capability before the
+turn ends.
 
-**#4387/#4468: a second, independent latch for a second kind of eviction.**
-Session.history now also has a resident-BYTE cap (#4387), unrelated to
-compaction — it can evict an entry that is still "active" (`seq` above the
-compaction watermark) purely because memory is tight, well before compaction
-would have folded it away. Since the live-scan above only ever sees resident
-entries, that eviction would silently drop the taint signal the same way a
-mid-turn compaction eviction could — so `_evict_oldest_resident_entries`
-latches the highest `seq` among any evicted entry that carried the untrusted
-marker (`Session._max_evicted_untrusted_seq`), and the scan ORs that latch in
-alongside the in-flight one. This latch is monotone and never blocks or
+**#4387/#4468: a second, independent latch closing a resource/semantic role
+crossing.** Session.history now also has a resident-BYTE cap (#4387) — a
+RESOURCE-role operation (#4431's role split), unrelated to compaction. It can
+evict an entry that is still logically active (`seq` above the compaction
+watermark) purely because memory is tight, well before compaction (the only
+SEMANTIC-role operation meant to retire an entry) would have folded it away —
+the entry stays durable in `history.jsonl` and reloads on demand, so it has
+not actually left the conversation. Without a fix, a scan that reads only
+resident entries would let this resource-role operation silently decide a
+semantic question it has no business deciding — so `_evict_oldest_resident_
+entries` latches the highest `seq` among any evicted entry that carried the
+untrusted marker (`Session._max_evicted_untrusted_seq`), and the scan ORs
+that latch in alongside the in-flight one. Deliberately keyed to the SAME
+extinction trigger as everything else on this page — the compaction
+watermark, never "no longer resident" — so eviction can set the latch but
+only compaction can clear it; tying it to residency instead would just
+reproduce this exact bug on the latch's own side. This latch is monotone and
+never blocks or
 delays eviction itself (no DoS surface from an attacker stuffing untrusted
 content to make eviction stall) — it self-clears the identical way the live
 scan does, the moment compaction's own watermark advances past the latched

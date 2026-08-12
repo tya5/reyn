@@ -2816,16 +2816,19 @@ class Session:
         # latch covers a same-turn tool result whose history entry has not
         # landed yet (see the flag's own docstring in __init__ for why).
         # #4468 (lead-coder security review): OR a THIRD term —
-        # self._max_evicted_untrusted_seq's own OR-latch, covering an
-        # untrusted entry that WAS active (seq > watermark) but has since
-        # been evicted from self.history by #4387's resident-byte cap (the
-        # scan above only ever sees RESIDENT entries, so eviction would
-        # otherwise silently drop this signal — CLAUDE.md's own "removing
-        # one layer regrants a denied capability" shape). Self-clears the
-        # same way the resident scan does: once compaction advances the
-        # watermark past that seq, this term drops out on its own — no
-        # separate clearing logic needed, same monotone comparison either
-        # way.
+        # self._max_evicted_untrusted_seq's own OR-latch. #4387's
+        # resident-byte cap is a RESOURCE-role operation (#4431's role
+        # split); it can evict an entry that is still logically active
+        # (seq > watermark) purely because memory is tight, well before
+        # compaction (the only SEMANTIC-role operation meant to retire an
+        # entry) would fold it away. Without this term the resource-role
+        # cap would silently decide a semantic question it has no business
+        # deciding — CLAUDE.md's own "removing one layer regrants a denied
+        # capability" shape. Keyed to the SAME extinction trigger as the
+        # resident scan above (the compaction watermark) — eviction can SET
+        # this latch, only compaction can CLEAR it; clearing it on "no
+        # longer resident" instead would just reproduce this exact bug on
+        # the latch's own side.
         if not (
             metas_have_untrusted(m.meta for m in active)
             or self._in_flight_untrusted_this_turn
