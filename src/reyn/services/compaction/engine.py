@@ -724,7 +724,31 @@ def is_context_overflow_error(exc: BaseException) -> bool:
     ``services.compaction.engine``'s own recover-classification, #3783
     stage 3, a deliberately separate question living in this same module
     but not this function).
+
+    #4381 stage 1: HTTP 413 (Request Entity Too Large — a request-BODY-byte
+    limit, a different dimension entirely from the token-count limit
+    ``ContextWindowExceededError`` represents) used to reach this predicate
+    ONLY through the ``"too large"`` keyword fallback — the exact
+    "stronger signal available, but not used" gap this function's own
+    docstring already warns against. litellm/openai exceptions carry a
+    real ``status_code`` attribute (``openai.APIStatusError.status_code``,
+    set from the underlying ``httpx.Response`` — a status LiteLLM's proxy
+    cannot flatten away the way it can flatten a typed exception class),
+    checked here as the SAME kind of definitive, type-adjacent signal the
+    ``ContextWindowExceededError`` isinstance check above already is.
+    Classification for 413 is UNCHANGED by this (it already matched via
+    the keyword) — recovery behaviour for it is #4381's later stages
+    (deliberately untouched here); what changes is that the match no
+    longer depends on the exception's message text containing "too large"
+    at all, so a differently-worded 413 (a different provider/proxy, a
+    non-English locale) is now caught too.
     """
+    # #4381 stage 1: checked BEFORE the litellm import below (and so
+    # regardless of whether that import succeeds) — a plain attribute
+    # read needs no litellm dependency at all, and this signal must not
+    # be weaker than the fallback it is meant to replace.
+    if getattr(exc, "status_code", None) == 413:
+        return True
     try:
         from reyn.llm.litellm_bootstrap import ensure_litellm_ready
         ensure_litellm_ready()
