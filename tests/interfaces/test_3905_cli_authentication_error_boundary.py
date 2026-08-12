@@ -8,12 +8,24 @@ This narrows that boundary to a real `litellm.exceptions.AuthenticationError`
 `isinstance` check (no hardcoded provider/env-var lookup table) rather than
 restoring the old typed pre-check.
 
-The boundary is a ``sys.modules`` gate BEFORE importing
-``litellm.exceptions`` — importing it pulls in all of litellm (measured
-directly: ~1.76s cold), so checking it unconditionally would tax every
-unrelated late failure with an irrelevant multi-second cost. Real
+The boundary is an ``is_litellm_ready()`` gate BEFORE reading
+``litellm.exceptions`` — reading it while litellm was never imported would
+otherwise force litellm's full cold import (measured directly: ~1.76s
+cold), so checking it unconditionally would tax every unrelated late
+failure with an irrelevant multi-second cost. Real
 ``litellm.exceptions.AuthenticationError`` instances throughout — no mocks
 of litellm's own exception hierarchy.
+
+#4395/#4421 (architect finding): this boundary used to gate on
+``"litellm" in sys.modules`` — Python places a module into ``sys.modules``
+at the START of import, before its top-level code finishes, so that check
+only ever proved the import STARTED, not that it FINISHED; #4417's
+background warming thread turned that into a live race (the SAME shape
+#4423 fixed at `llm.py`'s `_is_llm_timeout_exc`, the actual site the
+owner's `AttributeError: module 'litellm' has no attribute 'exceptions'`
+traced to). Fixed the same way: gate on ``is_litellm_ready()`` and read
+``AuthenticationError`` off the confirmed module via ``sys.modules``,
+never a fresh ``from litellm... import``.
 """
 from __future__ import annotations
 
@@ -21,6 +33,8 @@ import argparse
 import sys
 
 import pytest
+
+import reyn.llm.litellm_bootstrap as lb_mod
 
 
 def _fake_parser(target_exc: Exception) -> argparse.ArgumentParser:
@@ -36,11 +50,21 @@ def _fake_parser(target_exc: Exception) -> argparse.ArgumentParser:
 def test_authentication_error_renders_friendly_and_exits(monkeypatch, capsys) -> None:
     """Tier 2: a real litellm.exceptions.AuthenticationError renders as
     ``Error: <message>`` + exit 1, not a raw traceback."""
-    from litellm.exceptions import AuthenticationError
+    from reyn.llm.litellm_bootstrap import ensure_litellm_ready
+
+    # This test's own precondition, stated explicitly rather than left to
+    # incidental test-order luck: the boundary only reads litellm's
+    # exception hierarchy once `is_litellm_ready()` confirms it, so a real
+    # completion must have already imported it — via the chokepoint, not
+    # a bare `from litellm.exceptions import AuthenticationError` (which
+    # would leave `is_litellm_ready()` False even though litellm is
+    # genuinely importable).
+    litellm = ensure_litellm_ready()
+    assert litellm is not None, "this test requires a real litellm install"
 
     import reyn.interfaces.cli as cli
 
-    exc = AuthenticationError(
+    exc = litellm.exceptions.AuthenticationError(
         message="Missing Anthropic API Key - set ANTHROPIC_API_KEY",
         llm_provider="anthropic", model="claude-3-5-haiku-20241022",
     )
@@ -56,11 +80,10 @@ def test_authentication_error_renders_friendly_and_exits(monkeypatch, capsys) ->
 
 
 def test_a_non_litellm_exception_propagates_as_a_normal_traceback(monkeypatch) -> None:
-    """Tier 2: an unrelated exception (litellm never touched, never
-    imported into this process by this test) is NOT caught by the
-    boundary — it propagates unmodified, exactly as it would with no
-    boundary at all. Falsify-relevant: this is the case the sys.modules
-    gate exists to keep cheap and untouched."""
+    """Tier 2: an unrelated exception is NOT caught by the boundary — it
+    propagates unmodified, exactly as it would with no boundary at all.
+    Independent of litellm's readiness state (a ``ValueError`` is never an
+    ``AuthenticationError`` instance either way)."""
     import reyn.interfaces.cli as cli
 
     exc = ValueError("unrelated bug, nothing to do with credentials")
@@ -76,41 +99,51 @@ def test_an_internal_server_error_is_not_caught_the_boundary_is_narrow(
 ) -> None:
     """Tier 2: strip-falsify the boundary's OWN narrowness claim — an
     InternalServerError (openai's real missing-key shape, #3905 measured)
-    is deliberately NOT caught, even with litellm already imported. If the
+    is deliberately NOT caught, even with litellm genuinely ready. If the
     isinstance check were accidentally broadened (e.g. to a bare
     ``except Exception``), this would go RED (SystemExit instead of the
     raw exception)."""
-    import litellm  # noqa: F401 - ensure litellm IS in sys.modules for this case
-    from litellm.exceptions import InternalServerError
+    from reyn.llm.litellm_bootstrap import ensure_litellm_ready
+
+    litellm = ensure_litellm_ready()
+    assert litellm is not None, "this test requires a real litellm install"
 
     import reyn.interfaces.cli as cli
 
-    exc = InternalServerError(
+    exc = litellm.exceptions.InternalServerError(
         message="Missing credentials",
         llm_provider="openai", model="gpt-4o-mini",
     )
     monkeypatch.setattr(cli, "build_parser", lambda: _fake_parser(exc))
     monkeypatch.setattr(sys, "argv", ["reyn"])
 
-    with pytest.raises(InternalServerError):
+    with pytest.raises(litellm.exceptions.InternalServerError):
         cli.main()
 
 
-def test_the_litellm_exceptions_import_is_skipped_when_litellm_was_never_loaded(
+def test_the_litellm_exceptions_read_is_skipped_when_litellm_was_never_loaded(
     monkeypatch,
 ) -> None:
-    """Tier 2: the sys.modules gate itself — when litellm was never
-    imported into this process, the boundary must not import it just to
-    run the isinstance check (the exact cost #3671 measures startup
-    against). Verified by removing 'litellm' from sys.modules for the
-    duration of this test (restored after) and confirming it STAYS absent
-    once the unrelated exception is handled."""
+    """Tier 2: the ``is_litellm_ready()`` gate itself — when litellm was
+    never imported into this process, the boundary must not touch it just
+    to run the isinstance check (the exact cost #3671 measures startup
+    against). Verified by simulating "never touched" BOTH ways: removing
+    'litellm' from `sys.modules` AND resetting the chokepoint's own
+    `_litellm_ready` flag (restored after) — the flag alone would
+    otherwise leak True from an earlier test in this same file/session
+    (a process-global) even after `sys.modules` is stripped, silently
+    reintroducing the exact race this boundary exists to avoid (`sys.
+    modules["litellm"]` on a name that was just removed) instead of
+    exercising the not-ready path this test means to cover."""
     import reyn.interfaces.cli as cli
 
     had_litellm = "litellm" in sys.modules
     saved = {k: v for k, v in sys.modules.items() if k == "litellm" or k.startswith("litellm.")}
     for k in list(saved):
         del sys.modules[k]
+    original_ready = lb_mod._litellm_ready
+    lb_mod._litellm_ready = False
+    lb_mod._ready_registry.pop("ready", None)
     try:
         assert "litellm" not in sys.modules
 
@@ -123,8 +156,11 @@ def test_the_litellm_exceptions_import_is_skipped_when_litellm_was_never_loaded(
 
         assert "litellm" not in sys.modules, (
             "the boundary imported litellm.exceptions for an exception that "
-            "was never litellm's — the sys.modules gate did not prevent it"
+            "was never litellm's — the is_litellm_ready() gate did not "
+            "prevent it"
         )
     finally:
+        lb_mod._litellm_ready = original_ready
+        lb_mod._ready_registry.pop("ready", None)
         if had_litellm:
             sys.modules.update(saved)

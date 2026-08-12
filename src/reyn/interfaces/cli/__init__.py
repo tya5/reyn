@@ -62,26 +62,38 @@ def main() -> None:
     # misses get the friendly one-liner, openai-shaped ones still traceback
     # — an HONEST partial improvement, not the old "all providers" claim.
     #
-    # ``sys.modules`` gate BEFORE the litellm import (not just "import
-    # litellm.exceptions and see"): importing ``litellm.exceptions`` pulls in
-    # ALL of litellm (measured directly: 1.76s cold, matching #3671's own
-    # cold-import figure) — paying that for an exception that was never
-    # litellm's in the first place would tax every unrelated late failure
-    # (a bug in file-handling code, say) with an irrelevant multi-second
-    # startup-cost regression. If litellm was never imported, this exception
-    # cannot possibly be a litellm one — skip the check entirely. If it WAS
-    # imported (an LLM call was actually attempted), the re-import is a
-    # sys.modules cache hit (measured: ~0.7 microseconds, not the 1.76s
-    # cold cost) — free.
-    import sys
+    # ``is_litellm_ready()`` gate BEFORE the litellm touch (not just "import
+    # litellm.exceptions and see"): reading ``litellm.exceptions`` would
+    # otherwise force litellm's full cold import (measured directly: 1.76s
+    # cold, matching #3671's own cold-import figure) — paying that for an
+    # exception that was never litellm's in the first place would tax every
+    # unrelated late failure (a bug in file-handling code, say) with an
+    # irrelevant multi-second startup-cost regression. If litellm was never
+    # imported, this exception cannot possibly be a litellm one — skip the
+    # check entirely. If it WAS imported (an LLM call was actually
+    # attempted), reading the confirmed module is free.
+    #
+    # #4395/#4421 (architect finding): this used to gate on ``"litellm" in
+    # sys.modules`` — Python places a module into ``sys.modules`` at the
+    # START of import, before its top-level code finishes, so that check
+    # only ever proved the import STARTED, not that it FINISHED; #4417's
+    # background warming thread turned that into a live race (not yet
+    # observed here the way #4423's `_is_llm_timeout_exc` was, but the
+    # SAME shape: this handler runs on a startup failure, which can race
+    # the warming thread's own in-flight import and grab a genuinely
+    # incomplete module). Fixed the same way as #4423: gate on
+    # ``is_litellm_ready()`` and read ``AuthenticationError`` off the
+    # confirmed module via ``sys.modules``, never a fresh ``from
+    # litellm... import``.
+    from reyn.llm.litellm_bootstrap import is_litellm_ready
 
     try:
         args.func(args)
     except Exception as exc:
-        if "litellm" in sys.modules:
-            from litellm.exceptions import AuthenticationError  # noqa: PLC0415
-
-            if isinstance(exc, AuthenticationError):
+        if is_litellm_ready():
+            import sys
+            litellm = sys.modules["litellm"]
+            if isinstance(exc, litellm.exceptions.AuthenticationError):
                 sys.stderr.write(f"Error: {exc}\n")
                 sys.exit(1)
         raise
