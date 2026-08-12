@@ -5,15 +5,18 @@ REYN_YAML_TEMPLATE = """\
 # Reyn project configuration — commit this file.
 # Local overrides belong in reyn.local.yaml (gitignored) — never commit secrets here.
 
-# Default model class when --model is not specified.
-model: standard
+# LLM model selection (#4174 T3: model / models live under llm.*, not
+# top-level).
+llm:
+  # Default model class when --model is not specified.
+  model: standard
 
-# Model class → LiteLLM model string.
-# Three standard tiers. Edit to match your provider.
-models:
-  light:    openai/gpt-4o-mini
-  standard: openai/gpt-4o
-  strong:   openai/gpt-4o
+  # Model class → LiteLLM model string.
+  # Three standard tiers. Edit to match your provider.
+  models:
+    light:    openai/gpt-4o-mini
+    standard: openai/gpt-4o
+    strong:   openai/gpt-4o
 
 # output_language: en          # en | ja | zh | ...
 
@@ -95,17 +98,22 @@ permissions:
 REYN_LOCAL_CONFIG_TEMPLATE = """\
 # Local environment overrides — gitignored, never commit.
 
-# LiteLLM proxy base URL (omit if calling providers directly)
-# api_base: http://localhost:4000
-
 # API keys must be set as environment variables, not here — e.g.:
 #   export OPENAI_API_KEY=sk-...
 # litellm resolves your provider's own variable automatically; see
 # https://docs.litellm.ai/docs/providers for the name yours expects.
 
-# Override model mappings for your local setup (optional)
-# models:
-#   light:    openai/gemini-2.5-flash-lite
-#   standard: openai/gemini-2.5-flash-lite
-#   strong:   openai/gemini-2.5-flash-lite
+# LLM model selection overrides (#4174 T3: model / models / api_base live
+# under llm.*, not top-level). Uncomment the fields you want — both live
+# under the same `llm:` key, so uncomment this header once.
+
+# llm:
+#   # LiteLLM proxy base URL (omit if calling providers directly)
+#   api_base: http://localhost:4000
+#
+#   # Override model mappings for your local setup (optional)
+#   models:
+#     light:    openai/gemini-2.5-flash-lite
+#     standard: openai/gemini-2.5-flash-lite
+#     strong:   openai/gemini-2.5-flash-lite
 """
