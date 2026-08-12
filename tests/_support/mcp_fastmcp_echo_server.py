@@ -43,13 +43,14 @@ Usage:
   sse:   ``python mcp_fastmcp_echo_server.py sse <port>``
 
 #4302: ported from the standalone ``fastmcp`` package to the official ``mcp``
-SDK's own bundled ``mcp.server.fastmcp`` (same decorator API, in-tree in the
-1.x line — #4302's option 2: reyn pins ``mcp>=1.24,<2.0``, since mcp 2.0
-breaks reyn's own production MCP server, see #4302 for the full finding and
-the follow-up issue tracking the 2.0 port). This is the last real
-fastmcp-server dependent, and porting it off the standalone ``fastmcp``
-package is the actual precondition for dropping ``fastmcp`` from
-``pyproject.toml``'s core dependencies. Two ergonomic gaps vs standalone
+SDK's own bundled server framework (same decorator API). #4412 (arc #4368)
+later bumped the pin itself to ``mcp>=2.0,<3.0``, renaming the module this
+imports from ``mcp.server.fastmcp``/``FastMCP`` (1.x) to
+``mcp.server.mcpserver``/``MCPServer`` (2.0, see the import below) — the
+decorator API (``@mcp.tool()`` etc.) is unchanged across that rename. This
+was the last real fastmcp-server dependent, and porting it off the
+standalone ``fastmcp`` package was the actual precondition for dropping
+``fastmcp`` from ``pyproject.toml``'s core dependencies. Two ergonomic gaps vs standalone
 fastmcp, both closed below: ``fastmcp.server.dependencies.get_http_headers()``
 has no bundled equivalent (``show_headers`` reads the raw transport
 ``Request`` off ``ctx.request_context.request`` instead), and bundled

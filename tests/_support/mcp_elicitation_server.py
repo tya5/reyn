@@ -6,12 +6,14 @@ round-trip these tests exercise is the genuine MCP protocol exchange, not a
 hand-rolled fake.
 
 #4302: ported from the standalone ``fastmcp`` package to the official ``mcp``
-SDK's own bundled ``mcp.server.fastmcp`` (1.x line — reyn pins
-``mcp>=1.24,<2.0``, see #4302's own finding that mcp 2.0 breaks reyn's own
-production MCP server). One real capability gap, not just an ergonomic one:
-``mcp.server.fastmcp.Context.elicit()`` validates its ``schema`` and REJECTS
-an enum/``Literal`` field (only ``str``/``int``/``float``/``bool`` are
-accepted — ``mcp/server/elicitation.py``'s ``_is_primitive_field``, an actual
+SDK's own bundled server framework — ``mcp.server.fastmcp`` on the 1.x line
+this file originally shipped against; #4412 (arc #4368) later bumped the
+pin to ``mcp>=2.0,<3.0`` and renamed the import to
+``mcp.server.mcpserver``/``MCPServer`` (see below), same decorator API.
+One real capability gap, not just an ergonomic one, holds on both lines:
+``Context.elicit()`` validates its ``schema`` and REJECTS an enum/
+``Literal`` field (only ``str``/``int``/``float``/``bool`` are accepted —
+``mcp/server/elicitation.py``'s ``_is_primitive_field``, an actual
 restriction absent from standalone fastmcp, not merely a different
 ergonomic; verified live against the installed mcp 1.29.0). ``pick()`` below
 works around it by calling ``ctx.session.elicit_form()`` directly — the raw
