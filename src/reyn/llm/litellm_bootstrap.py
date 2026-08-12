@@ -590,7 +590,28 @@ def ensure_litellm_ready(
                     )
             my_future.set_result(result)
 
-    _capture_client_cache_baseline()
+    # #4418②: only when `result is not None` — `_capture_client_cache_
+    # baseline` does its OWN bare `import litellm` (not wrapped in
+    # `_third_party_import_egress_honours_standard_env`, since it isn't
+    # the seam's "first real import" call), which is a harmless no-op
+    # re-import when litellm already imported successfully but a SECOND,
+    # UNPROTECTED full re-import attempt when the FIRST one (just above,
+    # inside the protected `with` block) failed and Python evicted the
+    # partially-initialized module from `sys.modules` — reopening the
+    # exact tiktoken-fetch-without-SSL_VERIFY/timeout gap #4419 closed,
+    # through a second, unguarded `import litellm` statement this
+    # module's own docstring says should not exist ("ensure_litellm_
+    # ready() is the ONE place... the actual import litellm statement
+    # should live"). Measured directly (2026-08-13, forced tiktoken cache
+    # miss + blocked socket probe): a failed import here produced 5
+    # PROTECTED fetch attempts (verify=/timeout= present) followed by 5
+    # MORE, unprotected ones (bare `{"params": None}`, no verify/timeout)
+    # from `_capture_client_cache_baseline`'s own `import litellm` — not
+    # hypothetical. There is nothing to baseline when the import failed
+    # (litellm's `in_memory_llm_clients_cache` doesn't exist), so skipping
+    # entirely on failure is strictly correct, not just a workaround.
+    if result is not None:
+        _capture_client_cache_baseline()
     return result
 
 
