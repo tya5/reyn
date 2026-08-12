@@ -180,3 +180,111 @@ async def test_indicator_absent_when_config_is_none():
     app = TextualChatApp(transport=_Transport())
     async with app.run_test(size=(90, 24)):
         assert len(app.query("ConfigWarningLine")) == 0
+
+
+# ---------------------------------------------------------------------------
+# #4357: the indicator names the offending keys, not just a bare count
+# ---------------------------------------------------------------------------
+
+
+def test_config_warning_text_names_a_renamed_key_and_its_destination():
+    """Tier 2: #4357 — with ``keys=`` given, the line names the key AND
+    its destination (``` `model` → `llm.model` ```) instead of only a
+    count. #4357's own finding: a bare count gave an operator nothing to
+    act on — 5 real instances of a moved key went unfixed for months,
+    including this repo's own reyn.yaml, because "N keys not applied"
+    names no key to fix."""
+    from reyn.config.config_schema import RenamedKeyHint
+    from reyn.interfaces.inline.textual_chat.chrome import config_warning_text
+
+    text = config_warning_text(
+        1, keys={"model": RenamedKeyHint(note="moved", destination="llm.model")},
+    )
+    assert text is not None
+    assert "`model`" in text
+    assert "`llm.model`" in text
+    assert text.endswith("→ reyn config validate")
+
+
+def test_config_warning_text_falls_back_to_count_only_without_keys():
+    """Tier 2b: accept-side — ``keys=None`` (the pre-#4357 call shape,
+    still used wherever a caller has no dict handy) renders byte-identical
+    to the original count-only line."""
+    from reyn.interfaces.inline.textual_chat.chrome import config_warning_text
+
+    assert config_warning_text(2) == "⚠ 2 config keys not applied → reyn config validate"
+    assert config_warning_text(2, keys=None) == config_warning_text(2)
+    assert config_warning_text(2, keys={}) == config_warning_text(2)
+
+
+def test_config_warning_text_caps_inline_names_and_counts_the_rest():
+    """Tier 2: #4357 — never "show everything" (#4380's own 197-item
+    rejection applies here too): past the inline cap, remaining keys
+    collapse to a "+N more" suffix rather than growing the line
+    unboundedly with the population."""
+    from reyn.config.config_schema import RenamedKeyHint
+    from reyn.interfaces.inline.textual_chat.chrome import (
+        _CONFIG_WARNING_INLINE_KEY_CAP,
+        config_warning_text,
+    )
+
+    keys = {
+        f"key{i}": RenamedKeyHint(note="moved", destination=f"llm.key{i}")
+        for i in range(_CONFIG_WARNING_INLINE_KEY_CAP + 2)
+    }
+    text = config_warning_text(len(keys), keys=keys)
+    assert text is not None
+    shown = text.count("→ `llm.key")  # one arrow per inline-shown renamed key
+    assert shown == _CONFIG_WARNING_INLINE_KEY_CAP
+    assert "+2 more" in text
+    assert text.endswith("→ reyn config validate")
+
+
+def test_config_warning_text_shows_a_removed_key_by_name_with_no_destination():
+    """Tier 2: accept-side for a RemovedKeyHint (#4375) — a genuinely
+    removed key (no successor) is still named, just without a
+    destination arrow, distinguishing it from a renamed key's shape."""
+    from reyn.config.config_schema import RemovedKeyHint
+    from reyn.interfaces.inline.textual_chat.chrome import config_warning_text
+
+    text = config_warning_text(
+        1, keys={"workspace": RemovedKeyHint(note="deleted, no replacement")},
+    )
+    assert text is not None
+    assert "`workspace`" in text
+    assert "→ `" not in text.split("workspace")[1].split(",")[0]  # no destination for THIS key
+
+
+def test_reyn_config_unknown_config_keys_defaults_to_empty_dict():
+    """Tier 2: accept-side — ``ReynConfig.unknown_config_keys`` defaults
+    to ``{}`` (never ``None``), so every caller (``config_warning_text``'s
+    own ``keys=`` param, the status-snapshot dict) can treat it as a plain
+    dict unconditionally, no ``None``-check needed at each read site."""
+    config = ReynConfig()
+    assert config.unknown_config_keys == {}
+
+
+def test_load_config_attaches_the_real_hint_dict_not_just_a_count():
+    """Tier 2: THE core #4357 fix, end to end — a real unmapped top-level
+    key in a real reyn.yaml produces a ``ReynConfig.unknown_config_keys``
+    dict an operator (or the chrome renderer) can read the key name AND
+    destination from, not only a count. Real filesystem, real loader —
+    no mocked collaborator."""
+    import tempfile
+    from pathlib import Path
+
+    from reyn.config.config_schema import RenamedKeyHint
+    from reyn.config.loader import load_config
+
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        (root / ".git").mkdir()
+        (root / "reyn.yaml").write_text("model: standard\n", encoding="utf-8")
+
+        config = load_config(cwd=root)
+
+    assert config.unknown_config_key_count == 1
+    assert "model" in config.unknown_config_keys
+    hint = config.unknown_config_keys["model"]
+    assert isinstance(hint, RenamedKeyHint)
+    assert hint.destination == "llm.model"

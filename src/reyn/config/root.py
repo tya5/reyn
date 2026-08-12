@@ -352,6 +352,23 @@ class ReynConfig:
         default=0, metadata={"schema_internal": True},
     )
 
+    # #4357: the full `{dotted_key: RenamedKeyHint | RemovedKeyHint | None}`
+    # dict `unknown_config_key_count` above is derived from (`len(...)`) —
+    # attached alongside the count, not instead of it, so existing readers
+    # of the count are unaffected. Same `schema_internal` reasoning as the
+    # count: a runtime-computed FACT about the config the operator wrote,
+    # never a `reyn.yaml` key itself. Motivation: the bare count gave the
+    # CUI's bottom chrome something to show, but not WHICH keys — #4357
+    # measured that in practice this meant nobody acted on it (5 real
+    # instances of a moved key going unfixed for months, including this
+    # repo's own `reyn.yaml`, discovered independently of the count
+    # existing at all). `RenamedKeyHint`/`RemovedKeyHint` already carry
+    # the exact destination/removal note (#4375/#4402) — this field is
+    # what lets the CUI chrome actually show it instead of a number.
+    unknown_config_keys: dict = field(
+        default_factory=dict, metadata={"schema_internal": True},
+    )
+
     def model_class_for(self, purpose: str) -> str:
         """#1672: the model CLASS for a logical call *purpose*.
 

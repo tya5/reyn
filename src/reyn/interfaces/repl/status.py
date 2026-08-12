@@ -462,6 +462,13 @@ def _snapshot(registry, config=None):
         "unknown_config_key_count": (
             getattr(config, "unknown_config_key_count", 0) if config is not None else 0
         ),
+        # #4357: the full {key: hint} dict the count above is derived from
+        # — kept alongside it in this snapshot for the same reason (a
+        # future consumer of this snapshot dict gets the actionable detail
+        # for free, not just the count).
+        "unknown_config_keys": (
+            getattr(config, "unknown_config_keys", {}) if config is not None else {}
+        ),
         # #2285: session-scoped capability visibility + hook applicability toggles.
         # #3378: ``visibility_items`` is ``None`` when the session wires no visibility
         # seam (or it raised) and a possibly-empty LIST when it does — the renderer

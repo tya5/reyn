@@ -358,6 +358,10 @@ def project_remote_snapshot(values: "dict | None") -> dict:
         # nothing meaningful to report here; 0 degrades gracefully (no
         # indicator shown) rather than fabricating a count.
         "unknown_config_key_count": 0,
+        # #4357: same reasoning — an empty dict degrades gracefully to the
+        # count-only (here, no-indicator-at-all) fallback in
+        # config_warning_text, never a fabricated key list.
+        "unknown_config_keys": {},
     }
 
 

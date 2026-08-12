@@ -1354,7 +1354,15 @@ def status_line_text(
     return base
 
 
-def config_warning_text(count: int) -> "str | None":
+#: #4357: how many unknown-key NAMES the chrome line shows inline before
+#: falling back to "N more" — bounded deliberately (owner ruling, #4380:
+#: "show everything" was rejected there for a 197-item case). 3 is enough
+#: to make the common "a handful of moved keys" case immediately
+#: actionable without the line growing unboundedly with the population.
+_CONFIG_WARNING_INLINE_KEY_CAP = 3
+
+
+def config_warning_text(count: int, keys: "dict | None" = None) -> "str | None":
     """The bottom-chrome config-warning indicator's text, or ``None`` when
     there is nothing to show (#4194).
 
@@ -1362,9 +1370,8 @@ def config_warning_text(count: int) -> "str | None":
     properties, form left to the implementer: ①doesn't
     scroll away with the conversation ②stays visible for as long as the
     condition holds ③directs the operator to ``reyn config validate`` for
-    the 4-element detail (result / destination / full list / fix command) —
-    this line deliberately carries NONE of that detail itself, only a count
-    and the command name. Scope: the POLICY TIER only (``reyn.yaml`` /
+    the 4-element detail (result / destination / full list / fix command).
+    Scope: the POLICY TIER only (``reyn.yaml`` /
     ``reyn.local.yaml`` / ``~/.reyn/config.yaml``) — the same scope
     ``reyn config validate`` itself checks (``config.py``'s ``_validate``
     uses ``build_policy_tier_config``), so the indicator's own guidance is
@@ -1374,12 +1381,29 @@ def config_warning_text(count: int) -> "str | None":
     (lead-coder's explicit scoping call, #4194) — deliberately not counted
     here; that remaining silence is real and tracked separately (#4235).
 
+    ``keys`` (#4357, optional — ``ReynConfig.unknown_config_keys``): when
+    given, up to :data:`_CONFIG_WARNING_INLINE_KEY_CAP` key names are shown
+    inline (RENAMED keys with a known destination first — the ones an
+    operator can act on immediately by name — then any remaining unknown/
+    removed keys), with a "+N more" suffix past the cap. This line
+    previously carried NONE of that detail (architect's original #4194
+    design, quoted verbatim in this docstring's history) — #4357 measured
+    that in practice this meant nobody acted on the warning: 5 real
+    instances of a moved key went unfixed for months, including this
+    repo's own ``reyn.yaml``, because "N config keys not applied" names no
+    key to fix. Still bounded (never "show everything" — #4380's own
+    197-item rejection applies here too) and still ends by pointing at
+    ``reyn config validate`` for the full list, so property ③ above is
+    unchanged; ``keys=None`` (the pre-#4357 call shape) falls back to the
+    original count-only line byte-for-byte.
+
     ``count`` (not a snapshot dict, unlike :func:`status_line_text`): this
     value is CONFIG-derived, not session/live-state-derived — it is fixed
     for the whole session lifetime once ``load_config()`` runs (``reyn.yaml``
     changes need a restart to take effect, unlike the hot-reload IN-set),
     so there is no live snapshot to route through, only
-    ``ReynConfig.unknown_config_key_count`` itself.
+    ``ReynConfig.unknown_config_key_count`` / ``ReynConfig.
+    unknown_config_keys`` themselves.
 
     ``⚠`` matches the existing ``HALTED`` banner glyph above (same
     single-cell-width class of symbol, same "something needs attention"
@@ -1387,7 +1411,26 @@ def config_warning_text(count: int) -> "str | None":
     if not count:
         return None
     plural = "" if count == 1 else "s"
-    return f"⚠ {count} config key{plural} not applied → reyn config validate"
+    base = f"⚠ {count} config key{plural} not applied"
+    if not keys:
+        return f"{base} → reyn config validate"
+
+    # #4357: destination-bearing (renamed) keys first — an operator can
+    # act on "`model` → `llm.model`" immediately; a bare unknown/removed
+    # key still names the key, just not where it goes.
+    from reyn.config.config_schema import RenamedKeyHint
+
+    ordered = sorted(
+        keys.items(),
+        key=lambda item: 0 if isinstance(item[1], RenamedKeyHint) and item[1].destination else 1,
+    )
+    shown = []
+    for key, hint in ordered[:_CONFIG_WARNING_INLINE_KEY_CAP]:
+        destination = getattr(hint, "destination", None)
+        shown.append(f"`{key}` → `{destination}`" if destination else f"`{key}`")
+    remaining = len(ordered) - len(shown)
+    names = ", ".join(shown) + (f" (+{remaining} more)" if remaining > 0 else "")
+    return f"{base}: {names} → reyn config validate"
 
 
 def build_drawer_pane(tab_id: str, rows: "Sequence[str]") -> Widget:

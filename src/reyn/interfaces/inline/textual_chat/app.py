@@ -1463,8 +1463,12 @@ class TextualChatApp(App):
             # this row in — an operator on a clean config never pays even the
             # empty-row layout cost the #4194 measurement confirmed a present
             # row would take.
+            # #4357: `keys=` passes the actual `{key: hint}` dict so the line
+            # names the offending keys (and destinations, where known)
+            # instead of only a bare count.
             config_warning = config_warning_text(
-                getattr(self._config, "unknown_config_key_count", 0)
+                getattr(self._config, "unknown_config_key_count", 0),
+                keys=getattr(self._config, "unknown_config_keys", None),
             )
             if config_warning is not None:
                 yield ConfigWarningLine(config_warning, id="config-warning")
