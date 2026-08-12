@@ -45,6 +45,8 @@ import logging
 from concurrent.futures import Future
 from typing import TYPE_CHECKING, Any
 
+from reyn import _cooldown
+
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
@@ -185,6 +187,22 @@ def _litellm_import_logs_to_file() -> "Iterator[None]":
 
 _litellm_import_failure_warned = False
 
+# #4395 axis②/PR-2 (owner-flagged gap in PR-1): PR-1 removed the WITHIN-one-
+# call double attempt (a caller's own redundant bare `import litellm` right
+# after this chokepoint) but a failure is deliberately NOT cached as
+# "ready" — the NEXT call still starts a genuinely fresh attempt, which
+# means a PERSISTENTLY broken environment (the owner's own repro: a TLS
+# handshake that never completes) gets re-attempted, and re-hangs, on
+# EVERY subsequent call, not just once. `_LITELLM_IMPORT_COOLDOWN_SECONDS`
+# closes that: a failure starts a cooldown window (`reyn._cooldown`, the
+# same primitive #4398 already established for the identical shape in
+# `compaction/engine.py`'s `estimate_tokens`) during which every call
+# returns `None` immediately — no import attempted, no wait paid — rather
+# than a permanent give-up (the underlying cause may clear; the window
+# just rate-limits re-probing, it does not stop it).
+_LITELLM_IMPORT_COOLDOWN_SECONDS = 60.0
+_litellm_import_cooldown_until = 0.0
+
 
 def ensure_litellm_ready() -> "Any | None":
     """Idempotent first-touch chokepoint: import litellm + apply its
@@ -255,7 +273,7 @@ def ensure_litellm_ready() -> "Any | None":
     embedding.litellm_provider``). So the proxy-trust flip covers every
     litellm-originated request, not just chat.
     """
-    global _litellm_ready, _litellm_import_failure_warned
+    global _litellm_ready, _litellm_import_failure_warned, _litellm_import_cooldown_until
     # Unlocked fast-path read keeps the "cheap on every call after the
     # first success" property this docstring promises. NOTE: still falls
     # through to `_capture_client_cache_baseline` below — the
@@ -266,6 +284,17 @@ def ensure_litellm_ready() -> "Any | None":
         _capture_client_cache_baseline()
         import sys
         return sys.modules.get("litellm")
+
+    # #4395 axis②: a PERSISTENT failure (e.g. a TLS handshake that never
+    # completes) must not be re-attempted, and re-hung-on, by every single
+    # call across the whole cooldown window — see this module's own
+    # `_LITELLM_IMPORT_COOLDOWN_SECONDS` comment above. Checked BEFORE the
+    # ownership dance below so a call inside the window never even
+    # contests for it. Unlocked read, same GIL-atomic-single-variable
+    # reasoning as the fast path above; the worst race is one caller
+    # re-probing slightly early or late, never a wrong result.
+    if _cooldown.in_cooldown(_litellm_import_cooldown_until):
+        return None
 
     my_future: "Future[Any | None]" = Future()
     winning_future = _ready_registry.setdefault("ready", my_future)
@@ -299,12 +328,21 @@ def ensure_litellm_ready() -> "Any | None":
         finally:
             if result is not None:
                 _litellm_ready = True
+                _litellm_import_cooldown_until = 0.0  # healthy — clear any cooldown
             else:
                 # NOT cached — clear ownership so the NEXT call gets a
                 # fresh attempt instead of being permanently stuck on
                 # this one failure (see docstring: callers with no
-                # fallback must keep retrying across turns).
+                # fallback must keep retrying across turns). #4395 axis②:
+                # that "fresh attempt" is now rate-limited by the cooldown
+                # above rather than happening on literally every call —
+                # ownership is still cleared (so the FIRST call after the
+                # cooldown elapses can win it), just gated by the cooldown
+                # check before it's ever contested.
                 _ready_registry.pop("ready", None)
+                _litellm_import_cooldown_until = _cooldown.new_cooldown_deadline(
+                    _LITELLM_IMPORT_COOLDOWN_SECONDS,
+                )
                 if not _litellm_import_failure_warned:
                     _litellm_import_failure_warned = True
                     logging.getLogger(__name__).warning(

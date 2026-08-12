@@ -20,6 +20,16 @@ session's own #4399 falsify tests (blocking real sockets to prove a
 network attempt was genuinely made/prevented) — not a mock of any reyn
 object, an interception of Python's own import mechanism to control a
 third-party package's outcome deterministically.
+
+#4395 axis②/PR-2 added a cooldown between repeated failed attempts (a
+gap this PR-1 file's own tests originally missed — a live owner repro
+caught the process still re-attempting, and re-hanging on, the same
+broken TLS handshake on every subsequent call after PR-1 alone landed).
+This file's own autouse fixture resets `_litellm_import_cooldown_until`
+to 0.0 before every test so PR-1's tests keep exercising "not
+PERMANENTLY cached" without being rate-limited by that cooldown; the
+cooldown's own rate-limiting behavior is covered by the dedicated
+cooldown test file instead, not duplicated here.
 """
 from __future__ import annotations
 
@@ -51,13 +61,16 @@ def _clean_litellm_bootstrap_state():
     a change to what "ready" means in production.
     """
     original_ready = lb_mod._litellm_ready
+    original_cooldown_until = lb_mod._litellm_import_cooldown_until
     lb_mod._litellm_ready = False
     lb_mod._ready_registry.pop("ready", None)
     lb_mod._litellm_import_failure_warned = False
+    lb_mod._litellm_import_cooldown_until = 0.0
     yield
     lb_mod._litellm_ready = original_ready
     lb_mod._ready_registry.pop("ready", None)
     lb_mod._litellm_import_failure_warned = False
+    lb_mod._litellm_import_cooldown_until = original_cooldown_until
 
 
 @pytest.fixture()
@@ -88,21 +101,30 @@ def test_a_failed_import_returns_none_not_raise(_force_litellm_import_failure):
     assert result is None
 
 
-def test_a_failed_import_is_not_cached_the_next_call_retries_fresh(
+def test_a_failed_import_is_not_permanently_cached_past_its_cooldown(
     _force_litellm_import_failure,
 ):
     """Tier 2: THE core defect this PR-1 fixes at the chokepoint level —
     a failure must not be permanently remembered as "done" the way a
     success is; the caller with no fallback (a real completion) needs to
-    keep trying on the NEXT turn, not be locked out forever after one
-    environmental blip."""
+    keep trying eventually, not be locked out forever after one
+    environmental blip. #4395 axis②/PR-2 added a COOLDOWN between
+    attempts (see the dedicated cooldown test file) — a call made WHILE
+    still in cooldown does NOT retry (that is now the correct,
+    intentional behavior, the opposite of this test's own pre-PR-2
+    premise); this test simulates the cooldown having already elapsed
+    (a direct, real manipulation of the module's own deadline variable,
+    not a sleep) to isolate "not cached past its cooldown" from "rate-
+    limited during its cooldown", which the dedicated cooldown test file
+    covers separately."""
     ensure_litellm_ready()
     after_first = _force_litellm_import_failure["n"]
+    lb_mod._litellm_import_cooldown_until = 0.0  # simulate: cooldown has elapsed
     ensure_litellm_ready()
     after_second = _force_litellm_import_failure["n"]
     assert after_second > after_first, (
-        "the second call must trigger a genuinely fresh import attempt, "
-        "not reuse a cached failure result"
+        "a call made after the cooldown has elapsed must trigger a "
+        "genuinely fresh import attempt, not reuse a cached failure result"
     )
 
 
@@ -145,6 +167,13 @@ def test_a_success_after_a_failure_is_returned_and_cached(monkeypatch):
 
     assert ensure_litellm_ready() is None
     state["fail"] = False
+    # #4395 axis②/PR-2: the first failure above armed a cooldown — clear it
+    # (a direct, real manipulation of the module's own deadline variable,
+    # not a sleep) so this recovery attempt is not itself rate-limited;
+    # the cooldown mechanism's own behavior is covered by the dedicated
+    # cooldown test file, this test is specifically about "a SUCCESS,
+    # once attempted, stays cached."
+    lb_mod._litellm_import_cooldown_until = 0.0
     result = ensure_litellm_ready()
     assert result is not None
     assert result.__name__ == "litellm"
