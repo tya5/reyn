@@ -225,7 +225,7 @@ llm:
 llm:
   models:
     light:
-      model: gemini-flash-lite
+      model: gemini/gemini-2.5-flash-lite
       reasoning_effort: low      # minimal | low | medium | high | disable | none
 ```
 

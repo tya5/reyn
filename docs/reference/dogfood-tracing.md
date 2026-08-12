@@ -339,7 +339,7 @@ Get `<request_id>` from `dogfood_trace.py --mode llm-payloads` output.
 | Option | Description |
 |--------|-------------|
 | `--trace <path>` | Path to JSONL trace file (required) |
-| `--model <name>` | Override the model (e.g. `claude-sonnet`, `openai/gpt-4o`) |
+| `--model <name>` | Override the model (e.g. `light` — a project-declared `llm.models:` tier — or a raw LiteLLM string like `openai/gpt-4o`) |
 | `--temperature <float>` | Override temperature sampling param |
 | `--max-tokens <int>` | Override max_tokens sampling param |
 | `--n <count>` | Replay N times to observe distribution (default: 1) |
