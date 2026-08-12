@@ -338,6 +338,21 @@ def _setup_interactive_logging(project_root: Path) -> None:
     the FIRST real litellm use — see ``reyn.llm.litellm_bootstrap.
     ensure_litellm_ready`` — which reads the file handler this function
     installs (so the routing still works whenever litellm is first touched).
+
+    #4362: also captures ``warnings.warn`` output via
+    ``logging.captureWarnings(True)`` — this docstring's own opening line
+    already declared "route library warnings ... so they don't corrupt the
+    live region", but the mechanism below only ever routed *logging*
+    records; a bare ``warnings.warn`` (the stdlib's own mechanism for
+    library warnings, e.g. an unclosed-client ``ResourceWarning``) still
+    went straight to stderr and corrupted the live region exactly as
+    described. This closes that declared-vs-implemented gap — it does not
+    change WHERE any warning's root cause lives (#4365 tracks a real
+    litellm client-cleanup gap this does NOT fix, only reroutes the
+    resulting warning's ink). Scoped to the same ``is_interactive`` guard
+    as the rest of this function — both of this module's two call sites
+    are gated by it, so an embedder or non-interactive run never has its
+    own warnings redirected.
     """
     log_dir = project_root / ".reyn" / "logs"
     log_dir.mkdir(parents=True, exist_ok=True)
@@ -347,6 +362,7 @@ def _setup_interactive_logging(project_root: Path) -> None:
         format="%(asctime)s %(name)s %(levelname)s %(message)s",
         force=True,  # safe: the interactive path has no prior logging setup
     )
+    logging.captureWarnings(True)
 
 
 def _run_remote(

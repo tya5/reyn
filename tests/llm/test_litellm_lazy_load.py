@@ -141,6 +141,11 @@ def test_first_use_quiets_litellm_banners(tmp_path) -> None:
         ensure_litellm_ready()  # first real use
         assert litellm.suppress_debug_info is True
     finally:
+        # #4362: _setup_interactive_logging also calls
+        # logging.captureWarnings(True) now; its own on/off guard
+        # (logging._warnings_showwarning) is process-global, same class of
+        # leak as root's handlers/level below.
+        logging.captureWarnings(False)
         root.handlers[:] = saved_handlers
         root.setLevel(saved_level)
         litellm.suppress_debug_info = saved_suppress
@@ -201,6 +206,9 @@ def test_first_use_routes_litellm_logger_to_file_not_console(tmp_path) -> None:
             h.flush()
         assert "runtime-marker-9a1b-not-a-mock" in log_file.read_text()
     finally:
+        # #4362: same process-global captureWarnings guard leak as
+        # test_first_use_quiets_litellm_banners above.
+        logging.captureWarnings(False)
         root.handlers[:] = saved_root_handlers
         root.setLevel(saved_root_level)
         litellm_logger.handlers[:] = saved_litellm_handlers
