@@ -27,7 +27,7 @@ Reyn has all the data needed (`litellm.model_cost` carries `input_cost_per_token
 | `BudgetTracker.check_pre_llm` + `ask_on_exceed` | Cumulative spend exceeds hard cap | **None** — per-token rate vs. total spend |
 | `ContextBudgetAdvisor` / `maybe_force_compact` | Context window token ceiling | **None** — token count, not cost rate |
 | `lifecycle_forwarder.on_budget_warn` | Warn after spend threshold crossed | **None** — post-hoc, not pre-selection |
-| `embedding/cost_estimator.py` | Job-level cost preflight (embedding only) | Pattern match — same idea, different domain |
+| `embedding/cost_estimator.py` (deleted, #4352 — had zero production callers) | Job-level cost preflight (embedding only) | Pattern match — same idea, different domain |
 
 Pre-selection model rate warning is **orthogonal** to all existing budget mechanisms.
 
