@@ -377,6 +377,74 @@ def test_named_substages_plus_other_equal_the_wide_span(monkeypatch) -> None:
     assert abs(named_sum - (wall_end - wall_start)) < 0.02
 
 
+def test_tui_boot_named_substages_plus_other_equal_the_wide_span(monkeypatch) -> None:
+    """Tier 2: #3671 follow-up — the SAME coverage invariant as
+    ``test_named_substages_plus_other_equal_the_wide_span`` above, applied
+    to ``tui-boot``'s own breakdown (owner git-bash re-measurement:
+    ``tui-boot`` was a single unbroken 23.9s span). The 3 named sub-stages
+    (``tui-boot:construct``/``:compose``/``:hydrate``) plus
+    ``tui-boot:other`` must sum to the wide ``mark_app_constructed`` ->
+    ``mark_first_frame`` span exactly, not merely be less than or equal to
+    it — the #3735 regression shape this module's whole ``:other`` pattern
+    exists to prevent."""
+    import time
+
+    from reyn.runtime import startup_timing
+
+    monkeypatch.setattr(startup_timing, "_ASYNC_ENTERED_AT", None)
+    monkeypatch.setattr(startup_timing, "_TUI_IMPORT_DONE_AT", None)
+    monkeypatch.setattr(startup_timing, "_APP_CONSTRUCTED_AT", None)
+    monkeypatch.setattr(startup_timing, "_FIRST_FRAME_AT", None)
+    monkeypatch.setattr(startup_timing, "TIMING", StartupTiming())
+    stages = ("tui-boot:construct", "tui-boot:compose", "tui-boot:hydrate", "tui-boot:other")
+
+    wall_start = time.perf_counter()
+    startup_timing.mark_app_constructed()
+    with stage("tui-boot:construct"):
+        time.sleep(0.01)
+    time.sleep(0.01)  # the gap a narrow-bracket-only regression would drop
+    with stage("tui-boot:compose"):
+        time.sleep(0.01)
+    with stage("tui-boot:hydrate"):
+        time.sleep(0.01)
+    startup_timing.mark_first_frame()
+    wall_end = time.perf_counter()
+
+    named_sum = sum(startup_timing.TIMING.elapsed(name) for name in stages)
+    assert abs(named_sum - (wall_end - wall_start)) < 0.02
+
+
+def test_total_seconds_does_not_double_count_tui_boot(monkeypatch) -> None:
+    """Tier 2: #3671 follow-up — ``tui-boot`` (the wide bracket) and its own
+    ``tui-boot:construct``/``:compose``/``:hydrate``/``:other`` breakdown
+    measure the SAME interval. ``total_seconds`` (and therefore
+    ``unaccounted_seconds``, which subtracts it from wall time) must count
+    that interval once, not twice — falsification: summing both naively
+    would put ``total_seconds`` at roughly double the real span, clamping
+    ``unaccounted_seconds`` to 0 even when a genuine coverage gap exists
+    elsewhere in the startup."""
+    from reyn.runtime import startup_timing
+
+    monkeypatch.setattr(startup_timing, "_APP_CONSTRUCTED_AT", None)
+    monkeypatch.setattr(startup_timing, "_FIRST_FRAME_AT", None)
+    timing = StartupTiming()
+    monkeypatch.setattr(startup_timing, "TIMING", timing)
+
+    startup_timing.mark_app_constructed()
+    with stage("tui-boot:construct"):
+        pass
+    with stage("tui-boot:compose"):
+        pass
+    with stage("tui-boot:hydrate"):
+        pass
+    startup_timing.mark_first_frame()
+
+    wide = timing.elapsed("tui-boot")
+    assert wide > 0.0, "tui-boot must have actually recorded something to test against"
+    # total_seconds must be close to the wide span alone, not ~2x it.
+    assert timing.total_seconds < wide * 1.5
+
+
 def test_unaccounted_warning_line_appears_when_coverage_is_bad() -> None:
     """Tier 2: #3735 — the report self-flags a large `unaccounted` share
     instead of leaving it to blend in with the other rows. This is the "gate"

@@ -1251,205 +1251,210 @@ class TextualChatApp(App):
         self._cursor_position = value
 
     def compose(self) -> ComposeResult:
-        # Held so the frame pump can start/stop the per-entry BODY animation
-        # (``animate_entry``/``stop_entry_animation``) that drives a RUNNING tool
-        # row's live spinner + elapsed (Phase ②).
-        self._flow: "FlowView[OutboxMessage]" = _CursorFlowView(
-            model=self.conversation,
-            presenter=self._presenter,
-            decorator=ReynGutter(
-                frame_period=_RUNNING_FRAME_PERIOD,
-                # The app's own injectable clock, as the right gutter already
-                # takes — production passes ``time.monotonic``, so this is the
-                # same behaviour, and it lets a test drive the blink instead of
-                # sleeping through a real frame period.
-                clock=self._clock,
-                # #3530: blink a reply that is still receiving chunks. Read
-                # live off ``_streaming_replies`` each repaint — the same
-                # record the terminal completion frame pops — so the marker
-                # can never disagree with whether the stream is actually
-                # still open.
-                is_streaming=self._is_streaming_entry,
-            ),
-            gutter_width=_GUTTER_WIDTH,
-            # Phase ④ (#3283): the RIGHT gutter shows per-entry elapsed time
-            # (tool rows) AND the row's turn's real prompt/completion token
-            # split (agent reply rows, via the keyed per-turn lookup) — see
-            # ReynRightGutter and its two halves for the content-set decisions.
-            # additive flowview params; the LEFT gutter/state contract above is
-            # untouched.
-            right_decorator=ReynRightGutter(
-                clock=self._clock,
-                usage_lookup=self._turn_usage,
-                # #3490, moved to this side by #3526 (owner directive): the
-                # addressed-row rail. Read live off the view each repaint (not
-                # pushed in on every move) so the gutter can never hold a stale
-                # copy of which entry is current.
-                is_marked=self._is_addressed_entry,
-            ),
-            right_gutter_width=RIGHT_GUTTER_WIDTH,
-            spacing=1,
-            anchor=Anchor.STICKY_BOTTOM,
-            # Native running-blink: FlowView owns the animation clock and
-            # re-invokes the time-based ReynGutter each tick (no app-side timer).
-            animation_fps=self.ANIMATION_FPS,
-            # #3476 ②: a fresh session previously opened onto a blank void
-            # above the composer (owner design review). flowview 0.6.0's
-            # empty state shows this hint across the viewport while the model
-            # has no entries and clears itself the moment the first entry
-            # lands — no app-side show/hide wiring to drift.
-            empty=empty_state_hint(),
-            empty_align="middle",
-            # #3476 ④: fire ReachedTop while the top edge is still a few rows
-            # away, so the next history page is in place by the time the user
-            # actually arrives at it.
-            reach_threshold=3,
-            # #3476 ⑥: the keyboard cursor (the visual affordance #3470
-            # deferred to this PR). Reached the SAME way #3470 already
-            # established — Shift+Tab focus-cycling into FlowView, Esc back
-            # out (#3399 gate) — never a new focus path. flowview owns
-            # ↑/↓/PageUp/PageDown/Home/End moving the cursor once FlowView
-            # has focus; while it doesn't, those keys are unaffected (the
-            # composer's own PageUp/PageDown delegation, #3470, calls
-            # actions on ``self._flow`` directly and never depends on this
-            # flag).
-            # #3624: flowview 0.11.0 unified this with mouse-driven selection
-            # (a click now moves+commits the SAME cursor) — ``selectable=``
-            # is the current name (``highlight=`` was removed in 0.12.0).
-            # See ``_CursorFlowView``/``KeyCommitted`` above for how
-            # reyn keeps the copy-on-Enter/Space intent without also copying
-            # on a click.
-            selectable=True,
-            # #3507 / flowview 0.8.0 (#7), #3692 PR-A (flowview 0.13's yank,
-            # renamed from copy_yank): the text cursor's yank writes through
-            # THIS sink instead of the default OSC 52. reyn already owns a local
-            # clipboard path (``pbcopy``/``xclip``/``wl-copy``/``xsel``) that
-            # works on macOS Terminal and through tmux, where OSC 52 silently
-            # does not — and unlike OSC 52 its result is observable, so a failed
-            # yank can be reported instead of looking like it worked. Upstream
-            # added this per-view seam for exactly this case; the alternative
-            # (overriding ``App.copy_to_clipboard``) caught every
-            # Textual-originated copy in the app to fix one widget's.
-            clipboard=self._write_clipboard,
-            # flowview 0.17.0 / #4171: without this, `*`/`n`/`N` search reads
-            # rows through the render path, so an entry that has never
-            # scrolled into view has no Presentation yet and search sees the
-            # "Loading..." placeholder instead of its content — silently
-            # missing matches above the rendered window. This hands flowview
-            # the raw message text so it can search the whole model directly,
-            # not just what's been rendered. Deliberately `msg.text`, not
-            # what the gutter decorates onto it — the gutter prefix is
-            # decoration, not message content, and a match there would be a
-            # confusing result to land a search cursor on.
-            search_text=lambda msg: msg.text,
-        )
-        # #3352: apply the configured START state. flowview has no constructor
-        # parameter for gutter visibility (both flags initialise True), so the
-        # only way to open with one hidden is to set it here — before mount,
-        # where ``set_gutter_visible`` short-circuits its relayout and geometry
-        # syncs on its own at mount time. No flash: nothing has painted yet.
-        left_start, right_start = self._gutter_start
-        self._flow.set_gutter_visible("left", left_start)
-        self._flow.set_gutter_visible("right", right_start)
-        yield self._flow
-        # #3299 P1: the grouped intervention panel sits BETWEEN the flow and
-        # the input row (region order shared with the sibling #3300 queue arc,
-        # plus #3362's rewind picker: conversation / intervention panel /
-        # rewind picker / sent-queue / input).
-        # Collapsed by default (``display=False`` — see
-        # ``InterventionPanel.on_mount``); shown + auto-focused only while an
-        # intervention is pending (:meth:`_present_intervention`).
-        self._iv_panel = InterventionPanel(id="intervention-panel")
-        yield self._iv_panel
-        # #3362: the /rewind checkpoint picker sits between the intervention
-        # panel and the sent-queue — same collapsed-by-default region shape
-        # (``display=False`` in its ``on_mount``), shown only while a bare
-        # ``/rewind`` is offering checkpoints.
-        self._rewind_picker = RewindPicker(id="rewind-picker")
-        yield self._rewind_picker
-        # #3300 P2b: the sent-queue region sits BETWEEN the intervention
-        # panel and the input row (region order: conversation / intervention
-        # panel / rewind picker / sent-queue / input — the intervention/queue/
-        # input ordering was pinned by the architect design pass so the sibling
-        # #3299/#3300 P1 coders never collide on this zone; #3362 added the
-        # rewind picker above the queue, inside the same zone).
-        # Collapsed by default (``display=False`` — see ``SentQueue.on_mount``);
-        # shown while at least one message is queued, undispatched.
-        # #3693: the live-turn line sits between the rewind picker and the
-        # queue, so the zone reads past (conversation) -> now (this) -> next
-        # (queue) -> the line being typed. Non-focusable, so Tab/Esc still walk
-        # the same path to the composer they did before it existed.
-        #: #3777: how many entries THIS TURN has produced, counted as they
-        #: arrive rather than derived from two reads of the model. The baseline
-        #: is the turn's start, which the reader saw; the previous counter's
-        #: baseline was the moment the reader scrolled away, which they did
-        #: not, so its number could never be interpreted. Reset by
-        #: :meth:`_reset_turn_entries` at turn start and nowhere else — in
-        #: particular NOT on a scroll edge.
-        self._turn_entries = 0
-        self._activity = ActivityRow(id="activity-row", clock=self._clock)
-        yield self._activity
-        self._sent_queue = SentQueue(id="sent-queue")
-        yield self._sent_queue
-        # #3354: the / and : completion popup sits DIRECTLY above the input row
-        # (the last region before the composer), so the candidate list grows
-        # upward out of the line being typed — the same direction and adjacency
-        # the retired inline app's completion menu had. Collapsed by default
-        # (``display=False`` — see ``CompletionPopup.on_mount``).
-        self._completion = CompletionPopup(id="completion")
-        yield self._completion
-        # #3476 ⑤ (ctrl+n since #3692 PR-B ③): the search bar — the last
-        # chrome region before the composer (collapsed by default; the
-        # completion popup above it can never be open at the same time,
-        # since completion follows COMPOSER typing and the search bar owns
-        # focus while visible).
-        self._search_bar = SearchBar(id="search-bar")
-        yield self._search_bar
-        with Horizontal(id="inputrow"):
-            yield Static("❯", id="inputgutter")
-            yield Composer(
-                # ``<key> to <verb> · <key> to <verb>`` (#3801), the shape
-                # ``rewind_picker`` already used. The previous form separated
-                # the two clauses with a comma and gave the second one a
-                # different grammar ("for a newline"), so the two halves of one
-                # hint read as two kinds of statement.
-                # "add a line", not "break the line": measured on a real
-                # terminal, the longer wording truncated at 65 columns where
-                # the pre-#3801 text fit at 60. This one costs one column over
-                # the old text rather than five. ("to newline" is shorter still
-                # and was rejected — it reads as a typo, and a hint nobody
-                # trusts is worse than a hint that wraps.)
-                placeholder=(
-                    "Type a message — enter to send · shift+enter to add a line…"
-                )
+        # #3671: reyn builds the ENTIRE widget tree in this generator —
+        # see startup_timing.py's mark_app_constructed docstring for why
+        # this is inside tui-boot's own breakdown, not Textual's boot.
+        from reyn.runtime.startup_timing import stage  # noqa: PLC0415
+        with stage("tui-boot:compose"):
+            # Held so the frame pump can start/stop the per-entry BODY animation
+            # (``animate_entry``/``stop_entry_animation``) that drives a RUNNING tool
+            # row's live spinner + elapsed (Phase ②).
+            self._flow: "FlowView[OutboxMessage]" = _CursorFlowView(
+                model=self.conversation,
+                presenter=self._presenter,
+                decorator=ReynGutter(
+                    frame_period=_RUNNING_FRAME_PERIOD,
+                    # The app's own injectable clock, as the right gutter already
+                    # takes — production passes ``time.monotonic``, so this is the
+                    # same behaviour, and it lets a test drive the blink instead of
+                    # sleeping through a real frame period.
+                    clock=self._clock,
+                    # #3530: blink a reply that is still receiving chunks. Read
+                    # live off ``_streaming_replies`` each repaint — the same
+                    # record the terminal completion frame pops — so the marker
+                    # can never disagree with whether the stream is actually
+                    # still open.
+                    is_streaming=self._is_streaming_entry,
+                ),
+                gutter_width=_GUTTER_WIDTH,
+                # Phase ④ (#3283): the RIGHT gutter shows per-entry elapsed time
+                # (tool rows) AND the row's turn's real prompt/completion token
+                # split (agent reply rows, via the keyed per-turn lookup) — see
+                # ReynRightGutter and its two halves for the content-set decisions.
+                # additive flowview params; the LEFT gutter/state contract above is
+                # untouched.
+                right_decorator=ReynRightGutter(
+                    clock=self._clock,
+                    usage_lookup=self._turn_usage,
+                    # #3490, moved to this side by #3526 (owner directive): the
+                    # addressed-row rail. Read live off the view each repaint (not
+                    # pushed in on every move) so the gutter can never hold a stale
+                    # copy of which entry is current.
+                    is_marked=self._is_addressed_entry,
+                ),
+                right_gutter_width=RIGHT_GUTTER_WIDTH,
+                spacing=1,
+                anchor=Anchor.STICKY_BOTTOM,
+                # Native running-blink: FlowView owns the animation clock and
+                # re-invokes the time-based ReynGutter each tick (no app-side timer).
+                animation_fps=self.ANIMATION_FPS,
+                # #3476 ②: a fresh session previously opened onto a blank void
+                # above the composer (owner design review). flowview 0.6.0's
+                # empty state shows this hint across the viewport while the model
+                # has no entries and clears itself the moment the first entry
+                # lands — no app-side show/hide wiring to drift.
+                empty=empty_state_hint(),
+                empty_align="middle",
+                # #3476 ④: fire ReachedTop while the top edge is still a few rows
+                # away, so the next history page is in place by the time the user
+                # actually arrives at it.
+                reach_threshold=3,
+                # #3476 ⑥: the keyboard cursor (the visual affordance #3470
+                # deferred to this PR). Reached the SAME way #3470 already
+                # established — Shift+Tab focus-cycling into FlowView, Esc back
+                # out (#3399 gate) — never a new focus path. flowview owns
+                # ↑/↓/PageUp/PageDown/Home/End moving the cursor once FlowView
+                # has focus; while it doesn't, those keys are unaffected (the
+                # composer's own PageUp/PageDown delegation, #3470, calls
+                # actions on ``self._flow`` directly and never depends on this
+                # flag).
+                # #3624: flowview 0.11.0 unified this with mouse-driven selection
+                # (a click now moves+commits the SAME cursor) — ``selectable=``
+                # is the current name (``highlight=`` was removed in 0.12.0).
+                # See ``_CursorFlowView``/``KeyCommitted`` above for how
+                # reyn keeps the copy-on-Enter/Space intent without also copying
+                # on a click.
+                selectable=True,
+                # #3507 / flowview 0.8.0 (#7), #3692 PR-A (flowview 0.13's yank,
+                # renamed from copy_yank): the text cursor's yank writes through
+                # THIS sink instead of the default OSC 52. reyn already owns a local
+                # clipboard path (``pbcopy``/``xclip``/``wl-copy``/``xsel``) that
+                # works on macOS Terminal and through tmux, where OSC 52 silently
+                # does not — and unlike OSC 52 its result is observable, so a failed
+                # yank can be reported instead of looking like it worked. Upstream
+                # added this per-view seam for exactly this case; the alternative
+                # (overriding ``App.copy_to_clipboard``) caught every
+                # Textual-originated copy in the app to fix one widget's.
+                clipboard=self._write_clipboard,
+                # flowview 0.17.0 / #4171: without this, `*`/`n`/`N` search reads
+                # rows through the render path, so an entry that has never
+                # scrolled into view has no Presentation yet and search sees the
+                # "Loading..." placeholder instead of its content — silently
+                # missing matches above the rendered window. This hands flowview
+                # the raw message text so it can search the whole model directly,
+                # not just what's been rendered. Deliberately `msg.text`, not
+                # what the gutter decorates onto it — the gutter prefix is
+                # decoration, not message content, and a match there would be a
+                # confusing result to land a search cursor on.
+                search_text=lambda msg: msg.text,
             )
-        # #4194: the config-warning indicator, mounted BEFORE MenuBar so it
-        # sits above the menu row in compose order (measured, headless
-        # ``App.run_test``: this ordering plus `1fr` FlowView is what leaves
-        # the always-visible last row — MenuBar/StatusLine — untouched,
-        # exactly where #2280's halt banner already depends on it staying).
-        # Conditionally yielded, not yielded-then-hidden: `unknown_config_key_count`
-        # is fixed for the whole session (reyn.yaml needs a restart to
-        # change), so there is no later render tick that would need to grow
-        # this row in — an operator on a clean config never pays even the
-        # empty-row layout cost the #4194 measurement confirmed a present
-        # row would take.
-        config_warning = config_warning_text(
-            getattr(self._config, "unknown_config_key_count", 0)
-        )
-        if config_warning is not None:
-            yield ConfigWarningLine(config_warning, id="config-warning")
-        # Bottom chrome: a focusable menu row that also carries the slim
-        # status-values segment (#3326: MenuBar owns placing StatusLine on
-        # whichever row has room, collapsing the two previously-separate rows
-        # into one whenever the terminal is wide enough), then a drawer
-        # (ContentSwitcher) that stays collapsed until a menu item opens it
-        # downward. Phase 4 fills each pane from its canonical reyn source; each
-        # pane is rebuilt from a fresh snapshot when opened (:meth:`_refresh_pane`).
-        yield MenuBar(_MENU_TABS, id="menubar", status_text=self._status_text())
-        with ScrollableDrawer(initial=None, id="drawer"):
-            for tid, _label in _MENU_TABS:
-                yield build_drawer_pane(tid, self._pane_rows(tid))
+            # #3352: apply the configured START state. flowview has no constructor
+            # parameter for gutter visibility (both flags initialise True), so the
+            # only way to open with one hidden is to set it here — before mount,
+            # where ``set_gutter_visible`` short-circuits its relayout and geometry
+            # syncs on its own at mount time. No flash: nothing has painted yet.
+            left_start, right_start = self._gutter_start
+            self._flow.set_gutter_visible("left", left_start)
+            self._flow.set_gutter_visible("right", right_start)
+            yield self._flow
+            # #3299 P1: the grouped intervention panel sits BETWEEN the flow and
+            # the input row (region order shared with the sibling #3300 queue arc,
+            # plus #3362's rewind picker: conversation / intervention panel /
+            # rewind picker / sent-queue / input).
+            # Collapsed by default (``display=False`` — see
+            # ``InterventionPanel.on_mount``); shown + auto-focused only while an
+            # intervention is pending (:meth:`_present_intervention`).
+            self._iv_panel = InterventionPanel(id="intervention-panel")
+            yield self._iv_panel
+            # #3362: the /rewind checkpoint picker sits between the intervention
+            # panel and the sent-queue — same collapsed-by-default region shape
+            # (``display=False`` in its ``on_mount``), shown only while a bare
+            # ``/rewind`` is offering checkpoints.
+            self._rewind_picker = RewindPicker(id="rewind-picker")
+            yield self._rewind_picker
+            # #3300 P2b: the sent-queue region sits BETWEEN the intervention
+            # panel and the input row (region order: conversation / intervention
+            # panel / rewind picker / sent-queue / input — the intervention/queue/
+            # input ordering was pinned by the architect design pass so the sibling
+            # #3299/#3300 P1 coders never collide on this zone; #3362 added the
+            # rewind picker above the queue, inside the same zone).
+            # Collapsed by default (``display=False`` — see ``SentQueue.on_mount``);
+            # shown while at least one message is queued, undispatched.
+            # #3693: the live-turn line sits between the rewind picker and the
+            # queue, so the zone reads past (conversation) -> now (this) -> next
+            # (queue) -> the line being typed. Non-focusable, so Tab/Esc still walk
+            # the same path to the composer they did before it existed.
+            #: #3777: how many entries THIS TURN has produced, counted as they
+            #: arrive rather than derived from two reads of the model. The baseline
+            #: is the turn's start, which the reader saw; the previous counter's
+            #: baseline was the moment the reader scrolled away, which they did
+            #: not, so its number could never be interpreted. Reset by
+            #: :meth:`_reset_turn_entries` at turn start and nowhere else — in
+            #: particular NOT on a scroll edge.
+            self._turn_entries = 0
+            self._activity = ActivityRow(id="activity-row", clock=self._clock)
+            yield self._activity
+            self._sent_queue = SentQueue(id="sent-queue")
+            yield self._sent_queue
+            # #3354: the / and : completion popup sits DIRECTLY above the input row
+            # (the last region before the composer), so the candidate list grows
+            # upward out of the line being typed — the same direction and adjacency
+            # the retired inline app's completion menu had. Collapsed by default
+            # (``display=False`` — see ``CompletionPopup.on_mount``).
+            self._completion = CompletionPopup(id="completion")
+            yield self._completion
+            # #3476 ⑤ (ctrl+n since #3692 PR-B ③): the search bar — the last
+            # chrome region before the composer (collapsed by default; the
+            # completion popup above it can never be open at the same time,
+            # since completion follows COMPOSER typing and the search bar owns
+            # focus while visible).
+            self._search_bar = SearchBar(id="search-bar")
+            yield self._search_bar
+            with Horizontal(id="inputrow"):
+                yield Static("❯", id="inputgutter")
+                yield Composer(
+                    # ``<key> to <verb> · <key> to <verb>`` (#3801), the shape
+                    # ``rewind_picker`` already used. The previous form separated
+                    # the two clauses with a comma and gave the second one a
+                    # different grammar ("for a newline"), so the two halves of one
+                    # hint read as two kinds of statement.
+                    # "add a line", not "break the line": measured on a real
+                    # terminal, the longer wording truncated at 65 columns where
+                    # the pre-#3801 text fit at 60. This one costs one column over
+                    # the old text rather than five. ("to newline" is shorter still
+                    # and was rejected — it reads as a typo, and a hint nobody
+                    # trusts is worse than a hint that wraps.)
+                    placeholder=(
+                        "Type a message — enter to send · shift+enter to add a line…"
+                    )
+                )
+            # #4194: the config-warning indicator, mounted BEFORE MenuBar so it
+            # sits above the menu row in compose order (measured, headless
+            # ``App.run_test``: this ordering plus `1fr` FlowView is what leaves
+            # the always-visible last row — MenuBar/StatusLine — untouched,
+            # exactly where #2280's halt banner already depends on it staying).
+            # Conditionally yielded, not yielded-then-hidden: `unknown_config_key_count`
+            # is fixed for the whole session (reyn.yaml needs a restart to
+            # change), so there is no later render tick that would need to grow
+            # this row in — an operator on a clean config never pays even the
+            # empty-row layout cost the #4194 measurement confirmed a present
+            # row would take.
+            config_warning = config_warning_text(
+                getattr(self._config, "unknown_config_key_count", 0)
+            )
+            if config_warning is not None:
+                yield ConfigWarningLine(config_warning, id="config-warning")
+            # Bottom chrome: a focusable menu row that also carries the slim
+            # status-values segment (#3326: MenuBar owns placing StatusLine on
+            # whichever row has room, collapsing the two previously-separate rows
+            # into one whenever the terminal is wide enough), then a drawer
+            # (ContentSwitcher) that stays collapsed until a menu item opens it
+            # downward. Phase 4 fills each pane from its canonical reyn source; each
+            # pane is rebuilt from a fresh snapshot when opened (:meth:`_refresh_pane`).
+            yield MenuBar(_MENU_TABS, id="menubar", status_text=self._status_text())
+            with ScrollableDrawer(initial=None, id="drawer"):
+                for tid, _label in _MENU_TABS:
+                    yield build_drawer_pane(tid, self._pane_rows(tid))
 
     def _snapshot(self) -> "dict | None":
         """The live status snapshot (model/agent/cost/ctx) off the client read
@@ -1732,7 +1737,11 @@ class TextualChatApp(App):
         # pane. Restored turns render resolved (never RUNNING) through the exact
         # same presenter/gutter path a live frame does. Must run before
         # ``run_worker`` so the prior turns sit ABOVE the first live frame.
-        self._hydrate_from_history()
+        # #3671: bracketed — owner suspected this scales with history size.
+        from reyn.runtime.startup_timing import stage  # noqa: PLC0415
+
+        with stage("tui-boot:hydrate"):
+            self._hydrate_from_history()
         # The running-blink gutter animates off FlowView's NATIVE animation clock
         # (``animation_fps`` wired in :meth:`compose`), not an app-side timer — so
         # there is nothing to start/pause here. The blink is ADDITIVE: a frozen
@@ -4579,17 +4588,21 @@ async def run_textual_chat(
     except Exception:
         pass
 
-    # #3671: the framework's own startup begins here — terminal setup, first
-    # layout, first paint. Everything before it is reyn assembling things;
-    # everything after it is Textual, and the two were indistinguishable while
-    # both sat inside ``unaccounted``.
-    from reyn.runtime.startup_timing import mark_app_constructed  # noqa: PLC0415
+    # #3671: the ``tui-boot`` span begins here. Owner git-bash re-measurement
+    # (25.5s startup, tui-boot = 93.7%) showed this span is NOT purely
+    # Textual's own boot — reyn's __init__/compose()/on_mount() all run
+    # inside it — so it is now broken into named sub-stages
+    # (``tui-boot:construct``/``:compose``/``:hydrate``/``:other``,
+    # startup_timing.py's ``_TUI_BOOT_NAMED_STAGES``) rather than left as
+    # one opaque bracket.
+    from reyn.runtime.startup_timing import mark_app_constructed, stage  # noqa: PLC0415
 
     mark_app_constructed()
-    app = TextualChatApp(
-        transport=transport,
-        read_model=read_model,
-        agent_name=agent_name,
-        config=config,
-    )
+    with stage("tui-boot:construct"):
+        app = TextualChatApp(
+            transport=transport,
+            read_model=read_model,
+            agent_name=agent_name,
+            config=config,
+        )
     await app.run_async(inline=inline)
