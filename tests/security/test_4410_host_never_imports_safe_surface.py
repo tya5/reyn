@@ -48,11 +48,8 @@ of #4410's two-tier class, not the whole class.
 from __future__ import annotations
 
 import ast
-from pathlib import Path
 
-
-def _repo_root() -> Path:
-    return Path(__file__).resolve().parents[2]
+from tests._support.paths import REPO_ROOT
 
 
 def _imports_reyn_api_safe(node: ast.AST) -> "str | None":
@@ -84,7 +81,7 @@ def test_host_code_never_imports_the_safe_mode_surface() -> None:
     """Tier 1: no file under src/reyn (outside reyn.api.safe itself) imports
     reyn.api.safe in any form. See module docstring for the contract, scope
     decision, and this gate's own limit."""
-    root = _repo_root()
+    root = REPO_ROOT
     src = root / "src" / "reyn"
     safe_dir = (src / "api" / "safe").resolve()
 
