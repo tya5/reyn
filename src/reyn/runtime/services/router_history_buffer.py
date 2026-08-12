@@ -179,8 +179,68 @@ def _refresh_skill_location_tokens(
     )
 
 
+# #4381 PR-1: warn-once cache for the resource/budget invariant below, keyed
+# per (model, phase) — a high-frequency-called SSoT (every trigger
+# resolution) must not warn on every call; process-global by design (mirrors
+# `reyn.llm.litellm_bootstrap`'s own one-shot flags). Reset in tests via
+# `_resource_budget_warned.clear()`.
+_resource_budget_warned: "set[tuple[str, str | None]]" = set()
+
+
+def _check_resource_within_budget(
+    model: str, phase: "str | None", effective_trigger: int, events: Any,
+) -> None:
+    """#4381 PR-1: the invariant this SSoT now enforces — "a result that
+    passed the resource boundary must not exceed the budget boundary after
+    conversion" (architect design, #4381). Two independent read-cap-vs-
+    spill-cap mismatches (#4381's own reported incident, #4432's spill-loop
+    guard) trace to this SAME class going unchecked: the resource boundary
+    (``control_ir_inline_cap``, CHARS — memory/transfer-scoped, model-
+    derived today; owner ruling may make it a model-independent config byte
+    value later, at which point THIS function's arguments alone can no
+    longer derive it and a config value must be threaded in — not done in
+    PR-1) and the budget boundary (``effective_trigger``, TOKENS — the
+    model's context window) are never compared anywhere before this PR, so
+    a resource-bounded result that looks "safe" in chars can still overflow
+    the budget boundary once converted.
+
+    The conversion point is ``context_builder.INLINE_CAP_CHARS_PER_TOKEN``
+    — the ONE named chars→tokens conversion (architect: name it once, don't
+    re-derive the same ratio elsewhere). Rounded UP (ceil): understating the
+    resource bound's token cost would make this check too permissive, the
+    wrong direction for a safety check.
+
+    Warn-once per ``(model, phase)`` (not per call — this SSoT is called on
+    every trigger resolution, so warning every time would flood the log)
+    via a ``resource_cap_exceeds_budget_trigger`` audit-event. Detection
+    only in PR-1 — no value is clamped; the class closes once the resource
+    boundary itself moves to a model-independent byte value (later PR).
+    """
+    from reyn.core.context_builder import (
+        INLINE_CAP_CHARS_PER_TOKEN,
+        control_ir_inline_cap,
+    )
+
+    resource_bound_chars = control_ir_inline_cap(model, events=events, phase=phase)
+    resource_bound_tokens = -(-resource_bound_chars // INLINE_CAP_CHARS_PER_TOKEN)  # ceil
+    if resource_bound_tokens <= effective_trigger:
+        return
+    key = (model, phase)
+    if key in _resource_budget_warned:
+        return
+    _resource_budget_warned.add(key)
+    if events is not None:
+        events.emit(
+            "resource_cap_exceeds_budget_trigger",
+            model=model, phase=phase or "",
+            resource_bound_chars=resource_bound_chars,
+            resource_bound_tokens=resource_bound_tokens,
+            effective_trigger=effective_trigger,
+        )
+
+
 def resolve_effective_trigger_and_budgets(
-    compaction_controller: Any, model: str, events: Any,
+    compaction_controller: Any, model: str, events: Any, *, phase: "str | None" = None,
 ) -> "tuple[int, int, int]":
     """Return ``(effective_trigger, head_budget, tail_budget)`` — #2957 PR-B
     single SSoT for this lookup.
@@ -191,15 +251,30 @@ def resolve_effective_trigger_and_budgets(
     ``compaction_controller._engine.budgets`` lookup + ``get_max_input_tokens``
     fallback independently — a duplication that could silently drift (one
     site's fallback changing without the other). Both now delegate here.
+
+    #4381 PR-1: also the SSoT for the resource/budget invariant (see
+    ``_check_resource_within_budget``) — the third instance of this same
+    "two independently-computed things can silently drift" class this
+    function already exists to close (PR-B's own docstring names the first
+    two). ``phase`` (#4381: granularity is per ``(model, phase)``, not once
+    per session — ``control_ir_inline_cap`` itself already takes ``phase``)
+    defaults to ``None`` for both existing callers, neither of which has a
+    phase concept today; a future phase-aware caller can pass a real value
+    without a signature change.
     """
     engine = getattr(compaction_controller, "_engine", None) if compaction_controller is not None else None
     budgets = getattr(engine, "budgets", None)
     if budgets is not None:
-        return budgets.effective_trigger, budgets.head_budget, budgets.tail_budget
-    from reyn.llm.model_budget import get_max_input_tokens
-    effective_trigger = get_max_input_tokens(model, events=events)
-    fallback = effective_trigger // 4
-    return effective_trigger, fallback, fallback
+        effective_trigger, head_budget, tail_budget = (
+            budgets.effective_trigger, budgets.head_budget, budgets.tail_budget,
+        )
+    else:
+        from reyn.llm.model_budget import get_max_input_tokens
+        effective_trigger = get_max_input_tokens(model, events=events)
+        fallback = effective_trigger // 4
+        head_budget, tail_budget = fallback, fallback
+    _check_resource_within_budget(model, phase, effective_trigger, events)
+    return effective_trigger, head_budget, tail_budget
 
 
 # ── RouterHistoryBuffer ───────────────────────────────────────────────────────

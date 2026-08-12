@@ -34,7 +34,15 @@ MAX_CONTROL_IR_RESULT_INLINE_BYTES: int = 8_192   # ~8KB threshold
 # fixed 8KB was a root anomaly — same class as #1201/#1172 (fixed-constant →
 # window-derive). The per-RESULT cap is orthogonal to count-axis compaction,
 # which still trims the TOTAL across results.
-_INLINE_CAP_CHARS_PER_TOKEN: int = 4
+#
+# #4381 PR-1: this is THE ONE named chars→tokens conversion (architect
+# design) — the resource boundary (this module, chars) and the budget
+# boundary (`router_history_buffer.resolve_effective_trigger_and_budgets`,
+# tokens) are compared through THIS constant and nowhere else; a second,
+# independently-derived chars-per-token ratio anywhere else would reopen the
+# exact silent-drift class #4381 PR-1 closes. Public (not `_`-prefixed) for
+# that reason — it is a cross-module conversion point, not a local detail.
+INLINE_CAP_CHARS_PER_TOKEN: int = 4
 _INLINE_CAP_WINDOW_FRACTION: float = 0.08  # one result may inline up to ~8% of the window
 
 
@@ -56,6 +64,6 @@ def control_ir_inline_cap(
     from reyn.llm.model_budget import get_max_input_tokens
 
     t_max = get_max_input_tokens(model_resolved, events=events, phase=phase)
-    derived = int(t_max * _INLINE_CAP_CHARS_PER_TOKEN * _INLINE_CAP_WINDOW_FRACTION)
+    derived = int(t_max * INLINE_CAP_CHARS_PER_TOKEN * _INLINE_CAP_WINDOW_FRACTION)
     return max(MAX_CONTROL_IR_RESULT_INLINE_BYTES, derived)
 

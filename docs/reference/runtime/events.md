@@ -176,6 +176,7 @@ presentation_load_failed
 presented
 project_context_changed
 repo_ingest_files_skipped
+resource_cap_exceeds_budget_trigger
 router_context_overflow_detected
 router_context_overflow_unrecovered
 router_empty_response_detected
@@ -279,6 +280,7 @@ See [Concepts: multi-agent](../../concepts/multi-agent/multi-agent.md) — "Agen
 | `llm_response_received` | `prompt_tokens`, `completion_tokens`, `cached_tokens`, `cache_creation_tokens`, `cost_usd`, `usage_source` (+ `chain_id`) |
 | `embedding_index_build_complete` | `source_id`, `chunk_count`, `total_tokens`, `cost_usd`, `embedding_model` (a disk-adopt/no-fresh-build completion carries `total_tokens`/`cost_usd` as `null` — no embed call happened that run, not a cost of zero) |
 | `repo_ingest_files_skipped` | #4431 — the repo-knowledge (`knowledge_repo_doc`/`knowledge_repo_src`) background build excluded one or more files for exceeding `_REPO_INGEST_MAX_BYTES` (256 KB, `src/reyn/data/index/knowledge_ingest.py`). Emitted once per build, only when the count is nonzero — a routine build with nothing skipped emits no event at all. `kind` (`"doc"`/`"src"`), `skipped_count`, `reason` (currently always `"over_size_cap"`) |
+| `resource_cap_exceeds_budget_trigger` | #4381 PR-1 — `resolve_effective_trigger_and_budgets`'s own invariant check (`src/reyn/runtime/services/router_history_buffer.py`): the per-result resource boundary (`control_ir_inline_cap`, chars, converted to tokens via `context_builder.INLINE_CAP_CHARS_PER_TOKEN`) exceeds the budget boundary (`effective_trigger`, the model's context window). Detection only — no value is clamped. Warn-once per `(model, phase)`, not per call (this SSoT runs on every trigger resolution). `model`, `phase` (`""` when none), `resource_bound_chars`, `resource_bound_tokens`, `effective_trigger` |
 
 `usage_source` says where the token counts came from: `provider` (the provider
 reported them) or `estimated` (the provider's stream carried no usage, so
