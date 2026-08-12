@@ -210,10 +210,29 @@ def read_history_after(
     own combined token footprint can make a compaction pass produce zero
     candidates — no progress, though also no incorrect coverage claim
     (this function's own contiguous-batch discipline holds regardless).
-    Not a live risk under the current default (8 MiB is orders of
-    magnitude above any realistic head/tail token budget) — recorded here
-    as the actual measurement this review asked for, relevant only if
-    ``max_bytes`` ever becomes independently operator-configurable.
+
+    ⚠️ **Architect's follow-up correction (same PR, not a merge blocker):**
+    the 2000-turn measurement above only verified the BACKLOG-SIZE axis —
+    it does NOT verify the axis that actually decides whether the "zero
+    candidates" condition triggers, which is independent of backlog size
+    entirely: whether ``max_bytes`` (a RESOURCE-role byte cap) is smaller
+    than ``head_budget + tail_budget`` (a BUDGET-role token figure,
+    MODEL-context-window-derived, #4431's role split). A small backlog
+    proves nothing about a large-context-window model whose head+tail
+    budgets alone could exceed 8 MiB. Worse than "no progress": zero
+    candidates means no summary, means ``covers_through_seq`` never
+    advances, means the NEXT pass reads the identical window and produces
+    the identical zero — a genuine STALL, the exact class #4471/#4472
+    exist to close, reachable through this new resource/budget
+    combination. Neither architect nor this author has computed
+    ``head_budget + tail_budget``'s own worst case, so whether this
+    actually triggers at the 8 MiB default is UNVERIFIED, not ruled out —
+    tracked as issue #4477 (a warn-once check at the same conversion point
+    ``INLINE_CAP_BYTES_PER_TOKEN`` already established for this class of
+    resource/budget comparison, #4381 PR-1 precedent) rather than solved
+    here. #4477's own first task is measuring ``head_budget + tail_budget``'s
+    worst case, not implementing the warn — reachability is confirmed
+    before a mechanism is built.
     """
     if not path.is_file():
         return [], False
