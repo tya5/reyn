@@ -487,23 +487,21 @@ async def shutdown_logging() -> None:
     race (a shutdown racing a still-in-flight warm-up could grab a
     genuinely incomplete module). Both the call-site guard and this
     function's own body were fixed the same way as #4423: gate on
-    ``is_litellm_ready()`` (the real "genuinely finished" signal) before
-    touching litellm at all. ``litellm.litellm_core_utils.logging_worker``
-    is not one of the submodules litellm's own ``__init__`` eagerly
-    populates as an attribute (unlike e.g. ``litellm.types.utils``), so
-    this still needs its own ``import`` statement for that specific
-    submodule — but only ever reached AFTER ``is_litellm_ready()``
-    confirms the TOP-level package finished initializing, so this is a
-    normal, non-racing import (the top package's own import lock has
-    already been released; importing one of its submodules afterward
-    behaves like any other already-safe-to-import module).
+    ``is_litellm_ready()`` (the real "genuinely finished" signal) and read
+    the confirmed module's attributes — never a fresh ``import`` of any
+    kind, including a submodule. ``litellm.litellm_core_utils.logging_
+    worker`` is not one of the submodules litellm's own ``__init__``
+    eagerly populates, so ``ensure_litellm_ready()`` itself now imports it
+    once, inside the chokepoint (#4421 seam alignment) — this function
+    never needs an ``import`` statement of its own at all.
     """
     from reyn.llm.litellm_bootstrap import is_litellm_ready
     if not is_litellm_ready():
         return
     try:
-        import litellm.litellm_core_utils.logging_worker as _logging_worker_mod
-        await _logging_worker_mod.GLOBAL_LOGGING_WORKER.clear_queue()
+        import sys
+        litellm = sys.modules["litellm"]
+        await litellm.litellm_core_utils.logging_worker.GLOBAL_LOGGING_WORKER.clear_queue()
     except Exception:
         # Best-effort: never raise from shutdown.
         pass
@@ -578,7 +576,20 @@ async def _close_litellm_async_clients(pre_existing_keys: frozenset) -> None:
     alternative (not hiding at all) reintroduces the #3434 defect this
     function exists to fix, which is the worse failure mode.
     """
-    import litellm
+    # #4395/#4421: bare `import litellm` → `is_litellm_ready()` gate + read
+    # the confirmed module. The docstring above already argues this is
+    # call-order-safe (the call site never invokes this function unless
+    # `client_cache_baseline()` is non-None, which only happens after a
+    # genuine litellm touch this call) — but "safe by call order" is
+    # exactly the shape #4415/#4417 showed can go stale silently when a
+    # NEW call path is added later. Gating structurally costs nothing here
+    # (this function already tolerates litellm being unavailable — return
+    # early) and removes the dependency on that argument staying true.
+    from reyn.llm.litellm_bootstrap import is_litellm_ready
+    if not is_litellm_ready():
+        return
+    import sys
+    litellm = sys.modules["litellm"]
 
     cache = getattr(litellm, "in_memory_llm_clients_cache", None)
     cache_dict = getattr(cache, "cache_dict", None)
@@ -590,10 +601,7 @@ async def _close_litellm_async_clients(pre_existing_keys: frozenset) -> None:
         del cache_dict[key]
     try:
         try:
-            from litellm.llms.custom_httpx.async_client_cleanup import (
-                close_litellm_async_clients,
-            )
-            await close_litellm_async_clients()
+            await litellm.llms.custom_httpx.async_client_cleanup.close_litellm_async_clients()
         except Exception:
             # Best-effort: never raise from shutdown.
             pass
@@ -1595,7 +1603,22 @@ def _single_deployment_router(model: str, *, original_model: "str | None" = None
     lookup and the runtime kwarg must agree — see the docstring's own
     caution against fixing only one).
     """
-    import litellm as _ll
+    # #4395/#4421: bare `import litellm as _ll` → read the confirmed
+    # module. Reached only from an already-gated completion path
+    # (`recorded_acompletion`'s own readiness check runs first), but "safe
+    # by call order" is exactly the shape #4415/#4417 showed can go stale
+    # silently — no bare import outside the chokepoint, structurally.
+    # There is no fallback for a Router construction (the return value is
+    # used immediately for a real completion), so a not-ready state raises
+    # explicitly rather than proceeding with a broken reference.
+    from reyn.llm.litellm_bootstrap import LitellmUnavailableError, is_litellm_ready
+    if not is_litellm_ready():
+        raise LitellmUnavailableError(
+            "import litellm failed — see the reyn.llm.litellm_bootstrap "
+            "warn-once log line for the underlying cause",
+        )
+    import sys
+    _ll = sys.modules["litellm"]
     rcfg = _resolved_router_config()
     loop = asyncio.get_running_loop()
     per_loop = _ROUTERS_BY_LOOP.get(loop)
@@ -1808,12 +1831,19 @@ def _may_need_responses_endpoint(model: str) -> bool:
     provider identity) is a property of the MODEL, not of the transport used
     to reach it.
 
-    Any lookup failure (unmapped model, litellm internal error) is caught and
-    treated as "does not need it" — conservative in the direction that
-    matters for a diagnostic (never claim a model needs an endpoint reyn
-    can't confirm it resolves to)."""
+    Any lookup failure (unmapped model, litellm internal error, litellm not
+    yet ready — #4395/#4421: no bare ``import litellm`` outside the
+    chokepoint, so "not ready" is now one more lookup failure this
+    function already tolerates) is caught and treated as "does not need
+    it" — conservative in the direction that matters for a diagnostic
+    (never claim a model needs an endpoint reyn can't confirm it resolves
+    to)."""
     try:
-        import litellm  # noqa: PLC0415
+        from reyn.llm.litellm_bootstrap import is_litellm_ready
+        if not is_litellm_ready():
+            return False
+        import sys
+        litellm = sys.modules["litellm"]
 
         _, provider, _, _ = litellm.get_llm_provider(model=model, custom_llm_provider=None)
         return provider in (
@@ -1942,8 +1972,16 @@ def _streaming_capability(model: str, has_tools: bool) -> "bool | None":
     only thing call sites ask.
     """
     try:
-        import litellm  # noqa: PLC0415
-        from litellm.utils import supports_native_streaming  # noqa: PLC0415
+        # #4395/#4421: no bare `import litellm` outside the chokepoint —
+        # "not ready" maps to the SAME `None` ("the catalog does not say")
+        # this function already returns for an absent-from-catalog model;
+        # both are "cannot confirm", not "confirmed no".
+        from reyn.llm.litellm_bootstrap import is_litellm_ready
+        if not is_litellm_ready():
+            return None
+        import sys
+        litellm = sys.modules["litellm"]
+        supports_native_streaming = litellm.utils.supports_native_streaming
         try:
             litellm.get_model_info(model=model, custom_llm_provider=None)
         except Exception:  # noqa: BLE001 — absent from the catalog, nothing more

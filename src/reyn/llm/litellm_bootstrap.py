@@ -547,6 +547,17 @@ def ensure_litellm_ready(
                     # REQUESTS_CA_BUNDLE via get_ssl_verify(), so this is the one
                     # missing piece for full conformance.
                     litellm.aiohttp_trust_env = True
+                    # #4395/#4421 (seam alignment): `litellm.litellm_core_
+                    # utils.logging_worker` is NOT one of the submodules
+                    # litellm's own `__init__` eagerly populates as an
+                    # attribute (unlike e.g. `litellm.types.utils` or
+                    # `litellm.llms.custom_httpx.http_handler`, verified
+                    # empirically) — imported here, once, inside the ONE
+                    # place `import litellm` itself is allowed, so
+                    # `llm.py`'s `shutdown_logging()` can read it via plain
+                    # attribute access afterward instead of needing its
+                    # own submodule import statement outside the seam.
+                    import litellm.litellm_core_utils.logging_worker  # noqa: F401
                     result = litellm
                 except Exception:  # noqa: BLE001 — best-effort; never block the caller on this
                     result = None
