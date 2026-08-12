@@ -386,7 +386,16 @@ def test_tui_boot_named_substages_plus_other_equal_the_wide_span(monkeypatch) ->
     ``tui-boot:other`` must sum to the wide ``mark_app_constructed`` ->
     ``mark_first_frame`` span exactly, not merely be less than or equal to
     it — the #3735 regression shape this module's whole ``:other`` pattern
-    exists to prevent."""
+    exists to prevent.
+
+    Compared against the RECORDED ``tui-boot`` value, not the test's own
+    wall clock — ``mark_first_frame`` computes ``:other = max(0, wide -
+    named)`` from that exact same recorded ``wide``, so the two sides are
+    exactly equal by construction and need no time-based tolerance (lead-
+    coder review on #4363: a wall-clock tolerance is an environment-
+    dependent constant, which the owner's standing no-time-limit rule for
+    tests forbids; the falsification power is unchanged — a narrow-bracket-
+    only regression that drops a gap still fails this exactly)."""
     import time
 
     from reyn.runtime import startup_timing
@@ -398,7 +407,6 @@ def test_tui_boot_named_substages_plus_other_equal_the_wide_span(monkeypatch) ->
     monkeypatch.setattr(startup_timing, "TIMING", StartupTiming())
     stages = ("tui-boot:construct", "tui-boot:compose", "tui-boot:hydrate", "tui-boot:other")
 
-    wall_start = time.perf_counter()
     startup_timing.mark_app_constructed()
     with stage("tui-boot:construct"):
         time.sleep(0.01)
@@ -408,10 +416,9 @@ def test_tui_boot_named_substages_plus_other_equal_the_wide_span(monkeypatch) ->
     with stage("tui-boot:hydrate"):
         time.sleep(0.01)
     startup_timing.mark_first_frame()
-    wall_end = time.perf_counter()
 
     named_sum = sum(startup_timing.TIMING.elapsed(name) for name in stages)
-    assert abs(named_sum - (wall_end - wall_start)) < 0.02
+    assert named_sum == startup_timing.TIMING.elapsed("tui-boot")
 
 
 def test_total_seconds_does_not_double_count_tui_boot(monkeypatch) -> None:
