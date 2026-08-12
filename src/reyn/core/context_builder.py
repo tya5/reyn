@@ -79,6 +79,12 @@ MAX_CONTROL_IR_RESULT_INLINE_BYTES: int = 10_240   # 10 KiB default
 # meaning under the old name (a literal ~4 bytes-per-token approximation
 # for UTF-8-mixed text is the same rough average commonly used for chars,
 # so the NUMBER is unchanged; only the unit label is corrected).
+#
+# #4431 follow-up (architect, explicit): the NUMBER 4 itself has never been
+# empirically verified against a real tokenizer — carrying it forward under
+# a corrected unit label is "put the ONE existing value behind the ONE named
+# conversion point," not a claim that 4 is the right ratio. Do not read this
+# constant's existence as evidence the value was measured.
 INLINE_CAP_BYTES_PER_TOKEN: int = 4
 
 

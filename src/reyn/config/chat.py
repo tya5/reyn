@@ -298,6 +298,20 @@ class OffloadConfig:
     ``structured_inline_max_chars`` / ``structured_preview_chars``
         The same two questions for a STRUCTURED (dict/list) result: the size at
         which it goes to its own ref, and how much of it stays inline.
+
+    #4381's resource-vs-budget ROLE split (see ``ReadCapConfig`` above): every
+    field here is BUDGET-role — ``cap_ceil_tokens``/``cap_alpha`` are TOKENS,
+    model-derived via ``effective_trigger``; ``max_inline_bytes``,
+    ``preview_head_chars``/``preview_tail_chars``, and
+    ``structured_inline_max_chars``/``structured_preview_chars`` name their
+    own unit already (bytes/chars) but are still budget-role — they bound
+    what stays in the conversation the model reads, not a resource-role
+    physical ceiling like ``ReadCapConfig``'s. This is stated explicitly
+    (#4431 follow-up) because the unit being IMPLICIT is exactly the shape
+    #4381's loop happened in: two caps compared without either side naming
+    its own ROLE or unit. Any cross-ROLE comparison against a resource-role
+    value MUST go through ``context_builder.INLINE_CAP_BYTES_PER_TOKEN``,
+    never a second independently-derived ratio.
     """
     enabled: bool = False
     max_inline_bytes: int = 16_384

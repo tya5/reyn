@@ -54,6 +54,19 @@ invisible to an AST scan by construction. Architect's own #4415 recount
 found exactly this gap once already (an attribute-access path an earlier
 count had not measured). This gate closes the "a literal import statement
 outside the seam" half of the class, not the whole class.
+
+**#4421's own follow-up, #4450: the excluded files' insides are not
+watched either.** This gate treats ``litellm_bootstrap.py`` as trusted
+once it's on the exclusion list — it never inspects what that seam file's
+own body does. #4450 found a real bug entirely INSIDE that excluded file
+(``_capture_client_cache_baseline()``'s own unconditional second
+``import litellm``, reopening the exact race #4419 closed, on the
+first-import-failure path) that this gate could not have caught: the
+statement triggering it lives in the one file this gate is built to
+ignore. The scope this docstring already states above ("this gate scans
+``src/reyn`` only, not ``tests/``" / the third-party-touch limit) is
+still accurate — it just doesn't cover this angle, which #4450 made
+concrete rather than hypothetical.
 """
 from __future__ import annotations
 
