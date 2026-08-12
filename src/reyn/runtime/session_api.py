@@ -604,6 +604,21 @@ async def _spawn_pipeline_driver_session(
             f"pipeline launch: spawned driver-session ({reply_to_agent!r}, "
             f"{sid!r}) not found in the registry"
         )
+    if attached_parent_session is not None:
+        # #4215 ②: bridge this driver's hook-bus events to the PARENT's
+        # bus, non-blocking, same ATTACHED-only condition as the
+        # presentation/intervention BridgeToParent routing above — a
+        # detached spawn (AuditOnlyNoSurface) has no live parent to bridge
+        # to. See bridge_child_bus_to_parent's own docstring for why this
+        # goes through neither session's HookDispatcher, and Session.
+        # _hook_bus_bridge_task for where teardown cancels it.
+        import asyncio
+
+        from reyn.hooks.bus import bridge_child_bus_to_parent
+
+        session._hook_bus_bridge_task = asyncio.create_task(
+            bridge_child_bus_to_parent(session._hook_bus, attached_parent_session._hook_bus)
+        )
     driver = PipelineExecutorDriver(
         work_order, registry=registry, state_log=state_log,
         notify_reply=notify_reply,

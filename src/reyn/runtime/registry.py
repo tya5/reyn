@@ -2111,6 +2111,17 @@ class AgentRegistry:
             aclose_event_store = getattr(session, "aclose_event_store", None)
             if callable(aclose_event_store):
                 await aclose_event_store()
+            # #4215 ②: cancel this session's own hook-bus->parent bridge
+            # task, if it is one (bridged children only —
+            # session_api._spawn_pipeline_driver_session's attached path;
+            # every other session's own attribute stays None and this is a
+            # no-op). Bare cancel(), not awaited, mirroring the
+            # self._tasks/_forward_tasks cancellation a few lines below —
+            # the bridge's own loop has nothing to flush on cancellation
+            # (it only forwards live events, nothing durable).
+            bridge_task = getattr(session, "_hook_bus_bridge_task", None)
+            if bridge_task is not None and not bridge_task.done():
+                bridge_task.cancel()
         for task_dict in (self._tasks, self._forward_tasks):
             task = task_dict.pop((name, sid), None)
             if task is not None:
