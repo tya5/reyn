@@ -60,6 +60,7 @@ from reyn.data.index.source_manifest import get_source_manifest
 from reyn.data.workspace.workspace import Workspace
 from reyn.schemas.models import IndexDropIROp
 from reyn.security.permissions.permissions import PermissionDecl
+from tests._support.events import collect_events
 
 
 def _run(coro: Any) -> Any:
@@ -459,3 +460,87 @@ def test_repo_build_failure_leaves_dirty_and_a_later_search_await_heals(
     healed = _run(manifest.get(KNOWLEDGE_REPO_DOC_SOURCE_ID))
     assert healed is not None and healed.state == "clean"
     assert healed.chunk_count == 3
+
+
+# ── 6. #4431 — oversize-file skip visibility ─────────────────────────────
+
+
+def test_oversize_repo_file_is_skipped_and_reported(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Tier 3a: #4431 — a repo file over `_REPO_INGEST_MAX_BYTES` was
+    silently dropped from the ingest corpus with no trail at all. It must
+    now (a) still be excluded from the built chunks (unchanged behaviour —
+    an oversize file has never been ingested) and (b) emit a
+    `repo_ingest_files_skipped` audit-event carrying the count, so the gap
+    has a witness instead of reading as "this file was never written"."""
+    from reyn.data.index.knowledge_ingest import _REPO_INGEST_MAX_BYTES
+
+    repo_root = tmp_path / "fake_repo"
+    _make_fake_repo(repo_root)
+    (repo_root / "docs" / "huge.md").write_text(
+        "x" * (_REPO_INGEST_MAX_BYTES + 1), encoding="utf-8",
+    )
+    _patch_repo_root(monkeypatch, repo_root)
+    provider = _FakeEmbeddingProvider(fail=False)
+    _patch_provider(monkeypatch, provider)
+
+    ws_root = tmp_path / "workspace"
+    ws_root.mkdir()
+    coordinator = IndexCoordinator(ws_root)
+    events = EventLog()
+    collected = collect_events(events)
+    ws = _make_op_ctx(ws_root).workspace
+    op_ctx = OpContext(
+        workspace=ws, events=events,
+        permission_decl=PermissionDecl(),
+    )
+    coordinator.register_builder(
+        KNOWLEDGE_REPO_DOC_SOURCE_ID, _repo_build_fn("doc", op_ctx, "standard"), kind="static",
+    )
+    _run(coordinator.ensure_built(KNOWLEDGE_REPO_DOC_SOURCE_ID, await_completion=True))
+
+    manifest = get_source_manifest(ws_root)
+    entry = _run(manifest.get(KNOWLEDGE_REPO_DOC_SOURCE_ID))
+    # README.md + docs/x.md + docs/y.ja.md = 3 — the oversize file is NOT
+    # among them (unchanged behaviour; only its visibility is new).
+    assert entry is not None and entry.chunk_count == 3
+
+    # Exactly one AGGREGATE event, not one per skipped file — the count is
+    # in the payload, not in how many events fired. Unpacking a 1-item
+    # generator fails the same way (ValueError) if that ever drifted,
+    # without a bare length-equality assertion.
+    (skip_event,) = (e for e in collected if e.type == "repo_ingest_files_skipped")
+    assert skip_event.data["kind"] == "doc"
+    assert skip_event.data["skipped_count"] == 1
+
+
+def test_no_skip_event_when_nothing_is_oversize(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Tier 3a: accept-side twin — a build with no oversize files emits NO
+    `repo_ingest_files_skipped` event at all (not one with count=0); the
+    event names an actual gap, not a routine zero-report on every build."""
+    repo_root = tmp_path / "fake_repo"
+    _make_fake_repo(repo_root)
+    _patch_repo_root(monkeypatch, repo_root)
+    provider = _FakeEmbeddingProvider(fail=False)
+    _patch_provider(monkeypatch, provider)
+
+    ws_root = tmp_path / "workspace"
+    ws_root.mkdir()
+    coordinator = IndexCoordinator(ws_root)
+    events = EventLog()
+    collected = collect_events(events)
+    ws = _make_op_ctx(ws_root).workspace
+    op_ctx = OpContext(
+        workspace=ws, events=events,
+        permission_decl=PermissionDecl(),
+    )
+    coordinator.register_builder(
+        KNOWLEDGE_REPO_DOC_SOURCE_ID, _repo_build_fn("doc", op_ctx, "standard"), kind="static",
+    )
+    _run(coordinator.ensure_built(KNOWLEDGE_REPO_DOC_SOURCE_ID, await_completion=True))
+
+    skip_events = [e for e in collected if e.type == "repo_ingest_files_skipped"]
+    assert skip_events == []
