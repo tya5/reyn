@@ -14,10 +14,56 @@ class ConsoleLogger:
     def __init__(self, conversation: bool = False) -> None:
         self.conversation = conversation
 
-    def __call__(self, event: Event) -> None:
+    def __call__(self, event: Event) -> bool:
+        """Render *event*. Returns whether anything was actually printed
+        (#4383) — ``reyn events`` replay uses this to report how many
+        MATCHED events actually RENDERED, not just how many were found.
+
+        Before this: an event type with no dedicated ``on_<type>`` handler
+        was silently dropped (only 11 of 211 declared audit-event kinds
+        have one — 5.2%), and the replay summary's own count included the
+        dropped ones too, so "N events replayed" read as "N shown" when it
+        actually meant "N found, possibly 0 shown" — the owner's own
+        real-environment report: 21 events matched, 0 lines printed, no
+        indication anything had been dropped at all.
+
+        A handler-less type now falls through to :meth:`_render_unhandled`
+        (a generic one-line fallback) rather than being dropped — this
+        method wraps the handler call in a stdout capture (not a change to
+        any of the 11 existing handlers' own bodies) purely to detect
+        whether printing genuinely happened, for the caller's own matched-
+        vs-rendered accounting; the captured output is still written to
+        the real stdout unchanged, byte for byte.
+        """
+        import io
+        from contextlib import redirect_stdout
+
         handler = getattr(self, f"on_{event.type}", None)
-        if handler:
-            handler(event.data)
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            if handler is not None:
+                handler(event.data)
+            else:
+                self._render_unhandled(event)
+        output = buf.getvalue()
+        if output:
+            import sys
+            sys.stdout.write(output)
+        return bool(output)
+
+    def _render_unhandled(self, event: Event) -> None:
+        """#4383: generic one-line fallback for a declared audit-event kind
+        this module has no dedicated ``on_<type>`` renderer for (~200 of
+        211 kinds, before this fix silently dropped by :meth:`__call__`).
+        Prints the kind plus a bounded set of its own top-level data
+        fields as ``key=value`` — never a full JSON dump (a replay is meant
+        to be skimmed line by line, not re-inspected as raw payload; an
+        operator who needs the full record already has the source JSONL).
+        Bounded to the first 6 fields so one wide event (e.g. a payload
+        carrying a large embedded blob) cannot turn a scan of thousands of
+        events into an unreadable wall of text."""
+        fields = " ".join(f"{k}={v!r}" for k, v in list(event.data.items())[:6])
+        print(f"[{event.type}] {fields}".rstrip())
 
     # ── Workflow ───────────────────────────────────────────────────────────────
 
