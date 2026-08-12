@@ -29,6 +29,7 @@ Three things pinned here, matching the stage-1 acceptance conditions
 from __future__ import annotations
 
 import inspect
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -75,7 +76,7 @@ def test_session_module_no_longer_has_the_old_private_names():
     assert not hasattr(session_mod, "_merge_memory_indexes")
 
 
-def test_session_pure_importable_without_first_importing_session():
+def test_session_pure_importable_without_first_importing_session(out_of_process_reyn):
     """Tier 2: acceptance condition ③ — `reyn.runtime.session_pure` is
     importable standalone, in a FRESH subprocess, without
     `reyn.runtime.session` (or anything that imports it) already loaded
@@ -85,13 +86,24 @@ def test_session_pure_importable_without_first_importing_session():
     back, importing it FIRST (before `session.py` has a chance to partially
     initialize) would raise the same
     "cannot import name ... from partially initialized module" this stage
-    is fixing."""
+    is fixing.
+
+    #4446: was missing `out_of_process_reyn` (and its PYTHONPATH pin) — a
+    spawned subprocess re-resolves `reyn` from the ambient venv, not from
+    this checkout's in-process `sys.path` (`pythonpath = ["src"]` only
+    affects THIS process). Without the pin, a machine whose ambient venv
+    has an editable install pointing at a DIFFERENT checkout silently reads
+    that one instead — exactly the #3231/#3024 incident `out_of_process_reyn`
+    exists to close, which every sibling subprocess-spawning test in this
+    repo already requests. This one just never had.
+    """
     # #4397: no timeout= — CI's own per-test pytest-timeout is the kill switch.
     proc = subprocess.run(
         [sys.executable, "-c", "import reyn.runtime.session_pure; print('OK')"],
         cwd=str(_REPO_ROOT),
         capture_output=True,
         text=True,
+        env={**os.environ, "PYTHONPATH": out_of_process_reyn},
     )
     assert proc.returncode == 0, f"stdout={proc.stdout}\nstderr={proc.stderr}"
     assert "OK" in proc.stdout
