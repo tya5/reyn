@@ -113,67 +113,20 @@ def test_error_body_not_truncated(monkeypatch) -> None:
     assert err.data["provider_body"] == long_body
 
 
-def test_error_event_redacts_secret_value(monkeypatch) -> None:
-    """Tier 2: #1676 — a secret value (api_key) echoed in the provider error text is
-    scrubbed from the captured event (no key leak in the audit log)."""
-    monkeypatch.setattr(
-        litellm, "acompletion",
-        _raising_acompletion(
-            message="Auth failed for key sk-supersecret-123",
-            status_code=401,
-            body="rejected token sk-supersecret-123",
-            response_text="sk-supersecret-123",
-        ),
-    )
-    log = EventLog()
-    collected = collect_events(log)
-    set_llm_request_event_log(log)
-
-    with pytest.raises(_FakeProviderError):
-        _call(monkeypatch, api_key="sk-supersecret-123")
-
-    (err,) = [e for e in collected if e.type == "llm_request_error"]
-    data = err.data
-    # The secret must not leak anywhere in the captured error event.
-    assert "sk-supersecret-123" not in repr(data), "secret value must be scrubbed"
-    assert "***REDACTED***" in data["error_message"]
-    # The params dict redacts the api_key by key, too.
-    assert data["params"]["api_key"] == "***REDACTED***"
-
-
-def test_error_event_redacts_secret_value_in_dict_shaped_body(monkeypatch) -> None:
-    """Tier 2: #3830 — a secret value echoed inside a DICT-shaped provider body
-    (litellm's parsed JSON error, the common real-world shape) is scrubbed the
-    same as a string body, WITHOUT flattening the structure — the non-secret
-    keys/values (root-cause detail #1676 exists to capture) survive unchanged."""
-    monkeypatch.setattr(
-        litellm, "acompletion",
-        _raising_acompletion(
-            message="Auth failed",
-            status_code=401,
-            body={
-                "error": {
-                    "message": "rejected token sk-supersecret-123",
-                    "type": "invalid_request_error",
-                },
-            },
-            response_text="",
-        ),
-    )
-    log = EventLog()
-    collected = collect_events(log)
-    set_llm_request_event_log(log)
-
-    with pytest.raises(_FakeProviderError):
-        _call(monkeypatch, api_key="sk-supersecret-123")
-
-    (err,) = [e for e in collected if e.type == "llm_request_error"]
-    data = err.data
-    assert "sk-supersecret-123" not in repr(data), "secret value must be scrubbed"
-    # The structure and non-secret detail survive — this is a value scrub, not
-    # a blanket "drop the dict body" redaction.
-    assert data["provider_body"]["error"]["type"] == "invalid_request_error"
-    assert "***REDACTED***" in data["provider_body"]["error"]["message"]
+# #3830-follow-up (removed, not fixed): the two tests that lived here
+# (`test_error_event_redacts_secret_value`,
+# `test_error_event_redacts_secret_value_in_dict_shaped_body`) asserted that
+# `reyn.llm.secret_scrub` scrubbed a fixture-injected `api_key` kwarg out of
+# the captured error event. That module is gone (#3830-follow-up: reyn never
+# had a documented motive to inspect key values, and multi-layer defense
+# there was never sound — scrubbing requires reyn to KNOW the secret value,
+# which conflicts with the owner's standing "API KEY is proxy/litellm's
+# responsibility, never inspect" instruction). Since #4348, reyn no longer
+# passes an `api_key` kwarg into `recorded_acompletion` at all — these tests
+# constructed a call shape (`_call(monkeypatch, api_key="...")`) that
+# production no longer builds, so their premise did not survive the removal
+# and they were deleted rather than re-pointed at a mechanism that no
+# longer exists.
 
 
 def test_no_event_when_ambient_log_unset_but_still_raises(monkeypatch) -> None:
