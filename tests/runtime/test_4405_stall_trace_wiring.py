@@ -16,6 +16,17 @@ called with the right value), not the N-second stall-detection behavior
 itself, which stall_trace.py's own docstring already explains cannot be
 tested without violating the testing-policy time-limit ban — see that
 module for why no test exercises the actual firing.
+
+``monkeypatch.setattr(stall_trace, "arm", ...)`` only intercepts the call
+because ``Session._run_router_loop`` does ``from reyn.runtime.stall_trace
+import arm as _arm_stall_trace`` INSIDE the method body (a fresh
+module-attribute lookup on every call), not at module import time. If
+that import were ever hoisted to session.py's top level, it would bind
+``_arm_stall_trace`` to the original function object once at import time
+— this file's ``monkeypatch.setattr`` would then silently stop
+intercepting anything, and all three tests here would go green for the
+wrong reason (nothing left to fail). Keep the import function-local if
+you touch that call site.
 """
 from __future__ import annotations
 
@@ -101,3 +112,42 @@ async def test_stall_trace_not_touched_when_env_unset(
 
     assert result is True
     assert calls == [], "arm/disarm must not be touched when the env var is unset"
+
+
+@pytest.mark.asyncio
+async def test_stall_trace_disarmed_even_when_the_turn_raises(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    """Tier 2: disarm() fires on the EXCEPTION path too, not just the happy
+    path — the ``finally`` block's own reason for existing. Without this,
+    a turn that raises leaves the background timer armed past turn end:
+    it later dumps an UNRELATED stack into reyn.log, a false lead in
+    exactly the shape #4403's investigation was fighting. Removing the
+    ``finally`` (or the disarm call inside it) would leave the other two
+    tests in this file green — only an exception-path turn exercises
+    this line, so it needed its own witness."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("REYN_STALL_TRACE", "5")
+    session = _make_session(tmp_path)
+
+    calls: list[str] = []
+    monkeypatch.setattr(stall_trace, "arm", lambda seconds: calls.append("arm"))
+    monkeypatch.setattr(stall_trace, "disarm", lambda: calls.append("disarm"))
+
+    async def _raising_run_turn(user_text: str, chain_id: str) -> None:
+        raise RuntimeError("simulated turn failure")
+
+    session._loop_driver.run_turn = _raising_run_turn  # type: ignore[method-assign]
+
+    await session._put_inbox("user", {"text": "hi", "chain_id": "c1"})
+    # The router loop's own top-level handler logs-and-swallows an
+    # unhandled exception (session.py's "router loop terminated by
+    # unhandled exception" path) rather than propagating it out of
+    # run_one_iteration — so this await completes normally; the turn's
+    # FAILURE is not what this test is about, only whether disarm() ran.
+    await session.run_one_iteration()
+
+    assert calls == ["arm", "disarm"], (
+        "disarm() must still fire after a turn that raised — an armed "
+        "timer left running past turn end dumps an unrelated stack later"
+    )
