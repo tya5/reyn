@@ -323,17 +323,100 @@ def test_huggingface_hub_session_trusts_env() -> None:
 def test_mcp_sdk_remote_transport_built_on_env_trusting_httpx() -> None:
     """Tier 2: degradation witness — the official ``mcp`` SDK's remote-MCP
     transport factory (``mcp.shared._httpx_utils.create_mcp_http_client``,
-    which ``mcp.client.streamable_http``/``mcp.client.sse`` build their
-    ``httpx.AsyncClient`` from, and which reyn's own client — #4282, since
-    fastmcp was dropped, #4302 — passes no client of its own to) never sets
-    ``trust_env``, so it honours the standard proxy/CA env by httpx's own
-    default. RED if the SDK starts explicitly setting ``trust_env=False``."""
-    import inspect
+    re-exported from ``mcp.client.streamable_http``, which builds the
+    HTTP client reyn's own ``client.py`` passes into ``streamable_http_client``
+    — #4412 pin-bump PR: reyn deliberately calls this SDK factory rather than
+    constructing the client itself, per #4368's construction-axis ruling)
+    never sets ``trust_env``, so it honours the standard proxy/CA env by
+    the underlying HTTP library's own default. RED if the SDK starts
+    explicitly setting ``trust_env=False``.
 
+    #4412 pin-bump PR: mcp 2.0 depends on ``httpx2`` — a genuinely SEPARATE
+    package from ``httpx`` (confirmed live:
+    ``httpx2.AsyncClient is not httpx.AsyncClient``), not just a rename —
+    so "httpx's own default" is NOT automatically also httpx2's default;
+    this owner-environment-critical claim (owner works behind a TLS-
+    intercepting corporate proxy) needed its OWN live verification, not an
+    inherited assumption from the old httpx-named assertion. Verified
+    against the installed ``httpx2==2.10.0`` (this repo's pin at the time
+    of writing):
+
+      - ``httpx2.AsyncClient.__init__``'s own signature:
+        ``trust_env: bool = True`` (same default httpx itself has).
+      - Reading ``httpx2._client``'s source: ``trust_env`` gates
+        ``allow_env_proxies``, which (when true) calls
+        ``httpx2._utils.get_environment_proxies()`` — itself built on
+        ``urllib.request.getproxies()`` (the SAME stdlib call httpx's own
+        proxy-env resolution uses), honouring
+        ``HTTP_PROXY``/``HTTPS_PROXY``/``ALL_PROXY``/``NO_PROXY`` (both
+        cases) identically.
+      - Reading ``httpx2._config.create_ssl_context``'s source:
+        ``trust_env`` gates reading ``SSL_CERT_FILE``/``SSL_CERT_DIR`` for
+        the SSL context's CA source, falling back to the OS-native trust
+        store via ``truststore`` when neither is set (httpx2-specific;
+        classic httpx historically fell back to bundled ``certifi`` certs
+        instead — a real behavioral difference, but a STRICTLY BROADER
+        trust source for a corporate MITM proxy scenario: the OS trust
+        store is exactly where IT/MDM tooling installs a corporate root
+        CA, so this is not a degradation for the owner's use case).
+
+    This test's own runtime assertions below witness the two claims most
+    load-bearing for the owner's environment directly (constructed client
+    + a real env-var round trip), not just a source-string grep — the grep
+    below stays too, as the cheap "did the SDK start doing something
+    different" tripwire the original test was for."""
     from mcp.shared._httpx_utils import create_mcp_http_client
 
+    # Real runtime witness 1: the client this factory actually returns has
+    # trust_env=True (not just "the default parameter value is True" —
+    # the SAME client create_mcp_http_client hands back).
+    client = create_mcp_http_client()
+    try:
+        assert client.trust_env is True
+    finally:
+        import asyncio
+
+        asyncio.run(client.aclose())
+
+    # Real runtime witness 2: a proxy env var set BEFORE construction is
+    # actually picked up by the constructed client's proxy map — not just
+    # "the source mentions get_environment_proxies", the real object it
+    # returns.
+    import os
+
+    old = os.environ.get("HTTPS_PROXY")
+    os.environ["HTTPS_PROXY"] = "http://sentinel-proxy.invalid:9"
+    try:
+        client2 = create_mcp_http_client()
+        try:
+            # The real resolved mount map, no public accessor for it — walk
+            # to each transport's connection pool's OWN resolved proxy URL
+            # (not just "a mount object exists", which is true even with no
+            # proxy configured) and assert the sentinel host actually made
+            # it all the way through httpx2's own env-proxy resolution.
+            mounts = client2._mounts  # noqa: SLF001
+            proxy_hosts = [
+                pool._proxy_url.host.decode()  # noqa: SLF001
+                for transport in mounts.values()
+                for pool in [getattr(transport, "_pool", None)]
+                if pool is not None and getattr(pool, "_proxy_url", None) is not None
+            ]
+            assert proxy_hosts, f"HTTPS_PROXY env was set but no proxy pool was resolved: {mounts!r}"
+            assert "sentinel-proxy.invalid" in proxy_hosts, proxy_hosts
+        finally:
+            asyncio.run(client2.aclose())
+    finally:
+        if old is None:
+            os.environ.pop("HTTPS_PROXY", None)
+        else:
+            os.environ["HTTPS_PROXY"] = old
+
+    # Cheap tripwire, unchanged in spirit from the pre-#4412 form: RED if
+    # the SDK starts explicitly opting out of env trust.
+    import inspect
+
     src = inspect.getsource(create_mcp_http_client)
-    assert "httpx.AsyncClient" in src
+    assert "httpx2.AsyncClient" in src
     assert "trust_env=False" not in src
 
 
