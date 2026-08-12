@@ -2842,10 +2842,39 @@ class Session:
         anchors drop out); fork-switch makes an alternate branch's anchors active;
         the future/other-branch turns stay in the file, just outside the visible
         prefix. Turns without an anchor (pre-#2360 entries, or no state_log) are
-        always visible (backward-compatible, no migration)."""
+        always visible (backward-compatible, no migration).
+
+        #4387 Phase B ②: since ``load_history()`` no longer necessarily
+        loads the whole file, this extends ``self.history`` BACKWARD first
+        (:meth:`_load_older_entries`) whenever the active branch's own
+        abandoned-interval bounds reach further back than what's currently
+        in memory — see ``earliest_relevant_wal_seq``'s own docstring for
+        why its return value is the exact threshold that makes the filter
+        below correct. A session that has never rewound
+        (``earliest_relevant_wal_seq`` returns ``None``) never triggers
+        this — the common case pays nothing extra.
+        """
         if self._state_log is None:
             return self.history
-        from reyn.core.events.snapshot_generations import build_active_predicate
+        from reyn.core.events.snapshot_generations import (
+            build_active_predicate,
+            earliest_relevant_wal_seq,
+        )
+
+        threshold = earliest_relevant_wal_seq(self._state_log)
+        if threshold is not None:
+            while True:
+                loaded_wal_seqs: "list[int]" = [
+                    m.meta["wal_seq"] for m in self.history
+                    if isinstance(m.meta, dict) and isinstance(m.meta.get("wal_seq"), int)
+                ]
+                earliest_loaded = min(loaded_wal_seqs) if loaded_wal_seqs else None
+                if earliest_loaded is not None and earliest_loaded <= threshold:
+                    break
+                oldest_seq = self.history[0].seq if self.history else 0
+                extended = self._load_older_entries(before_seq=oldest_seq)
+                if extended == 0:
+                    break  # BOF reached — nothing older exists on disk
 
         # #2941: hoisted OUT of the per-message loop below. The abandoned-interval
         # predicate depends only on the state_log's rewind records, never on a
@@ -3205,19 +3234,54 @@ class Session:
             depth=depth, chain_id=chain_id, responder_sid=responder_sid,
         )
 
-    def _append_parsed_history_line(self, line: str) -> None:
-        """Parse one ``history.jsonl`` line and append it to ``self.history``
-        — the per-line body shared by both of :meth:`load_history`'s paths.
-        Malformed lines are skipped (byte-identical to the pre-#4387
-        behavior), never raised."""
+    def _parse_history_line(self, line: str) -> "ChatMessage | None":
+        """Parse one ``history.jsonl`` line into a ``ChatMessage``, or
+        ``None`` if malformed (skipped, never raised — byte-identical to
+        the pre-#4387 behavior). Pure: does not touch ``self.history``."""
         try:
             raw = json.loads(line)
             # Read-time migration for pre-#383 entries (legacy text + media
             # shape → new content shape).
             raw = _migrate_legacy_chat_message(raw)
-            self.history.append(ChatMessage(**raw))
+            return ChatMessage(**raw)
         except Exception:
-            pass
+            return None
+
+    def _append_parsed_history_line(self, line: str) -> None:
+        """Parse one ``history.jsonl`` line and append it to ``self.history``
+        — the per-line body shared by both of :meth:`load_history`'s paths."""
+        msg = self._parse_history_line(line)
+        if msg is not None:
+            self.history.append(msg)
+
+    def _load_older_entries(self, *, before_seq: int, min_lines: int = _HISTORY_HYDRATE_MIN_LINES) -> int:
+        """#4387 Phase B ②: extend ``self.history`` BACKWARD from
+        ``history.jsonl``, prepending up to ``min_lines`` entries older
+        than ``before_seq`` (typically ``self.history[0].seq`` — "give me
+        more of what I don't have yet"). Returns the count actually
+        prepended (0 if none qualify, e.g. already at the file's start).
+
+        Called by consumers that need to look further back than what a
+        bounded :meth:`load_history` loaded at startup — currently
+        :meth:`_active_branch_history` when a rewind/branch-switch cut
+        references a ``wal_seq`` older than anything in memory. Prepending
+        never evicts anything already loaded (Phase B is "load lazily,"
+        not "unload") — see the module docstring on why that is currently
+        UNBOUNDED (a deep rewind can pull most of a huge file back into
+        memory) and left that way deliberately: bounding it caps how far
+        back a rewind can reach, which is an owner-facing capability
+        question, not one this stage answers.
+        """
+        from reyn.runtime.history_tail_reader import read_history_before
+
+        lines = read_history_before(
+            self.history_path, before_seq=before_seq, min_lines=min_lines,
+        )
+        if not lines:
+            return 0
+        parsed = [m for line in lines if (m := self._parse_history_line(line)) is not None]
+        self.history[0:0] = parsed
+        return len(parsed)
 
     def load_history(self) -> None:
         """#4387 Phase B ①: hydrate ``self.history`` at startup WITHOUT
