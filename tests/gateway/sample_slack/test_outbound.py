@@ -131,24 +131,25 @@ def test_build_server_lists_and_dispatches_extra_tool(tmp_path):
     call_tool to its handler (the in-process MCP-server half of the e2e).
 
     #4444 (mcp 2.0 port, Class A co-vet finding): drives this through a REAL
-    in-process client/server round trip
-    (``mcp.shared.memory.create_connected_server_and_client_session``)
-    rather than calling ``server.request_handlers[...]`` directly — a direct
-    call bypasses the SDK's own request-dispatch loop, which is where
-    ``request_ctx`` (the seam's ``_CtxAdapter`` reads it via
-    ``server.request_context``) gets SET; confirmed live reading
-    ``mcp.server.lowlevel.server``'s own source that this happens deep
-    inside ``Server.run()``'s private per-message handling, with no small
-    public API to set it from outside. See
+    in-process client/server round trip rather than calling
+    ``server.request_handlers[...]`` directly — a direct call bypasses the
+    SDK's own request-dispatch loop, which is where ``request_ctx`` gets
+    SET; confirmed live reading ``mcp.server.lowlevel.server``'s own source
+    that this happens deep inside ``Server.run()``'s private per-message
+    handling, with no small public API to set it from outside. See
     ``tests/runtime/test_mcp_server_resources_adapter.py``'s identical fix
-    for the same finding, full detail."""
-    pytest.importorskip("mcp")
-    from mcp.shared.memory import create_connected_server_and_client_session
+    for the same finding, full detail.
 
+    #4412 pin-bump PR: uses ``tests._support.mcp_memory_session`` (a
+    hand-rolled equivalent of the removed
+    ``mcp.shared.memory.create_connected_server_and_client_session``)
+    rather than the SDK helper this test used before the bump."""
+    pytest.importorskip("mcp")
     from reyn.core.events.state_log import StateLog
     from reyn.mcp.extra_tool import ExtraTool
     from reyn.mcp.server import build_server
     from reyn.runtime.registry import AgentRegistry
+    from tests._support.mcp_memory_session import connected_server_and_client_session
 
     async def _echo(args: dict) -> str:
         return json.dumps({"echo": args.get("msg", "")})
@@ -175,7 +176,7 @@ def test_build_server_lists_and_dispatches_extra_tool(tmp_path):
     server = build_server(registry, extra_tools=[tool])
 
     async def _round_trip():
-        async with create_connected_server_and_client_session(server) as session:
+        async with connected_server_and_client_session(server) as session:
             await session.initialize()
             list_result = await session.list_tools()
             call_result = await session.call_tool("echo_tool", {"msg": "hi"})

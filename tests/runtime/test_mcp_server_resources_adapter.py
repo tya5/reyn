@@ -63,31 +63,34 @@ def _build_registry_with_agent(tmp_path: Path, agent_name: str) -> AgentRegistry
 
 def _invoke_read_resource(server, uri_str: str):
     """Drive ``resources/read`` through a REAL in-process client/server round
-    trip (``mcp.shared.memory.create_connected_server_and_client_session``)
-    rather than calling ``server.request_handlers[ReadResourceRequest]``
+    trip rather than calling ``server.request_handlers[ReadResourceRequest]``
     directly.
 
     #4444 (mcp 2.0 port, Class A co-vet finding): calling a registered
     handler directly bypasses the SDK's own request-dispatch loop, which is
-    where ``request_ctx`` (a ``contextvars.ContextVar`` the seam's
-    ``_CtxAdapter`` reads via ``server.request_context``) gets SET —
-    confirmed live by reading ``mcp.server.lowlevel.server``'s own source:
-    the set happens deep inside ``Server.run()``'s private per-message
-    handling, with no small public API to set it from outside. Direct
-    handler calls therefore raise ``LookupError`` under Class A's ported
-    registration shape, even though the OLD decorator-registered inner
-    function tolerated being called bare. Routing through a real client
-    session is the fix, not a workaround — it's the SAME "reuse the real
-    path, not a hand-built shortcut" discipline #4368's own third-axis
-    finding came from (a throwaway test masked a gap; a real fixture caught
-    it)."""
-    from mcp.shared.memory import create_connected_server_and_client_session
-    from mcp.types import AnyUrl
+    where ``request_ctx`` (a ``contextvars.ContextVar`` the seam reads via
+    ``ctx``) gets SET — confirmed live by reading
+    ``mcp.server.lowlevel.server``'s own source: the set happens deep
+    inside ``Server.run()``'s private per-message handling, with no small
+    public API to set it from outside. Direct handler calls therefore raise
+    ``LookupError`` under Class A's ported registration shape, even though
+    the OLD decorator-registered inner function tolerated being called
+    bare. Routing through a real client session is the fix, not a
+    workaround — it's the SAME "reuse the real path, not a hand-built
+    shortcut" discipline #4368's own third-axis finding came from (a
+    throwaway test masked a gap; a real fixture caught it).
+
+    #4412 pin-bump PR: uses ``tests._support.mcp_memory_session`` (a
+    hand-rolled equivalent of the removed
+    ``mcp.shared.memory.create_connected_server_and_client_session`` — see
+    that module's own docstring for why it was hand-rolled) rather than
+    the SDK helper this test used before the bump."""
+    from tests._support.mcp_memory_session import connected_server_and_client_session
 
     async def _run() -> "object":
-        async with create_connected_server_and_client_session(server) as session:
+        async with connected_server_and_client_session(server) as session:
             await session.initialize()
-            return await session.read_resource(AnyUrl(uri_str))
+            return await session.read_resource(uri_str)
 
     return asyncio.run(_run())
 

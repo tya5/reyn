@@ -61,9 +61,9 @@ from __future__ import annotations
 
 import sys
 
-from mcp.server.fastmcp import Context, FastMCP
+from mcp.server.mcpserver import Context, MCPServer
 
-mcp = FastMCP("reyn-test-echo")
+mcp = MCPServer("reyn-test-echo")
 
 
 @mcp.tool()
@@ -175,7 +175,7 @@ async def notify_tool_list_changed(ctx: Context) -> str:
 
     # #4302: bundled Context has no ``send_notification`` convenience — go
     # through ``ctx.session`` (the underlying ServerSession) directly.
-    await ctx.session.send_notification(types.ServerNotification(types.ToolListChangedNotification()))
+    await ctx.session.send_notification(types.ToolListChangedNotification())
     return "sent"
 
 
@@ -183,20 +183,22 @@ async def notify_tool_list_changed(ctx: Context) -> str:
 async def notify_prompt_list_changed(ctx: Context) -> str:
     import mcp.types as types
 
-    await ctx.session.send_notification(types.ServerNotification(types.PromptListChangedNotification()))
+    await ctx.session.send_notification(types.PromptListChangedNotification())
     return "sent"
 
 
 if __name__ == "__main__":
     if len(sys.argv) >= 3:
         cli_transport, port = sys.argv[1], int(sys.argv[2])
-        # #4302: the bundled ``mcp.server.fastmcp.FastMCP`` (1.x line) takes
-        # host/port as constructor-time ``.settings``, not per-``.run()``
-        # kwargs, and its transport literal is "streamable-http" — this
-        # file's own CLI ("http"/"sse" + port) stays unchanged for every
-        # caller.
-        mcp.settings.host = "127.0.0.1"
-        mcp.settings.port = port
-        mcp.run(transport="streamable-http" if cli_transport == "http" else cli_transport)
+        # #4412 pin-bump PR: mcp 2.0's `MCPServer.settings` DROPPED
+        # `host`/`port` entirely (confirmed live: the `Settings` model no
+        # longer declares those fields) — `.run(transport=..., **kwargs)`
+        # forwards them straight to `run_streamable_http_async`/
+        # `run_sse_async` as kwargs instead. This file's own CLI
+        # ("http"/"sse" + port) stays unchanged for every caller.
+        mcp.run(
+            transport="streamable-http" if cli_transport == "http" else cli_transport,
+            host="127.0.0.1", port=port,
+        )
     else:
         mcp.run(transport="stdio")

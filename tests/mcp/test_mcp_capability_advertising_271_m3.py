@@ -62,7 +62,7 @@ def test_serve_stdio_declares_static_tool_list(tmp_path: Path) -> None:
     )
     capabilities = build_init_options(build_server(registry)).capabilities
     assert capabilities.tools is not None
-    assert capabilities.tools.listChanged is False
+    assert capabilities.tools.list_changed is False
 
 
 def test_no_notify_changed_calls_in_mcp_server_source() -> None:

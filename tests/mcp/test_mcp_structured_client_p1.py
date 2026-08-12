@@ -23,8 +23,8 @@ import pytest
 
 _SERVER_SRC = textwrap.dedent(
     '''
-    from mcp.server.fastmcp import FastMCP
-    mcp = FastMCP("p1acceptance")
+    from mcp.server.mcpserver import MCPServer
+    mcp = MCPServer("p1acceptance")
 
     @mcp.tool()
     def echo(text: str) -> str:

@@ -6,42 +6,41 @@ Standalone script — run as a subprocess, never imported. Exists to prove FastM
 SDK ``ClientSession.list_tools()`` call the old client made directly.
 
 Serves 4 tools across 2 pages of 2 (cursor = the next tool's index as a string).
+
+#4412 pin-bump PR: ``lowlevel.Server``'s ``@list_tools()`` decorator is gone
+on mcp 2.0 (confirmed live) — the handler is now a plain function passed as
+``Server(...)``'s ``on_list_tools`` constructor kwarg, receiving
+``(ctx, params: PaginatedRequestParams | None)`` directly. This actually
+SIMPLIFIES this file: 2.0's own handler signature already carries cursor
+control, so the old raw ``app.request_handlers[...]`` override (needed on
+1.x because the decorator sugar couldn't express pagination) is gone too —
+one handler function does the whole job. ``Tool.inputSchema`` ->
+``input_schema``, ``ListToolsResult.nextCursor`` -> ``next_cursor``.
 """
 from __future__ import annotations
 
 import asyncio
 
 import mcp.types as types
-from mcp.server.lowlevel import Server
+from mcp.server import Server
 from mcp.server.stdio import stdio_server
 
-app = Server("reyn-test-paginated")
-
 _ALL_TOOLS = [
-    types.Tool(name=f"tool_{i}", description=f"tool number {i}", inputSchema={"type": "object"})
+    types.Tool(name=f"tool_{i}", description=f"tool number {i}", input_schema={"type": "object"})
     for i in range(4)
 ]
 _PAGE_SIZE = 2
 
 
-@app.list_tools()
-async def list_tools(request: types.PaginatedRequestParams | None = None) -> list[types.Tool]:
-    # The low-level Server API decorator only supports returning the tool list; page
-    # boundaries need the raw request handler for cursor control, so this override goes
-    # through app.request_handlers directly below instead of the decorator sugar.
-    return _ALL_TOOLS
-
-
-async def _handle_list_tools_paginated(req):
-    cursor = req.params.cursor if req.params is not None else None
+async def list_tools(ctx: "object", params: "object") -> "types.ListToolsResult":
+    cursor = getattr(params, "cursor", None) if params is not None else None
     start = int(cursor) if cursor else 0
     page = _ALL_TOOLS[start : start + _PAGE_SIZE]
     next_cursor = str(start + _PAGE_SIZE) if start + _PAGE_SIZE < len(_ALL_TOOLS) else None
-    result = types.ListToolsResult(tools=page, nextCursor=next_cursor)
-    return types.ServerResult(result)
+    return types.ListToolsResult(tools=page, next_cursor=next_cursor)
 
 
-app.request_handlers[types.ListToolsRequest] = _handle_list_tools_paginated
+app = Server("reyn-test-paginated", on_list_tools=list_tools)
 
 
 async def main() -> None:

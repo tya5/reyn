@@ -199,44 +199,28 @@ dependencies = [
     "numpy>=1.24",           # RAG index backend cosine similarity (ADR-0033)
     "croniter>=2.0",         # cron expression parsing for FP-0009 Component B
     "charset-normalizer>=3.0",  # #1452 read_file encoding detection (MIT, pure-python)
-    "mcp>=1.24,<2.0",         # #4302: fastmcp DROPPED from every reyn-side dependency
-                              # declaration -- core AND every extra (#3698 stage 1 + #4282
-                              # moved the MCP CLIENT path off it onto this SDK directly;
-                              # #4299 removed the last source-level fastmcp import outside
-                              # tests/_support/; #4302 itself ported the remaining 4
-                              # fastmcp-SERVER test-doubles -- mcp_fastmcp_echo_server.py,
-                              # mcp_elicitation_server.py, and 2 embedded stub-markitdown
-                              # servers, not 3 as an earlier count claimed -- onto this
-                              # SDK's own bundled `mcp.server.fastmcp`, the 1.x-line module;
-                              # NOT `mcp.server.mcpserver`, mcp 2.0's rename of it). `mcp`
-                              # becomes an EXPLICIT direct dependency here because it was
-                              # previously only transitive (via fastmcp-slim, which pinned
-                              # the same `mcp<2.0,>=1.24.0` range this now declares directly).
-                              # NOT the whole footprint, though: the bundled `rag` PLUGIN
-                              # declares its OWN `fastmcp>=2.0` in its own
-                              # `builtin/plugins/rag/requirements.txt` (a real,
-                              # currently-uncounted consumer #4302 found) -- reyn's dev/CI
-                              # tooling that runs the plugin's scripts directly (the seccomp
-                              # gate, `wheel_reachability_smoke.py`'s own harness client)
-                              # installs THAT requirements.txt as its own setup step, not by
-                              # reintroducing fastmcp to any `pyproject.toml` declaration.
-                              #
-                              # `<2.0` is a DELIBERATE, load-bearing upper bound, not a
-                              # leftover floor -- #4302 measured (live) that mcp 2.0 is a
-                              # MAJOR breaking release: it renames `mcp.server.fastmcp.FastMCP`
-                              # to `mcp.server.mcpserver.MCPServer`, and (more importantly)
-                              # `mcp.server.lowlevel.Server` LOSES its `@list_tools()`/
-                              # `@call_tool()` decorator API entirely, replaced by a generic
-                              # `add_request_handler(...)` registration shape. reyn's own MCP
-                              # SERVER (`src/reyn/mcp/server.py:372/482`, built on
-                              # `lowlevel.Server`) uses exactly those decorators and would
-                              # raise `AttributeError` at construction time under mcp 2.0 --
-                              # measured live, not assumed. This pin is an accurate
-                              # description of that fact ("reyn does not support mcp 2.0
-                              # today"), not a bandaid hiding it -- the 2.0 port is real,
-                              # bounded work (~4-5 functions + a context re-plumb, see #4302)
-                              # tracked as its own follow-up issue, deliberately NOT folded
-                              # into this dependency-hygiene PR.
+    "mcp>=2.0,<3.0",          # #4412: the arc this comment used to describe (mcp 2.0 port)
+                              # is DONE -- bumped from `>=1.24,<2.0`. fastmcp stays DROPPED
+                              # from every reyn-side dependency declaration (#4302, #3698
+                              # stage 1, #4282, #4299 -- unaffected by this bump). Server
+                              # CONSTRUCTION (Tool(...)/CallToolResult(...)/etc.) now uses
+                              # 2.0's field-name vocabulary directly (input_schema/
+                              # mime_type/...) -- #4368's own ruling was ONE-WAY migration,
+                              # no dual-pin seam for construction (owner: reyn's surface
+                              # must not grow every time the SDK's vocabulary grows), so
+                              # this bump's own commit mechanically flips every
+                              # construction call site in the SAME PR. Registration + ctx
+                              # shape stay behind `_mcp_server_boundary.py`
+                              # /`_mcp_client_boundary.py` (#4368) -- those seams already
+                              # speak 2.0 natively and needed ZERO changes for this bump
+                              # (their whole POINT). `mcp.server.fastmcp` is gone, renamed
+                              # `mcp.server.mcpserver` (`FastMCP`->`MCPServer`, #4412 Class
+                              # B) -- the decorator API itself (`@mcp.tool()`) is UNCHANGED,
+                              # confirmed live, so this was a pure import/construction
+                              # rename, no test-double logic changed. The bundled `rag` PLUGIN
+                              # still declares its OWN `fastmcp>=3.4,<4` in its own
+                              # `builtin/plugins/rag/requirements.txt` (#4388) -- a SEPARATE
+                              # venv (ADR-0064), untouched by this bump.
     # #4395: was transitive only (Required-by: httpx, mcp, openai,
     # sse-starlette, starlette, watchfiles — 4.14.0 already installed via
     # that chain). Owner decision: declare it directly rather than keep

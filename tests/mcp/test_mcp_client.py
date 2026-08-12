@@ -48,17 +48,25 @@ class _HttpEchoServer:
         sys.path.insert(0, str(_SUPPORT_DIR))
         import mcp_fastmcp_echo_server as server_mod
 
-        server_mod.mcp.settings.host = "127.0.0.1"
-        server_mod.mcp.settings.port = self.port
-        # #4302: the bundled FastMCP (1.x line) lazily builds+CACHES a
+        # #4412 pin-bump PR: mcp 2.0's `MCPServer.settings` DROPPED
+        # `host`/`port` entirely (confirmed live: the `Settings` model no
+        # longer declares those fields at all) — `run_streamable_http_async`
+        # takes them as direct kwargs instead.
+        # #4302: the bundled FastMCP/MCPServer lazily builds+CACHES a
         # StreamableHTTPSessionManager on first use, and its own docs say
         # "can only be called once per instance" — a 2nd http-transport test
         # importing the SAME cached module-level ``mcp`` object hangs on
         # startup otherwise (verified: isolated it to exactly this reuse).
         # Reset so each test gets a fresh session manager, matching this
-        # module's fresh-``_HttpEchoServer``-per-test intent.
-        server_mod.mcp._session_manager = None
-        self._task = asyncio.create_task(server_mod.mcp.run_streamable_http_async())
+        # module's fresh-``_HttpEchoServer``-per-test intent. On 2.0,
+        # `MCPServer.session_manager` is a READ-ONLY property delegating to
+        # the underlying `lowlevel.Server._session_manager` (confirmed live
+        # by reading the property's own source) — that private attribute is
+        # the actual resettable backing store.
+        server_mod.mcp._lowlevel_server._session_manager = None
+        self._task = asyncio.create_task(
+            server_mod.mcp.run_streamable_http_async(host="127.0.0.1", port=self.port),
+        )
         # Poll until the socket accepts connections instead of a fixed sleep.
         # Unbounded per the testing policy — a capped attempt count is a wait
         # duration rewritten as a count, and fails the same way on a slow host.
@@ -353,9 +361,12 @@ def test_sse_transport_round_trip() -> None:
         sys.path.insert(0, str(_SUPPORT_DIR))
         import mcp_fastmcp_echo_server as server_mod
 
-        server_mod.mcp.settings.host = "127.0.0.1"
-        server_mod.mcp.settings.port = port
-        task = asyncio.create_task(server_mod.mcp.run_sse_async())
+        # #4412 pin-bump PR: `.settings.host`/`.settings.port` are gone on
+        # mcp 2.0 — see `_HttpEchoServer.__aenter__` above for the same fix
+        # and its full rationale.
+        task = asyncio.create_task(
+            server_mod.mcp.run_sse_async(host="127.0.0.1", port=port),
+        )
         try:
             # Unbounded per the testing policy — see the identical poll in
             # _HttpEchoServer.__aenter__ above for the rationale.

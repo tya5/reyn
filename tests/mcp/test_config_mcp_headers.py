@@ -126,18 +126,33 @@ def _capture_streamablehttp_client_kwargs(monkeypatch) -> dict:
     real one, so the connection attempt proceeds exactly as it would
     unmodified) rather than faking the SDK — same seam
     ``test_mcp_client_stderr_capture.py``'s stdio_client patch already
-    established, applied to the http transport function instead."""
+    established, applied to the http transport function instead.
+
+    #4412 pin-bump PR: ``streamablehttp_client`` (headers/timeout kwargs
+    directly) is GONE on mcp 2.0 — its replacement, ``streamable_http_client``,
+    takes a pre-built HTTP client instead, and ``client.py`` now builds that
+    client via the SDK's own ``create_mcp_http_client(headers=...)`` factory
+    (see that call site's own comment for why: reyn deliberately does not
+    import the SDK's transport-library type by name). Headers therefore now
+    reach ``create_mcp_http_client``, not ``streamable_http_client`` itself —
+    wrap BOTH functions to keep capturing url (from the latter) and headers
+    (from the former)."""
     import mcp.client.streamable_http as sh_mod
 
     captured: dict = {}
-    real_fn = sh_mod.streamablehttp_client
+    real_create_client = sh_mod.create_mcp_http_client
+    real_transport = sh_mod.streamable_http_client
 
-    def _capturing(url, headers=None, timeout=30, **kwargs):
-        captured["url"] = url
+    def _capturing_create_client(headers=None, timeout=None, auth=None):
         captured["headers"] = headers
-        return real_fn(url, headers=headers, timeout=timeout, **kwargs)
+        return real_create_client(headers=headers, timeout=timeout, auth=auth)
 
-    monkeypatch.setattr(sh_mod, "streamablehttp_client", _capturing)
+    def _capturing_transport(url, **kwargs):
+        captured["url"] = url
+        return real_transport(url, **kwargs)
+
+    monkeypatch.setattr(sh_mod, "create_mcp_http_client", _capturing_create_client)
+    monkeypatch.setattr(sh_mod, "streamable_http_client", _capturing_transport)
     return captured
 
 

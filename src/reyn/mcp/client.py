@@ -137,10 +137,15 @@ bearer token):
 
   :meth:`_build_oauth_provider` builds the official SDK's
   ``mcp.client.auth.OAuthClientProvider(server_url=url, client_metadata=...,
-  storage=MCPOAuthTokenStorage(url), redirect_handler=..., callback_handler=
-  ..., timeout=...)`` directly (#4282: fastmcp's own ``OAuth`` wrapper
+  storage=MCPOAuthTokenStorage(url), redirect_handler=...,
+  callback_handler=...)`` directly (#4282: fastmcp's own ``OAuth`` wrapper
   around this same class is no longer in the path) and passes it as
-  ``streamablehttp_client(url, headers=..., auth=provider)`` —
+  ``streamable_http_client(url, headers=..., auth=provider)`` — #4412
+  pin-bump PR: the constructor's own ``timeout=`` kwarg is GONE on mcp 2.0
+  (confirmed live it was dead even on 1.x — never read anywhere in
+  ``mcp.client.auth.oauth2``'s own source — so removing it changes nothing
+  behaviorally on either pin) and the transport factory itself is renamed
+  (``streamablehttp_client`` → ``streamable_http_client``, both below).
   ``OAuthClientProvider`` IS an ``httpx.Auth``, so it slots into the SDK
   transport's own ``auth=`` kwarg directly, no wrapper object needed.
   ``redirect_handler``/``callback_handler`` (the browser-open + localhost-
@@ -603,7 +608,15 @@ def _is_transport_death(exc: BaseException) -> bool:
     if isinstance(exc, (anyio.ClosedResourceError, anyio.BrokenResourceError, ConnectionError)):
         return True
     try:
-        from mcp.shared.exceptions import McpError as _SdkMcpError
+        # #4412 pin-bump PR: the SDK's own exception class is renamed on 2.0
+        # -- `mcp.shared.exceptions.McpError` (1.x) -> `MCPError` (2.0),
+        # confirmed live (`hasattr(mcp.shared.exceptions, "McpError")` is
+        # False, `hasattr(..., "MCPError")` is True). The stale 1.x import
+        # name silently caught its own ImportError below and made this
+        # predicate return False UNCONDITIONALLY under mcp 2.0 -- every
+        # transport death went unrecognized, so _heal() never reconnected.
+        # Found via a real reconnect-flow repro, not a static grep.
+        from mcp.shared.exceptions import MCPError as _SdkMcpError
         from mcp.types import CONNECTION_CLOSED
     except ImportError:  # pragma: no cover — mcp SDK always installed alongside fastmcp
         return False
@@ -1135,19 +1148,39 @@ class MCPClient:
                 # other httpx.Auth — no more fastmcp Client/transport
                 # wrapper needed to carry it.
                 auth = await self._build_oauth_provider(url)
-                # Deliberately the deprecated headers/timeout/auth-kwarg
-                # `streamablehttp_client`, not its replacement
-                # `streamable_http_client` — the latter takes a pre-built
-                # `httpx.AsyncClient` instead, which would mean
-                # reimplementing headers/timeout wiring by hand for no
-                # behavioral gain right now (a real future improvement, out
-                # of this PR's scope: a like-for-like swap, not a redesign).
-                from mcp.client.streamable_http import streamablehttp_client
+                # #4412 pin-bump PR: `streamablehttp_client` (the
+                # headers/timeout/auth-kwarg form) is GONE on mcp 2.0 —
+                # confirmed live, `mcp.client.streamable_http` no longer
+                # exports it at all, only its replacement
+                # `streamable_http_client(url, http_client=...)`, which
+                # takes a pre-built HTTP client instead of individual
+                # headers/timeout/auth kwargs. That pre-built client must be
+                # an `httpx2.AsyncClient` specifically — mcp 2.0 depends on
+                # `httpx2`, a genuinely SEPARATE package from `httpx`
+                # (confirmed live: `httpx2.AsyncClient is httpx.AsyncClient`
+                # is False), which arrives transitively via `mcp`'s own
+                # declared dependency (`pip show mcp` → `Requires: ...
+                # httpx2 ...`) — reyn declares nothing extra for it.
+                # Deliberately calling the SDK's own `create_mcp_http_client`
+                # factory (re-exported from this same module) rather than
+                # importing `httpx2` and constructing the client here
+                # directly — that would mean reyn's own code speaks the
+                # SDK's transport-library vocabulary, which #4368's own
+                # ruling (construction is not a seamed axis; reyn's surface
+                # must not grow every time the SDK's vocabulary grows)
+                # argues against. The factory takes the same
+                # headers/timeout/auth reyn already builds and returns an
+                # already-`follow_redirects=True`-configured client.
+                from mcp.client.streamable_http import (
+                    create_mcp_http_client,
+                    streamable_http_client,
+                )
 
-                read, write, _get_session_id = await stack.enter_async_context(
-                    streamablehttp_client(
-                        url, headers=headers, timeout=read_timeout, auth=auth,
-                    )
+                http_client = create_mcp_http_client(
+                    headers=headers, timeout=read_timeout, auth=auth,
+                )
+                read, write = await stack.enter_async_context(
+                    streamable_http_client(url, http_client=http_client)
                 )
             else:
                 from mcp.client.sse import sse_client
@@ -1263,8 +1296,13 @@ class MCPClient:
         if progress_callback is not None:
             kwargs["progress_callback"] = progress_callback
         if timeout_seconds is not None:
-            from datetime import timedelta
-            kwargs["read_timeout_seconds"] = timedelta(seconds=timeout_seconds)
+            # #4412 pin-bump PR: ClientSession.call_tool's read_timeout_seconds
+            # is `float | None` on 2.0, confirmed live via its own signature —
+            # was `timedelta | None` on 1.x. Passing a timedelta where 2.0
+            # expects a float crashes downstream with `unsupported operand
+            # type(s) for +: 'float' and 'datetime.timedelta'` (found via a
+            # real ephemeral-session repro, not a static read).
+            kwargs["read_timeout_seconds"] = timeout_seconds
         try:
             # ClientSession.call_tool() is already the raw/no-raise variant
             # fastmcp needed a call_tool_mcp-suffixed method to reach
@@ -1365,8 +1403,11 @@ class MCPClient:
         await self.initialize()
         require_capability(self, "resources")
         try:
+            # #4412 pin-bump PR: ListResourceTemplatesResult's own field is
+            # resource_templates (snake_case) on 2.0 -- confirmed live via
+            # model_fields -- was resourceTemplates (camelCase) on 1.x.
             templates = await self._paginate_official_sdk(
-                self._client.list_resource_templates, "resourceTemplates",
+                self._client.list_resource_templates, "resource_templates",
             )
         except Exception as exc:
             _classify_and_raise(exc, f"MCP resources/templates/list error: {exc}")
@@ -2017,7 +2058,6 @@ class MCPClient:
             storage=storage,
             redirect_handler=redirect_handler,
             callback_handler=_callback_handler,
-            timeout=callback_timeout,
         )
 
 
@@ -2061,10 +2101,15 @@ def _result_to_dict(result: Any) -> dict[str, Any]:
             content_items.append(item)
         else:
             content_items.append({"type": "text", "text": str(item)})
+    # #4412 pin-bump PR: CallToolResult's own fields are snake_case on 2.0
+    # (`is_error`/`structured_content`, confirmed live via model_fields) —
+    # was camelCase on 1.x. reyn's OUTPUT dict keys below stay `isError`/
+    # `structuredContent` (reyn's own external contract, asserted on by
+    # callers/tests) — only the SDK object attribute names being READ change.
     return {
         "content": content_items,
-        "isError": bool(getattr(result, "isError", False)),
-        "structuredContent": getattr(result, "structuredContent", None),
+        "isError": bool(getattr(result, "is_error", False)),
+        "structuredContent": getattr(result, "structured_content", None),
     }
 
 

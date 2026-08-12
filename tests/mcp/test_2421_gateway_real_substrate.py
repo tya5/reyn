@@ -20,16 +20,19 @@ import pytest
 pytest.importorskip("mcp.server", reason="mcp SDK server API required for the real-substrate test")
 
 # A real low-level stdio MCP server that handshakes fine, then its subprocess DIES on list_tools.
+# #4368 (mcp 2.0 port): @app.list_tools() is gone on mcp 2.0 (measured live) -- the handler is now
+# a plain function passed as Server(...)'s on_list_tools constructor kwarg, defined before
+# construction, taking (ctx, params) directly. No return-type change needed here (the subprocess
+# dies before ever returning).
 _DYING_SERVER = '''\
 import os, asyncio
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
 
-app = Server("dying-server")
-
-@app.list_tools()
-async def list_tools():
+async def list_tools(ctx, params):
     os._exit(1)  # the subprocess dies mid-operation (external dep missing / crash analogue)
+
+app = Server("dying-server", on_list_tools=list_tools)
 
 async def main():
     async with stdio_server() as (r, w):

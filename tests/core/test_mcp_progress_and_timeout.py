@@ -28,7 +28,6 @@ from __future__ import annotations
 
 import asyncio
 import inspect
-from datetime import timedelta
 from typing import Any
 
 import pytest
@@ -92,11 +91,15 @@ def test_call_tool_signature_accepts_progress_callback_and_timeout() -> None:
     assert params["timeout_seconds"].default is None
 
 
-def test_call_tool_passes_progress_callback_and_timedelta_to_official_sdk() -> None:
+def test_call_tool_passes_progress_callback_and_read_timeout_to_official_sdk() -> None:
     """Tier 2: when both kwargs are set, ``MCPClient.call_tool`` forwards them
     to ``self._client.call_tool`` using the official SDK's own parameter
-    names (``progress_callback`` and ``read_timeout_seconds`` as a
-    ``timedelta``).
+    names (``progress_callback`` and ``read_timeout_seconds``).
+
+    #4412 pin-bump PR: ``read_timeout_seconds`` is ``float | None`` on
+    mcp 2.0's ``ClientSession.call_tool`` (confirmed live via its own
+    signature) -- was ``timedelta | None`` on 1.x. ``MCPClient.call_tool``
+    now passes the raw float straight through.
     """
     captured: dict[str, Any] = {}
 
@@ -143,8 +146,8 @@ def test_call_tool_passes_progress_callback_and_timedelta_to_official_sdk() -> N
     assert captured["arguments"] == {"x": 1}
     assert captured["kwargs"].get("progress_callback") is _on_progress
     read_to = captured["kwargs"].get("read_timeout_seconds")
-    assert isinstance(read_to, timedelta)
-    assert read_to == timedelta(seconds=4.5)
+    assert isinstance(read_to, float)
+    assert read_to == 4.5
 
 
 def test_call_tool_omits_kwargs_when_none_for_backwards_compat() -> None:
@@ -256,8 +259,9 @@ def test_op_handler_progress_callback_emits_mcp_progress_event() -> None:
 def test_op_handler_reads_call_timeout_from_server_config() -> None:
     """Tier 2: when ``mcp.servers.<name>.call_timeout_seconds`` is set, the
     op handler reads it from the raw config dict and forwards as
-    ``timeout_seconds`` to ``MCPClient.call_tool`` (which converts to
-    ``timedelta`` and passes as ``read_timeout_seconds`` to the SDK).
+    ``timeout_seconds`` to ``MCPClient.call_tool``, which passes it as
+    ``read_timeout_seconds`` to the SDK (a plain ``float`` on mcp 2.0,
+    #4412 pin-bump PR -- was converted to ``timedelta`` on 1.x).
     """
     from reyn.core.op_runtime import mcp as mcp_op_handler
 
@@ -304,8 +308,8 @@ def test_op_handler_reads_call_timeout_from_server_config() -> None:
     asyncio.run(mcp_op_handler._execute(op, ctx))
 
     read_to = captured["read_timeout_seconds"]
-    assert isinstance(read_to, timedelta)
-    assert read_to == timedelta(seconds=7.5)
+    assert isinstance(read_to, float)
+    assert read_to == 7.5
 
 
 def test_op_handler_call_timeout_default_finite_and_optout() -> None:
@@ -385,6 +389,7 @@ def test_mcp_client_call_tool_forwards_progress_and_timeout_kwargs() -> None:
     # Both kwargs must appear in the SDK kwargs builder.
     assert "progress_callback" in src
     assert "read_timeout_seconds" in src
-    assert "timedelta" in src, (
-        "timeout_seconds must be converted to a timedelta before the SDK call"
-    )
+    # #4412 pin-bump PR: read_timeout_seconds is passed as a plain float on
+    # mcp 2.0 (its own signature: float | None -- confirmed live), not
+    # converted to a timedelta as it was on 1.x -- this pin dropped
+    # accordingly, not weakened by omission.

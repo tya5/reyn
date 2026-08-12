@@ -26,24 +26,36 @@ import mcp.types as types
 from mcp.server.lowlevel import Server
 from mcp.server.stdio import stdio_server
 
-app = Server("reyn-test-tools-only-pid")
-
 _PID_TOOL = types.Tool(
     name="pid", description="Return this server subprocess's PID.",
-    inputSchema={"type": "object"},
+    input_schema={"type": "object"},
 )
 
 
-@app.list_tools()
-async def list_tools() -> list[types.Tool]:
-    return [_PID_TOOL]
+# #4368 (mcp 2.0 port): lowlevel.Server's @list_tools()/@call_tool()
+# decorators are gone on mcp 2.0 (measured live) -- handlers are now plain
+# functions passed as Server(...) constructor kwargs instead, so they are
+# defined BEFORE construction. Each handler now receives
+# (ctx: ServerRequestContext, params: <X>RequestParams) directly and must
+# return the typed <X>Result object -- see src/reyn/mcp/server.py's own
+# port commit for the full rationale, identical here.
+async def list_tools(ctx: "object", params: "object") -> "types.ListToolsResult":
+    return types.ListToolsResult(tools=[_PID_TOOL])
 
 
-@app.call_tool()
-async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
-    if name != "pid":
-        raise ValueError(f"Unknown tool: {name!r}")
-    return [types.TextContent(type="text", text=str(os.getpid()))]
+async def call_tool(
+    ctx: "object", params: "types.CallToolRequestParams",
+) -> "types.CallToolResult":
+    if params.name != "pid":
+        raise ValueError(f"Unknown tool: {params.name!r}")
+    return types.CallToolResult(
+        content=[types.TextContent(type="text", text=str(os.getpid()))],
+    )
+
+
+app = Server(
+    "reyn-test-tools-only-pid", on_list_tools=list_tools, on_call_tool=call_tool,
+)
 
 
 async def main() -> None:
