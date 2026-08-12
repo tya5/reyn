@@ -1732,6 +1732,21 @@ render_template:
 
 The defaults are generous enough for real reports / configs and tight enough that a runaway generator stops quickly. Omitting the block leaves both at their defaults (behaviour unchanged).
 
+## `read_cap` block
+
+The per-result inline cap for `file.read` and `load_skill` (#4381 PR-5, architect design). This is a **resource bound**, not a budget bound — a role split the codebase draws deliberately: a resource bound protects a fixed physical resource (memory, transfer size) and is measured in **bytes**, **model-independent**; a budget bound protects the model's context window, is measured in tokens, and is derived from the resolved model (offload's spill trigger, compaction, reactive shrink all live on that side). Before this split, the same cap was scaled by the resolved model's input window and counted in characters — both were defects: window-scaling conflated the two roles, and counting a byte-denominated resource in characters drifted up to ~3× for non-ASCII content.
+
+```yaml
+read_cap:
+  inline_bytes: 10240   # 10 KiB — ceiling on a single inline read/load result
+```
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `inline_bytes` | int | `10240` | Ceiling, in bytes, on what `file.read` / `load_skill` return inline before truncating. A non-positive or non-numeric value falls back to the default. |
+
+**Why 10 KiB**: both consumers gained a resume mechanism the same night this default was chosen — `file.read` via `char_offset` (#4432), `load_skill` via deferring to `read_file(offset=next_offset)` (#4431). A truncated read loses at most one round-trip, not the rest of the content, which is what makes a small default safe rather than arbitrary. Omitting the block keeps this default (behaviour unchanged).
+
 ## MCP servers
 
 External tool servers reyn can call via the [Model Context Protocol](../../concepts/tools-integrations/mcp.md). Each entry under `mcp.servers:` is keyed by a short name (the same name the skill declares in `permissions.mcp` and emits in `mcp` ops).
