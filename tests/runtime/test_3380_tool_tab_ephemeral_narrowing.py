@@ -155,6 +155,53 @@ def test_turn_context_denial_self_clears_when_the_taint_leaves_the_context(
     assert _UNTRUSTED_DENIED_TOOL in _tools(cleared, "authorized")
 
 
+def test_narrowing_self_clears_when_a_real_compaction_covers_the_taint(
+    tmp_path,
+) -> None:
+    """Tier 2: #4387 Phase A — ``_ephemeral_contextual_for_turn`` bounds its
+    ``metas_have_untrusted`` scan to ``seq > self._compaction_watermark()``
+    instead of scanning all of ``self.history`` forever. Proven against a
+    REAL compaction watermark (a ``role="summary"`` entry appended via
+    ``_append_history`` with ``covers_through_seq`` at the tainted entry's
+    own seq — the exact shape ``CompactionController``'s
+    ``make_summary_message`` produces), not by physically removing the
+    entry from ``self.history`` the way
+    ``test_turn_context_denial_self_clears_when_the_taint_leaves_the_context``
+    above does. The tainted raw entry stays PRESENT in ``self.history``
+    throughout this test; only the watermark moves past its seq — so a
+    pre-fix scan (unbounded) would still see it and stay narrowed forever,
+    while the bounded scan correctly treats it as compacted out.
+    """
+    s = _session(tmp_path)
+    s._append_history(
+        ChatMessage(role="user", content="<<<EXTERNAL>>> hi", meta={"external_source": True})
+    )
+    tainted_seq = s.history[-1].seq
+    assert tainted_seq > 0, "a real _append_history call must assign a coordinate"
+    assert _UNTRUSTED_DENIED_TOOL in _tools(
+        s.capability_visibility_state(), "denied_by_turn_context"
+    ), "control arm: the taint must engage narrowing before any compaction"
+
+    s._append_history(
+        ChatMessage(
+            role="summary", content="summarised",
+            meta={"structured": {}, "covers_through_seq": tainted_seq},
+        )
+    )
+
+    cleared = s.capability_visibility_state()
+    assert not _tools(cleared, "denied_by_turn_context"), (
+        "a compaction watermark covering the tainted entry's seq must clear the "
+        "narrowing even though the raw entry is still physically present in "
+        "self.history"
+    )
+    assert _UNTRUSTED_DENIED_TOOL in _tools(cleared, "authorized")
+    assert any((m.meta or {}).get("external_source") for m in s.history), (
+        "sanity: the tainted entry is still physically present — the clearing "
+        "above is due to watermark bounding, not removal"
+    )
+
+
 def test_every_floored_tool_stays_denied_at_the_live_gate(tmp_path) -> None:
     """Tier 2: the ephemeral floor rejects EVERY name it floors at the live gate,
     not just the one the constant above happens to witness.

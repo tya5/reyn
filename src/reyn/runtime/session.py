@@ -2721,6 +2721,26 @@ class Session:
         (never latched at turn start), so a status-bar read is as of NOW; only the
         loaded profile is cached, and a profile file does not change mid-session.
 
+        #4387 Phase A: the scan this re-derivation runs is bounded to the
+        UNCOMPACTED tail (``seq > self._compaction_watermark()``, the same
+        bound ``_uncompacted_tool_call_records`` already uses), not all of
+        ``self.history``. ``metas_have_untrusted``'s own docstring already
+        promises "the until-compaction scope for free" from being handed
+        only "the live, un-compacted entries" — this call site was actually
+        violating that contract (it passed the FULL unfiltered history,
+        so real deployments never got the promised self-clear-on-compaction
+        at all, only an O(session-length) scan on every turn once
+        narrowing was opted into, #3501). Bounding to the watermark fixes
+        both: the freshness/self-clearing property this method's own tests
+        pin (``test_turn_context_denial_self_clears_when_the_taint_leaves_
+        the_context``) becomes what actually happens in a compacting
+        session, not just an unenforced docstring claim, and the re-scan on
+        every turn is now proportional to the uncompacted tail rather than
+        total session length. Entries with ``seq == 0`` (pre-#3704 legacy
+        rows with no assigned coordinate) are always included — never
+        excluded from a taint check just because they predate seq
+        tracking.
+
         #3501: OPT-IN. This returns ``None`` — no narrowing at all — unless the
         operator set ``safety.threat_scan.capability_narrowing`` to something other
         than ``off``. It is the SINGLE place the opt-in is read, so the live gate,
@@ -2737,7 +2757,9 @@ class Session:
         threat_scan = getattr(self._safety, "threat_scan", None)
         if threat_scan is None or not threat_scan.narrowing_engaged():
             return None
-        if not metas_have_untrusted(m.meta for m in self.history):
+        watermark = self._compaction_watermark()
+        active = (m for m in self.history if m.seq == 0 or m.seq > watermark)
+        if not metas_have_untrusted(m.meta for m in active):
             return None
         if self._untrusted_contextual_cache is None:
             root = self._perm.project_root if self._perm is not None else Path.cwd()
@@ -6285,6 +6307,16 @@ class Session:
                 return m
         return None
 
+    def _compaction_watermark(self) -> int:
+        """The latest summary's ``covers_through_seq`` (0 if none yet) — seqs
+        at or below this are considered compacted out. #4387 Phase A:
+        factored out of :meth:`_uncompacted_tool_call_records` so
+        :meth:`_ephemeral_contextual_for_turn` can bound its own scan the
+        same way, rather than duplicating the ``_latest_summary`` +
+        ``covers_through_seq`` lookup inline."""
+        latest = self._latest_summary()
+        return int((latest.meta or {}).get("covers_through_seq", 0)) if latest is not None else 0
+
     def _uncompacted_tool_call_records(self) -> list[tuple[str, float]]:
         """Return ``(action_name, ts_epoch)`` records from the
         portion of history that has NOT yet been folded into a
@@ -6293,15 +6325,9 @@ class Session:
         Used by RouterLoop to build the hot-list each turn without
         relying on a parallel per-call write log; the compacted table
         in :class:`~reyn.tools.action_usage_tracker.ActionUsageTracker`
-        already covers the older portion. The watermark is the latest
-        summary's ``covers_through_seq`` (= seqs at or below it are
-        considered compacted out).
+        already covers the older portion.
         """
-        latest = self._latest_summary()
-        watermark = (
-            int((latest.meta or {}).get("covers_through_seq", 0))
-            if latest is not None else 0
-        )
+        watermark = self._compaction_watermark()
         live = [m for m in self.history if m.seq > watermark]
         return _extract_tool_call_records(live)
 
