@@ -259,3 +259,47 @@ class SandboxBackend(Protocol):
         ``cancelled=True``. None = no cancel-awareness (#1470).
         """
         ...
+
+
+def all_concrete_backend_classes() -> "tuple[type, ...]":
+    """Return every class reyn ships that implements the ``SandboxBackend``
+    Protocol — the single source of truth for "which backends bear this
+    Protocol's contract" (#4434, lead-coder correction: a TEST re-deriving
+    this via a filesystem/AST scan tripped ``file-depth-reference-gate.yml``
+    — a scan rooted via ``Path(__file__).resolve().parents[N]`` breaks the
+    moment the scanning file itself moves to a different depth under
+    ``tests/`` — and, independently, doing a directory walk to answer "who
+    implements this Protocol" duplicates work a stable list here does once).
+
+    Deliberately NOT auto-discovered (`Protocol` is structural typing, not a
+    registry — there is no zero-effort way to enumerate every conforming
+    class without scanning). A new backend's author is expected to add it
+    HERE, in the Protocol's own home module, where a reader implementing
+    the Protocol is far more likely to notice a companion registry than a
+    scan-based test living in an unrelated ``tests/`` file — this is how
+    #4439's own CI caught ``DockerEnvironmentBackend`` missing from an
+    earlier, ad-hoc test-side list (it lives in ``environment/``, a
+    different directory from the other 3, which a directory-scoped hand
+    list silently excluded).
+
+    ``DockerEnvironmentBackend`` is included even though it is NOT part of
+    ``get_default_backend()``'s own name-based selection table — it is
+    reachable only via explicit injection (an ``OpContext.sandbox_backend``
+    a caller constructs directly, e.g. ``sandboxed_exec.py``'s own
+    docstring on "an injected instance wins over name-based auto-
+    selection"), never via ``sandbox.backend: "docker"`` config. "Every
+    backend that bears the Protocol's contract" is a broader question than
+    "every backend ``get_default_backend()`` can select" — this function
+    answers the former.
+
+    Imports are deferred (not module-level) to avoid a real import cycle:
+    ``environment.container_backend`` imports FROM this module
+    (``AxisEnforcement`` etc.), so this module cannot import it back at
+    top-level without a cycle.
+    """
+    from reyn.environment.container_backend import DockerEnvironmentBackend  # noqa: PLC0415
+    from reyn.security.sandbox.backends.landlock import LandlockBackend  # noqa: PLC0415
+    from reyn.security.sandbox.backends.seatbelt import SeatbeltBackend  # noqa: PLC0415
+    from reyn.security.sandbox.noop_backend import NoopBackend  # noqa: PLC0415
+
+    return (SeatbeltBackend, LandlockBackend, NoopBackend, DockerEnvironmentBackend)
