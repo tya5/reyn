@@ -102,7 +102,7 @@ from .presenter import (
     ReynPresenter,
     _neutralized_label,
 )
-from .restore import project_restored_frames
+from .restore import RESUME_DIVIDER, project_restored_frames
 from .rewind_picker import RewindPicker
 from .search_bar import SearchBar
 from .sent_queue import SentQueue
@@ -1899,7 +1899,25 @@ class TextualChatApp(App):
         regardless of how projection folds messages. Returns whether any new
         frames became available (``False`` = true start of history, or the
         read model/projection failed — fully guarded, same as
-        :meth:`_hydrate_from_history`)."""
+        :meth:`_hydrate_from_history`).
+
+        ``project_restored_frames`` unconditionally prepends ONE
+        :data:`.restore.RESUME_DIVIDER` row whenever its own input is
+        non-empty — correct for a single call, but this method calls it
+        AGAIN on every extension, and flowview has no primitive to REMOVE
+        or reposition an already-painted row (only ``append``/``insert``/
+        ``insert_many``). So the FIRST divider a non-empty projection ever
+        produced (at ``_hydrate_from_history`` time, or an earlier extend)
+        is permanent — it stays exactly where it landed. Every LATER
+        extend's own fresh divider is a would-be DUPLICATE and is stripped
+        before slicing, so the pane only ever carries the ONE divider its
+        first non-empty projection produced. This means the divider is NOT
+        guaranteed to sit at the true chronological front once extension
+        has happened (there is no way to move it there without a removal
+        primitive) — an accepted, cosmetic-only limitation: the actual
+        conversation CONTENT before and after it is still complete and in
+        order, which is what this method's own correctness claim is about.
+        """
         if self._read_model is None:
             return False
         try:
@@ -1915,8 +1933,24 @@ class TextualChatApp(App):
         except Exception:
             logger.exception("textual chat: history backward-extend projection failed")
             return False
-        new_prefix = frames[: len(frames) - self._history_frame_count]
+        divider_already_shown = self._history_frame_count > 0
+        if (
+            divider_already_shown
+            and frames
+            and frames[0].kind == "system"
+            and frames[0].text == RESUME_DIVIDER
+        ):
+            content = frames[1:]
+            already_known = self._history_frame_count - 1
+        else:
+            content = frames
+            already_known = self._history_frame_count
+        new_prefix = content[: len(content) - already_known]
         self._older_frames = new_prefix + self._older_frames
+        # The running total this method's OWN slicing bound reads next time
+        # always represents the FULL logical projection (divider + every
+        # message) — whether or not a duplicate divider was actually
+        # painted, exactly one is logically accounted for.
         self._history_frame_count = len(frames)
         return bool(new_prefix)
 
