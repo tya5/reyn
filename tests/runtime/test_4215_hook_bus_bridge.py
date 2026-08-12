@@ -207,26 +207,39 @@ def test_bridge_child_bus_to_parent_never_touches_a_hook_dispatcher() -> None:
 
 
 @pytest.mark.asyncio
-async def test_bridge_publish_never_blocks_the_child(tmp_path: Path) -> None:
+async def test_bridge_publish_does_not_wait_on_the_bridge_task(tmp_path: Path) -> None:
     """Tier 2: HookBus.publish is documented as synchronous and
     non-blocking (bus.py's own module docstring) — this exercises that
-    property specifically THROUGH the bridge: publishing many events in a
-    tight loop on the child returns immediately regardless of whether the
-    bridge task has had a chance to drain any of them yet."""
+    property specifically THROUGH the bridge, structurally rather than by
+    a wall-clock budget.
+
+    lead-coder review on #4378: the earlier version asserted `elapsed <
+    0.5` — a time-limit-shaped assertion the owner's standing rule bans
+    (tests carry no time limit of their own; a slow runner fails it even
+    when the mechanism is correct, measuring "is this machine fast"
+    rather than "does publish wait"). Publish's non-blocking-ness is
+    already guaranteed BY TYPE (it is a plain `def`, not `async def` —
+    this PR cannot break that), so what is actually worth pinning here is
+    narrower: that the bridge's own background task never gets a chance
+    to run DURING the publish loop.
+
+    No `await` appears between the publish loop and the check below — on
+    a single-threaded event loop, that means `bridge` (scheduled via
+    `ensure_future` but never yet resumed) structurally CANNOT have run
+    even its first line in between, so it cannot have drained or
+    forwarded anything yet. The parent's subscription queue being empty
+    at that exact point is therefore a deterministic consequence of the
+    event loop's own scheduling model, not a race against a clock."""
     child = HookBus()
     parent = HookBus()
     bridge = asyncio.ensure_future(bridge_child_bus_to_parent(child, parent))
     try:
-        loop = asyncio.get_running_loop()
-        start = loop.time()
-        for i in range(50):
-            child.publish(
-                HookEvent(kind="builtin:external:test_probe", payload={"i": i})
-            )
-        elapsed = loop.time() - start
-        assert elapsed < 0.5, (
-            f"50 publishes on the bridged child took {elapsed:.3f}s — "
-            "publish must never block on the bridge task draining"
-        )
+        async with parent.subscribe() as parent_sub:
+            for i in range(50):
+                child.publish(
+                    HookEvent(kind="builtin:external:test_probe", payload={"i": i})
+                )
+            with pytest.raises(asyncio.QueueEmpty):
+                parent_sub.get_nowait()
     finally:
         bridge.cancel()
