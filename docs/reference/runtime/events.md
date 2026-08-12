@@ -58,6 +58,7 @@ compact_op_completed
 compact_op_failed
 compact_op_requested
 compact_op_unavailable
+compaction_batch_cap_below_head_tail_budget
 compaction_check
 compaction_completed
 compaction_failed
@@ -444,6 +445,7 @@ mostly informational.
 
 | Kind | When | Key payload |
 |------|------|-------------|
+| `compaction_batch_cap_below_head_tail_budget` | #4477 — `resolve_effective_trigger_and_budgets`'s 4th resource/budget invariant instance (`src/reyn/runtime/services/router_history_buffer.py`, siblings to `resource_cap_exceeds_budget_trigger` below): the compaction batch read's own byte cap (`history_tail_reader.COMPACTION_BATCH_MAX_BYTES`, 8 MiB) is smaller than `head_budget + tail_budget`'s own combined token footprint converted to bytes via `context_builder.INLINE_CAP_BYTES_PER_TOKEN` — meaning a compaction pass would produce zero candidates every time (head+tail trimming alone consumes the whole batch), permanently stalling `covers_through_seq`. Confirmed reachable against real, currently-cataloged litellm models (>8 MiB combined at the shipped `component_weights` default). Detection only — no value is clamped. Warn-once per `(model, phase)`. `model`, `phase` (`""` when none), `head_budget`, `tail_budget`, `combined_bytes`, `compaction_batch_max_bytes` |
 | `compaction_check` | The compaction gate ran for a turn. `outcome` records the decision — e.g. `too_few_turns`, `below_min_batch`, `pre_frame_overflow`, `already_running`, `forced_sync`, `forced_sync_no_turns`, `compaction_input_gap_invariant_violated` (#4472: candidates are read directly from the durable `history.jsonl`, never residency-gated, so this should never fire under normal operation — a defensive invariant, not a routine branch; a hit means something else narrowed the durable read out from under compaction, reopening #4470's silent-coverage-claim defect through a new path). `outcome="forced_sync"` also carries `batch_truncated` (#4472: `True` when the durable read's own per-call byte cap capped this pass short of the full uncovered range — the pass still only claims coverage of what it actually examined; a large backlog needs multiple passes, each with `batch_truncated=True` until the final one). Some outcomes also carry `turns`, `head`, `tail`. | `outcome`, plus outcome-specific fields |
 | `compaction_failed` | A compaction attempt raised. | `error` |
 | `compaction_shrink_recovered` | (#3783 stage 2) `retry_loop`'s bounded shrink ladder caught a context-overflow (compaction-call or main-call) and is about to shrink and retry. Fires once per recovered iteration, not once per turn — a turn that shrinks 3 times emits 3 of these. | `cause` (the caught exception's class name), `iteration` (0-based ladder position), `consecutive` (how many times in a row `cause` has recovered without a different cause or a success in between) |

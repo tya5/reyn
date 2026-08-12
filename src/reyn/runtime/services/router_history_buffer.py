@@ -172,6 +172,11 @@ def _refresh_skill_location_tokens(
 # `_resource_budget_warned.clear()`.
 _resource_budget_warned: "set[tuple[str, str | None]]" = set()
 
+# #4477: warn-once cache for the compaction-batch/head+tail-budget invariant
+# below — the 4th instance of this SSoT's resource/budget comparison class.
+# Reset in tests via `_compaction_batch_budget_warned.clear()`.
+_compaction_batch_budget_warned: "set[tuple[str, str | None]]" = set()
+
 
 def _check_resource_within_budget(
     model: str,
@@ -237,6 +242,69 @@ def _check_resource_within_budget(
         )
 
 
+def _check_compaction_batch_within_budget(
+    model: str, phase: "str | None", head_budget: int, tail_budget: int, events: Any,
+) -> None:
+    """#4477: the 4th instance of the resource/budget comparison class
+    ``_check_resource_within_budget`` (#4381 PR-1) already established —
+    same conversion point (``INLINE_CAP_BYTES_PER_TOKEN``), same warn-once
+    shape, different pair: ``read_history_after``'s own per-call byte cap
+    (``COMPACTION_BATCH_MAX_BYTES`` — a RESOURCE bound, #4472/#4475) vs
+    ``head_budget + tail_budget`` (a BUDGET bound, model-context-window-
+    derived, #4431's role split).
+
+    **Why this check exists at all — measured, not assumed** (architect's
+    #4475 follow-up review + this issue's own explicit first task, before
+    any warn mechanism was written): if the batch cap is smaller than
+    ``head_budget + tail_budget``'s own combined token footprint (in
+    bytes), a compaction pass produces ZERO candidates every time — head
+    and tail trimming alone consume the whole small batch, leaving no
+    middle. Worse than merely "no progress": zero candidates means no
+    summary, means ``covers_through_seq`` never advances, means the NEXT
+    pass reads the IDENTICAL window and produces the IDENTICAL zero — a
+    genuine, permanent STALL, the exact class #4470/#4471/#4472 exist to
+    close, reachable through this specific resource/budget combination.
+
+    Confirmed LIVE (not theoretical) against this repo's own installed
+    litellm catalog (verified 2026-08-13): ``component_weights``'s shipped
+    default (head=10, tail=15, of 100 total ⇒ 25% combined) times
+    ``INLINE_CAP_BYTES_PER_TOKEN`` (4) means the worst-case
+    ``head_budget + tail_budget`` in BYTES equals the model's own
+    ``max_input_tokens`` numerically (0.25 × 4 = 1). At least 5 models in
+    the installed litellm catalog exceed ``COMPACTION_BATCH_MAX_BYTES``
+    (8 MiB = 8,388,608) at this weighting — e.g.
+    ``oci/meta.llama-4-scout-17b-16e-instruct`` at 10,485,760 tokens (a
+    real, currently-selectable model, not a hypothetical) — so this is a
+    REACHABLE misconfiguration, not a defensive-only guard.
+
+    Warn-once per ``(model, phase)``, same reasoning as the sibling check
+    above (a high-frequency SSoT). Detection only — no value is clamped;
+    unlike the resource-bound/budget check above, there is no obvious safe
+    clamp direction here (shrinking the batch cap further only worsens the
+    stall; growing it is an operator/model-choice decision, not something
+    this call site should silently do).
+    """
+    from reyn.core.context_builder import INLINE_CAP_BYTES_PER_TOKEN
+    from reyn.runtime.history_tail_reader import COMPACTION_BATCH_MAX_BYTES
+
+    combined_tokens = head_budget + tail_budget
+    combined_bytes = combined_tokens * INLINE_CAP_BYTES_PER_TOKEN
+    if combined_bytes <= COMPACTION_BATCH_MAX_BYTES:
+        return
+    key = (model, phase)
+    if key in _compaction_batch_budget_warned:
+        return
+    _compaction_batch_budget_warned.add(key)
+    if events is not None:
+        events.emit(
+            "compaction_batch_cap_below_head_tail_budget",
+            model=model, phase=phase or "",
+            head_budget=head_budget, tail_budget=tail_budget,
+            combined_bytes=combined_bytes,
+            compaction_batch_max_bytes=COMPACTION_BATCH_MAX_BYTES,
+        )
+
+
 def resolve_effective_trigger_and_budgets(
     compaction_controller: Any,
     model: str,
@@ -265,6 +333,14 @@ def resolve_effective_trigger_and_budgets(
     phase concept today; a future phase-aware caller can pass a real value
     without a signature change.
 
+    #4477: also the SSoT for a FOURTH instance of the same class —
+    ``_check_compaction_batch_within_budget`` — comparing
+    ``head_budget + tail_budget`` (already computed here) against
+    #4472/#4475's own compaction-batch byte cap. Confirmed reachable
+    (see that function's own docstring for the live measurement) before
+    being added — the class's own established discipline: don't build an
+    unreachable-machinery warn.
+
     ``read_cap_config`` (#4381 PR-5): the ``ReadCapConfig`` to check the
     resource bound against — threaded from ``RouterHistoryBuffer``, which
     has a live config reference; ``ContextBudgetAdvisor``'s own call
@@ -283,6 +359,9 @@ def resolve_effective_trigger_and_budgets(
         fallback = effective_trigger // 4
         head_budget, tail_budget = fallback, fallback
     _check_resource_within_budget(model, phase, effective_trigger, events, read_cap_config)
+    # #4477: 4th instance of the resource/budget comparison class — the
+    # compaction batch's own byte cap vs head+tail's combined token budget.
+    _check_compaction_batch_within_budget(model, phase, head_budget, tail_budget, events)
     return effective_trigger, head_budget, tail_budget
 
 

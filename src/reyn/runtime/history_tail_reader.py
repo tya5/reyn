@@ -146,8 +146,16 @@ def read_history_tail(
     return collected
 
 
+# #4477: named so `router_history_buffer._check_compaction_batch_within_
+# budget` (the 4th resource/budget-role comparison instance, #4381 PR-1's
+# own class) can compare against the SAME value this function actually
+# defaults to — a second, independently-typed `8 * 1024 * 1024` literal
+# would silently drift from this one the day either changes.
+COMPACTION_BATCH_MAX_BYTES: int = 8 * 1024 * 1024
+
+
 def read_history_after(
-    path: Path, *, after_seq: int, max_bytes: int = 8 * 1024 * 1024,
+    path: Path, *, after_seq: int, max_bytes: int = COMPACTION_BATCH_MAX_BYTES,
 ) -> "tuple[list[str], bool]":
     """#4472 (batched, per architect's + lead-coder's independent review of
     the first draft): read *path* FORWARD from BOF, skipping every line
