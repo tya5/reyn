@@ -170,6 +170,79 @@ class RenamedKeyHint:
     destination: "str | None" = None
 
 
+@_dataclass(frozen=True)
+class RemovedKeyHint:
+    """The reason an unknown config key isn't valid, when it was DELETED
+    with no successor — a distinct category from :class:`RenamedKeyHint`
+    (#4375, lead-coder's ruling ①).
+
+    ``_RENAMED_CONFIG_KEYS`` is a table of "where did this move to" —
+    every entry there has, or could have, a destination. A key that was
+    genuinely removed has none, and putting it in that table either
+    leaves no way to write an honest hint (no destination to name) or
+    invites writing a false one. The operator's next action differs by
+    kind, not just degree: a rename says "rewrite this to Y"; a removal
+    says "delete this, there is no Y" — encoding it as a separate type
+    makes that difference structural instead of something a hint's
+    author has to remember to phrase correctly each time (same reasoning
+    :class:`RenamedKeyHint`'s own ``destination`` field already applies
+    to the rewrite-vs-manual-review distinction).
+
+    Deliberately carries no ``destination`` field at all — unlike
+    :class:`RenamedKeyHint` where ``destination=None`` is a valid state
+    (a value-transform rename, manual review only), a removed key MUST
+    stay unrewritable; making the field simply not exist here makes that
+    unrepresentable-wrong rather than merely a convention.
+    """
+
+    note: str
+
+
+#: #4375: top-level ``ReynConfig`` keys that existed at some point in the
+#: schema's own history and were deleted with NO successor key — a
+#: DIFFERENT population than :data:`_RENAMED_CONFIG_KEYS` (which only
+#: covers keys that MOVED). Derived by architect's #4375 measurement: a
+#: union of every top-level field name across all ~148 historical
+#: revisions of the schema's own module (``git log --follow``), minus the
+#: 33 that are still current, minus the 8 that are registered renames
+#: above — 17 remain, confirmed real (not a false-positive population)
+#: because #4373's two hand-found stale keys (``shell_allowed`` /
+#: ``skill_search``) are both in this list. Individual per-key removal
+#: provenance (which PR deleted each one, and why) was NOT traced — #4375
+#: measured the SCHEMA'S OWN population, not each key's history, and an
+#: operator needs "delete this, it's gone" more than a specific PR
+#: citation. Same co-location discipline as ``_RENAMED_CONFIG_KEYS``: a
+#: future removal adds its entry here in the SAME PR as the removal.
+_REMOVED_CONFIG_KEYS: "dict[str, RemovedKeyHint]" = {
+    key: RemovedKeyHint(
+        note=f"`{key}:` no longer exists in the schema and has no "
+             "replacement key (traced via #4375: a union of every "
+             "top-level key across the config schema's own revision "
+             "history, 58 that ever existed vs. 33 current) — delete "
+             "it from your config."
+    )
+    for key in (
+        "eval",
+        "limits",
+        "max_phase_visits",
+        "mcp_search_threshold",
+        "multi_agent",
+        "plan",
+        "plan_resume_raw",
+        "python",
+        "routerloop_convergence_skills",
+        "self_improvement",
+        "shell_allowed",
+        "skill_resume",
+        "skill_search",
+        "state_dir",
+        "time_travel",
+        "tool_calls_op_loop_skills",
+        "workspace",
+    )
+}
+
+
 #: #4174 T0: a renamed config key (dotted, any level) -> a :class:`RenamedKeyHint`,
 #: so an unknown-key warning can NAME the destination ("`model:` moved to
 #: `llm.model:`") rather than just say "unknown", and ``reyn config migrate``
@@ -332,7 +405,7 @@ def _schema_index() -> "tuple[frozenset[str], frozenset[str], frozenset[str]]":
 
 def unknown_config_keys(
     raw: "dict | None", *, prefix: str = "",
-) -> "dict[str, RenamedKeyHint | None]":
+) -> "dict[str, RenamedKeyHint | RemovedKeyHint | None]":
     """Return ``{dotted_key: hint_or_None}`` for every key in *raw*
     (recursively, at every nesting level) that is not a valid
     ``ReynConfig`` field — #4174 T0's ONE unknown-key implementation,
@@ -348,18 +421,27 @@ def unknown_config_keys(
     duplicated).
 
     A ``None`` hint means "this key matches none of the known keys — see
-    ``reyn config fields``" (today's ONLY case: no rename has landed yet).
-    A :class:`RenamedKeyHint` means the key was intentionally renamed (see
+    ``reyn config fields``" (a typo, or a key that never existed at all).
+    A :class:`RenamedKeyHint` means the key MOVED (see
     :data:`_RENAMED_CONFIG_KEYS`) — its ``note`` is always shown; its
     ``destination`` tells ``reyn config migrate`` whether it's safe to
-    auto-rewrite. Collects every unknown key in one pass — callers must NOT
+    auto-rewrite. A :class:`RemovedKeyHint` (#4375) means the key was
+    DELETED with no successor (see :data:`_REMOVED_CONFIG_KEYS`) — its
+    ``note`` says so; it carries no ``destination`` because there is
+    nowhere to rewrite it TO. Both hint types expose ``.note``, so a
+    caller that only prints the note (every current call site) needs no
+    ``isinstance`` branch; a caller that acts on ``destination`` (``reyn
+    config migrate``) already only ever reads ``_RENAMED_CONFIG_KEYS``
+    directly for that, never this function's combined result, so a
+    ``RemovedKeyHint`` reaching that code is not a case it has to guard
+    against. Collects every unknown key in one pass — callers must NOT
     early-return on the first hit (owner requirement: report all problems
     at once, not one-fix-restart-repeat).
     """
     if not isinstance(raw, dict):
         return {}
     namespaces, dict_leaves, scalar_leaves = _schema_index()
-    result: "dict[str, RenamedKeyHint | None]" = {}
+    result: "dict[str, RenamedKeyHint | RemovedKeyHint | None]" = {}
     for key, value in raw.items():
         dotted = f"{prefix}.{key}" if prefix else key
         if dotted in scalar_leaves:
@@ -374,7 +456,9 @@ def unknown_config_keys(
             if isinstance(value, dict):
                 result.update(unknown_config_keys(value, prefix=dotted))
             continue
-        result[dotted] = _RENAMED_CONFIG_KEYS.get(dotted)
+        result[dotted] = (
+            _RENAMED_CONFIG_KEYS.get(dotted) or _REMOVED_CONFIG_KEYS.get(dotted)
+        )
     return result
 
 

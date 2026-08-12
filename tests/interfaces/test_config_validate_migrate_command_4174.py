@@ -66,6 +66,25 @@ def test_validate_reports_an_unrecognized_top_level_key(project, capsys):
     assert "totally_made_up_top_level_key" in out
 
 
+def test_validate_reports_a_removed_key_via_the_same_generic_hint_note(
+    project, capsys,
+):
+    """Tier 2: #4375 — a removed key reaches ``reyn config validate``'s
+    report through the SAME generic ``if hint: print(hint.note)`` path
+    every other hint type already uses (no ``isinstance`` branch needed —
+    ``RemovedKeyHint`` exposes ``.note`` same as ``RenamedKeyHint``)."""
+    from reyn.config.config_schema import _REMOVED_CONFIG_KEYS
+    from reyn.interfaces.cli.commands.config import _validate
+
+    assert _REMOVED_CONFIG_KEYS, "the registry must be non-empty for this test to mean anything"
+    any_removed_key = next(iter(_REMOVED_CONFIG_KEYS))
+    _write_yaml(project / "reyn.yaml", f"{any_removed_key}: 1\n")
+    _validate()
+    out = capsys.readouterr().out
+    assert any_removed_key in out
+    assert "no longer exists" in out
+
+
 def test_validate_reports_llm_model_as_known_not_flagged(project, capsys):
     """Tier 2: #4174 T3 — accept-side, superseding this test's former pre-T3
     shape (architect's #4174 T0 finding: `LLMConfig` had no `model` field, so
@@ -100,26 +119,32 @@ def test_validate_subcommand_is_registered():
 def test_migrate_reports_nothing_to_migrate_when_registry_is_empty(
     project, capsys, monkeypatch,
 ):
-    """Tier 2: #4174 T0b — with ``_RENAMED_CONFIG_KEYS`` empty, ``reyn
-    config migrate`` says so explicitly rather than silently doing nothing
-    with no output (lead-coder's explicit requirement: must not be
-    silently vacuous).
+    """Tier 2: #4174 T0b — with BOTH ``_RENAMED_CONFIG_KEYS`` and
+    ``_REMOVED_CONFIG_KEYS`` empty, ``reyn config migrate`` says so
+    explicitly rather than silently doing nothing with no output
+    (lead-coder's explicit requirement: must not be silently vacuous).
 
-    Injects an empty registry explicitly (the same ``monkeypatch.setattr``
+    Injects both registries empty explicitly (the same ``monkeypatch.setattr``
     seam the sibling test below already uses for a non-empty one) — #4174
-    T5 populated ``_RENAMED_CONFIG_KEYS`` for real, which falsified this
-    test's original premise that the module-global registry was ITSELF
+    T5 populated ``_RENAMED_CONFIG_KEYS`` for real, and #4375 populated
+    ``_REMOVED_CONFIG_KEYS`` for real, which falsified this test's
+    original premise that the module-global registries were THEMSELVES
     empty at the time the test ran. What this test actually verifies is
-    "what `migrate` says when the registry is empty", not "is the
-    registry currently empty" — those are different claims, and only the
-    first one is this test's to make."""
+    "what `migrate` says when both registries are empty", not "are the
+    registries currently empty" — those are different claims, and only
+    the first one is this test's to make. #4375: the early-return guard
+    now checks both registries (a removed-key population alone is enough
+    to make "nothing is registered" false), so this test must empty both
+    or it silently starts asserting the WRONG code path's message instead
+    of failing loudly — caught by running it against #4375's own change."""
     from reyn.interfaces.cli.commands.config import _migrate
 
     monkeypatch.setattr("reyn.config.config_schema._RENAMED_CONFIG_KEYS", {})
+    monkeypatch.setattr("reyn.config.config_schema._REMOVED_CONFIG_KEYS", {})
     _write_yaml(project / "reyn.yaml", MINIMAL_REYN_YAML)
     _migrate()
     out = capsys.readouterr().out
-    assert "No config key renames are registered yet" in out
+    assert "No config key renames or removals are registered yet" in out
 
 
 def test_migrate_reports_nothing_to_migrate_when_config_has_no_renamed_key(
@@ -229,6 +254,39 @@ def test_migrate_flags_a_value_transforming_rename_for_manual_review(
     out = capsys.readouterr().out
     assert "manual review" in out.lower()
     assert "old_inverting_key" in out
+
+
+def test_migrate_flags_a_removed_key_as_delete_not_manual_review(
+    project, capsys, monkeypatch,
+) -> None:
+    """Tier 2: #4375, lead-coder's ruling ① — a key present in
+    ``_REMOVED_CONFIG_KEYS`` is NOT auto-rewritten (there is no
+    destination to rewrite to) and is reported in its OWN "REMOVED ...
+    delete them" section, distinct from the value-transform-rename
+    "needs manual review" section above — the operator's next action
+    differs (rewrite vs. delete), so the two must not read as the same
+    kind of finding."""
+    from reyn.config.config_schema import RemovedKeyHint
+
+    monkeypatch.setattr("reyn.config.config_schema._RENAMED_CONFIG_KEYS", {})
+    monkeypatch.setattr(
+        "reyn.config.config_schema._REMOVED_CONFIG_KEYS",
+        {"old_dead_key": RemovedKeyHint(note="deleted, no successor")},
+    )
+    _write_yaml(project / "reyn.yaml", "old_dead_key: true\n")
+
+    from reyn.interfaces.cli.commands.config import _migrate
+    _migrate()
+
+    import yaml
+    cfg = yaml.safe_load((project / "reyn.yaml").read_text())
+    # Untouched — this command never deletes an operator's line unasked.
+    assert cfg["old_dead_key"] is True
+    out = capsys.readouterr().out
+    assert "REMOVED" in out
+    assert "delete them" in out
+    assert "old_dead_key" in out
+    assert "needs manual review" not in out.lower()
 
 
 def test_migrate_does_not_rewrite_a_space_free_note_with_no_destination(

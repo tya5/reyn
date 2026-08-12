@@ -106,6 +106,23 @@ def test_unknown_sandbox_policy_key_warning_names_the_effective_policy(
     )
 
 
+def test_a_removed_top_level_key_warns_delete_not_rewrite(tmp_path, caplog) -> None:
+    """Tier 2: #4375 — a key registered in ``_REMOVED_CONFIG_KEYS`` (deleted,
+    no successor) is reachable through the SAME real ``load_config`` path
+    every other unknown-key case in this file goes through, and its
+    warning says the key was removed (not "renamed" or "unrecognized"
+    generically) — the real end-to-end wiring, not just
+    ``unknown_config_keys()`` in isolation (already covered by
+    ``config_schema``'s own direct-call tests)."""
+    from reyn.config.config_schema import _REMOVED_CONFIG_KEYS
+    assert _REMOVED_CONFIG_KEYS, "the registry must be non-empty for this test to mean anything"
+    any_removed_key = next(iter(_REMOVED_CONFIG_KEYS))
+    cfg = _load(tmp_path, f"{any_removed_key}: 1\n", caplog)
+    assert cfg is not None  # did not raise
+    messages = [r.message for r in caplog.records]
+    assert any(any_removed_key in m and "no longer exists" in m for m in messages), messages
+
+
 def test_renamed_sandbox_policy_key_warning_names_the_destination(
     tmp_path, caplog,
 ) -> None:
