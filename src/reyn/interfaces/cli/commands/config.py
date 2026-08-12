@@ -404,16 +404,28 @@ def _migrate(*, dry_run: bool = False) -> None:
     intentionally NOT auto-rewritten by this command — an operator on an
     old sandbox.policy key sees the guidance via ``reyn config validate``
     and fixes it by hand.
+
+    #4375: a key in ``_REMOVED_CONFIG_KEYS`` (deleted, no successor) is
+    reported in its OWN section, never folded into ``needs_manual`` above
+    — lead-coder's ruling ①: a rename's remedy is "rewrite to Y"; a
+    removed key's remedy is "delete it, there is no Y". Mixing the two
+    into one "needs manual review" list would make that difference
+    illegible (the operator would have to read each note to find out
+    which action applies). Never auto-rewritten (no destination exists to
+    rewrite to) and never auto-DELETED either — this command only ever
+    writes a value TO a key, deleting an operator's line unasked is a
+    different, more destructive class of edit this command doesn't do.
     """
     import yaml
 
     from reyn.config import _find_project_root
-    from reyn.config.config_schema import _RENAMED_CONFIG_KEYS
+    from reyn.config.config_schema import _REMOVED_CONFIG_KEYS, _RENAMED_CONFIG_KEYS
 
-    if not _RENAMED_CONFIG_KEYS:
+    if not _RENAMED_CONFIG_KEYS and not _REMOVED_CONFIG_KEYS:
         print(
-            "No config key renames are registered yet (nothing to migrate "
-            "— #4174 T1-T6 populate this registry incrementally)."
+            "No config key renames or removals are registered yet "
+            "(nothing to migrate — #4174 T1-T6 / #4375 populate these "
+            "registries incrementally)."
         )
         return
 
@@ -474,6 +486,7 @@ def _migrate(*, dry_run: bool = False) -> None:
 
     any_changes = False
     manual_found: list[tuple[str, str, str]] = []  # (label, old_key, reason)
+    removed_found: list[tuple[str, str]] = []  # (label, old_key) — #4375
     for path in candidates:
         cfg = _read(path)
         if not cfg:
@@ -493,6 +506,14 @@ def _migrate(*, dry_run: bool = False) -> None:
             found, _value = _pop_dotted(dict(cfg), old_key)  # peek, don't mutate
             if found:
                 manual_found.append((_label(path), old_key, _VALUE_TRANSFORM))
+        # #4375: removed keys are detected and reported, never rewritten
+        # (there is no destination) and never auto-deleted (this command
+        # only ever writes a rewrite TO a key, not removes an operator's
+        # line unasked) — see the docstring's "removed key" scope note.
+        for old_key in _REMOVED_CONFIG_KEYS:
+            found, _value = _pop_dotted(dict(cfg), old_key)  # peek, don't mutate
+            if found:
+                removed_found.append((_label(path), old_key))
         if not present_here:
             continue
 
@@ -531,8 +552,19 @@ def _migrate(*, dry_run: bool = False) -> None:
             )
             print(f"  {label}: {old_key} — {note}")
 
-    if not any_changes and not manual_found:
-        print("No renamed keys found in your config — nothing to migrate.")
+    if removed_found:
+        if manual_found:
+            print()
+        # #4375, lead-coder's ruling ①: "delete", not "review" — a removed
+        # key has no destination to migrate TO, so this is its own section
+        # rather than folded into "needs manual review" above (that phrase
+        # implies a rewrite path exists; this key has none).
+        print("\nThe following key(s) were REMOVED (no successor) — delete them:")
+        for label, old_key in removed_found:
+            print(f"  {label}: {old_key} — {_REMOVED_CONFIG_KEYS[old_key].note}")
+
+    if not any_changes and not manual_found and not removed_found:
+        print("No renamed or removed keys found in your config — nothing to migrate.")
         return
     if any_changes:
         if dry_run:

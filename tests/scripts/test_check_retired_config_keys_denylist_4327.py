@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import subprocess
 
-from reyn.config.config_schema import _RENAMED_CONFIG_KEYS
+from reyn.config.config_schema import _REMOVED_CONFIG_KEYS, _RENAMED_CONFIG_KEYS
 from scripts.check_retired_config_keys_denylist import (
     _ROOT,
     offending_lines,
@@ -174,6 +174,80 @@ def test_denylist_keys_are_exactly_the_renamed_config_keys_registry(tmp_path) ->
     _add(tmp_path)
     offenders = offending_lines(tmp_path)
     assert [k for _, _, k, _ in offenders] == [any_retired_key]
+
+
+def test_denylist_also_includes_the_removed_config_keys_registry(tmp_path) -> None:
+    """Tier 1: #4375 — a key registered ONLY in `_REMOVED_CONFIG_KEYS`
+    (deleted, no successor — never in `_RENAMED_CONFIG_KEYS`) must still be
+    detected. This is the gate's own #4373 witness: `shell_allowed` /
+    `skill_search` were retired keys the OLD rename-only denylist could
+    never have caught, by construction, regardless of scan scope — because
+    they were never a rename at all."""
+    assert _REMOVED_CONFIG_KEYS, "the registry must be non-empty for this test to mean anything"
+    any_removed_key = next(iter(_REMOVED_CONFIG_KEYS))
+    assert any_removed_key not in _RENAMED_CONFIG_KEYS, (
+        "test precondition: the two registries must be disjoint, or this "
+        "test can't tell which one actually caught the key"
+    )
+    _write(tmp_path, "docs/guide/example.md", f"{any_removed_key}: x\n")
+    _git_repo(tmp_path)
+    _add(tmp_path)
+    offenders = offending_lines(tmp_path)
+    assert [k for _, _, k, _ in offenders] == [any_removed_key]
+
+
+# ── #4375 ruling ②: `.example` comment-line scanning ────────────────────────
+
+
+def test_a_commented_out_top_level_retired_key_in_dot_example_is_offending(
+    tmp_path,
+) -> None:
+    """Tier 1: #4375 — a retired key commented out at column 0 (`# key:`,
+    ONE leading space) in a `.example` file is offending. This is the
+    #4392 real-crash shape: a stale commented-out example is invisible to
+    every unknown-key check while commented, and only bites the operator
+    the moment they uncomment it to actually use the block."""
+    any_retired_key = next(iter(_RENAMED_CONFIG_KEYS))
+    _write(tmp_path, "reyn.local.yaml.example", f"# {any_retired_key}: x\n")
+    _git_repo(tmp_path)
+    _add(tmp_path)
+    offenders = offending_lines(tmp_path)
+    assert [k for _, _, k, _ in offenders] == [any_retired_key]
+
+
+def test_a_commented_out_nested_key_in_dot_example_is_not_offending(tmp_path) -> None:
+    """Tier 1: #4375 — a retired key commented out at NESTED position
+    (`#   key:`, 2+ leading spaces after `#`, mirroring the YAML indent it
+    would have if uncommented) in a `.example` file is NOT offending —
+    same "indented nested key sharing a retired name" exclusion the bare
+    (non-`.example`) case already has, applied to the comment-prefixed
+    form too. This is the false positive a naive `#\\s*` (unbounded
+    whitespace) pattern would reintroduce: `reyn.local.yaml.example`'s own
+    real convention marks a NESTED commented key with extra leading
+    spaces (`# llm:` then `#   model:` for `llm.model`)."""
+    any_retired_key = next(iter(_RENAMED_CONFIG_KEYS))
+    _write(
+        tmp_path, "reyn.local.yaml.example",
+        f"# llm:\n#   {any_retired_key}: x\n",
+    )
+    _git_repo(tmp_path)
+    _add(tmp_path)
+    offenders = offending_lines(tmp_path)
+    assert offenders == []
+
+
+def test_a_commented_out_retired_key_in_docs_is_not_offending(tmp_path) -> None:
+    """Tier 1: #4375 ruling ② — the comment-prefix form applies ONLY to
+    `.example` files. A `docs/**` file's `# key:` stays invisible (prose
+    scope, unchanged from before this PR) — a doc explaining a rename in
+    prose (`` # models: moved to llm.models ``) must not itself trip the
+    gate (#3559's "the disciplined party pays" shape)."""
+    any_retired_key = next(iter(_RENAMED_CONFIG_KEYS))
+    _write(tmp_path, "docs/guide/example.md", f"# {any_retired_key}: x\n")
+    _git_repo(tmp_path)
+    _add(tmp_path)
+    offenders = offending_lines(tmp_path)
+    assert offenders == []
 
 
 # ── the real committed tree ─────────────────────────────────────────────────

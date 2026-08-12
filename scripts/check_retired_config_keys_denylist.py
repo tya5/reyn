@@ -34,21 +34,38 @@ surrounding example happens to be for (mostly — see the "different schema
 still collides" note below, which is exactly why a small file-level
 allowlist exists alongside this denylist).
 
-## Single source: `_RENAMED_CONFIG_KEYS`, not a second hand-kept list
+## Single source: `_RENAMED_CONFIG_KEYS` + `_REMOVED_CONFIG_KEYS`, not a
+## second hand-kept list
 
-The denylist is `reyn.config.config_schema._RENAMED_CONFIG_KEYS` — the SAME
-registry `reyn config validate`/`migrate` already reads, already populated
-incrementally, in the SAME PR as each rename, by #4174's own T1-T7 practice
-(see that module's docstring). This script adds no maintenance burden of
-its own: a future rename that registers a `RenamedKeyHint` is picked up
-here for free. It deliberately does NOT hand-roll a parallel list — CLAUDE.md's
-own recurring lesson (`control-ir.md` vs `OP_KIND_MODEL_MAP`) is that a second
-registry nobody is obligated to update is worse than no registry.
+The denylist is the UNION of `reyn.config.config_schema._RENAMED_CONFIG_KEYS`
+and `_REMOVED_CONFIG_KEYS` (#4375) — the SAME registries `reyn config
+validate`/`migrate` already read, already populated incrementally, in the
+SAME PR as each rename or removal (#4174's T1-T7 practice for renames;
+#4375's own practice for removals — see that module's docstring). This
+script adds no maintenance burden of its own: a future rename or removal
+that registers a hint is picked up here for free. It deliberately does NOT
+hand-roll a parallel list — CLAUDE.md's own recurring lesson (`control-ir.md`
+vs `OP_KIND_MODEL_MAP`) is that a second registry nobody is obligated to
+update is worse than no registry.
+
+#4375 also closed the gate's OWN gap this registry split exposed: #4373 had
+hand-fixed 2 retired keys (`shell_allowed` / `skill_search`) that were never
+in `_RENAMED_CONFIG_KEYS` at all — they were REMOVED, not renamed, so the
+old rename-only denylist could never have caught them regardless of scan
+scope. Both are in `_REMOVED_CONFIG_KEYS`'s population now.
 
 ## Detection: line-START only, not "key anywhere"
 
 Only a match at column 0 (`^key:`) counts — a *top-level* YAML mapping key
-position. This deliberately does NOT catch:
+position. #4375, ruling ②: `*.example` files ALSO match `# key:` (a single
+optional leading `#` + at most one space, still column-0 anchored — see
+`_pattern`'s own docstring) — a `.example` file presents every optional
+field commented-out, so a stale commented-out top-level example is that
+file's version of the same drift a bare top-level key is everywhere else
+(#4392's real crash: an operator uncommenting a stale block). `docs/**`
+stays bare-only — a doc explaining a rename in prose must not itself trip
+the gate. Column 0 (bare or `.example`-commented) deliberately does NOT
+catch:
 
 - **dotted mentions** (`web.fetch.max_download_bytes`, prose citing a
   nested field by its full path) — these aren't claiming the OLD top-level
@@ -180,20 +197,62 @@ _EXCLUDED_FILE_KEYS: "dict[str, frozenset[str]]" = {
     "docs/deep-dives/contributing/dogfood-tooling.md": frozenset({"model"}),
     "docs/reference/builtin-models.md": frozenset({"model"}),
     "docs/reference/builtin-models.ja.md": frozenset({"model"}),
+    # #4375: `reyn agent show`'s OWN CLI output shape (`name:` /
+    # `created_at:` / `workspace:` / `role:`), not a `reyn.yaml` example —
+    # `workspace` is #4375's own removed-key population, and this is
+    # exactly the collision architect measured 532 candidates of (a
+    # common word legitimately used by a different schema). Confirmed by
+    # reading the whole file: this is the ONLY retired-key collision in
+    # either file, and it appears once, inside the `reyn agent show`
+    # sample output block.
+    "docs/reference/cli/agent.md": frozenset({"workspace"}),
+    "docs/reference/cli/agent.ja.md": frozenset({"workspace"}),
 }
 
 
 def _retired_keys() -> "dict[str, str]":
-    """The denylist itself: ``{old_top_level_key: note}`` straight from
-    ``_RENAMED_CONFIG_KEYS`` — see module docstring "Single source"."""
-    from reyn.config.config_schema import _RENAMED_CONFIG_KEYS
-    return {key: hint.note for key, hint in _RENAMED_CONFIG_KEYS.items()}
+    """The denylist itself: ``{old_top_level_key: note}`` — the UNION of
+    ``_RENAMED_CONFIG_KEYS`` (moved) and ``_REMOVED_CONFIG_KEYS`` (deleted,
+    no successor) — see module docstring "Single source". #4375: a
+    RETIRED key is retired either way; the two registries exist because
+    the operator's remedy differs (rewrite vs. delete), not because this
+    gate cares — both describe a key that must not appear in a current
+    ``reyn.yaml`` example, which is this gate's only question. The two
+    key-sets are disjoint by construction (each dict is populated once,
+    in the PR that renames or removes that key — nothing writes the same
+    key into both)."""
+    from reyn.config.config_schema import _REMOVED_CONFIG_KEYS, _RENAMED_CONFIG_KEYS
+    return {
+        key: hint.note
+        for key, hint in (*_RENAMED_CONFIG_KEYS.items(), *_REMOVED_CONFIG_KEYS.items())
+    }
 
 
-def _pattern(keys: "list[str]") -> "re.Pattern[str]":
+def _pattern(keys: "list[str]", *, allow_comment_prefix: bool) -> "re.Pattern[str]":
     alt = "|".join(re.escape(k) for k in sorted(keys))
     # Column-0 anchor (`^`, no leading whitespace) = top-level YAML mapping
     # key position — see module docstring "Detection: line-START only".
+    if allow_comment_prefix:
+        # #4375, lead-coder's ruling ②: `.example` files ONLY — an OPTIONAL
+        # `# ` (exactly one space, or none) before the key. Measured
+        # against the real file rather than assumed: `reyn.local.yaml.example`
+        # marks a TOP-LEVEL commented key as `# key:` (one space) and a
+        # NESTED one as `#   key:` (3+ spaces, mirroring the 2-space YAML
+        # indent it would have if uncommented — `# llm:` then `#   model:`
+        # for `llm.model`). A bare `\s*` here would match the nested form
+        # too and reintroduce exactly the false positive column-0 anchoring
+        # exists to avoid (caught by running this gate against the real
+        # file during development — `#   model:` under `# llm:` matched
+        # before this was narrowed to `#?` with NO wildcard span). In a
+        # `.example` file the comment IS the body — every optional field is
+        # presented commented-out — so this is the file's normal shape, not
+        # prose; #4392's real crash (an operator uncommenting a stale
+        # `api_base:`/`models:` block) was invisible to the bare-only
+        # pattern for exactly this reason. NOT applied to `docs/**` —
+        # ruling ② keeps that scope as prose (a doc explaining a move,
+        # `` `model:` moved to `llm.model:` ``, would otherwise itself
+        # trip the gate — #3559's "the disciplined party pays" shape).
+        return re.compile(r"^#?(?: )?(" + alt + r"):(\s|$)")
     return re.compile(r"^(" + alt + r"):(\s|$)")
 
 
@@ -221,7 +280,12 @@ def offending_lines(root: Path = _ROOT) -> "list[tuple[Path, int, str, str]]":
     top-level key appears at YAML top-level (column 0) — the gate's entire
     decision, isolated from CLI/printing so it is directly testable."""
     keys = _retired_keys()
-    pattern = _pattern(list(keys))
+    key_list = list(keys)
+    # #4375, lead-coder's ruling ②: two patterns, chosen per file — see
+    # `_pattern`'s own docstring for why `.example` alone gets the
+    # comment-prefix form.
+    bare_pattern = _pattern(key_list, allow_comment_prefix=False)
+    example_pattern = _pattern(key_list, allow_comment_prefix=True)
     offenders: list[tuple[Path, int, str, str]] = []
     for path in _iter_scan_files(root):
         try:
@@ -229,6 +293,7 @@ def offending_lines(root: Path = _ROOT) -> "list[tuple[Path, int, str, str]]":
         except (OSError, UnicodeDecodeError):
             continue
         rel_s = str(path.relative_to(root))
+        pattern = example_pattern if path.name.endswith(".example") else bare_pattern
         excluded_keys = _EXCLUDED_FILE_KEYS.get(rel_s, frozenset())
         for lineno, line in enumerate(text.splitlines(), start=1):
             m = pattern.match(line)
