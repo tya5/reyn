@@ -201,9 +201,9 @@ _INGEST_QUERY_FIXTURE_PATH = _FIXTURE_DIR / "turn2_ingest_query.jsonl"
 _STUB_MARKITDOWN_SERVER = '''
 import base64
 from urllib.parse import urlsplit
-from mcp.server.fastmcp import FastMCP
+from mcp.server.mcpserver import MCPServer
 
-mcp = FastMCP("stub-markitdown")
+mcp = MCPServer("stub-markitdown")
 
 
 @mcp.tool()

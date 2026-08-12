@@ -14,14 +14,6 @@ registered (``get_capabilities()``), so a server that registers ONLY
 gets ``resources`` non-None and ``tools`` None — the real differentiator this
 gate slice needs to prove ``MCPClient.supports()`` reads the ACTUAL negotiated
 capabilities rather than a hardcoded reyn-side assumption.
-
-#4368 (mcp 2.0 port, arc #4412): this is a standalone test-only script, not
-production surface the ``_mcp_server_boundary`` seam is scoped to (owner
-ruling via lead-coder, #4368: growing the seam's registration API for every
-test-only handler kind isn't warranted). Written plain, in the CURRENTLY
-INSTALLED pin's own decorator API + field-name vocabulary (1.x today); the
-arc's pin-bump PR flips this file's decorators/field names in the same
-mechanical pass as every other pin-vocabulary call site.
 """
 from __future__ import annotations
 
@@ -31,19 +23,39 @@ import mcp.types as types
 from mcp.server.lowlevel import Server
 from mcp.server.stdio import stdio_server
 
-app = Server("reyn-test-resources")
-
 _URI = "resource://greeting"
 
 
-@app.list_resources()
-async def list_resources() -> list[types.Resource]:
-    return [types.Resource(uri=_URI, name="greeting", mimeType="text/plain")]
+# #4368 (mcp 2.0 port): lowlevel.Server's @list_resources()/@read_resource()
+# decorators are gone on mcp 2.0 (measured live) -- handlers are now plain
+# functions passed as Server(...) constructor kwargs instead, so they are
+# defined BEFORE construction. Each handler now receives
+# (ctx: ServerRequestContext, params: <X>RequestParams) directly and must
+# return the typed <X>Result object -- see src/reyn/mcp/server.py's own
+# port commit for the full rationale, identical here. Resource.mimeType
+# renamed to mime_type (verified live); on_read_resource must return a
+# ReadResourceResult directly -- the old decorator's "bare str auto-wraps"
+# convenience sugar is gone (confirmed: no normalisation layer between the
+# handler's return value and the wire response on the 2.0 registration
+# path).
+async def list_resources(ctx: "object", params: "object") -> "types.ListResourcesResult":
+    return types.ListResourcesResult(resources=[
+        types.Resource(uri=_URI, name="greeting", mime_type="text/plain"),
+    ])
 
 
-@app.read_resource()
-async def read_resource(uri) -> str:
-    return "hello from a resource"
+async def read_resource(
+    ctx: "object", params: "types.ReadResourceRequestParams",
+) -> "types.ReadResourceResult":
+    return types.ReadResourceResult(contents=[types.TextResourceContents(
+        uri=str(params.uri), mime_type="text/plain", text="hello from a resource",
+    )])
+
+
+app = Server(
+    "reyn-test-resources",
+    on_list_resources=list_resources, on_read_resource=read_resource,
+)
 
 
 async def main() -> None:

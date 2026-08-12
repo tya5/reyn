@@ -110,14 +110,16 @@ class _ErroringFastMCPClient:
     async def call_tool(
         self, name: str, arguments: "dict | None" = None, **kwargs: Any,
     ) -> Any:
-        # `_result_to_dict` (reyn.mcp.client) reads `.content`/`.isError` as
-        # plain ATTRIBUTES (mirrors ``mcp.types.CallToolResult``), and a
-        # content item is either a pydantic model (``model_dump()``) or a
-        # plain dict passed through unchanged -- the latter is simplest here.
+        # `_result_to_dict` (reyn.mcp.client) reads `.content`/`.is_error`
+        # as plain ATTRIBUTES (mirrors ``mcp.types.CallToolResult`` -- #4412
+        # pin-bump PR: snake_case on mcp 2.0, confirmed live via
+        # model_fields; was camelCase on 1.x), and a content item is either
+        # a pydantic model (``model_dump()``) or a plain dict passed
+        # through unchanged -- the latter is simplest here.
         class _Result:
             content = [{"type": "text", "text": self._error_text}]
-            isError = True
-            structuredContent = None
+            is_error = True
+            structured_content = None
 
         return _Result()
 
@@ -179,8 +181,8 @@ def test_mcp_completed_event_carries_no_error_text_on_success() -> None:
         async def call_tool(self, name: str, arguments=None, **kwargs: Any) -> Any:
             class _Result:
                 content = [{"type": "text", "text": "ok"}]
-                isError = False
-                structuredContent = None
+                is_error = False
+                structured_content = None
             return _Result()
 
     _bypass_initialize(client, _OkFastMCPClient())

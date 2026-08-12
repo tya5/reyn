@@ -65,8 +65,8 @@ _SILENT_SERVER_SRC = textwrap.dedent(
 # healthy launches would trade the owner's hang for the owner's broken startup.
 _HEALTHY_SERVER_SRC = textwrap.dedent(
     '''
-    from mcp.server.fastmcp import FastMCP
-    mcp = FastMCP("t3028healthy")
+    from mcp.server.mcpserver import MCPServer
+    mcp = MCPServer("t3028healthy")
 
     @mcp.tool()
     def echo(text: str) -> str:

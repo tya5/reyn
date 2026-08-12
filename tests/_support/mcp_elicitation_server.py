@@ -46,10 +46,10 @@ Tools:
 """
 from __future__ import annotations
 
-from mcp.server.fastmcp import Context, FastMCP
+from mcp.server.mcpserver import Context, MCPServer
 from pydantic import BaseModel, create_model
 
-mcp = FastMCP("reyn-test-elicitation")
+mcp = MCPServer("reyn-test-elicitation")
 
 
 class _BoolValue(BaseModel):
@@ -79,7 +79,7 @@ async def pick(question: str, ctx: Context) -> str:
         "required": ["value"],
     }
     result = await ctx.session.elicit_form(
-        message=question, requestedSchema=schema, related_request_id=ctx.request_id,
+        message=question, requested_schema=schema, related_request_id=ctx.request_id,
     )
     if result.action != "accept":
         return result.action  # "decline" | "cancel"

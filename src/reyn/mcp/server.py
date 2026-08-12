@@ -382,7 +382,7 @@ def build_server(
                     "List the agents registered in the current Reyn project. "
                     "Returns each agent's name and a short role excerpt."
                 ),
-                inputSchema={
+                input_schema={
                     "type": "object",
                     "properties": {},
                     "additionalProperties": False,
@@ -396,7 +396,7 @@ def build_server(
                     "how to respond; multi-turn conversation "
                     "accumulates because per-agent chat history persists."
                 ),
-                inputSchema={
+                input_schema={
                     "type": "object",
                     "properties": {
                         "agent_name": {
@@ -430,7 +430,7 @@ def build_server(
                     "``choice_id`` explicitly; for free-text ask_user "
                     "omit it."
                 ),
-                inputSchema={
+                input_schema={
                     "type": "object",
                     "properties": {
                         "agent_name": {
@@ -477,7 +477,7 @@ def build_server(
                 Tool(
                     name=et.name,
                     description=et.description,
-                    inputSchema=et.input_schema,
+                    input_schema=et.input_schema,
                 )
                 for et in _extra_tools
             ],
@@ -661,7 +661,7 @@ def build_server(
             # directly (= the URL points at our own resources router).
             return ReadResourceResult(contents=[TextResourceContents(
                 uri=uri_str,
-                mimeType="text/plain",
+                mime_type="text/plain",
                 text=(
                     f"error: unsupported resource URI scheme: {uri_str!r}. "
                     "Reyn MCP server resolves reyn-tool-result://<agent>/<artifact> only; "
@@ -683,14 +683,14 @@ def build_server(
         if not found:
             return ReadResourceResult(contents=[TextResourceContents(
                 uri=uri_str,
-                mimeType="text/plain",
+                mime_type="text/plain",
                 text=(
                     f"error: tool result not found for URI {uri_str!r} "
                     "(= deleted by user, or never existed on this Reyn instance)"
                 ),
             )])
         return ReadResourceResult(contents=[TextResourceContents(
-            uri=uri_str, mimeType="text/plain", text=body,
+            uri=uri_str, mime_type="text/plain", text=body,
         )])
 
     return build_mcp_server(
