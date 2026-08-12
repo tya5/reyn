@@ -466,3 +466,79 @@ def test_file_module_carries_no_skill_load_import(tmp_path):
     assert not hasattr(file_module, "is_skill_body_path")
     assert not hasattr(file_module, "load_skill_body")
     assert not hasattr(file_module, "_config_registered_skill_body_provenance")
+
+
+# ── #4431 (architect correction): truncated load_skill can resume ──────────
+#
+# load_skill shared file.py's read-bounding cap (control_ir_inline_cap) but
+# had no `char_offset`/`next_offset` support at all — a truncated skill body
+# told the model "the full body is on disk at <path>" with no way to
+# actually continue reading it. Distinct from #4431 item ③ (say a cut
+# happened) — load_skill already said so via `_truncated`; this is the
+# OUTPUT-side gap ③ doesn't cover: saying it happened is not the same as
+# being able to read the rest.
+
+
+def test_load_skill_truncated_result_carries_a_resumable_offset(tmp_path):
+    """Tier 2: an unbounded load_skill over the cap returns `next_offset` —
+    the exact field a resuming `read_file(path=..., offset=next_offset)`
+    call needs (mirrors file.py's own #1209/#2335 shape, the established
+    precedent — no new field name invented)."""
+    ctx, _events = _make_ctx(tmp_path)
+    big = "".join(f"line {i} {'.' * 60}\n" for i in range(400))
+    from reyn.core.context_builder import MAX_CONTROL_IR_RESULT_INLINE_BYTES
+    assert len(big) > MAX_CONTROL_IR_RESULT_INLINE_BYTES  # ensure over the floor cap
+    ctx.workspace.write_file("SKILL.md", big)
+
+    result = _run(load_skill_handle(LoadSkillIROp(kind="load_skill", path="SKILL.md"), ctx))
+
+    assert result["status"] == "truncated"
+    assert result["_truncated"] is True
+    assert isinstance(result["next_offset"], int) and result["next_offset"] > 0
+    assert str(result["next_offset"]) in result["note"]
+    assert "read_file" in result["note"]
+
+
+def test_load_skill_resume_via_read_file_recovers_the_exact_remainder(tmp_path):
+    """Tier 2: end-to-end — the note's own remedy actually works. Reading the
+    same path via `read_file(offset=next_offset)` picks up EXACTLY where
+    load_skill's truncated content left off (no gap, no duplicated line) —
+    concatenating the two recovers the original body byte-for-byte. This is
+    the "assert both the count and the content" discipline (#4437's own
+    review note): a plausible-looking `next_offset` that off-by-ones would
+    still pass a bare "field is present" check but fail this one."""
+    ctx, _events = _make_ctx(tmp_path)
+    # Sized to overflow the cap just enough for ONE truncation round (both
+    # load_skill and read_file share the same window-derived cap) — a
+    # bigger body would need this test to loop resume calls, which is a
+    # real thing a caller can do but not what THIS assertion is pinning.
+    big = "".join(f"line {i} {'.' * 60}\n" for i in range(130))
+    from reyn.core.context_builder import MAX_CONTROL_IR_RESULT_INLINE_BYTES
+    assert len(big) > MAX_CONTROL_IR_RESULT_INLINE_BYTES
+    ctx.workspace.write_file("SKILL.md", big)
+
+    first = _run(load_skill_handle(LoadSkillIROp(kind="load_skill", path="SKILL.md"), ctx))
+    assert first["status"] == "truncated"
+
+    rest = _run(file_handle(
+        FileIROp(kind="file", op="read", path="SKILL.md", offset=first["next_offset"]), ctx,
+    ))
+    assert rest["status"] == "ok", (
+        f"test body sized wrong — resume itself truncated again: {rest}"
+    )
+    assert first["content"] + rest["content"] == big
+
+
+def test_load_skill_under_cap_is_unaffected(tmp_path):
+    """Tier 2: accept-side twin — a small skill body is unchanged: no
+    `next_offset`, no `_truncated`, `status="ok"` as before this fix."""
+    ctx, _events = _make_ctx(tmp_path)
+    small = "---\nname: probe\n---\nsmall body\n"
+    ctx.workspace.write_file("SKILL.md", small)
+
+    result = _run(load_skill_handle(LoadSkillIROp(kind="load_skill", path="SKILL.md"), ctx))
+
+    assert result["status"] == "ok"
+    assert result["content"] == small
+    assert "next_offset" not in result
+    assert "_truncated" not in result
