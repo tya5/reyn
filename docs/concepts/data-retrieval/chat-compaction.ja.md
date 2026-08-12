@@ -50,7 +50,7 @@ Head と Tail のサイズは**トークンバジェット制**です。固定�
 
 `covers_through_seq` は圧縮ポストプロセッサが決定論的に派生させ、結果は `history.jsonl` に `role: "summary"` エントリとして追記されます。
 
-トークンバジェットは精度のためデフォルトで `litellm.token_counter` を使用し、レイテンシ重視のデプロイ向けに安価な `len(text) // 4` ヒューリスティックも利用可能です（`use_chars4_estimate: true`）。
+トークンバジェットは精度のためデフォルトで `litellm.token_counter` を使用し、レイテンシ重視のデプロイ向けに安価な `len(text) // 4` ヒューリスティックも利用可能です（`use_chars4_estimate: true`）。第三の経路は operator 設定によらず自動で発生します: `litellm.token_counter` が失敗した場合（ネットワークに本当に到達できない等）、`estimate_tokens()` は60秒のクールダウン期間だけ同じ `len(text) // 4` ヒューリスティックへフォールバックし、その後自動的に実トークナイザへ再試行します — 設定不要かつ恒久的な切り替えではありません（#4395）。
 
 ## 圧縮軸
 

@@ -35,16 +35,19 @@ from reyn.services.compaction.engine import estimate_tokens
 
 @pytest.fixture(autouse=True)
 def _clean_token_state():
-    """Tier 2 hygiene: both the token-estimate cache and the warn-once latch
-    are module-globals shared across the whole test process. Reset them for
-    isolation (setup/teardown, not an assertion — testing.ja.md's Tier-4 ban
-    is on *asserting* private state, not on resetting it between tests; the
-    same pattern used by test_compaction_token_cache_incremental.py)."""
+    """Tier 2 hygiene: the token-estimate cache, the warn-once latch, and
+    (#4395) the persistent-failure cooldown deadline are all module-globals
+    shared across the whole test process. Reset them for isolation
+    (setup/teardown, not an assertion — testing.ja.md's Tier-4 ban is on
+    *asserting* private state, not on resetting it between tests; the same
+    pattern used by test_compaction_token_cache_incremental.py)."""
     engine_mod._token_cache.clear()
     engine_mod._token_counter_fallback_warned = False
+    engine_mod._token_counter_cooldown_until = 0.0
     yield
     engine_mod._token_cache.clear()
     engine_mod._token_counter_fallback_warned = False
+    engine_mod._token_counter_cooldown_until = 0.0
 
 
 def test_empty_string_estimate_does_not_warn(caplog: pytest.LogCaptureFixture) -> None:
