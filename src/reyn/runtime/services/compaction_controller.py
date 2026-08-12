@@ -116,8 +116,8 @@ class CompactionController:
     config:
         :class:`~reyn.config.CompactionConfig` — thresholds and sizing.
     history_from_disk:
-        Callable ``(after_seq: int) -> list[ChatMessage]`` (#4472) that
-        returns every conversation turn with ``seq > after_seq``, read
+        Callable ``(after_seq: int) -> (list[ChatMessage], bool)`` (#4472)
+        that returns conversation turns with ``seq > after_seq``, read
         DIRECTLY from the durable store (``history.jsonl``), branch-
         visibility filtered, and NEVER residency-gated — so #4387's
         resident-byte cap can never make compaction blind to content it
@@ -128,6 +128,15 @@ class CompactionController:
         objects from a second source (e.g. a resident cache) here would
         silently defeat that exclusion — callers must never combine this
         with any other history source.
+
+        The ``bool`` is ``truncated`` (architect's + lead-coder's #4472
+        review: the read is capped PER CALL, not unbounded, so a large
+        backlog is examined across multiple compaction passes rather than
+        materialized in one — never claiming coverage of more than what a
+        single pass actually read). ``force_compact_now`` surfaces this on
+        the ``compaction_check``/``compaction_started`` audit events so a
+        capped-batch pass is distinguishable from "there was genuinely
+        nothing more."
     latest_summary:
         Zero-argument callable that returns the most recent ``"summary"``
         :class:`~reyn.runtime.chat_message.ChatMessage`, or ``None``.
@@ -172,7 +181,7 @@ class CompactionController:
         *,
         event_log: EventLog,
         config: CompactionConfig,
-        history_from_disk: Callable[[int], list[ChatMessage]],
+        history_from_disk: Callable[[int], "tuple[list[ChatMessage], bool]"],
         latest_summary: Callable[[], ChatMessage | None],
         compaction_engine_factory: "Callable[[], CompactionEngine]",
         history_appender: Callable[[ChatMessage], None],
@@ -312,7 +321,17 @@ class CompactionController:
         # compaction considers, so the "gap" #4470/#4471 had to detect and
         # skip around cannot occur anymore — there is nothing left for a
         # gap to be a gap IN.
-        history = self._history_from_disk(prev_cover)
+        #
+        # `batch_truncated` (architect's + lead-coder's #4472 review): the
+        # durable read is capped PER CALL (bounded MATERIALIZATION, not
+        # bounded EXAMINATION — #4470 forbids skipping unseen content, not
+        # reading a contiguous prefix of it per call). A large backlog is
+        # covered across multiple compaction passes; this pass's own
+        # `covers_through_seq` (below, `candidates[-1].seq`) already only
+        # ever reflects what THIS batch actually contained — surfaced on
+        # the audit trail so a capped-batch pass is distinguishable from
+        # "there was genuinely nothing more to compact."
+        history, batch_truncated = self._history_from_disk(prev_cover)
         turns = [
             m for m in history
             if m.role in ("user", "assistant", "tool", "agent")
@@ -321,16 +340,17 @@ class CompactionController:
             self._events.emit("compaction_check", outcome="forced_sync_no_turns")
             return
         # #4472 architect review, point ③: NOT a normal branch — a defensive
-        # invariant, not a routine outcome. `_history_from_disk` has no
-        # bound/floor on how far back it reads (unlike the old resident
-        # scan), so `turns`'s earliest real seq should always be exactly
-        # `prev_cover + 1` (or the file's own first entry, if prev_cover is
-        # 0). A hit here means something ELSE narrowed the durable read out
-        # from under this method — #4470's silent-coverage-claim defect
-        # would otherwise reopen through that new path. Kept as a LOUD,
-        # named audit outcome (not a silent skip) so a future regression
-        # that reintroduces a bound is caught immediately, not rediscovered
-        # the way #4470 itself was.
+        # invariant, not a routine outcome. The durable read always starts
+        # its batch immediately after `prev_cover` (only the END of the
+        # batch is capped, never the beginning skipped), so `turns`'s
+        # earliest real seq should always be exactly `prev_cover + 1` (or
+        # the file's own first entry, if prev_cover is 0). A hit here means
+        # something ELSE narrowed the durable read out from under this
+        # method — #4470's silent-coverage-claim defect would otherwise
+        # reopen through that new path. Kept as a LOUD, named audit outcome
+        # (not a silent skip) so a future regression that reintroduces a
+        # bound is caught immediately, not rediscovered the way #4470
+        # itself was.
         resident_seqs = [t.seq for t in turns if t.seq > 0]
         if resident_seqs and min(resident_seqs) > prev_cover + 1:
             self._events.emit(
@@ -341,6 +361,7 @@ class CompactionController:
 
         self._events.emit(
             "compaction_check", outcome="forced_sync",
+            batch_truncated=batch_truncated,
             candidate_count=len(candidates),
         )
         if not candidates:

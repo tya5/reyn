@@ -839,9 +839,9 @@ def test_force_compact_now_single_pass_no_race_recovery() -> None:
         # in for the durable source directly (freshly built each call, like
         # a real disk read would be), so narrowing by seq is a faithful
         # match to the real method's contract.
-        history_from_disk=lambda after_seq: [
-            m for m in _big_history() if m.seq == 0 or m.seq > after_seq
-        ],
+        history_from_disk=lambda after_seq: (
+            [m for m in _big_history() if m.seq == 0 or m.seq > after_seq], False,
+        ),
         latest_summary=lambda: None,
         compaction_engine_factory=lambda: engine,
         history_appender=lambda m: None,

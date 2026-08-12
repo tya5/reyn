@@ -3070,16 +3070,25 @@ class Session:
                 out.append(m)
         return out
 
-    def _durable_active_history_after(self, after_seq: int) -> "list[ChatMessage]":
+    def _durable_active_history_after(
+        self, after_seq: int,
+    ) -> "tuple[list[ChatMessage], bool]":
         """#4472: ``CompactionController``'s candidate-selection input —
         read DIRECTLY from ``history.jsonl`` (the durable store), never
         residency-gated, so #4387's byte cap can never make compaction
         blind to content it hasn't actually summarized (#4470's own root
         cause: ``self.history`` is a byte-capped CACHE, not the source of
-        truth).
+        truth). Returns ``(turns, truncated)`` — ``truncated=True`` means
+        more qualifying content exists past what was returned; the caller
+        (``CompactionController``) must only ever claim coverage up to the
+        highest seq it ACTUALLY examined this pass, never the theoretical
+        full range (see :func:`~reyn.runtime.history_tail_reader.
+        read_history_after`'s own docstring for why a batched read does
+        NOT reopen #4470 — #4470's defect was skipping unseen content, not
+        reading a contiguous prefix of it per call).
 
-        Two correctness properties architect's #4472 review named
-        explicitly, both satisfied by construction here:
+        Three correctness properties named across architect's and lead-
+        coder's #4472 review, all satisfied by construction here:
 
         - **Branch visibility (point ①)**: ``self.history`` is not the raw
           file — it's already filtered to the ACTIVE branch
@@ -3098,18 +3107,24 @@ class Session:
           exclusion (a should-stay-protected tail turn slipping into
           candidates). Reading fresh from ONE source each call makes that
           class of bug structurally unreachable, not just untested.
-
-        No ``min_lines`` cap: compaction needs the COMPLETE uncompacted
-        range above ``after_seq``, not a bounded page (a partial read
-        would silently reopen #4470's "claimed more than it examined"
-        defect from a different angle).
+        - **Bounded materialization, not bounded examination** (architect's
+          + lead-coder's independent correction of this method's first
+          draft, which read the COMPLETE ``(after_seq, EOF]`` range
+          unconditionally — genuinely unbounded memory when compaction has
+          a large backlog, exactly the class of defect #4387/#4468 exist
+          to close, reintroduced through this new path): the durable read
+          is capped PER CALL (``read_history_after``'s own ``max_bytes``),
+          so a large backlog takes multiple compaction passes to work
+          through — each pass covers exactly what it read, contiguously,
+          never skipping — rather than materializing the whole backlog in
+          one call.
         """
         from reyn.runtime.history_tail_reader import read_history_after
 
-        lines = read_history_after(self.history_path, after_seq=after_seq)
+        lines, truncated = read_history_after(self.history_path, after_seq=after_seq)
         parsed = [m for line in lines if (m := self._parse_history_line(line)) is not None]
         if self._state_log is None:
-            return parsed
+            return parsed, truncated
         from reyn.core.events.snapshot_generations import build_active_predicate
 
         is_active = build_active_predicate(self._state_log)
@@ -3117,7 +3132,7 @@ class Session:
         def _active(seq: "int | None") -> bool:
             return seq is None or is_active(seq)
 
-        return self._filter_visible_on_active_branch(parsed, _active)
+        return self._filter_visible_on_active_branch(parsed, _active), truncated
 
     def last_sender(self) -> str | None:
         """Return the most-recently-attributed sender label or None if no

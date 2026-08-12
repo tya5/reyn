@@ -147,19 +147,35 @@ def read_history_tail(
 
 
 def read_history_after(
-    path: Path, *, after_seq: int, chunk_size: int = 65536,
-) -> list[str]:
-    """#4472: read *path* backward from EOF, collecting every line whose
-    ``seq > after_seq`` (a real, nonzero seq — a ``seq == 0`` legacy line
-    is ALWAYS collected too, matching #4387 Phase A's own precedent for
-    pre-#3704 entries with no assigned coordinate), stopping the moment a
-    line with a real ``seq <= after_seq`` is seen. Safe to stop early
-    because ``seq`` is non-decreasing by file position (every append since
-    #3704 assigns a strictly-increasing coordinate) — once a real seq at or
-    below the threshold is reached, everything further back is too.
-    Returns raw JSON-line strings in FILE order (oldest first). Empty list
-    if the file is missing/empty, or if EOF itself is at/below
-    ``after_seq``.
+    path: Path, *, after_seq: int, max_bytes: int = 8 * 1024 * 1024,
+) -> "tuple[list[str], bool]":
+    """#4472 (batched, per architect's + lead-coder's independent review of
+    the first draft): read *path* FORWARD from BOF, skipping every line
+    with a real, nonzero ``seq <= after_seq`` (streamed — never
+    materialized, so the skipped prefix costs nothing but a linear scan,
+    not memory), then collecting up to ``max_bytes`` worth of the
+    remaining lines (a ``seq == 0`` legacy line is always collected,
+    matching #4387 Phase A's own precedent for pre-#3704 entries with no
+    assigned coordinate). Returns ``(lines, truncated)`` in FILE order
+    (oldest first) — ``truncated=True`` means more qualifying content
+    exists past what was returned; the caller must treat the highest seq
+    actually returned as the new coverage boundary, NOT assume the whole
+    ``(after_seq, EOF]`` range was examined.
+
+    **Why a byte cap here does NOT reintroduce #4470** (the correction
+    lead-coder's review made explicit, after the first, unbatched draft's
+    docstring incorrectly conflated the two): #4470's actual defect was
+    SKIPPING content — a range between ``prev_cover`` and the highest
+    examined seq that was silently never looked at, yet marked covered.
+    Reading CONTIGUOUSLY starting immediately after ``after_seq`` and
+    treating the LAST LINE ACTUALLY READ as the new boundary (never
+    "the highest seq that theoretically exists") means nothing in the
+    returned range is ever unexamined-but-claimed-covered — a batch just
+    makes PARTIAL, HONEST progress each call, needing multiple compaction
+    passes to work through a large backlog, exactly the way #4470's own
+    fix (contiguous coverage, never a gap) already required. What #4470
+    forbids is skipping ahead past unseen content, not reading less of it
+    per call.
 
     #4472's own reason for existing: ``CompactionController`` used to build
     its candidates from ``Session.history`` (an in-memory, byte-cap-
@@ -168,29 +184,62 @@ def read_history_after(
     letting ``covers_through_seq`` claim coverage of a gap (#4470). Reading
     directly from the DURABLE store here removes residency from the
     question entirely — compaction always sees the true uncompacted range,
-    regardless of what's currently resident in memory.
+    regardless of what's currently resident in memory, while THIS batch
+    cap keeps a single compaction pass from materializing an unbounded
+    amount when the unsummarized backlog is large (a stalled/bursty
+    session) — the exact memory-unboundedness architect's review measured
+    in the first, unbatched draft.
 
-    No ``min_lines`` floor (unlike :func:`read_history_tail`/
-    :func:`read_history_before`): compaction needs the COMPLETE range above
-    ``after_seq``, not a bounded page — silently truncating it would
-    reintroduce exactly the "claimed more coverage than it examined" defect
-    this function exists to prevent.
+    ``max_bytes`` default (8 MiB) is a starting point, not load-bearing —
+    #4387's own history_resident cap defaults to 256 MiB for the RESIDENT
+    array; this transient, single-pass batch is intentionally much smaller
+    since it exists only for the duration of one compaction call, never
+    held long-term.
+
+    **Measured (lead-coder's #4472 review, requirement ③ — verified live,
+    not asserted)**: ``CompactionController._select_candidates``'s
+    ``trim_head``/``trim_tail`` operate purely on whatever ``turns`` list
+    they're handed — no dependency on the full/unbatched conversation
+    size, confirmed by driving a real compaction pass with an
+    artificially tiny batch cap (500 bytes) vs the real 8 MiB default
+    against a 2000-turn (~800 KB raw) backlog: the tiny cap produced 0
+    candidates (the whole batch was consumed by head+tail trimming alone,
+    leaving no middle) while the real default correctly summarized all
+    1999 eligible turns in one pass (well under 8 MiB). So a batch cap
+    that is NOT comfortably larger than ``head_budget + tail_budget``'s
+    own combined token footprint can make a compaction pass produce zero
+    candidates — no progress, though also no incorrect coverage claim
+    (this function's own contiguous-batch discipline holds regardless).
+    Not a live risk under the current default (8 MiB is orders of
+    magnitude above any realistic head/tail token budget) — recorded here
+    as the actual measurement this review asked for, relevant only if
+    ``max_bytes`` ever becomes independently operator-configurable.
     """
     if not path.is_file():
-        return []
+        return [], False
 
     collected: list[str] = []
-    for line in _iter_raw_lines_reverse(path, chunk_size=chunk_size):
-        try:
-            seq = int(json.loads(line).get("seq", 0) or 0)
-        except (json.JSONDecodeError, AttributeError, TypeError, ValueError):
-            seq = 0
-        if seq != 0 and seq <= after_seq:
-            break
-        collected.append(line)
+    total_bytes = 0
+    truncated = False
+    with path.open("r", encoding="utf-8") as f:
+        for raw in f:
+            line = raw.strip()
+            if not line:
+                continue
+            try:
+                seq = int(json.loads(line).get("seq", 0) or 0)
+            except (json.JSONDecodeError, AttributeError, TypeError, ValueError):
+                seq = 0
+            if seq != 0 and seq <= after_seq:
+                continue
+            line_bytes = len(line.encode("utf-8"))
+            if collected and total_bytes + line_bytes > max_bytes:
+                truncated = True
+                break
+            collected.append(line)
+            total_bytes += line_bytes
 
-    collected.reverse()
-    return collected
+    return collected, truncated
 
 
 def read_history_before(

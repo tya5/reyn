@@ -166,11 +166,93 @@ def test_active_branch_history_still_agrees_with_compaction_after_a_rewind(
     asyncio.run(checkout(state_log, target_seq=anchors[2]))  # hide turns 4-7
 
     visible_resident = [m.content for m in s._active_branch_history()]
-    visible_durable = [m.content for m in s._durable_active_history_after(0)]
+    durable_turns, _truncated = s._durable_active_history_after(0)
+    visible_durable = [m.content for m in durable_turns]
 
     assert visible_resident == visible_durable == ["turn-1", "turn-2", "turn-3"], (
         "the resident (_active_branch_history) and durable "
         "(_durable_active_history_after) branch-visibility filters must "
         "agree exactly -- they share the same underlying filter helper, "
         "so a divergence here means that sharing broke"
+    )
+
+
+def test_a_capped_batch_makes_honest_incremental_progress_across_passes(
+    tmp_path, monkeypatch,
+):
+    """Tier 2: architect's + lead-coder's #4472 review (the corrected
+    requirement, after the first draft read the COMPLETE uncovered range
+    unconditionally — genuinely unbounded memory when compaction has a
+    large backlog, #4387/#4468's own memory-cap purpose defeated through
+    this new path). A capped batch read must still make GENUINE progress:
+    covers_through_seq only ever reflects what a pass actually examined
+    (never more), and a SECOND pass picks up exactly where the first left
+    off — proving the "examine everything, eventually, honestly" property
+    #4470 requires holds across multiple bounded passes, not just one
+    unbounded one."""
+    monkeypatch.chdir(tmp_path)
+    s, state_log = _make_session(tmp_path, monkeypatch)
+    prompt_calls: list = []
+    _script_compaction_llm(monkeypatch, prompt_calls)
+
+    from tests._support.events import collect_events
+
+    events = collect_events(s._audit_events)
+
+    # A real, sizeable backlog -- each turn ~4KB, 30 turns -> ~120KB raw,
+    # comfortably larger than a small forced batch cap below.
+    pad = "x" * 4000
+    for i in range(30):
+        asyncio.run(_turn(s, state_log, f"turn-{i} {pad}"))
+
+    import reyn.runtime.history_tail_reader as htr
+    orig_reader = htr.read_history_after
+
+    def _tiny_batch_reader(path, *, after_seq, max_bytes=8 * 1024 * 1024):
+        # Force a batch cap small enough to guarantee truncation against
+        # the ~120KB backlog above, while still leaving enough headroom
+        # over head_budget+tail_budget (~74+112 tokens ~ a few hundred
+        # bytes with chars4) for real middle candidates to survive --
+        # the exact sizing constraint this PR's own docstring measurement
+        # documents.
+        return orig_reader(path, after_seq=after_seq, max_bytes=20_000)
+
+    monkeypatch.setattr(htr, "read_history_after", _tiny_batch_reader)
+
+    result1 = asyncio.run(s._compact_now_for_op())
+    assert result1["summarized_turns"] > 0, "sanity: the first pass must make real progress"
+
+    first_summary = s._latest_summary()
+    assert first_summary is not None
+    first_cover = first_summary.meta["covers_through_seq"]
+    assert first_cover < 30, (
+        "the capped batch must NOT claim to cover the whole 30-turn "
+        "backlog in one pass -- if it does, the batch cap isn't actually "
+        "constraining anything and this test's own premise is broken"
+    )
+
+    forced_sync_events = [
+        e for e in events
+        if getattr(e, "type", None) == "compaction_check"
+        and (getattr(e, "data", None) or {}).get("outcome") == "forced_sync"
+    ]
+    assert forced_sync_events, "sanity: at least one real compaction pass must have run"
+    assert forced_sync_events[0].data.get("batch_truncated") is True, (
+        "the audit trail must mark this pass as a truncated (capped) "
+        "batch -- distinguishable from 'there was genuinely nothing more'"
+    )
+
+    # A second pass must pick up exactly where the first left off and make
+    # FURTHER progress -- honest incremental coverage, not a stall.
+    result2 = asyncio.run(s._compact_now_for_op())
+    assert result2["summarized_turns"] > 0, (
+        "a second pass must make further progress on the remaining "
+        "backlog -- if this is 0, batching silently stalled instead of "
+        "continuing"
+    )
+    second_cover = s._latest_summary().meta["covers_through_seq"]
+    assert second_cover > first_cover, (
+        "covers_through_seq must have advanced further on the second "
+        "pass -- proving the batches are contiguous and cumulative, "
+        "never re-examining or skipping"
     )

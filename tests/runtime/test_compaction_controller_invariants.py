@@ -93,9 +93,12 @@ def _make_controller(
         # tests/runtime/test_4472_compaction_reads_durable_store.py against
         # a real Session + real history.jsonl instead) — this just narrows
         # the same list by seq, matching the real method's contract.
-        history_from_disk=lambda after_seq: [
-            m for m in history if m.seq == 0 or m.seq > after_seq
-        ],
+        # (list, truncated=False) -- these unit tests never exercise the
+        # #4472 batch cap itself (covered end-to-end by
+        # test_4472_compaction_reads_durable_store.py instead).
+        history_from_disk=lambda after_seq: (
+            [m for m in history if m.seq == 0 or m.seq > after_seq], False,
+        ),
         latest_summary=_latest_summary,
         compaction_engine_factory=lambda: engine,
         history_appender=history.append,
