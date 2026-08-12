@@ -587,7 +587,7 @@ what happens afterwards. Both `continuity` and `display` default **on**.
 > path; litellm auto-manages that when it's left on the wire — a known
 > provider-dependency, not implemented here (proxy + Gemini reality).
 
-## `safety` block
+## `safety` config block
 
 Unified stop-condition namespace. Each value can be overridden per-invocation by the matching CLI flag. (The old top-level `limits:` key is gone; `safety:` is the single source of truth.)
 
