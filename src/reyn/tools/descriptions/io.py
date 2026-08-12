@@ -187,10 +187,45 @@ PARAMS: dict[str, dict[str, ParamDescription]] = {
         ),
         "limit": ParamDescription(
             text=(
-                "Number of lines to read from `offset`. "
-                "Omit to read through end of file."
+                "Number of lines to read from `offset`. Omitting it does "
+                "NOT guarantee reading through end of file — a remaining "
+                "span too large for the model's context window is still "
+                "cut. If it is, the result flags it (`status: "
+                "\"truncated\"`, `_truncated: true`) instead of silently "
+                "returning a partial file, and carries `next_offset` (and "
+                "`next_char_offset` when a single line alone was too "
+                "long) to resume from — pass those back as `offset` (and "
+                "`char_offset`) on the next call."
             ),
-            ja="`offset` から読む行数。省略時はファイル末尾まで読む。",
+            ja=(
+                "`offset` から読む行数。省略しても必ずファイル末尾まで"
+                "読めるとは限らない — モデルのコンテキスト窓に収まらない"
+                "残り部分は切り詰められる。切り詰められた場合は黙って"
+                "一部だけ返すのではなく結果に `status: \"truncated\"`（"
+                "`_truncated: true`）が立ち、続きを読むための "
+                "`next_offset`（1 行が単独で長すぎた場合は "
+                "`next_char_offset` も）を含む — 次回呼び出しでそれらを "
+                "`offset`（`char_offset`）として渡すこと。"
+            ),
+        ),
+        "char_offset": ParamDescription(
+            text=(
+                "Character position within the line at `offset` to resume "
+                "from. Only needed when a PREVIOUS truncated read of this "
+                "same file returned `next_char_offset` (a single line "
+                "longer than the context window, cut mid-line) — pass "
+                "that value back here to continue from where it was cut, "
+                "instead of re-reading the same oversized line from its "
+                "start and truncating identically again."
+            ),
+            ja=(
+                "`offset` 行内で読み再開する文字位置。同じファイルの"
+                "直前の切り詰め読み取りが `next_char_offset` を返した"
+                "場合（1 行がコンテキスト窓より長く、行の途中で"
+                "切られた場合）にのみ必要 — その値をここに渡すことで、"
+                "切られた箇所から続きを読める。渡さないと同じ長すぎる"
+                "行を先頭から読み直し、同じところでまた切り詰められる。"
+            ),
         ),
     },
     "edit_file": {

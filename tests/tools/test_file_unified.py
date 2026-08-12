@@ -103,11 +103,19 @@ def test_read_file_router_render_exact_description():
 
 def test_read_file_router_render_exact_parameters():
     """Tier 2: READ_FILE parameters schema pins the LLM-visible shape — ``path``
-    is required, optional ``offset`` / ``limit`` expose the line-slice
-    capability that already exists in ``op_runtime/file.py``. This shape is
-    the read-side symmetry contract shared with ``reyn_repo_read`` and
-    ``read_memory_body``; widening it should be a deliberate cross-surface
-    decision, not a drift."""
+    is required, optional ``offset`` / ``limit`` / ``char_offset`` expose the
+    line-slice + mid-line-resume capability that already exists in
+    ``op_runtime/file.py``. This shape is the read-side symmetry contract
+    shared with ``reyn_repo_read`` and ``read_memory_body``; widening it
+    should be a deliberate cross-surface decision, not a drift.
+
+    #4381: ``char_offset`` added and ``limit``'s description corrected — it
+    previously claimed "Omit to read through end of file", which
+    ``op_runtime/file.py`` does not actually guarantee (a remaining span
+    too large for the model's context window still gets cut); the
+    corrected text also names ``next_char_offset``, which used to be
+    returned by a truncated read but had no schema field to receive it
+    back on the following call."""
     rendered = READ_FILE.render_for_router()
     expected_parameters = {
         "type": "object",
@@ -123,8 +131,27 @@ def test_read_file_router_render_exact_parameters():
             "limit": {
                 "type": "integer",
                 "description": (
-                    "Number of lines to read from `offset`. "
-                    "Omit to read through end of file."
+                    "Number of lines to read from `offset`. Omitting it does "
+                    "NOT guarantee reading through end of file — a remaining "
+                    "span too large for the model's context window is still "
+                    "cut. If it is, the result flags it (`status: "
+                    "\"truncated\"`, `_truncated: true`) instead of silently "
+                    "returning a partial file, and carries `next_offset` (and "
+                    "`next_char_offset` when a single line alone was too "
+                    "long) to resume from — pass those back as `offset` (and "
+                    "`char_offset`) on the next call."
+                ),
+            },
+            "char_offset": {
+                "type": "integer",
+                "description": (
+                    "Character position within the line at `offset` to resume "
+                    "from. Only needed when a PREVIOUS truncated read of this "
+                    "same file returned `next_char_offset` (a single line "
+                    "longer than the context window, cut mid-line) — pass "
+                    "that value back here to continue from where it was cut, "
+                    "instead of re-reading the same oversized line from its "
+                    "start and truncating identically again."
                 ),
             },
         },

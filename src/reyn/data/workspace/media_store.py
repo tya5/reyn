@@ -58,11 +58,46 @@ Out of scope (= future work):
 from __future__ import annotations
 
 import hashlib
+import json
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
 from reyn.services.offload.store import offload_value, read_offloaded
+
+#: #4381: one JSON object per line (``{"path": "<absolute path>"}``), one
+#: line per :meth:`MediaStore.save_tool_result` write — the persisted
+#: cross-process spill-provenance manifest.
+#:
+#: Lives under ``.reyn/cache/``, NOT under ``tool_results_dir`` (where it
+#: first landed — lead-coder review, #4432 round 3): every file
+#: ``tool_results_dir`` holds is written through this exact path
+#: (``offload_value`` in :meth:`save_tool_result` is its ONLY writer), so a
+#: consumer that lists that directory and expects "N spill artifacts" is
+#: entitled to get exactly N — mixing the ledger into the same namespace
+#: broke that (``tests/runtime/test_2425_step1c_chat_chokepoint.py``'s
+#: ``sorted(store.tool_results_dir.iterdir())`` unpack). ``.reyn/tool-
+#: results/`` is also classified *audit* (append-only forensic record,
+#: never read back) in ``reyn-dir-layout.md`` — this manifest IS read back,
+#: every process start, so it does not belong in an audit-only namespace
+#: either. ``.reyn/cache/`` fits the *derived* classification's spirit
+#: (ordinary writable zone, not recovery-core, ``budget_checkpoint.json``
+#: precedent) even though this manifest is not literally rebuildable from
+#: other state the way that ledger-derived total is.
+#:
+#: NOT a fix for a from-the-sandbox spoof: ``.reyn/cache/`` sits in the
+#: SAME default agent file-write zone as ``.reyn/tool-results/`` did
+#: (``security/permissions/file_scope.py``'s ``ZoneStateDir`` carves out
+#: only ``.reyn/config/`` + ``.reyn/state/`` + ``approvals.yaml`` —
+#: confirmed by reading ``_RECOVERY_CORE_WRITE_PREFIXES`` /
+#: ``_CANONICAL_PROTECTED_WRITE_PATHS`` in
+#: ``security/permissions/permissions.py``, not assumed). A safe-mode
+#: ``file.write`` could still inject or erase a line here before or after
+#: this move. Closing THAT requires ``.reyn/state/`` behind a dedicated
+#: WAL-emitting op — a bigger design call, deliberately not made in this
+#: fixup (same "flag, don't silently half-fix" call as this PR's own
+#: ``MAX_CONTROL_IR_RESULT_INLINE_BYTES`` note).
+_SPILL_MANIFEST_FILENAME = "tool_result_spills.jsonl"
 
 # Conservative mapping from MIME type to file extension; unknown types
 # fall back to ``""`` so the storage layer still writes a file (= user
@@ -249,6 +284,81 @@ class MediaStore:
         # cross-host consumers can fetch via standard HTTP GET. Unset →
         # no ``url`` minted, same-host fast-path only.
         self._base_url = (base_url or "").rstrip("/") or None
+        # #4381: every path this store has itself written via
+        # ``save_tool_result`` (= a "tool result spill" — owner-ratified
+        # term, 2026-08-12: "入らないから出す。不可避・設定で止めない",
+        # distinct from "offload" = "入るけれども節約のために出す。最適化・
+        # 既定 false"). ``op_runtime/file.py``'s read handler queries this
+        # via :meth:`is_tool_result_spill` to detect and break the loop a
+        # *bare* re-read of a spilled file can otherwise cause: reading the
+        # spill file's own content can be too big for ``file.py``'s
+        # window-derived cap AGAIN, and since that cap is INDEPENDENT of
+        # the router's separate token-derived spill trigger
+        # (``services/tool_result_cap.py``), a naive truncate-and-return
+        # can come back oversized under the ROUTER's cap too and get
+        # spilled A SECOND time — a real, unbounded chain, not a
+        # hypothetical.
+        #
+        # PERSISTED (lead-coder review, #4381): a REFERENCE to a spill
+        # path survives across a restart — it can sit in ``history.jsonl``
+        # (the LLM's own past ``read_file(path=<spill>)`` call, or a tool-
+        # result-ref block from a still-open turn) long after the process
+        # that wrote the spill has exited. An in-memory-only set is EMPTY
+        # in the next process, so the guard would silently not fire for a
+        # path that genuinely is a spill — the loop this exists to close
+        # reopens across the restart boundary, not just within one
+        # process. Loaded once at construction from
+        # :data:`_SPILL_MANIFEST_FILENAME` under ``tool_results_dir``,
+        # appended to (one line per write) by :meth:`save_tool_result`.
+        # No NEW cleanup story beyond what ``.reyn/cache/`` already has
+        # (rebuilt/pruned like every other cache entry — see
+        # :data:`_SPILL_MANIFEST_FILENAME`'s own module-level docstring
+        # for why it lives there and not alongside the spill artifacts).
+        self._tool_result_spill_paths: "set[Path]" = self._load_spill_manifest()
+
+    def _spill_manifest_path(self) -> Path:
+        return self._project_root / ".reyn" / "cache" / _SPILL_MANIFEST_FILENAME
+
+    def _load_spill_manifest(self) -> "set[Path]":
+        manifest = self._spill_manifest_path()
+        if not manifest.exists():
+            return set()
+        paths: "set[Path]" = set()
+        try:
+            for line in manifest.read_text(encoding="utf-8").splitlines():
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    entry = json.loads(line)
+                    paths.add(Path(entry["path"]))
+                except (json.JSONDecodeError, KeyError, TypeError):
+                    continue  # one malformed line never invalidates the rest
+        except OSError:
+            return set()  # best-effort — an unreadable manifest degrades to empty, not a crash
+        return paths
+
+    def is_tool_result_spill(self, path: "str | Path") -> bool:
+        """#4381: whether *path* is a file THIS store itself wrote via
+        :meth:`save_tool_result` — i.e. a tool-result spill artifact, not
+        an arbitrary file that merely happens to live under
+        ``tool_results_dir`` (a path-naming/location heuristic would also
+        catch an unrelated file an operator happened to place in the same
+        directory — the reason this checks WHAT WAS ACTUALLY WRITTEN,
+        never where a path merely sits). Persisted (see the manifest note
+        in ``__init__``) — recognizes a spill written by an EARLIER
+        process too, not just this one.
+
+        Resolves *path* the same way ``save_tool_result`` resolved the
+        path it recorded (against ``project_root`` when relative), so a
+        caller may pass either the project-relative path a tool result
+        block carries or an absolute one."""
+        p = Path(path)
+        if not p.is_absolute():
+            p = (self._project_root / p).resolve()
+        else:
+            p = p.resolve()
+        return p in self._tool_result_spill_paths
 
     # ── Image storage (= .reyn/media/) ────────────────────────────────
 
@@ -358,6 +468,25 @@ class MediaStore:
         # Convert absolute path_ref to project-relative path for the block.
         abs_path = Path(result.path_ref)
         rel_path = str(abs_path.relative_to(self._project_root))
+        # #4381: record so a later ``read_file`` on this exact path — in
+        # THIS process or a LATER one (a reference to it can sit in
+        # ``history.jsonl`` past a restart) — can detect it's re-reading a
+        # spill artifact (see :meth:`is_tool_result_spill`'s own
+        # docstring for why). The in-memory set update and the manifest
+        # append are independent, best-effort: a manifest-write failure
+        # (e.g. a read-only ``tool_results_dir``) must never fail the
+        # spill write itself, which is the load-bearing operation here —
+        # it only means a FUTURE process's guard won't recognize this one
+        # path, not that this write failed.
+        resolved_path = abs_path.resolve()
+        self._tool_result_spill_paths.add(resolved_path)
+        try:
+            manifest_path = self._spill_manifest_path()
+            manifest_path.parent.mkdir(parents=True, exist_ok=True)
+            with manifest_path.open("a", encoding="utf-8") as f:
+                f.write(json.dumps({"path": str(resolved_path)}) + "\n")
+        except OSError:
+            pass
         block: dict = {
             "type": "tool_result_ref",
             "path": rel_path,

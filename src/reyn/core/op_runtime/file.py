@@ -454,6 +454,39 @@ async def handle(op: FileIROp, ctx: OpContext) -> dict:
             seg_start = 0
 
         if next_offset is not None:
+            # #4381: this read is about to come back truncated — before doing
+            # that, check whether ``op.path`` is itself a tool-result SPILL
+            # (owner-ratified term, distinct from "offload" — a spill is the
+            # unavoidable "didn't fit, had to go out" write; see
+            # ``MediaStore.is_tool_result_spill``'s own docstring). Re-reading
+            # a spill file's FULL content bare can be too big for THIS cap
+            # again, and since this cap (window/char-derived) is independent
+            # of the router's own SEPARATE token-derived spill trigger
+            # (``services/tool_result_cap.py``), truncating and returning it
+            # here can still come back oversized under THAT cap downstream
+            # and get spilled a second time — a real, unbounded chain. Error
+            # instead of truncating, with the exact remedy (not "too big" —
+            # the caller already knows that; the fix is which parameter to
+            # pass next).
+            if ctx.media_store is not None and ctx.media_store.is_tool_result_spill(op.path):
+                ctx.events.emit(
+                    "tool_executed", op="read_file", path=op.path,
+                    truncated=True, spill_reread_blocked=True,
+                )
+                return {
+                    "kind": "file",
+                    "op": "read",
+                    "path": op.path,
+                    "status": "error",
+                    "content": "",
+                    "error": (
+                        f"{op.path!r} is itself the output of a previous tool-result "
+                        "spill (content too large for the model's context window) — "
+                        "reading it whole would spill it again. Specify `offset` (and "
+                        "`char_offset` if a previous read of THIS file returned "
+                        "`next_char_offset`) to read a bounded window instead."
+                    ),
+                }
             ctx.events.emit(
                 "tool_executed", op="read_file", path=op.path,
                 truncated=True, shown_lines=len(shown), total_lines=len(all_lines),
@@ -475,7 +508,16 @@ async def handle(op: FileIROp, ctx: OpContext) -> dict:
                 "note": (
                     f"content truncated to fit context ({len(''.join(shown))} of {len(content)} "
                     f"chars shown); the full file is on disk at {op.path!r} — re-read from "
-                    f"offset {next_offset} to continue."
+                    f"offset {next_offset}"
+                    + (
+                        # #4381: when a SINGLE line was itself char-truncated, plain
+                        # `offset=next_offset` restarts that same line from char 0 and
+                        # truncates identically — an infinite loop. The resume call
+                        # MUST also pass char_offset=next_char_offset; say so.
+                        f" and char_offset {next_char_offset}"
+                        if next_char_offset is not None else ""
+                    )
+                    + " to continue."
                 ),
                 **_enc_field,
             }
