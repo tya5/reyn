@@ -42,6 +42,19 @@ Restart the proxy after editing.
 export LITELLM_API_BASE=http://localhost:4000   # your proxy's address
 ```
 
+**"No API key" describes the local model, not the client call.** The
+transport reyn's litellm client uses for any OpenAI-compatible endpoint --
+proxy included -- still requires *some* non-empty `api_key` value to
+construct the request; this is
+[litellm's own documented requirement for the OpenAI-compatible
+provider](https://docs.litellm.ai/docs/providers/openai_compatible), not
+something reyn adds. If you don't already have `OPENAI_API_KEY` set (e.g.
+from a prior Case A setup), running `reyn secret set OPENAI_API_KEY` with
+any placeholder string satisfies it -- your local proxy only validates
+that value if you've set its own
+[`general_settings.master_key`](https://docs.litellm.ai/docs/proxy/virtual_keys),
+which Step 2 above never did.
+
 **Naming rule (read before choosing a model name):** when
 `LITELLM_API_BASE` is set, reyn strips the resolved model string's leading
 `provider/` segment before sending it to the proxy -- `openai/foo` arrives
