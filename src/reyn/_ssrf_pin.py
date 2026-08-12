@@ -341,10 +341,20 @@ class PinnedAsyncHTTPTransport:
         # Rewrite the URL host to the pinned IP (socket connect target).
         new_url = request.url.copy_with(host=pin)
 
-        # sni_hostname must be bytes for httpcore (it decodes the extension in
-        # _connect).  str is also accepted in practice, but bytes is the
-        # canonical form used throughout httpcore's own test fixtures.
-        sni_bytes = host.encode("ascii")
+        # sni_hostname must be a STR (#3846 live-verify fix). The prior
+        # comment here claimed bytes was "the canonical form... str is also
+        # accepted in practice" — FALSIFIED by a real crash: httpcore hands
+        # this straight through as `server_hostname` to the backend's own
+        # `start_tls` (`anyio.py`/`trio.py` both type it `str | None`), and
+        # anyio's `TLSStream.wrap` -> `idna2008_resolve(hostname: str)` calls
+        # `hostname.encode("ascii")` on it — raising `AttributeError: 'bytes'
+        # object has no attribute 'encode'` for a bytes hostname. This was
+        # the actual failure behind #3846's "image row shows an error" live
+        # finding for every image fetched over https through the SSRF pin
+        # (which is every https image fetch, not a narrow edge case) —
+        # verified via a real turn through the real op/router-loop/TUI path,
+        # not a hand-constructed presentation frame.
+        sni_hostname = host
 
         # Build a new request with the pinned URL, overridden Host header,
         # and the sni_hostname extension.  httpx.Request is constructed from
@@ -362,7 +372,7 @@ class PinnedAsyncHTTPTransport:
             url=new_url,
             headers=new_headers,
             content=request.content,
-            extensions={**request.extensions, "sni_hostname": sni_bytes},
+            extensions={**request.extensions, "sni_hostname": sni_hostname},
         )
 
         return await self._transport.handle_async_request(pinned_request)
