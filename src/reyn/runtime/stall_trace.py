@@ -29,12 +29,13 @@ payload.
 
 **Default off, zero behavior change**: nothing in this module runs unless
 ``REYN_STALL_TRACE`` is set to a positive number. No test pins the actual
-5-second-block-then-dump behavior (that would need a real multi-second
+N-second-block-then-dump behavior (that would need a real multi-second
 sleep in a test, which the owner's own timeout policy bans) — this is a
 diagnostic tool, not a system invariant, so it carries no Tier per
 testing.ja.md's six-question check ① (a tool has no behavior/contract of
-its own to protect; what IS tested is that arming/disarming touches the
-real faulthandler API, a real observable point).
+its own to protect). Whether the ``REYN_STALL_TRACE`` → arm/disarm WIRING
+itself is exercised by a test is tracked separately, not claimed here —
+see the PR this module landed in for the current status.
 """
 from __future__ import annotations
 
