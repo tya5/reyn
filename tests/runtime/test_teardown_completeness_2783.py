@@ -134,6 +134,13 @@ def test_reyn_run_once_cli_reaches_registry_shutdown(tmp_path, monkeypatch):
     from reyn.runtime.registry import AgentRegistry
 
     monkeypatch.chdir(tmp_path)
+    # #4349: reyn ships no built-in model catalog — a minimal reyn.yaml is
+    # needed for the real config-load path this test drives (mirrors
+    # test_chat_cli_flags.py's own copy of this fix).
+    (tmp_path / "reyn.yaml").write_text(
+        "llm:\n  models:\n    standard: openai/test-standard-model\n",
+        encoding="utf-8",
+    )
     top = argparse.ArgumentParser()
     sub = top.add_subparsers()
     run_once.register(sub)

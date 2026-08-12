@@ -1,9 +1,21 @@
 name: fizzbuzz_tdd_workspace
 
-models:
-  light:    gemini-flash-lite
-  standard: gemini-flash-lite
-  strong:   gemini-pro
+# #4349: top-level `models:` was silently ignored (moved to `llm.models:`,
+# #4174 T3) -- this fixture's model mapping was never actually applied even
+# before the built-in catalog's removal; fixed while migrating off the
+# catalog shorthand. reasoning_effort restored per #1654 (the catalog used
+# to carry it for these Gemini reasoning models).
+llm:
+  models:
+    light:
+      model: gemini/gemini-2.5-flash-lite
+      reasoning_effort: low
+    standard:
+      model: gemini/gemini-2.5-flash-lite
+      reasoning_effort: low
+    strong:
+      model: gemini/gemini-2.5-pro
+      reasoning_effort: medium
 
 # Pre-approve file write + shell for the TDD scenario. The workspace
 # is an isolated tmp dir per run, so blanket grants are safe.

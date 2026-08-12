@@ -286,8 +286,10 @@ def test_default_shaped_gemini_call_actually_enters_the_streaming_branch(monkeyp
         model_class=None,  # #4206 T1: not subject to the axis (pre-existing call)
         on_content_delta=deltas.append,
         # The default-config primary-reply shape: tools attached AND
-        # reasoning_effort set (reyn.yaml's default model classes all carry
-        # reasoning_effort — see builtin_models.py).
+        # reasoning_effort set (an operator's own reyn.yaml model classes
+        # commonly carry reasoning_effort for Gemini reasoning models —
+        # #1654; #4349 removed reyn's own built-in catalog that used to
+        # default this, so it's an explicit per-kwarg choice here).
         extra_kwargs={"tools": [{"type": "function"}], "reasoning_effort": "low"},
     ))
 

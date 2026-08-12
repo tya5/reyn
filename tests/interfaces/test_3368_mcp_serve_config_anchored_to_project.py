@@ -8,12 +8,18 @@ config, so the spawned ``reyn mcp serve --project <root>`` process starts in
 ``Path.cwd()``) and only 44 lines later resolved ``--project`` and
 ``os.chdir``'d into it. From ``/`` no ``reyn.yaml`` is reachable, so the
 cascade silently yielded the built-in defaults — ``models: {}`` with
-``model: "standard"``, and ``permissions: {}``. ``"standard"`` is NOT in
-``BUILTIN_MODELS`` (it is a tier every project maps itself), so
-``ModelResolver.resolve`` fell through its sanctioned raw-litellm-string
-passthrough and handed the bare class name to litellm, which rejects it with
+``model: "standard"``, and ``permissions: {}``. ``"standard"`` was not
+resolvable with no project config in effect (reyn ships no built-in model
+catalog — #4349, a tier every project maps itself), so
+``ModelResolver.resolve`` fell through its raw-litellm-string passthrough
+and handed the bare class name to litellm, which rejected it with
 ``You passed model=standard`` — no ``--model`` flag and no ``/model``
-command involved. The permission config was dropped by the same ordering.
+command involved. (#4349 has since made an unresolved class position raise
+immediately inside ``resolve()`` instead of reaching litellm at all — this
+test's own fixture declares the class in its project config, so it never
+exercises that path either way; the ordering bug this test guards, and the
+project config actually taking effect, are what it pins.) The permission
+config was dropped by the same ordering.
 
 THE FIX: ``_anchor_project_root`` resolves the root and ``os.chdir``s BEFORE
 the config is loaded, so every cwd-derived read (the config cascade included)

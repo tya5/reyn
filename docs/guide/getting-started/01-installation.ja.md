@@ -39,11 +39,10 @@ llm:
     strong:   anthropic/claude-3-5-sonnet-20241022
 ```
 
-上記の shorthand `<value>` は literal な model string (= `/` を含む) です。 Reyn は
-built-in catalog (例: `claude-sonnet-thinking` / `gemini-flash-lite`) も ship しており、
-短い class 名で reference 可能。 さらに dict form の `extends` で cost variant を
-派生できます。 詳細は `reference/config/reyn-yaml.md` + `reference/builtin-models.md`
-を参照。
+上記の shorthand `<value>` は literal な model string (= `/` を含む) です。Reyn は
+built-in model catalog を ship していません — `light`/`standard`/`strong` は reyn 自身の
+tier 名ですが、それぞれが何を指すかはこのマッピング次第です。cost variant 用の dict form
+`extends` も利用できます。詳細は `reference/config/reyn-yaml.md` を参照。
 
 あなたの provider の API キーをエクスポートします。例:
 

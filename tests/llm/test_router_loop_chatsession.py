@@ -175,14 +175,21 @@ def test_chatsession_satisfies_host_protocol(tmp_path, monkeypatch):
 # ---------------------------------------------------------------------------
 
 def test_resolve_model_uses_resolver(tmp_path, monkeypatch):
-    """Tier 1: RouterHostAdapter.resolve_model delegates to ModelResolver; named models resolve to configured values and unknown names pass through unchanged."""
+    """Tier 1: RouterHostAdapter.resolve_model delegates to ModelResolver; a
+    configured class resolves to its target, and a raw '/'-containing
+    string still passes through unchanged (name position). #4349: an
+    unresolved BARE (no '/') name is a class position that failed to
+    resolve and now raises, rather than passing through unchanged."""
     monkeypatch.chdir(tmp_path)
     from reyn.llm.model_resolver import ModelResolver
     resolver = ModelResolver({"router": "openai/gpt-4o-mini"})
     session = make_session(agent_name="test_agent", resolver=resolver)
 
     assert session.router_host.resolve_model("router") == "openai/gpt-4o-mini"
-    assert session.router_host.resolve_model("unknown") == "unknown"  # pass-through
+    assert session.router_host.resolve_model("openai/literal-model") == "openai/literal-model"
+    import pytest
+    with pytest.raises(ValueError, match="unknown"):
+        session.router_host.resolve_model("unknown")
 
 
 # ---------------------------------------------------------------------------

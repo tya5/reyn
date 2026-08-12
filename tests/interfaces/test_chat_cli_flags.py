@@ -160,6 +160,19 @@ def _run_chat_once(tmp_path, monkeypatch, *, no_restore: bool):
     from reyn.runtime.session import Session
 
     monkeypatch.chdir(tmp_path)
+    # #4349: reyn ships no built-in model catalog — a project dir with no
+    # `models:` mapping for the default "standard" class now raises a
+    # legible error at session construction, instead of the old silent
+    # builtin-catalog fallback. This helper drives the REAL `chat.run`
+    # config-load path (not a hand-built resolver), so it needs a real,
+    # minimal config on disk, same as an actual `reyn init` + edit would
+    # produce.
+    # `_find_project_root` specifically requires `reyn.yaml` (not just
+    # `reyn.local.yaml`) to identify tmp_path as the project root at all.
+    (tmp_path / "reyn.yaml").write_text(
+        "llm:\n  models:\n    standard: openai/test-standard-model\n",
+        encoding="utf-8",
+    )
     top = argparse.ArgumentParser()
     sub = top.add_subparsers()
     chat_register(sub)

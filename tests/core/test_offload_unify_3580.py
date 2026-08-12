@@ -187,10 +187,10 @@ def test_the_inline_preview_size_follows_its_config() -> None:
         return {"path": ".reyn/tool-results/x.txt"}
 
     shipped = cap_tool_result_content(
-        body, cap_tokens=100, model="gpt-4o", save_fn=_save
+        body, cap_tokens=100, model="openai/gpt-4o", save_fn=_save
     )
     tuned = cap_tool_result_content(
-        body, cap_tokens=100, model="gpt-4o", save_fn=_save,
+        body, cap_tokens=100, model="openai/gpt-4o", save_fn=_save,
         preview_head_chars=100, preview_tail_chars=50,
     )
 
@@ -229,8 +229,8 @@ def test_the_force_close_reserve_follows_its_config() -> None:
     fires. Asserted on the threshold rather than on the reserve, because the
     threshold is the value that decides anything.
     """
-    shipped = build_default_turn_budget_engine("gpt-4o")
-    tuned = build_default_turn_budget_engine("gpt-4o", max_inline_bytes=4_096)
+    shipped = build_default_turn_budget_engine("openai/gpt-4o")
+    tuned = build_default_turn_budget_engine("openai/gpt-4o", max_inline_bytes=4_096)
 
     # A content size that force-closes under the shipped reserve. Derived from
     # the engine rather than written as a literal, so the test states the

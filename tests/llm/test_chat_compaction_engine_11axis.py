@@ -621,7 +621,7 @@ def test_recompute_budgets_with_provider_changes_effective_trigger() -> None:
         provider = lambda: sp_state[0]  # noqa: E731
 
         engine = CompactionEngine(
-            model="test-model",
+            model="test/test-model",
             events=events,
             cfg=cfg,
             system_prompt_provider=provider,
@@ -655,7 +655,7 @@ def test_recompute_budgets_noop_when_no_provider() -> None:
         cfg = _make_cfg()
         events = EventLog()
         engine = CompactionEngine(
-            model="test-model",
+            model="test/test-model",
             events=events,
             cfg=cfg,
             T_SP=1_000,
@@ -690,7 +690,7 @@ def test_recompute_budgets_called_at_init_when_provider_set() -> None:
         events = EventLog()
 
         engine = CompactionEngine(
-            model="test-model",
+            model="test/test-model",
             events=events,
             cfg=cfg,
             system_prompt_provider=lambda: sp_text,
@@ -740,7 +740,7 @@ def test_new_msg_exceeds_budget_error_fields_and_raises() -> None:
         )
         events = EventLog()
         engine = CompactionEngine(
-            model="test-model",
+            model="test/test-model",
             events=events,
             cfg=cfg,
             T_SP=0,

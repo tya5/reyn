@@ -47,7 +47,7 @@ def test_offload_cap_is_derived_from_tool_result_cap_ceiling_not_hardcoded(monke
     that specific regression."""
     import reyn.runtime.services.tool_result_cap as tool_result_cap
 
-    model = "gpt-4o-mini"
+    model = "openai/gpt-4o-mini"
     default_eng = build_default_turn_budget_engine(model, use_chars4=True)
 
     off_default_ceiling = tool_result_cap.MAX_TOOL_RESULT_INLINE_BYTES + 12_000
@@ -69,7 +69,7 @@ def test_offload_cap_is_derived_from_tool_result_cap_ceiling_not_hardcoded(monke
 def test_adapter_exposes_reserve_when_engine_present() -> None:
     """Tier 2: with a turn_budget engine, wrap_up_output_reserve ==
     engine.budget.output_reserve (the cap RouterLoop._force_close_call applies)."""
-    eng = build_default_turn_budget_engine("gpt-4o-mini", use_chars4=True)
+    eng = build_default_turn_budget_engine("openai/gpt-4o-mini", use_chars4=True)
     adapter = _make_adapter(universal_wrappers_enabled=False,  # #4159: not exercised by this test
         turn_budget_engine=eng)
     assert adapter.wrap_up_output_reserve == eng.budget.output_reserve
@@ -89,7 +89,7 @@ def test_adapter_does_not_expose_proactive_trigger() -> None:
     the deliberate per-axis choice: phase force-closes proactively, chat only at
     the F2 floor-exhausted terminal."""
     adapter = _make_adapter(universal_wrappers_enabled=False,  # #4159: not exercised by this test
-        turn_budget_engine=build_default_turn_budget_engine("gpt-4o-mini", use_chars4=True)
+        turn_budget_engine=build_default_turn_budget_engine("openai/gpt-4o-mini", use_chars4=True)
     )
     assert not hasattr(adapter, "should_force_close")
 
@@ -123,12 +123,12 @@ def test_try_build_returns_none_for_small_context_model(monkeypatch) -> None:
     monkeypatch.setattr(
         "reyn.llm.model_budget.get_max_input_tokens", lambda model, **kw: 2800
     )
-    assert try_build_default_turn_budget_engine("tiny", use_chars4=True) is None
+    assert try_build_default_turn_budget_engine("test/tiny", use_chars4=True) is None
 
 
 def test_try_build_returns_engine_for_large_context_model() -> None:
     """Tier 2: a normal large-context model yields a real engine (the floor holds)."""
-    eng = try_build_default_turn_budget_engine("gpt-4o-mini", use_chars4=True)
+    eng = try_build_default_turn_budget_engine("openai/gpt-4o-mini", use_chars4=True)
     assert eng is not None
     assert eng.budget.output_reserve == DEFAULT_WRAP_UP_OUTPUT_RESERVE_TOKENS
 

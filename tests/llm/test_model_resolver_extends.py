@@ -13,8 +13,9 @@ Pinned invariants (Tier 1 — contract):
   - missing ``model`` field after extends resolution raises ValueError
 
 Pinned invariants (Tier 2 — OS invariant):
-  - built-in pre-load: ModelResolver() with empty user mapping resolves built-ins
-  - user override: user entry wins over built-in with the same name
+  - a synthetic `builtin=` entry (#4349: reyn ships no model catalog) is
+    preloaded and resolvable with an empty user mapping
+  - user override: user entry wins over a `builtin=` entry with the same name
   - backward compat: ``/``-containing str form unchanged
 
 Reference: PR-MODEL-SPEC-EXTENDS Task 3 (Tier 1 + Tier 2).
@@ -23,17 +24,17 @@ from __future__ import annotations
 
 import pytest
 
-from reyn.llm.model_resolver import ModelResolver, ModelSpec
+from reyn.llm.model_resolver import ModelResolver
 
 # ---------------------------------------------------------------------------
-# Helper: resolver with built-ins disabled for isolation
+# Helper: resolver with no builtin= namespace, for isolation
 # ---------------------------------------------------------------------------
 
-def make_resolver(mapping: dict, *, with_builtin: bool = False) -> ModelResolver:
-    """Create a ModelResolver with optional built-in catalog."""
-    if with_builtin:
-        return ModelResolver(mapping)
-    # Disable built-ins so tests are self-contained.
+def make_resolver(mapping: dict) -> ModelResolver:
+    """Create a ModelResolver scoped to *mapping* alone (#4349: reyn ships no
+    default model catalog, so this is now equivalent to the plain
+    constructor — kept as a named helper since most tests in this file read
+    more clearly calling it than spelling out `builtin={}` at every site)."""
     return ModelResolver(mapping, builtin={})
 
 
@@ -232,30 +233,45 @@ def test_extends_multi_level_base_only_field_carried():
 
 
 # ---------------------------------------------------------------------------
-# Tier 1: extends with built-in catalog (real built-ins)
+# Tier 1: extends against a `builtin=`-injected entry
 # ---------------------------------------------------------------------------
 
 
-def test_extends_builtin_claude_sonnet_thinking():
-    """Tier 1: dict form extends claude-sonnet-thinking built-in, overrides budget_tokens."""
-    r = ModelResolver({
-        "reasoning-light": {
-            "extends": "claude-sonnet-thinking",
-            "extra_body": {"thinking": {"budget_tokens": 4000}},
-        }
-    })
+def test_extends_a_builtin_entry():
+    """Tier 1: dict form extends a `builtin=`-injected entry, overrides a
+    nested field (#4349: a SYNTHETIC entry — reyn ships no model catalog —
+    demonstrating the same extends-against-builtin mechanism a former
+    concrete catalog name used to)."""
+    r = ModelResolver(
+        {
+            "reasoning-light": {
+                "extends": "probe-thinking",
+                "extra_body": {"thinking": {"budget_tokens": 4000}},
+            }
+        },
+        builtin={
+            "probe-thinking": {
+                "model": "anthropic/probe-model",
+                "extra_body": {"thinking": {"type": "enabled", "budget_tokens": 8000}},
+            },
+        },
+    )
     spec = r.resolve("reasoning-light")
-    assert spec.model == "anthropic/claude-3-7-sonnet"
+    assert spec.model == "anthropic/probe-model"
     thinking = spec.kwargs["extra_body"]["thinking"]
     assert thinking["budget_tokens"] == 4000
-    assert thinking["type"] == "enabled"  # carried from builtin
+    assert thinking["type"] == "enabled"  # carried from the builtin= entry
 
 
 def test_str_shorthand_with_builtin():
-    """Tier 1: str shorthand without '/' resolves against built-in catalog."""
-    r = ModelResolver({"standard": "claude-sonnet-thinking"})
+    """Tier 1: str shorthand without '/' resolves against a `builtin=`-
+    injected entry (#4349: synthetic, not a former catalog name)."""
+    r = ModelResolver(
+        {"standard": "probe-thinking"},
+        builtin={"probe-thinking": {"model": "anthropic/probe-model"}},
+    )
     spec = r.resolve("standard")
-    assert spec.model == "anthropic/claude-3-7-sonnet"
+    assert spec.model == "anthropic/probe-model"
 
 
 # ---------------------------------------------------------------------------
@@ -264,60 +280,60 @@ def test_str_shorthand_with_builtin():
 
 
 def test_builtin_preload_no_user_mapping():
-    """Tier 2: ModelResolver() with empty user mapping resolves built-in entries."""
-    r = ModelResolver({})
-    spec = r.resolve("claude-sonnet-thinking")
-    assert spec.model == "anthropic/claude-3-7-sonnet"
+    """Tier 2: a `builtin=`-injected entry resolves with an empty user
+    mapping (#4349: synthetic — reyn ships no model catalog)."""
+    r = ModelResolver(
+        {},
+        builtin={
+            "probe-thinking": {
+                "model": "anthropic/probe-model",
+                "extra_body": {"thinking": {"type": "enabled"}},
+            },
+        },
+    )
+    spec = r.resolve("probe-thinking")
+    assert spec.model == "anthropic/probe-model"
     assert spec.kwargs["extra_body"]["thinking"]["type"] == "enabled"
 
 
-def test_builtin_preload_all_8_are_resolvable():
-    """Tier 2: all 8 built-in entries are resolvable from ModelResolver({})."""
-    r = ModelResolver({})
-    expected_names = [
-        "claude-sonnet",
-        "claude-sonnet-thinking",
-        "claude-haiku",
-        "gpt-4o-mini",
-        "gpt-4o",
-        "gemini-flash-lite",
-        "gemini-3.1-flash-preview",
-        "gemini-2.0-flash",
-    ]
-    for name in expected_names:
-        spec = r.resolve(name)
-        assert isinstance(spec, ModelSpec), f"resolve({name!r}) should return ModelSpec"
-        assert spec.model  # non-empty LiteLLM model string
-
-
 def test_builtin_is_known_class():
-    """Tier 2: built-in entries appear in is_known_class even with empty user mapping."""
-    r = ModelResolver({})
-    assert r.is_known_class("claude-sonnet") is True
+    """Tier 2: a `builtin=`-injected entry appears in is_known_class even
+    with an empty user mapping (#4349: synthetic entry)."""
+    r = ModelResolver({}, builtin={"probe-x": {"model": "openai/probe"}})
+    assert r.is_known_class("probe-x") is True
     assert r.is_known_class("nonexistent-class") is False
 
 
 # ---------------------------------------------------------------------------
-# Tier 2: user override of built-in (OS invariant — user always wins)
+# Tier 2: user override of a `builtin=` entry (OS invariant — user always wins)
 # ---------------------------------------------------------------------------
 
 
 def test_user_override_replaces_builtin():
-    """Tier 2: user-declared entry with same name as built-in takes precedence."""
-    r = ModelResolver({
-        "claude-sonnet": {
-            "model": "openai/gpt-4o",  # intentional override to different provider
-        }
-    })
-    spec = r.resolve("claude-sonnet")
+    """Tier 2: user-declared entry with the same name as a `builtin=`-
+    injected entry takes precedence (#4349: synthetic — the precedence RULE
+    survives the catalog's removal; `model_resolver.py`'s `{**builtin,
+    **mapping}` is unchanged)."""
+    r = ModelResolver(
+        {"probe-x": {"model": "openai/gpt-4o"}},  # intentional override to a different provider
+        builtin={"probe-x": {"model": "anthropic/should-be-overridden"}},
+    )
+    spec = r.resolve("probe-x")
     assert spec.model == "openai/gpt-4o"
 
 
 def test_user_override_partial_builtin_name_unchanged():
-    """Tier 2: user override of one built-in does not affect other built-ins."""
-    r = ModelResolver({"claude-sonnet": {"model": "openai/gpt-4o"}})
-    spec = r.resolve("claude-haiku")
-    assert spec.model == "anthropic/claude-3-5-haiku"
+    """Tier 2: user override of one `builtin=` entry does not affect a
+    sibling entry (#4349: synthetic entries)."""
+    r = ModelResolver(
+        {"probe-x": {"model": "openai/gpt-4o"}},
+        builtin={
+            "probe-x": {"model": "anthropic/should-be-overridden"},
+            "probe-y": {"model": "anthropic/probe-y-model"},
+        },
+    )
+    spec = r.resolve("probe-y")
+    assert spec.model == "anthropic/probe-y-model"
 
 
 # ---------------------------------------------------------------------------

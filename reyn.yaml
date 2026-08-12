@@ -5,15 +5,31 @@
 # e.g. OPENAI_API_KEY. litellm resolves your provider's own variable
 # automatically; see https://docs.litellm.ai/docs/providers.
 
-# Default model class when --model is not specified
-model: standard
+# #4174 T3: `model:`/`models:` live under `llm:` — a top-level `model:`/
+# `models:` here was silently ignored (a WARNING, not an error), which
+# #4349's own resolve() fix turns into a hard startup failure for THIS
+# repo's own `reyn chat` (lead-coder catch, #4357: the same class of drift
+# #4349 found in test_cli_pipe.py's fixture and the dogfood fixtures,
+# 5th instance).
+llm:
+  # Default model class when --model is not specified
+  model: standard
 
-# Model class → LiteLLM model string
-# Three standard tiers. Add custom classes as needed.
-models:
-  light:    gemini-flash-lite
-  standard: gemini-flash-lite
-  strong:   gemini-pro
+  # Model class → LiteLLM model string
+  # Three standard tiers. Add custom classes as needed.
+  # #4349: the deleted built-in catalog also carried reasoning_effort for
+  # these Gemini reasoning models (#1654) — restored explicitly here so
+  # migrating off the catalog shorthand doesn't silently drop it.
+  models:
+    light:
+      model: gemini/gemini-2.5-flash-lite
+      reasoning_effort: low
+    standard:
+      model: gemini/gemini-2.5-flash-lite
+      reasoning_effort: low
+    strong:
+      model: gemini/gemini-2.5-pro
+      reasoning_effort: medium
 
 # Project-wide context injected into the system prompt for every phase.
 # Use this for stable background that all skills should implicitly know

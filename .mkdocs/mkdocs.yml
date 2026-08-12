@@ -161,7 +161,6 @@ nav:
           - Infrastructure:
               - reference/config/state-dir.md
               - reference/config/multi-agent.md
-              - reference/builtin-models.md
       - Testing:
           - reference/testing/replay.md
           - reference/test-tier-audit.md

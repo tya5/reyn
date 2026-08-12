@@ -109,6 +109,15 @@ def _make_live_runner_fn(tmp_path: Path, *, agent_name: str = "default"):
     """
     from reyn.interfaces.cli.commands.dogfood import _build_live_runner
 
+    # #4349: reyn ships no built-in model catalog — _build_live_runner
+    # constructs its OWN ModelResolver from the REAL loaded project config
+    # (not from this test's own _make_registry/factory), so it needs a
+    # real, minimal reyn.yaml on disk, same as an actual dogfood run would
+    # have.
+    (tmp_path / "reyn.yaml").write_text(
+        "llm:\n  models:\n    standard: openai/test-standard-model\n",
+        encoding="utf-8",
+    )
     # The live runner resolves project_root from cwd on construction.
     # monkeypatch.chdir(tmp_path) in the caller ensures this works.
     return _build_live_runner(agent_name)

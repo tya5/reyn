@@ -4,10 +4,19 @@
 
 llm:
   model: standard
+  # #4349: the deleted built-in catalog also carried reasoning_effort for
+  # these Gemini reasoning models (#1654) — restored explicitly here so
+  # migrating off the catalog shorthand doesn't silently drop it.
   models:
-    light:    gemini-flash-lite
-    standard: gemini-flash-lite
-    strong:   gemini-pro
+    light:
+      model: gemini/gemini-2.5-flash-lite
+      reasoning_effort: low
+    standard:
+      model: gemini/gemini-2.5-flash-lite
+      reasoning_effort: low
+    strong:
+      model: gemini/gemini-2.5-pro
+      reasoning_effort: medium
 
 permissions:
   python.pure: allow

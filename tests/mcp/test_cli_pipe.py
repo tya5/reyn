@@ -73,7 +73,13 @@ def _write_reyn_yaml(
     # printing to stdout, which would otherwise corrupt 'reyn pipe run's JSON
     # output the moment a 'tool:' step lazily constructs a real Session (the
     # router_state fix's source of a RouterHostAdapter — see run_run).
-    data: dict = {"model": "standard", "models": {"standard": "openai/gpt-4o-mini"}}
+    # #4174 T3 / #4349: top-level `model:`/`models:` were renamed to
+    # `llm.model:`/`llm.models:` — the OLD keys used here were silently
+    # ignored (a WARNING, not an error) and this fixture never actually
+    # applied its own model mapping; #4349's stricter resolve() (no built-in
+    # catalog to paper over an unresolved class) is what surfaced it, on the
+    # 3 tests that exercise an 'agent:' step for real.
+    data: dict = {"llm": {"model": "standard", "models": {"standard": "openai/gpt-4o-mini"}}}
     if pipelines_entries is not None:
         data["pipelines"] = {"entries": pipelines_entries}
     if permissions is not None:
@@ -671,8 +677,10 @@ def test_run_agent_step_spawns_real_ephemeral_session(tmp_path, monkeypatch, cap
     (tmp_path / "reyn.yaml").write_text(
         yaml.dump(
             {
-                "model": "standard",
-                "models": {"standard": "openai/gpt-4o-mini"},
+                "llm": {
+    "model": "standard",
+    "models": {"standard": "openai/gpt-4o-mini"},
+},
                 "pipelines": {"entries": {"uses_agent": {"path": "uses_agent.yaml"}}},
             },
             allow_unicode=True, default_flow_style=False,
@@ -805,8 +813,10 @@ def _write_agent_mcp_reyn_yaml(tmp_path, *, capabilities_line: str) -> None:
     (tmp_path / "reyn.yaml").write_text(
         yaml.dump(
             {
-                "model": "standard",
-                "models": {"standard": "openai/gpt-4o-mini"},
+                "llm": {
+    "model": "standard",
+    "models": {"standard": "openai/gpt-4o-mini"},
+},
                 "mcp": {"servers": {"echo": {"type": "stdio", "command": "x"}}},
                 "pipelines": {"entries": {"uses_agent_mcp": {"path": "uses_agent_mcp.yaml"}}},
             },
@@ -956,8 +966,10 @@ def test_run_tool_step_dispatches_mcp_action_for_real(tmp_path, monkeypatch, cap
     (tmp_path / "reyn.yaml").write_text(
         yaml.dump(
             {
-                "model": "standard",
-                "models": {"standard": "openai/gpt-4o-mini"},
+                "llm": {
+    "model": "standard",
+    "models": {"standard": "openai/gpt-4o-mini"},
+},
                 "mcp": {"servers": {"echo": {"type": "stdio", "command": "x"}}},
                 # Non-interactive caller (no one to answer the JIT approval
                 # prompt) needs the MCP runtime-approval gate pre-granted in
@@ -1018,8 +1030,10 @@ def test_run_tool_step_mcp_auto_grants_configured_server_no_explicit_permission(
     (tmp_path / "reyn.yaml").write_text(
         yaml.dump(
             {
-                "model": "standard",
-                "models": {"standard": "openai/gpt-4o-mini"},
+                "llm": {
+    "model": "standard",
+    "models": {"standard": "openai/gpt-4o-mini"},
+},
                 "mcp": {"servers": {"echo": {"type": "stdio", "command": "x"}}},
                 # No `permissions:` block at all — the auto-grant is the
                 # ONLY thing that can make this succeed.
@@ -1068,8 +1082,10 @@ def test_run_tool_step_mcp_unconfigured_server_still_denied_with_actionable_erro
     (tmp_path / "reyn.yaml").write_text(
         yaml.dump(
             {
-                "model": "standard",
-                "models": {"standard": "openai/gpt-4o-mini"},
+                "llm": {
+    "model": "standard",
+    "models": {"standard": "openai/gpt-4o-mini"},
+},
                 # 'ghost' is NOT configured anywhere — no mcp.servers entry.
                 "pipelines": {"entries": {"uses_mcp": {"path": "uses_mcp.yaml"}}},
             },
@@ -1104,7 +1120,7 @@ async def test_router_state_resource_categories_populated_from_real_session(
     (tmp_path / "reyn.yaml").write_text(
         yaml.dump(
             {
-                "model": "standard",
+                "llm": {"model": "standard"},
                 "mcp": {"servers": {"echo": {"type": "stdio", "command": "x"}}},
             },
             allow_unicode=True, default_flow_style=False,

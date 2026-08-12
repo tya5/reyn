@@ -26,6 +26,7 @@ from typing import Any
 from reyn.runtime.agent import Agent
 from reyn.runtime.services.recovery import build_recovery, default_snapshot_path
 from reyn.runtime.session import Session
+from tests._support.session import TEST_MODEL_RESOLVER
 
 # Identity fields owned by Agent (see reyn.runtime.agent.Agent). Extracted
 # here (by their pre-step-2 Session-kwarg name, which differs from the Agent
@@ -107,6 +108,14 @@ def make_session(*, role: str | None = None, **kwargs: Any) -> Session:
         kwargs.get("state_log"),
         kwargs.get("session_id", "main"),
     )
+    # #4349: Session's own default (``resolver or ModelResolver({})``) is
+    # genuinely empty now — reyn ships no built-in model catalog to fall
+    # back to. A caller here that doesn't care about model resolution
+    # still needs "light"/"standard"/"strong" to resolve to SOMETHING, so
+    # default to the shared synthetic test resolver unless the caller
+    # passed its own (via ``**kwargs``, unchanged for the ~16 call sites
+    # that already configure one).
+    kwargs.setdefault("resolver", TEST_MODEL_RESOLVER)
     return Session(
         agent=agent, generation_store=generation_store, journal=journal, **kwargs,
     )

@@ -33,7 +33,7 @@ from reyn.services.compaction.engine import (
 )
 from tests._support.events import collect_events
 
-_MODEL = "gpt-4o"
+_MODEL = "openai/gpt-4o"
 
 
 def _resp(content: str) -> SimpleNamespace:
