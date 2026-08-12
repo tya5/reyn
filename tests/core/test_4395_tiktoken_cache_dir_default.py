@@ -26,6 +26,17 @@ the test that would have caught this — the other tests only checked state
 immediately after `import reyn`, never after the `import litellm` that
 actually exercises the bug.
 
+Redirecting WHERE the cache lives is still not enough on its own: it
+leaves the directory EMPTY on a first run, and tiktoken's own fetch call
+(`requests.get(blobpath)` in `tiktoken/load.py`) has NO timeout — under a
+proxy/firewall that accepts a connection but never answers, that first
+run hangs forever (owner-observed: "Loading..." never resolves, no
+exception, no log growth — the hang is inside `import litellm` itself, on
+the startup path). `test_seeds_the_cache_from_litellms_own_bundled_blobs`
+covers the fix: importing `reyn` also seeds the redirected directory from
+litellm's own bundled tiktoken blobs (a same-machine file copy, zero
+network) so a version-compatible combo never needs the network even cold.
+
 Verified in a fresh subprocess — this is an `os.environ` side effect of
 `reyn`'s package `__init__`, which only runs once per process; testing it
 in-process would either see a stale value from whatever earlier import in
@@ -107,6 +118,71 @@ def test_survives_a_subsequent_litellm_import(out_of_process_reyn):
     )
     assert result.returncode == 0, (
         f"reyn's TIKTOKEN_CACHE_DIR did not survive `import litellm`.\n"
+        f"stdout: {result.stdout}\nstderr: {result.stderr}"
+    )
+
+
+def test_seeds_the_cache_from_litellms_own_bundled_blobs(out_of_process_reyn, tmp_path):
+    """Tier 2: THE hang-on-first-run defect. Redirecting WHERE the cache
+    lives (the other tests) still leaves it EMPTY on a first run —
+    tiktoken's own fetch call has no timeout, so under a proxy that
+    accepts a connection but never answers, that first run hangs forever
+    (owner-observed: "Loading..." never resolves). Importing `reyn` must
+    seed the redirected directory from litellm's own bundled blobs so a
+    version-compatible combo never needs the network at all, even cold.
+    A fresh, isolated $HOME (not `out_of_process_reyn`'s inherited one) so
+    this doesn't depend on — or pollute — any real prior cache state."""
+    fake_home = tmp_path / "fake_home"
+    fake_home.mkdir()
+    code = (
+        "import os, re, socket\n"
+        "socket.socket.connect = lambda self, *a, **kw: (_ for _ in ()).throw(AssertionError('NETWORK CALL: ' + repr(a)))\n"
+        "import reyn\n"
+        "cache_dir = os.path.join(os.path.expanduser('~'), '.reyn', 'cache', 'tiktoken')\n"
+        "names = os.listdir(cache_dir)\n"
+        "assert names, 'the cache directory was not seeded with anything: ' + cache_dir\n"
+        "sha1_pattern = re.compile(r'^[0-9a-f]{40}$')\n"
+        "hex_named = [n for n in names if sha1_pattern.match(n)]\n"
+        "assert hex_named, 'no sha1-named cache blob was seeded: ' + repr(names)\n"
+        "import litellm\n"
+        "print('OK: seeded and import litellm needed zero network calls')\n"
+    )
+    result = _run(
+        out_of_process_reyn, code,
+        unset=("TIKTOKEN_CACHE_DIR", "CUSTOM_TIKTOKEN_CACHE_DIR"),
+        HOME=str(fake_home),
+    )
+    assert result.returncode == 0, (
+        f"import reyn did not seed the cache dir, or a network call was attempted.\n"
+        f"stdout: {result.stdout}\nstderr: {result.stderr}"
+    )
+
+
+def test_does_not_seed_when_an_operator_chose_a_different_directory(out_of_process_reyn, tmp_path):
+    """Tier 2: seeding writes into reyn's OWN computed directory — if an
+    operator's own TIKTOKEN_CACHE_DIR won the setdefault (a different
+    directory), reyn's directory is never consulted by anything, so
+    seeding it would be pure waste. Confirms that directory stays empty
+    in that case (the operator's own chosen directory is untouched by
+    this seed step entirely — it's their directory to manage)."""
+    fake_home = tmp_path / "fake_home"
+    fake_home.mkdir()
+    operator_dir = tmp_path / "operator_chosen_cache"
+    operator_dir.mkdir()
+    code = (
+        "import os; "
+        "import reyn; "
+        "reyn_dir = os.path.join(os.path.expanduser('~'), '.reyn', 'cache', 'tiktoken'); "
+        "assert os.listdir(reyn_dir) == [], "
+        "'reyn seeded its own directory even though the operator chose a different one: ' + repr(os.listdir(reyn_dir))"
+    )
+    result = _run(
+        out_of_process_reyn, code,
+        HOME=str(fake_home),
+        TIKTOKEN_CACHE_DIR=str(operator_dir),
+    )
+    assert result.returncode == 0, (
+        f"unexpected seeding into reyn's own dir despite an operator override.\n"
         f"stdout: {result.stdout}\nstderr: {result.stderr}"
     )
 

@@ -20,7 +20,9 @@ earliest point that is still guaranteed to run before the first
 """
 from __future__ import annotations
 
+import importlib.util
 import os
+import shutil
 
 # Silence litellm's startup network fetches (remote cost-table / remote beta-
 # headers config) by defaulting to its bundled local snapshots. ``setdefault``
@@ -103,3 +105,69 @@ except OSError:
 else:
     os.environ.setdefault("TIKTOKEN_CACHE_DIR", _tiktoken_cache_dir)
     os.environ.setdefault("CUSTOM_TIKTOKEN_CACHE_DIR", _tiktoken_cache_dir)
+
+    # Redirecting WHERE the cache lives (above) still leaves the directory
+    # EMPTY on a first run — and tiktoken's own fetch call
+    # (``requests.get(blobpath)`` in tiktoken/load.py) is called with NO
+    # timeout, so under a proxy/firewall that accepts a connection but
+    # never answers, that first run hangs forever, not just slowly —
+    # observed live: "Loading..." never resolves, no exception, no log
+    # growth, because the hang is INSIDE ``import litellm`` on the startup
+    # path, before reyn's own event loop or logging is even running. Since
+    # reyn already ships litellm's own bundled tiktoken blobs (this is
+    # exactly what ``default_encoding.py`` would copy-from if IT ran
+    # first), seed reyn's cache directory from them now — same-machine
+    # file copy, zero network, so a version-COMPATIBLE combo (the common
+    # case) needs no fetch even on a cold cache. ``find_spec`` again (no
+    # ``import litellm`` — see the "no eager imports" module docstring).
+    # Copy only ONCE (never overwrite an existing destination file) — a
+    # file already there might be a real, freshly-fetched answer for a
+    # DIFFERENT tiktoken/litellm version pairing than what shipped in
+    # litellm's own bundle; this seed step must never regress that.
+    #
+    # LIMIT, stated plainly rather than silently: this does NOT help a
+    # version-INCOMPATIBLE combo (#4395's failure mode B — the bundled
+    # blob's sha256 doesn't match what the installed tiktoken expects).
+    # tiktoken still detects the mismatch on first use and deletes the
+    # seeded file to re-fetch — offline capability is not recoverable for
+    # that combination without a real network path at least once; seeding
+    # only removes the network round-trip for the compatible case, and
+    # (per the redirect above) confines a genuine mismatch's self-deletion
+    # to reyn's own directory instead of litellm's installed package.
+    #
+    # Skip entirely if an operator's own value won the setdefault above
+    # (their choice, not reyn's directory, is what actually gets read) —
+    # seeding a directory nothing will ever consult is pure waste.
+    if (
+        os.environ.get("TIKTOKEN_CACHE_DIR") == _tiktoken_cache_dir
+        and os.environ.get("CUSTOM_TIKTOKEN_CACHE_DIR") == _tiktoken_cache_dir
+    ):
+        _litellm_spec = importlib.util.find_spec("litellm")
+    else:
+        _litellm_spec = None
+    if _litellm_spec is not None and _litellm_spec.submodule_search_locations:
+        _litellm_tokenizers_dir = os.path.join(
+            next(iter(_litellm_spec.submodule_search_locations)),
+            "litellm_core_utils",
+            "tokenizers",
+        )
+        try:
+            _bundled_names = os.listdir(_litellm_tokenizers_dir)
+        except OSError:
+            _bundled_names = []
+        for _name in _bundled_names:
+            # tiktoken's own cache-key naming: sha1(blobpath).hexdigest() —
+            # a 40-char lowercase hex string. Filters out this directory's
+            # non-cache-blob contents (__init__.py, __pycache__/,
+            # anthropic_tokenizer.json — litellm's own Anthropic tokenizer
+            # metadata, unrelated to tiktoken's cache scheme) without
+            # hardcoding which specific encodings litellm bundles.
+            if len(_name) != 40 or not all(c in "0123456789abcdef" for c in _name):
+                continue
+            _dest = os.path.join(_tiktoken_cache_dir, _name)
+            if os.path.exists(_dest):
+                continue
+            try:
+                shutil.copy2(os.path.join(_litellm_tokenizers_dir, _name), _dest)
+            except OSError:
+                pass  # best-effort — tiktoken's own fetch-and-cache is still correct, just slower
