@@ -130,9 +130,10 @@ reyn の `HookDispatcher`(`hooks/dispatcher.py:58-350`)= v0.1 の Sync 経路の
 ### 3.3 Bus の scope — **per-Session(v1 確定)** [review-pass 追加]
 
 v0.1 は Bus の scope(1 session 内か、多 session を抱える server process 全体か)を定義していない — これは根本のアーキ判断:
-- **v1 = per-Session**。現行 `HookDispatcher` の locality(Session ごとに構築、DI closure が Session method に束縛)と一致し、session 間 isolation が構造的に保たれる(他 session の event を観測できない = spoofing/漏洩の新面を開かない)。`llm:<session_id>:*` namespace とも自然に整合。
+- **v1 = per-Session**。現行 `HookDispatcher` の locality(Session ごとに構築、DI closure が Session method に束縛)と一致し、session 間 isolation が既定では保たれる(他 session の event を無条件には観測できない = spoofing/漏洩の新面を無条件には開かない)。`llm:<session_id>:*` namespace とも自然に整合。
 - external source(cron/webhook)は現行通り **target Session を resolve してからその session の Bus に投入**(Ingress Adapter の責務、§6)。
 - **cross-session の event 観測/合成は v1 非対象**(将来: broker 級の設計が要る — 到着順 vs causal 順の補正、session 間の信頼境界。v0.1 §10 の Seq 分散問題はこの将来項に属する)。既存の cross-session **push**(hook action が別 session の inbox へ)はそのまま(action の宛先であって event の観測ではない)。
+- **#4215 ②追記(2026-08-12)**: 上の「session 間 isolation が構造的に保たれる」は、無条件の隔離ではなく **既定の隔離** と読み替える。owner 裁定(#4215、訂正後の枠): 懸念は「他の subscribe を受けてはいけない」ではなく「**受けない選択肢が無いこと**」。∴ **spawn した親が、子の bus を明示的に subscribe し自分の bus へ再 publish する経路**(`reyn.hooks.bus.bridge_child_bus_to_parent`、`session_api._spawn_pipeline_driver_session` の ATTACHED spawn のみ)を、狭い・opt-in な例外として追加した。デフォルトは変わらない(誰も subscribe しなければ `publish` の no-subscriber happy path のまま、コストゼロ)。`HookDispatcher` は経由しない(`dispatch_bus_event` 自身が「bus 由来の event を bus へ re-publish するのは二重配信」と明記している通り)。この橋渡しは spawn 時に明示的に選ばれた経路のみで発生し、任意の session が任意の他 session を無条件に観測できる形には拡張されていない。
 
 ---
 

@@ -239,4 +239,50 @@ class HookBus:
         return {state.subscriber_id: state.drop_count for state in self._subscribers}
 
 
-__all__ = ["HookBus", "HookBusSubscription"]
+async def bridge_child_bus_to_parent(child_bus: "HookBus", parent_bus: "HookBus") -> None:
+    """#4215 ②: forward every :class:`HookEvent` *child_bus* broadcasts onto
+    *parent_bus* — the one narrow, opt-in exception to this module's own
+    "no cross-session Bus" claim (see the module docstring's Per-Session
+    scope section, and its ``#3.3``-referencing update).
+
+    Owner ruling on #4215 (corrected framing, lead-coder's relay): the
+    concern was never "a parent must not be able to observe a child" — it
+    was "there must be a CHOICE, not a structural impossibility". This
+    bridge is what makes that choice available: a parent that never
+    subscribes to its own bus pays nothing extra for it (``publish``'s own
+    no-subscriber happy path, module docstring above); a parent that DOES
+    subscribe now sees its children's hook events too, by construction, the
+    same way the existing ``SpawnBridgePresentationConsumer`` /
+    ``SpawnBridgeInterventionListener`` pattern makes a child's present/
+    ask_user reach the parent by construction.
+
+    Run as a background task (``asyncio.create_task``), one per bridged
+    spawn — see ``session_api._spawn_pipeline_driver_session`` for the
+    call site and ``Session._hook_bus_bridge_task`` for where the task
+    handle is held (so it survives past the spawn call and is cancellable
+    at session teardown).
+
+    Deliberately does NOT go through either session's ``HookDispatcher`` —
+    ``HookDispatcher.dispatch_bus_event``'s own docstring already
+    documents why re-publishing a bus-originated event back onto a bus is
+    wrong: it would be a duplicate delivery to any sibling
+    Composer/subscriber correlating on the same kind. This function calls
+    ``parent_bus.publish`` directly, the SAME sync, non-blocking,
+    never-raises call any other publisher uses — the child's own publish
+    call is never held up by it (``HookBus.publish`` never blocks its
+    caller), and neither is the parent's own Sync hook dispatch (this
+    bridge never touches ``HookDispatcher`` at all, so there is nothing on
+    the parent's await path for a child event to wait behind).
+
+    Runs until cancelled (the intended shutdown path — see
+    ``AgentRegistry.remove_session``'s ``aclose_hook_bus_bridge``-shaped
+    teardown) or until ``child_bus``'s owning session's own subscription is
+    otherwise closed.
+    """
+    async with child_bus.subscribe() as subscription:
+        while True:
+            event = await subscription.get()
+            parent_bus.publish(event)
+
+
+__all__ = ["HookBus", "HookBusSubscription", "bridge_child_bus_to_parent"]

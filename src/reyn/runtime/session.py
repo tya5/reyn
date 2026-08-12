@@ -1258,6 +1258,16 @@ class Session:
         self._fs_watcher = _hook_bundle.fs_watcher
         self._composer_registry = _hook_bundle.composer_registry
         self._composed_consumer = _hook_bundle.composed_consumer
+        # #4215 ②: holds the background task bridging THIS session's own
+        # hook-bus events to a PARENT session's bus, when one is spawned
+        # (session_api._spawn_pipeline_driver_session, attached path only).
+        # None for every session that is not a bridged child (the default —
+        # main sessions, detached spawns). Held here (not a local variable at
+        # the spawn site) so it survives past the spawn call and so
+        # AgentRegistry.remove_session has something to cancel at teardown —
+        # see HookBus's own module docstring for why this is a narrow, opt-in
+        # exception to "no cross-session Bus", not a removal of that claim.
+        self._hook_bus_bridge_task: "asyncio.Task | None" = None
         self._hot_reloader = _hook_bundle.hot_reloader
         # Publish as the process-wide active reloader so the hooks-write LLM-op can request_reload (#2073 S3, see session-construction.md#family-3-hook-event-reactivity)
         from reyn.runtime.hot_reload import set_active_hot_reloader
