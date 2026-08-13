@@ -260,7 +260,6 @@ def build_tools(
     mcp_search_threshold: int = MCP_SEARCH_THRESHOLD,  # FP-0024: override via config
     universal_wrappers_enabled: bool = False,  # FP-0034 PR-3b-i: opt-in catalog wrappers
     search_actions_visible: bool = False,       # FP-0034 Phase 2 step 1: D14 visibility gate
-    hot_list_aliases: list[dict] | None = None,  # FP-0034 Phase 2 step 3: hot list direct aliases
     compact_visible: bool = False,              # #272/#1128: visibility-gate compact on window-fill
 ) -> list[dict]:
     """Build the tools= argument for litellm.acompletion.
@@ -944,25 +943,10 @@ def build_tools(
     if universal_wrappers_enabled:
         specs = [s for s in specs if s.name not in _wrapper_superseded_tool_names()]
 
-    # ── K. Hot list direct aliases (FP-0034 Phase 2 step 3) ─────────────────
-    #
-    # When universal_wrappers_enabled=True and hot_list_aliases is a non-empty
-    # list, append the alias dicts at the end of the tools list (after the
-    # universal wrappers).  Each alias is already in OpenAI dict shape
-    # {"type": "function", "function": {"name": ..., "description": ...,
-    # "parameters": ...}} — RouterLoop constructs them from the catalog.
-    # args are passed through to invoke_action dispatch unchanged.
-    #
-    # None / empty list → no-op (= Phase 2 step 2 callers unchanged).
-    _hot_list_raw: list[dict] = []
-    if universal_wrappers_enabled and hot_list_aliases:
-        _hot_list_raw = list(hot_list_aliases)
-
     # Convert ToolSpec list → OpenAI dict list (backward-compat return type).
     # Append tool_search_tool raw dict last (D-S deferred mode only; empty
     # list otherwise — no-op for the inline path).
-    # Hot list aliases follow MCP search tool (= ephemeral, session-specific).
-    return [spec.to_openai_dict() for spec in specs] + _mcp_search_tool_raw + _hot_list_raw
+    return [spec.to_openai_dict() for spec in specs] + _mcp_search_tool_raw
 
 
 def _build_tools_via_registry(registry) -> list[dict]:

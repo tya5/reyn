@@ -1049,18 +1049,21 @@ The full reset every dogfood worker should run **between scenarios within a batc
 ```bash
 rm -rf .reyn/events
 rm -rf .reyn/agents/<worker-agent-name>/events
-rm -f  .reyn/state/action_usage.jsonl
 rm -f  .reyn/state/wal.jsonl            # ← B39 addition (plan resume substrate)
 rm -f  .reyn/state/history.jsonl        # ← B39 addition (session summary carry-over)
 rm -rf .reyn/state/plans/
 rm -rf reyn/local/                      # ← B30-NEW-3 addition
 ```
 
+(#4552: the `.reyn/state/action_usage.jsonl` line this recipe used to
+include is removed — that path never existed in the first place, the real
+per-agent ledger it meant to target backed the now-retired hot-list feature,
+owner directive: discarded.)
+
 Alternatively, use `bash scripts/dogfood_fresh_reset.sh` from the worktree
-root — it runs the hot-list portion of this recipe (all lines except the
-`.reyn/events` and per-agent lines, which require knowing the agent name and
-must not run while `reyn web` is live). See §6.7 for the full fresh-mode
-rationale.
+root — it runs this recipe (all lines except the `.reyn/events` and
+per-agent lines, which require knowing the agent name and must not run
+while `reyn web` is live). See §6.7 for the full fresh-mode rationale.
 
 The `reyn/local/` line was added in B30 follow-up: `skill_builder` writes persistent skill files there, and on subsequent scenarios the LLM sees those skills in `list_actions` enumeration — silently contaminating the catalog. Observation: B30 worker 1 had S6's `list_comprehension_generator` skill bleed into S3's skill list because `reyn/local/` was not reset.
 
@@ -1213,6 +1216,15 @@ For `--n-shot N > 1`, each shot uses a distinct agent name (`default-shot1` thro
 ---
 
 ## 6.7 Fresh mode is the dogfood baseline
+
+> **#4552 (2026-08) — hot-list retired.** The hot-list feature this section's
+> historical evidence is about (B37/B38's `action_usage.jsonl` carry-over
+> confound) is removed (owner directive: discarded, superseded by
+> `list_actions` as the canonical discovery path) — nothing writes that file
+> anymore, so it is no longer a fresh-mode wipe target or a cross-batch V
+> confound going forward. The B37/B38 findings below remain as historical
+> record of a real measurement effect at the time; new dogfood work does not
+> need to account for it.
 
 > **B37 retro §3 F2 / B38 retro §6 evidence**: V swings between batches are
 > partly driven by hot-list usage-history seed state differences (= fresh

@@ -179,21 +179,23 @@ def build_capabilities_routing_guide(
 
 
 # =============================================================================
-# R2 — "## Action categories" + hot-list + discovery-mandate (slot_post_environment)
+# R2 — "## Action categories" + discovery-mandate (slot_post_environment)
 # =============================================================================
 # WHEN: only when universal_wrappers_enabled (wrappers-off has nothing to
 #       enumerate — the full action set is already advertised flat).
 # WHERE: injected at slot_post_environment, between "## Environment" and
 #        "## Behaviour".
 # WHY: per-category one-liners teach the LLM the qualified-name shape and
-#      what each category is for; the hot-list-aliases hint and the
-#      discovery-mandate paragraph (#187 Stage C, weak-tier gate — see
-#      tools/schemes/_discovery.py's tier_wants_discovery_mandate for the
-#      policy that decides discovery_mandate) close the "refused because the
-#      tool wasn't in the visible hot-list" failure mode.
-# 日本語訳: 「## Action categories」節。各カテゴリの一行説明・hot-list
-#      ヒント・discovery-mandate 段落（弱モデル向けの発見義務化、#187）。
-#      universal_wrappers_enabled のときのみ描画される。
+#      what each category is for; the discovery-mandate paragraph (#187
+#      Stage C, weak-tier gate — see tools/schemes/_discovery.py's
+#      tier_wants_discovery_mandate for the policy that decides
+#      discovery_mandate) closes the "refused instead of discovering the
+#      tool via list_actions" failure mode. (#4552: this used to also carry
+#      a hot-list-aliases hint here — discarded with the hot-list feature,
+#      owner directive.)
+# 日本語訳: 「## Action categories」節。各カテゴリの一行説明・discovery-mandate
+#      段落(弱モデル向けの発見義務化、#187)。universal_wrappers_enabled の
+#      ときのみ描画される。
 ACTION_CATEGORIES_HEADER = "## Action categories"
 
 ACTION_CATEGORIES_INTRO = (
@@ -294,16 +296,6 @@ ACTION_CATEGORIES_LINES = [
 ]
 
 
-HOT_LIST_ALIASES_HINT = (
-    "The function list visible to you is a HOT-LIST (= a subset of "
-    "the full catalog). Whenever the user requests a capability and "
-    "no listed tool obviously matches, ALWAYS call `list_actions` "
-    "(narrow with `category=[...]` when you know the category) to "
-    "discover the rest of the catalog BEFORE refusing. Refusing "
-    "without that check is a failure mode — the action you assumed "
-    "missing often exists."
-)
-
 DISCOVERY_MANDATE_PARAGRAPH = (
     "When no visible tool obviously matches the action you need, "
     "calling list_actions is MANDATORY and comes FIRST — before any "
@@ -315,7 +307,6 @@ DISCOVERY_MANDATE_PARAGRAPH = (
 def build_action_categories_slot(
     *,
     universal_wrappers_enabled: bool,
-    has_hot_list_aliases: bool,
     discovery_mandate: bool,
 ) -> "str | None":
     """R2: the "## Action categories" slot content, or ``None`` when the slot
@@ -330,9 +321,6 @@ def build_action_categories_slot(
         for _line in ACTION_CATEGORIES_LINES:
             _r2.append(_line)
         _r2.append("")
-        if has_hot_list_aliases:
-            _r2.append(HOT_LIST_ALIASES_HINT)
-            _r2.append("")
     if discovery_mandate and universal_wrappers_enabled:
         _r2.append(DISCOVERY_MANDATE_PARAGRAPH)
         _r2.append("")

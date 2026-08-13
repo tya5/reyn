@@ -248,7 +248,7 @@ These are surface conditions surfaced during the B47 N=10 reproducibility check 
 
 ### 7.3 Router catalog fuzzy-match on parallel-built skills
 
-**Symptom**: When several `skill_builder` invocations run in parallel within the same worktree, the second-and-later builds may not dispatch `skill_builder` at all — instead, the router LLM picks the *already-built* skill from a previous parallel run (= because the previous build's `reyn/local/<name>/skill.md` made it discoverable in the catalog hot-list) and invokes it directly. The user's intent to "build a new skill" is lost because the catalog reports a fuzzy-matching skill is already available.
+**Symptom**: When several `skill_builder` invocations run in parallel within the same worktree, the second-and-later builds may not dispatch `skill_builder` at all — instead, the router LLM picks the *already-built* skill from a previous parallel run (= because the previous build's `reyn/local/<name>/skill.md` made it discoverable via the catalog) and invokes it directly. The user's intent to "build a new skill" is lost because the catalog reports a fuzzy-matching skill is already available.
 
 **Root cause**: shared filesystem state (= `reyn/local/`) between parallel agents in the same worktree. The first parallel build wins; subsequent calls see the catalog and route to the existing skill. No race in the build itself — just LLM routing prior contaminated by mid-batch catalog growth.
 

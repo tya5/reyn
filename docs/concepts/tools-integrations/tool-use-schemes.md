@@ -24,7 +24,7 @@ success**. Schemes that place the callable name directly in the LLM-facing
 surface (`enumerate-all`, `CodeAct`) let the model invoke without guessing;
 schemes that put the name behind an indirection it must first traverse
 (`universal-category`'s discover→invoke, `retrieval`'s search-first) invite
-name-hallucination on non-hot-list tools. This is why the chat default moved to
+name-hallucination on direct tools. This is why the chat default moved to
 `enumerate-all`.
 
 ### `enumerate-all` (chat default)
@@ -33,7 +33,7 @@ Presents *every* usable tool flatly in the LLM's tool list and dispatches by
 name — the plain, native-JSON baseline with no discovery indirection. **This is
 the default for the `chat` layer**: flat-listing actions lets the LLM
 invoke them directly, avoiding the `invoke_action` name-hallucination that the
-discover-then-call indirection induced (measured ~30%→100% non-hot-list tool-use
+discover-then-call indirection induced (measured ~30%→100% direct tool-use
 on the chat path). Leaving `tool_use.scheme` unset keeps it.
 
 **Use when:** the default for chat — direct, deterministic name→dispatch. The

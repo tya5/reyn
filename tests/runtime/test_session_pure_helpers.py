@@ -3,7 +3,6 @@
 ``_no_reply_marker(agent, reason)``   — structured failure string format
 ``_is_no_reply_marker(text)``         — detect the marker by structural signature
 ``_parse_no_reply_marker(text)``      — parse into (peer, reason) or None
-``_ts_iso_to_epoch(ts)``              — ISO-8601 → epoch float, None on failure
 """
 from __future__ import annotations
 
@@ -20,7 +19,6 @@ from reyn.runtime.session import (
     _is_no_reply_marker,
     _no_reply_marker,
     _parse_no_reply_marker,
-    _ts_iso_to_epoch,
 )
 
 # ---------------------------------------------------------------------------
@@ -114,41 +112,8 @@ def test_parse_no_reply_marker_partial_bracket_returns_none() -> None:
 
 
 # ---------------------------------------------------------------------------
-# _ts_iso_to_epoch
+# #4552: _ts_iso_to_epoch's own tests lived here. The function was deleted
+# as orphaned dead code — its sole caller, _extract_tool_call_records, was
+# itself deleted with the hot-list feature (the tool-call-record scan that
+# fed the removed ActionUsageTracker; owner directive: discarded).
 # ---------------------------------------------------------------------------
-
-
-def test_ts_iso_to_epoch_valid_utc() -> None:
-    """Tier 2: valid UTC ISO-8601 string converts to the exact epoch value."""
-    assert _ts_iso_to_epoch("2024-01-15T12:30:00+00:00") == 1705321800.0
-
-
-def test_ts_iso_to_epoch_valid_with_z_suffix() -> None:
-    """Tier 2: 'Z' UTC suffix (Python 3.11+ fromisoformat) converts to exact epoch."""
-    import sys
-    if sys.version_info >= (3, 11):
-        assert _ts_iso_to_epoch("2024-01-15T12:30:00Z") == 1705321800.0
-
-
-def test_ts_iso_to_epoch_none_returns_none() -> None:
-    """Tier 2: None → None."""
-    assert _ts_iso_to_epoch(None) is None
-
-
-def test_ts_iso_to_epoch_empty_string_returns_none() -> None:
-    """Tier 2: empty string → None."""
-    assert _ts_iso_to_epoch("") is None
-
-
-def test_ts_iso_to_epoch_invalid_string_returns_none() -> None:
-    """Tier 2: unparseable string → None (no crash)."""
-    assert _ts_iso_to_epoch("not-a-date") is None
-
-
-def test_ts_iso_to_epoch_two_distinct_times_order_preserved() -> None:
-    """Tier 2: later timestamp produces a larger epoch value."""
-    earlier = _ts_iso_to_epoch("2024-01-15T12:00:00+00:00")
-    later = _ts_iso_to_epoch("2024-01-15T13:00:00+00:00")
-    assert earlier is not None
-    assert later is not None
-    assert later > earlier

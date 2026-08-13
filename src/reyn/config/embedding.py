@@ -300,8 +300,10 @@ class ActionRetrievalConfig:
     Phase 1 of FP-0034. The 4 universal wrappers (list_actions /
     search_actions / describe_action / invoke_action) plus the
     qualified-name dispatcher land across PR-1 through PR-3b-iv.
-    Subsequent phases extend with hot list / cold start /
-    search_actions enablement.
+    Subsequent phases extend with cold start / search_actions enablement.
+    (#4552: an earlier phase also added ``hot_list_n``/``hot_list_seed`` —
+    discarded, owner directive: hot list's role is gone, superseded by
+    ``list_actions`` as the canonical discovery path.)
 
     Fields:
         universal_wrappers_enabled:
@@ -345,15 +347,6 @@ class ActionRetrievalConfig:
             in-process local-model embedding backend; reyn depends on
             litellm exclusively for embeddings).
 
-        hot_list_n:
-            Hot list size for top-N freq+recency projection (§D2).
-            Default 0 (= off) following N=0 viability verdict (44 runs,
-            nested-args 0/23) — list_actions is the canonical discovery
-            path and hot-list aliases introduced a visibility-asymmetry
-            bug class. Operators who want aliases can set hot_list_n: 10
-            (or higher) in reyn.yaml; the seed, tracker, and alias-builder
-            mechanisms remain fully operative as an opt-in.
-
         mode:
             Operational mode label (§D24): ``"minimal"`` /
             ``"default"`` / ``"performance"``. Stored as a free-form
@@ -363,13 +356,7 @@ class ActionRetrievalConfig:
     """
 
     universal_wrappers_enabled: bool = True
-    hot_list_n: int = 0
     mode: str = "default"
-    # FP-0034 §D16: seed qualified names for initial hot list (before freq
-    # accumulates). "default" means the OS-defined 10-item seed (5 universal
-    # + 5 Reyn flagship). [] means no seed. Explicit list overrides the
-    # default. Parsed by _build_action_retrieval_config.
-    hot_list_seed: list[str] | str = "default"
 
 
 def _build_action_retrieval_config(raw: object) -> ActionRetrievalConfig:
@@ -402,19 +389,6 @@ def _build_action_retrieval_config(raw: object) -> ActionRetrievalConfig:
             )
         cfg.universal_wrappers_enabled = val
 
-    if "hot_list_n" in raw:
-        val = raw["hot_list_n"]
-        if not isinstance(val, int) or isinstance(val, bool):
-            raise ValueError(
-                "action_retrieval.hot_list_n must be an integer, "
-                f"got {type(val).__name__}"
-            )
-        if val < 0:
-            raise ValueError(
-                f"action_retrieval.hot_list_n must be >= 0, got {val}"
-            )
-        cfg.hot_list_n = val
-
     if "mode" in raw:
         val = raw["mode"]
         if not isinstance(val, str):
@@ -422,23 +396,5 @@ def _build_action_retrieval_config(raw: object) -> ActionRetrievalConfig:
                 f"action_retrieval.mode must be a string, got {type(val).__name__}"
             )
         cfg.mode = val
-
-    if "hot_list_seed" in raw:
-        val = raw["hot_list_seed"]
-        if val == "default":
-            cfg.hot_list_seed = "default"
-        elif isinstance(val, list):
-            for item in val:
-                if not isinstance(item, str):
-                    raise ValueError(
-                        "action_retrieval.hot_list_seed list items must be "
-                        f"strings, got {type(item).__name__}"
-                    )
-            cfg.hot_list_seed = list(val)
-        else:
-            raise ValueError(
-                "action_retrieval.hot_list_seed must be \"default\" or a "
-                f"list of strings, got {type(val).__name__!r}"
-            )
 
     return cfg

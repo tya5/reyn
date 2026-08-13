@@ -464,7 +464,7 @@ async def test_both_retrieval_cells_derive_their_sp_facts_from_one_place() -> No
 
     rendered = (await RetrievalScheme().build_presentation(available, layer_ctx, ops)).tool_use_sp
     from_shared = encoder_for_transport(Transport.TOOL_CALLS).encode_tool_use_sp(
-        Exposure(descriptors=(), sp_facts=retrieval_sp_facts(available, layer_ctx)),
+        Exposure(descriptors=(), sp_facts=retrieval_sp_facts(layer_ctx)),
     )
     assert from_shared, "the shared facts rendered no slots — this arm would be vacuous"
     assert {k: v for k, v in rendered.items() if k != "slot_post_catalog"} == {
@@ -480,7 +480,7 @@ async def test_both_retrieval_cells_derive_their_sp_facts_from_one_place() -> No
         layer_ctx=layer_ctx,
         deviation=SEARCH_FIRST_EXPOSURE_DEVIATION,
     )
-    assert exposure.sp_facts == retrieval_sp_facts(available, layer_ctx)
+    assert exposure.sp_facts == retrieval_sp_facts(layer_ctx)
     assert exposure.sp_facts["universal_wrappers_enabled"] is False, (
         "retrieval stopped declaring the universal wrapper block off, which is "
         "the fact that distinguishes its SP from category's"

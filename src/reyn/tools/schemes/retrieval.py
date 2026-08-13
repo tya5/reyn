@@ -100,7 +100,7 @@ class RetrievalScheme:
 
     name = "retrieval"
 
-    def _sp_facts(self, available, layer_ctx) -> "dict[str, object]":
+    def _sp_facts(self, layer_ctx) -> "dict[str, object]":
         """This cell's ``sp_facts``, from the presentation's shared source.
 
         #3376 P3: the formula moved to ``_retrieval_exposure.retrieval_sp_facts``
@@ -108,7 +108,7 @@ class RetrievalScheme:
         *presentation*, so two cells computing them separately could drift on a
         value neither test would notice (the ``content_fence`` encoder does not
         read ``sp_facts`` at all, so its copy would rot silently)."""
-        return retrieval_sp_facts(available, layer_ctx)
+        return retrieval_sp_facts(layer_ctx)
 
     def _encode(self, exposure: Exposure, **presentation_fields) -> Presentation:
         """Hand one retrieval exposure to the ``tool_calls`` encoder.
@@ -153,7 +153,7 @@ class RetrievalScheme:
                     descriptors=descriptors_from_entries(
                         without_duplicate_names(base + catalog)
                     ),
-                    sp_facts=self._sp_facts(available, layer_ctx),
+                    sp_facts=self._sp_facts(layer_ctx),
                     sp_slot_overrides={"slot_post_catalog": _HIDDEN_STATE_HINT},
                 ))
             # Initial presentation: the base + the search tool (no catalog flood).
@@ -164,7 +164,7 @@ class RetrievalScheme:
                 # It becomes wrong the day this branch composes a catalog
                 # subset (#3428).
                 descriptors=descriptors_from_entries(base + [_search_tool_schema()]),
-                sp_facts=self._sp_facts(available, layer_ctx),
+                sp_facts=self._sp_facts(layer_ctx),
                 sp_slot_overrides={"slot_post_catalog": _search_sp(terminal=False)},
             ))
         # Refined presentation: run the search (the async, dynamic-query I/O) and
@@ -205,7 +205,7 @@ class RetrievalScheme:
                 descriptors=descriptors_from_entries(
                     without_duplicate_names(tools)
                 ),
-                sp_facts=self._sp_facts(available, layer_ctx),
+                sp_facts=self._sp_facts(layer_ctx),
                 sp_slot_overrides={"slot_post_catalog": _search_sp(terminal=terminal)},
             ),
             candidates=tuple(matched),

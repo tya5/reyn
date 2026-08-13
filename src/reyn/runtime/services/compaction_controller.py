@@ -165,15 +165,6 @@ class CompactionController:
     render_summary:
         Callable ``(structured: dict) -> str`` that renders a structured
         summary dict to a storage-friendly text blob.
-    merge_action_usage:
-        Optional sink for the per-agent
-        :class:`~reyn.tools.action_usage_tracker.ActionUsageTracker`.
-        When set, the controller invokes
-        ``merge_action_usage(candidates)`` with the list of
-        ``ChatMessage`` instances being folded into the summary; the
-        sink is responsible for extracting tool-call records and
-        forwarding them to the tracker. Ignored when ``None``
-        (= session has no tracker configured).
     """
 
     def __init__(
@@ -187,7 +178,6 @@ class CompactionController:
         history_appender: Callable[[ChatMessage], None],
         make_summary_message: Callable[..., ChatMessage],
         render_summary: Callable[[dict], str],
-        merge_action_usage: Callable[[list[ChatMessage]], None] | None = None,
         # FP-0050/#1822 S3 (#1820): content-threat scan config. When enabled,
         # turn text is secret-redacted before entering the summarizer input.
         # None (test paths) → no redaction (byte-identical).
@@ -203,7 +193,6 @@ class CompactionController:
         self._append_history = history_appender
         self._make_summary_message = make_summary_message
         self._render_summary = render_summary
-        self._merge_action_usage = merge_action_usage
         self._compacting: bool = False
 
     @property
@@ -436,15 +425,6 @@ class CompactionController:
 
         summary_msg = self._make_summary_message(rendered, structured, covers)
         self._append_history(summary_msg)
-        # Action-usage sink (= per-agent compacted table). Fired BEFORE
-        # the completed event so any downstream subscriber (TUI etc.)
-        # already sees the updated hot-list state. Sink failure is
-        # non-fatal — compaction itself succeeded.
-        if self._merge_action_usage is not None:
-            try:
-                self._merge_action_usage(list(candidates))
-            except Exception:
-                pass
         self._events.emit(
             "compaction_completed",
             new_turn_count=new_turn_count,

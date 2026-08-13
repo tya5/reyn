@@ -97,7 +97,7 @@ SSoT は `src/reyn/core/events/event_schema.py` の `AUDIT_EVENT_KINDS` で、�
 
 | 種類 | トリガー | 主要なペイロード |
 |------|---------|-------------|
-| `routing_decided` | router の単一ディスパッチ関門（`RouterLoop._dispatch_resolved`）で、カタログアクションがディスパッチされるたびに発行されます — `invoke_action` ラッパー経由、bare な hot-list-alias 呼び出し、ARS-salvage された直接呼び出し、あるいは（#3455）reyn.yaml で `action_retrieval.universal_wrappers_enabled: false` を設定した場合のフラットな bare-name ディスパッチパスのいずれでも。 | `action_name: str`; `source: str` — `"invoke_action"` \| `"hot_list_alias"` \| `"ars_direct"`; `outcome: str` — `"success"` \| `"error"`; `chain_id: str` — クロスコール相関用リクエストチェーン識別子。 |
+| `routing_decided` | router の単一ディスパッチ関門（`RouterLoop._dispatch_resolved`）で、カタログアクションがディスパッチされるたびに発行されます — `invoke_action` ラッパー経由、ARS-salvage された直接呼び出し、あるいは（#3455）reyn.yaml で `action_retrieval.universal_wrappers_enabled: false` を設定した場合のフラットな bare-name ディスパッチパスのいずれでも。 | `action_name: str`; `source: str` — `"invoke_action"` \| `"ars_direct"`; `outcome: str` — `"success"` \| `"error"`; `chain_id: str` — クロスコール相関用リクエストチェーン識別子。 |
 
 **注記:** モデルがどの入口を使ったかによらず、カタログアクションのルーティングを監査できます（#3455: 以前は `invoke_action` ラッパー経由にのみ紐づいており、`universal_wrappers_enabled: false` の opt-out 構成ではこのイベントが一度も発行されませんでした）。`chain_id` を使って、アクションのダウンストリームイベントとのクロスコリレーションが行えます。
 

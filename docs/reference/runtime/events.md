@@ -86,7 +86,6 @@ force_close_triggered
 hook_event_emitted
 hook_push_fired
 hook_shell_executed
-hot_list_updated
 inbox_cancel
 index_dropped
 index_update_cost_warning
@@ -402,7 +401,7 @@ See also: [Concepts: secret handling](../../concepts/runtime/secret-handling.md)
 
 | Kind | Trigger | Key payload |
 |------|---------|-------------|
-| `routing_decided` | Emitted at the router's single dispatch chokepoint (`RouterLoop._dispatch_resolved`) whenever a catalog action is dispatched — via the `invoke_action` wrapper, a bare hot-list-alias tool call, an ARS-salvaged direct call, or (#3455) the flat bare-name dispatch path used when `action_retrieval.universal_wrappers_enabled: false` is set in reyn.yaml. | `action_name: str`; `source: str` — `"invoke_action"` \| `"hot_list_alias"` \| `"ars_direct"`; `outcome: str` — `"success"` \| `"error"`; `chain_id: str` — request chain identifier for cross-call correlation. |
+| `routing_decided` | Emitted at the router's single dispatch chokepoint (`RouterLoop._dispatch_resolved`) whenever a catalog action is dispatched — via the `invoke_action` wrapper, an ARS-salvaged direct call, or (#3455) the flat bare-name dispatch path used when `action_retrieval.universal_wrappers_enabled: false` is set in reyn.yaml. | `action_name: str`; `source: str` — `"invoke_action"` \| `"ars_direct"`; `outcome: str` — `"success"` \| `"error"`; `chain_id: str` — request chain identifier for cross-call correlation. |
 
 **Notes:** enables auditing catalog-action routing regardless of which entry surface the model used (#3455: previously gated on the `invoke_action` wrapper surface, so the `universal_wrappers_enabled: false` opt-out configuration never emitted this event at all). Cross-correlate with `chain_id` across the action's downstream events.
 

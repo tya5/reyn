@@ -1,8 +1,7 @@
 """Tier 2: FP-0034 PR-3b-ii ActionRetrievalConfig + parser contract.
 
 Tests for the ``action_retrieval:`` config block:
-  - Default config has the safe defaults (= wrappers enabled, mode='default',
-    hot_list_n=0 — off by default; opt-in via reyn.yaml).
+  - Default config has the safe defaults (= wrappers enabled, mode='default').
   - Parser accepts each field independently, validates types, and
     raises on bad values.
   - ReynConfig.action_retrieval is populated by load_config from the
@@ -19,7 +18,7 @@ The on/off decision now lives at ``embedding.enabled: bool`` (default
 False); the model-class field is the (pre-existing) ``embedding.default_class``
 (default "standard"). Its tests live in ``tests/config/test_embedding_config.py``;
 this file keeps only the ``action_retrieval:`` block's own fields
-(``universal_wrappers_enabled`` / ``hot_list_n`` / ``mode`` / ``hot_list_seed``).
+(``universal_wrappers_enabled`` / ``mode``).
 
 No mocks; uses real load_config with a yaml file written to tmp_path.
 """
@@ -49,7 +48,6 @@ def test_default_action_retrieval_config_is_on() -> None:
     """
     cfg = ActionRetrievalConfig()
     assert cfg.universal_wrappers_enabled is True
-    assert cfg.hot_list_n == 0  # N=0 default: viability verdict; opt-in via reyn.yaml
     assert cfg.mode == "default"
 
 
@@ -84,18 +82,6 @@ def test_parser_universal_wrappers_enabled_true() -> None:
     assert cfg.universal_wrappers_enabled is True
 
 
-def test_parser_hot_list_n_zero() -> None:
-    """Tier 2: hot_list_n=0 (= opt-out, §D24 minimal mode) is accepted."""
-    cfg = _build_action_retrieval_config({"hot_list_n": 0})
-    assert cfg.hot_list_n == 0
-
-
-def test_parser_hot_list_n_positive() -> None:
-    """Tier 2: hot_list_n positive value flows through."""
-    cfg = _build_action_retrieval_config({"hot_list_n": 20})
-    assert cfg.hot_list_n == 20
-
-
 def test_parser_mode_minimal() -> None:
     """Tier 2: mode='minimal' (§D24) flows through."""
     cfg = _build_action_retrieval_config({"mode": "minimal"})
@@ -112,11 +98,9 @@ def test_parser_all_fields_at_once() -> None:
     """Tier 2: all supported fields can be set together."""
     cfg = _build_action_retrieval_config({
         "universal_wrappers_enabled": True,
-        "hot_list_n": 15,
         "mode": "performance",
     })
     assert cfg.universal_wrappers_enabled is True
-    assert cfg.hot_list_n == 15
     assert cfg.mode == "performance"
 
 
@@ -133,18 +117,6 @@ def test_parser_rejects_non_bool_wrappers_enabled() -> None:
     """Tier 2: universal_wrappers_enabled with non-bool raises."""
     with pytest.raises(ValueError, match="universal_wrappers_enabled"):
         _build_action_retrieval_config({"universal_wrappers_enabled": "yes"})
-
-
-def test_parser_rejects_non_int_hot_list_n() -> None:
-    """Tier 2: hot_list_n with non-int raises."""
-    with pytest.raises(ValueError, match="hot_list_n"):
-        _build_action_retrieval_config({"hot_list_n": "10"})
-
-
-def test_parser_rejects_negative_hot_list_n() -> None:
-    """Tier 2: hot_list_n < 0 raises."""
-    with pytest.raises(ValueError, match=">= 0"):
-        _build_action_retrieval_config({"hot_list_n": -1})
 
 
 def test_parser_rejects_non_string_mode() -> None:
@@ -170,17 +142,6 @@ def test_parser_ignores_unknown_keys() -> None:
     assert cfg.universal_wrappers_enabled is True
 
 
-def test_parser_rejects_bool_passed_as_hot_list_n() -> None:
-    """Tier 2: True/False is rejected for hot_list_n (= bool is int subclass in Python).
-
-    Python's bool is a subclass of int — without explicit guard a
-    user accidentally passing True/False would pass through silently.
-    Parser must catch this.
-    """
-    with pytest.raises(ValueError, match="hot_list_n"):
-        _build_action_retrieval_config({"hot_list_n": True})
-
-
 # ── 4. End-to-end load_config integration ─────────────────────────────────
 
 
@@ -190,7 +151,6 @@ def test_load_config_picks_up_action_retrieval_yaml(tmp_path: Path) -> None:
         """
 action_retrieval:
   universal_wrappers_enabled: true
-  hot_list_n: 15
   mode: performance
 """,
         encoding="utf-8",
@@ -198,7 +158,6 @@ action_retrieval:
 
     cfg = load_config(cwd=tmp_path)
     assert cfg.action_retrieval.universal_wrappers_enabled is True
-    assert cfg.action_retrieval.hot_list_n == 15
     assert cfg.action_retrieval.mode == "performance"
 
 
@@ -216,7 +175,6 @@ def test_load_config_without_action_retrieval_uses_defaults(tmp_path: Path) -> N
 
     cfg = load_config(cwd=tmp_path)
     assert cfg.action_retrieval.universal_wrappers_enabled is True
-    assert cfg.action_retrieval.hot_list_n == 0  # N=0 default
     assert cfg.action_retrieval.mode == "default"
 
 
@@ -236,34 +194,3 @@ action_retrieval:
 
     cfg = load_config(cwd=tmp_path)
     assert cfg.action_retrieval.universal_wrappers_enabled is False
-
-
-# ── 5. N=0 default + opt-in contract (hot-list default flip) ─────────────
-
-
-def test_hot_list_n_default_is_zero() -> None:
-    """Tier 2: N=0 default flip — ActionRetrievalConfig.hot_list_n default is 0.
-
-    Regression pin: list_actions is the canonical discovery path; hot-list
-    aliases are off by default and require explicit opt-in (hot_list_n: 10+
-    in reyn.yaml). The seed/tracker/alias-builder remain operative as opt-in.
-    """
-    assert ActionRetrievalConfig().hot_list_n == 0
-
-
-def test_load_config_hot_list_n_explicit_opt_in(tmp_path: Path) -> None:
-    """Tier 2: N=0 default flip — explicit hot_list_n: 10 in reyn.yaml enables
-    the hot-list (symmetric pin: default off, explicit on)."""
-    (tmp_path / "reyn.yaml").write_text(
-        MINIMAL_REYN_YAML + "action_retrieval:\n  hot_list_n: 10\n",
-        encoding="utf-8",
-    )
-    cfg = load_config(cwd=tmp_path)
-    assert cfg.action_retrieval.hot_list_n == 10
-
-
-def test_load_config_hot_list_n_default_is_zero(tmp_path: Path) -> None:
-    """Tier 2: N=0 default flip — bare reyn.yaml with no hot_list_n gives 0."""
-    (tmp_path / "reyn.yaml").write_text(MINIMAL_REYN_YAML, encoding="utf-8")
-    cfg = load_config(cwd=tmp_path)
-    assert cfg.action_retrieval.hot_list_n == 0

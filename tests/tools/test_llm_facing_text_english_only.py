@@ -76,17 +76,17 @@ def _representative_sp_flag_combos() -> list[dict]:
     """A representative (not exhaustive-huge) set of the scheme-layer flag
     combinations that feed ``build_universal_tool_use_slots`` — covers both
     wrapper-on (universal-category / retrieval) and wrapper-off
-    (enumerate-all) paths, with discovery-mandate / hot-list / non-interactive
-    each toggled at least once."""
+    (enumerate-all) paths, with discovery-mandate / non-interactive each
+    toggled at least once."""
     return [
         dict(universal_wrappers_enabled=True, search_actions_enabled=True,
-             discovery_mandate=True, has_hot_list_aliases=True, non_interactive=False),
+             discovery_mandate=True, non_interactive=False),
         dict(universal_wrappers_enabled=True, search_actions_enabled=False,
-             discovery_mandate=False, has_hot_list_aliases=False, non_interactive=True),
+             discovery_mandate=False, non_interactive=True),
         dict(universal_wrappers_enabled=False, search_actions_enabled=True,
-             discovery_mandate=True, has_hot_list_aliases=False, non_interactive=False),
+             discovery_mandate=True, non_interactive=False),
         dict(universal_wrappers_enabled=False, search_actions_enabled=False,
-             discovery_mandate=False, has_hot_list_aliases=True, non_interactive=True),
+             discovery_mandate=False, non_interactive=True),
     ]
 
 

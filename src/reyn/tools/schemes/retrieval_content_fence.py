@@ -155,7 +155,7 @@ def build_retrieval_content_fence_exposure(
 
     return Exposure(
         descriptors=descriptors_from_entries(exposed),
-        sp_facts=retrieval_sp_facts(available, layer_ctx),
+        sp_facts=retrieval_sp_facts(layer_ctx),
         dispatchable_names=dispatchable_names,
         deviation=deviation,
     )

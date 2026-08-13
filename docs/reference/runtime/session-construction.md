@@ -279,29 +279,36 @@ Two other cost-adjacent construction points stay inline:
 ## Family 5 — Retrieval
 
 `_build_retrieval_bundle` constructs the embedding block (three attrs:
-`action_embedding_index`/`embedding_provider`/`embedding_model_class`) plus
-`action_usage_tracker` — a byte-identical extraction (same
-objects, same conditionals, same try/except None-fallbacks, same args as the inline
-sequence it replaced), MODULO one reordering (#3408): the call site MOVED from its
-original position (BEFORE Family 1 / `_build_audit_event_bundle`) to run right AFTER
-Family 1 instead. #3408 measured that nothing between the two positions reads or writes
-this family's own attrs (`_action_embedding_index`/`_embedding_provider`/
-`_embedding_model_class`/`_action_usage_tracker`), so the move is safe.
+`action_embedding_index`/`embedding_provider`/`embedding_model_class`) — a
+byte-identical extraction (same objects, same conditionals, same
+try/except None-fallbacks, same args as the inline sequence it replaced).
+The call site sits right after Family 1 (`_build_audit_event_bundle`)
+rather than before it.
 
-Before #3408, this family had no eager dependency on `audit_events` — only the
-`_on_hot_list_changed` closure's DEFERRED `self._audit_events` NAME resolution, because the
-EventLog did not exist yet at the builder's old (pre-Family-1) call site. #3408 closed that
-deferral instead of keeping it: the builder now takes `audit_events` as an eager arg and the
-closure binds it by IDENTITY (the `_audit_bundle.audit_events` object, passed through), not
-by re-resolving `self._audit_events` on every call. This closes the #2856 accident's CLASS —
-a name reference silently resolving to a DIFFERENT EventLog than the one live when it was
-written — not just the one instance: an identity reference can't retarget.
+**#4552 (2026-08) — `action_usage_tracker` removed.** This family used to
+also construct `action_usage_tracker` (the hot-list feature's freq+recency
+ranking, `ActionUsageTracker`), plus an `_on_hot_list_changed` closure that
+emitted a `hot_list_updated` audit-event on every ranking reorder — removed
+with the hot-list feature (owner directive: discarded, superseded by
+`list_actions` as the canonical discovery path). `_build_retrieval_bundle`
+dropped its `agent_name`/`audit_events` params along with it (both existed
+solely to feed the tracker's persist path and the closure's audit-emit,
+respectively — nothing else in the builder read them).
 
-The rationale (git-grep evidence: `_audit_events =` is a single assignment repo-wide, in
-`Session.__init__` only) is machine-checked, not just asserted in the docstring —
-`tests/repo/test_audit_events_single_assignment_3408.py`'s AST arm fails the day a restore/attach
-path adds a second assignment site, naming the offending file:line and saying "route this
-through the builder arg instead."
+The reordering this family's call site still carries (#3408: MOVED from its
+original position BEFORE Family 1 to run right AFTER it, so the
+now-removed hot-list closure could bind `audit_events` by IDENTITY rather
+than a deferred `self._audit_events` NAME lookup — closing the #2856
+accident's class, a name reference silently resolving to a DIFFERENT
+EventLog than the one live when it was written) no longer has a live
+reason attached to THIS family specifically — nothing remaining here reads
+`audit_events` at all. The position is left as-is rather than reverted (no
+live bug either way; reverting on its own merits, if ever warranted, is a
+separate, later change). `tests/repo/test_audit_events_single_assignment_
+3408.py`'s AST arm (git-grep evidence: `_audit_events =` is a single
+assignment repo-wide, in `Session.__init__` only) remains true and
+unaffected by this removal — its own subject was never this family's
+attrs, just the identity-vs-name binding discipline generally.
 
 `_action_retrieval` (FP-0034 PR-3b-iii) drives whether the universal catalog wrappers
 appear in the router `tools=`. Default constructs an off-flag `ActionRetrievalConfig` so
@@ -355,14 +362,10 @@ provider) deleted the sink, `OpContext.embedding_event_sink`, and every hop
 of the threading, along with the `KIND_FAMILY` registry entry it used to
 justify in `event_schema.py`'s `DYNAMIC_KIND_EMIT_SITES`.
 
-The `_on_hot_list_changed` closure in the `ActionUsageTracker` setup a few
-lines below still uses the same deferred-`self._audit_events`-capture
-pattern the removed sink used to mirror (C.4 hotfix, 2026-05-27: capturing
-`self.events` instead of `self._audit_events` at construction time raised
-`AttributeError` the moment the sink fired, silently swallowed by the
-surrounding `try/except` — see git history for the original incident
-writeup). That recurrence risk is still live for `_on_hot_list_changed`,
-so it is called out here for future edits of that closure.
+**#4552 (2026-08):** the `_on_hot_list_changed` closure this paragraph used
+to warn about (a name-capture recurrence risk, C.4 hotfix 2026-05-27) is
+removed along with the hot-list feature it belonged to (owner directive:
+discarded) — the warning no longer has a live subject.
 
 ## Family 6a — Router-waist (`RouterHostAdapter`)
 
@@ -484,13 +487,15 @@ and its result feeds a per-turn cap check worth having correct immediately.
 `_build_history_compaction_bundle` constructs `history_buffer` / `compaction_controller`
 (including the None-then-patch that breaks their circular dependency) / `budget_advisor` —
 a byte-identical extraction, same construction sequence, same position (right after Family
-6a's `router_host`, since `history_buffer` eager-depends on it).
+6a's `router_host`, since `history_buffer` eager-depends on it). The session drives
+compaction via `force_compact_now()` (pre-frame guard) — background task lifecycle was
+removed in #1128 PR-a, all callbacks resolve against `self` at call time. `_token_learner`
+(PR-N6) is the adaptive per-user token-estimation learner.
 
-`_merge_action_usage_from_candidates` (FP-0019 Wave 1 / #1128 PR-a) is a nested closure
-passed to the builder as a callback; the session drives compaction via
-`force_compact_now()` (pre-frame guard) — background task lifecycle was removed in #1128
-PR-a, all callbacks resolve against `self` at call time. `_token_learner` (PR-N6) is the
-adaptive per-user token-estimation learner.
+**#4552 (2026-08):** this builder used to also take a `merge_action_usage` param — the
+`_merge_action_usage_from_candidates` closure (FP-0019 Wave 1 / #1128 PR-a), a hot-list
+compactor sink — threaded through as a nested closure passed to the builder as a callback.
+Removed with the hot-list feature it fed (owner directive: discarded).
 
 ### CompactionEngine model — resolved class, not the cosmetic label (#1172)
 

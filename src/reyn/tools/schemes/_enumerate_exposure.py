@@ -137,7 +137,6 @@ def build_enumerate_all_exposure(
             "universal_wrappers_enabled": False,
             "search_actions_enabled": bool(layer_ctx.get("search_visible", False)),
             "discovery_mandate": tier_wants_discovery_mandate(layer_ctx.get("router_model")),
-            "has_hot_list_aliases": bool((available or {}).get("hot_list_aliases")),
             "non_interactive": bool(layer_ctx.get("non_interactive", False)),
             "available_skills": layer_ctx.get("available_skills"),
         },

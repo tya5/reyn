@@ -119,7 +119,6 @@ def build_category_exposure(
     #   universal_wrappers_enabled = layer_ctx["univ_enabled"]
     #   search_actions_enabled     = sv if univ else True   ← CRITICAL subtlety
     #   discovery_mandate          = tier_wants_discovery_mandate(router_model)
-    #   has_hot_list_aliases       = bool(available["hot_list_aliases"])
     #   non_interactive            = layer_ctx["non_interactive"]
     univ: bool = bool(layer_ctx.get("univ_enabled", False))
     sv: bool = bool(layer_ctx.get("search_visible", True))
@@ -129,7 +128,6 @@ def build_category_exposure(
             "universal_wrappers_enabled": univ,
             "search_actions_enabled": sv if univ else True,  # the formula, unchanged
             "discovery_mandate": tier_wants_discovery_mandate(layer_ctx.get("router_model")),
-            "has_hot_list_aliases": bool((available or {}).get("hot_list_aliases")),
             "non_interactive": bool(layer_ctx.get("non_interactive", False)),
             # #1791 A2: non-Claude operational-steering policy from the raw family
             # fact (Claude excluded — it doesn't need the hygiene reminders).

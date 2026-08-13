@@ -103,7 +103,6 @@ class _VisibilityProbeOps:
             web_fetch_allowed=self._host.get_web_fetch_allowed(),
             universal_wrappers_enabled=layer_ctx.get("univ_enabled", False),
             search_actions_visible=layer_ctx.get("search_visible", False),
-            hot_list_aliases=available.get("hot_list_aliases"),
             compact_visible=layer_ctx.get("ctx_signal_present", False),
         )))
 
@@ -117,7 +116,6 @@ class _VisibilityProbeOps:
             web_fetch_allowed=self._host.get_web_fetch_allowed(),
             universal_wrappers_enabled=False,
             search_actions_visible=False,
-            hot_list_aliases=available.get("hot_list_aliases"),
             compact_visible=layer_ctx.get("ctx_signal_present", False),
         )
 
@@ -579,7 +577,7 @@ class CapabilityVisibility:
         # by ``capability_visibility_state`` below, which needs the denied rows to
         # RENDER them as denied. Passing the narrowing here instead would delete them
         # from the census and the Tool tab could not say why they are unavailable.
-        available = {"hot_list_aliases": [], "contextual_permission": None}
+        available = {"contextual_permission": None}
         layer_ctx = {
             "univ_enabled": univ_enabled,
             # search_actions is wrapper plumbing (excluded below regardless of

@@ -34,7 +34,7 @@ _BASE = dict(agent_name="t", agent_role="", available_agents=[])
 def _slots(non_claude: bool) -> dict:
     return build_universal_tool_use_slots(
         universal_wrappers_enabled=True, search_actions_enabled=True,
-        discovery_mandate=False, has_hot_list_aliases=False, non_claude=non_claude,
+        discovery_mandate=False, non_claude=non_claude,
     )
 
 

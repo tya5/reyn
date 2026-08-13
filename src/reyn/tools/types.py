@@ -395,9 +395,8 @@ def parameters_for_export(parameters: Mapping[str, Any]) -> dict[str, Any]:
     """The ONE way a canonical tool schema is handed outside its definition.
 
     Every seam that projects a ``ToolDefinition.parameters`` into something a
-    caller keeps — the router ``tools=`` payload, a ``describe_action`` result,
-    a hot-list alias entry — MUST route through here. The obligation this owns
-    is the DEEP copy.
+    caller keeps — the router ``tools=`` payload, a ``describe_action`` result
+    — MUST route through here. The obligation this owns is the DEEP copy.
 
     A shallow ``dict(parameters)`` is wrong, and wrong in a way that is invisible
     at the call site: it copies only the top level, leaving every nested

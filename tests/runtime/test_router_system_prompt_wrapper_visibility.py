@@ -31,7 +31,6 @@ def _slots(*, search_actions_enabled: bool) -> "dict[str, str]":
         universal_wrappers_enabled=True,
         search_actions_enabled=search_actions_enabled,
         discovery_mandate=False,
-        has_hot_list_aliases=False,
         non_interactive=False,
     )
 

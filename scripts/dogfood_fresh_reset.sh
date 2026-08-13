@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # dogfood_fresh_reset.sh — idempotent fresh-mode state reset for dogfood workers.
 #
-# Wipes the per-batch hot-list / WAL / plan-resume state so every scenario
-# starts from DEFAULT_HOT_LIST_SEED with no carry-over.
+# Wipes the per-batch WAL / plan-resume state so every scenario starts with
+# no carry-over. (#4552: this used to also describe hot-list state — the
+# feature is retired, owner directive; see the action_usage.json note below.)
 #
 # What this script wipes:
 #   .reyn/state/wal.jsonl           — plan-resume substrate (if present)
@@ -15,10 +16,11 @@
 #   .reyn/agents/*/events           — per-agent event log; same constraint
 #   .reyn/agents/*/history.jsonl    — per-agent conversation history; requires knowing
 #                                     the agent name — callers must wipe this separately
-#   .reyn/agents/*/action_usage.json — per-agent hot-list ledger; requires the agent name,
-#                                     so the runner wipes it per-scenario (#2357). The old
-#                                     .reyn/state/action_usage.jsonl path never existed (the
-#                                     live ledger is per-agent) — wiping it here was a no-op.
+#   .reyn/agents/*/action_usage.json — #4552: the hot-list feature this per-agent ledger
+#                                     backed is retired (owner directive: discarded);
+#                                     nothing writes this file anymore, so there is
+#                                     nothing left to wipe. The runner's own per-scenario
+#                                     wipe of it (#2357) was removed in the same PR.
 #
 # Rationale: §6.7 of docs/deep-dives/contributing/dogfood-discipline.md.
 # Cross-batch V comparison is only valid when all batches start from the same

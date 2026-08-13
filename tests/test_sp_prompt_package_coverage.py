@@ -58,7 +58,6 @@ _BOOL_NAMES = [
     "universal_wrappers_enabled",
     "search_actions_enabled",
     "discovery_mandate",
-    "has_hot_list_aliases",
     "non_interactive",
     "non_claude",
 ]
@@ -92,7 +91,7 @@ def _all_relocated_constants() -> dict[str, str]:
 
 def _assembled_output_corpus() -> str:
     """Concatenation of every assembled fixture's rendered text, across the
-    EXHAUSTIVE 6-bool slot cross-product (so every gated R1-R4/Skills variant
+    EXHAUSTIVE 5-bool slot cross-product (so every gated R1-R4/Skills variant
     renders at least once) plus a curated build_system_prompt/codeact/
     retrieval axis sweep."""
     chunks: list[str] = []
@@ -115,7 +114,7 @@ def _assembled_output_corpus() -> str:
     skills = [SkillEntry("deploy", "Deploys the app", "skills/deploy/SKILL.md")]
     slots_with_skills = build_universal_tool_use_slots(
         universal_wrappers_enabled=True, search_actions_enabled=True,
-        discovery_mandate=True, has_hot_list_aliases=True,
+        discovery_mandate=True,
         non_interactive=False, non_claude=False, available_skills=skills,
     )
     chunks.extend(slots_with_skills.values())
@@ -129,7 +128,7 @@ def _assembled_output_corpus() -> str:
         memory_index={"status": "ok", "content": "# Memory Index (shared)\n- [Fact](user_1.md) — a fact\n"},
         tool_use_sp=build_universal_tool_use_slots(
             universal_wrappers_enabled=True, search_actions_enabled=True,
-            discovery_mandate=True, has_hot_list_aliases=True,
+            discovery_mandate=True,
             non_interactive=False, non_claude=False, available_skills=None,
         ),
         cwd="/tmp/project",

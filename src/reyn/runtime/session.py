@@ -18,7 +18,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 from dataclasses import asdict, dataclass, field
-from datetime import datetime, timezone
+from datetime import timezone
 from pathlib import Path
 
 from reyn.config import (  # noqa: F401
@@ -253,22 +253,6 @@ _HISTORY_HYDRATE_MIN_LINES = 200
 # import here would create a circular import (#187 B43-NF-W6-1).
 
 
-def _ts_iso_to_epoch(ts: str | None) -> float | None:
-    """Best-effort ISO-8601 → epoch-seconds conversion.
-
-    Returns None if *ts* is empty or unparseable. Used by the
-    action-usage extractor to source the recency timestamp from each
-    ChatMessage's stored ``ts`` field; failure yields a record skipped
-    rather than a crash.
-    """
-    if not ts:
-        return None
-    try:
-        return datetime.fromisoformat(ts).timestamp()
-    except (ValueError, TypeError):
-        return None
-
-
 def _deepest_cause(exc: BaseException) -> "BaseException | None":
     """#4381 stage 1 (B): the DEEPEST ``__cause__`` in *exc*'s chain, or
     ``None`` if *exc* has no ``__cause__`` at all (it IS the root — the
@@ -284,60 +268,6 @@ def _deepest_cause(exc: BaseException) -> "BaseException | None":
     while root.__cause__ is not None:
         root = root.__cause__
     return root if root is not exc else None
-
-
-def _extract_tool_call_records(
-    messages: "list[ChatMessage]",
-) -> list[tuple[str, float]]:
-    """Extract ``(action_name, ts_epoch)`` tuples from a list of
-    ``ChatMessage`` instances.
-
-    Recognises two emission shapes (mirrors ``router_loop`` recording
-    semantics pre-refactor):
-
-      - ``invoke_action`` tool call → ``args["action_name"]`` is the
-        action name; the ``args`` payload may be a JSON string per
-        the OpenAI wire shape.
-      - Any other tool call → ``function.name`` itself (a hot-list
-        alias or a universal wrapper). Non-action names like
-        ``list_actions`` are caught by the tracker's
-        ``_is_tracked_action_name`` filter and dropped.
-
-    Returns an empty list when no candidate tool_calls are present.
-    """
-    out: list[tuple[str, float]] = []
-    for m in messages:
-        if getattr(m, "role", None) != "assistant":
-            continue
-        tcs = getattr(m, "tool_calls", None) or []
-        if not tcs:
-            continue
-        ts_epoch = _ts_iso_to_epoch(getattr(m, "ts", None))
-        if ts_epoch is None:
-            continue
-        for tc in tcs:
-            fn = (tc or {}).get("function") or {}
-            name = fn.get("name", "")
-            if not isinstance(name, str) or not name:
-                continue
-            if name == "invoke_action":
-                raw_args = fn.get("arguments")
-                if isinstance(raw_args, str):
-                    try:
-                        args = json.loads(raw_args)
-                    except (json.JSONDecodeError, ValueError):
-                        continue
-                else:
-                    args = raw_args
-                target = (
-                    args.get("action_name")
-                    if isinstance(args, dict) else None
-                )
-                if isinstance(target, str) and target:
-                    out.append((target, ts_epoch))
-            else:
-                out.append((name, ts_epoch))
-    return out
 
 
 # FP-0041 (#489) PR-A: humanic dispatch attribution helper — moved to
@@ -586,33 +516,24 @@ class _RetrievalBundle:
     (``embedding_provider`` / ``embedding_model_class`` /
     ``action_embedding_index``, three attrs, one conditional construction
     guarded by ``universal_wrappers_enabled and embedding.enabled`` (FP-0066
-    §7) with a
-    try/except None-fallback) plus ``action_usage_tracker`` (hot-list
+    §7) with a try/except None-fallback).
+
+    #4552: this bundle used to also carry ``action_usage_tracker`` (hot-list
     freq+recency, a SEPARATE conditional guarded by
-    ``universal_wrappers_enabled and hot_list_n > 0``, also with a
-    try/except None-fallback). Regrouped here per the #3082 DAG correction
-    in the Family 4 spec (``action_usage_tracker`` was originally mis-grouped
-    under Family 4/budget; it has no dependency on ``BudgetGateway`` and is
-    retrieval-adjacent — co-located with ``action_embedding_index`` under the
-    shared ``action_retrieval`` config). Two DAG corrections also apply here:
-    the originally-listed ``render_bounds`` does not exist in this codebase
+    ``universal_wrappers_enabled and hot_list_n > 0``) — removed with the
+    hot-list feature (owner directive: discarded, superseded by
+    ``list_actions`` as the canonical discovery path). The construction-order
+    rationale below (moved to run right after Family 1 specifically so a
+    hot-list closure could bind ``audit_events`` by identity) no longer has a
+    live reason attached to THIS family — nothing remaining here reads
+    ``audit_events`` — but the position is left as-is rather than reverted
+    (no live bug either way; a later PR can revisit ordering on its own
+    merits, not as a consequence of this removal).
+
+    Pure output→input value object. Two DAG corrections apply: the
+    originally-listed ``render_bounds`` does not exist in this codebase
     (dropped) and ``subscription_writer`` is WAL-derived task-subscription
     state, not retrieval (excluded, reassigned to a later family).
-
-    Pure output→input value object. #3408 moved the call site from its
-    original pre-Family-1 position to run right AFTER Family 1
-    (``_build_audit_event_bundle``), so this family's closure
-    (``_on_hot_list_changed``) now takes ``audit_events`` as an eager builder
-    input — like ``hot_reloader`` (Family 3) and ``budget`` (Family 4) — and
-    binds it by IDENTITY instead of resolving ``self._audit_events`` by NAME
-    at call time. Before #3408, the builder ran BEFORE Family 1 (so
-    ``self._audit_events`` did not exist yet at its old call site) and the
-    closure deferred the name lookup to call time to avoid an
-    ``AttributeError``; #3408 measured that nothing between the old and new
-    call sites reads or writes this family's own attrs, moved the call site
-    instead, and closed the deferral. See
-    :meth:`Session._build_retrieval_bundle`'s docstring for the full
-    identity-vs-name rationale and the AST guard that keeps it true.
 
     #3438: the fourth attr, ``embedding_event_sink`` (a TUI model-download
     status sink, FP-0057 #2856 Part A), was removed along with its whole
@@ -632,7 +553,6 @@ class _RetrievalBundle:
     embedding_provider: "object | None"
     embedding_model_class: "str | None"
     action_embedding_index: "object | None"
-    action_usage_tracker: "object | None"
 
 
 @dataclass(frozen=True)
@@ -695,13 +615,11 @@ class _HistoryCompactionBundle:
         ``self._reasoning`` / ``self._active_branch_history`` /
         ``self._append_history`` / ``self.agent_name``.
 
-    ``merge_action_usage`` (the ``_merge_action_usage_from_candidates``
-    closure, defined in ``__init__`` immediately before this builder is
-    called, at its original position — it is not itself one of this
-    family's three components, so it is NOT moved into the builder body)
-    is threaded through as an explicit LOCAL param, mirroring Family
-    2/4's pattern of passing a ``__init__``-local value the builder
-    cannot reach via ``self``.
+    #4552: this builder used to also take an explicit ``merge_action_usage``
+    LOCAL param (the ``_merge_action_usage_from_candidates`` closure, a
+    hot-list compactor sink threaded through mirroring Family 2/4's
+    __init__-local-value pattern) — removed with the hot-list feature
+    (owner directive: discarded).
 
     ★ ``budget_advisor`` UP-move: originally constructed AFTER
     ``InterAgentMessaging`` (Family 8) at line ~1893; this builder
@@ -1280,24 +1198,19 @@ class Session:
         self._event_store = _audit_bundle.event_store
         self._audit_events = _audit_bundle.audit_events
         self._otel_exporter = _audit_bundle.otel_exporter
-        # Embedding block + action_usage_tracker (#3082 Family 5). MOVED here,
-        # right after Family 1, so the hot-list sink can bind audit_events by
-        # IDENTITY (the _audit_bundle.audit_events OBJECT, passed as a builder
-        # arg) instead of by NAME (a `self._audit_events` lookup deferred to
-        # CALL time). #3408: the name-lookup form is the #2856 accident's
-        # class -- a name reference can resolve to a DIFFERENT EventLog than
-        # the one that was live at bind time (the #2856 bug bound `self.events`
-        # by name and silently picked up the wrong log); an identity-bound
-        # reference cannot, because it never re-resolves the name. Safe to
-        # move here because Family 5 has no eager dependency on anything
-        # Family 3/6a/etc. build later (see session-construction.md#family-5-retrieval).
+        # Embedding block (#3082 Family 5). #4552: this used to also build
+        # action_usage_tracker (hot-list), which is why the call site sits
+        # right after Family 1 rather than before it — a #3408 reordering
+        # so the hot-list closure could bind audit_events by IDENTITY. That
+        # reason no longer applies (nothing here reads audit_events now),
+        # but the position is left as-is — see _RetrievalBundle's own
+        # docstring for why reverting it is out of scope for this removal.
         _retrieval_bundle = self._build_retrieval_bundle(
-            self._action_retrieval, embedding_config, self.agent_name, self._audit_events,
+            self._action_retrieval, embedding_config,
         )
         self._action_embedding_index = _retrieval_bundle.action_embedding_index
         self._embedding_provider = _retrieval_bundle.embedding_provider
         self._embedding_model_class = _retrieval_bundle.embedding_model_class
-        self._action_usage_tracker = _retrieval_bundle.action_usage_tracker
         # hook_bus -> hook_dispatcher -> fs_watcher -> composer_registry -> composed_consumer -> hot_reloader; runs right after Family 1 since hot_reloader reads audit_events eagerly (#3082 Family 3, see session-construction.md#family-3-hook-event-reactivity)
         _hook_bundle = self._build_hook_event_bundle(
             _boot_in_set,
@@ -1435,19 +1348,6 @@ class Session:
         # owns + orchestrates them in one method (#2073 S2, see session-construction.md#family-3-hook-event-reactivity)
         self._register_hot_reload_seams()
 
-        # Synchronous head/body/tail compaction callback (FP-0019 Wave 1 / #1128 PR-a, see docs/reference/runtime/session-construction.md#family-6b-history-compaction)
-        def _merge_action_usage_from_candidates(
-            candidates: "list[ChatMessage]",
-        ) -> None:
-            if self._action_usage_tracker is None:
-                return
-            try:
-                records = _extract_tool_call_records(candidates)
-                if records:
-                    self._action_usage_tracker.merge_compacted(records)
-            except Exception:
-                pass
-
         # Adaptive per-user token-estimation learner (PR-N6, see docs/reference/runtime/session-construction.md#family-6b-history-compaction)
         from reyn.runtime.services.token_multiplier_learner import TokenMultiplierLearner
         self._token_learner: TokenMultiplierLearner = TokenMultiplierLearner(
@@ -1455,9 +1355,7 @@ class Session:
         )
 
         # history_buffer / compaction_controller (incl. the None-then-patch breaking their circular dep) / budget_advisor, byte-identical extraction (#3082 Family 6b, see session-construction.md#family-6b-history-compaction)
-        _history_compaction_bundle = self._build_history_compaction_bundle(
-            merge_action_usage=_merge_action_usage_from_candidates,
-        )
+        _history_compaction_bundle = self._build_history_compaction_bundle()
         self._history_buffer = _history_compaction_bundle.history_buffer
         self._compaction_controller = _history_compaction_bundle.compaction_controller
         self._budget_advisor = _history_compaction_bundle.budget_advisor
@@ -2778,9 +2676,8 @@ class Session:
         loaded profile is cached, and a profile file does not change mid-session.
 
         #4387 Phase A: the scan this re-derivation runs is bounded to the
-        UNCOMPACTED tail (``seq > self._compaction_watermark()``, the same
-        bound ``_uncompacted_tool_call_records`` already uses), not all of
-        ``self.history``. ``metas_have_untrusted``'s own docstring already
+        UNCOMPACTED tail (``seq > self._compaction_watermark()``), not all
+        of ``self.history``. ``metas_have_untrusted``'s own docstring already
         promises "the until-compaction scope for free" from being handed
         only "the live, un-compacted entries" — this call site was actually
         violating that contract (it passed the FULL unfiltered history,
@@ -4125,63 +4022,44 @@ class Session:
         self,
         action_retrieval: "ActionRetrievalConfig",
         embedding_config: "EmbeddingConfig | None",
-        agent_name: str,
-        audit_events: "EventLog",
     ) -> "_RetrievalBundle":
         """#3082 Family 5: build the retrieval spine — the embedding block
         (three attrs, one conditional construction guarded by
         ``universal_wrappers_enabled and embedding.enabled`` (FP-0066 §7,
         clean-break replacement for the retired ``embedding_class`` truthy
-        gate) with a try/except
-        None-fallback) and ``action_usage_tracker`` (a SEPARATE conditional
-        guarded by ``universal_wrappers_enabled and hot_list_n > 0``, also
-        with a try/except None-fallback). ``action_usage_tracker`` is
-        regrouped here per the Family 4 spec's DAG correction — it has no
-        dependency on ``BudgetGateway`` and is co-located with
-        ``action_embedding_index`` under the shared ``action_retrieval``
-        config. ``render_bounds`` (never existed in this codebase) and
-        ``subscription_writer`` (WAL-derived task-subscription state, not
-        retrieval) are excluded per this same spec's DAG corrections.
+        gate) with a try/except None-fallback). ``render_bounds`` (never
+        existed in this codebase) and ``subscription_writer`` (WAL-derived
+        task-subscription state, not retrieval) are excluded per the Family
+        4 spec's own DAG corrections.
+
+        #4552: this builder used to also construct ``action_usage_tracker``
+        (hot-list freq+recency, a SEPARATE conditional guarded by
+        ``universal_wrappers_enabled and hot_list_n > 0``) and took
+        ``agent_name`` / ``audit_events`` params solely to feed it (the
+        tracker's persist path and its ``_on_hot_list_changed`` audit-emit
+        closure, respectively). Removed with the hot-list feature (owner
+        directive: discarded, superseded by ``list_actions`` as the
+        canonical discovery path) — both params are dropped since nothing
+        else in this builder read them.
 
         Byte-identical extraction of the construction sequence that used to
         run inline in ``__init__``, MODULO one reordering (#3408): the
         call site moved from its ORIGINAL position (line ~1152, BEFORE
         Family 1 / ``_build_audit_event_bundle`` ran) to run right AFTER
-        Family 1 instead. ``action_retrieval`` / ``embedding_config`` /
-        ``agent_name`` are the ``self._action_retrieval`` value / the
-        ``embedding_config`` __init__ parameter / the LOCAL ``agent_name``
-        __init__ parameter (NOT ``self.agent_name``, mirroring the original
-        inline reference at the ``action_usage_tracker`` persist path) —
-        all resolvable at the new call site exactly as they were at the old
-        one, since nothing between the two positions reads or writes them.
+        Family 1 instead — ``action_retrieval`` / ``embedding_config`` are
+        the ``self._action_retrieval`` value / the ``embedding_config``
+        __init__ parameter, resolvable at the new call site exactly as they
+        were at the old one, since nothing between the two positions reads
+        or writes them. (The #3408 identity-vs-name binding rationale this
+        docstring used to carry was specific to the now-removed hot-list
+        closure and the AST single-assignment guard it motivated,
+        ``tests/repo/test_audit_events_single_assignment_3408.py`` — that
+        test's own subject, ``self._audit_events =`` single-assignment,
+        remains true independent of this builder and is unaffected.)
 
-        ``audit_events`` IS a builder input (#3408), unlike its pre-#3408
-        shape where it was deliberately excluded so the closure below
-        (``_on_hot_list_changed``) could defer ``self._audit_events``
-        resolution to CALL time — the EventLog did not exist yet at the
-        builder's old (pre-Family-1) call site, so an eager reference there
-        would have raised ``AttributeError``. #3408 moved the call site
-        instead of keeping the deferral: ``git grep '_audit_events ='`` across
-        ``src`` finds exactly ONE assignment, ``Session.__init__``'s single
-        ``self._audit_events = _audit_bundle.audit_events`` — no restore/attach
-        path re-binds it — so a NAME lookup deferred to call time and an
-        IDENTITY reference captured once at construction resolve to the same
-        object today. The identity form is preferred structurally: a name
-        lookup re-resolves ``self._audit_events`` on every call, so a future
-        rebinding of that name (however unlikely) would retarget every
-        deferred closure that names it silently — the #2856 accident's
-        class (a name reference resolved to a DIFFERENT EventLog than the
-        one live when the reference was written). An identity reference
-        captured once cannot retarget: it either keeps pointing at the
-        EventLog it was given, or (if that assumption ever breaks) the
-        AST single-assignment guard in
-        ``tests/repo/test_audit_events_single_assignment_3408.py`` goes RED first,
-        naming the new call site and saying "route this through the builder
-        arg, not a rediscovered eager ``self._audit_events``."
-
-        FP-0034 Phase 2 steps 1 + 5 / Issue #192:
-        see the three embedding attrs' and ``action_usage_tracker``'s
-        original inline comments, reproduced verbatim below."""
+        FP-0034 Phase 2 step 1 / Issue #192:
+        see the three embedding attrs' original inline comments, reproduced
+        verbatim below."""
         # FP-0034 Phase 2 step 1: build the ActionEmbeddingIndex +
         # EmbeddingProvider once per session when the operator has set
         # ``embedding.enabled: true`` (FP-0066 §7 — clean-break
@@ -4234,48 +4112,10 @@ class Session:
                 embedding_provider = None
                 action_embedding_index = None
                 embedding_model_class = None
-        # FP-0034 Phase 2 step 5: ActionUsageTracker for hot list freq+recency.
-        # Created when universal_wrappers_enabled=True and hot_list_n > 0.
-        # Per-agent compacted table at
-        # ``.reyn/agents/<agent_name>/action_usage.json``. The table is fed
-        # by the chat-compactor sink (see ``CompactionController`` wiring
-        # below); uncompacted turns are scanned at hot-list-build time.
-        action_usage_tracker: Any = None
-        if (
-            action_retrieval.universal_wrappers_enabled
-            and action_retrieval.hot_list_n > 0
-        ):
-            try:
-                from reyn.tools.action_usage_tracker import ActionUsageTracker
-                # Issue #192 / #3408: wire a callback that emits
-                # ``hot_list_updated`` on every reorder of the compacted
-                # ranking. Binds the ``audit_events`` builder ARG by IDENTITY
-                # (not a ``self._audit_events`` name lookup) — see this
-                # method's docstring for why identity binding is safe today
-                # and what keeps it safe (the AST single-assignment guard).
-                def _on_hot_list_changed(ranking: list[dict]) -> None:
-                    try:
-                        audit_events.emit(
-                            "hot_list_updated", ranking=ranking,
-                        )
-                    except Exception:
-                        pass
-                action_usage_tracker = ActionUsageTracker(
-                    # #3705: anchored on the same root as workspace_dir —
-                    # was a bare relative `Path(".reyn")`.
-                    persist_path=(
-                        self._reyn_state_root / "agents" / agent_name
-                        / "action_usage.json"
-                    ),
-                    on_ranking_changed=_on_hot_list_changed,
-                )
-            except Exception:
-                action_usage_tracker = None
         return _RetrievalBundle(
             embedding_provider=embedding_provider,
             embedding_model_class=embedding_model_class,
             action_embedding_index=action_embedding_index,
-            action_usage_tracker=action_usage_tracker,
         )
 
     def _build_router_waist(self, *, contextual_permission: "object | None" = None) -> "RouterHostAdapter":
@@ -4563,11 +4403,6 @@ class Session:
             action_embedding_index=self._action_embedding_index,
             embedding_provider=self._embedding_provider,
             embedding_model_class=self._embedding_model_class,
-            # FP-0034 Phase 2 step 5: ActionUsageTracker for hot list.
-            action_usage_tracker=self._action_usage_tracker,
-            uncompacted_tool_call_records_fn=(
-                self._uncompacted_tool_call_records
-            ),
             action_retrieval_config=self._action_retrieval,
             available_skills=self._available_skills,  # #2548 PR-A
             # Read the injected sandbox_backend INSTANCE's .name, not the
@@ -4626,9 +4461,7 @@ class Session:
         )
         return router_host
 
-    def _build_history_compaction_bundle(
-        self, merge_action_usage: "Callable[[list[ChatMessage]], None]",
-    ) -> "_HistoryCompactionBundle":
+    def _build_history_compaction_bundle(self) -> "_HistoryCompactionBundle":
         """#3082 Family 6b: build the history-compaction chain —
         ``history_buffer`` / ``compaction_controller`` (incl. the
         None-then-patch forward-reference) / ``budget_advisor``. Byte-identical
@@ -4651,12 +4484,9 @@ class Session:
         See :class:`_HistoryCompactionBundle`'s docstring for the full
         per-arg local-vs-deferred-self-vs-cross-family-self classification.
 
-        ``merge_action_usage`` is the ``_merge_action_usage_from_candidates``
-        closure defined in ``__init__`` immediately before this builder is
-        called (unmoved, at its original position) — it is not one of this
-        family's three components, so it is threaded through as an explicit
-        param (mirroring Family 2/4's LOCAL-param pattern) rather than
-        redefined inside the builder.
+        #4552: this builder used to also take an explicit
+        ``merge_action_usage`` param (a hot-list compactor sink) — removed
+        with the hot-list feature (owner directive: discarded).
 
         ★ ``budget_advisor`` UP-move: this builder constructs it right after
         the forward-patch, BEFORE ``InterAgentMessaging`` (Family 8), which
@@ -4746,9 +4576,6 @@ class Session:
                 meta={"structured": structured, "covers_through_seq": covers},
             ),
             render_summary=render_summary_for_storage,
-            # Feed compacted candidates' tool calls into the per-agent
-            # action_usage table so the hot-list survives summarisation.
-            merge_action_usage=merge_action_usage,
         )
         # Wire compaction_controller now that it exists (the patch that closes
         # the circular dependency — LOCAL history_buffer, not self._history_buffer).
@@ -6726,26 +6553,14 @@ class Session:
     def _compaction_watermark(self) -> int:
         """The latest summary's ``covers_through_seq`` (0 if none yet) — seqs
         at or below this are considered compacted out. #4387 Phase A:
-        factored out of :meth:`_uncompacted_tool_call_records` so
-        :meth:`_ephemeral_contextual_for_turn` can bound its own scan the
-        same way, rather than duplicating the ``_latest_summary`` +
-        ``covers_through_seq`` lookup inline."""
+        factored out so :meth:`_ephemeral_contextual_for_turn` can bound its
+        own scan by it, rather than duplicating the ``_latest_summary`` +
+        ``covers_through_seq`` lookup inline. (#4552: its original second
+        caller, the hot-list feature's ``_uncompacted_tool_call_records``,
+        was removed — owner directive: discarded — but this method itself
+        has an independent live caller and stays.)"""
         latest = self._latest_summary()
         return int((latest.meta or {}).get("covers_through_seq", 0)) if latest is not None else 0
-
-    def _uncompacted_tool_call_records(self) -> list[tuple[str, float]]:
-        """Return ``(action_name, ts_epoch)`` records from the
-        portion of history that has NOT yet been folded into a
-        compactor summary.
-
-        Used by RouterLoop to build the hot-list each turn without
-        relying on a parallel per-call write log; the compacted table
-        in :class:`~reyn.tools.action_usage_tracker.ActionUsageTracker`
-        already covers the older portion.
-        """
-        watermark = self._compaction_watermark()
-        live = [m for m in self.history if m.seq > watermark]
-        return _extract_tool_call_records(live)
 
     # ── router ──────────────────────────────────────────────────────────────────
 
