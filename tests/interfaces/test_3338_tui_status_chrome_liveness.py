@@ -357,6 +357,59 @@ async def test_cost_table_stays_aligned_and_honest_past_the_1000_dollar_column_w
 
 
 @pytest.mark.asyncio
+async def test_every_static_drawer_pane_shares_the_tabs_left_edge(tmp_path) -> None:
+    """Tier 2: #4554 — the drawer's tab label sits 2 cells in from the left
+    edge (MenuBar's own `padding: 0 1` + Tab's own `padding: 0 1`), but a
+    Static pane's content used to start at column 0 with no shared left
+    edge. Reads the REAL RESOLVED CSS via ``.styles.padding`` on a real
+    mounted widget — not a string grep of the stylesheet source, which
+    would only confirm the rule was EDITED, not that Textual actually
+    applies it (a selector typo/specificity miss would still show the
+    edited text in the source).
+
+    Derives the pane-id set from `_MENU_TABS` minus `pane_is_list()`
+    (the real registries #4554's own investigation used to enumerate all
+    5 Static panes), rather than hand-listing cost/ctx/pipe/cron/help — a
+    hand list would silently stop covering a 6th Static pane added later."""
+    from textual.geometry import Spacing
+    from textual.widgets import OptionList, Static
+
+    from reyn.interfaces.inline.textual_chat import TextualChatApp
+    from reyn.interfaces.inline.textual_chat.chrome import _MENU_TABS, pane_is_list
+
+    static_pane_ids = [tab_id for tab_id, _label in _MENU_TABS if not pane_is_list(tab_id)]
+    list_pane_ids = [tab_id for tab_id, _label in _MENU_TABS if pane_is_list(tab_id)]
+    assert static_pane_ids and list_pane_ids, "pane registries are empty — fixture is stale"
+
+    snap, _session, _registry = await _real_snapshot(tmp_path)
+    transport = _EventOnlyTransport()
+    app = TextualChatApp(transport=transport, read_model=_MutableSnapshotReadModel(snap))
+    async with app.run_test(size=(100, 40)) as pilot:
+        await pilot.pause()
+        wrong: dict[str, Spacing] = {}
+        for tab_id in static_pane_ids:
+            app._open_drawer(tab_id)
+            await pilot.pause()
+            padding = app.query_one(f"#{tab_id}", Static).styles.padding
+            if padding != Spacing(top=1, right=2, bottom=1, left=2):
+                wrong[tab_id] = padding
+        assert not wrong, (
+            f"these Static panes do not share the tab row's 2-cell left edge: {wrong}"
+        )
+
+        # OptionList panes must be UNCHANGED (architect's own exclusion,
+        # #4554) — adding padding here would shrink the full-width row
+        # highlight that selecting a row relies on.
+        for tab_id in list_pane_ids:
+            app._open_drawer(tab_id)
+            await pilot.pause()
+            padding = app.query_one(f"#{tab_id}", OptionList).styles.padding
+            assert padding == Spacing(0, 0, 0, 0), (
+                f"OptionList pane {tab_id!r} gained padding it must not have: {padding}"
+            )
+
+
+@pytest.mark.asyncio
 async def test_cost_pane_surfaces_all_three_scope_breakdowns(tmp_path) -> None:
     """Tier 2: a value carried in EACH of the three ``cost_breakdown_*`` keys
     surfaces in the Cost pane — the regression was that the pane read none of
