@@ -1007,8 +1007,10 @@ directory (`plugin.json` manifest at the plugin root + optional `mcp`/`pipelines
 `skills` subdirs, ADR §3.1, relocated from `.reyn-plugin/plugin.json` — #4570
 conversion A, aligning with the Agent Plugins 1.0 standard's manifest
 location) — `plugin_install` copies it to
-`~/.reyn/plugins/<name>/` (global, once), expands `${REYN_*}` stable-location
-tokens, and REGISTERS whatever capability kinds the plugin directory
+`~/.reyn/plugins/<name>/` (global, once), bakes stable-location tokens into
+the copy per file kind (step 6 below — `${REYN_*}` for `pipelines/*.yaml`/
+`SKILL.md`, the standard's own `${PLUGIN_ROOT}`/`${PLUGIN_DATA}` for
+`mcp.json`), and REGISTERS whatever capability kinds the plugin directory
 contains (`mcp`/`pipelines`/`skills`, derived PURELY from directory/file
 existence via `capability_kinds_present` — #4570 conversion B removed the
 manifest's own `capabilities`/`entries` fields, so this is no longer a
@@ -1164,17 +1166,35 @@ higher-trust one.
 5. Copy: write the `_install_state.json` marker, THEN copy the source tree
    (VCS metadata excluded) into `~/.reyn/plugins/<name>/`. Emit
    `plugin_install_copied`.
-6. Expand `${REYN_*}` stable-location tokens (P1 `reyn.plugins.tokens.
-   expand_reyn_tokens`) into the copied `mcp.json` / `pipelines/*.yaml`
-   files (every token the copy-time context carries a value for). A
-   `skills/*/SKILL.md` file gets a NARROWER bake: only `${REYN_PLUGIN_ROOT}`
-   (`plugin_install.py`'s `_bake_plugin_root_only`) — `${REYN_SKILL_DIR}` and
-   `${REYN_PROJECT_DIR}` are deliberately left as literal tokens for the
-   skill-load verb (`reyn.plugins.skill_load.load_skill_body`, P4/#3070) to
-   resolve fresh at every invocation, since the plugin's global
-   `~/.reyn/plugins/<name>/` copy can be enabled into more than one project
-   (§3.3) — baking one install call's project into the shared copy would
-   freeze every later enabling project to whichever one installed it first.
+6. Bake stable-location tokens into the copy's text files, per file kind
+   (`_expand_plugin_files`) — three DIFFERENT bakes, not one shared pass:
+   - `mcp.json`: `${PLUGIN_ROOT}`/`${PLUGIN_DATA}` — the Agent Plugins 1.0
+     `mcp.schema.json`'s OWN token vocabulary, NOT `${REYN_PLUGIN_ROOT}` (#4570
+     conversion D, `_bake_mcp_json_fields`) — FIELD-AWARE: expanded only in
+     `args`/`env` values/`cwd`, NEVER in `command` or `url` (the injection
+     boundary the standard itself draws — a plugin-authored string must not
+     be able to choose WHAT gets executed or WHERE a request goes via a
+     token this module resolves). Parsed as JSON, not text, so a token
+     appearing inside `command`/`url` is left LITERAL rather than swept up
+     by a coincidental string match. `${PLUGIN_DATA}` resolves to
+     `plugin_data_root()/<name>` — `~/.reyn/plugin-data/<name>/`, a
+     SIBLING of `~/.reyn/plugins/` (never a subdirectory of the copy
+     itself, since step 5's atomic swap replaces that copy wholesale on
+     every reinstall/update — anything a plugin needs to SURVIVE a
+     reinstall cannot live inside it), created eagerly on every bake.
+   - `pipelines/*.yaml`: unchanged — the pre-#4570 reyn-native `${REYN_*}`
+     full-text bake (P1 `reyn.plugins.tokens.expand_reyn_tokens`, every
+     token the copy-time context carries a value for). Pipelines are a
+     reyn extension the standard doesn't define, so conversion D
+     deliberately leaves this candidate untouched.
+   - `skills/*/SKILL.md`: a NARROWER bake, only `${REYN_PLUGIN_ROOT}`
+     (`plugin_install.py`'s `_bake_plugin_root_only`) — `${REYN_SKILL_DIR}` and
+     `${REYN_PROJECT_DIR}` are deliberately left as literal tokens for the
+     skill-load verb (`reyn.plugins.skill_load.load_skill_body`, P4/#3070) to
+     resolve fresh at every invocation, since the plugin's global
+     `~/.reyn/plugins/<name>/` copy can be enabled into more than one project
+     (§3.3) — baking one install call's project into the shared copy would
+     freeze every later enabling project to whichever one installed it first.
 7. Register (#3209: register-only, no dep materialise step; #4570
    conversion B: capability presence is derived from directory/file
    EXISTENCE, not a manifest-declared list — the manifest carries no
@@ -1216,6 +1236,14 @@ deleted copy):
 2. Remove the `~/.reyn/plugins/<name>/` copy (gated `require_file_write`).
    Emit `plugin_uninstall_completed`.
 
+**Plugin data survives uninstall** (#4570 conversion D): a plugin's
+`~/.reyn/plugin-data/<name>/` directory (above, step 6) is NEVER deleted
+by `plugin_uninstall` — data outliving code is the safe direction; the
+reverse (code reinstalled later, its old data silently gone) is
+unrecoverable. Not silent either: when a data directory exists for the
+uninstalled name, the result dict carries `plugin_data_retained_at`
+naming exactly where it is.
+
 **Not WAL-derived** (§3.11): the `~/.reyn/plugins/` copies are FILES, not
 WAL-event-derived state — the CLAUDE.md truncate-falsify recovery gate does
 not apply to them. The reconcile above is a filesystem/registry consistency
@@ -1227,7 +1255,9 @@ Result fields (`plugin_install`): `status` (`"installed"` / `"skipped"` /
 (per-capability sub-results).
 
 Result fields (`plugin_uninstall`): `status` (`"uninstalled"` / `"error"`),
-`name`, `removed` (per-registry list of dropped entry names), `copy_removed`.
+`name`, `removed` (per-registry list of dropped entry names), `copy_removed`,
+`plugin_data_retained_at` (present only when a `~/.reyn/plugin-data/<name>/`
+directory exists for the uninstalled name, #4570 conversion D).
 
 Events emitted: `plugin_install_started` / `_copied` / `_registered` /
 `_completed`; `plugin_uninstall_started` / `_registry_dropped` /
