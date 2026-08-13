@@ -31,6 +31,7 @@ throughout — no mocks.
 from __future__ import annotations
 
 import asyncio
+import shutil
 from pathlib import Path
 
 from reyn.core.events.state_log import StateLog
@@ -110,8 +111,9 @@ def test_falsify_artifact_ref_survives_a_real_wal_truncation_and_reconstruct(
     resolved = resolve_ref(tmp_path, "alice", ref)
     assert resolved == target.resolve(), (
         "the artifact ref was lost across a WAL truncation it was never "
-        "derived from — the #4584 fix (moving the table out of cache/, off "
-        "the WAL entirely) did not hold"
+        "derived from. This does NOT witness #4584 itself (WAL truncation "
+        "never touched cache/, so this passed before the move too) — it "
+        "guards the FUTURE change of deriving the table from the WAL"
     )
 
 
@@ -133,5 +135,67 @@ def test_falsify_spill_manifest_survives_a_real_wal_truncation_and_reconstruct(
     reopened = MediaStore(MediaStoreConfig(), project_root=tmp_path)
     assert reopened.is_tool_result_spill(block["path"]), (
         "the spill-manifest entry was lost across a WAL truncation it was "
-        "never derived from — the #4584 fix did not hold"
+        "never derived from. Same scope as the sibling above: not a witness "
+        "for #4584, a guard against deriving this manifest from the WAL"
+    )
+
+
+# ── the falsification #4584 actually needs: the danger is cache REMOVAL ──
+
+
+def _wipe_cache(project_root: Path) -> None:
+    """Delete ``.reyn/cache/`` outright — what an operator does when the
+    layout doc says a tier is safe to delete, and what ``index_drop`` does
+    to a subtree of it from inside a running agent. This, not WAL
+    truncation, is the event #4584 moved the two tables away from."""
+    cache = project_root / ".reyn" / "cache"
+    cache.mkdir(parents=True, exist_ok=True)
+    shutil.rmtree(cache)
+    assert not cache.exists(), "test setup: the cache tier must really be gone"
+
+
+def test_falsify_artifact_ref_survives_the_cache_tier_being_deleted(
+    tmp_path: Path,
+) -> None:
+    """Tier 2: LOAD-BEARING falsification — mint a ref, delete the whole
+    ``.reyn/cache/`` tier, and resolve it again.
+
+    This is the one that FLIPS: before #4584 the table lived in
+    ``.reyn/cache/artifact_refs.jsonl``, so wiping that tier took the
+    ref with it and ``resolve_ref`` returned ``None``. The sibling
+    WAL-truncation tests above pass either way — WAL truncation never
+    touched ``cache/`` — so they cannot witness this move, which is why
+    this test exists separately rather than as a variation of them.
+    """
+    target = _write(tmp_path / "report.pptx")
+    ref = mint_ref(tmp_path, "alice", target)
+    assert resolve_ref(tmp_path, "alice", ref) == target.resolve()  # test premise
+
+    _wipe_cache(tmp_path)
+
+    assert resolve_ref(tmp_path, "alice", ref) == target.resolve(), (
+        "the artifact ref died when the cache tier was deleted — the table is "
+        "back under a tier the layout doc says is safe to delete, and every "
+        "previously minted /open link is now unresolvable (#4584)"
+    )
+
+
+def test_falsify_spill_manifest_survives_the_cache_tier_being_deleted(
+    tmp_path: Path,
+) -> None:
+    """Tier 2: LOAD-BEARING falsification, media_store.py's half — same
+    flip: the manifest used to live under ``.reyn/cache/`` and a wipe of
+    that tier made every recorded spill unrecognizable to a later
+    process."""
+    store = MediaStore(MediaStoreConfig(), project_root=tmp_path)
+    block = store.save_tool_result("big output", chain_id="c1", tool="exec", seq=1)
+    assert store.is_tool_result_spill(block["path"])  # test premise
+
+    _wipe_cache(tmp_path)
+
+    reopened = MediaStore(MediaStoreConfig(), project_root=tmp_path)
+    assert reopened.is_tool_result_spill(block["path"]), (
+        "the spill-manifest entry died when the cache tier was deleted — the "
+        "manifest is back under the tier the layout doc says is safe to "
+        "delete (#4584)"
     )
