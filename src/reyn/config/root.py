@@ -280,8 +280,19 @@ class ReynConfig:
     # LINE / Discord etc.). Empty by default; operator declares
     # transport → MCP tool mapping in reyn.yaml ``external_transports``.
     # See ``reyn.runtime.external_routing.ExternalTransportRouting``.
+    # #4515: ``dict_leaf`` metadata — ``ExternalTransportRouting`` wraps a
+    # single ``transports: dict`` field for its own consumers'
+    # ``.get(name)`` convenience, but the real reyn.yaml shape has no
+    # nested ``transports:`` key (the operator writes
+    # ``external_transports: {broker: {...}}`` directly). Without this
+    # flag the schema walk recurses into the wrapper and registers the
+    # dict-leaf as ``external_transports.transports`` — one level too
+    # deep — so every real transport name falsely reads as an unknown
+    # key (config_schema.py's ``unknown_config_keys`` docstring has the
+    # full incident this fixes).
     external_transports: "ExternalTransportRouting" = field(
         default_factory=lambda: _empty_external_transports(),
+        metadata={"dict_leaf": True},
     )
     # #2548 PR-A: skill registry config. Raw dict passed to
     # reyn.data.skills.registry.build_skill_registry at session /
