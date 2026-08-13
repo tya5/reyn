@@ -305,13 +305,20 @@ def _validate() -> None:
     walker sees). That gap is exactly what let an operator's
     ``allow_write_paths`` (the agent-level sandbox.policy field name,
     written at the wrong per-hook site) pass ``validate`` silently while
-    doing nothing — architect's own real incident. Closes it by feeding
-    the IN-set's own ``hooks:`` list through ``load_hooks`` (the SAME
-    parser hook-loading itself uses, per this function's own
-    "check exactly what startup checks" discipline) and reporting any
-    ``HookConfigError`` as a fourth labeled section — never raising it:
-    this command REPORTS, per the docstring above, so a malformed hook
-    entry is caught here rather than only at the next actual hook-load.
+    doing nothing — architect's own real incident. #4501 closed it for
+    ONE of hooks' three real input paths: the ``.reyn/config/hooks.yaml``
+    runtime IN-set. #4364 PR-1 found the other two the same night —
+    ``_build_hook_registry``'s own 3-layer COMBINE (startup / runtime /
+    per-agent) names them: reyn.yaml's own top-level ``hooks:`` (the
+    layer ``docs/concepts/runtime/hooks.md`` actually tells operators to
+    write in, and architect's own real incident lived there, not in the
+    IN-set #4501 fixed) and every ``.reyn/agents/<name>/hooks.yaml``. All
+    three now feed through ``load_hooks`` (the SAME parser hook-loading
+    itself uses, per this function's own "check exactly what startup
+    checks" discipline) and any ``HookConfigError`` per source is
+    reported as a fourth labeled section — never raised: this command
+    REPORTS, per the docstring above, so a malformed hook entry is caught
+    here rather than only at the next actual hook-load.
 
     Uses ``build_policy_tier_config`` — the SAME construction
     ``load_config``'s own startup warning uses (architect's explicit
@@ -330,7 +337,11 @@ def _validate() -> None:
     decision.
     """
     from reyn.config.config_schema import disabled_config_keys, unknown_config_keys
-    from reyn.config.loader import build_policy_tier_config, load_hot_reload_config
+    from reyn.config.loader import (
+        build_policy_tier_config,
+        load_hot_reload_config,
+        load_per_agent_hooks,
+    )
     from reyn.hooks.loader import load_hooks
     from reyn.hooks.schema import HookConfigError
 
@@ -340,18 +351,51 @@ def _validate() -> None:
     in_set_merged = load_hot_reload_config()
     in_set_unknown = unknown_config_keys(in_set_merged)
 
-    # #4501: hooks[] entries are a free-form list the top-level schema walk
-    # above never opens — feed them through the real parser to catch a
-    # malformed/wrong-scope key inside one, same as an actual hook-load would.
-    hooks_raw = in_set_merged.get("hooks")
-    hook_entry_error: str | None = None
-    if hooks_raw is not None:
-        try:
-            load_hooks(hooks_raw)
-        except HookConfigError as exc:
-            hook_entry_error = str(exc)
+    # #4501/#4364 PR-1: hooks[] entries are a free-form list the top-level
+    # schema walk above never opens — feed EVERY real input path through the
+    # real parser to catch a malformed/wrong-scope key inside one, same as an
+    # actual hook-load would. Three sources, mirroring
+    # Session._build_hook_registry's own startup/runtime/per-agent layers:
+    hook_entry_errors: dict[str, str] = {}
 
-    if not policy_unknown and not disabled and not in_set_unknown and not hook_entry_error:
+    # (1) reyn.yaml top-level `hooks:` (the startup layer — the one
+    # docs/concepts/runtime/hooks.md tells operators to write in; #4501 did
+    # NOT cover this source, only (2) below).
+    policy_hooks_raw = policy_merged.get("hooks")
+    if policy_hooks_raw:
+        try:
+            load_hooks(policy_hooks_raw)
+        except HookConfigError as exc:
+            hook_entry_errors["reyn.yaml"] = str(exc)
+
+    # (2) .reyn/config/hooks.yaml (the runtime IN-set — #4501's own fix).
+    in_set_hooks_raw = in_set_merged.get("hooks")
+    if in_set_hooks_raw:
+        try:
+            load_hooks(in_set_hooks_raw)
+        except HookConfigError as exc:
+            hook_entry_errors[".reyn/config/hooks.yaml"] = str(exc)
+
+    # (3) every .reyn/agents/<name>/hooks.yaml (the per-agent layer).
+    # load_per_agent_hooks mirrors Session._read_per_agent_hooks exactly —
+    # same defensive "not a list -> []" degrade the real runtime uses, so a
+    # non-list `hooks:` here is silently skipped just like it would be at an
+    # actual hook-load, not a validate-only gap.
+    project_root = Path.cwd()
+    agents_dir = project_root / ".reyn" / "agents"
+    if agents_dir.is_dir():
+        for agent_dir in sorted(agents_dir.iterdir()):
+            if not agent_dir.is_dir():
+                continue
+            agent_hooks_raw = load_per_agent_hooks(project_root, agent_dir.name)
+            if not agent_hooks_raw:
+                continue
+            try:
+                load_hooks(agent_hooks_raw)
+            except HookConfigError as exc:
+                hook_entry_errors[f".reyn/agents/{agent_dir.name}/hooks.yaml"] = str(exc)
+
+    if not policy_unknown and not disabled and not in_set_unknown and not hook_entry_errors:
         print("No unknown, renamed, or disabled-by-dependency config keys found.")
         return
 
@@ -401,14 +445,20 @@ def _validate() -> None:
             ".reyn/*.yaml file directly)."
         )
 
-    if hook_entry_error:
+    if hook_entry_errors:
         if policy_unknown or disabled or in_set_unknown:
             print()
-        print("Hook entry validation — .reyn/config/hooks.yaml's hooks: list:\n")
-        print(f"  {hook_entry_error}")
         print(
-            "\nThis entry will fail to load the next time hooks are (re)loaded "
-            "(hot-reload or restart) — fix the key above."
+            f"Hook entry validation — checked reyn.yaml, .reyn/config/hooks.yaml, "
+            f"and every .reyn/agents/<name>/hooks.yaml — "
+            f"{len(hook_entry_errors)} source(s) with a malformed entry:\n"
+        )
+        for label, err in sorted(hook_entry_errors.items()):
+            print(f"  [{label}]")
+            print(f"    {err}")
+        print(
+            "\nEach flagged entry will fail to load the next time hooks are "
+            "(re)loaded (hot-reload or restart) — fix the key(s) above."
         )
 
 
