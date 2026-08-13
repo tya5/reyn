@@ -60,7 +60,7 @@ def test_oauth_server_config_parses_via_load_config(tmp_path, monkeypatch) -> No
         "mcp:\n"
         "  servers:\n"
         "    github:\n"
-        "      type: http\n"
+        "      type: streamable-http\n"
         "      url: https://api.githubcopilot.com/mcp/\n"
         "      auth:\n"
         "        type: oauth\n"
@@ -72,7 +72,7 @@ def test_oauth_server_config_parses_via_load_config(tmp_path, monkeypatch) -> No
 
     cfg = load_config(cwd=tmp_path)
     server_cfg = cfg.mcp["servers"]["github"]
-    assert server_cfg["type"] == "http"
+    assert server_cfg["type"] == "streamable-http"
     assert server_cfg["auth"]["type"] == "oauth"
     assert server_cfg["auth"]["scopes"] == ["repo", "read:org"]
     assert server_cfg["auth"]["client_id"] == "my-client-id"
@@ -81,7 +81,7 @@ def test_oauth_server_config_parses_via_load_config(tmp_path, monkeypatch) -> No
 def test_bare_oauth_string_shorthand_parses(oauth_store_path) -> None:
     """Tier 1: ``auth: oauth`` (bare string) is shorthand for ``{"type": "oauth"}``
     — builds a provider without raising."""
-    cfg = {"type": "http", "url": "https://example.com/mcp", "auth": "oauth"}
+    cfg = {"type": "streamable-http", "url": "https://example.com/mcp", "auth": "oauth"}
     client = MCPClient(cfg, non_interactive=False)
     provider = asyncio.run(client._build_oauth_provider(cfg["url"]))
     assert provider is not None
@@ -89,7 +89,7 @@ def test_bare_oauth_string_shorthand_parses(oauth_store_path) -> None:
 
 def test_unsupported_auth_type_rejected() -> None:
     """Tier 1: a non-'oauth' auth.type is a clear config error, not a silent no-op."""
-    cfg = {"type": "http", "url": "https://example.com/mcp", "auth": {"type": "saml"}}
+    cfg = {"type": "streamable-http", "url": "https://example.com/mcp", "auth": {"type": "saml"}}
     client = MCPClient(cfg, non_interactive=False)
     with pytest.raises(MCPError, match="saml"):
         asyncio.run(client._build_oauth_provider(cfg["url"]))
@@ -181,7 +181,7 @@ def test_headless_with_stored_token_proceeds(oauth_store_path) -> None:
     url = "https://mcp.example.com/mcp"
     asyncio.run(MCPOAuthTokenStorage(url, path=oauth_store_path).set_tokens(_token("at-cached-7742")))
 
-    cfg = {"type": "http", "url": url, "auth": {"type": "oauth"}}
+    cfg = {"type": "streamable-http", "url": url, "auth": {"type": "oauth"}}
     client = MCPClient(cfg, non_interactive=True)
     provider = asyncio.run(client._build_oauth_provider(url))  # must not raise
     assert provider is not None
@@ -254,7 +254,7 @@ def test_headless_no_token_raises_clear_mcp_error_not_hang(oauth_store_path) -> 
     immediate MCPError instead of the OAuth flow opening a browser + waiting
     on a localhost callback nobody can complete."""
     cfg = {
-        "type": "http",
+        "type": "streamable-http",
         "url": "https://mcp.example.com/mcp",
         "auth": {"type": "oauth"},
     }
@@ -270,7 +270,7 @@ def test_interactive_client_with_no_token_does_not_raise_preflight_error(
     allowed to proceed to the browser flow even with no cached token — the
     headless guard only fires for non-interactive callers."""
     cfg = {
-        "type": "http",
+        "type": "streamable-http",
         "url": "https://mcp.example.com/mcp",
         "auth": {"type": "oauth"},
     }
@@ -287,7 +287,7 @@ def test_static_bearer_header_auth_unaffected(oauth_store_path) -> None:
     headers path) builds no OAuth provider at all — the ④ wiring is
     additive, never a behavior change for the existing header-auth path."""
     cfg = {
-        "type": "http",
+        "type": "streamable-http",
         "url": "https://mcp.example.com/mcp",
         "headers": {"Authorization": "Bearer static-token-abc"},
     }

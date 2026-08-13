@@ -120,7 +120,7 @@ def test_http_transport_round_trip() -> None:
     async def _run_it():
         async with _HttpEchoServer() as server:
             cfg = {
-                "type": "http",
+                "type": "streamable-http",
                 "url": server.url,
                 "headers": {"Authorization": "Bearer abc"},
             }
@@ -138,7 +138,7 @@ def test_http_transport_forwards_agent_id_header() -> None:
 
     async def _run_it():
         async with _HttpEchoServer() as server:
-            cfg = {"type": "http", "url": server.url}
+            cfg = {"type": "streamable-http", "url": server.url}
             async with MCPClient(cfg, agent_id="reyn/test-agent") as client:
                 result = await client.call_tool("show_headers", {})
                 return result
@@ -181,7 +181,7 @@ def test_env_var_expansion(monkeypatch) -> None:
     monkeypatch.setenv("MY_TOKEN", "s3cret")
     monkeypatch.setenv("MY_HOST", "example.com")
     cfg = {
-        "type": "http",
+        "type": "streamable-http",
         "url": "https://${MY_HOST}/mcp",
         "headers": {"Authorization": "Bearer ${MY_TOKEN}"},
     }
@@ -275,7 +275,7 @@ def test_initialize_against_unreachable_http_raises_mcp_error_not_cancelled() ->
     that boundary, hiding the real ConnectError behind an uninformative
     CancelledError. See _close_stack_after_init_failure's docstring in
     client.py for the full root-cause and live-probe evidence."""
-    cfg = {"type": "http", "url": "http://127.0.0.1:1/mcp", "timeout": 3}
+    cfg = {"type": "streamable-http", "url": "http://127.0.0.1:1/mcp", "timeout": 3}
 
     async def _run_it():
         client = MCPClient(cfg)

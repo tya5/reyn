@@ -125,7 +125,7 @@ def test_write_paths_rejected_for_non_stdio_server():
     it would read to the operator as a restriction that was never applied.
     """
     with pytest.raises(ValueError, match="write_paths"):
-        MCPClient({"type": "http", "url": "https://x.test", "write_paths": ["~/.npm"]})
+        MCPClient({"type": "streamable-http", "url": "https://x.test", "write_paths": ["~/.npm"]})
 
 
 @pytest.mark.parametrize("bad", ["~/.npm", [1], {"p": "x"}])

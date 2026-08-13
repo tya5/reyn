@@ -48,7 +48,7 @@ def _client(transport_type: str = "stdio") -> MCPClient:
     """
     if transport_type == "stdio":
         return MCPClient({"type": "stdio", "command": "/bin/true"})
-    return MCPClient({"type": "http", "url": "http://localhost:9999/mcp"})
+    return MCPClient({"type": "streamable-http", "url": "http://localhost:9999/mcp"})
 
 
 # ── 1. tail helpers handle absent capture gracefully ────────────────────
@@ -137,7 +137,7 @@ def test_http_transport_does_not_allocate_capture() -> None:
     Capture is stdio-only; http transport has no subprocess. The
     field stays None so close() is a no-op.
     """
-    client = _client("http")
+    client = _client("streamable-http")
     assert client.stderr_capture is None
     client.close_stderr_capture()  # safe
 

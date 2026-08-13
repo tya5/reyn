@@ -102,12 +102,12 @@ def test_build_server_entry_writes_type_http_when_specified() -> None:
         "registryType": "npm",
         "identifier": "some/http-server",
         "version": "",
-        "transport": {"type": "http"},
+        "transport": {"type": "streamable-http"},
         "environmentVariables": [],
     }
     entry = _build_server_entry(pkg_raw, env_keys=[])
-    assert entry["type"] == "http"
-    # Pre-fix bug: would set entry["transport"] = "http" instead.
+    assert entry["type"] == "streamable-http"
+    # Pre-fix bug: would set entry["transport"] = "streamable-http" instead.
     assert "transport" not in entry
 
 

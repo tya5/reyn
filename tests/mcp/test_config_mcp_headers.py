@@ -55,7 +55,7 @@ def test_mcp_headers_field_load_with_env_interpolation(tmp_path, monkeypatch):
         "mcp": {
             "servers": {
                 "github": {
-                    "type": "http",
+                    "type": "streamable-http",
                     "url": "https://api.githubcopilot.com/mcp/",
                     "headers": {
                         "Authorization": "Bearer ${GITHUB_TOKEN}",
@@ -73,7 +73,7 @@ def test_mcp_headers_field_load_with_env_interpolation(tmp_path, monkeypatch):
     servers = cfg.mcp.get("servers") or {}
     assert "github" in servers, "github MCP server config should round-trip"
     gh = servers["github"]
-    assert gh["type"] == "http"
+    assert gh["type"] == "streamable-http"
     assert gh["url"] == "https://api.githubcopilot.com/mcp/"
     # ${VAR} resolves at load time
     assert gh["headers"]["Authorization"] == "Bearer ghp_t0pSecret"
@@ -94,7 +94,7 @@ def test_mcp_headers_optional_back_compat(tmp_path, monkeypatch):
         "mcp": {
             "servers": {
                 "local": {
-                    "type": "http",
+                    "type": "streamable-http",
                     "url": "http://localhost:3000/mcp",
                 },
             },
@@ -170,7 +170,7 @@ def test_mcp_headers_reach_http_transport(monkeypatch) -> None:
 
     captured = _capture_streamablehttp_client_kwargs(monkeypatch)
     cfg = {
-        "type": "http",
+        "type": "streamable-http",
         "url": "https://api.example.com/mcp",
         "headers": {
             "Authorization": "Bearer abc123",
@@ -204,7 +204,7 @@ def test_mcp_headers_default_empty_when_omitted(monkeypatch) -> None:
     from reyn.mcp.client import MCPClient, MCPError
 
     captured = _capture_streamablehttp_client_kwargs(monkeypatch)
-    cfg = {"type": "http", "url": "http://x/mcp", "init_timeout": 1}
+    cfg = {"type": "streamable-http", "url": "http://x/mcp", "init_timeout": 1}
     client = MCPClient(cfg)
     try:
         asyncio.run(client.initialize())

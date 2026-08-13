@@ -18,7 +18,7 @@ The point: your workflow says "call the `read_text_file` tool on the `filesystem
 
 | Role | Direction | How |
 |------|-----------|-----|
-| **MCP client** — Reyn calls external servers | Outbound | The `mcp` Control IR op + `permissions.mcp:` declaration in a phase. A workflow says "call this tool on this server"; the OS dispatches via `MCPClient` (stdio / http / sse). Example: a workflow reads files through the `filesystem` MCP server. |
+| **MCP client** — Reyn calls external servers | Outbound | The `mcp` Control IR op + `permissions.mcp:` declaration in a phase. A workflow says "call this tool on this server"; the OS dispatches via `MCPClient` (stdio / streamable-http / sse). Example: a workflow reads files through the `filesystem` MCP server. |
 | **MCP server** — external clients call Reyn | Inbound | `reyn mcp serve --project .` launches Reyn as a JSON-RPC server. Claude Code, Cursor, OpenAI Agents SDK, or any MCP-aware client can then call INTO Reyn's agents using two tools: `list_agents()` and `send_to_agent(agent_name, message)`. |
 
 The rest of this page covers each role in turn.
@@ -99,14 +99,14 @@ When a workflow needs an external tool, the flow is:
 ```
 phase frontmatter         LLM emits Control IR        OS dispatches
   permissions:        →     {kind: mcp,           →   MCPClient
-    mcp: [filesystem]        server: filesystem,        (stdio | http | sse)
+    mcp: [filesystem]        server: filesystem,        (stdio | streamable-http | sse)
                              tool: read_text_file,
                              args: {path: ...}}
 ```
 
 1. The workflow's phase declares `permissions.mcp: [server_name]` in frontmatter — without this, the runtime refuses every call to that server.
 2. The LLM emits an `mcp` Control IR op: `{server, tool, args}`. It cannot invent server names; only servers configured in `reyn.yaml` and declared in the phase's permissions are reachable.
-3. The OS resolves the server's transport (`stdio`, `http`, `sse`), dispatches via `MCPClient`, and returns the tool result to the phase loop.
+3. The OS resolves the server's transport (`stdio`, `streamable-http`, `sse`), dispatches via `MCPClient`, and returns the tool result to the phase loop.
 4. Every call emits events — `mcp_called` before, `mcp_completed` (or `mcp_failed`) after. The audit trail is identical to any other op.
 
 The boundary is sharp on purpose: workflows describe what they want, the OS decides how to get it. Adding a new MCP server doesn't touch any OS code (P7).
@@ -183,7 +183,7 @@ mcp:
 
     # http: hosted server, JSON-RPC over Streamable HTTP
     internal_tools:
-      type: http
+      type: streamable-http
       url: https://tools.example.internal/mcp
       headers:
         Authorization: "Bearer ${INTERNAL_TOOLS_TOKEN}"
@@ -191,7 +191,7 @@ mcp:
 
 | Field | stdio | http | Description |
 |-------|-------|------|-------------|
-| `type` | required | required | `stdio` \| `http` \| `sse` |
+| `type` | required | required | `stdio` \| `streamable-http` \| `sse` |
 | `command` | required | — | Executable to spawn (e.g., `npx`, `python`, an absolute path) |
 | `args`    | optional | — | Argument list passed to `command` |
 | `env`     | optional | — | Extra environment variables for the spawned process |
@@ -214,7 +214,7 @@ Streamable HTTP**; `stdio`/`sse` servers reject an `auth` key outright.
 mcp:
   servers:
     hosted_tool:
-      type: http
+      type: streamable-http
       url: https://tools.example.com/mcp
       auth: oauth   # shorthand for {type: oauth}
       # or the long form, when you need scopes / a specific client:

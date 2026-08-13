@@ -2,8 +2,8 @@
 
 Supports stdio + Streamable HTTP transports (sse deferred). The transport
 is selected per-server via the ``type:`` field in ``mcp.servers.<name>``;
-configs that omit ``type`` default to ``http`` for backward compatibility
-with pre-PR32 reyn.yaml files.
+configs that omit ``type`` default to ``streamable-http`` (#4604 renamed
+from ``http``) for backward compatibility with pre-PR32 reyn.yaml files.
 """
 from __future__ import annotations
 
@@ -34,10 +34,10 @@ async def _execute(op: MCPIROp, ctx: OpContext) -> dict:
         return {"kind": "mcp", "status": "error",
                 "error": f"MCP server '{op.server}' config must be a dict."}
 
-    # Backward compat: a config with `url` but no `type` is treated as http.
+    # Backward compat: a config with `url` but no `type` is treated as streamable-http.
     if "type" not in expanded:
         if expanded.get("url"):
-            expanded = {**expanded, "type": "http"}
+            expanded = {**expanded, "type": "streamable-http"}
 
     # #2597 S2a: prefer the session-owned held-open connection service (Option C) when wired —
     # it replaces the per-turn pool on the live (non-ephemeral) session path with one persistent

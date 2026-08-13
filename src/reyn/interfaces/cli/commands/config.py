@@ -299,6 +299,28 @@ def _mcp_misplaced_server_entries(mcp_section: object) -> "list[str]":
     return found
 
 
+# #4604: reyn's own MCP transport-type vocabulary renamed "http" ->
+# "streamable-http" (aligning with the Agent Plugins 1.0 canonical
+# mcp.schema.json). mcp/client.py's MCPClient.__init__ already REJECTS
+# the old value at connection time (a clear ValueError naming the rename)
+# -- this is the earlier, proactive half: `reyn config validate` can find
+# a stale `type: http` entry without ever trying to connect, closing the
+# #4401 shape (a server discovered degraded only much later) for THIS
+# specific value, not just a generic "unsupported type" surprise.
+def _mcp_renamed_http_transport_entries(mcp_section: object) -> "list[str]":
+    """Every ``mcp.servers.<name>`` entry (in a raw, per-source ``mcp:``
+    dict) whose ``type`` is still the pre-#4604 value ``"http"``."""
+    if not isinstance(mcp_section, dict):
+        return []
+    servers = mcp_section.get("servers")
+    if not isinstance(servers, dict):
+        return []
+    return [
+        name for name, entry in servers.items()
+        if isinstance(entry, dict) and entry.get("type") == "http"
+    ]
+
+
 def _validate() -> None:
     """#4174 T0: report every unknown/renamed config key found in the
     operator-editable POLICY TIER (reyn.yaml / reyn.local.yaml /
@@ -445,7 +467,12 @@ def _validate() -> None:
     # on, #4364. The 3 static paths + the 1 dynamic path mirror
     # `_migrate_mcp`'s own already-established scan list (this module,
     # above) exactly — not a new, narrower list.
+    # #4604: the same per-source-file scan as mcp_misplaced's own loop
+    # below checks a SECOND, unrelated defect too — a server entry whose
+    # `type` is still the renamed-away "http" value — so both detectors
+    # run off the SAME loaded raw dict per source, one file read each.
     mcp_misplaced: dict[str, "list[str]"] = {}
+    mcp_renamed_http: dict[str, "list[str]"] = {}
     static_mcp_sources = {
         "~/.reyn/config.yaml": Path.home() / ".reyn" / "config.yaml",
         "reyn.yaml": project_root / "reyn.yaml",
@@ -453,17 +480,25 @@ def _validate() -> None:
     }
     for label, path in static_mcp_sources.items():
         raw = _load_yaml(path)
-        found = _mcp_misplaced_server_entries(raw.get("mcp"))
-        if found:
-            mcp_misplaced[label] = found
+        mcp_section = raw.get("mcp")
+        misplaced_found = _mcp_misplaced_server_entries(mcp_section)
+        if misplaced_found:
+            mcp_misplaced[label] = misplaced_found
+        renamed_found = _mcp_renamed_http_transport_entries(mcp_section)
+        if renamed_found:
+            mcp_renamed_http[label] = renamed_found
     dynamic_mcp_raw = _load_yaml(project_root / ".reyn" / "config" / "mcp.yaml")
-    dynamic_found = _mcp_misplaced_server_entries(dynamic_mcp_raw.get("mcp"))
+    dynamic_mcp_section = dynamic_mcp_raw.get("mcp")
+    dynamic_found = _mcp_misplaced_server_entries(dynamic_mcp_section)
     if dynamic_found:
         mcp_misplaced[".reyn/config/mcp.yaml"] = dynamic_found
+    dynamic_renamed_found = _mcp_renamed_http_transport_entries(dynamic_mcp_section)
+    if dynamic_renamed_found:
+        mcp_renamed_http[".reyn/config/mcp.yaml"] = dynamic_renamed_found
 
     if (
         not policy_unknown and not disabled and not in_set_unknown
-        and not hook_entry_errors and not mcp_misplaced
+        and not hook_entry_errors and not mcp_misplaced and not mcp_renamed_http
     ):
         print("No unknown, renamed, or disabled-by-dependency config keys found.")
         return
@@ -550,6 +585,27 @@ def _validate() -> None:
             "'mcp.servers.<name>' ('reyn config migrate-mcp' relocates "
             "already-correctly-nested mcp.servers entries between files, "
             "but does not add a missing 'servers:' key)."
+        )
+
+    if mcp_renamed_http:
+        if policy_unknown or disabled or in_set_unknown or hook_entry_errors or mcp_misplaced:
+            print()
+        print(
+            f"MCP transport type — checked ~/.reyn/config.yaml, reyn.yaml, "
+            f"reyn.local.yaml, and .reyn/config/mcp.yaml — "
+            f"{len(mcp_renamed_http)} source(s) with a renamed transport type:\n"
+        )
+        for label, names in sorted(mcp_renamed_http.items()):
+            for name in names:
+                print(f"  [{label}] mcp.servers.{name}.type: http")
+        print(
+            "\nMCP server type 'http' was renamed to 'streamable-http' "
+            "(#4604), aligning reyn's own vocabulary with the Agent "
+            "Plugins 1.0 canonical mcp.schema.json. Each entry above "
+            "will FAIL to connect (MCPClient rejects the old value with "
+            "a clear error) the next time this server is used — fix it "
+            "now by hand: change 'type: http' to 'type: streamable-http' "
+            "in the file named above."
         )
 
 

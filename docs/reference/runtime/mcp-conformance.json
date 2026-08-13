@@ -28,7 +28,7 @@
     "notes": "logging: MCPClient has no representative public call for this capability (architect #3698 design \u00a73); completions: not advertised by this server, no call attempted; elicitation: test server has no elicit-triggering tool (needs a purpose-built server; not yet available in-repo); subscription: MCPCapabilityError = the server does not advertise resources.subscribe (MCPClient's capability gate working as intended, not a reyn defect)"
   },
   {
-    "transport": "http",
+    "transport": "streamable-http",
     "server": "tests/_support/mcp_fastmcp_echo_server.py",
     "dep_version": "fastmcp 3.4.5, mcp-sdk 1.26.0",
     "negotiated": "2025-11-25",

@@ -255,8 +255,8 @@ def test_infer_transport_stdio():
 
 
 def test_infer_transport_http():
-    """Tier 2: server with 'url' field inferred as 'http' transport."""
-    assert _infer_transport({"url": "http://localhost:3000/mcp"}) == "http"
+    """Tier 2: server with 'url' field inferred as 'streamable-http' transport."""
+    assert _infer_transport({"url": "http://localhost:3000/mcp"}) == "streamable-http"
 
 
 def test_infer_transport_explicit():

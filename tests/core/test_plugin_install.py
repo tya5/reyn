@@ -829,7 +829,9 @@ def _build_mcp_entries_from_dict(mcp_json: dict) -> dict:
     """Round-trips *mcp_json* through a real temp file into
     ``_build_mcp_entries`` — same real-file-I/O shape as
     ``test_build_mcp_entries_registers_command_as_is`` above, factored out
-    for the #4570 conversion C1 transport-type adapter tests below."""
+    for the transport-type pass-through tests below (#4570 conversion C1
+    added the round-trip helper; #4604 removed the translation those
+    tests originally covered)."""
     import tempfile
     with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as fh:
         json.dump(mcp_json, fh)
@@ -840,30 +842,23 @@ def _build_mcp_entries_from_dict(mcp_json: dict) -> dict:
         mcp_json_path.unlink()
 
 
-def test_build_mcp_entries_translates_streamable_http_to_reyn_internal_http():
-    """Tier 1: (#4570 conversion C1) the Agent Plugins 1.0 spec's own
-    HTTP-family spelling, ``"streamable-http"``, is translated into reyn's
-    STILL-INTERNAL vocabulary value ``"http"`` (``mcp/client.py``'s
-    ``_SUPPORTED_TYPES`` — the repo-wide rename is #4604, deliberately not
-    done here) — this is the ONE adapter point #4570 conversion C1 adds."""
+def test_build_mcp_entries_passes_streamable_http_through_unchanged():
+    """Tier 1: (#4604) the Agent Plugins 1.0 spec's own HTTP-family
+    spelling, ``"streamable-http"``, is now ALSO reyn's own vocabulary
+    (``mcp/client.py``'s ``_SUPPORTED_TYPES``) — no translation happens
+    any more (#4570 conversion C1's temporary adapter was removed once
+    #4604 landed)."""
     entries = _build_mcp_entries_from_dict(
         {"mcpServers": {"srv": {"type": "streamable-http", "url": "http://localhost:1234"}}},
     )
 
-    assert entries["srv"]["type"] == "http"
+    assert entries["srv"]["type"] == "streamable-http"
 
 
 def test_build_mcp_entries_leaves_sse_unswept(tmp_path):
-    """Tier 1: (#4570 conversion C1, lead-coder review point) ``"sse"`` is
-    a DISTINCT value in both the spec's vocabulary and reyn's own — the
-    adapter above must translate ONLY ``"streamable-http"``, never sweep
-    ``"sse"`` into ``"http"`` too. A translation that maps BOTH would still
-    pass a test asserting "http.type == 'streamable-http' input yields
-    reyn's http" alone; this test is the one that actually distinguishes
-    "one value renamed" from "two values collapsed into one" — the
-    concrete failure mode: an adapter written as `"http" if "http" in
-    spec_type else spec_type` would silently swallow "sse" too, since it
-    is not a literal-equality check."""
+    """Tier 1: (accept-side) ``"sse"`` passes through unchanged — never
+    swept into ``"streamable-http"`` by any pattern-matching mistake in
+    the (now-removed) adapter's former translation logic."""
     entries = _build_mcp_entries_from_dict(
         {"mcpServers": {"srv": {"type": "sse", "url": "http://localhost:1234"}}},
     )
@@ -871,17 +866,16 @@ def test_build_mcp_entries_leaves_sse_unswept(tmp_path):
     assert entries["srv"]["type"] == "sse"
 
 
-def test_build_mcp_entries_defaults_missing_type_to_streamable_http_translated():
+def test_build_mcp_entries_defaults_missing_type_to_streamable_http():
     """Tier 1: (accept-side) a url-bearing entry omitting ``type``
-    entirely (pre-#4570-conversion-C1 shape, or an author who hasn't
-    updated yet) still defaults sanely — through the SAME translation
-    path, landing on reyn's ``"http"``, not a raw untranslated
-    ``"streamable-http"`` leaking into reyn's own vocabulary."""
+    entirely defaults to ``"streamable-http"`` — both the spec's own
+    default and reyn's own vocabulary agree since #4604, so this is a
+    plain default, not a translation."""
     entries = _build_mcp_entries_from_dict(
         {"mcpServers": {"srv": {"url": "http://localhost:1234"}}},
     )
 
-    assert entries["srv"]["type"] == "http"
+    assert entries["srv"]["type"] == "streamable-http"
 
 
 # ── #4570 conversion D: field-aware ${PLUGIN_ROOT}/${PLUGIN_DATA} bake ─────
@@ -1263,11 +1257,11 @@ async def test_plugin_install_stale_token_warning_fires_a_paired_audit_event(
     assert {f["name"] for f in findings} == {"wrongtoken2"}
 
 
-def test_build_mcp_entries_stdio_type_is_unaffected_by_the_adapter():
-    """Tier 1: (accept-side) the adapter only ever touches the url-bearing
-    (HTTP-family) branch — a stdio entry's ``"type": "stdio"`` is set
-    unconditionally by the ELSE branch, never routed through the
-    streamable-http/sse translation at all."""
+def test_build_mcp_entries_stdio_type_is_unaffected_by_the_url_branch():
+    """Tier 1: (accept-side) the ``spec_type`` default/pass-through only
+    ever applies to the url-bearing (HTTP-family) branch — a stdio
+    entry's ``"type": "stdio"`` is set unconditionally by the ELSE
+    branch, never touched by that logic at all."""
     entries = _build_mcp_entries_from_dict(
         {"mcpServers": {"srv": {"type": "stdio", "command": "python"}}},
     )

@@ -54,7 +54,7 @@ _ECHO_SERVER = _REPO_ROOT / "tests" / "_support" / "mcp_fastmcp_echo_server.py"
 _JSON_OUT = _REPO_ROOT / "docs" / "reference" / "runtime" / "mcp-conformance.json"
 _MD_OUT = _REPO_ROOT / "docs" / "reference" / "runtime" / "mcp-conformance.md"
 
-_TRANSPORTS = ("stdio", "http", "sse")
+_TRANSPORTS = ("stdio", "streamable-http", "sse")
 _CAPABILITIES = ("tools", "resources", "prompts", "logging", "completions")
 
 
@@ -307,7 +307,7 @@ async def _measure_row(transport: str) -> dict:
             for cap in _CAPABILITIES:
                 cell["implemented"][cap] = "not_measurable"
             return cell
-        path = "/mcp" if transport == "http" else "/sse"
+        path = "/mcp" if transport == "streamable-http" else "/sse"
         config = {"type": transport, "url": f"http://127.0.0.1:{port}{path}"}
         cell["_server_task"] = server_task
 

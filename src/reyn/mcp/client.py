@@ -1,16 +1,18 @@
 """
 MCP client (v#2597 S1; #3698 stage 1; #4282 stage 2 — fastmcp retired).
 
-Supports two transports today: ``stdio`` and ``http`` (Streamable HTTP);
-``sse`` uses the SSE client.
+Supports two transports today: ``stdio`` and ``streamable-http`` (Streamable
+HTTP — #4604 renamed reyn's own vocabulary from ``"http"`` to
+``"streamable-http"``, aligning with the Agent Plugins 1.0 canonical
+``mcp.schema.json``); ``sse`` uses the SSE client.
 
-#4282: EVERY transport — ``stdio``, ``http``/``sse`` with or without OAuth
-configured — now goes through the official ``mcp`` SDK DIRECTLY (``mcp.
-Client`` — #3698 PR-1; was ``mcp.client.session.ClientSession`` — plus
-``mcp.client.{stdio,streamable_http,sse}`` for the transports either way).
-fastmcp is no longer constructed anywhere in this module. #3698 stage 1 had
-already migrated stdio and non-OAuth http/sse;
-#4282 closed the remaining OAuth-configured-http gap by building the
+#4282: EVERY transport — ``stdio``, ``streamable-http``/``sse`` with or
+without OAuth configured — now goes through the official ``mcp`` SDK
+DIRECTLY (``mcp.Client`` — #3698 PR-1; was ``mcp.client.session.ClientSession``
+— plus ``mcp.client.{stdio,streamable_http,sse}`` for the transports either
+way). fastmcp is no longer constructed anywhere in this module. #3698 stage 1
+had already migrated stdio and non-OAuth streamable-http/sse;
+#4282 closed the remaining OAuth-configured-streamable-http gap by building the
 official SDK's own ``mcp.client.auth.OAuthClientProvider`` directly
 instead of fastmcp's ``OAuth`` wrapper around it — this needed two things
 fastmcp provided internally: a browser-redirect + localhost-callback
@@ -340,7 +342,12 @@ class MCPTransportError(MCPError):
     the pre-fix ``except MCPError:`` over-caught both of those)."""
 
 
-_SUPPORTED_TYPES = {"stdio", "http", "sse"}
+_SUPPORTED_TYPES = {"stdio", "streamable-http", "sse"}
+# #4604: the pre-rename value — kept as its own constant (not inlined into
+# the error branch below) so the rename story stays legible at the one
+# call site that reads it, rather than a bare string literal a future
+# grep for "http" would miss.
+_RENAMED_HTTP_TYPE = "http"
 
 
 def _resolve_client_mode(config: dict) -> "str":
@@ -853,6 +860,17 @@ class MCPClient:
         if not isinstance(config, dict):
             raise ValueError(f"MCP server config must be a dict, got {type(config).__name__}")
         srv_type = config.get("type")
+        if srv_type == _RENAMED_HTTP_TYPE:
+            # #4604: name the rename explicitly rather than letting this
+            # fall into the generic "not one of {...}" branch below — an
+            # operator whose config still says the old value needs to be
+            # told what it's now called, not just that it's invalid (the
+            # #4401 shape: a silent/ambiguous failure discovered only when
+            # the server later shows up degraded).
+            raise ValueError(
+                "MCP server type 'http' was renamed to 'streamable-http' "
+                "(#4604) — update this server's 'type' in your MCP config."
+            )
         if srv_type not in _SUPPORTED_TYPES:
             raise ValueError(
                 f"Unsupported MCP server type: {srv_type!r}. "
@@ -861,10 +879,10 @@ class MCPClient:
         # #2597 slice ④: 'auth' (OAuth) only makes sense over Streamable HTTP —
         # reject it eagerly at construction time for stdio/sse rather than
         # silently ignoring it (only _build_oauth_provider ever reads 'auth').
-        if config.get("auth") and srv_type != "http":
+        if config.get("auth") and srv_type != "streamable-http":
             raise ValueError(
-                f"MCP server 'auth' config is only supported for 'http' "
-                f"(Streamable HTTP) servers, not {srv_type!r}."
+                f"MCP server 'auth' config is only supported for "
+                f"'streamable-http' servers, not {srv_type!r}."
             )
         # #2976: same eager-rejection model as 'auth' above — 'write_paths' is a
         # sandbox grant for a spawned subprocess, so only 'stdio' has one. A
@@ -1336,7 +1354,7 @@ class MCPClient:
 
         stack = AsyncExitStack()
         try:
-            if self._type == "http":
+            if self._type == "streamable-http":
                 # #4282: OAuth (if configured — __init__ already rejects it
                 # for sse) is now built as the official SDK's own
                 # OAuthClientProvider (an httpx.Auth) and passed straight
@@ -2236,10 +2254,11 @@ class MCPClient:
                 "'headers' key instead (e.g. headers: {Authorization: "
                 "'Bearer ${TOKEN}'})."
             )
-        # Note: the http-only restriction is already enforced eagerly in
-        # __init__ (config.get("auth") + srv_type != "http" raises there) —
-        # this method is only ever reached via _initialize_http_or_sse's
-        # http branch, so self._type is guaranteed "http" here.
+        # Note: the streamable-http-only restriction is already enforced
+        # eagerly in __init__ (config.get("auth") + srv_type !=
+        # "streamable-http" raises there) — this method is only ever
+        # reached via _initialize_http_or_sse's streamable-http branch, so
+        # self._type is guaranteed "streamable-http" here.
 
         from reyn.mcp.oauth_token_storage import (
             MCPOAuthTokenStorage,

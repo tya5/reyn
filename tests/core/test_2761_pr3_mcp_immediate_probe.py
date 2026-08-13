@@ -175,7 +175,7 @@ async def test_probe_unreachable_remote_returns_error() -> None:
     """Tier 2: the probe is transport-uniform — an unreachable REMOTE (http) server
     returns an error string via the SAME path (http-transport branch, same rollback)."""
     err = await probe_mcp_server(
-        "remote", {"type": "http", "url": "http://127.0.0.1:1/mcp", "timeout": 3},
+        "remote", {"type": "streamable-http", "url": "http://127.0.0.1:1/mcp", "timeout": 3},
     )
     assert isinstance(err, str) and err
 

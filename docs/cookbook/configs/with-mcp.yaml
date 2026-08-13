@@ -47,7 +47,7 @@ mcp:
 
     # Remote HTTP example
     # team_search:
-    #   type: http
+    #   type: streamable-http
     #   url: ${TEAM_SEARCH_MCP_URL}
     #   headers:
     #     Authorization: "Bearer ${TEAM_SEARCH_TOKEN}"
