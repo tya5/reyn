@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import pytest
 
+from reyn.config.chat import SafetyConfig
 from reyn.llm.model_resolver import ModelResolver
 from reyn.runtime.services.router_loop_driver import RouterLoopDriver
 
@@ -84,7 +85,15 @@ def _make_driver(
 
     return RouterLoopDriver(
         router_host=host,
-        safety=None,
+        # #4525: safety=None here was the ONLY place in the whole tree that
+        # constructed RouterLoopDriver with a partial/missing safety object
+        # -- lead-coder's grep confirmed session.py:994's own
+        # `safety or SafetyConfig()` normalization means production NEVER
+        # passes anything but a real SafetyConfig to the real construction
+        # site (session.py:1471). A real SafetyConfig() here is what this
+        # test host should have used from the start -- this test is about
+        # /model override propagation, not about a missing-safety guard.
+        safety=SafetyConfig(),
         router_max_iterations=1,
         budget_tracker=budget,
         non_interactive=True,

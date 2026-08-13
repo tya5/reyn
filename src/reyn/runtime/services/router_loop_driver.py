@@ -21,17 +21,30 @@ from typing import TYPE_CHECKING, Any, Callable
 from reyn.runtime.session_pure import render_summary_for_storage
 
 if TYPE_CHECKING:
-    pass
+    from reyn.config.chat import SafetyConfig
 
 
-def _narrowing_per_iteration(safety: Any) -> bool:
+def _narrowing_per_iteration(safety: "SafetyConfig") -> bool:
     """Whether ``safety.threat_scan.capability_narrowing`` is at the ``iteration``
     rung (#3501). Delegates to the config object's own predicate rather than
-    comparing the string here, so the vocabulary lives in exactly one place;
-    ``getattr``-guarded because test hosts pass partial safety objects."""
-    threat_scan = getattr(safety, "threat_scan", None)
-    predicate = getattr(threat_scan, "narrowing_per_iteration", None)
-    return bool(predicate()) if callable(predicate) else False
+    comparing the string here, so the vocabulary lives in exactly one place.
+
+    #4525: direct attribute access, not a ``getattr`` guard. The prior
+    docstring claimed the guard existed because "test hosts pass partial
+    safety objects" — lead-coder's grep found this was true of exactly ONE
+    test host (which has since been fixed to construct a real
+    ``SafetyConfig()``, matching what production has ALWAYS passed:
+    ``session.py``'s own ``safety or SafetyConfig()`` normalization means
+    ``RouterLoopDriver``'s one real construction site, ``session.py:1471``,
+    never sees anything but a fully-populated ``SafetyConfig``, whose own
+    ``threat_scan`` field is never ``None`` by construction
+    (``field(default_factory=ThreatScanConfig)``). A ``getattr`` guard
+    protecting a shape nothing ever constructs is the shape CLAUDE.md's
+    test-review Q3 calls out — the fix is removing the guard, not adding a
+    test for it, per architect's revised call after the premise was
+    falsified. A caller genuinely passing a wrong type now gets a loud
+    ``AttributeError`` instead of a silent ``False``."""
+    return bool(safety.threat_scan.narrowing_per_iteration())
 
 
 class RouterLoopDriver:
