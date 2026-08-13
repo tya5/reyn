@@ -538,17 +538,50 @@ _CONSTRUCTOR_MODULE = "src/reyn/_network.py"
 _ALLOWED_TRANSPORT_MODULE = "src/reyn/_ssrf_pin.py"
 
 
-def _is_httpx_client_construction(node: ast.AST) -> str | None:
-    """Return 'Client' / 'AsyncClient' if *node* constructs one, else None."""
+def _httpx_bound_names(tree: ast.Module) -> "frozenset[str]":
+    """Local names in *tree* actually bound to ``httpx.Client``/
+    ``httpx.AsyncClient`` via ``from httpx import Client [as X]`` /
+    ``from httpx import AsyncClient [as X]`` — the alias (`asname`) is what a
+    bare-name call site would spell, not the original ``httpx``-side name.
+
+    #4546: the bare-name branch below used to match ANY ``Client(...)``/
+    ``AsyncClient(...)`` call by spelling alone, regardless of where that
+    name came from — a same-name-different-thing false positive the moment
+    a file imports the mcp SDK's own unrelated ``Client`` (its docstring-only
+    comment claimed "after `from httpx import Client`" but the code never
+    checked it). This resolves the file's own import bindings first, so a
+    bare ``Client(...)`` only matches when THIS file actually imported that
+    name from ``httpx``."""
+    bound: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.module == "httpx":
+            for alias in node.names:
+                if alias.name in ("Client", "AsyncClient"):
+                    bound.add(alias.asname or alias.name)
+    return frozenset(bound)
+
+
+def _is_httpx_client_construction(
+    node: ast.AST, httpx_bound_names: "frozenset[str]" = frozenset()
+) -> str | None:
+    """Return 'Client' / 'AsyncClient' if *node* constructs one, else None.
+
+    ``httpx_bound_names`` (from :func:`_httpx_bound_names`, computed once per
+    FILE being scanned) gates the bare-name branch — see #4546's own note on
+    that function for why. Defaults to empty so a caller that only cares
+    about the unambiguous ``httpx.Client(...)`` attribute form (this
+    function's original, still-supported use) does not need to thread it."""
     if not isinstance(node, ast.Call):
         return None
     func = node.func
-    # httpx.Client(...) / httpx.AsyncClient(...)
+    # httpx.Client(...) / httpx.AsyncClient(...) — unambiguous: names the
+    # httpx module directly, needs no import resolution.
     if isinstance(func, ast.Attribute) and isinstance(func.value, ast.Name):
         if func.value.id == "httpx" and func.attr in ("Client", "AsyncClient"):
             return func.attr
-    # Client(...) / AsyncClient(...) after `from httpx import Client`
-    if isinstance(func, ast.Name) and func.id in ("Client", "AsyncClient"):
+    # Client(...) / AsyncClient(...) — only when THIS file's own imports
+    # actually bound that name to httpx's Client/AsyncClient (#4546).
+    if isinstance(func, ast.Name) and func.id in httpx_bound_names:
         return func.id
     return None
 
@@ -570,8 +603,9 @@ def test_no_raw_httpx_client_construction_bypasses_the_dry_constructor() -> None
         if resolved in (constructor_path, transport_path):
             continue
         tree = ast.parse(py.read_text(encoding="utf-8"))
+        httpx_bound_names = _httpx_bound_names(tree)
         for node in ast.walk(tree):
-            kind = _is_httpx_client_construction(node)
+            kind = _is_httpx_client_construction(node, httpx_bound_names)
             if kind:
                 offenders.append(f"{py.relative_to(root)}:{node.lineno} ({kind})")
 
@@ -599,6 +633,82 @@ def test_dry_constructor_module_actually_constructs_httpx_clients() -> None:
         f"expected reyn._network to construct both httpx.Client and "
         f"httpx.AsyncClient; found {kinds}"
     )
+
+
+# ── #4546: the bare-name branch must resolve imports, not spell alone ──────
+
+
+def test_a_same_named_client_not_imported_from_httpx_is_not_flagged() -> None:
+    """Tier 2: falsify-side for #4546's own fix — a bare ``Client(...)`` call
+    whose ``Client`` name was imported from somewhere OTHER than httpx (the
+    mcp SDK's own ``Client``, in the real incident) must NOT be flagged. This
+    is the exact false-positive #4546 reported against #4545's branch;
+    reproduced here as a real AST fixture (not asserted from the bug report
+    alone), through the real gate helpers."""
+    src = (
+        "from mcp import Client\n"
+        "\n"
+        "def f():\n"
+        "    return Client()\n"
+    )
+    tree = ast.parse(src)
+    httpx_bound_names = _httpx_bound_names(tree)
+    assert httpx_bound_names == frozenset()
+    offenders = [
+        n for n in ast.walk(tree)
+        if _is_httpx_client_construction(n, httpx_bound_names) is not None
+    ]
+    assert offenders == []
+
+
+def test_a_real_from_httpx_import_client_construction_is_still_flagged() -> None:
+    """Tier 2: falsify — the gate's ORIGINAL purpose (catching a genuine
+    ``from httpx import Client`` bypass) must still work after #4546's fix
+    narrows the bare-name branch. Not going soft: this is the exact shape
+    the docstring comment always claimed to catch, now actually enforced
+    rather than assumed by spelling alone."""
+    src = (
+        "from httpx import Client\n"
+        "\n"
+        "def f():\n"
+        "    return Client()\n"
+    )
+    tree = ast.parse(src)
+    httpx_bound_names = _httpx_bound_names(tree)
+    assert httpx_bound_names == frozenset({"Client"})
+    offenders = [
+        n for n in ast.walk(tree)
+        if _is_httpx_client_construction(n, httpx_bound_names) is not None
+    ]
+    # Unpacking fails on zero or more-than-one offenders, without pinning a
+    # bare count as a format assertion (testing.md Tier 4).
+    (offender,) = offenders
+    assert _is_httpx_client_construction(offender, httpx_bound_names) == "Client"
+
+
+def test_an_aliased_httpx_import_is_still_flagged() -> None:
+    """Tier 2: falsify — ``from httpx import Client as HttpxClient`` (an
+    aliased import) must still be caught under its LOCAL (aliased) name, per
+    #4546's own explicit "must catch the alias form too" requirement."""
+    src = (
+        "from httpx import AsyncClient as HttpxAsyncClient\n"
+        "\n"
+        "def f():\n"
+        "    return HttpxAsyncClient()\n"
+    )
+    tree = ast.parse(src)
+    httpx_bound_names = _httpx_bound_names(tree)
+    assert httpx_bound_names == frozenset({"HttpxAsyncClient"})
+    offenders = [
+        n for n in ast.walk(tree)
+        if _is_httpx_client_construction(n, httpx_bound_names) is not None
+    ]
+    # Unpacking fails on zero or more-than-one offenders, without pinning a
+    # bare count as a format assertion (testing.md Tier 4).
+    (offender,) = offenders
+    # func.id is the LOCAL (aliased) spelling, per _is_httpx_client_construction's
+    # own bare-name branch — it returns func.id, not the httpx-side original name.
+    assert _is_httpx_client_construction(offender, httpx_bound_names) == "HttpxAsyncClient"
 
 
 # ── structural gate: no raw urllib build_opener bypass ─────────────────────
