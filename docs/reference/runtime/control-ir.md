@@ -1154,7 +1154,9 @@ higher-trust one.
    entries tagged with its `plugin_id` pointing at the dir about to be deleted,
    so those entries are dropped from all three `.reyn/config/*.yaml` registries
    (ungated — OS-internal repair of already-broken entries) BEFORE the copy is
-   removed, or a dangling registry entry would survive.
+   removed, or a dangling registry entry would survive. Emit
+   `plugin_install_reconciled` (`name`, `action` — `"rolled_back"` today, the
+   only value emitted) per plugin actually rolled back.
 1. Resolve `source` → a source directory per its `kind`, applying the source's
    gate(s): `{kind: "git"}` runs the run-code trust gate (2) then
    `require_http_get` before cloning; `builtin`/`local` touch no network.
