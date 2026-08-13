@@ -106,10 +106,6 @@ CUSTOM_PROFILE: dict[str, CustomName] = _entries(
         "the /rewind sentinel — FORWARDED (not a local-control filter): the CLIENT consumes it over the transport stream and renders the rewind region picker, so filtering it would make remote /rewind a silent no-op",
     ),
     CustomName(
-        "reyn.display.__attach_request__", DISPLAY_NS, "{text: str}",
-        "the attach-request sentinel — a LIVE WIRE KIND (corrected #3362): the registry forwarder's `continue` is subscriber-local and does not keep it off the tap, and it is not in CONTROL_FILTER_KINDS, so this entry names an event that really is emitted (see protocol.py CONTROL_FILTER_KINDS for the fan-out reasoning). The reyn client skips it for display; remote attach-label sync is a separate P6b mechanism",
-    ),
-    CustomName(
         "reyn.display.trace", DISPLAY_NS, "{text: str}",
         "a nested detail / trace line (dim, transient) — the generic trace kind rendered nested with the tool-call trace subtypes",
     ),

@@ -16,7 +16,6 @@ from __future__ import annotations
 from dataclasses import replace
 
 from reyn.interfaces.slash import SlashContext, reply, reply_error, slash
-from reyn.runtime.outbox import OutboxMessage
 from reyn.runtime.profile import AgentProfile
 
 _USAGE = (
@@ -58,9 +57,9 @@ async def agent_cmd(ctx: "SlashContext", args: str) -> None:
 async def _create_agent(ctx: "SlashContext", name: str) -> None:
     """Create a new agent profile and attach to it.
 
-    Uses the same ``__attach_request__`` sentinel as ``/attach`` so the
-    registry's forwarder picks up the switch (until #191 lands, the
-    header label won't refresh — same constraint as /attach).
+    #4534 PR-2: uses the same ``request_attach`` named-operation seam as
+    ``/attach`` (until #191 lands, the header label won't refresh — same
+    constraint as /attach).
     """
     name = name.strip()
     if not name:
@@ -83,9 +82,7 @@ async def _create_agent(ctx: "SlashContext", name: str) -> None:
         await reply_error(ctx, str(exc))
         return
     await reply(ctx, f"created agent {name!r}; attaching…")
-    ctx.transport.put_display(OutboxMessage(
-        kind="__attach_request__", text=name,
-    ))
+    await ctx.transport.request_attach(name)
 
 
 async def _edit_agent(ctx: "SlashContext", args: str) -> None:

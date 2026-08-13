@@ -4,8 +4,8 @@
 (names present → reply contains names).
 
 /attach: no-name error, no-registry error, name-not-found error,
-already-attached note, valid-name success (system reply + __attach_request__
-sentinel with the name).
+already-attached note, valid-name success (system reply +
+transport.request_attach called with the name — #4534 PR-2).
 """
 from __future__ import annotations
 
@@ -41,12 +41,6 @@ class _FakeSession:
 
     def error_text(self) -> str:
         return " ".join(m.text for m in self._outbox if m.kind == "error")
-
-    def outbox_kinds(self) -> list[str]:
-        return [m.kind for m in self._outbox]
-
-    def sentinel_text(self, kind: str) -> str:
-        return " ".join(m.text for m in self._outbox if m.kind == kind)
 
 
 class _StubProfile:
@@ -181,11 +175,13 @@ async def test_attach_valid_name_sends_success_reply() -> None:
 
 
 @pytest.mark.asyncio
-async def test_attach_valid_name_emits_attach_request_sentinel() -> None:
-    """Tier 2: /attach <valid-name> emits __attach_request__ OutboxMessage with the name."""
+async def test_attach_valid_name_requests_attach() -> None:
+    """Tier 2: /attach <valid-name> asks the transport to attach (#4534
+    PR-2 — the retired __attach_request__ sentinel's named-operation
+    replacement)."""
     session = _FakeSession(
         registry=_FakeRegistry(names=["alpha", "beta"], attached="alpha")
     )
-    await attach_cmd(_ctx(session), "beta")
-    assert "__attach_request__" in session.outbox_kinds()
-    assert session.sentinel_text("__attach_request__") == "beta"
+    ctx = _ctx(session)
+    await attach_cmd(ctx, "beta")
+    assert ctx.transport.attach_requests == ["beta"]

@@ -54,9 +54,9 @@ _STANDARD_DISPLAY_KINDS: "frozenset[str]" = frozenset({
     "error",      # → RUN_ERROR
 })
 
-# profiled (11): the codec emits a reyn.display.<kind> CUSTOM event that has an
+# profiled (10): the codec emits a reyn.display.<kind> CUSTOM event that has an
 # extension-profile entry (profile.CUSTOM_PROFILE). Renderer chrome with no
-# standard AG-UI analog. INCLUDES the three client-consumed control sentinels
+# standard AG-UI analog. INCLUDES the two client-consumed control sentinels
 # that are FORWARDED on the wire (not filtered) — the CLIENT consumes them over
 # the transport stream, so filtering them would make remote /copy · /rewind
 # silent no-ops (they ride as reyn.display.* CUSTOM, round-trip losslessly).
@@ -71,7 +71,6 @@ _PROFILED_DISPLAY_KINDS: "frozenset[str]" = frozenset({
     "tool_call_failed",     # tool-call failure trace line
     "__copy_last_reply__",  # /copy sentinel — client-side clipboard copy (repl._copy_sentinel.handle_copy_sentinel)
     "__rewind_list__",      # /rewind sentinel — client renders the rewind list / region picker
-    "__attach_request__",   # /attach sentinel — consumed by registry._forwarder for the agent swap, but ALSO emitted on the AG-UI wire (the forwarder's `continue` is subscriber-local — see protocol.py CONTROL_FILTER_KINDS)
 })
 
 # Every kind FORWARDED to the AG-UI wire as a display frame (standard or CUSTOM).
