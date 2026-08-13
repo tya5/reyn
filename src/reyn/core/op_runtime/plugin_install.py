@@ -1157,6 +1157,21 @@ async def handle(op: PluginInstallIROp, ctx: OpContext) -> dict:
         # ${REYN_PLUGIN_ROOT} in mcp.json's args/env/cwd) stays literal
         # either way; this is the DISCLOSURE that used to be silent.
         stale_token_warnings = _expand_plugin_files(plugin_root, token_ctx)
+        # #4610 follow-up: the result-dict field above is discoverable only
+        # by the caller of THIS install call — a plugin installed once and
+        # never touched again would have its stale token silently drop out
+        # of view the moment the return value isn't kept. The audit-event
+        # is the durable record (P6 band member), same "install-time,
+        # discrete, named condition" class as `mcp_server_install_skipped`
+        # (#4580) / `pipeline_install_skipped`/`skill_install_skipped`
+        # (#4590) — one event per finding, not one per install, so a
+        # consumer filtering by kind sees exactly the findings, not a
+        # count it has to re-derive.
+        for warning in stale_token_warnings:
+            ctx.events.emit(
+                "plugin_install_token_vocabulary_mismatch",
+                name=safe_name, warning=warning,
+            )
 
         # ── 7. Register capabilities (#3209: register-only — no dep materialise) ──
         # #4570 conversion B: capability presence is now derived PURELY

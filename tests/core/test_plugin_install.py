@@ -1207,6 +1207,63 @@ async def test_plugin_install_surfaces_stale_token_warnings_in_the_result(
     ), result["stale_token_warnings"]
 
 
+@pytest.mark.asyncio
+async def test_plugin_install_stale_token_warning_fires_a_paired_audit_event(
+    tmp_path, monkeypatch,
+):
+    """Tier 2: (#4610 follow-up) the result-dict field above is
+    discoverable only by whoever kept THIS install call's return value —
+    a plugin installed once and never re-inspected would have the finding
+    silently drop out of view otherwise. `plugin_install_token_vocabulary_
+    mismatch` is the durable P6 record, same "install-time, discrete,
+    named condition" class as `mcp_server_install_skipped` (#4580) /
+    `pipeline_install_skipped`/`skill_install_skipped` (#4590): one event
+    per finding, `name` + `warning` (the same string the result's own
+    `stale_token_warnings` list carries)."""
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    src = tmp_path / "src" / "wrongtoken2"
+    src.mkdir(parents=True)
+    (src / "plugin.json").write_text(
+        json.dumps({
+            "$schema": PLUGIN_MANIFEST_SCHEMA_URL,
+            "name": "wrongtoken2", "version": "0.1.0",
+        }),
+        encoding="utf-8",
+    )
+    (src / "mcp.json").write_text(
+        json.dumps({
+            "mcpServers": {
+                "srv": {
+                    "type": "stdio", "command": "python",
+                    "args": ["${REYN_PLUGIN_ROOT}/x"],
+                },
+            },
+        }),
+        encoding="utf-8",
+    )
+
+    ctx = _make_ctx(tmp_path, approve_all_http=True)
+    op = PluginInstallIROp(kind="plugin_install", source={"kind": "local", "path": str(src)})
+    result = await install_handle(op, ctx)
+
+    assert result["status"] == "installed", result
+    # ctx.events is this file's own _Events fake (emit-recording only) —
+    # each call is `(args, kwargs)`; args[0] is the kind string.
+    findings = [
+        {"name": kwargs["name"], "warning": kwargs["warning"]}
+        for args, kwargs in ctx.events.calls
+        if args and args[0] == "plugin_install_token_vocabulary_mismatch"
+    ]
+    # Identity, not just count: every result-dict warning has a paired
+    # event carrying the SAME string, and vice versa — neither surface
+    # drops or invents a finding the other doesn't have.
+    assert sorted(f["warning"] for f in findings) == sorted(result["stale_token_warnings"])
+    assert {f["name"] for f in findings} == {"wrongtoken2"}
+
+
 def test_build_mcp_entries_stdio_type_is_unaffected_by_the_adapter():
     """Tier 1: (accept-side) the adapter only ever touches the url-bearing
     (HTTP-family) branch — a stdio entry's ``"type": "stdio"`` is set
