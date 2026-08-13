@@ -308,7 +308,7 @@ def _scan_install_metadata(
     Returns ``[]`` when ``threat_scan`` is absent/disabled or there is nothing
     to scan — making the whole feature a no-op unless the operator enabled it.
     """
-    if threat_scan is None or not getattr(threat_scan, "enabled", False):
+    if threat_scan is None or not getattr(threat_scan, "enabled", True):  # #4523: shadow default matches ThreatScanConfig.enabled's own declared True
         return []
     scan_text = " ".join([command, *[str(a) for a in args], desc or ""]).strip()
     if not scan_text:

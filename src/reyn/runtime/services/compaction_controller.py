@@ -400,7 +400,7 @@ class CompactionController:
         # persisted summary). Gated by threat_scan.enabled; None/disabled → no-op.
         _ts = self._threat_scan
         _redact = None
-        if _ts is not None and getattr(_ts, "enabled", False):
+        if _ts is not None and getattr(_ts, "enabled", True):  # #4523: shadow default matches ThreatScanConfig.enabled's own declared True
             from reyn.security.secret_redaction import redact_secrets
             _redact = redact_secrets
         input_chunk = HistoryChunkToCompact(
