@@ -66,15 +66,20 @@ session_spawn = ToolDescription(
     text=(
         "Spawn a fresh-context session under your agent to run a task in isolation. "
         "Choose mode='ephemeral' (auto-vanishes after the task) or 'persistent'. "
-        "Optionally narrow the sub-session's capabilities (restrict-only). The session "
-        "runs the task; its result stays in that session."
+        "Optionally narrow the sub-session's capabilities (restrict-only). Optionally "
+        "target 'agent' (yourself or an agent in your own spawn subtree) and/or "
+        "'session' (a specific session id) instead of spawning under yourself with an "
+        "auto-generated id. The session runs the task; its result stays in that "
+        "session."
     ),
     ja=(
         "自分のエージェントの下に、タスクを隔離環境で実行するための新規"
         "コンテキストセッションを生成する。mode='ephemeral'（タスク後に"
         "自動消滅）または 'persistent' を選ぶ。サブセッションの権限を"
-        "（制限のみ）狭めることもできる。セッションはタスクを実行し、結果"
-        "はそのセッション内に留まる。"
+        "（制限のみ）狭めることもできる。任意で 'agent'（自分自身または"
+        "自分のスポーン下位ツリー内のエージェント）や 'session'（特定の"
+        "セッションID）を指定して、自分自身・自動生成ID以外を対象にできる。"
+        "セッションはタスクを実行し、結果はそのセッション内に留まる。"
     ),
 )
 
@@ -228,6 +233,32 @@ PARAMS: dict[str, dict[str, ParamDescription]] = {
                 "あり、範囲外のパスは拒否される。clamp はされない）。相対パスは"
                 "自分自身の base_dir を基準に解決される。省略すると自分自身の"
                 "base_dir をそのまま継承する（既定）。"
+            ),
+        ),
+        "agent": ParamDescription(
+            text=(
+                "Optional target agent for the new session — must be yourself or "
+                "an agent in your own spawn subtree (one you created via "
+                "spawn_agent, transitively). Omit to spawn under your own agent "
+                "(the default, unchanged behavior)."
+            ),
+            ja=(
+                "新規セッションの対象エージェント（任意）——自分自身か、自分の"
+                "スポーン下位ツリー内のエージェント（spawn_agent で生成した"
+                "もの、間接的な子孫も含む）でなければならない。省略すると"
+                "自分自身のエージェントの下にスポーンする（既定、従来通り）。"
+            ),
+        ),
+        "session": ParamDescription(
+            text=(
+                "Optional session id for the new session. Omit to auto-generate "
+                "one. A duplicate id (for the target agent) is rejected, not "
+                "overwritten."
+            ),
+            ja=(
+                "新規セッションのセッションID（任意）。省略すると自動生成"
+                "される。対象エージェントに対して重複するIDは上書きせず"
+                "拒否される。"
             ),
         ),
     },

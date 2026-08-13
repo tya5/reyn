@@ -69,6 +69,17 @@ description). Same switch, same verification — the NEW fixtures against the OL
 schema raise ``MissingFixture`` attributing the drift to ``present: schema
 differs (08b2323ddf3a -> 4ab741e16061)``.
 
+#4556 re-keyed BOTH files again, for the same #3556 shape: ``spawn_session``
+(the renamed ``session_spawn``, #4004) gained two new optional parameters
+(``agent``/``session``) and matching schema/description entries. Same switch,
+same verification, but observed in the OTHER direction from #3556's own note —
+the pre-existing (OLD) fixtures against the NEW code raised ``MissingFixture``
+FIRST (before regeneration), attributing the drift to exactly
+``spawn_session: schema differs (b3b75ea9ec35 -> 49ced6eb14c5)`` — the same
+attribution mechanism, run the direction that occurs naturally when a schema
+changes and the fixtures haven't caught up yet, rather than deliberately
+reversed afterward to double-check the regenerated ones.
+
 **Historical hazard, fixed by #3634 — regenerating in place used to APPEND.**
 ``REYN_FP0063_ARC_WITNESS_GENERATE=1`` used to record into whatever was already
 there, and ``LLMReplay.flush`` only ever appended: the old keys survived

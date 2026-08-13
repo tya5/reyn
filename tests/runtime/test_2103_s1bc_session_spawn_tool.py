@@ -166,8 +166,11 @@ async def test_handle_dispatches_to_spawn_session_fn() -> None:
     spawn_session_fn and returns its ack (the tool→callback wiring)."""
     seen: dict = {}
 
-    async def _fake_spawn_session_fn(*, request, mode, narrowing, base_dir=None):
-        seen.update(request=request, mode=mode, narrowing=narrowing, base_dir=base_dir)
+    async def _fake_spawn_session_fn(
+        *, request, mode, narrowing, base_dir=None, agent=None, session=None,
+    ):
+        seen.update(request=request, mode=mode, narrowing=narrowing, base_dir=base_dir,
+                    agent=agent, session=session)
         return {"status": "spawned", "sid": "abc", "mode": mode}
 
     ctx = ToolContext(
@@ -177,6 +180,7 @@ async def test_handle_dispatches_to_spawn_session_fn() -> None:
     result = await _handle({"request": "do X", "mode": "ephemeral"}, ctx)
     assert seen == {
         "request": "do X", "mode": "ephemeral", "narrowing": None, "base_dir": None,
+        "agent": None, "session": None,
     }
     assert result["status"] == "spawned" and result["sid"] == "abc"
 

@@ -1230,7 +1230,9 @@ class RouterHostAdapter:
 
     async def spawn_session(self, *, request: str, mode: str,
                             narrowing: "dict | None", chain_id: str,
-                            base_dir: "str | None" = None) -> dict:
+                            base_dir: "str | None" = None,
+                            agent: "str | None" = None,
+                            session: "str | None" = None) -> dict:
         """#2103 S1bc: spawn a fresh-context SESSION under THIS agent for a task.
 
         Spawns + records the session (rewind-tracked via ``session_spawned`` +
@@ -1239,12 +1241,50 @@ class RouterHostAdapter:
         submits the task to it — the spawned session RUNS the task in isolation. The
         result stays in the session; routing it BACK to the spawner is the S1bc-exec
         follow-on (FP-0043 Stage-4 non-main routing), so this is async-dispatch posture
-        (returns a spawn-ack)."""
+        (returns a spawn-ack).
+
+        ``agent`` (#4556, optional): target a specific agent for the new session
+        instead of always spawning under ``self._agent_name``. Restrict-only, the
+        SAME forge-guard shape ``create_topology`` uses for its members
+        (``is_spawn_descendant`` — self is always allowed, since the predicate
+        is reflexive): the target must be the caller itself or a (transitive)
+        spawn-descendant of it, never an arbitrary peer or ancestor. An unknown
+        agent name or a target outside the caller's own spawn subtree is a typed
+        error response, never a raised exception.
+
+        ``session`` (#4556, optional): a caller-chosen session id, threaded
+        through to ``spawn_session_recorded``'s new ``sid`` parameter instead of
+        letting one auto-generate. A duplicate id for the target agent is a typed
+        error response (the registry's own ``ValueError`` reshaped here — never
+        propagated raw), not silently overwritten."""
         if self._registry is None:
             raise RuntimeError(
                 "spawn_session requires a registry (multi-session host) — unavailable "
                 "in this context."
             )
+        # #4556: resolve + forge-guard the target agent BEFORE any other work below
+        # (nesting-depth checkpoint, narrowing composition, base_dir validation) —
+        # a bad ``agent`` argument should short-circuit cheaply, not spend an
+        # operator checkpoint round-trip on a request that is going to be refused
+        # anyway. ``is_spawn_descendant(x, x) == True`` (reflexive), so omitting
+        # ``agent`` (target == self._agent_name) never even reaches the guard.
+        target_agent = agent if agent is not None else self._agent_name
+        if agent is not None and agent != self._agent_name:
+            if not self._registry.exists(target_agent):
+                return {
+                    "status": "error", "kind": "agent_not_found",
+                    "error": f"agent {target_agent!r} does not exist.",
+                }
+            if not self._registry.is_spawn_descendant(target_agent, self._agent_name):
+                return {
+                    "status": "error", "kind": "agent_outside_subtree",
+                    "error": (
+                        f"agent {target_agent!r} is not in your own spawn subtree — "
+                        "restrict-only: spawn_session's optional agent argument can "
+                        "only target yourself or an agent you (transitively) spawned "
+                        "via spawn_agent."
+                    ),
+                }
         # #2130: the spawning session's LIVE sid — threaded as ``from_sid`` so the spawned
         # session's result routes back to THIS specific (agent, sid), not the agent's main
         # session. Reading the LIVE sid (the constructor's cached session_id is stale for a
@@ -1377,33 +1417,45 @@ class RouterHostAdapter:
                     ),
                 }
             resolved_base_dir = candidate
-        sid = await self._registry.spawn_session_recorded(
-            self._agent_name, mode=mode, narrowing=narrowing,
-            base_dir=resolved_base_dir,
-            # #4193 ①: this method returns a spawn-ack and submits the task
-            # below WITHOUT awaiting its completion — regardless of ``mode``.
-            # A persistent spawn through this one path is exactly the gap
-            # #4193 opened (fire-and-forget, but used to get the foreground
-            # timeout pair as if someone were waiting). See
-            # ``OpContext.attended``'s own docstring for the full picture.
-            attended=False,
-            presentation_consumer=_routing.presentation_consumer,
-            intervention_bridge=_routing.intervention_bridge,
-        )
+        try:
+            sid = await self._registry.spawn_session_recorded(
+                target_agent, sid=session, mode=mode, narrowing=narrowing,
+                base_dir=resolved_base_dir,
+                # #4193 ①: this method returns a spawn-ack and submits the task
+                # below WITHOUT awaiting its completion — regardless of ``mode``.
+                # A persistent spawn through this one path is exactly the gap
+                # #4193 opened (fire-and-forget, but used to get the foreground
+                # timeout pair as if someone were waiting). See
+                # ``OpContext.attended``'s own docstring for the full picture.
+                attended=False,
+                presentation_consumer=_routing.presentation_consumer,
+                intervention_bridge=_routing.intervention_bridge,
+            )
+        except ValueError as exc:
+            # #4556: the registry's own duplicate-(name, sid) guard (see
+            # ``registry.spawn_session``) is the only ``ValueError`` this call can
+            # raise — reshape it into the same typed-error-response convention as
+            # every other guard in this method, never let it reach the LLM as a
+            # raw exception.
+            return {
+                "status": "error", "kind": "session_already_exists",
+                "error": str(exc),
+            }
         # #2103 S1bc-exec: record sid→task BEFORE submitting, so a fast result finds the
         # trusted task on return (else it falls back to the from=-only rendering — both
         # still kind=prompt, proposal 0067 P4 #3978, architect ruling 2026-08-10).
         if self._record_spawned_task is not None:
             self._record_spawned_task(sid, request)
-        session = self._registry.ensure_session_running(self._agent_name, sid)
-        if session is not None:
-            await session.submit_agent_request(
+        spawned_session = self._registry.ensure_session_running(target_agent, sid)
+        if spawned_session is not None:
+            await spawned_session.submit_agent_request(
                 from_agent=self._agent_name, request=request, depth=0,
                 chain_id=chain_id, from_sid=from_sid,
             )
         return {
             "status": "spawned",
             "sid": sid,
+            "agent": target_agent,
             "mode": mode,
             "note": (
                 "Fresh session spawned + task submitted; it runs in isolation. The "
