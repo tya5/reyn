@@ -213,6 +213,55 @@ def _parse_entry(
     # ``{True: 'turn_end', ...}``.  Try the string key first (= quoted
     # ``"on"``), then fall back to the boolean key ``True`` so that both
     # ``on: turn_end`` and ``"on": turn_end`` work.
+    #
+    # #4517: the fallback above means an unquoted ``on:`` never breaks the
+    # entry — but it also means the operator gets NO signal that they hit
+    # PyYAML's YAML-1.1 bareword trap, until a future edit or a stricter
+    # YAML loader elsewhere silently drops the same hook. A `True` key on
+    # a hook entry has exactly one cause — there is no OTHER way to write
+    # a hook entry that produces a literal `True` key (the entry is
+    # user-authored YAML with a small, closed field vocabulary, none of
+    # which is a bareword truthy literal) — so this warning has ZERO false
+    # positives (architect's own #4517 requirement), unlike an ordinary
+    # "did you mean" heuristic. Fires only when the STRING key is absent
+    # (an operator who wrote `"on":` — quoted — never sees this, matching
+    # #4515's own "warn only the entries that need it" discipline).
+    if "on" not in raw and True in raw:
+        # #4517 architect ruling (2026-08-13, reversed from an earlier same-
+        # day "this would be a design regression" call after re-examining
+        # the premise): the fallback below is a compatibility SHIM for a
+        # spelling pitfall, not two equally-intended spellings — nobody
+        # deliberately writes a boolean key wanting a hook point; `on:`
+        # reads naturally as the string, and YAML 1.1 (PyYAML) made it a
+        # bool. A canonical form therefore exists ("on":, quoted), so
+        # nudging toward it is not a regression against "so that both ...
+        # work" (that comment describes what still RUNS, not a declaration
+        # that both spellings are equally correct).
+        #
+        # Three conditions from that ruling, all load-bearing — do not
+        # relax without re-checking with architect/lead-coder:
+        #   1. Never say "broken" / "NOT APPLIED" — this hook DID apply.
+        #      Saying otherwise repeats #4515's own just-fixed false-report
+        #      shape (asserting a failure that didn't happen).
+        #   2. Never share `_warn_unknown_config_keys`'s (config/loader.py)
+        #      channel or phrasing — that warning means "not applied"; this
+        #      one means "applied, via a fallback" — the same look would
+        #      make an operator read this as that.
+        #   3. Never fire for the quoted `"on":` form (this `if` already
+        #      only reaches here when the string key is absent).
+        # Plus: name that pre-#4519 docs taught the unquoted spelling —
+        # an operator who copied the OLD example did nothing wrong.
+        _log.warning(
+            "hooks[%d]: applied via a compatibility fallback — the 'on:' "
+            "key here is unquoted, and PyYAML (YAML 1.1) parses that as "
+            "the boolean True rather than the string 'on'. This hook DID "
+            "register and will fire normally; nothing failed. Older reyn "
+            "docs/examples showed this exact unquoted spelling before "
+            "#4519, so this is not a mistake on your part. Quoting the "
+            "key (\"on\": %r) is recommended so the hook no longer depends "
+            "on this fallback.",
+            entry_index, raw[True],
+        )
     on_raw = raw.get("on", raw.get(True))
     if on_raw is None:
         raise HookConfigError(
