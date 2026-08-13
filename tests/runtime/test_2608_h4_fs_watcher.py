@@ -372,3 +372,40 @@ async def test_session_owned_watcher_fires_configured_hook_into_inbox(tmp_path):
         assert str(target) in payload["text"]
     finally:
         await session.aclose_fs_watcher()
+
+
+@pytest.mark.asyncio
+async def test_session_owned_watcher_emits_file_changed_audit_event_with_no_hook_configured(tmp_path):
+    """Tier 2: #4605 — the arrival of a ``file_changed`` signal is recorded on
+    ``session._audit_events`` even with NO ``file_changed`` hook configured
+    (empty-registry equivalence, mirroring H1's
+    ``test_no_configured_hook_leaves_hook_side_a_pure_noop``). Before #4605
+    this was the silent gap: 3 of the 4 external points never emitted an
+    arrival audit event regardless of hook config; only ``mcp_resource_updated``
+    did."""
+    from reyn.config.infra import FsWatchConfig
+    from reyn.core.events.state_log import StateLog
+    from tests._support.events import collect_events
+
+    watched_dir = tmp_path / "watched"
+    watched_dir.mkdir()
+    session = make_session(
+        agent_name="test-agent",
+        state_log=StateLog(tmp_path / "state.wal"),
+        snapshot_path=tmp_path / "snap.json",
+        reactivity=ReactivityConfig(hooks_config=None, fs_watch_config=FsWatchConfig(paths=[str(watched_dir)], debounce_seconds=0.05)),
+    )
+    collected = collect_events(session._audit_events)
+    try:
+        await session._fs_watcher.start()
+        assert session.fs_watcher_is_started()
+
+        target = watched_dir / "d.txt"
+        target.write_text("hi")
+
+        await _wait_for(lambda: any(e.type == "file_changed" for e in collected))
+        (event,) = [e for e in collected if e.type == "file_changed"]
+        assert event.data["path"] == str(target)
+        assert event.data["event_type"] in ("created", "modified")
+    finally:
+        await session.aclose_fs_watcher()

@@ -70,6 +70,7 @@ config_reload_rejected
 config_reloaded
 control_ir_failed
 control_ir_skipped
+cron_fired
 direct_alias_call_salvaged
 elide_evaluated
 embed_attempts
@@ -81,6 +82,7 @@ embedding_index_build_progress
 embedding_index_build_started
 exec_threat_blocked
 exec_threat_match
+file_changed
 file_read_media_denied
 force_close_triggered
 hook_event_emitted
@@ -249,6 +251,7 @@ web_fetch_too_many_redirects
 web_search_completed
 web_search_failed
 web_search_started
+webhook_received
 workspace_updated
 ```
 
@@ -393,6 +396,26 @@ op dispatch:
 None of these events include the human's typed answer or any field *value* —
 only the requested schema's property names, matching the sensitive-field
 handling described in [Concepts: MCP § Elicitation](../../concepts/tools-integrations/mcp.md#elicitation-structured-input-requests-from-a-server).
+
+## External events
+
+The 4 points a hook's `on:` can subscribe to as an external-event source —
+see [Concepts: hooks § External-event points](../../concepts/runtime/hooks.md#external-event-points).
+`mcp_resource_updated` (above, MCP section) is the one of the 4 that has
+always emitted an arrival audit event; #4605 closed the same gap for the
+remaining 3 — each now emits its own arrival event REGARDLESS of whether a
+hook is configured to consume it, so the signal's arrival is reconstructable
+from `.reyn/events` even when nothing was listening.
+
+| Kind | Trigger | Key payload |
+|------|---------|-------------|
+| `file_changed` | A watched path (`fs_watch.paths`) reports a create/modify/delete via the `watchdog` observer, after debounce (`fs_watch.debounce_seconds`) and symlink-path rewrite. See [Concepts: hooks § file_changed](../../concepts/runtime/hooks.md#file_changed). | `path` (rewritten to the operator-configured prefix), `event_type` (`"created"` \| `"modified"` \| `"deleted"`) |
+| `cron_fired` | A scheduled cron job fires, on the job's own resolved `cron:<job_name>` session, right after session resolution. See [Concepts: hooks § cron_fired](../../concepts/runtime/hooks.md#cron_fired). | `job_name`, `to` (operator-authored config, never end-user-supplied) |
+| `webhook_received` | An inbound webhook (slack/line/generic plugin) is routed to its resolved per-sender session, right after session resolution. See [Concepts: hooks § webhook_received](../../concepts/runtime/hooks.md#webhook_received). | `transport`, `sender` — NEVER the raw inbound body/text, which may carry tokens/PII (same discipline as `hook_push_fired`'s "never the message body") |
+
+All three are best-effort: a sink fault logs and is swallowed, never blocking
+the job's inbox delivery / the webhook's HTTP response / the watcher's drain
+loop.
 
 ## Credentials and OAuth
 

@@ -24,7 +24,11 @@ stable ingress every webhook plugin routes through), right after
 """
 from __future__ import annotations
 
+import logging
+
 from reyn.hooks.ingress import WebhookIngressAdapter
+
+_log = logging.getLogger(__name__)
 
 _GENERIC_WEBHOOK_TRANSPORT = "webhook"
 
@@ -75,6 +79,19 @@ def dispatch_webhook_received(session, sender: str) -> None:
     action must never stall the webhook plugin's HTTP response). Both
     ``transport`` and ``sender`` are exact-match fields (not glob — see
     ``reyn.hooks.matcher``), e.g. ``matcher: {transport: "slack"}``.
+
+    #4605: also emits a ``webhook_received`` AUDIT event on
+    ``session._audit_events`` (P6, distinct from the hook fire above) — the
+    ARRIVAL of the signal is recorded even when no hook is configured to
+    consume it, mirroring ``ReynMCPMessageHandler.emit_resource_updated``'s
+    ``mcp_resource_updated`` precedent. Same SECURITY invariant as the hook
+    payload above: only ``transport``/``sender``, never the raw body.
+    Best-effort: a sink fault must never break the webhook's HTTP response.
     """
+    transport, _external_id = _ADAPTER.parse_sender(sender)
+    try:
+        session._audit_events.emit("webhook_received", transport=transport, sender=sender)
+    except Exception:  # noqa: BLE001 — audit emit is best-effort, never blocks the response
+        _log.debug("dispatch_webhook_received: audit emit failed for sender %r", sender, exc_info=True)
     event = _ADAPTER.to_event(sender)
     _ADAPTER.deliver(event, session)
