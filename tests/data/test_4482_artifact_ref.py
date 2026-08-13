@@ -116,17 +116,22 @@ def test_minting_never_copies_the_file(tmp_path: Path):
 
     assert before_inode == after_inode
     # The ONLY new file allowed to appear is the ref table itself.
-    assert new_files <= {tmp_path / ".reyn" / "cache" / "artifact_refs.jsonl"}
+    assert new_files <= {tmp_path / ".reyn" / "memory" / "artifact_refs.jsonl"}
 
 
 def test_table_is_a_jsonl_manifest_matching_the_4432_spill_manifest_shape(tmp_path: Path):
-    """Tier 2: (accept-side, format) one JSON object per line under
-    .reyn/cache/ — mirrors #4432's tool-result spill manifest shape, as
-    the brief explicitly asked for."""
+    """Tier 2: (accept-side, format) one JSON object per line, directly under
+    .reyn/memory/ — a PERSIST-tier file (#4584: moved out of .reyn/cache/,
+    which falsely promised "derived, rebuilt after restore" for data that is
+    not reconstructable from anything else — see artifact_ref.py's own
+    module docstring). The JSONL-append SHAPE still mirrors #4432's
+    tool-result spill manifest, as the original #4482 brief asked for; only
+    the tier (where it lives, and what that implies about deleting it)
+    changed."""
     target = _write(tmp_path / "report.pptx")
     ref = mint_ref(tmp_path, "alice", target)
 
-    table_path = tmp_path / ".reyn" / "cache" / "artifact_refs.jsonl"
+    table_path = tmp_path / ".reyn" / "memory" / "artifact_refs.jsonl"
     lines = [line for line in table_path.read_text(encoding="utf-8").splitlines() if line.strip()]
     entries = [json.loads(line) for line in lines]
     (entry,) = [e for e in entries if e["ref"] == ref]

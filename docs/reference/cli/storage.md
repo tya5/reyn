@@ -77,12 +77,16 @@ with no `.reyn/agents/` yet reports all-zero for the `history.jsonl` row, not an
 ## Spill-manifest self-prune (#4478)
 
 `MediaStore` tracks which tool-result files it has spilled to disk via a manifest at
-`.reyn/cache/tool_result_spills.jsonl`, read in full on every `MediaStore`
-construction. An entry whose target file no longer exists on disk (deleted manually,
-or by a future Phase 2 GC policy) is dropped from the manifest the next time it's
-loaded — this bounds the manifest's otherwise-unbounded growth. The prune only
-rewrites the manifest itself; it never deletes any actual media/tool-result bytes,
-and a write failure here is best-effort (never fails `MediaStore` construction).
+`.reyn/memory/tool_result_spills.jsonl` (#4584: moved from `.reyn/cache/` — that
+tier's "derived, rebuilt after restore" promise never held for this manifest; see
+[`.reyn/` directory layout](../runtime/reyn-dir-layout.md)), read in full on every
+`MediaStore` construction. An entry whose target file no longer exists on disk
+(deleted manually, or by a future Phase 2 GC policy) is dropped from the manifest
+the next time it's loaded — this bounds the manifest's otherwise-unbounded growth.
+This is a self-PRUNE of existing entries only, never a REBUILD: if the manifest file
+itself were deleted, nothing recreates it. The prune only rewrites the manifest
+itself; it never deletes any actual media/tool-result bytes, and a write failure
+here is best-effort (never fails `MediaStore` construction).
 `reyn storage stats` does not report on the manifest directly — it measures the
 artifact directories the manifest tracks.
 

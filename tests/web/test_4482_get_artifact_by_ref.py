@@ -158,7 +158,7 @@ def test_a_table_entry_pointing_outside_project_root_is_rejected(tmp_project: Pa
 
     outside = tmp_project.parent / "outside-secret.txt"
     outside.write_bytes(b"SECRET")
-    table = tmp_project / ".reyn" / "cache" / "artifact_refs.jsonl"
+    table = tmp_project / ".reyn" / "memory" / "artifact_refs.jsonl"  # #4584: moved out of cache/
     table.parent.mkdir(parents=True, exist_ok=True)
     with table.open("a", encoding="utf-8") as f:
         f.write(json.dumps({"ref": "evil", "agent": "researcher", "path": str(outside)}) + "\n")

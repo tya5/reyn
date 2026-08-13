@@ -82,8 +82,9 @@ from reyn.services.offload.store import offload_value, read_offloaded
 #: line per :meth:`MediaStore.save_tool_result` write — the persisted
 #: cross-process spill-provenance manifest.
 #:
-#: Lives under ``.reyn/cache/``, NOT under ``tool_results_dir`` (where it
-#: first landed — lead-coder review, #4432 round 3): every file
+#: Lives under ``.reyn/memory/`` — PERSIST tier (#4584 fix; previously
+#: ``.reyn/cache/``, moved there from ``tool_results_dir`` by #4432 round
+#: 3's own review). NOT under ``tool_results_dir``: every file
 #: ``tool_results_dir`` holds is written through this exact path
 #: (``offload_value`` in :meth:`save_tool_result` is its ONLY writer), so a
 #: consumer that lists that directory and expects "N spill artifacts" is
@@ -93,22 +94,39 @@ from reyn.services.offload.store import offload_value, read_offloaded
 #: results/`` is also classified *audit* (append-only forensic record,
 #: never read back) in ``reyn-dir-layout.md`` — this manifest IS read back,
 #: every process start, so it does not belong in an audit-only namespace
-#: either. ``.reyn/cache/`` fits the *derived* classification's spirit
-#: (ordinary writable zone, not recovery-core, ``budget_checkpoint.json``
-#: precedent) even though this manifest is not literally rebuildable from
-#: other state the way that ledger-derived total is.
+#: either.
 #:
-#: NOT a fix for a from-the-sandbox spoof: ``.reyn/cache/`` sits in the
-#: SAME default agent file-write zone as ``.reyn/tool-results/`` did
-#: (``security/permissions/file_scope.py``'s ``ZoneStateDir`` carves out
-#: only ``.reyn/config/`` + ``.reyn/state/`` + ``approvals.yaml`` —
-#: confirmed by reading ``_RECOVERY_CORE_WRITE_PREFIXES`` /
-#: ``_CANONICAL_PROTECTED_WRITE_PATHS`` in
-#: ``security/permissions/permissions.py``, not assumed). A safe-mode
-#: ``file.write`` could still inject or erase a line here before or after
-#: this move. Closing THAT requires ``.reyn/state/`` behind a dedicated
-#: WAL-emitting op — a bigger design call, deliberately not made in this
-#: fixup (same "flag, don't silently half-fix" call as this PR's own
+#: **Why NOT ``cache/`` (#4584 correction of the #4432-era reasoning
+#: above):** this module's own comment already said, verbatim, "this
+#: manifest is not literally rebuildable from other state the way that
+#: [``budget_checkpoint.json``] ledger-derived total is" — i.e. it was
+#: filed under *derived* while explicitly acknowledging it isn't derived.
+#: #4584 measured directly (``artifact_ref.py``'s sibling table hit the
+#: identical shape): no rebuild/reconstruction code path exists anywhere
+#: for this manifest — an operator following ``reyn-dir-layout.md``'s
+#: (now-corrected) "cache/ is derived, safe to clean up" classification
+#: would silently break every already-spilled tool-result reference this
+#: manifest is the ONLY record of. *Persist* (survives rewind, never
+#: reverted, ``reyn-dir-layout.md``'s own "must SURVIVE rewind → memory/"
+#: rule — the same landing spot ``artifact_ref.py``'s sibling table uses,
+#: same "memory as a NAME is an imperfect fit" caveat) is the honest tier:
+#: the entries here were never expected to be reconstructed, only ever
+#: written once and read back.
+#:
+#: **The move does NOT change write permissions** — a real, separate axis
+#: from tier classification, worth stating explicitly since a reader could
+#: otherwise assume "persist" means "harder to write to". ``security/
+#: permissions/file_scope.py``'s ``ZoneStateDir`` carves out ONLY
+#: ``.reyn/config/`` + ``.reyn/state/`` + ``approvals.yaml`` as the
+#: write-gated recovery-core surface (confirmed by reading
+#: ``_RECOVERY_CORE_WRITE_PREFIXES`` / ``_CANONICAL_PROTECTED_WRITE_PATHS``
+#: in ``security/permissions/permissions.py``, not assumed) — ``memory/``
+#: is an ordinary agent-writable zone, identically to ``cache/``. A
+#: safe-mode ``file.write`` could still inject or erase a line here before
+#: or after this move, exactly as it always could under ``cache/``.
+#: Closing THAT requires ``.reyn/state/`` behind a dedicated WAL-emitting
+#: op — a bigger design call, deliberately not made in this fixup (same
+#: "flag, don't silently half-fix" call as this PR's own
 #: ``MAX_CONTROL_IR_RESULT_INLINE_BYTES`` note).
 _SPILL_MANIFEST_FILENAME = "tool_result_spills.jsonl"
 
@@ -356,14 +374,22 @@ class MediaStore:
         # process. Loaded once at construction from
         # :data:`_SPILL_MANIFEST_FILENAME` under ``tool_results_dir``,
         # appended to (one line per write) by :meth:`save_tool_result`.
-        # No NEW cleanup story beyond what ``.reyn/cache/`` already has
-        # (rebuilt/pruned like every other cache entry — see
-        # :data:`_SPILL_MANIFEST_FILENAME`'s own module-level docstring
-        # for why it lives there and not alongside the spill artifacts).
+        # #4584: this manifest self-PRUNES (an existing entry whose target
+        # vanished is dropped — see :meth:`_load_spill_manifest`) but has NO
+        # REBUILD story: if the manifest FILE ITSELF were deleted, nothing
+        # recreates it from another source. An earlier version of this
+        # comment conflated the two ("rebuilt/pruned like every other cache
+        # entry" — false: no rebuild mechanism was ever implemented,
+        # measured directly; see :data:`_SPILL_MANIFEST_FILENAME`'s own
+        # module-level docstring for the full correction). It otherwise
+        # survives for the project's lifetime, same as :mod:`data.workspace.
+        # artifact_ref`'s sibling table.
         self._tool_result_spill_paths: "set[Path]" = self._load_spill_manifest()
 
     def _spill_manifest_path(self) -> Path:
-        return self._project_root / ".reyn" / "cache" / _SPILL_MANIFEST_FILENAME
+        # #4584: PERSIST tier — `.reyn/memory/`, not `.reyn/cache/` (see
+        # :data:`_SPILL_MANIFEST_FILENAME`'s own module docstring).
+        return self._project_root / ".reyn" / "memory" / _SPILL_MANIFEST_FILENAME
 
     def _load_spill_manifest(self) -> "set[Path]":
         manifest = self._spill_manifest_path()
@@ -402,15 +428,27 @@ class MediaStore:
 
     def _persist_spill_manifest(self, paths: "set[Path]") -> None:
         """#4478: rewrite the MANIFEST ONLY — the ledger of which paths
-        this store has spilled, under ``.reyn/cache/``. Never touches an
-        artifact under ``tool_results_dir`` itself; an entry only reaches
-        this rewrite because :meth:`_load_spill_manifest` already found its
-        target file gone from disk (deleted by something else, out of
-        scope for this store). This prune deletes zero bytes of anyone's
-        actual content — it only stops re-reading a manifest line that
-        stopped meaning anything the moment its file disappeared.
+        this store has spilled, under ``.reyn/memory/`` (#4584: moved from
+        ``.reyn/cache/``). Never touches an artifact under
+        ``tool_results_dir`` itself; an entry only reaches this rewrite
+        because :meth:`_load_spill_manifest` already found its target file
+        gone from disk (deleted by something else, out of scope for this
+        store). This prune deletes zero bytes of anyone's actual content —
+        it only stops re-reading a manifest line that stopped meaning
+        anything the moment its file disappeared.
+
+        #4584: this SELF-PRUNE (an existing, real entry dropped once its
+        target vanishes) is NOT the same claim as "this manifest can be
+        REBUILT" (recreated wholesale after the manifest FILE ITSELF is
+        deleted) — an earlier comment on this module conflated the two
+        ("rebuilt/pruned like every other cache entry"). Only pruning is
+        real; there is no reconstruction-from-nothing path, which is
+        exactly why this manifest cannot live under a tier documented
+        "safe to delete, rebuilt after restore" (see
+        :data:`_SPILL_MANIFEST_FILENAME`'s own module docstring).
+
         Best-effort, same as the append path in :meth:`save_tool_result` —
-        a write failure here (e.g. a read-only ``.reyn/cache/``) must
+        a write failure here (e.g. a read-only ``.reyn/memory/``) must
         never fail construction; it only means this process's prune
         didn't stick and the next one retries."""
         manifest = self._spill_manifest_path()

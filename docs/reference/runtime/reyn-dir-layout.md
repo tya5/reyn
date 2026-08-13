@@ -54,40 +54,61 @@ Everything else is excluded, by one of four reasons:
 │                           `external_transports` config is read from reyn.yaml's own
 │                           `external_transports:` section only
 ├── memory/                 PERSIST — agent knowledge; survives rewind, never reverted
+│   ├── artifact_refs.jsonl (agent, path) → ref table for `present`'s "artifact"
+│   │                       component (#4482 PR-1, moved from `cache/` by #4584):
+│   │                       the mapping exists ONLY at mint time — no WAL event,
+│   │                       no conversation-log entry, nothing else durable
+│   │                       carries it — so it is PRIMARY data, not derived,
+│   │                       however small. Ordinary writable zone (not
+│   │                       write-gated, same as the rest of `memory/`) — a
+│   │                       plain file write, never a dedicated op. "memory" is
+│   │                       an imperfect NAME fit (a ref→path table is neither
+│   │                       knowledge nor a decision) — the doc's own tier
+│   │                       decision rule (below) only points at one place.
+│   └── tool_result_spills.jsonl  persisted provenance of tool-result SPILL
+│                           artifacts under `tool-results/` (#4381/#4432, moved
+│                           from `cache/` by #4584 — same reasoning as
+│                           `artifact_refs.jsonl` above: not literally
+│                           rebuildable, an earlier comment on this file said
+│                           so explicitly while still filing it under
+│                           `cache/`) — one JSON line per `MediaStore.
+│                           save_tool_result` write, read back at every
+│                           `MediaStore` construction so a bare re-read of a
+│                           spilled file (in this process or a later one — a
+│                           reference can outlive the process that wrote it,
+│                           sitting in `history.jsonl`) is detected and errors
+│                           instead of re-spilling. SELF-PRUNES existing
+│                           entries whose target vanished (bounds otherwise-
+│                           unbounded growth) but does NOT rebuild if the
+│                           manifest FILE ITSELF is deleted — pruning and
+│                           rebuilding are not the same claim.
 ├── approvals.yaml          PERSIST — user-authored permission grants; survive rewind
 ├── events/ traces/ logs/   AUDIT — append-only forensic record; never restored
 │   audit-trail/ tool-results/ media/
-├── cache/                  DERIVED — rebuilt after restore
+├── cache/                  DERIVED — rebuilt after restore. ⚠️ "rebuilt after
+│                           restore" describes what belongs in this tier, not a
+│                           blanket safety claim about deleting `cache/` itself:
+│                           `index_drop` (an agent-callable op) deletes
+│                           `cache/index/<source>` behind `require_file_write`
+│                           (#1199 S3.4) — reyn's OWN code already treats
+│                           deleting something under `cache/` as a gated,
+│                           permission-requiring action, not a free one.
 │   ├── index/              rag index data (sqlite), one dir per source —
 │   │   └── actions/        includes the tool-use action catalog since
 │   │                       FP-0057 Phase 0 (was the separate action_index/
 │   │                       implementation pre-consolidation; clean-break,
 │   │                       no migration — see `reyn.tools.action_index`)
 │   ├── registry-cache/     mcp registry cache
-│   ├── tool_result_spills.jsonl  persisted provenance of tool-result SPILL
-│   │                       artifacts under `tool-results/` (#4381/#4432) —
-│   │                       one JSON line per `MediaStore.save_tool_result`
-│   │                       write, read back at every `MediaStore`
-│   │                       construction so a bare re-read of a spilled
-│   │                       file (in this process or a later one — a
-│   │                       reference can outlive the process that wrote
-│   │                       it, sitting in `history.jsonl`) is detected
-│   │                       and errors instead of re-spilling. NOT in
-│   │                       `tool-results/` itself: every file there is
-│   │                       written through the exact same call, so a
-│   │                       consumer counting "N spill artifacts" via a
-│   │                       directory listing is entitled to get exactly
-│   │                       N (#4432 round 3 — mixing the ledger in broke
-│   │                       that count). NOT recovery-core (no dedicated
-│   │                       op) — same ordinary-writable-zone exposure as
-│   │                       everything else under `cache/`, an open gap
-│   │                       flagged, not silently closed by this move.
 │   └── budget_checkpoint.json  compacted per-agent budget totals (#2945),
 │                           anchored to a byte position in
 │                           `state/budget_ledger.jsonl` — fully
-│                           reconstructable from the ledger by re-scanning,
-│                           safe to delete at any time (a write failure is
-│                           logged and swallowed, never blocks startup).
+│                           reconstructable from the ledger by re-scanning.
+│                           UNLIKE the rest of `cache/` (see the ⚠️ above),
+│                           THIS one entry really is safe to delete at any
+│                           time (a write failure is
+│                           logged and swallowed, never blocks startup) —
+│                           scoped to this file specifically, not a claim
+│                           about `cache/` as a whole.
 │                           NOTE: its per-agent totals act as a FLOOR by
 │                           default — whenever the ledger is found
 │                           truncated, missing, or its identity (a hash of
