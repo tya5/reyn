@@ -58,14 +58,26 @@ so you can reference it in a subsequent `create_topology` call.
 
 ```text
 spawn_session(request: str, mode: "ephemeral" | "persistent" = "persistent",
-              narrowing: dict | None = None)
+              narrowing: dict | None = None, base_dir: str | None = None,
+              agent: str | None = None, session: str | None = None)
 ```
 
-Starts a new Session under your current agent to run `request` in
-isolation — a blank context window, independent workspace, with no memory
-of this conversation. The spawned session begins immediately; this tool
-returns a spawn-ack rather than waiting for the task to complete (async
-dispatch).
+Starts a new Session under your current agent (or, with `agent`, #4556:
+under any agent in your own spawn subtree) to run `request` in isolation —
+a blank context window, independent workspace, with no memory of this
+conversation. The spawned session begins immediately; this tool returns a
+spawn-ack rather than waiting for the task to complete (async dispatch).
+
+**`agent`** (optional, #4556): target any agent in your own spawn subtree —
+yourself, or an agent you created (transitively) via `spawn_agent`. Guarded
+by the same `is_spawn_descendant` predicate `create_topology` already uses
+for its own subtree forge-guard — an attempt to target an agent outside your
+subtree is rejected (`agent_outside_subtree`), not silently redirected.
+Omit to spawn under your own agent (the default, unchanged behavior).
+
+**`session`** (optional, #4556): choose the new session's id yourself
+instead of letting the OS auto-generate one. A duplicate id for the target
+agent is rejected (`session_already_exists`), never silently overwritten.
 
 **Reachable under exclusive-wrapper mode too (#3896, fixed 2026-08-13).** When
 [`action_retrieval.universal_wrappers_enabled`](../tools-integrations/universal-catalog.md)
@@ -113,6 +125,12 @@ nothing about keeps the spawner's restriction on it. So omitting
 wider one. (The composition covers the sid-keyed per-session layer; the
 agent-level layers need no carrying, since the sub-session runs under the
 same agent identity.)
+
+**`base_dir`** (optional, #4200): a working-directory override for the
+spawned session. Restrict-only, same shape as `narrowing` — must resolve
+inside YOUR OWN effective `base_dir`; a path outside it is REJECTED, never
+silently clamped into it. Relative paths resolve against your own
+`base_dir`. Omit to inherit your own `base_dir` unchanged (the default).
 
 Both modes are rewind-safe: a session spawned after a rewind cut is
 dropped during rewind reconstruction.
