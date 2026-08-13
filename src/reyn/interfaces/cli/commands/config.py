@@ -298,6 +298,21 @@ def _validate() -> None:
     (``action_retrieval.universal_wrappers_enabled`` vs.
     ``tool_use.scheme``) lives there.
 
+    #4501: ``unknown_config_keys`` walks the TOP-LEVEL ``ReynConfig``
+    schema only — it confirms ``hooks:`` itself is a recognized key, but
+    never recurses into what each ``hooks:`` LIST ENTRY contains (a
+    free-form list of dicts, not individual dataclass fields the schema
+    walker sees). That gap is exactly what let an operator's
+    ``allow_write_paths`` (the agent-level sandbox.policy field name,
+    written at the wrong per-hook site) pass ``validate`` silently while
+    doing nothing — architect's own real incident. Closes it by feeding
+    the IN-set's own ``hooks:`` list through ``load_hooks`` (the SAME
+    parser hook-loading itself uses, per this function's own
+    "check exactly what startup checks" discipline) and reporting any
+    ``HookConfigError`` as a fourth labeled section — never raising it:
+    this command REPORTS, per the docstring above, so a malformed hook
+    entry is caught here rather than only at the next actual hook-load.
+
     Uses ``build_policy_tier_config`` — the SAME construction
     ``load_config``'s own startup warning uses (architect's explicit
     requirement: this command must check exactly what startup checks, not
@@ -316,6 +331,8 @@ def _validate() -> None:
     """
     from reyn.config.config_schema import disabled_config_keys, unknown_config_keys
     from reyn.config.loader import build_policy_tier_config, load_hot_reload_config
+    from reyn.hooks.loader import load_hooks
+    from reyn.hooks.schema import HookConfigError
 
     policy_merged = build_policy_tier_config()
     policy_unknown = unknown_config_keys(policy_merged)
@@ -323,7 +340,18 @@ def _validate() -> None:
     in_set_merged = load_hot_reload_config()
     in_set_unknown = unknown_config_keys(in_set_merged)
 
-    if not policy_unknown and not disabled and not in_set_unknown:
+    # #4501: hooks[] entries are a free-form list the top-level schema walk
+    # above never opens — feed them through the real parser to catch a
+    # malformed/wrong-scope key inside one, same as an actual hook-load would.
+    hooks_raw = in_set_merged.get("hooks")
+    hook_entry_error: str | None = None
+    if hooks_raw is not None:
+        try:
+            load_hooks(hooks_raw)
+        except HookConfigError as exc:
+            hook_entry_error = str(exc)
+
+    if not policy_unknown and not disabled and not in_set_unknown and not hook_entry_error:
         print("No unknown, renamed, or disabled-by-dependency config keys found.")
         return
 
@@ -371,6 +399,16 @@ def _validate() -> None:
             "\nIN-set keys apply on the next turn automatically (no restart, "
             "no 'reyn config migrate' support for this tier — edit the "
             ".reyn/*.yaml file directly)."
+        )
+
+    if hook_entry_error:
+        if policy_unknown or disabled or in_set_unknown:
+            print()
+        print("Hook entry validation — .reyn/config/hooks.yaml's hooks: list:\n")
+        print(f"  {hook_entry_error}")
+        print(
+            "\nThis entry will fail to load the next time hooks are (re)loaded "
+            "(hot-reload or restart) — fix the key above."
         )
 
 

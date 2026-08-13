@@ -507,3 +507,81 @@ def test_a_hook_entry_with_neither_on_nor_true_key_still_raises_not_warns():
     change the missing-on error path."""
     with pytest.raises(HookConfigError, match="\\.on is required"):
         load_hooks([{"exec": ["echo", "hi"]}])
+
+
+# ===========================================================================
+# #4501 — unknown hook-entry keys are eager-rejected, not silently dropped
+# ===========================================================================
+
+
+def test_load_hooks_unknown_key_rejected() -> None:
+    """Tier 1: a hook entry key outside the known vocabulary raises
+    HookConfigError naming the key (#4501 — every individual field was
+    already type-checked strictly; the entry's own key SET was not, so a
+    typo'd key was silently dropped)."""
+    with pytest.raises(HookConfigError, match="unrecognized key"):
+        load_hooks([{"on": "turn_end", "exec": ["echo", "hi"], "nam": "typo"}])
+
+
+def test_load_hooks_allow_write_paths_wrong_scope_gets_a_specific_hint() -> None:
+    """Tier 1: `allow_write_paths` (the agent-level sandbox.policy field
+    name, HOOK_SANDBOX_SCOPE's own left-hand column) written at a hook
+    site raises HookConfigError naming the CORRECT per-hook key
+    (`write_paths`) directly — the concrete case architect named in #4501
+    (a real 3-hour incident: the wrong-scope name is the RIGHT name on the
+    other side of the boundary, so it isn't a typo a spellchecker-shaped
+    heuristic would catch)."""
+    with pytest.raises(HookConfigError, match="allow_write_paths.*write_paths"):
+        load_hooks(
+            [{"on": "turn_end", "exec": ["echo", "hi"], "allow_write_paths": ["/tmp"]}]
+        )
+
+
+def test_load_hooks_every_known_key_together_still_accepts() -> None:
+    """Tier 1: accept-side — a hook entry using every known key at once is
+    NOT rejected by the new eager-reject check — the deny-side tests above
+    only prove unknown keys ARE rejected, this proves the known-key set
+    itself is complete and doesn't false-positive on a legitimate entry."""
+    reg = load_hooks(
+        [
+            {
+                "on": "turn_end",
+                "name": "full-entry",
+                "exec": ["echo", "hi"],
+                "matcher": {"agent_name": "default"},
+                "subprocess": True,
+                "network": False,
+                "write_paths": ["/tmp"],
+            }
+        ]
+    )
+    assert reg.hooks_for("turn_end")[0].name == "full-entry"
+
+
+def test_load_hooks_quoted_on_key_is_not_flagged_as_unknown() -> None:
+    """Tier 1: regression guard — the quoted `"on"` string key (the
+    canonical, recommended spelling per #4519) must never itself be
+    reported as an unrecognized key by the new #4501 check."""
+    reg = load_hooks([{"on": "turn_end", "exec": ["echo", "hi"]}])
+    assert reg.hooks_for("turn_end")[0].on == "turn_end"
+
+
+def test_load_hooks_bareword_off_alongside_a_string_typo_raises_not_crashes() -> None:
+    """Tier 1: lead-coder's #4526 review block, through REAL yaml.safe_load
+    — a bareword `off:`/`no:` key (PyYAML/YAML 1.1 parses those as the
+    boolean False, #4517's own sibling class) alongside an unrelated
+    string-key typo used to raise an UNCAUGHT TypeError
+    (`sorted([False, "typo"])`: '<' not supported between str and bool)
+    instead of the friendly HookConfigError this whole check exists to
+    produce — the crash-side mirror of the "silently dropped" defect
+    class. Falsify-verified against the pre-fix `sorted(...)` (no
+    `key=repr`): TypeError, not HookConfigError."""
+    import yaml
+
+    raw = yaml.safe_load(
+        "hooks:\n  - \"on\": turn_end\n    exec: [echo, hi]\n"
+        "    off: a\n    nam: typo\n"
+    )
+    assert False in raw["hooks"][0], "the fixture itself must reproduce the False-key shape"
+    with pytest.raises(HookConfigError, match="unrecognized key"):
+        load_hooks(raw["hooks"])
