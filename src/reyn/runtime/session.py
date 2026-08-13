@@ -515,8 +515,13 @@ class _RetrievalBundle:
     """#3082 Family 5: the retrieval spine — the embedding block
     (``embedding_provider`` / ``embedding_model_class`` /
     ``action_embedding_index``, three attrs, one conditional construction
-    guarded by ``universal_wrappers_enabled and embedding.enabled`` (FP-0066
-    §7) with a try/except None-fallback).
+    guarded SOLELY by ``embedding.enabled`` (FP-0066 §7 — "Single switch
+    embedding.enabled ... ON → action-retrieval...", no AND with
+    ``universal_wrappers_enabled`` anywhere in the ratified proposal) with
+    a try/except None-fallback. #4564 follow-up: an undeclared
+    ``universal_wrappers_enabled`` AND-condition here used to make
+    #4564's own router_loop.py fix unreachable in a real session — see
+    ``_build_retrieval_bundle``'s docstring for the full account.)
 
     #4552: this bundle used to also carry ``action_usage_tracker`` (hot-list
     freq+recency, a SEPARATE conditional guarded by
@@ -1205,9 +1210,7 @@ class Session:
         # reason no longer applies (nothing here reads audit_events now),
         # but the position is left as-is — see _RetrievalBundle's own
         # docstring for why reverting it is out of scope for this removal.
-        _retrieval_bundle = self._build_retrieval_bundle(
-            self._action_retrieval, embedding_config,
-        )
+        _retrieval_bundle = self._build_retrieval_bundle(embedding_config)
         self._action_embedding_index = _retrieval_bundle.action_embedding_index
         self._embedding_provider = _retrieval_bundle.embedding_provider
         self._embedding_model_class = _retrieval_bundle.embedding_model_class
@@ -4020,17 +4023,31 @@ class Session:
 
     def _build_retrieval_bundle(
         self,
-        action_retrieval: "ActionRetrievalConfig",
         embedding_config: "EmbeddingConfig | None",
     ) -> "_RetrievalBundle":
         """#3082 Family 5: build the retrieval spine — the embedding block
-        (three attrs, one conditional construction guarded by
-        ``universal_wrappers_enabled and embedding.enabled`` (FP-0066 §7,
-        clean-break replacement for the retired ``embedding_class`` truthy
-        gate) with a try/except None-fallback). ``render_bounds`` (never
-        existed in this codebase) and ``subscription_writer`` (WAL-derived
-        task-subscription state, not retrieval) are excluded per the Family
-        4 spec's own DAG corrections.
+        (three attrs, one conditional construction guarded SOLELY by
+        ``embedding.enabled`` (FP-0066 §7, clean-break replacement for the
+        retired ``embedding_class`` truthy gate) with a try/except
+        None-fallback). ``render_bounds`` (never existed in this codebase)
+        and ``subscription_writer`` (WAL-derived task-subscription state,
+        not retrieval) are excluded per the Family 4 spec's own DAG
+        corrections.
+
+        #4564 follow-up: this builder used to ALSO require
+        ``action_retrieval.universal_wrappers_enabled`` in the same AND
+        condition — an undeclared second gate, same defect class #4564
+        fixed in ``router_loop.py``'s PER-TURN visibility check, just one
+        layer earlier (Session CONSTRUCTION time). With that second gate,
+        an operator running ``universal_wrappers_enabled: false`` under
+        ANY scheme (not just the ones #4564 covered) never got an
+        ``ActionEmbeddingIndex``/provider AT ALL for the session's entire
+        lifetime, regardless of ``embedding.enabled`` — #4564's own fix in
+        ``router_loop.py`` could never fire in a REAL session, only in a
+        test that hand-constructs a ready index and bypasses this builder
+        (exactly what #4564's own regression witness did, caught on
+        reopen). The ``action_retrieval`` param is dropped — nothing else
+        in this builder reads it.
 
         #4552: this builder used to also construct ``action_usage_tracker``
         (hot-list freq+recency, a SEPARATE conditional guarded by
@@ -4046,11 +4063,10 @@ class Session:
         run inline in ``__init__``, MODULO one reordering (#3408): the
         call site moved from its ORIGINAL position (line ~1152, BEFORE
         Family 1 / ``_build_audit_event_bundle`` ran) to run right AFTER
-        Family 1 instead — ``action_retrieval`` / ``embedding_config`` are
-        the ``self._action_retrieval`` value / the ``embedding_config``
-        __init__ parameter, resolvable at the new call site exactly as they
-        were at the old one, since nothing between the two positions reads
-        or writes them. (The #3408 identity-vs-name binding rationale this
+        Family 1 instead — ``embedding_config`` is the ``embedding_config``
+        __init__ parameter, resolvable at the new call site exactly as it
+        was at the old one, since nothing between the two positions reads
+        or writes it. (The #3408 identity-vs-name binding rationale this
         docstring used to carry was specific to the now-removed hot-list
         closure and the AST single-assignment guard it motivated,
         ``tests/repo/test_audit_events_single_assignment_3408.py`` — that
@@ -4072,8 +4088,7 @@ class Session:
         embedding_provider: Any = None
         embedding_model_class: str | None = None
         if (
-            action_retrieval.universal_wrappers_enabled
-            and embedding_config is not None
+            embedding_config is not None
             and embedding_config.enabled
         ):
             try:
