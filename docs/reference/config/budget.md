@@ -128,9 +128,6 @@ Usage (process invocation):
     tokens:       12,450 / 50,000  (warn at 40,000)
     cost:         $0.0187 / $2.00     (warn at $1.60)
 
-  Per-chain skill calls:
-    chain-abc/direct_llm:  2 / 5
-
   Rate limit (last minute):
     openai/gpt-4o:  14 / 60  (warn at 48)
 
