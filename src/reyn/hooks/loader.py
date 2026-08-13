@@ -38,6 +38,37 @@ from reyn.hooks.schema_registry import HookSchemaError, bare_point, canonical_ki
 
 _log = logging.getLogger(__name__)
 
+# #4501 architect finding: a hook entry's own key vocabulary was never
+# eager-rejected, unlike every individual field's TYPE (which _parse_entry
+# already validates strictly). The concrete failure this closes: an operator
+# writes the agent-level sandbox.policy field name (``allow_write_paths``)
+# inside a hook entry instead of the per-hook key (``write_paths``,
+# HOOK_SANDBOX_SCOPE's own right-hand column) — same silent-drop shape
+# sandbox_scope.py's own module docstring names as the defect that module
+# exists to close, except this is the OTHER entry point into that silence
+# (a name mismatch at the hook site itself, not an unre-declared global
+# field). `True` is included because #4517's own compat fallback means an
+# unquoted `on:` legitimately produces a `True` key — that is handled
+# separately above and must not also trip this check.
+_KNOWN_HOOK_ENTRY_KEYS: frozenset[str | bool] = frozenset({
+    "on", True, "name", "template_push", "exec", "exec_capture",
+    "pipeline_launch", "matcher", "subprocess", "network", "write_paths",
+})
+
+# The one wrong-scope key architect named as directly actionable (not a
+# guess): the agent-level sandbox.policy config name for the write-paths
+# axis (HOOK_SANDBOX_SCOPE's own left-hand column) is a real field, just
+# not one this per-hook site accepts — the per-hook name is on the right.
+# ``network``/``subprocess`` are NOT included: HOOK_SANDBOX_SCOPE's own
+# left/right columns are identical for those two axes, so there is no
+# analogous "wrong name" a hook author could plausibly write for them.
+_WRONG_SCOPE_HINTS: dict[str, str] = {
+    "allow_write_paths": (
+        "'allow_write_paths' is the agent-level sandbox.policy field name; "
+        "the per-hook key for the same axis is 'write_paths'."
+    ),
+}
+
 
 # ---------------------------------------------------------------------------
 # Internal helpers
@@ -469,6 +500,26 @@ def _parse_entry(
             f"got {type(name_raw).__name__!r}."
         )
     name: str | None = name_raw.strip() if isinstance(name_raw, str) and name_raw.strip() else None
+
+    # ── unknown-key eager-rejection (#4501) ────────────────────────────────
+    # Every individual field above is already type-checked strictly; the
+    # entry's own key SET was not. A key outside the known vocabulary is
+    # either a typo or, concretely, the agent-level sandbox.policy field name
+    # written at the wrong site (_WRONG_SCOPE_HINTS) — either way it was
+    # silently dropped before this check existed, reading as an applied
+    # setting that was never applied (the exact defect class
+    # sandbox_scope.py's own module docstring names).
+    unknown_keys = sorted(k for k in raw if k not in _KNOWN_HOOK_ENTRY_KEYS)
+    if unknown_keys:
+        parts = []
+        for key in unknown_keys:
+            hint = _WRONG_SCOPE_HINTS.get(key)
+            parts.append(f"{key!r} ({hint})" if hint else repr(key))
+        sorted_known = ", ".join(sorted(k for k in _KNOWN_HOOK_ENTRY_KEYS if isinstance(k, str)))
+        raise HookConfigError(
+            f"hooks[{entry_index}] has unrecognized key(s): {', '.join(parts)}. "
+            f"Known keys: {sorted_known}."
+        )
 
     return HookDef(
         on=on_key,
