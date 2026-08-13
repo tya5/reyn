@@ -83,7 +83,7 @@ import pytest
 import yaml
 
 from reyn.data.pipelines.registry import build_pipeline_registry
-from reyn.plugins.manifest import load_plugin_manifest
+from reyn.plugins.manifest import capability_kinds_present, load_plugin_manifest
 from tests._support.builtin_skill_tool_names import (
     qualified_tool_calls_referenced,
     real_catalog_tool_names,
@@ -120,11 +120,13 @@ def _skill_body() -> str:
 
 
 def test_rag_plugin_manifest_declares_skills_capability_and_the_skill_exists() -> None:
-    """Tier 2: the plugin manifest declares a `skills` capability, and the
-    `build-and-query-rag-corpus` SKILL.md really exists at the layout
-    `plugin_install`'s discovery convention expects."""
-    manifest = load_plugin_manifest(_PLUGIN_DIR)
-    assert "skills" in manifest.capability_kinds
+    """Tier 2: the plugin ships a `skills` capability (#4570 conversion B:
+    derived from `skills/` directory presence, not a manifest field any
+    more — `load_plugin_manifest` still confirms the manifest itself
+    loads/validates), and the `build-and-query-rag-corpus` SKILL.md really
+    exists at the layout `plugin_install`'s discovery convention expects."""
+    load_plugin_manifest(_PLUGIN_DIR)  # still validates the manifest loads
+    assert "skills" in capability_kinds_present(_PLUGIN_DIR)
     assert _SKILL_PATH.is_file(), f"expected a SKILL.md at {_SKILL_PATH}"
 
 
