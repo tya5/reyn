@@ -147,6 +147,7 @@ nav:
               - reference/cli/events.md
               - reference/cli/memory.md
               - reference/cli/cron.md
+              - reference/cli/media.md
               - reference/cli/common-flags.md
       - Runtime:
           - reference/runtime/control-ir.md
