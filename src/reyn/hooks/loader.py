@@ -213,6 +213,27 @@ def _parse_entry(
     # ``{True: 'turn_end', ...}``.  Try the string key first (= quoted
     # ``"on"``), then fall back to the boolean key ``True`` so that both
     # ``on: turn_end`` and ``"on": turn_end`` work.
+    #
+    # #4517: the fallback above means an unquoted ``on:`` never breaks the
+    # entry — but it also means the operator gets NO signal that they hit
+    # PyYAML's YAML-1.1 bareword trap, until a future edit or a stricter
+    # YAML loader elsewhere silently drops the same hook. A `True` key on
+    # a hook entry has exactly one cause — there is no OTHER way to write
+    # a hook entry that produces a literal `True` key (the entry is
+    # user-authored YAML with a small, closed field vocabulary, none of
+    # which is a bareword truthy literal) — so this warning has ZERO false
+    # positives (architect's own #4517 requirement), unlike an ordinary
+    # "did you mean" heuristic. Fires only when the STRING key is absent
+    # (an operator who wrote `"on":` — quoted — never sees this, matching
+    # #4515's own "warn only the entries that need it" discipline).
+    if "on" not in raw and True in raw:
+        _log.warning(
+            "hooks[%d]: the 'on:' key is unquoted and PyYAML (YAML 1.1) "
+            "parsed it as the boolean True, not the string 'on' — this "
+            "hook still works (a compatibility fallback reads it), but "
+            "quote it (\"on\": %r) to avoid depending on that fallback.",
+            entry_index, raw[True],
+        )
     on_raw = raw.get("on", raw.get(True))
     if on_raw is None:
         raise HookConfigError(

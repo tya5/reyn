@@ -414,3 +414,67 @@ hooks:
     # ── Hooks at other points are empty (no stray registrations) ─────────
     assert registry.hooks_for("session_end") == []
     assert registry.hooks_for("turn_start") == []
+
+
+# ---------------------------------------------------------------------------
+# #4517 — unquoted `on:` parses as the boolean True key (YAML 1.1 / PyYAML)
+# ---------------------------------------------------------------------------
+
+
+def test_on_key_from_real_unquoted_yaml_still_loads_via_the_true_key_fallback():
+    """Tier 1: #4517's own reproduction, through REAL yaml.safe_load — an
+    unquoted ``on: session_start`` parses to a ``True`` key (PyYAML is a
+    YAML 1.1 implementation; `on`/`off`/`yes`/`no` are boolean literals
+    there), and the loader's existing fallback (`raw.get("on",
+    raw.get(True))`) still resolves it correctly. This was previously
+    UNTESTED despite being real, invoked code — a genuine coverage gap
+    the #4517 investigation surfaced, not a new behavior."""
+    import yaml
+
+    raw = yaml.safe_load(
+        "hooks:\n  - on: session_start\n    exec: [echo, hi]\n"
+    )
+    assert True in raw["hooks"][0], "the fixture itself must reproduce the True-key shape"
+    registry = load_hooks(raw["hooks"])
+    (hd,) = registry.hooks_for("session_start")
+    assert hd.exec == ("echo", "hi")
+
+
+def test_true_key_hook_entry_logs_a_warning(caplog):
+    """Tier 2: #4517 — a hook entry with a `True` key (the unquoted `on:`
+    trap) logs a warning naming the entry index, even though the hook
+    still loads correctly via the fallback. Zero false positives by
+    construction: a `True` key has exactly one cause in a hand-authored
+    hook entry (an unquoted `on:`/`off:`/`yes:`/`no:` bareword) — there is
+    no other field whose YAML spelling produces a literal `True` key."""
+    import logging
+
+    with caplog.at_level(logging.WARNING, logger="reyn.hooks.loader"):
+        load_hooks([{True: "session_start", "exec": ["echo", "hi"]}])
+    assert any(
+        "hooks[0]" in r.message and "True" in r.message for r in caplog.records
+    ), f"expected a warning naming the True-key trap, got: {[r.message for r in caplog.records]}"
+
+
+def test_quoted_on_key_never_logs_the_warning(caplog):
+    """Tier 2: accept-side — an operator who correctly quoted `"on":`
+    never sees this warning (it fires only when the string key is
+    ABSENT). Same discipline #4515's own accept-side test established:
+    a false positive here would train operators to ignore the warning."""
+    import logging
+
+    with caplog.at_level(logging.WARNING, logger="reyn.hooks.loader"):
+        load_hooks([{"on": "session_start", "exec": ["echo", "hi"]}])
+    assert not any("True" in r.message for r in caplog.records), (
+        f"a correctly-quoted 'on:' must never trigger the True-key warning, "
+        f"got: {[r.message for r in caplog.records]}"
+    )
+
+
+def test_a_hook_entry_with_neither_on_nor_true_key_still_raises_not_warns():
+    """Tier 1: regression guard — a genuinely missing `on` (no string key,
+    no True key either) still raises HookConfigError as before; the new
+    warning path only intercepts the SPECIFIC True-key shape, it does not
+    change the missing-on error path."""
+    with pytest.raises(HookConfigError, match="\\.on is required"):
+        load_hooks([{"exec": ["echo", "hi"]}])
