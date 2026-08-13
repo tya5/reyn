@@ -169,11 +169,11 @@ def test_manifest_name_rejects_reserved_namespace_separator():
 
 
 def test_capability_kinds_present_detects_mcp_json(tmp_path):
-    """Tier 1: (#4570 conversion B) ``.mcp.json`` presence alone is the mcp
-    capability declaration — no manifest field involved."""
+    """Tier 1: (#4570 conversions B/C1) ``mcp.json`` presence alone is the
+    mcp capability declaration — no manifest field involved."""
     plugin_dir = tmp_path / "mcp-only"
     plugin_dir.mkdir()
-    (plugin_dir / ".mcp.json").write_text("{}", encoding="utf-8")
+    (plugin_dir / "mcp.json").write_text("{}", encoding="utf-8")
 
     assert capability_kinds_present(plugin_dir) == frozenset({"mcp"})
 

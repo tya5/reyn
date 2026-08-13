@@ -11,7 +11,7 @@ resolvers, and the ``_deps_materialised`` install-state stage are REMOVED,
 clean-break (no transition shim). External deps are now **skill-driven**:
 the operator/LLM creates their OWN venv (following the plugin's
 ``requirements.txt`` + the installing skill's SETUP instructions) and points
-the plugin's ``.mcp.json`` server ``command`` at that venv's python
+the plugin's ``mcp.json`` server ``command`` at that venv's python
 interpreter absolute path directly — never a reyn-managed venv. See ADR 0064
 §3.11b for the full rationale and the interpreter-path-resolution history
 (§3.11a) this redesign supersedes.
@@ -64,9 +64,9 @@ Pipeline (one-shot, no sub-phases):
    ``plugin_id=<name>``, §3.7's additive provenance field), and a
    ``require_file_write``-gated (#3088) direct ``.reyn/config/mcp.yaml``
    write (mirrors ``mcp_install_local``'s shape, probe-then-commit) for
-   the optional root ``.mcp.json``. A server's ``command`` is registered
+   the optional root ``mcp.json``. A server's ``command`` is registered
    AS-IS (no venv-interpreter rewrite) — whatever absolute path the
-   plugin's ``.mcp.json`` names (or the operator edits in afterward,
+   plugin's ``mcp.json`` names (or the operator edits in afterward,
    post-#3209) is what spawn execs.
 8. **Complete**: delete the ``_install_state.json`` marker (absence =
    completed — the state step 0's reconcile checks) and emit
@@ -532,10 +532,12 @@ def _copy_plugin_tree(source_dir: Path, plugin_root: Path) -> None:
 
 def _expand_plugin_files(plugin_root: Path, token_ctx: PluginTokenContext) -> None:
     """Bake stable-location ``${REYN_*}`` tokens into every text file a
-    capability might read (§3.4/§3.5): the root ``.mcp.json``, every
-    ``pipelines/*.yaml``, and every ``skills/*/SKILL.md``. Non-existent
-    globs are simply empty — every capability is optional (§3.1)."""
-    mcp_and_pipeline_candidates: list[Path] = [plugin_root / ".mcp.json"]
+    capability might read (§3.4/§3.5): the root ``mcp.json`` (#4570
+    conversion C1 — renamed from ``.mcp.json``, the Agent Plugins 1.0
+    canonical filename), every ``pipelines/*.yaml``, and every
+    ``skills/*/SKILL.md``. Non-existent globs are simply empty — every
+    capability is optional (§3.1)."""
+    mcp_and_pipeline_candidates: list[Path] = [plugin_root / "mcp.json"]
     pipelines_dir = plugin_root / "pipelines"
     if pipelines_dir.is_dir():
         mcp_and_pipeline_candidates.extend(pipelines_dir.glob("*.yaml"))
@@ -595,14 +597,29 @@ def _mcp_config_path(project_root: Path) -> Path:
 
 
 def _build_mcp_entries(mcp_json: Path) -> dict:
-    """Parse the plugin's root ``.mcp.json`` (standard shape,
-    ``{"mcpServers": {"<name>": {"command", "args", "env"?, "url"?}}}``)
+    """Parse the plugin's root ``mcp.json`` (#4570 conversion C1 — renamed
+    from ``.mcp.json``; standard shape,
+    ``{"mcpServers": {"<name>": {"type", "command", "args", "env"?, "url"?}}}``)
     into reyn's ``mcp.servers.<name>`` entry shape.
+
+    **Transport-type ADAPTER (#4570 conversion C1, temporary)**: the
+    Agent Plugins 1.0 canonical mcp.schema.json spells the HTTP-family
+    transport ``"streamable-http"``; reyn's OWN ``.reyn/config/mcp.yaml``
+    vocabulary still says ``"http"`` (``mcp/client.py``'s
+    ``_SUPPORTED_TYPES``) — that repo-wide rename is split off into #4604
+    (conversion C2, deliberately NOT done here: 18 src files + 9 test
+    files outside the plugin subsystem, lead-coder ruling). This function
+    is the ONE translation point: a spec-legal ``"streamable-http"``
+    becomes reyn-internal ``"http"``; ``"sse"`` passes through UNCHANGED
+    (it is a DISTINCT value in both vocabularies — mapping it into
+    ``"http"`` too would be a real bug, not just an incomplete rename).
+    Remove this translation once #4604 lands and reyn's own vocabulary
+    says ``"streamable-http"`` natively.
 
     ``command`` is registered AS-IS (#3209 — register-only redesign: no
     venv-interpreter rewrite here any more). A plugin whose server needs a
     Python env other than the ambient ``python``/``python3`` on ``PATH``
-    names an absolute interpreter path directly in its ``.mcp.json`` (per
+    names an absolute interpreter path directly in its ``mcp.json`` (per
     its skill's SETUP instructions — the operator/LLM creates that venv
     themselves), or the operator edits the registered entry's ``command``
     afterward."""
@@ -618,7 +635,9 @@ def _build_mcp_entries(mcp_json: Path) -> dict:
         if not isinstance(spec, dict):
             continue
         if "url" in spec:
-            entry: dict = {"type": spec.get("type", "http"), "url": spec["url"]}
+            spec_type = spec.get("type", "streamable-http")
+            reyn_type = "http" if spec_type == "streamable-http" else spec_type
+            entry: dict = {"type": reyn_type, "url": spec["url"]}
         else:
             entry = {
                 "type": "stdio",
@@ -636,7 +655,7 @@ async def _register_mcp(
     plugin_root: Path, plugin_name: str,
     ctx: OpContext, project_root: Path,
 ) -> dict:
-    """Register every server declared in the plugin's root ``.mcp.json``
+    """Register every server declared in the plugin's root ``mcp.json``
     into ``.reyn/config/mcp.yaml`` — mirrors ``mcp_install_local``'s shape
     (probe-then-commit on a live per-session reloader; deferred write
     otherwise), tagged with ``plugin_id`` (§3.7) so ``plugin_uninstall`` can
@@ -658,7 +677,7 @@ async def _register_mcp(
     (``reason`` = ``"probe_failed"`` or ``"permission_denied"``) — never a
     silent ``continue``. This does NOT make the server work (#3209: reyn
     does not manage venvs) — it only makes the drop visible."""
-    mcp_json = plugin_root / ".mcp.json"
+    mcp_json = plugin_root / "mcp.json"
     entries = _build_mcp_entries(mcp_json)
     if not entries:
         return {"registered": [], "skipped": []}
@@ -960,7 +979,7 @@ async def handle(op: PluginInstallIROp, ctx: OpContext) -> dict:
         # (#4580 dropped quietly; this claimed success for a drop).
         skipped: dict[str, list] = {"mcp": [], "pipelines": [], "skills": []}
 
-        # mcp: _register_mcp already no-ops gracefully when `.mcp.json` is
+        # mcp: _register_mcp already no-ops gracefully when `mcp.json` is
         # absent (returns {"registered": [], "skipped": []}) — safe to call
         # unconditionally, same as every other install regardless of
         # whether this plugin ships an mcp server.

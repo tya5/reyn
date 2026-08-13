@@ -53,7 +53,7 @@ gate. Everything else remains normally gated, in particular:
   ``read_builtin_body_bytes`` excludes ``.py`` modules outside its body
   dirs: this bypass authorizes reading shipped *documentation/config*
   content, not arbitrary plugin-authored code).
-- ``requirements.txt``, ``.mcp.json`` — not body content.
+- ``requirements.txt``, ``mcp.json`` — not body content.
 - ``.staging/`` — ``plugin_install``'s git-clone staging area
   (``plugin_install.py``'s ``handle``, ``{kind: "git"}`` branch) holds
   content BEFORE the operator's install-permission gate has run (or before a
@@ -104,7 +104,7 @@ def read_plugin_body_bytes(path_str: str) -> "bytes | None":
     ``None`` in every other case — not under ``~/.reyn/plugins/`` at all, an
     UNREGISTERED plugin root (never installed, mid-install, or rolled back),
     ``.staging/``, or inside a registered root but outside its body dirs
-    (``scripts/``, ``requirements.txt``, ``.mcp.json``, etc.). In every
+    (``scripts/``, ``requirements.txt``, ``mcp.json``, etc.). In every
     ``None`` case the caller (``reyn.core.op_runtime.file.handle``) falls
     through to the normal ``_in_default_read_zone``-gated file read,
     unchanged — identical fallback contract to

@@ -67,7 +67,7 @@ Each server is **probed before its registration is committed**: if a command doe
 >
 > then use `command: /abs/path/to/this/project/.venv-markitdown/bin/markitdown-mcp` with `args: []`. Reyn starts whatever `command` names, as-is, so an absolute path to a script whose environment actually has the package is the reliable form.
 
-**Why does the registered `reyn_chunker`/`reyn_vector_store` command need to be an absolute path to a venv interpreter (`.venv/bin/python` on macOS/Linux, `.venv\Scripts\python.exe` on Windows), not `python`?** `install_plugin` registers whatever `command` the plugin's own `.mcp.json` names, unmodified — pointing it at YOUR venv's absolute interpreter path is what makes spawning it independent of your ambient `PATH`'s `python3`, which is a *different* interpreter under `pipx install reyn`, a non-activated venv, or a `PATH` with another python first.
+**Why does the registered `reyn_chunker`/`reyn_vector_store` command need to be an absolute path to a venv interpreter (`.venv/bin/python` on macOS/Linux, `.venv\Scripts\python.exe` on Windows), not `python`?** `install_plugin` registers whatever `command` the plugin's own `mcp.json` names, unmodified — pointing it at YOUR venv's absolute interpreter path is what makes spawning it independent of your ambient `PATH`'s `python3`, which is a *different* interpreter under `pipx install reyn`, a non-activated venv, or a `PATH` with another python first.
 
 ## Use it
 

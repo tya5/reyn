@@ -1011,7 +1011,7 @@ location) — `plugin_install` copies it to
 tokens, and REGISTERS whatever capabilities the manifest declares by calling
 the SAME existing verbs `skill_install` / `pipeline_install` already provide
 (plus a direct `.reyn/config/mcp.yaml` write for the optional root
-`.mcp.json`) — an orchestration layer, not a fourth registry.
+`mcp.json`) — an orchestration layer, not a fourth registry.
 
 **Register-only** (#3209 — architect-firm redesign, owner GO 2026-07-23):
 `plugin_install` never provisions a plugin's external Python dependencies.
@@ -1025,9 +1025,9 @@ stage) is REMOVED, clean-break, no transition shim. A plugin's
 never reads: external deps are **skill-driven** — the installing skill's
 SETUP instructions walk the operator/LLM through creating their OWN venv,
 `pip install -r requirements.txt` inside it, and pointing the plugin's
-`.mcp.json` server `command` at that venv's python interpreter absolute
+`mcp.json` server `command` at that venv's python interpreter absolute
 path directly (Windows: `Scripts\python.exe`). `plugin_install` registers
-whatever `command` the plugin's `.mcp.json` names AS-IS — no rewrite of any
+whatever `command` the plugin's `mcp.json` names AS-IS — no rewrite of any
 kind. **Fail-fast preserved** (#3060 by-construction requirement): a
 `command` naming an incomplete/missing venv fails at MCP spawn with a clear
 OS-level error; plugin_install/spawn never falls back to a runtime fetch.
@@ -1161,7 +1161,7 @@ higher-trust one.
    (VCS metadata excluded) into `~/.reyn/plugins/<name>/`. Emit
    `plugin_install_copied`.
 6. Expand `${REYN_*}` stable-location tokens (P1 `reyn.plugins.tokens.
-   expand_reyn_tokens`) into the copied `.mcp.json` / `pipelines/*.yaml`
+   expand_reyn_tokens`) into the copied `mcp.json` / `pipelines/*.yaml`
    files (every token the copy-time context carries a value for). A
    `skills/*/SKILL.md` file gets a NARROWER bake: only `${REYN_PLUGIN_ROOT}`
    (`plugin_install.py`'s `_bake_plugin_root_only`) — `${REYN_SKILL_DIR}` and
@@ -1171,13 +1171,17 @@ higher-trust one.
    `~/.reyn/plugins/<name>/` copy can be enabled into more than one project
    (§3.3) — baking one install call's project into the shared copy would
    freeze every later enabling project to whichever one installed it first.
-7. Register (#3209: register-only, no dep materialise step): for each
-   manifest capability, call `skill_install.handle` / `pipeline_install.
-   handle` (each sub-op carries `plugin_id=<name>`, §3.7) for
-   skills/pipelines, or write `.reyn/config/mcp.yaml` directly
-   (probe-then-commit, mirrors `mcp_install_local`) for the root
-   `.mcp.json` — a server's `command` is registered AS-IS, no
-   venv-interpreter rewrite. Emit `plugin_install_registered`.
+7. Register (#3209: register-only, no dep materialise step; #4570
+   conversion B: capability presence is derived from directory/file
+   EXISTENCE, not a manifest-declared list — the manifest carries no
+   `capabilities` field at all any more): `.mcp.json`'s successor,
+   `mcp.json`, is always probed (no-ops gracefully when absent) via
+   `.reyn/config/mcp.yaml` (probe-then-commit, mirrors `mcp_install_local`);
+   a `pipelines/` directory, if present, has every `*.yaml` file registered
+   via `pipeline_install.handle`; a `skills/` directory, if present, has
+   every subdirectory registered via `skill_install.handle` (each sub-op
+   carries `plugin_id=<name>`, §3.7). A server's `command` is registered
+   AS-IS, no venv-interpreter rewrite. Emit `plugin_install_registered`.
    Before #4580, this step's own `registered` list was the ONLY signal
    — a manifest declaring 3 capabilities that only 2 actually registered
    read identically to "declared 3, registered 3": no count or event let

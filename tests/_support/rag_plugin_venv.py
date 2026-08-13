@@ -7,7 +7,7 @@ standalone ``fastmcp`` package, which is NOT a reyn dependency -- core
 dropped it entirely in #4302, and register-only install (#3209) never
 provisions a plugin's own deps either; the operator/LLM creates a
 dedicated venv following the plugin's SETUP skill instructions, and
-``.mcp.json`` points the server's ``command`` at THAT venv's python.
+``mcp.json`` points the server's ``command`` at THAT venv's python.
 
 Before this module, ``tests/builtin/test_fp0063_p3_rag_pipelines.py`` /
 ``test_fp0063_arc_witness.py`` spawned these servers via ``sys.executable``

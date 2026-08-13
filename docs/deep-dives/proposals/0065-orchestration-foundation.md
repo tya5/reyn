@@ -144,7 +144,7 @@ Each declared file is one **activation definition**:
 ```yaml
 # <plugin_root>/automations/<name>.yaml
 name: streamlit_ui            # activation id, unique within the plugin
-server: streamlit             # the .mcp.json server this activation holds
+server: streamlit             # the mcp.json server this activation holds
 exclusive: true               # server owns an exclusive resource (a port, one UI)
 subscribe:                    # URIs subscribed on activate, dropped on deactivate
   - "app://status"

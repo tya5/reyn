@@ -159,7 +159,7 @@ replay across days") -- pinning the two offending fields is what removes it.
 Proxy-free / CI-durable (the re-scope #3119 exists for): the plugin is
 installed from a LOCAL COPY with `requirements.txt` deliberately absent (this
 sandbox's ``builtin-rag`` extra already provides apsw/chonkie/sqlite_vec, and
-the copy's ``.mcp.json`` points its two REAL servers -- chunker + vector-store
+the copy's ``mcp.json`` points its two REAL servers -- chunker + vector-store
 -- at ``sys.executable`` with ``PYTHONPATH`` pinned to this checkout, mirroring
 ``test_fp0063_p3_rag_pipelines.py``'s ``_server_env()`` precedent) --
 so ``plugin_install``'s dependency-materialisation step (real ``python -m
@@ -304,7 +304,7 @@ def _prepare_local_plugin_copy(tmp_path: Path, src_root: str) -> Path:
       materialisation step (real ``python -m venv`` + ``pip install`` + real
       network fetch) never triggers -- this is a LOCAL install, not the
       builtin fast-path, so the copy is what gets network-audited.
-    - Rewrite ``.mcp.json``: the plugin's own two REAL servers (chunker,
+    - Rewrite ``mcp.json``: the plugin's own two REAL servers (chunker,
       vector-store -- the ONLY two it declares; markitdown is deliberately
       NOT part of the plugin bundle, per the pipeline's own X1 pre-flight
       message: "install it yourself" -- same as ``test_fp0063_p3_rag_pipelines.py``,
@@ -329,7 +329,7 @@ def _prepare_local_plugin_copy(tmp_path: Path, src_root: str) -> Path:
     shutil.copytree(_RAG_PLUGIN_DIR, dest)
     (dest / "requirements.txt").unlink(missing_ok=True)
 
-    mcp_json_path = dest / ".mcp.json"
+    mcp_json_path = dest / "mcp.json"
     mcp_json = json.loads(mcp_json_path.read_text(encoding="utf-8"))
     env = _server_env(src_root)
     for name, spec in mcp_json["mcpServers"].items():

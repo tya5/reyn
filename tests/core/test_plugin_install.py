@@ -23,7 +23,7 @@ Tests:
      http.get / web.fetch approval does NOT satisfy. Strip it → PermissionError,
      nothing fetched/written. Operator YES → proceeds; operator NO → denied.
   6. register-only (#3209): a plugin with an mcp capability registers its
-     ``.mcp.json`` server ``command`` AS-IS — no dep materialise, no venv,
+     ``mcp.json`` server ``command`` AS-IS — no dep materialise, no venv,
      no command rewrite. A ``requirements.txt`` at the plugin root is inert
      data install never reads.
   7. #3048 seal: require_http_get(host) with a bus wired but unanswered
@@ -328,7 +328,7 @@ def _make_mcp_plugin_source(base: Path, name: str = "mcpplugin") -> Path:
         }),
         encoding="utf-8",
     )
-    (plugin_dir / ".mcp.json").write_text(
+    (plugin_dir / "mcp.json").write_text(
         json.dumps({"mcpServers": {"srv": {"command": "python", "args": ["-m", "srv"]}}}),
         encoding="utf-8",
     )
@@ -613,8 +613,8 @@ async def test_plugin_install_register_only_no_venv_no_rewrite(tmp_path, monkeyp
     ITS ROOT + an mcp capability (command: python) is installed WITHOUT any
     venv/materialise step: no ``.venv`` directory is created under the
     plugin's global copy, and the registered mcp spawn ``command`` is the
-    plugin's OWN ``.mcp.json`` value, unrewritten. RED if a ``.venv`` appears
-    or the registered command differs from the literal ``.mcp.json`` value
+    plugin's OWN ``mcp.json`` value, unrewritten. RED if a ``.venv`` appears
+    or the registered command differs from the literal ``mcp.json`` value
     — either would mean plugin_install still touches dependency provisioning,
     which #3209 moved entirely to skill-driven, user-managed venvs."""
     home = tmp_path / "home"
@@ -630,7 +630,7 @@ async def test_plugin_install_register_only_no_venv_no_rewrite(tmp_path, monkeyp
         }),
         encoding="utf-8",
     )
-    (src / ".mcp.json").write_text(
+    (src / "mcp.json").write_text(
         json.dumps({"mcpServers": {"srv": {"command": "python", "args": ["-m", "srv"]}}}),
         encoding="utf-8",
     )
@@ -653,7 +653,7 @@ async def test_plugin_install_register_only_no_venv_no_rewrite(tmp_path, monkeyp
     servers = yaml.safe_load(mcp_yaml.read_text(encoding="utf-8"))["mcp"]["servers"]
     assert servers["srv"]["command"] == "python", (
         "registered mcp command was rewritten away from the plugin's own "
-        ".mcp.json value — #3209 register-only means AS-IS registration"
+        "mcp.json value — #3209 register-only means AS-IS registration"
     )
     assert servers["srv"]["plugin_id"] == "registeronly"
 
@@ -712,7 +712,7 @@ async def test_plugin_install_never_reads_requirements_txt_content(tmp_path, mon
 
 @pytest.mark.asyncio
 async def test_registered_command_pointing_at_missing_venv_fails_fast_no_fetch(tmp_path):
-    """Tier 2: a plugin's ``.mcp.json`` naming an absolute venv-python path
+    """Tier 2: a plugin's ``mcp.json`` naming an absolute venv-python path
     that does not exist on disk is registered AS-IS (register-only, #3209);
     actually spawning it (via ``probe_mcp_server``, the same probe
     ``_register_mcp`` itself uses) fails with a clear, non-network error —
@@ -760,6 +760,76 @@ def test_build_mcp_entries_registers_command_as_is():
 
     assert entries["srv"]["command"] == windows_style_path
 
+
+def _build_mcp_entries_from_dict(mcp_json: dict) -> dict:
+    """Round-trips *mcp_json* through a real temp file into
+    ``_build_mcp_entries`` — same real-file-I/O shape as
+    ``test_build_mcp_entries_registers_command_as_is`` above, factored out
+    for the #4570 conversion C1 transport-type adapter tests below."""
+    import tempfile
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as fh:
+        json.dump(mcp_json, fh)
+        mcp_json_path = Path(fh.name)
+    try:
+        return _build_mcp_entries(mcp_json_path)
+    finally:
+        mcp_json_path.unlink()
+
+
+def test_build_mcp_entries_translates_streamable_http_to_reyn_internal_http():
+    """Tier 1: (#4570 conversion C1) the Agent Plugins 1.0 spec's own
+    HTTP-family spelling, ``"streamable-http"``, is translated into reyn's
+    STILL-INTERNAL vocabulary value ``"http"`` (``mcp/client.py``'s
+    ``_SUPPORTED_TYPES`` — the repo-wide rename is #4604, deliberately not
+    done here) — this is the ONE adapter point #4570 conversion C1 adds."""
+    entries = _build_mcp_entries_from_dict(
+        {"mcpServers": {"srv": {"type": "streamable-http", "url": "http://localhost:1234"}}},
+    )
+
+    assert entries["srv"]["type"] == "http"
+
+
+def test_build_mcp_entries_leaves_sse_unswept(tmp_path):
+    """Tier 1: (#4570 conversion C1, lead-coder review point) ``"sse"`` is
+    a DISTINCT value in both the spec's vocabulary and reyn's own — the
+    adapter above must translate ONLY ``"streamable-http"``, never sweep
+    ``"sse"`` into ``"http"`` too. A translation that maps BOTH would still
+    pass a test asserting "http.type == 'streamable-http' input yields
+    reyn's http" alone; this test is the one that actually distinguishes
+    "one value renamed" from "two values collapsed into one" — the
+    concrete failure mode: an adapter written as `"http" if "http" in
+    spec_type else spec_type` would silently swallow "sse" too, since it
+    is not a literal-equality check."""
+    entries = _build_mcp_entries_from_dict(
+        {"mcpServers": {"srv": {"type": "sse", "url": "http://localhost:1234"}}},
+    )
+
+    assert entries["srv"]["type"] == "sse"
+
+
+def test_build_mcp_entries_defaults_missing_type_to_streamable_http_translated():
+    """Tier 1: (accept-side) a url-bearing entry omitting ``type``
+    entirely (pre-#4570-conversion-C1 shape, or an author who hasn't
+    updated yet) still defaults sanely — through the SAME translation
+    path, landing on reyn's ``"http"``, not a raw untranslated
+    ``"streamable-http"`` leaking into reyn's own vocabulary."""
+    entries = _build_mcp_entries_from_dict(
+        {"mcpServers": {"srv": {"url": "http://localhost:1234"}}},
+    )
+
+    assert entries["srv"]["type"] == "http"
+
+
+def test_build_mcp_entries_stdio_type_is_unaffected_by_the_adapter():
+    """Tier 1: (accept-side) the adapter only ever touches the url-bearing
+    (HTTP-family) branch — a stdio entry's ``"type": "stdio"`` is set
+    unconditionally by the ELSE branch, never routed through the
+    streamable-http/sse translation at all."""
+    entries = _build_mcp_entries_from_dict(
+        {"mcpServers": {"srv": {"type": "stdio", "command": "python"}}},
+    )
+
+    assert entries["srv"]["type"] == "stdio"
 
 
 # ── #3048 seal: require_http_get awaits indefinitely when a bus is wired ──────
