@@ -1176,6 +1176,17 @@ higher-trust one.
    (probe-then-commit, mirrors `mcp_install_local`) for the root
    `.mcp.json` — a server's `command` is registered AS-IS, no
    venv-interpreter rewrite. Emit `plugin_install_registered`.
+   The return value's `registered`/`skipped` dicts (both keyed by
+   capability kind — `mcp`/`pipelines`/`skills`) record every declared
+   capability that did NOT make it in, by a different mechanism per kind:
+   mcp's probe-then-commit skips BEFORE the write (a probe failure or a
+   denied MCP-axis permission gate — `mcp_server_install_skipped`, #4580);
+   a pipeline/skill sub-install always runs and is routed to `skipped`
+   when its OWN return value's `status` isn't `"installed"` (a bad name,
+   a threat-scan block, a missing DSL file, ...) — `pipeline_install_
+   skipped`/`skill_install_skipped` (#4590). Either way, "declared but
+   not registered" is visible in the return value and its own audit-event,
+   never a silent drop.
 8. Delete the `_install_state.json` marker (absence = completed) and emit
    `plugin_install_completed`.
 

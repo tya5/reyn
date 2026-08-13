@@ -155,6 +155,7 @@ pending_intervention_claimed
 pending_intervention_discarded
 permission_denied
 permission_granted
+pipeline_install_skipped
 pipeline_install_threat_blocked
 pipeline_install_threat_match
 pipeline_installed
@@ -204,6 +205,7 @@ session_halted
 session_restored
 session_started
 skill_body_loaded
+skill_install_skipped
 skill_install_threat_blocked
 skill_install_threat_match
 skill_installed
@@ -360,6 +362,7 @@ Each Control IR op kind emits its own event:
 | `mcp_install_cancelled`, `mcp_prompt_get_cancelled`, `mcp_resource_read_cancelled`, `mcp_resource_subscribe_cancelled`, `mcp_resource_unsubscribe_cancelled` | #2813 — a Ctrl-C `cancel_event` interrupted the corresponding op (install probe / get-prompt / read-resource / subscribe / unsubscribe) before it completed; the op returns `status:"cancelled"` and nothing is committed |
 | `plugin_install_started`, `plugin_install_copied`, `plugin_install_registered`, `plugin_install_completed` | `plugin_install` op's own main-flow milestones — `started`: `name`, `source_kind`; `copied`: `name`, `plugin_root`; `registered`: `name`, `registered` (the per-capability-kind registration result); `completed`: `name` |
 | `mcp_server_install_skipped` | `plugin_install` op (#4580) — fires once per declared MCP server the op's probe-then-commit loop drops (never a silent `continue`): `server_id`, `server_name`, `reason` (`"probe_failed"` or `"permission_denied"`), `source` (`"plugin_install:<plugin_name>"`). The op's own return value also carries a `skipped` list alongside `registered` — this event is the audit-trail counterpart, not a duplicate of it. |
+| `pipeline_install_skipped`, `skill_install_skipped` | `plugin_install` op (#4590) — fires once per declared pipeline/skill whose own sub-install call (`pipeline_install`/`skill_install`) returned a non-`"installed"` status instead of raising (a bad name, a threat-scan block, a missing DSL file, ...): `plugin_id`, `path` (the pipeline DSL file / skill directory), `reason` (the sub-install's own `status` value — e.g. `"error"`, `"blocked"`), `error` (the sub-install's own `error` message, `""` if absent). Unlike mcp's probe-then-commit (which skips BEFORE ever calling the sub-install), a pipeline/skill sub-install always runs; the skip is read from its return value, not a separate pre-check. |
 | `plugin_install_reconciled` | Startup crash-recovery, not the main install flow — a partial install left behind by a prior crash is rolled back before any op runs; `name`, `action` (`"rolled_back"` today, the only value emitted) |
 | `web_search_started`, `web_search_completed`, `web_search_failed` | web_search ops — `started`: `query`, `backend`; `completed`: adds `result_count`; `failed`: adds `error` |
 | `web_fetch_started`, `web_fetch_completed`, `web_fetch_failed` | web_fetch ops — `started`: `url`; `completed`: `url`, `status_code`, `content_length`, `extractor`; `failed`: `url`, `status` (`"timeout"` or `"error"`), `error` |
