@@ -48,7 +48,7 @@ from reyn.core.pipeline.executor import Pipeline, ToolStep
 from reyn.core.pipeline.registry import PipelineRegistry
 from reyn.hooks.dispatcher import HookDispatcher
 from reyn.hooks.registry import HookRegistry
-from reyn.hooks.schema import HookConfigError, HookDef, PipelineLaunchBlock, PushBlock
+from reyn.hooks.schema import HookConfigError, HookDef, PipelineLaunchBlock
 from reyn.llm.llm import LLMToolCallResult
 from reyn.llm.pricing import TokenUsage
 from reyn.runtime.registry import AgentRegistry

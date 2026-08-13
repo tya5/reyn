@@ -18,7 +18,6 @@ substitution (= no ``unittest.mock``; see ``docs/deep-dives/contributing/testing
 from __future__ import annotations
 
 import sys
-from pathlib import Path
 
 import pytest
 

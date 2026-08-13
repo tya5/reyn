@@ -14,8 +14,6 @@ Uses a real injectable fake runner (no mocks), mirroring test_container_launcher
 """
 from __future__ import annotations
 
-from pathlib import Path
-
 import pytest
 
 from reyn.environment.container_launcher import (

@@ -17,7 +17,6 @@ no ``unittest.mock`` per ``docs/deep-dives/contributing/testing.ja.md``.
 from __future__ import annotations
 
 import sys
-from pathlib import Path
 
 import pytest
 

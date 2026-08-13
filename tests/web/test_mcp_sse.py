@@ -22,7 +22,6 @@ docstring used to cite before #4081, does not exist.
 from __future__ import annotations
 
 import sys
-from pathlib import Path
 
 import pytest
 

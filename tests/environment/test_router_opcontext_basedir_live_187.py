@@ -17,7 +17,6 @@ from __future__ import annotations
 from pathlib import Path
 
 from reyn.environment.container_backend import DockerEnvironmentBackend
-from reyn.runtime.session import Session
 from tests._support.agent_session import make_session
 
 

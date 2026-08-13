@@ -66,7 +66,6 @@ common name reused ACROSS sections, is."""
 from __future__ import annotations
 
 import re
-from pathlib import Path
 
 from reyn.config.config_schema import walk_config_schema
 from tests._support.paths import REPO_ROOT

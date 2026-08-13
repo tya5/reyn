@@ -77,7 +77,6 @@ No mocks: the real `PluginManifest`, the real skill/pipeline files, the real
 from __future__ import annotations
 
 import re
-from pathlib import Path
 
 import pytest
 import yaml
