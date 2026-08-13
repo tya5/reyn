@@ -88,7 +88,6 @@ client は 1 つの順序付き SSE ストリームを消費し、各 event を�
 | `intervention`    | `CUSTOM`           | プロンプトが表示される。reyn client はそれをネイティブに描画し、id で回答する(「Human-in-the-loop answering」参照) |
 | `presentation`    | `CUSTOM`           | `present` op の render-node モデル(*present-on-wire* 参照) |
 | `__copy_last_reply__` / `__rewind_list__` | `CUSTOM` | クライアント消費センチネル — 転送される(*control sentinels* 参照) |
-| `__attach_request__` | `CUSTOM`        | 転送される — live なワイヤー kind(*control sentinels* 参照) |
 | `__end__` / `__session_switch_request__` | *(フィルタ)* | 転送されない(*control sentinels* 参照) |
 
 これら以外の display kind もすべて損失なく round-trip する(`CUSTOM` にフォールバックし
@@ -118,13 +117,15 @@ display kind を誤って落としてしまう):
     (`_SessionFrameSource._drain_one_session`: セッション switch-follow、解決できない
     sid の場合は silent drop)ため、その source から emitter に到達しない。フィルタ
     エントリは、消費しない frame source に対する fail-safe。
-- **転送され、実際に live**: `__attach_request__` は profiled `CUSTOM` display event
-  として **実際にワイヤーへ出る**。registry forwarder の `continue` はこれを妨げない —
-  forwarder と AG-UI tap は同一 `session.outbox_hub` の独立した 2 つの subscriber であり、
-  hub は全 subscription に全メッセージを fan-out するので、`continue` は
-  「`repl_outbox`(ローカル REPL sink)に再投函しない」だけを意味する。リモート
-  クライアントはこの kind を許容する必要があり、reyn クライアントは表示上スキップする
-  ので会話ペインに素のセンチネルは出ない(リモートの attach-label *同期* は別機構)。
+- **廃止済み**(#4534 PR-2): `__attach_request__` はもう存在しない。`/agent new`と
+  `/attach`は今や named operation である`ClientTransport.request_attach`を経由する
+  (display channel のセンチネルではない — #3595 S5 の原則「client が解釈し、server が
+  名前つき操作を実行する」を`run_slash_command`と同じ形で適用)。本docの以前の版は
+  `__attach_request__`を「転送され、実際に live」と記述していたが、それはPR-2着地前は
+  正確だった。`__session_switch_request__`は★別のセンチネルで、上記の通り引き続き
+  filterされている——その移行(PR-2b)は、消費が二重目的(`agui/endpoint.py`の
+  mid-stream switch-follow、#3310 N3も駆動する)であるため別途段階的に進められており、
+  本docではまだ扱っていない。
 
 > #3362 で訂正。本節は以前、両センチネルとも registry forwarder が swallow するため
 > 「AG-UI tap に到達しない」と記述していたが、いずれも到達する。forwarder の
@@ -400,7 +401,6 @@ display 行のテキストである。
 | `reyn.display.system`             | reyn chrome 行 — 永続化されるライフサイクル/ステータスマーカー(compaction / budget / cost-warn) |
 | `reyn.display.__copy_last_reply__` | `/copy` センチネル — 転送される(クライアント側クリップボードコピー);*control sentinels* 参照 |
 | `reyn.display.__rewind_list__`    | `/rewind` センチネル — 転送される(クライアント側 rewind ピッカー);*control sentinels* 参照 |
-| `reyn.display.__attach_request__` | attach-request センチネル — 実際に emit される;reyn クライアントは表示上スキップ;*control sentinels* 参照 |
 | `reyn.display.tool_call_started`  | tool-call 開始のトレース行                              |
 | `reyn.display.tool_call_completed`| tool-call 完了のトレース行                              |
 | `reyn.display.tool_call_failed`   | tool-call 失敗のトレース行                              |
