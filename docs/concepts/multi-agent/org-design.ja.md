@@ -40,10 +40,15 @@ spawn_agent(name: str, role: str = "")
 
 ```text
 spawn_session(request: str, mode: "ephemeral" | "persistent" = "persistent",
-              narrowing: dict | None = None)
+              narrowing: dict | None = None, base_dir: str | None = None,
+              agent: str | None = None, session: str | None = None)
 ```
 
-現在の agent の下で `request` を分離して実行する新しい Session を開始します。空のコンテキストウィンドウ、独立したワークスペース、この会話の記憶なし。スポーンされたセッションは即座に開始し、タスクの完了を待たずにスポーン ack を返します（非同期ディスパッチ）。
+現在の agent の下で（または `agent` 指定時、#4556: 自分の spawn subtree 内の任意の agent の下で）`request` を分離して実行する新しい Session を開始します。空のコンテキストウィンドウ、独立したワークスペース、この会話の記憶なし。スポーンされたセッションは即座に開始し、タスクの完了を待たずにスポーン ack を返します（非同期ディスパッチ）。
+
+**`agent`**（オプション、#4556）：自分の spawn subtree 内の任意の agent を対象にできます — 自分自身、または `spawn_agent` 経由で（推移的に）作成した agent。`create_topology` 自身の subtree forge-guard が使うのと同じ `is_spawn_descendant` 述語でガードされます — subtree 外の agent を対象にする試みは拒否されます（`agent_outside_subtree`）、暗黙にリダイレクトされることはありません。省略すると自分自身の agent の下でスポーンします（デフォルト、従来どおりの挙動）。
+
+**`session`**（オプション、#4556）：OS に自動生成させる代わりに、新しい session の id を自分で選べます。対象 agent について id が重複している場合は拒否されます（`session_already_exists`）、暗黙に上書きされることはありません。
 
 **`mode`**：
 
@@ -55,6 +60,8 @@ spawn_session(request: str, mode: "ephemeral" | "persistent" = "persistent",
 ```json
 {"tool_deny": ["exec"]}
 ```
+
+**`base_dir`**（オプション、#4200）：スポーンされる session の作業ディレクトリを上書きします。`narrowing` と同じ形で制限のみ——自分自身の実効 `base_dir` の内側に解決される必要があり、それ以外は拒否されます（暗黙にクランプされることはありません）。相対パスは自分自身の `base_dir` に対して解決されます。省略すると自分自身の `base_dir` をそのまま継承します（デフォルト）。
 
 両モードとも巻き戻し安全です：巻き戻しカット後にスポーンされたセッションは巻き戻し再構成中に削除されます。
 
