@@ -17,10 +17,7 @@ models dict: shallow merge — each key overrides independently.
 """
 from __future__ import annotations
 
-import socket
 from dataclasses import dataclass, field
-from pathlib import Path
-from typing import Any, Literal
 
 # #1682 #3 (R1): ReynConfig references every section config via default_factory,
 # AND config_schema.walk_config_schema does get_type_hints(ReynConfig), resolving
@@ -28,18 +25,13 @@ from typing import Any, Literal
 # CONCRETE (non-TYPE_CHECKING) imports or the fields silently drop from the schema.
 from reyn.config.chat import (
     ChatConfig,
-    CompactionConfig,
     CostWarnConfig,
     HistoryResidentConfig,
     ImageConfig,
-    LoopConfig,
     OffloadConfig,
-    OnLimitConfig,
     ReadCapConfig,
-    ReasoningConfig,
     RenderTemplateConfig,
     SafetyConfig,
-    TimeoutConfig,
     TuiConfig,
 )
 from reyn.config.embedding import (
@@ -68,7 +60,7 @@ from reyn.config.media import (
 from reyn.config.observability import (
     ObservabilityConfig,
 )
-from reyn.runtime.budget.budget import CostConfig, CostLimitConfig
+from reyn.runtime.budget.budget import CostConfig
 
 
 def _empty_external_transports():

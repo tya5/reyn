@@ -39,7 +39,6 @@ from __future__ import annotations
 import argparse
 import ast
 import re
-import sys
 from pathlib import Path
 
 DEFAULT_ROOTS = ("src", "tests")

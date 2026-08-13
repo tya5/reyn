@@ -524,9 +524,6 @@ exclude = [
 # readability more than it helps.
 select = ["F", "I"]
 ignore = [
-    # F401: re-exports in __init__.py and TYPE_CHECKING blocks make
-    # these false positives common.
-    "F401",
     # F811: local imports inside functions for clarity (e.g. lazy
     # imports of optional deps) trigger this.
     "F811",
@@ -538,6 +535,27 @@ ignore = [
     # aren't used outside an assertion are intentional.
     "F841",
 ]
+
+# #4097: F401 (unused import) — enforced in src/, still ignored in tests/.
+# A blanket F401 ignore meant no gate could ever say "nobody uses this
+# import any more" -- #4094/#4095's own motivating case: a dead import in
+# a2a.py survived months of green CI, and its OWN module docstring cited
+# it as evidence two callers took the same lock (they didn't). Measured
+# before landing (#4097 first slice): removing the ignore surfaced 64
+# findings in src/ -- 61 were genuinely dead (no reference anywhere in
+# the file, not even inside a quoted annotation or a comment); 1 was a
+# deliberate re-export needing an inline `# noqa: F401` (router_loop.py's
+# EMPTY_STOP_RETRY_DIRECTIVE -- real external consumers import it FROM
+# router_loop, not from its origin module); 2 were re-exports missing
+# from their __init__.py's own `__all__` (services/__init__.py's
+# LiveSessionIdInputs/PutOutboxInputs -- adding them to `__all__` is
+# what actually satisfies F401 for a re-export, not an ignore).
+# tests/ is intentionally NOT included yet: measured separately at 333
+# findings, an order of magnitude more and a distinct population (test
+# fixtures/helpers imported for side effect, parametrize decorators, etc.)
+# -- a later slice's own scope, not folded into this one silently.
+[tool.ruff.lint.per-file-ignores]
+"tests/**/*.py" = ["F401"]
 
 # #3726: wired into CI as a ratchet (.github/workflows/test.yml's "mypy
 # (ratchet)" job), not a blocking full-adoption gate — the tree currently

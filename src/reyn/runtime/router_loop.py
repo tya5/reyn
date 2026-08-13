@@ -17,7 +17,11 @@ from reyn.core.dispatch import DispatchContext, dispatch_tool
 from reyn.llm.llm import call_llm_tools
 from reyn.llm.pricing import TokenUsage
 from reyn.prompt.loop_control import (
-    EMPTY_STOP_RETRY_DIRECTIVE,
+    EMPTY_STOP_RETRY_DIRECTIVE,  # noqa: F401 -- deliberate re-export, see #4097:
+    # every external consumer imports this name FROM router_loop (not from
+    # loop_control directly) -- router_loop_driver.py and
+    # test_chat_router_empty_stop_directive_wired.py both do
+    # `from reyn.runtime.router_loop import EMPTY_STOP_RETRY_DIRECTIVE`.
 )
 from reyn.prompt.loop_control import tool_call_cap_notice as _tool_call_cap_notice_text
 from reyn.runtime.router_system_prompt import (
@@ -3516,7 +3520,7 @@ class RouterLoop:
         ``_run_scheme_tool_round`` body. The OS exclude-gate produces the same
         ``tool_excluded`` error result **in place** (not a drop), so order +
         ``tool_call_id`` alignment are preserved across the dispatch."""
-        from reyn.tools.scheme import ExecContext, Execute, ExecutionResult
+        from reyn.tools.scheme import ExecContext, Execute
 
         actions = interp.actions
         tool_calls = [a["tc"] for a in actions]

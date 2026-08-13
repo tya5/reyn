@@ -1,13 +1,10 @@
 """reyn.config.media — media config: Voice/Multimodal/WebFetch/Gateway. (#1682 #3 split)."""
 from __future__ import annotations
 
-import socket
 from dataclasses import dataclass, field
-from pathlib import Path
-from typing import Any, Literal
+from typing import Literal
 
 from reyn._http_limits import MAX_DOWNLOAD_BYTES
-from reyn.runtime.budget.budget import CostConfig, CostLimitConfig
 
 
 @dataclass

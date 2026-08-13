@@ -13,7 +13,7 @@ from reyn.user_intervention import InterventionAnswer
 
 if TYPE_CHECKING:
     from reyn.core.events.events import EventLog
-    from reyn.user_intervention import RequestBus, UserIntervention
+    from reyn.user_intervention import UserIntervention
 
     from .intervention_handler import InterventionHandler
     from .intervention_registry import InterventionRegistry
