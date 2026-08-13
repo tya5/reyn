@@ -414,11 +414,13 @@ How tools are presented to the LLM and how its calls are dispatched is a **plugg
 | Command | Description | Documentation |
 |---------|-------------|---------------|
 | `reyn chat` | Interactive multi-turn chat with a named agent | [Reference](reference/cli/chat.md) |
+| `reyn run-once` | Non-interactive batch counterpart to `reyn chat` — reads the whole of stdin as one user message, drives the agent to completion (any number of tool-call iterations, one final stop), prints the final reply, exits. The SWE-bench runner and other automation pipe a whole task in this way | [Reference](reference/cli/run-once.md) |
 | `reyn agent` | Create and manage named persistent agents | [Reference](reference/cli/agent.md) |
 | `reyn topology` | Create and manage communication topologies | [Reference](reference/cli/topology.md) |
 | `reyn memory` | CRUD + search + export/import for agent memories | [Reference](reference/cli/memory.md) |
 | `reyn permissions` | Inspect and revoke saved approval entries | [Reference](reference/cli/permissions.md) |
 | `reyn events` | Replay event JSONL files or purge old files by date | [Reference](reference/cli/events.md) |
+| `reyn support-bundle` | Assembles a **redacted** diagnostic zip (#1833) — collects the three observability artifacts reyn already writes (LLM payload trace, WAL, event logs), filters by `--session`/`--since`, redacts every line through the existing secret-redaction layer. No new redaction logic, no provider calls — assembly + redaction-at-the-exit, not a new diagnostic mechanism | [Reference](reference/cli/support-bundle.md) |
 | `reyn mcp` | Serve, search, install, and manage MCP servers | [Reference](reference/cli/mcp.md) |
 | `reyn secret` | Set / list / clear secrets in `~/.reyn/secrets.env` | [Reference](reference/cli/secret.md) |
 | `reyn embeddings` | `status` / `rebuild` / `clear` for the action embedding index (`search_actions`) | [Reference](reference/cli/embeddings.md) |
@@ -427,6 +429,7 @@ How tools are presented to the LLM and how its calls are dispatched is a **plugg
 | `reyn cron` | Manage and run cron-scheduled skill jobs — foreground scheduler / list jobs + next-run / status | [reyn.yaml § cron](reference/config/reyn-yaml.md) |
 | `reyn web` | Start FastAPI gateway server (HTTP + SSE) | [Reference](reference/cli/web.md) |
 | `reyn init` | Scaffold `reyn.yaml` and `.reyn/` in current directory | [Reference](reference/cli/init.md) |
+| `reyn storage` | Read-only inspection of Reyn-managed on-disk storage: `.reyn/media/` + `.reyn/tool-results/` file/byte counts, plus file/byte/turn counts summed across every `history.jsonl` under `.reyn/agents/` — measurement only, no TTL/max-N/retention eviction policy yet (#4478/#4476 Phase 1; the visibility half of #4480's owner ruling, `reyn doctor`'s own disk-usage checks reuse the same `storage_stats()`/`aggregate_history_stats()` functions) | [Reference](reference/cli/storage.md) |
 | `reyn doctor` | Reports **measured** health, never declared — every line comes from actually reading a live effect (disk stat, a real audit-event, a real backend resolution), never restating a config value back. Read-only: never deletes, writes, or repairs anything (report-only by design, not merely by omission). Checks span disk usage, hook launch probes (C-1, a differential probe against a known-good control binary — never the hook's real configured args), external-event producer/consumer pairing (C-2), MCP negotiated version/capabilities (C-3(b), audit-log evidence, never a live connect), model/`api_base` reachability (C-4, a 0-token `GET /v1/models`, never a real completion call), and declared-vs-resolved sandbox posture (C-5) | [Reference](reference/cli/doctor.md) |
 
 ---
