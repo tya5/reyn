@@ -20,15 +20,11 @@ from pathlib import Path
 
 import pytest
 
+from reyn.core.events.events import EventLog
 from reyn.core.events.state_log import StateLog
 from reyn.runtime.services.chain_manager import ChainManager
 from reyn.runtime.services.snapshot_journal import SnapshotJournal
 from reyn.runtime.task_types import Requester
-
-
-class _NullEvents:
-    def emit(self, *_args, **_kwargs) -> None:
-        pass
 
 
 def _make_manager(tmp_path: Path) -> ChainManager:
@@ -37,7 +33,7 @@ def _make_manager(tmp_path: Path) -> ChainManager:
         agent_name="alpha", snapshot_path=tmp_path / "snap.json", state_log=log,
     )
     return ChainManager(
-        journal=journal, events=_NullEvents(), chain_timeout_seconds=0, max_hop_depth=10,
+        journal=journal, events=EventLog(), chain_timeout_seconds=0, max_hop_depth=10,
     )
 
 

@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 
+from reyn.core.events.events import EventLog
 from reyn.llm.llm import LLMToolCallResult
 from reyn.llm.pricing import TokenUsage, estimate_cost
 from reyn.runtime.router_loop import RouterLoop
@@ -44,11 +45,6 @@ def _run(coro):
 # Minimal FakeRouterHost (mirrors test_router_loop.py pattern)
 # ---------------------------------------------------------------------------
 
-class _FakeEventLog:
-    def emit(self, type: str, **data) -> None:  # noqa: A002
-        pass
-
-
 class _FakeHost:
     chat_id: str = "test-chat"
     agent_name: str = "test-agent"
@@ -56,7 +52,7 @@ class _FakeHost:
     output_language: str | None = "ja"
 
     def __init__(self) -> None:
-        self._events = _FakeEventLog()
+        self._events = EventLog()
         self.outbox: list[dict] = []
 
     @property

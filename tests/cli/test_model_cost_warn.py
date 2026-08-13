@@ -24,6 +24,7 @@ import asyncio
 import pytest
 
 from reyn.config.chat import CostWarnConfig, _build_cost_warn_config
+from reyn.core.events.events import EventLog
 from reyn.llm.model_cost_rate import get_input_cost_per_1m_usd, is_high_cost_model
 from reyn.runtime.lifecycle_forwarder import ChatLifecycleForwarder
 
@@ -181,22 +182,6 @@ def test_on_model_cost_warn_safe_on_missing_cost_field() -> None:
 # D. maybe_emit_model_cost_warn shared helper (S3 — de-dup + action field)
 # ---------------------------------------------------------------------------
 
-class _FakeEventLog:
-    """Minimal event log stub — records (type, data) pairs.
-
-    ``snapshot()`` is the public read surface (mirrors the snapshot() idiom
-    from testing policy — never assert on private fields like `.emitted`
-    directly from test code; use this method instead).
-    """
-    def __init__(self) -> None:
-        self._emitted: list[tuple[str, dict]] = []
-
-    def emit(self, event_type: str, **data: object) -> None:
-        self._emitted.append((event_type, dict(data)))
-
-    def snapshot(self) -> list[tuple[str, dict]]:
-        """Public read — returns a copy of all (event_type, data) pairs so far."""
-        return list(self._emitted)
 
 
 class _FakeResolver:
@@ -217,11 +202,18 @@ class _FakeSession:
             model_threshold_per_1m_input_usd=threshold,
         )
         self._resolver = _FakeResolver()
-        self._audit_events = _FakeEventLog()
+        # #4597 slice②: real EventLog, no fake — snapshot() is reconstructed
+        # from a subscriber capture (mirrors testing.md's "snapshot-style
+        # read", never asserting on the collaborator's own private state).
+        self._audit_events = EventLog()
+        self._audit_snapshot: list[tuple[str, dict]] = []
+        self._audit_events.add_subscriber(
+            lambda e: self._audit_snapshot.append((e.type, dict(e.data))),
+        )
 
     def event_snapshot(self) -> list[tuple[str, dict]]:
         """Public surface: returns recorded (event_type, data) pairs."""
-        return self._audit_events.snapshot()
+        return list(self._audit_snapshot)
 
 
 def test_maybe_emit_model_cost_warn_emits_for_known_high_cost_model() -> None:

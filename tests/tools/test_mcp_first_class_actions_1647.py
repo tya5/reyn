@@ -28,6 +28,7 @@ import asyncio
 
 import pytest
 
+from reyn.core.events.events import EventLog
 from reyn.tools import get_default_registry
 from reyn.tools.types import RouterCallerState, ToolContext
 from reyn.tools.universal_catalog import (
@@ -53,14 +54,9 @@ _MCP_SERVERS = [
 ]
 
 
-class _FakeEvents:
-    def emit(self, *a, **k) -> None:
-        pass
-
-
 def _ctx(with_tools: bool = True) -> ToolContext:
     return ToolContext(
-        events=_FakeEvents(),
+        events=EventLog(),
         permission_resolver=None,
         workspace=None,
         caller_kind="router",
@@ -128,7 +124,7 @@ async def test_per_tool_call_reaches_mcp_gate_e2e() -> None:
     ``tool``, so there is ONE route to that boundary rather than two."""
     host = _RecordingHost()
     ctx = ToolContext(
-        events=_FakeEvents(),
+        events=EventLog(),
         permission_resolver=None,
         workspace=None,
         caller_kind="router",
@@ -175,7 +171,7 @@ def test_list_mcp_tools_result_carries_each_tools_real_input_schema() -> None:
                      "inputSchema": _TOOL_SCHEMA}]
 
     ctx = ToolContext(
-        events=_FakeEvents(), permission_resolver=None, workspace=None,
+        events=EventLog(), permission_resolver=None, workspace=None,
         caller_kind="router", router_state=RouterCallerState(host=_Host()),
     )
     result = asyncio.run(LIST_MCP_TOOLS.handler({"server": "brave"}, ctx))

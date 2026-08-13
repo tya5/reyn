@@ -12,6 +12,7 @@ from pathlib import Path
 
 import pytest
 
+from reyn.core.events.events import EventLog
 from reyn.core.events.state_log import StateLog
 from reyn.runtime.router_loop import RouterLoop
 from reyn.runtime.services.chain_manager import ChainManager
@@ -26,24 +27,19 @@ from reyn.tools.types import RouterCallerState, ToolContext
 from tests._support.router_loop import FakeRouterHost
 
 
-class _NullEvents:
-    def emit(self, *_args, **_kwargs) -> None:
-        pass
-
-
 def _make_manager(tmp_path: Path) -> ChainManager:
     log = StateLog(tmp_path / "wal.jsonl")
     journal = SnapshotJournal(
         agent_name="alpha", snapshot_path=tmp_path / "snap.json", state_log=log,
     )
     return ChainManager(
-        journal=journal, events=_NullEvents(), chain_timeout_seconds=0, max_hop_depth=10,
+        journal=journal, events=EventLog(), chain_timeout_seconds=0, max_hop_depth=10,
     )
 
 
 def _ctx(chains, *, inbox_depth: "int | None" = None) -> ToolContext:
     return ToolContext(
-        events=_NullEvents(), permission_resolver=None, workspace=None,
+        events=EventLog(), permission_resolver=None, workspace=None,
         caller_kind="router",
         router_state=RouterCallerState(chains=chains, session_inbox_depth=inbox_depth),
     )

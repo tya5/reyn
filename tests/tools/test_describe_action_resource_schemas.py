@@ -40,13 +40,9 @@ import asyncio
 
 import pytest
 
+from reyn.core.events.events import EventLog
 from reyn.tools.types import RouterCallerState, ToolContext
 from reyn.tools.universal_catalog import _handle_describe_action
-
-
-class _FakeEvents:
-    def emit(self, *args, **kwargs) -> None:
-        pass
 
 
 class _FakeHost:
@@ -66,7 +62,7 @@ def _make_ctx(skills=None, mcp_servers=None):
         mcp_servers=mcp_servers,
     )
     return ToolContext(
-        events=_FakeEvents(),
+        events=EventLog(),
         permission_resolver=None,
         workspace=None,
         caller_kind="router",
@@ -161,7 +157,7 @@ def test_no_router_state_falls_back_for_resource_categories():
     used to stand in for this case.)
     """
     ctx = ToolContext(
-        events=_FakeEvents(),
+        events=EventLog(),
         permission_resolver=None,
         workspace=None,
         caller_kind="router",

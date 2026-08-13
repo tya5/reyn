@@ -26,6 +26,7 @@ from typing import Any
 
 import pytest
 
+from reyn.core.events.events import EventLog
 from reyn.tools.types import ToolContext, ToolDefinition, ToolGates
 from reyn.tools.universal_catalog import (
     CATEGORIES,
@@ -194,7 +195,7 @@ def test_every_dispatch_wired_category_actually_enumerates() -> None:
         embedding_model_class="some-model",
     )
     ctx = ToolContext(
-        events=_NullEventsForCategorySweep(),
+        events=EventLog(),
         permission_resolver=None,
         workspace=None,
         caller_kind="router",
@@ -210,11 +211,6 @@ def test_every_dispatch_wired_category_actually_enumerates() -> None:
         f"conditions — dispatchable via invoke_action, undiscoverable via "
         f"list_actions/tools= (see #4154)"
     )
-
-
-class _NullEventsForCategorySweep:
-    """Minimal events stub satisfying ToolContext.events typing."""
-    subscribers: list[Any] = []
 
 
 def test_action_categories_sp_slot_covers_every_category() -> None:
@@ -552,17 +548,9 @@ def _make_minimal_ctx() -> ToolContext:
     NotImplementedError before consulting any context state.
     """
     return ToolContext(
-        events=_NullEvents(),
+        events=EventLog(),
         permission_resolver=None,
         workspace=None,
         caller_kind="router",
         router_state=None,
     )
-
-
-class _NullEvents:
-    """Minimal events stub satisfying ToolContext.events typing."""
-    subscribers: list[Any] = []
-
-    def emit(self, *_args: Any, **_kwargs: Any) -> None:
-        pass

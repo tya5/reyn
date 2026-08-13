@@ -22,6 +22,7 @@ import json
 
 import pytest
 
+from reyn.core.events.events import EventLog
 from reyn.llm.llm import LLMToolCallResult
 from reyn.llm.pricing import TokenUsage
 from reyn.runtime.router_loop import RouterLoop
@@ -67,20 +68,6 @@ def _text_result(text: str = "done") -> LLMToolCallResult:
 
 
 # ---------------------------------------------------------------------------
-# _FakeEventLog — minimal real collaborator (records emitted events)
-# ---------------------------------------------------------------------------
-
-class _FakeEventLog:
-    """Minimal events stub: records emitted events, no subscribers."""
-
-    def __init__(self) -> None:
-        self.emitted: list[dict] = []
-
-    def emit(self, type: str, **data) -> None:
-        self.emitted.append({"type": type, **data})
-
-
-# ---------------------------------------------------------------------------
 # _FakeRouterHost — minimal real RouterLoopHost with universal wrappers on
 # ---------------------------------------------------------------------------
 
@@ -103,10 +90,18 @@ class _FakeRouterHost:
         self._universal_wrappers_enabled = universal_wrappers_enabled
         self._skills = skills or []
         self.outbox: list[dict] = []
-        self._events = _FakeEventLog()
+        self._events = EventLog()
+        # #4597 slice②: real EventLog, no fake — the {"type": ..., **data}
+        # dict shape every call site in this file already asserts on is
+        # reconstructed here from each real Event, at the ONE conversion
+        # boundary, so no downstream `ev["field"]` access needed to change.
+        self.emitted: list[dict] = []
+        self._events.add_subscriber(
+            lambda e: self.emitted.append({"type": e.type, **e.data}),
+        )
 
     @property
-    def events(self) -> _FakeEventLog:
+    def events(self) -> EventLog:
         return self._events
 
     def get_universal_wrappers_enabled(self) -> bool:
@@ -200,7 +195,7 @@ def _run_with_llm_sequence(
 
 
 def _routing_decided_events(host: _FakeRouterHost) -> list[dict]:
-    return [e for e in host.events.emitted if e["type"] == "routing_decided"]
+    return [e for e in host.emitted if e["type"] == "routing_decided"]
 
 
 # ---------------------------------------------------------------------------

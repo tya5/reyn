@@ -24,19 +24,9 @@ import asyncio
 import pytest
 
 from reyn.config.chat import CostWarnConfig
+from reyn.core.events.events import EventLog
 from reyn.llm.model_cost_rate import get_input_cost_per_1m_usd
 from reyn.runtime.model_cost_warn import maybe_block_high_cost_model
-
-
-class _FakeEventLog:
-    def __init__(self) -> None:
-        self._emitted: list[tuple[str, dict]] = []
-
-    def emit(self, event_type: str, **data: object) -> None:
-        self._emitted.append((event_type, dict(data)))
-
-    def snapshot(self) -> list[tuple[str, dict]]:
-        return list(self._emitted)
 
 
 class _FakeResolver:
@@ -77,7 +67,14 @@ class _FakeSession:
             block_on_high_cost=block,
         )
         self._resolver = _FakeResolver()
-        self._audit_events = _FakeEventLog()
+        # #4597 slice②: real EventLog, no fake — snapshot() is reconstructed
+        # from a subscriber capture (mirrors testing.md's "snapshot-style
+        # read", never asserting on the collaborator's own private state).
+        self._audit_events = EventLog()
+        self._audit_snapshot: list[tuple[str, dict]] = []
+        self._audit_events.add_subscriber(
+            lambda e: self._audit_snapshot.append((e.type, dict(e.data))),
+        )
         self._non_interactive = non_interactive
         self._handle_chat_limit_checkpoint = _RecordingCheckpoint(checkpoint_allows)
 
@@ -86,7 +83,7 @@ class _FakeSession:
         return self._handle_chat_limit_checkpoint.calls
 
     def event_snapshot(self) -> list[tuple[str, dict]]:
-        return self._audit_events.snapshot()
+        return list(self._audit_snapshot)
 
 
 def _run(coro):

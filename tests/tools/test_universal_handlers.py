@@ -52,18 +52,10 @@ from reyn.tools.universal_catalog import (
 )
 
 
-class _NullEvents:
-    """Minimal events stand-in for ToolContext.events."""
-    subscribers: list[Any] = []
-
-    def emit(self, *_args: Any, **_kwargs: Any) -> None:
-        pass
-
-
 def _make_ctx(router_state: RouterCallerState | None = None) -> ToolContext:
     """Build a ToolContext with optional RouterCallerState for handler tests."""
     return ToolContext(
-        events=_NullEvents(),
+        events=EventLog(),
         permission_resolver=None,
         workspace=None,
         caller_kind="router",
