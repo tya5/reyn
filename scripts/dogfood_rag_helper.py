@@ -14,10 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
-import os
-import struct
 from pathlib import Path
-from typing import Any
 
 
 def _deterministic_vector(text: str, dim: int = 1536) -> list[float]:

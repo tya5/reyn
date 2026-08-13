@@ -28,7 +28,7 @@ import time
 from collections import OrderedDict, defaultdict, deque
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Optional
+from typing import Optional
 
 from reyn.llm.pricing import (
     CostBreakdown,

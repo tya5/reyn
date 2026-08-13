@@ -72,7 +72,6 @@ from __future__ import annotations
 import platform
 import shutil
 import socket as _socket_mod
-import struct
 import sys
 import tempfile
 from dataclasses import dataclass

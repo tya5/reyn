@@ -1,10 +1,8 @@
 """reyn.config.chat — chat-session config: Reasoning/Chat/Loop/Compaction/Timeout/OnLimit/Safety. (#1682 #3 split)."""
 from __future__ import annotations
 
-import socket
 from dataclasses import dataclass, field
-from pathlib import Path
-from typing import Any, Literal
+from typing import Literal
 
 # ── FP-0004: safety: section (user-facing unified schema) ──────────────────
 # PR22: CostConfig + CostLimitConfig live in `reyn.runtime.budget` (re-exported here

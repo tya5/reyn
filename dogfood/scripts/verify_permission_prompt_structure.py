@@ -36,7 +36,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-from pathlib import Path
 
 from reyn.intervention_choices import generic_yn_choices
 from reyn.runtime.outbox import OutboxMessage

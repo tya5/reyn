@@ -27,7 +27,6 @@ from reyn.prompt.router_frame import (
     render_mechanism_routing_frame,
     role_stamp,
 )
-from reyn.runtime.router_tools import MAX_DESC_LEN_FOR_LISTING
 
 # ---------------------------------------------------------------------------
 # Public API

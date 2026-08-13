@@ -25,7 +25,7 @@ import logging
 from typing import Awaitable, Callable
 
 from reyn.runtime.outbox import OutboxMessage
-from reyn.runtime.transport import TransportRef, TuiRef
+from reyn.runtime.transport import TuiRef
 
 logger = logging.getLogger(__name__)
 

@@ -58,7 +58,6 @@ Bands: verified (V), inconclusive (I), refuted (R), blocked (B)
 
 import csv
 import json
-from pathlib import Path
 
 OUTCOMES = ["verified", "inconclusive", "refuted", "blocked"]
 

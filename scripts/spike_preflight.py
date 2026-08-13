@@ -465,7 +465,7 @@ async def _run_all_checks() -> None:
 
 
 def main() -> None:
-    from reyn.llm.llm import run_async, shutdown_logging
+    from reyn.llm.llm import shutdown_logging
 
     async def _wrapped() -> None:
         await _run_all_checks()

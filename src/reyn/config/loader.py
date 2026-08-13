@@ -1,11 +1,9 @@
 """reyn.config.loader — config loading + yaml shape-wiring (load_config / _merge / _load_yaml). (#1682 #3 split)."""
 from __future__ import annotations
 
-import socket
-from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any
 
 from reyn.config.chat import (  # #1682 #3 cross-section
     _build_chat_config,
@@ -46,7 +44,6 @@ from reyn.config.observability import (
     _build_observability_config,
 )
 from reyn.config.root import ReynConfig  # #1682 #3 cross-section
-from reyn.runtime.budget.budget import CostConfig, CostLimitConfig
 
 
 def _load_yaml(path: Path) -> dict:

@@ -9,16 +9,13 @@ import asyncio
 import json
 import logging
 import re
-import time
-import uuid
-from typing import TYPE_CHECKING, Any, Awaitable, Callable, Literal
+from typing import TYPE_CHECKING, Any, Callable
 
 if TYPE_CHECKING:
     from reyn.interfaces.slash import SlashContext
 
 logger = logging.getLogger(__name__)
-from dataclasses import asdict, dataclass, field
-from datetime import timezone
+from dataclasses import asdict, dataclass
 from pathlib import Path
 
 from reyn.config import (  # noqa: F401
@@ -50,10 +47,6 @@ from reyn.llm.model_resolver import ModelResolver
 from reyn.runtime.agent import Agent
 from reyn.runtime.budget.budget import (
     BudgetTracker,
-    format_budget_full,
-    format_cost_line,
-    format_refusal_message,
-    format_warn_message,
 )
 from reyn.runtime.capability_visibility import CapabilityVisibility
 from reyn.runtime.chat_message import (  # #312 C1: extracted VO + helpers
@@ -67,7 +60,6 @@ from reyn.runtime.inbox_arbiter import InboxArbiter
 from reyn.runtime.limits.limit_handler import (
     LimitDecision,
     handle_limit_exceeded,
-    reset_run_extensions,
 )
 from reyn.runtime.outbox import OutboxMessage
 from reyn.runtime.outbox_hub import OutboxHub
@@ -89,7 +81,6 @@ from reyn.runtime.services import (
     RouterHostAdapter,
     SnapshotJournal,
 )
-from reyn.runtime.services.chain_manager import _PendingChain
 from reyn.runtime.services.execution_driver import ExecutionDriver
 from reyn.runtime.services.inter_agent_messaging import InterAgentMessaging
 from reyn.runtime.services.recovery import default_snapshot_path
@@ -104,7 +95,6 @@ from reyn.runtime.session_params import (
     ReactivityConfig,
 )
 from reyn.runtime.session_pure import (
-    merge_memory_indexes,
     new_chain_id,
     render_summary_for_storage,
 )
@@ -115,8 +105,6 @@ from reyn.security.permissions.permissions import PermissionResolver
 from reyn.services.compaction.engine import CompactionEngine
 from reyn.user_intervention import (
     InterventionAnswer,
-    InterventionChoice,
-    RequestBus,
     UserIntervention,
 )
 

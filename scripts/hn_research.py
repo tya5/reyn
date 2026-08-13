@@ -52,7 +52,6 @@ import argparse
 import concurrent.futures
 import html
 import json
-import os
 import re
 import sys
 import urllib.error
