@@ -128,27 +128,6 @@ def test_build_tools_on_when_flag_on() -> None:
     assert names[-3:] == ["list_actions", "describe_action", "invoke_action"]
 
 
-# ── 3. Session constructor accepts action_retrieval_config ───────────
-
-
-def test_chat_session_accepts_action_retrieval_config() -> None:
-    """Tier 2: Session constructor signature includes
-    action_retrieval_config parameter (= PR-3b-iii integration point).
-
-    The constructor accepts the config; downstream wiring is verified
-    via RouterHostAdapter unit tests above (= same flag flows through).
-    """
-    import inspect
-
-    from reyn.runtime.session import Session
-
-    sig = inspect.signature(Session.__init__)
-    assert "action_retrieval_config" in sig.parameters
-    # Default must be None so existing callers don't break
-    default = sig.parameters["action_retrieval_config"].default
-    assert default is None
-
-
 # ── 4. reyn.yaml end-to-end ──────────────────────────────────────────────
 
 

@@ -293,52 +293,21 @@ def _build_embedding_config(raw: object) -> EmbeddingConfig:
     )
 
 
-@dataclass
-class ActionRetrievalConfig:
-    """`action_retrieval:` — FP-0034 universal catalog + retrieval settings.
-
-    #4552: the arc that emptied this class.
-
-    - PR-1: ``hot_list_n``/``hot_list_seed`` discarded — owner directive,
-      hot list's role is gone, superseded by ``list_actions`` as the
-      canonical discovery path.
-    - PR-2: ``mode`` (§D24 operational-mode label) removed — 0 real
-      consumers, confirmed via census in the PR body.
-    - PR-3 (this one): ``universal_wrappers_enabled`` MOVED to
-      ``tool_use.universal_wrappers_enabled`` (see
-      ``execution.ToolUseConfig``) — architect's ruling: it is a
-      ``tool_use`` (presentation-scheme) property, not a retrieval
-      setting; only ``universal-category``'s own 3 wrapper functions ever
-      read it. Unblocked once #4564 removed the flag's one remaining
-      undeclared reach into ``search_actions`` visibility (now solely
-      ``embedding.enabled``'s).
-
-    This dataclass is now EMPTY — PR-4 deletes ``action_retrieval:``
-    (and this class) entirely, closing the #4552 arc.
-    """
-
-
-def _build_action_retrieval_config(raw: object) -> ActionRetrievalConfig:
-    """Parse ``action_retrieval:`` from reyn.yaml.
-
-    Accepts a dict with any subset of fields; unknown keys are
-    ignored (= forward-compatible with future Phase 2 additions).
-    Validates types and clamps numeric ranges to non-negative.
-
-    Raises:
-        ValueError: when a recognised field has an invalid type
-            (= explicit type mismatch; missing fields fall back to
-            defaults).
-    """
-    if raw is None:
-        return ActionRetrievalConfig()
-    if not isinstance(raw, dict):
-        raise ValueError(
-            f"action_retrieval must be a mapping, got {type(raw).__name__}"
-        )
-
-    # #4552 PR-3: the last recognised field (universal_wrappers_enabled)
-    # moved to tool_use.universal_wrappers_enabled — every key reaching
-    # here is now unknown (forward-compatible: ignored, not an error).
-    # PR-4 deletes this function and the section entirely.
-    return ActionRetrievalConfig()
+# #4552: `action_retrieval:` / `ActionRetrievalConfig` — DELETED entirely.
+# The arc that closed it:
+# - PR-1: `hot_list_n`/`hot_list_seed` discarded — owner directive, hot
+#   list's role is gone, superseded by `list_actions` as the canonical
+#   discovery path.
+# - PR-2: `mode` (§D24 operational-mode label) removed — 0 real
+#   consumers, confirmed via census.
+# - PR-3: `universal_wrappers_enabled` MOVED to
+#   `tool_use.universal_wrappers_enabled` (see `execution.ToolUseConfig`)
+#   — architect's ruling: a `tool_use`/presentation-scheme property, not
+#   a retrieval setting.
+# - PR-4 (this change, same PR as PR-3 — lead-coder ruling: a
+#   genuinely-empty section is an intermediate state that should never
+#   land on main by itself, same "regression and repair move together"
+#   shape as #4534): the now-empty class + its parser are deleted. A
+#   `reyn.yaml` still carrying `action_retrieval:` gets the standard
+#   unknown-key tolerance (T0's `unknown_config_keys`, `config_schema.py`)
+#   — ignored, reported, not a parse error.

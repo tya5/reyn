@@ -248,7 +248,7 @@ gate は pure function; runtime は `embedding.enabled`(FP-0066 §7)
 
 ## System prompt placement (§D9)
 
-`action_retrieval.universal_wrappers_enabled` が true のとき、 router
+`tool_use.universal_wrappers_enabled` が true のとき、 router
 system prompt に **`## Action categories`** section が加わり、 全
 category と canonical-default 意味論を列挙する。 この section は
 `## Capabilities` と `## Behaviour` の間に位置し、 static prompt-cache
@@ -365,11 +365,11 @@ off で走り影響を受けない。
 
 **このセクションは `universal_wrappers_enabled` フラグ自身のデフォルトを説明するものであり、今日どの tool-use scheme がそれに解決されるかではありません** — このページ冒頭の状態更新を参照してください: `tool_use.scheme`(x `tool_use.transport`)selector がこのフラグの *選択* 役割を generalize しており、chat レイヤー自身の scheme デフォルト(`enumerate-all`)はこのフラグを一切経由しません。フラグ自体は `universal-category` scheme の live な presentation(catalog-wrapper vs direct-tool)として残存します。
 
-production では `ActionRetrievalConfig.universal_wrappers_enabled` の
-default は `True`。 `build_tools` / `build_system_prompt` を直接呼ぶ
-caller (= `FakeRouterHost` を組む unit test fixture 等) で
-`ActionRetrievalConfig` を渡さないものは引き続き legacy off behavior に
-留まる。 これは `RouterLoop` が `getattr(host,
+production では `ToolUseConfig.universal_wrappers_enabled`(#4552 PR-3:
+廃止された `ActionRetrievalConfig` から移動)の default は `True`。
+`build_tools` / `build_system_prompt` を直接呼ぶ caller (= `FakeRouterHost`
+を組む unit test fixture 等) でこの flag を渡さないものは引き続き
+legacy off behavior に留まる。 これは `RouterLoop` が `getattr(host,
 "get_universal_wrappers_enabled", None)` fallback で flag を読むため
 で、 method が無い場合は `False` 扱い。 この dual path によって
 LLMReplay fixture は byte-valid のまま、 production router は新 tools
@@ -378,7 +378,7 @@ LLMReplay fixture は byte-valid のまま、 production router は新 tools
 opt-out したい場合は `reyn.yaml` に:
 
 ```yaml
-action_retrieval:
+tool_use:
   universal_wrappers_enabled: false
 ```
 
@@ -402,5 +402,5 @@ top-N freq+recency の direct-alias 投影、デフォルト無効）がここ�
 - [`src/reyn/tools/universal_dispatch.py`](https://github.com/anthropics/reyn) — `_CATEGORY_ACTIONS` membership table、 `require_known_action`、 `UnknownActionError`、 `suggest_similar_names`
 - [`src/reyn/runtime/router_tools.py`](https://github.com/anthropics/reyn) — `build_tools` integration (flag-gate された wrapper)
 - [`src/reyn/runtime/router_system_prompt.py`](https://github.com/anthropics/reyn) — `## Action categories` section
-- [`src/reyn/config/embedding.py`](https://github.com/anthropics/reyn) — `ActionRetrievalConfig`
-- [`docs/reference/config/reyn-yaml.ja.md`](../../reference/config/reyn-yaml.ja.md#action_retrieval-ブロック) — config reference
+- [`src/reyn/config/execution.py`](https://github.com/anthropics/reyn) — `ToolUseConfig.universal_wrappers_enabled`（#4552 PR-3: 廃止された `ActionRetrievalConfig` から移動）
+- [`docs/reference/config/reyn-yaml.ja.md`](../../reference/config/reyn-yaml.ja.md#tool_use-block) — config reference

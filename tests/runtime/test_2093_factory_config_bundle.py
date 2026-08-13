@@ -25,7 +25,6 @@ def test_from_config_maps_each_field_to_its_config_source() -> None:
     # build_scoped_chat_session uniform config (8)
     assert fc.sandbox_config is config.sandbox
     assert fc.multimodal_config is config.multimodal
-    assert fc.action_retrieval_config is config.action_retrieval
     assert fc.embedding_config is config.embedding
     assert fc.router_config is config.llm.router
     assert fc.retry_config is config.llm.retry

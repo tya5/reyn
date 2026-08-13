@@ -278,7 +278,7 @@ sandbox backend. Hidden categories appear neither in the
 
 ## System prompt placement (§D9)
 
-When `action_retrieval.universal_wrappers_enabled` is true, the router
+When `tool_use.universal_wrappers_enabled` is true, the router
 system prompt gains a **`## Action categories`** section listing every
 category with its canonical-default semantic. The section sits
 between `## Capabilities` and `## Behaviour` so it stays inside the
@@ -408,11 +408,11 @@ selector generalizes this flag's *selection* role, and the chat layer's own
 scheme default (`enumerate-all`) does not route through this flag at all. The flag itself remains live for the
 `universal-category` scheme (catalog-wrapper vs direct-tool presentation).
 
-`ActionRetrievalConfig.universal_wrappers_enabled` defaults to `True`
-in production. Direct callers of `build_tools` or `build_system_prompt`
-that don't pass an `ActionRetrievalConfig` (e.g. unit-test fixtures
-constructing a `FakeRouterHost`) keep the legacy off behavior because
-`RouterLoop` reads the flag through a `getattr(host,
+`ToolUseConfig.universal_wrappers_enabled` (#4552 PR-3: moved from the
+retired `ActionRetrievalConfig`) defaults to `True` in production. Direct
+callers of `build_tools` or `build_system_prompt` that don't pass this flag
+(e.g. unit-test fixtures constructing a `FakeRouterHost`) keep the legacy
+off behavior because `RouterLoop` reads the flag through a `getattr(host,
 "get_universal_wrappers_enabled", None)` fallback that returns
 `False` when the method is missing. The dual path keeps LLMReplay
 fixtures byte-valid while production routers get the new tools.
@@ -420,7 +420,7 @@ fixtures byte-valid while production routers get the new tools.
 To opt out, add the following to `reyn.yaml`:
 
 ```yaml
-action_retrieval:
+tool_use:
   universal_wrappers_enabled: false
 ```
 
@@ -518,5 +518,5 @@ here — removed, owner directive: the mechanism's role is gone, superseded by
 - [`src/reyn/tools/universal_dispatch.py`](https://github.com/anthropics/reyn) — `_CATEGORY_ACTIONS` membership table, `require_known_action`, `UnknownActionError`, `suggest_similar_names`
 - [`src/reyn/runtime/router_tools.py`](https://github.com/anthropics/reyn) — `build_tools` integration (flag-gated wrappers)
 - [`src/reyn/runtime/router_system_prompt.py`](https://github.com/anthropics/reyn) — `## Action categories` section
-- [`src/reyn/config/embedding.py`](https://github.com/anthropics/reyn) — `ActionRetrievalConfig`
-- [`docs/reference/config/reyn-yaml.md`](../../reference/config/reyn-yaml.md#action_retrieval-block) — config reference
+- [`src/reyn/config/execution.py`](https://github.com/anthropics/reyn) — `ToolUseConfig.universal_wrappers_enabled` (#4552 PR-3: moved from the retired `ActionRetrievalConfig`)
+- [`docs/reference/config/reyn-yaml.md`](../../reference/config/reyn-yaml.md#tool_use-block) — config reference

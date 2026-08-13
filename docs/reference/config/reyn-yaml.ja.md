@@ -67,7 +67,6 @@ reload）、`reyn.yaml` 側に書いた同じキーは他と同じく再起動�
 | `web_fetch` | マップ | PRJ のみ・**再起動** | `web_fetch` ツールと MCP レジストリ呼び出しの SSL 設定。以下参照。 |
 | `gateway` | マップ | PRJ のみ・**再起動** | `reyn web` ゲートウェイ自身の設定: 認証モデル、WebSocket 受信フレーム上限、マウントするサーフェス。旧 `web:` キー（`web_fetch` と同居していた）から分割。以下参照。 |
 | `sandbox` | マップ | PRJ のみ・**再起動** | バックエンド選択（`backend`）、非対応プラットフォームポリシー（`on_unsupported`）、強制モード（`mode`: compat / strict / custom）、agent-level サンドボックスポリシー（`policy`）。以下参照。 |
-| `action_retrieval` | マップ | PRJ のみ・**再起動** | ユニバーサルカタログの可視化 + 検索設定。以下参照。 |
 | `embedding` | マップ | PRJ のみ・**再起動** | RAG 埋め込み: マスタースイッチ（`enabled`）、モデルクラス、バッチサイズと並列度、リトライ / バックオフ / タイムアウト、トークナイザ、コスト警告閾値。以下参照。 |
 | `chat` | マップ | PRJ のみ・**再起動** | チャットセッションのランタイム設定: 履歴の圧縮、reasoning（"thinking"）テキストの扱い、対話レンダラ（`render_mode`）、TUI の gutter、body の neutralize、許可する画像 URL スキーム。以下参照。 |
 | `voice` | マップ | PRJ のみ・**再起動** | ⚠️ 現在利用不可(consumerなし)。以下参照。 |
@@ -379,6 +378,8 @@ tool_use:
 | `transport` | 文字列 | `tool_calls` | モデルが選択したアクションをどう表現するか: `tool_calls`（ネイティブ tool-calling）または `content_fence`（応答テキスト内のフェンス付きコードとしてアクションを表現 — CodeAct）。 |
 | `universal_wrappers_enabled` | bool | `true` | **#4552 PR-3 — `action_retrieval.universal_wrappers_enabled` からここへ移動**（architect 裁定: `tool_use`/presentation-scheme の性質であり、retrieval 設定ではない）。`scheme` が `universal-category` に解決される layer について、`true`（デフォルト）は 4 universal wrapper（`list_actions` / `search_actions` / `describe_action` / `invoke_action`）のみをその layer の `tools=` に出す。legacy per-kind tool（`invoke_skill` / `call_mcp_tool` 等）はその layer で LLM に surface されず、wrapper の backing handler として残存。`search_actions` は `embedding.enabled` で別途ゲート（#4564 — このフラグはどの scheme でも `search_actions` の可視性に一切影響しない）。`false` 設定でその layer の wrapper surface 自体を無効化（= legacy のみが addressing path）。`scheme` が `enumerate-all`/`retrieval` である layer には影響しない。`scheme` が `universal-category` でないのにこのフラグを明示的に `true` にしても効果は無く、`reyn config validate` がその組み合わせを報告する（#4231(C)）。 |
 
+`list_actions` / `describe_action` / `invoke_action` wrapper の完全な意味論（カテゴリ discovery、エラー復帰 `suggestions`、weak-model landing design）は [Concepts: universal catalog](../../concepts/tools-integrations/universal-catalog.ja.md) を参照。
+
 上記の軸の値の組み合わせは、現時点ですべて実装済みです:
 
 | `scheme` \ `transport` | `tool_calls` | `content_fence` |
@@ -560,92 +561,6 @@ sandbox:
 | `max_timeout_seconds` | int | `600`（#3903①） | LLM が per-call で要求できる `timeout`（`exec` の任意引数）の上限 — **operator が制御**、ハードコード値ではない。上限を超える要求は静かに切り詰めず拒否し、実際に設定された上限を名指しする。`600` より下げれば LLM が要求できる範囲が実際に狭まる。LLM がこれを広げることはできない。 |
 
 [リファレンス: control-ir — `sandboxed_exec`](../runtime/control-ir.md#sandboxed_exec) で op スキーマとバックエンド選択の詳細を参照してください。
-
-## `action_retrieval` ブロック
-
-ユニバーサルカタログの可視化 + 検索設定。 scheme *選択* は [`tool_use` ブロック](#tool_use-block)（下記参照）に generalize されています — `tool_use.scheme` はデフォルトで `enumerate-all`(この wrapper path ではない)です。 `tool_use.scheme: category` を設定するとこのフラグが設定する wrapper scheme を選択できます(FP-0066 P4b, #3247 — 旧 `tool_use.chat` key は削除され、`scheme` x `transport` の 2-key に分割されました。presentation 軸の名前は `category`、解決先の登録済み scheme 名が `universal-category`)。 chat レイヤーの scheme が `universal-category` に解決される時、 このフラグがその presentation を制御します。 **ユニバーサル wrapper** (`list_actions` / `describe_action` / `invoke_action`) による、 全 skill / agent / MCP / file / memory / RAG カテゴリで統一の browse / describe / invoke を提供します。`universal_wrappers_enabled` は legacy フラグパスの直接呼び出し元に対してデフォルト ON — その呼び出し元について既存の flat `tools=` shape を保持したい operator は `universal_wrappers_enabled: false` でオプトアウト可能。
-
-```yaml
-action_retrieval:
-  universal_wrappers_enabled: true    # デフォルト; false でオプトアウト
-embedding:
-  enabled: false                      # デフォルト（無効）; opt-in するには true
-  # default_class: standard           # enabled 時に使う embedding class
-```
-
-### `action_retrieval` フィールド
-
-| フィールド | 型 | デフォルト | 説明 |
-|-----|------|---------|-------------|
-| `universal_wrappers_enabled` | bool | `true` | `tool_use` scheme が `universal-category` に解決される layer について、`true`(デフォルト)の時、その layer の `tools=` は 4 universal wrappers (`list_actions` / `search_actions` / `describe_action` / `invoke_action`) のみ。 legacy per-kind tool (`invoke_skill` / `call_mcp_tool` 等) はその layer で LLM に surface されず、 wrapper の backing handler として残存。 `search_actions` は `embedding.enabled` で別途ゲート（下記参照）。 `false` 設定でその layer の wrapper surface 自体を無効化 (= legacy のみが addressing path)。 scheme が `enumerate-all`(`chat` layer 自身のデフォルト)である layer には影響しない — その scheme はこのフラグを一切参照しない。 |
-
-> **#4552（2026-08）— hot list 撤去。** 従来の `hot_list_n` / `hot_list_seed`
-> フィールド（top-N freq+recency の direct-alias 投影）は**削除、alias なし**
-> — owner 指示: 機構の役割はすでに無くなっており、`list_actions` が正規の
-> discovery path として代替済み。 これらのキーを持つ `reyn.yaml` は通常の
-> unknown-key 許容（無視されるだけで parse エラーにはならない）を受ける —
-> 移行先が無いので移行パスも無い。
-
-> **#4552 PR-2（2026-08）— `mode` 撤去。** `mode` フィールド
-> （`"minimal"`/`"default"`/`"performance"`、§D24）は実際の消費者が 0 だった
-> — どの呼び出し元も参照しておらず、将来の仮想的な消費者のためだけに存在
-> していた accessor（`get_action_retrieval_config()`）も同じ PR で削除。
-> 上記と同じ unknown-key 許容がこのキーを持つ `reyn.yaml` にも適用される。
-
-### クイックスタート — semantic `search_actions` を opt-in
-
-`search_actions` はデフォルトで無効(`embedding.enabled: false`)— semantic search はプロジェクト全体で opt-in の方針です。有効にするには:
-
-```yaml
-# reyn.yaml — API backed、ローカルインストール不要 (`OPENAI_API_KEY` が必要)
-embedding:
-  enabled: true
-  # default_class: standard   # デフォルト; openai/text-embedding-3-small を使用
-```
-
-```yaml
-# reyn.yaml — 自前の litellm proxy 背後のローカルモデル（API キー不要）;
-# reyn 起動前に LITELLM_API_BASE を export — proxy の config.yaml と命名規則はガイド参照
-embedding:
-  enabled: true
-  default_class: local
-  classes:
-    local:
-      model: openai/nomic-embed-text
-```
-
-> **FP-0066 §7(2026-07)— config clean-break。** 以前の断片的なゲート
-> `action_retrieval.embedding_class`(on/off の判断と、どの embedding class を
-> 使うかを混同していた)は **廃止(alias なし)**。 2 つの独立したフィールドに
-> 分割: `embedding.enabled`(bool、デフォルト `false` — embedding-backed な
-> semantic-discovery レイヤー全体の単一 opt-in スイッチ。同時に 2 つを有効化する
-> ─ action retrieval の `search_actions` と、FP-0066 P3b リポジトリ知識
-> index（`knowledge_repo_doc`/`knowledge_repo_src`）の無条件バックグラウンド
-> build。後者は別物の FP-0063 `rag` プラグイン自身の `rag_ingest` とは異なり、
-> それを要求もしない ─ 詳細は [`embedding` フィールド表](reyn-yaml.md#embedding-fields)
-> (EN) を参照)と
-> `embedding.default_class`(string、デフォルト `"standard"` — 既存フィールド、
-> 変更なし)。
-
-詳細な手順（オフライン/エアギャップ環境のガイダンスを含む）は [ガイド: semantic search を有効にする](../../guide/for-users/enable-semantic-search.ja.md) を参照。
-
-### クイックスタート — オプトアウト
-
-```yaml
-# reyn.yaml — legacy の tools= shape を保持
-action_retrieval:
-  universal_wrappers_enabled: false
-```
-
-有効時（デフォルト）、 チャット Router の `tools=` 末尾に wrapper が含まれる。 LLM は以下を呼び出し可能:
-
-- `list_actions(category=["mcp"])` → qualified name 形式(例: `mcp_call_tool`)でカテゴリ内の利用可能 action を列挙
-- `describe_action(action_name="mcp_call_tool")` → input schema を取得
-- `invoke_action(action_name="mcp_call_tool", args={...})` → 既存 handler 経由で実行
-
-どのカテゴリも列挙する action は固定 verb 集合 — リソース（保存済み memory / indexed corpus / MCP tool / 登録済 pipeline）は verb の引数であって action そのものではないため、 列挙される集合は蓄積量に依存しない。 リソースはカテゴリの discovery verb (`list_memory`, `rag_operation__list_sources`, `list_mcp_tools`, `pipeline_list`) で discover し、 その id を引数として渡す。 不明な action 名は文字列類似度でランクされた `suggestions` を含む構造化エラーを返し、 LLM は 1 turn で復帰可能。
-
-ツールレジストリ / dispatch の背景は Concepts: architecture (architecture doc removed) を参照。
 
 ## `agent_id`
 
@@ -1104,7 +1019,7 @@ presentations:
 
 ## `embedding` ブロック
 
-RAG 埋め込みモデルクラスとバッチ設定。組み込みデフォルトが OpenAI パスをカバーしているため、`OPENAI_API_KEY` を設定した新規インストールでは `reyn.yaml` の変更は不要です。
+RAG 埋め込みモデルクラスとバッチ設定。組み込みデフォルトが OpenAI パスをカバーしているため、`OPENAI_API_KEY` を設定した新規インストールでは `reyn.yaml` の変更は不要です。オフライン/エアギャップ環境を含む opt-in の全手順は [ガイド: semantic search を有効にする](../../guide/for-users/enable-semantic-search.ja.md) を参照。
 
 ```yaml
 embedding:

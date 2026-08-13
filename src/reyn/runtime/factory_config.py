@@ -48,7 +48,6 @@ class SessionFactoryConfig:
     # shape/role as read_cap_config (#4431's role split): bytes,
     # model-independent, config-driven.
     history_resident_config: Any
-    action_retrieval_config: Any
     embedding_config: Any
     router_config: Any
     retry_config: Any
@@ -134,7 +133,6 @@ class SessionFactoryConfig:
             read_cap_config=config.read_cap,
             # #4387 Phase B ③: the resource-bound history-resident cap config.
             history_resident_config=config.history_resident,
-            action_retrieval_config=config.action_retrieval,
             embedding_config=config.embedding,
             router_config=config.llm.router,
             retry_config=config.llm.retry,

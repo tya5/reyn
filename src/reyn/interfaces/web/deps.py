@@ -367,7 +367,7 @@ def _get_registry():
                 state_log=state_log,
                 budget_tracker=budget_tracker,
                 # #2093: the uniform reyn.yaml-derived per-session config (sandbox /
-                # multimodal / action_retrieval / embedding / router / retry /
+                # multimodal / embedding / router / retry /
                 # op-loops / tool-use-scheme) — one bundle, so a new uniform arg
                 # can't be missed here (the sandbox_config B52 drift class is gone).
                 factory_config=SessionFactoryConfig.from_config(config, root),

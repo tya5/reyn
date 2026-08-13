@@ -24,7 +24,6 @@ import asyncio
 
 import pytest
 
-from reyn.config.loader import _build_action_retrieval_config
 from reyn.core.events.events import EventLog
 from reyn.core.op_runtime.context import OpContext
 from reyn.data.workspace.workspace import Workspace
@@ -267,20 +266,12 @@ def test_bare_mcp_search_threshold_key_is_ignored_not_erroring(tmp_path) -> None
 
 
 # ---------------------------------------------------------------------------
-# Sanity: ActionRetrievalConfig no longer carries embedding_class either
+# Sanity: `embedding_class` never resurfaces as a live field anywhere.
 # ---------------------------------------------------------------------------
-
-
-def test_action_retrieval_config_has_no_embedding_class_field() -> None:
-    """Tier 1: #3218 / FP-0066 §7 — `ActionRetrievalConfig.embedding_class`
-    is gone (clean-break split into `embedding.enabled` + the pre-existing
-    `embedding.default_class`)."""
-    import dataclasses
-
-    from reyn.config import ActionRetrievalConfig
-
-    field_names = {f.name for f in dataclasses.fields(ActionRetrievalConfig)}
-    assert "embedding_class" not in field_names
-    # The parser also silently ignores it now (forward-compat unknown key).
-    cfg = _build_action_retrieval_config({"embedding_class": "standard"})
-    assert not hasattr(cfg, "embedding_class")
+# (#4552 PR-3+4: the ``ActionRetrievalConfig`` this sanity check used to
+# target — the clean-break split's OTHER half, `embedding.enabled` +
+# `embedding.default_class` — is deleted entirely, its own 4 fields
+# fully migrated/retired across the #4552 arc. Nothing left to pin here;
+# `test_search_actions_description_names_new_config_key` above already
+# guards the retired ``action_retrieval.embedding_class`` key from
+# resurfacing in the LLM-facing description.)

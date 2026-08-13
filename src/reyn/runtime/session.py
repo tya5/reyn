@@ -22,7 +22,6 @@ from datetime import timezone
 from pathlib import Path
 
 from reyn.config import (  # noqa: F401
-    ActionRetrievalConfig,
     AuditEventsConfig,
     CostWarnConfig,
     EmbeddingConfig,
@@ -616,7 +615,7 @@ class _HistoryCompactionBundle:
         / ``self._compaction`` / ``self._media_store`` /
         ``self._offload_config`` / ``self._budget_tracker`` /
         ``self._safety`` / ``self._latest_summary`` /
-        ``self._action_retrieval`` / ``self._non_interactive`` /
+        ``self._non_interactive`` /
         ``self._reasoning`` / ``self._active_branch_history`` /
         ``self._append_history`` / ``self.agent_name``.
 
@@ -854,7 +853,6 @@ class Session:
         # (verify_ssl / allow_private_ips / max_download_bytes). Plain value, same
         # shape as multimodal_config — not a per-turn supplier.
         web_fetch_config: "WebFetchConfig | None" = None,
-        action_retrieval_config: "ActionRetrievalConfig | None" = None,
         # Chat-layer tool-use scheme name, threaded to RouterLoop (#1593 PR-2, default per #1657)
         chat_tool_use_scheme: str = "enumerate-all",
         # #4552 PR-3: moved from action_retrieval.universal_wrappers_enabled —
@@ -1010,11 +1008,6 @@ class Session:
             self._media_store = None
         # Queue of /image-attached blocks drained on the next user-message turn (#366, see session-construction.md#multimodal-media)
         self._pending_user_images: list[dict] = []
-        # #4552 PR-3: no longer drives universal-wrapper visibility — that
-        # field moved to tool_use.universal_wrappers_enabled (see
-        # self._universal_wrappers_enabled below). Now empty pending PR-4
-        # (deletes action_retrieval: entirely, see session-construction.md#family-5-retrieval)
-        self._action_retrieval = action_retrieval_config or ActionRetrievalConfig()
         # Enabled skill registry snapshot for the ## Skills block; None -> omitted section (#2548 PR-A)
         self._available_skills = available_skills
         # #3100 Axis 4: same-name-across-config-tiers collision map, consulted

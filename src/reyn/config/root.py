@@ -43,7 +43,6 @@ from reyn.config.chat import (
     TuiConfig,
 )
 from reyn.config.embedding import (
-    ActionRetrievalConfig,
     EmbeddingConfig,
 )
 from reyn.config.execution import (
@@ -268,13 +267,14 @@ class ReynConfig:
     # uses). Empty (default) → no composers → ``start_composers`` is never
     # called → byte-identical to pre-Composer behavior.
     composers: list = field(default_factory=list)
-    # FP-0034: universal catalog gating + action retrieval (D13 / D14).
-    # Default-off so existing chat behaviour is byte-identical until the
-    # operator explicitly opts in; will flip in PR-3b-iii after LLMReplay
-    # fixtures are re-recorded.
-    action_retrieval: "ActionRetrievalConfig" = field(
-        default_factory=lambda: ActionRetrievalConfig(),
-    )
+    # #4552 PR-3+4: `action_retrieval` field DELETED entirely (was FP-0034's
+    # universal catalog gating + action retrieval, D13/D14). Its 4 fields
+    # were removed/moved across the #4552 arc: hot_list_n/hot_list_seed
+    # (PR-1), mode (PR-2), universal_wrappers_enabled (PR-3, moved to
+    # `tool_use` above) — leaving nothing, so the section itself is
+    # deleted rather than kept as a permanently-empty block. A `reyn.yaml`
+    # still carrying `action_retrieval:` gets the standard unknown-key
+    # tolerance (T0's `unknown_config_keys`) — reported, not a parse error.
     # FP-0009 Component B — cron-driven scheduled message dispatch.
     # Empty by default; operator declares jobs in reyn.yaml ``cron.jobs``.
     cron: CronConfig = field(default_factory=CronConfig)
