@@ -1630,17 +1630,34 @@ class TextualChatApp(App):
         pane, and this list must not silently follow that unrelated
         resource-management axis).
 
-        No persistence, no pre-stat: :func:`collect_artifact_rows` is pure
-        and only reads what is already in each message's own resolved
-        payload (`ref`/`name`/`media_type`/`body`) — nothing here ever
-        opens a file just to build this list."""
-        from reyn.core.present.artifact_list import collect_artifact_rows
+        No persistence: :func:`collect_artifact_rows` is pure and only
+        reads what is already in each message's own resolved payload
+        (`ref`/`name`/`media_type`/`body`). The one piece of I/O this
+        method does — resolving each row's `resolved_path` via the SAME
+        `resolve_ref` path `_handle_open_artifact_request` itself calls —
+        is a review fix (lead-coder/architect, #4482 PR-3): a bare
+        `name` is a basename, which cannot distinguish two same-named
+        artifacts in different directories, failing the arc's one
+        non-negotiable requirement (the user sees the REAL thing about to
+        open). Runs only when this method is called (a pane refresh),
+        never continuously — "表示ページ分だけ stat"."""
+        from pathlib import Path
+
+        from reyn.config import _find_project_root
+        from reyn.core.present.artifact_list import (
+            collect_artifact_rows,
+            resolve_display_paths,
+        )
         node_lists = [
             entry.item.meta.get("nodes", [])
             for entry in self.conversation
             if entry.item.kind == "presentation"
         ]
-        return collect_artifact_rows(node_lists)
+        rows = collect_artifact_rows(node_lists)
+        if not rows:
+            return rows
+        project_root = _find_project_root(Path.cwd()) or Path.cwd()
+        return resolve_display_paths(rows, project_root, self._agent_name)
 
     def _pane_rows(self, tab_id: str, snap: "dict | None | object" = _UNSET) -> "list[str]":
         """The display rows for ``tab_id``'s pane, derived from canonical sources:

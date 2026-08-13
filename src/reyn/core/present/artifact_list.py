@@ -35,7 +35,9 @@ I/O this module does (a single `os.stat`) is isolated in :func:`stat_row`,
 called by the caller only for rows about to render."""
 from __future__ import annotations
 
+import dataclasses
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 
@@ -45,7 +47,20 @@ class ArtifactRow:
     OPEN it, with no further derivation. `ref` is `None` for an inline
     (no-real-file) artifact — nothing to open with the OS, the content
     already reached the conversation pane directly (present's own inline
-    rendering handles it, same as any other component)."""
+    rendering handles it, same as any other component).
+
+    `resolved_path` (#4482 PR-3 review, lead-coder/architect — a real
+    block, not a nit): `name` alone is a BASENAME — it names WHAT the
+    artifact is, never WHERE it is, so two same-named artifacts in
+    different directories are indistinguishable on the row alone. That
+    fails the arc's one non-negotiable requirement ("ユーザが何を開こう
+    としているか実体が見えること" — the user sees the REAL thing they're
+    about to open) and architect's ruling ("表示から実行まで同じ path を
+    使う"). `resolved_path` is set by :func:`resolve_display_paths` below
+    — a project-root-relative path when the ref resolves, `None` when it
+    doesn't (deleted, or an inline/error row with nothing to resolve) —
+    and the display layer (`chrome.artifact_row_label`) prefers it over
+    the bare `name`."""
 
     ref: "str | None"
     name: str
@@ -53,6 +68,7 @@ class ArtifactRow:
     description: "str | None"
     is_inline: bool
     error: "str | None" = None
+    resolved_path: "str | None" = None
 
 
 def _artifact_row_from_node(node: dict) -> "ArtifactRow | None":
@@ -110,6 +126,45 @@ def collect_artifact_rows(node_lists: "list[list[dict]]") -> list[ArtifactRow]:
                 rows.append(row)
     rows.reverse()  # newest-first
     return rows
+
+
+def resolve_display_paths(
+    rows: list[ArtifactRow], project_root: Path, agent_name: str,
+) -> list[ArtifactRow]:
+    """Fill in each ref-bearing row's `resolved_path` (#4482 PR-3 review —
+    see :class:`ArtifactRow`'s own docstring for why `name` alone was not
+    enough). The SAME resolution path :func:`~reyn.data.workspace.
+    artifact_ref.resolve_ref` — the one `_handle_open_artifact_request`
+    itself calls right before opening — never a second, independently-
+    computed path, so what this shows and what actually opens cannot
+    diverge.
+
+    An inline row (`ref is None`) or an unresolvable one (deleted, or an
+    unknown ref) passes through with `resolved_path` still `None` — the
+    caller's own display layer falls back to `name` for those, which is
+    the best available answer when there is genuinely nothing to resolve.
+
+    The one piece of I/O this module's collection path does — called only
+    on rows about to be DISPLAYED (a pane refresh), matching this module's
+    own "no pre-stat, no persisted cache" discipline; see the module
+    docstring."""
+    from reyn.data.workspace.artifact_ref import resolve_ref
+
+    out: list[ArtifactRow] = []
+    for row in rows:
+        if row.ref is None:
+            out.append(row)
+            continue
+        resolved = resolve_ref(project_root, agent_name, row.ref)
+        if resolved is None:
+            out.append(row)
+            continue
+        try:
+            display = str(resolved.relative_to(project_root))
+        except ValueError:
+            display = str(resolved)
+        out.append(dataclasses.replace(row, resolved_path=display))
+    return out
 
 
 def stat_row(resolved_path: "Any | None") -> "int | None":

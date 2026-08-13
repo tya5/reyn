@@ -911,15 +911,23 @@ def history_pane_options(turns: "Sequence[str]") -> list[str]:
 def artifact_row_label(row: "ArtifactRow") -> str:
     """#4482 PR-3: one artifact's display row. Names the SAME thing
     :meth:`_handle_open_artifact_request` opens — architect's ruling
-    ("表示から実行まで同じ path を使う") applies to what's shown here too,
-    which is why this shows ``name`` (the OS-visible filename the ref
-    resolves to), never a bare ref alone — a ref is an opaque token with
-    no meaning to the operator deciding whether to open it."""
+    ("表示から実行まで同じ path を使う") applies to what's shown here too.
+
+    **Prefers `resolved_path` over bare `name`** (review fix, lead-coder/
+    architect): `name` alone is a BASENAME, which cannot distinguish two
+    same-named artifacts in different directories — the arc's one
+    non-negotiable requirement is that the user sees the REAL thing about
+    to open, and a basename does not satisfy that on its own. A ref is an
+    opaque token with no meaning to the operator either, so neither
+    ``name`` nor ``ref`` alone is enough; ``resolved_path`` (a
+    project-root-relative path — see :func:`~reyn.core.present.
+    artifact_list.resolve_display_paths`) is what's shown whenever it is
+    available."""
     if row.error is not None:
         return f"✗ {row.name or '(unresolved)'} — {row.error}"
     if row.is_inline:
         return f"{row.name} (inline — already shown above)"
-    return row.name
+    return row.resolved_path or row.name
 
 
 def artifact_pane_options(rows: "Sequence[ArtifactRow]") -> list[str]:

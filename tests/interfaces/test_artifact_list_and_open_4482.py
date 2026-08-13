@@ -18,7 +18,11 @@ from textual_flowview import FlowView
 
 from reyn.data.workspace.artifact_ref import mint_ref
 from reyn.interfaces.inline.textual_chat import TextualChatApp
-from reyn.interfaces.inline.textual_chat.chrome import artifact_pane_commands, artifact_pane_options
+from reyn.interfaces.inline.textual_chat.chrome import (
+    artifact_pane_commands,
+    artifact_pane_options,
+    artifact_row_label,
+)
 from reyn.runtime.outbox import OutboxMessage
 from tests._support.minimal_reyn_yaml import MINIMAL_REYN_YAML
 from tests._support.textual_chat_test_helpers import QueueTransport
@@ -75,6 +79,53 @@ async def test_newest_artifact_sorts_first_across_multiple_presentations():
 
         rows = app._artifact_rows()
         assert [r.name for r in rows] == ["second.pptx", "first.pptx"]
+
+
+@pytest.mark.asyncio
+async def test_same_named_artifacts_in_different_directories_are_distinguishable(
+    tmp_path, monkeypatch,
+):
+    """Tier 2: #4482 PR-3 review block (lead-coder/architect) — a bare
+    basename cannot tell two same-named artifacts in different
+    directories apart, failing the arc's one non-negotiable requirement
+    (the user sees the REAL thing about to open). This proves the FIX:
+    with real refs minted against two REAL files both named
+    `report.pptx` in different subdirectories, the row labels differ
+    (each shows its own project-root-relative path), not the same
+    ambiguous `report.pptx` twice."""
+    (tmp_path / "reyn.yaml").write_text(MINIMAL_REYN_YAML, encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+
+    dir_a = tmp_path / "q1"
+    dir_a.mkdir()
+    file_a = dir_a / "report.pptx"
+    file_a.write_text("q1 report")
+    ref_a = mint_ref(tmp_path, "default", file_a)
+
+    dir_b = tmp_path / "q2"
+    dir_b.mkdir()
+    file_b = dir_b / "report.pptx"
+    file_b.write_text("q2 report")
+    ref_b = mint_ref(tmp_path, "default", file_b)
+
+    app = TextualChatApp(transport=QueueTransport())
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app._ingest_frame(_presentation_frame(name="report.pptx", ref=ref_a))
+        await pilot.pause()
+        app._ingest_frame(_presentation_frame(name="report.pptx", ref=ref_b))
+        await pilot.pause()
+
+        rows = app._artifact_rows()
+        labels = [artifact_row_label(r) for r in rows]
+        assert len(set(labels)) == 2, (
+            f"same-named artifacts in different directories must show "
+            f"distinguishable rows, got: {labels}"
+        )
+        assert "q1/report.pptx" in labels
+        assert "q2/report.pptx" in labels
+        # And neither label is the bare, ambiguous basename alone.
+        assert "report.pptx" not in labels
 
 
 @pytest.mark.asyncio
