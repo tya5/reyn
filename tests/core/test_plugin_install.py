@@ -55,8 +55,10 @@ import yaml
 
 from reyn.core.op_runtime.context import OpContext
 from reyn.core.op_runtime.plugin_install import (
+    _bake_mcp_json_fields,
     _build_mcp_entries,
     _write_install_state,
+    plugin_data_root,
     plugins_root,
     reconcile_plugin_installs,
 )
@@ -282,6 +284,67 @@ async def test_plugin_install_uninstall_roundtrip(tmp_path, monkeypatch):
 
     raw_after = yaml.safe_load(skills_yaml.read_text(encoding="utf-8"))
     assert raw_after["skills"]["entries"] == {}, "registry entry survived uninstall"
+
+
+@pytest.mark.asyncio
+async def test_plugin_uninstall_never_deletes_plugin_data_and_discloses_where_it_is(
+    tmp_path, monkeypatch,
+):
+    """Tier 2: (#4570 conversion D, lead-coder ruling) plugin_uninstall
+    NEVER removes ``~/.reyn/plugin-data/<name>/`` — data outliving code
+    is the safe direction, the reverse is unrecoverable — and does not
+    silently leave that fact unstated: the result dict names exactly
+    where the retained data lives."""
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    source = _make_plugin_source(tmp_path / "src", name="dataplugin")
+    ctx = _make_ctx(tmp_path)
+    op = PluginInstallIROp(kind="plugin_install", source={"kind": "local", "path": str(source)})
+    result = await install_handle(op, ctx)
+    assert result["status"] == "installed", f"install failed: {result}"
+
+    # Simulate the plugin having actually written data at runtime (this
+    # test does not exercise the ${PLUGIN_DATA} bake itself — see the
+    # dedicated _bake_mcp_json_fields tests above — only the uninstall
+    # retention/disclosure contract).
+    data_dir = plugin_data_root() / "dataplugin"
+    data_dir.mkdir(parents=True, exist_ok=True)
+    (data_dir / "corpus.sqlite").write_text("not really sqlite", encoding="utf-8")
+
+    uop = PluginUninstallIROp(kind="plugin_uninstall", name="dataplugin")
+    uresult = await uninstall_handle(uop, ctx)
+
+    assert uresult["status"] == "uninstalled"
+    assert data_dir.is_dir(), "plugin-data must survive uninstall"
+    assert (data_dir / "corpus.sqlite").is_file(), "plugin-data CONTENT must survive uninstall"
+    assert uresult["plugin_data_retained_at"] == str(data_dir)
+
+
+@pytest.mark.asyncio
+async def test_plugin_uninstall_omits_the_disclosure_key_when_no_data_exists(
+    tmp_path, monkeypatch,
+):
+    """Tier 2: (accept-side) a plugin that never wrote any
+    ``${PLUGIN_DATA}`` content has no data directory to disclose —
+    ``plugin_data_retained_at`` is absent, not a false claim of an
+    empty/nonexistent path."""
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    source = _make_plugin_source(tmp_path / "src", name="nodataplugin")
+    ctx = _make_ctx(tmp_path)
+    op = PluginInstallIROp(kind="plugin_install", source={"kind": "local", "path": str(source)})
+    result = await install_handle(op, ctx)
+    assert result["status"] == "installed", f"install failed: {result}"
+
+    uop = PluginUninstallIROp(kind="plugin_uninstall", name="nodataplugin")
+    uresult = await uninstall_handle(uop, ctx)
+
+    assert uresult["status"] == "uninstalled"
+    assert "plugin_data_retained_at" not in uresult
 
 
 # ── Test 2: enforcement (real resolver, gate strip-falsify) ──────────────────
@@ -818,6 +881,143 @@ def test_build_mcp_entries_defaults_missing_type_to_streamable_http_translated()
     )
 
     assert entries["srv"]["type"] == "http"
+
+
+# ── #4570 conversion D: field-aware ${PLUGIN_ROOT}/${PLUGIN_DATA} bake ─────
+
+
+def test_bake_mcp_json_fields_expands_args_env_cwd_but_never_command_or_url(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    """Tier 1: (#4570 conversion D, lead-coder's REQUIRED falsify pair)
+    ``${PLUGIN_ROOT}`` expands inside ``args``/``env``/``cwd`` but is left
+    LITERAL inside ``command``/``url`` — the spec's own exclusion
+    (injection: a token whose value this module resolves must not be
+    able to choose WHAT gets executed or WHERE a request goes). Both
+    halves asserted together: an implementation that expands nowhere
+    would fail the first half; one that expands everywhere (the
+    pre-#4570-conversion-D behavior) would fail the second — only a
+    genuinely field-aware bake passes both."""
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    from reyn.plugins.tokens import PluginTokenContext
+
+    plugin_root = tmp_path / "src-plugin"
+    plugin_root.mkdir()
+    mcp_json_path = plugin_root / "mcp.json"
+    mcp_json_path.write_text(
+        json.dumps({
+            "mcpServers": {
+                "srv": {
+                    "type": "stdio",
+                    "command": "${PLUGIN_ROOT}/bin/srv",
+                    "args": ["--root", "${PLUGIN_ROOT}/data"],
+                    "env": {"ROOT": "${PLUGIN_ROOT}"},
+                    "cwd": "${PLUGIN_ROOT}/work",
+                },
+            },
+        }),
+        encoding="utf-8",
+    )
+    token_ctx = PluginTokenContext(plugin_root=plugin_root, project_dir=tmp_path)
+
+    _bake_mcp_json_fields(mcp_json_path, token_ctx)
+
+    baked = json.loads(mcp_json_path.read_text(encoding="utf-8"))
+    srv = baked["mcpServers"]["srv"]
+    # Half 1: args/env/cwd DID expand.
+    assert srv["args"] == ["--root", f"{plugin_root}/data"]
+    assert srv["env"] == {"ROOT": str(plugin_root)}
+    assert srv["cwd"] == f"{plugin_root}/work"
+    # Half 2: command stays LITERAL — never expanded.
+    assert srv["command"] == "${PLUGIN_ROOT}/bin/srv"
+
+
+def test_bake_mcp_json_fields_url_stays_literal_too(tmp_path: Path, monkeypatch) -> None:
+    """Tier 1: (#4570 conversion D) same exclusion as ``command``, for a
+    url-bearing (HTTP-family) server entry."""
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    from reyn.plugins.tokens import PluginTokenContext
+
+    plugin_root = tmp_path / "src-plugin"
+    plugin_root.mkdir()
+    mcp_json_path = plugin_root / "mcp.json"
+    mcp_json_path.write_text(
+        json.dumps({
+            "mcpServers": {
+                "srv": {"type": "streamable-http", "url": "${PLUGIN_ROOT}/mcp"},
+            },
+        }),
+        encoding="utf-8",
+    )
+    token_ctx = PluginTokenContext(plugin_root=plugin_root, project_dir=tmp_path)
+
+    _bake_mcp_json_fields(mcp_json_path, token_ctx)
+
+    baked = json.loads(mcp_json_path.read_text(encoding="utf-8"))
+    assert baked["mcpServers"]["srv"]["url"] == "${PLUGIN_ROOT}/mcp"
+
+
+def test_bake_mcp_json_fields_expands_plugin_data_and_creates_the_directory(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    """Tier 1: (#4570 conversion D, lead-coder ruling) ``${PLUGIN_DATA}``
+    expands to ``plugin_data_root() / <plugin name>`` — a SIBLING of
+    ``plugins_root()``, surviving a future reinstall — and that directory
+    is created eagerly (the spec's own "clients PROVIDE a persistent
+    writable PLUGIN_DATA directory" wording)."""
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    from reyn.plugins.tokens import PluginTokenContext
+
+    plugin_root = plugins_root() / "dataplugin"
+    plugin_root.mkdir(parents=True)
+    mcp_json_path = plugin_root / "mcp.json"
+    mcp_json_path.write_text(
+        json.dumps({
+            "mcpServers": {
+                "srv": {"type": "stdio", "command": "python", "args": ["${PLUGIN_DATA}/db"]},
+            },
+        }),
+        encoding="utf-8",
+    )
+    token_ctx = PluginTokenContext(plugin_root=plugin_root, project_dir=tmp_path)
+
+    _bake_mcp_json_fields(mcp_json_path, token_ctx)
+
+    expected_data_dir = plugin_data_root() / "dataplugin"
+    assert expected_data_dir.is_dir(), "PLUGIN_DATA directory must be created, not just referenced"
+    baked = json.loads(mcp_json_path.read_text(encoding="utf-8"))
+    assert baked["mcpServers"]["srv"]["args"] == [f"{expected_data_dir}/db"]
+
+
+def test_bake_mcp_json_fields_is_a_noop_when_mcp_json_is_absent(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    """Tier 1: (accept-side) a plugin with no mcp.json at all — the
+    common "just skills"/"just pipelines" shape (§1) — is a graceful
+    no-op, no PLUGIN_DATA directory fabricated for a plugin that never
+    references it."""
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    from reyn.plugins.tokens import PluginTokenContext
+
+    plugin_root = tmp_path / "no-mcp-plugin"
+    plugin_root.mkdir()
+    token_ctx = PluginTokenContext(plugin_root=plugin_root, project_dir=tmp_path)
+
+    _bake_mcp_json_fields(plugin_root / "mcp.json", token_ctx)
+
+    assert not (plugin_data_root() / "no-mcp-plugin").exists()
 
 
 def test_build_mcp_entries_stdio_type_is_unaffected_by_the_adapter():

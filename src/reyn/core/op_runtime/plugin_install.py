@@ -159,7 +159,7 @@ from reyn.plugins.manifest import (
     load_plugin_manifest,
 )
 from reyn.plugins.source import resolve_name_collision
-from reyn.plugins.tokens import PluginTokenContext, expand_reyn_tokens
+from reyn.plugins.tokens import PluginTokenContext, expand_reyn_tokens, expand_with_map
 from reyn.schemas.models import PipelineInstallIROp, PluginInstallIROp, SkillInstallIROp
 
 from . import register
@@ -193,8 +193,34 @@ _IGNORED_COPY_NAMES = {".git"}
 
 def plugins_root() -> Path:
     """``~/.reyn/plugins/`` — the global plugin-code cache (ADR §3.3: code
-    installs once to global, enablement is project-local)."""
+    installs once to global, enablement is project-local). See
+    :func:`plugin_data_root` for its SIBLING (``~/.reyn/plugin-data/``) —
+    the per-plugin PERSISTENT data directory (#4570 conversion D), kept
+    OUTSIDE this directory specifically because this one gets wiped and
+    replaced wholesale on every reinstall."""
     return Path.home() / ".reyn" / "plugins"
+
+
+def plugin_data_root() -> Path:
+    """``~/.reyn/plugin-data/`` — the global, per-plugin PERSISTENT
+    writable directory the Agent Plugins 1.0 standard's ``${PLUGIN_DATA}``
+    token resolves to (#4570 conversion D, lead-coder ruling, 2026-08-13).
+    A SIBLING of :func:`plugins_root`, not a subdirectory of it — deliberate:
+    step 5 of ``handle`` below replaces ``plugin_root`` (``plugins_root() /
+    name``) WHOLESALE on every install/update (an atomic ``.staging``
+    swap), so anything a plugin needs to SURVIVE a reinstall cannot live
+    inside it. Global scope (not project-scoped, i.e. not under a
+    project's own ``.reyn/``) mirrors ``plugins_root()``'s own ADR §3.3
+    rationale: the CODE installs once globally; a project-scoped data
+    dir would mean the SAME globally-installed plugin quietly gets a
+    DIFFERENT data directory per enabling project, which nothing in the
+    standard's own "clients provide a persistent writable PLUGIN_DATA
+    directory" wording implies.
+
+    ``plugin_uninstall`` deliberately never deletes anything under here
+    (lead-coder ruling: data outliving code is the safe direction; the
+    reverse is unrecoverable) — see that module's own disclosure line."""
+    return Path.home() / ".reyn" / "plugin-data"
 
 
 # ---------------------------------------------------------------------------
@@ -531,18 +557,20 @@ def _copy_plugin_tree(source_dir: Path, plugin_root: Path) -> None:
 
 
 def _expand_plugin_files(plugin_root: Path, token_ctx: PluginTokenContext) -> None:
-    """Bake stable-location ``${REYN_*}`` tokens into every text file a
-    capability might read (§3.4/§3.5): the root ``mcp.json`` (#4570
-    conversion C1 — renamed from ``.mcp.json``, the Agent Plugins 1.0
-    canonical filename), every ``pipelines/*.yaml``, and every
+    """Bake stable-location tokens into every text file a capability might
+    read (§3.4/§3.5): the root ``mcp.json`` (#4570 conversion C1 —
+    renamed from ``.mcp.json``, the Agent Plugins 1.0 canonical filename;
+    #4570 conversion D — FIELD-AWARE bake, see :func:`_bake_mcp_json_fields`),
+    every ``pipelines/*.yaml`` (STILL the reyn-native ``${REYN_*}`` full-text
+    bake — pipelines are a reyn extension the standard doesn't define, #4570
+    conversion D deliberately does not touch this candidate), and every
     ``skills/*/SKILL.md``. Non-existent globs are simply empty — every
     capability is optional (§3.1)."""
-    mcp_and_pipeline_candidates: list[Path] = [plugin_root / "mcp.json"]
+    _bake_mcp_json_fields(plugin_root / "mcp.json", token_ctx)
     pipelines_dir = plugin_root / "pipelines"
     if pipelines_dir.is_dir():
-        mcp_and_pipeline_candidates.extend(pipelines_dir.glob("*.yaml"))
-    for path in mcp_and_pipeline_candidates:
-        _bake_all_tokens(path, token_ctx)
+        for path in pipelines_dir.glob("*.yaml"):
+            _bake_all_tokens(path, token_ctx)
 
     # SKILL.md bakes ONLY ${REYN_PLUGIN_ROOT} here — ${REYN_PROJECT_DIR} is a
     # dynamic param (§3.4), never baked at copy: the plugin's global
@@ -561,8 +589,11 @@ def _expand_plugin_files(plugin_root: Path, token_ctx: PluginTokenContext) -> No
 
 def _bake_all_tokens(path: Path, token_ctx: PluginTokenContext) -> None:
     """Expand every ``${REYN_*}`` token *token_ctx* carries a value for, in
-    place — the mcp/pipeline copy-time bake, unchanged from pre-#3070
-    behavior."""
+    place — the pipeline copy-time bake (#4570 conversion D: mcp.json no
+    longer goes through this function — see :func:`_bake_mcp_json_fields`
+    — pipelines are a reyn extension the Agent Plugins 1.0 standard
+    doesn't define, so they keep the pre-#3070 full-text/``${REYN_*}``
+    behavior unchanged)."""
     if not path.is_file():
         return
     try:
@@ -572,6 +603,90 @@ def _bake_all_tokens(path: Path, token_ctx: PluginTokenContext) -> None:
     expanded = expand_reyn_tokens(text, token_ctx)
     if expanded != text:
         path.write_text(expanded, encoding="utf-8")
+
+
+def _bake_mcp_json_fields(path: Path, token_ctx: PluginTokenContext) -> None:
+    """Field-aware ``${PLUGIN_ROOT}``/``${PLUGIN_DATA}`` bake for
+    ``mcp.json`` (#4570 conversion D) — expand ONLY ``args`` / ``env``
+    values / ``cwd``, NEVER ``command`` or ``url``.
+
+    ``${PLUGIN_ROOT}``/``${PLUGIN_DATA}`` is the Agent Plugins 1.0
+    mcp.schema.json's OWN token vocabulary for mcp.json specifically —
+    NOT ``${REYN_PLUGIN_ROOT}`` (the reyn-native name pipelines/SKILL.md
+    still use, untouched by this conversion). Deliberately a SEPARATE,
+    narrower map from ``tokens.py``'s ``PluginTokenContext.tokens()`` —
+    this is the spec's own canonical names, scoped to the one file the
+    spec defines them for.
+
+    This is the spec's own exclusion (mcp.schema.json's token-expansion
+    note, measured directly from the published schema, #4570): a
+    plugin-authored string must not be able to choose WHAT gets executed
+    (``command``) or WHERE a network request goes (``url``) via a
+    token whose VALUE this module resolves — only WHICH arguments/env/cwd
+    it runs with. Before this conversion, ``_bake_all_tokens`` did a
+    blind full-text replace across the WHOLE file, expanding inside
+    ``command``/``url`` too (architect's own #4570 finding: reyn's
+    pre-conversion behavior was MORE permissive than the standard it is
+    aligning with, not merely differently-spelled).
+
+    ``${PLUGIN_DATA}`` resolves to :func:`plugin_data_root` / *the
+    plugin's own name* (lead-coder ruling, #4570) — created here,
+    eagerly, on every bake (mirrors the spec's own "clients PROVIDE a
+    persistent writable PLUGIN_DATA directory" wording: existence is
+    reyn's responsibility, not something a plugin's own first-run code
+    must ``mkdir -p`` for itself).
+
+    Parses the file as JSON (not text) so field identity is unambiguous
+    — a token that happens to appear inside a ``command``/``url`` string
+    is left LITERAL, not a coincidental string match away from being
+    expanded anyway."""
+    if not path.is_file():
+        return
+    try:
+        raw = path.read_text(encoding="utf-8")
+        data = json.loads(raw)
+    except (OSError, json.JSONDecodeError):
+        return
+    servers = data.get("mcpServers")
+    if not isinstance(servers, dict):
+        return
+    plugin_data_dir = plugin_data_root() / token_ctx.plugin_root.name
+    plugin_data_dir.mkdir(parents=True, exist_ok=True)
+    token_map = {
+        "PLUGIN_ROOT": str(token_ctx.plugin_root),
+        "PLUGIN_DATA": str(plugin_data_dir),
+    }
+    changed = False
+    for spec in servers.values():
+        if not isinstance(spec, dict):
+            continue
+        args = spec.get("args")
+        if isinstance(args, list):
+            new_args = [
+                expand_with_map(a, token_map) if isinstance(a, str) else a for a in args
+            ]
+            if new_args != args:
+                spec["args"] = new_args
+                changed = True
+        env = spec.get("env")
+        if isinstance(env, dict):
+            new_env = {
+                k: (expand_with_map(v, token_map) if isinstance(v, str) else v)
+                for k, v in env.items()
+            }
+            if new_env != env:
+                spec["env"] = new_env
+                changed = True
+        cwd = spec.get("cwd")
+        if isinstance(cwd, str):
+            new_cwd = expand_with_map(cwd, token_map)
+            if new_cwd != cwd:
+                spec["cwd"] = new_cwd
+                changed = True
+        # `command` and `url` are NEVER touched — see this function's
+        # own docstring.
+    if changed:
+        path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
 
 
 def _bake_plugin_root_only(path: Path, plugin_root: Path) -> None:

@@ -12,6 +12,15 @@ Not WAL-derived (§3.11): same rationale as ``plugin_install`` — these are
 file/registry mutations, not WAL-event-derived state, so the CLAUDE.md
 truncate-falsify recovery gate does not apply.
 
+**Never touches ``~/.reyn/plugin-data/<name>/``** (#4570 conversion D,
+lead-coder ruling): a plugin's ``${PLUGIN_DATA}`` directory (see
+``plugin_install.plugin_data_root``) is deliberately OUTSIDE the scope of
+this handler's removal — data outliving the code that produced it is the
+safe direction; the reverse (code reinstalled later, its old data
+silently gone) is unrecoverable. This is not silent: when a data
+directory exists for the uninstalled name, the result dict carries
+``plugin_data_retained_at`` naming exactly where it is.
+
 **Concurrency (#3212)**: both the registry-drop and the copy-removal below
 are wrapped in ``plugin_install.plugin_name_lock`` — the SAME per-name,
 blocking, bounded-wait, cross-process advisory lock ``plugin_install``
@@ -34,6 +43,7 @@ from .context import OpContext
 from .context import sandbox_policy_from_ctx as _sandbox_policy_from_ctx
 from .plugin_install import (
     drop_entries_by_plugin_id,
+    plugin_data_root,
     plugin_name_lock,
     plugins_root,
     registry_config_paths,
@@ -151,12 +161,24 @@ async def handle(op: PluginUninstallIROp, ctx: OpContext) -> dict:
 
         ctx.events.emit("plugin_uninstall_completed", name=name, copy_removed=copy_removed)
 
-        return {
+        # #4570 conversion D (lead-coder ruling): plugin_uninstall NEVER
+        # deletes anything under plugin_data_root() (data outliving code
+        # is the safe direction — the reverse is unrecoverable), but
+        # never SILENTLY leaves it unmentioned either. If a data dir
+        # exists for this name, disclose exactly where it is — never a
+        # count, never buried, always in the return value every caller
+        # (CLI json-dump, the uninstall_plugin tool result an LLM reads)
+        # already surfaces.
+        plugin_data_dir = plugin_data_root() / name
+        result: dict = {
             "status": "uninstalled",
             "name": name,
             "removed": removed,
             "copy_removed": copy_removed,
         }
+        if plugin_data_dir.is_dir():
+            result["plugin_data_retained_at"] = str(plugin_data_dir)
+        return result
 
 
 from reyn.core.offload.canonical import STRUCTURED_PASSTHROUGH  # noqa: E402

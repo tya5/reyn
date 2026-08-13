@@ -4,7 +4,7 @@
     "reyn_chunker": {
       "type": "stdio",
       "command": "python",
-      "args": ["${REYN_PLUGIN_ROOT}/scripts/chunker_server.py"],
+      "args": ["${PLUGIN_ROOT}/scripts/chunker_server.py"],
       "env": {
         "FASTMCP_SHOW_SERVER_BANNER": "false",
         "FASTMCP_CHECK_FOR_UPDATES": "off"
@@ -13,7 +13,7 @@
     "reyn_vector_store": {
       "type": "stdio",
       "command": "python",
-      "args": ["${REYN_PLUGIN_ROOT}/scripts/vector_store_server.py"],
+      "args": ["${PLUGIN_ROOT}/scripts/vector_store_server.py"],
       "env": {
         "FASTMCP_SHOW_SERVER_BANNER": "false",
         "FASTMCP_CHECK_FOR_UPDATES": "off"
