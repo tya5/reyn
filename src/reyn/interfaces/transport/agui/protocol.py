@@ -180,6 +180,11 @@ _REYN = "_reyn"
 CONTROL_FILTER_KINDS: "frozenset[str]" = frozenset({
     "__end__",
     "__session_switch_request__",
+    # #4482 PR-3: /open <ref> — local-only by construction (launching an OS
+    # app on the machine the client is running on); mirrors outbox.py's
+    # CONTROL_KINDS entry, kept in sync with it deliberately (see that
+    # module's own comment for why it's control-filtered, not profiled).
+    "__open_artifact__",
 })
 
 # Reserved frontend-tool namespace for the HITL round-trip (ADR-0039 P3, D6/R4).

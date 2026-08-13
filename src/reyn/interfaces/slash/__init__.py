@@ -306,6 +306,7 @@ from reyn.interfaces.slash import image as _image_mod  # noqa: E402, F401
 from reyn.interfaces.slash import matrix as _matrix_mod  # noqa: E402, F401
 from reyn.interfaces.slash import memory as _memory_mod  # noqa: E402, F401
 from reyn.interfaces.slash import model as _model_mod  # noqa: E402, F401
+from reyn.interfaces.slash import open_artifact as _open_artifact_mod  # noqa: E402, F401
 from reyn.interfaces.slash import pending as _pending_mod  # noqa: E402, F401
 from reyn.interfaces.slash import plugin as _plugin_mod  # noqa: E402, F401
 from reyn.interfaces.slash import quit as _quit_mod  # noqa: E402, F401

@@ -91,6 +91,7 @@ While a session is active, lines starting with `/` are intercepted and never rou
 | `/list` | List pending interventions |
 | `/memory [list\|view <name>]` | Inspect project memory entries (see [concepts/memory](../../concepts/data-retrieval/memory.md)) |
 | `/model [<class>]` | Show the session's model class and any override, or set a per-session model-class override with `/model <class>` (validated against known classes; clears on restart) |
+| `/open <ref>` | Open a generated artifact (html/office/pdf/image — anything the terminal can't render) with the OS's own default app. The Artifacts tab (`Art`, bottom-chrome drawer) lists refs newest-first; selecting a row runs this for you |
 | `/pending [list\|discard <id>\|claim <id>]` | List / discard / claim stalled cross-channel ops |
 | `/quit` | Exit the chat (alias: `/exit`, Ctrl+D) |
 | `/reload` | Hot-reload runtime config (`.reyn/*.yaml`) at the next turn boundary |
@@ -99,7 +100,7 @@ While a session is active, lines starting with `/` are intercepted and never rou
 | `/session new \| switch <sid> \| list` | Open / switch / list conversation sessions for the attached agent (see [Sessions](../../concepts/multi-agent/sessions.md)) |
 | `/visibility on\|off <tool\|mcp\|category> <name>` | Toggle this session's LLM visibility of a capability (hidden next turn / restored up to the agent's authorized envelope — an envelope-denied capability stays hidden) |
 
-`/list` / `/answer` are foundational — they let pending interventions coexist without blocking the prompt. `/agents` / `/attach` / `/agent` are the multi-agent workflow primitives; a spawned/delegated peer's progress is monitored via `/agents`. `/hook` / `/visibility` are session-scoped LLM-catalog controls, mirroring the status bar's `hook`/`tool`/`mcp`/`category` chips. `/copy` is a conversation-pane utility; `/image` enables multimodal input.
+`/list` / `/answer` are foundational — they let pending interventions coexist without blocking the prompt. `/agents` / `/attach` / `/agent` are the multi-agent workflow primitives; a spawned/delegated peer's progress is monitored via `/agents`. `/hook` / `/visibility` are session-scoped LLM-catalog controls, mirroring the status bar's `hook`/`tool`/`mcp`/`category` chips. `/copy` is a conversation-pane utility; `/image` enables multimodal input; `/open` launches a generated artifact with the OS's own default app (local sessions only — see the Artifacts tab).
 
 ## Multi-agent behavior
 
