@@ -261,7 +261,9 @@ Every event has:
   "timestamp": "2026-04-30T10:00:00.123456+00:00",
   "data": {
     ... // kind-specific payload; may include agent_id / run_id when the
-        // emitting EventLog was configured with them (see below)
+        // emitting EventLog was configured with them (see below), plus
+        // audit_seq / emitter on every event from a session-path EventLog
+        // (see "Audit sequence" below)
   }
 }
 ```
@@ -271,6 +273,56 @@ Every event has:
 Every event emitted from a session whose `agent_id` is configured (in `reyn.yaml`) automatically carries an `agent_id` field in its payload. The default value is `reyn/<hostname>`. This enables RBAC and multi-agent audit trails per SOC2 / ISO 27001 / METI v1.1 requirements.
 
 See [Concepts: multi-agent](../../concepts/multi-agent/multi-agent.md) — "Agent ID propagation" for details.
+
+## Audit sequence (`audit_seq` / `emitter`, all events)
+
+Every event carries `emitter` (a string identifying **one execution** of an
+`EventLog` — not the session's stable identity, a fresh token minted at
+construction time, one per real process run) and, when that EventLog tracks
+sequencing (the default), a monotonically increasing `audit_seq` starting
+at 1.
+
+**`audit_seq` is NOT the WAL's `seq`.** The WAL's `seq` is a recovery
+coordinate (where replay resumes reconstructing in-memory state);
+`audit_seq` is purely an audit-continuity witness — a subscriber uses it to
+detect a DROPPED event (`(emitter, audit_seq)` pairs with a gap in the
+number) without needing in-order delivery. The two are deliberately
+different names for two different concepts (this repo has hit the "same
+name, two meanings" defect class more than once — see CLAUDE.md).
+
+**Monotonic per `emitter`, never across emitters.** Reconstructing global
+ordering across two different emitters (two sessions, or two runs of the
+same session) is not this field's job — that would require cross-process
+coordination at the point of emission, which the audit band deliberately
+does not impose (a synchronization point on the execution path, for
+audit's sake, is the opposite of what the band exists to be). A reader
+groups events by `emitter` first, then checks each group's own
+`audit_seq` run for gaps.
+
+**A new process execution is a new `emitter`, never a resumed count.** If a
+session's `EventLog` reused a stable identity (e.g. the session_id alone)
+across a restart, a fresh process would re-emit `audit_seq` 1..N under the
+SAME emitter a prior process already used — a reader could no longer tell
+"event 5 is missing" from "this is a new run's own event 5". A fresh
+`EventLog` instance is constructed exactly once per real process execution
+and never reloaded across a restart, so minting `emitter` once at
+construction (rather than deriving it from any longer-lived identity)
+gives per-execution uniqueness by construction, with no counter to persist
+or reconcile across a restart.
+
+**Neither field is caller-settable per emit call** (unlike `agent_id`/
+`run_id` above, which follow a caller-wins convention) — `EventLog.emit`
+always overwrites both, even if a caller's own `data` happens to include
+same-named keys. Numbering the events is `emit`'s own job, done in exactly
+one place; letting a caller influence it would open a path to skip or
+forge a number, which would defeat the gap-detection contract 3 exists
+for.
+
+**`.reyn/events/direct/cli/` is out of gap-detection scope.** A one-off CLI
+event (`emit_cli_event`, no active session) carries `emitter: "cli"` but no
+`audit_seq` at all — a single event from a single process invocation is
+not a series a gap can be detected in, so a meaningless `audit_seq: 1`
+every time is omitted rather than emitted.
 
 ## LLM and context
 

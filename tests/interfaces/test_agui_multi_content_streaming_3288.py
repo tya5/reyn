@@ -300,13 +300,28 @@ async def _collect(gen) -> list:
 
 
 async def _via_in_process(script) -> list:
+    # #4511: forward each script EventFrame's own Event straight to
+    # subscribers, rather than re-emitting it through fake.audit_events
+    # (a real EventLog). Re-emitting used to be a harmless passthrough
+    # (this EventLog has no agent_id/run_id configured, so nothing got
+    # added) -- but EventLog.emit now ALWAYS stamps audit_seq/emitter
+    # (#4496 PR-1), which only this path re-emits through, diverging from
+    # _via_agui's _frame_source(script) below (which consumes the SAME
+    # script's Event objects untouched, never routing through .emit() at
+    # all). Both helpers must treat the script's Event objects as
+    # already-final so this test's own comparison stays about transport
+    # reconstruction, not EventLog's stamping (which has its own coverage,
+    # test_4496_pr1_audit_seq.py) -- matches production, where both
+    # transports subscribe to ONE session EventLog.emit() call and see
+    # identical data either way.
     fake = _FakeRegistry()
     transport = InProcessTransport(fake, intervention_channel="tui")
     transport.start()
     try:
         for f in script:
             if isinstance(f, EventFrame):
-                fake.audit_events.emit(f.event.type, **f.event.data)
+                for sub in fake.audit_events.subscribers:
+                    sub(f.event)
             else:
                 fake.repl_outbox.put_nowait(f.message)
         fake.repl_outbox.put_nowait(OutboxMessage(kind="__end__", text=""))
