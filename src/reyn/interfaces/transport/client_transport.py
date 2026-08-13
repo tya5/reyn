@@ -244,6 +244,33 @@ class ClientTransport(ABC):
         """
         return False
 
+    async def request_artifact_list(self, *, agent: str) -> "list[dict]":
+        """#4494 design C: the durable artifact-ref table's own entries for
+        *agent* — ``[{"ref", "path"}, ...]``, newest-first, or ``[]`` when
+        there is nothing (or this transport does not support the query).
+        Same "client interprets, server executes a named operation" shape
+        :meth:`request_attach`/:meth:`request_session_switch` already
+        establish: ``InProcessTransport`` reads the table directly;
+        ``AgUiTransport`` POSTs a typed request and the server reads its
+        OWN copy (never the wire's stale view — the server always has the
+        live, durable table this client cannot see any other way).
+
+        This is the FALLBACK a caller reaches for only when its own live
+        conversation-derived artifact list is empty (frame-sufficiency: a
+        remote client's past turns are not on the wire; a local client
+        right after a restart has the identical gap, #4584's own measured
+        finding — ``restore.project_restored_frames`` has no
+        "presentation" kind reconstruction). Rows from this source are
+        ALWAYS ref-backed (real files only — the table never records an
+        inline artifact) and carry no ``media_type``/``description`` — a
+        real information loss the caller's own UI must disclose, never
+        silently absorb (lead-coder's #4494 ruling).
+
+        NOT abstract, same reasoning as :meth:`request_attach` — several
+        narrow-purpose stubs across the test suite pre-date this method;
+        the default ``[]`` preserves their behavior unchanged."""
+        return []
+
     def reyn_state_root(self) -> "Path | None":
         """The attached session's project `.reyn` root, or None (#3721).
 

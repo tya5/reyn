@@ -140,6 +140,36 @@ def collect_artifact_rows(node_lists: "list[list[dict]]") -> list[ArtifactRow]:
     return rows
 
 
+def rows_from_ref_table_entries(entries: "list[dict]") -> list[ArtifactRow]:
+    """#4494 design C: project the durable artifact-ref table's own raw
+    entries (:func:`~reyn.data.workspace.artifact_ref.list_refs_for_agent`
+    — already newest-first) into :class:`ArtifactRow` objects — the
+    fallback source a client with no live conversation state (a REMOTE
+    client, or a LOCAL one right after a restart, #4584's own measured
+    finding) uses to populate the Artifacts pane at all.
+
+    Every row from THIS source is ref-backed (never inline — the table
+    only ever records a real file's path) and carries no ``media_type``/
+    ``description`` (the ref table was never designed to hold them —
+    only what :func:`~reyn.data.workspace.artifact_ref.mint_ref` itself
+    records). This is a real, structural information loss versus the
+    live-conversation-derived path, not a bug in this function — the
+    caller's own UI is responsible for disclosing it (lead-coder's #4494
+    ruling: state the SOURCE LIMITATION, never a count — see
+    ``chrome.py``'s own artifact-pane disclosure text)."""
+    return [
+        ArtifactRow(
+            ref=str(entry["ref"]),
+            name=Path(str(entry["path"])).name,
+            media_type=None,
+            description=None,
+            is_inline=False,
+        )
+        for entry in entries
+        if "ref" in entry and "path" in entry
+    ]
+
+
 def resolve_display_paths(
     rows: list[ArtifactRow], project_root: Path, agent_name: str,
 ) -> list[ArtifactRow]:

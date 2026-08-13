@@ -951,13 +951,42 @@ def artifact_row_label(row: "ArtifactRow") -> str:
     return row.resolved_path or row.name
 
 
-def artifact_pane_options(rows: "Sequence[ArtifactRow]") -> list[str]:
+#: #4494 design C (lead-coder ruling, verbatim): "C ＋ 明示。文面は「件数」
+#: ではなく「情報源の限界」を言うこと" — states the SOURCE LIMITATION, never
+#: a count (a remote/post-restart fallback genuinely cannot count what it
+#: has no record of), and never a "まだ" (not-yet) framing (implies a richer
+#: source is definitely coming, which is not decided). Appended verbatim
+#: regardless of row count, so an empty ref-table fallback still explains
+#: WHY, rather than reading like "no artifacts" (#4494's own falsify
+#: requirement: emptying the table empties the rows but this text stays).
+ARTIFACT_REF_TABLE_FALLBACK_DISCLOSURE = (
+    "この一覧はartifact-ref表から作られます。agentがinlineで直接渡した"
+    "artifact（実ファイルなし）はその表に記録されないため、ここには出せません。"
+)
+
+
+def artifact_pane_options(
+    rows: "Sequence[ArtifactRow]", *, source: str = "live",
+) -> list[str]:
     """Rows for the Artifacts drawer pane — newest-first, already the order
-    :func:`~reyn.core.present.artifact_list.collect_artifact_rows` returns."""
-    return [artifact_row_label(r) for r in rows] if rows else ["(no artifacts yet)"]
+    :func:`~reyn.core.present.artifact_list.collect_artifact_rows` returns
+    (``source="live"``, the default) or
+    :func:`~reyn.core.present.artifact_list.rows_from_ref_table_entries`
+    (``source="ref_table_fallback"``, #4494 design C — consulted only when
+    the live-conversation list is empty: a remote client's past turns are
+    not on the wire, and a local client right after a restart has the
+    identical gap, #4584's own measured finding). The fallback source
+    ALWAYS appends :data:`ARTIFACT_REF_TABLE_FALLBACK_DISCLOSURE` — the
+    source limitation, never a count."""
+    body = [artifact_row_label(r) for r in rows] if rows else ["(no artifacts yet)"]
+    if source == "ref_table_fallback":
+        return [*body, ARTIFACT_REF_TABLE_FALLBACK_DISCLOSURE]
+    return body
 
 
-def artifact_pane_commands(rows: "Sequence[ArtifactRow]") -> list[str]:
+def artifact_pane_commands(
+    rows: "Sequence[ArtifactRow]", *, source: str = "live",
+) -> list[str]:
     """The ``/open <ref>`` command parallel to each row in
     :func:`artifact_pane_options` — empty string for a ref-less row: an
     error marker (nothing resolved), or a pure-inline artifact.
@@ -969,11 +998,15 @@ def artifact_pane_commands(rows: "Sequence[ArtifactRow]") -> list[str]:
     slash-command TEXT pipeline as an argument the way a `ref` token can.
     ``app.on_option_list_option_selected`` special-cases the "artifacts"
     pane and reads the ``ArtifactRow`` objects directly (never this
-    command list) for exactly that row shape — see its own docstring."""
-    return [
-        f"/open {r.ref}" if r.ref is not None else ""
-        for r in rows
-    ]
+    command list) for exactly that row shape — see its own docstring.
+
+    ``source="ref_table_fallback"`` appends one more empty string — the
+    disclosure row :func:`artifact_pane_options` appends has no command
+    of its own, index-aligned with that row (#4494)."""
+    cmds = [f"/open {r.ref}" if r.ref is not None else "" for r in rows]
+    if source == "ref_table_fallback":
+        cmds.append("")
+    return cmds
 
 
 def menu_pane_options(commands: "Iterable[SlashCommand]") -> list[str]:
@@ -1352,6 +1385,7 @@ def pane_commands(
     snapshot: "dict | None" = None,
     *,
     artifacts: "Sequence[ArtifactRow]" = (),
+    artifact_source: str = "live",
 ) -> list[str]:
     """The slash command parallel to each row of ``tab_id``'s pane — index-aligned
     with :func:`pane_payload`'s rows for the same ``snapshot``, ``[]`` for a pane
@@ -1361,9 +1395,11 @@ def pane_commands(
     This is what makes the restored categories OPERABLE rather than merely visible
     (#3338): the app maps a selected row straight onto ``/model`` / ``/attach`` /
     ``/session switch`` / ``/visibility`` / ``/hook`` / ``/open`` (#4482) and
-    submits it through the same transport seam a typed slash uses."""
+    submits it through the same transport seam a typed slash uses.
+
+    ``artifact_source`` — see :func:`artifact_pane_options` (#4494 design C)."""
     if tab_id == "artifacts":
-        return artifact_pane_commands(artifacts)
+        return artifact_pane_commands(artifacts, source=artifact_source)
     builder = _PANE_ENTRY_BUILDERS.get(tab_id)
     if builder is None:
         return []
@@ -1377,13 +1413,16 @@ def pane_payload(
     commands: "Iterable[SlashCommand]" = (),
     history: "Sequence[str]" = (),
     artifacts: "Sequence[ArtifactRow]" = (),
+    artifact_source: str = "live",
     app_bindings: "Iterable[tuple[str, str]]" = (),
 ) -> list[str]:
     """The display rows for ``tab_id``'s drawer pane, derived from canonical reyn
     sources. For a list pane (:func:`pane_is_list`) the rows are OptionList
     options; for a readout the rows are Static lines. All inputs are plain data
     (the app assembles them from its live snapshot / the slash REGISTRY / the
-    conversation model) so this stays pure + testable."""
+    conversation model) so this stays pure + testable.
+
+    ``artifact_source`` — see :func:`artifact_pane_options` (#4494 design C)."""
     snap = snapshot or {}
     builder = _PANE_ENTRY_BUILDERS.get(tab_id)
     if builder is not None:
@@ -1391,7 +1430,7 @@ def pane_payload(
     if tab_id == "history":
         return history_pane_options(history)
     if tab_id == "artifacts":
-        return artifact_pane_options(artifacts)
+        return artifact_pane_options(artifacts, source=artifact_source)
     if tab_id == "menu":
         return menu_pane_options(commands)
     if tab_id == "cost":
