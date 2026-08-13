@@ -88,6 +88,16 @@ CONTROL_KINDS: "frozenset[str]" = frozenset({
     # `/session switch <sid>`: consumed at registry._forwarder (swallowed with
     # `continue` → attach_session); the AG-UI emitter also fail-safe-filters it.
     "__session_switch_request__",
+    # #4482 PR-3: `/open <ref>` sentinel — client-side ref-resolve + OS-launch
+    # (interfaces.inline.textual_chat.app._handle_open_artifact_request).
+    # Control-filtered (unlike /copy · /rewind's PROFILED forwarding) because
+    # "launch a local application" is local-only by construction — remote
+    # handling is explicitly deferred (owner ruling, #4482: "ローカル前提で
+    # 進めてください", remote tracked separately as #4494) — forwarding this
+    # on the wire today would just be a sentinel no remote client has a
+    # handler for, the exact silent-no-op shape the /copy·/rewind comment
+    # above warns about, not a real remote capability.
+    "__open_artifact__",
 })
 
 # The complete closed vocabulary of valid OutboxMessage.kind values.

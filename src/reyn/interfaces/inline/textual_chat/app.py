@@ -111,6 +111,7 @@ if TYPE_CHECKING:
     from textual.timer import Timer
     from textual_flowview import VisibilityHandle
 
+    from reyn.core.present.artifact_list import ArtifactRow
     from reyn.interfaces.repl.read_model import ChatReadModel
     from reyn.interfaces.transport.client_transport import ClientTransport
     from reyn.runtime.outbox import OutboxMessage
@@ -1617,12 +1618,53 @@ class TextualChatApp(App):
             rows.append(f"{role} · {head}")
         return rows[-limit:]
 
+    def _artifact_rows(self) -> "list[ArtifactRow]":
+        """#4482 PR-3: every listable artifact, newest-first — derived from
+        the SAME message source the conversation pane itself renders
+        (``self.conversation``, the app's own live ``FlowModel``), never
+        ``Session.history``'s resident buffer (invariant 3, repeated
+        verbatim across three separate lead-coder dispatches this session:
+        the two are not the same list, nor evicted on the same schedule —
+        #4387/#4468's byte-cap eviction can drop an entry from
+        ``self.history`` while it is STILL visible in the conversation
+        pane, and this list must not silently follow that unrelated
+        resource-management axis).
+
+        No persistence: :func:`collect_artifact_rows` is pure and only
+        reads what is already in each message's own resolved payload
+        (`ref`/`name`/`media_type`/`body`). The one piece of I/O this
+        method does — resolving each row's `resolved_path` via the SAME
+        `resolve_ref` path `_handle_open_artifact_request` itself calls —
+        is a review fix (lead-coder/architect, #4482 PR-3): a bare
+        `name` is a basename, which cannot distinguish two same-named
+        artifacts in different directories, failing the arc's one
+        non-negotiable requirement (the user sees the REAL thing about to
+        open). Runs only when this method is called (a pane refresh),
+        never continuously — "表示ページ分だけ stat"."""
+        from pathlib import Path
+
+        from reyn.config import _find_project_root
+        from reyn.core.present.artifact_list import (
+            collect_artifact_rows,
+            resolve_display_paths,
+        )
+        node_lists = [
+            entry.item.meta.get("nodes", [])
+            for entry in self.conversation
+            if entry.item.kind == "presentation"
+        ]
+        rows = collect_artifact_rows(node_lists)
+        if not rows:
+            return rows
+        project_root = _find_project_root(Path.cwd()) or Path.cwd()
+        return resolve_display_paths(rows, project_root, self._agent_name)
+
     def _pane_rows(self, tab_id: str, snap: "dict | None | object" = _UNSET) -> "list[str]":
         """The display rows for ``tab_id``'s pane, derived from canonical sources:
         the status snapshot (model/agent/cost/ctx), the slash ``REGISTRY`` (menu),
-        the live conversation (history), and the app BINDINGS (help). Pass ``snap``
-        to reuse an already-read snapshot (keeps the rows and the selection ids
-        derived from ONE snapshot)."""
+        the live conversation (history), the live artifact list (#4482), and the
+        app BINDINGS (help). Pass ``snap`` to reuse an already-read snapshot
+        (keeps the rows and the selection ids derived from ONE snapshot)."""
         from reyn.interfaces.slash import REGISTRY  # noqa: PLC0415 — TTY-local
         snapshot = self._snapshot() if snap is _UNSET else snap
         return pane_payload(
@@ -1630,6 +1672,7 @@ class TextualChatApp(App):
             snapshot=snapshot,  # type: ignore[arg-type]
             commands=REGISTRY.all_commands(),
             history=self._history_turns(),
+            artifacts=self._artifact_rows(),
             app_bindings=self._app_binding_help(),
         )
 
@@ -2361,7 +2404,9 @@ class TextualChatApp(App):
         upstream, in :meth:`_history_turns`."""
         snapshot = self._snapshot() if snap is _UNSET else snap
         rows = self._pane_rows(tab_id, snapshot)
-        self._pane_commands[tab_id] = pane_commands(tab_id, snapshot)  # type: ignore[arg-type]
+        self._pane_commands[tab_id] = pane_commands(  # type: ignore[arg-type]
+            tab_id, snapshot, artifacts=self._artifact_rows(),
+        )
         child = self.query_one(f"#{tab_id}")
         if isinstance(child, OptionList):
             child.clear_options()
@@ -3057,6 +3102,46 @@ class TextualChatApp(App):
         untouched."""
         status = await handle_copy_sentinel(self._recent_replies, arg)
         self._ingest_frame(status)
+
+    async def _handle_open_artifact_request(self, ref: str) -> None:
+        """Consume a ``__open_artifact__`` sentinel: resolve the ref, launch
+        the OS's own default app on the SAME path, then report (#4482 PR-3).
+
+        Architect's #4482 ruling, verbatim: "開くのに使う path そのものを
+        表示し、表示から実行まで同じ path を使う" — the Artifacts pane already
+        showed this ref's `name` before the operator selected it; resolving
+        the SAME ref here (never a raw path carried by the command itself —
+        the artifact payload's own invariant 1) is what keeps "what was shown"
+        and "what gets opened" the same string, not two.
+
+        A resolution failure (unknown ref, or the file no longer exists —
+        :func:`resolve_ref` returns ``None`` for both, by design; see its own
+        docstring) reports as a status line rather than raising — the same
+        "report failure, never silently do nothing" shape :meth:`_write_clipboard`
+        established for the text-cursor yank path (#3616)."""
+        from pathlib import Path
+
+        from reyn.config import _find_project_root
+        from reyn.data.workspace.artifact_ref import resolve_ref
+        from reyn.interfaces.repl._open_with_os_default import open_with_os_default
+        from reyn.runtime.outbox import OutboxMessage
+
+        ref = (ref or "").strip()
+        if not ref:
+            self._ingest_frame(OutboxMessage(kind="status", text="no artifact ref given"))
+            return
+        project_root = _find_project_root(Path.cwd()) or Path.cwd()
+        resolved = resolve_ref(project_root, self._agent_name, ref)
+        if resolved is None:
+            self._ingest_frame(OutboxMessage(
+                kind="status", text=f"artifact not found (ref={ref})",
+            ))
+            return
+        ok = open_with_os_default(resolved)
+        if not ok:
+            self._ingest_frame(OutboxMessage(
+                kind="status", text=f"could not open {resolved.name} — no OS opener available",
+            ))
 
     def _handle_rewind_request(self, msg: "OutboxMessage") -> None:
         """Consume a ``__rewind_list__`` sentinel: show the picker, or the text
@@ -4533,6 +4618,11 @@ class TextualChatApp(App):
                             self._handle_rewind_request(msg)
                         except Exception:
                             logger.exception("textual chat: /rewind sentinel failed")
+                    elif msg.kind == "__open_artifact__":
+                        try:
+                            await self._handle_open_artifact_request(msg.text)
+                        except Exception:
+                            logger.exception("textual chat: /open sentinel failed")
                     elif msg.kind not in _SKIP_KINDS:
                         try:
                             self._ingest_frame(msg)

@@ -24,6 +24,13 @@ Phase 4 wires every pane to its CANONICAL reyn source (no placeholders):
   ``ChatReadModel.conversation_history`` seam), so this pane is cross-session by
   construction — it shows restored PRIOR turns alongside the live ones (see the
   app docstring).
+- **Artifacts** (#4482 PR-3) — generated files the terminal can't render
+  natively (html/office/pdf/images), newest-first, derived from the SAME
+  ``self.conversation`` model History reads (never ``Session.history``'s own
+  resident buffer — see :meth:`TextualChatApp._artifact_rows`'s own docstring
+  for why the two are not interchangeable). Each openable row carries an
+  ``/open <ref>`` command (:func:`pane_commands`) that launches the OS's own
+  default app on the resolved path.
 - **Cost / Ctx** — the live token/cost + context-window figures from the same
   status snapshot the plain path's status bar reads. Cost is the 5-row ×
   3-scope breakdown table (:func:`_cost_breakdown_table`) plus the cumulative
@@ -87,6 +94,7 @@ from .sent_queue import SentQueue
 if TYPE_CHECKING:
     from collections.abc import Iterable, Sequence
 
+    from reyn.core.present.artifact_list import ArtifactRow
     from reyn.interfaces.slash import SlashCommand
 
 
@@ -376,6 +384,12 @@ _MENU_TABS: "list[tuple[str, str]]" = [
     ("model", "Model"),
     ("agent", "Agent"),
     ("history", "Hist"),
+    # #4482 PR-3: generated artifacts (html/office/pdf/images — anything the
+    # terminal can't render natively) the operator can open with the OS's own
+    # default app. "Art" reads unambiguous next to "Agent" here (distinct
+    # first two letters, Ar- vs Ag-), matching this row's own "each
+    # abbreviation stays uniquely identifiable on its own" bar.
+    ("artifacts", "Art"),
     ("cost", "Cost"),
     ("ctx", "Ctx"),
     # The six categories the retired chip bar kept behind its level-2 "more…"
@@ -411,7 +425,7 @@ _MENU_TABS: "list[tuple[str, str]]" = [
 #: limitation of leaving those three panes unwrapped, not a claim that they
 #: are immune to the rendering quirk.
 _LIST_PANES = frozenset({
-    "model", "agent", "history", "menu", "tool", "mcp", "skill", "hook",
+    "model", "agent", "history", "artifacts", "menu", "tool", "mcp", "skill", "hook",
 })
 
 # ── the Help pane's key tables ───────────────────────────────────────────────
@@ -589,7 +603,9 @@ _USER_CONTENT_LIST_PANE = "history"
 #: that carry no marker of ours, so the quirk only reaches them if an operator
 #: names something with a ``[...]``-shaped substring (the accepted limitation
 #: documented at ``_LIST_PANES``).
-_LITERAL_ROW_PANES = frozenset({_USER_CONTENT_LIST_PANE, "tool", "mcp", "skill", "hook"})
+_LITERAL_ROW_PANES = frozenset({
+    _USER_CONTENT_LIST_PANE, "artifacts", "tool", "mcp", "skill", "hook",
+})
 
 
 def pane_needs_literal_rows(tab_id: str) -> bool:
@@ -890,6 +906,46 @@ def history_pane_options(turns: "Sequence[str]") -> list[str]:
     """Recent turns of the live conversation (already-formatted ``role · text``
     rows). A readout of the retained conversation model, not a registry set."""
     return list(turns) if turns else ["(no conversation yet)"]
+
+
+def artifact_row_label(row: "ArtifactRow") -> str:
+    """#4482 PR-3: one artifact's display row. Names the SAME thing
+    :meth:`_handle_open_artifact_request` opens — architect's ruling
+    ("表示から実行まで同じ path を使う") applies to what's shown here too.
+
+    **Prefers `resolved_path` over bare `name`** (review fix, lead-coder/
+    architect): `name` alone is a BASENAME, which cannot distinguish two
+    same-named artifacts in different directories — the arc's one
+    non-negotiable requirement is that the user sees the REAL thing about
+    to open, and a basename does not satisfy that on its own. A ref is an
+    opaque token with no meaning to the operator either, so neither
+    ``name`` nor ``ref`` alone is enough; ``resolved_path`` (a
+    project-root-relative path — see :func:`~reyn.core.present.
+    artifact_list.resolve_display_paths`) is what's shown whenever it is
+    available."""
+    if row.error is not None:
+        return f"✗ {row.name or '(unresolved)'} — {row.error}"
+    if row.is_inline:
+        return f"{row.name} (inline — already shown above)"
+    return row.resolved_path or row.name
+
+
+def artifact_pane_options(rows: "Sequence[ArtifactRow]") -> list[str]:
+    """Rows for the Artifacts drawer pane — newest-first, already the order
+    :func:`~reyn.core.present.artifact_list.collect_artifact_rows` returns."""
+    return [artifact_row_label(r) for r in rows] if rows else ["(no artifacts yet)"]
+
+
+def artifact_pane_commands(rows: "Sequence[ArtifactRow]") -> list[str]:
+    """The ``/open <ref>`` command parallel to each row in
+    :func:`artifact_pane_options` — empty string (non-actionable, same as
+    History/Menu) for a row with nothing to open: an inline artifact (no
+    real file — the content already reached the conversation pane
+    directly) or an error marker (nothing resolved)."""
+    return [
+        f"/open {r.ref}" if r.ref is not None else ""
+        for r in rows
+    ]
 
 
 def menu_pane_options(commands: "Iterable[SlashCommand]") -> list[str]:
@@ -1220,7 +1276,12 @@ _PANE_ENTRY_BUILDERS: "dict[str, object]" = {
 }
 
 
-def pane_commands(tab_id: str, snapshot: "dict | None" = None) -> list[str]:
+def pane_commands(
+    tab_id: str,
+    snapshot: "dict | None" = None,
+    *,
+    artifacts: "Sequence[ArtifactRow]" = (),
+) -> list[str]:
     """The slash command parallel to each row of ``tab_id``'s pane — index-aligned
     with :func:`pane_payload`'s rows for the same ``snapshot``, ``[]`` for a pane
     with no actionable rows. An empty string marks an inert row (a read-only
@@ -1228,8 +1289,10 @@ def pane_commands(tab_id: str, snapshot: "dict | None" = None) -> list[str]:
 
     This is what makes the restored categories OPERABLE rather than merely visible
     (#3338): the app maps a selected row straight onto ``/model`` / ``/attach`` /
-    ``/session switch`` / ``/visibility`` / ``/hook`` and submits it through the
-    same transport seam a typed slash uses."""
+    ``/session switch`` / ``/visibility`` / ``/hook`` / ``/open`` (#4482) and
+    submits it through the same transport seam a typed slash uses."""
+    if tab_id == "artifacts":
+        return artifact_pane_commands(artifacts)
     builder = _PANE_ENTRY_BUILDERS.get(tab_id)
     if builder is None:
         return []
@@ -1242,6 +1305,7 @@ def pane_payload(
     snapshot: "dict | None" = None,
     commands: "Iterable[SlashCommand]" = (),
     history: "Sequence[str]" = (),
+    artifacts: "Sequence[ArtifactRow]" = (),
     app_bindings: "Iterable[tuple[str, str]]" = (),
 ) -> list[str]:
     """The display rows for ``tab_id``'s drawer pane, derived from canonical reyn
@@ -1255,6 +1319,8 @@ def pane_payload(
         return [row for row, _cmd in builder(snap)]  # type: ignore[operator]
     if tab_id == "history":
         return history_pane_options(history)
+    if tab_id == "artifacts":
+        return artifact_pane_options(artifacts)
     if tab_id == "menu":
         return menu_pane_options(commands)
     if tab_id == "cost":
