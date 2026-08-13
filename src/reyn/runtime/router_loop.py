@@ -372,14 +372,33 @@ def _build_media_followup_message(
 
 
 def _is_empty_router_response(response: Any) -> bool:
-    """OS-side detection: model emitted no text and no tool calls.
+    """Is THIS ONE response empty — no text, no tool calls?
 
     Provider-level glitch (observed with weak models such as
-    gemini-2.5-flash-lite at ~50% rate — ADR-0021 / B7-G12).  This is
-    NOT recovered by Reyn — surfaced to the user as an explicit failure
-    for user-side handling (no retry, no context change, no model switch).
+    gemini-2.5-flash-lite at ~50% rate — ADR-0021 / B7-G12).
 
     Trigger: finish_reason=="stop", content empty, tool_calls empty.
+
+    **This predicate's subject is deliberately narrow — one response, no
+    turn context** (its only argument is ``response``, structurally unable
+    to ask "did the LLM already produce something earlier THIS turn?").
+    The call site (`run()`, near the "Option F" block) is what answers the
+    real question ADR-0021 needs — "did this TURN produce nothing?" — by
+    additionally gating on `_tool_calls_attempted` (#4486: a tool call
+    already dispatched this turn means the model may correctly have
+    nothing further to add — e.g. `present`'s entire contract is that the
+    tool call itself is the answer — and that is not the glitch this
+    function detects). Do not fold that gating in here: a caller that only
+    wants "is this single response empty" (there are none today, but the
+    predicate's name promises exactly that) would silently gain turn-scoped
+    behavior it never asked for.
+
+    **Retry note** (#4486 drift fix — this docstring previously claimed
+    Reyn does not retry at all, which stopped matching production the
+    moment B42-NF-W6-1 landed): the OS-level retry decision is NOT made
+    here either — see the "Option F" block at the `_is_empty_router_response`
+    call site, and `empty_stop_retry_auto` (default `True` in production,
+    `router_loop_driver.py`) for the actual current behavior.
     """
     if response is None:
         return True
@@ -2427,19 +2446,38 @@ class RouterLoop:
             # Option F (ADR-0021): detect empty-stop before treating as text reply.
             # Empty-stop = finish_reason="stop", content empty, no tool calls.
             # This is a provider-level glitch (observed at ~50% rate with weak
-            # models — B7-G12 measurement).  Reyn does NOT retry, change context,
-            # or switch models.  Responsibility: observe + surface to user.
+            # models — B7-G12 measurement). Reyn does not change context or
+            # switch models when it fires.  #4486 drift fix: this comment
+            # previously also said "does NOT retry" — that stopped matching
+            # production the moment B42-NF-W6-1 shipped `empty_stop_retry_auto`
+            # (see below; the real driver, `router_loop_driver.py`, wires it
+            # `True`, so a retry attempt IS the default production behavior,
+            # not an opt-in one).
             #
-            # B42-NF-W6-1: when a continuation directive is configured AND the
-            # ``REYN_EMPTY_STOP_RETRY`` env var opts in, attempt ONE retry per
-            # turn with the directive appended as a synthetic user message
-            # before re-entering the loop. The retry path matches the
-            # Anthropic-recommended "continuation prompts as last resort"
-            # pattern (= platform.claude.com handling-stop-reasons docs) and
-            # the Hermes-agent #9400 community implementation. Without the
-            # env var, behaviour is unchanged from the original "observe +
-            # surface" policy.
+            # #4486: this is turn-scoped, not response-scoped — a tool call
+            # dispatched EARLIER this turn (`_tool_calls_attempted > 0`) means
+            # an otherwise-"empty" response may be the model correctly having
+            # nothing further to add (e.g. `present`'s entire contract is that
+            # the tool call itself is the answer), not ADR-0021's glitch
+            # (calibrated against a turn's very FIRST response, no preceding
+            # tool call). `_is_empty_router_response` itself can't tell these
+            # apart — its only argument is the one `response` — so the turn
+            # context is supplied HERE, at the call site, not folded into that
+            # narrower predicate. architect ruling (#4486): the asymmetry
+            # decides it — a false positive here ASSERTS a failure that never
+            # happened (a completed, successful turn reads as broken to the
+            # user); a false negative only drops a trailing summary line, on
+            # work already done. Deliberately `_tool_calls_attempted` (a
+            # per-turn monotonic count, reset once at the top of `run()`, only
+            # ever incremented — never "did the immediately preceding response
+            # have tool_calls", which would miss the tool -> empty -> resume ->
+            # empty shape: the resume round's own response has no tool_calls).
+            # Not merged with #4453's taint latch despite the same per-turn/
+            # monotonic SHAPE — different STATE, different reset trigger
+            # (compaction there, turn boundary here).
             if _is_empty_router_response(result):
+                if _tool_calls_attempted > 0:
+                    return self._total_usage
                 # P6: emit audit event — state change must be observable.
                 self.host.events.emit(
                     "router_empty_response_detected",
@@ -2451,9 +2489,13 @@ class RouterLoop:
                     caller_hint="router",
                     model=host.resolve_model(self.router_model),
                 )
-                # B42-NF-W6-1 detect-and-retry: env-var-gated, directive-gated,
-                # max 1 retry per turn. Trace-patch-replay verified 0/10 →
-                # 10/10 narration recovery on the W6-S1 plan-step empty stop.
+                # B42-NF-W6-1 detect-and-retry: directive-gated, auto- or
+                # env-var-gated, max 1 retry per turn (`empty_stop_retry_auto`
+                # is the real production switch — see the module-docstring
+                # note above; the env var is a secondary opt-in for callers
+                # that construct RouterLoop without it). Trace-patch-replay
+                # verified 0/10 → 10/10 narration recovery on the W6-S1
+                # plan-step empty stop.
                 if (
                     self._empty_stop_retry_directive
                     and _empty_stop_retries < 1
