@@ -247,6 +247,10 @@ _ACTION_CONTRACT_SAMPLES: list[tuple[str, dict[str, Any]]] = [
     # itself defaults an absent ``path`` to ``""``.)
     ("list_agents", {"path": ""}),
     ("describe_agent", {"name": "planner"}),
+    # #3896 (owner ruling, option 1): spawn_session gained a catalog route so
+    # exclusive-wrapper mode doesn't lose the capability entirely — see
+    # llm_reachability.py's "Exclusive-wrapper mode" section.
+    ("spawn_session", {"request": "investigate the failing test"}),
     # delegate_to_agent retired, proposal 0067 P6 (#3978) — run_prompt/
     # send_to_session are router-only tools (not invoke_action/catalog
     # actions), so they need no contract sample here.

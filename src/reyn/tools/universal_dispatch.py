@@ -103,7 +103,14 @@ _CATEGORY_ACTIONS: Final[dict[str, tuple[str, ...]]] = {
     # ``delegate_to_agent`` retired (proposal 0067 P6, #3978) — see
     # ``send_to_session``/``run_prompt`` for the surviving reach-another-
     # agent's-context verbs.
-    "multi_agent": ("list_agents", "describe_agent"),
+    # #3896 (owner ruling, option 1): ``spawn_session`` gains a catalog route
+    # so exclusive-wrapper mode does not lose the capability entirely — it
+    # used to be stripped by router_tools.py's §J with nothing to replace it
+    # (unlike ``call_mcp_tool``/``describe_mcp_tool``, whose §J strips DO name
+    # a replacement). ``run_prompt``/``send_to_session`` remain catalog-less;
+    # this entry is scoped to spawn_session's own finding, not a general fix
+    # for the delegation surface.
+    "multi_agent": ("list_agents", "describe_agent", "spawn_session"),
     # Issue #879 — a single ``mcp`` category. 2026-05-25 install-surface
     # refactor: ``install_server`` split along the SOURCE axis into three verbs
     # (registry / public package channel / local script), and

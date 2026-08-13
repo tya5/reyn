@@ -113,9 +113,16 @@ other, both, or neither; they answer different questions and neither
 subsumes the other. Measured result under this mode: the 5 cron tools (still
 unreachable regardless of mode) plus ``call_mcp_tool`` / ``describe_mcp_tool``
 (their own §J entries' reasons already name their replacement — this is the
-INTENDED end state, not a gap) plus ``spawn_session`` (#3896's actual finding
-— no replacement exists, an open (A)/(B)/(C) product decision, same shape as
-cron's own entry above).
+INTENDED end state, not a gap).
+
+**#3896's own finding (fixed).** ``spawn_session`` used to be in this set too
+— stripped by §J with no compensating catalog route, unlike the two MCP
+tools above. Owner ruling (2026-08-13): give it a real catalog route rather
+than stop stripping it or accept the loss (option 1 of the (A)/(B)/(C) choice
+this module's own registry used to track as open). ``universal_dispatch.
+_CATEGORY_ACTIONS["multi_agent"]`` now includes it, so route (b) covers it
+even while §J still strips route (a) — it is reachable under this mode
+again, and no longer appears in the registry below.
 """
 from __future__ import annotations
 
@@ -188,25 +195,6 @@ UNREACHABLE_TOOL_REASONS: Final[Mapping[str, UnreachableToolReason]] = {
 }
 
 
-_SPAWN_SESSION_EXCLUSIVE_WRAPPER_REASON = (
-    "#3896: `spawn_session` is registered router=allow and IS direct-advertisable "
-    "in the default configuration (universal_wrappers_enabled=False under the "
-    "shipped default 'enumerate-all' exposure scheme), so it is correctly absent "
-    "from UNREACHABLE_TOOL_REASONS above. But router_tools.build_tools's own "
-    "section J strips it (_wrapper_superseded_tool_names() includes it as a "
-    "deliberate surface reduction) whenever universal_wrappers_enabled=True -- a "
-    "real, selectable, already-landed configuration (#3429's exclusive-wrapper "
-    "mode) -- and it has no catalog route (never added to "
-    "universal_dispatch._CATEGORY_ACTIONS), unlike delegate_to_agent's symmetric "
-    "multi_agent category route. Under that mode specifically, spawn_session is "
-    "genuinely unreachable -- a real capability loss, not a false positive. "
-    "Whether to (A) give it a catalog route (symmetric with delegate_to_agent), "
-    "(B) stop stripping it in exclusive-wrapper mode, or (C) accept the loss as "
-    "the mode's intended shape is an open product decision tracked on #3896 "
-    "itself. This entry records the interim state -- a known, tracked hole, not "
-    "a silently-passing gate -- pending that decision."
-)
-
 _CALL_MCP_TOOL_EXCLUSIVE_WRAPPER_REASON = (
     "router_tools.py's own _WRAPPER_SUPERSEDED_BASE_TOOLS entry for "
     "`call_mcp_tool` names its replacement: `mcp_call_tool` is the catalog's "
@@ -243,9 +231,11 @@ UNREACHABLE_UNDER_EXCLUSIVE_WRAPPER_MODE_REASONS: Final[Mapping[str, Unreachable
     "describe_mcp_tool": UnreachableToolReason(
         "SUPERSEDED_BY_CATALOG_REPLACEMENT", _DESCRIBE_MCP_TOOL_EXCLUSIVE_WRAPPER_REASON
     ),
-    "spawn_session": UnreachableToolReason(
-        "PENDING_CAPABILITY_DECISION", _SPAWN_SESSION_EXCLUSIVE_WRAPPER_REASON
-    ),
+    # #3896: `spawn_session` used to be declared here (PENDING_CAPABILITY_DECISION)
+    # — removed once it gained a real `multi_agent` catalog route (see the
+    # module docstring's "Exclusive-wrapper mode" section). It is reachable
+    # under this mode again via route (b), so it no longer belongs in this
+    # registry at all.
 }
 
 

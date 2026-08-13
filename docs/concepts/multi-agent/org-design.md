@@ -67,17 +67,22 @@ of this conversation. The spawned session begins immediately; this tool
 returns a spawn-ack rather than waiting for the task to complete (async
 dispatch).
 
-⚠️ **Exclusive-wrapper mode has no catalog route for this tool.** When
+**Reachable under exclusive-wrapper mode too (#3896, fixed 2026-08-13).** When
 [`action_retrieval.universal_wrappers_enabled`](../tools-integrations/universal-catalog.md)
-is `true`, `spawn_session`'s individual per-tool entry is stripped, the same
-as every router-only delegation tool (`run_prompt`, `send_to_session`) —
-none of them has a `multi_agent` category catalog-dispatch fallback; that
-category's action set is `list_agents` / `describe_agent` only. (Prior to
-proposal 0067 P6, #3978, `delegate_to_agent` was the one exception with a
-catalog-channel route; it retired with the rest of its own tool, so this
-gap is now uniform across the whole delegation surface, not
-`spawn_session`-specific.) An operator enabling exclusive-wrapper mode
-loses `spawn_session` reachability entirely, with no compensating route.
+is `true`, `spawn_session`'s individual per-tool entry is stripped from direct
+advertisement, but the `multi_agent` catalog category now includes it
+alongside `list_agents` / `describe_agent` — `invoke_action{action_name:
+"spawn_session", args: {...}}` reaches the same handler, same permission
+enforcement, as calling it directly. (An earlier version of this doc — and of
+the code itself — documented this as a real gap: #3896 found that
+`spawn_session` used to have no compensating catalog route at all, a genuine
+capability loss under a real, selectable configuration. Owner ruling gave it
+one rather than accept the loss.) `run_prompt` / `send_to_session` remain
+router-only delegation tools with no catalog-dispatch fallback — this fix is
+scoped to `spawn_session`'s own finding, not the whole delegation surface.
+(Prior to proposal 0067 P6, #3978, `delegate_to_agent` was the one *other*
+exception with a catalog-channel route; it retired with the rest of its own
+tool.)
 
 **`mode`**:
 
