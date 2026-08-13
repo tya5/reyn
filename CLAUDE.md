@@ -242,7 +242,7 @@ available action.
 This repo is touched by multiple Claude sessions (lead-coder, e2e-coder,
 per-PR coders) authenticating as the same `gh` user.
 
-**Before you open a PR, run `ruff check src tests`, `python
+**Before you open a PR, run `ruff check .`, `python
 scripts/test_tier_audit.py --strict <changed test files>`, `python
 scripts/verify_module_docstrings.py <changed src files>`, `python
 scripts/mypy_ratchet.py`, `python
@@ -259,7 +259,9 @@ This is testing.md's own canonical policy, not a CLAUDE.md-specific rule —
 read `docs/deep-dives/contributing/testing.md` § "Before you push" for the
 full reasoning (why the full run was dropped, not just discouraged; what
 running it locally actually costs vs. CI; the #3750 count history) before
-changing this paragraph, in either doc. A green scoped `pytest` alone is
+changing this paragraph, in either doc. This line said `ruff check src tests` until #4630 measured the gap: CI runs `ruff check .` (`test.yml:162`), so the documented command silently skipped `scripts/` and every other top-level directory — a PR author who followed it exactly still went red, and 17 genuinely-dead imports outside `src/` had been invisible to the whole checklist. Run the same command CI runs; a narrower local gate is a green that does not mean what it says.
+
+A green scoped `pytest` alone is
 **not** a green CI run (`pytest-green ≠ CI-green`): ruff `I001` import-sort
 and a Tier-4 format pin (`len(...) == N`) both fail CI while `pytest`
 passes.
