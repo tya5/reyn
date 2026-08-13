@@ -166,11 +166,24 @@ class _BoundedEventBridge:
 
 
 class McpIngressAdapter:
-    """§6.1 MCP Adapter — standard ``resources/updated`` notification only (no
-    custom dialect). Converts a resource-update signal into the builtin
-    ``mcp_resource_updated`` :class:`HookEvent` (via Phase 1's
-    ``build_hook_payload``, so the field-set stays schema-gated) and delivers
-    it through the shared in-process bridge."""
+    """§6.1 MCP Adapter — converts a resource-update signal (``uri``,
+    ``resync``) into the builtin ``mcp_resource_updated`` :class:`HookEvent`
+    (via Phase 1's ``build_hook_payload``, so the field-set stays
+    schema-gated) and delivers it through the shared in-process bridge.
+
+    #3698 (architect flag, corrected): the SIGNAL is wire-independent, not
+    "standard ``resources/updated`` notification only" as an earlier version
+    of this docstring claimed — :meth:`to_event` takes ``uri``/``resync``
+    values, never a wire notification object, and its ONE caller
+    (:meth:`~reyn.mcp.connection_service.MCPConnectionService.
+    _mcp_to_hook_event`) already fed it from THREE distinct sources even
+    before PR-2: a real legacy ``resources/updated`` push
+    (:meth:`~reyn.mcp.message_handler.ReynMCPMessageHandler.
+    on_resource_updated`), a SYNTHETIC reconnect-resync re-signal (#2597 P1,
+    ``resync=True``, no wire notification at all), and — since #3698 PR-2 —
+    a modern-era ``ResourceUpdated`` event off a ``Client.listen()`` stream
+    (:class:`~reyn.mcp.subscription_port.ListenSubscriptionAdapter`). This
+    adapter itself never branches on which of those produced the signal."""
 
     def __init__(self, *, hook_trigger: "HookTrigger | None", maxsize: int = 32) -> None:
         self._bridge = _BoundedEventBridge(

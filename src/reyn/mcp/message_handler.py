@@ -166,12 +166,65 @@ class ReynMCPMessageHandler:
         # None = no bridge (no hook trigger wired — byte-identical to pre-H1).
         self._on_external_event = on_external_event
         self._agent_name = agent_name
+        # #3698 PR-2 (review ruling): per-FAMILY legacy-dispatch suppression
+        # while a ListenSubscriptionAdapter is active and HONORS that family
+        # — see :meth:`set_listen_honored`/:meth:`clear_listen_honored` and
+        # ``__call__``'s three gated ``case`` arms below. Deliberately does
+        # NOT cover ``on_progress`` (request-scoped, never rides ``listen()``
+        # — see that method's own docstring; blanket-disabling this whole
+        # handler while listen is active would silently drop progress, the
+        # exact "no-longer-silent" failure mode this handler's own module
+        # docstring names as the thing to avoid). False by default: a
+        # connection with no active listen adapter (legacy era, or before
+        # the first successful ``open()``) dispatches every family via the
+        # legacy channel exactly as before this ruling.
+        self._listen_honors_tools = False
+        self._listen_honors_prompts = False
+        self._listen_honors_resources = False
 
     def bind_client(self, client: Any) -> None:
         """Complete the weakref binding once the owning ``fastmcp.Client`` exists.
         MUST run before the first message is dispatched — see module docstring's
         "two-phase client binding"."""
         self._client_ref = weakref.ref(client)
+
+    def set_listen_honored(self, *, tools: bool, prompts: bool, resources: bool) -> None:
+        """Called by :class:`~reyn.mcp.subscription_port.ListenSubscriptionAdapter`
+        after every successful ``open()`` — records, per family, whether the
+        server's ``subscriptions/listen`` ack actually honored it (``sub.
+        honored.tools_list_changed``/``.prompts_list_changed`` — ``bool |
+        None``, ``False`` here for both ``False`` AND ``None``/"unknown",
+        which is deliberately the SAME as "not honored": if the server
+        didn't confirm it's delivering this family over listen, the legacy
+        channel must stay live for it, matching the review ruling's
+        "honored が None なら何も抑止しない" — resources from ``sub.honored.
+        resource_subscriptions is not None`` — a real, non-``None`` list,
+        even if empty, means the server acknowledged the resource-
+        subscriptions mechanism under listen for this open() call.
+
+        A server that dual-fires BOTH the legacy notification and the
+        modern listen event for an honored family (a real, plausible
+        migration-period shape — not just reyn's own test doubles; see
+        ``subscription_port.py``'s module docstring) would otherwise double
+        every ``mcp_tool_list_changed``/``mcp_prompt_list_changed``/
+        ``mcp_resource_updated`` audit-event AND double-fire the H1 hook
+        trigger + (tools family) the lazy-tools-cache invalidation — a
+        real, user-visible harm, not a cosmetic double-count (#3698 review:
+        found live via a previously-green test that started failing once
+        this port's listen adapter actually started dispatching)."""
+        self._listen_honors_tools = tools
+        self._listen_honors_prompts = prompts
+        self._listen_honors_resources = resources
+
+    def clear_listen_honored(self) -> None:
+        """Called by :class:`~reyn.mcp.subscription_port.ListenSubscriptionAdapter`
+        on :meth:`~reyn.mcp.subscription_port.ListenSubscriptionAdapter.close`
+        — the legacy channel becomes authoritative again for every family
+        once listen delivery is no longer active (a reconnect that lands on
+        a legacy-era server, or teardown)."""
+        self._listen_honors_tools = False
+        self._listen_honors_prompts = False
+        self._listen_honors_resources = False
 
     # ── the MCP SDK's actual entry point (see module docstring's "#3698 P3") ───────
 
@@ -195,12 +248,25 @@ class ReynMCPMessageHandler:
                     if client is not None:
                         client._handle_task_status_notification(root)
                 case mcp.types.ToolListChangedNotification():
-                    await self.on_tool_list_changed(root)
+                    # #3698 PR-2 (review ruling): suppressed only while an
+                    # active listen adapter HONORS this family — see
+                    # set_listen_honored's docstring for why (a dual-firing
+                    # server would otherwise double this event/hook/cache-
+                    # invalidate).
+                    if not self._listen_honors_tools:
+                        await self.on_tool_list_changed(root)
                 case mcp.types.PromptListChangedNotification():
-                    await self.on_prompt_list_changed(root)
+                    if not self._listen_honors_prompts:
+                        await self.on_prompt_list_changed(root)
                 case mcp.types.ResourceUpdatedNotification():
-                    await self.on_resource_updated(root)
+                    if not self._listen_honors_resources:
+                        await self.on_resource_updated(root)
                 case mcp.types.ProgressNotification():
+                    # Deliberately UNGATED — progress is request-scoped, never
+                    # rides listen() (see on_progress's own docstring); a
+                    # blanket suppression here would silently drop it, the
+                    # exact class of bug this handler's module docstring
+                    # exists to make un-silent.
                     await self.on_progress(root)
                 case _:
                     self._log_unhandled(root)

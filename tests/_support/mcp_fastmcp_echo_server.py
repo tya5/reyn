@@ -12,12 +12,22 @@ Tools:
                             real FastMCP ``Context.report_progress`` API, so
                             progress-callback plumbing is exercised against the
                             real protocol (not a hand-rolled fake).
-  - ``notify_tool_list_changed()``   -> sends a real
-                            ``notifications/tools/list_changed`` via
-                            ``Context.send_notification`` (#2597 S2b — the
-                            async notifications bridge).
-  - ``notify_prompt_list_changed()`` -> sends a real
-                            ``notifications/prompts/list_changed`` (#2597 S2b).
+  - ``notify_tool_list_changed()``   -> fires a real ``ToolListChanged``
+                            signal on BOTH delivery mechanisms (#3698 PR-2):
+                            the legacy ``notifications/tools/list_changed``
+                            push via ``Context.send_notification`` (#2597
+                            S2b — the async notifications bridge, delivered
+                            when a client is on a pre-2026-07-28 negotiated
+                            connection) AND ``bus.publish(ToolsListChanged())``
+                            on the explicit module-level ``InMemorySubscriptionBus``
+                            (delivered to a client that opened
+                            ``Client.listen(tools_list_changed=True)`` on a
+                            2026-07-28 connection — see the module docstring's
+                            "#3698 PR-2" section for why BOTH calls are needed
+                            here, not just one).
+  - ``notify_prompt_list_changed()`` -> same dual-delivery shape for
+                            ``notifications/prompts/list_changed`` /
+                            ``PromptsListChanged`` (#2597 S2b / #3698 PR-2).
   - ``pid()``            -> returns ``os.getpid()`` of THIS server process. Used
                             by #2597 S2a connection-reuse tests to prove a second
                             ``call_tool`` hit the SAME held subprocess (no
@@ -57,14 +67,39 @@ has no bundled equivalent (``show_headers`` reads the raw transport
 ``Context`` has no ``send_notification`` convenience (the notify tools go
 through ``ctx.session.send_notification`` directly — the same primitive
 standalone fastmcp's own convenience wraps).
+
+#3698 PR-2 — dual notification delivery (live-verified, not assumed):
+``MCPServer`` wires an ``InMemorySubscriptionBus`` (this module now passes
+one explicitly as ``subscriptions=`` so the notify tools below can reach it)
+into ``on_subscriptions_listen=ListenHandler(bus)`` automatically — but
+does NOT auto-publish to it on a tool author's behalf. ``Context.
+send_notification``/``ctx.session.send_notification`` is a SEPARATE, legacy-
+only wire primitive that a client using ``Client.listen()`` (the 2026-07-28
+delivery mechanism, #3698's PR-2 subject) never observes — confirmed via a
+minimal bare-SDK reproduction outside this file entirely (a hand-built
+``Server(on_subscriptions_listen=...)`` publishing to its own bus delivered
+instantly; ``send_notification`` alone against this exact file, pre-fix,
+hung a listening client forever with zero error). Before this fix, the two
+notify tools below called ONLY ``send_notification`` — correct for a
+pre-2026-07-28 negotiated client (what every pre-PR-2 test used), silently
+undeliverable to a client that had moved to ``Client.listen()``. Both tools
+now call BOTH primitives, so ONE tool invocation exercises whichever
+delivery mechanism the calling test's negotiated connection actually uses,
+without the test needing to know which era it's on.
 """
 from __future__ import annotations
 
 import sys
 
 from mcp.server.mcpserver import Context, MCPServer
+from mcp.server.subscriptions import InMemorySubscriptionBus
 
-mcp = MCPServer("reyn-test-echo")
+# #3698 PR-2: shared explicitly (not left to MCPServer's own internal
+# default) so notify_tool_list_changed/notify_prompt_list_changed below can
+# publish to the SAME bus instance the listen handler reads from — see the
+# module docstring's "dual notification delivery" section.
+_subscriptions = InMemorySubscriptionBus()
+mcp = MCPServer("reyn-test-echo", subscriptions=_subscriptions)
 
 
 @mcp.tool()
@@ -173,18 +208,23 @@ async def progress(steps: int, ctx: Context) -> str:
 @mcp.tool()
 async def notify_tool_list_changed(ctx: Context) -> str:
     import mcp.types as types
+    from mcp.server.subscriptions import ToolsListChanged
 
     # #4302: bundled Context has no ``send_notification`` convenience — go
     # through ``ctx.session`` (the underlying ServerSession) directly.
+    # #3698 PR-2: fire BOTH delivery mechanisms — see module docstring.
     await ctx.session.send_notification(types.ToolListChangedNotification())
+    await _subscriptions.publish(ToolsListChanged())
     return "sent"
 
 
 @mcp.tool()
 async def notify_prompt_list_changed(ctx: Context) -> str:
     import mcp.types as types
+    from mcp.server.subscriptions import PromptsListChanged
 
     await ctx.session.send_notification(types.PromptListChangedNotification())
+    await _subscriptions.publish(PromptsListChanged())
     return "sent"
 
 

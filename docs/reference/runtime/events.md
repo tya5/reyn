@@ -374,7 +374,7 @@ op dispatch:
 
 | Kind | Trigger | Key payload |
 |------|---------|-------------|
-| `mcp_initialized` | Emitted on every (re)connect, once the server's `initialize` handshake completes. | `server`, `negotiated_version`, `capabilities` |
+| `mcp_initialized` | Emitted on every (re)connect, once the server's handshake completes (`initialize` or, since #3698 PR-2's `Client(mode="auto")`, `discover`). | `server`, `negotiated_version`, `capabilities`, `subscription_adapter` (the selected `SubscriptionAdapter` class name — `LegacySubscriptionAdapter` or `ListenSubscriptionAdapter`, see [Concepts: MCP](../../concepts/tools-integrations/mcp.md) — the audit-visible witness of which delivery mechanism this connection actually uses) |
 | `mcp_resource_updated` | A subscribed resource's server-pushed `resources/updated` notification, or a synthetic resync fired per re-subscribed URI after a transport-death reconnect. Also wired into the hook dispatcher as an external-event hook-point — see [Concepts: hooks](../../concepts/runtime/hooks.md#mcp_resource_updated). | `server`, `uri`, `resync` (`true` for a reconnect resync, `false` for a real push) |
 | `mcp_elicitation_requested` | A server issues an `elicitation/create` structured-input request. | `server`, `field_keys` (the requested schema's property **names** only — never values) |
 | `mcp_elicitation_answered` | The request resolves to `accept` or `decline` (human choice, or a `decline` from `auto_decline` config). | `server`, `field_keys`, `action` (`"accept"` \| `"decline"`) |
