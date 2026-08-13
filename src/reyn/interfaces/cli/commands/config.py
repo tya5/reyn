@@ -338,6 +338,7 @@ def _validate() -> None:
     """
     from reyn.config.config_schema import disabled_config_keys, unknown_config_keys
     from reyn.config.loader import (
+        _find_project_root,
         build_policy_tier_config,
         load_hot_reload_config,
         load_per_agent_hooks,
@@ -345,10 +346,17 @@ def _validate() -> None:
     from reyn.hooks.loader import load_hooks
     from reyn.hooks.schema import HookConfigError
 
+    # lead-coder review (#4555): root resolution must be consistent across
+    # all 3 sources this command reads, or `cd subdir && reyn config
+    # validate` checks reyn.yaml (build_policy_tier_config walks up to the
+    # real root via _find_project_root) while silently skipping the other 2
+    # (a bare Path.cwd() does not walk up). Resolve once, thread everywhere.
+    project_root = _find_project_root(Path.cwd()) or Path.cwd()
+
     policy_merged = build_policy_tier_config()
     policy_unknown = unknown_config_keys(policy_merged)
     disabled = disabled_config_keys(policy_merged)
-    in_set_merged = load_hot_reload_config()
+    in_set_merged = load_hot_reload_config(project_root)
     in_set_unknown = unknown_config_keys(in_set_merged)
 
     # #4501/#4364 PR-1: hooks[] entries are a free-form list the top-level
@@ -380,8 +388,8 @@ def _validate() -> None:
     # load_per_agent_hooks mirrors Session._read_per_agent_hooks exactly —
     # same defensive "not a list -> []" degrade the real runtime uses, so a
     # non-list `hooks:` here is silently skipped just like it would be at an
-    # actual hook-load, not a validate-only gap.
-    project_root = Path.cwd()
+    # actual hook-load, not a validate-only gap. Uses the SAME resolved
+    # project_root as (1)/(2) above (lead-coder review, #4555).
     agents_dir = project_root / ".reyn" / "agents"
     if agents_dir.is_dir():
         for agent_dir in sorted(agents_dir.iterdir()):

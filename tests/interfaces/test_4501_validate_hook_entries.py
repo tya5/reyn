@@ -231,6 +231,67 @@ def test_an_agent_dir_with_no_hooks_file_is_silently_skipped(project, capsys):
     assert "Hook entry validation" not in out
 
 
+# ── #4555 review (lead-coder): root resolution must be consistent ─────────
+#
+# The `project` fixture above monkeypatches `_find_project_root` to always
+# return `tmp_path` regardless of the path it's called with — it can never
+# witness a root-resolution bug where one call site walks up from cwd and
+# another does not. This fixture uses the REAL `_find_project_root` (only
+# `Path.home` is faked) so a genuine subdirectory run exercises the actual
+# filesystem walk each of the 3 call sites in `_validate()` must agree on.
+
+
+@pytest.fixture()
+def real_project_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    fake_home = tmp_path / "fake_home"
+    fake_home.mkdir()
+    monkeypatch.setattr(Path, "home", staticmethod(lambda: fake_home))
+    root = tmp_path / "project"
+    root.mkdir()
+    return root
+
+
+def test_findings_from_all_3_sources_survive_running_from_a_subdirectory(
+    real_project_root, capsys, monkeypatch,
+):
+    """Tier 2: #4555 review — build_policy_tier_config walks up to the real
+    project root via _find_project_root, but load_hot_reload_config and the
+    per-agent scan used a bare Path.cwd() before this fix, which does NOT
+    walk up. Running from a subdirectory used to silently drop the IN-set
+    and per-agent findings while still reporting the reyn.yaml one — this
+    pins that all 3 sources are found identically regardless of which
+    subdirectory `reyn config validate` is invoked from."""
+    _write_yaml(real_project_root / "reyn.yaml", MINIMAL_REYN_YAML)
+    _write_yaml(
+        real_project_root / ".reyn" / "config" / "hooks.yaml",
+        "hooks:\n"
+        "  - \"on\": turn_end\n"
+        "    exec: [\"echo\", \"hi\"]\n"
+        "    allow_write_paths: [\"/tmp\"]\n",
+    )
+    _write_yaml(
+        real_project_root / ".reyn" / "agents" / "planner" / "hooks.yaml",
+        "hooks:\n"
+        "  - \"on\": turn_end\n"
+        "    exec: [\"echo\", \"hi\"]\n"
+        "    nam: typo\n",
+    )
+    subdir = real_project_root / "src" / "nested"
+    subdir.mkdir(parents=True)
+    monkeypatch.chdir(subdir)
+
+    from reyn.interfaces.cli.commands.config import _validate
+
+    _validate()
+    out = capsys.readouterr().out
+    assert ".reyn/config/hooks.yaml" in out, (
+        f"IN-set finding missing when run from a subdirectory: {out!r}"
+    )
+    assert ".reyn/agents/planner/hooks.yaml" in out, (
+        f"per-agent finding missing when run from a subdirectory: {out!r}"
+    )
+
+
 def test_multiple_hook_sources_each_report_their_own_labeled_finding(project, capsys):
     """Tier 2: a malformed entry in BOTH reyn.yaml and a per-agent file at
     once produces two distinct labeled findings, not one that shadows the
