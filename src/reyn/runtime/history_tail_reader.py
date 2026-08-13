@@ -32,10 +32,16 @@ read.
 Older entries this reader doesn't return are NOT lost: ``history.jsonl`` is
 append-only, so anything left unread here is still on disk, reachable later
 via the extend-on-demand path (#4387 Phase B ②, not yet implemented).
+
+#4476 Phase 1 adds a small, separate section at the end of this module:
+policy-independent measurement (bytes/line counts across every
+``history.jsonl``) that reads to no truncation path — see that section's
+own header comment for why it lives here rather than a new module.
 """
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -304,3 +310,73 @@ def read_history_before(
 
     collected.reverse()
     return collected
+
+
+# ── #4476 Phase 1: read-only measurement, no truncation ─────────────────
+#
+# retention.py:84-87's own docstring states ``history.jsonl`` is "append-only
+# and never floor-truncated" — this file has NO deletion path today, by
+# design (branch visibility / compaction's own watermark / TUI scrollback
+# all depend on old lines still being readable, per #4476's own issue body).
+# The owner-measured 500MB figure (#4387) is a single point — one
+# environment, one moment — too thin to set a retention policy from. This
+# section exists ONLY to widen that single point into an actual measured
+# population, same order as #4478/#4485: land the measurement, let evidence
+# accumulate, THEN an owner-set policy (never invented here) decides
+# anything. See this module's own docstring for why truncation isn't safe
+# to add casually, and :func:`read_history_after`'s docstring for the
+# ``covers_through_seq`` floor a Phase 2 truncation would eventually have to
+# respect.
+
+
+@dataclass(frozen=True)
+class HistoryStorageStats:
+    """#4476 Phase 1: policy-independent snapshot of every discovered
+    ``history.jsonl``'s on-disk footprint under a project's ``.reyn/agents/``
+    tree. Measurement only — no field here implies or drives any deletion."""
+    file_count: int
+    total_bytes: int
+    total_lines: int
+
+
+def history_file_stats(path: Path) -> "tuple[int, int]":
+    """``(bytes, lines)`` for one ``history.jsonl``. ``bytes`` is the exact
+    on-disk file size (``stat().st_size``); ``lines`` counts non-empty
+    JSONL lines (= turns), the same "blank line is not an entry" rule
+    :func:`read_history_after` already uses — so this count agrees with
+    what a durable-store reader actually sees, not a raw ``wc -l``.
+    Missing file → ``(0, 0)``, matching "nothing written yet" rather than
+    an error."""
+    if not path.is_file():
+        return 0, 0
+    total_bytes = path.stat().st_size
+    lines = 0
+    with path.open("r", encoding="utf-8") as f:
+        for raw in f:
+            if raw.strip():
+                lines += 1
+    return total_bytes, lines
+
+
+def aggregate_history_stats(project_root: Path) -> HistoryStorageStats:
+    """#4476 Phase 1: sum :func:`history_file_stats` over every
+    ``history.jsonl`` found anywhere under ``<project_root>/.reyn/agents/``
+    (``**/history.jsonl`` — covers both a top-level agent's own file and any
+    nested spawned-session workspace, without hardcoding the exact nesting
+    depth, which is an internal detail of ``registry.py`` this module has no
+    reason to duplicate). A project with no ``.reyn/agents/`` yet returns
+    all-zero, not an error."""
+    agents_dir = project_root / ".reyn" / "agents"
+    if not agents_dir.is_dir():
+        return HistoryStorageStats(file_count=0, total_bytes=0, total_lines=0)
+    file_count = 0
+    total_bytes = 0
+    total_lines = 0
+    for hist_path in sorted(agents_dir.glob("**/history.jsonl")):
+        b, lines = history_file_stats(hist_path)
+        file_count += 1
+        total_bytes += b
+        total_lines += lines
+    return HistoryStorageStats(
+        file_count=file_count, total_bytes=total_bytes, total_lines=total_lines,
+    )

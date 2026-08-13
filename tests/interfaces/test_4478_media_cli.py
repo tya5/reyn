@@ -1,9 +1,10 @@
-"""Tier 2: #4478 Phase 1 — ``reyn media stats`` CLI contract.
+"""Tier 2: #4478/#4476 Phase 1 — ``reyn media stats`` CLI contract.
 
-Gives ``MediaStore.storage_stats`` an actual caller (lead-coder's #4478
-review condition ①: a measurement surface with no reader is a mechanism
-nobody uses, the shape flagged repeatedly this session). No mocks — drives
-the real ``run_stats`` against real on-disk state under ``tmp_path``.
+Gives ``MediaStore.storage_stats`` and ``aggregate_history_stats`` an actual
+caller (lead-coder's #4478 review condition ①: a measurement surface with
+no reader is a mechanism nobody uses, the shape flagged repeatedly this
+session; #4476 lands on this SAME surface per the same review). No mocks —
+drives the real ``run_stats`` against real on-disk state under ``tmp_path``.
 """
 from __future__ import annotations
 
@@ -53,6 +54,23 @@ def test_stats_honors_an_explicit_project_root(tmp_path: Path, capsys):
     out = capsys.readouterr().out
     media_line = next(line for line in out.splitlines() if line.startswith("media/"))
     assert "1" in media_line and "7" in media_line
+
+
+def test_stats_reflects_a_real_history_jsonl(tmp_path: Path, monkeypatch, capsys):
+    """Tier 2: #4476 — a history.jsonl under .reyn/agents/<name>/ shows up
+    in the same command's output, not a separate one."""
+    hist = tmp_path / ".reyn" / "agents" / "alice" / "history.jsonl"
+    hist.parent.mkdir(parents=True)
+    hist.write_text('{"seq": 1}\n{"seq": 2}\n{"seq": 3}\n', encoding="utf-8")
+
+    monkeypatch.chdir(tmp_path)
+    run_stats(Namespace(project_root="."))
+    out = capsys.readouterr().out
+
+    hist_line = next(line for line in out.splitlines() if line.startswith("history.jsonl"))
+    assert "1" in hist_line  # 1 file found
+    assert "3" in hist_line  # 3 turns
+    assert str(hist.stat().st_size) in hist_line
 
 
 def test_media_stats_is_registered_on_the_reyn_parser():
