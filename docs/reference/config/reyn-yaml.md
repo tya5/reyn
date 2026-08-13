@@ -457,6 +457,23 @@ On the Router path, retry count is **config-only**: `num_retries` is taken from
 budget has a single source. (On the direct, non-Router path the per-call
 `max_retries` is unchanged.)
 
+**What degrades if litellm's Router misbehaves** (#4354 follow-up — owner's
+"delegate what litellm already does" ruling means reyn increasingly relies on
+litellm's own retry/fallback/cooldown machinery working correctly, not a
+reason by itself to stop delegating): `num_retries` / `fallbacks` /
+`cooldown_time` / `allowed_fails` / `retry_policy` above are all config reyn
+merely HANDS to `litellm.Router` — reyn keeps no parallel bookkeeping of
+deployment health, cooldown state, or which fallback fired. If the Router's
+own cooldown/fallback logic misbehaves (wrong deployment skipped, a cooldown
+that never clears, a fallback chain that doesn't fire), reyn has no
+independent view to detect or override it — debugging that is inspecting
+litellm's own Router state/logs, not reyn's, since (post-#4347/#4354) reyn no
+longer holds a second copy of per-deployment credential/rotation state to
+cross-check against. This is the same shape #4398's `chars//4` token-count
+fallback names for `token_counter`'s own failure mode: delegating is the
+right call, but the doc should say what the delegation costs when the
+delegated-to system is wrong, not just that delegating is correct.
+
 ### `llm.retry` fields
 
 Controls the **timing** of the Reyn self-retry layer only (semantic-retry
