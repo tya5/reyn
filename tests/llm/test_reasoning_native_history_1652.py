@@ -11,7 +11,6 @@ a real async fake for litellm.acompletion.
 """
 from __future__ import annotations
 
-import asyncio
 from types import SimpleNamespace
 
 import litellm

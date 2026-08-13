@@ -13,7 +13,6 @@ crash. Real subprocess (no mock); skipped if the ``mcp`` SDK server API is unava
 from __future__ import annotations
 
 import sys
-from pathlib import Path
 
 import pytest
 

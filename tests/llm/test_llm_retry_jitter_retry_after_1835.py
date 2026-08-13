@@ -30,7 +30,6 @@ Testing policy compliance (testing.ja.md):
 """
 from __future__ import annotations
 
-import asyncio
 import datetime
 from email.utils import format_datetime
 from typing import Any
@@ -39,7 +38,6 @@ import httpx
 import litellm
 import pytest
 
-import reyn.llm.llm as llm_mod
 from reyn.config.infra import RetryConfig
 from reyn.llm.llm import (
     _LLM_RETRY_MAX_BACKOFF_S,

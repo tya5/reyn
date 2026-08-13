@@ -155,7 +155,6 @@ async def test_ephemeral_session_never_populates_connection_service():
     pool, NOT the session-owned MCPConnectionService, so a sub-second-lived session never
     holds a connection open (would be pure churn). Real Session + real stdio server;
     asserts on the service's public ``held_servers()`` surface, not private state."""
-    from reyn.runtime.session import Session
 
     session = make_session(agent_name="s2a-ephemeral-test", mcp_servers={"srv": _CFG})
     session._ephemeral = True  # the registry sets this post-construction on an ephemeral spawn
@@ -174,7 +173,6 @@ async def test_non_ephemeral_session_holds_connection_across_calls():
     """Tier 2: the counterpart of the ephemeral test above — a non-ephemeral (persistent
     / main) session DOES hold the connection open across two ``_mcp_call_tool`` calls
     (the S2a value: no re-handshake on a 2nd tool call within the session)."""
-    from reyn.runtime.session import Session
 
     session = make_session(agent_name="s2a-persistent-test", mcp_servers={"srv": _CFG})
     try:

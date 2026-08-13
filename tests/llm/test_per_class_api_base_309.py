@@ -15,7 +15,6 @@ import asyncio
 from types import SimpleNamespace
 
 import litellm
-import pytest
 
 from reyn.llm.llm import recorded_acompletion, routing_for_spec
 from reyn.llm.model_resolver import ModelSpec

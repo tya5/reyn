@@ -22,7 +22,6 @@ errors (plain ``MCPError``) propagate with the connection left alone.
 from __future__ import annotations
 
 import sys
-from pathlib import Path
 
 import pytest
 
