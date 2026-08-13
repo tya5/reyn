@@ -1182,6 +1182,15 @@ silently start running the full suite locally again without updating it.
    ```bash
    python scripts/mypy_ratchet.py
    ```
+   ⚠️ It also fails when `mypy` is not importable by the interpreter running it
+   (#4576) — that is a *precondition* failure, not a finding. Before the guard,
+   a missing mypy produced `OK: 0 findings, all baselined (215 declared)` and
+   exit 0: `python -m mypy` wrote "No module named mypy" to stderr, no `[code]`
+   lines were parsed, and zero measured pairs minus the baseline is zero new
+   pairs. The `215 declared` came from a baseline load that HAD succeeded, so
+   the line looked fully alive. It hid a real `[call-arg]` through an entire
+   local pre-PR check (#4575). If you installed reyn without the `dev` extra,
+   this gate was never measuring anything for you.
 6. **path-literal reference ratchet** — `scripts/check_tests_path_literal_reference.py`
    (#4065). Same ratchet shape as #5 against
    `scripts/check_tests_path_literal_reference_baseline.json`, but a different

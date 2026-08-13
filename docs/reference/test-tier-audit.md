@@ -160,6 +160,13 @@ tests/test_util.py:12: [ERROR rule2] Format pinning: len(result) == 5
 
 Exit code 1 when any errors are found; exit code 0 on a clean audit.
 
+Exit code 1 **also** when the targets resolve to zero test files (#4577) — a
+mistyped path, a file another PR has since moved, or an empty shell variable.
+That case is neither "errors found" nor "a clean audit": nothing was audited,
+and the run says so rather than reporting the colour of a pass. The resolved
+targets are echoed alongside the message, since a typo is easier to see next to
+the path it was meant to be.
+
 ### `--quiet` output
 
 ```
