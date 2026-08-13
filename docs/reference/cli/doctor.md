@@ -197,12 +197,46 @@ NOT build a `resolve_sandbox_policy()` call — that needs a caller-supplied
 must not invent a stand-in for. Only the declared `sandbox.policy` dict's own
 write-scope keys are shown, never a merged/resolved policy.
 
+### MCP servers — last negotiated version/capabilities (C-3(b))
+
+```
+MCP servers — last negotiated version/capabilities (audit-log
+evidence, not a live probe; D-2: doctor never connects):
+  ✓ filesystem: last negotiated '2025-11-25', capabilities=['resources', 'tools']
+  ? brave: no event history yet
+```
+
+The motivating real case (architect's own note, #4364): a protocol-version mismatch
+between reyn (2.0) and a connected server (1.27.1) had already fallen back silently
+to an older shared version — nothing was BROKEN, so nothing raised, and the only way
+to learn it happened was digging through the audit log after the fact. `reyn doctor`
+now surfaces the same fact in one line.
+
+For each MCP server declared under `mcp.servers`, this reuses the SAME windowed
+evidence-based scan C-2's `mcp_resource_updated`/`webhook_received` checks already
+use (`_mcp_initialized_evidence`, sharing `_MCP_EVENT_SCAN_MAX_FILES`) — the newest
+`mcp_initialized` audit-event record per server (emitted once per real (re)connect,
+`mcp/connection_service.py`) carries `negotiated_version` + `capabilities` verbatim.
+`✓` when found within the window; `? <server>: no event history yet` when
+`.reyn/events` has no dated files at all (#4624's fresh-install shape — the #4614
+windowed caveat would be a true but empty statement there); `? <server>: not seen in
+the newest N event file(s) scanned — ... NOT proof the server was never reached`
+otherwise, same #4614 wording as the other windowed checks.
+
+**C-3(a)** (an actual live `tools/list` connect + response check) was ruled
+unnecessary: the evidence this check reports already exists from the connections
+`reyn` itself made — a SEPARATE live reachability probe from doctor's own one-shot
+process would duplicate work, and a held MCP connection is a session concept doctor
+cannot observe directly anyway (the same architect correction C-2's own
+producer↔consumer design rests on). D-2 holds: doctor never connects to a server
+itself, only reads what a real connection already recorded.
+
 ## Out of scope for this PR (later slices, same arc)
 
 - **C-6** (listen port and model-name declared-vs-effective pairs) — each needs
   its own new measurement code (introspecting a live bound socket, a real
-  litellm probe call), unlike C-1/C-2/C-5/C-7, which reuse existing measurement
-  functions.
+  litellm probe call), unlike C-1/C-2/C-3(b)/C-5/C-7, which reuse existing
+  measurement functions.
 
 ## Related
 

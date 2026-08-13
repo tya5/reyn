@@ -79,10 +79,22 @@ real dispatch would (:func:`reyn.security.sandbox.policy.
 resolve_sandbox_policy` needs one, and inventing a stand-in would
 contrast against nothing real) — only the declared ``sandbox.policy``
 dict's own write-scope keys are shown, next to the resolved backend
-name. C-6's other named pairs (listen port, model-name acceptance) are a
-later slice — each needs its own NEW measurement code (introspecting a
-live bound socket, a real litellm probe call), not reuse of an existing
-function the way C-1/C-2/C-5/C-7 are.
+name. C-3(b) (MCP negotiated version/capabilities, this slice's own
+addition): for each declared ``mcp.servers`` entry, the newest
+``mcp_initialized`` audit-event's ``negotiated_version``/``capabilities``
+— the SAME windowed evidence-based scan C-2's ``mcp_resource_updated``/
+``webhook_received`` checks already use
+(:func:`_mcp_initialized_evidence`, sharing ``_MCP_EVENT_SCAN_MAX_FILES``
+and #4624's empty-history branch), never a live probe (C-3(a), a real
+``tools/list`` connect, was ruled unnecessary — the evidence already
+exists from connections ``reyn`` itself made, and a held MCP connection
+is a session concept doctor's separate one-shot process cannot observe
+directly anyway, the same architect correction C-2's own
+producer↔consumer design rests on). C-6's other named pairs (listen
+port, model-name acceptance) are a later slice — each needs its own NEW
+measurement code (introspecting a live bound socket, a real litellm
+probe call), not reuse of an existing function the way
+C-1/C-2/C-3(b)/C-5/C-7 are.
 """
 from __future__ import annotations
 
@@ -260,6 +272,12 @@ def run(args: argparse.Namespace) -> None:
     print("does not mean unrestricted; see the resolved backend below):")
     _print_sandbox_posture(config)
 
+    # ── C-3(b): MCP negotiated protocol version + capabilities (#4364) ─────
+    print()
+    print("MCP servers — last negotiated version/capabilities (audit-log")
+    print("evidence, not a live probe; D-2: doctor never connects):")
+    _print_mcp_negotiation(config, resolved_root)
+
 
 def _configured_exec_hooks(config: object) -> "list[HookDef]":
     """Every configured ``exec``/``exec_capture`` ``HookDef`` — the caller
@@ -419,6 +437,53 @@ def _external_event_kind_seen(events_dir: Path, kind: str) -> "tuple[bool, int]"
         except OSError:
             continue
     return False, len(window)
+
+
+def _mcp_initialized_evidence(events_dir: Path) -> "tuple[dict[str, dict], int]":
+    """(per-server evidence, files_scanned) — for each ``server`` named in
+    the newest ``_MCP_EVENT_SCAN_MAX_FILES`` dated ``.jsonl`` files' own
+    ``mcp_initialized`` records, its MOST RECENT ``negotiated_version`` /
+    ``capabilities`` (#4364 C-3(b)). Same windowed-scan shape as
+    :func:`_external_event_kind_seen` — reused rather than re-derived — but
+    per-KEY evidence instead of a single seen/not-seen bool, since C-3(b)
+    is "what did we last negotiate with this server," not "did this point
+    ever fire." Scanning newest-first means the FIRST record seen for a
+    given server is already its most recent — a server already recorded
+    is never overwritten by an older file. ``events_dir`` missing →
+    ``({}, 0)``, matching ``_external_event_kind_seen``'s own contract."""
+    import json
+
+    from reyn.core.events.event_purge import collect_dated_files
+
+    if not events_dir.is_dir():
+        return {}, 0
+    newest_first = list(reversed(collect_dated_files(events_dir)))
+    window = newest_first[:_MCP_EVENT_SCAN_MAX_FILES]
+    evidence: dict[str, dict] = {}
+    for path, _start_date in window:
+        try:
+            with path.open("r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        obj = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    if obj.get("type") != "mcp_initialized":
+                        continue
+                    data = obj.get("data") or {}
+                    server = data.get("server")
+                    if not isinstance(server, str) or server in evidence:
+                        continue
+                    evidence[server] = {
+                        "negotiated_version": data.get("negotiated_version"),
+                        "capabilities": data.get("capabilities"),
+                    }
+        except OSError:
+            continue
+    return evidence, len(window)
 
 
 def _merged_hook_registry(config: object, project_root: Path) -> object:
@@ -645,3 +710,46 @@ def _print_sandbox_posture(config: object) -> None:
             f"a backend that cannot enforce is already treated as absent "
             f"at this step, #2983, so this name IS the enforcement witness)",
         )
+
+
+def _print_mcp_negotiation(config: object, project_root: Path) -> None:
+    """#4364 C-3(b): for each declared MCP server, the negotiated protocol
+    version + capabilities from the newest ``mcp_initialized`` audit-event
+    evidence — same windowed evidence-based shape C-2 already uses
+    (:func:`_mcp_initialized_evidence`, reusing #4627's empty-history
+    branch), not a live probe. C-3(a) (an actual `tools/list` connect) was
+    ruled unnecessary — this evidence already exists in the audit log from
+    the connections `reyn` itself already made, so a SEPARATE live
+    reachability check from doctor would duplicate work doctor's own
+    process cannot even perform faster (a held connection is a session
+    concept, #4364 C-2's own architect correction). D-2: report-only,
+    never connects."""
+    mcp_config = getattr(config, "mcp", None) or {}
+    servers = sorted((mcp_config.get("servers") if isinstance(mcp_config, dict) else None) or {})
+    if not servers:
+        print("  no MCP servers declared")
+        return
+
+    events_dir = project_root / ".reyn" / "events"
+    evidence, scanned = _mcp_initialized_evidence(events_dir)
+    for server in servers:
+        seen = evidence.get(server)
+        if seen is not None:
+            version = seen.get("negotiated_version")
+            caps = seen.get("capabilities") or []
+            print(
+                f"  ✓ {server}: last negotiated {version!r}, "
+                f"capabilities={caps}",
+            )
+        elif scanned == 0:
+            # #4627: no window to predate — say the plain fact, not the
+            # windowed caveat (see _external_event_kind_seen's own sibling
+            # branch in _print_external_point_pairing for the same shape).
+            print(f"  ? {server}: no event history yet")
+        else:
+            print(
+                f"  ? {server}: not seen in the newest {scanned} event "
+                f"file(s) scanned — a connection whose last occurrence is "
+                f"older than that is not covered here, so this is NOT "
+                f"proof the server was never reached",
+            )
