@@ -564,3 +564,24 @@ def test_load_hooks_quoted_on_key_is_not_flagged_as_unknown() -> None:
     reported as an unrecognized key by the new #4501 check."""
     reg = load_hooks([{"on": "turn_end", "exec": ["echo", "hi"]}])
     assert reg.hooks_for("turn_end")[0].on == "turn_end"
+
+
+def test_load_hooks_bareword_off_alongside_a_string_typo_raises_not_crashes() -> None:
+    """Tier 1: lead-coder's #4526 review block, through REAL yaml.safe_load
+    — a bareword `off:`/`no:` key (PyYAML/YAML 1.1 parses those as the
+    boolean False, #4517's own sibling class) alongside an unrelated
+    string-key typo used to raise an UNCAUGHT TypeError
+    (`sorted([False, "typo"])`: '<' not supported between str and bool)
+    instead of the friendly HookConfigError this whole check exists to
+    produce — the crash-side mirror of the "silently dropped" defect
+    class. Falsify-verified against the pre-fix `sorted(...)` (no
+    `key=repr`): TypeError, not HookConfigError."""
+    import yaml
+
+    raw = yaml.safe_load(
+        "hooks:\n  - \"on\": turn_end\n    exec: [echo, hi]\n"
+        "    off: a\n    nam: typo\n"
+    )
+    assert False in raw["hooks"][0], "the fixture itself must reproduce the False-key shape"
+    with pytest.raises(HookConfigError, match="unrecognized key"):
+        load_hooks(raw["hooks"])

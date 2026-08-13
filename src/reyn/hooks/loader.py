@@ -509,15 +509,38 @@ def _parse_entry(
     # silently dropped before this check existed, reading as an applied
     # setting that was never applied (the exact defect class
     # sandbox_scope.py's own module docstring names).
-    unknown_keys = sorted(k for k in raw if k not in _KNOWN_HOOK_ENTRY_KEYS)
+    # sorted(..., key=repr): `raw` may hold a bool key alongside a str key —
+    # not just `True` (#4517's `on:` bareword, already excluded via
+    # _KNOWN_HOOK_ENTRY_KEYS above) but also `False` (an UNRELATED bareword
+    # like `off:`/`no:`, #4517's own sibling YAML-1.1-boolean-literal
+    # class, architect's #4517 item ③). Sorting `[False, "typo"]` directly
+    # raises TypeError ('<' not supported between str and bool) — a
+    # crash exactly where a HookConfigError was supposed to be the
+    # user-friendly outcome, the crash-side mirror of the "silently
+    # dropped" defect this whole check exists to close. `repr` orders
+    # deterministically across mixed types without needing them
+    # comparable to each other.
+    unknown_keys = sorted(
+        (k for k in raw if k not in _KNOWN_HOOK_ENTRY_KEYS), key=repr,
+    )
     if unknown_keys:
         parts = []
         for key in unknown_keys:
+            if isinstance(key, bool):
+                # A bareword `off:`/`no:` (PyYAML/YAML 1.1 parses those as
+                # the boolean False, same class as `on:` -> True, #4517).
+                parts.append(
+                    "a bareword boolean key (False) — an unquoted "
+                    "'off:'/'no:' key parses as YAML 1.1's False literal, "
+                    "not a string; quote it if a literal key named "
+                    "'off'/'no' was intended"
+                )
+                continue
             hint = _WRONG_SCOPE_HINTS.get(key)
             parts.append(f"{key!r} ({hint})" if hint else repr(key))
         sorted_known = ", ".join(sorted(k for k in _KNOWN_HOOK_ENTRY_KEYS if isinstance(k, str)))
         raise HookConfigError(
-            f"hooks[{entry_index}] has unrecognized key(s): {', '.join(parts)}. "
+            f"hooks[{entry_index}] has unrecognized key(s): {'; '.join(parts)}. "
             f"Known keys: {sorted_known}."
         )
 
