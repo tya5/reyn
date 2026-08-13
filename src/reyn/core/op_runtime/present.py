@@ -218,6 +218,21 @@ async def handle(op: PresentIROp, ctx: OpContext) -> dict:
         fallback_stage=fallback_stage,
     )
 
+    # 3.5. #4482 PR-2b: resolve any "artifact" node's raw source/content
+    #    strings (resolve_bindings only bound them — it stays pure/I/O-free,
+    #    see binding.py's own "artifact" branch comment) into the final
+    #    OS-derived payload. This is the layer that legitimately has
+    #    project_root (ctx.workspace.base_dir) / agent_name (ctx.actor) —
+    #    lead-coder's ruling on where this step belongs, not inside
+    #    resolve_bindings or _resolve_presentation. Rewrites rendered.nodes
+    #    only — the audit event above already carries refs + stats, never
+    #    node content, so ordering relative to it does not matter; placed
+    #    here because THIS is the only thing that needs it.
+    from reyn.core.present.artifact_payload import apply_artifact_resolution
+    rendered.nodes = apply_artifact_resolution(
+        rendered.nodes, ctx.workspace.base_dir, ctx.actor,
+    )
+
     # 4. Hand the actually-rendered model to the wired surface (PR-B). Fire-and-
     #    continue: the op's ack (below) is already fully derived from the stats,
     #    not from anything the renderer does — a renderer failure must never be

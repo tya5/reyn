@@ -2,20 +2,17 @@
 LLM-produced file the terminal can't render natively (html/office/pdf/
 images), which a user opens with the OS's own default app.
 
-★ Isolation note (temporary, deliberate — not an oversight): as of this
-PR, nothing in ``core/present/catalog.py`` or ``core/present/binding.py``
-calls this module yet. The "artifact" component/slot naming (architect's
-#4482 ruling: ``component="artifact"``; agent-writable slots ``source`` /
-``content`` / ``media_type`` / ``description``, with ``name`` NOT a slot)
-was decided in a follow-up comment landing alongside this PR's merge, and
-the actual catalog-gate + binding-resolution wiring is PR-2b, a separate
-PR — not silently deferred, named here so this module's "no caller yet"
-state reads as a known, temporary staging point rather than the
-"declared/implemented/tested/invoked-by-nobody" shape this session has
-flagged repeatedly elsewhere tonight.
-
-**① server/client payload shape** (architect's final corrected form, #4482
-issue thread)::
+PR-2b wires this module in: ``catalog.py``'s ``CATALOG`` gates the
+``"artifact"`` component's own structural rules (exactly one of
+source/content; media_type required alongside content, forbidden
+alongside source), ``binding.py``'s ``resolve_bindings`` resolves an
+``artifact`` node's raw slot values (bind-or-literal, same as ``image``'s
+own ``src``) WITHOUT touching disk (stays pure — see that function's own
+"artifact" branch comment for why), and :func:`apply_artifact_resolution`
+below is the separate post-processing pass — run by
+``op_runtime/present.py``'s ``handle()``, the layer that actually has
+``project_root``/``agent_name`` — that turns those raw values into the
+final OS-derived payload this module's other two functions build.
 
 **① server/client payload shape** (architect's final corrected form, #4482
 issue thread)::
@@ -158,3 +155,58 @@ def build_inline_artifact_payload(
     if description is not None:
         payload["description"] = description
     return payload
+
+
+def apply_artifact_resolution(
+    nodes: "list[dict]", project_root: Path, agent_name: str,
+) -> "list[dict]":
+    """#4482 PR-2b: the post-processing pass that turns a
+    ``resolve_bindings``-produced ``"artifact"`` node's raw
+    source/content/media_type/description STRINGS into the final
+    OS-derived payload (:func:`build_source_artifact_payload` /
+    :func:`build_inline_artifact_payload`).
+
+    Deliberately NOT part of ``resolve_bindings`` itself — see that
+    function's own "artifact" branch comment for why (lead-coder's
+    ruling: ``replay.py``'s re-render must stay disk-state-independent,
+    so this pass only runs in a layer that legitimately HAS
+    ``project_root``/``agent_name`` — ``op_runtime/present.py``'s
+    ``handle()``, not the pure binding-resolution layer).
+
+    Every non-``"artifact"`` node passes through completely unchanged.
+    An ``"artifact"`` node missing what it needs (both ``source`` AND
+    ``content`` soft-missed at binding time, or ``content`` resolved but
+    ``media_type`` didn't) is left as a bare ``{"component": "artifact"}``
+    — present's own soft-skip philosophy, never a hard failure from a
+    binding miss. A ``source`` file that has vanished since the agent
+    referenced it (:func:`build_source_artifact_payload` raising
+    ``FileNotFoundError``) becomes an explicit ``error`` marker rather
+    than propagating an exception through op execution — the same shape
+    :func:`reyn.data.workspace.artifact_ref.resolve_ref` already
+    established for a GC'd/deleted target (missing is unresolvable, not
+    a crash).
+    """
+    out: "list[dict]" = []
+    for node in nodes:
+        if node.get("component") != "artifact":
+            out.append(node)
+            continue
+        description = node.get("description")
+        if "source" in node:
+            try:
+                payload = build_source_artifact_payload(
+                    project_root, agent_name, node["source"], description=description,
+                )
+            except FileNotFoundError:
+                out.append({"component": "artifact", "error": "source_not_found"})
+                continue
+        elif "content" in node and "media_type" in node:
+            payload = build_inline_artifact_payload(
+                node["media_type"], node["content"], description=description,
+            )
+        else:
+            out.append({"component": "artifact"})
+            continue
+        payload["component"] = "artifact"
+        out.append(payload)
+    return out
