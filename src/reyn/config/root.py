@@ -61,17 +61,7 @@ from reyn.config.observability import (
     ObservabilityConfig,
 )
 from reyn.runtime.budget.budget import CostConfig
-
-
-def _empty_external_transports():
-    """Lazy import shim for the default ``ExternalTransportRouting``.
-
-    Avoids importing ``reyn.runtime.external_routing`` at module-load time
-    (= ``reyn.config`` is imported very early; the chat-side import
-    would create a cycle).
-    """
-    from reyn.runtime.external_routing import ExternalTransportRouting
-    return ExternalTransportRouting()
+from reyn.runtime.external_routing import ExternalTransportRouting
 
 
 @dataclass
@@ -298,7 +288,7 @@ class ReynConfig:
     # key (config_schema.py's ``unknown_config_keys`` docstring has the
     # full incident this fixes).
     external_transports: "ExternalTransportRouting" = field(
-        default_factory=lambda: _empty_external_transports(),
+        default_factory=ExternalTransportRouting,
         metadata={"dict_leaf": True},
     )
     # #2548 PR-A: skill registry config. Raw dict passed to

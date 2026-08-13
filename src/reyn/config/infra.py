@@ -5,6 +5,8 @@ import socket
 from dataclasses import dataclass, field
 from typing import Literal
 
+from reyn.security.secrets.oauth import OAuthProviderConfig
+
 
 def _default_agent_id() -> str:
     """Compute the default ``agent_id`` used when reyn.yaml's ``agent_id:`` is
@@ -395,8 +397,6 @@ def _build_auth_config(raw: object) -> AuthConfig:
     ``None`` / missing → empty AuthConfig.providers.
     Unknown provider fields are ignored (= forward-compatible).
     """
-    from reyn.security.secrets.oauth import OAuthProviderConfig
-
     if raw is None:
         return AuthConfig()
     if not isinstance(raw, dict):

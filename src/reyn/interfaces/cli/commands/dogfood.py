@@ -22,11 +22,15 @@ import asyncio
 import json
 import sys
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from reyn.interfaces.cli.env_backend import (
     build_environment_backend,
     register_env_backend_args,
 )
+
+if TYPE_CHECKING:
+    from reyn.runtime.session import Session
 
 
 def register(sub) -> None:

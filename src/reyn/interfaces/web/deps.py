@@ -30,6 +30,7 @@ from fastapi import Depends, Request
 
 if TYPE_CHECKING:
     from reyn.interfaces.web.run_registry import RunRegistry
+    from reyn.runtime.session import Session
 
 # ---------------------------------------------------------------------------
 # project_root discovery

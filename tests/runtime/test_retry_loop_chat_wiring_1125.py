@@ -28,6 +28,8 @@ import asyncio
 from datetime import datetime, timezone
 from pathlib import Path
 
+import pytest
+
 from reyn.config import CompactionConfig
 from reyn.core.events.state_log import StateLog
 from reyn.llm.pricing import TokenUsage

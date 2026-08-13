@@ -12,7 +12,20 @@ import re
 from typing import TYPE_CHECKING, Any, Callable
 
 if TYPE_CHECKING:
+    from reyn.config.chat import CompactionConfig, ReasoningConfig
+    from reyn.core.op_runtime.context import OpContext
+    from reyn.hooks.bus import HookBus
+    from reyn.hooks.composed_consumer import ComposedEventConsumer
+    from reyn.hooks.composer import ComposerRegistry
+    from reyn.hooks.dispatcher import HookDispatcher
     from reyn.interfaces.slash import SlashContext
+    from reyn.mcp.connection_service import MCPConnectionService
+    from reyn.runtime.fs_watcher import FsWatcher
+    from reyn.runtime.hot_reload import HotReloader
+    from reyn.runtime.registry import AgentRegistry
+    from reyn.runtime.services.chain_timeout_glue import ChainTimeoutGlue
+    from reyn.runtime.services.context_budget_advisor import ContextBudgetAdvisor
+    from reyn.runtime.services.router_history_buffer import RouterHistoryBuffer
 
 logger = logging.getLogger(__name__)
 from dataclasses import asdict, dataclass
@@ -1907,7 +1920,7 @@ class Session:
         return self._on_perm_persist_cb
 
     @property
-    def on_limit(self) -> "_OnLimitConfig":
+    def on_limit(self) -> "OnLimitConfig":
         """Read-only accessor for the safety-loop OnLimit config.
 
         Captured at construction from ``SafetyConfig.on_limit``; tests

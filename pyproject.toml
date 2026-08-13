@@ -527,14 +527,34 @@ ignore = [
     # F811: local imports inside functions for clarity (e.g. lazy
     # imports of optional deps) trigger this.
     "F811",
-    # F821: forward references in string annotations
-    # (`x: "Foo | None"`) confuse pyflakes; the actual import lives
-    # under TYPE_CHECKING.
-    "F821",
     # F841: explicit `_ = ...` placeholders or guard variables that
     # aren't used outside an assertion are intentional.
     "F841",
 ]
+
+# #4653 (F401's own sibling): F821 (undefined name) was unignored repo-wide,
+# not sliced -- 35 findings, an order of magnitude smaller than #4097's F401
+# population, so no per-directory rollout was needed. The stale rationale
+# above this used to claim a forward ref under TYPE_CHECKING "confuses"
+# pyflakes; it doesn't -- pyflakes correctly flags a name that resolves to
+# nothing at runtime. Each finding was one of two genuinely different
+# shapes, never decided from the count alone: (a) a missing import -- 32
+# cases, all but 2 a TYPE_CHECKING-only import (the annotation is never
+# evaluated at runtime under `from __future__ import annotations`); 2 cases
+# (`ExternalTransportRouting` in config/root.py, `OAuthProviderConfig` in
+# config/infra.py) needed a CONCRETE import instead, because
+# config_schema.py's own `walk_config_schema` calls `get_type_hints()`,
+# which eagerly resolves every forward ref against the class's real module
+# globals -- a TYPE_CHECKING-only name is never in there, so the field would
+# have silently dropped from the schema walk. (b) a wrong name in the
+# annotation -- 3 cases where the annotation referenced a name that never
+# existed anywhere in the file (a typo'd class, e.g. `_OnLimitConfig` for
+# the real `OnLimitConfig`) and the fix was correcting the name, not adding
+# an import. Landing (a)'s 2 concrete-import cases also let
+# config_schema.py drop its own hardcoded `_patch_localns` workaround that
+# duplicated those same two names in a second file, specifically to paper
+# over this exact gap for `get_type_hints()` alone -- the workaround is now
+# unnecessary because both names are real module attributes.
 
 # #4097: F401 (unused import) — enforced in src/, still ignored in tests/.
 # A blanket F401 ignore meant no gate could ever say "nobody uses this

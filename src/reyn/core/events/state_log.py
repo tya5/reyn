@@ -49,7 +49,10 @@ import json
 import os
 from datetime import datetime
 from pathlib import Path
-from typing import Iterator
+from typing import TYPE_CHECKING, Iterator
+
+if TYPE_CHECKING:
+    from reyn.core.events.durability_worker import DurabilityWorker
 
 WAL_EVENT_KINDS = (
     # Existing PR21 — inbox and chain lifecycle

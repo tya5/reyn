@@ -16,6 +16,8 @@ that raises RegistryError — same sanctioned seam used in test_mcp_install_work
 """
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from reyn.core.events.events import EventLog
