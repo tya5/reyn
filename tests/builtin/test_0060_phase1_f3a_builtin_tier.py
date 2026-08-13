@@ -53,9 +53,7 @@ import tomllib
 
 import reyn.builtin.registry as builtin_registry
 from reyn.builtin.registry import (
-    BUILTIN_PIPELINES,
     BUILTIN_PRESENTATIONS,
-    BUILTIN_SKILLS,
     build_builtin_config,
 )
 from reyn.config.loader import _merge

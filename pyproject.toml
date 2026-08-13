@@ -548,8 +548,6 @@ ignore = [
 # EMPTY_STOP_RETRY_DIRECTIVE -- real external consumers import it FROM
 # router_loop, not from its origin module); 2 were re-exports missing
 # from their __init__.py's own `__all__` (services/__init__.py's
-# LiveSessionIdInputs/PutOutboxInputs -- adding them to `__all__` is
-# what actually satisfies F401 for a re-export, not an ignore).
 # tests/ is measured + sliced per-directory (335 findings total, an order
 # of magnitude more than src/ and a distinct population -- test fixtures/
 # helpers imported for side effect, parametrize decorators, plus a real
@@ -559,34 +557,30 @@ ignore = [
 # verify per-import what it supported, don't bulk --fix). Sliced by
 # top-level tests/ subdirectory, ruff per-file-ignores has no "more
 # specific pattern wins" override (verified empirically -- an inner glob's
-# empty ignore list does NOT subtract an outer glob's ignore, so the
-# subdirectory below is cleared by ABSENCE from this list, not by an
-# explicit override entry): tests/core/ enforced in #4097's 2nd slice
-# (71 findings, all genuinely dead once checked per-enclosing-function
-# with real code tokens only -- module/comment/docstring/decorator-
-# attribute text excluded). 3rd slice enforced cli/config/data/
-# environment/hooks/http_safety/observability/plugins/services/web (21
-# findings, the 10 smallest remaining directories, each verified the
-# same way). Every other subdirectory stays ignored, each its own
-# future slice. ROOT-level tests/*.py files (conftest.py
-# etc.) are deliberately NOT listed here -- they measured 0 findings
-# already, so leaving them off this list enforces F401 there too, for
-# free. A single-`*` "tests/*.py" pattern was tried first and DISCARDED:
-# ruff's glob crosses `/` on a bare `*` the same as `**`, so that one
-# entry silently re-exempted every nested subdirectory too (verified:
-# it alone reproduced the FULL 335-finding blanket ignore) -- the
-# per-subdirectory `tests/<dir>/**/*.py` entries below don't have this
-# failure mode because the directory NAME is the anchor, not a wildcard.
+# empty ignore list does NOT subtract an outer glob's ignore, so a
+# subdirectory is cleared by ABSENCE from this list, not by an explicit
+# override entry): tests/core/ (#4097 2nd slice), tests/builtin/,
+# tests/dev/, tests/repo/, tests/scripts/ (#4097 3rd slice), and
+# cli/config/data/environment/hooks/http_safety/observability/plugins/
+# services/web (#4636, the 10 smallest remaining directories, 21
+# findings) are all enforced. Every other subdirectory stays ignored,
+# each its own future slice. ROOT-level tests/*.py files (conftest.py
+# etc.) and tests/_support/ are deliberately NOT listed here -- both
+# measured 0 findings already, so leaving them off this list enforces
+# F401 there too, for free (caught in review, #4640: an earlier draft
+# of this list carried a stale tests/_support entry despite the
+# 0-finding measurement). A single-`*` "tests/*.py" pattern was tried
+# first and DISCARDED: ruff's glob crosses `/` on a bare `*` the same
+# as `**`, so that one entry silently re-exempted every nested
+# subdirectory too (verified: it alone reproduced the FULL 335-finding
+# blanket ignore) -- the per-subdirectory `tests/<dir>/**/*.py` entries
+# below don't have this failure mode because the directory NAME is the
+# anchor, not a wildcard.
 [tool.ruff.lint.per-file-ignores]
-"tests/_support/**/*.py" = ["F401"]
-"tests/builtin/**/*.py" = ["F401"]
-"tests/dev/**/*.py" = ["F401"]
 "tests/interfaces/**/*.py" = ["F401"]
 "tests/llm/**/*.py" = ["F401"]
 "tests/mcp/**/*.py" = ["F401"]
-"tests/repo/**/*.py" = ["F401"]
 "tests/runtime/**/*.py" = ["F401"]
-"tests/scripts/**/*.py" = ["F401"]
 "tests/security/**/*.py" = ["F401"]
 "tests/tools/**/*.py" = ["F401"]
 

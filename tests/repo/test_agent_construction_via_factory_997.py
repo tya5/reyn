@@ -24,7 +24,6 @@ not apply — they forward the bundle they were given:
 from __future__ import annotations
 
 import ast
-import pathlib
 
 from tests._support.paths import REPO_ROOT
 

@@ -68,7 +68,6 @@ def test_swe_task_prompt_is_minimal_no_rigid_procedure() -> None:
 def test_runner_agent_mode_is_chat_only() -> None:
     """Tier 2: the swe_bench skill was retired — --agent-mode is 'chat'-only now
     (the general agent via `reyn run-once`); 'skill' is no longer a valid choice."""
-    import argparse
 
     p = r.build_parser()
     assert p.parse_args(["--input", "/dev/null"]).agent_mode == "chat"

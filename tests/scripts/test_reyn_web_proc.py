@@ -9,11 +9,9 @@ WHOLE group is killed (not just the direct child).
 from __future__ import annotations
 
 import os
-import signal
 import subprocess
 import sys
 import time
-from pathlib import Path
 
 from tests._support.paths import REPO_ROOT
 

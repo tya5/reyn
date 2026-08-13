@@ -25,7 +25,6 @@ Nothing is faked — the census IS the production doc pair.
 from __future__ import annotations
 
 import re
-from pathlib import Path
 
 from tests._support.paths import REPO_ROOT
 

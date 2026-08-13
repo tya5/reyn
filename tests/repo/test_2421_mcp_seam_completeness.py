@@ -11,7 +11,6 @@ guard the design calls for (not a one-shot grep).
 from __future__ import annotations
 
 import re
-from pathlib import Path
 
 from tests._support.paths import REPO_ROOT
 

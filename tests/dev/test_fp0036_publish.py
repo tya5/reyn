@@ -23,7 +23,6 @@ from reyn.dev.dogfood.publish import (
     PublishConfig,
     _split_repo,
     build_title,
-    create_discussion,
     detect_repo_from_git,
     get_token,
     publish_run,

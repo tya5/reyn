@@ -15,11 +15,9 @@ Design note:
 """
 from __future__ import annotations
 
-import asyncio
 import json
 import textwrap
 from pathlib import Path
-from typing import TYPE_CHECKING
 
 import pytest
 
@@ -30,7 +28,6 @@ import pytest
 try:
     from reyn.dev.dogfood.scenarios import (
         Scenario,
-        ScenarioSet,
         load_scenario_set,
     )
 except ImportError as _e:
@@ -317,7 +314,7 @@ async def test_compare_runs_detects_regression(tmp_path: Path):
 async def test_coverage_finds_covers_tags(tmp_path: Path):
     """Tier 2c: compute_coverage maps scenario covers: tags to feature-map paths."""
     try:
-        from reyn.dev.dogfood.coverage import CoverageMatrix, compute_coverage
+        from reyn.dev.dogfood.coverage import compute_coverage
     except ImportError as exc:
         pytest.skip(f"F4 (reyn.dev.dogfood.coverage) not yet available: {exc}")
 
@@ -380,7 +377,11 @@ async def test_replay_fixture_round_trip(tmp_path: Path):
         pytest.skip(f"F5 (reyn.dev.dogfood.replay) not yet available: {exc}")
 
     try:
-        from reyn.dev.testing.replay import LLMReplay
+        # #4097: deliberate availability probe -- this try/except exists
+        # ONLY to skip the test when the optional reyn.dev.testing.replay
+        # module is absent; LLMReplay itself is never referenced below,
+        # removing it would delete the check.
+        from reyn.dev.testing.replay import LLMReplay  # noqa: F401
     except ImportError as exc:
         pytest.skip(f"reyn.dev.testing.replay.LLMReplay not available: {exc}")
 

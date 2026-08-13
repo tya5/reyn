@@ -19,7 +19,6 @@ from pathlib import Path
 # ---------------------------------------------------------------------------
 # Import helper — same pattern as the other llm_replay test files
 # ---------------------------------------------------------------------------
-from pathlib import Path as _Path
 from typing import Any
 
 from tests._support.paths import REPO_ROOT

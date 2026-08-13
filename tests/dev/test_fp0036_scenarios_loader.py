@@ -19,11 +19,7 @@ from pathlib import Path
 import pytest
 
 from reyn.dev.dogfood import (
-    EventAssertion,
-    ExpectedEvents,
-    ExpectedReply,
     OutcomePrediction,
-    Scenario,
     ScenarioLoadError,
     ScenarioSet,
     load_scenario_set,

@@ -24,7 +24,6 @@ gap goes unenforced.
 from __future__ import annotations
 
 import re
-from pathlib import Path
 
 from tests._support.paths import REPO_ROOT
 

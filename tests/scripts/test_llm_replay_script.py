@@ -134,7 +134,6 @@ def _write_trace_with_tools(
 # Import the module under test
 # ---------------------------------------------------------------------------
 
-from pathlib import Path as _Path
 
 from tests._support.paths import REPO_ROOT
 
