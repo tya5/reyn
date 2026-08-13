@@ -272,11 +272,14 @@ def test_sync_repo_ingest_background_noops_when_embedding_disabled(
 def test_sync_repo_ingest_background_noops_when_repo_knowledge_index_off(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Tier 3a: #4156 — the SECOND gate. `embedding.enabled=True` alone is
+    """Tier 2: #4156 — the SECOND gate. `embedding.enabled=True` alone is
     no longer sufficient; `embedding.index.repo_knowledge` (default False)
     must also be true. Same no-op shape as the `enabled=False` test above,
     but reached via the other axis — proves the two gates are genuinely
-    independent, not one flag under two names.
+    independent, not one flag under two names. No LLM/provider call
+    happens in this path at all — the gate short-circuits before
+    `sync_repo_ingest_background` ever reaches the embedding boundary, so
+    this is an OS-invariant test (Tier 2), not a replay test (Tier 3a).
 
     Strip-falsify: removing the `_repo_knowledge_index_enabled()` check
     from `sync_repo_ingest_background` turns this RED — a manifest entry
@@ -313,10 +316,12 @@ def test_sync_repo_ingest_background_noops_when_repo_knowledge_index_off(
 def test_repo_knowledge_skip_logs_exactly_once_per_process(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """Tier 3a: #4156, lead-coder's "don't disable quietly" condition —
+    """Tier 2: #4156, lead-coder's "don't disable quietly" condition —
     the skip is logged, but only ONCE per process (this function is called
     on every router-loop turn; a WARN every turn would be noise, not
-    signal). Calling twice must produce exactly one record.
+    signal). Calling twice must produce exactly one record. No LLM/
+    provider call happens here either — this pins a logging latch, an OS
+    invariant (Tier 2), not a replay test.
 
     Strip-falsify: removing `_warn_repo_knowledge_skip_once`'s call (or
     its one-shot latch) either drops the message entirely or spams one
