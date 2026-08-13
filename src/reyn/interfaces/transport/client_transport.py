@@ -206,6 +206,46 @@ class ClientTransport(ABC):
         """
         return False
 
+    async def request_attach(self, agent_name: str) -> bool:
+        """Attach to a different agent (the ``/attach`` seam); ``True`` iff it
+        happened (#4534 PR-1).
+
+        The ADD-ONLY half of retiring the ``__attach_request__`` display-
+        channel sentinel (#3595 S5's own principle — "client interprets,
+        server executes a named operation" — applied here the same way
+        :meth:`run_slash_command` already applies it for slash commands):
+        a typed request naming the target directly, not a magic string
+        smuggled through the outbox/display stream that ``registry.
+        _forwarder``/the AG-UI transport have to specially detect. The
+        sentinel path is UNCHANGED and still live in this PR — this method
+        is a second, parallel way to reach the SAME ``registry.attach``
+        operation, not a replacement yet (existing call sites migrate in a
+        later PR once this path has its own coverage).
+
+        ``False`` means "did not happen here" (no attached session / no
+        execution side / unknown agent on the far end) — mirrors
+        :meth:`run_slash_command`'s own convention.
+
+        NOT abstract (same reasoning as :meth:`run_slash_command`/
+        :meth:`cancel_queued` above): several narrow-purpose
+        ``ClientTransport`` stubs across the test suite pre-date this
+        method; the default ``False`` preserves their behavior unchanged.
+        """
+        return False
+
+    async def request_session_switch(self, session_id: str) -> bool:
+        """Switch the focused conversation session (the ``/session switch``
+        seam); ``True`` iff it happened (#4534 PR-1).
+
+        Same shape and same ADD-ONLY status as :meth:`request_attach` —
+        see that method's docstring for the shared rationale. This one
+        retires ``__session_switch_request__`` (in a later PR), reaching
+        ``registry.attach_session`` directly instead.
+
+        NOT abstract, same reasoning as :meth:`request_attach`.
+        """
+        return False
+
     def reyn_state_root(self) -> "Path | None":
         """The attached session's project `.reyn` root, or None (#3721).
 
