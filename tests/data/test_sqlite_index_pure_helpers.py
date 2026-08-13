@@ -11,8 +11,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-
 from reyn.data.index.backends.sqlite import _db_path, _within_paths
 
 # ── _db_path ──────────────────────────────────────────────────────────────────

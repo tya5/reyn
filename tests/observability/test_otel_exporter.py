@@ -16,7 +16,6 @@ The two load-bearing gates:
 """
 from __future__ import annotations
 
-import warnings
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any

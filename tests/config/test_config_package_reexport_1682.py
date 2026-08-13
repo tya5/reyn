@@ -11,7 +11,6 @@ resolves on ``reyn.config`` — so an omission fails here, not in 50 unrelated t
 from __future__ import annotations
 
 import ast
-from pathlib import Path
 
 import reyn.config
 from tests._support.paths import REPO_ROOT

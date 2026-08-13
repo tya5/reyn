@@ -18,7 +18,6 @@ import pytest
 from reyn.hooks import (
     HookConfigError,
     HookDef,
-    HookRegistry,
     PushBlock,
     load_hooks,
 )

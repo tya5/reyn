@@ -53,7 +53,6 @@ from reyn.hooks import loader as loader_mod
 from reyn.hooks.event_pattern import EventPattern, validate_against_schema
 from reyn.hooks.loader import HookConfigError, load_hooks
 from reyn.hooks.schema_registry import HookSchemaError
-from reyn.runtime.session import Session
 from reyn.runtime.session_params import ReactivityConfig
 from tests._support.agent_session import make_session
 
