@@ -515,6 +515,19 @@ class AuditEventsConfig:
     max_age_seconds: int = 24 * 60 * 60   # 1 day
     cleanup_period_days: int = 30
     max_disk_usage_percent: float = 10.0
+    # #4496 PR-2: the WRITE-side backend. `local` (default) preserves
+    # current behavior unchanged — audit-events land under `.reyn/events`
+    # exactly as before this field existed. `discard` writes nothing
+    # (sink-null); subscriber delivery (CUI/AG-UI, hooks, OTEL) and the
+    # per-emitter `audit_seq` continuity are UNCHANGED either way — see
+    # `reyn.core.events.backend`'s module docstring for the structural
+    # guarantee. `network` is NOT yet a valid value here — its on-failure
+    # semantics (discard-and-let-seq-show-it / local spool / halt-the-run)
+    # are still an open owner decision (#4496); an operator who sets it
+    # gets the standard unknown-VALUE-falls-back-to-default tolerance
+    # (this field is validated at parse time, not silently accepted as a
+    # do-nothing string — see the parser below).
+    backend: str = "local"
 
 
 _SANDBOX_BACKENDS = {"auto", "seatbelt", "landlock", "noop"}
@@ -973,11 +986,21 @@ def _build_audit_events_config(raw: object) -> AuditEventsConfig:
             disk_percent_val = defaults.max_disk_usage_percent
     except (TypeError, ValueError):
         disk_percent_val = defaults.max_disk_usage_percent
+    # #4496 PR-2: `network` is a declared future value, not yet backed by an
+    # implementation (see AuditEventsConfig.backend's own docstring) — an
+    # operator who sets it (or any other unrecognized string) falls back
+    # to the default rather than reaching `EventLog` with a value nothing
+    # can resolve to a real backend, same "malformed value falls back"
+    # discipline every other field in this parser already uses.
+    backend_val = raw.get("backend", defaults.backend)
+    if backend_val not in ("local", "discard"):
+        backend_val = defaults.backend
     return AuditEventsConfig(
         max_bytes=int(raw.get("max_bytes", defaults.max_bytes)),
         max_age_seconds=int(raw.get("max_age_seconds", defaults.max_age_seconds)),
         cleanup_period_days=cleanup_val,
         max_disk_usage_percent=disk_percent_val,
+        backend=backend_val,
     )
 
 

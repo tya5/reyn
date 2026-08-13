@@ -85,6 +85,31 @@ production overhead zero.
 
 Stable shape makes the log machine-readable without a custom parser per consumer.
 
+## Write-side backend (#4496)
+
+Where an audit-event lands on disk (or doesn't) is a separate axis from
+whether it fires and reaches subscribers. `EventLog.emit()` always: stamps
+`agent_id`/`run_id`/`emitter`/`audit_seq`, dispatches to every subscriber
+(console reporters, the TUI/AG-UI forwarders, hooks, OTEL), and returns —
+regardless of the write-side backend `reyn.yaml`'s `audit_events.backend`
+selects (see [config reference](../../reference/config/reyn-yaml.md#audit_events-block)):
+
+- **`local`** (default) — writes to `.reyn/events`, unchanged from before
+  this abstraction existed.
+- **`discard`** (sink-null) — writes nothing. Subscriber delivery and
+  `audit_seq` continuity are unaffected; only the disk write is skipped.
+  `reyn events replay` / support-bundle / dogfood_trace have nothing to
+  read for a `discard` run — this is a real trade-off (support-bundle in
+  particular is the tool operators use to report bugs), not a free lunch.
+
+The backend is called from inside `emit()`, before the subscriber loop
+runs, wrapped in its own try/except — never inserted as just another
+subscriber. That ordering is what guarantees a backend failure (or a
+future network backend's connection error) can never silence a
+subscriber, and a raising subscriber can never stop the backend from
+having already written. See `src/reyn/core/events/backend.py`'s module
+docstring for the full mechanism.
+
 ## What audit-events are NOT
 
 - **Not application logs.** A workflow author shouldn't emit free-form audit-events. The set is OS-defined.

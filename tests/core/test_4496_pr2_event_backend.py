@@ -1,0 +1,231 @@
+"""Tier 2: #4496 PR-2 — audit-event WRITE-side backend abstraction.
+
+Architect's acceptance criteria (issue #4496 comment, falsifiable form):
+
+  1. ``backend=discard`` — subscribers still receive events (the witness
+     MUST be actual subscriber delivery, not "emit was called").
+  2. ``backend=discard`` — audit_seq still increments 1, 2, 3, ... (discard
+     does not also discard sequence continuity).
+  3. a raising backend does not stop subscriber delivery.
+  4. falsify: moving the backend call INTO the subscriber loop (so a
+     raising backend aborts delivery to later subscribers) flips ①/③ red
+     — the two tests above already ARE that falsify: if a future edit put
+     the backend in ``self._subscribers`` with no isolating try/except,
+     ``test_a_raising_backend_does_not_stop_subscriber_delivery`` goes red
+     immediately (a raising subscriber-list entry aborts every LATER
+     entry — see ``backend.py``'s module docstring for the measured
+     mechanism).
+
+#2 (Session-level, real production path): ``backend=discard`` — the real
+AG-UI/CUI subscriber wiring (``ChatLifecycleForwarder`` et al., attached by
+``Session.__init__`` itself) keeps receiving events, driven through
+``make_session`` (the same helper 282+ other tests use, mirroring
+production's ``scoped_session_factory.py`` shape) — not a hand-built
+EventLog that bypasses the real construction path.
+"""
+from __future__ import annotations
+
+import pytest
+
+from reyn.config import AuditEventsConfig
+from reyn.core.events.backend import DiscardEventBackend, LocalEventBackend
+from reyn.core.events.events import EventLog
+from tests._support.agent_session import make_session
+
+
+class _RaisingBackend:
+    def write(self, _event) -> None:
+        raise RuntimeError("backend write failed")
+
+    def declare_gaps(self) -> list[str]:
+        return []
+
+
+# ── 1. discard preserves subscriber delivery ──────────────────────────────
+
+
+def test_discard_backend_subscribers_still_receive_events() -> None:
+    """Tier 2: witness ① — with backend=discard, a subscriber still gets
+    every emitted event. The witness is the subscriber's own received list,
+    not "emit returned an Event"."""
+    log = EventLog(backend=DiscardEventBackend())
+    received = []
+    log.add_subscriber(received.append)
+
+    e1 = log.emit("tool_executed", op="read")
+    e2 = log.emit("tool_executed", op="read")
+
+    assert received == [e1, e2]
+
+
+def test_discard_backend_declares_its_gap() -> None:
+    """Tier 2: contract 2 — discard names what it does NOT retain, so a
+    consumer (`reyn events`/support-bundle/dogfood_trace) can tell "empty"
+    apart from "unsupported"."""
+    backend = DiscardEventBackend()
+    gaps = backend.declare_gaps()
+    assert gaps
+    assert all(isinstance(g, str) and g for g in gaps)
+
+
+def test_local_backend_declares_no_gaps() -> None:
+    """Tier 2: contract 2, accept-side — local retains everything, so its
+    gap list is empty (not "no answer", an explicit empty declaration)."""
+    class _StubStore:
+        def write(self, _event) -> None:
+            pass
+
+    backend = LocalEventBackend(_StubStore())
+    assert backend.declare_gaps() == []
+
+
+# ── 2. discard preserves audit_seq continuity ──────────────────────────────
+
+
+def test_discard_backend_audit_seq_still_monotonic() -> None:
+    """Tier 2: witness ② — audit_seq keeps incrementing under discard; a
+    subscriber can still detect a gap by watching this number, even though
+    nothing is written to disk."""
+    log = EventLog(backend=DiscardEventBackend())
+    e1 = log.emit("tool_executed", op="read")
+    e2 = log.emit("tool_executed", op="read")
+    e3 = log.emit("tool_executed", op="read")
+    assert (e1.data["audit_seq"], e2.data["audit_seq"], e3.data["audit_seq"]) == (1, 2, 3)
+
+
+# ── 3. backend failure isolation (prohibition ③, both directions) ────────
+
+
+def test_a_raising_backend_does_not_stop_subscriber_delivery() -> None:
+    """Tier 2: witness ③ / falsify ④ — a backend that raises on write()
+    must not prevent subscribers from receiving the event. This is the
+    test that goes RED if a future edit ever makes the backend "just
+    another subscriber" with no isolating try/except (see backend.py's
+    module docstring for the measured mechanism: the current subscriber
+    loop has none, so a raising list entry aborts every later one)."""
+    log = EventLog(backend=_RaisingBackend())
+    received = []
+    log.add_subscriber(received.append)
+
+    emitted = log.emit("tool_executed", op="read")
+
+    assert received == [emitted]
+
+
+def test_a_raising_subscriber_does_not_stop_the_backend_from_having_written() -> None:
+    """Tier 2: witness ③, the other direction — a raising subscriber must
+    not prevent the backend from having already written (ordering
+    guarantee: backend runs BEFORE the subscriber loop)."""
+    written = []
+
+    class _RecordingBackend:
+        def write(self, event) -> None:
+            written.append(event)
+
+        def declare_gaps(self) -> list[str]:
+            return []
+
+    def _raising_subscriber(_event) -> None:
+        raise RuntimeError("subscriber failed")
+
+    log = EventLog(backend=_RecordingBackend())
+    log.add_subscriber(_raising_subscriber)
+
+    # The subscriber loop itself has no isolating try/except (a pre-existing,
+    # separately-flagged fact — see backend.py's module docstring), so the
+    # raise propagates out of emit(). What matters here is that the
+    # backend, called BEFORE the subscriber loop, has already written by
+    # the time that happens.
+    with pytest.raises(RuntimeError, match="subscriber failed"):
+        log.emit("tool_executed", op="read")
+
+    assert written and written[0].type == "tool_executed"
+
+
+# ── 4. backend is a settable singleton, not a subscriber-list entry ──────
+
+
+def test_backend_property_reflects_the_active_backend() -> None:
+    """Tier 2: public read-only view — a caller (`reyn events` CLI) reads
+    the active backend without reaching into private state."""
+    backend = DiscardEventBackend()
+    log = EventLog(backend=backend)
+    assert log.backend is backend
+
+
+def test_set_backend_swaps_without_touching_subscribers() -> None:
+    """Tier 2: `set_backend` (used by `Session.set_events_dir`'s live
+    re-key) replaces the backend only — every subscriber registered before
+    the swap keeps receiving events after it."""
+    log = EventLog(backend=DiscardEventBackend())
+    received = []
+    log.add_subscriber(received.append)
+
+    before_swap = log.emit("tool_executed", op="read")
+    log.set_backend(DiscardEventBackend())
+    after_swap = log.emit("tool_executed", op="read")
+
+    assert received == [before_swap, after_swap]
+
+
+def test_no_backend_omits_write_side_entirely() -> None:
+    """Tier 2: accept-side — None (the pre-PR-2 default) means no write
+    side at all; emit + subscriber dispatch behave exactly as before this
+    PR existed."""
+    log = EventLog()  # backend=None, the default
+    received = []
+    log.add_subscriber(received.append)
+    emitted = log.emit("tool_executed", op="read")
+    assert received == [emitted]
+    assert log.backend is None
+
+
+# ── 5. config: `audit_events.backend` parses to a real EventBackend ──────
+
+
+def test_audit_events_config_backend_defaults_to_local() -> None:
+    """Tier 2: default preserves current behavior — no operator action
+    needed to keep the pre-PR-2 shape."""
+    assert AuditEventsConfig().backend == "local"
+
+
+def test_audit_events_config_backend_accepts_discard() -> None:
+    """Tier 2: `discard` is a real, wired value."""
+    cfg = AuditEventsConfig(backend="discard")
+    assert cfg.backend == "discard"
+
+
+# ── 6. Session-level, real production path (not a hand-built EventLog) ────
+
+
+def test_session_with_discard_backend_still_delivers_to_real_subscribers(
+    tmp_path,
+) -> None:
+    """Tier 2: the real production-path witness — driven through
+    `make_session` (`tests/_support/agent_session.py`, mirroring production's
+    `scoped_session_factory.py` construction shape: builds a real `Agent`,
+    calls `Session(agent=agent, **kwargs)`), not a hand-built EventLog that
+    bypasses `_build_audit_event_bundle` / `_build_events_backend`.
+
+    With `audit_events.backend=discard` threaded through at construction, a
+    subscriber attached via `subscribe_audit_events` (Session's own public
+    API — the same method `ChatLifecycleForwarder` et al. are wired through
+    inside `_build_audit_event_bundle`) still receives an event emitted
+    through the session's real `_audit_events.emit()` (the same EventLog
+    `_build_events_backend` wired the discard backend into — accessing it
+    here mirrors `tests/core/test_session_lifecycle_events_1800.py`'s own
+    established pattern for observing session-level emits, not a private-
+    state assertion: `.emit()` is EventLog's public production entry point).
+    """
+    session = make_session(
+        agent_name="discard-backend-test",
+        workspace_state_dir=tmp_path / ".reyn",
+        events_config=AuditEventsConfig(backend="discard"),
+    )
+
+    received = []
+    session.subscribe_audit_events(received.append)
+    emitted = session._audit_events.emit("test_event", foo="bar")
+
+    assert received == [emitted]
+    assert emitted.data.get("foo") == "bar"
