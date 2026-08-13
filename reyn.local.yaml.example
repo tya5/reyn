@@ -703,6 +703,23 @@
 
 
 # -----------------------------------------------------------------------------
+# tui: operator-tunable inline-TUI presentation thresholds (#4542). Today
+# just the status bar's Telemetry segment (model / agent / cost / context%):
+# the percent at which context-window usage escalates from a bare number
+# (16%) to a labelled one (ctx 82%). Omit the block to keep the 80 default
+# below; a non-numeric value or one outside 0-100 falls back to that default
+# too.
+#
+# Why this is operator-configurable rather than a bare constant: 80 is a
+# shipped default (a plain, unsurprising round number), not a measured
+# "correct" threshold for every operator's own risk tolerance or model/
+# context window — same discipline as image.row_height_cells above.
+# -----------------------------------------------------------------------------
+# tui:
+#   context_usage_warn_percent: 80   # ctx% at/above this gets the "ctx" label
+
+
+# -----------------------------------------------------------------------------
 # tool_use: the chat-layer tool-use scheme x transport selector (#1593;
 # FP-0066 P4b, #3247). ``scheme`` is the PRESENTATION axis (category /
 # enumerate-all / retrieval — how capabilities are shown/discovered);

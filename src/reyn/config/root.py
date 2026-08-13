@@ -40,6 +40,7 @@ from reyn.config.chat import (
     RenderTemplateConfig,
     SafetyConfig,
     TimeoutConfig,
+    TuiConfig,
 )
 from reyn.config.embedding import (
     ActionRetrievalConfig,
@@ -229,6 +230,10 @@ class ReynConfig:
     # can be derived to preserve the image's real aspect ratio (see
     # ImageConfig's own docstring). Default 20.
     image: ImageConfig = field(default_factory=ImageConfig)
+    # #4542: operator-tunable inline-TUI presentation thresholds — today
+    # just the status bar's context-usage-percent warn threshold (see
+    # TuiConfig's own docstring). Default 80.
+    tui: TuiConfig = field(default_factory=TuiConfig)
     # FP-0022 follow-up: declarative SSL config for web_fetch + MCP registry.
     # Priority: web_fetch.ca_bundle → web_fetch.verify_ssl → SSL_VERIFY env →
     # litellm.ssl_verify → SSL_CERT_FILE → True (default).

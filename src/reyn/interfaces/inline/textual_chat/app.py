@@ -74,6 +74,7 @@ from ._meta_keys import PIPELINE_RUN_KEY as _PIPELINE_RUN_KEY
 from .activity_row import ActivityRow
 from .chrome import (
     _MENU_TABS,
+    CTX_WARN_PERCENT,
     Composer,
     ConfigWarningLine,
     MenuBar,
@@ -848,9 +849,14 @@ class TextualChatApp(App):
     Composer > .text-area--placeholder {
         text-style: dim;
     }
+    /* #4542: text-style, not color — same "$text-muted is inert under the
+       ansi-* themes" reasoning MenuBar's own comment below already states
+       (#3522/#3528/#3505's ansi-dark measurement). @telemetry@ (dim) is a
+       DEDICATED token (palette.py), separate from @recede@ despite sharing
+       today's underlying value — see that token's own docstring. */
     StatusLine {
         height: 1;
-        color: @quiet@;
+        text-style: @telemetry@;
         padding: 0 1;
     }
     /* #4194: bold, not a colour — palette.py's own rule (@attention@ is the
@@ -908,15 +914,22 @@ class TextualChatApp(App):
        near-white block; a single tab is the size the idiom is built for. */
     MenuBar:focus-within Tab.-active { text-style: reverse bold; }
     MenuBar Tab { padding: 0 1; }
-    /* #3326: tone down. Tab's own DEFAULT_CSS gives ``.-active`` full-brightness
-       ``$foreground`` against every other tab's muted 50%-opacity foreground —
-       a stark contrast jump that reads as loud emphasis (no literal underline
-       is drawn anywhere; MenuBar doesn't use Textual's Tabs/Underline widget).
-       Matched to the status line's own quiet ``$text-muted`` tone instead,
-       kept bold so the active tab stays identifiable without the brightness
-       jump. */
+    /* #4542 (owner ruling, REVERSES #3326's own "tone down" rule below —
+       kept as history, not repaired quietly): the redesign's own words are
+       "選択中の項目のみ...強調表示を行う" (ONLY the selected item gets
+       emphasis) — the opposite instruction from #3326's "match it to the
+       muted status line so it doesn't jump out". #3326 solved a real
+       problem (Tab's own DEFAULT_CSS ``.-active`` at full-brightness
+       ``$foreground`` against every other tab's 50%-muted one read as loud)
+       by TONING DOWN toward Telemetry's own tone — but #4542 gives
+       Telemetry its OWN dedicated, permanently-dim style (``@telemetry@``,
+       see StatusLine's rule above and palette.py), so "match the active tab
+       to it" now means "make the active tab look like the OBSERVATION half
+       of the row" — backwards from what emphasis should read as. No
+       ``color`` override here anymore: the active tab keeps the terminal's
+       own normal foreground (never toned down), ``bold`` alone is the
+       emphasis. */
     MenuBar Tab.-active {
-        color: @quiet@;
         text-style: bold;
     }
     /* No separator rule between the menu row and its drawer — they read as one
@@ -1689,15 +1702,31 @@ class TextualChatApp(App):
         return "failed" if self._transport.attach_failed() else "connecting"
 
     def _status_text(self, snap: "dict | None | object" = _UNSET) -> str:
-        """The status-values line (``model │ agent │ cost │ ctx``), from the live
-        status snapshot (F5b: running cost + context percent are visible even with
-        the drawer closed). Falls back to the threaded ``agent_name`` pre-session.
-        Pass ``snap`` to reuse an already-read snapshot (one read per frame)."""
+        """The Telemetry segment (#4542: ``model · agent    $cost  ctx%``),
+        from the live status snapshot (F5b: running cost + context percent are
+        visible even with the drawer closed). Falls back to the threaded
+        ``agent_name`` pre-session. Pass ``snap`` to reuse an already-read
+        snapshot (one read per frame).
+
+        #4542: ``warn_percent`` reads ``self._config.tui.
+        context_usage_warn_percent`` via ``getattr`` (same "config may be
+        None, or a caller-supplied stand-in missing this section entirely"
+        tolerance as every other ``self._config.X`` read in this class —
+        see ``_configured_gutter_visibility``'s own docstring for the
+        pattern) — falls back to ``status_line_text``'s own module-default
+        (:data:`~reyn.interfaces.inline.textual_chat.chrome.
+        CTX_WARN_PERCENT`) when unset."""
         snapshot = self._snapshot() if snap is _UNSET else snap
+        warn_percent = getattr(
+            getattr(self._config, "tui", None),
+            "context_usage_warn_percent",
+            CTX_WARN_PERCENT,
+        )
         return status_line_text(
             snapshot,
             self._agent_name,
             attach_state=self._attach_state(),
+            warn_percent=warn_percent,
         )  # type: ignore[arg-type]
 
     async def _watch_loop_responsiveness(self) -> None:

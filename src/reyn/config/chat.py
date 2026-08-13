@@ -594,6 +594,51 @@ def _build_image_config(raw: object) -> "ImageConfig":
 
 
 @dataclass
+class TuiConfig:
+    """`tui:` — operator-tunable inline-TUI presentation thresholds (#4542).
+
+    ``context_usage_warn_percent`` — the context-window usage percent at
+    which the status bar's Telemetry segment escalates from a bare number
+    (``16%``) to a labelled one (``ctx 82%``).
+
+    **Why this is operator-configurable, not a bare constant** (owner's
+    standing rule — no unjustified number embedded without either a
+    reasoning comment or a user-facing override, same discipline as
+    :class:`ImageConfig`'s ``row_height_cells``): 80 is a shipped default
+    (a plain, unsurprising round number), not a measured "correct"
+    threshold for every operator's own risk tolerance or model/context
+    window — the config key exists specifically so an operator who wants
+    an earlier or later warning can change it without a code edit.
+    """
+    context_usage_warn_percent: int = 80
+
+
+def _build_tui_config(raw: object) -> "TuiConfig":
+    """Parse the `tui:` section (#4542).
+
+    Missing or malformed -> default (80). A non-numeric or out-of-[0,100]
+    value falls back to the default — same discipline as
+    ``_build_image_config``: an operator typo must not silently produce a
+    threshold that never fires (e.g. a negative number) or fires
+    immediately (e.g. 0), either of which would be a confusing, silent
+    change to what the status bar shows.
+    """
+    if not isinstance(raw, dict):
+        return TuiConfig()
+    defaults = TuiConfig()
+    warn_percent = raw.get(
+        "context_usage_warn_percent", defaults.context_usage_warn_percent,
+    )
+    try:
+        warn_percent = int(warn_percent)
+        if not (0 <= warn_percent <= 100):
+            warn_percent = defaults.context_usage_warn_percent
+    except (TypeError, ValueError):
+        warn_percent = defaults.context_usage_warn_percent
+    return TuiConfig(context_usage_warn_percent=warn_percent)
+
+
+@dataclass
 class SpawnConfig:
     """`safety.spawn:` — operator bounds on the LLM spawn tree (#2103 C3).
 

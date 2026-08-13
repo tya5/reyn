@@ -86,6 +86,8 @@ from textual.widgets import (
     TextArea,
 )
 
+from reyn.config.chat import TuiConfig
+
 from .completion import CompletionPopup
 from .intervention_panel import InterventionPanel
 from .presenter import option_content_rows
@@ -403,8 +405,14 @@ _MENU_TABS: "list[tuple[str, str]]" = [
     ("pipe", "Pipe"),
     ("hook", "Hook"),
     ("cron", "Cron"),
-    ("menu", "Menu"),
-    ("help", "Help"),
+    # #4542 (owner ruling): compact glyphs, not "Menu"/"Help" full words —
+    # same flat arrow-navigable tab, same Enter-opens-drawer mechanism as
+    # every other entry above; only the visible label shrinks. Distinct
+    # single characters (not the SAME "…" twice) so #3338's on-screen
+    # geometry test (every tab id maps 1:1 to a real, distinguishable Tab
+    # widget) has something to distinguish rather than two identical labels.
+    ("menu", "…"),
+    ("help", "?"),
 ]
 
 #: Menu items whose pane is an interactive :class:`OptionList` picker (keyboard
@@ -1401,15 +1409,60 @@ def cost_figure(snap: "dict | None") -> str:
     return f"{figure}{UNPRICED_MARK}" if snap.get("cost_agent_unpriced_calls") else figure
 
 
+#: #4542: the context-usage percent at which the Telemetry segment escalates
+#: from the bare number to a labelled one (``16%`` -> ``ctx 82%``) — the
+#: owner's proposal names the BEHAVIOR ("通常時は簡潔... 閾値を超えた場合の
+#: み情報量を増やしてよい") but not a specific number.
+#:
+#: #4542 review (owner's standing rule — no unjustified number embedded
+#: without either a reasoning comment or a user-facing override, same
+#: discipline as ``ImageConfig.row_height_cells``): 80 is a plain,
+#: unsurprising round number, not a measured "correct" threshold for
+#: every operator's own risk tolerance — see ``tui.context_usage_warn_
+#: percent`` in ``reyn.yaml``.
+#:
+#: **The CANONICAL value is :class:`reyn.config.chat.TuiConfig`'s own
+#: default, not this constant** — this constant just READS it, so there
+#: is exactly one number to keep in sync, not two hand-written literals
+#: (#4542 review: an earlier version defined ``80`` here too, a real
+#: drift risk the review caught — "the same contract hand-written in two
+#: places"). Importing ``TuiConfig`` (not the reverse — ``config/chat.py``
+#: is a foundational, TTY-independent module nearly every reyn code path
+#: loads, including headless ones; ``chrome.py`` imports ``textual`` at
+#: module level and genuinely cannot be imported without it — verified
+#: live, and exactly what ``test_phase3_chrome_imports_stay_tty_only``
+#: guards) is the only safe direction. If you're tempted to flip this
+#: back because "chrome should own its own UI constant" — don't; that
+#: direction breaks ``load_config()`` in any textual-less environment.
+#: The name ``CTX_WARN_PERCENT`` is kept (existing references stay
+#: valid) even though the value now lives elsewhere.
+CTX_WARN_PERCENT = TuiConfig().context_usage_warn_percent
+
+
 def status_line_text(
     snap: "dict | None",
     agent_name: str,
     *,
     attach_state: "str | None" = None,
+    warn_percent: int = CTX_WARN_PERCENT,
 ) -> str:
-    """The slim ``model │ agent │ cost │ ctx`` status-values line, from the live
-    status snapshot (F5b: the running cost + context percent are visible here even
-    when the drawer is closed).
+    """The Telemetry segment (#4542: ``model · agent    $cost  ctx%``, no
+    ``│``/``|`` separators — position and text-style carry the grouping
+    instead) — from the live status snapshot (F5b: the running cost +
+    context percent are visible here even when the drawer is closed).
+
+    #4542 (owner ruling, superseding #4540's ``│``-separator direction):
+    the labelled ``model X │ agent Y │ cost Z │ ctx W`` format is replaced
+    by an UNLABELLED one — ``model · agent`` (a ``·`` groups the two
+    identity fields, distinct from the ``│`` this redesign explicitly
+    rejects) followed by the cost figure and context percent, separated by
+    plain whitespace. Labels are dropped deliberately: this line's own
+    styling (``@quiet@`` / dim, see app.py's ``StatusLine`` CSS) already
+    marks it as the "observation" half of the row, so the meaning is
+    conveyed by POSITION, not text. ``ctx`` escalates to a labelled ``ctx
+    NN%`` only at/past ``warn_percent`` (default :data:`CTX_WARN_PERCENT`,
+    operator-overridable via ``tui.context_usage_warn_percent`` — below it,
+    the bare percent is unambiguous next to the cost figure).
 
     ``attach_state`` (#3671 P3): ``"connecting"`` / ``"failed"`` / ``None``
     (attached — the ordinary case). Owner ruling: "not yet attached" and
@@ -1424,20 +1477,20 @@ def status_line_text(
 
     #3671 P3 review (lead-coder): deliberately plain text, no decorative
     glyph — ``⏳`` measures East-Asian-Width ``W`` (2 terminal cells) while
-    every other character on this ONE always-visible, ``│``-delimited row is
-    ``N``/``Na`` (1 cell); glyph width also varies by terminal/font, and this
-    line has zero such glyphs today, so it would be the first. A 1-cell
-    misjudgement on the narrowest-terminal case (owner's own environment)
-    breaks the whole row, not just this segment. Visual decoration is
-    explicitly a separate, still-open owner decision (#3642) — this PR lands
-    the MECHANISM only; a glyph can be added later without touching the
-    mechanism, but a broken row on a still-forming feature would cast doubt
-    on the mechanism itself.
+    every other character on this ONE always-visible row is ``N``/``Na`` (1
+    cell); glyph width also varies by terminal/font, and this line has zero
+    such glyphs today, so it would be the first. A 1-cell misjudgement on
+    the narrowest-terminal case (owner's own environment) breaks the whole
+    row, not just this segment. Visual decoration is explicitly a separate,
+    still-open owner decision (#3642) — this PR lands the MECHANISM only; a
+    glyph can be added later without touching the mechanism, but a broken
+    row on a still-forming feature would cast doubt on the mechanism
+    itself.
     """
     if attach_state == "connecting":
-        return f"connecting… │ agent {agent_name}"
+        return f"connecting… · agent {agent_name}"
     if attach_state == "failed":
-        return f"attach failed (see log) │ agent {agent_name}"
+        return f"attach failed (see log) · agent {agent_name}"
 
     # #2280: when ``snap["halted_reason"]`` is set (the session fail-stopped on
     # a persistent durability failure — ``Session.halted_reason``), a
@@ -1452,14 +1505,18 @@ def status_line_text(
     snap = snap or {}
     model = snap.get("model_active_class") or snap.get("model") or "—"
     agent = snap.get("attached_name") or agent_name
-    cost = snap.get("cost_agent", 0.0)
-    base = (
-        f"model {model} │ agent {agent} │ cost {cost_figure(snap)} "
-        f"│ ctx {_ctx_pct(snap)}"
-    )
+    ctx_pct = _ctx_pct(snap)
+    ctx_segment = ctx_pct
+    if ctx_pct.endswith("%"):
+        try:
+            if int(ctx_pct[:-1]) >= warn_percent:
+                ctx_segment = f"ctx {ctx_pct}"
+        except ValueError:
+            pass  # "—" (no completed call yet) — bare, never escalated
+    base = f"{model} · {agent}    {cost_figure(snap)}  {ctx_segment}"
     halted_reason = snap.get("halted_reason")
     if halted_reason:
-        return f"⚠ HALTED — {halted_reason} — agent stopped accepting ops │ {base}"
+        return f"⚠ HALTED — {halted_reason} — agent stopped accepting ops · {base}"
     return base
 
 

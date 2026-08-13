@@ -160,11 +160,27 @@ def test_no_placeholder_residue_pickers_empty_readouts_zero() -> None:
 
 def test_f5b_cost_and_ctx_surface_on_status_line() -> None:
     """Tier 1: the status-values line reflects the live cost + context percent
-    from the snapshot (F5b: cost is legible in the Textual TTY, drawer closed)."""
+    from the snapshot (F5b: cost is legible in the Textual TTY, drawer closed).
+
+    #4542: 90k/200k = 45%, below CTX_WARN_PERCENT (80) — the bare percent
+    renders WITHOUT the "ctx" label at this level (labelling is reserved for
+    the over-threshold case; see test_ctx_percent_gains_ctx_label_past_warn_threshold)."""
     line = status_line_text(_SNAP, "default")
     assert "$0.0123" in line, "running cost missing from the status line"
-    assert "ctx 45%" in line, "context percent (90k/200k) missing from the status line"
+    assert "45%" in line, "context percent (90k/200k) missing from the status line"
+    assert "ctx 45%" not in line, "below CTX_WARN_PERCENT must stay unlabelled"
     assert "opus" in line and "default" in line, "model/agent missing from the status line"
+
+
+def test_ctx_percent_gains_ctx_label_past_warn_threshold() -> None:
+    """Tier 1: #4542 — context percent gains the "ctx" label ONLY at/past
+    CTX_WARN_PERCENT; below it, the bare percent is unambiguous next to the
+    cost figure (see the test above for the below-threshold case)."""
+    from reyn.interfaces.inline.textual_chat.chrome import CTX_WARN_PERCENT
+
+    hot_snap = {**_SNAP, "ctx_used": 180000, "ctx_window": 200000}  # 90%
+    line = status_line_text(hot_snap, "default")
+    assert "ctx 90%" in line, f"90% is past CTX_WARN_PERCENT ({CTX_WARN_PERCENT}) and must be labelled"
 
 
 def test_f5b_cost_and_ctx_panes_reflect_usage() -> None:
@@ -327,7 +343,11 @@ async def test_menu_drawer_equals_full_slash_registry() -> None:
 async def test_status_line_and_cost_pane_show_live_cost_f5b() -> None:
     """Tier 2: F5b end-to-end — the mounted status line and the Cost drawer pane
     both reflect the snapshot's live cost/ctx (previously the Textual path showed
-    no cost at all)."""
+    no cost at all).
+
+    #4542: 90k/200k = 45%, below CTX_WARN_PERCENT — asserts the bare percent
+    (see test_ctx_percent_gains_ctx_label_past_warn_threshold for the
+    labelled, over-threshold case)."""
     from textual.widgets import Static
 
     from reyn.interfaces.inline.textual_chat import StatusLine, TextualChatApp
@@ -338,7 +358,7 @@ async def test_status_line_and_cost_pane_show_live_cost_f5b() -> None:
     async with app.run_test(size=(100, 30)) as pilot:
         await pilot.pause()
         status = str(app.query_one(StatusLine).render())
-        assert "$0.0123" in status and "ctx 45%" in status, f"status line lacks cost/ctx: {status}"
+        assert "$0.0123" in status and "45%" in status, f"status line lacks cost/ctx: {status}"
         app._open_drawer("cost")
         await pilot.pause()
         cost_text = str(app.query_one("#cost", Static).render())
