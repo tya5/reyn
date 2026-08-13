@@ -101,7 +101,6 @@ of the renderer's two entry points (display vs working-indicator). The mapping:
 | `intervention`    | `CUSTOM`           | a prompt is displayed; the reyn client draws it natively and answers it by id (see "Human-in-the-loop answering") |
 | `presentation`    | `CUSTOM`           | a `present` op's render-node model (see *present-on-wire*) |
 | `__copy_last_reply__` / `__rewind_list__` | `CUSTOM` | client-consumed sentinels — forwarded (see *control sentinels*) |
-| `__attach_request__` | `CUSTOM`        | forwarded — a live wire kind (see *control sentinels*) |
 | `__end__` / `__session_switch_request__` | *(filtered)* | NOT forwarded (see *control sentinels*) |
 
 Any other display kind still round-trips losslessly (it falls back to `CUSTOM` and
@@ -134,14 +133,17 @@ renderable display kinds):
     drop for an unresolvable sid), so it never reaches the emitter from that
     source; the filter entry is a fail-safe covering a frame source that does not
     consume it.
-- **Forwarded, and genuinely live**: `__attach_request__` **is** emitted on the
-  wire as a profiled `CUSTOM` display event. The registry forwarder's `continue`
-  does not prevent this: the forwarder and the AG-UI tap are two independent
-  subscribers of the same `session.outbox_hub`, which fans every message out to
-  every subscription, so the `continue` only means "not re-posted to
-  `repl_outbox`" (the local REPL sink). A remote client must tolerate the kind;
-  the reyn client skips it for display so no bare sentinel lands in the
-  conversation pane. (Remote attach-label *sync* is a separate mechanism.)
+- **Retired** (#4534 PR-2): `__attach_request__` no longer exists. `/agent new`
+  and `/attach` now go through `ClientTransport.request_attach` — a named
+  operation, not a display-channel sentinel (#3595 S5's own principle: the
+  client interprets, the server executes a named operation, the same shape
+  `run_slash_command` already applied). Earlier revisions of this doc described
+  `__attach_request__` as "forwarded, and genuinely live" on the wire — that was
+  accurate before PR-2 landed. `__session_switch_request__` is a **separate**
+  sentinel, still filtered as described above — its own migration (PR-2b) is
+  staged separately because its consumption is dual-purpose (it also drives
+  `agui/endpoint.py`'s mid-stream switch-follow, #3310 N3), not yet documented
+  here.
 
 > Corrected in #3362. This section previously stated that both sentinels "never
 > reach the AG-UI tap" because the registry forwarder swallows them. Both do
@@ -564,7 +566,6 @@ A reyn display frame with no standard AG-UI analog. `value` is `{"text": <string
 | `reyn.display.system`             | a reyn chrome line — a persisted lifecycle/status marker (compaction / budget / cost-warn) |
 | `reyn.display.__copy_last_reply__` | the `/copy` sentinel — forwarded (client-side clipboard copy); see *control sentinels* |
 | `reyn.display.__rewind_list__`    | the `/rewind` sentinel — forwarded (client-side rewind picker); see *control sentinels* |
-| `reyn.display.__attach_request__` | the attach-request sentinel — really emitted; the reyn client skips it for display; see *control sentinels* |
 | `reyn.display.tool_call_started`  | a tool-call start trace line                           |
 | `reyn.display.tool_call_completed`| a tool-call completion trace line                     |
 | `reyn.display.tool_call_failed`   | a tool-call failure trace line                        |
