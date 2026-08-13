@@ -23,6 +23,7 @@ from typing import Any
 import pytest
 import yaml
 
+from reyn.data.workspace.workspace import Workspace
 from reyn.schemas.models import MCPDropServerIROp
 from reyn.security.permissions.permissions import PermissionDecl, PermissionResolver
 from reyn.user_intervention import (
@@ -90,17 +91,12 @@ def _seed_config(path: Path, servers: dict[str, dict]) -> None:
     )
 
 
-class _StubWorkspace:
-    """Workspace stand-in exposing only ``base_dir`` (= what the handler reads).
-
-    The real Workspace class reads CWD eagerly + creates `.reyn/`
-    directories; using it in unit tests pollutes the test filesystem.
-    The handler only consults ``ws.base_dir`` via
-    ``_resolve_project_root`` so a stub is sufficient + cleaner.
-    """
-
-    def __init__(self, base_dir: Path) -> None:
-        self.base_dir = base_dir
+# #4597 slice ①: _StubWorkspace removed — its docstring's "reads CWD
+# eagerly + pollutes the test filesystem" rationale didn't hold for this
+# file's own call site (always passes tmp_path, never omits base_dir), and
+# Workspace(base_dir=tmp_path) only ever creates tmp_path/.reyn/, which is
+# disposable pytest state, not filesystem pollution. A real Workspace is
+# cheaply constructible (#4581's own precedent).
 
 
 def _phase5_drop_decl(resolver: PermissionResolver, tmp_path: Path) -> PermissionDecl:
@@ -132,9 +128,12 @@ def _make_op_ctx(
         else:
             effective_decl = PermissionDecl()
 
+    effective_events = events or _CapturingEvents()
     return OpContext(
-        workspace=_StubWorkspace(base_dir=tmp_path),
-        events=events or _CapturingEvents(),
+        workspace=Workspace(
+            events=effective_events, permission_resolver=resolver, base_dir=tmp_path,
+        ),
+        events=effective_events,
         permission_decl=effective_decl,
         permission_resolver=resolver,
         actor="test_mcp_drop_server",

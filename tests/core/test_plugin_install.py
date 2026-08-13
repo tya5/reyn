@@ -68,6 +68,7 @@ from reyn.core.op_runtime.plugin_install import (
     handle as install_handle,
 )
 from reyn.core.op_runtime.plugin_uninstall import handle as uninstall_handle
+from reyn.data.workspace.workspace import Workspace
 from reyn.intervention_choices import NO, YES
 from reyn.plugins.manifest import PLUGIN_MANIFEST_SCHEMA_URL
 from reyn.schemas.models import PluginInstallIROp, PluginUninstallIROp
@@ -75,11 +76,10 @@ from reyn.security.permissions.permissions import PermissionDecl, PermissionReso
 from reyn.user_intervention import InterventionAnswer, UserIntervention
 
 # ── shared stubs (real API surface, no mocks) ─────────────────────────────────
-
-
-class _StubWorkspace:
-    def __init__(self, base_dir: Path) -> None:
-        self.base_dir = base_dir
+# #4597 slice ①: _StubWorkspace removed — a real Workspace(events=...,
+# permission_resolver=..., base_dir=...) is cheaply constructible (#4581's
+# own 1-line precedent) and only ever creates <base_dir>/.reyn/, which is
+# always a disposable pytest tmp_path/project_root here, not the real CWD.
 
 
 class _Events:
@@ -233,9 +233,10 @@ def _make_ctx(
         file_write=[{"path": str(plugins_root()), "scope": "recursive"}],
         http_get=[{"host": "*"}],
     )
+    events = _Events()
     return OpContext(
-        workspace=_StubWorkspace(base_dir=project_root),
-        events=_Events(),
+        workspace=Workspace(events=events, permission_resolver=resolver, base_dir=project_root),
+        events=events,
         permission_decl=decl,
         permission_resolver=resolver,
         actor="test",

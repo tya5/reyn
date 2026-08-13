@@ -53,6 +53,7 @@ from reyn.core.op_runtime.plugin_install import (
     reconcile_plugin_installs,
 )
 from reyn.core.op_runtime.plugin_install import handle as install_handle
+from reyn.data.workspace.workspace import Workspace
 from reyn.plugins.manifest import PLUGIN_MANIFEST_SCHEMA_URL
 from reyn.schemas.models import PluginInstallIROp
 from reyn.security.permissions.permissions import PermissionDecl, PermissionResolver
@@ -61,10 +62,8 @@ from reyn.security.permissions.permissions import PermissionDecl, PermissionReso
 # precedent in tests/core/test_action_embedding_index_concurrency.py).
 _DEAD_PID = 2**31 - 1
 
-
-class _StubWorkspace:
-    def __init__(self, base_dir) -> None:
-        self.base_dir = base_dir
+# #4597 slice ①: _StubWorkspace removed — a real Workspace(events=...,
+# permission_resolver=..., base_dir=...) is cheaply constructible.
 
 
 class _Events:
@@ -89,9 +88,10 @@ def _make_ctx(tmp_path):
             str(project_root / ".reyn" / "config" / cfg), "test", "file.write",
         )
     decl = PermissionDecl(file_write=[{"path": str(plugins_root()), "scope": "recursive"}])
+    events = _Events()
     return OpContext(
-        workspace=_StubWorkspace(base_dir=project_root),
-        events=_Events(),
+        workspace=Workspace(events=events, permission_resolver=resolver, base_dir=project_root),
+        events=events,
         permission_decl=decl,
         permission_resolver=resolver,
         actor="test",

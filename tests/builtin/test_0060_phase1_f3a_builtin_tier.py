@@ -60,15 +60,12 @@ from reyn.builtin.registry import (
 )
 from reyn.config.loader import _merge
 from reyn.core.op_runtime.context import OpContext, provenance_from_ctx
+from reyn.data.workspace.workspace import Workspace
 
 _REPO_ROOT = REPO_ROOT
 
-
-class _StubWorkspace:
-    """Minimal real-attribute workspace stub — OpContext only reads base_dir."""
-
-    def __init__(self, base_dir: Path) -> None:
-        self.base_dir = base_dir
+# #4597 slice ①: _StubWorkspace removed — a real Workspace(events=...,
+# permission_resolver=..., base_dir=...) is cheaply constructible.
 
 
 class _Events:
@@ -86,9 +83,10 @@ def _make_ctx(tmp_path: Path, *, turn_origin: "str | None") -> OpContext:
     from reyn.security.permissions.permissions import PermissionDecl, PermissionResolver
 
     resolver = PermissionResolver(config_permissions={}, project_root=tmp_path, interactive=False)
+    events = _Events()
     return OpContext(
-        workspace=_StubWorkspace(base_dir=tmp_path),
-        events=_Events(),
+        workspace=Workspace(events=events, permission_resolver=resolver, base_dir=tmp_path),
+        events=events,
         permission_decl=PermissionDecl(),
         permission_resolver=resolver,
         actor="test",

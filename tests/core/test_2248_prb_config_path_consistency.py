@@ -20,14 +20,13 @@ from reyn.core.events.config_recovery import record_config_generation, reyn_rela
 from reyn.core.events.snapshot_generations import rewind
 from reyn.core.events.state_log import StateLog
 from reyn.core.op_runtime.context import OpContext
+from reyn.data.workspace.workspace import Workspace
 from reyn.runtime.registry import AgentRegistry
 from reyn.schemas.models import MCPDropServerIROp
 from reyn.security.permissions.permissions import PermissionDecl, PermissionResolver
 
-
-class _StubWorkspace:
-    def __init__(self, base_dir) -> None:
-        self.base_dir = base_dir
+# #4597 slice ①: _StubWorkspace removed — a real Workspace(events=...,
+# permission_resolver=..., base_dir=...) is cheaply constructible.
 
 
 class _Events:
@@ -81,9 +80,10 @@ async def test_real_mcp_drop_writes_config_subdir_keyed_path_and_rewind_restores
     )
     canonical = str(mcp_path)
     resolver.session_approve_path(canonical, "test", "file.write")
+    events = _Events()
     ctx = OpContext(
-        workspace=_StubWorkspace(base_dir=tmp_path),
-        events=_Events(),
+        workspace=Workspace(events=events, permission_resolver=resolver, base_dir=tmp_path),
+        events=events,
         permission_decl=PermissionDecl(
             file_write=[{"path": canonical, "scope": "just_path"}],
         ),
