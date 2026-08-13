@@ -1176,10 +1176,14 @@ higher-trust one.
    (probe-then-commit, mirrors `mcp_install_local`) for the root
    `.mcp.json` — a server's `command` is registered AS-IS, no
    venv-interpreter rewrite. Emit `plugin_install_registered`.
-   The return value's `registered`/`skipped` dicts (both keyed by
-   capability kind — `mcp`/`pipelines`/`skills`) record every declared
-   capability that did NOT make it in, by a different mechanism per kind:
-   mcp's probe-then-commit skips BEFORE the write (a probe failure or a
+   Before #4580, this step's own `registered` list was the ONLY signal
+   — a manifest declaring 3 capabilities that only 2 actually registered
+   read identically to "declared 3, registered 3": no count or event let
+   an operator (or a test) tell the two apart. The return value's
+   `registered`/`skipped` dicts (both keyed by capability kind —
+   `mcp`/`pipelines`/`skills`) now record every declared capability that
+   did NOT make it in, by a different mechanism per kind: mcp's
+   probe-then-commit skips BEFORE the write (a probe failure or a
    denied MCP-axis permission gate — `mcp_server_install_skipped`, #4580);
    a pipeline/skill sub-install always runs and is routed to `skipped`
    when its OWN return value's `status` isn't `"installed"` (a bad name,
