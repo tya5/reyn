@@ -69,8 +69,20 @@ def filename_start_date(name: str) -> date | None:
 def collect_dated_files(root: Path) -> list[tuple[Path, date | None]]:
     """Every `.jsonl` file under `root`, each paired with its parsed
     filename start-date (`None` if unparseable). Sorted oldest-first —
-    `(date, path)`, with undated files sorted FIRST (never assumed recent —
-    a conservative choice for a destructive-by-default purge)."""
+    `(date, path)`, with undated files sorted FIRST.
+
+    **This ordering is "conservative" for the SIZE axis specifically, not
+    a blanket policy** — the two axes read an undated file oppositely
+    (lead-coder review, #4479): `select_by_age` (below) never selects one
+    at all, since there is no date to compare against `before` — the
+    conservative reading there is "don't guess, don't delete." Sorting it
+    FIRST only matters to `select_by_disk_budget`, which purges oldest-first
+    off THIS ordering — there, "don't guess, assume the worst" is the
+    conservative reading: an unparseable filename (e.g. after a future
+    naming-convention change) is treated as the OLDEST entry, so a
+    size-budget purge reaches it before any dated file, rather than
+    silently exempting whatever it doesn't recognize from the size axis
+    the way the age axis structurally must exempt it."""
     out: list[tuple[Path, date | None]] = []
     for p in root.rglob("*.jsonl"):
         out.append((p, filename_start_date(p.name)))
