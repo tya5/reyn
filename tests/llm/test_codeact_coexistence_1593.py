@@ -44,7 +44,7 @@ class _FakeHost:
         self._events = EventLog()
 
     @property
-    def events(self) -> _FakeEvents:
+    def events(self) -> EventLog:
         return self._events
 
     # context / catalog inputs (all empty — the CodeAct scheme ignores them)

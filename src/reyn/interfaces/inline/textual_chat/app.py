@@ -109,6 +109,7 @@ from .search_bar import SearchBar
 from .sent_queue import SentQueue
 
 if TYPE_CHECKING:
+    from textual.geometry import Offset
     from textual.timer import Timer
     from textual_flowview import VisibilityHandle
 

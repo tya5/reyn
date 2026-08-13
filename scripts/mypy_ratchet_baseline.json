@@ -24,14 +24,6 @@
     "code": "attr-defined"
   },
   {
-    "file": "src/reyn/config/infra.py",
-    "code": "name-defined"
-  },
-  {
-    "file": "src/reyn/config/root.py",
-    "code": "name-defined"
-  },
-  {
     "file": "src/reyn/core/events/agent_snapshot.py",
     "code": "arg-type"
   },
@@ -42,10 +34,6 @@
   {
     "file": "src/reyn/core/events/event_store.py",
     "code": "misc"
-  },
-  {
-    "file": "src/reyn/core/events/state_log.py",
-    "code": "name-defined"
   },
   {
     "file": "src/reyn/core/kernel/codeact_runner.py",
@@ -288,10 +276,6 @@
     "code": "attr-defined"
   },
   {
-    "file": "src/reyn/interfaces/cli/commands/dogfood.py",
-    "code": "name-defined"
-  },
-  {
     "file": "src/reyn/interfaces/cli/commands/embeddings.py",
     "code": "attr-defined"
   },
@@ -358,10 +342,6 @@
   {
     "file": "src/reyn/interfaces/inline/textual_chat/app.py",
     "code": "attr-defined"
-  },
-  {
-    "file": "src/reyn/interfaces/inline/textual_chat/app.py",
-    "code": "name-defined"
   },
   {
     "file": "src/reyn/interfaces/inline/textual_chat/app.py",
@@ -494,10 +474,6 @@
   {
     "file": "src/reyn/interfaces/web/deps.py",
     "code": "attr-defined"
-  },
-  {
-    "file": "src/reyn/interfaces/web/deps.py",
-    "code": "name-defined"
   },
   {
     "file": "src/reyn/interfaces/web/routers/a2a.py",
@@ -664,10 +640,6 @@
     "code": "attr-defined"
   },
   {
-    "file": "src/reyn/runtime/router_loop.py",
-    "code": "name-defined"
-  },
-  {
     "file": "src/reyn/runtime/router_op_context.py",
     "code": "arg-type"
   },
@@ -706,10 +678,6 @@
   {
     "file": "src/reyn/runtime/session.py",
     "code": "attr-defined"
-  },
-  {
-    "file": "src/reyn/runtime/session.py",
-    "code": "name-defined"
   },
   {
     "file": "src/reyn/runtime/session.py",

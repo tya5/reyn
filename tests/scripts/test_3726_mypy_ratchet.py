@@ -20,6 +20,8 @@ import json
 import sys
 from pathlib import Path
 
+import pytest
+
 from tests._support.paths import REPO_ROOT
 
 _SCRIPT = REPO_ROOT / "scripts" / "mypy_ratchet.py"

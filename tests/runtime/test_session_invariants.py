@@ -77,7 +77,7 @@ class _FakeRegistry:
 
     def __init__(self):
         # Map agent_name → fake target session (if needed)
-        self._targets: dict[str, "_FakeTarget"] = {}
+        self._targets: dict[str, "Session"] = {}
         self.sent_requests: list[dict] = []
         self.sent_responses: list[dict] = []
 

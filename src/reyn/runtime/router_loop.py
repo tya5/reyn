@@ -38,7 +38,8 @@ from reyn.services.compaction.engine import (
 from reyn.services.turn_budget import wrap_up_system_prompt
 
 if TYPE_CHECKING:
-    pass
+    from reyn.llm.llm import LLMToolCallResult
+    from reyn.tools.scheme import ExecutionResult
 
 logger = logging.getLogger(__name__)
 

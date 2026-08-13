@@ -10,12 +10,12 @@ now removed).
 Design notes
 ------------
 - **Forward-ref robustness**: ``from __future__ import annotations``
-  makes all type annotations strings.  Naively calling
-  ``typing.get_type_hints(ReynConfig)`` fails on forward refs like
-  ``'ExternalTransportRouting'`` that are lazily imported in
-  ``config.py``.  We resolve per-dataclass using the *class module's*
-  own ``__dict__`` as ``globalns``, extended with the two known
-  lazy-import types.  See :func:`_get_hints_safe`.
+  makes all type annotations strings.  ``typing.get_type_hints(ReynConfig)``
+  resolves each forward ref against the *class module's* own ``__dict__``
+  as ``globalns`` — every dataclass field type referenced only as a string
+  (``ExternalTransportRouting``, ``OAuthProviderConfig``, ...) MUST be a
+  concrete, non-``TYPE_CHECKING`` import in that module or the field
+  silently drops from the schema (#4653).  See :func:`_get_hints_safe`.
 
 - **Dict leaf (free-form)**: any field whose unwrapped type is ``dict``
   or ``dict[K, V]`` is treated as a free-form dict — the operator may
@@ -658,39 +658,22 @@ def _get_hints_safe(cls: type) -> dict[str, Any]:
     """Call ``typing.get_type_hints`` robustly for *cls*.
 
     Uses the class's own module namespace as ``globalns`` to resolve
-    forward refs declared in that module.  Adds the two known
-    lazy-imported types (``ExternalTransportRouting``,
-    ``OAuthProviderConfig``) which are not present in ``reyn.config``'s
-    module globals at import time.
+    forward refs declared in that module.  Every forward-ref field type
+    (``ExternalTransportRouting``, ``OAuthProviderConfig``, ...) must
+    already be a concrete import in that module (#4653) — this no longer
+    patches in a hardcoded name list; a missing import surfaces as a
+    ruff F821 finding at the declaration site instead of a silent schema
+    drop here.
 
     Returns an empty dict on failure (= walk falls back to skipping).
     """
     try:
         localns: dict[str, Any] = dict(vars(sys.modules[cls.__module__]))
-        # Patch in lazy-import types that are referenced as forward refs
-        # but not imported at the top of config.py.
-        _patch_localns(localns)
         return typing.get_type_hints(cls, globalns=localns)
     except Exception:
         # Fallback: return empty so the walk skips this class cleanly
         # rather than crashing.  Callers will log / skip silently.
         return {}
-
-
-def _patch_localns(ns: dict[str, Any]) -> None:
-    """Inject lazy-import types that appear as forward refs in config.py."""
-    if "ExternalTransportRouting" not in ns:
-        try:
-            from reyn.runtime.external_routing import ExternalTransportRouting  # noqa: PLC0415
-            ns["ExternalTransportRouting"] = ExternalTransportRouting
-        except ImportError:
-            pass
-    if "OAuthProviderConfig" not in ns:
-        try:
-            from reyn.security.secrets.oauth import OAuthProviderConfig  # noqa: PLC0415
-            ns["OAuthProviderConfig"] = OAuthProviderConfig
-        except ImportError:
-            pass
 
 
 def _unwrap_optional(ftype: Any) -> Any:
