@@ -28,12 +28,36 @@ the SAME file ends up minting two different refs).
 endpoint this feeds is already agent-scoped, ``/agents/{agent}/...``, so
 there is no cross-agent need and no extra cleanup surface to invent).
 
-**Table persisted under ``.reyn/cache/``** — mirrors #4432's tool-result
-spill manifest: same "derived, ordinary agent-writable zone" home, same
-JSONL-append shape, same best-effort write-failure tolerance (a write
-failure here must never fail the mint itself — the ref is still valid for
-this process's lifetime even if a LATER process's table load won't see it,
-the identical tradeoff #4432's own manifest already accepted).
+**Table persisted under ``.reyn/memory/`` — PERSIST tier, not
+``.reyn/cache/``** (#4584 fix; originally mirrored #4432's tool-result
+spill manifest's ``cache/`` home, which turned out to be the wrong
+precedent for BOTH tables to follow — #4584 moved that one too). ``cache/``
+is documented "DERIVED — rebuilt after restore" (``reyn-dir-layout.md``) —
+never true for this table: the (agent, path) → ref mapping exists ONLY at
+the instant :func:`mint_ref` writes it — no WAL event, no
+``ChatMessage``/conversation-log entry, no other durable record anywhere
+carries it (measured directly, #4494/#4584: a ``present`` tool call's own
+tool-result carries only ack STATISTICS, never the resolved ``ref``). An
+operator correctly deleting the table because the doc calls it
+safely-rebuildable, but that in fact cannot be rebuilt, silently kills
+every past ``/open`` — the #4584 defect this move closes.
+
+``reyn-dir-layout.md``'s own persist-tier decision rule ("knowledge /
+decision that must SURVIVE rewind → ``memory/``") is the only rule this
+table's shape actually satisfies among the doc's existing tiers — "memory"
+as a NAME is an imperfect fit (a ref→path table is neither knowledge nor a
+decision), recorded rather than silently accepted; introducing a sibling
+tier for this one table was judged out of scope for #4584 (lead-coder/
+architect co-vet, 2026-08-13).
+
+Same JSONL-append shape, same best-effort write-failure tolerance as
+before (a write failure here must never fail the mint itself — the ref is
+still valid for this process's lifetime even if a LATER process's table
+load won't see it) — only the TIER moved, not the mechanism. **The move
+does NOT change write permissions**: ``security/permissions/file_scope.py``'s
+``ZoneStateDir`` carves out only ``.reyn/config/`` + ``.reyn/state/`` +
+``approvals.yaml`` as the write-gated recovery-core surface — ``memory/``
+is an ordinary agent-writable zone, identically to ``cache/``.
 
 **Never copies bytes.** :func:`mint_ref` never reads the file's content,
 only records its path; :func:`resolve_ref` hands back a path for the
@@ -63,7 +87,10 @@ _REF_TABLE_FILENAME = "artifact_refs.jsonl"
 
 
 def _table_path(project_root: Path) -> Path:
-    return project_root / ".reyn" / "cache" / _REF_TABLE_FILENAME
+    # #4584: PERSIST tier — under `.reyn/memory/`, mirroring the doc's own
+    # decision rule for "must survive rewind" data (see this module's own
+    # docstring for why `memory/` as a NAME is an imperfect but chosen fit).
+    return project_root / ".reyn" / "memory" / _REF_TABLE_FILENAME
 
 
 def _load_table(project_root: Path) -> "list[dict]":

@@ -68,7 +68,7 @@ def test_storage_stats_never_deletes_or_writes_anything(tmp_path):
 
 
 def _manifest_path(tmp_path: Path) -> Path:
-    return tmp_path / ".reyn" / "cache" / "tool_result_spills.jsonl"
+    return tmp_path / ".reyn" / "memory" / "tool_result_spills.jsonl"  # #4584: moved out of cache/
 
 
 def test_prune_drops_a_manifest_entry_whose_file_was_deleted_out_of_band(tmp_path):
@@ -111,7 +111,8 @@ def test_prune_keeps_a_manifest_entry_whose_file_still_exists(tmp_path):
 
 def test_prune_never_deletes_the_referenced_artifact_itself(tmp_path):
     """Tier 2: #4478 condition ② — the prune rewrites the MANIFEST (the
-    ledger under .reyn/cache/), never a file under tool_results_dir. This
+    ledger under .reyn/memory/, #4584: moved from .reyn/cache/), never a
+    file under tool_results_dir. This
     is the falsifiable form of "prune deletes zero bytes of anyone's
     actual content": construct a mixed manifest (one live entry, one
     entry a test writes by hand pointing at a path that never existed)
