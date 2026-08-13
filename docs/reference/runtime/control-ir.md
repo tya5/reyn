@@ -1008,10 +1008,14 @@ directory (`plugin.json` manifest at the plugin root + optional `mcp`/`pipelines
 conversion A, aligning with the Agent Plugins 1.0 standard's manifest
 location) — `plugin_install` copies it to
 `~/.reyn/plugins/<name>/` (global, once), expands `${REYN_*}` stable-location
-tokens, and REGISTERS whatever capabilities the manifest declares by calling
-the SAME existing verbs `skill_install` / `pipeline_install` already provide
-(plus a direct `.reyn/config/mcp.yaml` write for the optional root
-`mcp.json`) — an orchestration layer, not a fourth registry.
+tokens, and REGISTERS whatever capability kinds the plugin directory
+contains (`mcp`/`pipelines`/`skills`, derived PURELY from directory/file
+existence via `capability_kinds_present` — #4570 conversion B removed the
+manifest's own `capabilities`/`entries` fields, so this is no longer a
+manifest declaration) by calling the SAME existing verbs `skill_install` /
+`pipeline_install` already provide (plus a direct `.reyn/config/mcp.yaml`
+write for the optional root `mcp.json`) — an orchestration layer, not a
+fourth registry.
 
 **Register-only** (#3209 — architect-firm redesign, owner GO 2026-07-23):
 `plugin_install` never provisions a plugin's external Python dependencies.
@@ -1183,18 +1187,21 @@ higher-trust one.
    carries `plugin_id=<name>`, §3.7). A server's `command` is registered
    AS-IS, no venv-interpreter rewrite. Emit `plugin_install_registered`.
    Before #4580, this step's own `registered` list was the ONLY signal
-   — a manifest declaring 3 capabilities that only 2 actually registered
-   read identically to "declared 3, registered 3": no count or event let
-   an operator (or a test) tell the two apart. The return value's
+   — a plugin directory containing 3 capability kinds that only 2
+   actually registered read identically to "present 3, registered 3": no
+   count or event let an operator (or a test) tell the two apart (this
+   was true back when the 3 came from a manifest-declared list; #4570
+   conversion B later changed WHERE the count comes from, not the
+   registered/skipped distinction itself). The return value's
    `registered`/`skipped` dicts (both keyed by capability kind —
-   `mcp`/`pipelines`/`skills`) now record every declared capability that
-   did NOT make it in, by a different mechanism per kind: mcp's
+   `mcp`/`pipelines`/`skills`) now record every present capability kind
+   that did NOT make it in, by a different mechanism per kind: mcp's
    probe-then-commit skips BEFORE the write (a probe failure or a
    denied MCP-axis permission gate — `mcp_server_install_skipped`, #4580);
    a pipeline/skill sub-install always runs and is routed to `skipped`
    when its OWN return value's `status` isn't `"installed"` (a bad name,
    a threat-scan block, a missing DSL file, ...) — `pipeline_install_
-   skipped`/`skill_install_skipped` (#4590). Either way, "declared but
+   skipped`/`skill_install_skipped` (#4590). Either way, "present but
    not registered" is visible in the return value and its own audit-event,
    never a silent drop.
 8. Delete the `_install_state.json` marker (absence = completed) and emit
