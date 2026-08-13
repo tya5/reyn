@@ -80,8 +80,9 @@ instead of letting the OS auto-generate one. A duplicate id for the target
 agent is rejected (`session_already_exists`), never silently overwritten.
 
 **Reachable under exclusive-wrapper mode too (#3896, fixed 2026-08-13).** When
-[`action_retrieval.universal_wrappers_enabled`](../tools-integrations/universal-catalog.md)
-is `true`, `spawn_session`'s individual per-tool entry is stripped from direct
+[`tool_use.universal_wrappers_enabled`](../tools-integrations/universal-catalog.md)
+(moved here from the retired `action_retrieval:` block, #4552 PR-3+4) is
+`true`, `spawn_session`'s individual per-tool entry is stripped from direct
 advertisement, but the `multi_agent` catalog category now includes it
 alongside `list_agents` / `describe_agent` — `invoke_action{action_name:
 "spawn_session", args: {...}}` reaches the same handler, same permission

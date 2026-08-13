@@ -310,9 +310,13 @@ assignment repo-wide, in `Session.__init__` only) remains true and
 unaffected by this removal — its own subject was never this family's
 attrs, just the identity-vs-name binding discipline generally.
 
-`_action_retrieval` (FP-0034 PR-3b-iii) drives whether the universal catalog wrappers
-appear in the router `tools=`. Default constructs an off-flag `ActionRetrievalConfig` so
-existing chat behaviour is preserved when callers don't pass one. `_eager_embedding_build`
+`_universal_wrappers_enabled` (FP-0034 PR-3b-iii; renamed from `_action_retrieval`
+and its source moved from the now-deleted `action_retrieval:` block to `tool_use:`,
+#4552 PR-3+4) drives whether the universal catalog wrappers appear in the router
+`tools=`. A plain bool, `chat_universal_wrappers_enabled: bool = True` by default
+(previously an `ActionRetrievalConfig` object; the field simplified to a scalar
+along with the same move), so existing chat behaviour is preserved when callers
+don't pass one. `_eager_embedding_build`
 (B25-S5-1 fix): when `True`, `RouterLoop` awaits the embedding index build synchronously on
 the first turn (Turn 1 blocks ~2-5s) so `search_actions` is visible to the LLM from the
 very first call; default `False` keeps the lazy background-build path.

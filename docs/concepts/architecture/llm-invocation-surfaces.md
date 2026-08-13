@@ -34,8 +34,9 @@ audience: [human, agent]
 > wrapper) — a deliberate owner-driven fix (flat listing prevents `invoke_action`
 > name-hallucination, 30%→100% direct tool-use accuracy in evidence). The
 > chat-layer scheme *selection* generalizes the older
-> `action_retrieval.universal_wrappers_enabled` flag, but does not retire it — the
-> flag remains a live presentation sub-flag of the `universal-category` scheme
+> `universal_wrappers_enabled` flag (moved from `action_retrieval:` to
+> `tool_use:`, #4552 PR-3+4), but does not retire it — the flag remains a
+> live presentation sub-flag of the `universal-category` scheme
 > (catalog-wrapper vs direct-tool). (#2768 removed the dead phase-graph-era
 > `step`/`phase` tool-use layers.) `docs/feature-map.md`'s Tool-Use Schemes
 > section (already correct throughout this arc) is the canonical source this

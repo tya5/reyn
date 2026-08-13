@@ -26,7 +26,8 @@ audience: [human, agent]
 > flat な提示)です — owner 主導の意図的な H1 fix です(flat listing が
 > `invoke_action` の name-hallucination を防ぐ、30%→100% の direct tool-use
 > 精度が証拠)。chat レイヤーの scheme *選択* は古い
-> `action_retrieval.universal_wrappers_enabled` フラグを generalize しますが、それを
+> `universal_wrappers_enabled` フラグ(`action_retrieval:` から `tool_use:` へ移動、
+> #4552 PR-3+4)を generalize しますが、それを
 > retire はしません — このフラグは `universal-category` scheme の live な presentation
 > sub-flag(catalog-wrapper vs direct-tool)として残存します。(#2768 が死んだ
 > phase-graph era の `step`/`phase` tool-use レイヤーを削除しました。)
