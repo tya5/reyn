@@ -12,8 +12,6 @@ No mocks of collaborators — real EventLog, Workspace, NoopBackend, dispatcher.
 """
 from __future__ import annotations
 
-from pathlib import Path
-
 import pytest
 
 from reyn.core.events.events import EventLog

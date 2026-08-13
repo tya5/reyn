@@ -31,8 +31,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-
 from reyn.core.events.state_log import StateLog
 from reyn.runtime.session import (
     _STATE_CHANGE_EVENT_MAPPINGS,

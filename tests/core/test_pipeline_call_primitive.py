@@ -33,7 +33,6 @@ import pytest
 from reyn.core.events.state_log import StateLog
 from reyn.core.pipeline.executor import (
     CallStep,
-    ExprRef,
     Pipeline,
     PipelineExecutionError,
     PipelineExecutor,

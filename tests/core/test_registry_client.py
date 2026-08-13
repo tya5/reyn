@@ -16,14 +16,11 @@ Invariants tested:
 from __future__ import annotations
 
 import json
-import os
-from pathlib import Path
 from typing import Any
 from unittest import mock
 
 import httpx
 import pytest
-import pytest_asyncio
 
 import reyn.core.registry.cache as cache_mod
 from reyn.core.registry import RegistryClient, RegistryError

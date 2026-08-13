@@ -550,12 +550,52 @@ ignore = [
 # from their __init__.py's own `__all__` (services/__init__.py's
 # LiveSessionIdInputs/PutOutboxInputs -- adding them to `__all__` is
 # what actually satisfies F401 for a re-export, not an ignore).
-# tests/ is intentionally NOT included yet: measured separately at 333
-# findings, an order of magnitude more and a distinct population (test
-# fixtures/helpers imported for side effect, parametrize decorators, etc.)
-# -- a later slice's own scope, not folded into this one silently.
+# tests/ is measured + sliced per-directory (335 findings total, an order
+# of magnitude more than src/ and a distinct population -- test fixtures/
+# helpers imported for side effect, parametrize decorators, plus a real
+# hazard #4597 slice(3) surfaced: an import that supported a hand-rolled
+# fake/stand-in REMOVED by an earlier refactor can look F401-dead while
+# actually being a signal the stand-in's replacement is incomplete --
+# verify per-import what it supported, don't bulk --fix). Sliced by
+# top-level tests/ subdirectory, ruff per-file-ignores has no "more
+# specific pattern wins" override (verified empirically -- an inner glob's
+# empty ignore list does NOT subtract an outer glob's ignore, so the
+# subdirectory below is cleared by ABSENCE from this list, not by an
+# explicit override entry): tests/core/ enforced in #4097's 2nd slice
+# (71 findings, all genuinely dead once checked per-enclosing-function
+# with real code tokens only -- module/comment/docstring/decorator-
+# attribute text excluded). Every other subdirectory stays ignored,
+# each its own future slice. ROOT-level tests/*.py files (conftest.py
+# etc.) are deliberately NOT listed here -- they measured 0 findings
+# already, so leaving them off this list enforces F401 there too, for
+# free. A single-`*` "tests/*.py" pattern was tried first and DISCARDED:
+# ruff's glob crosses `/` on a bare `*` the same as `**`, so that one
+# entry silently re-exempted every nested subdirectory too (verified:
+# it alone reproduced the FULL 335-finding blanket ignore) -- the
+# per-subdirectory `tests/<dir>/**/*.py` entries below don't have this
+# failure mode because the directory NAME is the anchor, not a wildcard.
 [tool.ruff.lint.per-file-ignores]
-"tests/**/*.py" = ["F401"]
+"tests/_support/**/*.py" = ["F401"]
+"tests/builtin/**/*.py" = ["F401"]
+"tests/cli/**/*.py" = ["F401"]
+"tests/config/**/*.py" = ["F401"]
+"tests/data/**/*.py" = ["F401"]
+"tests/dev/**/*.py" = ["F401"]
+"tests/environment/**/*.py" = ["F401"]
+"tests/hooks/**/*.py" = ["F401"]
+"tests/http_safety/**/*.py" = ["F401"]
+"tests/interfaces/**/*.py" = ["F401"]
+"tests/llm/**/*.py" = ["F401"]
+"tests/mcp/**/*.py" = ["F401"]
+"tests/observability/**/*.py" = ["F401"]
+"tests/plugins/**/*.py" = ["F401"]
+"tests/repo/**/*.py" = ["F401"]
+"tests/runtime/**/*.py" = ["F401"]
+"tests/scripts/**/*.py" = ["F401"]
+"tests/security/**/*.py" = ["F401"]
+"tests/services/**/*.py" = ["F401"]
+"tests/tools/**/*.py" = ["F401"]
+"tests/web/**/*.py" = ["F401"]
 
 # #3726: wired into CI as a ratchet (.github/workflows/test.yml's "mypy
 # (ratchet)" job), not a blocking full-adoption gate — the tree currently

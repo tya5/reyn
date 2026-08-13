@@ -6,8 +6,6 @@ WAL seq, surfaced additively by list_rewind_points, and rendered as a 2nd dim li
 """
 from __future__ import annotations
 
-from pathlib import Path
-
 import pytest
 
 from reyn.core.events.agent_snapshot import AgentSnapshot

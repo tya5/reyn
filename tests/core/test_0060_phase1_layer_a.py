@@ -59,7 +59,6 @@ from reyn.core.op_runtime.context import OpContext
 from reyn.core.op_runtime.presentation_install import handle as presentation_install_handle
 from reyn.core.present import PresentBlueprintError, validate_blueprint
 from reyn.data.workspace.workspace import Workspace
-from reyn.runtime.session import Session
 from reyn.schemas.models import PresentationInstallIROp
 from reyn.security.permissions.permissions import PermissionDecl, PermissionResolver
 from tests._support.agent_session import make_session

@@ -15,7 +15,6 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
-import time
 
 
 def _run(src_root: str, code: str) -> subprocess.CompletedProcess:

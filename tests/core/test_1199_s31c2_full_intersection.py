@@ -26,7 +26,7 @@ from pathlib import Path
 
 import pytest
 
-from reyn.security.permissions.permissions import PermissionDecl, PermissionResolver
+from reyn.security.permissions.permissions import PermissionDecl
 from reyn.security.sandbox.policy import SandboxPolicy
 from tests._support.permissions import make_resolver as _make_resolver
 

@@ -34,7 +34,6 @@ import pytest
 from reyn.core.offload.canonical import canonical_to_ctx_fields
 from reyn.core.offload.seam import STRUCTURED_INLINE_MAX_CHARS
 from reyn.core.pipeline.executor import (
-    ExprRef,
     Pipeline,
     PipelineExecutor,
     ToolStep,

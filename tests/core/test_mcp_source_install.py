@@ -18,7 +18,7 @@ from pathlib import Path
 
 import pytest
 
-from reyn.core.registry.source_resolver import SourceResolution, resolve
+from reyn.core.registry.source_resolver import resolve
 
 # ===========================================================================
 # Part 1: source_resolver unit tests

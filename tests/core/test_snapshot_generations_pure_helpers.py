@@ -10,7 +10,6 @@ derived branch tree (Phase-2, #1533). All take plain Python lists; no disk I/O.
 from __future__ import annotations
 
 import sys
-from pathlib import Path
 
 from tests._support.paths import REPO_ROOT
 

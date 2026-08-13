@@ -58,7 +58,7 @@ from reyn.data.embedding.provider import EmbedBatchResult
 from reyn.data.index.build_lock import pid_alive, try_acquire_build_lock
 from reyn.data.workspace.workspace import Workspace
 from reyn.security.permissions.permissions import PermissionDecl
-from reyn.tools.action_index import ActionEmbeddingIndex, compute_catalog_hash
+from reyn.tools.action_index import ActionEmbeddingIndex
 
 
 def _run(coro):

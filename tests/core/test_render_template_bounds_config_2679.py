@@ -32,7 +32,6 @@ from reyn.config import RenderTemplateConfig
 from reyn.config.chat import _build_render_template_config
 from reyn.config.loader import load_config
 from reyn.core.op_runtime.render_template import handle
-from reyn.runtime.session import Session
 from tests._support.agent_session import make_session
 from tests._support.minimal_reyn_yaml import MINIMAL_REYN_YAML
 

@@ -91,7 +91,6 @@ from reyn.runtime.chat_message import (
 from reyn.runtime.registry import AgentRegistry
 from reyn.runtime.router_loop import RouterLoop
 from reyn.runtime.session_params import PresentationWiring
-from reyn.security.content_guard import first_blocking_match, scan_for_threats
 from reyn.security.permissions.permissions import PermissionResolver
 from reyn.tools.pipeline_verbs import _handle_run_pipeline
 from reyn.tools.scheme import ExecutionResult

@@ -22,7 +22,6 @@ import asyncio
 from typing import Any
 
 import httpx
-import pytest
 
 from reyn.config.media import WebFetchConfig
 from reyn.core.op_runtime.web import handle_web_fetch

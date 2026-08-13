@@ -27,7 +27,6 @@ Policy compliance (docs/deep-dives/contributing/testing.md):
 """
 from __future__ import annotations
 
-import asyncio
 from pathlib import Path
 
 import pytest

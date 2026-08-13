@@ -7,7 +7,6 @@ and EventLog.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
 
 import pytest
 
@@ -106,7 +105,6 @@ async def _seed(workspace_root: Path, source: str) -> None:
 @pytest.mark.asyncio
 async def test_drop_removes_backend_and_manifest(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Tier 2: index_drop removes backend index and manifest entry."""
-    import os
     monkeypatch.chdir(tmp_path)
     import os as _os
     _os.environ["REYN_INDEX_DROP_AUTO_APPROVE"] = "1"
@@ -200,7 +198,6 @@ async def test_drop_denied_when_permission_not_declared(tmp_path: Path, monkeypa
     authorisation flows through ``require_file_write`` on
     ``.reyn/index/sources.yaml``. An empty PermissionDecl fails the gate.
     """
-    import os
     monkeypatch.chdir(tmp_path)
 
     await _seed(tmp_path, "guarded_src")

@@ -37,7 +37,6 @@ Real filesystem (HOME monkeypatched to a tmp dir) throughout — no mocks.
 """
 from __future__ import annotations
 
-import asyncio
 import json
 import os
 
