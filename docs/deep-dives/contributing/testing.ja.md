@@ -467,8 +467,14 @@ REYN_LLM_RECORD=1 python -m pytest tests/ -v
    ```
 2. **ruff** — lint + import-sort（`I001`）:
    ```bash
-   ruff check src tests        # autofix 可能な I001 / format は --fix
+   ruff check .                # autofix 可能な I001 / format は --fix
    ```
+   末尾の `.` は略記ではなく意味を持ちます: CI は `ruff check .`（`test.yml:162`）
+   を走らせるため、これより狭いローカル実行は `scripts/` やリポジトリ直下を
+   ローカルの検査対象から外したまま、merge の可否だけは握らせることになります。
+   この行は #4630 が差を測るまで `ruff check src tests` でした — 手順どおりに
+   走らせた著者が CI で赤になり、範囲を広げたところ `src/` の外に本当に死んでいる
+   import が 17 件見つかりました。
 3. **test-tier audit** — 新規・変更したテストファイルごとに
    `scripts/test_tier_audit.py --strict`（後述の Tier コンプライアンス監査ツールと
    同じ linter）。Tier-4 の format-pin（`len(...) == N`、exact whitespace、行数）は
