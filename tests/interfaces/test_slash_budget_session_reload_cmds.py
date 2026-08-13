@@ -1,8 +1,9 @@
 """Tier 2: /cost, /budget, /session, /reload slash — handler behavioural paths.
 
 These handlers have no pure helper functions — the testable surface is the
-dispatch logic: which reply surfaces when the budget tracker is disabled, which
-sentinel is emitted on /session switch, etc.
+dispatch logic: which reply surfaces when the budget tracker is disabled, what
+the transport is asked to do on /session switch (#4534 PR-2b —
+request_session_switch, not a sentinel), etc.
 """
 from __future__ import annotations
 
@@ -255,15 +256,15 @@ async def test_session_switch_unknown_sid_replies_error() -> None:
 
 
 @pytest.mark.asyncio
-async def test_session_switch_known_sid_emits_sentinel() -> None:
-    """Tier 2: /session switch to a known sid emits the __session_switch_request__ sentinel."""
+async def test_session_switch_known_sid_requests_switch() -> None:
+    """Tier 2: /session switch to a known sid asks the transport to
+    request_session_switch with the target sid (#4534 PR-2b — the retired
+    __session_switch_request__ sentinel's named-operation replacement)."""
     reg = _FakeRegistry(get_session_result=object())
     session = _FakeSession(registry=reg)
-    await session_cmd(_ctx(session), "switch s2")  # type: ignore[arg-type]
-    assert "__session_switch_request__" in session.outbox_kinds()
-    # The sentinel text is the target sid
-    sentinel = next(m for m in session._outbox if m.kind == "__session_switch_request__")
-    assert sentinel.text == "s2"
+    ctx = _ctx(session)
+    await session_cmd(ctx, "switch s2")  # type: ignore[arg-type]
+    assert ctx.transport.session_switch_requests == ["s2"]
 
 
 @pytest.mark.asyncio

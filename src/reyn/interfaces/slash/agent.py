@@ -59,7 +59,12 @@ async def _create_agent(ctx: "SlashContext", name: str) -> None:
 
     #4534 PR-2: uses the same ``request_attach`` named-operation seam as
     ``/attach`` (until #191 lands, the header label won't refresh — same
-    constraint as /attach).
+    constraint as /attach). The reply is ordered AFTER the call and reads
+    its return (lead-coder review, #4534 remainder): ``request_attach``'s
+    ``False`` is ambiguous by transport (AG-UI's is "unknown" — an
+    unconfirmed remote ack; in-process's is a definitive local failure), so
+    the reply on ``False`` says "could not confirm", never "failed" — the
+    wording that would be true for one transport and wrong for the other.
     """
     name = name.strip()
     if not name:
@@ -81,8 +86,14 @@ async def _create_agent(ctx: "SlashContext", name: str) -> None:
         # verbatim so the user sees exactly what's wrong with the name.
         await reply_error(ctx, str(exc))
         return
-    await reply(ctx, f"created agent {name!r}; attaching…")
-    await ctx.transport.request_attach(name)
+    attached = await ctx.transport.request_attach(name)
+    if attached:
+        await reply(ctx, f"created agent {name!r}; attaching…")
+    else:
+        await reply(
+            ctx,
+            f"created agent {name!r}; could not confirm the attach — try /attach {name}",
+        )
 
 
 async def _edit_agent(ctx: "SlashContext", args: str) -> None:

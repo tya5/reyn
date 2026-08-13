@@ -11,17 +11,34 @@ era design). Two premises, both re-verified here structurally by construction
 (not merely asserted): a remote client that switches sessions had NO way to
 obtain the new session's scrollback at all.
 
-The fix (this PR): ``_SessionFrameSource`` independently detects the SAME
-``__session_switch_request__`` sentinel the registry forwarder consumes
-(fan-out off ``session.outbox_hub`` — both are subscribers), re-points itself
-at the target session, and synthesizes a ``session_attached`` EventFrame onto
-its OWN per-connection queue. ``AgUiEmitter``, on observing that EventFrame,
-treats the switch as a *logical reconnect*: it re-fires the SAME
-``MESSAGES_SNAPSHOT``/``STATE_SNAPSHOT`` protocol it uses at connect
+The fix (N3, ported off the sentinel #4534 PR-2b): ``_SessionFrameSource``
+subscribes to ``registry.add_attach_listener`` — the registry fires it,
+synchronously, from the SAME no-await critical section
+``_announce_session_attached`` uses, whenever ``attach``/``attach_session``
+switches focus for the watched agent name. The listener hands the target sid
+to a per-connection ``asyncio.Queue`` (``_switch_signal``) that
+``_drain_one_session``'s drain loop dual-waits alongside its outbox
+subscription (``asyncio.wait(..., return_when=FIRST_COMPLETED)``) — the
+second wait source an in-flight blocked ``await sub.get()`` needs to be
+interrupted by an out-of-band signal (the switch no longer arrives in-band on
+that same subscription, unlike the retired sentinel). On seeing it, the
+source re-points itself at the target session and synthesizes a
+``session_attached`` EventFrame onto its OWN per-connection queue.
+``AgUiEmitter``, on observing that EventFrame, treats the switch as a
+*logical reconnect*: it re-fires the SAME ``MESSAGES_SNAPSHOT``/
+``STATE_SNAPSHOT`` protocol it uses at connect
 (:meth:`AgUiEmitter._reconnect_snapshot_chunks`), sourcing the new backlog from
 a caller-supplied ``backlog_provider`` — here, ``session_backlog_frames``,
 which projects a session's in-memory ``ChatMessage`` history through the SAME
 ``project_restored_frames`` SSoT local restore-on-restart uses (#3273 P5).
+
+These tests drive the switch via ``registry.attach_session`` directly — the
+real op both the retired local-REPL sentinel path and the current
+``ClientTransport.request_session_switch`` seam call into; they exercise
+``_SessionFrameSource``'s own reconnect/backlog/ordering mechanics, not the
+transport-to-registry wiring. The full stack, through a real ASGI POST on an
+ALREADY-OPEN SSE stream, is
+``tests/interfaces/test_4534_pr2b_switch_follow_e2e.py``'s own claim.
 
 Gates:
 
@@ -203,9 +220,7 @@ async def test_remote_switch_has_no_scrollback_without_the_refire(tmp_path) -> N
 
         async def _switch() -> None:
             await _pump(2)
-            await session_a._put_outbox(
-                OutboxMessage(kind="__session_switch_request__", text=sid_b)
-            )
+            await reg.attach_session("alpha", sid_b)
             await _pump(5)
             await session_b._put_outbox(OutboxMessage(kind="__end__", text=""))
 
@@ -272,16 +287,12 @@ async def test_remote_switch_parity_a_b_a_with_staleness(tmp_path) -> None:
 
         async def _drive() -> None:
             await _pump(2)
-            await session_a._put_outbox(
-                OutboxMessage(kind="__session_switch_request__", text=sid_b)
-            )
+            await reg.attach_session("alpha", sid_b)
             await _pump(5)
             # A's history grows a SECOND turn while the connection is on B —
             # switching back to A must show it (fresh read, not stale cache).
             session_a.history.append(ChatMessage(role="user", content="are you there A"))
-            await session_b._put_outbox(
-                OutboxMessage(kind="__session_switch_request__", text=_DEFAULT_SID)
-            )
+            await reg.attach_session("alpha", _DEFAULT_SID)
             await _pump(5)
             await session_a._put_outbox(OutboxMessage(kind="__end__", text=""))
 
@@ -358,9 +369,7 @@ async def test_switch_announce_precedes_any_new_session_audit_event(tmp_path) ->
                 await asyncio.sleep(0)
 
         adversary_task = asyncio.create_task(_adversary())
-        await session_a._put_outbox(
-            OutboxMessage(kind="__session_switch_request__", text=sid_b)
-        )
+        await reg.attach_session("alpha", sid_b)
         await adversary_task
 
         try:
@@ -418,9 +427,7 @@ async def test_barrier_precedes_refire_on_the_wire(tmp_path) -> None:
 
         async def _switch() -> None:
             await _pump(2)
-            await session_a._put_outbox(
-                OutboxMessage(kind="__session_switch_request__", text=sid_b)
-            )
+            await reg.attach_session("alpha", sid_b)
             await _pump(5)
             await session_b._put_outbox(OutboxMessage(kind="__end__", text=""))
 

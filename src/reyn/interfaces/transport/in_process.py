@@ -203,21 +203,18 @@ class InProcessTransport(ClientTransport):
         )
 
     async def request_attach(self, agent_name: str) -> bool:
-        # #4534 PR-1: the local execution side, calling the SAME
-        # registry.attach() operation registry._forwarder's
-        # __attach_request__ branch calls today (that sentinel path is
-        # unchanged, still live) — this is a second, direct way to reach
-        # it, not a replacement of it yet.
+        # #4534 PR-1/PR-2: the local execution side — calls registry.attach()
+        # directly. Retires the __attach_request__ sentinel (PR-2); this is
+        # now the only path /attach and /agent new use.
         if not agent_name or not self._registry.exists(agent_name):
             return False
         await self._registry.attach(agent_name)
         return True
 
     async def request_session_switch(self, session_id: str) -> bool:
-        # #4534 PR-1: mirrors request_attach above; calls registry.
-        # attach_session directly, the same operation the
-        # __session_switch_request__ sentinel branch calls. Graceful on a
-        # bad/vanished sid, matching the sentinel path's own tolerance.
+        # #4534 PR-1/PR-2b: mirrors request_attach above; calls registry.
+        # attach_session directly. Retires the __session_switch_request__
+        # sentinel (PR-2b); graceful on a bad/vanished sid.
         s = self._attached()
         if s is None or not session_id:
             return False

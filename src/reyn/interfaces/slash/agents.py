@@ -91,6 +91,13 @@ async def attach_cmd(ctx: "SlashContext", args: str) -> None:
     a typed request to whichever transport holds the session (local:
     direct ``registry.attach``; remote: a wire call the server executes),
     not a display-channel sentinel a REPL loop has to specially detect.
+
+    The success reply is ordered AFTER the call and reads its return
+    (lead-coder review, #4534 remainder): ``request_attach``'s ``False`` is
+    ambiguous by transport (AG-UI's is "unknown" — an unconfirmed remote
+    ack; in-process's is a definitive local failure), so the reply on
+    ``False`` says "could not confirm", never "failed" — the wording that
+    would be true for one transport and wrong for the other.
     """
     name = args.strip()
     if not name:
@@ -115,7 +122,11 @@ async def attach_cmd(ctx: "SlashContext", args: str) -> None:
     # produced no in-pane feedback — the user had to run ``/agents``
     # to confirm the switch happened. The actual attach runs through
     # ClientTransport.request_attach (#4534 PR-2); this reply is a
-    # separate, visible breadcrumb. (The header label refresh is
+    # separate, visible breadcrumb, ordered AFTER the call so it reflects
+    # what the call actually reports. (The header label refresh is
     # blocked by a separate registry-forwarder bug — see #191.)
-    await reply(ctx, f"attached to {name!r}")
-    await ctx.transport.request_attach(name)
+    attached = await ctx.transport.request_attach(name)
+    if attached:
+        await reply(ctx, f"attached to {name!r}")
+    else:
+        await reply(ctx, f"could not confirm attach to {name!r}")

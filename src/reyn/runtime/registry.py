@@ -360,6 +360,14 @@ class AgentRegistry:
         # Single queue the REPL drains; registry routes each attached agent's
         # outbox into here.
         self.repl_outbox: asyncio.Queue = asyncio.Queue()
+        # #4534 PR-2b: per-agent-name switch-follow subscribers — the registry
+        # analogue of OutboxHub.subscribe for a REMOTE connection watching one
+        # agent (repl_outbox is a single process-wide queue a remote surface
+        # cannot also drain without stealing frames from the local REPL, #3825's
+        # own wall). ``_announce_session_attached`` fires every listener
+        # registered for the switched agent, synchronously, from the SAME
+        # no-await critical section as the ``repl_outbox`` barrier put.
+        self._attach_listeners: "dict[str, list[Callable[[str], None]]]" = {}
         # #3671 P3 (now #3793 stage 1: moved onto self._connection): the ONE
         # place a caller doing a BACKGROUND attach (P2's
         # `chat.py._background_attach`, running off the render path) can
@@ -3284,6 +3292,33 @@ class AgentRegistry:
             except AttributeError:
                 pass
 
+    def add_attach_listener(self, agent_name: str, callback: "Callable[[str], None]") -> None:
+        """#4534 PR-2b: register a per-agent-name switch-follow subscriber.
+
+        ``callback`` is invoked with the target ``sid`` whenever
+        ``attach``/``attach_session`` switches focus for ``agent_name`` —
+        the AG-UI remote tap's per-connection replacement for consuming the
+        retired ``__session_switch_request__`` sentinel off the outbox
+        (:class:`~reyn.interfaces.transport.agui.endpoint._SessionFrameSource`).
+        Fired synchronously, with no ``await`` between the connection flip
+        and the call (:meth:`_announce_session_attached`'s own barrier
+        property, extended to every listener, not only ``repl_outbox``) —
+        ``callback`` must not block or await; its job is to hand the sid to
+        a side-channel (e.g. an ``asyncio.Queue.put_nowait``) a consumer
+        task picks up, mirroring ``_on_audit_event``'s own idiom."""
+        self._attach_listeners.setdefault(agent_name, []).append(callback)
+
+    def remove_attach_listener(self, agent_name: str, callback: "Callable[[str], None]") -> None:
+        """Undo :meth:`add_attach_listener`. A no-op if already removed
+        (connection teardown racing a registry-side cleanup is tolerated,
+        not an error)."""
+        listeners = self._attach_listeners.get(agent_name)
+        if not listeners or callback not in listeners:
+            return
+        listeners.remove(callback)
+        if not listeners:
+            del self._attach_listeners[agent_name]
+
     def _announce_session_attached(self, name: str, sid: str) -> None:
         """#3310 N1: notify the client a switch just happened, as a stream
         BARRIER on ``repl_outbox`` — the one queue every local client drains.
@@ -3319,6 +3354,13 @@ class AgentRegistry:
         self.repl_outbox.put_nowait(
             EventFrame(Event(type="session_attached", data={"agent": name, "session_id": sid}))
         )
+        # #4534 PR-2b: same no-await critical section, extended to every
+        # per-agent-name switch-follow subscriber (see add_attach_listener).
+        # Iterates a snapshot (list(...)) so a listener that unsubscribes
+        # itself mid-callback (unlikely — callbacks must not block or await
+        # — but not disallowed) never mutates the list being walked.
+        for callback in list(self._attach_listeners.get(name, ())):
+            callback(sid)
 
     async def attach(self, name: str, *, start_runner: bool = True) -> "object":
         """Switch the attached agent to `name`. Loads + starts session.run()
@@ -3428,11 +3470,6 @@ class AgentRegistry:
         Runs continuously per (name, sid) session. Only forwards when that
         session is the attached one; otherwise drops the message (transient
         kinds were already dropped at source, durable narration is in history).
-        Special kind `__session_switch_request__` is consumed here as a
-        control signal (#4534 PR-2: `__attach_request__`'s sibling branch is
-        retired — /attach now goes through `ClientTransport.request_attach`,
-        which calls `registry.attach()` directly; this branch stays until
-        PR-2b ports the AG-UI remote switch-follow it also feeds).
 
         ADR-0039 P6b: subscribes to the session's outbox *hub* (unbounded local
         sink) instead of draining ``session.outbox`` directly — so this local
@@ -3458,20 +3495,6 @@ class AgentRegistry:
                     if self._connection.is_attached(key):
                         await self.repl_outbox.put(msg)
                     return
-                if msg.kind == "__session_switch_request__":
-                    # FP-0043 Stage 4a: `/session switch <sid>` — focus another
-                    # session of the CURRENT agent (msg.text = target sid). Routed
-                    # through the forwarder so the focus flip + display re-wire
-                    # are sequenced on the registry side, not raced by a direct
-                    # call from the slash handler. Graceful on a bad sid: drop
-                    # (the slash handler validated existence + replied before
-                    # posting).
-                    if msg.text:
-                        try:
-                            await self.attach_session(name, msg.text)
-                        except KeyError:
-                            pass  # session vanished between validate + switch — no-op
-                    continue
                 if self._connection.is_attached(key):
                     await self.repl_outbox.put(msg)
                 # else: drop — session is detached, transient kinds were already

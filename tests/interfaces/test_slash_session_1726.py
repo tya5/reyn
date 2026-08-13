@@ -2,12 +2,13 @@
 
 `/session new|switch <sid>|list` drives per-agent multi-session in the REPL. The
 handler reads the public registry surface (attached_name / spawn_session /
-get_session / session_ids / attached_sid) and posts a `__session_switch_request__`
-sentinel for switch (mirroring `/attach`, so the focus flip is sequenced by the
-registry forwarder). These tests exercise the command flow + the graceful-error
-paths via a stub registry + an outbox-capturing fake session — the same pattern as
-test_slash_agent. Byte-identical when unused (a session that never runs `/session`
-stays single-"main").
+get_session / session_ids / attached_sid) and asks the transport to
+`request_session_switch` for `switch` (#4534 PR-2b — a typed request, not the
+retired `__session_switch_request__` display-channel sentinel). These tests
+exercise the command flow + the graceful-error paths via a stub registry + an
+outbox-capturing fake session — the same pattern as test_slash_agent.
+Byte-identical when unused (a session that never runs `/session` stays
+single-"main").
 """
 from __future__ import annotations
 
@@ -108,14 +109,15 @@ async def test_session_new_spawns_and_reports_sid():
 
 
 @pytest.mark.asyncio
-async def test_session_switch_known_posts_sentinel():
-    """Tier 2: #1726 — `/session switch <known>` posts __session_switch_request__
-    (the focus flip is driven by the registry forwarder, mirroring /attach)."""
+async def test_session_switch_known_requests_switch():
+    """Tier 2: #1726/#4534 — `/session switch <known>` asks the transport
+    to request_session_switch with the target sid (the retired
+    __session_switch_request__ sentinel's named-operation replacement)."""
     reg = _StubRegistry(sids=("main", "s1"))
     s = _FakeSession(reg)
-    await session_cmd(_ctx(s), "switch s1")
-    switch_sids = [m.text for m in s.outbox_calls if m.kind == "__session_switch_request__"]
-    assert switch_sids == ["s1"], "exactly the one switch sentinel, carrying the target sid"
+    ctx = _ctx(s)
+    await session_cmd(ctx, "switch s1")
+    assert ctx.transport.session_switch_requests == ["s1"]
 
 
 @pytest.mark.asyncio

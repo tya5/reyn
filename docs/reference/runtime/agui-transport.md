@@ -101,7 +101,7 @@ of the renderer's two entry points (display vs working-indicator). The mapping:
 | `intervention`    | `CUSTOM`           | a prompt is displayed; the reyn client draws it natively and answers it by id (see "Human-in-the-loop answering") |
 | `presentation`    | `CUSTOM`           | a `present` op's render-node model (see *present-on-wire*) |
 | `__copy_last_reply__` / `__rewind_list__` | `CUSTOM` | client-consumed sentinels — forwarded (see *control sentinels*) |
-| `__end__` / `__session_switch_request__` | *(filtered)* | NOT forwarded (see *control sentinels*) |
+| `__end__` | *(filtered)* | NOT forwarded (see *control sentinels*) |
 
 Any other display kind still round-trips losslessly (it falls back to `CUSTOM` and
 is reconstructed from `_reyn`) — a new display kind can never silently vanish on
@@ -128,27 +128,19 @@ renderable display kinds):
   no wire event):
   - `__end__` — the stream terminator (the emitter returns on it; the client's
     loop also ends when the stream closes).
-  - `__session_switch_request__` — the **AG-UI tap itself** consumes this one
-    (`_SessionFrameSource._drain_one_session`: session switch-follow, or a silent
-    drop for an unresolvable sid), so it never reaches the emitter from that
-    source; the filter entry is a fail-safe covering a frame source that does not
-    consume it.
-- **Retired** (#4534 PR-2): `__attach_request__` no longer exists. `/agent new`
-  and `/attach` now go through `ClientTransport.request_attach` — a named
-  operation, not a display-channel sentinel (#3595 S5's own principle: the
-  client interprets, the server executes a named operation, the same shape
-  `run_slash_command` already applied). Earlier revisions of this doc described
-  `__attach_request__` as "forwarded, and genuinely live" on the wire — that was
-  accurate before PR-2 landed. `__session_switch_request__` is a **separate**
-  sentinel, still filtered as described above — its own migration (PR-2b) is
-  staged separately because its consumption is dual-purpose (it also drives
-  `agui/endpoint.py`'s mid-stream switch-follow, #3310 N3), not yet documented
-  here.
-
-> Corrected in #3362. This section previously stated that both sentinels "never
-> reach the AG-UI tap" because the registry forwarder swallows them. Both do
-> reach it; the forwarder's `continue` is subscriber-local. Measured with the
-> real forwarder + real tap in `tests/interfaces/test_agui_control_filter.py`.
+  - `__open_artifact__` — local-only by construction (launches an OS app on the
+    machine the client is running on; see *#4482*).
+- **Retired** (#4534 PR-2 / PR-2b): `__attach_request__` and
+  `__session_switch_request__` no longer exist. `/agent new`, `/attach`, and
+  `/session switch` all go through `ClientTransport.request_attach` /
+  `request_session_switch` — named operations, not display-channel sentinels
+  (#3595 S5's own principle: the client interprets, the server executes a
+  named operation, the same shape `run_slash_command` already applied).
+  Earlier revisions of this doc described `__attach_request__` as "forwarded,
+  and genuinely live" on the wire, and `__session_switch_request__` as
+  tap-consumed-and-filtered — both accurate before their respective PRs
+  landed. Session-switch follow (below) no longer consumes a sentinel off
+  the outbox either; it subscribes to `registry.add_attach_listener` directly.
 
 #### The session-switch barrier (`reyn.event.session_attached`, #3310 N1/N2)
 
@@ -211,13 +203,20 @@ switch as a **logical reconnect**, entirely within the remote transport
 (the registry's own `attach`/`attach_session` + `repl_outbox` barrier are
 untouched and not involved):
 
-- `_SessionFrameSource` (`endpoint.py`) independently observes the SAME
-  `__session_switch_request__` sentinel the registry forwarder consumes for
-  the local REPL (both are subscribers of the same session's `outbox_hub`
-  fan-out — see *the control-sentinel dispositions* above). On seeing it, it
-  **enqueues the `session_attached` `EventFrame` onto this connection's own
-  queue BEFORE re-pointing itself at the target session** (`registry.get_session`
-  + subscribing to the new session's audit-events) — the SAME vocabulary N1
+- `_SessionFrameSource` (`endpoint.py`) subscribes to
+  `registry.add_attach_listener(agent_name, ...)` (#4534 PR-2b — ported off the
+  retired `__session_switch_request__` sentinel, whose in-band arrival on
+  `session.outbox_hub` this source used to observe directly; `attach_session`
+  now flips focus out-of-band, so the source instead registers a synchronous
+  callback the registry fires from `_announce_session_attached`'s own no-await
+  critical section). The callback hands the target sid to a per-connection
+  `asyncio.Queue`, which `_drain_one_session`'s drain loop dual-waits
+  alongside `sub.get()` (`asyncio.wait(..., return_when=FIRST_COMPLETED)`) —
+  the second wait source an in-flight blocked `await sub.get()` needs to be
+  interrupted by an out-of-band signal. On seeing the sid, it **enqueues the
+  `session_attached` `EventFrame` onto this connection's own queue BEFORE
+  re-pointing itself at the target session** (`registry.get_session` +
+  subscribing to the new session's audit-events) — the SAME vocabulary N1
   defined, an independent per-connection equivalent since `repl_outbox` never
   reaches a remote surface. This ordering (announce, then subscribe) is
   load-bearing, not incidental: the new session's audit-event subscriber does
@@ -229,9 +228,9 @@ untouched and not involved):
   that floods the target session's own audit-event stream the instant the
   switch is triggered). It never calls `registry.attach_session` itself, so
   it cannot race or double-apply that side effect — it only re-points THIS
-  connection's own view. A registry-less construction (every pre-N3 unit test)
-  degrades byte-identically: the sentinel falls through to the generic
-  `DisplayFrame` path, where `CONTROL_FILTER_KINDS` already drops it silently.
+  connection's own view. A registry-less / agent_name-less construction
+  (most existing unit tests) registers no listener at all, so no switch-follow
+  ever happens for that connection.
 - `AgUiEmitter`, on observing a `session_attached` `EventFrame` flow through
   `stream()`, re-fires the SAME reconnect protocol it uses at connect
   (`_reconnect_snapshot_chunks`: `MESSAGES_SNAPSHOT` then `STATE_SNAPSHOT`)

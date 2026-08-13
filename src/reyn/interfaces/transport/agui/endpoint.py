@@ -217,27 +217,40 @@ class _SessionFrameSource:
     the renderer-relevant ``session.audit_events`` subset as EventFrames onto one
     ordered queue.
 
-    **Session-switch follow (#3310 N3).** This source is bound to ONE session
-    object at construction, but a remote client can switch which of the
-    agent's sessions it is viewing (``/session switch <sid>``, the same
-    ``__session_switch_request__`` sentinel ``registry._forwarder`` consumes
-    for the local REPL — see ``interfaces/slash/session.py``). This source
-    ALSO sees that sentinel (it fans out off ``session.outbox_hub``, the same
-    hub the registry forwarder subscribes to) and, when ``registry`` +
-    ``agent_name`` are supplied, reacts to it independently: it re-points
-    itself at the target session (:meth:`_peek_session`'s public counterpart,
-    ``registry.get_session``) and synthesizes the SAME ``session_attached``
-    audit-event #3310 N1 emits on ``repl_outbox`` — the barrier the emitter
-    (``AgUiEmitter``) uses to re-fire the reconnect protocol for the new
-    session (its ``backlog_provider``). This is a PARALLEL, independent
-    reaction to a message the registry's own forwarder already handles for
-    the local REPL — it never calls ``registry.attach_session`` itself, so it
-    cannot race or double-apply that side effect; it only re-points THIS
-    connection's own view. A registry-less / agent_name-less construction (as
-    every existing unit test builds this class) degrades to the pre-N3
-    behavior byte-identically: the sentinel falls through to the generic
-    ``DisplayFrame`` path, where the emitter's ``CONTROL_FILTER_KINDS``
-    already silently drops it (a fail-safe, per ``protocol.py``).
+    **Session-switch follow (#3310 N3, ported #4534 PR-2b).** This source is
+    bound to ONE session object at construction, but a remote client can
+    switch which of the agent's sessions it is viewing (``/session switch
+    <sid>``, now ``ClientTransport.request_session_switch`` →
+    ``registry.attach_session`` — see ``interfaces/slash/session.py``).
+    ``attach_session`` calls ``registry`` directly, out-of-band from this
+    source's own ``session.outbox_hub`` subscription (unlike the retired
+    ``__session_switch_request__`` sentinel, which arrived IN-BAND on that
+    same hub). So this source instead SUBSCRIBES to the switch — when
+    ``registry`` + ``agent_name`` are supplied, :meth:`_bind`'s caller
+    registers :meth:`_on_attach_announced` via
+    ``registry.add_attach_listener`` — and reacts by re-pointing itself at
+    the target session (``registry.get_session``) and synthesizing the SAME
+    ``session_attached`` audit-event #3310 N1 emits on ``repl_outbox`` — the
+    barrier the emitter (``AgUiEmitter``) uses to re-fire the reconnect
+    protocol for the new session (its ``backlog_provider``). This is a
+    PARALLEL, independent reaction to the switch the registry's own
+    ``attach_session`` already performed — it never calls
+    ``registry.attach_session`` itself, so it cannot race or double-apply
+    that side effect; it only re-points THIS connection's own view. A
+    registry-less / agent_name-less construction (as most existing unit
+    tests build this class) degrades to no switch-follow at all — no
+    listener is registered, so nothing but the ordinary ``DisplayFrame`` /
+    ``EventFrame`` stream ever reaches :attr:`_q`.
+
+    **The listener fires synchronously** (``registry``'s own no-await
+    critical section — see ``add_attach_listener``'s docstring), so it
+    cannot itself do the re-point (that needs ``await sub.close()``-adjacent
+    bookkeeping and races the in-flight ``await sub.get()`` this source's
+    drain loop is blocked in). It only hands the sid to
+    :attr:`_switch_signal`, an ``asyncio.Queue`` :meth:`_drain_one_session`
+    dual-waits alongside ``sub.get()`` (``asyncio.wait(...,
+    return_when=FIRST_COMPLETED)``) — the second wait source a blocked
+    in-flight await needs to be interrupted by an out-of-band signal.
 
     ★No per-client "which frames has this connection already seen"
     bookkeeping (design constraint, #3310 issue thread — rejected as state
@@ -260,7 +273,15 @@ class _SessionFrameSource:
         self._sub = None
         self._session = None
         self._events = None
+        # #4534 PR-2b: the switch-follow signal — registry.add_attach_listener
+        # feeds this from its own synchronous critical section;
+        # _drain_one_session dual-waits it alongside sub.get().
+        self._switch_signal: "asyncio.Queue[str]" = asyncio.Queue()
+        self._listening_for = ""
         self._bind(session)
+        if self._registry is not None and self._agent_name:
+            self._registry.add_attach_listener(self._agent_name, self._on_attach_announced)
+            self._listening_for = self._agent_name
 
     def _bind(self, session) -> None:
         """Point this source at ``session``'s own audit-event stream (the
@@ -284,21 +305,29 @@ class _SessionFrameSource:
         if getattr(event, "type", None) in self._forward:
             self._q.put_nowait(EventFrame(event))
 
+    def _on_attach_announced(self, sid: str) -> None:
+        """Registry callback (#4534 PR-2b) — synchronous, no ``await``: hand
+        the sid to :attr:`_switch_signal` and return, mirroring
+        :meth:`_on_audit_event`'s own idiom."""
+        self._switch_signal.put_nowait(sid)
+
     def start(self) -> None:
         self._drain_task = asyncio.create_task(self._drain_outbox())
 
     def close(self) -> None:
         self._unbind(self._session)
+        if self._registry is not None and self._listening_for:
+            self._registry.remove_attach_listener(self._listening_for, self._on_attach_announced)
         if self._sub is not None:
             self._sub.close()
         if self._drain_task is not None:
             self._drain_task.cancel()
 
     def _resolve_switch_target(self, sid: str):
-        """The target session for a ``__session_switch_request__`` sentinel,
-        or ``None`` when this source is registry-less (pre-N3 degrade), the
-        sid names no loaded session, or the sid is already the current one
-        (a no-op switch)."""
+        """The target session for a switch-follow signal, or ``None`` when
+        this source is registry-less (no switch-follow), the sid names no
+        loaded session, or the sid is already the current one (a no-op
+        switch)."""
         if self._registry is None or not sid:
             return None
         target = self._registry.get_session(self._agent_name, sid)
@@ -325,50 +354,94 @@ class _SessionFrameSource:
                 return
 
     async def _drain_one_session(self) -> bool:
+        """Drain ``self._sub`` (the current session's outbox_hub
+        subscription) until it ends or a switch-follow signal re-points this
+        source at a different session.
+
+        #4534 PR-2b: dual-waits ``sub.get()`` alongside
+        ``self._switch_signal.get()`` (``asyncio.wait(...,
+        return_when=FIRST_COMPLETED)``) — the switch signal now arrives
+        OUT-OF-BAND (a registry callback, not a message on this same
+        subscription), so the task genuinely blocked in ``await sub.get()``
+        needs a second wait source to be interrupted by it. ``asyncio.wait``
+        does not cancel the loser; a signal that arrives after ``sub.get()``
+        already won stays queued for the next iteration (no message loss on
+        that side). The narrow remaining race is the reverse: if BOTH
+        complete in the same tick, the switch is processed first and the
+        already-fetched outbox message is dropped rather than requeued —
+        accepted (documented, not silently absorbed): the two are produced
+        by independent event-loop callbacks (the hub's fan-out vs. the
+        registry's synchronous notify), so simultaneous readiness needs both
+        callbacks to run in the same iteration, which a real switch (an
+        operator-paced action) essentially never coincides with a message
+        arriving in the exact same tick.
+        """
         sub = self._sub
-        while True:
-            msg = await sub.get()
-            if msg is None:
-                self._q.put_nowait(DisplayFrame(OutboxMessage(kind="__end__", text="")))
-                return False
-            if msg.kind == "__session_switch_request__":
-                target = self._resolve_switch_target(msg.text)
-                if target is not None:
-                    old_session = self._session
-                    self._unbind(old_session)
-                    sub.close()
-                    # ★Barrier ordering (co-vet #3310 N3 (a)): the announce
-                    # is enqueued BEFORE ``_bind(target)`` makes the new
-                    # session's audit-event subscriber live. ``_bind`` calls
-                    # ``add_subscriber`` synchronously, and ``_on_audit_event``
-                    # is itself synchronous (``_q.put_nowait`` — no await),
-                    # so an audit-event the new session emits CANNOT reach
-                    # ``_q`` before its subscriber exists. Emitting the
-                    # announce first, THEN subscribing, therefore makes
-                    # "barrier before any of the new session's own frames"
-                    # hold BY CONSTRUCTION regardless of whether an ``await``
-                    # is ever later introduced between the two steps — not
-                    # merely true today because there happens to be none
-                    # (the SAME barrier property N1 built for
-                    # ``AgentRegistry.attach``/``attach_session``, applied
-                    # here to the ORDER of two synchronous calls rather than
-                    # a flip + a queue put). The announce payload depends
-                    # only on ``self._agent_name``/``msg.text``, never on
-                    # ``_bind``'s result, so reordering is free.
-                    self._q.put_nowait(
-                        EventFrame(
-                            Event(
-                                type="session_attached",
-                                data={"agent": self._agent_name, "session_id": msg.text},
+        get_task: "asyncio.Task | None" = None
+        switch_task: "asyncio.Task | None" = None
+        try:
+            while True:
+                if get_task is None:
+                    get_task = asyncio.create_task(sub.get())
+                if switch_task is None:
+                    switch_task = asyncio.create_task(self._switch_signal.get())
+                done, _ = await asyncio.wait(
+                    {get_task, switch_task}, return_when=asyncio.FIRST_COMPLETED,
+                )
+                if switch_task in done:
+                    sid = switch_task.result()
+                    switch_task = None
+                    target = self._resolve_switch_target(sid)
+                    if target is not None:
+                        if get_task is not None and not get_task.done():
+                            get_task.cancel()
+                        get_task = None
+                        old_session = self._session
+                        self._unbind(old_session)
+                        sub.close()
+                        # ★Barrier ordering (co-vet #3310 N3 (a)): the announce
+                        # is enqueued BEFORE ``_bind(target)`` makes the new
+                        # session's audit-event subscriber live. ``_bind`` calls
+                        # ``add_subscriber`` synchronously, and ``_on_audit_event``
+                        # is itself synchronous (``_q.put_nowait`` — no await),
+                        # so an audit-event the new session emits CANNOT reach
+                        # ``_q`` before its subscriber exists. Emitting the
+                        # announce first, THEN subscribing, therefore makes
+                        # "barrier before any of the new session's own frames"
+                        # hold BY CONSTRUCTION regardless of whether an ``await``
+                        # is ever later introduced between the two steps — not
+                        # merely true today because there happens to be none
+                        # (the SAME barrier property N1 built for
+                        # ``AgentRegistry.attach``/``attach_session``, applied
+                        # here to the ORDER of two synchronous calls rather than
+                        # a flip + a queue put). The announce payload depends
+                        # only on ``self._agent_name``/``sid``, never on
+                        # ``_bind``'s result, so reordering is free.
+                        self._q.put_nowait(
+                            EventFrame(
+                                Event(
+                                    type="session_attached",
+                                    data={"agent": self._agent_name, "session_id": sid},
+                                )
                             )
                         )
-                    )
-                    self._bind(target)
-                    return True
-                continue  # registry-less / unknown / no-op sid: drop silently
-            self._q.put_nowait(DisplayFrame(msg))
-            if msg.kind == "__end__":
-                return False
+                        self._bind(target)
+                        return True
+                    continue  # unresolved / no-op sid: drop silently, keep draining
+                if get_task in done:
+                    msg = get_task.result()
+                    get_task = None
+                    if msg is None:
+                        self._q.put_nowait(DisplayFrame(OutboxMessage(kind="__end__", text="")))
+                        return False
+                    self._q.put_nowait(DisplayFrame(msg))
+                    if msg.kind == "__end__":
+                        return False
+        finally:
+            if get_task is not None and not get_task.done():
+                get_task.cancel()
+            if switch_task is not None and not switch_task.done():
+                switch_task.cancel()
 
     async def frames(self):
         while True:
@@ -674,9 +747,9 @@ async def agui_submit(request: Request, agent_name: str):
     elif ptype == "attach_request":
         # #4534 PR-1: the remote execution side, mirroring slash_command
         # above — a typed payload naming the target agent, re-resolved
-        # against THIS process's registry (never the raw
-        # __attach_request__ sentinel string). ADD-ONLY: the sentinel
-        # path is unchanged and still live.
+        # against THIS process's registry (never a raw sentinel string).
+        # The __attach_request__ display-channel sentinel this replaces is
+        # retired (#4534 PR-2) — this is the only path now.
         target = str(payload.get("agent_name", "")).strip()
         attached = False
         if target and registry.exists(target):
@@ -684,8 +757,11 @@ async def agui_submit(request: Request, agent_name: str):
             attached = True
         return JSONResponse({"status": "ok", "attached": attached})
     elif ptype == "session_switch_request":
-        # #4534 PR-1: mirrors attach_request above, retiring
-        # __session_switch_request__.
+        # #4534 PR-1: mirrors attach_request above. The
+        # __session_switch_request__ sentinel this replaces is retired
+        # (#4534 PR-2b) — _SessionFrameSource's switch-follow now subscribes
+        # to registry.add_attach_listener directly instead of consuming a
+        # sentinel off the outbox (see that class's own docstring).
         target_sid = str(payload.get("session_id", "")).strip()
         switched = False
         if target_sid:

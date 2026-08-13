@@ -11,10 +11,10 @@ Stage 3; this is the REPL wiring.
                           per-session capability narrowing (#2103-S1a), composed
                           the same way the three sibling spawn sites compose
                           theirs, and the reply names what it inherited.
-  /session switch <sid> → focus another session of the attached agent. Routed
-                          through the registry forwarder (like ``/attach``) so
-                          the focus flip + display re-wire are sequenced, not
-                          raced against the output loop.
+  /session switch <sid> → focus another session of the attached agent, via
+                          ``ClientTransport.request_session_switch`` (#4534
+                          PR-2b — a typed request, not a display-channel
+                          sentinel a forwarder has to specially detect).
   /session list         → list the attached agent's sessions (``*`` = focused).
 
 Byte-identical when unused: a session that never runs ``/session`` keeps the
@@ -24,7 +24,6 @@ routing for non-REPL transports (web / A2A) is Stage 4b.
 from __future__ import annotations
 
 from reyn.interfaces.slash import SlashContext, reply, reply_error, slash
-from reyn.runtime.outbox import OutboxMessage
 from reyn.runtime.spawn_routing import ReviewedNA
 from reyn.security.permissions.capability_profile import compose_narrowing_mappings
 
@@ -182,13 +181,19 @@ async def session_cmd(ctx: "SlashContext", args: str) -> None:
                 " partial prefixes are not supported. Try /session list.",
             )
             return
-        # Visible breadcrumb; the actual focus flip is driven by the sentinel
-        # below (the registry forwarder consumes it → attach_session), mirroring
-        # /attach so display re-wiring is sequenced on the registry side.
-        await reply(ctx, f"switching to session {rest!r}")
-        ctx.transport.put_display(OutboxMessage(
-            kind="__session_switch_request__", text=rest,
-        ))
+        # #4534 PR-2b: the actual focus flip goes through the named-operation
+        # seam (request_session_switch -> registry.attach_session), not the
+        # retired __session_switch_request__ display-channel sentinel — see
+        # ClientTransport.request_session_switch's own docstring for why.
+        # The reply is ordered AFTER the call and reads its return
+        # (lead-coder review, #4534 remainder): False is ambiguous by
+        # transport (AG-UI's is "unknown"; in-process's is definitive), so
+        # the reply on False says "could not confirm", never "failed".
+        switched = await ctx.transport.request_session_switch(rest)
+        if switched:
+            await reply(ctx, f"switching to session {rest!r}")
+        else:
+            await reply(ctx, f"could not confirm the switch to session {rest!r}")
         return
 
     if sub == "list":

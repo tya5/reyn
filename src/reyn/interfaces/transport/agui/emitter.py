@@ -132,13 +132,12 @@ class AgUiEmitter:
             # Control sentinels in CONTROL_FILTER_KINDS are NOT forwarded on the
             # AG-UI wire — the explicit per-entry allowlist (protocol.py), not the
             # negation of any forward-set. It holds only ``__end__`` (the stream
-            # terminator; returns below) and ``__session_switch_request__`` (which
-            # the registry already swallows upstream — a fail-safe). Client-consumed
-            # sentinels ``__copy_last_reply__`` / ``__rewind_list__`` are DELIBERATELY
-            # NOT here: the client consumes them over the transport stream (real
-            # clipboard copy / rewind picker), so they are forwarded as profiled
-            # CUSTOM events — filtering them would make remote /copy / /rewind
-            # silent no-ops.
+            # terminator; returns below) and ``__open_artifact__`` (local-only by
+            # construction). Client-consumed sentinels ``__copy_last_reply__`` /
+            # ``__rewind_list__`` are DELIBERATELY NOT here: the client consumes
+            # them over the transport stream (real clipboard copy / rewind
+            # picker), so they are forwarded as profiled CUSTOM events —
+            # filtering them would make remote /copy / /rewind silent no-ops.
             is_control = (
                 isinstance(frame, DisplayFrame)
                 and frame.message.kind in CONTROL_FILTER_KINDS

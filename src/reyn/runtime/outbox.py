@@ -76,7 +76,7 @@ _PROFILED_DISPLAY_KINDS: "frozenset[str]" = frozenset({
 # Every kind FORWARDED to the AG-UI wire as a display frame (standard or CUSTOM).
 DISPLAY_KINDS: "frozenset[str]" = _STANDARD_DISPLAY_KINDS | _PROFILED_DISPLAY_KINDS
 
-# control-filtered (2): emitter-FILTERED control sentinels
+# control-filtered (1): emitter-FILTERED control sentinels
 # (== protocol.CONTROL_FILTER_KINDS) — consumed as signals, NEVER forwarded on
 # the wire. Each documented with its consumption locus:
 CONTROL_KINDS: "frozenset[str]" = frozenset({
@@ -84,9 +84,6 @@ CONTROL_KINDS: "frozenset[str]" = frozenset({
     # _SessionFrameSource loops all return on it; the AG-UI emitter returns
     # (ends the SSE stream). Never rendered.
     "__end__",
-    # `/session switch <sid>`: consumed at registry._forwarder (swallowed with
-    # `continue` → attach_session); the AG-UI emitter also fail-safe-filters it.
-    "__session_switch_request__",
     # #4482 PR-3: `/open <ref>` sentinel — client-side ref-resolve + OS-launch
     # (interfaces.inline.textual_chat.app._handle_open_artifact_request).
     # Control-filtered (unlike /copy · /rewind's PROFILED forwarding) because
