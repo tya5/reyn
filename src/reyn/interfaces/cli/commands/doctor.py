@@ -57,13 +57,15 @@ partial one, is the one thing this command must never do). C-2
 (zero-responder subscription, #4364 PR-2b, architect ruling): for each of
 the 4 external ingress points (``hooks.schema_registry._EXTERNAL_POINTS``),
 check whether a PRODUCER exists (declared config for ``file_changed``/
-``cron_fired``, past audit-log evidence for ``mcp_resource_updated`` —
-subscriptions themselves are a volatile op-level concept doctor cannot see
-from a separate process, so the check pairs producer↔consumer, not
-subscription↔consumer) and, only where one does, whether any consumer
-(hook) is registered for it. ``webhook_received`` has no config or
-audit-log surface at all — D-3: named as un-checked, not silently
-skipped. C-5 (sandbox posture) and C-6's other named pairs (listen port,
+``cron_fired``, past audit-log evidence for ``mcp_resource_updated``/
+``webhook_received`` — subscriptions themselves are a volatile op-level
+concept doctor cannot see from a separate process, so the check pairs
+producer↔consumer, not subscription↔consumer) and, only where one does,
+whether any consumer (hook) is registered for it. ``webhook_received``
+had no config or audit-log surface at all until #4618 gave it its own
+audit-event kind (#4620) — it now routes through the SAME windowed
+evidence-based check ``mcp_resource_updated`` already had. C-5 (sandbox
+posture) and C-6's other named pairs (listen port,
 model-name acceptance) are PR-3b — each needs its own NEW measurement
 code (introspecting a live bound socket, a real litellm probe call), not
 reuse of an existing function the way C-1/C-2/C-7 are.
@@ -326,9 +328,22 @@ def _print_hook_probe_results(config: Any) -> None:
 # always readable from config; the producer side is readable ONLY where a
 # static declaration or a past audit-log record exists.
 #
-# `webhook_received` has neither (no config surface, no AUDIT_EVENT_KINDS
-# entry) — D-3: named as un-checked below, never silently skipped.
-_UNCHECKABLE_EXTERNAL_POINTS: Final[tuple[str, ...]] = ("webhook_received",)
+# #4620: `webhook_received` USED to have neither (no config surface, no
+# AUDIT_EVENT_KINDS entry) and lived here — #4618 (same night, same repo)
+# gave it an audit-event of its own (webhook_routing.py), the same
+# evidence-based surface `mcp_resource_updated` already had. That made
+# this constant's own reasoning stale without anyone editing this file:
+# the printed "no config or audit-log surface exists" claim went false
+# the moment #4618 merged. `webhook_received` now routes through the
+# SAME windowed evidence-based check as `mcp_resource_updated` (below) —
+# this constant stays EMPTY, not deleted, so a future point that
+# genuinely has no producer surface has somewhere to land without
+# reinventing the D-3 disclosure. `cron_fired`/`file_changed` do NOT
+# move here or into the windowed check — both already have a COMPLETE
+# config-declared producer surface (`cron.jobs[]` / `fs_watch.paths`),
+# and turning a complete read into a windowed scan would strictly lose
+# information for no gain (architect's own point, #4620).
+_UNCHECKABLE_EXTERNAL_POINTS: Final[tuple[str, ...]] = ()
 
 # .reyn/events is append-only with no kind index (reyn-dir-layout.md) — a
 # kind lookup is a scan. #4479 retention normally bounds the file count, but
@@ -347,11 +362,15 @@ _UNCHECKABLE_EXTERNAL_POINTS: Final[tuple[str, ...]] = ("webhook_received",)
 _MCP_EVENT_SCAN_MAX_FILES: Final[int] = 20
 
 
-def _mcp_resource_updated_seen(events_dir: Path) -> "tuple[bool, int]":
-    """(seen, files_scanned) — whether ``mcp_resource_updated`` appears in
-    any of the newest ``_MCP_EVENT_SCAN_MAX_FILES`` dated ``.jsonl`` files
-    under *events_dir*. ``events_dir`` missing → ``(False, 0)`` (nothing
-    written yet, not an error)."""
+def _external_event_kind_seen(events_dir: Path, kind: str) -> "tuple[bool, int]":
+    """(seen, files_scanned) — whether *kind* appears in any of the newest
+    ``_MCP_EVENT_SCAN_MAX_FILES`` dated ``.jsonl`` files under *events_dir*.
+    ``events_dir`` missing → ``(False, 0)`` (nothing written yet, not an
+    error). Shared by every windowed-evidence external point (#4620:
+    generalized from ``mcp_resource_updated``-only so ``webhook_received``
+    can route through the identical check once it has its own audit-event
+    kind — the scan itself has no point-specific logic, only *kind*
+    differs)."""
     import json
 
     from reyn.core.events.event_purge import collect_dated_files
@@ -373,7 +392,7 @@ def _mcp_resource_updated_seen(events_dir: Path) -> "tuple[bool, int]":
                         obj = json.loads(line)
                     except json.JSONDecodeError:
                         continue
-                    if obj.get("type") == "mcp_resource_updated":
+                    if obj.get("type") == kind:
                         return True, len(window)
         except OSError:
             continue
@@ -455,8 +474,8 @@ def _print_external_point_pairing(config: object, project_root: Path) -> None:
             enabled_jobs = [j for j in jobs if getattr(j, "enabled", True)]
             has_producer = bool(enabled_jobs)
             evidence = f"{len(enabled_jobs)} enabled cron job(s)"
-        elif point == "mcp_resource_updated":
-            # #4614: this check is windowed (a bounded scan, see
+        elif point in ("mcp_resource_updated", "webhook_received"):
+            # #4614/#4620: this check is windowed (a bounded scan, see
             # _MCP_EVENT_SCAN_MAX_FILES's own comment) — unlike
             # file_changed/cron_fired's complete config reads, "not seen"
             # here is NOT proof of "no producer": a producer whose last
@@ -465,8 +484,13 @@ def _print_external_point_pairing(config: object, project_root: Path) -> None:
             # (the pre-#4614 shape) hid the exact state C-2 exists to
             # catch — so this point is disclosed UNCONDITIONALLY (D-3),
             # never folded into the generic "no producer -> no finding"
-            # rule below.
-            seen, scanned = _mcp_resource_updated_seen(events_dir)
+            # rule below. #4620: webhook_received joined this branch once
+            # #4618 gave it its own audit-event kind (matching its own
+            # point name, same convention as mcp_resource_updated) — it
+            # has no config surface at all, so it can ONLY ever be
+            # evidence-based, never a complete config read like
+            # file_changed/cron_fired.
+            seen, scanned = _external_event_kind_seen(events_dir, point)
             consumers = registry.hooks_for(point)  # type: ignore[attr-defined]
             if seen and consumers:
                 print(

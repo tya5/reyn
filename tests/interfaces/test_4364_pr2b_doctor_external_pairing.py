@@ -7,8 +7,14 @@ one-shot process) so the check pairs PRODUCER <-> CONSUMER, not
 subscription <-> consumer. Consumer side (a hook registered for a point)
 is always config-readable; producer side is readable only where a static
 declaration (``fs_watch:``/``cron:``) or a past audit-log record
-(``mcp_resource_updated``) exists. ``webhook_received`` has neither —
-named as un-checked (D-3), never silently skipped.
+(``mcp_resource_updated``/``webhook_received``) exists.
+
+#4620: ``webhook_received`` used to have neither and was named
+un-checked (D-3) — #4618 gave it its own audit-event kind, so it now
+routes through the SAME windowed evidence-based check
+``mcp_resource_updated`` already had (never a complete config read like
+``file_changed``/``cron_fired`` — it has no config surface of its own to
+read).
 
 Real CLI invocation (mirrors ``test_4364_pr2_doctor_hook_probe.py``'s own
 established capsys-driven shape) against real config files + a real
@@ -36,28 +42,29 @@ def _write_event(events_dir: Path, filename: str, kind: str) -> None:
     )
 
 
-def test_no_producers_configured_reports_only_the_uncheckable_point(
+def test_no_producers_configured_reports_only_the_windowed_points(
     tmp_path: Path, capsys,
 ) -> None:
     """Tier 2: (accept-side, absence) with no fs_watch/cron evidence at
     all, file_changed/cron_fired print no finding at all (D-2/D-3:
     reporting "0 hooks" for a nonexistent producer would be noise, not
     signal — those two checks are COMPLETE config reads, so "no producer"
-    can be asserted outright). mcp_resource_updated is different (#4614):
-    its own check is windowed, so it prints a "?" disclosure line even
-    with zero event-log evidence — "not seen" there is never proof of
-    "no producer", only "not seen in the window", so silence would hide
-    exactly the state C-2 exists to catch."""
+    can be asserted outright). mcp_resource_updated/webhook_received are
+    different (#4614/#4620): both checks are windowed, so both print a
+    "?" disclosure line even with zero event-log evidence — "not seen"
+    there is never proof of "no producer", only "not seen in the
+    window", so silence would hide exactly the state C-2 exists to
+    catch."""
     _write_yaml(tmp_path / "reyn.yaml", MINIMAL_REYN_YAML)
 
     run(Namespace(project_root=str(tmp_path)))
     out = capsys.readouterr().out
 
     assert "External-event producer/consumer pairing" in out
-    assert "? webhook_received: not checked" in out
     assert "file_changed" not in out
     assert "cron_fired" not in out
     assert "? mcp_resource_updated: not seen in the newest" in out
+    assert "? webhook_received: not seen in the newest" in out
     assert "NOT proof no producer exists" in out
 
 
@@ -231,6 +238,79 @@ def test_mcp_resource_updated_evidence_outside_the_scan_window_is_disclosed_not_
     assert "NOT proof no producer exists" in out
     assert "✗ mcp_resource_updated" not in out
     assert "✓ mcp_resource_updated" not in out
+
+
+def test_webhook_received_with_past_evidence_and_zero_consumers_is_flagged(
+    tmp_path: Path, capsys,
+) -> None:
+    """Tier 2: #4620 — webhook_received's own evidence-based witness, same
+    shape as mcp_resource_updated's: a PAST audit-log record (#4618 gave
+    this kind an emitter) is the producer evidence; no hook subscribes ->
+    ✗. Regression witness for the #4620 fix — before it, this exact case
+    printed the stale '? webhook_received: not checked' claim even though
+    real evidence existed."""
+    _write_yaml(tmp_path / "reyn.yaml", MINIMAL_REYN_YAML)
+    _write_event(
+        tmp_path / ".reyn" / "events", "2026-08-14T000000.jsonl", "webhook_received",
+    )
+
+    run(Namespace(project_root=str(tmp_path)))
+    out = capsys.readouterr().out
+
+    assert "✗ webhook_received: producer present" in out
+    assert "seen in the newest" in out
+
+
+def test_webhook_received_with_a_consumer_reports_ok(
+    tmp_path: Path, capsys,
+) -> None:
+    """Tier 2: #4620 accept-side — same past evidence, but a hook
+    subscribes to webhook_received -> ✓."""
+    _write_yaml(
+        tmp_path / "reyn.yaml",
+        MINIMAL_REYN_YAML + (
+            "hooks:\n"
+            '  - "on": webhook_received\n'
+            '    name: webhook-watcher\n'
+            '    template_push:\n'
+            '      message: "received"\n'
+        ),
+    )
+    _write_event(
+        tmp_path / ".reyn" / "events", "2026-08-14T000000.jsonl", "webhook_received",
+    )
+
+    run(Namespace(project_root=str(tmp_path)))
+    out = capsys.readouterr().out
+
+    assert "✓ webhook_received: producer present" in out
+
+
+def test_webhook_received_evidence_outside_the_scan_window_is_disclosed_not_silent(
+    tmp_path: Path, capsys,
+) -> None:
+    """Tier 2: #4620 — same regression shape as
+    test_mcp_resource_updated_evidence_outside_the_scan_window_is_disclosed_not_silent,
+    for webhook_received: a real producer whose last arrival predates the
+    scan window with 0 subscribing hooks must still surface a '?'
+    disclosure, not silence and not a false '✗'/'✓'."""
+    from reyn.interfaces.cli.commands import doctor as _doctor_mod
+
+    _write_yaml(tmp_path / "reyn.yaml", MINIMAL_REYN_YAML)
+    events_dir = tmp_path / ".reyn" / "events"
+    _write_event(events_dir, "2026-01-01T000000.jsonl", "webhook_received")
+    for day in range(1, _doctor_mod._MCP_EVENT_SCAN_MAX_FILES + 1):
+        _write_event(
+            events_dir, f"2026-02-{day:02d}T000000.jsonl", "session_started",
+        )
+
+    run(Namespace(project_root=str(tmp_path)))
+    out = capsys.readouterr().out
+
+    assert "? webhook_received: not seen in the newest" in out
+    assert "NOT proof no producer exists" in out
+    assert "✗ webhook_received" not in out
+    assert "✓ webhook_received" not in out
 
 
 def test_consumer_declared_only_in_runtime_hooks_yaml_still_counts(
