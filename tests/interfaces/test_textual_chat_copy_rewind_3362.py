@@ -27,13 +27,12 @@ Graded invariants:
    The action gate additionally pins that the picker's submission is IDENTICAL
    to a typed one, so the picker cannot grow a private action path beside the
    real one.
-4. **The remaining sentinel is still skipped** — ``__session_switch_request__``
-   is consumed UPSTREAM by ``AgentRegistry._forwarder`` (pinned by
-   ``test_3310_n3_remote_switch_parity.py``; its sibling
-   ``__attach_request__`` retired #4534 PR-2 — ``/attach`` now goes through
-   ``ClientTransport.request_attach``, a typed operation, no sentinel left to
-   skip); the TUI must keep skipping it rather than leaking a bare sentinel
-   into the conversation.
+4. **Both former sentinels retired** (#4534 PR-2 / PR-2b) — ``/attach`` and
+   ``/session switch`` now go through ``ClientTransport.request_attach`` /
+   ``request_session_switch``, typed operations; ``app._SKIP_KINDS`` no
+   longer has a sentinel entry, and neither kind is even constructible
+   (removed from the closed vocabulary). See section 4's own comment below
+   for the deleted test this leaves behind.
 
 **No real state is ever rewound here.** The app's rewind action ends at the
 ``ClientTransport.run_slash_command`` seam (#3595 S5 — a slash the app routes is
@@ -58,7 +57,6 @@ import pytest
 from textual_flowview import FlowView
 
 from reyn.interfaces.inline.textual_chat import TextualChatApp
-from reyn.interfaces.inline.textual_chat.app import _SKIP_KINDS
 from reyn.interfaces.inline.textual_chat.rewind_picker import RewindPicker
 from reyn.interfaces.repl.read_model import ChatReadModel
 from reyn.interfaces.transport.client_transport import ClientTransport
@@ -500,39 +498,17 @@ async def test_escape_dismisses_the_picker_without_rewinding() -> None:
         )
 
 
-# ── 4. the two sentinels that REMAIN skipped ──────────────────────────────────
-
-
-@pytest.mark.asyncio
-async def test_upstream_consumed_sentinel_stays_out_of_the_conversation() -> None:
-    """Tier 2: ``__session_switch_request__`` is still skipped — it never
-    leaks a bare sentinel row into the pane.
-
-    ``__attach_request__`` retired (#4534 PR-2): ``/attach`` now goes through
-    ``ClientTransport.request_attach``, a typed operation with no
-    display-channel sentinel, so it is no longer in ``_SKIP_KINDS`` and no
-    longer a constructible ``OutboxMessage`` kind at all.
-
-    ``__session_switch_request__`` is consumed by ``AgentRegistry._forwarder``
-    before it can reach a LOCAL client's frame stream (its effect arrives
-    instead as the ``session_attached`` ``EventFrame``), and — on the REMOTE
-    path — by the AG-UI tap and ``CONTROL_FILTER_KINDS`` besides, so its
-    entry here is a true fail-safe (pending #4534 PR-2b's switch-follow
-    port). A neighbouring ordinary frame must still render (so the assertion
-    cannot pass by the pump being dead)."""
-    assert _SKIP_KINDS == {"__session_switch_request__"}
-    transport = ScriptedTransport([
-        OutboxMessage(kind="__session_switch_request__", text="sid-b"),
-        OutboxMessage(kind="agent", text="a real reply"),
-    ])
-    app = TextualChatApp(transport=transport, read_model=_PickerReadModel())
-    async with app.run_test() as pilot:
-        await _settle(pilot)
-        texts = _texts(app)
-        assert "a real reply" in texts, f"the pump never ran: {texts}"
-        assert "sid-b" not in texts, (
-            f"the control sentinel leaked into the conversation: {texts}"
-        )
+# #4534 PR-2b retired the last of `_SKIP_KINDS`'s two former sentinel entries
+# (`__attach_request__` in PR-2, `__session_switch_request__` here) — neither
+# `/attach` nor `/session switch` posts an `OutboxMessage` sentinel anymore
+# (both go through `ClientTransport.request_attach`/`request_session_switch`,
+# typed operations), and neither kind is constructible at all (removed from
+# the closed vocabulary). `_SKIP_KINDS` is now empty; the falsify-verify this
+# section's test used to pin (a `__session_switch_request__` frame skipped,
+# alongside an ordinary `agent` frame confirmed to still render) confirmed RED
+# at construction time — `OutboxMessage(kind="__session_switch_request__", ...)`
+# raises `ValueError` (kind not in `VOCABULARY`) — so the test is deleted
+# rather than rewritten: there is no longer a sentinel kind left to skip.
 
 
 # ── environment sanity ────────────────────────────────────────────────────────

@@ -133,23 +133,16 @@ logger = logging.getLogger(__name__)
 # the :class:`~reyn.interfaces.inline.textual_chat.rewind_picker.RewindPicker`
 # region + a text fallback) and are gone from this set.
 #
-# The one that REMAINS is a fail-safe, not a live path. ``/attach`` and
+# Both former entries are retired (#4534 PR-2 / PR-2b). ``/attach`` and
 # ``/session switch`` now go through ``ClientTransport.request_attach`` /
-# ``request_session_switch`` (#4534 PR-2) — typed operations, not a
-# display-channel sentinel; ``__attach_request__`` retired from this set
-# with them (#4534 PR-2: nothing constructs that kind anymore).
-#
-# ``__session_switch_request__`` is left here as a fail-safe pending #4534's
-# switch-follow port (the AG-UI remote tap's mid-stream re-point used to
-# consume this same sentinel off the outbox — see
-# ``transport/agui/endpoint.py``'s ``_SessionFrameSource``, which is why the
-# kind is not yet fully retired). If a future change removes it there too,
-# remove it here in the same PR.
-_SKIP_KINDS = frozenset(
-    {
-        "__session_switch_request__",
-    }
-)
+# ``request_session_switch`` — typed operations, not a display-channel
+# sentinel — and the AG-UI remote tap's mid-stream switch-follow
+# (``transport/agui/endpoint.py``'s ``_SessionFrameSource``) subscribes to
+# ``registry.add_attach_listener`` directly instead of consuming a sentinel
+# off the outbox. Nothing constructs either kind anymore, so this set is
+# currently empty — kept (not deleted) as the documented extension point for
+# a future control sentinel that needs skipping here.
+_SKIP_KINDS: "frozenset[str]" = frozenset()
 
 # Turn-end event types (#72): when one of these lands on the EVENT-tag frame
 # path, any tool row still RUNNING is a confirmed ORPHAN — its completion frame

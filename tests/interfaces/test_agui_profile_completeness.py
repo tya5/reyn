@@ -88,7 +88,7 @@ def test_every_vocabulary_kind_is_dispositioned() -> None:
     assert {"agent", "status", "reasoning", "error"} <= VOCABULARY   # standard
     assert {"system", "user", "trace",
             "tool_call_started"} <= VOCABULARY                       # profiled CUSTOM
-    assert {"__end__", "__session_switch_request__"} <= VOCABULARY   # control-filtered
+    assert {"__end__"} <= VOCABULARY   # control-filtered
 
     leaks = {k for k in VOCABULARY if _disposition(k) == "LEAK"}
     assert not leaks, (
@@ -110,11 +110,12 @@ def test_control_sentinel_dispositions_client_consumed_forward_upstream_consumed
     - ``__copy_last_reply__`` / ``__rewind_list__`` are **client-consumed** over the
       transport stream (real client-side clipboard copy / rewind picker), so they
       are FORWARDED (profiled CUSTOM display kinds) and round-trip losslessly.
-    - ``__end__`` (terminal) and ``__session_switch_request__`` (upstream-consumed)
-      are control-filtered. ``__attach_request__`` retired (#4534 PR-2): /attach
-      now goes through ``ClientTransport.request_attach``, a typed operation with
-      no display-channel sentinel — nothing constructs that kind anymore, so it
-      carries no disposition at all."""
+    - ``__end__`` (terminal) is control-filtered. ``__attach_request__`` /
+      ``__session_switch_request__`` both retired (#4534 PR-2 / PR-2b):
+      ``/attach`` and ``/session switch`` now go through
+      ``ClientTransport.request_attach`` / ``request_session_switch``, typed
+      operations with no display-channel sentinel — neither kind is
+      constructed anywhere anymore, so neither carries a disposition at all."""
     # Client-consumed → forwarded + profiled + lossless round-trip.
     for client_kind in ("__copy_last_reply__", "__rewind_list__"):
         assert client_kind in DISPLAY_KINDS, client_kind
@@ -126,9 +127,8 @@ def test_control_sentinel_dispositions_client_consumed_forward_upstream_consumed
         assert isinstance(decoded, DisplayFrame)
         assert decoded.message.kind == client_kind
 
-    # Terminal + upstream-consumed → control-filtered.
+    # Terminal → control-filtered.
     assert _disposition("__end__") == "control"
-    assert _disposition("__session_switch_request__") == "control"
 
 
 def test_every_custom_mapped_frame_is_profiled() -> None:

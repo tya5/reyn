@@ -197,15 +197,15 @@ class AgUiTransport(ClientTransport):
         return bool((result or {}).get("ran"))
 
     async def request_attach(self, agent_name: str) -> bool:
-        # #4534 PR-1: same shape as run_slash_command above, a second typed
-        # payload alongside it — the ADD-ONLY half of retiring the
-        # __attach_request__ display-channel sentinel. The server re-
-        # resolves agent_name against its own registry.
+        # #4534 PR-1/PR-2: same shape as run_slash_command above, a second
+        # typed payload alongside it — retires the __attach_request__
+        # display-channel sentinel. The server re-resolves agent_name
+        # against its own registry.
         result = await self._send({"type": "attach_request", "agent_name": agent_name})
         return bool((result or {}).get("attached"))
 
     async def request_session_switch(self, session_id: str) -> bool:
-        # #4534 PR-1: mirrors request_attach above, retiring
+        # #4534 PR-1/PR-2b: mirrors request_attach above, retiring
         # __session_switch_request__.
         result = await self._send(
             {"type": "session_switch_request", "session_id": session_id},

@@ -88,7 +88,7 @@ client は 1 つの順序付き SSE ストリームを消費し、各 event を�
 | `intervention`    | `CUSTOM`           | プロンプトが表示される。reyn client はそれをネイティブに描画し、id で回答する(「Human-in-the-loop answering」参照) |
 | `presentation`    | `CUSTOM`           | `present` op の render-node モデル(*present-on-wire* 参照) |
 | `__copy_last_reply__` / `__rewind_list__` | `CUSTOM` | クライアント消費センチネル — 転送される(*control sentinels* 参照) |
-| `__end__` / `__session_switch_request__` | *(フィルタ)* | 転送されない(*control sentinels* 参照) |
+| `__end__` | *(フィルタ)* | 転送されない(*control sentinels* 参照) |
 
 これら以外の display kind もすべて損失なく round-trip する(`CUSTOM` にフォールバックし
 `_reyn` から再構成される)— 新しい display kind がワイヤー上で静かに消えることは決してない。
@@ -113,24 +113,17 @@ display kind を誤って落としてしまう):
 - **フィルタ**(`CONTROL_FILTER_KINDS`、明示的 allowlist — emitter はワイヤーイベントを出さない):
   - `__end__` — ストリーム終端(emitter はこれで return する。クライアントのループもストリーム
     クローズで終わる)。
-  - `__session_switch_request__` — **AG-UI tap 自身** がこのセンチネルを消費する
-    (`_SessionFrameSource._drain_one_session`: セッション switch-follow、解決できない
-    sid の場合は silent drop)ため、その source から emitter に到達しない。フィルタ
-    エントリは、消費しない frame source に対する fail-safe。
-- **廃止済み**(#4534 PR-2): `__attach_request__` はもう存在しない。`/agent new`と
-  `/attach`は今や named operation である`ClientTransport.request_attach`を経由する
+  - `__open_artifact__` — 構造上ローカル専用(クライアントが動くマシン上で OS アプリを
+    起動する;*#4482* 参照)。
+- **廃止済み**(#4534 PR-2 / PR-2b): `__attach_request__` と `__session_switch_request__`
+  はもう存在しない。`/agent new`・`/attach`・`/session switch` はすべて今や named
+  operation である `ClientTransport.request_attach` / `request_session_switch` を経由する
   (display channel のセンチネルではない — #3595 S5 の原則「client が解釈し、server が
-  名前つき操作を実行する」を`run_slash_command`と同じ形で適用)。本docの以前の版は
-  `__attach_request__`を「転送され、実際に live」と記述していたが、それはPR-2着地前は
-  正確だった。`__session_switch_request__`は★別のセンチネルで、上記の通り引き続き
-  filterされている——その移行(PR-2b)は、消費が二重目的(`agui/endpoint.py`の
-  mid-stream switch-follow、#3310 N3も駆動する)であるため別途段階的に進められており、
-  本docではまだ扱っていない。
-
-> #3362 で訂正。本節は以前、両センチネルとも registry forwarder が swallow するため
-> 「AG-UI tap に到達しない」と記述していたが、いずれも到達する。forwarder の
-> `continue` は subscriber-local である。実 forwarder + 実 tap で計測
-> (`tests/interfaces/test_agui_control_filter.py`)。
+  名前つき操作を実行する」を `run_slash_command` と同じ形で適用)。本 doc の以前の版は
+  `__attach_request__` を「転送され、実際に live」、`__session_switch_request__` を
+  「tap が消費しフィルタされる」と記述していたが、それぞれ各 PR 着地前は正確だった。
+  セッション switch-follow(下記)ももう outbox からセンチネルを消費せず、
+  `registry.add_attach_listener` に直接 subscribe する。
 
 #### Text lifecycle(適合する triplet — plain と streamed)
 
