@@ -151,6 +151,7 @@ nav:
               - reference/cli/memory.md
               - reference/cli/cron.md
               - reference/cli/storage.md
+              - reference/cli/support-bundle.md
               - reference/cli/common-flags.md
       - Runtime:
           - reference/runtime/control-ir.md
