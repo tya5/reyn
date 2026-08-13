@@ -98,6 +98,7 @@ aren't.
 | `skills` | map | both (`.reyn/config/skills.yaml` side is **hot-reloaded**) | Skill declarations. Merged across config tiers by name (an explicit entry wins a collision). |
 | `pipelines` | map | both (`.reyn/config/pipelines.yaml` side is **hot-reloaded**) | Pipeline declarations. Same union-merge shape as `skills`. |
 | `presentations` | map | both (`.reyn/config/presentations.yaml` side is **hot-reloaded**) | Presentation-template declarations. Same union-merge shape as `skills` / `pipelines`. |
+| `tui` | map | PRJ only · **restart** | Operator-tunable inline-TUI presentation thresholds — today just the status bar's context-usage-percent warn threshold. See below. |
 
 > **Project context file (`project_context_path`).** Left unset, Reyn reads
 > `AGENTS.md` — the cross-tool convention that Claude Code, Codex, opencode and
@@ -1222,6 +1223,7 @@ Universal catalog visibility + retrieval settings.  Scheme *selection* is genera
 ```yaml
 action_retrieval:
   universal_wrappers_enabled: true    # default; set false to opt out
+  mode: default                       # default | minimal | performance
 embedding:
   enabled: false                      # default (off); set true to opt in to search_actions
   # default_class: standard           # which embedding class to use when enabled
@@ -1232,6 +1234,7 @@ embedding:
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `universal_wrappers_enabled` | bool | `true` | For a layer whose `tool_use` scheme resolves to `universal-category`, `true` (default) exposes only the 4 universal wrappers (`list_actions`, `search_actions`, `describe_action`, `invoke_action`) in that layer's `tools=`.  Legacy per-kind tools (`invoke_skill`, `call_mcp_tool`, etc.) are no longer surfaced to the LLM on that layer but remain available as wrapper backing handlers.  `search_actions` is gated separately by [`embedding.enabled`](#embedding-block).  Set `false` to disable the wrapper surface entirely for that layer (= legacy tools become the only addressing path again).  Does not affect a layer whose scheme is `enumerate-all` (the `chat` layer's own default) — that scheme never consults this flag. |
+| `mode` | string | `"default"` | Operational mode label: `"minimal"` / `"default"` / `"performance"`.  Free-form string; currently unread — no caller layers semantics on it yet. |
 
 > **#4552 (2026-08) — hot-list retired.** The prior `hot_list_n` / `hot_list_seed`
 > fields (a top-N freq+recency direct-alias projection) are **removed, no
@@ -1240,13 +1243,6 @@ embedding:
 > carrying either key gets the standard unknown-key tolerance (ignored, not
 > a parse error) rather than a migration path — there is nothing left to
 > migrate TO.
-
-> **#4552 PR-2 (2026-08) — `mode` retired.** The `mode` field
-> (`"minimal"`/`"default"`/`"performance"`, §D24) had 0 real consumers — no
-> caller ever read it, and the accessor method that existed solely to
-> expose it to a hypothetical future consumer (`get_action_retrieval_config()`)
-> is removed in the same PR. Same unknown-key tolerance as above applies to
-> a `reyn.yaml` still carrying it.
 
 > **FP-0066 §7 (2026-07) — config clean-break.** The prior fragmented gate
 > `action_retrieval.embedding_class` (which conflated the on/off decision with
@@ -1803,6 +1799,21 @@ image:
 | `row_height_cells` | int | `20` | Fixed height, in terminal rows, for every inline image `present` renders. A non-positive or non-numeric value falls back to the default. |
 
 **Why this is operator-configurable**: the "right" row count is a function of your own terminal height and how much scrollback a photo should occupy — not something reyn can decide for every environment. 20 is a shipped default (tall enough for real photo detail, short enough not to dominate a typical terminal), not a measured "correct" number. Omitting the block keeps this default (behaviour unchanged).
+
+## `tui` block
+
+Operator-tunable inline-TUI presentation thresholds (#4542). Today just the status bar's Telemetry segment (model / agent / cost / context%): the percent at which context-window usage escalates from a bare number (`16%`) to a labelled one (`ctx 82%`).
+
+```yaml
+tui:
+  context_usage_warn_percent: 80   # ctx% at/above this gets the "ctx" label
+```
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `context_usage_warn_percent` | int | `80` | Context-window usage percent at which the status bar labels the figure (`ctx NN%`) instead of showing it bare. A non-numeric value or one outside `0`–`100` falls back to the default. |
+
+**Why this is operator-configurable**: 80 is a shipped default (a plain, unsurprising round number), not a measured "correct" threshold for every operator's own risk tolerance or model/context window — same discipline as `image.row_height_cells` above. Omitting the block keeps this default (behaviour unchanged).
 
 ## MCP servers
 

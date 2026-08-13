@@ -1097,20 +1097,22 @@ async def test_inline_code_style_toned_down_from_the_loud_default(tmp_path) -> N
 
 
 @pytest.mark.asyncio
-async def test_menubar_active_tab_toned_down_to_status_line_muted_tone(
+async def test_menubar_active_tab_is_not_toned_down_to_telemetry_dimness(
     tmp_path,
 ) -> None:
-    """Tier 2: #3326 — MenuBar's active-tab color is toned down to match
-    StatusLine's own quiet ``$text-muted`` tone, rather than Tab's default
-    full-brightness ``$foreground`` jump against every other tab's 50%-muted
-    foreground (measured: no literal underline is drawn anywhere — MenuBar
-    doesn't use Textual's ``Tabs``/``Underline`` widget — the "underline" the
-    issue named was this brightness contrast read as loud emphasis).
-
-    Falsification: pre-fix, the active tab's resolved color is the full
-    ``$foreground`` (distinctly brighter than an inactive tab's 50%-muted
-    one); this asserts the active tab's color instead matches the SAME muted
-    tone StatusLine itself uses."""
+    """Tier 2: #4542 (owner ruling, REVERSES #3326's own relationship —
+    see app.py's ``MenuBar Tab.-active`` rule for the full history). #3326
+    matched the active tab's color to the status line's own muted tone so it
+    would not read as a loud, distinct highlight; #4542's redesign explicitly
+    wants the OPPOSITE — "選択中の項目のみ...強調表示を行う" (only the
+    selected item gets emphasis) — and gives the status line (now Telemetry)
+    its own dedicated, permanently-dim style instead. Keeping #3326's own
+    test green under the new CSS would have meant asserting a relationship
+    the owner deliberately reversed; this replaces it with the relationship
+    #4542 actually specifies: the active tab's text-style includes ``bold``
+    (emphasis) and stays UNDIMMED, while Telemetry's own style is ``dim``
+    — the two segments read as distinctly different tones, active tab the
+    brighter of the two, not matched to it."""
     from textual.widgets import Tab
 
     from reyn.interfaces.inline.textual_chat import TextualChatApp
@@ -1131,11 +1133,15 @@ async def test_menubar_active_tab_toned_down_to_status_line_muted_tone(
         await pilot.pause()
         line = app.query_one(StatusLine)
         active_tab = next(tab for tab in app.query(Tab) if tab.has_class("-active"))
-        status_color = line.styles.color
-        active_color = active_tab.styles.color
-        assert active_color == status_color, (
-            f"active tab color {active_color!r} does not match StatusLine's "
-            f"muted tone {status_color!r} — still reads as a loud, distinct highlight"
+        assert active_tab.styles.text_style.bold, (
+            f"active tab lost its bold emphasis: {active_tab.styles.text_style!r}"
+        )
+        assert not active_tab.styles.text_style.dim, (
+            "active tab is toned down (dim) — #4542 reserves dim for "
+            f"Telemetry only, active tab must stay undimmed: {active_tab.styles.text_style!r}"
+        )
+        assert line.styles.text_style.dim, (
+            f"StatusLine (Telemetry) lost its dim style: {line.styles.text_style!r}"
         )
 
 

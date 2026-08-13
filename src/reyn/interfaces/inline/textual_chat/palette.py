@@ -61,6 +61,21 @@ TOKENS: "dict[str, str]" = {
     #: leaves the hue to the terminal, which is the operator's to choose, and
     #: actually changes what is drawn.
     "@recede@": "dim",
+    #: #4542: the status bar's Telemetry segment (model/agent/cost/context%) —
+    #: "one step weaker than Navigation's own normal intensity" (owner's
+    #: proposal), so the row reads as two visually distinct halves without a
+    #: literal separator. A DEDICATED token, not a reuse of ``@recede@``
+    #: (same underlying SGR value today, but a distinct semantic role — a
+    #: heading/count receding and the Telemetry segment's own steady-state
+    #: tone are different concepts that happen to share a mechanism; keeping
+    #: them separate here means changing one's value later can't silently
+    #: move the other). ``dim``, not ``@quiet@``/``$text-muted``, for the
+    #: same reason ``@recede@`` isn't a colour either: under the ``ansi-*``
+    #: themes ``$text-muted`` resolves to the same ``ansi_default`` marker as
+    #: ordinary text (#3522/#3528's own measurement) — using it here would
+    #: make Telemetry read IDENTICAL to Navigation under exactly the themes
+    #: this redesign's "visually distinct halves" goal most needs to survive.
+    "@telemetry@": "dim",
     #: The selected row in a list the operator navigates (the sent-queue).
     #: ``bold`` rather than a background: a filled block is what
     #: ``$accent 30%`` produced once alpha was dropped — a solid ANSI-green bar
