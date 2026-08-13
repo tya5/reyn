@@ -1,4 +1,6 @@
-"""Tier 1: Contract — ``.reyn-plugin/plugin.json`` typed manifest schema (ADR 0064 §3.1, #3067).
+"""Tier 1: Contract — ``plugin.json`` typed manifest schema (ADR 0064 §3.1,
+#3067; relocated to the plugin root + required ``$schema`` — #4570
+conversion A, aligning with the Agent Plugins 1.0 standard).
 
 Round-trips a manifest with non-default values (all three capability kinds,
 non-empty explicit ``entries``, a non-empty ``description``) through the real
@@ -13,6 +15,7 @@ import pytest
 from pydantic import ValidationError
 
 from reyn.plugins.manifest import (
+    PLUGIN_MANIFEST_SCHEMA_URL,
     PluginManifest,
     PluginManifestError,
     PluginMCPCapability,
@@ -24,9 +27,8 @@ from reyn.plugins.manifest import (
 
 
 def _write_manifest(plugin_dir, data: dict) -> None:
-    manifest_dir = plugin_dir / ".reyn-plugin"
-    manifest_dir.mkdir(parents=True, exist_ok=True)
-    (manifest_dir / "plugin.json").write_text(json.dumps(data), encoding="utf-8")
+    plugin_dir.mkdir(parents=True, exist_ok=True)
+    (plugin_dir / "plugin.json").write_text(json.dumps(data), encoding="utf-8")
 
 
 def test_manifest_round_trips_nondefault_values(tmp_path):
@@ -35,6 +37,7 @@ def test_manifest_round_trips_nondefault_values(tmp_path):
     model_validate round-trip."""
     plugin_dir = tmp_path / "my-plugin"
     data = {
+        "$schema": PLUGIN_MANIFEST_SCHEMA_URL,
         "name": "rag",
         "version": "1.2.3",
         "description": "builtin RAG plugin (dogfood template, ADR §3.1)",
@@ -48,6 +51,7 @@ def test_manifest_round_trips_nondefault_values(tmp_path):
 
     manifest = load_plugin_manifest(plugin_dir)
 
+    assert manifest.schema_ == PLUGIN_MANIFEST_SCHEMA_URL
     assert manifest.name == "rag"
     assert manifest.version == "1.2.3"
     assert manifest.description == "builtin RAG plugin (dogfood template, ADR §3.1)"
@@ -64,8 +68,10 @@ def test_manifest_round_trips_nondefault_values(tmp_path):
     assert any(isinstance(cap, PluginMCPCapability) for cap in manifest.capabilities)
 
     # Round-trip through model_dump -> model_validate (JSON mode, the
-    # serialised shape a P2 install step would persist/copy).
-    dumped = json.loads(manifest.model_dump_json())
+    # serialised shape a P2 install step would persist/copy). by_alias=True
+    # so the required "$schema" key round-trips under its real wire name,
+    # not the Python attribute name (schema_).
+    dumped = json.loads(manifest.model_dump_json(by_alias=True))
     reloaded = PluginManifest.model_validate(dumped)
     assert reloaded == manifest
 
@@ -75,7 +81,10 @@ def test_manifest_capabilities_are_optional_any_subset(tmp_path):
     zero capabilities (declares only identity) is valid, matching the common
     case of building just an MCP server with no skill (§1)."""
     plugin_dir = tmp_path / "bare"
-    _write_manifest(plugin_dir, {"name": "bare-server", "version": "0.1.0"})
+    _write_manifest(
+        plugin_dir,
+        {"$schema": PLUGIN_MANIFEST_SCHEMA_URL, "name": "bare-server", "version": "0.1.0"},
+    )
 
     manifest = load_plugin_manifest(plugin_dir)
 
@@ -83,11 +92,12 @@ def test_manifest_capabilities_are_optional_any_subset(tmp_path):
     assert manifest.capability_kinds == frozenset()
 
 
-def test_manifest_path_for_matches_adr_layout(tmp_path):
-    """Tier 1: the manifest path is the ADR §3.1 layout constant, not an
-    implementation-chosen path."""
+def test_manifest_path_for_matches_the_plugin_root_layout(tmp_path):
+    """Tier 1: the manifest path is the plugin ROOT (#4570 conversion A —
+    the Agent Plugins 1.0 canonical location), not the pre-#4570
+    ``.reyn-plugin/`` subdirectory."""
     plugin_dir = tmp_path / "some-plugin"
-    assert manifest_path_for(plugin_dir) == plugin_dir / ".reyn-plugin" / "plugin.json"
+    assert manifest_path_for(plugin_dir) == plugin_dir / "plugin.json"
 
 
 def test_manifest_missing_file_raises_typed_error(tmp_path):
@@ -102,9 +112,8 @@ def test_manifest_invalid_json_raises_typed_error(tmp_path):
     """Tier 1: malformed JSON raises the typed ``PluginManifestError``, not a
     bare ``json.JSONDecodeError``."""
     plugin_dir = tmp_path / "bad-json"
-    manifest_dir = plugin_dir / ".reyn-plugin"
-    manifest_dir.mkdir(parents=True)
-    (manifest_dir / "plugin.json").write_text("{not valid json", encoding="utf-8")
+    plugin_dir.mkdir(parents=True)
+    (plugin_dir / "plugin.json").write_text("{not valid json", encoding="utf-8")
 
     with pytest.raises(PluginManifestError):
         load_plugin_manifest(plugin_dir)
@@ -115,7 +124,34 @@ def test_manifest_missing_required_field_raises_typed_error(tmp_path):
     validation (via the typed ``PluginManifestError``), not a silent
     default."""
     plugin_dir = tmp_path / "no-version"
-    _write_manifest(plugin_dir, {"name": "incomplete"})
+    _write_manifest(plugin_dir, {"$schema": PLUGIN_MANIFEST_SCHEMA_URL, "name": "incomplete"})
+
+    with pytest.raises(PluginManifestError):
+        load_plugin_manifest(plugin_dir)
+
+
+def test_manifest_missing_schema_field_raises_typed_error(tmp_path):
+    """Tier 1: (#4570) ``$schema`` is required — the Agent Plugins 1.0
+    canonical schema's own requirement, not a reyn-invented rule. A
+    manifest omitting it is malformed, same treatment as omitting
+    ``version``."""
+    plugin_dir = tmp_path / "no-schema"
+    _write_manifest(plugin_dir, {"name": "incomplete", "version": "1.0.0"})
+
+    with pytest.raises(PluginManifestError):
+        load_plugin_manifest(plugin_dir)
+
+
+def test_manifest_wrong_schema_value_raises_typed_error(tmp_path):
+    """Tier 1: (#4570) ``$schema`` must equal the canonical URL exactly (the
+    spec's own ``const`` requirement) — an arbitrary string is rejected,
+    not silently accepted as "some schema or other"."""
+    plugin_dir = tmp_path / "wrong-schema"
+    _write_manifest(
+        plugin_dir,
+        {"$schema": "https://example.com/not-the-real-schema.json",
+         "name": "incomplete", "version": "1.0.0"},
+    )
 
     with pytest.raises(PluginManifestError):
         load_plugin_manifest(plugin_dir)
@@ -125,7 +161,7 @@ def test_manifest_name_rejects_reserved_namespace_separator():
     """Tier 1: ``name`` rejects ``.`` — the reserved namespace-separator
     character (mirrors ``PipelineInstallIROp``/``SkillInstallIROp``)."""
     with pytest.raises(ValidationError):
-        PluginManifest(name="a.b", version="1.0.0")
+        PluginManifest(schema_=PLUGIN_MANIFEST_SCHEMA_URL, name="a.b", version="1.0.0")
 
 
 def test_manifest_rejects_duplicate_capability_kind():
@@ -134,6 +170,7 @@ def test_manifest_rejects_duplicate_capability_kind():
     has no 'merge two pipelines blocks' semantics to fall back on)."""
     with pytest.raises(ValidationError):
         PluginManifest(
+            schema_=PLUGIN_MANIFEST_SCHEMA_URL,
             name="dup",
             version="1.0.0",
             capabilities=[
@@ -150,6 +187,7 @@ def test_manifest_capability_kind_is_a_typed_discriminated_union_not_a_string():
     with pytest.raises(ValidationError):
         PluginManifest.model_validate(
             {
+                "$schema": PLUGIN_MANIFEST_SCHEMA_URL,
                 "name": "x",
                 "version": "1.0.0",
                 "capabilities": [{"kind": "not-a-real-capability"}],

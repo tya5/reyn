@@ -1,4 +1,5 @@
 {
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "rag",
   "version": "0.1.0",
   "description": "Builtin turnkey user RAG (ADR 0064 P5): chunker + vector-store MCP servers, ingest/query pipelines, and its RAG skill (install, embedding-provider setup, the ingest/query workflow, and corpus internals, all bundled with references). External sqlite store the operator names and owns (FP-0057 C2) -- distinct from reyn's own OS-internal index (not agent-callable, FP-0066 P1b).",

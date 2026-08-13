@@ -39,9 +39,9 @@ Pipeline (one-shot, no sub-phases):
    - ``git``: gate ``require_http_get`` for the URL host, then shallow-clone
      to a staging dir under ``~/.reyn/plugins/.staging/`` (removed after the
      copy step, success or failure).
-2. **Load + validate** ``.reyn-plugin/plugin.json`` via P1's
-   ``load_plugin_manifest`` — a missing/malformed manifest refuses BEFORE
-   any copy.
+2. **Load + validate** ``plugin.json`` (plugin root — #4570 conversion A
+   relocated it out of ``.reyn-plugin/``) via P1's ``load_plugin_manifest``
+   — a missing/malformed manifest refuses BEFORE any copy.
 3. **Name-collision precedence** (§3.8/§3.10): when ``~/.reyn/plugins/<name>/``
    already holds a DIFFERENT-kind completed install, ``resolve_name_collision``
    decides the winner (builtin ≤ local ≪ git) — a lower-trust source is

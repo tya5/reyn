@@ -213,7 +213,7 @@ BUILTIN_PLUGINS: "dict[str, dict[str, Any]]" = {
     # capability; an operator-equivalent, code-shipped decision names it
     # here first). `reyn.builtin.discovery.list_builtin_plugins` is the
     # ONLY enumerator of this map, and it derives {description,
-    # capabilities} from each plugin's own `.reyn-plugin/plugin.json`
+    # capabilities} from each plugin's own `plugin.json`
     # manifest at read time -- deliberately NOT duplicated into this dict,
     # so there is no second copy of manifest text to drift out of sync
     # with it (the redundant-projection failure #3164 hit for a different

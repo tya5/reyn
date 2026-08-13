@@ -65,6 +65,7 @@ from reyn.core.op_runtime.plugin_install import (
 )
 from reyn.core.op_runtime.plugin_uninstall import handle as uninstall_handle
 from reyn.intervention_choices import NO, YES
+from reyn.plugins.manifest import PLUGIN_MANIFEST_SCHEMA_URL
 from reyn.schemas.models import PluginInstallIROp, PluginUninstallIROp
 from reyn.security.permissions.permissions import PermissionDecl, PermissionResolver
 from reyn.user_intervention import InterventionAnswer, UserIntervention
@@ -127,9 +128,10 @@ def _make_git_plugin_repo(base: Path, name: str = "gitplugin") -> Path:
     """A real local git repo containing a minimal plugin (skills capability),
     usable as a file:// {kind:git} source."""
     repo = base / "repo"
-    (repo / ".reyn-plugin").mkdir(parents=True, exist_ok=True)
-    (repo / ".reyn-plugin" / "plugin.json").write_text(
+    repo.mkdir(parents=True, exist_ok=True)
+    (repo / "plugin.json").write_text(
         json.dumps({
+            "$schema": PLUGIN_MANIFEST_SCHEMA_URL,
             "name": name, "version": "0.1.0", "description": "git plugin",
             "capabilities": [{"kind": "skills"}],
         }),
@@ -150,9 +152,10 @@ def _make_git_plugin_repo(base: Path, name: str = "gitplugin") -> Path:
 def _make_plugin_source(base: Path, name: str = "myplugin") -> Path:
     """A minimal local plugin dir: manifest + one skills capability."""
     plugin_dir = base / name
-    (plugin_dir / ".reyn-plugin").mkdir(parents=True, exist_ok=True)
-    (plugin_dir / ".reyn-plugin" / "plugin.json").write_text(
+    plugin_dir.mkdir(parents=True, exist_ok=True)
+    (plugin_dir / "plugin.json").write_text(
         json.dumps({
+            "$schema": PLUGIN_MANIFEST_SCHEMA_URL,
             "name": name, "version": "0.1.0", "description": "test plugin",
             "capabilities": [{"kind": "skills"}],
         }),
@@ -319,9 +322,10 @@ def _make_mcp_plugin_source(base: Path, name: str = "mcpplugin") -> Path:
     """A minimal local plugin dir: manifest + one mcp capability (no
     requirements.txt — offline, no materialise step at all)."""
     plugin_dir = base / name
-    (plugin_dir / ".reyn-plugin").mkdir(parents=True, exist_ok=True)
-    (plugin_dir / ".reyn-plugin" / "plugin.json").write_text(
+    plugin_dir.mkdir(parents=True, exist_ok=True)
+    (plugin_dir / "plugin.json").write_text(
         json.dumps({
+            "$schema": PLUGIN_MANIFEST_SCHEMA_URL,
             "name": name, "version": "0.1.0", "description": "mcp test plugin",
             "capabilities": [{"kind": "mcp"}],
         }),
@@ -621,9 +625,12 @@ async def test_plugin_install_register_only_no_venv_no_rewrite(tmp_path, monkeyp
     monkeypatch.setenv("HOME", str(home))
 
     src = tmp_path / "src" / "registeronly"
-    (src / ".reyn-plugin").mkdir(parents=True)
-    (src / ".reyn-plugin" / "plugin.json").write_text(
-        json.dumps({"name": "registeronly", "version": "0.1.0", "capabilities": [{"kind": "mcp"}]}),
+    src.mkdir(parents=True)
+    (src / "plugin.json").write_text(
+        json.dumps({
+            "$schema": PLUGIN_MANIFEST_SCHEMA_URL,
+            "name": "registeronly", "version": "0.1.0", "capabilities": [{"kind": "mcp"}],
+        }),
         encoding="utf-8",
     )
     (src / ".mcp.json").write_text(
@@ -673,9 +680,12 @@ async def test_plugin_install_never_reads_requirements_txt_content(tmp_path, mon
     monkeypatch.setenv("HOME", str(home))
 
     src = tmp_path / "src" / "badreqs"
-    (src / ".reyn-plugin").mkdir(parents=True)
-    (src / ".reyn-plugin" / "plugin.json").write_text(
-        json.dumps({"name": "badreqs", "version": "0.1.0", "capabilities": []}),
+    src.mkdir(parents=True)
+    (src / "plugin.json").write_text(
+        json.dumps({
+            "$schema": PLUGIN_MANIFEST_SCHEMA_URL,
+            "name": "badreqs", "version": "0.1.0", "capabilities": [],
+        }),
         encoding="utf-8",
     )
     (src / "requirements.txt").write_text(
@@ -813,9 +823,12 @@ async def test_plugin_install_never_hangs_on_pypi_with_unanswering_bus(tmp_path,
     monkeypatch.setenv("HOME", str(home))
 
     src = tmp_path / "src" / "needsdeps4"
-    (src / ".reyn-plugin").mkdir(parents=True)
-    (src / ".reyn-plugin" / "plugin.json").write_text(
-        json.dumps({"name": "needsdeps4", "version": "0.1.0", "capabilities": []}),
+    src.mkdir(parents=True)
+    (src / "plugin.json").write_text(
+        json.dumps({
+            "$schema": PLUGIN_MANIFEST_SCHEMA_URL,
+            "name": "needsdeps4", "version": "0.1.0", "capabilities": [],
+        }),
         encoding="utf-8",
     )
     (src / "requirements.txt").write_text("somepkg==1.0\n", encoding="utf-8")

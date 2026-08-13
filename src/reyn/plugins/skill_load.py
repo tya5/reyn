@@ -52,13 +52,13 @@ globally-installed plugin.
 
 **Plugin-root resolution.** A skill installed via
 ``skill_install_local``/``_install_source`` (the pre-plugin-model
-skill install path, unrelated to a ``.reyn-plugin/plugin.json`` manifest) has
+skill install path, unrelated to a plugin ``plugin.json`` manifest) has
 no separate plugin directory — its own directory IS the root for
 ``${REYN_PLUGIN_ROOT}`` purposes there, so :func:`resolve_plugin_root` falls
 back to the skill's own directory when it finds no manifest walking upward.
 A plugin-shipped skill (``<plugin_root>/skills/<name>/SKILL.md``) resolves
 to the real, distinct plugin root — reusing P1's
-``reyn.plugins.manifest.manifest_path_for`` to find the ``.reyn-plugin/``
+``reyn.plugins.manifest.manifest_path_for`` to find the ``plugin.json``
 marker rather than re-deriving the plugin layout convention independently.
 
 **``${env:VAR}`` — a NAMESPACED env-var token, deliberately NOT
@@ -203,7 +203,7 @@ def is_skill_body_path(path: "str | Path") -> bool:
 def resolve_plugin_root(skill_dir: Path) -> Path:
     """Find the plugin root a skill at *skill_dir* belongs to.
 
-    Walks *skill_dir* and its parents looking for ``.reyn-plugin/plugin.json``
+    Walks *skill_dir* and its parents looking for ``plugin.json``
     (P1's :func:`~reyn.plugins.manifest.manifest_path_for` — the SAME marker
     P2's install step will write, not a re-derived convention). Returns the
     first directory found; falls back to *skill_dir* itself (already

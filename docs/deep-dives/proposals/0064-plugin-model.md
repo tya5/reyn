@@ -1,6 +1,6 @@
 # 0064 — Plugin model for reyn (author → test → promote reusable capabilities)
 
-- **Status**: Accepted + Implemented — owner GO'd, all 5 phases (P1 manifest/token-expansion, P2 install machinery, P3 slash+CLI surfaces, P4 skill-load tool, P5 RAG plugin) landed and checked off in umbrella issue #3066 (CLOSED)
+- **Status**: Accepted + Implemented — owner GO'd, all 5 phases (P1 manifest/token-expansion, P2 install machinery, P3 slash+CLI surfaces, P4 skill-load tool, P5 RAG plugin) landed and checked off in umbrella issue #3066 (CLOSED). **Amended by #4570** (owner, 2026-08-13: reyn is unreleased, so align with the published Agent Plugins 1.0 standard rather than diverge) — the manifest MOVED from `.reyn-plugin/plugin.json` to the plugin root's own `plugin.json` (a required `$schema` const added), with `capabilities`/transport-spelling/token-expansion-scope changes tracked as the same issue's remaining conversion points. The layout diagram and manifest-path references below are historical (as decided 2026-07-18) — see #4570 for the current, standard-aligned shape.
 - **Date**: 2026-07-18
 - **Arc**: grew out of the RAG turnkey arc (#2955)
 - **Deferred (named, not decided here)**: agents/hooks (incl. event composition) plugin containment; hosting arbitrary third-party plugins; multi-version cache resolution; the end-user promote/install UX surface.

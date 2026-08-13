@@ -39,6 +39,7 @@ from reyn.core.op_runtime.file import handle as file_handle
 from reyn.core.op_runtime.plugin_install import handle as install_handle
 from reyn.core.op_runtime.plugin_install import plugins_root
 from reyn.data.workspace.workspace import Workspace
+from reyn.plugins.manifest import PLUGIN_MANIFEST_SCHEMA_URL
 from reyn.schemas.models import FileIROp, PluginInstallIROp
 from reyn.security.permissions.permissions import PermissionDecl, PermissionResolver
 from tests._support.paths import REPO_ROOT
@@ -66,9 +67,10 @@ def _copy_real_skill_as_plugin_source(base: Path) -> Path:
     probes MCP servers."""
     assert _REAL_SKILL_DIR.is_dir(), f"expected real skill dir at {_REAL_SKILL_DIR}"
     plugin_dir = base / "rag_skill_only"
-    (plugin_dir / ".reyn-plugin").mkdir(parents=True, exist_ok=True)
-    (plugin_dir / ".reyn-plugin" / "plugin.json").write_text(
+    plugin_dir.mkdir(parents=True, exist_ok=True)
+    (plugin_dir / "plugin.json").write_text(
         json.dumps({
+            "$schema": PLUGIN_MANIFEST_SCHEMA_URL,
             "name": "rag_skill_only", "version": "0.1.0",
             "description": "skills-only witness copy of the real rag skill",
             "capabilities": [{"kind": "skills"}],

@@ -279,7 +279,7 @@ Three token kinds expand, in order:
 
 | Token | Source | Resolved |
 |-------|--------|----------|
-| `${REYN_PLUGIN_ROOT}` | the skill's plugin directory (a `.reyn-plugin/plugin.json` marker found walking up from the skill's own directory; falls back to the skill's own directory for a standalone, non-plugin skill) | every load (see note below) |
+| `${REYN_PLUGIN_ROOT}` | the skill's plugin directory (a `plugin.json` marker found walking up from the skill's own directory; falls back to the skill's own directory for a standalone, non-plugin skill) | every load (see note below) |
 | `${REYN_SKILL_DIR}` | the skill's own containing directory | every load |
 | `${REYN_PROJECT_DIR}` | the current session's workspace root | every load, freshly |
 | `${CLAUDE_PLUGIN_ROOT}` / `${CLAUDE_SKILL_DIR}` / `${CLAUDE_PROJECT_DIR}` | alias of the three `${REYN_*}` tokens above (ADR §3.6) — `SKILL.md` is a shared open standard (agentskills.io), so this alias is always active for a skill-load, not gated behind a separate provenance check | every load |
