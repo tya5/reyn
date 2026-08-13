@@ -951,8 +951,23 @@ class TextualChatApp(App):
     /* #3699: deliberately NO max-height here — the pane must be allowed to be
        its full content height so the scroll container above has something to
        scroll to. Capping the Static instead clamps its virtual size and the
-       content past the cap stops existing rather than moving off screen. */
-    #drawer Static { height: auto; padding: 1 0; }
+       content past the cap stops existing rather than moving off screen.
+       Horizontal padding unrelated to this rule's own concern (height) —
+       touched by #4554, see that rule change's own comment just below for
+       why 0 became 2. */
+    /* #4554: the tab label sits 2 cells in from the drawer's left edge
+       (MenuBar's own `padding: 0 1` + Tab's own `padding: 0 1`, above), but
+       a Static pane's content started at column 0 — no shared left edge
+       between a tab and the pane it opens, most visible on the Cost tab's
+       column-aligned table (reyn-reviewer, #4544's own investigation).
+       Fixes ALL 5 Static panes (cost/ctx/pipe/cron/help) from this ONE
+       rule — `_MENU_TABS` (chrome.py) has 14 entries, `_LIST_PANES` has 9;
+       the other 9 are OptionList, explicitly excluded (architect's own
+       measurement, #4554): OptionList already has `padding: 0` above by
+       design (full-width row highlight on selection — adding padding here
+       would shrink that highlight), so this rule intentionally targets
+       Static only, never OptionList. */
+    #drawer Static { height: auto; padding: 1 2; }
     """)
 
     #: Per-entry BODY animation rate (Hz) for the live RUNNING-tool indicator
