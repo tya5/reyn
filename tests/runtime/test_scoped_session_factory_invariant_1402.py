@@ -75,7 +75,6 @@ _BUNDLED_UNIFORM = frozenset({
     # → build_scoped_chat_session (8)
     "sandbox_config",
     "multimodal_config",
-    "action_retrieval_config",
     "embedding_config",
     "router_config",  # #1829 S3b
     "retry_config",  # #1835

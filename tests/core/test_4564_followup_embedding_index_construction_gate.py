@@ -27,14 +27,17 @@ wrong) — fixed in the same PR as this test.
 This test drives Session construction through ``make_session`` (the SAME
 helper 282+ other tests use, mirroring production's own
 ``scoped_session_factory.py`` shape) with
-``action_retrieval_config=ActionRetrievalConfig(universal_wrappers_enabled=False)``
+``chat_universal_wrappers_enabled=False`` (#4552 PR-3: renamed/moved from
+``action_retrieval_config=ActionRetrievalConfig(universal_wrappers_
+enabled=False)`` — this test predates PR-3's field relocation and was
+updated in the same PR, keeping the field's OWN value False throughout)
 + a real ``EmbeddingConfig(enabled=True)`` and asserts
 ``session._action_embedding_index`` / ``session._embedding_provider`` are
 NOT None — the exact construction path #4564's own witness bypassed.
 """
 from __future__ import annotations
 
-from reyn.config.embedding import ActionRetrievalConfig, EmbeddingConfig
+from reyn.config.embedding import EmbeddingConfig
 from tests._support.agent_session import make_session
 
 
@@ -46,14 +49,14 @@ def test_wrappers_off_real_session_still_constructs_embedding_index(
     constructs a real ActionEmbeddingIndex/provider — proving the
     construction-time gate no longer depends on the wrapper flag.
 
-    Strip-falsify: reverting this fix (re-adding
-    ``action_retrieval.universal_wrappers_enabled and`` to
+    Strip-falsify: reverting the #4564-follow-up fix (re-adding a
+    ``universal_wrappers_enabled and`` clause to
     ``_build_retrieval_bundle``'s condition) turns this RED —
     ``session._action_embedding_index`` goes back to None."""
     session = make_session(
         agent_name="test-agent-4564-followup",
         workspace_base_dir=tmp_path,
-        action_retrieval_config=ActionRetrievalConfig(universal_wrappers_enabled=False),
+        chat_universal_wrappers_enabled=False,  # #4552 PR-3
         embedding_config=EmbeddingConfig(enabled=True),
     )
 

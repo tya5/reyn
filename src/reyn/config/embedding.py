@@ -293,99 +293,21 @@ def _build_embedding_config(raw: object) -> EmbeddingConfig:
     )
 
 
-@dataclass
-class ActionRetrievalConfig:
-    """`action_retrieval:` — FP-0034 universal catalog + retrieval settings.
-
-    Phase 1 of FP-0034. The 4 universal wrappers (list_actions /
-    search_actions / describe_action / invoke_action) plus the
-    qualified-name dispatcher land across PR-1 through PR-3b-iv.
-    Subsequent phases extend with cold start / search_actions enablement.
-    (#4552: an earlier phase also added ``hot_list_n``/``hot_list_seed`` —
-    discarded, owner directive: hot list's role is gone, superseded by
-    ``list_actions`` as the canonical discovery path.)
-
-    Fields:
-        universal_wrappers_enabled:
-            When True (= **default since PR-3b-iv**), ``build_tools()``
-            appends the 3 universal wrappers (list_actions /
-            describe_action / invoke_action) at the end of tools=.
-            ``search_actions`` is gated separately via
-            ``embedding.enabled`` (FP-0066 §7; clean-break replacement
-            for the retired ``action_retrieval.embedding_class`` on/off
-            gate) per §D14.
-
-            The flip from False (= PR-3b-i through iii) to True
-            happens here in PR-3b-iv. Operators who want to opt out
-            (= preserve the prior tools= shape) can set
-            ``action_retrieval.universal_wrappers_enabled: false``
-            in reyn.yaml.
-
-            Test suite verified safe via FakeRouterHost insulation:
-            all LLMReplay fixtures + AsyncMock-based E2E tests do
-            NOT implement ``get_universal_wrappers_enabled`` so the
-            RouterLoop's getattr fallback keeps tools= shape stable
-            for the recorded fixtures. The flip affects production
-            runtime only.
-
-            **FP-0066 §7 (2026-07)**: the fragmented
-            ``action_retrieval.embedding_class`` field (on/off + which
-            model, conflated) is retired (clean-break, no alias). The
-            on/off decision now lives at ``embedding.enabled: bool``
-            (default ``False`` — opt-in / predictable-safe default);
-            the model-class selection stays a separate field —
-            ``embedding.default_class`` (already existed, default
-            ``"standard"``). ``search_actions`` is excluded from
-            tools= whenever ``embedding.enabled`` is False, even if
-            ``universal_wrappers_enabled`` is True (§D14 gating).
-            Operators who want semantic ``search_actions`` set
-            ``embedding.enabled: true`` in reyn.yaml (optionally
-            pairing it with a non-default ``embedding.default_class``
-            or a custom ``embedding.classes`` entry pointing at any
-            litellm-routable model, including a local model served
-            behind a litellm-fronted proxy — #3128 removed the
-            in-process local-model embedding backend; reyn depends on
-            litellm exclusively for embeddings).
-
-    #4552 PR-2: ``mode`` (§D24 operational-mode label — "minimal" /
-    "default" / "performance") is removed — a census (both the literal
-    field and the ``get_action_retrieval_config()`` symbol that existed
-    solely to expose it to a future consumer) found 0 real consumers;
-    the "future PR reading .mode" PR-1 anticipated never happened and
-    PR-2 retires the intent instead.
-    """
-
-    universal_wrappers_enabled: bool = True
-
-
-def _build_action_retrieval_config(raw: object) -> ActionRetrievalConfig:
-    """Parse ``action_retrieval:`` from reyn.yaml.
-
-    Accepts a dict with any subset of fields; unknown keys are
-    ignored (= forward-compatible with future Phase 2 additions).
-    Validates types and clamps numeric ranges to non-negative.
-
-    Raises:
-        ValueError: when a recognised field has an invalid type
-            (= explicit type mismatch; missing fields fall back to
-            defaults).
-    """
-    if raw is None:
-        return ActionRetrievalConfig()
-    if not isinstance(raw, dict):
-        raise ValueError(
-            f"action_retrieval must be a mapping, got {type(raw).__name__}"
-        )
-
-    cfg = ActionRetrievalConfig()
-
-    if "universal_wrappers_enabled" in raw:
-        val = raw["universal_wrappers_enabled"]
-        if not isinstance(val, bool):
-            raise ValueError(
-                "action_retrieval.universal_wrappers_enabled must be a bool, "
-                f"got {type(val).__name__}"
-            )
-        cfg.universal_wrappers_enabled = val
-
-    return cfg
+# #4552: `action_retrieval:` / `ActionRetrievalConfig` — DELETED entirely.
+# The arc that closed it:
+# - PR-1: `hot_list_n`/`hot_list_seed` discarded — owner directive, hot
+#   list's role is gone, superseded by `list_actions` as the canonical
+#   discovery path.
+# - PR-2: `mode` (§D24 operational-mode label) removed — 0 real
+#   consumers, confirmed via census.
+# - PR-3: `universal_wrappers_enabled` MOVED to
+#   `tool_use.universal_wrappers_enabled` (see `execution.ToolUseConfig`)
+#   — architect's ruling: a `tool_use`/presentation-scheme property, not
+#   a retrieval setting.
+# - PR-4 (this change, same PR as PR-3 — lead-coder ruling: a
+#   genuinely-empty section is an intermediate state that should never
+#   land on main by itself, same "regression and repair move together"
+#   shape as #4534): the now-empty class + its parser are deleted. A
+#   `reyn.yaml` still carrying `action_retrieval:` gets the standard
+#   unknown-key tolerance (T0's `unknown_config_keys`, `config_schema.py`)
+#   — ignored, reported, not a parse error.

@@ -47,10 +47,11 @@ can deliver it to the model:
       same route restated, not a widened or narrowed one.)
       ``invoke_action`` is itself advertised via route (a) whenever the
       universal wrappers are enabled, which is the shipped default
-      (``ActionRetrievalConfig.universal_wrappers_enabled: bool = True``
-      in ``reyn.config.embedding``) — so dispatching through it is a
-      real, always-available route in the default configuration, not a
-      hypothetical one.
+      (``ToolUseConfig.universal_wrappers_enabled: bool = True`` in
+      ``reyn.config.execution`` — #4552 PR-3: moved from
+      ``ActionRetrievalConfig`` in ``reyn.config.embedding``) — so
+      dispatching through it is a real, always-available route in the
+      default configuration, not a hypothetical one.
 
 **"Any one route suffices" is the deliberate reading** — the issue does
 not require a SPECIFIC path, only that the model can reach the tool

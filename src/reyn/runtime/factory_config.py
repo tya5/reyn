@@ -48,11 +48,15 @@ class SessionFactoryConfig:
     # shape/role as read_cap_config (#4431's role split): bytes,
     # model-independent, config-driven.
     history_resident_config: Any
-    action_retrieval_config: Any
     embedding_config: Any
     router_config: Any
     retry_config: Any
     chat_tool_use_scheme: str
+    # #4552 PR-3: moved from action_retrieval.universal_wrappers_enabled —
+    # a tool_use.scheme property (only universal-category's own 3 wrapper
+    # functions read it), not a retrieval setting. Same resolution-point
+    # convention as chat_tool_use_scheme just above.
+    chat_universal_wrappers_enabled: bool
     # P5 ADR-0039: the resolved ``observability:`` block (ObservabilityConfig).
     # Opt-in OTLP export surface — reaches every factory site so a session on any
     # frontend attaches the OtelExporter when (and only when) an endpoint is set.
@@ -129,7 +133,6 @@ class SessionFactoryConfig:
             read_cap_config=config.read_cap,
             # #4387 Phase B ③: the resource-bound history-resident cap config.
             history_resident_config=config.history_resident,
-            action_retrieval_config=config.action_retrieval,
             embedding_config=config.embedding,
             router_config=config.llm.router,
             retry_config=config.llm.retry,
@@ -145,6 +148,8 @@ class SessionFactoryConfig:
             chat_tool_use_scheme=resolve_scheme_for_transport(
                 config.tool_use.scheme, Transport(config.tool_use.transport)
             ),
+            # #4552 PR-3: moved from action_retrieval.universal_wrappers_enabled.
+            chat_universal_wrappers_enabled=config.tool_use.universal_wrappers_enabled,
             observability_config=config.observability,
             # #2548 PR-A: build the enabled skill registry once here (filtered to
             # enabled=True) so every factory site threads the same snapshot.

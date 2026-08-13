@@ -185,7 +185,7 @@ def _make_buffer(history: list[ChatMessage]) -> RouterHistoryBuffer:
         events=EventLog(),
         media_store=None,
         router_host=None,
-        action_retrieval=None,
+        universal_wrappers_enabled=False,  # #4552 PR-3
         non_interactive=True,
     )
 

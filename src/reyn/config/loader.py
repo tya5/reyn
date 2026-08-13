@@ -20,7 +20,6 @@ from reyn.config.chat import (  # #1682 #3 cross-section
     _build_tui_config,
 )
 from reyn.config.embedding import (  # #1682 #3 cross-section
-    _build_action_retrieval_config,
     _build_embedding_config,
 )
 from reyn.config.execution import (  # #1682 #3 cross-section
@@ -871,7 +870,6 @@ def load_config(cwd: Path | None = None) -> ReynConfig:
         # block, passed through (parsed by ``load_composers`` at Session
         # construction). None/absent → empty list → no Composer starts.
         composers=merged.get("composers") or [],
-        action_retrieval=_build_action_retrieval_config(merged.get("action_retrieval")),
         cron=_build_cron_config(merged.get("cron")),
         # #2608 H4: OUT-set only — read from ``merged`` (reyn.yaml/reyn.local.yaml),
         # never from the ``.reyn/*.yaml`` hot-reload IN-set (see

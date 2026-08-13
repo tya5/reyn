@@ -65,8 +65,10 @@ def test_walk_forward_ref_robustness() -> None:
     """Tier 2: walk completes without raising (forward-ref eval regression guard).
 
     ReynConfig contains forward-ref string annotations (ExternalTransportRouting,
-    ActionRetrievalConfig, OAuthProviderConfig).  Naive get_type_hints() raises;
-    the robust per-class-module resolver must not.
+    OAuthProviderConfig).  Naive get_type_hints() raises; the robust
+    per-class-module resolver must not. (#4552: ``ActionRetrievalConfig``,
+    a prior example of a forward-ref field here, is deleted along with
+    the `action_retrieval` field it annotated.)
     """
     # Must not raise — if it does, forward-ref resolution is broken.
     nodes = walk_config_schema()

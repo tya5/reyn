@@ -508,8 +508,10 @@ def test_routing_decided_emitted_for_bare_direct_call_when_universal_wrappers_di
 ):
     """Tier 2: #3455 — bare-name direct catalog dispatch emits routing_decided
     even with ``universal_wrappers_enabled=False`` (the opt-out shape an
-    operator gets from ``action_retrieval.universal_wrappers_enabled: false``
-    in reyn.yaml: flat bare-name ``tools=``, no ``invoke_action`` wrapper at
+    operator gets from ``tool_use.universal_wrappers_enabled: false``
+    in reyn.yaml — #4552 PR-3 moved this from
+    ``action_retrieval.universal_wrappers_enabled``: flat bare-name
+    ``tools=``, no ``invoke_action`` wrapper at
     all — the production default, since PR-3b-iv, is actually ``True``).
 
     This is the actual coverage hole #3455 reports. Before the fix, the

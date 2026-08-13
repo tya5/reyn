@@ -73,7 +73,6 @@ aren't.
 | `gateway` | map | PRJ only · **restart** | The `reyn web` gateway's own settings: auth model, WebSocket inbound-frame ceiling, and which surfaces are mounted. Split from the old `web:` key, which conflated this with `web_fetch` above. See below. |
 | `sandbox` | map | PRJ only · **restart** | Backend selection (`backend`), unsupported-platform policy (`on_unsupported`), the enforcement mode (`mode`: compat / strict / custom), and the agent-level sandbox policy (`policy`). See below. |
 | `hooks` | list | both (`.reyn/config/hooks.yaml` side is **hot-reloaded**) | Agent-lifecycle hooks. Four action schemes: `template_push` / `exec` / `exec_capture` / `pipeline_launch`. See below. |
-| `action_retrieval` | map | PRJ only · **restart** | Universal catalog visibility + retrieval settings. See below. |
 | `embedding` | map | PRJ only · **restart** | RAG embedding: the master switch (`enabled`), model classes, batch sizing and concurrency, retry / backoff / timeout, tokenizer, and a cost-warning threshold. See below. |
 | `chat` | map | PRJ only · **restart** | Chat-session runtime knobs: history compaction, reasoning/"thinking" text handling, the interactive renderer (`render_mode`), TUI gutters, body neutralization, and permitted image-URL schemes. See below. |
 | `voice` | map | PRJ only · **restart** | ⚠️ Currently unavailable (no consumer). See below. |
@@ -715,12 +714,16 @@ are presented to and dispatched from the LLM.
 tool_use:
   scheme: enumerate-all       # default
   transport: tool_calls       # default
+  universal_wrappers_enabled: true    # default; set false to opt out
 ```
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | `scheme` | string | `enumerate-all` | Presentation for the top-level chat layer: `category` / `enumerate-all` / `retrieval`. **Default `enumerate-all`** — flat-lists actions so the LLM invokes them directly instead of hallucinating `invoke_action` names (raised direct tool-use ~30%→100%). Set to `universal-category` for a minimal-surface / many-tool catalog (discover-then-call). |
 | `transport` | string | `tool_calls` | How the model expresses a chosen action: `tool_calls` (native tool-calling) or `content_fence` (the action is expressed as fenced code in the reply text — CodeAct). |
+| `universal_wrappers_enabled` | bool | `true` | **#4552 PR-3 — moved here from `action_retrieval.universal_wrappers_enabled`** (architect's ruling: a `tool_use`/presentation-scheme property, not a retrieval setting). For a layer whose `scheme` resolves to `universal-category`, `true` (default) exposes only the 4 universal wrappers (`list_actions`, `search_actions`, `describe_action`, `invoke_action`) in that layer's `tools=`.  Legacy per-kind tools (`invoke_skill`, `call_mcp_tool`, etc.) are no longer surfaced to the LLM on that layer but remain available as wrapper backing handlers.  `search_actions` is gated separately by [`embedding.enabled`](#embedding-block) (#4564 — this flag has NO effect on `search_actions` visibility in any scheme).  Set `false` to disable the wrapper surface entirely for that layer (= legacy tools become the only addressing path again).  Does not affect a layer whose `scheme` is `enumerate-all`/`retrieval` — those never consult this flag. Setting it explicitly `true` while `scheme` isn't `universal-category` has no effect; `reyn config validate` reports that combination (#4231(C)). |
+
+See [Concepts: universal catalog](../../concepts/tools-integrations/universal-catalog.md) for the full `list_actions` / `describe_action` / `invoke_action` wrapper semantics (category discovery, error-recovery `suggestions`, weak-model landing design).
 
 Every combination of the axis values above is implemented today:
 
@@ -1215,95 +1218,6 @@ deny").
 > and stops the warning.
 
 See [Reference: control-ir — `sandboxed_exec`](../runtime/control-ir.md#sandboxed_exec) for the op schema and backend selection details.
-
-## `action_retrieval` block
-
-Universal catalog visibility + retrieval settings.  Scheme *selection* is generalized by the [`tool_use` block](#tool_use-block) below — `tool_use.scheme` defaults to `enumerate-all` (not this wrapper path); set `tool_use.scheme: category` to select the wrapper scheme this flag configures (`category` is the presentation-axis name; it resolves to the registered `universal-category` scheme). When the chat layer's scheme resolves to `universal-category`, this flag governs its presentation. Provides **universal catalog wrappers** (`list_actions` / `describe_action` / `invoke_action`) for uniform browse / describe / invoke across all skill / agent / MCP / file / memory / RAG categories. `universal_wrappers_enabled` defaults on for direct callers of the legacy flag path; operators who want the prior flat `tools=` shape for those callers can opt out with `universal_wrappers_enabled: false`.
-
-```yaml
-action_retrieval:
-  universal_wrappers_enabled: true    # default; set false to opt out
-embedding:
-  enabled: false                      # default (off); set true to opt in to search_actions
-  # default_class: standard           # which embedding class to use when enabled
-```
-
-### `action_retrieval` fields
-
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `universal_wrappers_enabled` | bool | `true` | For a layer whose `tool_use` scheme resolves to `universal-category`, `true` (default) exposes only the 4 universal wrappers (`list_actions`, `search_actions`, `describe_action`, `invoke_action`) in that layer's `tools=`.  Legacy per-kind tools (`invoke_skill`, `call_mcp_tool`, etc.) are no longer surfaced to the LLM on that layer but remain available as wrapper backing handlers.  `search_actions` is gated separately by [`embedding.enabled`](#embedding-block).  Set `false` to disable the wrapper surface entirely for that layer (= legacy tools become the only addressing path again).  Does not affect a layer whose scheme is `enumerate-all` (the `chat` layer's own default) — that scheme never consults this flag. |
-
-> **#4552 PR-2 (2026-08) — `mode` retired.** The prior `mode: "default" |
-> "minimal" | "performance"` field was always free-form and unread (no
-> caller ever layered semantics on it) — removed, no alias. A `reyn.yaml`
-> still carrying it gets the standard unknown-key tolerance (ignored, not
-> a parse error).
-
-> **#4552 (2026-08) — hot-list retired.** The prior `hot_list_n` / `hot_list_seed`
-> fields (a top-N freq+recency direct-alias projection) are **removed, no
-> alias** — owner directive: the mechanism's role is gone, superseded by
-> `list_actions` as the canonical discovery path. A `reyn.yaml` still
-> carrying either key gets the standard unknown-key tolerance (ignored, not
-> a parse error) rather than a migration path — there is nothing left to
-> migrate TO.
-
-> **FP-0066 §7 (2026-07) — config clean-break.** The prior fragmented gate
-> `action_retrieval.embedding_class` (which conflated the on/off decision with
-> which embedding class to use) is **retired, no alias**. It splits into two
-> orthogonal fields: [`embedding.enabled`](#embedding-block) (bool, default
-> `false` — the single opt-in switch for the whole embedding-backed
-> semantic-discovery layer: action retrieval `search_actions` + an
-> unconditional background build of the FP-0066 P3b repo-knowledge index
-> (`knowledge_repo_doc`/`knowledge_repo_src` — see the
-> [field table below](#embedding-fields) for the full breakdown; this is
-> distinct from, and does not require, the separate FP-0063 `rag` plugin's
-> own `rag_ingest`) and `embedding.default_class` (string,
-> default `"standard"` — already existed; unaffected by this change). See
-> [`embedding` block](#embedding-block) below for the full field table.
-
-### Quick-start — opt in to semantic `search_actions`
-
-`search_actions` is off by default (`embedding.enabled: false`) — semantic search is opt-in project-wide. To turn it on:
-
-```yaml
-# reyn.yaml — API-backed, no local install (needs OPENAI_API_KEY)
-embedding:
-  enabled: true
-  # default_class: standard   # default; uses openai/text-embedding-3-small
-```
-
-```yaml
-# reyn.yaml — local model behind a self-run litellm proxy (no API key);
-# export LITELLM_API_BASE before starting reyn — see the Guide for the
-# proxy config.yaml + naming rule
-embedding:
-  enabled: true
-  default_class: local
-  classes:
-    local:
-      model: openai/nomic-embed-text
-```
-
-See [Guide: enable semantic search](../../guide/for-users/enable-semantic-search.md) for the full walkthrough, including offline/air-gapped guidance.
-
-### Quick-start — opt out
-
-```yaml
-# reyn.yaml — preserve the legacy tools= shape
-action_retrieval:
-  universal_wrappers_enabled: false
-```
-
-When enabled (default), the chat router's `tools=` includes the wrappers at the tail.  The LLM can call:
-
-- `list_actions(category=["mcp"])` → enumerate available actions in a category as qualified names (e.g. `mcp_call_tool`)
-- `describe_action(action_name="mcp_call_tool")` → fetch the input schema
-- `invoke_action(action_name="mcp_call_tool", args={...})` → execute via the existing handler
-
-Every category enumerates a fixed set of verbs — a resource (a stored memory, an indexed corpus, an MCP tool, a registered pipeline) is an argument to a verb, not an action of its own, so the enumerated set does not grow with what you have accumulated.  Discover resources with the category's discovery verb (`list_memory`, `rag_operation__list_sources`, `list_mcp_tools`, `pipeline_list`) and pass the id as an argument.  Unknown action names return a structured error with `suggestions` ranked by string similarity, so the LLM recovers in one turn.
-
-See Concepts: architecture (architecture doc removed) for the tool registry / dispatch background.
 
 ## `agent_id`
 
@@ -1975,7 +1889,9 @@ RAG embedding model classes and batch settings.
 
 `enabled` is the one switch and it is **off by default** — nothing else in this
 block turns embedding on. Once it is on, the built-in defaults cover the OpenAI
-path, so a fresh install with `OPENAI_API_KEY` needs no further changes.
+path, so a fresh install with `OPENAI_API_KEY` needs no further changes. See
+[Guide: enable semantic search](../../guide/for-users/enable-semantic-search.md)
+for the full opt-in walkthrough, including offline/air-gapped guidance.
 
 > **Non-OpenAI embeddings behind a LiteLLM proxy.** If your embedding
 > class routes through a LiteLLM proxy to a non-OpenAI provider (e.g. an

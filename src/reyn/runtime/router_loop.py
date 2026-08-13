@@ -576,8 +576,10 @@ class RouterLoopHost(RouterLoopCore, Protocol):
 
     def get_universal_wrappers_enabled(self) -> bool:
         """Return whether the FP-0034 universal catalog wrappers should
-        appear in tools=. Mirrors ``action_retrieval.universal_wrappers_enabled``
-        from reyn.yaml. Default False preserves the prior tools= shape."""
+        appear in tools=. Mirrors ``tool_use.universal_wrappers_enabled``
+        from reyn.yaml (#4552 PR-3: moved from
+        ``action_retrieval.universal_wrappers_enabled``). Default False
+        preserves the prior tools= shape."""
         ...
 
     def get_action_embedding_index(self) -> Any:

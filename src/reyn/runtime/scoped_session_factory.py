@@ -70,7 +70,7 @@ def build_scoped_chat_session(
     allowed_mcp: list[str] | None,  # per-profile MCP allow-list
     # ── per-session config — the UNIFORM, reyn.yaml-derived bundle (#2093) ──
     # All previously-individual uniform args (sandbox_config / multimodal_config
-    # / action_retrieval_config / embedding_config / router_config / retry_config /
+    # / embedding_config / router_config / retry_config /
     # chat_tool_use_scheme) now arrive as ONE bundle, built
     # once per frontend via SessionFactoryConfig.from_config — so a new uniform arg is
     # added in one place and reaches all five factory sites (completeness-by-
@@ -165,11 +165,11 @@ def build_scoped_chat_session(
         web_fetch_config=factory_config.web_fetch_config,  # #4274
         read_cap_config=factory_config.read_cap_config,  # #4381 PR-5
         history_resident_config=factory_config.history_resident_config,  # #4387 Phase B ③
-        action_retrieval_config=factory_config.action_retrieval_config,
         embedding_config=factory_config.embedding_config,
         router_config=factory_config.router_config,
         retry_config=factory_config.retry_config,  # #1835
         chat_tool_use_scheme=factory_config.chat_tool_use_scheme,
+        chat_universal_wrappers_enabled=factory_config.chat_universal_wrappers_enabled,  # #4552 PR-3
         pipeline_registry=factory_config.pipeline_registry,  # #2575
         observability_config=factory_config.observability_config,  # P5 ADR-0039
         **base,

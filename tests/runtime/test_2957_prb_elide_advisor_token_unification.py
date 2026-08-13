@@ -69,7 +69,7 @@ def _make_pair(history: list[ChatMessage], *, media_store=None, use_chars4: bool
         events=events,
         media_store=media_store,
         router_host=None,
-        action_retrieval=None,
+        universal_wrappers_enabled=False,  # #4552 PR-3
         non_interactive=True,
     )
     advisor = ContextBudgetAdvisor(

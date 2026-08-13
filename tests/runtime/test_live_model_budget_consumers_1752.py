@@ -78,7 +78,7 @@ def test_router_history_buffer_reads_model_fn_live():
         events=None,
         media_store=None,
         router_host=None,
-        action_retrieval=None,
+        universal_wrappers_enabled=False,  # #4552 PR-3
         non_interactive=False,
     )
 

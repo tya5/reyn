@@ -896,11 +896,11 @@ def build_tools(
     # ── I. Universal catalog wrappers (FP-0034 PR-3b-iv default-on) ──────────
     #
     # When universal_wrappers_enabled=True (= production default since
-    # PR-3b-iv flipped ActionRetrievalConfig), append the 3 universal
-    # wrappers (list_actions / describe_action / invoke_action) at the
-    # END of the specs list per §D21.  The flag stays False for direct
-    # callers that don't pass an ActionRetrievalConfig (= LLMReplay
-    # fixture-safe path).
+    # PR-3b-iv, now reyn.yaml's tool_use.universal_wrappers_enabled per
+    # #4552 PR-3), append the 3 universal wrappers (list_actions /
+    # describe_action / invoke_action) at the END of the specs list per
+    # §D21.  The flag stays False for direct callers that don't pass it
+    # (= LLMReplay fixture-safe path).
     #
     # search_actions is visibility-gated per §D14: only exposed when
     # ``embedding.enabled: true`` (FP-0066 §7 — operator opt-in, clean-break
