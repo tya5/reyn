@@ -466,6 +466,19 @@ surfaced through the normal error path rather than a silent `None`
 degrade. Setting `embedding.enabled` to `false` opts out of
 `search_actions` entirely.
 
+**#4156 split `embedding.enabled` further**: it used to have two jobs at
+once — "may reyn call the embedding provider" AND "what does reyn embed"
+(the action catalog `search_actions` depends on, bundled with an
+unconditional FP-0066 P3b repo-wide knowledge index — no way to get one
+without the other, which burned an operator's TPM budget on a repo-scale
+build they never asked for). `embedding.enabled` is now purely the
+provider/cost gate; `embedding.index.actions` (default **on**) is what
+actually builds the ~10-entry catalog `search_actions` reads, and
+`embedding.index.repo_knowledge` (default **off**) is the separate,
+much larger opt-in this section's `embedding.enabled: true` step does
+NOT also turn on. See [`embedding.index`](../../reference/config/reyn-yaml.md#embedding-fields)
+in the config reference.
+
 ## What stays out of Phase 1
 
 The structural surface is complete. Discovery features landed and

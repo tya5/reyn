@@ -28,7 +28,7 @@ agent のツールを LLM にどのように見せるか、そして LLM の呼�
 
 ### `retrieval`
 
-ツール上の RAG。カタログ全体を提示する代わりに**検索ツール**を提示し、LLM が検索するとマッチしたアクションだけが呼び出し可能なツールとして再提示されます。`embedding.enabled: true`（FP-0066 §7）+ 設定済みの埋め込みプロバイダーが必要です（検索はセマンティック）。マッチングがセマンティックなため品質は埋め込みインデックスに依存し、安定した well-indexed カタログに適しています。
+ツール上の RAG。カタログ全体を提示する代わりに**検索ツール**を提示し、LLM が検索するとマッチしたアクションだけが呼び出し可能なツールとして再提示されます。`embedding.enabled: true`（FP-0066 §7）+ 設定済みの埋め込みプロバイダーが必要です（検索はセマンティック）。加えて `embedding.index.actions`（既定 **on** — このスキームが読む ~10件のカタログindex。通常のケースでは追加設定不要、[`embedding.index`](../../reference/config/reyn-yaml.md#embedding-fields) 参照）も必要です。マッチングがセマンティックなため品質は埋め込みインデックスに依存し、安定した well-indexed カタログに適しています。
 
 **使いどころ：** ツールセットが**非常に大きく**、全件を提示するとトークンコストが大きすぎる場合。検索で候補を絞ってから呼び出します。
 
@@ -88,7 +88,7 @@ result = invoke_action(action_name="read_file", args={"path": "README.md"})
 
 **使いどころ:** カタログが大きくカテゴリからのブラウズが入口として適切でなく、
 かつ弱い / 低コストモデルで JSON tool call よりコードを書かせた方が良い場合。
-他の `retrieval` セルと同様 `embedding.enabled: true` が必要です。埋め込み
+他の `retrieval` セルと同様 `embedding.enabled: true`（加えて `embedding.index.actions`、既定 on — 上の `retrieval` 節を参照）が必要です。埋め込み
 インデックスが未準備のときは、空を返す検索を見せる代わりにフラットカタログの
 列挙へフォールバックします（`tool_calls` 側と同じ degrade・同じ理由 — インデックス
 の無い検索はモデルを空結果でスタックさせます）。

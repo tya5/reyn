@@ -74,7 +74,7 @@ embedding:
   cost_warn_threshold: 10000
 ```
 
-`embedding.enabled` (default `false`, opt-in) gates the embed op and everything built on it — see [proposal 0066 §7](../../deep-dives/proposals/0066-retrieval-two-groups-two-axes.md#7-opt-in-embeddingenabled-symmetric-model).
+`embedding.enabled` (default `false`, opt-in) gates the embed op itself — see [proposal 0066 §7](../../deep-dives/proposals/0066-retrieval-two-groups-two-axes.md#7-opt-in-embeddingenabled-symmetric-model). #4156 later split WHICH workloads that gate actually turns on: `embedding.index.actions` (default **on**) builds the ~10-entry action catalog `search_actions` reads, and `embedding.index.repo_knowledge` (default **off**) is the separate, much larger FP-0066 P3b repo-wide knowledge index — see [`embedding.index`](../../reference/config/reyn-yaml.md#embedding-fields).
 
 `timeout` is the per-attempt deadline (seconds) — how long reyn waits for one embedding attempt. It exists because a stalled embedding endpoint would otherwise be capped only by litellm's own `request_timeout` default of 6000s per attempt, which an operator cannot tell from a hang. `<= 0` opts out.
 

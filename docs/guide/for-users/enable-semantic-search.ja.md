@@ -4,6 +4,8 @@
 
 > **TL;DR**: `search_actions` は **デフォルトで無効**（semantic search はプロジェクト全体で opt-in の方針）。すでに埋め込み API キーがある場合は `reyn secret set OPENAI_API_KEY` のあと `reyn.yaml` で `embedding.enabled: true` を設定するだけ — proxy も追加インストールも不要です。API キーなしでローカルモデルを使いたい場合は **litellm proxy** の背後にモデルを立て、reyn からそこを指してください（後述の [経路 B](#経路-b-埋め込み-api-契約なし-litellm-proxy-ローカルモデル) を参照）。
 
+> **`embedding.enabled` だけで構築されるのはこのガイドのタイトル通りの範囲だけです。** 以前はこのフラグが repo-knowledge index（リポジトリ内のすべてのドキュメント・ソースファイル）の background build も無条件でスケジュールしていました — この結合が `search_actions` の ~10 件の action catalog だけを望んでいた運用者に実際の 5M-TPM インシデントを起こしました。#4156 がこの 2 つを分離: `embedding.enabled` は現在 purely provider/cost ゲートで、`embedding.index.repo_knowledge`（既定 **off**）が repo 全体 build の独立した opt-in です。このガイド自身の `embedding.enabled: true` の手順は action catalog だけを構築します（`embedding.index.actions` は既定 **on**）— repo-knowledge index も欲しい場合は config reference の [`embedding.index`](../../reference/config/reyn-yaml.md#embedding-fields) を参照してください。
+
 ## どんなときに欲しくなるか
 
 `search_actions` は次の違いを生みます:

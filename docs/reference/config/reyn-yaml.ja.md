@@ -394,7 +394,8 @@ tool_use:
 `transport: content_fence` で到達します — `enumerate-all` と同じ全件フラット
 カタログを、ネイティブ tool call の代わりにフェンス付きコードとして表現した
 ものであり、独立した `scheme` 名ではありません。`retrieval` はさらに
-`embedding.enabled: true` を要求します（FP-0066 §7）。
+`embedding.enabled: true`（FP-0066 §7）に加え `embedding.index.actions`
+（既定 **on** ── 通常のケースでは追加設定不要、上記の `embedding` フィールド参照）を要求します。
 
 `scheme: category` + `transport: content_fence` は CodeAct の小サーフェス版
 です。モデルはフェンス付き Python を書きますが、見せられる関数はカタログの
@@ -1047,7 +1048,10 @@ embedding:
 
 | フィールド | 型 | デフォルト | 説明 |
 |-------|------|---------|-------------|
-| `default_class` | 文字列 | `standard` | 埋め込み op でクラス未指定時に使用するクラス。`classes` のキーである必要があります。 |
+| `enabled` | bool | `false` | **provider/cost ゲート ── 意味は 1 つだけ**（#4156）: reyn が埋め込みプロバイダーを呼んでよいか。既定 `false`（opt-in／安全側のデフォルト ── 埋め込みにはプロバイダーとコストが要る）。廃止された `action_retrieval.embedding_class` ゲートの clean-break 後継（alias 無し）── on/off の決定はここにあり、モデルクラスは別の `default_class` フィールド（下記）で無関係。**対称モデル**: `enabled: false` は `index.*` に関わらず以下すべてを隠す ── 非セマンティックな discovery（`list_actions` 等）と load/invoke 系 verb（`invoke_action` 等）は影響を受けません。`embedding.enabled` が `false` のとき、`embed` op は pre-flight してこのキーを名指しした `status: "blocked"` 結果を返します（silent な no-op でも不透明なプロバイダーエラーでもありません）。#4156 以前は、この単一フラグが「何を embed するか」も決めていました（action catalog を無条件の repo 全体 index build と束ねており、両者を分離する方法が無かった）── その決定は現在 `index`（下記）にあります。 |
+| `index.actions` | bool | `true` | #4156 ── `enabled: true` のとき、`search_actions` が依存する ~10 件の action/mcp/pipeline catalog index を構築。TPM への寄与は無視できるほど小さい（固定・小規模な母集団）── #4156 以前の `search_actions` 体験をこのフィールドに一切触れない運用者にも変えないよう、既定で on。 |
+| `index.repo_knowledge` | bool | `false` | #4156 ── `enabled: true` のとき、FP-0066 P3b の**repo-knowledge index**（`knowledge_repo_doc` + `knowledge_repo_src` ── 到達可能なすべての `.md` doc と他のソースファイル、チャンク化 ── #4156 起票時点でこのリポジトリで ~1,609 チャンク／~4.86M トークンと実測、リポジトリ規模に比例し固定ではない）を構築。**router-loop の毎ターン**スケジュールされる（`sync_repo_ingest_background`、index が clean なら no-op）。**既定 `false`** ── これは owner の 5M TPM 予算を一度のバーストで使い切った workload（~10 件の action catalog だけを望んでいたのに）── TPM は tokens-per-minute の上限でありバッチ化では削減できず、index しないことだけが総トークン量を減らせます。このフィールドが `false` で、あるターンが repo-knowledge index を ingest していたはずの場合、reyn はプロセスごとに 1 行ログを出します（`repo knowledge indexing is off (embedding.index.repo_knowledge: false, the default) — ...`）── 黙ってスキップしません。 |
+| `default_class` | 文字列 | `standard` | 埋め込み op でクラス未指定時に使用するクラス（`enabled: true` のときのみ使用）。`classes` のキーである必要があります。 |
 | `batch_size` | int | `100` | 埋め込み API 呼び出しごとのテキスト数。有効範囲: 1–2048。 |
 | `max_concurrent_batches` | int | `1` | 並列バッチ呼び出し数。有効範囲: 1–10。1 より大きい値は受け入れますが、並列パスが有効になるまで警告ログが出ます。 |
 | `max_retries` | int | `3` | バッチ呼び出しごとの一時的エラーリトライ数。有効範囲: 0–10。 |
