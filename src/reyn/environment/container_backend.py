@@ -555,6 +555,18 @@ class DockerEnvironmentBackend:
         """
         return None
 
+    def probe_binary(self) -> "list[str] | None":
+        """#4364 PR-2: always ``None`` — architect's own worked example for
+        why this method exists at all (#4364 issue thread): the image an
+        operator configured is not something this backend can assume ships
+        ``true`` (or any other specific binary) at a known path, and
+        probing would mean a HOST-side ``shutil.which`` lookup that has no
+        bearing on what the CONTAINER's own filesystem actually contains.
+        Same "measure, don't assert" reasoning ``self_test`` above already
+        states for this backend: a guess here would be exactly the kind of
+        claim-without-witness this whole feature exists to avoid."""
+        return None
+
     def session_artifact_outside_write_scope(self, policy: SandboxPolicy) -> bool:
         """Vacuously True (#4434): neither ``wrap_command`` nor ``run`` below
         writes a policy-derived representation to disk — the policy travels

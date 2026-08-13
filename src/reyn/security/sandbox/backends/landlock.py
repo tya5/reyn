@@ -384,6 +384,16 @@ class LandlockBackend:
         self._available = True
         return True
 
+    def probe_binary(self) -> "list[str] | None":
+        """#4364 PR-2: ``true`` via the shared lookup — most Linux distros
+        ship it at ``/usr/bin/true``, a few at ``/bin/true``, and
+        ``shutil.which`` covers a PATH-overridden install; ``None`` if
+        none resolve (a minimal/container image without it — measured,
+        never assumed present)."""
+        from reyn.security.sandbox.backend import find_posix_true_binary  # noqa: PLC0415
+
+        return find_posix_true_binary()
+
     def session_artifact_outside_write_scope(self, policy: SandboxPolicy) -> bool:
         """Vacuously True (#4434, architect ruling): Landlock DOES derive a
         policy representation once per session now
