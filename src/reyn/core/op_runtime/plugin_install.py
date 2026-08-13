@@ -73,7 +73,10 @@ Pipeline (one-shot, no sub-phases):
    ``plugin_install_completed``.
 
 Audit-events emitted (at minimum): ``plugin_install_started`` /
-``_copied`` / ``_registered`` / ``_completed``.
+``_copied`` / ``_registered`` / ``_completed``, plus one
+``mcp_server_install_skipped`` (#4580) per declared MCP server that a
+probe failure or a denied MCP-axis permission gate dropped — see
+``_register_mcp``'s own docstring for the shape this closes.
 
 **Fail-fast, never runtime-fetch** (#3060 by-construction requirement,
 preserved across the #3209 redesign): a server whose ``command`` names an
@@ -625,18 +628,33 @@ def _build_mcp_entries(mcp_json: Path) -> dict:
 async def _register_mcp(
     plugin_root: Path, plugin_name: str,
     ctx: OpContext, project_root: Path,
-) -> list[str]:
+) -> dict:
     """Register every server declared in the plugin's root ``.mcp.json``
     into ``.reyn/config/mcp.yaml`` — mirrors ``mcp_install_local``'s shape
     (probe-then-commit on a live per-session reloader; deferred write
     otherwise), tagged with ``plugin_id`` (§3.7) so ``plugin_uninstall`` can
     find these entries again. The write is gated by ``require_file_write``
     on the mcp.yaml path (#3088), mirroring the sibling skill/pipeline
-    register steps' own config-write gates."""
+    register steps' own config-write gates.
+
+    #4580: returns ``{"registered": [<name>, ...], "skipped": [{"name":
+    ..., "reason": ...}, ...]}`` — before this, a DECLARED server that
+    failed its probe (or was denied at the MCP-axis permission gate) was
+    silently dropped: no event, not in the return value, no count
+    anywhere the operator (or a test) could see the difference between
+    "declared 3, registered 3" and "declared 3, registered 2". The
+    doc-facing instruction a bundled plugin's own ``requirements.txt``
+    gives ("point the registered ``command`` at your venv's interpreter")
+    presupposes an entry exists to point AT — when the probe never
+    passes, none was ever written, and install still reported success.
+    Each skip also gets its own ``mcp_server_install_skipped`` audit-event
+    (``reason`` = ``"probe_failed"`` or ``"permission_denied"``) — never a
+    silent ``continue``. This does NOT make the server work (#3209: reyn
+    does not manage venvs) — it only makes the drop visible."""
     mcp_json = plugin_root / ".mcp.json"
     entries = _build_mcp_entries(mcp_json)
     if not entries:
-        return []
+        return {"registered": [], "skipped": []}
 
     from reyn.core.events.config_recovery import record_config_generation
     from reyn.core.op_runtime.mcp_install import probe_mcp_server
@@ -663,6 +681,7 @@ async def _register_mcp(
     servers = data.setdefault("mcp", {}).setdefault("servers", {})
 
     registered: list[str] = []
+    skipped: list[dict] = []
     for name, entry in entries.items():
         is_addition = is_pure_addition(name, servers)
         reloader = getattr(ctx, "hot_reloader", None)
@@ -682,20 +701,35 @@ async def _register_mcp(
                     contextual=getattr(ctx, "contextual_permission", None),
                 )
             except PermissionError:
-                # A denied MCP-axis gate is treated the same as any other
-                # probe failure — skip this one server (nothing written for
-                # it), not the whole plugin install; the operator already
-                # saw a decision-enabling deny (require_mcp's message) via
-                # whatever surfaced the prompt/log for this call.
+                # #4580: a denied MCP-axis gate is treated the same AS AN
+                # OUTCOME as any other probe failure — skip this one server
+                # (nothing written for it), not the whole plugin install.
+                # Previously a bare ``continue`` here: the operator saw a
+                # decision-enabling deny at the GATE (require_mcp's own
+                # message), but nothing on the INSTALL RESULT side recorded
+                # that this declared server never made it in — a different
+                # surface than the one the comment used to justify silence
+                # by pointing at.
+                skipped.append({"name": name, "reason": "permission_denied"})
                 continue
             if probe_err is not None:
-                # Probe-then-commit: skip this one server (nothing written
-                # for it) rather than fail the whole plugin install — other
-                # capabilities may still be perfectly usable.
+                # #4580: probe-then-commit — skip this one server (nothing
+                # written for it) rather than fail the whole plugin install;
+                # other capabilities may still be perfectly usable. Now
+                # RECORDED rather than silently dropped (see this function's
+                # own docstring for the full "declared but never registered"
+                # shape this closes).
+                skipped.append({"name": name, "reason": "probe_failed", "error": str(probe_err)})
                 continue
         entry["plugin_id"] = plugin_name
         servers[name] = entry
         registered.append(name)
+
+    for skip in skipped:
+        ctx.events.emit(
+            "mcp_server_install_skipped", server_id=skip["name"], server_name=skip["name"],
+            reason=skip["reason"], source=f"plugin_install:{plugin_name}",
+        )
 
     if registered:
         _write_yaml(config_path, data)
@@ -713,7 +747,7 @@ async def _register_mcp(
             # as an indistinguishable repeat of another mcp_install_local reload.
             detail=", ".join(registered),
         )
-    return registered
+    return {"registered": registered, "skipped": skipped}
 
 
 # ---------------------------------------------------------------------------
@@ -892,12 +926,20 @@ async def handle(op: PluginInstallIROp, ctx: OpContext) -> dict:
         manifest_path = manifest_path_for(plugin_root)
         reloaded_manifest = load_plugin_manifest(plugin_root) if manifest_path.exists() else manifest
         registered: dict[str, list] = {"mcp": [], "pipelines": [], "skills": []}
+        # #4580: declared-vs-registered diff, per capability kind. Only "mcp"
+        # is ever non-empty today — pipelines/skills register unconditionally
+        # (no probe-then-commit step that can drop one), so there is nothing
+        # for this axis to record there yet; the keys still exist so a
+        # consumer never has to special-case a missing key.
+        skipped: dict[str, list] = {"mcp": [], "pipelines": [], "skills": []}
 
         for cap in reloaded_manifest.capabilities:
             if cap.kind == "mcp":
-                registered["mcp"] = await _register_mcp(
+                mcp_result = await _register_mcp(
                     plugin_root, safe_name, ctx, project_root,
                 )
+                registered["mcp"] = mcp_result["registered"]
+                skipped["mcp"] = mcp_result["skipped"]
             elif cap.kind == "pipelines":
                 pipelines_dir = plugin_root / "pipelines"
                 files = (
@@ -939,6 +981,7 @@ async def handle(op: PluginInstallIROp, ctx: OpContext) -> dict:
             "source_kind": source_kind,
             "capabilities": sorted(reloaded_manifest.capability_kinds),
             "registered": registered,
+            "skipped": skipped,  # #4580: declared-but-dropped, per capability kind
         }
 
 
