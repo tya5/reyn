@@ -420,6 +420,27 @@ def unknown_config_keys(
     is the one example — #3823's own vocabulary, folded in rather than
     duplicated).
 
+    **#4515 incident**: recursing into a namespace assumes the RAW config
+    shape mirrors the DATACLASS shape exactly, one nesting level per
+    field. That broke for ``external_transports`` — its field type
+    (``ExternalTransportRouting``) wraps a single ``transports: dict``
+    field for the wrapper's own ``.get(name)`` convenience, but the real
+    reyn.yaml has no ``transports:`` key at all (the operator writes
+    ``external_transports: {broker: {...}}`` directly). The walk
+    registered the dict-leaf one level too deep
+    (``external_transports.transports``), so EVERY real transport name
+    matched none of ``namespaces``/``dict_leaves``/``scalar_leaves`` and
+    was reported "not recognized ... NOT APPLIED" — while
+    ``loader.py``'s ``_build_external_transports_config`` was, in fact,
+    applying it correctly the whole time. A false "not applied" is worse
+    than no warning: an operator reads it as "this setting does
+    nothing" and deletes working config (architect hit this directly
+    setting up reyn-gpt, #4501). Fixed via ``field(metadata={'dict_leaf':
+    True})`` (see :func:`_is_dict_leaf_override`) — a reusable escape
+    hatch for the whole SHAPE class (a wrapper dataclass around one dict
+    field whose own name never appears in real config), not a
+    single-field patch.
+
     A ``None`` hint means "this key matches none of the known keys — see
     ``reyn config fields``" (a typo, or a key that never existed at all).
     A :class:`RenamedKeyHint` means the key MOVED (see
@@ -723,8 +744,23 @@ def _walk(
         dotkey = f"{prefix}.{fname}" if prefix else fname
         inner = _unwrap_optional(ftype)
 
-        if _is_dict_type(inner):
+        if _is_dict_type(inner) or _is_dict_leaf_override(dc_field):
             # Free-form dict leaf — operator may set arbitrary sub-keys.
+            # #4515: `_is_dict_leaf_override` covers a field whose TYPE is a
+            # dataclass wrapper around exactly one dict field (e.g.
+            # `ExternalTransportRouting(transports: dict)`) but whose REAL
+            # reyn.yaml shape has no nested wrapper key — the operator writes
+            # `external_transports: {broker: {...}}` directly, never
+            # `external_transports: {transports: {broker: {...}}}`. Without
+            # this override the recursion below registers the dict-leaf as
+            # `external_transports.transports` (matching the DATACLASS, not
+            # the real config), so every real transport name looks unknown —
+            # a false "NOT APPLIED" warning on config that IS applied (see
+            # `unknown_config_keys`'s own docstring for the full incident).
+            # Emitted at THIS field's own dotkey (the wrapper), never the
+            # inner field's — the wrapper class itself stays unchanged (its
+            # `.transports`/`.get()` convenience API is a separate concern
+            # from what the operator-facing schema shape is).
             desc = _field_desc(dc_field)
             default = _field_default(dc_field)
             nodes.append(SchemaNode(
@@ -771,4 +807,24 @@ def _is_schema_internal(f: dataclasses.Field) -> bool:  # type: ignore[type-arg]
     meta = getattr(f, "metadata", None)
     if meta and isinstance(meta, typing.Mapping):
         return bool(meta.get("schema_internal", False))
+    return False
+
+
+def _is_dict_leaf_override(f: dataclasses.Field) -> bool:  # type: ignore[type-arg]
+    """True when a dataclass-typed field should be schema-classified as a
+    free-form dict leaf (#4515) rather than recursed into as a namespace.
+
+    A field flags itself with ``field(metadata={'dict_leaf': True})`` when
+    its TYPE is a wrapper dataclass around exactly one dict field but its
+    REAL reyn.yaml shape has no nested key matching that wrapped field's
+    name — the wrapper exists for the TYPE's own consumers (a
+    ``.get(name)`` convenience method, e.g.), not because the operator
+    ever writes that extra nesting level. Without this override,
+    ``_walk`` would recurse into the wrapper and register the dict-leaf
+    one level too deep, so every real operator-written sub-key falsely
+    reads as unknown (see :func:`unknown_config_keys`'s own docstring for
+    the #4515 incident this fixes)."""
+    meta = getattr(f, "metadata", None)
+    if meta and isinstance(meta, typing.Mapping):
+        return bool(meta.get("dict_leaf", False))
     return False
