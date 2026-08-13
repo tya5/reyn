@@ -462,7 +462,7 @@ def _build_auth_config(raw: object) -> AuthConfig:
 
 @dataclass
 class AuditEventsConfig:
-    """`audit_events:` — audit log rotation policy (PR20).
+    """`audit_events:` — audit log rotation + automatic purge policy (PR20, #4479).
 
     #4174 T5: renamed from `events:` / `EventsConfig` — bare "event" is the
     exact shape CLAUDE.md's cross-cutting-band note bans ("event" is three
@@ -475,15 +475,46 @@ class AuditEventsConfig:
     exceeds `max_age_seconds`. Setting both to 0 disables rotation, which
     is the single-run mode (1 run = 1 file).
 
-    `cleanup_period_days` documents how long closed files should be kept
-    before `reyn events purge` may delete them. `null` (default) disables
-    automatic deletion — purge only runs when invoked explicitly. Setting
-    `0` is rejected (it is a footgun: Claude Code historically treated
-    `0` as "disable transcript writes" and surprised users).
+    **Automatic purge (#4479, owner ruling 2026-08-13)** — two independent
+    axes, EITHER firing deletes a file (owner: "日数orサイズ"; `and` would
+    mean disabling one axis silently disables the other too):
+
+    - ``cleanup_period_days`` (default 30): files whose filename start-date
+      is older than `today - cleanup_period_days` are purge targets.
+      **This is a borrowed CONVENTION, not a measurement** — no local-CLI
+      precedent measures `.reyn/events`'s own growth rate; 30 borrows the
+      nearest comparable tool's own default (Claude Code's own
+      `cleanupPeriodDays`, another local-agent CLI).
+    - ``max_disk_usage_percent`` (default 10): once the events directory's
+      own total size exceeds this percent of the filesystem's CURRENT free
+      space, oldest files are purged until back under. **Relative, not
+      absolute** — an absolute byte ceiling would need reyn's own measured
+      growth rate to set safely (unmeasured); a relative ceiling doesn't.
+      10 borrows systemd-journald's own `SystemMaxUse` convention for the
+      identical reason — again borrowed, not derived from reyn's own data.
+
+    **`0` on either axis disables that axis** (deliberately, an explicit
+    reversal of THIS class's earlier stance on `cleanup_period_days`, which
+    used to REJECT `0` as a footgun — see below). Both axes documented
+    here plainly rather than left ambiguous: Claude Code carries an open
+    report of its own `cleanupPeriodDays` knob being unclear about what
+    `0` means, and this is that precedent deliberately not repeated.
+
+    Purge runs automatically (fire-and-forget, off the event loop) at
+    session start and at rotation — see `EventStore`/`core/events/
+    event_purge.py` for the trigger + the actual selection/deletion logic,
+    which `reyn events purge` (the CLI command) also calls, so there is
+    exactly one place that decides "which files are purge targets."
+
+    #4479 drift note: this docstring previously said `cleanup_period_days`
+    defaulted to `None` (disabled) and rejected `0`. Both are now the
+    OPPOSITE of what this field does — kept only as a historical note in
+    case an old comment elsewhere still cites the rejected-0 behavior.
     """
     max_bytes: int = 10 * 1024 * 1024     # 10 MB
     max_age_seconds: int = 24 * 60 * 60   # 1 day
-    cleanup_period_days: int | None = None
+    cleanup_period_days: int = 30
+    max_disk_usage_percent: float = 10.0
 
 
 _SANDBOX_BACKENDS = {"auto", "seatbelt", "landlock", "noop"}
@@ -915,25 +946,38 @@ def _build_fs_watch_config(raw: object) -> FsWatchConfig:
 
 
 def _build_audit_events_config(raw: object) -> AuditEventsConfig:
-    """Parse `audit_events:` from reyn.yaml (#4174 T5, renamed from `events:`)."""
+    """Parse `audit_events:` from reyn.yaml (#4174 T5, renamed from `events:`).
+
+    #4479: `cleanup_period_days` / `max_disk_usage_percent` — 0 disables
+    that axis (owner ruling — the OPPOSITE of this field's earlier stance,
+    which rejected 0 as a footgun; see `AuditEventsConfig`'s own docstring
+    for why the reversal). A negative or non-numeric value falls back to
+    the default rather than being accepted or rejected outright — same
+    discipline as every other numeric config builder in this module (an
+    operator typo must not silently produce a nonsensical negative purge
+    threshold)."""
     defaults = AuditEventsConfig()
     if not isinstance(raw, dict):
         return defaults
     cleanup = raw.get("cleanup_period_days", defaults.cleanup_period_days)
-    if cleanup == 0:
-        # Reject the Claude-Code-style "0 disables writes" footgun.
-        # Use null/None to disable automatic cleanup; positive ints to enable.
-        raise ValueError(
-            "audit_events.cleanup_period_days=0 is not allowed; "
-            "use null to disable automatic cleanup, or a positive int."
-        )
-    cleanup_val: int | None = None
-    if cleanup is not None:
+    try:
         cleanup_val = int(cleanup)
+        if cleanup_val < 0:
+            cleanup_val = defaults.cleanup_period_days
+    except (TypeError, ValueError):
+        cleanup_val = defaults.cleanup_period_days
+    disk_percent = raw.get("max_disk_usage_percent", defaults.max_disk_usage_percent)
+    try:
+        disk_percent_val = float(disk_percent)
+        if disk_percent_val < 0:
+            disk_percent_val = defaults.max_disk_usage_percent
+    except (TypeError, ValueError):
+        disk_percent_val = defaults.max_disk_usage_percent
     return AuditEventsConfig(
         max_bytes=int(raw.get("max_bytes", defaults.max_bytes)),
         max_age_seconds=int(raw.get("max_age_seconds", defaults.max_age_seconds)),
         cleanup_period_days=cleanup_val,
+        max_disk_usage_percent=disk_percent_val,
     )
 
 

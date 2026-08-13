@@ -2100,7 +2100,7 @@ window-relative.
 
 ## `audit_events` block
 
-Audit-log rotation policy for chat-session event files. Skill-run events use one file per run and are not affected by this setting.
+Audit-log rotation + automatic purge policy for chat-session event files. Skill-run events use one file per run and are not affected by this setting.
 
 Renamed from `events:` (#4174 T5) — bare "event" is ambiguous in reyn (an
 "event" is one of audit-event / WAL-event / hook-event); this block was
@@ -2108,18 +2108,28 @@ always audit-event rotation only.
 
 ```yaml
 audit_events:
-  max_bytes: 10485760       # rotate at 10 MB (default)
-  max_age_seconds: 86400    # rotate after 1 day (default)
-  cleanup_period_days: null # null = no automatic deletion (default)
+  max_bytes: 10485760              # rotate at 10 MB (default)
+  max_age_seconds: 86400           # rotate after 1 day (default)
+  cleanup_period_days: 30          # auto-delete files older than 30 days (default)
+  max_disk_usage_percent: 10       # auto-delete oldest files past 10% of free space (default)
 ```
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `max_bytes` | int | `10485760` (10 MB) | Rotate the active event file when it exceeds this size. `0` = no size-based rotation. |
 | `max_age_seconds` | int | `86400` (1 day) | Rotate the active event file when it exceeds this age in seconds. `0` = no age-based rotation. |
-| `cleanup_period_days` | int \| null | `null` | How long closed event files are kept before `reyn events purge` may delete them. `null` disables automatic deletion. `0` is rejected — use `null` to disable. |
+| `cleanup_period_days` | int | `30` | Automatic-purge age axis (#4479) — files whose filename date is older than this many days are deleted. `0` disables this axis. |
+| `max_disk_usage_percent` | float | `10` | Automatic-purge size axis (#4479) — once the events directory's own total size exceeds this percent of the filesystem's current FREE space, oldest files are deleted until back under. `0` disables this axis. |
 
 Setting both `max_bytes` and `max_age_seconds` to `0` disables rotation entirely.
+
+### Automatic purge (#4479)
+
+Either axis firing deletes files — `cleanup_period_days` OR `max_disk_usage_percent`, whichever is touched first (not `and`: disabling one axis must not silently disable the other). Runs fire-and-forget, off the event loop, at session start and at every rotation; `reyn events purge --before <DATE>` remains available for a manual, explicit run and shares the same file-selection code.
+
+Both defaults are **borrowed conventions, not measurements** of reyn's own `.reyn/events` growth rate (unmeasured as of #4479): 30 days borrows the nearest comparable local-agent CLI's own default (Claude Code's `cleanupPeriodDays`); 10% borrows systemd-journald's own `SystemMaxUse` convention. Neither is "the correct" number — both exist as an operator-overridable starting point.
+
+**`0` means disabled on that axis, not rejected** — a deliberate choice, documented here on purpose: Claude Code carries an open report of its own `cleanupPeriodDays` knob being ambiguous about whether `0` means "delete immediately" or "never delete." reyn's own knobs use `0` = never delete, unambiguously, on both axes.
 
 ## `voice` block
 

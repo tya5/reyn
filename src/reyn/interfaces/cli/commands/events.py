@@ -8,15 +8,18 @@ from __future__ import annotations
 
 import argparse
 import json
-import re
 import sys
 from datetime import datetime
 from pathlib import Path
 from typing import Iterator
 
-from ..logger_factory import make_logger
+from reyn.core.events.event_purge import (
+    collect_dated_files as _collect_dated_files,
+)
+from reyn.core.events.event_purge import filename_start_date as _filename_start_date
+from reyn.core.events.event_purge import select_by_age as _select_by_age
 
-_FILENAME_TS_RE = re.compile(r"^(\d{4}-\d{2}-\d{2})(?:T(\d{6}))?")
+from ..logger_factory import make_logger
 
 
 def register(sub) -> None:
@@ -183,16 +186,6 @@ def _collect_files(
     return [p for _, p in out]
 
 
-def _filename_start_date(name: str):
-    m = _FILENAME_TS_RE.match(name)
-    if not m:
-        return None
-    try:
-        return datetime.strptime(m.group(1), "%Y-%m-%d").date()
-    except ValueError:
-        return None
-
-
 def _parse_date(s: str | None, flag: str):
     if s is None:
         return None
@@ -232,14 +225,11 @@ def run_purge(args: argparse.Namespace) -> None:
         print(f"No events directory at {root}", file=sys.stderr)
         return
 
-    targets: list[Path] = []
-    for p in root.rglob("*.jsonl"):
-        date = _filename_start_date(p.name)
-        if date is None:
-            continue
-        if date >= before.date():
-            continue
-        targets.append(p)
+    # #4479: shared selection logic with the automatic trigger
+    # (core/events/event_purge.py) — the SAME "which files are old enough"
+    # decision, not a second copy that could drift from it.
+    targets = _select_by_age(_collect_dated_files(root), before=before.date())
+    targets.sort()
 
     if not targets:
         print(f"No event files older than {args.before}.")

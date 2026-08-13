@@ -488,22 +488,43 @@
 
 
 # -----------------------------------------------------------------------------
-# audit_events: audit-log rotation policy (#4174 T5: renamed from
-# ``events:`` — bare "event" is ambiguous in reyn, and this block was
-# always audit-event rotation only). Chat events land under
+# audit_events: audit-log rotation + automatic purge policy (#4174 T5:
+# renamed from ``events:`` — bare "event" is ambiguous in reyn, and this
+# block was always audit-event only). Chat events land under
 # ``.reyn/events/agents/<name>/chat/<YYYY-MM>/`` and rotate when EITHER the
 # active file exceeds ``max_bytes`` OR the file's age (or local date) exceeds
 # ``max_age_seconds``.
 #
-# ``cleanup_period_days``: how long closed files should be kept before
-# ``reyn events purge`` may delete them. ``null`` (default) disables
-# automatic deletion. Setting ``0`` is rejected (= footgun: would silently
-# discard transcript writes).
+# Automatic purge (#4479, owner ruling 2026-08-13): EITHER axis firing
+# deletes old files — ``cleanup_period_days`` OR ``max_disk_usage_percent``,
+# whichever is touched first (not ``and`` — disabling one axis must not
+# silently disable the other). Runs fire-and-forget, off the event loop, at
+# session start and at rotation; ``reyn events purge`` remains available for
+# a manual/explicit run.
+#
+# ``cleanup_period_days`` (default 30): files whose filename date is older
+# than this many days are purge targets. Practice, not measurement — no
+# local-CLI precedent measures ``.reyn/events``'s own growth rate; 30
+# borrows the nearest comparable tool's own default (Claude Code's own
+# ``cleanupPeriodDays``).
+#
+# ``max_disk_usage_percent`` (default 10): once the events directory's own
+# total size exceeds this percent of the filesystem's CURRENT free space,
+# oldest files are purged until back under. Relative, not absolute — an
+# absolute byte ceiling would need reyn's own measured growth rate to set
+# safely (unmeasured); 10 borrows systemd-journald's own ``SystemMaxUse``
+# convention for the same reason.
+#
+# ``0`` on EITHER axis disables that axis (all retention, on that axis,
+# forever) — documented plainly here on purpose: Claude Code carries an
+# open report of its own ``cleanupPeriodDays`` knob being ambiguous about
+# what ``0`` means, and this is that precedent deliberately not repeated.
 # -----------------------------------------------------------------------------
 # audit_events:
 #   max_bytes: 10485760              # 10 MB
 #   max_age_seconds: 86400           # 1 day
-#   cleanup_period_days: null        # null = never auto-delete
+#   cleanup_period_days: 30          # 0 = never auto-delete by age
+#   max_disk_usage_percent: 10       # 0 = never auto-delete by size
 
 
 # -----------------------------------------------------------------------------

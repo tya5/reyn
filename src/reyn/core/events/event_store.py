@@ -80,6 +80,8 @@ class EventStore:
         max_bytes: int = 0,
         max_age_seconds: int = 0,
         suffix: str = "",
+        cleanup_period_days: int = 0,
+        max_disk_usage_percent: float = 0.0,
     ) -> None:
         """
         dir_path: e.g. `events/agents/researcher/chat`
@@ -87,11 +89,17 @@ class EventStore:
         max_age_seconds: 0 disables age-based rotation
                          (date-boundary rotation also gated on this)
         suffix:          "" for chat, e.g. "_run" for a run
+        cleanup_period_days / max_disk_usage_percent: #4479 automatic
+            purge axes (0 disables that axis; see `AuditEventsConfig`'s own
+            docstring for the full rationale) — consulted by
+            `submit_auto_purge`, fired from `_open_new_file` below.
         """
         self._dir = Path(dir_path)
         self._max_bytes = int(max_bytes)
         self._max_age_seconds = int(max_age_seconds)
         self._suffix = suffix
+        self._cleanup_period_days = int(cleanup_period_days)
+        self._max_disk_usage_percent = float(max_disk_usage_percent)
         self._active: Path | None = None
         self._active_started_at: datetime | None = None
         # Running byte count of the active file — avoids a `.stat()` syscall
@@ -280,6 +288,40 @@ class EventStore:
         self._active.touch()
         self._active_started_at = now
         self._active_size = 0
+        # #4479: this method runs on EVERY store's first write (self._active
+        # was None) AND on every true rotation — one hook point covers both
+        # triggers architect named without duplicating logic: "session
+        # start" (the guaranteed one — rotation defaults OFF, infra.py's
+        # own AuditEventsConfig docstring) and "rotation" (frequency scales
+        # with usage, free — already touching the directory here).
+        self.submit_auto_purge()
+
+    def submit_auto_purge(self) -> None:
+        """Fire-and-forget an automatic purge check (#4479) off the event
+        loop, via this store's own `DurabilityWorker`. No-op when both
+        axes are disabled, or when no event loop is running (a sync-mode
+        caller — e.g. the CLI-mode `EventStore`, `events.py`'s own replay
+        construction — gets no automatic purge; `reyn events purge` stays
+        the explicit path for those)."""
+        if self._cleanup_period_days <= 0 and self._max_disk_usage_percent <= 0:
+            return
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        root = self._dir
+        max_age_days = self._cleanup_period_days
+        max_disk_usage_percent = self._max_disk_usage_percent
+
+        async def _job() -> None:
+            from reyn.core.events.event_purge import apply_auto_purge
+            await asyncio.to_thread(
+                apply_auto_purge, root,
+                max_age_days=max_age_days,
+                max_disk_usage_percent=max_disk_usage_percent,
+            )
+
+        self._worker.submit_nowait(_job)
 
     @staticmethod
     def _unique(path: Path) -> Path:
