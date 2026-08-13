@@ -440,7 +440,7 @@ Main reference: **[`reyn.yaml`](reference/config/reyn-yaml.md)**
 | 3-layer cascade | user-global / project / project-local + CLI flags | [reyn-yaml](reference/config/reyn-yaml.md) |
 | `${VAR}` interpolation | Env var expansion in all string fields via `secrets.env` | [reyn-yaml § interpolation](reference/config/reyn-yaml.md#var-interpolation) |
 | `safety` | Loop caps / timeout caps / on-limit policy | [reyn-yaml § safety](reference/config/reyn-yaml.md#safety-block) |
-| `cost` | Per-agent / per-chain / daily / monthly token+USD caps | [Budget config](reference/config/budget.md) |
+| `cost` | Per-agent / daily / monthly token+USD caps | [Budget config](reference/config/budget.md) |
 | `sandbox` | Backend selection (auto/seatbelt/landlock/noop) + `on_unsupported` | [reyn-yaml § sandbox](reference/config/reyn-yaml.md#sandbox-block) |
 | `web_fetch` | SSL `verify_ssl` and `ca_bundle` override | [reyn-yaml § web_fetch](reference/config/reyn-yaml.md#web_fetch-block) |
 | `chat` | Compaction trigger / head+tail retention / section token caps | [Chat Compaction](concepts/data-retrieval/chat-compaction.md) |
@@ -526,16 +526,15 @@ logic. Design: [content-threat scan proposal](deep-dives/proposals/0050-content-
 | Feature | Description | Documentation |
 |---------|-------------|---------------|
 | Per-agent caps | Token + USD hard limits with `warn_ratio` | [Budget config](reference/config/budget.md) |
-| Per-chain caps | Skill spawn count + token total per chain | [Budget config](reference/config/budget.md) |
 | Rate limits | Per-model calls-per-minute sliding window | [Budget config](reference/config/budget.md) |
 | Daily quotas | Persistent JSONL ledger, resets at local midnight | [Budget config](reference/config/budget.md) |
 | Monthly quotas | Persistent JSONL ledger, resets at month boundary | [Budget config](reference/config/budget.md) |
 | Per-turn token/cost attribution | Each LLM call is keyed with the turn's `chain_id` (ambient turn scope + ledger field), so a turn's tokens/USD is the real sum of that turn's own calls — tool-loop iterations included — never a difference of cumulative counters. A sub-agent's turn is billed to its own chain_id, not the parent's; a call with no turn in scope at all is attributed to no turn | [Budget config § Per-turn attribution](reference/config/budget.md#per-turn-attribution) |
 | Token-count provenance | Every recorded token count says where it came from — `provider` (the provider reported it) vs `estimated` (LiteLLM's local tokenizer filled it because the stream carried no usage) vs `unknown` (not stated; how pre-existing records read). The estimate is kept, not suppressed; the origin rides the same ledger record, the same `llm_response_received` audit-event, and the same per-turn figure as the number itself, so an estimated turn is identifiable after the fact and a cap decision is auditable. A turn reads `estimated` if any one of its calls was | [Budget config § Token-count provenance](reference/config/budget.md#token-count-provenance) · [Events reference](reference/runtime/events.md) |
-| Crash-durable cap counters | Every cap counter (daily / monthly / per-agent token+USD / per-chain spawn count) is reconstructed on startup from the fsync-per-append ledger — a crash inside the throttled `budget_state.json` save window cannot under-count a cap and re-allow over-budget calls or spawns. The state file is a best-effort cache; the ledger wins on recovery | [Budget config](reference/config/budget.md) · [state-dir](reference/config/state-dir.md) |
+| Crash-durable cap counters | Every cap counter (daily / monthly / per-agent token+USD) is reconstructed on startup from the fsync-per-append ledger — a crash inside the throttled `budget_state.json` save window cannot under-count a cap and re-allow over-budget calls. The state file is a best-effort cache; the ledger wins on recovery. (A pre-existing ledger may also hold legacy per-chain skill-spawn records from before that subsystem was removed — #2448 — no longer written, skipped on read.) | [Budget config](reference/config/budget.md) · [state-dir](reference/config/state-dir.md) |
 | High-cost model warn (`cost_warn`) | `cost_warn.enabled` (default `true`) emits a `model_cost_warn` audit-event + inline conv-pane marker when the resolved model's input cost per 1M tokens exceeds `model_threshold_per_1m_input_usd` (default `5.0`); fires at `/model` switch and session startup, de-duped once per model per session | [reyn.yaml § cost_warn](reference/config/reyn-yaml.md#cost_warn-block) |
 
-> **Differentiation vs general agents:** token + USD caps per agent / chain / model with refuse-on-exceed, plus a pre-selection high-cost model warning — runaway spend is structurally bounded, not merely observed after the fact. (#4522: an earlier per-dimension ask-for-extension flow, `cost.*.extension_calls`, was removed — its only real implementation was a since-removed subsystem, #2448 — hitting a hard cap refuses outright.)
+> **Differentiation vs general agents:** token + USD caps per agent / model with refuse-on-exceed, plus a pre-selection high-cost model warning — runaway spend is structurally bounded, not merely observed after the fact. (#4522: an earlier per-dimension ask-for-extension flow, `cost.*.extension_calls`, was removed — its only real implementation was a since-removed subsystem, #2448 — hitting a hard cap refuses outright.)
 
 ---
 
