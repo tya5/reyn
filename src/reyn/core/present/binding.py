@@ -376,5 +376,20 @@ def resolve_bindings(
                     rendered["src"] = val
             if "alt" in node:
                 rendered["alt"] = _guard_maybe(node["alt"], neut, out, path=f"{loc}.alt")
+        elif component == "artifact":
+            # #4482 PR-2b: resolve_bindings stays pure/I/O-free (lead-coder's
+            # ruling — replay.py's own re-render must not start depending on
+            # "the disk's state at replay time", only on the P6 event's own
+            # data). This only resolves source/content/media_type/description
+            # to their bound-or-literal STRING values, same as image's own
+            # `src` — the OS-derivation (media_type/name/body from a real
+            # file) is a LATER, separate pass
+            # (`artifact_payload.apply_artifact_resolution`) run by a layer
+            # that actually has project_root/agent_name (op_runtime/present.py).
+            for slot in ("source", "content", "media_type", "description"):
+                if slot in node:
+                    val = _render_text_slot(node[slot], doc, out, neut, loc=f"{loc}.{slot}")
+                    if val is not _MISSING:
+                        rendered[slot] = val
         out.nodes.append(rendered)
     return out

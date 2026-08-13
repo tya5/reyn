@@ -6,7 +6,28 @@ not from policy layered on top. A blueprint is data (a component tree), never
 code; the LLM authors *labels + path bindings* only.
 
 Catalog (all read-only): ``text`` / ``markdown`` / ``code`` / ``diff`` /
-``keyvalue`` / ``table`` / ``list`` / ``image``.
+``keyvalue`` / ``table`` / ``list`` / ``image`` / ``artifact``.
+
+``artifact`` (#4482 PR-2b, naming ratified by architect): an LLM-produced
+file the terminal can't render natively (html/office/pdf/binary images),
+which a user opens with the OS's own default app. Structural rules
+(architect's ruling, enforced here so a malformed blueprint is a hard
+rejection, never a guess at render time):
+
+- exactly ONE of ``source`` / ``content`` — never both, never neither.
+  ``source`` points at a real file (a literal path or a ``$bind``
+  pointer); ``content`` is text the agent hands over directly (no real
+  file exists).
+- ``media_type`` is allowed ONLY alongside ``content``, and REQUIRED
+  there — declaring it alongside ``source`` is rejected (the OS derives
+  ``media_type`` from the real file in that case, see
+  ``artifact_payload.py``, and an agent-declared value there could
+  disagree with it); omitting it alongside ``content`` is also rejected
+  (with no real file, there is nothing for the OS to derive it from).
+- ``description`` is always optional.
+- ``name`` is deliberately NOT a slot — for ``source`` the OS fills it
+  (the file's own basename); for ``content`` there is no real-file
+  identity to name at all.
 
 Bindings are expressed structurally as ``{"$bind": "<json-pointer>"}`` — a
 single-key object whose value is an RFC 6901 JSON Pointer **string**. This makes
@@ -36,6 +57,7 @@ CATALOG: dict[str, frozenset[str]] = {
     "table":    frozenset({"rows", "columns"}),
     "list":     frozenset({"items", "item_path"}),
     "image":    frozenset({"src", "alt"}),
+    "artifact": frozenset({"source", "content", "media_type", "description"}),
 }
 
 # The text-family components — a whole-body (plain-text ref) binding may only bind
@@ -142,7 +164,38 @@ def _validate_node(node: Any, *, path: str) -> dict:
     elif component == "image":
         if "src" in normalized:
             _validate_slot_value(normalized["src"], where=f"{path}.src")
+    elif component == "artifact":
+        _validate_artifact_slots(normalized, path=path)
     return normalized
+
+
+def _validate_artifact_slots(normalized: dict, *, path: str) -> None:
+    """#4482 PR-2b — the artifact component's own structural rules
+    (architect's ruling): exactly one of source/content, media_type only
+    alongside content. See the module docstring's ``artifact`` section
+    for the full rationale."""
+    has_source = "source" in normalized
+    has_content = "content" in normalized
+    if has_source == has_content:
+        raise PresentBlueprintError(
+            f"{path}: artifact needs EXACTLY ONE of 'source' or 'content' "
+            f"(got {'both' if has_source else 'neither'})"
+        )
+    has_media_type = "media_type" in normalized
+    if has_media_type and has_source:
+        raise PresentBlueprintError(
+            f"{path}.media_type: not allowed alongside 'source' — the OS "
+            "derives media_type from the real file in that case; a "
+            "declared value here could disagree with it"
+        )
+    if has_content and not has_media_type:
+        raise PresentBlueprintError(
+            f"{path}: 'media_type' is required alongside 'content' — with "
+            "no real file, there is nothing for the OS to derive it from"
+        )
+    for slot in ("source", "content", "media_type", "description"):
+        if slot in normalized:
+            _validate_slot_value(normalized[slot], where=f"{path}.{slot}")
 
 
 def _validate_kv_rows(rows: Any, *, path: str) -> list:
