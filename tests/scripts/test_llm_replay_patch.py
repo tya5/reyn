@@ -18,7 +18,6 @@ from pathlib import Path
 # ---------------------------------------------------------------------------
 # Import helpers (same pattern as test_llm_replay_script.py)
 # ---------------------------------------------------------------------------
-from pathlib import Path as _Path
 from typing import Any
 
 import pytest

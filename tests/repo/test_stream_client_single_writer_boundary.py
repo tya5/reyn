@@ -18,7 +18,6 @@ transport.
 from __future__ import annotations
 
 import ast
-from pathlib import Path
 
 from tests._support.paths import REPO_ROOT
 

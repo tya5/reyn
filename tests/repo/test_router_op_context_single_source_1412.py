@@ -24,7 +24,6 @@ Cf. [[feedback_multi_callsite_wiring_audit]] / #1402 src-wide invariant.
 from __future__ import annotations
 
 import ast
-from pathlib import Path
 
 from tests._support.paths import REPO_ROOT
 

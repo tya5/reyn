@@ -12,14 +12,12 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
-import types
 from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
 
 from reyn.dev.dogfood.compare import (
-    CompareReport,
     ScenarioDelta,
     compare_runs,
 )
@@ -683,7 +681,6 @@ def test_cli_compare_regression_exits_1(tmp_path: Path) -> None:
 
 def test_outcome_prediction_attached_from_scenario(tmp_path: Path) -> None:
     """Tier 2: outcome_prediction from scenario is attached to ScenarioRunResult.detail and affects Brier."""
-    from reyn.dev.dogfood.scenarios import OutcomePrediction
 
     prediction = {"verified": 1.0, "inconclusive": 0.0, "refuted": 0.0, "blocked": 0.0}
     scenario = _make_scenario("pred_s1", outcome_prediction=prediction)

@@ -7,8 +7,6 @@ is now always included in the dotted-literal / path checks.
 """
 from __future__ import annotations
 
-import pytest
-
 from scripts.verify_package_move import main
 
 

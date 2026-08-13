@@ -24,8 +24,6 @@ import json
 import sys
 from pathlib import Path
 
-import pytest
-
 from reyn.dev.dogfood.interpretation import (
     DEFAULT_MODEL,
     build_prompt,

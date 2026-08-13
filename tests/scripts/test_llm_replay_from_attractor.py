@@ -20,7 +20,6 @@ from pathlib import Path
 # ---------------------------------------------------------------------------
 # Import helpers
 # ---------------------------------------------------------------------------
-from pathlib import Path as _Path
 from typing import Any
 
 from tests._support.paths import REPO_ROOT

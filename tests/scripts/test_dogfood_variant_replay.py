@@ -38,8 +38,6 @@ if str(_SCRIPTS_DIR) not in sys.path:
 
 from dogfood_variant_replay import (  # noqa: E402
     ClassifierRule,
-    RunConfig,
-    Variant,
     _extract_last_json,
     classify_response,
     load_config,

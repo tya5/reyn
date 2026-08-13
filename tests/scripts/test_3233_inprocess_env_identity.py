@@ -22,8 +22,6 @@ import subprocess
 import sys
 from pathlib import Path
 
-import pytest
-
 from tests._support.paths import REPO_ROOT
 
 _REPO_ROOT = REPO_ROOT

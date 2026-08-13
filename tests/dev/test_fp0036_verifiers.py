@@ -14,7 +14,6 @@ from reyn.dev.dogfood.scenarios import (
     ExpectedReply,
 )
 from reyn.dev.dogfood.verifiers import (
-    VerifierResult,
     verify_events,
     verify_reply,
 )

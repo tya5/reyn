@@ -6,13 +6,8 @@ docs/feature-map.md. No MagicMock / AsyncMock / patch.
 from __future__ import annotations
 
 import json
-from pathlib import Path
-
-import pytest
 
 from reyn.dev.dogfood.coverage import (
-    CoverageMatrix,
-    FeatureNode,
     compute_coverage,
     parse_feature_map,
 )
