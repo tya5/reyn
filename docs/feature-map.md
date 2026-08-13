@@ -118,7 +118,6 @@ mindmap
       Compaction secret redact
     💰 Budget and Cost
       Per-agent caps
-      Per-chain caps
       Rate limits
       Daily/monthly quotas
       High-cost model warn
