@@ -26,12 +26,9 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 
-import pytest
-
 from reyn.core.events.events import EventLog
 from reyn.core.offload.canonical import file_to_canonical
 from reyn.data.workspace.workspace import Workspace
-from reyn.runtime.router_loop import RouterLoop
 from reyn.tools.file import GLOB_FILES, LIST_DIRECTORY
 from reyn.tools.types import ToolContext
 

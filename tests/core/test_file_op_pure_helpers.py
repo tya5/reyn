@@ -8,8 +8,6 @@ a bounded, numbered-line view of the region surrounding an edit change.
 """
 from __future__ import annotations
 
-import pytest
-
 from reyn.core.op_runtime.file import _changed_region_preview, _image_mime_for_path
 
 # ── _image_mime_for_path ──────────────────────────────────────────────────────

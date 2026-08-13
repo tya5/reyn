@@ -13,7 +13,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from reyn.core.events.state_log import StateLog
-from reyn.runtime.session import DEFAULT_CHAT_CHANNEL_ID, Session
+from reyn.runtime.session import DEFAULT_CHAT_CHANNEL_ID
 from tests._support.agent_session import make_session
 
 

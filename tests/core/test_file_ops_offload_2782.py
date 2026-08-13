@@ -42,7 +42,6 @@ covers option (a) only (see issue #2782); not tested here.
 from __future__ import annotations
 
 import asyncio
-import re
 import threading
 from pathlib import Path
 

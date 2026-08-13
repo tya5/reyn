@@ -18,7 +18,6 @@ from reyn.core.events.snapshot_generations import RewindIntoAbandonedError, rewi
 from reyn.core.events.state_log import StateLog
 from reyn.runtime.profile import AgentProfile
 from reyn.runtime.registry import AgentRegistry
-from reyn.runtime.session import Session
 from tests._support.agent_session import make_session
 
 

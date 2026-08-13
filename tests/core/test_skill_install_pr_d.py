@@ -30,7 +30,6 @@ import yaml
 from reyn.core.events.state_log import StateLog
 from reyn.core.op_runtime.context import OpContext
 from reyn.data.workspace.workspace import Workspace
-from reyn.runtime.registry import AgentRegistry
 from reyn.schemas.models import SkillInstallIROp
 from reyn.security.permissions.permissions import PermissionDecl, PermissionResolver
 
@@ -309,7 +308,6 @@ async def test_skill_install_source_records_config_generation(tmp_path):
     contract (CLAUDE.md gate) applies to source installs just as to local ones.
     Smoke check: a config generation file is written under .reyn/config/generations/
     after the install (mirrors test_skill_install_pr_c truncate-falsify contract)."""
-    from reyn.core.events.config_generations import ConfigGenerationStore
     from reyn.core.events.config_recovery import config_generations_dir
     from reyn.core.op_runtime.skill_install import handle
 

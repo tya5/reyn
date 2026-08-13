@@ -387,7 +387,6 @@ def test_from_config_without_project_root_is_empty(tmp_path: Path, monkeypatch) 
 def test_session_adopts_passed_pipeline_registry(tmp_path: Path) -> None:
     """Tier 2: Session(pipeline_registry=X) adopts X as its live registry (the
     factory threads the disk-loaded one); None → its own empty registry."""
-    from reyn.runtime.session import Session
 
     loaded = PipelineRegistry()
     loaded.register("hello", Pipeline(steps=[TransformStep(value="1", output="o")], name="hello"))
@@ -404,7 +403,6 @@ def test_session_adopts_passed_pipeline_registry(tmp_path: Path) -> None:
 def test_session_without_registry_owns_empty_one(tmp_path: Path) -> None:
     """Tier 2: a direct/test Session with no pipeline_registry falls back to its
     own empty PipelineRegistry — byte-identical to pre-#2575."""
-    from reyn.runtime.session import Session
 
     session = make_session(agent_name="a", state_log=StateLog(tmp_path / "wal.jsonl"))
 

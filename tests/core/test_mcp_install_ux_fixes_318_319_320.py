@@ -33,7 +33,6 @@ from __future__ import annotations
 
 import platform
 import subprocess
-import sys
 
 from reyn.core.op_runtime.mcp_install import _build_server_entry
 from reyn.core.registry.source_resolver import (

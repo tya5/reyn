@@ -30,8 +30,6 @@ import asyncio
 import inspect
 from typing import Any
 
-import pytest
-
 from reyn.core.events.events import EventLog
 from reyn.mcp.client import MCPClient
 from reyn.schemas.models import MCPIROp

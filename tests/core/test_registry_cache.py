@@ -5,12 +5,9 @@ No mocks — uses real filesystem via tmp_path.
 """
 from __future__ import annotations
 
-import json
 import time
 from pathlib import Path
 from unittest import mock
-
-import pytest
 
 import reyn.core.registry.cache as cache_mod
 

@@ -31,7 +31,6 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-import yaml
 
 from reyn.core.events.state_log import StateLog
 from reyn.core.pipeline.executor import Pipeline, TransformStep

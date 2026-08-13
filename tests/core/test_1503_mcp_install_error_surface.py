@@ -19,8 +19,6 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 
-import pytest
-
 from reyn.core.events.events import EventLog
 from reyn.core.op_runtime.context import OpContext
 from reyn.core.op_runtime.mcp_install import handle as mcp_install_handle

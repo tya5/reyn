@@ -32,7 +32,6 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 from typing import Any
-from unittest import mock  # only for cache_mod patching — no collaborator mocks
 
 import httpx
 import pytest
@@ -48,7 +47,6 @@ def _make_ctx(web_fetch_config: WebFetchConfig | None = None, tmp_path: Path | N
 
     Uses real EventLog and Workspace stubs — no mock collaborators.
     """
-    import tempfile
 
     from reyn.core.op_runtime.context import OpContext
     from reyn.security.permissions.permissions import PermissionDecl

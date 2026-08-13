@@ -19,7 +19,6 @@ from pathlib import Path
 from reyn.core.events.state_log import StateLog
 from reyn.environment.host_backend import HostBackend
 from reyn.interfaces.cli.env_backend import build_environment_backend, register_env_backend_args
-from reyn.runtime.session import Session
 from tests._support.agent_session import make_session
 
 

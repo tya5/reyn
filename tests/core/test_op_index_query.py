@@ -6,7 +6,6 @@ No mocks.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
 
 import pytest
 
@@ -68,7 +67,6 @@ async def _seed_source(workspace_root: Path, source: str, chunks: list[ChunkReco
 @pytest.mark.asyncio
 async def test_semantic_query_returns_chunks(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Tier 2: query with a vector returns top-K chunks in semantic mode."""
-    import os
     monkeypatch.chdir(tmp_path)
 
     await _seed_source(tmp_path, "src1", [
@@ -95,7 +93,6 @@ async def test_semantic_query_returns_chunks(tmp_path: Path, monkeypatch: pytest
 @pytest.mark.asyncio
 async def test_query_empty_source_returns_fallback(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Tier 2: querying a source with no chunks returns mode='fallback'."""
-    import os
     monkeypatch.chdir(tmp_path)
 
     ctx = _make_ctx(tmp_path)
@@ -116,7 +113,6 @@ async def test_query_empty_source_returns_fallback(tmp_path: Path, monkeypatch: 
 @pytest.mark.asyncio
 async def test_null_query_vector_returns_fallback(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Tier 2: query_vector=None triggers fallback enumerate path (phase 1 = empty)."""
-    import os
     monkeypatch.chdir(tmp_path)
 
     await _seed_source(tmp_path, "src1", [
@@ -140,7 +136,6 @@ async def test_null_query_vector_returns_fallback(tmp_path: Path, monkeypatch: p
 @pytest.mark.asyncio
 async def test_top_k_limits_results(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Tier 2: top_k parameter limits number of returned chunks."""
-    import os
     monkeypatch.chdir(tmp_path)
 
     chunks = [
@@ -166,7 +161,6 @@ async def test_top_k_limits_results(tmp_path: Path, monkeypatch: pytest.MonkeyPa
 @pytest.mark.asyncio
 async def test_filters_narrow_results(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Tier 2: filters narrow results to chunks matching the filter field."""
-    import os
     monkeypatch.chdir(tmp_path)
 
     # Two chunks with different source_type
