@@ -1778,6 +1778,19 @@ class MenuBar(Widget, can_focus=True):
         width: 100%;
         layout: horizontal;
     }
+    /* #4542: the stretching gap between Navigation and Telemetry — a plain
+       empty widget, no border/content (the owner's own non-goal: "box や
+       separator を追加しない"). 1fr consumes whatever width the row's
+       natural-width children (tabs + StatusLine) don't need, so Telemetry
+       sits at the row's right edge on any width wide enough to merge at
+       all — see status_fits_last_row's own docstring for the FIT decision
+       this doesn't change (the spacer only expands into slack space that
+       already existed; it never causes a row that used to fit to stop
+       fitting). */
+    MenuBar .menu-spacer {
+        width: 1fr;
+        height: 1;
+    }
     """
 
     class Selected(Message):
@@ -1816,11 +1829,28 @@ class MenuBar(Widget, can_focus=True):
         rows = pack_menu_rows(self._items, width)
         merge_status = status_fits_last_row(rows, width, len(self._status_text))
         self.remove_children()
+        # #4542: Navigation (tabs) / Telemetry (StatusLine) as two visually
+        # distinct regions when they SHARE a row — a stretching
+        # ``.menu-spacer`` between them (see DEFAULT_CSS's own comment)
+        # rather than the tabs and StatusLine sitting immediately adjacent,
+        # so Telemetry reads as pinned to the right edge instead of merely
+        # "the next thing after the last tab". Only the MERGED case needs
+        # the spacer: it requires StatusLine at ``width: auto`` (the
+        # ``-shared`` class) for the spacer to have slack to expand into.
+        # The own-row fallback below does NOT get a spacer — StatusLine
+        # there stays at its base rule's ``width: 100%`` (load-bearing
+        # containment for a long status string, see that CSS rule's own
+        # comment) and is pinned right via ``text-align: right`` instead
+        # (app.py's ``StatusLine`` rule) — a spacer would have nothing to
+        # push against there, since StatusLine already claims the whole row.
         menu_rows = [
             Horizontal(
                 *(Tab(label, id=tab_id) for tab_id, label in row),
                 *(
-                    [StatusLine(self._status_text, classes="-shared")]
+                    [
+                        Static("", classes="menu-spacer"),
+                        StatusLine(self._status_text, classes="-shared"),
+                    ]
                     if merge_status and i == len(rows) - 1
                     else []
                 ),

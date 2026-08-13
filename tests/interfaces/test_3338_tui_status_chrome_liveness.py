@@ -54,6 +54,7 @@ from reyn.interfaces.inline.textual_chat.chrome import (
     _COST_COL_W,
     _COST_LABEL_W,
     _MENU_TABS,
+    _TAB_H_PADDING,
     MenuBar,
     StatusLine,
     cost_pane_lines,
@@ -927,6 +928,91 @@ async def test_every_menu_tab_is_fully_on_screen(
         assert not offenders, (
             f"tabs laid out off-screen at {screen_size} (screen={screen}); "
             f"offender -> (x, right, y, bottom): {offenders}"
+        )
+
+
+@pytest.mark.asyncio
+async def test_telemetry_pins_to_the_right_edge_with_a_gap_from_navigation(
+    tmp_path,
+) -> None:
+    """Tier 2b: #4542 — real-TTY-witnessed geometry guard for the stretching
+    ``.menu-spacer`` between Navigation (tabs) and Telemetry (StatusLine),
+    for the MERGED case specifically (StatusLine shares the last tab row —
+    live-probed: this app's 14 tabs + status text all fit on one row
+    starting at 130 columns, not 100 — an earlier version of this test
+    picked 100 and, without checking, silently exercised the DIFFERENT
+    own-row fallback path instead, where there is no spacer at all — see
+    the sibling test below for that path's own, different mechanism).
+
+    A screen wide enough to merge (130 columns) must show TWO things the
+    spacer specifically causes, neither of which the pre-#4542
+    immediately-adjacent layout produced: (1) StatusLine's region reaches
+    (or comes very close to) the row's right edge — "pinned right", not
+    merely "somewhere after the tabs"; (2) there is a real gap (more than
+    the tabs' own inter-tab padding) between the last tab's right edge and
+    StatusLine's left edge — proving an actual stretching space, not the
+    two widgets sitting flush."""
+    from textual.widgets import Tab
+
+    from reyn.interfaces.inline.textual_chat import StatusLine, TextualChatApp
+
+    snap, _session, _registry = await _real_snapshot(tmp_path)
+    app = TextualChatApp(
+        transport=_EventOnlyTransport(), read_model=_MutableSnapshotReadModel(snap)
+    )
+    async with app.run_test(size=(130, 30)) as pilot:
+        await pilot.pause()
+        await pilot.pause()
+        screen = app.screen.size
+        status = app.query_one(StatusLine)
+        assert "-shared" in status.classes, (
+            "this test requires the MERGED case (status sharing the last tab "
+            "row) — got the own-row fallback instead; widen the screen size"
+        )
+        tabs = list(app.query(Tab))
+        last_tab = max(tabs, key=lambda t: t.region.x)
+        assert screen.width - status.region.right <= 1, (
+            f"StatusLine not pinned to the right edge: right={status.region.right} "
+            f"screen_width={screen.width}"
+        )
+        gap = status.region.x - last_tab.region.right
+        assert gap > _TAB_H_PADDING, (
+            f"no real gap between Navigation and Telemetry — the spacer did not "
+            f"expand (gap={gap}, last_tab.right={last_tab.region.right}, "
+            f"status.x={status.region.x})"
+        )
+
+
+@pytest.mark.asyncio
+async def test_telemetry_own_row_stays_full_width_not_shrunk_by_a_spacer(
+    tmp_path,
+) -> None:
+    """Tier 2b: #4542 — the own-row fallback (no merge — 100 columns, per
+    the sibling test's own live-probed threshold) does NOT get a spacer:
+    StatusLine keeps the base rule's ``width: 100%`` (load-bearing
+    containment for a long status string — see app.py's ``StatusLine``
+    CSS comment; an auto-width own-row status line can overflow past the
+    screen edge) and is pinned right via ``text-align: right`` instead. A
+    spacer here would have nothing to push against, since StatusLine
+    already claims the whole row — this asserts that design choice
+    directly rather than only the merged case above."""
+    from reyn.interfaces.inline.textual_chat import StatusLine, TextualChatApp
+
+    snap, _session, _registry = await _real_snapshot(tmp_path)
+    app = TextualChatApp(
+        transport=_EventOnlyTransport(), read_model=_MutableSnapshotReadModel(snap)
+    )
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        await pilot.pause()
+        status = app.query_one(StatusLine)
+        assert "-shared" not in status.classes, (
+            "this test requires the own-row fallback — got the merged case "
+            "instead; narrow the screen size"
+        )
+        assert status.region.width >= status.parent.size.width - 2, (
+            f"own-row StatusLine width shrank ({status.region.width}) — "
+            f"containment protection for a long status string may be lost"
         )
 
 
