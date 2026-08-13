@@ -51,17 +51,38 @@ def _churn_and_truncate_wal(wal_path: Path) -> None:
     re-open a brand-new ``StateLog`` over the result (the "reconstruct"
     step: a fresh process attaching to this project)."""
     log = StateLog(wal_path)
+    seen: dict[str, str] = {}
 
     async def _go() -> None:
         for i in range(5):
             await log.append("inbox_put", target=f"a{i}", payload={})
         await log.flush()
+        seen["before"] = wal_path.read_text(encoding="utf-8")
         await log.truncate_below(1_000_000)
         await log.flush()
+        seen["after"] = wal_path.read_text(encoding="utf-8")
 
     asyncio.run(_go())
-    log2 = StateLog(wal_path)
-    assert log2.current_seq >= 1, "test setup: the truncation must actually have run"
+    # Positive control on the SOURCE events, not on a counter that survives
+    # either way: `current_seq` is >= 1 the moment five appends land, so
+    # asserting it says nothing about whether anything was removed (#2839's
+    # own shape — assert the source entries before, and their absence after).
+    #
+    # "Absence" here is partial, and deliberately asserted as such:
+    # `_do_truncate` clamps its floor to the highest seq present ("never drop
+    # the highest seq present, even if min_keep_seq exceeds it"), so one entry
+    # always survives a truncate-past-everything. Asserting zero remained
+    # would fail against correct behaviour; asserting "fewer than before" is
+    # what actually witnesses that the rewrite dropped entries.
+    before_n = seen["before"].count('"inbox_put"')
+    after_n = seen["after"].count('"inbox_put"')
+    assert before_n == 5, f"test setup: the appends must have landed (saw {before_n})"
+    assert after_n < before_n, (
+        f"test setup: truncate_below removed nothing ({after_n} of {before_n} "
+        "entries still present) — every assertion below would then be "
+        "measuring an untruncated WAL while claiming otherwise"
+    )
+    StateLog(wal_path)  # the reconstruct step: a fresh process attaching here
 
 
 def test_both_tables_live_directly_under_memory_never_under_cache_or_state(
