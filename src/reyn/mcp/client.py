@@ -93,62 +93,72 @@ either way).
   ``get_prompt``/``subscribe_resource``/``unsubscribe_resource``), so those
   call sites are unchanged.
 
-  ``mode="legacy"``, NOT the SDK's own ``"auto"`` default — a design
-  correction, not the original plan (architect's own PR-1 spec named
-  ``mode="auto"``; lead-coder overrode it after two live-verified failure
-  symptoms, both traced to the SAME mechanism): ``"auto"`` probes
-  ``server/discover`` and negotiates UP to a modern (2026-07-28-era)
-  protocol version whenever the PEER nominally advertises support for
-  it — which every reyn-owned stdio/http test double DOES, simply by
-  running on the same ``mcp>=2.0`` SDK reyn's client now depends on,
-  REGARDLESS of whether that double's own HANDLERS were ever built for
-  the modern wire's actual mechanisms. Two symptoms, live-verified against
-  the SAME real test doubles, ``mode="legacy"`` vs ``"auto"``, held
-  constant otherwise:
+  ``mode="legacy"`` BY DEFAULT, modern an EXPLICIT PER-SERVER OPT-IN
+  (:func:`_resolve_client_mode`, reading ``config["protocol_mode"]`` —
+  ``"auto"`` opts in, anything else including omitted stays ``"legacy"``).
+  This is PR-2's SECOND reversal on this exact line, after PR-1's own —
+  history, because the reasoning across all three states is load-bearing
+  for whoever touches this next:
 
-  - **Symptom 1 (resources.subscribe silently False)**:
-    ``mcp_subscribable_resources_server.py`` registers only the LEGACY
-    ``resources/subscribe`` handler, never the modern
-    ``"subscriptions/listen"`` one. The installed SDK's own
-    ``Server.get_capabilities(protocol_version=...)`` is BY DESIGN (read
-    directly, not guessed): at a modern-era negotiated version it derives
-    ``resources.subscribe`` from whether ``"subscriptions/listen"`` is
-    registered, ignoring the legacy handler entirely (its own docstring:
-    "the modern wire cannot dispatch [the legacy handler]"). Probed live:
-    ``mode="legacy"`` -> ``negotiated=2025-11-25``,
-    ``resources=ResourcesCapability(subscribe=True, ...)``;
-    ``mode="auto"`` -> ``negotiated=2026-07-28``,
-    ``resources=ResourcesCapability(subscribe=False, ...)`` — same
-    server, same handler registration, only the negotiated version
-    differs. This is not a bug in the SDK or the test double — the double
-    genuinely does not implement the modern subscription mechanism, and
-    the SDK correctly reports that. It is #3698 PR-2's job (the
-    ``listen`` <-> ``subscribe_resource`` port), not PR-1's, to close it.
-  - **Symptom 2 (list_changed notifications silently undelivered)**:
-    probed live against ``mcp_fastmcp_echo_server.py``'s
-    ``notify_tool_list_changed`` tool with a real ``message_handler``:
-    ``mode="legacy"`` delivers exactly 1
-    ``ToolListChangedNotification``; ``mode="auto"`` delivers ZERO —
-    no error, no timeout, silent. Same root mechanism as symptom 1: a
-    modern-era negotiation switches list-changed delivery to the
-    ``subscriptions/listen`` stream, which this (FastMCP-built) test
-    double does not implement either.
+  **PR-1's finding**: ``"auto"`` probes ``server/discover`` and negotiates
+  UP to a modern (2026-07-28-era) protocol version whenever the PEER
+  nominally advertises support for it — which every reyn-owned stdio/http
+  test double DID, simply by running on the same ``mcp>=2.0`` SDK reyn's
+  client depends on, REGARDLESS of whether that double's own HANDLERS were
+  ever built for the modern wire's actual mechanisms. Two symptoms,
+  live-verified against the SAME real test doubles, ``mode="legacy"`` vs
+  ``"auto"``, held constant otherwise: (1) ``resources.subscribe`` silently
+  read ``False`` against a server that DID support legacy subscribe, because
+  the modern-era capability derivation only counts a registered
+  ``"subscriptions/listen"`` handler, which the double didn't have; (2)
+  ``tools/list_changed`` notifications silently stopped arriving (0
+  delivered vs 1 under legacy) — the modern wire routes list-changed
+  through ``subscriptions/listen`` exclusively, and nothing was consuming
+  that stream. Both were genuine FUNCTION LOSS against a server whose
+  actual capability never changed, not the behavior-preserving swap PR-1
+  promised — so PR-1 pinned ``mode="legacy"`` (byte-identical negotiation to
+  the pre-PR-1 raw ``ClientSession`` behavior) and deferred the real fix.
 
-  Both symptoms are genuine FUNCTION LOSS against a server whose actual
-  implemented capability did not change — exactly what the owner's stated
-  backward-compat constraint ("古い mcp ver server でも機能を維持すること")
-  forbids, and ``"auto"``'s negotiation-follows-the-peer's-NOMINAL-version
-  behavior is not gated on whether reyn's OWN handler-level expectations
-  (subscribe delivery, list-changed delivery) still hold at that version —
-  so it is not the behavior-preserving swap PR-1 promises ("the same
-  thing, in a different class"; existing green is the bar). ``mode=
-  "legacy"`` keeps negotiation IDENTICAL to what raw ``ClientSession``
-  always did — zero behavior change, satisfying PR-1's own promise.
-  Switching to ``"auto"`` (or a version-aware negotiation policy) is
-  deliberately deferred to #3698 PR-2/PR-3, which is where the modern
-  ``listen``-based mechanisms this needs are actually built and gated —
-  this trace is the design record for why that pairing is required,
-  not an incidental note.
+  **PR-2's own subscription/listen fix, and where its "auto is now safe"
+  premise turned out to be INCOMPLETE**: :mod:`reyn.mcp.subscription_port`
+  built a ``SubscriptionAdapter`` per held connection that ACTIVELY
+  consumes ``Client.listen()`` under a modern negotiation, re-dispatching
+  every event to the SAME ``ReynMCPMessageHandler`` methods the legacy push
+  used — closing PR-1's two symptoms (re-verified live: both deliver
+  correctly under modern negotiation once the port is wired AND the two
+  test doubles were fixed to actually publish to their subscription bus, a
+  THIRD, orthogonal finding — see ``subscription_port.py``'s own "design
+  record"). On the strength of that fix, PR-2 briefly restored ``mode=
+  "auto"`` as the default — WRONG, corrected within the same PR (#3698
+  review) before merge: PR-1's own framing of the problem ("subscribe
+  moves to listen") undersold what the modern protocol actually does.
+  Directly from the installed SDK's own docstring
+  (``mcp/server/connection.py``'s ``send_raw_request``): a modern
+  (2026-07-28+) connection **forbids server-initiated requests over the
+  standalone back-channel ENTIRELY** — not just list_changed/subscribe, but
+  elicitation, sampling, roots, and ping too. Live-verified: an untouched,
+  pre-existing elicitation test double, never edited for this PR, started
+  raising ``NoBackChannelError`` the moment ``mode="auto"`` let it
+  negotiate modern — 10/10 of that file's tests broke. Subscriptions were
+  ONE hole in "does auto still work"; #4559 is the enumeration of how many
+  more there are (reyn features that break under modern — column A — and
+  reyn's OWN test doubles that structurally cannot even EXPRESS modern
+  behavior, like ``MCPServer``'s unconditional ``subscriptions/listen``
+  registration silently flipping ``resources.subscribe`` for every
+  MCPServer-built double regardless of actual resource support — column B,
+  discovered via this exact PR's capability-gate tests breaking).
+
+  **Where this leaves the default**: legacy, because a default that can
+  silently break an unrelated capability (elicitation) on ANY server that
+  happens to negotiate modern is not a safe default for ``main`` — an
+  operator's elicitation-using server going modern-capable would silently
+  lose elicitation with no reyn-side signal. Modern is reachable per-server
+  today (``protocol_mode: "auto"`` in that server's ``reyn.yaml`` config —
+  the adapter/port work THIS PR did is not dead code, just not
+  unconditionally exercised), and flips to being the DEFAULT only once
+  #4559's enumeration is complete enough to know what "safe" actually means
+  here (tracked as a future PR, #3698 PR-3's real precondition — see
+  #4559).
 
   Response cache — deliberately disabled (``cache=None``): ``Client``
   ships a client-side response cache (SEP-2549, protocol revision
@@ -184,10 +194,11 @@ Capability / version gate (#2597 capability slice):
   threaded through (was: ``ClientSession.initialize()`` RETURNS the
   ``mcp.types.InitializeResult`` directly, a plain return value, before
   PR-1). ``Client`` supports three handshake paths (``initialize``/
-  ``discover``/``adopt``, chosen by its ``mode``), but reyn pins
-  ``mode="legacy"`` (``initialize`` only) — see the module docstring's
-  "mode='legacy', not the SDK's own 'auto' default" section for why.
-  :meth:`supports` answers "did the server
+  ``discover``/``adopt``, chosen by its ``mode``); reyn defaults to
+  ``mode="legacy"`` per server, opting a specific server into ``"auto"``
+  only via that server's own ``protocol_mode: "auto"`` config — see the
+  module docstring's "mode='legacy' BY DEFAULT, modern an EXPLICIT
+  PER-SERVER OPT-IN" section for the full history and why. :meth:`supports` answers "did the server
   advertise capability X" (conservative False before initialize / on a
   missing result); :func:`require_capability` is the enforcement seam —
   call it before issuing a request for a gated feature so an unsupported
@@ -279,6 +290,14 @@ import warnings
 from collections.abc import Callable
 from typing import Any, NoReturn
 
+# #3698 PR-2: subscription_port.py only imports THIS module under
+# TYPE_CHECKING (see its own module docstring), so this module-level import
+# is not circular. select_subscription_adapter is the ONE decision point
+# for subscribe_resource/unsubscribe_resource below — see their docstrings
+# and subscription_port.py's "Why a port" for why no version-branching
+# lives here directly.
+from reyn.mcp.subscription_port import ListenSubscriptionAdapter, select_subscription_adapter
+
 # ── Env var expansion ─────────────────────────────────────────────────────────
 # Shared resolver lives in reyn.security.secrets.interpolation (ADR-0030).
 # This re-export keeps the public surface of this module backward-compatible:
@@ -322,6 +341,22 @@ class MCPTransportError(MCPError):
 
 
 _SUPPORTED_TYPES = {"stdio", "http", "sse"}
+
+
+def _resolve_client_mode(config: dict) -> "str":
+    """#3698 PR-2 (review ruling, #4559): the ONE place that decides which
+    SDK ``Client(mode=...)`` a server's connection gets — see the module
+    docstring's "mode='legacy' BY DEFAULT, modern an EXPLICIT PER-SERVER
+    OPT-IN" section for the full history and why ``"legacy"`` is the
+    default rather than the SDK's own ``"auto"``. A server opts in to
+    modern-capable negotiation with ``protocol_mode: "auto"`` in its
+    ``reyn.yaml``/``reyn.local.yaml`` config; every other value, including
+    the key being absent entirely, stays ``"legacy"`` — byte-identical to
+    every server's negotiation before this PR touched anything. This
+    default flips only once #4559's enumeration (which reyn features, and
+    which of reyn's OWN test doubles, break or can't even express modern
+    behavior) is complete enough to call ``"auto"`` safe — see #4559."""
+    return "auto" if config.get("protocol_mode") == "auto" else "legacy"
 
 # #2976: per-runtime DEFAULT write grants, keyed on the basename of the server's
 # ``command``. A package-manager launcher bootstraps itself into a per-user cache
@@ -934,6 +969,17 @@ class MCPClient:
         # connection is open.
         self._negotiated_version: str | None = None
         self._server_capabilities: Any = None  # mcp.types.ServerCapabilities | None
+        # #3698 PR-2: this client's OWN subscription delivery — era selection
+        # is monopolized by subscription_port.select_subscription_adapter
+        # (see subscribe_resource/unsubscribe_resource below), lazily built
+        # on the first subscribe/unsubscribe call (negotiated_version isn't
+        # known until initialize() has run). _subscribed_uris is THIS
+        # client's own tracked set — independent of, and never shared with,
+        # MCPConnectionService's own tracking (a held connection wraps this
+        # same MCPClient but keeps its OWN set for reconnect resubscribe;
+        # see connection_service.py's module docstring).
+        self._subscription_adapter: "Any | None" = None
+        self._subscribed_uris: "set[str]" = set()
         # #2714 belt-and-suspenders: the OS pid of the stdio subprocess this client
         # spawned (stdio transport only; None for http/sse and until initialize()
         # succeeds). Captured best-effort right after the connect handshake and used
@@ -1133,14 +1179,17 @@ class MCPClient:
                 # rather than resting on an SDK gating condition a later PR
                 # could unknowingly cross.
                 cache=None,
-                # #3698 PR-1 design correction (lead-coder, live-verified —
-                # see the module docstring's "mode='legacy', not the SDK's
-                # own 'auto' default" section for the two-symptom trace):
-                # `mode="auto"` is NOT behavior-preserving. Explicit
-                # `mode="legacy"` is what actually keeps PR-1's promise
-                # ("the same thing, in a different class") — negotiation
-                # stays exactly what it was under raw `ClientSession`.
-                mode="legacy",
+                # #3698 PR-2 (review ruling, #4559): "legacy" by default,
+                # this SERVER'S OWN config opts in to "auto" — see
+                # _resolve_client_mode's docstring and the module
+                # docstring's "mode='legacy' BY DEFAULT, modern an EXPLICIT
+                # PER-SERVER OPT-IN" section for the full history (an
+                # EARLIER version of this PR made "auto" the unconditional
+                # default; reverted within the same PR after discovering it
+                # silently breaks elicitation/sampling/roots/ping — a much
+                # bigger blast radius than the subscribe/list_changed gap
+                # this PR's own port closes).
+                mode=_resolve_client_mode(self._config),
             )
             # #3028/#3698 stage 1 — PR-1 REVERSES this bound's mechanism
             # (live-verified, not assumed): `anyio.fail_after` around
@@ -1251,9 +1300,10 @@ class MCPClient:
         # and capabilities off `Client` itself (`session` here IS the entered
         # `Client` instance — see the module docstring's "ClientSession ->
         # Client" section), not off a separate `init_result` return value.
-        # `mode="legacy"` (see the module docstring's "mode='legacy', not
-        # the SDK's own 'auto' default" section) means only the `initialize`
-        # path ever runs here — negotiation is unchanged from before PR-1.
+        # #3698 PR-2: `mode="auto"` (see the module docstring's "mode='auto',
+        # THE SDK'S OWN DEFAULT" section) means this may now be `initialize`
+        # OR `discover` — `subscription_port.py`'s adapter selection is what
+        # reads this value to pick the delivery mechanism, not this site.
         self._negotiated_version = session.protocol_version
         self._server_capabilities = session.server_capabilities
 
@@ -1343,10 +1393,11 @@ class MCPClient:
                 # PR-1 forward-guard for #3698 PR-3 — see the matching
                 # comment + module docstring section in _initialize_stdio.
                 cache=None,
-                # mode="legacy" — see the matching comment + module
-                # docstring section in _initialize_stdio for the two-symptom
-                # live trace that ruled out the SDK's "auto" default.
-                mode="legacy",
+                # #3698 PR-2 (review ruling, #4559): "legacy" by default,
+                # per-server opt-in to "auto" — see the matching comment +
+                # module docstring section in _initialize_stdio for the
+                # full PR-1/PR-2 history.
+                mode=_resolve_client_mode(self._config),
             )
             # PR-1: `asyncio.wait_for`, not `anyio.fail_after` — see
             # _initialize_stdio's matching comment for the full live-verified
@@ -1658,45 +1709,93 @@ class MCPClient:
                 f"to subscribe to a resource on it."
             )
 
-    async def subscribe_resource(self, uri: str) -> None:
-        """Subscribe to server-pushed ``notifications/resources/updated`` for
-        ``uri``. Gated on BOTH the ``resources`` capability (via
-        :func:`require_capability`, same as :meth:`read_resource`) AND the
-        resources ``subscribe`` sub-capability (via
-        :meth:`_require_resources_subscribe_capability`) — a server may support
-        reading resources without supporting subscriptions to them.
-
-        ``self._client`` IS the entered ``mcp.Client`` directly (PR-1; #4282:
-        every transport, OAuth included), so ``subscribe_resource`` is called
-        on it directly — no ``.session`` indirection needed. ``Client.
-        subscribe_resource`` is ``@deprecated`` on the SDK side (superseded
-        by ``Client.listen()`` under the 2026-07-28 revision — #3698 PR-2's
-        scope, not this one) but still delegates to the underlying
-        ``ClientSession`` and works unchanged against every server reyn
-        talks to today. The notification itself carries no payload (just
-        ``uri``) — callers re-read the resource to see the new content; see
-        :mod:`reyn.mcp.message_handler`'s ``on_resource_updated`` for the
-        EventLog bridge.
-        """
-        await self.initialize()
-        require_capability(self, "resources")
-        self._require_resources_subscribe_capability()
+    async def _raw_subscribe_resource_rpc(self, uri: str) -> None:
+        """The ONE call site that issues the legacy ``resources/subscribe``
+        RPC — used by :meth:`subscribe_resource` below (pre-#3698-PR-2
+        behavior, unchanged) AND by
+        :class:`~reyn.mcp.subscription_port.LegacySubscriptionAdapter`
+        (called as ``client._raw_subscribe_resource_rpc`` — same-package
+        internal, see that class's own docstring for why it can't call the
+        PUBLIC ``subscribe_resource`` without recursing). Never call this
+        directly against a modern-negotiated connection — the RPC does not
+        exist on the wire there (see ``subscription_port.py``'s "Why a
+        port"); the adapter selection in ``subscribe_resource`` already
+        guarantees this method is only reached via a
+        :class:`~reyn.mcp.subscription_port.LegacySubscriptionAdapter`,
+        which is only ever selected for a legacy-negotiated connection.
+        No capability gating here — the ONE public entrypoint
+        (:meth:`subscribe_resource`) already gated before selecting the
+        adapter that reaches this."""
         try:
             await self._client.subscribe_resource(uri)
         except Exception as exc:
             _classify_and_raise(exc, f"MCP resources/subscribe error: {exc}")
 
-    async def unsubscribe_resource(self, uri: str) -> None:
-        """Unsubscribe from server-pushed updates for ``uri``. Same gating as
-        :meth:`subscribe_resource`; mirrors it via ``mcp.Client.
-        unsubscribe_resource`` (same deprecated-but-functional note)."""
-        await self.initialize()
-        require_capability(self, "resources")
-        self._require_resources_subscribe_capability()
+    async def _raw_unsubscribe_resource_rpc(self, uri: str) -> None:
+        """Mirrors :meth:`_raw_subscribe_resource_rpc` for unsubscribe."""
         try:
             await self._client.unsubscribe_resource(uri)
         except Exception as exc:
             _classify_and_raise(exc, f"MCP resources/unsubscribe error: {exc}")
+
+    async def subscribe_resource(self, uri: str) -> None:
+        """Subscribe to resource-update delivery for ``uri``. Gated on BOTH
+        the ``resources`` capability (via :func:`require_capability`, same
+        as :meth:`read_resource`) AND the resources ``subscribe``
+        sub-capability (via
+        :meth:`_require_resources_subscribe_capability`) — a server may
+        support reading resources without supporting subscriptions to them.
+
+        #3698 PR-2: era selection (legacy per-URI RPC vs. modern
+        ``Client.listen()``) is delegated to
+        :func:`~reyn.mcp.subscription_port.select_subscription_adapter` —
+        this method never branches on ``negotiated_version`` itself. This
+        matters because, under a modern-era (2026-07-28+) negotiation, the
+        legacy ``resources/subscribe`` RPC does NOT exist on the wire at
+        all (a wire-level ``MCPError`` — "Method not found", live-verified
+        #3698 review) — calling it unconditionally, as this method did
+        pre-PR-2, silently broke every caller once ANY configured server
+        negotiated modern. The adapter is built once per client (lazily,
+        since ``negotiated_version`` isn't known until :meth:`initialize`
+        has run) and reused for every subsequent
+        subscribe/unsubscribe on this connection; ``_subscribed_uris``
+        tracks this client's own desired set so the listen adapter (which
+        takes its FULL filter set at every (re)open — no incremental
+        primitive exists on the installed SDK) can reopen with the right
+        set on each call, mirroring
+        ``connection_service.py``'s ``_HeldConnection`` (a SEPARATE
+        instance of the same call-site pattern, not a second copy of the
+        adapter LOGIC itself — that logic lives solely in
+        ``subscription_port.py``).
+        """
+        await self.initialize()
+        require_capability(self, "resources")
+        self._require_resources_subscribe_capability()
+        if self._subscription_adapter is None:
+            self._subscription_adapter = select_subscription_adapter(self, self._message_handler)
+        self._subscribed_uris.add(uri)
+        if isinstance(self._subscription_adapter, ListenSubscriptionAdapter):
+            await self._subscription_adapter.open(self._subscribed_uris)
+        else:
+            await self._raw_subscribe_resource_rpc(uri)
+
+    async def unsubscribe_resource(self, uri: str) -> None:
+        """Unsubscribe from ``uri``. Same gating and era-selection as
+        :meth:`subscribe_resource` — see its docstring. The listen adapter
+        has no per-URI "remove" primitive of its own (see
+        ``subscription_port.py``), so removal is "reopen with the reduced
+        full set", exactly mirroring how adding a URI is "reopen with the
+        expanded full set" there."""
+        await self.initialize()
+        require_capability(self, "resources")
+        self._require_resources_subscribe_capability()
+        if self._subscription_adapter is None:
+            self._subscription_adapter = select_subscription_adapter(self, self._message_handler)
+        self._subscribed_uris.discard(uri)
+        if isinstance(self._subscription_adapter, ListenSubscriptionAdapter):
+            await self._subscription_adapter.open(self._subscribed_uris)
+        else:
+            await self._raw_unsubscribe_resource_rpc(uri)
 
     async def close(self) -> None:
         """Tear down the transport and session. Safe to call repeatedly.
@@ -1712,6 +1811,18 @@ class MCPClient:
         ``finally`` explicitly reaps the captured child pid, guaranteeing the OS
         subprocess is terminated rather than trusting that a swallowed fault left it
         dead. On a clean close the child is already gone and the reap is a no-op."""
+        # #3698 PR-2: tear down this client's own subscription adapter FIRST
+        # (before the transport it depends on goes away) — a live
+        # ListenSubscriptionAdapter owns a background task consuming
+        # Client.listen(); leaving it running past self._client teardown
+        # would leak that task against a now-dead connection.
+        if self._subscription_adapter is not None:
+            adapter = self._subscription_adapter
+            self._subscription_adapter = None
+            try:
+                await adapter.close()
+            except Exception:  # noqa: BLE001 — best-effort; a dead transport's own teardown may already have faulted
+                logger.warning("MCPClient: subscription adapter teardown faulted", exc_info=True)
         if self._client is None:
             self.close_stderr_capture()
             self._reap_child_process()  # nothing opened, or already closed once — still idempotent

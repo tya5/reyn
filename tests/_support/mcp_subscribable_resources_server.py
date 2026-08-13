@@ -37,9 +37,18 @@ Exposes:
     handlers (accepting the subscription is all a real server needs to do;
     the interesting behaviour is the PUSH below).
   - tool ``bump_and_notify()`` — increments the counter and pushes a REAL
-    ``notifications/resources/updated`` for ``resource://counter`` via
-    ``app.request_context.session.send_resource_updated(...)`` (the same raw
-    ``ServerSession`` API a real MCP server implementer would call).
+    resource-updated signal on BOTH delivery mechanisms (#3698 PR-2, same
+    dual-delivery shape as ``mcp_fastmcp_echo_server.py``'s notify tools —
+    see that module's docstring for the live-verified reasoning): the
+    legacy ``notifications/resources/updated`` push via
+    ``ctx.session.send_resource_updated(...)`` (the same raw
+    ``ServerSession`` API a real MCP server implementer would call,
+    delivered to a pre-2026-07-28 negotiated client) AND
+    ``bus.publish(ResourceUpdated(uri=...))`` on the explicit
+    ``InMemorySubscriptionBus`` this file now constructs and registers via
+    ``on_subscriptions_listen=ListenHandler(bus)`` (delivered to a client
+    that opened ``Client.listen(resource_subscriptions=[...])`` on a
+    2026-07-28 connection).
   - tool ``die()`` — kills the subprocess (transport-death simulation, mirrors
     ``mcp_fastmcp_echo_server.py``'s ``die`` tool) so reconnect/re-subscribe
     tests can simulate a genuine transport drop.
@@ -52,10 +61,16 @@ import os
 import mcp.types as types
 from mcp.server.lowlevel import Server
 from mcp.server.stdio import stdio_server
+from mcp.server.subscriptions import InMemorySubscriptionBus, ListenHandler, ResourceUpdated
 
 _URI = "resource://counter"
 
 _counter = {"value": 0}
+
+# #3698 PR-2: constructed explicitly (the low-level Server has no default,
+# unlike MCPServer's own internal one) so bump_and_notify below can publish
+# to the SAME bus the listen handler reads from — see module docstring.
+_subscriptions = InMemorySubscriptionBus()
 
 
 # #4368 (mcp 2.0 port): all 6 decorators this file used
@@ -116,7 +131,9 @@ async def call_tool(
     name = params.name
     if name == "bump_and_notify":
         _counter["value"] += 1
+        # #3698 PR-2: fire BOTH delivery mechanisms — see module docstring.
         await ctx.session.send_resource_updated(_URI)
+        await _subscriptions.publish(ResourceUpdated(uri=_URI))
         return types.CallToolResult(
             content=[types.TextContent(type="text", text=str(_counter["value"]))],
         )
@@ -133,6 +150,11 @@ app = Server(
     on_unsubscribe_resource=unsubscribe_resource,
     on_list_tools=list_tools,
     on_call_tool=call_tool,
+    # #3698 PR-2: the low-level Server, unlike MCPServer, has no default
+    # subscriptions/listen wiring at all — an explicit ListenHandler over
+    # THIS module's own bus is what makes a modern (2026-07-28) client's
+    # Client.listen(resource_subscriptions=[...]) reach anything.
+    on_subscriptions_listen=ListenHandler(_subscriptions),
 )
 
 

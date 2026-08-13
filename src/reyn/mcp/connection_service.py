@@ -91,9 +91,8 @@ is fully re-establishable and matches the gen-store runtime-only-state invariant
 consequence: a fresh session (post-restart) starts with NO subscriptions (same as a fresh
 ``MCPClient`` starts with none), and a RECONNECT within the same live session (the F1
 transport-death path) must explicitly RE-ISSUE ``subscribe_resource`` for every URI
-tracked for that server on the fresh client — a brand-new ``mcp.Client`` (#3698 PR-1;
-was a raw ``mcp.ClientSession``) has no memory of what the OLD (now-dead) session's
-client subscribed to. :meth:`_ensure_open`
+tracked for that server on the fresh client — a brand-new ``mcp.ClientSession`` has no
+memory of what the OLD (now-dead) session's client subscribed to. :meth:`_ensure_open`
 does this re-subscribe immediately after opening a NEW client (whether that is the very
 first open, where the tracked set is empty and the loop is a no-op, or a reconnect, where
 it is the whole point) — see that method's inline comment.
@@ -132,7 +131,7 @@ missed update a missed hook fire): ②b re-subscribes every tracked URI on a
 transport-death reconnect (the loop in :meth:`_ensure_open`, described above), but a
 resource that actually CHANGED while the connection was dead never produced a
 ``resources/updated`` push — that notification simply never arrived on the dead
-transport, and the fresh ``mcp.Client`` has no way to redeliver a notification it
+transport, and the fresh ``mcp.ClientSession`` has no way to redeliver a notification it
 never received. Q4 (S2-pre spike, decided, do not relitigate): reyn keeps NO resource
 content cache — subscriptions are runtime-only (see ②b's docstring above), so there is
 no baseline to diff the post-reconnect content against and no way to know WHICH tracked
@@ -162,6 +161,11 @@ from reyn.mcp.client import MCPClient, MCPTransportError
 from reyn.mcp.elicitation import DEFAULT_ELICITATION_TIMEOUT_SECONDS, build_elicitation_handler
 from reyn.mcp.message_handler import EmitSink, ReynMCPMessageHandler, ToolsCacheInvalidate
 from reyn.mcp.pool import describe_fault, is_real_control_flow
+from reyn.mcp.subscription_port import (
+    ListenSubscriptionAdapter,
+    SubscriptionAdapter,
+    select_subscription_adapter,
+)
 
 if TYPE_CHECKING:
     from reyn.user_intervention import RequestBus
@@ -253,6 +257,19 @@ class MCPConnectionService:
         # re-subscribe every tracked URI on a fresh client (first open: empty, no-op;
         # reconnect: the whole point).
         self._subscriptions: dict[str, set[str]] = {}
+        # #3698 PR-2: the active SubscriptionAdapter per server — rebuilt on
+        # every (re)connect by _ensure_open (see subscription_port.py's own
+        # module docstring for the full design). Read by _HeldConnection.
+        # subscribe_resource/unsubscribe_resource to route an incremental
+        # add/remove through whichever mechanism the CURRENT connection's
+        # negotiated version actually uses.
+        self._subscription_adapters: dict[str, SubscriptionAdapter] = {}
+        # #3698 PR-2: fire-and-forget reconnect tasks spawned by
+        # _on_subscription_lost (a ListenSubscriptionAdapter's background
+        # consumer noticing SubscriptionLost) — kept referenced so they are
+        # never garbage-collected mid-flight, and cancelled in aclose() so a
+        # session teardown can never race a proactive reconnect.
+        self._background_tasks: "set[asyncio.Task[None]]" = set()
         # #2597 P1 (reconnect resync-read): servers for which _ensure_open has
         # completed at least one successful open in THIS service's lifetime — the
         # boundary that distinguishes the very first open (nothing to resync yet,
@@ -371,56 +388,93 @@ class MCPConnectionService:
             await client.__aenter__()  # initialize; held open (no matching __aexit__ until aclose/reconnect)
             self._clients[server] = client
             self._ever_opened.add(server)
+            # #3698 PR-2: build the adapter matching THIS client's actual
+            # negotiated version (see subscription_port.py's own module
+            # docstring for the full design) and open() it — UNCONDITIONALLY,
+            # even when the tracked URI set is empty: under a modern
+            # negotiation, tools_list_changed/prompts_list_changed delivery
+            # itself REQUIRES an open listen() stream regardless of whether
+            # any resource is subscribed, unlike the legacy path (where the
+            # message_handler push covers those two families for free, no
+            # subscribe call needed). Stored per-server so a later
+            # incremental subscribe_resource/unsubscribe_resource
+            # (_HeldConnection, below) can route through the SAME adapter
+            # instance rather than rebuilding it.
+            #
+            # #2597 slice ②b (adapter-mediated since PR-2): open() re-issues
+            # delivery for every URI tracked for THIS server on the fresh
+            # client. On the very first open the tracked set is empty
+            # (nothing to (re)establish yet, though the listen adapter still
+            # opens its stream for list_changed — see above); on a reconnect
+            # (this same branch runs because the dead client was already
+            # popped from self._clients by _reconnect below) this is what
+            # makes a subscription survive a transport-death reconnect — a
+            # brand-new connection has no memory of what the OLD one
+            # subscribed to.
+            #
+            # #2597 P1 (reconnect resync-read, follow-up to ②b): on a RE-open
+            # (``is_reopen`` — NOT the very first open), reyn cannot know
+            # whether any of these URIs actually changed during the
+            # disconnect window (Q4: no content cache to diff against — see
+            # message_handler.py's ``emit_resource_updated`` docstring), so
+            # it conservatively fires a SYNTHETIC ``mcp_resource_updated`` for
+            # each re-established URI — through the exact same emit_sink + H1
+            # hook-trigger path a real push uses, so a missed-during-
+            # disconnect update is never silently dropped. ``honored`` drives
+            # WHICH URIs get the synthetic fire when the adapter can say
+            # (the listen adapter's filter-level ack); when it can't (``None``
+            # — the legacy adapter, or a listen adapter the server declined
+            # resource_subscriptions on entirely), every TRACKED URI gets one
+            # — deliberately not narrowed to "only URIs whose individual
+            # re-subscribe call didn't raise" (the pre-PR-2 legacy-only
+            # behavior): a resync is a cheap "may have changed, re-read if
+            # you care" signal, and firing it for a URI whose own re-
+            # subscribe state is uncertain is safer than silently assuming
+            # it's fine. First open: the tracked set is empty, so nothing is
+            # ever emitted — only a genuine re-open with tracked URIs
+            # produces synthetic events.
+            on_lost = (
+                # #3698 review: ``client`` (THIS open's own client, bound now
+                # while it's still THE current one) is threaded through so
+                # ``_on_subscription_lost`` can tell, when it actually fires,
+                # whether it's still talking about the CURRENT connection —
+                # see that method's own docstring for why this matters (the
+                # double-reconnect bug this closes).
+                functools.partial(self._on_subscription_lost, server, config, agent_id, client)
+                if handler is not None else None
+            )
+            adapter = select_subscription_adapter(client, handler, on_lost=on_lost)
+            self._subscription_adapters[server] = adapter
+            tracked = set(self._subscriptions.get(server, ()))
+            try:
+                honored = await adapter.open(tracked)
+            except Exception:  # noqa: BLE001 — subscription delivery is best-effort; must not abort the connect
+                logger.warning(
+                    "MCPConnectionService: failed to open subscription delivery for %r "
+                    "after (re)connect", server, exc_info=True,
+                )
+                honored = None
+            if is_reopen and handler is not None:
+                for uri in (honored if honored is not None else tracked):
+                    handler.emit_resource_updated(uri, resync=True)
             # #2597 capability/version gate: observability seam. This is the first
             # point in the live (non-ephemeral) session path that HAS the emit_sink
             # (the ephemeral per-call MCPClientPool path never wires one — see class
             # docstring — so it stays silent, matching pre-#2597 behaviour there).
             # Fires once per (re)connect, including reconnects (a version/capability
             # renegotiation is itself worth a trace event, not just the first
-            # connect).
+            # connect). #3698 PR-2: now ALSO names the selected adapter's class —
+            # the witness that adapter SELECTION (not just "both paths work in
+            # isolation") is observable per-connection, the exact acceptance
+            # criterion lead-coder named for this PR.
             if self._emit_sink is not None:
                 self._emit_sink(
                     "mcp_initialized",
                     server=server,
                     negotiated_version=client.negotiated_version,
                     capabilities=client.advertised_capabilities(),
+                    subscription_adapter=type(adapter).__name__,
                 )
-            # #2597 slice ②b: re-issue subscribe_resource for every URI tracked for
-            # THIS server on the fresh client. On the very first open the tracked set
-            # is empty (nothing to do yet); on a reconnect (this same branch runs
-            # because the dead client was already popped from self._clients by
-            # _reconnect below) this is what makes a subscription survive a
-            # transport-death reconnect — a brand-new mcp.Client (#3698 PR-1; was a
-            # raw mcp.ClientSession) has no memory of what the OLD session subscribed
-            # to. Per-URI try/except: a
-            # server that no longer supports subscribe post-reconnect (or a single
-            # bad URI) must not abort re-subscribing the REST of the tracked set,
-            # and must not crash the reconnect itself.
-            #
-            # #2597 P1 (reconnect resync-read, follow-up to ②b): on a RE-open
-            # (``is_reopen`` — NOT the very first open), reyn cannot know whether any
-            # of these URIs actually changed during the disconnect window (Q4: no
-            # content cache to diff against — see message_handler.py's
-            # ``emit_resource_updated`` docstring), so it conservatively fires a
-            # SYNTHETIC ``mcp_resource_updated`` for each URI it successfully
-            # re-subscribes — through the exact same emit_sink + H1 hook-trigger path
-            # a real push uses, so a missed-during-disconnect update is never
-            # silently dropped. A URI whose re-subscribe itself failed gets no
-            # synthetic event (there's no live subscription to have missed anything
-            # on). First open: the tracked set is empty, so this loop is a no-op and
-            # nothing is ever emitted — only a genuine re-open with tracked URIs
-            # produces synthetic events.
-            for uri in self._subscriptions.get(server, ()):
-                try:
-                    await client.subscribe_resource(uri)
-                except Exception:  # noqa: BLE001 — one bad re-subscribe must not block the rest
-                    logger.warning(
-                        "MCPConnectionService: failed to re-subscribe %r on %r after "
-                        "(re)connect", uri, server, exc_info=True,
-                    )
-                    continue
-                if is_reopen and handler is not None:
-                    handler.emit_resource_updated(uri, resync=True)
         return client
 
     async def _reconnect(
@@ -440,7 +494,91 @@ class MCPConnectionService:
                     "MCPConnectionService: teardown of dead connection %r contained: %r",
                     server, exc,
                 )
+        # #3698 PR-2: the OLD adapter (if any — first-ever connect has none)
+        # is orphaned once _ensure_open below rebuilds a fresh one; close it
+        # explicitly first so a ListenSubscriptionAdapter's background
+        # consumer task never leaks across a reconnect. graceful=False (#3698
+        # review ruling, live-verified): THIS caller already knows the
+        # transport is dead — that's why _reconnect is running at all — so
+        # there is no peer left to round-trip a graceful ``subscriptions/
+        # listen`` close with. An earlier version called the graceful
+        # close() unconditionally here and it hung indefinitely against a
+        # known-dead transport; see subscription_port.py's module docstring
+        # "Design record" #2a for the full finding and why bounding it with
+        # a timeout was tried and rejected rather than fixed this way.
+        old_adapter = self._subscription_adapters.pop(server, None)
+        if old_adapter is not None:
+            try:
+                await old_adapter.close(graceful=False)
+            except Exception:  # noqa: BLE001 — best-effort; the underlying connection is already dead
+                logger.warning(
+                    "MCPConnectionService: teardown of dead subscription adapter for %r "
+                    "contained an error", server, exc_info=True,
+                )
         return await self._ensure_open(server, config, agent_id=agent_id)
+
+    def _on_subscription_lost(
+        self, server: str, config: dict, agent_id: "str | None", dead_client: "MCPClient",
+    ) -> None:
+        """The sync, non-blocking callback a :class:`~reyn.mcp.subscription_port.
+        ListenSubscriptionAdapter` fires when its stream ends via
+        ``SubscriptionLost`` (see that module for the full design) — mirrors
+        #2608 H1's sync-callback-into-async-work bridge shape.
+
+        Schedules a PROACTIVE reconnect: unlike ``call_tool``/``list_tools``
+        (healed REACTIVELY, on the next use, via ``_HeldConnection._heal``),
+        nothing "calls" to receive a subscription/list_changed notification
+        — a purely reactive design would leave delivery silently dead until
+        some UNRELATED client call happened to trigger a heal. This task is
+        fire-and-forget (kept referenced in ``self._background_tasks`` so it
+        is never garbage-collected mid-flight, and cancelled in
+        :meth:`aclose`).
+
+        ``dead_client`` (#3698 review, live-verified DOUBLE RECONNECT bug —
+        this docstring PREVIOUSLY claimed "a genuinely concurrent client
+        call racing this reconnect is not a NEW hazard... already
+        tolerates" — that claim was WRONG, corrected here): the exact
+        client instance THIS adapter belonged to, captured at the open()
+        that installed it. A single transport death (e.g. the peer process
+        dying) fires BOTH this callback (the listen stream noticing loss)
+        AND, independently, ``_HeldConnection._heal``'s reactive path (an
+        in-flight call failing with ``MCPTransportError``) — live-verified:
+        one subprocess kill produced 3 ``mcp_initialized`` events (1 open +
+        2 reconnects) and 2 synthetic ``mcp_resource_updated`` resyncs
+        (expected 2 and 1). ``_reconnect_from_lost_subscription`` checks
+        ``dead_client`` against the CURRENT held client, under the SAME
+        per-server lock ``_HeldConnection._heal`` now also takes (see that
+        method) — whichever path reconnects first wins; the second sees the
+        client has already changed and skips, closing the race rather than
+        merely narrowing it (a check without the shared lock would still
+        race: both could pass a stale check before either replaces the
+        client)."""
+        task = asyncio.create_task(
+            self._reconnect_from_lost_subscription(server, config, agent_id, dead_client)
+        )
+        self._background_tasks.add(task)
+        task.add_done_callback(self._background_tasks.discard)
+
+    async def _reconnect_from_lost_subscription(
+        self, server: str, config: dict, agent_id: "str | None", dead_client: "MCPClient",
+    ) -> None:
+        try:
+            async with self._lock_for(server):
+                if self._clients.get(server) is not dead_client:
+                    # Someone else (typically _HeldConnection._heal's own
+                    # reactive path, racing the SAME transport death) already
+                    # reconnected — see this method's docstring. Not stale
+                    # data staying stale: we hold the lock, so this read is
+                    # the current truth, not a snapshot that could still
+                    # change under us.
+                    return
+                await self._reconnect(server, config, agent_id=agent_id)
+        except Exception:  # noqa: BLE001 — a proactive reconnect attempt must never crash the service; the
+            # next reactive _heal (a normal call_tool/list_tools) still retries.
+            logger.warning(
+                "MCPConnectionService: proactive reconnect after a lost subscription "
+                "failed for %r", server, exc_info=True,
+            )
 
     def subscribed_uris(self, server: str) -> list[str]:
         """Sorted list of URIs currently tracked as subscribed for ``server``.
@@ -522,6 +660,38 @@ class MCPConnectionService:
         # McpIngressAdapter (byte-identical: same cancel-then-await-swallow
         # shape, now shared with FsIngressAdapter's aclose).
         await self._mcp_ingress_adapter.aclose()
+
+        # #3698 PR-2: cancel every proactive-reconnect-from-lost-subscription
+        # task BEFORE tearing down the clients/adapters below — a task that
+        # ran to completion after teardown would try to reconnect a server
+        # this service just closed, resurrecting a held connection aclose()
+        # was supposed to end. Same finally-guaranteed shape as the H1 drain
+        # task above (CancelledError is a BaseException, not caught by a
+        # bare except-Exception).
+        background_tasks = list(self._background_tasks)
+        self._background_tasks.clear()
+        for task in background_tasks:
+            task.cancel()
+        for task in background_tasks:
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+
+        # #3698 PR-2: close every subscription adapter's own background
+        # delivery machinery (a ListenSubscriptionAdapter's consumer task)
+        # before tearing down the clients themselves — best-effort, mirrors
+        # the client-teardown fault-tolerance immediately below.
+        adapters = list(self._subscription_adapters.items())
+        self._subscription_adapters.clear()
+        for name, adapter in adapters:
+            try:
+                await adapter.close()
+            except Exception:  # noqa: BLE001 — best-effort; the client teardown below still runs regardless
+                logger.warning(
+                    "MCPConnectionService: teardown of subscription adapter for %r "
+                    "contained an error", name, exc_info=True,
+                )
 
         clients = list(self._clients.items())
         self._clients.clear()
@@ -633,12 +803,40 @@ class _HeldConnection:
     # THIS call once on the fresh connection. That sequencing is what avoids a double
     # subscribe: the reconnect's re-subscribe loop and this method's own retry never
     # target the same URI in the same pass.
+    #
+    # #3698 PR-2: routed through whichever adapter is CURRENTLY active for
+    # this server (rebuilt fresh by every _ensure_open, including inside
+    # _heal's own reconnect path above). The legacy adapter has no
+    # incremental primitive of its own — MCPClient.subscribe_resource(uri)
+    # unchanged, exactly as before PR-2. The listen adapter's `Client.
+    # listen()` takes its FULL filter set at open time (no incremental
+    # add/remove exists on the installed SDK — measured live, see
+    # subscription_port.py) — so adding/removing ONE URI means closing and
+    # re-opening the stream with the updated FULL tracked set, which
+    # ListenSubscriptionAdapter.open() already does internally (see its own
+    # docstring).
     async def subscribe_resource(self, uri: str) -> None:
-        await self._heal(lambda c: c.subscribe_resource(uri), heal_only=False)
+        async def op(c: MCPClient) -> None:
+            adapter = self._service._subscription_adapters.get(self._server)
+            if isinstance(adapter, ListenSubscriptionAdapter):
+                all_uris = set(self._service._subscriptions.get(self._server, ())) | {uri}
+                await adapter.open(all_uris)
+            else:
+                await c.subscribe_resource(uri)
+
+        await self._heal(op, heal_only=False)
         self._service._track_subscription(self._server, uri)
 
     async def unsubscribe_resource(self, uri: str) -> None:
-        await self._heal(lambda c: c.unsubscribe_resource(uri), heal_only=False)
+        async def op(c: MCPClient) -> None:
+            adapter = self._service._subscription_adapters.get(self._server)
+            if isinstance(adapter, ListenSubscriptionAdapter):
+                remaining = set(self._service._subscriptions.get(self._server, ())) - {uri}
+                await adapter.open(remaining)
+            else:
+                await c.unsubscribe_resource(uri)
+
+        await self._heal(op, heal_only=False)
         self._service._untrack_subscription(self._server, uri)
 
     async def _heal(
@@ -663,16 +861,42 @@ class _HeldConnection:
         after healing — do NOT re-run ``op`` (preserves at-most-once; the healed
         connection serves the NEXT call). ``heal_only=False`` (idempotent ``list_tools``):
         retry ``op`` ONCE on the fresh connection; a second failure propagates unchanged
-        (no silent retry loop)."""
-        client = await self._service._ensure_open(
-            self._server, self._config, agent_id=self._agent_id,
-        )
+        (no silent retry loop).
+
+        #3698 review: ``_ensure_open``/``_reconnect`` are now called under
+        ``self._service._lock_for(self._server)`` — the SAME per-server lock
+        :meth:`MCPConnectionService.get` already uses. Closes a real,
+        live-verified double-reconnect race: a single transport death used
+        to fire BOTH this method's own reactive reconnect (an in-flight call
+        failing) AND, independently, ``_on_subscription_lost``'s proactive
+        one (the listen stream noticing loss) — see that method's own
+        docstring for the full finding. ``op(client)`` itself runs OUTSIDE
+        the lock (only connection-state mutation is serialized — unrelated
+        concurrent calls on an already-healthy connection are not
+        artificially serialized against each other)."""
+        async with self._service._lock_for(self._server):
+            client = await self._service._ensure_open(
+                self._server, self._config, agent_id=self._agent_id,
+            )
         try:
             return await op(client)
         except MCPTransportError:
-            fresh = await self._service._reconnect(
-                self._server, self._config, agent_id=self._agent_id,
-            )
+            async with self._service._lock_for(self._server):
+                # #3698 review: staleness check mirrors
+                # ``_reconnect_from_lost_subscription``'s — the SAME
+                # transport death that just failed ``op(client)`` above may
+                # have ALSO already been reconnected by the proactive
+                # ``_on_subscription_lost`` path while this method was
+                # waiting for the lock. If so, reuse that already-fresh
+                # client rather than discarding it for a third, redundant
+                # reconnect.
+                current = self._service._clients.get(self._server)
+                if current is not None and current is not client:
+                    fresh = current
+                else:
+                    fresh = await self._service._reconnect(
+                        self._server, self._config, agent_id=self._agent_id,
+                    )
             if heal_only:
                 raise  # at-most-once: connection healed for the next call, but this call is NOT retried
             return await op(fresh)
