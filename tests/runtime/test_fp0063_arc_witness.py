@@ -80,6 +80,20 @@ attribution mechanism, run the direction that occurs naturally when a schema
 changes and the fixtures haven't caught up yet, rather than deliberately
 reversed afterward to double-check the regenerated ones.
 
+#4602 re-keyed BOTH files again (``install_plugin`` sits in every turn's
+tool catalog, not just turn 1's own call — its key moved in ``turn2`` too,
+even though turn 2 never calls it), for the 4th occurrence of the SAME
+#3556 shape: #4570 conversion A's manifest-relocation change edited
+``install_plugin``'s own tool DESCRIPTION text
+(``tools/descriptions/plugin_management.py``, ``.reyn-plugin/plugin.json`` ->
+``plugin.json``), and a tool's description is part of the ``tools=`` payload
+``LLMReplay.key`` hashes. Same switch, same verification — CI attributed the
+drift to exactly ``install_plugin: schema differs (690799f988fd ->
+bda7f3d3e3eb)`` before regeneration, matching #4556's own "observed in the
+direction that occurs naturally" note. This is the 4th time a
+``tools/descriptions/`` edit has re-keyed this fixture (#3556 / #3630 /
+#4556 / #4602) — worth knowing if a future PR touches that directory.
+
 **Historical hazard, fixed by #3634 — regenerating in place used to APPEND.**
 ``REYN_FP0063_ARC_WITNESS_GENERATE=1`` used to record into whatever was already
 there, and ``LLMReplay.flush`` only ever appended: the old keys survived
