@@ -230,6 +230,22 @@ async def get_tool_result(
 # / write_file's own scoping) — this route can only ever serve back
 # something the agent could already produce and read itself, not a new
 # capability.
+#
+# ★ What an UNAUTHENTICATED caller of this route can reach DID widen, in
+# fact, not just in theory: from "a tool-results artifact" (the sibling
+# route) to "any minted path" (this route) — this router carries no
+# per-route auth (see the module docstring's own "Authentication" note).
+# What stands in for it here is three separate things, NOT authentication:
+#   ① the ref itself is unguessable (secrets.token_urlsafe(9), ~72 bits —
+#     not enumerable by probing sequential/short values)
+#   ② resolve_ref is agent-scoped — a ref minted under one agent never
+#     resolves under another's route segment
+#   ③ ``reyn web``'s own default bind is loopback-only
+#     (``cli/commands/web.py``'s ``--host`` default, 127.0.0.1) — this
+#     route is not reachable from the network at all under the default
+# Named explicitly so a FUTURE decision to change ③ (e.g. defaulting
+# ``--host`` to 0.0.0.0) has this route on its checklist — the current
+# safety here rests on ③ holding, not on ① or ② alone standing in for auth.
 
 
 @router.get("/agents/{agent_name}/artifacts/{ref}")
