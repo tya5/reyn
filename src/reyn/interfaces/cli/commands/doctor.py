@@ -43,7 +43,7 @@ items checked" anywhere in this module or its own docs — see this issue's
 own owner note: any claim about coverage must be DERIVABLE from this
 disclosure line, never asserted independently of it.
 
-## Scope of this slice (PR-3a + PR-2)
+## Scope of this slice (PR-3a + PR-2 + PR-2b)
 
 C-7 (disk: declared retention ↔ actual bytes/age for ``.reyn/events/``, plus
 policy-independent visibility for ``.reyn/media/`` / ``.reyn/tool-results/``
@@ -53,12 +53,20 @@ yet, #4478/#4476 Phase 2 unimplemented). C-1 (hook argv[0] launch probe,
 hook's argv[0] is probed under the SAME sandbox backend + the SAME per-hook
 policy a real dispatch would use (:mod:`reyn.security.sandbox.probe_argv`),
 NEVER with the hook's own configured arguments (D-2: a real run, even a
-partial one, is the one thing this command must never do). C-5 (sandbox
-posture) and C-6's other named pairs (listen port, model-name acceptance)
-are PR-3b — each needs its own NEW measurement code (introspecting a live
-bound socket, a real litellm probe call), not reuse of an existing function
-the way C-1/C-7 are. C-2 (zero-responder subscription) remains dispatched
-separately, not implemented in this module.
+partial one, is the one thing this command must never do). C-2
+(zero-responder subscription, #4364 PR-2b, architect ruling): for each of
+the 4 external ingress points (``hooks.schema_registry._EXTERNAL_POINTS``),
+check whether a PRODUCER exists (declared config for ``file_changed``/
+``cron_fired``, past audit-log evidence for ``mcp_resource_updated`` —
+subscriptions themselves are a volatile op-level concept doctor cannot see
+from a separate process, so the check pairs producer↔consumer, not
+subscription↔consumer) and, only where one does, whether any consumer
+(hook) is registered for it. ``webhook_received`` has no config or
+audit-log surface at all — D-3: named as un-checked, not silently
+skipped. C-5 (sandbox posture) and C-6's other named pairs (listen port,
+model-name acceptance) are PR-3b — each needs its own NEW measurement
+code (introspecting a live bound socket, a real litellm probe call), not
+reuse of an existing function the way C-1/C-2/C-7 are.
 """
 from __future__ import annotations
 
@@ -221,6 +229,13 @@ def run(args: argparse.Namespace) -> None:
     print("probe, not a run; D-2: doctor never executes a hook for real):")
     _print_hook_probe_results(config)
 
+    # ── C-2: zero-responder external subscription (#4364 PR-2b) ────────────
+    print()
+    print("External-event producer/consumer pairing (a producer with 0")
+    print("subscribing hooks is a real gap; a point with no producer is not")
+    print("reported — see 'not checked' below for why some points aren't):")
+    _print_external_point_pairing(config, resolved_root)
+
 
 def _configured_exec_hooks(config: object) -> "list[HookDef]":
     """Every configured ``exec``/``exec_capture`` ``HookDef`` — the caller
@@ -297,4 +312,169 @@ def _print_hook_probe_results(config: Any) -> None:
             print(
                 f"  ⚠ {label}: the sandbox itself failed its own known-good "
                 f"control binary — this is not about {argv0!r}",
+            )
+
+
+# ── C-2: zero-responder subscription (#4364 PR-2b) ──────────────────────────
+#
+# Architect's own correction mid-design: the original C-2 spec asked "is
+# something subscribed?" — unanswerable from a separate process, because an
+# MCP resource subscription lives only on a HELD connection (mcp_subscribe_
+# resource.py's own docstring: "a subscription is only meaningful on a HELD
+# (persistent) connection") — volatile, not config. The corrected pairing is
+# PRODUCER <-> CONSUMER: the consumer side (a hook registered for a point) is
+# always readable from config; the producer side is readable ONLY where a
+# static declaration or a past audit-log record exists.
+#
+# `webhook_received` has neither (no config surface, no AUDIT_EVENT_KINDS
+# entry) — D-3: named as un-checked below, never silently skipped.
+_UNCHECKABLE_EXTERNAL_POINTS: Final[tuple[str, ...]] = ("webhook_received",)
+
+# .reyn/events is append-only with no kind index (reyn-dir-layout.md) — a
+# kind lookup is a scan. #4479 retention normally bounds the file count, but
+# an operator who disabled retention (0 = off, both axes) has no upper
+# bound. This check only needs "did it happen at least once" (architect's
+# own ruling), so a bounded newest-first scan is exact for that question —
+# an early exit can never turn a real positive into a false negative, only
+# a genuinely-never-happened case stays (correctly) unproven beyond this
+# window. Same "config knob + disclose what was scanned" shape as #4601's
+# own N (architect's note) — a local doctor-only display bound, not a
+# functional correctness cap, so no config knob of its own: the window is
+# always disclosed alongside the result (below), never asserted silently.
+_MCP_EVENT_SCAN_MAX_FILES: Final[int] = 20
+
+
+def _mcp_resource_updated_seen(events_dir: Path) -> "tuple[bool, int]":
+    """(seen, files_scanned) — whether ``mcp_resource_updated`` appears in
+    any of the newest ``_MCP_EVENT_SCAN_MAX_FILES`` dated ``.jsonl`` files
+    under *events_dir*. ``events_dir`` missing → ``(False, 0)`` (nothing
+    written yet, not an error)."""
+    import json
+
+    from reyn.core.events.event_purge import collect_dated_files
+
+    if not events_dir.is_dir():
+        return False, 0
+    # collect_dated_files sorts oldest-first (its own docstring) — reverse
+    # for "newest N" so the early exit favors recent evidence.
+    newest_first = list(reversed(collect_dated_files(events_dir)))
+    window = newest_first[:_MCP_EVENT_SCAN_MAX_FILES]
+    for path, _start_date in window:
+        try:
+            with path.open("r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        obj = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    if obj.get("type") == "mcp_resource_updated":
+                        return True, len(window)
+        except OSError:
+            continue
+    return False, len(window)
+
+
+def _merged_hook_registry(config: object, project_root: Path) -> object:
+    """The 3-layer ADDITIVE combine (#4555's own registry read as the
+    reference — ``Session._build_hook_registry``'s SAME shape, minus the
+    4th, session-scoped per-session layer doctor's standalone-process
+    read has no way to reach): reyn.yaml's top-level ``hooks:`` (startup,
+    trusted — must load, fail loud) -> ``.reyn/config/hooks.yaml`` (runtime
+    IN-set) -> every ``.reyn/agents/<name>/hooks.yaml`` (per-agent). Each
+    untrusted layer is try-added independently — a malformed one is
+    dropped, its siblings kept (same per-layer resilience as the real
+    Session combine), so one bad file cannot hide a real zero-responder
+    gap in the layers that DID load.
+
+    The startup layer is read off *config* (``config.hooks`` — the SAME
+    already-``project_root``-resolved ``load_config`` result ``run()``
+    builds every other C-2/C-7 reading from), not a second, separately-
+    invoked ``build_policy_tier_config()`` call — #4555's own review
+    caught exactly this shape of bug (a second root-resolution call that
+    silently reads the WRONG project when the process cwd differs from
+    *project_root*, e.g. ``reyn doctor --project-root <other-dir>`` or
+    any test driving ``run()`` directly with a ``tmp_path``)."""
+    from reyn.config.loader import load_hot_reload_config, load_per_agent_hooks
+    from reyn.hooks.loader import HookConfigError, load_hooks
+
+    policy_hooks = getattr(config, "hooks", None) or []
+    combined = list(policy_hooks) if isinstance(policy_hooks, list) else []
+    registry = load_hooks(combined)  # trusted startup layer — fail loud
+
+    in_set_merged = load_hot_reload_config(project_root)
+    in_set_hooks = in_set_merged.get("hooks") or []
+    layers = [("runtime", in_set_hooks if isinstance(in_set_hooks, list) else [])]
+
+    agents_dir = project_root / ".reyn" / "agents"
+    if agents_dir.is_dir():
+        for agent_dir in sorted(agents_dir.iterdir()):
+            if not agent_dir.is_dir():
+                continue
+            agent_hooks = load_per_agent_hooks(project_root, agent_dir.name)
+            if agent_hooks:
+                layers.append((f"per-agent:{agent_dir.name}", agent_hooks))
+
+    for _label, layer in layers:
+        if not layer:
+            continue
+        try:
+            registry = load_hooks(combined + list(layer))
+            combined = combined + list(layer)
+        except HookConfigError:
+            # Untrusted layer, malformed — dropped, siblings kept (same
+            # resilience as Session._build_hook_registry's real combine).
+            continue
+    return registry
+
+
+def _print_external_point_pairing(config: object, project_root: Path) -> None:
+    from reyn.hooks.schema_registry import _EXTERNAL_POINTS
+
+    registry = _merged_hook_registry(config, project_root)
+    events_dir = project_root / ".reyn" / "events"
+
+    for point in _EXTERNAL_POINTS:
+        if point in _UNCHECKABLE_EXTERNAL_POINTS:
+            print(f"  ? {point}: not checked (no config or audit-log surface exists for its producer)")
+            continue
+
+        if point == "file_changed":
+            fs_watch = getattr(config, "fs_watch", None)
+            paths = getattr(fs_watch, "paths", None) or []
+            has_producer = bool(paths)
+            evidence = f"{len(paths)} declared fs_watch path(s)"
+        elif point == "cron_fired":
+            cron = getattr(config, "cron", None)
+            jobs = getattr(cron, "jobs", None) or []
+            enabled_jobs = [j for j in jobs if getattr(j, "enabled", True)]
+            has_producer = bool(enabled_jobs)
+            evidence = f"{len(enabled_jobs)} enabled cron job(s)"
+        elif point == "mcp_resource_updated":
+            seen, scanned = _mcp_resource_updated_seen(events_dir)
+            has_producer = seen
+            evidence = (
+                f"seen in the newest {scanned} event file(s) scanned"
+                if seen
+                else f"not seen in the newest {scanned} event file(s) scanned "
+                f"(no evidence beyond this window)"
+            )
+        else:  # pragma: no cover — _EXTERNAL_POINTS is the closed population
+            continue
+
+        if not has_producer:
+            # D-2/D-3: a point with no producer gets no finding — reporting
+            # "0 hooks" here would be noise, not signal (architect's own
+            # ruling: "report only where a producer exists").
+            continue
+
+        consumers = registry.hooks_for(point)  # type: ignore[attr-defined]
+        if consumers:
+            print(f"  ✓ {point}: producer present ({evidence}), {len(consumers)} subscribing hook(s)")
+        else:
+            print(
+                f"  ✗ {point}: producer present ({evidence}) but 0 subscribing "
+                f"hooks — this point's notifications have nowhere to go",
             )
