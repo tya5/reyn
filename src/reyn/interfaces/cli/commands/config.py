@@ -295,8 +295,10 @@ def _validate() -> None:
     fields too) — no new validation logic, only a second call with a
     second load. ``disabled_config_keys`` (#4231 C) is checked against the
     policy tier only — the one dependency it currently knows about
-    (``action_retrieval.universal_wrappers_enabled`` vs.
-    ``tool_use.scheme``) lives there.
+    (``tool_use.universal_wrappers_enabled`` vs. ``tool_use.scheme`` —
+    #4552 PR-3: both now live under the same top-level ``tool_use:`` key,
+    relocated from ``action_retrieval.universal_wrappers_enabled``)
+    lives there.
 
     #4501: ``unknown_config_keys`` walks the TOP-LEVEL ``ReynConfig``
     schema only — it confirms ``hooks:`` itself is a recognized key, but

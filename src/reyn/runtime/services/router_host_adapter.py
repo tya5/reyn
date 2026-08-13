@@ -326,7 +326,8 @@ class RouterHostAdapter:
         # #3482: the ``live_session_id`` property is the exact consumer of both.
         live_session_id_inputs: LiveSessionIdInputs,
         # FP-0034 PR-3b-iii/iv: universal catalog wrapper visibility
-        # (= reyn.yaml action_retrieval.universal_wrappers_enabled).
+        # (= reyn.yaml tool_use.universal_wrappers_enabled — #4552 PR-3
+        # moved this from action_retrieval.universal_wrappers_enabled).
         # #4159: no default — this param used to default to False while
         # ActionRetrievalConfig's own default is True (PR-3b-iv), a silent
         # implicit/config mismatch: the production call site (Session)
@@ -1053,12 +1054,13 @@ class RouterHostAdapter:
     def get_universal_wrappers_enabled(self) -> bool:
         """Return whether FP-0034 universal catalog wrappers are enabled.
 
-        Mirror of the ``action_retrieval.universal_wrappers_enabled`` flag
-        from reyn.yaml. RouterLoop calls this when building tools= so the
-        4 wrappers (list_actions / describe_action / invoke_action;
-        search_actions gated separately by §D14) appear in the LLM's
-        function-calling catalog. Default False preserves the prior
-        tools= shape.
+        Mirror of the ``tool_use.universal_wrappers_enabled`` flag from
+        reyn.yaml (#4552 PR-3: moved from
+        ``action_retrieval.universal_wrappers_enabled``). RouterLoop calls
+        this when building tools= so the 4 wrappers (list_actions /
+        describe_action / invoke_action; search_actions gated separately
+        by §D14) appear in the LLM's function-calling catalog. Default
+        False preserves the prior tools= shape.
         """
         return self._universal_wrappers_enabled
 

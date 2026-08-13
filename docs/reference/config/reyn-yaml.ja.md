@@ -370,12 +370,14 @@ tool-use は直交する 2 つの軸に分解されます: `scheme` は **presen
 tool_use:
   scheme: enumerate-all       # デフォルト
   transport: tool_calls       # デフォルト
+  universal_wrappers_enabled: true    # デフォルト; false でオプトアウト
 ```
 
 | キー | 型 | デフォルト | 説明 |
 |-----|------|---------|-------------|
 | `scheme` | 文字列 | `enumerate-all` | トップレベル chat レイヤーの presentation: `category` / `enumerate-all` / `retrieval`。**デフォルト `enumerate-all`** — アクションをフラットに列挙し LLM が直接呼び出せるようにする（`invoke_action` 名のハルシネーションを防ぎ、direct tool-use が ~30%→100% に改善）。少数サーフェス / 多数ツールのカタログには `category` を設定（discover-then-call）。 |
 | `transport` | 文字列 | `tool_calls` | モデルが選択したアクションをどう表現するか: `tool_calls`（ネイティブ tool-calling）または `content_fence`（応答テキスト内のフェンス付きコードとしてアクションを表現 — CodeAct）。 |
+| `universal_wrappers_enabled` | bool | `true` | **#4552 PR-3 — `action_retrieval.universal_wrappers_enabled` からここへ移動**（architect 裁定: `tool_use`/presentation-scheme の性質であり、retrieval 設定ではない）。`scheme` が `universal-category` に解決される layer について、`true`（デフォルト）は 4 universal wrapper（`list_actions` / `search_actions` / `describe_action` / `invoke_action`）のみをその layer の `tools=` に出す。legacy per-kind tool（`invoke_skill` / `call_mcp_tool` 等）はその layer で LLM に surface されず、wrapper の backing handler として残存。`search_actions` は `embedding.enabled` で別途ゲート（#4564 — このフラグはどの scheme でも `search_actions` の可視性に一切影響しない）。`false` 設定でその layer の wrapper surface 自体を無効化（= legacy のみが addressing path）。`scheme` が `enumerate-all`/`retrieval` である layer には影響しない。`scheme` が `universal-category` でないのにこのフラグを明示的に `true` にしても効果は無く、`reyn config validate` がその組み合わせを報告する（#4231(C)）。 |
 
 上記の軸の値の組み合わせは、現時点ですべて実装済みです:
 

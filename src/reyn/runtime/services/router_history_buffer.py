@@ -385,7 +385,7 @@ class RouterHistoryBuffer:
         events: Any,                      # EventLog — for fallback tokens
         media_store: Any,                 # MediaStore | None — for _serialise_turn
         router_host: Any,                 # RouterHostAdapter — for build_system_prompt
-        action_retrieval: Any,            # ActionRetrievalConfig — .universal_wrappers_enabled
+        universal_wrappers_enabled: bool,  # #4552 PR-3: moved from ActionRetrievalConfig
         non_interactive: bool,
         reasoning: Any = None,            # ReasoningConfig — .continuity / .recent_turns (#1652/②)
         project_dir_fn: "Callable[[], Any] | None" = None,  # #3629: zero-arg → CURRENT workspace base_dir
@@ -398,7 +398,7 @@ class RouterHistoryBuffer:
         self._events = events
         self._media_store = media_store
         self._router_host = router_host
-        self._action_retrieval = action_retrieval
+        self._universal_wrappers_enabled = universal_wrappers_enabled
         self._non_interactive = non_interactive
         # #4381 PR-5: threaded into resolve_effective_trigger_and_budgets's
         # resource/budget invariant check (_check_resource_within_budget).
@@ -853,7 +853,7 @@ class RouterHistoryBuffer:
         from reyn.tools.schemes._discovery import tier_wants_discovery_mandate
         from reyn.tools.schemes._universal_sp import build_universal_tool_use_slots
         rh = self._router_host
-        univ = bool(getattr(self._action_retrieval, "universal_wrappers_enabled", False))
+        univ = self._universal_wrappers_enabled
         # Conservative T_SP estimate: use the router model if known; if not,
         # default to False (= no mandate, slightly under-counts for weak tier
         # but this is an estimation path — conservatively acceptable).

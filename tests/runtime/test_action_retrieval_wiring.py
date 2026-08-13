@@ -1,7 +1,9 @@
 """Tier 2: FP-0034 PR-3b-iii config-to-router_loop wiring.
 
-Verifies that ``ActionRetrievalConfig.universal_wrappers_enabled``
-flows from reyn.yaml → Session → RouterHostAdapter →
+Verifies that ``ToolUseConfig.universal_wrappers_enabled`` (#4552 PR-3:
+moved from ``ActionRetrievalConfig.universal_wrappers_enabled`` —
+architect's ruling, a tool_use/presentation-scheme property, not a
+retrieval setting) flows from reyn.yaml → Session → RouterHostAdapter →
 RouterLoopHost.get_universal_wrappers_enabled() and reaches
 build_tools() with the correct value.
 
@@ -12,7 +14,7 @@ config field reaches the host method, host method reaches
 build_tools when called.
 
 No mocks of collaborators. Constructs real RouterHostAdapter with
-no-op callables, real ActionRetrievalConfig.
+no-op callables.
 """
 
 from __future__ import annotations
@@ -22,7 +24,7 @@ from typing import Any
 
 import pytest
 
-from reyn.config import ActionRetrievalConfig, ReynConfig, load_config
+from reyn.config import ReynConfig, load_config
 from reyn.runtime.router_tools import build_tools
 from reyn.runtime.services.router_host_adapter import (
     LiveSessionIdInputs,
@@ -150,21 +152,22 @@ def test_chat_session_accepts_action_retrieval_config() -> None:
 # ── 4. reyn.yaml end-to-end ──────────────────────────────────────────────
 
 
-def test_load_config_propagates_action_retrieval_flag(tmp_path: Path) -> None:
+def test_load_config_propagates_universal_wrappers_flag(tmp_path: Path) -> None:
     """Tier 2: load_config from a yaml with the flag returns it set.
 
     Confirms the config-loader path completes without errors when
-    ``action_retrieval`` is present.
+    ``tool_use.universal_wrappers_enabled`` is present. #4552 PR-3: moved
+    from ``action_retrieval.universal_wrappers_enabled``.
     """
     (tmp_path / "reyn.yaml").write_text(
         """
-action_retrieval:
+tool_use:
   universal_wrappers_enabled: true
 """,
         encoding="utf-8",
     )
     cfg: ReynConfig = load_config(cwd=tmp_path)
-    assert cfg.action_retrieval.universal_wrappers_enabled is True
+    assert cfg.tool_use.universal_wrappers_enabled is True
 
 
 def test_default_reyn_config_flag_is_on() -> None:
@@ -172,10 +175,11 @@ def test_default_reyn_config_flag_is_on() -> None:
 
     PR-3b-iv flipped the default after verifying the test suite is
     insulated from the change (= FakeRouterHost fallback / mocked
-    call_llm_tools).  Operators can opt out via reyn.yaml.
+    call_llm_tools).  Operators can opt out via reyn.yaml. #4552 PR-3:
+    the field now lives on ``tool_use``, not ``action_retrieval``.
     """
     cfg = ReynConfig()
-    assert cfg.action_retrieval.universal_wrappers_enabled is True
+    assert cfg.tool_use.universal_wrappers_enabled is True
 
 
 # ── 5. RouterLoopHost protocol exposes the new method ────────────────────

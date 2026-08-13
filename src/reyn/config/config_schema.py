@@ -526,11 +526,22 @@ class DisabledByHint:
 def _check_universal_wrappers_enabled_scheme_mismatch(
     raw: dict,
 ) -> "DisabledByHint | None":
-    """#4231: does ``action_retrieval.universal_wrappers_enabled: true``
-    reach anything a non-``universal-category`` ``tool_use.scheme`` would
+    """#4231: does ``tool_use.universal_wrappers_enabled: true`` reach
+    anything a non-``universal-category`` ``tool_use.scheme`` would
     render? Answered by DESTINATION, not by "who reads the flag" (#4564's
     lesson: a discriminator grounded in the reader missed a real effect
     the flag had via a DERIVED value, not a direct read — see below).
+
+    #4552 PR-3: this check is RELOCATED here, not superseded — the field
+    itself moved from ``action_retrieval.universal_wrappers_enabled`` to
+    ``tool_use.universal_wrappers_enabled`` (architect's ruling: it is a
+    tool_use/presentation-scheme property, not a retrieval setting), so
+    both values this check compares now live under the SAME top-level
+    ``tool_use:`` key. The underlying inconsistency #4231 named is
+    otherwise UNCHANGED by the move — #4564 fixed a real but SEPARATE
+    defect (the flag's undeclared reach into ``search_actions``
+    visibility), not this scheme-mismatch itself, which #4564 did not
+    touch and remains real.
 
     Where the flag's effect actually lands, as of #4564:
 
@@ -567,21 +578,28 @@ def _check_universal_wrappers_enabled_scheme_mismatch(
     Fires ONLY when the raw file EXPLICITLY sets the flag to ``True``
     (the resolved *default* is also ``True`` — firing on the unset
     default would warn nearly every operator who never touched this key
-    at all, which is not what "explicit" means in architect's ruling)."""
-    action_retrieval = raw.get("action_retrieval")
-    if not isinstance(action_retrieval, dict):
-        return None
-    if action_retrieval.get("universal_wrappers_enabled") is not True:
-        return None
+    at all, which is not what "explicit" means in architect's ruling).
+    Deliberately kept SOFT (warn via ``reyn config validate``, never
+    raised) — an explicit, standing owner ruling governs config
+    validation uniformly ("warn, never hard-fail, anywhere — including
+    sandbox.policy, no special case", ``loader.py``'s
+    ``_warn_unknown_config_keys`` docstring), overriding
+    ``ToolUseConfig``'s own local convention of raising for its sibling
+    fields (see that class's docstring for the same note from the other
+    side)."""
     tool_use = raw.get("tool_use")
-    scheme = tool_use.get("scheme") if isinstance(tool_use, dict) else None
+    if not isinstance(tool_use, dict):
+        return None
+    if tool_use.get("universal_wrappers_enabled") is not True:
+        return None
+    scheme = tool_use.get("scheme")
     if scheme is None:
         scheme = "enumerate-all"  # the #1657 owner default (execution.py's own)
     if scheme == "universal-category":
         return None
     return DisabledByHint(
         note=(
-            f"action_retrieval.universal_wrappers_enabled: true has no effect "
+            f"tool_use.universal_wrappers_enabled: true has no effect "
             f"under tool_use.scheme: {scheme!r} — only the 'universal-category' "
             f"scheme uses universal wrappers; {scheme!r} has its own, "
             f"mutually-exclusive presentation mechanism."
@@ -589,7 +607,7 @@ def _check_universal_wrappers_enabled_scheme_mismatch(
         dependency_key="tool_use.scheme",
         fix=(
             "set tool_use.scheme: universal-category to make this flag apply, "
-            "or remove action_retrieval.universal_wrappers_enabled if you did "
+            "or remove tool_use.universal_wrappers_enabled if you did "
             "not intend to opt into the universal-category scheme."
         ),
     )
@@ -603,7 +621,9 @@ def _check_universal_wrappers_enabled_scheme_mismatch(
 #: embedding.enabled=false, offload.* under offload.enabled=false — but
 #: are UNENUMERATED; adding one here does not imply they're covered).
 _DISABLED_KEY_CHECKS: "dict[str, Any]" = {
-    "action_retrieval.universal_wrappers_enabled": (
+    # #4552 PR-3: relocated from "action_retrieval.universal_wrappers_enabled"
+    # — the field itself moved; the dict key names where it lives NOW.
+    "tool_use.universal_wrappers_enabled": (
         _check_universal_wrappers_enabled_scheme_mismatch
     ),
 }

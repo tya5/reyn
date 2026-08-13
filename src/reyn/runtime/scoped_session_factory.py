@@ -170,6 +170,7 @@ def build_scoped_chat_session(
         router_config=factory_config.router_config,
         retry_config=factory_config.retry_config,  # #1835
         chat_tool_use_scheme=factory_config.chat_tool_use_scheme,
+        chat_universal_wrappers_enabled=factory_config.chat_universal_wrappers_enabled,  # #4552 PR-3
         pipeline_registry=factory_config.pipeline_registry,  # #2575
         observability_config=factory_config.observability_config,  # P5 ADR-0039
         **base,

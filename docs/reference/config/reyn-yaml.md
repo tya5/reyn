@@ -715,12 +715,14 @@ are presented to and dispatched from the LLM.
 tool_use:
   scheme: enumerate-all       # default
   transport: tool_calls       # default
+  universal_wrappers_enabled: true    # default; set false to opt out
 ```
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | `scheme` | string | `enumerate-all` | Presentation for the top-level chat layer: `category` / `enumerate-all` / `retrieval`. **Default `enumerate-all`** — flat-lists actions so the LLM invokes them directly instead of hallucinating `invoke_action` names (raised direct tool-use ~30%→100%). Set to `universal-category` for a minimal-surface / many-tool catalog (discover-then-call). |
 | `transport` | string | `tool_calls` | How the model expresses a chosen action: `tool_calls` (native tool-calling) or `content_fence` (the action is expressed as fenced code in the reply text — CodeAct). |
+| `universal_wrappers_enabled` | bool | `true` | **#4552 PR-3 — moved here from `action_retrieval.universal_wrappers_enabled`** (architect's ruling: a `tool_use`/presentation-scheme property, not a retrieval setting). For a layer whose `scheme` resolves to `universal-category`, `true` (default) exposes only the 4 universal wrappers (`list_actions`, `search_actions`, `describe_action`, `invoke_action`) in that layer's `tools=`.  Legacy per-kind tools (`invoke_skill`, `call_mcp_tool`, etc.) are no longer surfaced to the LLM on that layer but remain available as wrapper backing handlers.  `search_actions` is gated separately by [`embedding.enabled`](#embedding-block) (#4564 — this flag has NO effect on `search_actions` visibility in any scheme).  Set `false` to disable the wrapper surface entirely for that layer (= legacy tools become the only addressing path again).  Does not affect a layer whose `scheme` is `enumerate-all`/`retrieval` — those never consult this flag. Setting it explicitly `true` while `scheme` isn't `universal-category` has no effect; `reyn config validate` reports that combination (#4231(C)). |
 
 Every combination of the axis values above is implemented today:
 

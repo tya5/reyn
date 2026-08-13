@@ -243,7 +243,7 @@ class TestFamily6bHistoryCompactionBundleByteIdentical:
             events=session._audit_events,
             media_store=session._media_store,
             router_host=session._router_host,
-            action_retrieval=session._action_retrieval,
+            universal_wrappers_enabled=session._universal_wrappers_enabled,  # #4552 PR-3
             non_interactive=session._non_interactive,
             reasoning=session._reasoning,
         )

@@ -176,10 +176,13 @@ class ReynConfig:
     # scheme=enumerate-all, transport=tool_calls (#1657). FP-0066 P4b split
     # the former single ``chat`` name into the ``scheme`` (presentation) x
     # ``transport`` (how actions are expressed) 2-axis surface, clean-break
-    # (#3247) — this is orthogonal to ``action_retrieval.
-    # universal_wrappers_enabled``, which is a live presentation sub-flag of
-    # the universal-category scheme (catalog-wrapper vs direct-tool) — NOT
-    # retired by this selector. (#2768 removed the dead step/phase layers.)
+    # (#3247). #4552 PR-3: ``universal_wrappers_enabled`` (a live
+    # presentation sub-flag of the universal-category scheme — catalog-
+    # wrapper vs direct-tool) is now a THIRD field of this SAME
+    # ``ToolUseConfig`` — moved from ``action_retrieval.
+    # universal_wrappers_enabled`` (architect's ruling: it belongs here,
+    # not with retrieval settings). (#2768 removed the dead step/phase
+    # layers.)
     tool_use: ToolUseConfig = field(default_factory=ToolUseConfig)
     # Voice input (Whisper) settings for the chat TUI. Optional feature gated
     # by the `reyn[voice]` extras; the OS itself never depends on this block.

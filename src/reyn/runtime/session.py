@@ -857,6 +857,11 @@ class Session:
         action_retrieval_config: "ActionRetrievalConfig | None" = None,
         # Chat-layer tool-use scheme name, threaded to RouterLoop (#1593 PR-2, default per #1657)
         chat_tool_use_scheme: str = "enumerate-all",
+        # #4552 PR-3: moved from action_retrieval.universal_wrappers_enabled —
+        # a tool_use.scheme property (universal-category's own 3 wrapper
+        # functions), not a retrieval setting. Default True matches
+        # ToolUseConfig's own default (#1657/PR-3b-iv).
+        chat_universal_wrappers_enabled: bool = True,
         embedding_config: "EmbeddingConfig | None" = None,
         eager_embedding_build: bool = False,
         # Resolved observability config -> opt-in OTLP export gate (P5 ADR-0039, see docs/reference/runtime/session-construction.md#family-1-audit-event-spine-p6)
@@ -1005,7 +1010,10 @@ class Session:
             self._media_store = None
         # Queue of /image-attached blocks drained on the next user-message turn (#366, see session-construction.md#multimodal-media)
         self._pending_user_images: list[dict] = []
-        # Drives whether universal catalog wrappers appear in router tools= (FP-0034 PR-3b-iii, see session-construction.md#family-5-retrieval)
+        # #4552 PR-3: no longer drives universal-wrapper visibility — that
+        # field moved to tool_use.universal_wrappers_enabled (see
+        # self._universal_wrappers_enabled below). Now empty pending PR-4
+        # (deletes action_retrieval: entirely, see session-construction.md#family-5-retrieval)
         self._action_retrieval = action_retrieval_config or ActionRetrievalConfig()
         # Enabled skill registry snapshot for the ## Skills block; None -> omitted section (#2548 PR-A)
         self._available_skills = available_skills
@@ -1014,6 +1022,11 @@ class Session:
         # LOUD audit-event + warning instead of a silent shadow.
         self._skill_collisions: dict = skill_collisions or {}
         self._chat_tool_use_scheme = chat_tool_use_scheme  # #1593 PR-2, passed to RouterLoopDriver below
+        # #4552 PR-3: drives whether universal catalog wrappers appear in
+        # router tools= (moved from action_retrieval.universal_wrappers_enabled;
+        # architect's ruling — a tool_use.scheme property, not a retrieval
+        # setting, see session-construction.md#family-5-retrieval).
+        self._universal_wrappers_enabled = chat_universal_wrappers_enabled
         # RouterLoop awaits the embedding index build synchronously on turn 1 when True (B25-S5-1 fix, see session-construction.md#family-5-retrieval)
         self._eager_embedding_build = eager_embedding_build
         # agent_id is owned by Agent (identity SSoT); the field + its prior
@@ -4414,7 +4427,7 @@ class Session:
             mark_untrusted_in_flight=self._mark_untrusted_in_flight,
             # Proposal 0067 P1' (#3978)
             mark_task_pending=lambda: setattr(self, "current_task", CurrentTask()),
-            universal_wrappers_enabled=self._action_retrieval.universal_wrappers_enabled,
+            universal_wrappers_enabled=self._universal_wrappers_enabled,  # #4552 PR-3
             action_embedding_index=self._action_embedding_index,
             embedding_provider=self._embedding_provider,
             embedding_model_class=self._embedding_model_class,
@@ -4522,7 +4535,7 @@ class Session:
             events=self._audit_events,
             media_store=self._media_store,
             router_host=self._router_host,
-            action_retrieval=self._action_retrieval,
+            universal_wrappers_enabled=self._universal_wrappers_enabled,  # #4552 PR-3
             non_interactive=self._non_interactive,
             reasoning=self._reasoning,  # #1652/② native reasoning re-attach + bound
             # #3629: live workspace root, resolved at wire-serialise time — a

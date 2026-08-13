@@ -1,33 +1,25 @@
-"""Tier 2: FP-0034 PR-3b-ii ActionRetrievalConfig + parser contract.
+"""Tier 2: ``action_retrieval:`` config block — now EMPTY (#4552 arc).
 
-Tests for the ``action_retrieval:`` config block:
-  - Default config has the safe defaults (= wrappers enabled).
-  - Parser accepts each field independently, validates types, and
-    raises on bad values.
-  - ReynConfig.action_retrieval is populated by load_config from the
-    merged yaml.
-  - Unknown keys in the action_retrieval block are silently ignored
-    (= forward compat with Phase 2 additions).
+This block's fields, in order of removal:
+  - `hot_list_n` / `hot_list_seed` — removed, owner directive (PR-1, #4560).
+  - `mode` — removed, 0 real consumers (PR-2, #4563).
+  - `universal_wrappers_enabled` — MOVED to
+    `tool_use.universal_wrappers_enabled` (PR-3, this arc's last field —
+    tests for it now live in `tests/config/test_tool_use_config.py`,
+    same coverage carried over).
 
-Note: hide_legacy_tools was removed in FP-0034 Phase 6 (wrapper-only is
-now the sole path). Tests for that field have been deleted.
-
-#3218 / FP-0066 §7 P1a: the fragmented ``action_retrieval.embedding_class``
-field (on/off + which model, conflated) is retired, clean-break, no alias.
-The on/off decision now lives at ``embedding.enabled: bool`` (default
-False); the model-class field is the (pre-existing) ``embedding.default_class``
-(default "standard"). Its tests live in ``tests/config/test_embedding_config.py``;
-this file keeps only the ``action_retrieval:`` block's own fields
-(``universal_wrappers_enabled``).
-
-#4552 PR-2: ``mode`` (§D24 operational-mode label) is removed — 0 real
-consumers, 3-shape census (literal field / ``get_action_retrieval_config()``
-symbol / the orphaned ``action_retrieval_config=`` call site it fed) found
-in the PR body. Its dedicated tests here are deleted.
+`ActionRetrievalConfig` is now a bare, fieldless dataclass. What remains
+here: the class default-constructs to an empty instance, `ReynConfig`
+carries one, and `_build_action_retrieval_config` treats every key in a
+`reyn.yaml` `action_retrieval:` block as unknown (forward-compat: ignored,
+not an error) — including the keys this section used to recognize, per
+the standard unknown-key tolerance every retired config key gets (no
+migration path — there is nothing left under `action_retrieval:` to
+migrate TO). PR-4 deletes this class and the section entirely, closing
+the #4552 arc.
 
 No mocks; uses real load_config with a yaml file written to tmp_path.
 """
-
 from __future__ import annotations
 
 from pathlib import Path
@@ -42,34 +34,29 @@ from reyn.config import (
 )
 from tests._support.minimal_reyn_yaml import MINIMAL_REYN_YAML
 
-# ── 1. Default values ─────────────────────────────────────────────────────
+# ── 1. Empty by construction ──────────────────────────────────────────────
 
 
-def test_default_action_retrieval_config_is_on() -> None:
-    """Tier 2: out-of-the-box config has universal wrappers ENABLED (wrapper-only path).
-
-    PR-3b-iv flipped universal_wrappers_enabled from False to True.
-    FP-0034 Phase 6 removed hide_legacy_tools (wrapper-only is the sole path).
-    """
+def test_default_construction_has_no_fields() -> None:
+    """Tier 2: ActionRetrievalConfig is a bare dataclass — every field it
+    ever had has been removed or relocated (#4552 PR-1/2/3)."""
+    import dataclasses
     cfg = ActionRetrievalConfig()
-    assert cfg.universal_wrappers_enabled is True
+    assert dataclasses.fields(cfg) == ()
 
 
-def test_reyn_config_carries_action_retrieval_default() -> None:
-    """Tier 2: ReynConfig default-constructs with an ActionRetrievalConfig.
-
-    Default flag is True since PR-3b-iv.
-    """
+def test_reyn_config_carries_an_action_retrieval_instance() -> None:
+    """Tier 2: ReynConfig still default-constructs an ActionRetrievalConfig
+    — the SECTION exists until PR-4, even though it carries no fields."""
     cfg = ReynConfig()
     assert isinstance(cfg.action_retrieval, ActionRetrievalConfig)
-    assert cfg.action_retrieval.universal_wrappers_enabled is True
 
 
-# ── 2. Parser — happy path ────────────────────────────────────────────────
+# ── 2. Parser — every key is now unknown (forward-compat tolerance) ──────
 
 
 def test_parser_none_returns_default() -> None:
-    """Tier 2: omitted block → defaults."""
+    """Tier 2: omitted block → the empty default."""
     cfg = _build_action_retrieval_config(None)
     assert cfg == ActionRetrievalConfig()
 
@@ -80,57 +67,39 @@ def test_parser_empty_dict_returns_default() -> None:
     assert cfg == ActionRetrievalConfig()
 
 
-def test_parser_universal_wrappers_enabled_true() -> None:
-    """Tier 2: setting universal_wrappers_enabled True flows through."""
-    cfg = _build_action_retrieval_config({"universal_wrappers_enabled": True})
-    assert cfg.universal_wrappers_enabled is True
-
-
-def test_parser_all_fields_at_once() -> None:
-    """Tier 2: all supported fields can be set together."""
+def test_parser_ignores_every_key_including_former_fields() -> None:
+    """Tier 2: unknown keys are silently ignored (forward compat) — now
+    including EVERY key this block used to recognize, since none remain.
+    Regression guard for the PR-3 move specifically: a stray
+    `universal_wrappers_enabled` left under `action_retrieval:` (an
+    operator who hasn't moved it to `tool_use:` yet) must not raise or
+    silently resurrect the old field."""
     cfg = _build_action_retrieval_config({
-        "universal_wrappers_enabled": True,
+        "universal_wrappers_enabled": True,  # stale location, now unknown
+        "mode": "performance",  # retired PR-2
+        "hot_list_n": 10,  # retired PR-1
+        "embedding_class": "standard",  # retired earlier (FP-0066 §7 P1a)
+        "phase3_cold_start_seed": ["x", "y"],  # never-implemented future field
     })
-    assert cfg.universal_wrappers_enabled is True
-
-
-# ── 3. Parser — validation errors ─────────────────────────────────────────
+    assert cfg == ActionRetrievalConfig()
 
 
 def test_parser_rejects_non_dict() -> None:
-    """Tier 2: non-mapping at the top level raises ValueError."""
+    """Tier 2: non-mapping at the top level still raises ValueError — the
+    top-level type check survives the field removal."""
     with pytest.raises(ValueError, match="must be a mapping"):
         _build_action_retrieval_config("not a dict")
 
 
-def test_parser_rejects_non_bool_wrappers_enabled() -> None:
-    """Tier 2: universal_wrappers_enabled with non-bool raises."""
-    with pytest.raises(ValueError, match="universal_wrappers_enabled"):
-        _build_action_retrieval_config({"universal_wrappers_enabled": "yes"})
+# ── 3. End-to-end load_config integration ─────────────────────────────────
 
 
-def test_parser_ignores_unknown_keys() -> None:
-    """Tier 2: unknown keys are silently ignored (forward compat).
-
-    #3218 / FP-0066 §7: ``embedding_class`` is now itself an unknown key here
-    (retired, clean-break) — doubles as the regression guard that removing it
-    does not raise.
-    """
-    cfg = _build_action_retrieval_config({
-        "universal_wrappers_enabled": True,
-        "embedding_class": "standard",  # retired field name — now just unknown
-        "phase2_hot_list_strategy": "freq+recency",  # future field
-        "phase3_cold_start_seed": ["x", "y"],
-    })
-    # Recognised field still set; unknown keys did not raise
-    assert cfg.universal_wrappers_enabled is True
-
-
-# ── 4. End-to-end load_config integration ─────────────────────────────────
-
-
-def test_load_config_picks_up_action_retrieval_yaml(tmp_path: Path) -> None:
-    """Tier 2: load_config reads action_retrieval: from reyn.yaml."""
+def test_load_config_with_stray_universal_wrappers_enabled_ignores_it(
+    tmp_path: Path,
+) -> None:
+    """Tier 2: an operator who hasn't moved `universal_wrappers_enabled`
+    from `action_retrieval:` to `tool_use:` yet (#4552 PR-3) gets the
+    standard unknown-key tolerance — no parse error, no silent effect."""
     (tmp_path / "reyn.yaml").write_text(
         """
 action_retrieval:
@@ -140,38 +109,18 @@ action_retrieval:
     )
 
     cfg = load_config(cwd=tmp_path)
-    assert cfg.action_retrieval.universal_wrappers_enabled is True
+    assert cfg.action_retrieval == ActionRetrievalConfig()
+    # The stray key has no effect on tool_use's OWN default either — it
+    # is a genuinely different, unread key at this point, not an alias.
+    assert cfg.tool_use.universal_wrappers_enabled is True  # unaffected default
 
 
 def test_load_config_without_action_retrieval_uses_defaults(tmp_path: Path) -> None:
-    """Tier 2: omitting action_retrieval: keeps defaults.
-
-    Since PR-3b-iv flipped the default, an empty config gives
-    operators the universal wrappers automatically. Opt-out via
-    ``universal_wrappers_enabled: false`` in reyn.yaml.
-    """
+    """Tier 2: omitting action_retrieval: keeps the empty default."""
     (tmp_path / "reyn.yaml").write_text(
         MINIMAL_REYN_YAML,
         encoding="utf-8",
     )
 
     cfg = load_config(cwd=tmp_path)
-    assert cfg.action_retrieval.universal_wrappers_enabled is True
-
-
-def test_load_config_with_explicit_opt_out(tmp_path: Path) -> None:
-    """Tier 2: explicit `universal_wrappers_enabled: false` opt-out flows through.
-
-    Operators who don't want the wrappers can disable them via
-    reyn.yaml. This path must keep working after the default flip.
-    """
-    (tmp_path / "reyn.yaml").write_text(
-        """
-action_retrieval:
-  universal_wrappers_enabled: false
-""",
-        encoding="utf-8",
-    )
-
-    cfg = load_config(cwd=tmp_path)
-    assert cfg.action_retrieval.universal_wrappers_enabled is False
+    assert cfg.action_retrieval == ActionRetrievalConfig()

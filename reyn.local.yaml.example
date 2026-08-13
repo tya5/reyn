@@ -740,10 +740,19 @@
 # pays. Every combination of the axis values above is implemented — a pair
 # naming a scheme or transport reyn does not have fails loud at config-parse
 # time.
+#
+# universal_wrappers_enabled: (#4552 PR-3 — moved here from
+# action_retrieval.universal_wrappers_enabled; architect's ruling, a
+# tool_use/presentation-scheme property, not a retrieval setting). True
+# (default) exposes the 4 universal wrappers (list_actions / search_actions
+# / describe_action / invoke_action) whenever scheme resolves to
+# universal-category (= scheme: category above); has no effect under any
+# other scheme.
 # -----------------------------------------------------------------------------
 # tool_use:
 #   scheme: universal-category
 #   transport: tool_calls
+#   universal_wrappers_enabled: true
 
 
 # -----------------------------------------------------------------------------
@@ -1092,10 +1101,9 @@
 # -----------------------------------------------------------------------------
 # action_retrieval: universal catalog visibility and action retrieval settings.
 #
-#   universal_wrappers_enabled:
-#       True (default) → ``build_tools()`` exposes the universal catalog wrappers
-#       (list_actions / describe_action / invoke_action / search_actions).
-#       ``search_actions`` is gated separately via ``embedding_class``.
+#   (#4552 PR-3: universal_wrappers_enabled moved to tool_use — see that
+#   block above. Not documented twice — a field left in both places is
+#   the "half moved" trap, not a relocation.)
 #   embedding_class:
 #       Name of an entry under ``embedding.classes`` used for semantic
 #       ``search_actions``. Default ``null`` (off) — semantic search is
@@ -1112,7 +1120,6 @@
 #       OS-supplied 10-item seed. ``[]`` = no seed. An explicit list overrides.
 # -----------------------------------------------------------------------------
 # action_retrieval:
-#   universal_wrappers_enabled: true
 #   embedding_class: local-mini       # default is null (off); uncomment to opt in
 #   hot_list_n: 20
 #   mode: default

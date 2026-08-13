@@ -297,65 +297,25 @@ def _build_embedding_config(raw: object) -> EmbeddingConfig:
 class ActionRetrievalConfig:
     """`action_retrieval:` — FP-0034 universal catalog + retrieval settings.
 
-    Phase 1 of FP-0034. The 4 universal wrappers (list_actions /
-    search_actions / describe_action / invoke_action) plus the
-    qualified-name dispatcher land across PR-1 through PR-3b-iv.
-    Subsequent phases extend with cold start / search_actions enablement.
-    (#4552: an earlier phase also added ``hot_list_n``/``hot_list_seed`` —
-    discarded, owner directive: hot list's role is gone, superseded by
-    ``list_actions`` as the canonical discovery path.)
+    #4552: the arc that emptied this class.
 
-    Fields:
-        universal_wrappers_enabled:
-            When True (= **default since PR-3b-iv**), ``build_tools()``
-            appends the 3 universal wrappers (list_actions /
-            describe_action / invoke_action) at the end of tools=.
-            ``search_actions`` is gated separately via
-            ``embedding.enabled`` (FP-0066 §7; clean-break replacement
-            for the retired ``action_retrieval.embedding_class`` on/off
-            gate) per §D14.
+    - PR-1: ``hot_list_n``/``hot_list_seed`` discarded — owner directive,
+      hot list's role is gone, superseded by ``list_actions`` as the
+      canonical discovery path.
+    - PR-2: ``mode`` (§D24 operational-mode label) removed — 0 real
+      consumers, confirmed via census in the PR body.
+    - PR-3 (this one): ``universal_wrappers_enabled`` MOVED to
+      ``tool_use.universal_wrappers_enabled`` (see
+      ``execution.ToolUseConfig``) — architect's ruling: it is a
+      ``tool_use`` (presentation-scheme) property, not a retrieval
+      setting; only ``universal-category``'s own 3 wrapper functions ever
+      read it. Unblocked once #4564 removed the flag's one remaining
+      undeclared reach into ``search_actions`` visibility (now solely
+      ``embedding.enabled``'s).
 
-            The flip from False (= PR-3b-i through iii) to True
-            happens here in PR-3b-iv. Operators who want to opt out
-            (= preserve the prior tools= shape) can set
-            ``action_retrieval.universal_wrappers_enabled: false``
-            in reyn.yaml.
-
-            Test suite verified safe via FakeRouterHost insulation:
-            all LLMReplay fixtures + AsyncMock-based E2E tests do
-            NOT implement ``get_universal_wrappers_enabled`` so the
-            RouterLoop's getattr fallback keeps tools= shape stable
-            for the recorded fixtures. The flip affects production
-            runtime only.
-
-            **FP-0066 §7 (2026-07)**: the fragmented
-            ``action_retrieval.embedding_class`` field (on/off + which
-            model, conflated) is retired (clean-break, no alias). The
-            on/off decision now lives at ``embedding.enabled: bool``
-            (default ``False`` — opt-in / predictable-safe default);
-            the model-class selection stays a separate field —
-            ``embedding.default_class`` (already existed, default
-            ``"standard"``). ``search_actions`` is excluded from
-            tools= whenever ``embedding.enabled`` is False, even if
-            ``universal_wrappers_enabled`` is True (§D14 gating).
-            Operators who want semantic ``search_actions`` set
-            ``embedding.enabled: true`` in reyn.yaml (optionally
-            pairing it with a non-default ``embedding.default_class``
-            or a custom ``embedding.classes`` entry pointing at any
-            litellm-routable model, including a local model served
-            behind a litellm-fronted proxy — #3128 removed the
-            in-process local-model embedding backend; reyn depends on
-            litellm exclusively for embeddings).
-
-    #4552 PR-2: ``mode`` (§D24 operational-mode label — "minimal" /
-    "default" / "performance") is removed — a census (both the literal
-    field and the ``get_action_retrieval_config()`` symbol that existed
-    solely to expose it to a future consumer) found 0 real consumers;
-    the "future PR reading .mode" PR-1 anticipated never happened and
-    PR-2 retires the intent instead.
+    This dataclass is now EMPTY — PR-4 deletes ``action_retrieval:``
+    (and this class) entirely, closing the #4552 arc.
     """
-
-    universal_wrappers_enabled: bool = True
 
 
 def _build_action_retrieval_config(raw: object) -> ActionRetrievalConfig:
@@ -377,15 +337,8 @@ def _build_action_retrieval_config(raw: object) -> ActionRetrievalConfig:
             f"action_retrieval must be a mapping, got {type(raw).__name__}"
         )
 
-    cfg = ActionRetrievalConfig()
-
-    if "universal_wrappers_enabled" in raw:
-        val = raw["universal_wrappers_enabled"]
-        if not isinstance(val, bool):
-            raise ValueError(
-                "action_retrieval.universal_wrappers_enabled must be a bool, "
-                f"got {type(val).__name__}"
-            )
-        cfg.universal_wrappers_enabled = val
-
-    return cfg
+    # #4552 PR-3: the last recognised field (universal_wrappers_enabled)
+    # moved to tool_use.universal_wrappers_enabled — every key reaching
+    # here is now unknown (forward-compatible: ignored, not an error).
+    # PR-4 deletes this function and the section entirely.
+    return ActionRetrievalConfig()

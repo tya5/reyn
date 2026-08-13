@@ -270,7 +270,7 @@ def _buffer(history: list, project_dir):
         events=None,
         media_store=None,
         router_host=None,
-        action_retrieval=None,
+        universal_wrappers_enabled=False,  # #4552 PR-3
         non_interactive=False,
         project_dir_fn=lambda: project_dir,
     )

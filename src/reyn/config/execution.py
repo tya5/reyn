@@ -33,10 +33,42 @@ class ToolUseConfig:
     valid-pair registry becomes the live validation authority). #2768 removed
     the dead ``step`` / ``phase`` layers (phase-graph era — zero read sites;
     ``PhaseRouterLoopHost`` deleted in #2438).
+
+    ``universal_wrappers_enabled`` (#4552 PR-3): moved here from
+    ``action_retrieval.universal_wrappers_enabled`` — architect's ruling
+    ("wrappers_enabled is a tool_use property, not a retrieval setting"),
+    unblocked once #4564 fixed the flag's ONE remaining undeclared reach
+    (search_actions visibility, now solely ``embedding.enabled``'s). What's
+    left is exactly what this field's own name says: for a layer whose
+    ``scheme`` resolves to ``universal-category``, ``true`` (default)
+    exposes the 3 universal-category wrapper functions (``list_actions`` /
+    ``describe_action`` / ``invoke_action``) in that layer's ``tools=``,
+    instead of the flat legacy shape. Has no effect under any other
+    scheme — a config with ``scheme`` != ``universal-category`` and this
+    flag explicitly ``true`` is reported (never raised — see below) by
+    ``reyn config validate``'s ``disabled_config_keys`` (#4231(C),
+    relocated here from ``action_retrieval.*`` in the same PR, not
+    superseded — #4564 only removed the search_actions coupling, the
+    scheme-mismatch inconsistency itself is unchanged and still real).
+
+    Deliberately validated SOFT here, unlike this class's OWN sibling
+    fields (``chat`` raises; an invalid (scheme, transport) pair raises):
+    an explicit, standing owner ruling governs config validation UNIFORMLY
+    ("warn, never hard-fail, anywhere — including sandbox.policy, no
+    special case", ``loader.py``'s ``_warn_unknown_config_keys``
+    docstring) and takes precedence over this class's own local
+    convention. The inconsistency this field can produce degrades to a
+    silent no-op (post-#4564: scheme != universal-category simply never
+    reads it, nothing crashes or misbehaves) — matching the ruling's own
+    "warn" category, not its exceptions. A future reader who notices this
+    field is validated differently from ``scheme``/``transport`` in the
+    SAME dataclass should read that as owner-ruling-over-local-convention,
+    not as an oversight.
     """
 
     scheme: str = "enumerate-all"
     transport: str = "tool_calls"
+    universal_wrappers_enabled: bool = True
 
 
 def _build_tool_use_config(raw: object) -> ToolUseConfig:
@@ -104,6 +136,19 @@ def _build_tool_use_config(raw: object) -> ToolUseConfig:
     # each falsified the previous one).
     resolve_scheme_for_transport(scheme, transport)
 
-    return ToolUseConfig(scheme=scheme, transport=transport_name)
+    universal_wrappers_enabled = True
+    if "universal_wrappers_enabled" in raw:
+        val = raw["universal_wrappers_enabled"]
+        if not isinstance(val, bool):
+            raise ValueError(
+                "tool_use.universal_wrappers_enabled must be a bool, "
+                f"got {type(val).__name__}"
+            )
+        universal_wrappers_enabled = val
+
+    return ToolUseConfig(
+        scheme=scheme, transport=transport_name,
+        universal_wrappers_enabled=universal_wrappers_enabled,
+    )
 
 
