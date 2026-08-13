@@ -43,20 +43,22 @@ items checked" anywhere in this module or its own docs — see this issue's
 own owner note: any claim about coverage must be DERIVABLE from this
 disclosure line, never asserted independently of it.
 
-## Scope of this slice (PR-3a)
+## Scope of this slice (PR-3a + PR-2)
 
 C-7 (disk: declared retention ↔ actual bytes/age for ``.reyn/events/``, plus
 policy-independent visibility for ``.reyn/media/`` / ``.reyn/tool-results/``
 / every ``history.jsonl`` — none of which has a declared retention policy
-yet, #4478/#4476 Phase 2 unimplemented). C-5 (sandbox posture) and C-6's
-other named pairs (listen port, model-name acceptance) are PR-3b — each
-needs its own NEW measurement code (reading the resolved sandbox backend
-object, introspecting a live bound socket, a real litellm probe call), not
-reuse of an existing function the way C-7 is. C-1 (hook argv launch) / C-2
-(zero-responder subscription) are PR-2, dispatched separately once their
-own execution semantics were settled (lead-coder, #4364: argv[0] only, no
-configured hook args, explicitly labeled "a launch probe, not a run" in
-doctor's own output — not implemented in this module).
+yet, #4478/#4476 Phase 2 unimplemented). C-1 (hook argv[0] launch probe,
+#4364 PR-2, architect ruling): every configured ``exec``/``exec_capture``
+hook's argv[0] is probed under the SAME sandbox backend + the SAME per-hook
+policy a real dispatch would use (:mod:`reyn.security.sandbox.probe_argv`),
+NEVER with the hook's own configured arguments (D-2: a real run, even a
+partial one, is the one thing this command must never do). C-5 (sandbox
+posture) and C-6's other named pairs (listen port, model-name acceptance)
+are PR-3b — each needs its own NEW measurement code (introspecting a live
+bound socket, a real litellm probe call), not reuse of an existing function
+the way C-1/C-7 are. C-2 (zero-responder subscription) remains dispatched
+separately, not implemented in this module.
 """
 from __future__ import annotations
 
@@ -64,7 +66,10 @@ import argparse
 import shutil
 from datetime import date
 from pathlib import Path
-from typing import Final
+from typing import TYPE_CHECKING, Any, Final
+
+if TYPE_CHECKING:
+    from reyn.hooks.schema import HookDef
 
 
 def register(sub) -> None:
@@ -209,3 +214,87 @@ def run(args: argparse.Namespace) -> None:
     print(f"  total (media+tool-results+history): {total_bytes_all:,} bytes")
     if free_bytes is not None:
         print(f"  (filesystem free space: {free_bytes:,} bytes)")
+
+    # ── C-1: hook argv[0] launch probe (#4364 PR-2, architect ruling) ──────
+    print()
+    print("Hook launch probe (argv[0] only, no configured args — a launch")
+    print("probe, not a run; D-2: doctor never executes a hook for real):")
+    _print_hook_probe_results(config)
+
+
+def _configured_exec_hooks(config: object) -> "list[HookDef]":
+    """Every configured ``exec``/``exec_capture`` ``HookDef`` — the caller
+    reads ``.name``/``.on``/``.exec``/``.exec_capture``/``.subprocess``/
+    ``.network``/``.write_paths`` directly off it, so the per-hook sandbox
+    knobs travel with the argv rather than being stripped here."""
+    from reyn.hooks.loader import load_hooks
+    from reyn.hooks.schema import ALLOWED_HOOK_POINTS
+
+    registry = load_hooks(getattr(config, "hooks", None) or [])
+    all_defs = [
+        hook_def
+        for point in ALLOWED_HOOK_POINTS
+        for hook_def in registry.hooks_for(point)
+    ]
+    return [
+        hook_def for hook_def in all_defs
+        if hook_def.exec is not None or hook_def.exec_capture is not None
+    ]
+
+
+def _print_hook_probe_results(config: Any) -> None:
+    import asyncio
+
+    from reyn.security.sandbox import SandboxPolicy as _SandboxPolicy
+    from reyn.security.sandbox.launcher import resolve_backend
+    from reyn.security.sandbox.probe_argv import probe_argv
+
+    hooks = _configured_exec_hooks(config)
+    if not hooks:
+        print("  no exec/exec_capture hooks configured")
+        return
+
+    sandbox_config = getattr(config, "sandbox", None)
+    backend = resolve_backend(None, sandbox_config)
+
+    async def _probe_all() -> "list[tuple[str, tuple[str, ...], Any]]":
+        results = []
+        for hook_def in hooks:
+            argv = hook_def.exec if hook_def.exec is not None else hook_def.exec_capture
+            # `_configured_exec_hooks` already filtered to `exec is not None or
+            # exec_capture is not None` — one of the two is always set here.
+            assert argv is not None
+            label = hook_def.name or hook_def.on
+            # #2827/#3005: the SAME per-hook knobs -> the SAME default policy
+            # shape `run_shell_hook` builds for a real dispatch (shell_runner.py)
+            # — "same backend, same profile" (architect's own C-1 spec), not a
+            # doctor-invented one. `None` (omitted) keeps the floor, exactly as
+            # the real dispatch path does.
+            policy = _SandboxPolicy(
+                network=bool(hook_def.network) if hook_def.network is not None else False,
+                deny_subprocess=(
+                    not hook_def.subprocess if hook_def.subprocess is not None else True
+                ),
+                write_paths=list(hook_def.write_paths) if hook_def.write_paths is not None else [],
+            )
+            results.append((label, argv, await probe_argv(backend, argv, policy)))
+        return results
+
+    probed = asyncio.run(_probe_all())
+    for label, argv, result in probed:
+        argv0 = argv[0] if argv else "(empty argv)"
+        if result is None:
+            print(f"  ? {label}: cannot probe under backend {backend.name!r} (no control binary)")
+        elif result == "ok":
+            print(f"  ✓ {label}: {argv0!r} is runnable under this hook's sandbox")
+        elif result == "target_failed":
+            print(
+                f"  ✗ {label}: {argv0!r} is NOT runnable under this hook's sandbox "
+                f"(probed with no arguments — a program that requires arguments "
+                f"will report here without being broken)",
+            )
+        else:  # "sandbox_failed"
+            print(
+                f"  ⚠ {label}: the sandbox itself failed its own known-good "
+                f"control binary — this is not about {argv0!r}",
+            )

@@ -115,6 +115,16 @@ class NoopBackend:
         """
         return None
 
+    def probe_binary(self) -> "list[str] | None":
+        """#4364 PR-2: always ``None`` — NoopBackend enforces no axis
+        (``enforced_axes`` above, all ``DOES_NOT_ENFORCE``), so a
+        differential launch probe here would answer a question this
+        backend has no sandbox to differentiate on: whatever argv[0]
+        resolves to under a plain, unsandboxed exec, so would any other
+        binary. Same exemption class as ``self_test`` above — Noop
+        genuinely has nothing to probe, not a gap in this method."""
+        return None
+
     def session_artifact_outside_write_scope(self, policy: SandboxPolicy) -> bool:
         """Trivially True (#4434): ``wrap_command`` below returns *argv*
         UNCHANGED — no profile, no wrapper argv, no on-disk artifact of any

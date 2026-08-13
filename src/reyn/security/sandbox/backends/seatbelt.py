@@ -341,6 +341,14 @@ class SeatbeltBackend:
 
         return enforcement_self_test(self)
 
+    def probe_binary(self) -> "list[str] | None":
+        """#4364 PR-2: ``/usr/bin/true`` (via the shared lookup — macOS
+        ships it at that canonical path on every version, but
+        ``shutil.which`` is tried first for a PATH-overridden install)."""
+        from reyn.security.sandbox.backend import find_posix_true_binary  # noqa: PLC0415
+
+        return find_posix_true_binary()
+
     def session_artifact_outside_write_scope(self, policy: SandboxPolicy) -> bool:
         """#4434: delegates to :func:`_profile_is_safe_to_cache` — the ONE
         real implementation of the ``SandboxBackend`` contract (Seatbelt is

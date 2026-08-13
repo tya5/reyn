@@ -8,9 +8,11 @@ execution under the declared policy.
 from __future__ import annotations
 
 import asyncio
+import os
 from collections.abc import Callable
 from dataclasses import dataclass, fields
 from enum import Enum
+from pathlib import Path
 from typing import Protocol, runtime_checkable
 
 from .policy import SandboxPolicy
@@ -171,6 +173,34 @@ class SandboxBackend(Protocol):
         """
         ...
 
+    def probe_binary(self) -> "list[str] | None":
+        """#4364 PR-2 (C-1, architect ruling): argv for a known-good,
+        args-free binary this backend can run under ITS OWN sandbox — the
+        differential probe's positive control (:mod:`reyn.security.sandbox.
+        probe_argv`'s ``probe_argv``: "does this hook's argv[0] run under
+        this sandbox" answered by comparing it against a binary already
+        known to run there, never by asserting anything about the exec
+        syscall or the target's own contract).
+
+        ``None`` means "this backend cannot support a probe" — the
+        SAME 3-value-plus-None shape :func:`~reyn.security.sandbox.
+        probe_argv.probe_argv` returns, for the SAME reason
+        ``self_test()``/``available()`` degrade gracefully rather than
+        raise: a backend that cannot answer the question is a real
+        "unmeasurable", never a crash. Each backend is the one place that
+        knows what "known-good" means under its own wrapping (the SAME
+        reasoning ``wrap_command`` already applies per-backend) — this
+        method is never called with a caller-supplied guess.
+
+        NOT abstract in production use (there is deliberately no
+        try/except fallback at the ``probe_argv`` call site — a backend
+        author who forgets this method fails loudly, the same "no default
+        anywhere" discipline ``enforced_axes`` already applies at
+        construction) — every concrete backend in
+        :func:`all_concrete_backend_classes` implements it explicitly,
+        including the ones that answer ``None``."""
+        ...
+
     def self_test(self) -> str | None:
         """Return None if this backend actually FIRED a deny on this host, else a
         human-readable reason it did not.
@@ -303,3 +333,27 @@ def all_concrete_backend_classes() -> "tuple[type, ...]":
     from reyn.security.sandbox.noop_backend import NoopBackend  # noqa: PLC0415
 
     return (SeatbeltBackend, LandlockBackend, NoopBackend, DockerEnvironmentBackend)
+
+
+def find_posix_true_binary() -> "list[str] | None":
+    """#4364 PR-2: locate a known-good, args-free, always-exit-0 binary —
+    the shared positive-control lookup Seatbelt and Landlock both need for
+    :meth:`SandboxBackend.probe_binary`. ``shutil.which`` first (honors
+    whatever PATH this process actually has), falling back to the two
+    conventional absolute locations (``/usr/bin/true``, ``/bin/true`` —
+    covers both the macOS/most-Linux-distro layout and the handful of
+    distros that only ship the other one) so a probe never depends on
+    PATH containing it. Returns ``None`` — never a guessed path — when
+    none of those resolve to a real, executable file: "measure, don't
+    assert" (this module's own D-1 discipline) applies to the CONTROL
+    binary too, not only the target being probed."""
+    import shutil
+
+    which = shutil.which("true")
+    if which is not None:
+        return [which]
+    for candidate in ("/usr/bin/true", "/bin/true"):
+        path = Path(candidate)
+        if path.is_file() and os.access(path, os.X_OK):
+            return [str(path)]
+    return None
