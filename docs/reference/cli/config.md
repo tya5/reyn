@@ -47,7 +47,8 @@ reyn config migrate-mcp [--dry-run]
 `reyn config validate` always exits `0`, even when it reports findings — it REPORTS, it
 never gates (owner ruling: warn, never hard-fail, anywhere). It checks four things,
 each printed as its own labeled section (never merged into one list — the fix differs
-per section, and merging would lose "which one do I fix, and how"):
+per section, and merging would lose "which one do I fix, and how"). Note the last
+check (hook entries) covers three separate config *files* under one section, not one:
 
 - **Unrecognized/renamed/removed keys, policy tier** (`reyn.yaml` / `reyn.local.yaml` /
   `~/.reyn/config.yaml`) — the same check `load_config`'s own startup warning runs.
@@ -66,13 +67,19 @@ per section, and merging would lose "which one do I fix, and how"):
   applies on the next turn automatically, no restart and no `reyn config migrate`
   support for this tier (a different remedy than the policy tier above, which is
   exactly why this is its own section).
-- **Hook entry validation, the IN-set's `hooks:` list** (#4501) — the IN-set's own
-  unknown-key check above only walks the TOP-LEVEL config schema, so `hooks:` itself
-  being a recognized key says nothing about what each list *entry* contains. This
-  section feeds `.reyn/config/hooks.yaml`'s `hooks:` list through the real
-  `load_hooks` parser and reports any `HookConfigError` (e.g. an unrecognized
-  per-hook key). Fix: edit the offending hook entry directly in
-  `.reyn/config/hooks.yaml`.
+- **Hook entry validation, all three real `hooks:` input paths** (#4501 / #4364
+  PR-1) — the top-level unknown-key checks above only confirm `hooks:` itself is a
+  recognized key; they never recurse into what each list *entry* contains. This
+  section feeds every real hooks source through the real `load_hooks` parser
+  (the SAME parser hook-loading itself uses) and reports any `HookConfigError`
+  (e.g. an unrecognized or wrong-scope per-hook key), labeled by source:
+    - **`reyn.yaml`'s own top-level `hooks:`** — the startup layer, and the one
+      [the hooks guide](../../concepts/runtime/hooks.md) tells operators to write
+      in. #4501 did not cover this source.
+    - **`.reyn/config/hooks.yaml`** — the runtime IN-set (#4501's own original fix).
+    - **every `.reyn/agents/<name>/hooks.yaml`** — the per-agent layer, one
+      finding per agent directory that has a malformed entry.
+  Fix: edit the offending hook entry in whichever labeled file the finding names.
 
 `reyn config migrate` only rewrites an entry whose registered rename has an automatic
 destination (a plain rename, no value transform); a rename that also transforms the

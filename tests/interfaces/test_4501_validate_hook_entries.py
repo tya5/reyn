@@ -1,8 +1,8 @@
-"""Tier 2: #4501 — ``reyn config validate`` widened to also open each
-``hooks:`` list entry (the IN-set's own free-form nested structure the
-top-level schema walk in #4235 never recurses into) via the real
-``load_hooks`` parser, catching a malformed/wrong-scope per-hook key —
-not just an unrecognized TOP-LEVEL config key.
+"""Tier 2: #4501 / #4364 PR-1 — ``reyn config validate`` widened to open
+each ``hooks:`` list entry (the free-form nested structure the top-level
+schema walk in #4235 never recurses into) via the real ``load_hooks``
+parser, catching a malformed/wrong-scope per-hook key — not just an
+unrecognized TOP-LEVEL config key.
 
 Companion to ``test_4235_validate_in_set.py`` (that PR's own top-level
 IN-set coverage, unchanged by this one — its accept/reject tests still
@@ -11,6 +11,15 @@ incident): ``allow_write_paths`` (the agent-level ``sandbox.policy``
 field name) written inside a ``hooks:`` entry instead of the per-hook
 key (``write_paths``) — ``validate`` passed ("No unknown ... keys
 found") while the hook silently did nothing.
+
+#4501 covered exactly ONE of hooks' three real input paths (the
+``.reyn/config/hooks.yaml`` runtime IN-set). #4364 PR-1 found the other
+two the same night, mirroring ``Session._build_hook_registry``'s own
+3-layer COMBINE: reyn.yaml's own top-level ``hooks:`` (the layer
+``docs/concepts/runtime/hooks.md`` actually tells operators to write in —
+and where architect's real incident lived, NOT the IN-set #4501 fixed)
+and every ``.reyn/agents/<name>/hooks.yaml``. The tests below cover those
+two additions; the IN-set tests above are unchanged.
 """
 from __future__ import annotations
 
@@ -115,3 +124,197 @@ def test_an_absent_hooks_key_is_not_treated_as_a_hook_entry_error(project, capsy
     _validate()
     out = capsys.readouterr().out
     assert "Hook entry validation" not in out
+
+
+# ── #4364 PR-1: reyn.yaml top-level hooks: (the startup layer) ─────────────
+
+
+def test_a_malformed_entry_in_reyn_yamls_own_hooks_block_is_now_caught(project, capsys):
+    """Tier 2: #4364 PR-1 ② — the layer #4501 did NOT cover. This is the
+    layer docs/concepts/runtime/hooks.md tells operators to write in, and
+    the one architect's own real incident actually lived in (they had no
+    .reyn/config/hooks.yaml at all that night — every hook was in
+    reyn.yaml's own top-level hooks: block)."""
+    _write_yaml(
+        project / "reyn.yaml",
+        MINIMAL_REYN_YAML
+        + "hooks:\n"
+        "  - \"on\": turn_end\n"
+        "    exec: [\"echo\", \"hi\"]\n"
+        "    allow_write_paths: [\"/tmp\"]\n",
+    )
+    from reyn.interfaces.cli.commands.config import _validate
+
+    _validate()
+    out = capsys.readouterr().out
+    assert "Hook entry validation" in out
+    assert "[reyn.yaml]" in out
+    assert "allow_write_paths" in out
+    assert "write_paths" in out
+
+
+def test_a_well_formed_reyn_yaml_hooks_block_produces_no_finding(project, capsys):
+    """Tier 2: accept-side for the reyn.yaml source — a valid top-level
+    hooks: block must not trip the new section."""
+    _write_yaml(
+        project / "reyn.yaml",
+        MINIMAL_REYN_YAML
+        + "hooks:\n"
+        "  - \"on\": turn_end\n"
+        "    exec: [\"echo\", \"hi\"]\n"
+        "    write_paths: [\"/tmp\"]\n",
+    )
+    from reyn.interfaces.cli.commands.config import _validate
+
+    _validate()
+    out = capsys.readouterr().out
+    assert "Hook entry validation" not in out
+    assert "No unknown, renamed, or disabled-by-dependency config keys found." in out
+
+
+# ── #4364 PR-1: .reyn/agents/<name>/hooks.yaml (the per-agent layer) ───────
+
+
+def test_a_malformed_entry_in_a_per_agent_hooks_file_is_now_caught(project, capsys):
+    """Tier 2: #4364 PR-1 ③ — the third real input path, previously
+    invisible to validate entirely (no prior test covered it, IN-set or
+    otherwise). The finding is labeled with the specific agent+path so an
+    operator with multiple agents knows exactly which file to fix."""
+    _write_yaml(project / "reyn.yaml", MINIMAL_REYN_YAML)
+    _write_yaml(
+        project / ".reyn" / "agents" / "planner" / "hooks.yaml",
+        "hooks:\n"
+        "  - \"on\": turn_end\n"
+        "    exec: [\"echo\", \"hi\"]\n"
+        "    allow_write_paths: [\"/tmp\"]\n",
+    )
+    from reyn.interfaces.cli.commands.config import _validate
+
+    _validate()
+    out = capsys.readouterr().out
+    assert "Hook entry validation" in out
+    assert ".reyn/agents/planner/hooks.yaml" in out
+    assert "allow_write_paths" in out
+    assert "write_paths" in out
+
+
+def test_a_well_formed_per_agent_hooks_file_produces_no_finding(project, capsys):
+    """Tier 2: accept-side for the per-agent source — a valid
+    .reyn/agents/<name>/hooks.yaml must not trip the new section."""
+    _write_yaml(project / "reyn.yaml", MINIMAL_REYN_YAML)
+    _write_yaml(
+        project / ".reyn" / "agents" / "planner" / "hooks.yaml",
+        "hooks:\n"
+        "  - \"on\": turn_end\n"
+        "    exec: [\"echo\", \"hi\"]\n"
+        "    write_paths: [\"/tmp\"]\n",
+    )
+    from reyn.interfaces.cli.commands.config import _validate
+
+    _validate()
+    out = capsys.readouterr().out
+    assert "Hook entry validation" not in out
+    assert "No unknown, renamed, or disabled-by-dependency config keys found." in out
+
+
+def test_an_agent_dir_with_no_hooks_file_is_silently_skipped(project, capsys):
+    """Tier 2: accept-side — an agent directory that exists (e.g. it has
+    state/ from a prior run) but no hooks.yaml at all must not be treated
+    as a malformed source; load_per_agent_hooks's own [] default covers
+    this, this test pins that validate's new loop respects it."""
+    _write_yaml(project / "reyn.yaml", MINIMAL_REYN_YAML)
+    (project / ".reyn" / "agents" / "planner" / "state").mkdir(parents=True)
+    from reyn.interfaces.cli.commands.config import _validate
+
+    _validate()
+    out = capsys.readouterr().out
+    assert "Hook entry validation" not in out
+
+
+# ── #4555 review (lead-coder): root resolution must be consistent ─────────
+#
+# The `project` fixture above monkeypatches `_find_project_root` to always
+# return `tmp_path` regardless of the path it's called with — it can never
+# witness a root-resolution bug where one call site walks up from cwd and
+# another does not. This fixture uses the REAL `_find_project_root` (only
+# `Path.home` is faked) so a genuine subdirectory run exercises the actual
+# filesystem walk each of the 3 call sites in `_validate()` must agree on.
+
+
+@pytest.fixture()
+def real_project_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    fake_home = tmp_path / "fake_home"
+    fake_home.mkdir()
+    monkeypatch.setattr(Path, "home", staticmethod(lambda: fake_home))
+    root = tmp_path / "project"
+    root.mkdir()
+    return root
+
+
+def test_findings_from_all_3_sources_survive_running_from_a_subdirectory(
+    real_project_root, capsys, monkeypatch,
+):
+    """Tier 2: #4555 review — build_policy_tier_config walks up to the real
+    project root via _find_project_root, but load_hot_reload_config and the
+    per-agent scan used a bare Path.cwd() before this fix, which does NOT
+    walk up. Running from a subdirectory used to silently drop the IN-set
+    and per-agent findings while still reporting the reyn.yaml one — this
+    pins that all 3 sources are found identically regardless of which
+    subdirectory `reyn config validate` is invoked from."""
+    _write_yaml(real_project_root / "reyn.yaml", MINIMAL_REYN_YAML)
+    _write_yaml(
+        real_project_root / ".reyn" / "config" / "hooks.yaml",
+        "hooks:\n"
+        "  - \"on\": turn_end\n"
+        "    exec: [\"echo\", \"hi\"]\n"
+        "    allow_write_paths: [\"/tmp\"]\n",
+    )
+    _write_yaml(
+        real_project_root / ".reyn" / "agents" / "planner" / "hooks.yaml",
+        "hooks:\n"
+        "  - \"on\": turn_end\n"
+        "    exec: [\"echo\", \"hi\"]\n"
+        "    nam: typo\n",
+    )
+    subdir = real_project_root / "src" / "nested"
+    subdir.mkdir(parents=True)
+    monkeypatch.chdir(subdir)
+
+    from reyn.interfaces.cli.commands.config import _validate
+
+    _validate()
+    out = capsys.readouterr().out
+    assert ".reyn/config/hooks.yaml" in out, (
+        f"IN-set finding missing when run from a subdirectory: {out!r}"
+    )
+    assert ".reyn/agents/planner/hooks.yaml" in out, (
+        f"per-agent finding missing when run from a subdirectory: {out!r}"
+    )
+
+
+def test_multiple_hook_sources_each_report_their_own_labeled_finding(project, capsys):
+    """Tier 2: a malformed entry in BOTH reyn.yaml and a per-agent file at
+    once produces two distinct labeled findings, not one that shadows the
+    other — an operator fixing only the first-listed one must still see
+    the second remains."""
+    _write_yaml(
+        project / "reyn.yaml",
+        MINIMAL_REYN_YAML
+        + "hooks:\n"
+        "  - \"on\": turn_end\n"
+        "    exec: [\"echo\", \"hi\"]\n"
+        "    allow_write_paths: [\"/tmp\"]\n",
+    )
+    _write_yaml(
+        project / ".reyn" / "agents" / "planner" / "hooks.yaml",
+        "hooks:\n"
+        "  - \"on\": turn_end\n"
+        "    exec: [\"echo\", \"hi\"]\n"
+        "    nam: typo\n",
+    )
+    from reyn.interfaces.cli.commands.config import _validate
+
+    _validate()
+    out = capsys.readouterr().out
+    assert "[reyn.yaml]" in out
+    assert ".reyn/agents/planner/hooks.yaml" in out
