@@ -28,6 +28,16 @@ Reyn directory naming uniformity):
                     MediaStore (= ``YYYYMMDDTHHMMSS-<chain_short>-
                     <tool>-<seq>.<ext>``).
 
+#4482 PR-1 adds a second, separate route on the same router:
+
+  GET /agents/<agent_name>/artifacts/<ref>
+
+for artifacts minted via ``reyn.data.workspace.artifact_ref`` (any file the
+agent already produced under ``project_root``, not just a MediaStore tool
+result) — see that module's own docstring for ref identity/minting, and
+:func:`get_artifact_by_ref` below for the route itself. Deliberately not an
+overload of ``<artifact>`` above; see that function's docstring for why.
+
 Same-host short-circuit (= when the resolved URL would point back to
 this very Reyn instance) is the dispatcher's responsibility on the
 consumer side; this router unconditionally serves the local file if it
@@ -197,6 +207,90 @@ async def get_tool_result(
         content=body,
         media_type=_mime_for(artifact),
         headers=_browser_headers(artifact, download=bool(download)),
+    )
+
+
+# ── GET /agents/<agent>/artifacts/<ref> (#4482 PR-1) ────────────────────
+#
+# A SEPARATE route from /tool-results/<artifact> above, deliberately not an
+# overload of it: the existing route's <artifact> segment means "a filename
+# MediaStore itself minted under tool_results_dir" and its traversal
+# boundary is tool_results_dir specifically. A #4482 artifact can be ANY
+# file the agent already produced anywhere under project_root (e.g. via
+# write_file, not necessarily a tool result) — a materially different
+# candidate set, so giving it its own route keeps the existing endpoint's
+# contract (and its existing callers) completely unchanged rather than
+# quietly widening what <artifact> can mean.
+#
+# Traversal boundary here is project_root, not tool_results_dir — this is
+# not a widened privilege: mint_ref never validates what it's given (see
+# artifact_ref.py's own docstring), so the boundary check has to happen at
+# resolve/serve time. project_root is the same boundary reyn's own sandbox
+# already uses for what an agent can write in the first place (file_scope.py
+# / write_file's own scoping) — this route can only ever serve back
+# something the agent could already produce and read itself, not a new
+# capability.
+
+
+@router.get("/agents/{agent_name}/artifacts/{ref}")
+async def get_artifact_by_ref(
+    agent_name: str,
+    ref: str,
+    request: Request,  # noqa: ARG001 — kept for symmetry with a2a routes
+    download: int = 0,
+    registry=Depends(get_registry),
+) -> Response:
+    """Serve a #4482 artifact by its minted ref (``artifact_ref.mint_ref``).
+
+    Validates the agent exists (= 404 if not), resolves *ref* via
+    ``artifact_ref.resolve_ref`` (= 404 if unknown to this agent's scope,
+    or if the target file has since been deleted — see that function's own
+    docstring for why those two cases share one outcome), and re-validates
+    the resolved path lives inside ``project_root`` (= 400 on an escape;
+    defense in depth — the table is only ever populated by ``mint_ref``,
+    but this route does not trust it blindly, matching the sibling
+    tool-results route's own "always re-check at serve time" posture).
+    """
+    if not registry.exists(agent_name):
+        raise HTTPException(
+            status_code=404,
+            detail=f"Reyn agent {agent_name!r} not found on this server.",
+        )
+
+    from reyn.data.workspace.artifact_ref import resolve_ref
+
+    project_root = Path.cwd()
+    resolved = resolve_ref(project_root, agent_name, ref)
+    if resolved is None:
+        raise HTTPException(
+            status_code=404,
+            detail=(
+                f"artifact ref {ref!r} not found for agent {agent_name!r} "
+                "(= unknown ref, or the file it named has been deleted)"
+            ),
+        )
+
+    try:
+        resolved.relative_to(project_root.resolve())
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail=f"resolved path for ref {ref!r} is outside project_root",
+        ) from exc
+
+    try:
+        body = resolved.read_bytes()
+    except OSError as exc:
+        raise HTTPException(
+            status_code=404,
+            detail=f"artifact ref {ref!r} could not be read: {exc}",
+        ) from exc
+
+    filename = resolved.name
+    return Response(
+        content=body,
+        media_type=_mime_for(filename),
+        headers=_browser_headers(filename, download=bool(download)),
     )
 
 
