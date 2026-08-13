@@ -154,12 +154,49 @@ A point with a COMPLETE producer read (`file_changed`/`cron_fired`) and no produ
 prints no finding at all — reporting "0 subscribing hooks" for
 a point that will never fire would be noise, not signal.
 
+### Sandbox posture — declared vs. RESOLVED (C-5)
+
+```
+Sandbox posture — declared vs. RESOLVED (absence of a declaration
+does not mean unrestricted; see the resolved backend below):
+  declared: sandbox.backend='auto', sandbox.on_unsupported='warn'
+  declared: no sandbox.policy — NOT the same as unrestricted, see resolved backend below
+  resolved: 'seatbelt' (production's own resolution — a backend that cannot enforce is already treated as absent at this step, #2983, so this name IS the enforcement witness)
+```
+
+The motivating real case (architect's own note, #4364): an operator read "no
+`sandbox.policy` declared" as "unrestricted," but the resolved backend was actually
+enforcing all along (`SeatbeltBackend`, `write_paths=[]`) — declaration and
+resolution silently disagreed, and only the resolved side is true.
+
+`reyn doctor` reports declared `sandbox.backend` / `sandbox.on_unsupported` /
+`sandbox.policy` (from config, verbatim — only the write-scope keys,
+`allow_write_paths`/`deny_write_paths`, are echoed) next to the backend
+production's OWN resolution (`reyn.security.sandbox.launcher.resolve_backend`
+— the SAME call C-1's hook probe already makes) actually hands back. This is
+deliberately **not** a second, doctor-invented probe: `get_default_backend()`
+already self-tests a real deny before returning a backend (#2983) and applies
+`sandbox.on_unsupported` to any backend that can't enforce, so "which backend
+resolved" already carries the enforcement witness — doctor reports that
+verdict, never re-derives it. If the declared backend was explicitly forced
+(not `'auto'`) and the resolution fell back to a different one, the line says
+`DOWNGRADED from declared '<name>'` rather than silently agreeing with the
+fallback. If `sandbox.on_unsupported: error` makes resolution itself
+fail-closed, doctor reports `resolved: refuses to run (...)` rather than
+crashing or swallowing the error.
+
+`reyn doctor` has no op context (no LLM tool call it's diagnosing), so it does
+NOT build a `resolve_sandbox_policy()` call — that needs a caller-supplied
+`write_paths` floor ("this op needs this directory") doctor cannot know and
+must not invent a stand-in for. Only the declared `sandbox.policy` dict's own
+write-scope keys are shown, never a merged/resolved policy.
+
 ## Out of scope for this PR (later slices, same arc)
 
-- **C-5 / C-6** (sandbox posture, listen port, and model-name declared-vs-effective
-  pairs) — each needs its own new measurement code (reading the resolved sandbox
-  backend object, introspecting a live bound socket, a real litellm probe call),
-  unlike C-1/C-2/C-7, which reuse existing measurement functions.
+- **C-6** (listen port and model-name declared-vs-effective pairs) — each needs
+  its own new measurement code (introspecting a live bound socket, a real
+  litellm probe call), unlike C-1/C-2/C-5/C-7, which reuse existing measurement
+  functions.
 
 ## Related
 
