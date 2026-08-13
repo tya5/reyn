@@ -79,6 +79,7 @@ External-event producer/consumer pairing (a producer with 0
 subscribing hooks is a real gap; a point with no producer is not
 reported — see 'not checked' below for why some points aren't):
   ✗ file_changed: producer present (1 declared fs_watch path(s)) but 0 subscribing hooks — this point's notifications have nowhere to go
+  ? mcp_resource_updated: not seen in the newest 0 event file(s) scanned — a producer whose last arrival is older than that is not covered here, so this is NOT proof no producer exists
   ? webhook_received: not checked (no config or audit-log surface exists for its producer)
 ```
 
@@ -138,11 +139,19 @@ one directly. Producer evidence differs per point:
   kind lookup has no index — `.reyn/events` is append-only — so this bound keeps a "did
   it ever happen" query cheap even with retention disabled; the question only needs "at
   least once," so an early exit can never turn a real positive into a false negative).
+  **This check is windowed, unlike the other two** (#4614): "not seen in the newest 20
+  files" is NOT proof of "no producer" — a real producer whose last arrival predates the
+  window is indistinguishable from one that never fired. Reporting nothing here (the
+  pre-#4614 behavior) silently hid exactly the state C-2 exists to catch, so this point
+  ALWAYS prints a line — `✓`/`✗` when seen within the window, or `? mcp_resource_updated:
+  not seen in the newest N event file(s) scanned — ... NOT proof no producer exists`
+  otherwise — never folded into the "no producer → no finding" rule below.
 - `webhook_received` — **not checked**: no config declaration and no `AUDIT_EVENT_KINDS`
   entry exist for it, so there is no surface to read a producer from at all. Reported as
   `? webhook_received: not checked`, never silently omitted (D-3).
 
-A point with no producer prints no finding at all — reporting "0 subscribing hooks" for
+A point with a COMPLETE producer read (`file_changed`/`cron_fired`) and no producer
+prints no finding at all — reporting "0 subscribing hooks" for
 a point that will never fire would be noise, not signal.
 
 ## Out of scope for this PR (later slices, same arc)

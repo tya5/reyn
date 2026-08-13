@@ -39,11 +39,15 @@ def _write_event(events_dir: Path, filename: str, kind: str) -> None:
 def test_no_producers_configured_reports_only_the_uncheckable_point(
     tmp_path: Path, capsys,
 ) -> None:
-    """Tier 2: (accept-side, absence) with no fs_watch/cron/event-log
-    evidence at all, the only line printed under this section is
-    webhook_received's "not checked" — a point with no producer gets no
-    finding (D-2/D-3: reporting "0 hooks" for a nonexistent producer
-    would be noise, not signal)."""
+    """Tier 2: (accept-side, absence) with no fs_watch/cron evidence at
+    all, file_changed/cron_fired print no finding at all (D-2/D-3:
+    reporting "0 hooks" for a nonexistent producer would be noise, not
+    signal — those two checks are COMPLETE config reads, so "no producer"
+    can be asserted outright). mcp_resource_updated is different (#4614):
+    its own check is windowed, so it prints a "?" disclosure line even
+    with zero event-log evidence — "not seen" there is never proof of
+    "no producer", only "not seen in the window", so silence would hide
+    exactly the state C-2 exists to catch."""
     _write_yaml(tmp_path / "reyn.yaml", MINIMAL_REYN_YAML)
 
     run(Namespace(project_root=str(tmp_path)))
@@ -53,7 +57,8 @@ def test_no_producers_configured_reports_only_the_uncheckable_point(
     assert "? webhook_received: not checked" in out
     assert "file_changed" not in out
     assert "cron_fired" not in out
-    assert "mcp_resource_updated" not in out
+    assert "? mcp_resource_updated: not seen in the newest" in out
+    assert "NOT proof no producer exists" in out
 
 
 def test_file_changed_producer_with_zero_consumers_is_flagged(
@@ -187,6 +192,45 @@ def test_mcp_resource_updated_with_a_consumer_reports_ok(
     out = capsys.readouterr().out
 
     assert "✓ mcp_resource_updated: producer present" in out
+
+
+def test_mcp_resource_updated_evidence_outside_the_scan_window_is_disclosed_not_silent(
+    tmp_path: Path, capsys,
+) -> None:
+    """Tier 2: #4614 — the core regression witness. A real producer whose
+    last arrival predates the scan window (more dated event files exist
+    than ``_MCP_EVENT_SCAN_MAX_FILES`` covers) with 0 subscribing hooks
+    is EXACTLY the state C-2 exists to catch — architect's own finding
+    (#4612 co-vet) was that the pre-#4614 code silently printed nothing
+    here, folded into the generic "no producer -> no finding" rule that
+    is only valid for a COMPLETE read (file_changed/cron_fired), not a
+    windowed one. This test writes evidence, then enough NEWER files
+    with an unrelated kind to push it outside the window, and asserts
+    the '?' disclosure line fires — not silence, and not a false '✗'
+    claiming certainty the window doesn't have."""
+    from reyn.interfaces.cli.commands import doctor as _doctor_mod
+
+    _write_yaml(tmp_path / "reyn.yaml", MINIMAL_REYN_YAML)
+    events_dir = tmp_path / ".reyn" / "events"
+    # Oldest file (real mcp_resource_updated evidence) — outside the
+    # window once enough newer files exist.
+    _write_event(events_dir, "2026-01-01T000000.jsonl", "mcp_resource_updated")
+    # Push it out of the window with newer, unrelated-kind files —
+    # exactly _MCP_EVENT_SCAN_MAX_FILES of them, so the oldest (the real
+    # evidence) is excluded from the newest-N scan.
+    for day in range(1, _doctor_mod._MCP_EVENT_SCAN_MAX_FILES + 1):
+        _write_event(
+            events_dir, f"2026-02-{day:02d}T000000.jsonl", "session_started",
+        )
+
+    run(Namespace(project_root=str(tmp_path)))
+    out = capsys.readouterr().out
+
+    # Not silent (the pre-#4614 bug) and not a false "no producer" claim.
+    assert "? mcp_resource_updated: not seen in the newest" in out
+    assert "NOT proof no producer exists" in out
+    assert "✗ mcp_resource_updated" not in out
+    assert "✓ mcp_resource_updated" not in out
 
 
 def test_consumer_declared_only_in_runtime_hooks_yaml_still_counts(

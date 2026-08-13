@@ -334,13 +334,16 @@ _UNCHECKABLE_EXTERNAL_POINTS: Final[tuple[str, ...]] = ("webhook_received",)
 # kind lookup is a scan. #4479 retention normally bounds the file count, but
 # an operator who disabled retention (0 = off, both axes) has no upper
 # bound. This check only needs "did it happen at least once" (architect's
-# own ruling), so a bounded newest-first scan is exact for that question —
-# an early exit can never turn a real positive into a false negative, only
-# a genuinely-never-happened case stays (correctly) unproven beyond this
-# window. Same "config knob + disclose what was scanned" shape as #4601's
-# own N (architect's note) — a local doctor-only display bound, not a
-# functional correctness cap, so no config knob of its own: the window is
-# always disclosed alongside the result (below), never asserted silently.
+# own ruling), so a bounded newest-first scan is exact for a POSITIVE
+# result — an early exit can never turn a real positive into a false
+# negative. #4614 correction: the negative case is NOT merely a display
+# concern — "not seen in the newest N files" and "genuinely never
+# happened" are indistinguishable from a bool, so a producer whose last
+# arrival is older than the window (0 subscribing hooks, the exact state
+# C-2 exists to catch) silently printed NOTHING before this fix. This
+# DOES bear on correctness, which is why the window is unconditionally
+# disclosed in the output below (D-3), not just alongside a positive
+# finding — never widen this number without keeping that disclosure.
 _MCP_EVENT_SCAN_MAX_FILES: Final[int] = 20
 
 
@@ -453,21 +456,48 @@ def _print_external_point_pairing(config: object, project_root: Path) -> None:
             has_producer = bool(enabled_jobs)
             evidence = f"{len(enabled_jobs)} enabled cron job(s)"
         elif point == "mcp_resource_updated":
+            # #4614: this check is windowed (a bounded scan, see
+            # _MCP_EVENT_SCAN_MAX_FILES's own comment) — unlike
+            # file_changed/cron_fired's complete config reads, "not seen"
+            # here is NOT proof of "no producer": a producer whose last
+            # arrival predates the window is indistinguishable from one
+            # that never fired. Silently printing nothing in that case
+            # (the pre-#4614 shape) hid the exact state C-2 exists to
+            # catch — so this point is disclosed UNCONDITIONALLY (D-3),
+            # never folded into the generic "no producer -> no finding"
+            # rule below.
             seen, scanned = _mcp_resource_updated_seen(events_dir)
-            has_producer = seen
-            evidence = (
-                f"seen in the newest {scanned} event file(s) scanned"
-                if seen
-                else f"not seen in the newest {scanned} event file(s) scanned "
-                f"(no evidence beyond this window)"
-            )
+            consumers = registry.hooks_for(point)  # type: ignore[attr-defined]
+            if seen and consumers:
+                print(
+                    f"  ✓ {point}: producer present (seen in the newest "
+                    f"{scanned} event file(s) scanned), {len(consumers)} "
+                    f"subscribing hook(s)",
+                )
+            elif seen:
+                print(
+                    f"  ✗ {point}: producer present (seen in the newest "
+                    f"{scanned} event file(s) scanned) but 0 subscribing "
+                    f"hooks — this point's notifications have nowhere to go",
+                )
+            else:
+                print(
+                    f"  ? {point}: not seen in the newest {scanned} event "
+                    f"file(s) scanned — a producer whose last arrival is "
+                    f"older than that is not covered here, so this is NOT "
+                    f"proof no producer exists",
+                )
+            continue
         else:  # pragma: no cover — _EXTERNAL_POINTS is the closed population
             continue
 
         if not has_producer:
             # D-2/D-3: a point with no producer gets no finding — reporting
             # "0 hooks" here would be noise, not signal (architect's own
-            # ruling: "report only where a producer exists").
+            # ruling: "report only where a producer exists"). Does NOT
+            # apply to mcp_resource_updated (handled above, its own
+            # branch) — that check is windowed, so "no producer" can't be
+            # asserted the same way a complete config read can.
             continue
 
         consumers = registry.hooks_for(point)  # type: ignore[attr-defined]
