@@ -143,6 +143,7 @@ nav:
               - reference/cli/secret.md
               - reference/cli/auth.md
               - reference/cli/init.md
+              - reference/cli/audit.md
           - Session & ops:
               - reference/cli/events.md
               - reference/cli/memory.md
