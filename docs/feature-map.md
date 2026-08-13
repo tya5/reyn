@@ -427,6 +427,7 @@ How tools are presented to the LLM and how its calls are dispatched is a **plugg
 | `reyn cron` | Manage and run cron-scheduled skill jobs — foreground scheduler / list jobs + next-run / status | [reyn.yaml § cron](reference/config/reyn-yaml.md) |
 | `reyn web` | Start FastAPI gateway server (HTTP + SSE) | [Reference](reference/cli/web.md) |
 | `reyn init` | Scaffold `reyn.yaml` and `.reyn/` in current directory | [Reference](reference/cli/init.md) |
+| `reyn doctor` | Reports **measured** health, never declared — every line comes from actually reading a live effect (disk stat, a real audit-event, a real backend resolution), never restating a config value back. Read-only: never deletes, writes, or repairs anything (report-only by design, not merely by omission). Checks span disk usage, hook launch probes (C-1, a differential probe against a known-good control binary — never the hook's real configured args), external-event producer/consumer pairing (C-2), MCP negotiated version/capabilities (C-3(b), audit-log evidence, never a live connect), model/`api_base` reachability (C-4, a 0-token `GET /v1/models`, never a real completion call), and declared-vs-resolved sandbox posture (C-5) | [Reference](reference/cli/doctor.md) |
 
 ---
 
