@@ -205,7 +205,6 @@ async def test_no_injection_when_queue_is_empty() -> None:
 # ---------------------------------------------------------------------------
 
 import re
-from pathlib import Path
 
 from tests._support.paths import REPO_ROOT
 from tests._support.router_host_adapter import make_adapter

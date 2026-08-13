@@ -18,7 +18,7 @@ import litellm
 import pytest
 
 import reyn.llm.llm as llm_mod
-from reyn.llm.llm import EmptyLLMResponseError, _llm_call_with_retry
+from reyn.llm.llm import _llm_call_with_retry
 
 
 class _Resp:

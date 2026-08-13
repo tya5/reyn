@@ -560,26 +560,25 @@ ignore = [
 # empty ignore list does NOT subtract an outer glob's ignore, so a
 # subdirectory is cleared by ABSENCE from this list, not by an explicit
 # override entry): tests/core/ (#4097 2nd slice), tests/builtin/,
-# tests/dev/, tests/repo/, tests/scripts/ (#4097 3rd slice), and
+# tests/dev/, tests/repo/, tests/scripts/ (#4097 3rd slice),
 # cli/config/data/environment/hooks/http_safety/observability/plugins/
 # services/web (#4636, the 10 smallest remaining directories, 21
-# findings) are all enforced. Every other subdirectory stays ignored,
-# each its own future slice. ROOT-level tests/*.py files (conftest.py
-# etc.) and tests/_support/ are deliberately NOT listed here -- both
-# measured 0 findings already, so leaving them off this list enforces
-# F401 there too, for free (caught in review, #4640: an earlier draft
-# of this list carried a stale tests/_support entry despite the
-# 0-finding measurement). A single-`*` "tests/*.py" pattern was tried
-# first and DISCARDED: ruff's glob crosses `/` on a bare `*` the same
-# as `**`, so that one entry silently re-exempted every nested
+# findings), and tests/llm/ + tests/mcp/ (14 findings, same per-import
+# verification) are all enforced. Every other subdirectory stays
+# ignored, each its own future slice. ROOT-level tests/*.py files
+# (conftest.py etc.) and tests/_support/ are deliberately NOT listed
+# here -- both measured 0 findings already, so leaving them off this
+# list enforces F401 there too, for free (caught in review, #4640: an
+# earlier draft of this list carried a stale tests/_support entry
+# despite the 0-finding measurement). A single-`*` "tests/*.py" pattern
+# was tried first and DISCARDED: ruff's glob crosses `/` on a bare `*`
+# the same as `**`, so that one entry silently re-exempted every nested
 # subdirectory too (verified: it alone reproduced the FULL 335-finding
 # blanket ignore) -- the per-subdirectory `tests/<dir>/**/*.py` entries
 # below don't have this failure mode because the directory NAME is the
 # anchor, not a wildcard.
 [tool.ruff.lint.per-file-ignores]
 "tests/interfaces/**/*.py" = ["F401"]
-"tests/llm/**/*.py" = ["F401"]
-"tests/mcp/**/*.py" = ["F401"]
 "tests/runtime/**/*.py" = ["F401"]
 "tests/security/**/*.py" = ["F401"]
 "tests/tools/**/*.py" = ["F401"]

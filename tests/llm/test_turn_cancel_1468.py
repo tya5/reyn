@@ -18,11 +18,8 @@ callable class). cancel flag is set via a host subclass or direct session method
 """
 from __future__ import annotations
 
-import asyncio
-
 import pytest
 
-from reyn.llm.llm import LLMToolCallResult
 from reyn.llm.pricing import TokenUsage
 from reyn.runtime.router_loop import RouterLoop
 from tests._support.router_loop import (

@@ -16,8 +16,6 @@ no mocks (per testing.ja.md).
 """
 from __future__ import annotations
 
-import asyncio
-
 import pytest
 
 from reyn.core.events.events import EventLog

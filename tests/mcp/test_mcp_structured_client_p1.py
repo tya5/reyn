@@ -15,9 +15,7 @@ structurally blind to the SDK-internal task group that actually crashes).
 from __future__ import annotations
 
 import sys
-import tempfile
 import textwrap
-from pathlib import Path
 
 import pytest
 
