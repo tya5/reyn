@@ -521,13 +521,18 @@ class AuditEventsConfig:
     # (sink-null); subscriber delivery (CUI/AG-UI, hooks, OTEL) and the
     # per-emitter `audit_seq` continuity are UNCHANGED either way — see
     # `reyn.core.events.backend`'s module docstring for the structural
-    # guarantee. `network` is NOT yet a valid value here — its on-failure
+    # guarantee. `network` is NOT yet a valid value — its on-failure
     # semantics (discard-and-let-seq-show-it / local spool / halt-the-run)
     # are still an open owner decision (#4496); an operator who sets it
-    # gets the standard unknown-VALUE-falls-back-to-default tolerance
-    # (this field is validated at parse time, not silently accepted as a
-    # do-nothing string — see the parser below).
-    backend: str = "local"
+    # (or any other string) gets the standard unknown-VALUE-falls-back-
+    # to-default tolerance — see the parser below. `Literal[...]` (not a
+    # bare `str`, per lead-coder review) matches this repo's convention
+    # for a closed, small value set (`retry_backoff` / `chat.mode` /
+    # `render_mode` / `on_oversize` all use it) — `tool_use.scheme` /
+    # `.transport` stay plain `str` because THEIR domain is an open,
+    # pluggable registry a literal type can't enumerate; this field's
+    # domain is closed, so it belongs on the Literal side of that split.
+    backend: Literal["local", "discard"] = "local"
 
 
 _SANDBOX_BACKENDS = {"auto", "seatbelt", "landlock", "noop"}

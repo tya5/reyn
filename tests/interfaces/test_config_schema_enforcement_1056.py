@@ -51,13 +51,15 @@ from tests._support.minimal_reyn_yaml import MINIMAL_REYN_YAML
 # distinguish "loader read+coerced" from a real no-op. Supply a domain-valid
 # non-default so the guard stays decisive. Keyed by dotted key; the iteration
 # itself is still live-walk-derived — this only overrides the candidate VALUE.
-_VALID_NONDEFAULT_OVERRIDES: dict[str, object] = {
-    # #4496 PR-2: `audit_events.backend` accepts only {"local", "discard"} —
-    # any other string (including the generic "local_nd" candidate) falls
-    # back to the default, same discipline as every other malformed value
-    # in this parser. "discard" is a real, wired, non-default value.
-    "audit_events.backend": "discard",
-}
+#
+# `audit_events.backend` (#4496 PR-2) does NOT need an entry here: it is
+# typed `Literal["local", "discard"]`, not a bare coercing `str`, so
+# `_nondefault_candidate`'s existing Literal branch (below) already picks
+# a real, non-default member automatically — no override needed. Left as
+# the discriminator for FUTURE soft-coercing string fields (the override
+# mechanism itself stays correct; this dict is empty because nothing
+# currently needs it, not because it doesn't work).
+_VALID_NONDEFAULT_OVERRIDES: dict[str, object] = {}
 
 
 def _nondefault_candidate(node: SchemaNode) -> object | None:
