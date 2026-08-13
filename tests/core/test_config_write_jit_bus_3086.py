@@ -44,6 +44,7 @@ from pathlib import Path
 import pytest
 
 from reyn.core.op_runtime.context import OpContext
+from reyn.data.workspace.workspace import Workspace
 from reyn.intervention_choices import NO, YES
 from reyn.schemas.models import (
     PipelineInstallIROp,
@@ -55,11 +56,8 @@ from reyn.user_intervention import InterventionAnswer, UserIntervention
 
 # ── shared stubs (real API surface, no mocks; mirrors test_plugin_install.py /
 # test_require_file_jit_ask_1505.py's _FakeBus) ────────────────────────────────
-
-
-class _StubWorkspace:
-    def __init__(self, base_dir: Path) -> None:
-        self.base_dir = base_dir
+# #4597 slice ①: _StubWorkspace removed — a real Workspace(events=...,
+# permission_resolver=..., base_dir=...) is cheaply constructible.
 
 
 class _Events:
@@ -101,10 +99,11 @@ def _make_ctx(
         config_permissions={}, project_root=project_root, interactive=True,
     )
     decl = PermissionDecl()  # no declared grants — the zone/sandbox conjunction decides
+    events = _Events()
 
     return OpContext(
-        workspace=_StubWorkspace(base_dir=project_root),
-        events=_Events(),
+        workspace=Workspace(events=events, permission_resolver=resolver, base_dir=project_root),
+        events=events,
         permission_decl=decl,
         permission_resolver=resolver,
         actor="test",

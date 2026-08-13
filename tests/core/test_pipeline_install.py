@@ -36,16 +36,14 @@ from reyn.core.events.snapshot_generations import rewind as _wal_rewind
 from reyn.core.events.state_log import StateLog
 from reyn.core.op_runtime.context import OpContext
 from reyn.data.pipelines.registry import build_pipeline_registry
+from reyn.data.workspace.workspace import Workspace
 from reyn.runtime.registry import AgentRegistry
 from reyn.schemas.models import PipelineInstallIROp
 from reyn.security.permissions.permissions import PermissionDecl, PermissionResolver
 
 # ── shared stubs (mirrors test_skill_install_pr_c.py / pr_d.py) ──────────────
-
-
-class _StubWorkspace:
-    def __init__(self, base_dir: Path) -> None:
-        self.base_dir = base_dir
+# #4597 slice ①: _StubWorkspace removed — a real Workspace(events=...,
+# permission_resolver=..., base_dir=...) is cheaply constructible.
 
 
 class _Events:
@@ -86,7 +84,7 @@ def _make_ctx(
     )
     events = _Events()
     ctx = OpContext(
-        workspace=_StubWorkspace(base_dir=tmp_path),
+        workspace=Workspace(events=events, permission_resolver=resolver, base_dir=tmp_path),
         events=events,
         permission_decl=decl,
         permission_resolver=resolver,

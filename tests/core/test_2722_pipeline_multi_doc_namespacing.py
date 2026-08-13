@@ -35,6 +35,7 @@ from reyn.core.pipeline.parser import (
 )
 from reyn.core.pipeline.schema import SchemaRegistry
 from reyn.data.pipelines.registry import PipelineLoadError, build_pipeline_registry
+from reyn.data.workspace.workspace import Workspace
 from reyn.schemas.models import PipelineInstallIROp
 from reyn.security.permissions.permissions import PermissionDecl, PermissionResolver
 
@@ -336,9 +337,8 @@ class _Events:
         self.emitted.append((kind, kwargs))
 
 
-class _StubWorkspace:
-    def __init__(self, base_dir: Path) -> None:
-        self.base_dir = base_dir
+# #4597 slice ①: _StubWorkspace removed — a real Workspace(events=...,
+# permission_resolver=..., base_dir=...) is cheaply constructible.
 
 
 def _install_ctx(tmp_path: Path) -> "tuple[OpContext, _Events]":
@@ -349,7 +349,7 @@ def _install_ctx(tmp_path: Path) -> "tuple[OpContext, _Events]":
     decl = PermissionDecl(file_write=[{"path": str(config_path), "scope": "just_path"}])
     events = _Events()
     ctx = OpContext(
-        workspace=_StubWorkspace(base_dir=tmp_path),
+        workspace=Workspace(events=events, permission_resolver=resolver, base_dir=tmp_path),
         events=events,
         permission_decl=decl,
         permission_resolver=resolver,
