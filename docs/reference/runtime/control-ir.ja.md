@@ -328,7 +328,7 @@ OS は server のトランスポートを解決し、`MCPClient.read_resource`�
 
 **永続接続が必要。** 購読は HELD（セッション寿命の）MCP 接続の上でのみ意味を持ちます — 購読中の URI 集合は `MCPConnectionService` 上でメモリ内追跡されます（runtime-only、WAL 無し: 購読自体はデータを持たないため完全に再確立可能で、gen-store の runtime-only-state 不変条件と一致します）。エフェメラルなセッション（op が返った直後に per-call `MCPClientPool` が接続を閉じる）は、push を決して観測できない購読を静かに受け入れるのではなく、両 op を明確なエラーで拒否します。
 
-**再接続時は自動的に再購読されます。** トランスポート断による再接続（`mcp`/`mcp_read_resource` が使うのと同じ F1 healing パス）は、購読を一切持たない新しい `mcp.ClientSession` を開きます — `MCPConnectionService` は、新しい接続が開いた直後に、その server に対してまだ追跡されている全 URI について `subscribe_resource` を再発行するため、購読はトランスポート断を透過的に生き延びます。
+**再接続時は自動的に再購読されます。** トランスポート断による再接続（`mcp`/`mcp_read_resource` が使うのと同じ F1 healing パス）は、購読を一切持たない新しい `mcp.Client`（#3698 PR-1 — 以前は生の `mcp.ClientSession` でした。`Client` は今やその session の構築・enter を内部で自ら行います）を開きます — `MCPConnectionService` は、新しい接続が開いた直後に、その server に対してまだ追跡されている全 URI について `subscribe_resource` を再発行するため、購読はトランスポート断を透過的に生き延びます。
 
 **push 通知自体は `control_ir_results` の値ではなく EventLog イベントです。** server が `notifications/resources/updated {uri}` を送ると、`reyn.mcp.message_handler.ReynMCPMessageHandler.on_resource_updated` がセッションの `EventLog` に `mcp_resource_updated` イベント（`server`、`uri`）を、どの op 呼び出しとも独立に非同期発行します。この slice は意図的に EventLog で止まります: `mcp_resource_updated` を hook dispatcher に配線するのは後続の（hooks-arc の）slice です。切断中に見逃した更新を再接続時に再読み取りして拾う（上記の再**購読**とは別の resync-READ）ことも、この slice ではなく follow-up です。
 
