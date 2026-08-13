@@ -142,7 +142,9 @@ full enumeration costs too much.
 retrieval` + `transport: content_fence` shows `search_actions` instead of
 `list_actions`, so the model describes what it wants and calls what the search
 returned — in the same snippet, without the re-present round trip the
-`tool_calls` retrieval cell pays. Requires `embedding.enabled: true`.
+`tool_calls` retrieval cell pays. Requires `embedding.enabled: true`
+(plus `embedding.index.actions`, default **on** — no extra config
+needed for the common case; see [`embedding.index`](../../reference/config/reyn-yaml.md#embedding-fields)).
 
 See [`reyn.yaml` § tool_use](../../reference/config/reyn-yaml.md#tool_use-block).
 

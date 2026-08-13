@@ -136,7 +136,9 @@ tool_use:
 retrieval` + `transport: content_fence` は `list_actions` の代わりに
 `search_actions` を見せます。モデルは欲しいものを記述し、検索が返したものを
 その場で呼び出せます — `tool_calls` 側の retrieval セルが払う再提示の 1 往復
-なしに、同一スニペット内で完結します。`embedding.enabled: true` が必要です。
+なしに、同一スニペット内で完結します。`embedding.enabled: true` が必要です
+（加えて `embedding.index.actions`、既定 **on** — 通常のケースでは追加設定不要。
+[`embedding.index`](../../reference/config/reyn-yaml.md#embedding-fields) 参照）。
 
 旧 `tool_use.chat` key は #3247 で削除済み（clean-break、compat alias 無し）
 — これを書いた `reyn.yaml` は parse 時に失敗する。

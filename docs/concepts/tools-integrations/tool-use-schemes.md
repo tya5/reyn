@@ -63,7 +63,10 @@ tools, and the LLM calls one. (That round trip is how the `tool_calls` cell
 narrows; the `content_fence` cell below reaches the same paradigm without one.)
 A **supported opt-in** alternative to the chat
 default — it requires `embedding.enabled: true` (FP-0066 §7) with a configured
-embedding provider (the search is semantic). Because matching is semantic, its
+embedding provider (the search is semantic), plus `embedding.index.actions`
+(default **on** — the ~10-entry catalog index this scheme reads; no extra
+config needed for the common case, see [`embedding.index`](../../reference/config/reyn-yaml.md#embedding-fields)).
+Because matching is semantic, its
 quality depends on the embedding index, so it suits stable, well-indexed
 catalogues.
 
@@ -142,8 +145,9 @@ nowhere to land.
 
 **Use when:** the catalog is large enough that browsing it by category is the
 wrong entry point *and* a weak / low-cost model does better writing code than
-emitting JSON tool calls. Requires `embedding.enabled: true`, like every
-`retrieval` cell. When the embedding index is not ready, the cell falls back to
+emitting JSON tool calls. Requires `embedding.enabled: true` (plus
+`embedding.index.actions`, default on — see the `retrieval` section above),
+like every `retrieval` cell. When the embedding index is not ready, the cell falls back to
 listing the flat catalog rather than showing a search that would return nothing —
 the same degrade its `tool_calls` sibling performs, and for the same reason (a
 search backed by no index strands the model on empty results).
