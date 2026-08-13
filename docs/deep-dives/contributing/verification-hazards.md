@@ -751,6 +751,32 @@ running the ratchet FAILED with exactly this message, and a baselined
 `[syntax]` pair still fails on every subsequent run rather than reading as
 known debt).
 
+The proposition that quote states — **a run that did not run is not clean**
+— has a strictly larger instance the same script did not cover for another
+two years: mypy not installed at all (#4576). `python -m mypy` then writes
+"No module named mypy" to stderr and exits 1; `run_mypy` deliberately does
+not raise on a non-zero exit (mypy's own error exit is the common case), no
+`[code]` lines parse out, and zero measured pairs minus the baseline is zero
+new pairs. The script printed `mypy ratchet OK: 0 findings, all baselined
+(215 declared)` and exited 0 — the `215 declared` supplied by a baseline load
+that HAD succeeded, so nothing in the line looked degraded. It hid a real
+`[call-arg]` through a complete local pre-PR check (#4575), and was found
+only because that PR's CI disagreed with its author's green.
+
+Two things are worth taking from it beyond the fix. First, the author had
+already reasoned about truncated runs — the `[syntax]` guard above is that
+reasoning — so this was not an unconsidered case but an unsearched *shape*:
+"ran and stopped early" was looked for, "never ran" was not. Second, the
+general proposition was written down, here, in this document, and neither
+the PR author nor its co-vet reviewer reached it. A hazard catalogue is only
+consulted at the moment someone suspects a hazard; it does not fire on its
+own. The guard added instead is structural — `importlib.util.find_spec`
+before the run, so the question asked is "is the tool present", not "does
+the output look like a real run", which would have put the discriminator on
+the side being classified (mypy's own summary wording, which mypy may
+change at will). The exit code cannot serve either: a missing module and a
+normal findings-reported run both exit 1 (measured).
+
 The `tick()`/`compact_caps`/`fv.cursor`/`Closes` shape itself — "prove the
 named symbol resolves" as a class, beyond what mypy already covers for
 method/attribute calls — is **not yet machinized**, not because it can't
