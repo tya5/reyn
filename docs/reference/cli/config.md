@@ -59,8 +59,10 @@ check (hook entries) covers three separate config *files* under one section, not
   operator's next action is "delete this line", not "rewrite it".
 - **Known keys currently disabled by another key's value** — the key is real and
   correctly spelled, but the current configuration makes it a no-op (e.g.
-  `action_retrieval.universal_wrappers_enabled` has no effect while `tool_use.scheme`
-  resolves to `enumerate-all`). Each entry names the key it depends on and the fix.
+  `tool_use.universal_wrappers_enabled` has no effect while `tool_use.scheme`
+  resolves to `enumerate-all` — both fields live under the same `tool_use:` block
+  since #4552 PR-3+4 moved `universal_wrappers_enabled` out of the now-deleted
+  `action_retrieval:` section). Each entry names the key it depends on and the fix.
 - **Unrecognized/renamed/removed keys, the hot-reload IN-set** (`.reyn/{mcp,cron,hooks,skills,
   pipelines,presentations}.yaml`) — same unknown-key check, run against the merged
   IN-set instead of the policy tier. Fix: edit the `.reyn/*.yaml` file directly — it
