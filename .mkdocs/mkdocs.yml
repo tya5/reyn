@@ -136,6 +136,7 @@ nav:
               - reference/cli/agent.md
               - reference/cli/topology.md
               - reference/cli/mcp.md
+              - reference/cli/pipe.md
               - reference/cli/embeddings.md
           - Configuration & auth:
               - reference/cli/config.md
