@@ -295,7 +295,11 @@ async def test_the_text_cursors_yank_writes_through_reyns_local_clipboard(
         app = TextualChatApp(transport=_Transport())
         async with app.run_test(size=(80, 20)) as pilot:
             flow = await _seeded(pilot, app)
-            wrote = flow.write_clipboard("yanked via the text cursor")
+            # flowview 0.19.0: write_clipboard became `async def` (its own
+            # public method, not the injected clipboard= sink's contract —
+            # that stays sync-or-async, see `_write_clipboard`'s own
+            # docstring, app.py) so its own caller must await it now.
+            wrote = await flow.write_clipboard("yanked via the text cursor")
             assert wrote is True, (
                 "the sink reported failure — reyn's clipboard tool did not accept the "
                 "text, or the default OSC 52 path is still in use"
