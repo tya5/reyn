@@ -6,9 +6,10 @@ Every Appendix-B non-linear primitive (``call``/``match``/``fold``/
 
 ``parallel`` is ``for_each``'s static-branch-set sibling — it reuses the EXACT
 SAME fan-out substrate (concurrent recovery via a single serializing
-coordinator + a NO-OP recorder inside branch tasks, the
-``__fan_out_dropped__`` kind-marker, the ``fan_out_depth``/``SpawnBudget`` S5
-guards). Structural differences covered here:
+coordinator, #2582's ``_FanOutRecordBox`` lock shared with each branch's
+compositional-``do`` sub-step recorder, the ``__fan_out_dropped__``
+kind-marker, the ``fan_out_depth``/``SpawnBudget`` S5 guards). Structural
+differences covered here:
 
   1. happy path — a STATIC dict of heterogeneous NAMED branches runs
      CONCURRENTLY; ``collect`` runs ONCE over the NAMED MAP ``results.NAME``
@@ -665,18 +666,28 @@ async def test_parallel_of_agent_branches_within_spawn_cap_succeeds(tmp_path: Pa
     assert scripted.calls == 3
 
 
-# ── compositional-do (branch) recovery gap, documented, mirrors for_each ─────
+# ── #2582: the compositional branch CLOSED gap, mirrors for_each ─────────────
 
 
 @pytest.mark.asyncio
-async def test_compositional_branch_reruns_atomically_on_crash(tmp_path: Path):
-    """Tier 2: DOCUMENTS the known fan-out recovery gap (module docstring's
-    "commit unit = the ITEM/BRANCH"). A ``call``-branch crashed MID-BRANCH
-    (its callee wrote sub-step 0's side effect, sub-step 1 failed) re-runs
-    ATOMICALLY on resume — because branch tasks record through a NO-OP
-    recorder, the branch's internal progress is never journaled, so the
-    completed internal side effect RE-FIRES. A single-step branch has no such
-    gap (see the truncate-falsify test above)."""
+async def test_truncate_falsify_compositional_branch_sub_step_survives_mid_branch_crash(
+    tmp_path: Path,
+):
+    """Tier 2: MANDATORY CLAUDE.md recovery-feature truncate-falsify gate for
+    #2582, the ``parallel`` counterpart of
+    ``test_pipeline_for_each_primitive.py``'s matching test. A ``call``-branch
+    crashes MID-BRANCH (its callee's sub-step 0 durably writes its side
+    effect, sub-step 1 then fails). The per-branch recorder (the SAME
+    :func:`~reyn.core.pipeline.executor._make_fan_out_sub_step_recorder`
+    ``for_each`` items use) now journals sub-step 0 durably AS IT LANDS. The
+    WAL is truncated BELOW sub-step 0's own recording event. Resume from the
+    generation FILE (never WAL replay) must still see sub-step 0 as complete
+    and NOT re-fire its side effect.
+
+    RED (pre-#2582): X-a would be written a SECOND time on resume — the
+    branch re-ran atomically from scratch because branch tasks recorded
+    through a no-op recorder, so nothing was durable until the whole branch
+    landed."""
     state_log = StateLog(tmp_path / ".reyn" / "wal.jsonl")
     out_file = tmp_path / "out.txt"
     crash = {"X-b"}  # the callee's 2nd sub-step fails in phase 1
@@ -698,22 +709,41 @@ async def test_compositional_branch_reruns_atomically_on_crash(tmp_path: Path):
     with pytest.raises(PipelineExecutionError):
         await PipelineExecutor().run(
             pipeline, None,
-            tool_dispatch=dispatch, state_log=state_log, run_id="run-par-comp",
+            tool_dispatch=dispatch, state_log=state_log, run_id="run-par-comp-tf",
             pipeline_registry=registry,
         )
     await state_log.flush()
     assert out_file.read_text(encoding="utf-8").splitlines() == ["X-a"]
 
-    # RESUME disarmed: the branch re-runs WHOLE (its key was never recorded),
-    # so X-a is written AGAIN (the documented internal-side-effect re-fire).
+    # The sub-step's own generation is on disk: sub-step 0's callee key is
+    # durably present even though the branch — and the whole parallel — never
+    # completed.
+    from reyn.core.events.pipeline_recovery import latest_pipeline_state
+    snap = latest_pipeline_state("run-par-comp-tf", state_log)
+    assert snap["completed_step_results"]["0.parallel.x.call.0"] == {
+        "text": "", "structured": {"wrote": "X-a"},
+    }
+    assert "0.parallel.x.call.1" not in snap["completed_step_results"]
+
+    # WAL head climbs past the crash-state seqs, then GC truncates below 40 —
+    # sub-step 0's own WAL entry is dropped from wal.jsonl (the falsify:
+    # recovery must come from the generation FILE, never WAL replay).
+    for i in range(50):
+        await state_log.append("inbox_put", n=100 + i)
+    await state_log.truncate_below(40)
+    await state_log.flush()
+    surviving = {e["seq"] for e in state_log.iter_from(0)}
+    assert all(s >= 40 for s in surviving), "sub-step 0's WAL entry is truncated away"
+
+    # RESUME with the crash disarmed: sub-step 0 REPLAYS (does not re-fire) —
+    # only sub-step 1 (X-b) executes.
     crash.clear()
     await PipelineExecutor().resume(
-        "run-par-comp", pipeline=pipeline,
+        "run-par-comp-tf", pipeline=pipeline,
         tool_dispatch=dispatch, state_log=state_log, pipeline_registry=registry,
     )
     lines = out_file.read_text(encoding="utf-8").splitlines()
-    assert lines == ["X-a", "X-a", "X-b"], (
-        "a compositional branch re-runs atomically on resume — X-a re-fires "
-        "(the documented commit-unit=BRANCH gap; single-step branch has no "
-        "such gap)"
+    assert lines == ["X-a", "X-b"], (
+        "#2582: a compositional branch's completed internal sub-step must "
+        "NOT re-fire on resume — X-a must be written exactly once"
     )

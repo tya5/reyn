@@ -21,11 +21,11 @@ Hard rule 6, N2) — ``fold``'s parallel, isolated sibling built on the same
      resume from the generation FILE → completed items REPLAY exactly-once (their
      side-effect file is unchanged), the dropped item STAYS dropped (not re-run),
      only absent items run, ``collect`` runs ONCE.
-  5. the documented COMPOSITIONAL-``do`` recovery gap: a ``call``-``do`` item
-     in-flight at crash re-runs ATOMICALLY on resume (its completed internal side
-     effects re-fire) — a known, TESTED contract, not a silent surprise (the
-     module docstring's "commit unit = the ITEM"; follow-up issue tracks closing
-     it).
+  5. #2582's truncate-falsify gate for the COMPOSITIONAL-``do`` case: a
+     ``call``-``do`` item in-flight at crash now journals its internal
+     sub-steps durably AS THEY LAND (closing the prior atomic-re-run gap —
+     the module docstring's "commit unit = the ITEM" section), verified
+     surviving WAL truncation exactly like the single-step gate above.
   6. S5 guards — (b) a ``for_each`` nested deeper than ``max_fan_out_depth``
      FAILS the step (does not spawn); (c) a fan-out spawning more ephemeral
      sessions than ``max_pipeline_spawns`` FAILS the step (the per-run
@@ -435,19 +435,25 @@ async def test_resume_after_full_fan_out_replays_with_zero_new_side_effects(tmp_
     assert resumed.pipe_data == {"text": "", "structured": {"wrote": "COLLECT"}}
 
 
-# ── the DOCUMENTED compositional-do atomic-re-run gap (commit unit = the ITEM) ─
+# ── #2582: the compositional-do CLOSED gap (per-internal-sub-step durability) ─
 
 
 @pytest.mark.asyncio
-async def test_compositional_do_item_reruns_atomically_on_crash(tmp_path: Path):
-    """Tier 2: DOCUMENTS the known fan-out recovery gap (module docstring's "commit
-    unit = the ITEM"). A ``call``-``do`` item crashed MID-ITEM (its callee wrote
-    sub-step 0's side effect, sub-step 1 failed) re-runs ATOMICALLY on resume —
-    because item tasks record through a NO-OP recorder, the item's internal
-    progress is never journaled, so the completed internal side effect RE-FIRES.
-    This is a TESTED contract, not a silent surprise; a follow-up issue tracks
-    closing it (per-internal-sub-step durability). A single-step ``do`` has no such
-    gap (see the truncate-falsify test above)."""
+async def test_truncate_falsify_compositional_do_sub_step_survives_mid_item_crash(
+    tmp_path: Path,
+):
+    """Tier 2: MANDATORY CLAUDE.md recovery-feature truncate-falsify gate for
+    #2582. A ``call``-``do`` item crashes MID-ITEM (its callee's sub-step 0
+    durably writes its side effect, sub-step 1 then fails). Per-item recorders
+    (:func:`~reyn.core.pipeline.executor._make_fan_out_sub_step_recorder`) now
+    journal sub-step 0 durably AS IT LANDS — not only once the whole item
+    completes. The WAL is truncated BELOW sub-step 0's own recording event.
+    Resume from the generation FILE (never WAL replay) must still see
+    sub-step 0 as complete and NOT re-fire its side effect.
+
+    RED (pre-#2582): X-a would be written a SECOND time on resume — the item
+    re-ran atomically from scratch because item tasks recorded through a
+    no-op recorder, so nothing was durable until the whole item landed."""
     state_log = StateLog(tmp_path / ".reyn" / "wal.jsonl")
     out_file = tmp_path / "out.txt"
     crash = {"X-b"}  # the callee's 2nd sub-step fails in phase 1
@@ -470,23 +476,43 @@ async def test_compositional_do_item_reruns_atomically_on_crash(tmp_path: Path):
     with pytest.raises(PipelineExecutionError):
         await PipelineExecutor().run(
             pipeline, None,
-            tool_dispatch=dispatch, state_log=state_log, run_id="run-fe-comp",
+            tool_dispatch=dispatch, state_log=state_log, run_id="run-fe-comp-tf",
             pipeline_registry=registry,
         )
     await state_log.flush()
     assert out_file.read_text(encoding="utf-8").splitlines() == ["X-a"]
 
-    # RESUME disarmed: the item re-runs WHOLE (its key was never recorded), so X-a
-    # is written AGAIN (the documented internal-side-effect re-fire).
+    # The sub-step's own generation is on disk: sub-step 0's callee key is
+    # durably present even though the item — and the whole for_each — never
+    # completed.
+    from reyn.core.events.pipeline_recovery import latest_pipeline_state
+    snap = latest_pipeline_state("run-fe-comp-tf", state_log)
+    assert snap["completed_step_results"]["0.for_each.0.call.0"] == {
+        "text": "", "structured": {"wrote": "X-a"},
+    }
+    assert "0.for_each.0.call.1" not in snap["completed_step_results"]
+
+    # WAL head climbs past the crash-state seqs, then GC truncates below 40 —
+    # sub-step 0's own WAL entry is dropped from wal.jsonl (the falsify:
+    # recovery must come from the generation FILE, never WAL replay).
+    for i in range(50):
+        await state_log.append("inbox_put", n=100 + i)
+    await state_log.truncate_below(40)
+    await state_log.flush()
+    surviving = {e["seq"] for e in state_log.iter_from(0)}
+    assert all(s >= 40 for s in surviving), "sub-step 0's WAL entry is truncated away"
+
+    # RESUME with the crash disarmed: sub-step 0 REPLAYS (does not re-fire) —
+    # only sub-step 1 (X-b) executes.
     crash.clear()
     await PipelineExecutor().resume(
-        "run-fe-comp", pipeline=pipeline,
+        "run-fe-comp-tf", pipeline=pipeline,
         tool_dispatch=dispatch, state_log=state_log, pipeline_registry=registry,
     )
     lines = out_file.read_text(encoding="utf-8").splitlines()
-    assert lines == ["X-a", "X-a", "X-b"], (
-        "a compositional-do item re-runs atomically on resume — X-a re-fires "
-        "(the documented commit-unit=ITEM gap; single-step do has no such gap)"
+    assert lines == ["X-a", "X-b"], (
+        "#2582: a compositional-do item's completed internal sub-step must "
+        "NOT re-fire on resume — X-a must be written exactly once"
     )
 
 
