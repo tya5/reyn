@@ -467,8 +467,13 @@ REYN_LLM_RECORD=1 python -m pytest tests/ -v
    ```
 2. **ruff** — lint + import-sort（`I001`）:
    ```bash
-   ruff check src tests        # autofix 可能な I001 / format は --fix
+   ruff check .        # autofix 可能な I001 / format は --fix
    ```
+   末尾の `.` は略記ではなく意味を持ちます: CI（`test.yml`）と同じ範囲を実行してください、狭い `src tests` サブセットではありません —
+   #4630 がこの狭いコマンドの穴を測定しました: `scripts/` を含む他のトップレベル
+   ディレクトリ全てが未チェックのままで、`src/` 以外の genuinely-dead import 17 件が
+   このチェックリスト全体から不可視でした。狭いローカルゲートは、その名が意味する
+   ものを意味しない green です。
 3. **test-tier audit** — 新規・変更したテストファイルごとに
    `scripts/test_tier_audit.py --strict`（後述の Tier コンプライアンス監査ツールと
    同じ linter）。Tier-4 の format-pin（`len(...) == N`、exact whitespace、行数）は
