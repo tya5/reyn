@@ -271,6 +271,34 @@ def _migrate_mcp(*, dry_run: bool = False) -> None:
         print(f"Removed mcp.servers from {src_label}")
 
 
+# #4631: a shape-based detector — `mcp.<name>` written where
+# `mcp.servers.<name>` belongs is invisible to `unknown_config_keys`
+# (which walks the TOP-LEVEL `ReynConfig` schema only; `mcp` itself IS a
+# recognized key, so nothing under it is ever inspected, same class of
+# gap #4501 closed for hooks[] entries). architect's own discriminator:
+# a dict directly under `mcp:` (other than the real `servers` key)
+# carrying `command`/`url`/`type` is shaped like a server entry, not a
+# scalar config knob (`mcp.timeout_seconds` etc. never take that shape).
+_MCP_SERVER_ENTRY_SHAPE_KEYS: "tuple[str, ...]" = ("command", "url", "type")
+
+
+def _mcp_misplaced_server_entries(mcp_section: object) -> "list[str]":
+    """Every key directly under a raw ``mcp:`` dict (other than the real
+    ``servers`` key) whose value is SHAPED like a server entry — the
+    #4631 defect: written at ``mcp.<name>`` instead of
+    ``mcp.servers.<name>``, loaded without error and without warning
+    (``cfg.mcp.servers`` silently stays empty)."""
+    if not isinstance(mcp_section, dict):
+        return []
+    found = []
+    for key, value in mcp_section.items():
+        if key == "servers" or not isinstance(value, dict):
+            continue
+        if any(shape_key in value for shape_key in _MCP_SERVER_ENTRY_SHAPE_KEYS):
+            found.append(key)
+    return found
+
+
 def _validate() -> None:
     """#4174 T0: report every unknown/renamed config key found in the
     operator-editable POLICY TIER (reyn.yaml / reyn.local.yaml /
@@ -341,6 +369,7 @@ def _validate() -> None:
     from reyn.config.config_schema import disabled_config_keys, unknown_config_keys
     from reyn.config.loader import (
         _find_project_root,
+        _load_yaml,
         build_policy_tier_config,
         load_hot_reload_config,
         load_per_agent_hooks,
@@ -405,7 +434,37 @@ def _validate() -> None:
             except HookConfigError as exc:
                 hook_entry_errors[f".reyn/agents/{agent_dir.name}/hooks.yaml"] = str(exc)
 
-    if not policy_unknown and not disabled and not in_set_unknown and not hook_entry_errors:
+    # #4631: mcp.<name> written where mcp.servers.<name> belongs loads
+    # without error AND without a warning (unknown_config_keys never opens
+    # `mcp:`'s own contents, same class of gap #4501 closed for hooks[]).
+    # Checked PER SOURCE FILE, not the already-merged policy_merged/
+    # in_set_merged dicts above — "which key is unknown" only needs the
+    # merged view (#4174 T0's own question), but "which FILE is wrong"
+    # needs the file identified, the same reasoning C-2's producer/consumer
+    # check (merged is enough) and this check (source must be named) split
+    # on, #4364. The 3 static paths + the 1 dynamic path mirror
+    # `_migrate_mcp`'s own already-established scan list (this module,
+    # above) exactly — not a new, narrower list.
+    mcp_misplaced: dict[str, "list[str]"] = {}
+    static_mcp_sources = {
+        "~/.reyn/config.yaml": Path.home() / ".reyn" / "config.yaml",
+        "reyn.yaml": project_root / "reyn.yaml",
+        "reyn.local.yaml": project_root / "reyn.local.yaml",
+    }
+    for label, path in static_mcp_sources.items():
+        raw = _load_yaml(path)
+        found = _mcp_misplaced_server_entries(raw.get("mcp"))
+        if found:
+            mcp_misplaced[label] = found
+    dynamic_mcp_raw = _load_yaml(project_root / ".reyn" / "config" / "mcp.yaml")
+    dynamic_found = _mcp_misplaced_server_entries(dynamic_mcp_raw.get("mcp"))
+    if dynamic_found:
+        mcp_misplaced[".reyn/config/mcp.yaml"] = dynamic_found
+
+    if (
+        not policy_unknown and not disabled and not in_set_unknown
+        and not hook_entry_errors and not mcp_misplaced
+    ):
         print("No unknown, renamed, or disabled-by-dependency config keys found.")
         return
 
@@ -469,6 +528,28 @@ def _validate() -> None:
         print(
             "\nEach flagged entry will fail to load the next time hooks are "
             "(re)loaded (hot-reload or restart) — fix the key(s) above."
+        )
+
+    if mcp_misplaced:
+        if policy_unknown or disabled or in_set_unknown or hook_entry_errors:
+            print()
+        print(
+            f"MCP server placement — checked ~/.reyn/config.yaml, reyn.yaml, "
+            f"reyn.local.yaml, and .reyn/config/mcp.yaml — "
+            f"{len(mcp_misplaced)} source(s) with a misplaced server entry:\n"
+        )
+        for label, names in sorted(mcp_misplaced.items()):
+            for name in names:
+                print(f"  [{label}] mcp.{name}")
+        print(
+            "\nEach name above is shaped like an MCP server entry "
+            "(command/url/type) but is nested directly under mcp:, not "
+            "mcp.servers: — it loads without error, but 'servers' stays "
+            "empty and the server is never registered. Fix it by hand: "
+            "add the missing 'servers:' key so the entry reads "
+            "'mcp.servers.<name>' ('reyn config migrate-mcp' relocates "
+            "already-correctly-nested mcp.servers entries between files, "
+            "but does not add a missing 'servers:' key)."
         )
 
 
