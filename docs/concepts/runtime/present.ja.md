@@ -58,7 +58,7 @@ view は**宣言的なコンポーネントツリー**であり、コードで�
 | `table` | 行 × 列 |
 | `list` | 箇条書き |
 | `image` | TUI が URL を自ら fetch し半ブロック Unicode セルとして描画する（`HalfBlockImage`、#4474 — 実ピクセル Kitty/Sixel 経路は試みられたが廃止された: reyn が対象とする端末上では実際には一度も描画に届いていなかった）。resolution stage を持たない surface（`--cui`、`reyn pipe`）は `[image: <alt>]` という dim テキストのプレースホルダーにフォールバックする |
-| `artifact` | 端末がネイティブに描画できない LLM 生成物（html/office/pdf/バイナリ画像）— ユーザーは inline 表示ではなく OS 既定のアプリで開く（#4482）。slot契約の全体は [present op リファレンス](../../reference/runtime/present.md#v1-catalog-display-only-non-executable) を参照 |
+| `artifact` | LLM の成果物を参照（またはinline text）で運ぶ、renderingでは運ばない node——node は何であるか（`media_type`）とどこに在るか（`source`/`content`）を宣言し、どう見せるかはclientの裁量（#4482）。slot契約の全体は [present op リファレンス](../../reference/runtime/present.md#v1-catalog-display-only-non-executable) を参照 |
 
 データは **JSON Pointer (RFC 6901)** のパスバインディングで view に結合され、`{"$bind":
 "<pointer>"}` として構造的に表現される。`table` / `list` のパスは**行相対**（各反復行に対する

@@ -62,7 +62,7 @@ A view is a **declarative component tree**, never code. It is built from a fixed
 | `table` | rows × columns |
 | `list` | a bullet list |
 | `image` | the TUI fetches the URL itself and renders it as half-block Unicode cells (`HalfBlockImage`, #4474 — a real-pixel Kitty/Sixel path was tried and dropped: it never actually rendered on the terminals reyn targets); surfaces without a resolution stage (`--cui`, `reyn pipe`) fall back to an `[image: <alt>]` dim-text placeholder |
-| `artifact` | an LLM-produced file the terminal can't render natively (html/office/pdf/binary images) — the user opens it with the OS's own default app rather than viewing it inline (#4482); see [Present op reference](../../reference/runtime/present.md#v1-catalog-display-only-non-executable) for the full slot contract |
+| `artifact` | an LLM-produced artifact carried by reference (or inline text), not by rendering — the node declares what it is (`media_type`) and where it is (`source`/`content`); how it's shown is the client's decision (#4482); see [Present op reference](../../reference/runtime/present.md#v1-catalog-display-only-non-executable) for the full slot contract |
 
 Data is joined to the view by **JSON Pointer (RFC 6901)** path bindings — expressed
 structurally as `{"$bind": "<pointer>"}`. `table` and `list` paths resolve **row-relative**
