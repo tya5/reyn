@@ -1,6 +1,8 @@
 {
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json",
   "mcpServers": {
     "reyn_chunker": {
+      "type": "stdio",
       "command": "python",
       "args": ["${REYN_PLUGIN_ROOT}/scripts/chunker_server.py"],
       "env": {
@@ -9,6 +11,7 @@
       }
     },
     "reyn_vector_store": {
+      "type": "stdio",
       "command": "python",
       "args": ["${REYN_PLUGIN_ROOT}/scripts/vector_store_server.py"],
       "env": {

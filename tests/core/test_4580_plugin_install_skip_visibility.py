@@ -39,7 +39,7 @@ def _make_plugin(root: Path, *, servers: dict) -> Path:
         }),
         encoding="utf-8",
     )
-    (root / ".mcp.json").write_text(
+    (root / "mcp.json").write_text(
         json.dumps({"mcpServers": servers}), encoding="utf-8",
     )
     return root

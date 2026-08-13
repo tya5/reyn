@@ -139,19 +139,17 @@ def manifest_path_for(plugin_dir: Path) -> Path:
 
 def capability_kinds_present(plugin_dir: Path) -> "frozenset[str]":
     """Which capability kinds *plugin_dir* ships, derived PURELY from
-    directory/file existence (#4570 conversion B) — ``.mcp.json`` for
-    ``mcp``, a ``pipelines/`` directory for ``pipelines``, a ``skills/``
-    directory for ``skills`` (ADR §3.1's own layout, unchanged). The ONE
-    derivation both :mod:`reyn.core.op_runtime.plugin_install`'s
-    registration step and :mod:`reyn.builtin.discovery`'s listing consult
-    — so "this plugin has an mcp capability" can never independently
-    drift between what gets REGISTERED and what gets LISTED.
-
-    ``.mcp.json`` is still the DOT-prefixed pre-#4570-conversion-C name
-    here (conversion C renames it to ``mcp.json``, not yet landed as of
-    this function)."""
+    directory/file existence (#4570 conversion B) — ``mcp.json`` (#4570
+    conversion C1 — renamed from ``.mcp.json``, the Agent Plugins 1.0
+    canonical filename) for ``mcp``, a ``pipelines/`` directory for
+    ``pipelines``, a ``skills/`` directory for ``skills`` (ADR §3.1's own
+    layout, unchanged). The ONE derivation both :mod:`reyn.core.op_runtime.
+    plugin_install`'s registration step and :mod:`reyn.builtin.discovery`'s
+    listing consult — so "this plugin has an mcp capability" can never
+    independently drift between what gets REGISTERED and what gets
+    LISTED."""
     kinds: set[str] = set()
-    if (plugin_dir / ".mcp.json").is_file():
+    if (plugin_dir / "mcp.json").is_file():
         kinds.add("mcp")
     if (plugin_dir / "pipelines").is_dir():
         kinds.add("pipelines")

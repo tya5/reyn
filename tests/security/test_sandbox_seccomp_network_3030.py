@@ -436,7 +436,7 @@ def _patch_landlock_backend(monkeypatch: pytest.MonkeyPatch) -> None:
 # `socket`/`bind` are now ALWAYS allowed (`_NETWORK_ALWAYS_ALLOWED` — the benign
 # urllib3 import-time IPv6-support probe no longer dies as collateral), and the
 # builtin RAG servers are launched with FastMCP telemetry/update-check disabled
-# (their `.mcp.json` sets `FASTMCP_SHOW_SERVER_BANNER=false`/
+# (their `mcp.json` sets `FASTMCP_SHOW_SERVER_BANNER=false`/
 # `FASTMCP_CHECK_FOR_UPDATES=off`), so the phone-home `connect()` is not
 # attempted. Per the #3060 architect firm the chunker/vector-store therefore now
 # init cleanly under network=False as well.
@@ -531,7 +531,7 @@ async def test_chunker_server_reaches_serving_under_network_false(
     The syscall-level probes (``test_shim_allows_socket_and_bind_*``) prove the
     allow-set exists; this proves the allow-set is SUFFICIENT for the actual
     purpose — a real chonkie-backed FastMCP stdio server, launched with the two
-    telemetry/update-check env vars the plugin's ``.mcp.json`` sets
+    telemetry/update-check env vars the plugin's ``mcp.json`` sets
     (``FASTMCP_SHOW_SERVER_BANNER=false`` / ``FASTMCP_CHECK_FOR_UPDATES=off``,
     which suppress FastMCP's banner-time phone-home ``connect()`` to PyPI),
     reaches serving (advertises + answers its ``chunk`` tool) rather than dying
@@ -542,7 +542,7 @@ async def test_chunker_server_reaches_serving_under_network_false(
     ``network=True`` to isolate the allowlist-completeness question from network
     behavior (see the "why network=True" note). This one deliberately fixes
     ``network=False`` because THAT is the config #3060 makes work — and pins the
-    telemetry env exactly as the shipped ``.mcp.json`` does, so a regression that
+    telemetry env exactly as the shipped ``mcp.json`` does, so a regression that
     dropped either env var (re-enabling the PyPI ``connect()`` that
     ``network=False`` refuses) would fail here.
 
@@ -569,7 +569,7 @@ async def test_chunker_server_reaches_serving_under_network_false(
         "network": False,  # the exact config #3060 makes work for the chunker
         "subprocess": True,  # the stdio-MCP default
         "cwd": str(tmp_path),
-        # Exactly the vars the shipped .mcp.json sets — suppress FastMCP's
+        # Exactly the vars the shipped mcp.json sets — suppress FastMCP's
         # banner-time update check (a real httpx.get to pypi.org) so no
         # outbound connect() is attempted that network=False would refuse.
         "env": {
@@ -753,21 +753,21 @@ async def test_markitdown_mcp_starts_and_responds_under_seccomp_allowlist(
 # network gate (this call happens from the server's own process, which is
 # under `network: true` by default for these two servers — see the "why
 # network=True" note above — so the sandbox never sees it). The fix disables
-# it via env, set in the plugin's own ``.mcp.json`` launch config (not
+# it via env, set in the plugin's own ``mcp.json`` launch config (not
 # ``resolve_passthrough_env``, which is the generic proxy/CA-env union, not
 # server-specific). This witnesses the env reaches the REAL production spawn
 # path — ``_build_mcp_entries`` is the exact function ``_register_mcp``
-# (``plugin_install.py``) calls to turn ``.mcp.json`` into the
+# (``plugin_install.py``) calls to turn ``mcp.json`` into the
 # ``mcp.servers.<name>`` entries ``MCPClient`` reads ``env`` from
-# (``client.py``'s ``_open_stdio``) — fed the REAL shipped ``.mcp.json``, no
+# (``client.py``'s ``_open_stdio``) — fed the REAL shipped ``mcp.json``, no
 # fakes.
 
 
 def test_rag_plugin_mcp_json_disables_fastmcp_telemetry_env() -> None:
-    """Tier 2c: the builtin ``rag`` plugin's ``.mcp.json`` declares
+    """Tier 2c: the builtin ``rag`` plugin's ``mcp.json`` declares
     ``FASTMCP_SHOW_SERVER_BANNER=false`` / ``FASTMCP_CHECK_FOR_UPDATES=off``
     for both servers, and the REAL ``_build_mcp_entries`` (the production
-    function that turns ``.mcp.json`` into the ``mcp.servers.<name>`` entries
+    function that turns ``mcp.json`` into the ``mcp.servers.<name>`` entries
     written to ``.reyn/config/mcp.yaml`` and read by ``MCPClient``'s
     ``_open_stdio``) carries those env vars through into the entry ``env``
     dict unchanged — the actual subprocess-spawn env dict, not just the
@@ -776,13 +776,13 @@ def test_rag_plugin_mcp_json_disables_fastmcp_telemetry_env() -> None:
     from reyn.core.op_runtime.plugin_install import _build_mcp_entries
 
     mcp_json = (
-        Path(_builtin_pkg.__file__).resolve().parent / "plugins" / "rag" / ".mcp.json"
+        Path(_builtin_pkg.__file__).resolve().parent / "plugins" / "rag" / "mcp.json"
     )
-    assert mcp_json.exists(), f"builtin rag plugin .mcp.json not found at {mcp_json}"
+    assert mcp_json.exists(), f"builtin rag plugin mcp.json not found at {mcp_json}"
 
     entries = _build_mcp_entries(mcp_json)
     assert set(entries) == {"reyn_chunker", "reyn_vector_store"}, (
-        f"unexpected server set in .mcp.json: {sorted(entries)}"
+        f"unexpected server set in mcp.json: {sorted(entries)}"
     )
     for name, entry in entries.items():
         env = entry.get("env")

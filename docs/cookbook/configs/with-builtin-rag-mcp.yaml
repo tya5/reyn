@@ -21,7 +21,7 @@
 # This call copies `src/reyn/builtin/plugins/rag/` to `~/.reyn/plugins/rag/`
 # and registers both MCP servers + both pipelines + the skill into your
 # project's `.reyn/config/{mcp,pipelines,skills}.yaml`, using the plugin's
-# own `.mcp.json` `command` value AS-IS -- it does NOT install the plugin's
+# own `mcp.json` `command` value AS-IS -- it does NOT install the plugin's
 # runtime deps (chonkie/apsw/sqlite-vec/fastmcp) for you. That step is
 # skill-driven: the `build-and-query-rag-corpus` skill's body walks the
 # operator/LLM through creating a venv + `pip install -r requirements.txt`
