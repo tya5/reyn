@@ -69,10 +69,34 @@ file the only one mypy reports on, full stop. ``main()`` prints a distinct
 warning when a new ``[syntax]`` pair appears, because the red's own SHAPE
 carries information a bare pair list does not: fix that one before trusting
 anything else this run says.
+
+#4576 is that same hazard one layer earlier: not "the run was truncated" but
+"the run never happened." With mypy absent from the interpreter's environment,
+``python -m mypy`` writes ``No module named mypy`` to stderr and exits 1 —
+which :func:`run_mypy` deliberately does not raise on (mypy's own error exit
+is the common case), and which :func:`parse_mypy_output` finds no
+``[code]`` lines in. Zero measured pairs minus the baseline is zero new pairs,
+so the script printed ``OK: 0 findings, all baselined (215 declared)`` and
+exited 0 — the ``215 declared`` making it look fully alive, because loading
+the baseline HAD succeeded. Measured directly in a ``python -m venv`` with no
+mypy installed; found because #4575's local run was green and CI's was not,
+and the real ``[call-arg]`` it had been hiding surfaced the moment mypy
+actually ran.
+
+The guard is :func:`mypy_is_importable`, checked BEFORE the run: a structural
+question (is the module there) rather than a textual one (does the output look
+like a real run). Deliberately not a check on mypy's summary wording — that
+would make a third party's output format decide whether we trust our own
+measurement, and mypy is free to reword it. The exit code cannot serve either:
+a missing module and a normal findings-reported run BOTH exit 1 (measured).
+NOT covered, disclosed rather than silently half-closed: mypy installed but
+crashing mid-run in some shape the ``[syntax]`` guard above doesn't already
+name. That shape has never been observed here; this one had.
 """
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
 import re
 import subprocess
@@ -90,6 +114,26 @@ _TARGET = "src/reyn"
 # trailing "Found N errors in M files" summary line — neither carries a
 # `[code]` a future run can be diffed against.
 _ERROR_LINE = re.compile(r"^(?P<file>[^:]+\.py):\d+: error: .*\[(?P<code>[a-z][a-z0-9-]*)\]\s*$")
+
+
+def mypy_is_importable() -> bool:
+    """Whether ``mypy`` can be imported by the interpreter that will run it.
+
+    The precondition every number this script prints depends on: with mypy
+    absent, the measured set is empty for a reason that has nothing to do with
+    the code under analysis, and "0 new findings" then means "0 findings were
+    looked for" (#4576).
+    """
+    return importlib.util.find_spec("mypy") is not None
+
+
+_MYPY_MISSING = (
+    "mypy is not importable by {exe} — NOTHING WAS MEASURED. This is not "
+    "'0 findings': the baseline may or may not still hold, and this run "
+    "cannot tell you which. Install it (`pip install -e \".[dev]\"`) and run "
+    "again. Green here without mypy present is the #4576 false green, which "
+    "hid a real [call-arg] through a full local pre-PR check."
+)
 
 
 def run_mypy(root: Path = _ROOT, target: str = _TARGET) -> str:
@@ -189,6 +233,13 @@ def main(argv: "list[str] | None" = None) -> int:
         ),
     )
     args = parser.parse_args(argv)
+
+    # #4576: before anything else — including --write-baseline, which would
+    # otherwise overwrite the baseline with the empty measurement of a run
+    # that never happened, silently discarding every declared pair.
+    if not mypy_is_importable():
+        print(_MYPY_MISSING.format(exe=sys.executable), file=sys.stderr)
+        return 1
 
     output = run_mypy()
     measured = parse_mypy_output(output)
