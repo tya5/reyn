@@ -6,6 +6,10 @@ shape (real ``AgentRegistry`` + real ASGI app over ``httpx.AsyncClient``)
 and its closing-the-loop pattern (client's real output fed directly into
 the real server endpoint — no hand-authored literal duplicated on both
 sides).
+
+**#4601**: the endpoint now caps entries (newest-first) at
+``config.artifacts.remote_fallback_limit`` and returns ``total`` (the
+pre-cap count) alongside them on the wire.
 """
 from __future__ import annotations
 
@@ -18,10 +22,10 @@ from tests._support.agent_session import make_session
 from tests._support.minimal_reyn_yaml import MINIMAL_REYN_YAML
 
 
-def _registry(tmp_path, monkeypatch) -> AgentRegistry:
+def _registry(tmp_path, monkeypatch, *, reyn_yaml: str = MINIMAL_REYN_YAML) -> AgentRegistry:
     monkeypatch.chdir(tmp_path)
     state_log = StateLog(tmp_path / "state.wal")
-    (tmp_path / "reyn.yaml").write_text(MINIMAL_REYN_YAML, encoding="utf-8")
+    (tmp_path / "reyn.yaml").write_text(reyn_yaml, encoding="utf-8")
     holder: dict = {}
 
     def _factory(profile, *, presentation_consumer=None, intervention_bridge=None):
@@ -81,7 +85,9 @@ async def test_artifact_list_request_returns_the_agents_ref_table_entries(
     )
 
     assert resp.status_code == 200
-    assert resp.json().get("entries") == [{"ref": ref, "path": str(f)}]
+    body = resp.json()
+    assert body.get("entries") == [{"ref": ref, "path": str(f)}]
+    assert body.get("total") == 1
 
 
 @pytest.mark.asyncio
@@ -97,7 +103,39 @@ async def test_artifact_list_request_returns_empty_with_no_ref_minted(
     )
 
     assert resp.status_code == 200
-    assert resp.json().get("entries") == []
+    body = resp.json()
+    assert body.get("entries") == []
+    assert body.get("total") == 0
+
+
+@pytest.mark.asyncio
+async def test_artifact_list_request_caps_entries_at_the_configured_limit(
+    tmp_path, monkeypatch,
+):
+    """Tier 2: (#4601) the ORIGINAL finding this issue reports — the
+    endpoint used to return the table's FULL, ever-growing contents with
+    no cap. Minting more refs than ``remote_fallback_limit`` proves the
+    cap is real: entries truncated (newest-first), ``total`` still
+    names the full count."""
+    reg = _registry(
+        tmp_path, monkeypatch,
+        reyn_yaml=MINIMAL_REYN_YAML + "\nartifacts:\n  remote_fallback_limit: 2\n",
+    )
+    refs = []
+    for i in range(5):
+        f = tmp_path / f"f{i}.pdf"
+        f.write_text("x")
+        refs.append(mint_ref(tmp_path, "alpha", f))
+    app = _build_app(reg, monkeypatch)
+
+    resp = await _post(
+        app, "/agui/chat/alpha?token=s3cret", {"type": "artifact_list_request"},
+    )
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert [e["ref"] for e in body["entries"]] == [refs[4], refs[3]]
+    assert body["total"] == 5
 
 
 @pytest.mark.asyncio
@@ -110,22 +148,24 @@ async def test_agui_transport_request_artifact_list_sends_the_typed_payload():
 
     async def _send(payload: dict) -> dict:
         sent.append(payload)
-        return {"entries": [{"ref": "r1", "path": "/p/x.pdf"}]}
+        return {"entries": [{"ref": "r1", "path": "/p/x.pdf"}], "total": 1}
 
     async def _empty_lines():
         return
         yield  # pragma: no cover
 
     transport = AgUiTransport(_empty_lines(), _send)
-    entries = await transport.request_artifact_list(agent="alpha")
+    entries, total = await transport.request_artifact_list(agent="alpha")
 
     assert entries == [{"ref": "r1", "path": "/p/x.pdf"}]
+    assert total == 1
     assert sent == [{"type": "artifact_list_request"}]
 
 
 @pytest.mark.asyncio
 async def test_agui_transport_request_artifact_list_empty_when_send_returns_none():
-    """Tier 2: (accept-side) a None/falsy send result -> [], not a crash."""
+    """Tier 2: (accept-side) a None/falsy send result -> ([], 0), not a
+    crash."""
     from reyn.interfaces.transport.agui.client import AgUiTransport
 
     async def _send(payload: dict):
@@ -136,7 +176,7 @@ async def test_agui_transport_request_artifact_list_empty_when_send_returns_none
         yield  # pragma: no cover
 
     transport = AgUiTransport(_empty_lines(), _send)
-    assert await transport.request_artifact_list(agent="alpha") == []
+    assert await transport.request_artifact_list(agent="alpha") == ([], 0)
 
 
 # ── closing the wire-shape double-transcription gap (mirrors #4537/#4534) ──
@@ -166,6 +206,7 @@ async def test_agui_transport_artifact_list_payload_is_accepted_by_the_real_endp
         yield  # pragma: no cover
 
     transport = AgUiTransport(_empty_lines(), _send)
-    entries = await transport.request_artifact_list(agent="alpha")
+    entries, total = await transport.request_artifact_list(agent="alpha")
 
     assert entries == [{"ref": ref, "path": str(f)}]
+    assert total == 1

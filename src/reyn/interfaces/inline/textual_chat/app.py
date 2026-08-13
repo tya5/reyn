@@ -1176,6 +1176,12 @@ class TextualChatApp(App):
         # ``chrome.pane_payload``/``pane_commands`` so the disclosure row
         # is appended (or not) alongside the right rows/commands.
         self._artifact_rows_source: str = "live"
+        # #4601: the fallback's pre-cap total (M in "newest N of M") —
+        # only meaningful when ``_artifact_rows_source ==
+        # "ref_table_fallback"``; 0 otherwise (the disclosure text is
+        # never rendered for the "live" source, so the stale value is
+        # never read in that state).
+        self._artifact_rows_fallback_total: int = 0
         # #3288 ③c: in-flight streamed reply, keyed by ``chain_id`` — the SAME
         # authoritative correlation id ``RouterLoop._emit_agent_delta`` stamps
         # on every ``agent_delta`` audit-event AND the one the terminal
@@ -1716,6 +1722,7 @@ class TextualChatApp(App):
             history=self._history_turns(),
             artifacts=self._artifact_rows(),
             artifact_source=self._artifact_rows_source,
+            artifact_fallback_total=self._artifact_rows_fallback_total,
             app_bindings=self._app_binding_help(),
         )
 
@@ -2501,11 +2508,14 @@ class TextualChatApp(App):
         offer, so this is strictly a fallback, not a merge.
 
         Re-renders the "artifacts" OptionList in place with the fallback
-        rows PLUS the source-limitation disclosure
-        (``chrome.ARTIFACT_REF_TABLE_FALLBACK_DISCLOSURE``) appended —
-        always appended, even when the fallback itself is empty (#4494's
-        own falsify requirement: emptying the ref table empties the rows
-        but the disclosure text stays)."""
+        rows PLUS the consolidated disclosure
+        (``chrome.artifact_fallback_disclosure_text``) appended — always
+        appended, even when the fallback itself is empty (#4494's own
+        falsify requirement: emptying the ref table empties the rows but
+        the disclosure text stays). #4601: the entries this transport
+        call returns are ALREADY capped (newest-first, at the one join
+        point — ``list_refs_for_agent``) — ``total`` is the pre-cap
+        count, threaded into the disclosure's "newest N of M"."""
         if self._artifact_rows_cache:
             return  # live list already had content — no fallback needed
         from pathlib import Path
@@ -2516,7 +2526,7 @@ class TextualChatApp(App):
             rows_from_ref_table_entries,
         )
 
-        entries = await self._transport.request_artifact_list(agent=self._agent_name)
+        entries, total = await self._transport.request_artifact_list(agent=self._agent_name)
         fallback_rows = rows_from_ref_table_entries(entries)
         if fallback_rows:
             # Same resolved_path fill-in the live path gets (#4482 PR-3
@@ -2529,6 +2539,7 @@ class TextualChatApp(App):
             )
         self._artifact_rows_cache = fallback_rows
         self._artifact_rows_source = "ref_table_fallback"
+        self._artifact_rows_fallback_total = total
         try:
             drawer = self.query_one("#drawer", ContentSwitcher)
         except Exception:
@@ -2540,6 +2551,7 @@ class TextualChatApp(App):
         )
         rows = pane_payload(
             "artifacts", artifacts=fallback_rows, artifact_source="ref_table_fallback",
+            artifact_fallback_total=total,
         )
         child = self.query_one("#artifacts")
         if isinstance(child, OptionList):

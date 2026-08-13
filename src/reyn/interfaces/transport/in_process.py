@@ -224,7 +224,7 @@ class InProcessTransport(ClientTransport):
             return False
         return True
 
-    async def request_artifact_list(self, *, agent: str) -> "list[dict]":
+    async def request_artifact_list(self, *, agent: str) -> "tuple[list[dict], int]":
         # #4494 design C: local execution side — reads the durable
         # artifact-ref table directly (no wire hop). ``list_refs_for_agent``
         # wants the PROJECT ROOT (it appends ".reyn"/"memory"/... itself,
@@ -233,11 +233,22 @@ class InProcessTransport(ClientTransport):
         # (see that method's own docstring). No attached session means no
         # root to read, so the fallback is empty, same as an unattached
         # ``has_session()``.
+        #
+        # #4601: capped at the SAME join point the AG-UI endpoint's own
+        # handler caps at (``list_refs_for_agent``'s own ``limit``) — this
+        # local path was the one architect measured as identically
+        # unbounded pre-#4601 (``in_process.py:236-240``, cited verbatim
+        # in the issue), reading the SAME table with no cap of its own.
+        from reyn.config.loader import load_config
         from reyn.data.workspace.artifact_ref import list_refs_for_agent
         reyn_root = self.reyn_state_root()
         if reyn_root is None:
-            return []
-        return list_refs_for_agent(reyn_root.parent, agent)
+            return [], 0
+        project_root = reyn_root.parent
+        config = load_config(project_root)
+        return list_refs_for_agent(
+            project_root, agent, limit=config.artifacts.remote_fallback_limit,
+        )
 
     async def answer_intervention_text(
         self, text: str, *, intervention_id: "str | None" = None

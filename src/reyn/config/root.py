@@ -49,6 +49,7 @@ from reyn.config.execution import (
     ToolUseConfig,
 )
 from reyn.config.infra import (
+    ArtifactsConfig,
     AuditEventsConfig,
     AuthConfig,
     CronConfig,
@@ -164,6 +165,12 @@ class ReynConfig:
     # Audit-log rotation policy (PR20). #4174 T5: renamed from `events:` —
     # bare "event" is the shape CLAUDE.md's cross-cutting-band note bans.
     audit_events: AuditEventsConfig = field(default_factory=AuditEventsConfig)
+    # The artifact-ref table fallback's row cap (#4601) — the ONE join
+    # point both the AG-UI endpoint and InProcessTransport's local
+    # fallback share. See `ArtifactsConfig`'s own docstring for why the
+    # default is a UX-scale default, not a derived number, and why that's
+    # exactly why it must be operator-adjustable here.
+    artifacts: ArtifactsConfig = field(default_factory=ArtifactsConfig)
     # Downstream observability export (OTLP/OpenTelemetry). Opt-in + off by
     # default: no `observability.otel.endpoint` (and no OTEL_EXPORTER_OTLP_ENDPOINT
     # env) → the OtelExporter is never built and behavior is byte-identical to

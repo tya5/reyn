@@ -244,16 +244,17 @@ class ClientTransport(ABC):
         """
         return False
 
-    async def request_artifact_list(self, *, agent: str) -> "list[dict]":
+    async def request_artifact_list(self, *, agent: str) -> "tuple[list[dict], int]":
         """#4494 design C: the durable artifact-ref table's own entries for
-        *agent* — ``[{"ref", "path"}, ...]``, newest-first, or ``[]`` when
-        there is nothing (or this transport does not support the query).
-        Same "client interprets, server executes a named operation" shape
-        :meth:`request_attach`/:meth:`request_session_switch` already
-        establish: ``InProcessTransport`` reads the table directly;
-        ``AgUiTransport`` POSTs a typed request and the server reads its
-        OWN copy (never the wire's stale view — the server always has the
-        live, durable table this client cannot see any other way).
+        *agent* — ``([{"ref", "path"}, ...], total)``, newest-first, or
+        ``([], 0)`` when there is nothing (or this transport does not
+        support the query). Same "client interprets, server executes a
+        named operation" shape :meth:`request_attach`/
+        :meth:`request_session_switch` already establish: ``InProcessTransport``
+        reads the table directly; ``AgUiTransport`` POSTs a typed request
+        and the server reads its OWN copy (never the wire's stale view —
+        the server always has the live, durable table this client cannot
+        see any other way).
 
         This is the FALLBACK a caller reaches for only when its own live
         conversation-derived artifact list is empty (frame-sufficiency: a
@@ -266,10 +267,18 @@ class ClientTransport(ABC):
         real information loss the caller's own UI must disclose, never
         silently absorb (lead-coder's #4494 ruling).
 
+        **#4601**: the entries are already CAPPED (newest-first) by the
+        implementation before this method returns them — ``total`` is
+        the full matching count before that cap, so a caller can
+        disclose "newest N of M" rather than silently dropping the tail
+        (the defect #4601 exists to close: this fallback's underlying
+        table is append-only/persist-tier, #4584, so an uncapped read
+        only ever grows).
+
         NOT abstract, same reasoning as :meth:`request_attach` — several
         narrow-purpose stubs across the test suite pre-date this method;
-        the default ``[]`` preserves their behavior unchanged."""
-        return []
+        the default ``([], 0)`` preserves their behavior unchanged."""
+        return [], 0
 
     def reyn_state_root(self) -> "Path | None":
         """The attached session's project `.reyn` root, or None (#3721).

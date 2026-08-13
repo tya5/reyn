@@ -535,6 +535,43 @@ class AuditEventsConfig:
     backend: Literal["local", "discard"] = "local"
 
 
+@dataclass
+class ArtifactsConfig:
+    """``artifacts:`` — the artifact-ref table fallback's own row cap
+    (#4601, lead-coder/architect ruling).
+
+    ``list_refs_for_agent`` (``data/workspace/artifact_ref.py``) is the
+    ONE fallback join point both the AG-UI endpoint's ``artifact_list_request``
+    handler and ``InProcessTransport``'s own local read share (#4494 design
+    C) — the table is append-only and now persist-tier (#4584), so both
+    call sites read an UNBOUNDED, ever-growing list with no cap of their
+    own. This is a single-knob fix at that one join point, not two
+    independent caller-side caps (architect's own #4601 finding: capping
+    only the endpoint leaves the TUI's identical fallback path broken).
+
+    **``remote_fallback_limit`` is a UX-scale cap, not a performance
+    one** (architect's #4601 measurement-by-order-of-magnitude, not a
+    live benchmark): a single ``stat()`` costs order-microseconds, so
+    even 10,000 rows costs tens of milliseconds — the constraint that
+    actually binds is how many newest-first rows a human operator would
+    ever scroll through in a list pane, which is a couple of dozen at
+    most. The default below is therefore a UX default, not a derived
+    number — which is exactly why it MUST be operator-adjustable (owner's
+    standing instruction: never embed a baseless number with no
+    user-facing way to change it) rather than defended with a rationale
+    comment no fixed number could honestly carry (the "correct" N
+    genuinely depends on the pane's own height/usage, which this config
+    layer cannot see).
+
+    The list is newest-first (``list_refs_for_agent``'s own convention,
+    matching ``collect_artifact_rows``), so ``entries[:remote_fallback_limit]``
+    is always the N MOST RECENT artifacts, never an arbitrary slice.
+    Truncation is disclosed, never silent — see ``chrome.py``'s
+    consolidated fallback-source disclosure text ("newest N of M")."""
+
+    remote_fallback_limit: int = 50
+
+
 _SANDBOX_BACKENDS = {"auto", "seatbelt", "landlock", "noop"}
 _SANDBOX_ON_UNSUPPORTED = {"warn", "error", "ignore"}
 # #3823 ①②: compat / strict — NOT "custom" (owner ruling, 2026-08-09:
@@ -1007,5 +1044,26 @@ def _build_audit_events_config(raw: object) -> AuditEventsConfig:
         max_disk_usage_percent=disk_percent_val,
         backend=backend_val,
     )
+
+
+def _build_artifacts_config(raw: object) -> ArtifactsConfig:
+    """Parse `artifacts:` from reyn.yaml (#4601).
+
+    A non-positive or non-numeric `remote_fallback_limit` falls back to
+    the default — same "malformed value falls back, never disables the
+    cap outright" discipline every other numeric field in this module
+    uses (an operator typo must not silently produce an unbounded
+    fallback again, the exact defect #4601 exists to close)."""
+    defaults = ArtifactsConfig()
+    if not isinstance(raw, dict):
+        return defaults
+    limit = raw.get("remote_fallback_limit", defaults.remote_fallback_limit)
+    try:
+        limit_val = int(limit)
+        if limit_val <= 0:
+            limit_val = defaults.remote_fallback_limit
+    except (TypeError, ValueError):
+        limit_val = defaults.remote_fallback_limit
+    return ArtifactsConfig(remote_fallback_limit=limit_val)
 
 

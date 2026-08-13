@@ -77,6 +77,7 @@ aren't.
 | `chat` | map | PRJ only · **restart** | Chat-session runtime knobs: history compaction, reasoning/"thinking" text handling, the interactive renderer (`render_mode`), TUI gutters, body neutralization, and permitted image-URL schemes. See below. |
 | `voice` | map | PRJ only · **restart** | ⚠️ Currently unavailable (no consumer). See below. |
 | `audit_events` | map | PRJ only · **restart** | Rotation policy (size / age / cleanup period) for the P6 **audit-event** files under `.reyn/events`. Not WAL-events, not hook-events. See below. |
+| `artifacts` | map | PRJ only · **restart** | The artifact-ref table fallback's own row cap (`remote_fallback_limit`, #4601) — used by a remote client's (and a post-restart local client's) Artifacts pane. See below. |
 | `observability` | map | PRJ only · **restart** | Opt-in OpenTelemetry (OTLP) export of P6 audit-events. Off by default. See below. |
 | `tool_use` | map | PRJ only · **restart** | Chat-layer tool-use scheme x transport selector (`scheme`, `transport`). See below. |
 | `mcp` | map | both (`.reyn/config/mcp.yaml` side is **hot-reloaded**) | MCP server definitions. See below. |
@@ -2095,6 +2096,21 @@ Either axis firing deletes files — `cleanup_period_days` OR `max_disk_usage_pe
 Both defaults are **borrowed conventions, not measurements** of reyn's own `.reyn/events` growth rate (unmeasured as of #4479): 30 days borrows the nearest comparable local-agent CLI's own default (Claude Code's `cleanupPeriodDays`); 10% borrows systemd-journald's own `SystemMaxUse` convention. Neither is "the correct" number — both exist as an operator-overridable starting point.
 
 **`0` means disabled on that axis, not rejected** — a deliberate choice, documented here on purpose: Claude Code carries an open report of its own `cleanupPeriodDays` knob being ambiguous about whether `0` means "delete immediately" or "never delete." reyn's own knobs use `0` = never delete, unambiguously, on both axes.
+
+## `artifacts` block
+
+The artifact-ref table fallback's own row cap (#4601). A remote client's — and a local client right after a restart's, #4584's own measured finding — Artifacts pane consults the durable, append-only, persist-tier artifact-ref table when its live conversation view carries nothing. With no cap, this read is unbounded and only ever grows.
+
+```yaml
+artifacts:
+  remote_fallback_limit: 50   # default
+```
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `remote_fallback_limit` | int | `50` | Caps the ref-table fallback to the N NEWEST entries (newest-first). A non-positive or non-numeric value falls back to the default. |
+
+`remote_fallback_limit` is a **UX-scale default, not a performance one** — a single `stat()` costs order-microseconds, so even 10,000 rows costs tens of milliseconds; the binding constraint is how many newest-first rows an operator would ever actually scroll through in a list pane, which is a couple of dozen at most. The Artifacts pane's own disclosure text always states "newest N of M" so a truncation is never silent — raise this value if your own usage wants more history visible at once.
 
 ## `voice` block
 

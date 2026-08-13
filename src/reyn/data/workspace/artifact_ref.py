@@ -168,7 +168,9 @@ def resolve_ref(project_root: Path, agent_name: str, ref: str) -> "Path | None":
     return None
 
 
-def list_refs_for_agent(project_root: Path, agent_name: str) -> "list[dict]":
+def list_refs_for_agent(
+    project_root: Path, agent_name: str, *, limit: "int | None" = None,
+) -> "tuple[list[dict], int]":
     """#4494 design C: every ``{"ref", "path"}`` entry minted under
     *agent_name*'s scope, newest-first — the durable source a REMOTE
     client's own artifact list falls back to when its live conversation
@@ -178,14 +180,37 @@ def list_refs_for_agent(project_root: Path, agent_name: str) -> "list[dict]":
     "presentation" kind reconstruction either, #4584's own measured
     finding — this function is transport-agnostic and serves both).
 
+    **#4601: the ONE fallback join point both in-repo callers
+    (``InProcessTransport.request_artifact_list`` and the AG-UI
+    endpoint's ``artifact_list_request`` handler) share** — the table is
+    append-only and persist-tier (#4584), so it never shrinks; capping
+    HERE (rather than in each caller separately) is what keeps both
+    transports bounded together, per architect's own #4601 finding that
+    a cap placed only at the endpoint would leave the TUI's identical
+    fallback path unbounded. ``limit`` truncates newest-first (so a
+    truncated list is always the N MOST RECENT artifacts) — pass
+    ``None`` for no cap (existing/internal callers, tests).
+
+    Returns ``(entries, total)`` — ``total`` is the FULL matching count
+    before truncation, so a caller can disclose "newest N of M" rather
+    than silently dropping the tail (owner's standing instruction: no
+    baseless cap without visibility into what it cut).
+
     Deliberately raw entries, not :class:`~reyn.core.present.artifact_list.
     ArtifactRow` objects — this module has no ``media_type``/
     ``description`` to offer (the table was never designed to carry them;
     only :func:`mint_ref`'s two fields exist), and no existence check
     (mirrors :func:`~reyn.core.present.artifact_list.collect_artifact_rows`'s
     own "stat only what's about to be displayed" discipline — the CALLER
-    decides how many rows it is about to render before paying that I/O).
-    """
+    decides how many rows it is about to render before paying that I/O;
+    #4601 architect ruling: that decision now happens in THIS order —
+    truncate first, stat only the N survivors — see
+    :func:`~reyn.core.present.artifact_list.resolve_display_paths`'s own
+    callers)."""
     entries = [e for e in _load_table(project_root) if e.get("agent") == agent_name]
     entries.reverse()  # newest-first, matching collect_artifact_rows' own convention
-    return [{"ref": e["ref"], "path": e["path"]} for e in entries if "ref" in e and "path" in e]
+    rows = [{"ref": e["ref"], "path": e["path"]} for e in entries if "ref" in e and "path" in e]
+    total = len(rows)
+    if limit is not None:
+        rows = rows[:limit]
+    return rows, total
