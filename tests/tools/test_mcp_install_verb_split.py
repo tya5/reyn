@@ -34,6 +34,7 @@ from typing import Any
 import pytest
 import yaml
 
+from reyn.core.events.events import EventLog
 from reyn.tools import get_default_registry
 from reyn.tools.mcp_verbs import (
     MCP_INSTALL_LOCAL,
@@ -46,14 +47,9 @@ from reyn.tools.types import ToolContext
 from reyn.tools.universal_dispatch import action_names_for_category
 
 
-class _FakeEvents:
-    def emit(self, *args: Any, **kwargs: Any) -> None:
-        pass
-
-
 def _ctx() -> ToolContext:
     return ToolContext(
-        events=_FakeEvents(),
+        events=EventLog(),
         permission_resolver=None,
         workspace=None,
         caller_kind="router",

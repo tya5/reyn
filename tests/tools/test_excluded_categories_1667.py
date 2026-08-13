@@ -17,19 +17,15 @@ Real ToolContext + RouterCallerState (no mocks of collaborators).
 """
 from __future__ import annotations
 
+from reyn.core.events.events import EventLog
 from reyn.tools.types import RouterCallerState, ToolContext
 from reyn.tools.universal_catalog import _enumerate_category, catalog_entries
 from reyn.tools.universal_dispatch import category_of
 
 
-class _FakeEvents:
-    def emit(self, *args, **kwargs) -> None:
-        pass
-
-
 def _ctx(excluded: "frozenset[str] | set[str]" = frozenset()) -> ToolContext:
     return ToolContext(
-        events=_FakeEvents(),
+        events=EventLog(),
         permission_resolver=None,
         workspace=None,
         caller_kind="router",

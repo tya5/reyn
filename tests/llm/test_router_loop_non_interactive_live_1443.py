@@ -29,6 +29,7 @@ import asyncio
 
 import pytest
 
+from reyn.core.events.events import EventLog
 from reyn.llm.llm import LLMToolCallResult
 from reyn.llm.pricing import TokenUsage
 from reyn.runtime.router_loop import RouterLoop
@@ -40,14 +41,6 @@ _NON_INTERACTIVE_ONLY = "make the most reasonable assumption, state it explicitl
 _INTERACTIVE_ONLY = "prefer proceeding with a stated,"
 
 
-class _FakeEventLog:
-    def __init__(self) -> None:
-        self.emitted: list[dict] = []
-
-    def emit(self, type: str, **data) -> None:
-        self.emitted.append({"type": type, **data})
-
-
 class _FakeRouterHost:
     """Minimal real RouterLoopHost — enough for RouterLoop.run() to build the
     live SP and reach the first call_llm_tools."""
@@ -57,11 +50,11 @@ class _FakeRouterHost:
     output_language: str = "en"
 
     def __init__(self) -> None:
-        self._events = _FakeEventLog()
+        self._events = EventLog()
         self.outbox: list[dict] = []
 
     @property
-    def events(self) -> _FakeEventLog:
+    def events(self) -> EventLog:
         return self._events
 
     def get_universal_wrappers_enabled(self) -> bool:

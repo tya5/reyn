@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 
+from reyn.core.events.events import EventLog
 from reyn.tools import get_default_registry
 from reyn.tools.types import RouterCallerState, ToolContext
 from reyn.tools.universal_catalog import (
@@ -21,11 +22,6 @@ from reyn.tools.universal_catalog import (
     _handle_describe_action,
     _handle_list_actions,
 )
-
-
-class _FakeEvents:
-    def emit(self, *args, **kwargs) -> None:
-        pass
 
 
 class _FakeHost:
@@ -42,7 +38,7 @@ class _FakeHost:
 def _ctx(skills=None) -> ToolContext:
     sk = skills or []
     return ToolContext(
-        events=_FakeEvents(),
+        events=EventLog(),
         permission_resolver=None,
         workspace=None,
         caller_kind="router",

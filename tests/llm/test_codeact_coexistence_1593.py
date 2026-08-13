@@ -20,6 +20,7 @@ import asyncio
 
 import pytest
 
+from reyn.core.events.events import EventLog
 from reyn.llm.llm import LLMToolCallResult
 from reyn.runtime.router_loop import RouterLoop
 from reyn.tools.scheme import (
@@ -29,11 +30,6 @@ from reyn.tools.scheme import (
     PlainText,
     Presentation,
 )
-
-
-class _FakeEvents:
-    def emit(self, *args, **kwargs) -> None:
-        pass
 
 
 class _FakeHost:
@@ -47,7 +43,7 @@ class _FakeHost:
     def __init__(self) -> None:
         self.outbox: list[dict] = []
         self.history: list[dict] = []
-        self._events = _FakeEvents()
+        self._events = EventLog()
 
     @property
     def events(self) -> _FakeEvents:

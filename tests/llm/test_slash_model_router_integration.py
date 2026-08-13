@@ -18,6 +18,7 @@ from __future__ import annotations
 import pytest
 
 from reyn.config.chat import SafetyConfig
+from reyn.core.events.events import EventLog
 from reyn.llm.model_resolver import ModelResolver
 from reyn.runtime.services.router_loop_driver import RouterLoopDriver
 
@@ -54,10 +55,6 @@ class _FakeBudgetAdvisor:
     async def maybe_force_compact(self, **kwargs):
         pass
 
-
-class _FakeEvents:
-    def emit(self, *args, **kwargs):
-        pass
 
 
 def _make_resolver(*, default_class: str = "standard") -> ModelResolver:
@@ -103,7 +100,7 @@ def _make_driver(
         compaction=None,
         compaction_controller=None,
         token_learner=None,
-        events=_FakeEvents(),
+        events=EventLog(),
         model_override_fn=model_override_fn,
         history_buffer=_FakeHistoryBuffer(),
         budget_advisor=_FakeBudgetAdvisor(),

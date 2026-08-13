@@ -32,20 +32,14 @@ from typing import Any
 
 import pytest
 
+from reyn.core.events.events import EventLog
 from reyn.tools.types import RouterCallerState, ToolContext
 from reyn.tools.universal_catalog import LIST_ACTIONS
 
 
-class _NullEvents:
-    subscribers: list[Any] = []
-
-    def emit(self, *_args: Any, **_kwargs: Any) -> None:
-        pass
-
-
 def _ctx(rs: RouterCallerState | None = None) -> ToolContext:
     return ToolContext(
-        events=_NullEvents(),
+        events=EventLog(),
         permission_resolver=None,
         workspace=None,
         caller_kind="router",

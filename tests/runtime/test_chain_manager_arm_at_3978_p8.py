@@ -36,15 +36,11 @@ from pathlib import Path
 import pytest
 
 from reyn.core.events.agent_snapshot import AgentSnapshot
+from reyn.core.events.events import EventLog
 from reyn.core.events.state_log import StateLog
 from reyn.runtime.services.chain_manager import ChainManager
 from reyn.runtime.services.snapshot_journal import SnapshotJournal
 from reyn.runtime.task_types import Requester
-
-
-class _NullEvents:
-    def emit(self, *_args, **_kwargs) -> None:
-        pass
 
 
 def _recording_sleep():
@@ -95,7 +91,7 @@ def _make_manager(
         agent_name="alpha", snapshot_path=tmp_path / "snap.json", state_log=log,
     )
     mgr = ChainManager(
-        journal=journal, events=_NullEvents(),
+        journal=journal, events=EventLog(),
         chain_timeout_seconds=chain_timeout_seconds, max_hop_depth=10,
         clock_fn=clock_fn, sleep_fn=sleep_fn,
     )
@@ -178,7 +174,7 @@ async def test_restore_of_a_past_due_chain_schedules_zero_remaining(
     sleep_fn, sleep_calls = _recording_sleep()
     on_fire, fire_calls = _recording_fire()
     mgr = ChainManager(
-        journal=journal, events=_NullEvents(),
+        journal=journal, events=EventLog(),
         chain_timeout_seconds=999, max_hop_depth=10,
         clock_fn=lambda: now, sleep_fn=sleep_fn,
     )
@@ -221,7 +217,7 @@ async def test_restore_of_a_chain_with_time_remaining_schedules_the_remainder(
     sleep_fn, sleep_calls = _recording_sleep()
     on_fire, fire_calls = _recording_fire()
     mgr = ChainManager(
-        journal=journal, events=_NullEvents(),
+        journal=journal, events=EventLog(),
         chain_timeout_seconds=999, max_hop_depth=10,
         clock_fn=lambda: now, sleep_fn=sleep_fn,
     )
@@ -263,7 +259,7 @@ async def test_restore_without_a_persisted_arm_at_schedules_a_fresh_full_window(
     sleep_fn, sleep_calls = _recording_sleep()
     on_fire, fire_calls = _recording_fire()
     mgr = ChainManager(
-        journal=journal, events=_NullEvents(),
+        journal=journal, events=EventLog(),
         chain_timeout_seconds=60, max_hop_depth=10, sleep_fn=sleep_fn,
     )
 
@@ -355,7 +351,7 @@ async def test_truncate_falsify_restore_schedules_from_the_snapshot_backed_arm_a
     sleep_fn, sleep_calls = _recording_sleep()
     on_fire, fire_calls = _recording_fire()
     mgr = ChainManager(
-        journal=journal, events=_NullEvents(),
+        journal=journal, events=EventLog(),
         chain_timeout_seconds=999, max_hop_depth=10,
         clock_fn=lambda: now, sleep_fn=sleep_fn,
     )
@@ -409,7 +405,7 @@ async def test_arm_at_persists_and_restores_for_an_async_producer_registered_cha
     )
     fixed_now = datetime(2026, 1, 1, tzinfo=timezone.utc)
     mgr = ChainManager(
-        journal=journal, events=_NullEvents(),
+        journal=journal, events=EventLog(),
         chain_timeout_seconds=30, max_hop_depth=10, clock_fn=lambda: fixed_now,
     )
     await mgr.register(
@@ -435,7 +431,7 @@ async def test_arm_at_persists_and_restores_for_an_async_producer_registered_cha
     )
     journal2.install(journal.snapshot)
     mgr2 = ChainManager(
-        journal=journal2, events=_NullEvents(),
+        journal=journal2, events=EventLog(),
         chain_timeout_seconds=30, max_hop_depth=10,
         clock_fn=lambda: fixed_now + timedelta(seconds=10),  # 10s later
     )

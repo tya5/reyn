@@ -17,6 +17,7 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 
+from reyn.core.events.events import EventLog
 from reyn.core.events.state_log import StateLog
 from reyn.runtime.services.chain_manager import ChainManager, _PendingChain
 from reyn.runtime.services.snapshot_journal import SnapshotJournal
@@ -26,10 +27,6 @@ from reyn.runtime.task_types import Requester
 # Helpers
 # ---------------------------------------------------------------------------
 
-
-class _NullEvents:
-    def emit(self, *_args, **_kwargs) -> None:
-        pass
 
 
 def _make_manager(tmp_path: Path) -> tuple[ChainManager, StateLog]:
@@ -41,7 +38,7 @@ def _make_manager(tmp_path: Path) -> tuple[ChainManager, StateLog]:
     )
     mgr = ChainManager(
         journal=journal,
-        events=_NullEvents(),
+        events=EventLog(),
         chain_timeout_seconds=0,  # disable watchdog
         max_hop_depth=10,
     )
