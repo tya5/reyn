@@ -76,7 +76,14 @@ Audit-events emitted (at minimum): ``plugin_install_started`` /
 ``_copied`` / ``_registered`` / ``_completed``, plus one
 ``mcp_server_install_skipped`` (#4580) per declared MCP server that a
 probe failure or a denied MCP-axis permission gate dropped — see
-``_register_mcp``'s own docstring for the shape this closes.
+``_register_mcp``'s own docstring for the shape this closes — and one
+``pipeline_install_skipped``/``skill_install_skipped`` (#4590) per
+declared pipeline/skill whose OWN sub-install call returned a non-
+``"installed"`` status (a bad name, a threat-scan block, a missing DSL
+file, ...) rather than raising. Unlike mcp's probe-then-commit (which
+skips BEFORE calling the sub-install at all), a pipeline/skill
+sub-install always runs — its failure is read from the returned
+``status`` field, not a separate pre-check.
 
 **Fail-fast, never runtime-fetch** (#3060 by-construction requirement,
 preserved across the #3209 redesign): a server whose ``command`` names an
@@ -926,11 +933,21 @@ async def handle(op: PluginInstallIROp, ctx: OpContext) -> dict:
         manifest_path = manifest_path_for(plugin_root)
         reloaded_manifest = load_plugin_manifest(plugin_root) if manifest_path.exists() else manifest
         registered: dict[str, list] = {"mcp": [], "pipelines": [], "skills": []}
-        # #4580: declared-vs-registered diff, per capability kind. Only "mcp"
-        # is ever non-empty today — pipelines/skills register unconditionally
-        # (no probe-then-commit step that can drop one), so there is nothing
-        # for this axis to record there yet; the keys still exist so a
-        # consumer never has to special-case a missing key.
+        # #4590: declared-vs-registered diff, per capability kind. Pipelines
+        # and skills DO have a drop path — unlike mcp's probe-then-commit
+        # (which skips BEFORE ever calling the sub-install), a pipeline/skill
+        # sub-install always runs and can itself fail (bad name, threat-scan
+        # block, missing file, ...), returning ``{"status": "error"/"blocked",
+        # ...}`` rather than raising (#4580's own comment here previously
+        # said "no probe-then-commit step that can drop one, so there is
+        # nothing for this axis to record" — the first half is true, the
+        # second was wrong: a sub-install's own failure IS a drop, just via
+        # a different mechanism than mcp's probe). Before this fix, EVERY
+        # sub_result — success or failure — was appended to ``registered``
+        # unconditionally, so a failed pipeline/skill install still read as
+        # registered, and the new "skipped" key (#4580) reported 0 for both
+        # axes regardless of how many actually failed — worse than silence
+        # (#4580 dropped quietly; this claimed success for a drop).
         skipped: dict[str, list] = {"mcp": [], "pipelines": [], "skills": []}
 
         for cap in reloaded_manifest.capabilities:
@@ -952,7 +969,16 @@ async def handle(op: PluginInstallIROp, ctx: OpContext) -> dict:
                         kind="pipeline_install", path=str(dsl_file), plugin_id=safe_name,
                     )
                     sub_result = await _pipeline_install_handle(sub_op, ctx)
-                    registered["pipelines"].append(sub_result)
+                    if sub_result.get("status") == "installed":
+                        registered["pipelines"].append(sub_result)
+                    else:
+                        skipped["pipelines"].append(sub_result)
+                        ctx.events.emit(
+                            "pipeline_install_skipped",
+                            plugin_id=safe_name, path=str(dsl_file),
+                            reason=sub_result.get("status", "error"),
+                            error=sub_result.get("error", ""),
+                        )
             elif cap.kind == "skills":
                 skills_dir = plugin_root / "skills"
                 dirs = (
@@ -965,7 +991,16 @@ async def handle(op: PluginInstallIROp, ctx: OpContext) -> dict:
                         kind="skill_install", path=str(skill_dir), plugin_id=safe_name,
                     )
                     sub_result = await _skill_install_handle(sub_op, ctx)
-                    registered["skills"].append(sub_result)
+                    if sub_result.get("status") == "installed":
+                        registered["skills"].append(sub_result)
+                    else:
+                        skipped["skills"].append(sub_result)
+                        ctx.events.emit(
+                            "skill_install_skipped",
+                            plugin_id=safe_name, path=str(skill_dir),
+                            reason=sub_result.get("status", "error"),
+                            error=sub_result.get("error", ""),
+                        )
 
         ctx.events.emit("plugin_install_registered", name=safe_name, registered=registered)
 
