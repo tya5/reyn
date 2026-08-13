@@ -768,8 +768,25 @@ def main(argv: list[str] | None = None) -> int:
     files = collect_files(target_paths)
 
     if not files:
-        print("No test files found.", file=sys.stderr)
-        return 0
+        # #4577: a non-zero exit, not a zero one. CLAUDE.md tells every author
+        # to run this as `--strict <changed test files>`, so the paths are
+        # hand-typed or shell-expanded — a typo (`test/` for `tests/`), a file
+        # another PR moved, or an empty variable all land HERE, and returning 0
+        # turned "I audited nothing" into a green the author then wrote into a
+        # Test plan as done. Nothing in the repo relied on the old 0: CI
+        # computes its own file list with `git diff` and guards `[ -z ]` before
+        # invoking (test.yml:310), and the main-push arm passes `tests/`, which
+        # never resolves empty. The resolved targets are echoed because the
+        # typo is invisible in the old message and obvious next to the path.
+        print(
+            "Audited NOTHING — the "
+            f"{len(target_paths)} target(s) below resolved to 0 test files. "
+            "This is not a pass; nothing was checked.",
+            file=sys.stderr,
+        )
+        for t in target_paths:
+            print(f"  {t}", file=sys.stderr)
+        return 1
 
     auditor = TestAuditor(check_rules=check_rules)
     reports: list[FileReport] = []
