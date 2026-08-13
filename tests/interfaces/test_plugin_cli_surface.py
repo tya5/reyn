@@ -54,7 +54,6 @@ def _make_git_plugin_repo(base: Path, name: str = "gitplugin") -> Path:
         json.dumps({
             "$schema": PLUGIN_MANIFEST_SCHEMA_URL,
             "name": name, "version": "0.1.0", "description": "git plugin",
-            "capabilities": [{"kind": "skills"}],
         }),
         encoding="utf-8",
     )
@@ -79,7 +78,6 @@ def _write_local_plugin(base: Path, name: str = "myplugin") -> Path:
         json.dumps({
             "$schema": PLUGIN_MANIFEST_SCHEMA_URL,
             "name": name, "version": "0.1.0", "description": "test plugin",
-            "capabilities": [{"kind": "skills"}],
         }),
         encoding="utf-8",
     )

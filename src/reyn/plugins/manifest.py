@@ -1,5 +1,6 @@
 """Typed schema for a plugin's ``plugin.json`` manifest (ADR 0064 §3.1,
-relocated to the plugin root — #4570 conversion A).
+relocated to the plugin root + capabilities dropped — #4570 conversions
+A/B, Agent Plugins 1.0 alignment).
 
 **#4570 conversion A**: the manifest lives at ``<plugin_dir>/plugin.json``
 (the Agent Plugins 1.0 canonical location, agent-plugins.org's
@@ -11,30 +12,36 @@ reyn's own internal state directory (``_install_state.json`` mid-install
 marker, ``_source_kind.json``/``_provenance.json`` sidecars) — only the
 manifest itself moved out of it.
 
-A plugin is a self-contained directory; the manifest declares its identity
-(``name`` / ``version``) and WHICH capability subdirs are present — every
-capability is optional (§3.1: "a valid plugin may be *just* an MCP server,
-*just* a pipeline, or any combination"). Mirrors the house convention for
-typed, discriminated-union side-effect payloads used across reyn's op
-schemas (``reyn.schemas.models`` — ``kind: Literal[...]`` per variant,
-``Field(discriminator="kind")`` on the union) rather than a form-sniffed
-untyped string.
+**#4570 conversion B**: ``capabilities`` (and its nested ``entries``
+subset-selection field) is REMOVED from this schema entirely, not moved
+into ``extensions["dev.reyn"]`` (lead-coder ruling, #4570: "誰も使ってい
+ない機能を extensions に残すのは一本化の逆" — owner's own stated goal
+("互換性あるなら標準に寄せて一本化したい") argues against inventing a
+never-used reyn-specific extension slot at the same moment the standard's
+own root schema (``additionalProperties: false``) is being adopted).
+Measured population before removal: 2 production readers
+(``plugin_install.py``'s registration step), 0 manifests anywhere in this
+repo declaring it (including the shipped ``rag`` plugin), 0 third-party
+manifests (reyn is unreleased). A capability's presence is now derived
+PURELY from directory/file existence at registration time — ``mcp.json``
+for ``mcp``, ``pipelines/*.yaml`` for ``pipelines``, ``skills/*/SKILL.md``
+for ``skills`` (ADR §3.1's own directory layout, unchanged) — mirroring
+exactly how a standard-compliant client discovers ``skills/`` without any
+manifest hint. See ``reyn.core.op_runtime.plugin_install``'s registration
+step for where this presence check actually runs; this module has nothing
+left to say about capabilities at all.
 
-``capabilities`` declares presence + an optional explicit entry list per
-capability; an empty ``entries`` tuple means "discover everything reyn's
-plugin layout convention expects" (root ``.mcp.json`` for ``mcp``,
-``pipelines/*.yaml`` for ``pipelines``, ``skills/*/SKILL.md`` for
-``skills`` — ADR §3.1's directory layout). Discovery/registration itself is
-P2 (install machinery); this module only defines and validates the shape.
-This field is a reyn-native extension the standard's ``additionalProperties:
-false`` root does not permit (#4570 conversion B moves it into
-``extensions["dev.reyn"]`` — not yet done as of this module's own #4570
-conversion A slice; kept here unchanged in the meantime)."""
+**A manifest still declaring ``capabilities`` is a typed-error REJECTION,
+not a silent no-op** (lead-coder ruling, same "config that doesn't take
+effect" trap class as ``_build_tool_use_config``'s ``chat``-key rejection,
+verbatim: "a silently dropped old key is a 'config that doesn't take
+effect' trap") — see :meth:`PluginManifest._reject_removed_capabilities_key`.
+"""
 from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Annotated, Literal, Union
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
@@ -59,47 +66,10 @@ class PluginManifestError(ValueError):
     one exception type to catch."""
 
 
-class PluginMCPCapability(BaseModel):
-    """The plugin ships an MCP server declared at its root ``.mcp.json``
-    (ADR §3.1 — standard shape, no reyn-specific fields)."""
-
-    kind: Literal["mcp"] = "mcp"
-
-
-class PluginPipelinesCapability(BaseModel):
-    """The plugin ships one or more pipeline DSL files under ``pipelines/``
-    (ADR §3.1 — a declared reyn extension, no standard equivalent).
-
-    ``entries``: explicit list of DSL filenames (relative to ``pipelines/``)
-    to register. Empty = discover every ``pipelines/*.yaml`` file.
-    """
-
-    kind: Literal["pipelines"] = "pipelines"
-    entries: tuple[str, ...] = ()
-
-
-class PluginSkillsCapability(BaseModel):
-    """The plugin ships one or more standard ``SKILL.md`` skills under
-    ``skills/<name>/`` (ADR §3.1 — honoured as-is, the one genuine open
-    standard per §3.6).
-
-    ``entries``: explicit list of skill directory names under ``skills/``
-    to register. Empty = discover every ``skills/*/SKILL.md``.
-    """
-
-    kind: Literal["skills"] = "skills"
-    entries: tuple[str, ...] = ()
-
-
-PluginCapability = Annotated[
-    Union[PluginMCPCapability, PluginPipelinesCapability, PluginSkillsCapability],
-    Field(discriminator="kind"),
-]
-
-
 class PluginManifest(BaseModel):
     """``plugin.json`` (plugin root) — the typed plugin manifest (ADR §3.1,
-    relocated #4570 conversion A).
+    relocated #4570 conversion A; ``capabilities`` removed #4570
+    conversion B).
 
     ``$schema`` (JSON key, Python attribute ``schema_``) is REQUIRED and
     must equal :data:`PLUGIN_MANIFEST_SCHEMA_URL` — the Agent Plugins 1.0
@@ -111,11 +81,6 @@ class PluginManifest(BaseModel):
     ``PipelineInstallIROp``/``SkillInstallIROp``'s namespace-separator
     convention) so a plugin name never collides with a capability's own
     dotted namespace key.
-
-    ``capabilities`` is a discriminated union list (`kind` in
-    ``{"mcp", "pipelines", "skills"}``) — every entry optional, any subset,
-    duplicates of the same ``kind`` rejected (a manifest declares each
-    capability at most once).
     """
 
     model_config = ConfigDict(populate_by_name=True)
@@ -124,11 +89,28 @@ class PluginManifest(BaseModel):
     name: str
     version: str
     description: str = ""
-    capabilities: tuple[PluginCapability, ...] = ()
 
-    @property
-    def capability_kinds(self) -> frozenset[str]:
-        return frozenset(cap.kind for cap in self.capabilities)
+    @model_validator(mode="before")
+    @classmethod
+    def _reject_removed_capabilities_key(cls, data: Any) -> Any:
+        """#4570 conversion B: ``capabilities`` (the field's whole former
+        purpose) is gone from this schema — a manifest still carrying it
+        must be REJECTED, never silently accepted-and-ignored. Pydantic's
+        default "extra fields dropped" behavior would otherwise turn a
+        plugin author's real declaration into dead JSON with no error
+        anywhere — the exact "wrote it, but it doesn't take effect" trap
+        class lead-coder's ruling names by precedent
+        (``_build_tool_use_config``'s ``chat``-key rejection)."""
+        if isinstance(data, dict) and "capabilities" in data:
+            raise ValueError(
+                "PluginManifest no longer accepts a 'capabilities' field "
+                "(#4570 conversion B: a capability's presence is derived "
+                "from directory/file existence -- mcp.json / pipelines/ / "
+                "skills/ -- never declared in the manifest). Remove the "
+                "'capabilities' key; declaring it here would otherwise "
+                "silently have no effect."
+            )
+        return data
 
     @model_validator(mode="after")
     def _validate(self) -> "PluginManifest":
@@ -144,12 +126,6 @@ class PluginManifest(BaseModel):
                 f"PluginManifest.name {self.name!r} must not contain "
                 f"reserved namespace-separator characters ({_RESERVED_NAME_CHARS!r})"
             )
-        kinds = [cap.kind for cap in self.capabilities]
-        if len(kinds) != len(set(kinds)):
-            raise ValueError(
-                f"PluginManifest.capabilities declares duplicate kinds: {kinds!r} "
-                "(each capability kind may appear at most once)"
-            )
         return self
 
 
@@ -159,6 +135,29 @@ _MANIFEST_RELATIVE_PATH = Path("plugin.json")
 def manifest_path_for(plugin_dir: Path) -> Path:
     """The canonical manifest path inside a plugin directory (ADR §3.1 layout)."""
     return plugin_dir / _MANIFEST_RELATIVE_PATH
+
+
+def capability_kinds_present(plugin_dir: Path) -> "frozenset[str]":
+    """Which capability kinds *plugin_dir* ships, derived PURELY from
+    directory/file existence (#4570 conversion B) — ``.mcp.json`` for
+    ``mcp``, a ``pipelines/`` directory for ``pipelines``, a ``skills/``
+    directory for ``skills`` (ADR §3.1's own layout, unchanged). The ONE
+    derivation both :mod:`reyn.core.op_runtime.plugin_install`'s
+    registration step and :mod:`reyn.builtin.discovery`'s listing consult
+    — so "this plugin has an mcp capability" can never independently
+    drift between what gets REGISTERED and what gets LISTED.
+
+    ``.mcp.json`` is still the DOT-prefixed pre-#4570-conversion-C name
+    here (conversion C renames it to ``mcp.json``, not yet landed as of
+    this function)."""
+    kinds: set[str] = set()
+    if (plugin_dir / ".mcp.json").is_file():
+        kinds.add("mcp")
+    if (plugin_dir / "pipelines").is_dir():
+        kinds.add("pipelines")
+    if (plugin_dir / "skills").is_dir():
+        kinds.add("skills")
+    return frozenset(kinds)
 
 
 def load_plugin_manifest(plugin_dir: Path) -> PluginManifest:

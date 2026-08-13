@@ -133,7 +133,6 @@ def _make_git_plugin_repo(base: Path, name: str = "gitplugin") -> Path:
         json.dumps({
             "$schema": PLUGIN_MANIFEST_SCHEMA_URL,
             "name": name, "version": "0.1.0", "description": "git plugin",
-            "capabilities": [{"kind": "skills"}],
         }),
         encoding="utf-8",
     )
@@ -157,7 +156,6 @@ def _make_plugin_source(base: Path, name: str = "myplugin") -> Path:
         json.dumps({
             "$schema": PLUGIN_MANIFEST_SCHEMA_URL,
             "name": name, "version": "0.1.0", "description": "test plugin",
-            "capabilities": [{"kind": "skills"}],
         }),
         encoding="utf-8",
     )
@@ -327,7 +325,6 @@ def _make_mcp_plugin_source(base: Path, name: str = "mcpplugin") -> Path:
         json.dumps({
             "$schema": PLUGIN_MANIFEST_SCHEMA_URL,
             "name": name, "version": "0.1.0", "description": "mcp test plugin",
-            "capabilities": [{"kind": "mcp"}],
         }),
         encoding="utf-8",
     )
@@ -629,7 +626,7 @@ async def test_plugin_install_register_only_no_venv_no_rewrite(tmp_path, monkeyp
     (src / "plugin.json").write_text(
         json.dumps({
             "$schema": PLUGIN_MANIFEST_SCHEMA_URL,
-            "name": "registeronly", "version": "0.1.0", "capabilities": [{"kind": "mcp"}],
+            "name": "registeronly", "version": "0.1.0",
         }),
         encoding="utf-8",
     )
@@ -684,7 +681,7 @@ async def test_plugin_install_never_reads_requirements_txt_content(tmp_path, mon
     (src / "plugin.json").write_text(
         json.dumps({
             "$schema": PLUGIN_MANIFEST_SCHEMA_URL,
-            "name": "badreqs", "version": "0.1.0", "capabilities": [],
+            "name": "badreqs", "version": "0.1.0",
         }),
         encoding="utf-8",
     )
@@ -827,7 +824,7 @@ async def test_plugin_install_never_hangs_on_pypi_with_unanswering_bus(tmp_path,
     (src / "plugin.json").write_text(
         json.dumps({
             "$schema": PLUGIN_MANIFEST_SCHEMA_URL,
-            "name": "needsdeps4", "version": "0.1.0", "capabilities": [],
+            "name": "needsdeps4", "version": "0.1.0",
         }),
         encoding="utf-8",
     )
