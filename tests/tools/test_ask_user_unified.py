@@ -12,8 +12,6 @@ instances. No private state assertions.
 """
 from __future__ import annotations
 
-import pytest
-
 from reyn.tools import get_default_registry
 from reyn.tools.ask_user import _ASK_USER_DESCRIPTION, _ASK_USER_PARAMETERS, ASK_USER
 

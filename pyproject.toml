@@ -563,9 +563,10 @@ ignore = [
 # tests/dev/, tests/repo/, tests/scripts/ (#4097 3rd slice),
 # cli/config/data/environment/hooks/http_safety/observability/plugins/
 # services/web (#4636, the 10 smallest remaining directories, 21
-# findings), and tests/llm/ + tests/mcp/ (14 findings, same per-import
-# verification) are all enforced. Every other subdirectory stays
-# ignored, each its own future slice. ROOT-level tests/*.py files
+# findings), tests/llm/ + tests/mcp/ (14 findings), and tests/security/
+# + tests/tools/ (48 findings, same per-import verification) are all
+# enforced. Every other subdirectory stays ignored, each its own
+# future slice. ROOT-level tests/*.py files
 # (conftest.py etc.) and tests/_support/ are deliberately NOT listed
 # here -- both measured 0 findings already, so leaving them off this
 # list enforces F401 there too, for free (caught in review, #4640: an
@@ -580,8 +581,6 @@ ignore = [
 [tool.ruff.lint.per-file-ignores]
 "tests/interfaces/**/*.py" = ["F401"]
 "tests/runtime/**/*.py" = ["F401"]
-"tests/security/**/*.py" = ["F401"]
-"tests/tools/**/*.py" = ["F401"]
 
 # #3726: wired into CI as a ratchet (.github/workflows/test.yml's "mypy
 # (ratchet)" job), not a blocking full-adoption gate — the tree currently

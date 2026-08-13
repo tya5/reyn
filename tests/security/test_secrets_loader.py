@@ -13,11 +13,8 @@ Pins the following invariants for ``reyn.security.secrets.loader.load_secrets_to
 from __future__ import annotations
 
 import os
-import stat
 import warnings
 from pathlib import Path
-
-import pytest
 
 from reyn.security.secrets.loader import load_secrets_to_environ
 

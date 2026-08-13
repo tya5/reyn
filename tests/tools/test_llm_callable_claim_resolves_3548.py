@@ -32,7 +32,6 @@ from __future__ import annotations
 
 import ast
 import re
-from pathlib import Path
 
 from reyn.tools import get_default_registry
 from tests._support.paths import REPO_ROOT

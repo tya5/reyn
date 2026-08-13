@@ -19,8 +19,6 @@ from __future__ import annotations
 
 import asyncio
 
-import pytest
-
 from reyn.core.events.events import EventLog
 from reyn.data.workspace.workspace import Workspace
 from reyn.tools.file import (

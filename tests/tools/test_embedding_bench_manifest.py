@@ -21,7 +21,6 @@ No mocks. Real manifest load + real LIST_ACTIONS handler enumeration.
 from __future__ import annotations
 
 import asyncio
-from pathlib import Path
 from typing import Any
 
 import yaml

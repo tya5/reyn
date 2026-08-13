@@ -44,7 +44,6 @@ from reyn.tools.types import (
     ToolGates,
 )
 from reyn.tools.universal_catalog import (
-    CATEGORIES,
     DESCRIBE_ACTION,
     INVOKE_ACTION,
     LIST_ACTIONS,

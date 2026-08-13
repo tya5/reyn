@@ -29,8 +29,6 @@ additionally proved live by registering a qualified-named tool into a real
 """
 from __future__ import annotations
 
-import pytest
-
 from reyn.tools import get_default_registry
 from reyn.tools.registry import ToolRegistry
 from reyn.tools.types import ToolDefinition, ToolGates

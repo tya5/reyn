@@ -30,8 +30,6 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
-import pytest
-
 from reyn.core.events.events import EventLog
 from reyn.tools.types import RouterCallerState, ToolContext
 from reyn.tools.universal_catalog import LIST_ACTIONS

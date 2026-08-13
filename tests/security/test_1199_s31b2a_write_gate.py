@@ -10,8 +10,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from reyn.security.permissions.effective import AgentLayer, CapabilityAxis, EffectivePermission
-from reyn.security.permissions.permissions import PermissionDecl
+from reyn.security.permissions.effective import CapabilityAxis
 from tests._support.permissions import make_resolver as _make_resolver
 
 AX = CapabilityAxis

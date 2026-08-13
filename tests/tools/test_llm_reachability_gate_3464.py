@@ -35,7 +35,6 @@ from reyn.tools.llm_reachability import (
     UNREACHABLE_TOOL_REASONS,
     compute_direct_advertisable_tool_names,
     compute_invoke_action_reachable_tool_names,
-    compute_llm_reachable_tool_names,
     compute_router_allow_tool_names,
     compute_unreachable_router_allow_tool_names,
 )
