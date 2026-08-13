@@ -86,6 +86,8 @@ from textual.widgets import (
     TextArea,
 )
 
+from reyn.config.chat import TuiConfig
+
 from .completion import CompletionPopup
 from .intervention_panel import InterventionPanel
 from .presenter import option_content_rows
@@ -1414,17 +1416,27 @@ def cost_figure(snap: "dict | None") -> str:
 #:
 #: #4542 review (owner's standing rule — no unjustified number embedded
 #: without either a reasoning comment or a user-facing override, same
-#: discipline as ``ImageConfig.row_height_cells``): this constant is the
-#: DEFAULT for the ``tui.context_usage_warn_percent`` config key
-#: (:class:`reyn.config.chat.TuiConfig`) — 80 is a plain, unsurprising
-#: round number, not a measured "correct" threshold for every operator's
-#: own risk tolerance. It stays defined HERE (not only in the config
-#: module) so this function has a real value to fall back to when called
-#: without a threaded config (e.g. every pre-#4542 caller, and most direct
-#: unit tests) — see :meth:`~reyn.interfaces.inline.textual_chat.app.
-#: TextualChatApp._status_text` for where the config value is actually
-#: read and passed as ``warn_percent`` below.
-CTX_WARN_PERCENT = 80
+#: discipline as ``ImageConfig.row_height_cells``): 80 is a plain,
+#: unsurprising round number, not a measured "correct" threshold for
+#: every operator's own risk tolerance — see ``tui.context_usage_warn_
+#: percent`` in ``reyn.yaml``.
+#:
+#: **The CANONICAL value is :class:`reyn.config.chat.TuiConfig`'s own
+#: default, not this constant** — this constant just READS it, so there
+#: is exactly one number to keep in sync, not two hand-written literals
+#: (#4542 review: an earlier version defined ``80`` here too, a real
+#: drift risk the review caught — "the same contract hand-written in two
+#: places"). Importing ``TuiConfig`` (not the reverse — ``config/chat.py``
+#: is a foundational, TTY-independent module nearly every reyn code path
+#: loads, including headless ones; ``chrome.py`` imports ``textual`` at
+#: module level and genuinely cannot be imported without it — verified
+#: live, and exactly what ``test_phase3_chrome_imports_stay_tty_only``
+#: guards) is the only safe direction. If you're tempted to flip this
+#: back because "chrome should own its own UI constant" — don't; that
+#: direction breaks ``load_config()`` in any textual-less environment.
+#: The name ``CTX_WARN_PERCENT`` is kept (existing references stay
+#: valid) even though the value now lives elsewhere.
+CTX_WARN_PERCENT = TuiConfig().context_usage_warn_percent
 
 
 def status_line_text(
