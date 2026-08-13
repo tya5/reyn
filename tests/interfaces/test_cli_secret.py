@@ -13,9 +13,6 @@ Pins the contract for the four ``reyn secret`` subcommands:
 from __future__ import annotations
 
 import argparse
-from pathlib import Path
-
-import pytest
 
 from reyn.interfaces.cli.commands.secret import (
     _get_audit_log,
@@ -26,7 +23,7 @@ from reyn.interfaces.cli.commands.secret import (
     run_rotate,
     run_set,
 )
-from reyn.security.secrets.store import load_secrets, save_secret
+from reyn.security.secrets.store import save_secret
 from tests._support.events import collect_events
 
 # ── helper ────────────────────────────────────────────────────────────────────

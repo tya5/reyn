@@ -66,7 +66,6 @@ import uvicorn
 from fastapi import FastAPI
 
 from reyn.interfaces.inline.textual_chat.restore import project_restored_frames
-from reyn.interfaces.repl.client_driver import run_chat_client
 from reyn.interfaces.repl.remote_client import run_remote_repl
 from reyn.interfaces.repl.renderer import ChatRenderer
 from reyn.interfaces.transport.agui import endpoint as endpoint_mod

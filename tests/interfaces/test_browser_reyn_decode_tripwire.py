@@ -16,7 +16,6 @@ names the browser's decode function reads and asserts each is a key the real
 from __future__ import annotations
 
 import re
-from pathlib import Path
 
 from reyn.interfaces.transport.agui.protocol import _encode_display
 from reyn.interfaces.transport.frames import DisplayFrame

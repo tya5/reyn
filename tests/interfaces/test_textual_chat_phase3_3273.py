@@ -22,7 +22,6 @@ pilot) — no mocks — per the testing policy.
 from __future__ import annotations
 
 import asyncio
-from pathlib import Path
 from typing import AsyncIterator
 
 import pytest

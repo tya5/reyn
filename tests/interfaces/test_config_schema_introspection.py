@@ -20,8 +20,6 @@ import yaml
 
 from reyn.config import ReynConfig
 from reyn.config.config_schema import (
-    MISSING,
-    SchemaNode,
     is_valid_config_key,
     resolve_config_value,
     walk_config_schema,

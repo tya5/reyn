@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import asyncio
 import sys
-from pathlib import Path
 
 from tests._support.paths import REPO_ROOT
 

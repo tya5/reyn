@@ -8,7 +8,6 @@ read through ``reyn.data.memory.list_entries`` / ``find_one``.
 from __future__ import annotations
 
 import sys
-from pathlib import Path
 
 import pytest
 

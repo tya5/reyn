@@ -17,8 +17,6 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-import pytest
-
 from tests._support.paths import REPO_ROOT
 
 _SRC = REPO_ROOT / "src"

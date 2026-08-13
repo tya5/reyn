@@ -17,7 +17,6 @@ Policy compliance:
 from __future__ import annotations
 
 import sys
-from pathlib import Path
 
 from tests._support.paths import REPO_ROOT
 
@@ -40,7 +39,7 @@ def test_slash_command_defaults_see_also_to_empty_tuple() -> None:
 
 def test_slash_decorator_stores_see_also_on_registered_command() -> None:
     """Tier 2: @slash(see_also=(...)) stores the tuple on the registered command."""
-    from reyn.interfaces.slash import REGISTRY, SlashCommand, slash
+    from reyn.interfaces.slash import REGISTRY, slash
 
     @slash(
         "xtest_see_also_reg",

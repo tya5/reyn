@@ -36,8 +36,7 @@ import asyncio
 import json
 from pathlib import Path
 
-from reyn.interfaces.web.run_registry import RunEntry, RunRegistry
-from reyn.user_intervention import InterventionAnswer, UserIntervention
+from reyn.interfaces.web.run_registry import RunRegistry
 
 # ── 1. Default (no persist_path) — legacy in-memory behaviour ──────────
 

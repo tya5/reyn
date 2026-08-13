@@ -27,7 +27,6 @@ checks to make sure no accidental opt-in slipped through.
 from __future__ import annotations
 
 import sys
-from pathlib import Path
 
 from tests._support.paths import REPO_ROOT
 

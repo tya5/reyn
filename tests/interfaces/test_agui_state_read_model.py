@@ -13,8 +13,6 @@ RemoteStatusView; no mocks.
 """
 from __future__ import annotations
 
-import asyncio
-
 import pytest
 
 from reyn.core.events.events import Event

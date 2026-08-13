@@ -17,12 +17,10 @@ from __future__ import annotations
 
 import asyncio
 import tomllib
-from pathlib import Path
 from typing import AsyncIterator
 
 import pytest
 
-from reyn.interfaces.repl.client_driver import run_chat_client
 from reyn.interfaces.repl.renderer import ChatRenderer
 from reyn.interfaces.repl.stream_client import run_output_loop
 from reyn.interfaces.transport.client_transport import ClientTransport

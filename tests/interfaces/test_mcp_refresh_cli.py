@@ -13,12 +13,7 @@ No unittest.mock / AsyncMock / MagicMock.
 """
 from __future__ import annotations
 
-import asyncio
-import json
-import sys
 from pathlib import Path
-
-import pytest
 
 from reyn.runtime.services.mcp_cache_file import (
     ToolsAnswered,

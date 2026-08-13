@@ -12,8 +12,6 @@ Real instances only — the real codec + AgUiTransport; no mocks.
 """
 from __future__ import annotations
 
-import asyncio
-
 import pytest
 
 from reyn.interfaces.transport.agui.client import AgUiTransport

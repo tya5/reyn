@@ -37,7 +37,7 @@ from reyn.interfaces.inline.textual_chat import Composer, TextualChatApp
 from reyn.interfaces.inline.textual_chat.activity_row import ActivityRow
 from reyn.interfaces.inline.textual_chat.search_bar import SearchBar
 from reyn.interfaces.transport.client_transport import ClientTransport
-from reyn.interfaces.transport.frames import DisplayFrame, EventFrame
+from reyn.interfaces.transport.frames import EventFrame
 from reyn.runtime.outbox import OutboxMessage
 from reyn.schemas.models import Event
 

@@ -17,8 +17,6 @@ Real instances only — the real dataclass, the real decode path; no mocks.
 """
 from __future__ import annotations
 
-from pathlib import Path
-
 import pytest
 
 from reyn.interfaces.transport.agui.protocol import decode_event, encode_frame
