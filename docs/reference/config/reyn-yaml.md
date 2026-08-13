@@ -1762,6 +1762,21 @@ history_resident:
 
 Eviction is not information loss: `Session.history` is a cache, not the source of truth — `history.jsonl` (append-only, on disk) is, and every entry evicted from memory reloads on demand via the already-shipped backward-hydrate path (TUI scrollback paging, in-conversation search, and WAL rewind visibility all already page older entries back in as needed). This closes an unbounded-growth defect (`self.history` previously had no cap at all — see #4387) independent of any claim about what fraction of a given memory ceiling `history` itself accounts for, which this config does not measure or claim to fix.
 
+## `image` block
+
+The fixed row height (in terminal rows/cells) every `present`-rendered inline image is shown at (#4474). Width is derived from this to preserve the image's real aspect ratio — `HalfBlockImage` (reyn's own image renderable, `interfaces/repl/present_renderer.py` — no third-party image-rendering dependency, #4474) takes an explicit width/height in cells with no aspect-ratio derivation of its own; passing a fixed height is what makes aspect-ratio-correct rendering possible at all.
+
+```yaml
+image:
+  row_height_cells: 20   # fixed height every inline image is rendered at
+```
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `row_height_cells` | int | `20` | Fixed height, in terminal rows, for every inline image `present` renders. A non-positive or non-numeric value falls back to the default. |
+
+**Why this is operator-configurable**: the "right" row count is a function of your own terminal height and how much scrollback a photo should occupy — not something reyn can decide for every environment. 20 is a shipped default (tall enough for real photo detail, short enough not to dominate a typical terminal), not a measured "correct" number. Omitting the block keeps this default (behaviour unchanged).
+
 ## MCP servers
 
 External tool servers reyn can call via the [Model Context Protocol](../../concepts/tools-integrations/mcp.md). Each entry under `mcp.servers:` is keyed by a short name (the same name the skill declares in `permissions.mcp` and emits in `mcp` ops).

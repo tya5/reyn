@@ -195,7 +195,34 @@ dependencies = [
     # `search_selection` are now `async` (a match may need its entry
     # presented first) — inert for reyn, which never calls these
     # programmatically (only via FlowView's own key bindings).
-    "textual-flowview @ git+https://github.com/tya5/textual-flowview.git@ae6a40679bfc6ddbdf8adf6df0e243643ccf3573",
+    # 0.18.1-0.19.0 (docs-only, taken for #4474): a live-verify session found
+    # a real reyn bug through this chain — `textual_image.renderable.Image`
+    # auto-selects Sixel first on WezTerm/Kitty, and Sixel draws pixels
+    # relative to the CURSOR rather than into cells, so FlowView (a
+    # virtualized, cell-repainting painter) cannot place or clip it,
+    # producing a duplicated/ghosted image after any row-height reflow.
+    # 0.18.1 named the supported-renderable matrix (Kitty placeholder mode
+    # or half-block, never Sixel); a follow-up finding (0.18.2/0.18.3, "a
+    # consumer hit exactly this") showed Kitty placeholder mode is ALSO
+    # unreliable — WezTerm/Konsole report Kitty-graphics support but render
+    # the placeholder's normally-invisible combining diacritics as visible
+    # garbled glyphs, and there is no query for "do placeholders actually
+    # draw" (`tgp.query_terminal_support()` only probes base Kitty support),
+    # so this cannot be auto-detected. 0.19.0's own conclusion: half-block
+    # cells are the ONLY form that needs no protocol negotiation and is
+    # reliable everywhere — ~15 lines of `__rich_console__` yielding
+    # `Segment("▀", Style(color=…, bgcolor=…))`, no third-party image
+    # library at all. reyn's own `HalfBlockImage` (`present_renderer.py`)
+    # follows `examples/image.py`'s exact shape. This SUPERSEDES #3970's
+    # own textual-image adoption decision — not a downgrade to a "lighter"
+    # renderer (#3970's own reinvention-comparison rule: a degraded
+    # reimplementation is not a smaller version of the same feature), but a
+    # correction of #3970's premise: real-pixel rendering (the capability
+    # #3970 chose textual-image FOR) turns out to be undeliverable inside
+    # FlowView's virtualized painting model at all, on the terminals reyn
+    # targets — #3970's trade-off no longer applies because the option it
+    # was weighing against never actually worked here.
+    "textual-flowview @ git+https://github.com/tya5/textual-flowview.git@ec10edb21516ca062a546f0511e69ca2500beca1",
     "numpy>=1.24",           # RAG index backend cosine similarity (ADR-0033)
     "croniter>=2.0",         # cron expression parsing for FP-0009 Component B
     "charset-normalizer>=3.0",  # #1452 read_file encoding detection (MIT, pure-python)
@@ -244,28 +271,15 @@ dependencies = [
     # have prebuilt wheels (no compiler needed); the one gap is
     # macosx_10_9_x86_64 (Intel Mac, source build needs libjpeg/zlib
     # headers) — neither CI nor the owner's machine is affected.
+    #
+    # #4474: `textual-image` (the real-pixel renderer #3970 chose this
+    # section's OTHER half for) is REMOVED from this list — see the
+    # `textual-flowview` pin comment above for the full chain. pillow alone
+    # remains: `present_renderer.py`'s own `HalfBlockImage` decodes with it
+    # and needs nothing else (no third-party image-rendering library at
+    # all, matching flowview's own `examples/image.py` — "you don't need an
+    # image library to put images in the feed").
     "pillow>=11.0",
-    # `textual_image.renderable` (NOT `.widget`) — measured (#3970): imports
-    # NO textual module at all (0/147 `sys.modules` entries), a real Rich
-    # renderable (`__rich_console__`) buildable straight from a PIL.Image
-    # already in this process — same shape `present_renderer.py` already
-    # returns for every other node kind. pillow is the dominant dependency
-    # weight either way (14MB); textual-image itself is close to free on top
-    # of it and is the ONLY option of the measured candidates that reaches
-    # real pixels (Kitty/WezTerm TGP, Sixel) rather than a half-block/unicode
-    # approximation only — see #3970's own reinvention-comparison for why a
-    # hand-rolled half-block renderer is not a "lighter version" of this
-    # (different feature, not a smaller implementation of the same one).
-    # Floor is 0.12 (not 0.13+): 0.13.0+ declares `Requires-Python >=3.12`,
-    # unsatisfiable on reyn's own Python 3.11 CI leg/support floor — a real
-    # install-stage failure caught only by testing a CLEAN venv on 3.11 (a
-    # venv with the package already installed, or a 3.12-only check, both
-    # stay green and miss this). Verified 0.12.0 has the identical API
-    # surface this file uses (`renderable.Image(pil_image, width=...)`, the
-    # same import-time no-textual / terminal-auto-detection module
-    # structure, and the same TextualImage-constructor-forces-eager-decode
-    # behavior `present_renderer.py`'s decode-failure path relies on).
-    "textual-image>=0.12",
 ]
 
 [project.urls]

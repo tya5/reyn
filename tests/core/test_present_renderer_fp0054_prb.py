@@ -95,15 +95,7 @@ def test_unsupported_component_does_not_crash_the_render_loop() -> None:
 
 
 def _png_bytes(*, size: tuple = (32, 32), color: tuple = (200, 20, 60)) -> bytes:
-    """A real PNG for the SUCCESS render path. 32x32, not e.g. 4x4: a real
-    `textual-image` 0.12.0 bug (the version pip resolves on reyn's own
-    Python 3.11 floor — 0.13+ requires >=3.12) raises at print time for a
-    very small source image (reproduced: 8x8 and 1x1 fail, 16x16 does not)
-    — a tiny fixture here would make "did the success path render" tests
-    exercise the FAILURE path instead on a 3.11 install, depending on which
-    textual-image version pip happened to resolve. See
-    `test_safe_image_renderable_catches_a_print_time_failure` for the
-    dedicated (version-independent) test of that failure path."""
+    """A real PNG for the SUCCESS render path."""
     import io as _io
 
     from PIL import Image as PILImage
@@ -116,11 +108,11 @@ def _png_bytes(*, size: tuple = (32, 32), color: tuple = (200, 20, 60)) -> bytes
 def test_image_with_resolved_cache_renders_real_pixels_not_the_status_line() -> None:
     """Tier 1: #3846 ③ — a successfully-resolved image (a real ImageResolution
     in `image_cache`) is wrapped in reyn's own `_SafeImageRenderable` (in
-    turn wrapping a `textual_image.renderable.Image`), not the pre-③
-    `[image loaded: ...]` status-line `Text`. This is reyn's OWN dispatch
+    turn wrapping `HalfBlockImage`, #4474 — reyn's own cell-based renderable;
+    no third-party image-rendering dependency, no protocol negotiation),
+    not the pre-③ `[image loaded: ...]` status-line `Text`. This is reyn's OWN dispatch
     decision (which renderable class `_render_image` picks) — a fact about
-    reyn's wiring, not textual_image's rendering behavior (a third party's
-    promise this file does not pin). Checked on the render-model OBJECT
+    reyn's own wiring. Checked on the render-model OBJECT
     (`Group.renderables`), not on printed glyph output — a Console.print of
     either class produces terminal-formatted text, so a text-content-only
     assertion here cannot tell "real pixel path wired" apart from "still
@@ -194,7 +186,7 @@ def test_render_image_uses_a_warm_decoded_cache_without_decoding_again() -> None
     original = present_renderer_module.decode_image_body
     present_renderer_module.decode_image_body = _spy
     try:
-        sentinel = object()  # stands in for a pre-decoded TextualImage
+        sentinel = object()  # stands in for a pre-decoded HalfBlockImage
         nodes = validate_blueprint(
             {"component": "image", "src": "http://x/y.png", "alt": "a photo"}
         )
@@ -235,23 +227,76 @@ def test_render_image_uses_a_warm_decoded_cache_without_decoding_again() -> None
         present_renderer_module.decode_image_body = original
 
 
+def test_decode_image_body_returns_a_half_block_image() -> None:
+    """Tier 1: #4474 — `decode_image_body` constructs reyn's OWN
+    `HalfBlockImage` (a plain Rich renderable built from Segments, no
+    third-party image-rendering library) — this is reyn's own dispatch
+    decision, a fact about reyn's wiring, not a third party's promise.
+    flowview's own 0.19.0 conclusion (half-block cells are the only image
+    form that needs no protocol negotiation and renders correctly
+    everywhere — real pixels via Sixel/Kitty placeholder are both
+    unplaceable/undetectable inside its virtualized row-painting model) is
+    why reyn switched away from `textual_image` entirely; that third-party
+    conclusion is not re-pinned here, only reyn's own resulting choice of
+    renderable class."""
+    from reyn.interfaces.repl.present_renderer import HalfBlockImage, decode_image_body
+
+    decoded = decode_image_body(_png_bytes())
+    assert isinstance(decoded, HalfBlockImage), (
+        f"expected reyn's own HalfBlockImage, got {type(decoded)!r}"
+    )
+
+
+def test_set_image_row_height_cells_changes_the_rendered_row_count() -> None:
+    """Tier 2: #4474 — `set_image_row_height_cells`'s own effect is
+    witnessed through PRINTED output (public surface), not by reaching
+    into `present_renderer`'s private `_image_row_height_cells` global.
+    `HalfBlockImage` renders exactly `height` text rows (one per 2 sampled
+    source pixel rows) — a real, observable consequence of the configured
+    value, not a declared intent."""
+    from reyn.interfaces.repl.present_renderer import (
+        decode_image_body,
+        set_image_row_height_cells,
+    )
+
+    body = _png_bytes()
+    try:
+        set_image_row_height_cells(5)
+        short = decode_image_body(body)
+        console = Console(width=100, file=io.StringIO(), color_system=None)
+        console.print(short)
+        short_lines = console.file.getvalue().count("\n")
+
+        set_image_row_height_cells(10)
+        tall = decode_image_body(body)
+        console2 = Console(width=100, file=io.StringIO(), color_system=None)
+        console2.print(tall)
+        tall_lines = console2.file.getvalue().count("\n")
+
+        assert short_lines == 5, f"expected 5 rendered rows, got {short_lines}"
+        assert tall_lines == 10, f"expected 10 rendered rows, got {tall_lines}"
+    finally:
+        # Reset to a known, deterministic state (never a private-state
+        # poke) so this test's own choice never leaks into a sibling
+        # test's decode_image_body call.
+        set_image_row_height_cells(20)
+
+
 def test_safe_image_renderable_catches_a_print_time_failure() -> None:
     """Tier 1: #3846 ③ — `_SafeImageRenderable` degrades to a status line
     when the WRAPPED renderable's `__rich_console__` raises, not just when
-    `TextualImage(...)`'s own constructor raises.
+    `decode_image_body`'s own decode step raises.
 
-    This matters because Rich's `__rich_console__` protocol is a generator
+    This matters because Rich's `__rich_console__` protocol is a generator —
     Console.print() only iterates once it knows the real render width — a
     failure there happens LATER than `_render_image`'s `try/except` (which
-    only wraps construction) can see. Real instance found during
-    implementation: `textual-image` 0.12.0 (the version pip resolves on
-    reyn's own Python 3.11 floor) raises `ValueError('height and width must
-    be > 0')` from inside `__rich_console__` for a very small source image
-    — `TextualImage(...)` construction itself never raises for these.
-    Tested here against a FAKE inner renderable (reyn's own wrapper
-    behavior, not textual_image's version-specific bug — the dev
-    environment's installed textual_image version may not reproduce that
-    bug at all, so pinning this test to it would be flaky-by-environment)."""
+    only wraps the decode step) can see. A real instance of exactly this
+    shape (a print-time-only failure a construction-time `try/except`
+    structurally could not catch) motivated this wrapper's original design,
+    from the now-removed `textual-image` dependency; the general guarantee
+    is still worth testing directly regardless of which renderable is
+    inside, so this is tested against a FAKE inner renderable — reyn's own
+    wrapper behavior, not any particular renderable's bug."""
     from rich.console import Console as _Console
 
     from reyn.interfaces.repl.present_renderer import _SafeImageRenderable
@@ -305,52 +350,6 @@ def test_safe_image_renderable_delegates_measurement_to_the_inner_renderable() -
     )
 
 
-def test_safe_image_renderable_normalizes_a_list_control_segment_to_a_tuple() -> None:
-    """Tier 2: #3846 live-verify — `_SafeImageRenderable.__rich_console__`
-    normalizes any yielded `Segment.control` LIST to a tuple before passing
-    it on. This is REYN'S OWN normalization behavior, not a claim about
-    `textual-image`'s own correctness — the fake inner below yields exactly
-    the shape a real `textual-image` sixel bug produces, without importing
-    `textual_image` at all.
-
-    Real bug this guards (found via a real turn through the real
-    render/paint path, #4463): `textual_image/renderable/sixel.py`'s own
-    `_NULL_CONTROL = [(ControlType.CURSOR_FORWARD, 0)]` is a LIST literal.
-    `Segment` is a `NamedTuple`, so a list-valued `control` field makes the
-    whole `Segment` unhashable — and Rich's `Segment._split_cells` is
-    `@lru_cache`-wrapped (keyed on the segment itself), so the crash
-    (`TypeError: unhashable type: 'list'`) only fires the first time
-    something needs to HASH the segment (flowview's own `Strip.crop`,
-    stamping gutter offsets on every row — not image-specific), not at
-    construction or at a plain `Console.print`.
-
-    Residual: if `textual-image` upstream fixes `_NULL_CONTROL` to be a
-    tuple, this normalization becomes a no-op (harmless) and can be
-    removed — same shape as #4458's own upstream-fixed-it-first residual
-    note."""
-    from rich.segment import ControlType, Segment
-
-    from reyn.interfaces.repl.present_renderer import _SafeImageRenderable
-
-    class _SixelLikeInner:
-        def __rich_console__(self, console: object, options: object):
-            # The exact shape a real textual-image sixel Segment carries —
-            # text/style/control as a NamedTuple, control as a plain list.
-            yield Segment("\x1b7", None, [(ControlType.CURSOR_FORWARD, 0)])
-
-    wrapped = _SafeImageRenderable(_SixelLikeInner(), "a photo")
-    segments = list(wrapped.__rich_console__(None, None))
-    (segment,) = segments
-    assert isinstance(segment, Segment)
-    assert isinstance(segment.control, tuple), (
-        f"expected control normalized to a tuple (hashable), got {type(segment.control)!r}"
-    )
-    # And the Segment itself must actually be hashable now — the real crash
-    # this guards is a hash attempt inside Rich's own lru_cache, not merely
-    # a type mismatch.
-    hash(segment)
-
-
 def test_image_with_undecodable_body_falls_back_to_a_distinct_status_line() -> None:
     """Tier 1: #3846 ③ — a resolved-but-not-actually-an-image body (corrupt,
     truncated, or a non-image content type mislabeled by the server) fails
@@ -364,10 +363,10 @@ def test_image_with_undecodable_body_falls_back_to_a_distinct_status_line() -> N
     alone, which would leave the LAZY-decode failure path unexercised — a
     truncated body passes `open()` (the header parses fine; PIL decodes
     lazily) and only fails once pixel data is actually read, which
-    `TextualImage(...)`'s own constructor does eagerly (verified directly:
-    `open()` on this exact body returns a valid `Image`; constructing
-    `TextualImage` from it raises `OSError: image file is truncated`) — the
-    case `_render_image`'s `try` block exists to catch."""
+    `decode_image_body`'s own `pil_image.load()` call forces eagerly
+    (verified directly: `open()` on this exact body returns a valid
+    `Image`; `.load()` on it raises `OSError: image file is truncated`) —
+    the case `_render_image`'s `try` block exists to catch."""
     from rich.console import Console
 
     from reyn.core.present.image_fetch import ImageResolution

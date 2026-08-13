@@ -662,6 +662,26 @@
 
 
 # -----------------------------------------------------------------------------
+# image: the fixed row height (in terminal rows/cells) every present-rendered
+# inline image (reyn's own HalfBlockImage renderable, #4474) is shown at.
+# Width is derived from this to preserve the image's real aspect ratio —
+# HalfBlockImage takes an explicit width/height in cells with no
+# aspect-ratio derivation of its own. Omit the block to keep the 20-row
+# default below; a non-positive/non-numeric value falls back to that
+# default too.
+#
+# Why this is operator-configurable rather than a bare constant: the "right"
+# row count is a function of YOUR OWN terminal height and how much
+# scrollback you want a photo to occupy — not something reyn can decide for
+# every environment. 20 is a shipped default (tall enough for real photo
+# detail, short enough not to dominate a typical terminal), not a measured
+# "correct" number.
+# -----------------------------------------------------------------------------
+# image:
+#   row_height_cells: 20   # fixed height every inline image is rendered at
+
+
+# -----------------------------------------------------------------------------
 # tool_use: the chat-layer tool-use scheme x transport selector (#1593;
 # FP-0066 P4b, #3247). ``scheme`` is the PRESENTATION axis (category /
 # enumerate-all / retrieval — how capabilities are shown/discovered);

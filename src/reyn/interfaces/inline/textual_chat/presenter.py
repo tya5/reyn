@@ -490,11 +490,11 @@ class ReynPresenter:
         # of a list().
         self._image_cache: "dict[str, object]" = {}
         self._image_inflight: "set[str]" = set()
-        # #4464: the DECODED renderable (a `textual_image.renderable.Image`),
-        # keyed by src — populated by `_resolve_image` on a background
-        # thread once the fetch settles, so the CPU-heavy PIL decode +
-        # `TextualImage(...)` construction (measured directly: ~100-300ms
-        # for a large real photo) never runs on the event loop. Evicted in
+        # #4464: the DECODED renderable (a `present_renderer.HalfBlockImage`,
+        # #4474), keyed by src — populated by `_resolve_image` on a
+        # background thread once the fetch settles, so the CPU-heavy PIL
+        # decode + resize (measured directly: ~100-300ms for a large real
+        # photo) never runs on the event loop. Evicted in
         # lockstep with `_image_cache` (see `_store_image_resolution`) —
         # a separate cap of its own would drift from the byte cap that
         # already governs image lifetime here.

@@ -22,6 +22,90 @@ from __future__ import annotations
 from typing import Any
 
 
+class HalfBlockImage:
+    """A Rich renderable for an image, built from nothing but `Segment`s —
+    no third-party image-rendering library (#4474, follows flowview's own
+    `examples/image.py`, 0.19.0, verbatim in shape).
+
+    **Why this exists at all, not a `textual-image` renderable** (the full
+    chain, since this supersedes #3970's own dependency decision): FlowView
+    paints rows as CELLS and repaints them independently while scrolling,
+    so it can only place a renderable that *occupies cells*. Sixel draws
+    pixels relative to the CURSOR instead — measured (flowview's own
+    README): 0 cells, 0 characters in the row, so a virtualized painter
+    has no way to position or clip it (the root cause of a live-verified
+    duplicated/ghosted image after a row-height reflow). The other
+    cell-based option, Kitty Unicode-placeholder mode
+    (`textual_image.renderable.tgp`), is ALSO unreliable: WezTerm/Konsole
+    report Kitty-graphics support but render the placeholder's normally-
+    invisible combining diacritics as literal visible garbled glyphs, and
+    there is no query for "do placeholders actually draw" (only for base
+    Kitty-graphics support) — live-verified directly, matching flowview's
+    own 0.18.2/0.18.3 findings from the SAME report. Half-block cells need
+    no protocol negotiation at all and render correctly everywhere.
+
+    Each text row carries two source pixel rows: the upper half-block
+    glyph (▀) is drawn in the upper pixel's colour, over the lower pixel's
+    colour as background — ordinary coloured cells, exactly what FlowView
+    needs to place and clip."""
+
+    def __init__(self, image: "Any", width: int, height: int) -> None:
+        # height is in TEXT rows; sample two pixel rows per text row.
+        self._img = image.convert("RGB").resize((max(1, width), max(1, height) * 2))
+        self._w, self._h = max(1, width), max(1, height) * 2
+
+    def __rich_console__(self, console: "Any", options: "Any"):
+        from rich.segment import Segment
+        from rich.style import Style
+
+        px = self._img.load()
+        for y in range(0, self._h - 1, 2):
+            row_segments = []
+            for x in range(self._w):
+                top, bottom = px[x, y], px[x, y + 1]
+                row_segments.append(Segment(
+                    "▀",
+                    Style(
+                        color=f"rgb({top[0]},{top[1]},{top[2]})",
+                        bgcolor=f"rgb({bottom[0]},{bottom[1]},{bottom[2]})",
+                    ),
+                ))
+            yield from row_segments
+            yield Segment("\n")
+
+    def __rich_measure__(self, console: "Any", options: "Any") -> "Any":
+        from rich.measure import Measurement
+
+        return Measurement(self._w, self._w)
+
+
+# owner ruling: every rendered image gets a FIXED row height, in cells —
+# `HalfBlockImage` (above) takes an explicit `width`/`height` in cells with
+# no built-in aspect-ratio derivation of its own (unlike `textual_image`'s
+# `ImageSize`), so `decode_image_body` below computes `width` FROM this
+# fixed height and the image's own pixel aspect ratio directly. #4474/
+# owner's standing "no unjustified number embedded without a comment or a
+# user-facing override" rule: 20 is the shipped DEFAULT (matches
+# `ImageConfig.row_height_cells`'s own default, `config/chat.py`) — the
+# "right" row count is a function of the OPERATOR'S OWN terminal height,
+# not something this repo can decide for every environment, so it is
+# config-driven via `set_image_row_height_cells` below, called once at
+# startup with the real `ReynConfig` value. This module-level default is
+# only what a caller with NO config threaded (every non-TUI caller, tests)
+# falls back to.
+_image_row_height_cells = 20
+
+
+def set_image_row_height_cells(row_height_cells: int) -> None:
+    """Record the operator-configured fixed image row height, in cells
+    (#4474) — called once by `run_textual_chat` with `config.image.
+    row_height_cells` (already validated positive by `_build_image_config`;
+    this setter re-validates defensively for any other caller)."""
+    global _image_row_height_cells
+    if isinstance(row_height_cells, int) and row_height_cells > 0:
+        _image_row_height_cells = row_height_cells
+
+
 def _cell(value: Any) -> "Any":
     """Wrap a leaf value as a markup-inert `Text` — the ONE conversion every string
     destined for a Rich renderable goes through in this module."""
@@ -122,79 +206,41 @@ def _render_node(
 
 
 class _SafeImageRenderable:
-    """Wraps a `textual_image` renderable so a PRINT-TIME failure degrades to
-    a status line instead of propagating and breaking the render loop.
+    """Wraps an image renderable (`HalfBlockImage`, #4474) so a PRINT-TIME
+    failure degrades to a status line instead of propagating and breaking
+    the render loop.
 
-    Rich's `__rich_console__` protocol is a generator Console.print() only
-    iterates once it knows the real render width — so a failure inside it
-    happens LATER than `_render_image`'s own `try/except` (which only wraps
-    `TextualImage(...)` construction) can see. This is not hypothetical: a
-    real `textual-image` 0.12.0 bug (the version pip resolves on reyn's
-    Python 3.11 floor — 0.13+ requires >=3.12) raises `ValueError('height
-    and width must be > 0')` from inside `__rich_console__` for a very
-    small source image (reproduced: 8x8 and 1x1 fail, 16x16 does not) —
-    `TextualImage(...)` construction itself never raises for these, so the
-    pre-existing `try/except` in `_render_image` never sees it; this wrapper
-    is the only thing standing between that bug and an uncaught exception
-    reaching whatever Console the presenter/renderer layer owns.
+    Rich's `__rich_console__` protocol is a generator — `Console.print()`
+    only iterates once it knows the real render width, so a failure inside
+    it happens LATER than `_render_image`'s own `try/except` (which only
+    wraps `decode_image_body`'s own decode step) can see. `HalfBlockImage`
+    is reyn's own code (no known print-time bug class the way the removed
+    `textual-image` dependency had — #4474's own PR removed a real,
+    reproduced third-party bug of exactly this shape: a print-time-only
+    failure a construction-time `try/except` structurally could not catch),
+    but this wrapper stays as the general safety net for ANY future
+    inner-renderable failure, not a specific bug's workaround.
 
-    Also implements `__rich_measure__` (#3846 live-verify follow-up) —
-    delegates to the inner `TextualImage`'s own measurement, which computes
-    a real cell width from the decoded image. Without this, Rich has no
-    `__rich_measure__` to find on THIS wrapper and falls back to a
-    `Measurement(minimum=0, maximum=options.max_width)` for the enclosing
-    `Group` (verified directly: `Measurement.get(console, options,
-    render_presentation_nodes(...))` returns `minimum=0` for an image node
-    with no measure delegation). A caller that sizes the row to that
-    measured MINIMUM before rendering (Textual's own auto-width/auto-height
-    layout does this) then renders at width=0, which yields ZERO lines —
-    reproduced directly: `console.render_lines(renderable,
-    options.update_width(0))` returns `[]` — the exact "image row renders
-    as nothing, not even an error line" symptom (#4433's live-verify
-    finding), not a sixel/pty capture artifact."""
+    Also implements `__rich_measure__` — delegates to the inner
+    renderable's own measurement (`HalfBlockImage.__rich_measure__` returns
+    its real cell width). Without this, Rich has no `__rich_measure__` to
+    find on THIS wrapper and falls back to a `Measurement(minimum=0,
+    maximum=options.max_width)` for the enclosing `Group` (verified
+    directly, #4433's live-verify finding: a caller that sizes a row to
+    that measured MINIMUM before rendering — Textual's own auto-width/
+    auto-height layout does this — then renders at width=0, which yields
+    ZERO lines, the "image row renders as nothing, not even an error line"
+    symptom)."""
 
     def __init__(self, inner: "Any", label: str) -> None:
         self._inner = inner
         self._label = label
 
     def __rich_console__(self, console: "Any", options: "Any"):
-        from rich.segment import Segment
         from rich.text import Text
 
         try:
-            for segment in self._inner.__rich_console__(console, options):
-                # #3846 live-verify fix: a real `textual-image` 0.12.0/0.13.x
-                # sixel bug (`textual_image/renderable/sixel.py`'s own
-                # module-level `_NULL_CONTROL = [(ControlType.CURSOR_FORWARD,
-                # 0)]`) emits `Segment.control` as a plain LIST, not a tuple.
-                # `Segment` is a `NamedTuple` — a list-valued field makes the
-                # whole tuple unhashable, and Rich's own
-                # `Segment._split_cells` is `@lru_cache`-wrapped (keyed on
-                # the segment itself), so the CONSTRUCTION never raises but
-                # the FIRST time flowview needs to crop this row mid-segment
-                # (`textual_flowview`'s `_decorate_line`, stamping gutter
-                # offsets — every row, not image-specific) it does, with
-                # `TypeError: unhashable type: 'list'` — reproduced directly
-                # end-to-end through a real turn (real LLM tool call -> real
-                # router loop -> real op dispatch -> real TUI paint) once
-                # the two OTHER #3846 live-verify bugs (the SSRF-pin
-                # str/bytes SNI crash, `_ssrf_pin.py`; this class's own
-                # missing `__rich_measure__`, both fixed in the same PR)
-                # were fixed and let a real sixel Segment reach this far.
-                # Normalizing to a tuple here is a one-line, contained fix
-                # for a genuine third-party bug, matching this class's own
-                # established precedent (module docstring) of defending
-                # against real `textual-image` print-time failures rather
-                # than reporting upstream and blocking on it.
-                #
-                # Residual: if `textual-image` upstream fixes `_NULL_CONTROL`
-                # to a tuple, this normalization becomes a no-op (a tuple
-                # `isinstance(..., list)` check is already False) and can be
-                # removed then — same shape as #4458's own upstream-fixed-it
-                # residual note.
-                if isinstance(segment, Segment) and isinstance(segment.control, list):
-                    segment = Segment(segment.text, segment.style, tuple(segment.control))
-                yield segment
+            yield from self._inner.__rich_console__(console, options)
         except Exception as exc:
             yield Text(
                 f"[image loaded but could not render: {self._label} — {exc}]",
@@ -219,28 +265,45 @@ class _SafeImageRenderable:
 
 
 def decode_image_body(body: bytes) -> "Any":
-    """Decode a fetched image body into a `textual_image.renderable.Image`
-    (#4464) — the CPU-heavy step `_render_image`'s own inline fallback below
-    does synchronously; extracted here so the presenter (`ReynPresenter.
-    _resolve_image`, `interfaces/inline/textual_chat/presenter.py`) can run
-    it via `asyncio.to_thread` instead of on the event loop, WITHOUT
-    duplicating the decode logic across the two modules.
+    """Decode a fetched image body into a `HalfBlockImage` renderable
+    (#4464/#4474) — the CPU-heavy step `_render_image`'s own inline
+    fallback below does synchronously; extracted here so the presenter
+    (`ReynPresenter._resolve_image`,
+    `interfaces/inline/textual_chat/presenter.py`) can run it via
+    `asyncio.to_thread` instead of on the event loop, WITHOUT duplicating
+    the decode logic across the two modules.
 
-    Raises on a corrupt/undecodable body or a missing optional dep (PIL /
-    textual-image) — the caller (both this module's own inline fallback and
-    the presenter's off-thread path) is responsible for turning that into
-    the established distinguishable failure state; this function itself
-    stays a pure decode step with no fallback text of its own."""
+    #4474: `HalfBlockImage` (this module) replaced `textual_image`'s
+    renderables entirely — see that class's own docstring for the full
+    chain (Sixel unplaceable / Kitty placeholder undetectably broken on
+    WezTerm+Konsole / flowview's own 0.19.0 conclusion: half-block cells,
+    no third-party image library needed).
+
+    Raises on a corrupt/undecodable body or a missing optional dep (PIL) —
+    the caller (both this module's own inline fallback and the presenter's
+    off-thread path) is responsible for turning that into the established
+    distinguishable failure state; this function itself stays a pure
+    decode step with no fallback text of its own.
+
+    Fixed height, preserved aspect ratio (owner ruling): `HalfBlockImage`
+    takes an explicit `width`/`height` in cells with no aspect-ratio
+    derivation of its own, so `width` is computed HERE from the fixed
+    `_image_row_height_cells` and the image's own pixel aspect ratio —
+    matching flowview's own `examples/image.py` convention (2 sampled
+    pixel rows per text row, which self-corrects for a typical monospace
+    cell's roughly 1:2 width:height pixel shape)."""
     import io
 
     from PIL import Image as PILImage
-    from textual_image.renderable import Image as TextualImage
 
     pil_image = PILImage.open(io.BytesIO(body))
-    # See `_render_image`'s own inline fallback for why no separate
-    # `.load()` call is needed — `TextualImage`'s constructor reads pixel
-    # data eagerly, so a bad body already raises HERE.
-    return TextualImage(pil_image, width="auto")
+    # `PILImage.open()` alone only parses the header (lazy decode) — force
+    # the decode NOW so a truncated/corrupt body raises HERE, not later at
+    # paint time inside `HalfBlockImage.__rich_console__`.
+    pil_image.load()
+    height = _image_row_height_cells
+    width = max(1, round(pil_image.width / pil_image.height * height)) if pil_image.height else 1
+    return HalfBlockImage(pil_image, width=width, height=height)
 
 
 def _render_image(
@@ -263,9 +326,9 @@ def _render_image(
     function without the new kwarg) gets the pre-#3846 `[image: alt]` text,
     byte-identical — no resolution stage exists on those surfaces yet.
 
-    `decoded_image_cache` (#4464, an app-owned `dict[str, TextualImage]`,
+    `decoded_image_cache` (#4464, an app-owned `dict[str, HalfBlockImage]`,
     default None) is consulted FIRST when present — the presenter's own
-    `_resolve_image` now does the PIL decode + `TextualImage(...)`
+    `_resolve_image` now does the PIL decode + `HalfBlockImage(...)`
     construction (the CPU-heavy step this docstring already called out) on
     a background thread (`asyncio.to_thread`) as part of "preparing" an
     image, so THIS function's own job shrinks to "wrap the already-built
@@ -275,17 +338,16 @@ def _render_image(
     existing caller's behavior unchanged — this is an accelerator, not a
     new required input.
 
-    #3846 ③: on a successful resolution, renders REAL pixels via
-    `textual_image.renderable.Image` (owner-approved regular dep, #3970) —
-    Kitty/WezTerm true pixels or Sixel when the terminal supports either,
-    half-block/unicode approximation otherwise (that fallback selection is
-    `textual_image`'s own, made once per process — see
-    `interfaces/inline/textual_chat/app.py`'s `run_textual_chat` for WHY the
-    triggering import must happen there and not lazily here). Falls back to
-    a status-line `Text` if decoding fails (a genuinely non-image or
-    corrupt body) or if `pillow`/`textual-image` are unavailable for any
-    reason (defensive — they are regular deps, so this should not happen in
-    a normal install)."""
+    #3846 ③ / #4474: on a successful resolution, renders real pixel colour
+    via `HalfBlockImage` (this module's own renderable, no third-party
+    image-rendering dependency — see that class's own docstring for why:
+    Sixel is unplaceable and the Kitty Unicode-placeholder mode is
+    undetectably broken on WezTerm/Konsole, both live-verified; half-block
+    cells are the one form FlowView's cell-based painting model can place
+    and clip everywhere with no protocol negotiation). Falls back to a
+    status-line `Text` if decoding fails (a genuinely non-image or corrupt
+    body) or if `pillow` is unavailable for any reason (defensive — it is a
+    regular dep, so this should not happen in a normal install)."""
     from rich.text import Text
 
     alt = node.get("alt") or ""

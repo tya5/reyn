@@ -142,12 +142,9 @@ async def test_loaded_state_replaces_the_placeholder_after_resolution(monkeypatc
     from PIL import Image as PILImage
 
     buf = io.BytesIO()
-    # 32x32, not e.g. 4x4: a real textual-image 0.12.0 bug (the version pip
-    # resolves on reyn's own Python 3.11 floor) raises at PRINT time for a
-    # very small source image — a tiny fixture here would make this
-    # SUCCESS-path test exercise the failure path instead, depending on
-    # which textual-image version pip resolved (see present_renderer's own
-    # test file for the dedicated, version-independent failure-path test).
+    # A reasonably-sized real PNG for the SUCCESS render path (see
+    # present_renderer's own test file for the dedicated failure-path
+    # tests — a corrupt/truncated body, exercised there instead).
     PILImage.new("RGB", (32, 32), color=(200, 20, 60)).save(buf, format="PNG")
     body = buf.getvalue()
     monkeypatch.setattr(
@@ -167,8 +164,8 @@ async def test_loaded_state_replaces_the_placeholder_after_resolution(monkeypatc
             "entry.revision never advanced — the redraw trigger did not fire"
         )
         text = await _entry_text(app, entry)
-        # Real-pixel rendering is a third party's promise (textual_image's
-        # own — see the module docstring rule against pinning it), so this
+        # Exact half-block colour output is a pixel-level rendering detail
+        # (see the module docstring rule against pinning that), so this
         # only asserts what's reyn's own to keep: the placeholder is gone,
         # no failure/decode-error text appeared, and SOMETHING non-empty
         # replaced it (the loaded state, not a crash swallowed to blank).
