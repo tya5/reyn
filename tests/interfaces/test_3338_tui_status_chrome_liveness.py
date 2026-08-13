@@ -51,6 +51,8 @@ import pytest
 
 from reyn.core.events.state_log import StateLog
 from reyn.interfaces.inline.textual_chat.chrome import (
+    _COST_COL_W,
+    _COST_LABEL_W,
     _MENU_TABS,
     MenuBar,
     StatusLine,
@@ -279,6 +281,79 @@ async def test_cost_table_value_columns_align_across_every_row(tmp_path) -> None
         f"these rows' value columns land elsewhere than the header's {reference}:\n"
         + "\n".join(f"{ends}  {row!r}" for row, ends in misaligned.items())
     )
+
+
+@pytest.mark.asyncio
+async def test_cost_table_stays_aligned_and_honest_past_the_1000_dollar_column_width(
+    tmp_path,
+) -> None:
+    """Tier 2: #4544 — architect's own repro, at the real widths this table
+    renders: every prior fixture in this file tops out at cost_total=9.8765
+    (7 chars — fits _COST_COL_W=9 with room to spare), so the existing
+    alignment test above is structurally incapable of exercising an
+    over-width cell. This fixture pushes the Project scope's Total past
+    $1000 (bug B's own threshold) with an ``approx`` state (bug A's own
+    state), and checks TWO things the alignment-only test cannot: the value
+    columns still land at the same offset (bug B), AND the displayed
+    number is not a byte-truncated wrong value (bug A) — architect's own
+    point that "the witness for bug A is the displayed amount, not just
+    alignment", since a truncated ``~$999.999`` is 9 chars wide and would
+    pass an alignment-only check."""
+    snap, _session, _registry = await _real_snapshot(tmp_path)
+    snap["cost_breakdown_session"] = CostBreakdown(
+        prompt_cost=0.0100, completion_cost=0.0100, cache_savings=0.0050
+    )
+    snap["cost_breakdown_agent"] = CostBreakdown(
+        prompt_cost=1.0000, completion_cost=2.0000, cache_savings=0.5000
+    )
+    # Components deliberately do NOT reconcile with the Total below -> "approx"
+    # state (genuine >200k tiered pricing shape), the exact state bug A hit.
+    snap["cost_breakdown_project"] = CostBreakdown(
+        prompt_cost=800.0000, completion_cost=150.0000, cache_savings=40.0000
+    )
+    snap["cost_usd"] = 0.0200
+    snap["cost_agent"] = 3.0000
+    # architect's own repro table (#4544): 999.9999 at 4dp is exactly 9 chars
+    # (fits without shedding — the Total column carries no '~' prefix, so it
+    # has one more character of budget than an approx cell at the same
+    # value). 12345.6789 genuinely needs precision shed even in the Total
+    # column, so this exercises the exact-state rounding path too, not just
+    # the approx one.
+    snap["cost_total"] = 12345.6789
+
+    rows = _cost_table_rows(cost_pane_lines(snap))
+    project_row = next(row for row in rows if row.startswith("Project"))
+
+    # Bug B: alignment must still hold at this width. Fixed-width slicing,
+    # NOT the whitespace-run regex `_value_column_ends` above uses — a cell
+    # that fills its full _COST_COL_W with no left-padding (exactly what a
+    # correctly width-shed value does) abuts its neighbor with no space at
+    # all, which would defeat a regex expecting a gap between tokens even
+    # though the columns ARE correctly aligned (fixed character offsets).
+    expected_len = _COST_LABEL_W + 5 * _COST_COL_W
+    wrong_length = {row: len(row) for row in rows if len(row) != expected_len}
+    assert not wrong_length, (
+        f"these rows are not exactly {expected_len} chars (label + 5 fixed-width "
+        f"columns), meaning some cell overflowed its column:\n"
+        + "\n".join(f"{n} chars  {row!r}" for row, n in wrong_length.items())
+    )
+
+    # Bug A: the Total cell must be the correctly-rounded $12345.68, never a
+    # byte-truncated "$12345.6" (a full digit short of the true value — this
+    # is what the old ("~"+s)[:9]-style slicing would have produced had it
+    # applied to the Total column too, which it never even attempted to).
+    assert "$12345.68" in project_row, (
+        f"Project row does not show the correctly-rounded total: {project_row!r}"
+    )
+    assert "$12345.6" not in project_row.replace("$12345.68", ""), (
+        f"Project row shows a byte-truncated (wrong) value, not a rounding: "
+        f"{project_row!r}"
+    )
+    # And the approx-state components must ALSO be correctly rounded, not
+    # byte-sliced — the exact shape reyn-reviewer originally found.
+    assert "~$800.000" in project_row
+    assert "~$150.000" in project_row
+    assert "~$40.0000" in project_row
 
 
 @pytest.mark.asyncio

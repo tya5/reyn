@@ -1079,6 +1079,50 @@ def _cost_row(label: str, cells: "Sequence[str]") -> str:
     )
 
 
+def _format_cost_cell(value: float, *, approx: bool) -> str:
+    """Format one currency cell to fit within :data:`_COST_COL_W`, WITHOUT ever
+    silently dropping a digit from the displayed number (#4544 bug A — the prior
+    ``("~" + s)[:_COST_COL_W]`` byte-sliced the formatted string, so
+    ``~$999.9999`` silently became ``~$999.999``: a DIFFERENT, wrong number that
+    reads as a plausible rounding, not a truncation).
+
+    Sheds decimal PRECISION in stages (4dp -> 3dp -> ... -> 0dp) until the
+    correctly-ROUNDED string fits — each stage is a real number, never a
+    byte-sliced fragment, and Python's own ``:.Nf`` rounding correctly carries
+    a value like 999.9999 up to 1000 when it no longer fits at higher
+    precision (verified: ``f"{999.9999:.2f}"`` == ``"1000.00"``, not a
+    stale ``"999.99"``). ``approx`` prepends ``~`` — the SAME width budget
+    applies to it, so an approx cell may show one fewer decimal than the
+    corresponding exact cell right at the boundary; that is the ``~``
+    character's own real width cost, not a defect.
+
+    Used for every currency cell (Total / Input / Output / Saved), not just
+    ``approx`` state, closing #4544 bug B in the same change (the Total/
+    ok-state path never even attempted to fit the column before this fix) —
+    architect's own review note: all states must share one formatter, since
+    the approx-only special case was the asymmetry that caused bug A.
+
+    Falls back to k/M/B unit abbreviation only for values so large that even
+    0 decimal places doesn't fit (unreachable at today's real cost volumes,
+    kept as a documented floor rather than an unbounded/undefined string)."""
+    prefix = "~" if approx else ""
+    for decimals in (4, 3, 2, 1, 0):
+        s = f"{prefix}${value:.{decimals}f}"
+        if len(s) <= _COST_COL_W:
+            return s
+    for divisor, suffix in ((1_000_000_000, "B"), (1_000_000, "M"), (1_000, "k")):
+        if abs(value) >= divisor:
+            scaled = value / divisor
+            for decimals in (2, 1, 0):
+                s = f"{prefix}${scaled:.{decimals}f}{suffix}"
+                if len(s) <= _COST_COL_W:
+                    return s
+    # Unreachable at any realistic cost magnitude; an explicit "…" marker
+    # (never a silent digit-chop) rather than an unbounded-width string.
+    s = f"{prefix}${value:.0f}"
+    return s if len(s) <= _COST_COL_W else s[: _COST_COL_W - 1] + "…"
+
+
 def _cost_breakdown_table(snap: dict) -> list[str]:
     """The 3-row (Session/Agent/Project) × 5-column (Total/Input/Output/Saved/
     Saved%) cost breakdown table.
@@ -1116,14 +1160,13 @@ def _cost_breakdown_table(snap: dict) -> list[str]:
     def _cell(value: float, state: str) -> str:
         if state == "unavail":
             return "—"
-        s = f"${value:.4f}"
-        return ("~" + s)[:_COST_COL_W] if state == "approx" else s
+        return _format_cost_cell(value, approx=(state == "approx"))
 
     scope_rows = [
         _cost_row(
             name,
             [
-                f"${total:.4f}",
+                _format_cost_cell(total, approx=False),
                 _cell(inp, state),
                 _cell(out, state),
                 _cell(sav, state),
