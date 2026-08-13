@@ -86,7 +86,7 @@ def test_every_vocabulary_kind_is_dispositioned() -> None:
     # Sanity: the vocabulary spans all three dispositions (a broken/empty
     # vocabulary must not vacuously pass).
     assert {"agent", "status", "reasoning", "error"} <= VOCABULARY   # standard
-    assert {"system", "user", "trace", "__attach_request__",
+    assert {"system", "user", "trace",
             "tool_call_started"} <= VOCABULARY                       # profiled CUSTOM
     assert {"__end__", "__session_switch_request__"} <= VOCABULARY   # control-filtered
 
@@ -111,10 +111,10 @@ def test_control_sentinel_dispositions_client_consumed_forward_upstream_consumed
       transport stream (real client-side clipboard copy / rewind picker), so they
       are FORWARDED (profiled CUSTOM display kinds) and round-trip losslessly.
     - ``__end__`` (terminal) and ``__session_switch_request__`` (upstream-consumed)
-      are control-filtered.
-    - ``__attach_request__`` is a LIVE wire kind (corrected #3362): the registry
-      forwarder's ``continue`` is subscriber-local, so its profile entry names an
-      event really emitted — see ``protocol.py``'s ``CONTROL_FILTER_KINDS`` note."""
+      are control-filtered. ``__attach_request__`` retired (#4534 PR-2): /attach
+      now goes through ``ClientTransport.request_attach``, a typed operation with
+      no display-channel sentinel — nothing constructs that kind anymore, so it
+      carries no disposition at all."""
     # Client-consumed → forwarded + profiled + lossless round-trip.
     for client_kind in ("__copy_last_reply__", "__rewind_list__"):
         assert client_kind in DISPLAY_KINDS, client_kind
@@ -130,11 +130,6 @@ def test_control_sentinel_dispositions_client_consumed_forward_upstream_consumed
     assert _disposition("__end__") == "control"
     assert _disposition("__session_switch_request__") == "control"
 
-    # __attach_request__ is profiled AND unfiltered => really emitted (#3362).
-    assert "__attach_request__" not in CONTROL_FILTER_KINDS
-    assert _disposition("__attach_request__") == "profiled"
-    assert is_profiled("reyn.display.__attach_request__")
-
 
 def test_every_custom_mapped_frame_is_profiled() -> None:
     """Tier 2: each reyn.* Custom name the codec emits (for a forwarded display
@@ -145,7 +140,6 @@ def test_every_custom_mapped_frame_is_profiled() -> None:
     assert {
         "reyn.display.system",
         "reyn.display.trace",
-        "reyn.display.__attach_request__",
         "reyn.display.tool_call_started",
         "reyn.event.user_answered_intervention",
     } <= emitted

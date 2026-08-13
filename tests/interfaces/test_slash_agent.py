@@ -89,30 +89,27 @@ async def test_agent_slash_is_registered():
 
 
 @pytest.mark.asyncio
-async def test_agent_new_creates_and_emits_attach_request(tmp_path):
-    """Tier 2: ``/agent new <name>`` creates the agent and emits
-    ``__attach_request__``.
+async def test_agent_new_creates_and_requests_attach(tmp_path):
+    """Tier 2: ``/agent new <name>`` creates the agent and asks the
+    transport to attach to it (#4534 PR-2 — the retired
+    ``__attach_request__`` sentinel's named-operation replacement).
 
     Drives the slash handler through a real registry on tmp_path so the
-    create + outbox-emit chain is exercised end-to-end.
+    create half is exercised end-to-end; the attach REQUEST itself is
+    asserted through the transport (the real attach-flow is
+    tests/interfaces/test_4534_pr1_request_attach_switch.py's own claim).
     """
     from reyn.interfaces.slash.agent import _create_agent
 
     registry = _build_real_registry(tmp_path)
     session = _FakeSession(registry)
+    ctx = _ctx(session)
 
-    await _create_agent(_ctx(session), "beta")
+    await _create_agent(ctx, "beta")
 
     # Profile file landed on disk via the real registry.
     assert registry.exists("beta"), "agent profile must persist on disk"
-    # And the attach sentinel was emitted (plus a confirmation reply
-    # before it — assert at least 1 attach_request was queued).
-    kinds = [m.kind for m in session.outbox_calls]
-    assert "__attach_request__" in kinds
-    attach_msg = next(
-        m for m in session.outbox_calls if m.kind == "__attach_request__"
-    )
-    assert attach_msg.text == "beta"
+    assert ctx.transport.attach_requests == ["beta"]
 
 
 @pytest.mark.asyncio

@@ -13,15 +13,19 @@ A few ``__…__`` display sentinels get per-entry dispositions on the AG-UI wire
   the filter is a genuine FAIL-SAFE rather than the active mechanism — the AG-UI
   tap consumes that sentinel itself (#3310 N3 switch-follow, or a silent drop for
   an unresolvable sid), so it never reaches the emitter from that source.
-- ``__attach_request__`` is a **live wire kind** — corrected in #3362, which
-  measured it landing on the wire with the registry forwarder running. The
-  forwarder's ``continue`` is SUBSCRIBER-LOCAL (it and the AG-UI tap are
-  independent ``outbox_hub`` subscribers, and the hub fans every message out to
-  every subscription), so it only means "not re-posted to ``repl_outbox``". Both
-  sentinels reach the tap; what happens after that is decided per-kind by the tap
-  and by ``CONTROL_FILTER_KINDS``, never by the forwarder. This file's docstring
-  previously asserted the opposite — the canonical reasoning lives in
-  ``protocol.py`` beside ``CONTROL_FILTER_KINDS``.
+``__attach_request__`` retired (#4534 PR-2): ``/attach`` now goes through
+``ClientTransport.request_attach``, a typed operation with no display-channel
+sentinel — the forwarder's own ``__attach_request__`` branch is gone too, so
+there is no longer a live example of "forwarder swallows it for
+``repl_outbox`` yet it still reaches the wire" (that was the reachability
+point #3362 measured). The still-live mechanism that survives is
+``__session_switch_request__``'s absence from the wire: it is the TAP
+(``_SessionFrameSource._drain_one_session``) consuming it, not merely
+``CONTROL_FILTER_KINDS`` filtering it — the forwarder's ``continue`` is
+SUBSCRIBER-LOCAL (it and the AG-UI tap are independent ``outbox_hub``
+subscribers, and the hub fans every message out to every subscription), so it
+only means "not re-posted to ``repl_outbox``" and says nothing about the wire
+on its own.
 
 Real instances only — a real ``AgUiEmitter`` over real SSE text; no mocks.
 """
@@ -139,32 +143,30 @@ async def test_filtered_control_sentinels_are_not_on_the_wire() -> None:
 
 
 @pytest.mark.asyncio
-async def test_forwarder_continue_does_not_keep_a_sentinel_off_the_wire(
+async def test_tap_not_filter_keeps_switch_request_off_the_wire(
     tmp_path,
 ) -> None:
-    """Tier 2: REACHABILITY, through the real tap — the registry forwarder's
-    ``continue`` is subscriber-local and does not gate the AG-UI wire (#3362).
+    """Tier 2: REACHABILITY, through the real tap — ``__session_switch_request__``
+    is kept off the AG-UI wire by the TAP consuming it
+    (``_SessionFrameSource._drain_one_session``), not merely by
+    ``CONTROL_FILTER_KINDS`` filtering it (#3362's distinction; #4534 PR-2
+    dropped this file's former ``__attach_request__`` arm — that sentinel's
+    forwarder branch is retired, so there is no live case left of "forwarder
+    swallows it for ``repl_outbox`` yet it still reaches the wire").
 
     Every other test in this file feeds a synthetic frame list straight to the
     emitter, which can only ever show what the emitter does with a frame it is
-    HANDED — it cannot show whether a frame arrives at all. That gap is what let
-    "``__attach_request__`` never reaches the AG-UI tap" survive in three
-    docstrings while being false. This test closes it by running the REAL
-    ``AgentRegistry`` forwarder (the thing that ``continue``s) concurrently with
+    HANDED — it cannot show whether a frame arrives at all. This test closes
+    that gap by running the REAL ``AgentRegistry`` forwarder concurrently with
     the REAL ``_SessionFrameSource`` + emitter, and reading the wire.
 
-    Three arms, so neither direction can pass vacuously:
+    Two arms:
 
-    - ``__attach_request__`` — not in ``CONTROL_FILTER_KINDS`` → **on the wire**,
-      even though the forwarder swallowed it for ``repl_outbox``.
-    - ``__session_switch_request__`` — **not on the wire**. Same tap, same
-      forwarder, opposite outcome, which is what shows the forwarder is not the
-      discriminator. ★The mechanism here is the TAP consuming the sentinel
-      (``_drain_one_session``), NOT ``CONTROL_FILTER_KINDS``: measured by strip —
+    - ``__session_switch_request__`` — **not on the wire**. Measured by strip:
       removing the filter entry alone leaves this arm green, and only removing
-      the filter entry AND the tap's consumption turns it red. The filter is a
-      backstop for a source that does not consume it. This arm deliberately does
-      not attribute itself to the filter; the synthetic
+      the filter entry AND the tap's consumption turns it red — the filter is
+      a backstop for a source that does not consume it. This arm deliberately
+      does not attribute itself to the filter; the synthetic
       ``test_filtered_control_sentinels_are_not_on_the_wire`` above is the
       filter's own gate (and does go red when the entry is removed).
     - an ordinary ``agent`` frame — on the wire, so a silent tap cannot make the
@@ -179,10 +181,6 @@ async def test_forwarder_continue_does_not_keep_a_sentinel_off_the_wire(
     emitter = AgUiEmitter(source.frames(), lambda: None)
 
     async def _drive() -> None:
-        await asyncio.sleep(0.2)
-        await session._put_outbox(
-            OutboxMessage(kind="__attach_request__", text="beta")
-        )
         await asyncio.sleep(0.2)
         await session._put_outbox(
             OutboxMessage(kind="__session_switch_request__", text="no-such-sid")
@@ -200,23 +198,8 @@ async def test_forwarder_continue_does_not_keep_a_sentinel_off_the_wire(
         source.close()
     names = _reyn_display_names(parse_sse_blocks(sse.split("\n")))
 
-    # ★Premise witness, on the PUBLIC surface: the forwarder is what ``continue``s,
-    # so if it were not running this test would prove nothing about it. Rather than
-    # inspecting its task, observe its EFFECT — ``__attach_request__("beta")`` makes
-    # the forwarder swap the attached agent. alpha → beta is only reachable by that
-    # branch actually executing, i.e. by the forwarder having consumed the very
-    # sentinel that also reached the wire.
-    assert reg.attached_name == "beta", (
-        "the registry forwarder did not consume __attach_request__ — it is not "
-        "running, so the 'continue does not gate the wire' claim is untested here"
-    )
     assert "reyn.display.agent" in names, (
-        f"the tap produced nothing — the arms below would be vacuous: {names}"
-    )
-    assert "reyn.display.__attach_request__" in names, (
-        "__attach_request__ did NOT reach the wire — if this now holds, the "
-        "forwarder/tap topology changed and protocol.py's reasoning needs "
-        f"revisiting: {names}"
+        f"the tap produced nothing — the arm below would be vacuous: {names}"
     )
     assert "reyn.display.__session_switch_request__" not in names, (
         f"the switch sentinel leaked onto the wire (tap consumption + the "

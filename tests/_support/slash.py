@@ -44,11 +44,29 @@ class RecordingTransport(ClientTransport):
     def __init__(self, session: Any = None) -> None:
         self._session = session
         self.displayed: "list[OutboxMessage]" = []
+        # #4534 PR-2: what request_attach/request_session_switch were CALLED
+        # WITH — a slash-handler unit test's own claim is "the handler asked
+        # the transport to do X", not "attaching actually works end-to-end"
+        # (that integration claim has its own real-registry coverage,
+        # tests/interfaces/test_4534_pr1_request_attach_switch.py). Recording
+        # here mirrors how ``displayed`` already records ``put_display`` calls
+        # rather than driving a real registry through a test's own hand-built
+        # fake.
+        self.attach_requests: "list[str]" = []
+        self.session_switch_requests: "list[str]" = []
 
     # -- the seam under test ------------------------------------------------
 
     def put_display(self, msg: "OutboxMessage") -> None:
         self.displayed.append(msg)
+
+    async def request_attach(self, agent_name: str) -> bool:
+        self.attach_requests.append(agent_name)
+        return True
+
+    async def request_session_switch(self, session_id: str) -> bool:
+        self.session_switch_requests.append(session_id)
+        return True
 
     # -- readers a test asserts through -------------------------------------
 

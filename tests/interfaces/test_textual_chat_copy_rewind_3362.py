@@ -27,11 +27,13 @@ Graded invariants:
    The action gate additionally pins that the picker's submission is IDENTICAL
    to a typed one, so the picker cannot grow a private action path beside the
    real one.
-4. **The other two sentinels are still skipped** — ``__attach_request__`` /
-   ``__session_switch_request__`` are consumed UPSTREAM by
-   ``AgentRegistry._forwarder`` (pinned by ``test_attach_request_forwarded.py``
-   and ``test_3310_n3_remote_switch_parity.py``); the TUI must keep skipping
-   them rather than leaking a bare sentinel into the conversation.
+4. **The remaining sentinel is still skipped** — ``__session_switch_request__``
+   is consumed UPSTREAM by ``AgentRegistry._forwarder`` (pinned by
+   ``test_3310_n3_remote_switch_parity.py``; its sibling
+   ``__attach_request__`` retired #4534 PR-2 — ``/attach`` now goes through
+   ``ClientTransport.request_attach``, a typed operation, no sentinel left to
+   skip); the TUI must keep skipping it rather than leaking a bare sentinel
+   into the conversation.
 
 **No real state is ever rewound here.** The app's rewind action ends at the
 ``ClientTransport.run_slash_command`` seam (#3595 S5 — a slash the app routes is
@@ -502,28 +504,24 @@ async def test_escape_dismisses_the_picker_without_rewinding() -> None:
 
 
 @pytest.mark.asyncio
-async def test_upstream_consumed_sentinels_stay_out_of_the_conversation() -> None:
-    """Tier 2: ``__attach_request__`` / ``__session_switch_request__`` are still
-    skipped — neither leaks a bare sentinel row into the pane.
+async def test_upstream_consumed_sentinel_stays_out_of_the_conversation() -> None:
+    """Tier 2: ``__session_switch_request__`` is still skipped — it never
+    leaks a bare sentinel row into the pane.
 
-    These two are NOT the same hole ``/copy``/``/rewind`` were. Both are consumed
-    by ``AgentRegistry._forwarder`` before they can reach a LOCAL client's frame
-    stream (pinned by ``test_attach_request_forwarded.py`` and
-    ``test_3310_n3_remote_switch_parity.py``), and their effect reaches this app
-    as the ``session_attached`` ``EventFrame``.
+    ``__attach_request__`` retired (#4534 PR-2): ``/attach`` now goes through
+    ``ClientTransport.request_attach``, a typed operation with no
+    display-channel sentinel, so it is no longer in ``_SKIP_KINDS`` and no
+    longer a constructible ``OutboxMessage`` kind at all.
 
-    On the REMOTE path they differ, which is why this gate feeds them in as
-    frames (the remote shape) rather than asserting they cannot arrive:
-    ``__attach_request__`` really IS emitted as an AG-UI display frame — measured
-    in ``tests/interfaces/test_agui_control_filter.py``, since the forwarder's ``continue``
-    is subscriber-local and does not gate the wire — so skipping it here is
-    load-bearing. ``__session_switch_request__`` is consumed by the AG-UI tap and
-    filtered besides, so its entry is a true fail-safe. Either way neither may
-    render, and a neighbouring ordinary frame must still render (so the
-    assertion cannot pass by the pump being dead)."""
-    assert _SKIP_KINDS == {"__attach_request__", "__session_switch_request__"}
+    ``__session_switch_request__`` is consumed by ``AgentRegistry._forwarder``
+    before it can reach a LOCAL client's frame stream (its effect arrives
+    instead as the ``session_attached`` ``EventFrame``), and — on the REMOTE
+    path — by the AG-UI tap and ``CONTROL_FILTER_KINDS`` besides, so its
+    entry here is a true fail-safe (pending #4534 PR-2b's switch-follow
+    port). A neighbouring ordinary frame must still render (so the assertion
+    cannot pass by the pump being dead)."""
+    assert _SKIP_KINDS == {"__session_switch_request__"}
     transport = ScriptedTransport([
-        OutboxMessage(kind="__attach_request__", text="beta"),
         OutboxMessage(kind="__session_switch_request__", text="sid-b"),
         OutboxMessage(kind="agent", text="a real reply"),
     ])
@@ -532,8 +530,8 @@ async def test_upstream_consumed_sentinels_stay_out_of_the_conversation() -> Non
         await _settle(pilot)
         texts = _texts(app)
         assert "a real reply" in texts, f"the pump never ran: {texts}"
-        assert "beta" not in texts and "sid-b" not in texts, (
-            f"a control sentinel leaked into the conversation: {texts}"
+        assert "sid-b" not in texts, (
+            f"the control sentinel leaked into the conversation: {texts}"
         )
 
 

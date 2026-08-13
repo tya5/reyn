@@ -2,14 +2,13 @@
 
 Migrated out of ``session.py`` per the cli-redesign plan (`docs/deep-dives/
 contributing/cli-redesign.md`). The session still owns the AgentRegistry
-reference and the REPL listens for ``__attach_request__`` outbox messages
-to perform the actual swap; this module just turns user input into the
-right outbox shape.
+reference; the actual swap runs through ``ClientTransport.request_attach``
+(#4534 PR-2, retired the ``__attach_request__`` display-channel sentinel) —
+this module validates the target and asks the transport to attach.
 """
 from __future__ import annotations
 
 from reyn.interfaces.slash import SlashContext, reply, reply_error, slash
-from reyn.runtime.outbox import OutboxMessage
 
 _NO_REGISTRY_AGENTS = (
     "agent registry not wired; /agents only works in `reyn chat`"
@@ -85,12 +84,13 @@ async def agents_cmd(ctx: "SlashContext", args: str) -> None:
     see_also=("docs/concepts/multi-agent/multi-agent.md",),
 )
 async def attach_cmd(ctx: "SlashContext", args: str) -> None:
-    """``/attach <name>`` — request the REPL switch to a different agent.
+    """``/attach <name>`` — request the client switch to a different agent.
 
-    The actual switch happens in ``repl._input_loop`` (which owns the
-    display wiring). This handler just validates the name and posts a
-    ``__attach_request__`` outbox message; the REPL listens for that
-    kind and performs the swap.
+    This handler validates the name and asks
+    ``ClientTransport.request_attach`` to perform the swap (#4534 PR-2) —
+    a typed request to whichever transport holds the session (local:
+    direct ``registry.attach``; remote: a wire call the server executes),
+    not a display-channel sentinel a REPL loop has to specially detect.
     """
     name = args.strip()
     if not name:
@@ -113,12 +113,9 @@ async def attach_cmd(ctx: "SlashContext", args: str) -> None:
         return
     # Surface the switch in the conv pane. Without this, ``/attach``
     # produced no in-pane feedback — the user had to run ``/agents``
-    # to confirm the switch happened. The actual attach is still
-    # driven by the ``__attach_request__`` sentinel below; this is a
+    # to confirm the switch happened. The actual attach runs through
+    # ClientTransport.request_attach (#4534 PR-2); this reply is a
     # separate, visible breadcrumb. (The header label refresh is
     # blocked by a separate registry-forwarder bug — see #191.)
     await reply(ctx, f"attached to {name!r}")
-    # Sentinel kind — see repl._input_loop for the receiver.
-    ctx.transport.put_display(OutboxMessage(
-        kind="__attach_request__", text=name,
-    ))
+    await ctx.transport.request_attach(name)

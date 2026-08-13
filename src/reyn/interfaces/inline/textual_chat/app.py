@@ -133,30 +133,20 @@ logger = logging.getLogger(__name__)
 # the :class:`~reyn.interfaces.inline.textual_chat.rewind_picker.RewindPicker`
 # region + a text fallback) and are gone from this set.
 #
-# The two that REMAIN are a different thing entirely, and are not a deferral.
-# Both are consumed by ``AgentRegistry._forwarder`` (registry.py — the
-# ``__attach_request__`` / ``__session_switch_request__`` branches ``continue``
-# without ever putting the message on ``repl_outbox``), so neither reaches a
-# LOCAL client's frame stream; their effect arrives instead as the
-# ``session_attached`` ``EventFrame`` (#3310 N2,
-# :meth:`TextualChatApp._handle_session_attached_event`). Nothing about
-# ``/attach`` or ``/session switch`` is implemented by this set.
+# The one that REMAINS is a fail-safe, not a live path. ``/attach`` and
+# ``/session switch`` now go through ``ClientTransport.request_attach`` /
+# ``request_session_switch`` (#4534 PR-2) — typed operations, not a
+# display-channel sentinel; ``__attach_request__`` retired from this set
+# with them (#4534 PR-2: nothing constructs that kind anymore).
 #
-# ★They are NOT symmetric on the REMOTE path, and the difference is measured
-# (#3362, ``tests/interfaces/test_agui_control_filter.py``) — the forwarder's ``continue``
-# is subscriber-local and gates only ``repl_outbox``, so it says nothing about
-# the wire (canonical reasoning: ``transport/agui/protocol.py`` beside
-# ``CONTROL_FILTER_KINDS``):
-#
-# - ``__attach_request__`` — LOAD-BEARING here. It really is emitted as a
-#   profiled AG-UI display frame, so a remote client genuinely receives it;
-#   skipping it is what keeps a bare sentinel text out of the conversation pane.
-# - ``__session_switch_request__`` — a true fail-safe. The AG-UI tap consumes it
-#   before the emitter, and ``CONTROL_FILTER_KINDS`` filters it besides, so it
-#   should never arrive by either route.
+# ``__session_switch_request__`` is left here as a fail-safe pending #4534's
+# switch-follow port (the AG-UI remote tap's mid-stream re-point used to
+# consume this same sentinel off the outbox — see
+# ``transport/agui/endpoint.py``'s ``_SessionFrameSource``, which is why the
+# kind is not yet fully retired). If a future change removes it there too,
+# remove it here in the same PR.
 _SKIP_KINDS = frozenset(
     {
-        "__attach_request__",
         "__session_switch_request__",
     }
 )

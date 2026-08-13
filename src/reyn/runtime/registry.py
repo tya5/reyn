@@ -3428,7 +3428,11 @@ class AgentRegistry:
         Runs continuously per (name, sid) session. Only forwards when that
         session is the attached one; otherwise drops the message (transient
         kinds were already dropped at source, durable narration is in history).
-        Special kind `__attach_request__` is consumed here as a control signal.
+        Special kind `__session_switch_request__` is consumed here as a
+        control signal (#4534 PR-2: `__attach_request__`'s sibling branch is
+        retired — /attach now goes through `ClientTransport.request_attach`,
+        which calls `registry.attach()` directly; this branch stays until
+        PR-2b ports the AG-UI remote switch-follow it also feeds).
 
         ADR-0039 P6b: subscribes to the session's outbox *hub* (unbounded local
         sink) instead of draining ``session.outbox`` directly — so this local
@@ -3454,30 +3458,19 @@ class AgentRegistry:
                     if self._connection.is_attached(key):
                         await self.repl_outbox.put(msg)
                     return
-                if msg.kind == "__attach_request__":
-                    # User typed `/attach <other>` while this agent was attached.
-                    if msg.text and self.exists(msg.text):
-                        await self.attach(msg.text)
-                        # (Issue #191 re-post removed: that forwarded msg to the
-                        # Textual TUI's _on_attach_request for header refresh.
-                        # TUI deleted — re-post is dead code; _output_loop never
-                        # handled this kind, so only effect was a bare-text leak.)
-                    continue
                 if msg.kind == "__session_switch_request__":
                     # FP-0043 Stage 4a: `/session switch <sid>` — focus another
                     # session of the CURRENT agent (msg.text = target sid). Routed
-                    # through the forwarder (mirroring __attach_request__) so the
-                    # focus flip + display re-wire are sequenced on the registry
-                    # side, not raced by a direct call from the slash handler.
-                    # Graceful on a bad sid: drop (the slash handler validated
-                    # existence + replied before posting).
+                    # through the forwarder so the focus flip + display re-wire
+                    # are sequenced on the registry side, not raced by a direct
+                    # call from the slash handler. Graceful on a bad sid: drop
+                    # (the slash handler validated existence + replied before
+                    # posting).
                     if msg.text:
                         try:
                             await self.attach_session(name, msg.text)
                         except KeyError:
                             pass  # session vanished between validate + switch — no-op
-                        # (re-post removed: was for Textual TUI header refresh —
-                        # dead code after TUI deletion; _output_loop never used it.)
                     continue
                 if self._connection.is_attached(key):
                     await self.repl_outbox.put(msg)
