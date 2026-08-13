@@ -47,7 +47,6 @@ import pytest
 from textual_flowview import FlowView
 
 from reyn.interfaces.inline.textual_chat import TextualChatApp
-from reyn.interfaces.inline.textual_chat.sent_queue import SentQueue
 from reyn.interfaces.repl.renderer import (
     ConsoleChatRenderer,
     InlineChatRenderer,

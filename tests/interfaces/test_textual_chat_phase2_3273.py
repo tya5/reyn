@@ -30,7 +30,6 @@ from __future__ import annotations
 import asyncio
 import re
 import tomllib
-from pathlib import Path
 from typing import AsyncIterator
 
 import pytest
@@ -182,7 +181,6 @@ def test_flowview_library_is_unmodified_blink_lives_in_reyn() -> None:
     :class:`ReynGutter`. The animation cadence is now the library's own native
     ``FlowView(animation_fps=N)`` clock (reyn passes ``N``; the library is
     unmodified). This is the 'blink glyph is reyn's, cadence is native' contract."""
-    import textual_flowview
     from textual_flowview import Entry, FlowView, StateDecorator
 
     # The library's own primitives are defined in textual_flowview, untouched.

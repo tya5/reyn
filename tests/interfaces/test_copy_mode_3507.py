@@ -151,7 +151,6 @@ def _binding_surfaces() -> "dict[str, list[str]]":
     read as "no violations" — the worst direction for this particular check.
     """
     import ast
-    import pathlib
 
     package = REPO_ROOT / (
         "src/reyn/interfaces/inline/textual_chat"

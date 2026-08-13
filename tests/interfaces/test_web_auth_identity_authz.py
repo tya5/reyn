@@ -18,8 +18,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-
 from reyn.interfaces.web.auth import (
     OPERATOR_USER_ID,
     AuthContext,

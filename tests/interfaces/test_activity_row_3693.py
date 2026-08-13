@@ -26,7 +26,6 @@ import asyncio
 from typing import AsyncIterator
 
 import pytest
-from textual.content import Span
 
 from reyn.interfaces.inline.textual_chat import TextualChatApp, palette
 from reyn.interfaces.inline.textual_chat.activity_row import (

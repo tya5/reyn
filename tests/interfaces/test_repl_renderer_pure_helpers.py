@@ -20,7 +20,6 @@ strengthened; see each test's own docstring for its specific finding.
 from __future__ import annotations
 
 import sys
-from pathlib import Path
 
 from tests._support.paths import REPO_ROOT
 

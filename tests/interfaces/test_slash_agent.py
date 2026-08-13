@@ -7,7 +7,6 @@ instances or the LLMReplay Fake").
 """
 from __future__ import annotations
 
-import asyncio
 import sys
 from pathlib import Path
 
@@ -181,7 +180,7 @@ async def test_agent_edit_role_persists_to_profile_and_session(tmp_path):
 async def test_agent_edit_role_preserves_other_profile_fields(tmp_path):
     """Tier 2: role edit MUST NOT clobber name / created_at / allowed_mcp."""
     from reyn.interfaces.slash.agent import _edit_role
-    from reyn.runtime.profile import PROFILE_FILENAME, AgentProfile
+    from reyn.runtime.profile import AgentProfile
 
     registry = _build_real_registry(tmp_path)
     registry.create("delta", role="initial")

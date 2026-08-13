@@ -21,7 +21,6 @@ circular.
 from __future__ import annotations
 
 import ast
-from pathlib import Path
 
 from reyn.core.events.events import Event
 from reyn.interfaces.transport.agui.protocol import (

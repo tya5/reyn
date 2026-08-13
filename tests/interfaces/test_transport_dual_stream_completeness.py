@@ -15,7 +15,6 @@ derivation), so the two are bound independently — the gate is not circular.
 from __future__ import annotations
 
 import ast
-from pathlib import Path
 
 from reyn.interfaces.repl.status import _WAITING_ON_BY_EVENT
 from reyn.interfaces.transport.frames import forwarded_frame_kinds

@@ -41,7 +41,6 @@ import pytest
 pytest.importorskip("fastapi", reason="fastapi not installed ([web] extra missing)")
 
 from reyn.core.events.events import EventLog  # noqa: E402
-from reyn.schemas.models import Event  # noqa: E402
 from tests._support.paths import REPO_ROOT
 
 
@@ -348,7 +347,6 @@ def test_handle_async_mode_attaches_bridge_around_send_to_agent_impl() -> None:
     ``test_handle_async_mode_bridge_is_unconditional_after_gap1``.
     """
     import ast
-    from pathlib import Path
 
     src_path = (
         REPO_ROOT

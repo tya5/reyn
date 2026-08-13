@@ -16,7 +16,6 @@ mcp_tools_cache_snapshot public properties.
 """
 from __future__ import annotations
 
-import asyncio
 import time
 from pathlib import Path
 
@@ -47,7 +46,6 @@ from reyn.runtime.services.mcp_cache_file import (
     ToolsUnknown,
     cache_file_path,
     read_cache,
-    write_cache,
 )
 
 # ---------------------------------------------------------------------------

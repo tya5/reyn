@@ -15,8 +15,6 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-import pytest
-
 from reyn.interfaces.cli.commands.support_bundle import _line_included, _rec_time
 from reyn.interfaces.cli.commands.topology import _format_members
 from reyn.runtime.topology import Topology

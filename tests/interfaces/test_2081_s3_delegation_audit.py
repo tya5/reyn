@@ -17,8 +17,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-
 from reyn.interfaces.cli.commands import audit
 
 _RULE = "gateway:delegation-unsafe"

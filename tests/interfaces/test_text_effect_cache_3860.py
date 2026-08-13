@@ -377,7 +377,6 @@ def test_every_tte_effect_is_offered() -> None:
     pinning the third party's current inventory under reyn's name (CLAUDE.md
     Q1); what reyn actually promises is "whatever TTE ships, all of it".
     """
-    import inspect
     import pkgutil
 
     import terminaltexteffects.effects as tte_effects

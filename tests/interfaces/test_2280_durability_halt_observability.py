@@ -52,7 +52,7 @@ from reyn.core.events.state_log import StateLog
 from reyn.interfaces.repl.renderer import ConsoleChatRenderer, InlineChatRenderer
 from reyn.interfaces.repl.status import _snapshot
 from reyn.interfaces.transport.client_transport import ClientTransport
-from reyn.interfaces.transport.frames import DisplayFrame, EventFrame, Frame
+from reyn.interfaces.transport.frames import EventFrame, Frame
 from reyn.runtime.outbox import OutboxMessage
 from reyn.runtime.profile import AgentProfile
 from reyn.runtime.registry import AgentRegistry

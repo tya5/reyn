@@ -18,8 +18,6 @@ client below is a plain standard-field consumer written for the test (no mocks).
 """
 from __future__ import annotations
 
-import asyncio
-
 import pytest
 
 from reyn.core.events.events import Event

@@ -17,7 +17,6 @@ import asyncio
 import pytest
 
 from reyn.interfaces.web.run_registry import RunEntry, RunRegistry
-from reyn.user_intervention import InterventionAnswer, UserIntervention
 
 # ---------------------------------------------------------------------------
 # Helpers
