@@ -1281,7 +1281,9 @@ Result fields (`plugin_uninstall`): `status` (`"uninstalled"` / `"error"`),
 `plugin_data_retained_at` (present only when a `~/.reyn/plugin-data/<name>/`
 directory exists for the uninstalled name, #4570 conversion D).
 
-Events emitted: `plugin_install_started` / `_copied` / `_registered` /
+Events emitted: `plugin_install_reconciled` (step 0, above — self-healing
+rollback of a stale prior install, fires BEFORE `_started` and only when
+one is found) / `plugin_install_started` / `_copied` / `_registered` /
 `_completed` / `_token_vocabulary_mismatch` (#4610, one per stale-token
 finding, above); `plugin_uninstall_started` / `_registry_dropped` /
 `_completed`.
