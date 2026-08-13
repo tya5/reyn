@@ -5,10 +5,11 @@ Supports two transports today: ``stdio`` and ``http`` (Streamable HTTP);
 ``sse`` uses the SSE client.
 
 #4282: EVERY transport — ``stdio``, ``http``/``sse`` with or without OAuth
-configured — now goes through the official ``mcp`` SDK DIRECTLY
-(``mcp.client.session.ClientSession`` + ``mcp.client.{stdio,
-streamable_http,sse}``). fastmcp is no longer constructed anywhere in this
-module. #3698 stage 1 had already migrated stdio and non-OAuth http/sse;
+configured — now goes through the official ``mcp`` SDK DIRECTLY (``mcp.
+Client`` — #3698 PR-1; was ``mcp.client.session.ClientSession`` — plus
+``mcp.client.{stdio,streamable_http,sse}`` for the transports either way).
+fastmcp is no longer constructed anywhere in this module. #3698 stage 1 had
+already migrated stdio and non-OAuth http/sse;
 #4282 closed the remaining OAuth-configured-http gap by building the
 official SDK's own ``mcp.client.auth.OAuthClientProvider`` directly
 instead of fastmcp's ``OAuth`` wrapper around it — this needed two things
@@ -65,12 +66,105 @@ itself satisfy that precondition — see #4302 for the corrected plan.
 
 Each ``MCPClient`` owns a single connection opened on :meth:`initialize` and
 torn down on :meth:`close`, held open via a ``contextlib.AsyncExitStack``
-(see :meth:`_initialize_stdio`'s docstring for why — the official SDK
-expresses one connection as TWO separate async context managers, not a
-single reentrant object) for the object's lifetime (matching the previous
-hand-rolled client's caching semantics on ``OpContext.mcp_clients`` / the
-pool's subprocess-reuse contract — persistent-subprocess semantics for
-stdio either way).
+(see :meth:`_initialize_stdio`'s docstring for the full lifecycle-model
+history) for the object's lifetime (matching the previous hand-rolled
+client's caching semantics on ``OpContext.mcp_clients`` / the pool's
+subprocess-reuse contract — persistent-subprocess semantics for stdio
+either way).
+
+#3698 PR-1 — ``ClientSession`` -> ``Client``:
+  reyn used to construct the official SDK's raw ``ClientSession`` directly
+  over an already-opened transport (``read, write = await stack.
+  enter_async_context(stdio_client(...))`` then ``ClientSession(read,
+  write, ...)``), needing an ``AsyncExitStack`` to hold BOTH as two
+  separate entered context managers. ``mcp.Client`` now owns entering the
+  transport itself: reyn hands it the UN-entered transport context manager
+  (``stdio_client(...)``/``streamable_http_client(...)``/``sse_client(...)``)
+  as its ``server=`` positional, and ``Client.__aenter__`` enters both the
+  transport and the ``ClientSession`` it builds internally, on its OWN
+  internal exit stack. Net effect: reyn's own ``AsyncExitStack`` now enters
+  exactly ONE thing (``Client``) instead of two — CLOSER to the single-
+  reentrant-object shape fastmcp's old ``Client`` had than the two-CM raw-
+  ``ClientSession`` pattern this file used between #3698 stage 1 and PR-1.
+  ``self._client`` is the entered ``Client`` instance (not ``Client.
+  session``) — it exposes every method reyn already called on
+  ``ClientSession`` (``call_tool``/``list_tools``/``list_resources``/
+  ``list_resource_templates``/``read_resource``/``list_prompts``/
+  ``get_prompt``/``subscribe_resource``/``unsubscribe_resource``), so those
+  call sites are unchanged.
+
+  ``mode="legacy"``, NOT the SDK's own ``"auto"`` default — a design
+  correction, not the original plan (architect's own PR-1 spec named
+  ``mode="auto"``; lead-coder overrode it after two live-verified failure
+  symptoms, both traced to the SAME mechanism): ``"auto"`` probes
+  ``server/discover`` and negotiates UP to a modern (2026-07-28-era)
+  protocol version whenever the PEER nominally advertises support for
+  it — which every reyn-owned stdio/http test double DOES, simply by
+  running on the same ``mcp>=2.0`` SDK reyn's client now depends on,
+  REGARDLESS of whether that double's own HANDLERS were ever built for
+  the modern wire's actual mechanisms. Two symptoms, live-verified against
+  the SAME real test doubles, ``mode="legacy"`` vs ``"auto"``, held
+  constant otherwise:
+
+  - **Symptom 1 (resources.subscribe silently False)**:
+    ``mcp_subscribable_resources_server.py`` registers only the LEGACY
+    ``resources/subscribe`` handler, never the modern
+    ``"subscriptions/listen"`` one. The installed SDK's own
+    ``Server.get_capabilities(protocol_version=...)`` is BY DESIGN (read
+    directly, not guessed): at a modern-era negotiated version it derives
+    ``resources.subscribe`` from whether ``"subscriptions/listen"`` is
+    registered, ignoring the legacy handler entirely (its own docstring:
+    "the modern wire cannot dispatch [the legacy handler]"). Probed live:
+    ``mode="legacy"`` -> ``negotiated=2025-11-25``,
+    ``resources=ResourcesCapability(subscribe=True, ...)``;
+    ``mode="auto"`` -> ``negotiated=2026-07-28``,
+    ``resources=ResourcesCapability(subscribe=False, ...)`` — same
+    server, same handler registration, only the negotiated version
+    differs. This is not a bug in the SDK or the test double — the double
+    genuinely does not implement the modern subscription mechanism, and
+    the SDK correctly reports that. It is #3698 PR-2's job (the
+    ``listen`` <-> ``subscribe_resource`` port), not PR-1's, to close it.
+  - **Symptom 2 (list_changed notifications silently undelivered)**:
+    probed live against ``mcp_fastmcp_echo_server.py``'s
+    ``notify_tool_list_changed`` tool with a real ``message_handler``:
+    ``mode="legacy"`` delivers exactly 1
+    ``ToolListChangedNotification``; ``mode="auto"`` delivers ZERO —
+    no error, no timeout, silent. Same root mechanism as symptom 1: a
+    modern-era negotiation switches list-changed delivery to the
+    ``subscriptions/listen`` stream, which this (FastMCP-built) test
+    double does not implement either.
+
+  Both symptoms are genuine FUNCTION LOSS against a server whose actual
+  implemented capability did not change — exactly what the owner's stated
+  backward-compat constraint ("古い mcp ver server でも機能を維持すること")
+  forbids, and ``"auto"``'s negotiation-follows-the-peer's-NOMINAL-version
+  behavior is not gated on whether reyn's OWN handler-level expectations
+  (subscribe delivery, list-changed delivery) still hold at that version —
+  so it is not the behavior-preserving swap PR-1 promises ("the same
+  thing, in a different class"; existing green is the bar). ``mode=
+  "legacy"`` keeps negotiation IDENTICAL to what raw ``ClientSession``
+  always did — zero behavior change, satisfying PR-1's own promise.
+  Switching to ``"auto"`` (or a version-aware negotiation policy) is
+  deliberately deferred to #3698 PR-2/PR-3, which is where the modern
+  ``listen``-based mechanisms this needs are actually built and gated —
+  this trace is the design record for why that pairing is required,
+  not an incidental note.
+
+  Response cache — deliberately disabled (``cache=None``): ``Client``
+  ships a client-side response cache (SEP-2549, protocol revision
+  2026-07-28) covering ``list_tools``/``list_resources``/
+  ``list_resource_templates``/``list_prompts``/``read_resource``, default
+  ``cache_mode="use"``. Live-verified (read the SDK's own
+  ``ClientResponseCache._resolve``): a result is ONLY ever actually stored
+  when BOTH the negotiated protocol version is 2026-07-28-era (``modern``)
+  AND the server explicitly set ``ttl_ms`` on that result — against every
+  server reyn talks to as of this PR (a pre-2026-07-28 negotiation, always,
+  since #3698 PR-3 is what first connects to a modern server), the cache
+  is structurally INERT regardless of ``cache_mode``. ``cache=None`` is
+  therefore a forward-guard for #3698 PR-3, NOT a live-bug fix — it keeps
+  #2597 P1's "reyn keeps NO resource content cache" decision enforced in
+  code rather than resting on today's protocol-modernity gate, which a
+  future PR could cross without anyone re-deriving this reasoning.
 
 Environment variable expansion:
   ``${VAR_NAME}`` in any string config value is replaced with
@@ -79,17 +173,21 @@ Environment variable expansion:
   handing config to the SDK.
 
 Capability / version gate (#2597 capability slice):
-  MCP's ``initialize`` handshake natively negotiates BOTH a protocol version
-  and a set of server capabilities (tools/resources/prompts/logging/
-  completions) in one round trip — rather than sprinkling version checks
-  across reyn, :meth:`initialize` captures both ONCE, right after the
-  handshake completes. #3698 stage 1 re-measured this against the official
-  SDK directly (live probe, not read from docs): ``ClientSession.
-  initialize()`` RETURNS the ``mcp.types.InitializeResult`` directly (a
-  plain return value — #4282 removed the last path, fastmcp's OAuth
-  transport, that instead read it off a separate ``Client.
-  initialize_result`` property populated by ``client.__aenter__()``; every
-  path is the plain-return-value shape now). :meth:`supports` answers "did the server
+  MCP's handshake natively negotiates BOTH a protocol version and a set of
+  server capabilities (tools/resources/prompts/logging/completions) in one
+  round trip — rather than sprinkling version checks across reyn,
+  :meth:`initialize` captures both ONCE, right after the handshake
+  completes. #3698 PR-1 re-measured this against the official SDK directly
+  (live probe, not read from docs): ``Client.protocol_version``/``.
+  server_capabilities`` are populated once ``Client.__aenter__`` completes
+  — a property read, no longer a separate ``init_result`` return value
+  threaded through (was: ``ClientSession.initialize()`` RETURNS the
+  ``mcp.types.InitializeResult`` directly, a plain return value, before
+  PR-1). ``Client`` supports three handshake paths (``initialize``/
+  ``discover``/``adopt``, chosen by its ``mode``), but reyn pins
+  ``mode="legacy"`` (``initialize`` only) — see the module docstring's
+  "mode='legacy', not the SDK's own 'auto' default" section for why.
+  :meth:`supports` answers "did the server
   advertise capability X" (conservative False before initialize / on a
   missing result); :func:`require_capability` is the enforcement seam —
   call it before issuing a request for a gated feature so an unsupported
@@ -491,6 +589,22 @@ async def _close_stack_after_init_failure(exc: BaseException, stack: "Any") -> B
     re-raise ``exc`` untouched so it reaches ``race_cancellable``'s own
     (correct) translation to :class:`~reyn.core.cancellable.Cancelled`
     unmolested, never becoming a misleading ``MCPError``.
+
+    #3698 PR-1 amendment — the CALLERS above no longer use ``anyio.
+    fail_after()`` for their init-timeout bound; they wrap ``Client.
+    __aenter__()`` (was: a bare ``session.initialize()`` RPC call) with
+    ``asyncio.wait_for()`` instead. This function's own root-cause finding
+    (above) does NOT change: it was measured against the OLDER shape
+    (wrapping a bare awaited RPC, no exit-stack-transfer involved) and
+    remains the reason a future bare-RPC-style wrapper should still reach
+    for ``anyio.fail_after()``, not ``wait_for()``. The NEWER shape
+    (wrapping a context-manager ENTRY whose ``Client.__aenter__`` transfers
+    ownership of still-open inner cancel scopes via ``exit_stack.
+    pop_all()``) is structurally different and was re-verified live to
+    behave the OPPOSITE way — see ``_initialize_stdio``'s matching comment
+    for the reasoning and probe output. This function itself (the discrim-
+    ination logic below) is unaffected either way: it operates generically
+    on whatever ``exc``/``stack`` its caller hands it.
     """
     real_exc: BaseException = exc
     try:
@@ -674,8 +788,10 @@ def _extract_stdio_child_pid(stdio_cm: "Any") -> int | None:
 # ── Client ───────────────────────────────────────────────────────────────────
 
 class MCPClient:
-    """Thin async wrapper around the official ``mcp`` SDK's ``ClientSession``
-    (#4282: fastmcp is no longer constructed anywhere in this class).
+    """Thin async wrapper around the official ``mcp`` SDK's ``Client`` (#3698
+    PR-1: was raw ``ClientSession`` — see :meth:`_initialize_stdio`'s
+    docstring for the swap's full rationale; #4282: fastmcp is no longer
+    constructed anywhere in this class).
 
     Construct with the *raw* server config dict from ``reyn.yaml`` (the
     caller is responsible for env-var expansion via :func:`expand_env`).
@@ -784,16 +900,14 @@ class MCPClient:
         # sys.stdin.isatty() at the point _build_oauth_provider actually
         # needs the answer — see _is_non_interactive().
         self._non_interactive_override: bool | None = non_interactive
-        self._client: Any = None  # official mcp.ClientSession when initialized
-        # #3698 stage 1 / #4282: holds the entered transport + ClientSession
-        # async context managers open for this object's lifetime — the
-        # official SDK's connection lifecycle is a pair of async context
-        # managers, not fastmcp.Client's old single reentrant
-        # __aenter__/close() object, so an AsyncExitStack is what reproduces
-        # the same "open once, use across many calls, close later" pattern
-        # (live-verified: initialize() then TWO separate call_tool()s
-        # against the SAME held session, then a clean stack.aclose() — see
-        # the commit message for the probe). None until initialize()
+        self._client: Any = None  # official mcp.Client when initialized (#3698 PR-1)
+        # #3698 stage 1 / PR-1 / #4282: holds the entered `mcp.Client` open
+        # for this object's lifetime via an AsyncExitStack — `Client` enters
+        # its own transport + session internally on ITS OWN __aenter__, so
+        # this reproduces the "open once, use across many calls, close
+        # later" pattern with a single entered context manager (was: TWO
+        # separate ones, the transport CM + a raw ClientSession, before
+        # PR-1 — see _initialize_stdio's docstring). None until initialize()
         # actually opens a connection (every transport now).
         self._exit_stack: "Any | None" = None
         self._initialized = False
@@ -814,11 +928,10 @@ class MCPClient:
         # no such resource (Noop / Landlock).
         self._sandbox_cleanup: Callable[[], None] | None = None
         # #2597 capability/version gate: captured right after the official
-        # SDK's ClientSession.initialize() handshake completes (a plain
-        # return value — see the module docstring's "Capability / version
-        # gate" section). None until then (or if the server's
-        # InitializeResult was unavailable — handled defensively, never
-        # raises).
+        # SDK's `Client` handshake completes (#3698 PR-1: read off
+        # `Client.protocol_version`/`.server_capabilities` — see the module
+        # docstring's "Capability / version gate" section). None until a
+        # connection is open.
         self._negotiated_version: str | None = None
         self._server_capabilities: Any = None  # mcp.types.ServerCapabilities | None
         # #2714 belt-and-suspenders: the OS pid of the stdio subprocess this client
@@ -946,24 +1059,22 @@ class MCPClient:
             await self._initialize_http_or_sse()
 
     async def _initialize_stdio(self) -> None:
-        """#3698 stage 1: stdio via the official ``mcp`` SDK, no fastmcp.
+        """#3698 stage 1 / PR-1: stdio via the official ``mcp`` SDK's
+        ``Client`` (was raw ``ClientSession``; see the module docstring's
+        "ClientSession -> Client" section for why and what changed).
 
-        Connection-lifetime model: fastmcp's ``Client`` is a single reentrant
-        async context manager an ``MCPClient`` enters once and holds open for
-        its own lifetime. The official SDK expresses the SAME connection as
-        TWO separate async context managers (``stdio_client`` for the
-        transport, ``ClientSession`` for the protocol session) that are
-        normally used inside one ``async with`` block. An
-        ``contextlib.AsyncExitStack`` reproduces the "open once, use across
-        many calls, close later" pattern instead — live-verified against the
-        real echo test-double (initialize → two separate call_tool()s against
-        the SAME held session → a clean ``stack.aclose()``) before this was
-        written, not assumed from reading the API alone.
+        Connection-lifetime model: ``Client`` is a single async context
+        manager (it enters its own transport + builds/enters its own
+        ``ClientSession`` internally, inside ITS OWN ``__aenter__``) —
+        actually CLOSER to fastmcp's old single-reentrant-``Client`` shape
+        than the raw ``ClientSession`` two-CM pattern this method used to
+        need an ``AsyncExitStack`` to reproduce. The ``AsyncExitStack`` stays
+        (entering ``Client`` itself, once) purely so ``close()``'s single
+        ``exit_stack.aclose()`` teardown path is unchanged.
         """
         from contextlib import AsyncExitStack
 
-        import anyio
-        from mcp.client.session import ClientSession
+        from mcp import Client
         from mcp.client.stdio import StdioServerParameters, stdio_client
 
         # Computed BEFORE the try block: the except handler's init-timeout hint
@@ -993,39 +1104,83 @@ class MCPClient:
                 env=dict(env) if env else None,
                 cwd=self._config.get("cwd"),
             )
+            # NOT entered here (PR-1's structural change from raw
+            # ClientSession): `stdio_cm` is the un-entered stdio_client(...)
+            # context manager, handed to `Client` below as its `server=`
+            # positional — `Client.__aenter__` enters it on ITS OWN internal
+            # exit stack, not reyn's. reyn keeps the object reference so
+            # `_extract_stdio_child_pid` can still read the entered
+            # generator's `.gen.ag_frame` after `Client` has entered it —
+            # same technique, same object, just entered by a different
+            # caller (live-verified, see this PR's commit message).
             stdio_cm = stdio_client(
                 params, **({"errlog": self._stderr_capture} if self._stderr_capture else {}),
             )
-            read, write = await stack.enter_async_context(stdio_cm)
             elicitation_callback = None
             if self._elicitation_handler is not None:
                 elicitation_callback = _adapt_elicitation_handler(self._elicitation_handler)
-            session = await stack.enter_async_context(
-                ClientSession(
-                    read, write,
-                    message_handler=self._message_handler,
-                    elicitation_callback=elicitation_callback,
-                )
+            client = Client(
+                stdio_cm,
+                message_handler=self._message_handler,
+                elicitation_callback=elicitation_callback,
+                # PR-1 forward-guard for #3698 PR-3 (NOT a live-bug fix — the
+                # SDK's response cache is structurally inert against every
+                # server reyn talks to as of this PR; see the module
+                # docstring's "Response cache — deliberately disabled"
+                # section for the full reasoning and the live-mechanism
+                # trace). Explicit `cache=None` keeps #2597 P1's "reyn keeps
+                # NO resource content cache" decision enforced in code
+                # rather than resting on an SDK gating condition a later PR
+                # could unknowingly cross.
+                cache=None,
+                # #3698 PR-1 design correction (lead-coder, live-verified —
+                # see the module docstring's "mode='legacy', not the SDK's
+                # own 'auto' default" section for the two-symptom trace):
+                # `mode="auto"` is NOT behavior-preserving. Explicit
+                # `mode="legacy"` is what actually keeps PR-1's promise
+                # ("the same thing, in a different class") — negotiation
+                # stays exactly what it was under raw `ClientSession`.
+                mode="legacy",
             )
-            # #3028/#3698 stage 1: reyn now owns the handshake bound directly
-            # instead of relying on fastmcp's opaque init_timeout constructor
-            # kwarg (anyio.fail_after wrapped in two layers of RuntimeError —
-            # see the removed _looks_like_init_timeout for why that
-            # indirection existed and why it no longer does).
-            # #4282-adjacent fix: anyio.fail_after(), not asyncio.wait_for() —
-            # see _close_stack_after_init_failure's docstring for the full
-            # root-cause (asyncio.wait_for corrupts anyio's per-task
-            # cancel-scope bookkeeping across an anyio-native call tree like
-            # this one). init_timeout == 0 disables THIS bound (#3028's own
-            # documented escape hatch) — anyio.fail_after(0), like
-            # asyncio.wait_for(timeout=0), means "fire almost immediately"
-            # (live-verified), the OPPOSITE of disabled, so 0 must skip the
-            # wrapper entirely rather than being passed through.
+            # #3028/#3698 stage 1 — PR-1 REVERSES this bound's mechanism
+            # (live-verified, not assumed): `anyio.fail_after` around
+            # `Client.__aenter__()` raises "Attempted to exit a cancel scope
+            # that isn't the current task's current cancel scope" on a
+            # SUCCESSFUL connect, and hangs indefinitely on a genuine timeout
+            # — reproduced directly against the real echo test-double both
+            # ways (see this commit's message for the probe output).
+            # Root cause: `Client.__aenter__` opens its transport/session
+            # inside its OWN internal `AsyncExitStack`, then transfers
+            # ownership of their (still-open) cancel scopes to `self.
+            # _exit_stack` via `exit_stack.pop_all()` — so those inner scopes
+            # are DELIBERATELY still open when `__aenter__` returns (they
+            # close much later, in `MCPClient.close()`). Wrapping that whole
+            # call in `anyio.fail_after` opens ANOTHER cancel scope around
+            # it that expects to close in the SAME `with` block — an anyio
+            # LIFO scope-nesting violation the moment an inner scope outlives
+            # it by design. `asyncio.wait_for` does not open an anyio-native
+            # cancel scope at all, so it does not hit this — live-verified
+            # against both a real connect (clean) and a hung/never-speaking
+            # subprocess (raises a plain `asyncio.TimeoutError`, which IS a
+            # `TimeoutError` since Python 3.11, and the subprocess is reaped
+            # cleanly by the following `stack.aclose()`). This is narrower
+            # than the file's general "asyncio.wait_for corrupts anyio
+            # bookkeeping" caution (see `_close_stack_after_init_failure`'s
+            # docstring) — that finding was about a bare awaited RPC call
+            # (`session.initialize()`, no exit-stack-transfer involved); this
+            # is a structurally different shape where the earlier general
+            # prohibition does not hold, confirmed live rather than assumed
+            # to transfer. init_timeout == 0 still disables the bound
+            # entirely (#3028's documented escape hatch) — a 0 argument to
+            # `wait_for` would ALSO mean "fire almost immediately", the
+            # opposite of disabled, so 0 must skip the wrapper, same as
+            # before.
             if init_timeout > 0:
-                with anyio.fail_after(init_timeout):
-                    init_result = await session.initialize()
+                session = await asyncio.wait_for(
+                    stack.enter_async_context(client), timeout=init_timeout,
+                )
             else:
-                init_result = await session.initialize()
+                session = await stack.enter_async_context(client)
         except MCPError:
             self.close_stderr_capture()
             await stack.aclose()
@@ -1086,48 +1241,39 @@ class MCPClient:
         # AsyncExitStack indirection _walk_frames_for_process_pid existed
         # for. Live-verified: the extracted pid matched the server's own
         # os.getpid() exactly (see this commit's message for the probe).
+        # PR-1: `stdio_cm` is now entered by `Client.__aenter__` rather than
+        # by reyn's own `stack` directly, but it's the SAME object reference
+        # reyn constructed and holds — the extraction technique (reading the
+        # entered generator's own frame) is unchanged by who called
+        # `__anext__` on it.
         self._child_pid = _extract_stdio_child_pid(stdio_cm)
-        # #2597 capability/version gate: read the negotiated version +
-        # capabilities right after the handshake. init_result is the plain
-        # return value of session.initialize() here (not a property read off
-        # a later object, unlike fastmcp's Client.initialize_result) — never
-        # None on a successful call, but read defensively anyway in case a
-        # future SDK version's contract changes underneath us.
-        if init_result is not None:
-            # #4368 (arc #4412): protocolVersion (1.x) / protocol_version
-            # (2.0) -- routed through _mcp_client_boundary's seam so this
-            # site doesn't hardcode either pin's field name (see that
-            # module's own docstring for the full rationale).
-            from reyn.mcp._mcp_client_boundary import negotiated_protocol_version
-
-            self._negotiated_version = negotiated_protocol_version(init_result)
-            self._server_capabilities = init_result.capabilities
-        else:
-            self._negotiated_version = None
-            self._server_capabilities = None
+        # #2597 capability/version gate + PR-1: read the negotiated version
+        # and capabilities off `Client` itself (`session` here IS the entered
+        # `Client` instance — see the module docstring's "ClientSession ->
+        # Client" section), not off a separate `init_result` return value.
+        # `mode="legacy"` (see the module docstring's "mode='legacy', not
+        # the SDK's own 'auto' default" section) means only the `initialize`
+        # path ever runs here — negotiation is unchanged from before PR-1.
+        self._negotiated_version = session.protocol_version
+        self._server_capabilities = session.server_capabilities
 
     async def _initialize_http_or_sse(self) -> None:
-        """#3698 stage 1: http/sse (no OAuth configured) via the official
-        ``mcp`` SDK, no fastmcp. Same ``AsyncExitStack`` lifetime model as
-        :meth:`_initialize_stdio` (see its docstring); no stdio-only hints
-        (network-disabled / write-denial / stderr tail) since neither
-        transport spawns a subprocess.
+        """#3698 stage 1 / PR-1: http/sse (no OAuth configured) via the
+        official ``mcp`` SDK's ``Client`` (was raw ``ClientSession`` — see
+        :meth:`_initialize_stdio`'s docstring for the full "ClientSession ->
+        Client" rationale, identical here). Same single-``AsyncExitStack``
+        lifetime model; no stdio-only hints (network-disabled / write-denial
+        / stderr tail) since neither transport spawns a subprocess.
 
-        ``streamablehttp_client`` yields a 3-tuple (``read, write,
-        get_session_id``) — one MORE element than stdio's/sse's 2-tuple
-        (measured via its own return-type annotation); ``sse_client``
-        matches stdio's 2-tuple shape exactly (measured by reading its
-        source's own ``yield read_stream, write_stream``). Only the
-        ``read``/``write`` pair is needed here; the session-id callable
-        (http-only, used for session resumption) is not currently consumed
-        by anything in reyn — same scope as this stage's other transports,
-        where only what reyn ALREADY read off the fastmcp wrapper carries
-        over, not the full surface a future caller might eventually want.
+        ``streamable_http_client``/``sse_client`` both yield the 2-tuple
+        (``read, write``) shape :class:`mcp.client._transport.Transport`
+        expects (measured live) — handed to ``Client`` UN-entered, same as
+        stdio's ``stdio_cm``; ``Client.__aenter__`` enters it on its own
+        internal exit stack.
         """
         from contextlib import AsyncExitStack
 
-        import anyio
-        from mcp.client.session import ClientSession
+        from mcp import Client
 
         init_timeout = float(self._config.get("init_timeout", _DEFAULT_INIT_TIMEOUT_SECONDS))
         url = self._config.get("url")
@@ -1179,37 +1325,47 @@ class MCPClient:
                 http_client = create_mcp_http_client(
                     headers=headers, timeout=read_timeout, auth=auth,
                 )
-                read, write = await stack.enter_async_context(
-                    streamable_http_client(url, http_client=http_client)
-                )
+                # NOT entered here (PR-1) — the un-entered transport CM is
+                # handed to `Client` below; see _initialize_stdio's matching
+                # comment for the full ownership-model explanation.
+                transport_cm = streamable_http_client(url, http_client=http_client)
             else:
                 from mcp.client.sse import sse_client
 
-                read, write = await stack.enter_async_context(
-                    sse_client(url, headers=headers, timeout=read_timeout)
-                )
+                transport_cm = sse_client(url, headers=headers, timeout=read_timeout)
             elicitation_callback = None
             if self._elicitation_handler is not None:
                 elicitation_callback = _adapt_elicitation_handler(self._elicitation_handler)
-            session = await stack.enter_async_context(
-                ClientSession(
-                    read, write,
-                    message_handler=self._message_handler,
-                    elicitation_callback=elicitation_callback,
-                )
+            client = Client(
+                transport_cm,
+                message_handler=self._message_handler,
+                elicitation_callback=elicitation_callback,
+                # PR-1 forward-guard for #3698 PR-3 — see the matching
+                # comment + module docstring section in _initialize_stdio.
+                cache=None,
+                # mode="legacy" — see the matching comment + module
+                # docstring section in _initialize_stdio for the two-symptom
+                # live trace that ruled out the SDK's "auto" default.
+                mode="legacy",
             )
-            # #4282-adjacent fix: anyio.fail_after(), not asyncio.wait_for() —
-            # see _close_stack_after_init_failure's docstring for the full
-            # root-cause (this is the exact bug that made #4283's CI red:
-            # asyncio.wait_for corrupts anyio's per-task cancel-scope
-            # bookkeeping across an anyio-native call tree like this one,
-            # turning a plain connection-refused into an uninformative bare
-            # CancelledError instead of a reportable MCPError).
+            # PR-1: `asyncio.wait_for`, not `anyio.fail_after` — see
+            # _initialize_stdio's matching comment for the full live-verified
+            # root-cause (an anyio LIFO cancel-scope-nesting violation
+            # `Client.__aenter__`'s `exit_stack.pop_all()` deferred-close
+            # pattern triggers under `fail_after` specifically). This
+            # REVERSES the #4282-era "anyio.fail_after(), not asyncio.
+            # wait_for()" note that used to sit here (that finding was about
+            # wrapping a bare `session.initialize()` RPC call under raw
+            # ClientSession — a different shape; re-verified live against a
+            # connection-refused http target for THIS shape: a clean
+            # `ExceptionGroup(ConnectError)` propagates, unwrapped correctly
+            # by `_close_stack_after_init_failure` below, same as before).
             if init_timeout > 0:
-                with anyio.fail_after(init_timeout):
-                    init_result = await session.initialize()
+                session = await asyncio.wait_for(
+                    stack.enter_async_context(client), timeout=init_timeout,
+                )
             else:
-                init_result = await session.initialize()
+                session = await stack.enter_async_context(client)
         except MCPError:
             await stack.aclose()
             raise
@@ -1227,18 +1383,10 @@ class MCPClient:
         self._client = session
         self._exit_stack = stack
         self._initialized = True
-        if init_result is not None:
-            # #4368 (arc #4412): protocolVersion (1.x) / protocol_version
-            # (2.0) -- routed through _mcp_client_boundary's seam so this
-            # site doesn't hardcode either pin's field name (see that
-            # module's own docstring for the full rationale).
-            from reyn.mcp._mcp_client_boundary import negotiated_protocol_version
-
-            self._negotiated_version = negotiated_protocol_version(init_result)
-            self._server_capabilities = init_result.capabilities
-        else:
-            self._negotiated_version = None
-            self._server_capabilities = None
+        # #2597 capability/version gate + PR-1: see _initialize_stdio's
+        # matching comment — read off `Client` itself, no `init_result`.
+        self._negotiated_version = session.protocol_version
+        self._server_capabilities = session.server_capabilities
 
     async def __aenter__(self) -> "MCPClient":
         """#a359: structured lifecycle. ``initialize()`` here + ``close()`` in ``__aexit__`` run in
@@ -1494,12 +1642,11 @@ class MCPClient:
         **#3698/#4282 re-measurement**: this declaration was always reading
         ``mcp.types.ServerCapabilities``/``ResourcesCapability`` directly —
         the official SDK's own types, not a fastmcp-shaped projection.
-        ``self._server_capabilities`` is populated from ``ClientSession.
-        initialize()``'s ``InitializeResult.capabilities`` on every
-        transport now (#4282 closed the last path — OAuth-configured http —
-        that instead read it off fastmcp's ``Client.initialize_result.
-        capabilities``, same underlying SDK type). No code or behavior
-        change; re-confirmed by re-reading the population code.
+        ``self._server_capabilities`` is populated from ``mcp.Client.
+        server_capabilities`` (PR-1; was ``ClientSession.initialize()``'s
+        ``InitializeResult.capabilities`` before the ClientSession -> Client
+        swap — same underlying SDK type either way) on every transport now.
+        No behavior change; re-confirmed by re-reading the population code.
         """
         server = self.server_name or "<unknown>"
         version = self.negotiated_version or "<unknown>"
@@ -1519,14 +1666,17 @@ class MCPClient:
         :meth:`_require_resources_subscribe_capability`) — a server may support
         reading resources without supporting subscriptions to them.
 
-        ``self._client`` IS the ``ClientSession`` directly (#4282: every
-        transport, OAuth included), so ``subscribe_resource`` is called on
-        it directly — no ``.session`` indirection needed (that was
-        fastmcp's own ``Client`` exposing it only via ``Client.session``,
-        never on ``Client`` itself). The notification itself carries no
-        payload (just ``uri``) — callers re-read the resource to see the
-        new content; see :mod:`reyn.mcp.message_handler`'s
-        ``on_resource_updated`` for the EventLog bridge.
+        ``self._client`` IS the entered ``mcp.Client`` directly (PR-1; #4282:
+        every transport, OAuth included), so ``subscribe_resource`` is called
+        on it directly — no ``.session`` indirection needed. ``Client.
+        subscribe_resource`` is ``@deprecated`` on the SDK side (superseded
+        by ``Client.listen()`` under the 2026-07-28 revision — #3698 PR-2's
+        scope, not this one) but still delegates to the underlying
+        ``ClientSession`` and works unchanged against every server reyn
+        talks to today. The notification itself carries no payload (just
+        ``uri``) — callers re-read the resource to see the new content; see
+        :mod:`reyn.mcp.message_handler`'s ``on_resource_updated`` for the
+        EventLog bridge.
         """
         await self.initialize()
         require_capability(self, "resources")
@@ -1538,8 +1688,8 @@ class MCPClient:
 
     async def unsubscribe_resource(self, uri: str) -> None:
         """Unsubscribe from server-pushed updates for ``uri``. Same gating as
-        :meth:`subscribe_resource`; mirrors it via
-        ``mcp.ClientSession.unsubscribe_resource``."""
+        :meth:`subscribe_resource`; mirrors it via ``mcp.Client.
+        unsubscribe_resource`` (same deprecated-but-functional note)."""
         await self.initialize()
         require_capability(self, "resources")
         self._require_resources_subscribe_capability()
@@ -1577,14 +1727,16 @@ class MCPClient:
         self._negotiated_version = None
         self._server_capabilities = None
         try:
-            # #4282: every transport (stdio, http/sse with or without OAuth)
-            # opens via self._exit_stack now — the official SDK's transport
-            # + ClientSession, entered as two separate async context
-            # managers (see _initialize_stdio / _initialize_http_or_sse) —
-            # closing means exiting THAT stack. ClientSession itself has no
-            # .close() method; only __aexit__ via the stack it was entered
-            # through. exit_stack is always set alongside self._client (both
-            # init paths set them together), so this is no longer a branch.
+            # #4282/PR-1: every transport (stdio, http/sse with or without
+            # OAuth) opens via self._exit_stack now — PR-1 entering ONE
+            # `mcp.Client` (was: the transport + a raw `ClientSession`,
+            # entered as two separate async context managers — see
+            # _initialize_stdio's docstring for why `Client` collapses this
+            # back to one) — closing means exiting THAT stack. `Client`
+            # itself has no `.close()` method; only `__aexit__` via the
+            # stack it was entered through. exit_stack is always set
+            # alongside self._client (both init paths set them together),
+            # so this is no longer a branch.
             assert exit_stack is not None  # narrows the type; see comment above
             await exit_stack.aclose()
         except (Exception, asyncio.CancelledError):

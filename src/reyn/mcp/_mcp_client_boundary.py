@@ -63,19 +63,31 @@ def next_page_cursor(list_result: "Any") -> "str | None":
 
 
 async def call_paginated_list(list_fn: "Any", cursor: "str | None") -> "Any":
-    """Call a ``ClientSession.list_tools``/``list_resources``/``list_prompts``-
-    shaped bound method with the CURRENT pin's actual call shape.
+    """Call a ``ClientSession``/``Client``-shaped ``list_tools``/
+    ``list_resources``/``list_prompts``/``list_resource_templates`` bound
+    method with the CURRENT call shape.
 
-    1.x: a bare positional ``cursor: str | None``. 2.0 (confirmed live via
-    ``inspect.signature``): keyword-only ``params: PaginatedRequestParams |
-    None``, the positional shorthand removed entirely. Structural check
-    (does the callable's own signature declare a ``params`` parameter),
-    not a version-string comparison -- the same discriminator this
-    module's own docstring names."""
-    if "params" in inspect.signature(list_fn).parameters:
+    Three shapes, structurally checked (the callable's own signature), not a
+    version-string comparison -- the same discriminator this module's own
+    docstring names:
+
+    - 1.x ``ClientSession``: a bare positional ``cursor: str | None``.
+    - 2.0 ``ClientSession`` (confirmed live via ``inspect.signature``):
+      keyword-only ``params: PaginatedRequestParams | None``, the positional
+      shorthand removed entirely.
+    - #3698 PR-1: ``mcp.Client`` (confirmed live) wraps ``ClientSession``'s
+      ``params``-shaped call back into a keyword-only ``cursor: str | None``
+      (plus ``meta``/``cache_mode``, neither consumed here) -- calling it
+      positionally (the 1.x branch's ``list_fn(cursor)``) raises
+      ``TypeError`` (``cursor`` is keyword-only on ``Client``), so this is
+      its OWN branch, checked before the bare-positional fallback."""
+    params = inspect.signature(list_fn).parameters
+    if "params" in params:
         from mcp.types import PaginatedRequestParams
 
         return await list_fn(params=PaginatedRequestParams(cursor=cursor))
+    if "cursor" in params and params["cursor"].kind == inspect.Parameter.KEYWORD_ONLY:
+        return await list_fn(cursor=cursor)
     return await list_fn(cursor)
 
 
