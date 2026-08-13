@@ -41,7 +41,11 @@ contract Phase 1 = "(a) Persistent until user delete"):
   - **Disk usage grows unboundedly.** Documented operational caveat —
     operators are expected to ``ls -la .reyn/tool-results/`` and clean
     up periodically. The browsable filename convention makes manual
-    audit straightforward.
+    audit straightforward. :meth:`MediaStore.storage_stats` (#4478
+    Phase 1) gives a scripted read of this instead of a manual ``ls``:
+    file counts + byte totals per directory, policy-independent — it
+    exists to SUPPLY the measurement evidence Phase 2 is gated on, it
+    does not itself decide anything.
   - **Phase 2 reservation.** When measurement surfaces a real disk
     pressure or stale-handle problem (= not just hypothetical), Phase 2
     adds a config-driven policy: TTL / LRU / session-end / mixed. The
@@ -51,7 +55,16 @@ contract Phase 1 = "(a) Persistent until user delete"):
 
 Out of scope (= future work):
   - Phase 2 cleanup policy (= TTL / max-N / session boundary). Trigger
-    is measurement evidence, not hypothesis.
+    is measurement evidence, not hypothesis — #4478 lands the
+    measurement (``storage_stats``) without the policy. A future Phase
+    2's own acceptance criteria MUST cover the user-visible side, not
+    just "no consumer crashes": every read consumer already tolerates
+    a missing file (404 / ``None`` / a silently dropped content block —
+    #4478's own consumer sweep confirmed this), but a silently dropped
+    block is a scrollback image or tool-result the USER sees vanish
+    with no explanation, not a safe no-op. "Does this crash" is not
+    "is this a good experience" — Phase 2 needs to answer the second
+    question too, not just the first.
   - Cross-host RPC dispatcher for ``resource_uri`` (= #385 β core
     impl sub-task 3, pending scheme arbitration).
 """
@@ -191,6 +204,39 @@ class MediaStoreConfig:
     tool_results_dir: str = ".reyn/tool-results"
 
 
+@dataclass(frozen=True)
+class MediaStorageStats:
+    """#4478 Phase 1: policy-independent on-disk footprint snapshot for
+    :meth:`MediaStore.storage_stats`. Measurement only — no field here
+    implies or drives any eviction; see that method's docstring."""
+    media_file_count: int
+    media_bytes: int
+    tool_result_file_count: int
+    tool_result_bytes: int
+
+
+def _dir_stats(directory: Path) -> tuple[int, int]:
+    """(file_count, total_bytes) for the flat, single-level layout both
+    storage dirs use (see the module docstring's filename convention —
+    neither dir nests subdirectories). Missing directory → ``(0, 0)``,
+    same as "nothing written yet" rather than an error; a file that
+    disappears mid-scan (a concurrent delete) is skipped rather than
+    raising, since this is a best-effort snapshot, not a transactional
+    read."""
+    if not directory.is_dir():
+        return 0, 0
+    count = 0
+    total = 0
+    for entry in directory.iterdir():
+        try:
+            if entry.is_file():
+                count += 1
+                total += entry.stat().st_size
+        except OSError:
+            continue
+    return count, total
+
+
 # #385 β core impl sub-task 1: cross-host capable resource URI scheme.
 # A path-ref minted with ``agent_name`` set carries this scheme so a
 # downstream consumer (= another agent / a different host) can dispatch
@@ -324,6 +370,7 @@ class MediaStore:
         if not manifest.exists():
             return set()
         paths: "set[Path]" = set()
+        stale = False
         try:
             for line in manifest.read_text(encoding="utf-8").splitlines():
                 line = line.strip()
@@ -331,12 +378,49 @@ class MediaStore:
                     continue
                 try:
                     entry = json.loads(line)
-                    paths.add(Path(entry["path"]))
+                    p = Path(entry["path"])
                 except (json.JSONDecodeError, KeyError, TypeError):
                     continue  # one malformed line never invalidates the rest
+                # #4478: an entry whose target no longer exists on disk (the
+                # artifact was manually deleted, or GC'd by a future Phase 2
+                # policy) protects nothing — is_tool_result_spill only needs
+                # to answer "is THIS path a spill I wrote", and a re-read of
+                # a now-missing path already fails on its own, normally,
+                # with no re-spill loop to guard against. Dropping it here
+                # is what bounds this manifest's otherwise-unbounded growth
+                # (lead-coder's #4478 dispatch, concern ②: it is read in
+                # full on every MediaStore construction).
+                if p.exists():
+                    paths.add(p)
+                else:
+                    stale = True
         except OSError:
             return set()  # best-effort — an unreadable manifest degrades to empty, not a crash
+        if stale:
+            self._persist_spill_manifest(paths)
         return paths
+
+    def _persist_spill_manifest(self, paths: "set[Path]") -> None:
+        """#4478: rewrite the MANIFEST ONLY — the ledger of which paths
+        this store has spilled, under ``.reyn/cache/``. Never touches an
+        artifact under ``tool_results_dir`` itself; an entry only reaches
+        this rewrite because :meth:`_load_spill_manifest` already found its
+        target file gone from disk (deleted by something else, out of
+        scope for this store). This prune deletes zero bytes of anyone's
+        actual content — it only stops re-reading a manifest line that
+        stopped meaning anything the moment its file disappeared.
+        Best-effort, same as the append path in :meth:`save_tool_result` —
+        a write failure here (e.g. a read-only ``.reyn/cache/``) must
+        never fail construction; it only means this process's prune
+        didn't stick and the next one retries."""
+        manifest = self._spill_manifest_path()
+        try:
+            manifest.write_text(
+                "".join(json.dumps({"path": str(p)}) + "\n" for p in sorted(paths)),
+                encoding="utf-8",
+            )
+        except OSError:
+            pass
 
     def is_tool_result_spill(self, path: "str | Path") -> bool:
         """#4381: whether *path* is a file THIS store itself wrote via
@@ -676,3 +760,21 @@ class MediaStore:
     def tool_results_dir(self) -> Path:
         """Absolute path of the tool result text storage directory."""
         return self._tool_results_dir
+
+    def storage_stats(self) -> "MediaStorageStats":
+        """#4478 Phase 1: a read-only, policy-independent snapshot of this
+        store's on-disk footprint. Never deletes, never evicts — this is
+        the measurement surface the module docstring's own "Phase 2
+        reservation" names as the precondition for any future TTL/max-N/
+        session-end policy ("trigger is measurement evidence, not
+        hypothesis"). Mirrors the chat presenter's own public
+        ``image_cache_size_bytes``-style snapshot-read pattern (#4376),
+        applied here to on-disk rather than in-memory storage."""
+        media_count, media_bytes = _dir_stats(self._media_dir)
+        tr_count, tr_bytes = _dir_stats(self._tool_results_dir)
+        return MediaStorageStats(
+            media_file_count=media_count,
+            media_bytes=media_bytes,
+            tool_result_file_count=tr_count,
+            tool_result_bytes=tr_bytes,
+        )
