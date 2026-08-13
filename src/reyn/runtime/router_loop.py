@@ -1175,11 +1175,30 @@ class RouterLoop:
         _env_info_getter = getattr(host, "get_environment_info", None)
         _environment_info = _env_info_getter() if callable(_env_info_getter) else None
         # FP-0034 Phase 2 step 1 / FP-0066 P2b (#3247): D14 visibility gate
-        # for search_actions. Only show search_actions when (a) wrappers are
-        # on, (b) the operator configured an embedding model class, AND (c)
-        # the session has an ActionEmbeddingIndex that is_ready().  Any
-        # missing signal degrades to "hide" so the LLM does not see a
+        # for search_actions. Only show search_actions when (a) the operator
+        # configured an embedding model class (= embedding.enabled, reflected
+        # by ``_idx``/``_provider``/``_model_class`` being non-None below)
+        # AND (b) the session has an ActionEmbeddingIndex that is_ready().
+        # Any missing signal degrades to "hide" so the LLM does not see a
         # tool whose query would return empty results.
+        #
+        # #4564: this block used to be gated on ``_univ_enabled`` too — an
+        # UNDECLARED second gate. ``embedding.py``'s own docstring already
+        # declares "search_actions is gated separately via
+        # embedding.enabled" — no mention of the wrapper flag. Every
+        # scheme's ``present()`` call reads this same ``_search_visible``
+        # (via ``layer_ctx["search_visible"]``), not just
+        # ``universal-category``'s, so the extra gate silently hid
+        # search_actions under enumerate-all/retrieval whenever an operator
+        # set ``universal_wrappers_enabled: false`` — a flag whose NAME
+        # reads as scoped to a scheme they may not even be using. Removed
+        # (architect ruling, #4552): the None-checks below are now the
+        # ONLY gate, matching the declared contract exactly. Pre-release
+        # (#4552: 未リリース) — the eager-build cost this newly enables for
+        # a "wrappers off + embedding on" operator requires BOTH
+        # ``embedding.enabled: true`` AND the separately opt-in
+        # ``eager_embedding_build: true`` (both default False), so exposure
+        # is a narrow, deliberate triple opt-in, not a default-path cost.
         #
         # P2b: the eager-vs-background DECISION + once-per-chain spawn dedup
         # + failure-memo are now routed through ``IndexCoordinator`` (see
@@ -1192,71 +1211,71 @@ class RouterLoop:
         # only setter) are both removed; production failure-tracking lives
         # only in the Coordinator's ``_failure_memo``.
         _search_visible = False
+        _idx_getter = getattr(host, "get_action_embedding_index", None)
+        _provider_getter = getattr(host, "get_embedding_provider", None)
+        _model_getter = getattr(host, "get_embedding_model_class", None)
+        _eager_getter = getattr(host, "get_eager_embedding_build", None)
+        _idx = _idx_getter() if _idx_getter else None
+        _provider = _provider_getter() if _provider_getter else None
+        _model_class = _model_getter() if _model_getter else None
+        _eager_embedding_build = bool(_eager_getter()) if _eager_getter else False
+        # #1458: a prior build failure in this session must not spawn a
+        # retry. P2-convergence PR2 (#3270 §3, REVISED after a co-vet-
+        # caught regression): the suppression is enforced inside
+        # ``_ensure_action_index_built`` itself (checked at ITS entry,
+        # reading ``IndexCoordinator.build_failed(source_id)`` — the
+        # single STATE owner), NOT here and NOT inside
+        # ``IndexCoordinator.ensure_built`` (an earlier revision put it
+        # there, which silently broke the §G2 heal contract:
+        # ``search_await`` calls ``ensure_built`` directly, for every
+        # OTHER registered source too, to heal a dirty/failed entry
+        # once its provider recovers — a blanket suppression inside
+        # ``ensure_built`` made that path permanently stuck). Both
+        # calls below are therefore UNCONDITIONAL here (no caller-side
+        # ``build_failed`` mirror) — the callee is the single AUTO-
+        # rebuild chokepoint that decides whether to actually attempt a
+        # build, so the calls resolve as a cheap no-op after a failure
+        # without this call site needing to know that.
+        #
+        # B25-S5-1: when eager flag is set, await the build synchronously
+        # before computing _search_visible. This pays the build cost on
+        # the first turn (= once per session; subsequent turns see
+        # is_ready() True via SQLite cache) but eliminates the cold-start
+        # race where search_actions is hidden from the LLM on Turn 1.
+        if (
+            _eager_embedding_build
+            and _idx is not None
+            and _provider is not None
+            and _model_class
+            and not getattr(_idx, "is_ready", lambda: False)()
+        ):
+            await self._ensure_action_index_built(
+                _idx, _provider, _model_class, await_completion=True,
+            )
+        if (
+            _idx is not None
+            and _model_class
+            and getattr(_idx, "is_ready", lambda: False)()
+        ):
+            _search_visible = True
+        # FP-0034 Phase 2 step 1 / FP-0066 P2b: kick off the background
+        # build when the index is configured but not yet ready.  The
+        # build is idempotent (= same catalog hash → no-op) and
+        # serialised by the index's internal lock; once-per-source
+        # in-flight dedup is now IndexCoordinator's ``ensure_built``
+        # (``_bg_tasks``, P2-convergence PR1 eliminated the two-path
+        # ``ensure_built_self_contained`` this comment used to name),
+        # not a RouterLoop instance flag.
+        if (
+            _idx is not None
+            and _provider is not None
+            and _model_class
+            and not getattr(_idx, "is_ready", lambda: False)()
+        ):
+            await self._ensure_action_index_built(
+                _idx, _provider, _model_class, await_completion=False,
+            )
         if _univ_enabled:
-            _idx_getter = getattr(host, "get_action_embedding_index", None)
-            _provider_getter = getattr(host, "get_embedding_provider", None)
-            _model_getter = getattr(host, "get_embedding_model_class", None)
-            _eager_getter = getattr(host, "get_eager_embedding_build", None)
-            _idx = _idx_getter() if _idx_getter else None
-            _provider = _provider_getter() if _provider_getter else None
-            _model_class = _model_getter() if _model_getter else None
-            _eager_embedding_build = bool(_eager_getter()) if _eager_getter else False
-            # #1458: a prior build failure in this session must not spawn a
-            # retry. P2-convergence PR2 (#3270 §3, REVISED after a co-vet-
-            # caught regression): the suppression is enforced inside
-            # ``_ensure_action_index_built`` itself (checked at ITS entry,
-            # reading ``IndexCoordinator.build_failed(source_id)`` — the
-            # single STATE owner), NOT here and NOT inside
-            # ``IndexCoordinator.ensure_built`` (an earlier revision put it
-            # there, which silently broke the §G2 heal contract:
-            # ``search_await`` calls ``ensure_built`` directly, for every
-            # OTHER registered source too, to heal a dirty/failed entry
-            # once its provider recovers — a blanket suppression inside
-            # ``ensure_built`` made that path permanently stuck). Both
-            # calls below are therefore UNCONDITIONAL here (no caller-side
-            # ``build_failed`` mirror) — the callee is the single AUTO-
-            # rebuild chokepoint that decides whether to actually attempt a
-            # build, so the calls resolve as a cheap no-op after a failure
-            # without this call site needing to know that.
-            #
-            # B25-S5-1: when eager flag is set, await the build synchronously
-            # before computing _search_visible. This pays the build cost on
-            # the first turn (= once per session; subsequent turns see
-            # is_ready() True via SQLite cache) but eliminates the cold-start
-            # race where search_actions is hidden from the LLM on Turn 1.
-            if (
-                _eager_embedding_build
-                and _idx is not None
-                and _provider is not None
-                and _model_class
-                and not getattr(_idx, "is_ready", lambda: False)()
-            ):
-                await self._ensure_action_index_built(
-                    _idx, _provider, _model_class, await_completion=True,
-                )
-            if (
-                _idx is not None
-                and _model_class
-                and getattr(_idx, "is_ready", lambda: False)()
-            ):
-                _search_visible = True
-            # FP-0034 Phase 2 step 1 / FP-0066 P2b: kick off the background
-            # build when the index is configured but not yet ready.  The
-            # build is idempotent (= same catalog hash → no-op) and
-            # serialised by the index's internal lock; once-per-source
-            # in-flight dedup is now IndexCoordinator's ``ensure_built``
-            # (``_bg_tasks``, P2-convergence PR1 eliminated the two-path
-            # ``ensure_built_self_contained`` this comment used to name),
-            # not a RouterLoop instance flag.
-            if (
-                _idx is not None
-                and _provider is not None
-                and _model_class
-                and not getattr(_idx, "is_ready", lambda: False)()
-            ):
-                await self._ensure_action_index_built(
-                    _idx, _provider, _model_class, await_completion=False,
-                )
             # FP-0066 P3b (#3247 firm §3): repo_doc/repo_src are "static"
             # sources too — same background-schedule shape as the action-
             # catalog block just above, but via the material-producing
@@ -1273,6 +1292,13 @@ class RouterLoop:
             # this awaited call. Best-effort (never raises) + no-ops
             # entirely when ``embedding.enabled`` is false, so this call is
             # safe on every turn regardless of embedding configuration.
+            #
+            # #4564 note: unlike the action-index block above, this repo-doc/
+            # repo-src ingest is a SEPARATE feature (FP-0066 P3b) with its
+            # own declared contract that has never claimed to be
+            # ``embedding.enabled``-only — left gated on ``_univ_enabled``
+            # here, out of #4564's scope (which is specifically about
+            # search_actions's declared gate).
             try:
                 from reyn.data.index.knowledge_ingest import sync_repo_ingest_background
 
