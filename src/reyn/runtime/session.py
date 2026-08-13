@@ -1535,6 +1535,8 @@ class Session:
             events_dir,
             max_bytes=self._events_config.max_bytes,
             max_age_seconds=self._events_config.max_age_seconds,
+            cleanup_period_days=self._events_config.cleanup_period_days,
+            max_disk_usage_percent=self._events_config.max_disk_usage_percent,
         )
         self._audit_events.remove_subscriber(self._event_store)
         self._audit_events.add_subscriber(new_store)
@@ -3891,6 +3893,8 @@ class Session:
             self.events_dir,
             max_bytes=self._events_config.max_bytes,
             max_age_seconds=self._events_config.max_age_seconds,
+            cleanup_period_days=self._events_config.cleanup_period_days,
+            max_disk_usage_percent=self._events_config.max_disk_usage_percent,
         )
         audit_events = EventLog(
             subscribers=[event_store],
