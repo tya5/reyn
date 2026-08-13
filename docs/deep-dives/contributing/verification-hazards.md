@@ -504,6 +504,13 @@ actually promises.
   "any coherent subject", a human judgment call): #4073 substitutes a
   mechanical check for what could previously only merge as a declared,
   unverifiable "a human read every line" promise.
+  **Retired (#4492)**: the gate itself — `.github/workflows/migration-diff-shape-gate.yml`
+  and `scripts/check_migration_diff_shape.py` — was removed once #3879
+  Stage 1 completed (its own `removed_by` condition). This bullet stays as
+  history of the design lesson; the script it names no longer exists on
+  disk. Same instinct this doc's own hazards are about — a past-tense
+  account is not automatically false, but a reader following the name
+  needs the one line saying where it went.
 
 **Apply**: when writing or reviewing a gate, write out the FULL property the
 surrounding prose/docstring promises, then check whether the assertion

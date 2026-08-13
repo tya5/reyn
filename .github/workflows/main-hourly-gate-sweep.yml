@@ -12,13 +12,17 @@ name: main hourly gate sweep
 # the 5 existing per-PR workflows (owner: keep this in ONE new file, don't
 # touch them).
 #
-# Deliberately only 5 of the 7 candidates from #4257's original scan — the
-# other 2 (migration-diff-shape-gate, tests-dir-names-gate) invoke their
-# scripts with a diff/merge-base argument (`--base origin/<PR base ref>` /
-# a merge-base comparison) that has no meaning against `main` alone: there
-# is no "PR" here to diff against, and passing any other ref would not
-# actually stand in for one. Left out, not silently dropped — see the PR
-# body for the same reasoning recorded where a reviewer will read it.
+# Deliberately only 5 of #4257's original scan — one other candidate,
+# tests-dir-names-gate, invokes its script with a diff/merge-base argument
+# (`--base origin/<PR base ref>` / a merge-base comparison) that has no
+# meaning against `main` alone: there is no "PR" here to diff against, and
+# passing any other ref would not actually stand in for one. Left out, not
+# silently dropped — see the PR body for the same reasoning recorded where
+# a reviewer will read it. (#4257's scan actually found 7 candidates; the
+# 7th, migration-diff-shape-gate, was the SAME shape as tests-dir-names-gate
+# here and excluded for the same reason — it no longer exists at all,
+# removed by #4492 once #3879 Stage 1 completed and the gate's own
+# `removed_by` condition was met.)
 #
 # `check-pr-closing-intent` / `dogfood-finding-triage` are excluded for the
 # same reason #4257's issue body gives: the former inspects a PR body (main
