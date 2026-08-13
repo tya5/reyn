@@ -230,6 +230,7 @@ AUDIT_EVENT_KINDS: frozenset[str] = frozenset({
     "compact_op_failed",
     "compact_op_requested",
     "compact_op_unavailable",
+    "compaction_batch_cap_below_head_tail_budget",
     "compaction_check",
     "compaction_completed",
     "compaction_failed",
