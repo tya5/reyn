@@ -65,10 +65,24 @@ whether any consumer (hook) is registered for it. ``webhook_received``
 had no config or audit-log surface at all until #4618 gave it its own
 audit-event kind (#4620) — it now routes through the SAME windowed
 evidence-based check ``mcp_resource_updated`` already had. C-5 (sandbox
-posture) and C-6's other named pairs (listen port,
-model-name acceptance) are PR-3b — each needs its own NEW measurement
-code (introspecting a live bound socket, a real litellm probe call), not
-reuse of an existing function the way C-1/C-2/C-7 are.
+posture, this slice's own addition): declared ``sandbox.backend``/
+``sandbox.on_unsupported``/``sandbox.policy`` next to the ACTUALLY
+RESOLVED backend (:func:`reyn.security.sandbox.launcher.resolve_backend`
+— the SAME production resolution C-1's probe already calls, which
+self-tests a real deny before returning a backend, #2983). Architect's
+ruling (#4364): "which backend resolved" already witnesses enforcement
+(a backend that cannot enforce is treated as absent at resolution,
+``sandbox.on_unsupported`` applied) — doctor reports that resolution's
+OWN verdict, never a second probe of its own. Doctor has no op context,
+so it does NOT merge a caller-supplied ``write_paths`` floor the way a
+real dispatch would (:func:`reyn.security.sandbox.policy.
+resolve_sandbox_policy` needs one, and inventing a stand-in would
+contrast against nothing real) — only the declared ``sandbox.policy``
+dict's own write-scope keys are shown, next to the resolved backend
+name. C-6's other named pairs (listen port, model-name acceptance) are a
+later slice — each needs its own NEW measurement code (introspecting a
+live bound socket, a real litellm probe call), not reuse of an existing
+function the way C-1/C-2/C-5/C-7 are.
 """
 from __future__ import annotations
 
@@ -102,6 +116,8 @@ def register(sub) -> None:
 _MEASURABLE_LEAF_KEYS: Final[tuple[str, ...]] = (
     "audit_events.cleanup_period_days",
     "audit_events.max_disk_usage_percent",
+    "sandbox.backend",
+    "sandbox.on_unsupported",
 )
 _MEASURABILITY_CRITERION: Final[str] = (
     "a leaf counts as measurable here iff this module reads its LIVE EFFECT "
@@ -237,6 +253,12 @@ def run(args: argparse.Namespace) -> None:
     print("subscribing hooks is a real gap; a point with no producer is not")
     print("reported — see 'not checked' below for why some points aren't):")
     _print_external_point_pairing(config, resolved_root)
+
+    # ── C-5: resolved sandbox posture (#4364, architect ruling) ────────────
+    print()
+    print("Sandbox posture — declared vs. RESOLVED (absence of a declaration")
+    print("does not mean unrestricted; see the resolved backend below):")
+    _print_sandbox_posture(config)
 
 
 def _configured_exec_hooks(config: object) -> "list[HookDef]":
@@ -532,3 +554,82 @@ def _print_external_point_pairing(config: object, project_root: Path) -> None:
                 f"  ✗ {point}: producer present ({evidence}) but 0 subscribing "
                 f"hooks — this point's notifications have nowhere to go",
             )
+
+
+# ── C-5: resolved sandbox posture (#4364, architect ruling) ─────────────────
+#
+# Architect's ruling, verbatim shape: declared = sandbox.policy/sandbox.backend
+# (from config); effective = the resolved backend (+ if downgraded via
+# on_unsupported, that fact). Doctor does not try a write of its own — same
+# reason as C-1 (doctor never changes the environment; a deny is harmless to
+# probe but a SUCCESS would not be, since doctor itself has no business
+# writing files). "Which backend resolved" already carries the enforcement
+# witness (backend.py's own get_default_backend: a backend that cannot
+# enforce is treated exactly like one that is absent) — this is production's
+# own gate reporting its own verdict, not a weaker doctor-invented probe.
+#
+# Doctor has NO op context, so it does not build a resolve_sandbox_policy()
+# call (that needs a caller-supplied write_paths floor "this op needs this
+# directory" — a value doctor cannot know and must not invent a stand-in
+# for, per lead-coder's own ruling on this check). Only the declared
+# sandbox.policy dict's own write-scope keys are shown, never a merged/
+# resolved policy.
+_SANDBOX_POLICY_WRITE_SCOPE_KEYS: Final[tuple[str, ...]] = (
+    "allow_write_paths",
+    "deny_write_paths",
+)
+
+
+def _print_sandbox_posture(config: object) -> None:
+    from reyn.security.sandbox.launcher import resolve_backend
+
+    sandbox_config = getattr(config, "sandbox", None)
+    declared_backend = getattr(sandbox_config, "backend", "auto")
+    declared_on_unsupported = getattr(sandbox_config, "on_unsupported", "warn")
+    declared_policy = getattr(sandbox_config, "policy", None)
+
+    print(
+        f"  declared: sandbox.backend={declared_backend!r}, "
+        f"sandbox.on_unsupported={declared_on_unsupported!r}",
+    )
+    if declared_policy:
+        write_scope = {
+            k: v for k, v in declared_policy.items()
+            if k in _SANDBOX_POLICY_WRITE_SCOPE_KEYS
+        }
+        if write_scope:
+            print(f"  declared write scope (sandbox.policy): {write_scope}")
+        else:
+            print(
+                "  declared: sandbox.policy is set, but neither "
+                "allow_write_paths nor deny_write_paths appears in it",
+            )
+    else:
+        # This is the exact real-world case the check was written for
+        # (#4364 architect note): "sandbox.policy: not declared" reads like
+        # "unrestricted" but is NOT — the resolved backend below is what
+        # actually governs.
+        print("  declared: no sandbox.policy — NOT the same as unrestricted, see resolved backend below")
+
+    try:
+        resolved = resolve_backend(None, sandbox_config)
+    except RuntimeError as exc:
+        # on_unsupported="error" with no real backend available — the
+        # RESOLUTION itself refuses (fail-closed), which doctor reports
+        # rather than swallowing (D-1: measure, don't paper over a raise).
+        print(f"  ✗ resolved: refuses to run ({exc})")
+        return
+
+    downgraded = declared_backend not in ("auto", "noop", resolved.name)
+    if downgraded:
+        print(
+            f"  resolved: {resolved.name!r} — DOWNGRADED from declared "
+            f"{declared_backend!r} (on_unsupported={declared_on_unsupported!r} "
+            f"applied; a backend that cannot enforce is treated as absent, #2983)",
+        )
+    else:
+        print(
+            f"  resolved: {resolved.name!r} (production's own resolution — "
+            f"a backend that cannot enforce is already treated as absent "
+            f"at this step, #2983, so this name IS the enforcement witness)",
+        )
