@@ -3,7 +3,7 @@
 #3896 found that ``router_tools.build_tools``'s section J strip step
 (``_wrapper_superseded_tool_names()``, run whenever
 ``universal_wrappers_enabled=True`` — the exclusive-wrapper mode #3429
-landed) removes ``spawn_session`` from direct advertisement with no
+landed) removed ``spawn_session`` from direct advertisement with no
 compensating catalog route — a genuine capability loss under a real,
 selectable, already-landed configuration. The plain #3464 gate
 (``reyn.tools.llm_reachability.compute_unreachable_router_allow_tool_names``)
@@ -16,9 +16,15 @@ at all. This suite exercises the SECOND, mode-scoped computation
 real (imports ``router_tools._wrapper_superseded_tool_names()``, never
 re-derives it) and answers the mode-scoped question directly.
 
-Per lead-coder's explicit review instruction: the RED this modeling produces
-(``spawn_session`` newly unreachable under this mode) is not suppressed via
-xfail/skip — it is registered in
+**Fixed** (owner ruling, 2026-08-13, option 1): ``spawn_session`` gained a
+``multi_agent`` catalog route, so it is reachable again under this mode via
+route (b) even though §J still strips route (a) — same shape as
+``call_mcp_tool``/``describe_mcp_tool`` below. It no longer appears in
+``UNREACHABLE_UNDER_EXCLUSIVE_WRAPPER_MODE_REASONS``.
+
+Per lead-coder's explicit review instruction (still true for the tools that
+remain in the registry): the RED this modeling produces for a genuinely
+unreachable tool is not suppressed via xfail/skip — it is registered in
 ``UNREACHABLE_UNDER_EXCLUSIVE_WRAPPER_MODE_REASONS``, a closed, tracked
 registry mirroring #3464's own pattern, so growth of this set is caught the
 same way #3464's own gate catches growth of its set.
@@ -95,18 +101,28 @@ def test_declared_reasons_use_the_closed_classification_and_are_nonempty() -> No
         )
 
 
-def test_spawn_session_is_declared_pending_capability_decision() -> None:
-    """Tier 2: #3896's own finding — spawn_session is stripped under
-    exclusive-wrapper mode with no compensating catalog route. A genuine
-    capability loss awaiting an owner (A)/(B)/(C) decision, same shape as
-    the #3464 cron entries -- not a wiring bug and not an intentional
-    supersession (there is no replacement tool)."""
-    assert "spawn_session" in UNREACHABLE_UNDER_EXCLUSIVE_WRAPPER_MODE_REASONS
-    entry = UNREACHABLE_UNDER_EXCLUSIVE_WRAPPER_MODE_REASONS["spawn_session"]
-    assert entry.classification == "PENDING_CAPABILITY_DECISION"
-    # Sanity: spawn_session IS in the #3464 gate's reachable set (existentially
-    # reachable under wrappers=off) -- confirming this mode-scoped registry is
-    # answering a genuinely different question, not a subset of #3464's own.
+def test_spawn_session_is_reachable_under_exclusive_wrapper_mode() -> None:
+    """Tier 2: #3896's fix (owner ruling, option 1) — spawn_session gained a
+    `multi_agent` catalog route, so it is reachable under exclusive-wrapper
+    mode via route (b) even though §J still strips its direct-advertisement
+    route (a). No longer declared in this registry at all (was
+    PENDING_CAPABILITY_DECISION before the fix)."""
+    assert "spawn_session" not in UNREACHABLE_UNDER_EXCLUSIVE_WRAPPER_MODE_REASONS
+    reachable = compute_reachable_tool_names_under_exclusive_wrapper_mode()
+    assert "spawn_session" in reachable
+    # The route making it reachable is (b), not (a): §J still strips its
+    # direct-advertisement route (now correctly — it's a catalog member, so
+    # advertising it BOTH directly and via invoke_action would be the same
+    # #3429 double-spelling problem this whole strip step exists to avoid),
+    # same shape as call_mcp_tool/describe_mcp_tool above. Confirms this
+    # isn't accidentally passing because the strip itself regressed.
+    from reyn.runtime.router_tools import _wrapper_superseded_tool_names
+    assert "spawn_session" in _wrapper_superseded_tool_names()
+    assert "spawn_session" not in compute_direct_advertisable_tool_names_under_exclusive_wrapper_mode()
+    # Sanity: spawn_session IS also in the #3464 gate's reachable set
+    # (existentially reachable under wrappers=off) -- confirming this
+    # mode-scoped registry answers a genuinely different question, not a
+    # subset of #3464's own.
     assert "spawn_session" not in compute_unreachable_router_allow_tool_names()
 
 
@@ -137,30 +153,16 @@ def test_cron_tools_are_declared_pending_capability_decision_here_too() -> None:
 
 
 # ── Non-vacuity: strip-falsify each route, AND the strip-modeling itself ──
-
-
-def test_unmodeled_strip_would_hide_spawn_session_the_actual_3896_defect() -> None:
-    """Tier 2: THE regression witness for #3896 itself -- proves the strip
-    modeling is load-bearing, not decorative. Passing ``superseded_names=
-    frozenset()`` (== the OLD gate's behaviour, which never modeled section J
-    at all) makes spawn_session vanish from the mode-scoped unreachable set,
-    reproducing the exact defect #3896 reported. If this ever regressed back
-    to that shape without anyone noticing, THIS assertion is what would still
-    catch it independently of the registry-identity check above."""
-    modeled = compute_unreachable_router_allow_tool_names_under_exclusive_wrapper_mode()
-    assert "spawn_session" in modeled, (
-        "the fix itself must find spawn_session unreachable under this mode"
-    )
-
-    unmodeled = compute_unreachable_router_allow_tool_names_under_exclusive_wrapper_mode(
-        superseded_names=frozenset(),
-    )
-    assert "spawn_session" not in unmodeled, (
-        "sanity: with no strip modeled at all, spawn_session must be "
-        "reachable via the (unstripped) direct-advertisement census -- "
-        "confirming the strip step is what actually removes it, not some "
-        "other factor this test would otherwise misattribute"
-    )
+#
+# #3896's own regression witness (`test_unmodeled_strip_would_hide_spawn_
+# session_the_actual_3896_defect`) lived here until spawn_session gained a
+# catalog route: its premise -- that spawn_session is unreachable under this
+# mode -- is no longer true (it's reachable via route (b) regardless of
+# whether the strip step is modeled), so the assertion it made would either
+# invert or become vacuous. Deleted rather than inverted: the two probes
+# below already independently prove both routes are load-bearing for THIS
+# mode generally (create_topology for route (a), search_knowledge for route
+# (b)), so no coverage is lost by retiring the spawn_session-specific one.
 
 
 def test_strip_direct_advertisement_route_makes_the_gate_fire() -> None:

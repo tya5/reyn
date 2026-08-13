@@ -119,11 +119,14 @@ _WRAPPER_SUPERSEDED_BASE_TOOLS: frozenset[str] = frozenset({
     # #879 shipped each tool's real ``inputSchema`` verbatim in
     # ``list_mcp_tools``' result precisely so no describe round-trip is needed.
     "describe_mcp_tool",
-    # Spawning a sub-session is not a catalog action; it is stripped here as a
-    # deliberate surface reduction, and has been since the exclusive-wrapper
-    # mode landed. (``spawn_agent`` / ``create_topology`` are deliberately NOT
-    # stripped — the org-design surface stays reachable.)
-    "spawn_session",  # renamed from session_spawn — #4004
+    # #3896: ``spawn_session`` used to be listed here under a "deliberate
+    # surface reduction" framing that named a policy which never actually
+    # existed — no owner decision was ever made to withhold session-spawn
+    # under exclusive-wrapper mode; it was an oversight (no compensating
+    # catalog route existed at all, unlike this set's other two entries,
+    # which both name a real replacement). Fixed by giving it a
+    # ``multi_agent`` catalog route (``universal_dispatch._CATEGORY_ACTIONS``)
+    # instead of stripping it — it no longer belongs in this residue set.
 })
 
 
