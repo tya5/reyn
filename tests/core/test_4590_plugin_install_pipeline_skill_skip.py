@@ -13,10 +13,17 @@ its own ``status``, so a failed pipeline/skill read as registered, and
 many actually failed. Worse than #4580's own silent drop: #4580 said
 nothing, this said something false.
 
-Real ``OpContext``/``PermissionResolver`` throughout (mirrors
-``test_plugin_install.py``'s own ``_make_ctx`` construction, which already
-approves the pipelines.yaml/skills.yaml write gates a real accept-path
-sub-install needs). No mocks.
+Real ``OpContext``/``PermissionResolver``/``EventLog``/``Workspace``
+throughout — no hand-rolled stand-in classes (CLAUDE.md: "NEVER fake a
+collaborator ... when a real instance is cheaply constructible"; both are
+cheaply constructible, per #4581/#4587's own real-``EventLog`` and
+#4581's real-``Workspace`` usage the same night). Skip witnessing only
+covers the ``"error"`` sub-status path (a missing DSL/dir, both sub-
+installs' own most common failure); the ``"blocked"`` (threat-scan) path
+isn't separately exercised here — it's already covered end-to-end by
+``pipeline_install.py``/``skill_install.py``'s own threat-scan tests, and
+this file only needs ONE non-``"installed"`` status to prove the routing
+reads ``sub_result["status"]`` rather than assuming success.
 """
 from __future__ import annotations
 
@@ -25,28 +32,13 @@ from pathlib import Path
 
 import pytest
 
+from reyn.core.events.events import EventLog
 from reyn.core.op_runtime.context import OpContext
 from reyn.core.op_runtime.plugin_install import handle as install_handle
 from reyn.core.op_runtime.plugin_install import plugins_root
+from reyn.data.workspace.workspace import Workspace
 from reyn.schemas.models import PluginInstallIROp
 from reyn.security.permissions.permissions import PermissionDecl, PermissionResolver
-
-
-class _Events:
-    """Minimal real-callable event log — records emitted calls for
-    audit-event witnessing (same pattern as test_plugin_install.py's own
-    ``_Events`` stub)."""
-
-    def __init__(self) -> None:
-        self.calls: list[tuple] = []
-
-    def emit(self, kind: str, **kwargs) -> None:
-        self.calls.append((kind, kwargs))
-
-
-class _StubWorkspace:
-    def __init__(self, base_dir: Path) -> None:
-        self.base_dir = base_dir
 
 
 def _make_pipeline_dsl(path: Path, *, name: str = "hello") -> None:
@@ -95,7 +87,7 @@ def _make_plugin(
     return plugin_dir
 
 
-def _ctx(tmp_path: Path, events: "_Events") -> OpContext:
+def _ctx(tmp_path: Path, events: EventLog) -> OpContext:
     project_root = tmp_path / "proj"
     project_root.mkdir(parents=True, exist_ok=True)
     resolver = PermissionResolver(
@@ -107,7 +99,7 @@ def _ctx(tmp_path: Path, events: "_Events") -> OpContext:
             str(project_root / ".reyn" / "config" / cfg), "test", "file.write",
         )
     return OpContext(
-        workspace=_StubWorkspace(base_dir=project_root),
+        workspace=Workspace(events=events, permission_resolver=resolver, base_dir=project_root),
         events=events,
         permission_decl=PermissionDecl(
             file_write=[{"path": str(plugins_root()), "scope": "recursive"}],
@@ -132,7 +124,9 @@ async def test_a_missing_pipeline_dsl_file_lands_in_skipped_not_registered(
     src = _make_plugin(
         tmp_path / "src", pipeline_entries=["missing.yaml"], skill_entries=[],
     )
-    events = _Events()
+    events = EventLog()
+    calls: list = []
+    events.add_subscriber(calls.append)
     ctx = _ctx(tmp_path, events)
     op = PluginInstallIROp(kind="plugin_install", source={"kind": "local", "path": str(src)})
 
@@ -143,11 +137,11 @@ async def test_a_missing_pipeline_dsl_file_lands_in_skipped_not_registered(
     assert [s["status"] for s in result["skipped"]["pipelines"]] == ["error"]
 
     skip_paths = {
-        c[1]["path"] for c in events.calls if c[0] == "pipeline_install_skipped"
+        e.data["path"] for e in calls if e.type == "pipeline_install_skipped"
     }
     assert skip_paths == {str(Path(result["plugin_root"]) / "pipelines" / "missing.yaml")}
     skip_reasons = {
-        c[1]["reason"] for c in events.calls if c[0] == "pipeline_install_skipped"
+        e.data["reason"] for e in calls if e.type == "pipeline_install_skipped"
     }
     assert skip_reasons == {"error"}
 
@@ -164,7 +158,9 @@ async def test_a_missing_skill_dir_lands_in_skipped_not_registered(
     src = _make_plugin(
         tmp_path / "src", pipeline_entries=[], skill_entries=["missing_skill"],
     )
-    events = _Events()
+    events = EventLog()
+    calls: list = []
+    events.add_subscriber(calls.append)
     ctx = _ctx(tmp_path, events)
     op = PluginInstallIROp(kind="plugin_install", source={"kind": "local", "path": str(src)})
 
@@ -175,7 +171,7 @@ async def test_a_missing_skill_dir_lands_in_skipped_not_registered(
     assert [s["status"] for s in result["skipped"]["skills"]] == ["error"]
 
     skip_paths = {
-        c[1]["path"] for c in events.calls if c[0] == "skill_install_skipped"
+        e.data["path"] for e in calls if e.type == "skill_install_skipped"
     }
     assert skip_paths == {str(Path(result["plugin_root"]) / "skills" / "missing_skill")}
 
@@ -199,7 +195,9 @@ async def test_one_good_one_bad_pipeline_entry_partitions_correctly(
     )
     _make_pipeline_dsl(src / "pipelines" / "good.yaml", name="good-pipeline")
 
-    events = _Events()
+    events = EventLog()
+    calls: list = []
+    events.add_subscriber(calls.append)
     ctx = _ctx(tmp_path, events)
     op = PluginInstallIROp(kind="plugin_install", source={"kind": "local", "path": str(src)})
 
@@ -235,7 +233,9 @@ async def test_a_working_skill_still_registers_normally(
     )
     _make_skill(src / "skills" / "hello", name="hello")
 
-    events = _Events()
+    events = EventLog()
+    calls: list = []
+    events.add_subscriber(calls.append)
     ctx = _ctx(tmp_path, events)
     op = PluginInstallIROp(kind="plugin_install", source={"kind": "local", "path": str(src)})
 
@@ -244,4 +244,4 @@ async def test_a_working_skill_still_registers_normally(
     assert result["status"] == "installed", result
     assert [r["status"] for r in result["registered"]["skills"]] == ["installed"]
     assert result["skipped"]["skills"] == []
-    assert not [c for c in events.calls if c[0] == "skill_install_skipped"]
+    assert not [e for e in calls if e.type == "skill_install_skipped"]
