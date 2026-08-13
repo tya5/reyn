@@ -85,6 +85,37 @@ and a ``"hooks"`` entry to ``_CATEGORY_ACTIONS`` (route (b)) + a matching
 (so they are enumerable, not just dispatchable) + ``router_dispatched=True``
 on the two tools that did not already have it. Only cron's fate remains an
 open (A)/(B)/(C) product decision (#3464).
+
+## Exclusive-wrapper mode (#3896) — a SECOND, mode-scoped reachability set
+
+Route (a)'s AST census above answers "reachable under SOME valid parameter
+combination" — deliberately existential, per the module docstring above. It
+does NOT model ``router_tools.build_tools``'s own §J strip step
+(``_wrapper_superseded_tool_names()``, run only when
+``universal_wrappers_enabled=True``), so it cannot answer a DIFFERENT, also
+real question: "reachable when an operator actually selects exclusive-wrapper
+mode" (a category-based exposure scheme with ``universal_wrappers_enabled:
+true`` — landed, selectable today, #3429). #3896 found this gap: under that
+mode, ``spawn_session`` is stripped from direct advertisement (§J) and has NO
+catalog route (never added to ``universal_dispatch._CATEGORY_ACTIONS``) — a
+genuine capability loss the plain existential census cannot see, because
+existentially ``spawn_session`` IS reachable (under the *other* valid combo,
+wrappers off).
+
+:func:`compute_reachable_tool_names_under_exclusive_wrapper_mode` and
+:func:`compute_unreachable_router_allow_tool_names_under_exclusive_wrapper_mode`
+answer the mode-scoped question directly, by subtracting the REAL strip set
+(imported from ``router_tools``, never re-derived) from route (a) before
+union-ing with route (b). Their own closed registry,
+``UNREACHABLE_UNDER_EXCLUSIVE_WRAPPER_MODE_REASONS``, is SEPARATE from
+``UNREACHABLE_TOOL_REASONS`` above — a tool can be declared in one, the
+other, both, or neither; they answer different questions and neither
+subsumes the other. Measured result under this mode: the 5 cron tools (still
+unreachable regardless of mode) plus ``call_mcp_tool`` / ``describe_mcp_tool``
+(their own §J entries' reasons already name their replacement — this is the
+INTENDED end state, not a gap) plus ``spawn_session`` (#3896's actual finding
+— no replacement exists, an open (A)/(B)/(C) product decision, same shape as
+cron's own entry above).
 """
 from __future__ import annotations
 
@@ -125,6 +156,13 @@ UNREACHABLE_CLASSIFICATIONS: Final[frozenset[str]] = frozenset({
     # Must carry a tracking issue link; this classification is a queue
     # entry, not a resting state.
     "DEFERRED_WIRING_BUG",
+    # Unreachable under its OWN name, but by DESIGN, not by gap: a
+    # differently-named tool already covers the identical capability (named
+    # in the reason). This is the intended permanent end state, not a queue
+    # entry — nothing is pending. Distinguishes "renamed/consolidated on
+    # purpose" from PENDING_CAPABILITY_DECISION's "capability itself is
+    # withheld."
+    "SUPERSEDED_BY_CATALOG_REPLACEMENT",
 })
 
 
@@ -147,6 +185,67 @@ UNREACHABLE_TOOL_REASONS: Final[Mapping[str, UnreachableToolReason]] = {
     "cron_list": UnreachableToolReason("PENDING_CAPABILITY_DECISION", _CRON_REASON),
     "cron_enable": UnreachableToolReason("PENDING_CAPABILITY_DECISION", _CRON_REASON),
     "cron_disable": UnreachableToolReason("PENDING_CAPABILITY_DECISION", _CRON_REASON),
+}
+
+
+_SPAWN_SESSION_EXCLUSIVE_WRAPPER_REASON = (
+    "#3896: `spawn_session` is registered router=allow and IS direct-advertisable "
+    "in the default configuration (universal_wrappers_enabled=False under the "
+    "shipped default 'enumerate-all' exposure scheme), so it is correctly absent "
+    "from UNREACHABLE_TOOL_REASONS above. But router_tools.build_tools's own "
+    "section J strips it (_wrapper_superseded_tool_names() includes it as a "
+    "deliberate surface reduction) whenever universal_wrappers_enabled=True -- a "
+    "real, selectable, already-landed configuration (#3429's exclusive-wrapper "
+    "mode) -- and it has no catalog route (never added to "
+    "universal_dispatch._CATEGORY_ACTIONS), unlike delegate_to_agent's symmetric "
+    "multi_agent category route. Under that mode specifically, spawn_session is "
+    "genuinely unreachable -- a real capability loss, not a false positive. "
+    "Whether to (A) give it a catalog route (symmetric with delegate_to_agent), "
+    "(B) stop stripping it in exclusive-wrapper mode, or (C) accept the loss as "
+    "the mode's intended shape is an open product decision tracked on #3896 "
+    "itself. This entry records the interim state -- a known, tracked hole, not "
+    "a silently-passing gate -- pending that decision."
+)
+
+_CALL_MCP_TOOL_EXCLUSIVE_WRAPPER_REASON = (
+    "router_tools.py's own _WRAPPER_SUPERSEDED_BASE_TOOLS entry for "
+    "`call_mcp_tool` names its replacement: `mcp_call_tool` is the catalog's "
+    "own definition of the identical call, reachable via invoke_action "
+    "(a universal_dispatch.KNOWN_ACTION_NAMES member) whenever exclusive-wrapper "
+    "mode is on -- the same mode that strips `call_mcp_tool`'s own direct "
+    "route. Unreachable under its OWN name by design, not by gap: the LLM's "
+    "capability is unchanged, only the tool name it uses to reach it."
+)
+
+_DESCRIBE_MCP_TOOL_EXCLUSIVE_WRAPPER_REASON = (
+    "router_tools.py's own _WRAPPER_SUPERSEDED_BASE_TOOLS entry for "
+    "`describe_mcp_tool` names its replacement: #879 shipped each tool's real "
+    "inputSchema verbatim in `list_mcp_tools`'s own result precisely so no "
+    "separate describe round-trip is needed -- `list_mcp_tools` is itself a "
+    "universal_dispatch.KNOWN_ACTION_NAMES member, reachable via invoke_action "
+    "in exclusive-wrapper mode. Unreachable under its OWN name by design, not "
+    "by gap: the capability (a tool's input schema) is still obtainable, "
+    "folded into a different tool's response shape rather than a dedicated verb."
+)
+
+# #3896: a SECOND, mode-scoped closed registry -- see the module docstring's
+# "Exclusive-wrapper mode" section for why this is separate from
+# UNREACHABLE_TOOL_REASONS above (different question, not a superset/subset).
+UNREACHABLE_UNDER_EXCLUSIVE_WRAPPER_MODE_REASONS: Final[Mapping[str, UnreachableToolReason]] = {
+    "cron_register": UnreachableToolReason("PENDING_CAPABILITY_DECISION", _CRON_REASON),
+    "cron_unregister": UnreachableToolReason("PENDING_CAPABILITY_DECISION", _CRON_REASON),
+    "cron_list": UnreachableToolReason("PENDING_CAPABILITY_DECISION", _CRON_REASON),
+    "cron_enable": UnreachableToolReason("PENDING_CAPABILITY_DECISION", _CRON_REASON),
+    "cron_disable": UnreachableToolReason("PENDING_CAPABILITY_DECISION", _CRON_REASON),
+    "call_mcp_tool": UnreachableToolReason(
+        "SUPERSEDED_BY_CATALOG_REPLACEMENT", _CALL_MCP_TOOL_EXCLUSIVE_WRAPPER_REASON
+    ),
+    "describe_mcp_tool": UnreachableToolReason(
+        "SUPERSEDED_BY_CATALOG_REPLACEMENT", _DESCRIBE_MCP_TOOL_EXCLUSIVE_WRAPPER_REASON
+    ),
+    "spawn_session": UnreachableToolReason(
+        "PENDING_CAPABILITY_DECISION", _SPAWN_SESSION_EXCLUSIVE_WRAPPER_REASON
+    ),
 }
 
 
@@ -282,13 +381,72 @@ def compute_unreachable_router_allow_tool_names(
     return allow_names - reachable
 
 
+def compute_direct_advertisable_tool_names_under_exclusive_wrapper_mode(
+    *,
+    source_text: str | None = None,
+    superseded_names: frozenset[str] | None = None,
+) -> frozenset[str]:
+    """Route (a) as it actually is once ``universal_wrappers_enabled=True``
+    (#3896) — the plain AST census (:func:`compute_direct_advertisable_tool_names`)
+    minus ``router_tools.build_tools``'s own §J strip step
+    (``_wrapper_superseded_tool_names()``), which the plain census never
+    modeled. See the module docstring's "Exclusive-wrapper mode" section.
+
+    ``superseded_names`` defaults to the real strip set (imported from
+    ``router_tools``, never re-derived here); tests pass an override to
+    strip-falsify this independently of the plain census."""
+    if superseded_names is None:
+        from reyn.runtime.router_tools import _wrapper_superseded_tool_names
+
+        superseded_names = _wrapper_superseded_tool_names()
+    return compute_direct_advertisable_tool_names(source_text=source_text) - superseded_names
+
+
+def compute_reachable_tool_names_under_exclusive_wrapper_mode(
+    *,
+    source_text: str | None = None,
+    action_names: frozenset[str] | None = None,
+    superseded_names: frozenset[str] | None = None,
+) -> frozenset[str]:
+    """Union of the stripped route (a) and route (b), under exclusive-wrapper
+    mode specifically — the mode-scoped analogue of
+    :func:`compute_llm_reachable_tool_names`."""
+    return compute_direct_advertisable_tool_names_under_exclusive_wrapper_mode(
+        source_text=source_text, superseded_names=superseded_names,
+    ) | compute_invoke_action_reachable_tool_names(action_names=action_names)
+
+
+def compute_unreachable_router_allow_tool_names_under_exclusive_wrapper_mode(
+    *,
+    source_text: str | None = None,
+    action_names: frozenset[str] | None = None,
+    allow_names: frozenset[str] | None = None,
+    superseded_names: frozenset[str] | None = None,
+) -> frozenset[str]:
+    """``router="allow"`` tool names NOT reachable by either route once
+    exclusive-wrapper mode strips route (a) — the mode-scoped analogue of
+    :func:`compute_unreachable_router_allow_tool_names`. See
+    ``UNREACHABLE_UNDER_EXCLUSIVE_WRAPPER_MODE_REASONS`` for the declared,
+    tracked holes this currently finds."""
+    if allow_names is None:
+        allow_names = compute_router_allow_tool_names()
+    reachable = compute_reachable_tool_names_under_exclusive_wrapper_mode(
+        source_text=source_text, action_names=action_names, superseded_names=superseded_names,
+    )
+    return allow_names - reachable
+
+
 __all__ = [
     "UnreachableToolReason",
     "UNREACHABLE_CLASSIFICATIONS",
     "UNREACHABLE_TOOL_REASONS",
+    "UNREACHABLE_UNDER_EXCLUSIVE_WRAPPER_MODE_REASONS",
     "compute_direct_advertisable_tool_names",
+    "compute_direct_advertisable_tool_names_under_exclusive_wrapper_mode",
     "compute_invoke_action_reachable_tool_names",
     "compute_llm_reachable_tool_names",
+    "compute_reachable_tool_names_under_exclusive_wrapper_mode",
     "compute_router_allow_tool_names",
     "compute_unreachable_router_allow_tool_names",
+    "compute_unreachable_router_allow_tool_names_under_exclusive_wrapper_mode",
 ]
