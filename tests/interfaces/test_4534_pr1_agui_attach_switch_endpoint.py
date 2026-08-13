@@ -199,3 +199,71 @@ async def test_agui_transport_request_attach_false_when_send_returns_none():
 
     transport = AgUiTransport(_empty_lines(), _send)
     assert await transport.request_attach("beta") is False
+
+
+# ── closing the wire-shape double-transcription gap (lead-coder #4537 review) ──
+#
+# The client-side tests above and the endpoint tests further up each
+# independently hand-wrote the SAME literal payload shape
+# ({"type": "attach_request", "agent_name": ...} etc.) — a contract
+# double-transcription (CLAUDE.md Q2's variant: not "the implementation,
+# transcribed" but "the CONTRACT, transcribed twice"). A client-side field
+# rename (agent_name -> agentName) would leave BOTH sides green
+# independently, since neither ever actually sends the OTHER side's
+# literal. These two tests close that: AgUiTransport's real `_send` is
+# wired DIRECTLY to the real ASGI app, so whatever the client ACTUALLY
+# constructs is what gets POSTed — one source of truth, not two.
+
+
+@pytest.mark.asyncio
+async def test_agui_transport_attach_payload_is_accepted_by_the_real_endpoint(
+    tmp_path, monkeypatch,
+):
+    """Tier 2: the client's own request_attach output, fed directly into
+    the real server endpoint — no hand-authored literal on either side."""
+    from reyn.interfaces.transport.agui.client import AgUiTransport
+
+    reg = _two_agent_registry(tmp_path, monkeypatch)
+    app = _build_app(reg, monkeypatch)
+
+    async def _send(payload: dict) -> dict:
+        resp = await _post(app, "/agui/chat/alpha?token=s3cret", payload)
+        return resp.json()
+
+    async def _empty_lines():
+        return
+        yield  # pragma: no cover
+
+    transport = AgUiTransport(_empty_lines(), _send)
+    ok = await transport.request_attach("beta")
+
+    assert ok is True
+    assert reg.attached_name == "beta"
+
+
+@pytest.mark.asyncio
+async def test_agui_transport_session_switch_payload_is_accepted_by_the_real_endpoint(
+    tmp_path, monkeypatch,
+):
+    """Tier 2: same closing-the-loop shape as the attach test above, for
+    request_session_switch."""
+    from reyn.interfaces.transport.agui.client import AgUiTransport
+
+    reg = _two_agent_registry(tmp_path, monkeypatch)
+    sid = reg.spawn_session("alpha", presentation_consumer=None, intervention_bridge=None)
+    await reg.attach("alpha")
+    app = _build_app(reg, monkeypatch)
+
+    async def _send(payload: dict) -> dict:
+        resp = await _post(app, "/agui/chat/alpha?token=s3cret", payload)
+        return resp.json()
+
+    async def _empty_lines():
+        return
+        yield  # pragma: no cover
+
+    transport = AgUiTransport(_empty_lines(), _send)
+    ok = await transport.request_session_switch(sid)
+
+    assert ok is True
+    assert reg.attached_sid == sid
