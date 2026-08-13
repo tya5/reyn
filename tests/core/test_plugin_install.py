@@ -55,7 +55,9 @@ import yaml
 
 from reyn.core.op_runtime.context import OpContext
 from reyn.core.op_runtime.plugin_install import (
+    _bake_all_tokens,
     _bake_mcp_json_fields,
+    _bake_plugin_root_only,
     _build_mcp_entries,
     _write_install_state,
     plugin_data_root,
@@ -1018,6 +1020,191 @@ def test_bake_mcp_json_fields_is_a_noop_when_mcp_json_is_absent(
     _bake_mcp_json_fields(plugin_root / "mcp.json", token_ctx)
 
     assert not (plugin_data_root() / "no-mcp-plugin").exists()
+
+
+# ── #4610: two token vocabularies, one per file — a wrong guess must warn ───
+
+
+def test_bake_mcp_json_fields_warns_on_a_stale_reyn_token_in_args(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    """Tier 1: (#4610) a plugin author who mistakenly writes
+    ``${REYN_PLUGIN_ROOT}`` (the WRONG vocabulary — that name belongs to
+    pipelines/SKILL.md, not mcp.json) in an args entry gets a warning —
+    the token stays literal (nothing recognizes it here) but the install
+    no longer succeeds in total silence about it."""
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    from reyn.plugins.tokens import PluginTokenContext
+
+    plugin_root = tmp_path / "src-plugin"
+    plugin_root.mkdir()
+    mcp_json_path = plugin_root / "mcp.json"
+    mcp_json_path.write_text(
+        json.dumps({
+            "mcpServers": {
+                "srv": {
+                    "type": "stdio",
+                    "command": "python",
+                    "args": ["${REYN_PLUGIN_ROOT}/data"],
+                },
+            },
+        }),
+        encoding="utf-8",
+    )
+    token_ctx = PluginTokenContext(plugin_root=plugin_root, project_dir=tmp_path)
+
+    warnings = _bake_mcp_json_fields(mcp_json_path, token_ctx)
+
+    assert any("REYN_PLUGIN_ROOT" in w and str(mcp_json_path) in w for w in warnings), warnings
+    # The token itself must still be LITERAL — this function never
+    # recognizes ${REYN_*}, so nothing expands it.
+    baked = json.loads(mcp_json_path.read_text(encoding="utf-8"))
+    assert baked["mcpServers"]["srv"]["args"] == ["${REYN_PLUGIN_ROOT}/data"]
+
+
+def test_bake_mcp_json_fields_never_warns_about_command_or_url(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    """Tier 1: (#4610, accept-side) ${PLUGIN_ROOT} surviving inside
+    ``command``/``url`` is CORRECT (the spec's own exclusion this whole
+    conversion exists to honor) — never flagged as a mistake."""
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    from reyn.plugins.tokens import PluginTokenContext
+
+    plugin_root = tmp_path / "src-plugin"
+    plugin_root.mkdir()
+    mcp_json_path = plugin_root / "mcp.json"
+    mcp_json_path.write_text(
+        json.dumps({
+            "mcpServers": {
+                "srv": {
+                    "type": "stdio",
+                    "command": "${PLUGIN_ROOT}/bin/srv",
+                    "args": ["ok"],
+                },
+            },
+        }),
+        encoding="utf-8",
+    )
+    token_ctx = PluginTokenContext(plugin_root=plugin_root, project_dir=tmp_path)
+
+    warnings = _bake_mcp_json_fields(mcp_json_path, token_ctx)
+
+    assert warnings == []
+
+
+def test_bake_all_tokens_warns_on_a_stale_spec_token(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    """Tier 1: (#4610) a pipeline DSL file mistakenly using
+    ``${PLUGIN_ROOT}`` (mcp.json's own spec vocabulary — meaningless in
+    a pipeline) gets a warning naming the file and the correct token."""
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    from reyn.plugins.tokens import PluginTokenContext
+
+    plugin_root = tmp_path / "src-plugin"
+    path = plugin_root / "pipelines" / "x.yaml"
+    path.parent.mkdir(parents=True)
+    path.write_text("pipeline: x\nsteps:\n  - transform: {value: \"${PLUGIN_ROOT}\"}\n", encoding="utf-8")
+    token_ctx = PluginTokenContext(plugin_root=plugin_root, project_dir=tmp_path)
+
+    warnings = _bake_all_tokens(path, token_ctx)
+
+    assert any(
+        "PLUGIN_ROOT" in w and "REYN_PLUGIN_ROOT" in w for w in warnings
+    ), warnings  # names the CORRECT token for this file
+
+
+def test_bake_all_tokens_no_warning_for_the_correct_reyn_token(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    """Tier 1: (#4610, accept-side) using the RIGHT vocabulary for a
+    pipeline (${REYN_PLUGIN_ROOT}) produces no warning at all."""
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    from reyn.plugins.tokens import PluginTokenContext
+
+    plugin_root = tmp_path / "src-plugin"
+    path = plugin_root / "pipelines" / "x.yaml"
+    path.parent.mkdir(parents=True)
+    path.write_text(
+        "pipeline: x\nsteps:\n  - transform: {value: \"${REYN_PLUGIN_ROOT}\"}\n", encoding="utf-8",
+    )
+    token_ctx = PluginTokenContext(plugin_root=plugin_root, project_dir=tmp_path)
+
+    warnings = _bake_all_tokens(path, token_ctx)
+
+    assert warnings == []
+
+
+def test_bake_plugin_root_only_warns_on_a_stale_spec_token(
+    tmp_path: Path,
+) -> None:
+    """Tier 1: (#4610) a SKILL.md mistakenly using ${PLUGIN_DATA} (never
+    valid in a skill — that name is mcp.json's own) gets a warning."""
+    plugin_root = tmp_path / "src-plugin"
+    path = plugin_root / "skills" / "hello" / "SKILL.md"
+    path.parent.mkdir(parents=True)
+    path.write_text(
+        "---\nname: hello\ndescription: d\n---\n\nData at ${PLUGIN_DATA}.\n", encoding="utf-8",
+    )
+
+    warnings = _bake_plugin_root_only(path, plugin_root)
+
+    assert any("PLUGIN_DATA" in w for w in warnings), warnings
+
+
+@pytest.mark.asyncio
+async def test_plugin_install_surfaces_stale_token_warnings_in_the_result(
+    tmp_path, monkeypatch,
+):
+    """Tier 2: end-to-end — a real ``plugin_install`` call whose mcp.json
+    uses the wrong vocabulary surfaces the #4610 warning in the actual
+    install result, not just at the unit level."""
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    src = tmp_path / "src" / "wrongtoken"
+    src.mkdir(parents=True)
+    (src / "plugin.json").write_text(
+        json.dumps({
+            "$schema": PLUGIN_MANIFEST_SCHEMA_URL,
+            "name": "wrongtoken", "version": "0.1.0",
+        }),
+        encoding="utf-8",
+    )
+    (src / "mcp.json").write_text(
+        json.dumps({
+            "mcpServers": {
+                "srv": {
+                    "type": "stdio", "command": "python",
+                    "args": ["${REYN_PLUGIN_ROOT}/x"],
+                },
+            },
+        }),
+        encoding="utf-8",
+    )
+
+    ctx = _make_ctx(tmp_path, approve_all_http=True)
+    op = PluginInstallIROp(kind="plugin_install", source={"kind": "local", "path": str(src)})
+    result = await install_handle(op, ctx)
+
+    assert result["status"] == "installed", result
+    assert any(
+        "REYN_PLUGIN_ROOT" in w for w in result["stale_token_warnings"]
+    ), result["stale_token_warnings"]
 
 
 def test_build_mcp_entries_stdio_type_is_unaffected_by_the_adapter():

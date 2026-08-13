@@ -142,6 +142,7 @@ import asyncio
 import contextlib
 import json
 import os
+import re
 import shutil
 import time
 from pathlib import Path
@@ -556,7 +557,39 @@ def _copy_plugin_tree(source_dir: Path, plugin_root: Path) -> None:
             shutil.copy2(child, dest)
 
 
-def _expand_plugin_files(plugin_root: Path, token_ctx: PluginTokenContext) -> None:
+#: #4610: two DIFFERENT token vocabularies now apply per file, a
+#: necessary consequence of #4570 conversion D ending the pre-D
+#: uniformity on purpose (mcp.json takes the Agent Plugins 1.0 standard's
+#: own ``${PLUGIN_ROOT}``/``${PLUGIN_DATA}`` names, field-aware;
+#: pipelines/SKILL.md keep the reyn-native ``${REYN_PLUGIN_ROOT}``
+#: full-text bake — see ``_bake_mcp_json_fields``'s own docstring for
+#: why receiving BOTH names in both places was rejected). A wrong guess
+#: previously stayed silently literal with no error, install still
+#: reporting success, until the server/skill actually ran (#4364 C-1's
+#: same "declaration and reality silently drift" shape). These two
+#: regexes are what the warning scan below checks for — NEVER the
+#: FIX (adding a second recognized name), only the DISCLOSURE.
+_REYN_TOKEN_RE = re.compile(r"\$\{REYN_\w+\}")
+_SPEC_TOKEN_RE = re.compile(r"\$\{PLUGIN_(?:ROOT|DATA)\}")
+
+
+def _stale_token_warnings(text: str, pattern: "re.Pattern[str]", location: str, hint: str) -> "list[str]":
+    """#4610: every DISTINCT wrong-vocabulary token still literally
+    present in *text* after its file's own bake pass — named by
+    *location* (which file/field this token survived in) with *hint*
+    (which name THIS location actually expands). Never raises, never
+    blocks the install (D-2-shaped: report-only) — the caller threads
+    the result into the install's own return value, the same disclosure
+    shape #4601's ``plugin_data_retained_at`` and #4580's ``skipped``
+    already established for this module."""
+    found = sorted(set(pattern.findall(text)))
+    if not found:
+        return []
+    names = ", ".join(found)
+    return [f"{location}: found {names}, never expanded there — {hint}"]
+
+
+def _expand_plugin_files(plugin_root: Path, token_ctx: PluginTokenContext) -> "list[str]":
     """Bake stable-location tokens into every text file a capability might
     read (§3.4/§3.5): the root ``mcp.json`` (#4570 conversion C1 —
     renamed from ``.mcp.json``, the Agent Plugins 1.0 canonical filename;
@@ -565,12 +598,18 @@ def _expand_plugin_files(plugin_root: Path, token_ctx: PluginTokenContext) -> No
     bake — pipelines are a reyn extension the standard doesn't define, #4570
     conversion D deliberately does not touch this candidate), and every
     ``skills/*/SKILL.md``. Non-existent globs are simply empty — every
-    capability is optional (§3.1)."""
-    _bake_mcp_json_fields(plugin_root / "mcp.json", token_ctx)
+    capability is optional (§3.1).
+
+    Returns every #4610 stale-token warning collected across all three —
+    a plugin author's mistaken use of the WRONG file's token vocabulary
+    (``${PLUGIN_ROOT}`` in a pipeline, ``${REYN_PLUGIN_ROOT}`` in
+    mcp.json's args/env/cwd) surviving literally with no error otherwise."""
+    warnings: list[str] = []
+    warnings.extend(_bake_mcp_json_fields(plugin_root / "mcp.json", token_ctx))
     pipelines_dir = plugin_root / "pipelines"
     if pipelines_dir.is_dir():
         for path in pipelines_dir.glob("*.yaml"):
-            _bake_all_tokens(path, token_ctx)
+            warnings.extend(_bake_all_tokens(path, token_ctx))
 
     # SKILL.md bakes ONLY ${REYN_PLUGIN_ROOT} here — ${REYN_PROJECT_DIR} is a
     # dynamic param (§3.4), never baked at copy: the plugin's global
@@ -584,31 +623,52 @@ def _expand_plugin_files(plugin_root: Path, token_ctx: PluginTokenContext) -> No
     skills_dir = plugin_root / "skills"
     if skills_dir.is_dir():
         for path in skills_dir.glob("*/SKILL.md"):
-            _bake_plugin_root_only(path, token_ctx.plugin_root)
+            warnings.extend(_bake_plugin_root_only(path, token_ctx.plugin_root))
+    return warnings
 
 
-def _bake_all_tokens(path: Path, token_ctx: PluginTokenContext) -> None:
+def _bake_all_tokens(path: Path, token_ctx: PluginTokenContext) -> "list[str]":
     """Expand every ``${REYN_*}`` token *token_ctx* carries a value for, in
     place — the pipeline copy-time bake (#4570 conversion D: mcp.json no
     longer goes through this function — see :func:`_bake_mcp_json_fields`
     — pipelines are a reyn extension the Agent Plugins 1.0 standard
     doesn't define, so they keep the pre-#3070 full-text/``${REYN_*}``
-    behavior unchanged)."""
+    behavior unchanged).
+
+    #4610: after expansion, a literal ``${PLUGIN_ROOT}``/``${PLUGIN_DATA}``
+    surviving in the result is the WRONG vocabulary for this file (that
+    pair is mcp.json's own spec-canonical name, meaningless here) —
+    disclosed, never silently accepted, never auto-corrected (this
+    function only ever expands ``${REYN_*}`` — receiving the spec's own
+    names too was rejected, see :func:`_bake_mcp_json_fields`'s
+    docstring)."""
     if not path.is_file():
-        return
+        return []
     try:
         text = path.read_text(encoding="utf-8")
     except OSError:
-        return
+        return []
     expanded = expand_reyn_tokens(text, token_ctx)
     if expanded != text:
         path.write_text(expanded, encoding="utf-8")
+    return _stale_token_warnings(
+        expanded, _SPEC_TOKEN_RE, str(path),
+        "this file expands ${REYN_PLUGIN_ROOT}/${REYN_PROJECT_DIR}/${REYN_SKILL_DIR}, not ${PLUGIN_ROOT}/${PLUGIN_DATA} (that pair is mcp.json's own vocabulary)",
+    )
 
 
-def _bake_mcp_json_fields(path: Path, token_ctx: PluginTokenContext) -> None:
+def _bake_mcp_json_fields(path: Path, token_ctx: PluginTokenContext) -> "list[str]":
     """Field-aware ``${PLUGIN_ROOT}``/``${PLUGIN_DATA}`` bake for
     ``mcp.json`` (#4570 conversion D) — expand ONLY ``args`` / ``env``
     values / ``cwd``, NEVER ``command`` or ``url``.
+
+    #4610: after expansion, a literal ``${REYN_*}`` token surviving in
+    args/env/cwd is the WRONG vocabulary for this file (mcp.json's own
+    field-aware bake only ever recognizes ``${PLUGIN_ROOT}``/
+    ``${PLUGIN_DATA}``) — disclosed, never silently accepted. A
+    ``${PLUGIN_ROOT}``/``${PLUGIN_DATA}`` surviving inside ``command``/
+    ``url`` is CORRECT and never warned about — that is the spec's own
+    exclusion this function exists to honor, not a mistake.
 
     ``${PLUGIN_ROOT}``/``${PLUGIN_DATA}`` is the Agent Plugins 1.0
     mcp.schema.json's OWN token vocabulary for mcp.json specifically —
@@ -641,15 +701,15 @@ def _bake_mcp_json_fields(path: Path, token_ctx: PluginTokenContext) -> None:
     is left LITERAL, not a coincidental string match away from being
     expanded anyway."""
     if not path.is_file():
-        return
+        return []
     try:
         raw = path.read_text(encoding="utf-8")
         data = json.loads(raw)
     except (OSError, json.JSONDecodeError):
-        return
+        return []
     servers = data.get("mcpServers")
     if not isinstance(servers, dict):
-        return
+        return []
     plugin_data_dir = plugin_data_root() / token_ctx.plugin_root.name
     plugin_data_dir.mkdir(parents=True, exist_ok=True)
     token_map = {
@@ -657,7 +717,8 @@ def _bake_mcp_json_fields(path: Path, token_ctx: PluginTokenContext) -> None:
         "PLUGIN_DATA": str(plugin_data_dir),
     }
     changed = False
-    for spec in servers.values():
+    warnings: list[str] = []
+    for name, spec in servers.items():
         if not isinstance(spec, dict):
             continue
         args = spec.get("args")
@@ -668,6 +729,13 @@ def _bake_mcp_json_fields(path: Path, token_ctx: PluginTokenContext) -> None:
             if new_args != args:
                 spec["args"] = new_args
                 changed = True
+            warnings.extend(
+                _stale_token_warnings(
+                    " ".join(str(a) for a in new_args), _REYN_TOKEN_RE,
+                    f"{path} ({name}.args)",
+                    "mcp.json expands ${PLUGIN_ROOT}/${PLUGIN_DATA}, not ${REYN_*} names (those are pipelines/SKILL.md's own vocabulary)",
+                )
+            )
         env = spec.get("env")
         if isinstance(env, dict):
             new_env = {
@@ -677,34 +745,57 @@ def _bake_mcp_json_fields(path: Path, token_ctx: PluginTokenContext) -> None:
             if new_env != env:
                 spec["env"] = new_env
                 changed = True
+            warnings.extend(
+                _stale_token_warnings(
+                    " ".join(str(v) for v in new_env.values()), _REYN_TOKEN_RE,
+                    f"{path} ({name}.env)",
+                    "mcp.json expands ${PLUGIN_ROOT}/${PLUGIN_DATA}, not ${REYN_*} names (those are pipelines/SKILL.md's own vocabulary)",
+                )
+            )
         cwd = spec.get("cwd")
         if isinstance(cwd, str):
             new_cwd = expand_with_map(cwd, token_map)
             if new_cwd != cwd:
                 spec["cwd"] = new_cwd
                 changed = True
-        # `command` and `url` are NEVER touched — see this function's
-        # own docstring.
+            warnings.extend(
+                _stale_token_warnings(
+                    new_cwd, _REYN_TOKEN_RE, f"{path} ({name}.cwd)",
+                    "mcp.json expands ${PLUGIN_ROOT}/${PLUGIN_DATA}, not ${REYN_*} names (those are pipelines/SKILL.md's own vocabulary)",
+                )
+            )
+        # `command` and `url` are NEVER touched or warned about — see
+        # this function's own docstring.
     if changed:
         path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+    return warnings
 
 
-def _bake_plugin_root_only(path: Path, plugin_root: Path) -> None:
+def _bake_plugin_root_only(path: Path, plugin_root: Path) -> "list[str]":
     """Expand ONLY ``${REYN_PLUGIN_ROOT}`` in *path*, in place — every other
     ``${REYN_*}``/``${CLAUDE_*}``/``${env:...}`` token is left as a literal
     string for the invocation-time skill-load pass. A targeted string
     replace rather than ``expand_reyn_tokens`` (whose ``PluginTokenContext``
     requires ``project_dir``, which this call must NOT supply a baked value
-    for — see the caller's docstring)."""
+    for — see the caller's docstring).
+
+    #4610: a literal ``${PLUGIN_ROOT}``/``${PLUGIN_DATA}`` surviving here
+    was NEVER valid in a SKILL.md (that pair is mcp.json's own spec
+    vocabulary) — disclosed as a stale-token warning, same as the
+    pipeline/mcp.json bakes."""
     if not path.is_file():
-        return
+        return []
     try:
         text = path.read_text(encoding="utf-8")
     except OSError:
-        return
+        return []
     expanded = text.replace("${REYN_PLUGIN_ROOT}", str(plugin_root))
     if expanded != text:
         path.write_text(expanded, encoding="utf-8")
+    return _stale_token_warnings(
+        expanded, _SPEC_TOKEN_RE, str(path),
+        "this file expands ${REYN_PLUGIN_ROOT} only, not ${PLUGIN_ROOT}/${PLUGIN_DATA} (that pair is mcp.json's own vocabulary)",
+    )
 
 
 def _mcp_config_path(project_root: Path) -> Path:
@@ -1061,7 +1152,11 @@ async def handle(op: PluginInstallIROp, ctx: OpContext) -> dict:
 
         # ── 6. Expand ${REYN_*} stable-location tokens ─────────────────────────
         token_ctx = PluginTokenContext(plugin_root=plugin_root, project_dir=project_root)
-        _expand_plugin_files(plugin_root, token_ctx)
+        # #4610: report-only, never blocks the install — a plugin author's
+        # wrong-vocabulary token guess (${PLUGIN_ROOT} in a pipeline,
+        # ${REYN_PLUGIN_ROOT} in mcp.json's args/env/cwd) stays literal
+        # either way; this is the DISCLOSURE that used to be silent.
+        stale_token_warnings = _expand_plugin_files(plugin_root, token_ctx)
 
         # ── 7. Register capabilities (#3209: register-only — no dep materialise) ──
         # #4570 conversion B: capability presence is now derived PURELY
@@ -1157,6 +1252,12 @@ async def handle(op: PluginInstallIROp, ctx: OpContext) -> dict:
             "capabilities": sorted(capability_kinds_present(plugin_root)),
             "registered": registered,
             "skipped": skipped,  # #4580: declared-but-dropped, per capability kind
+            # #4610: report-only disclosure — a plugin's wrong-file token
+            # guess (${PLUGIN_ROOT} in a pipeline, ${REYN_PLUGIN_ROOT} in
+            # mcp.json's args/env/cwd) stayed literal either way; this is
+            # what used to be silent. Empty when the bake found nothing
+            # stale, same "present but empty" convention as `skipped`.
+            "stale_token_warnings": stale_token_warnings,
         }
 
 
