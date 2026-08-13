@@ -8,7 +8,7 @@ Before this module, the ONLY path by which an LLM could learn that
 WHICH plugin directories are advertised (the allowlist, #3196-shaped: a
 directory appearing under ``src/reyn/builtin/plugins/`` never
 self-advertises); this module answers WHAT each one is, by reading its own
-``.reyn-plugin/plugin.json`` manifest (``description`` + ``capabilities``)
+``plugin.json`` manifest (``description`` + ``capabilities``)
 at call time rather than duplicating that text into the registry (the
 redundant-projection drift class #3164 hit for a different value). Two
 disjoint reads, one SSoT each:

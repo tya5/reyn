@@ -3,7 +3,7 @@
 The ``{kind: "builtin"}`` variant of ``plugin_install``'s discriminated
 ``source`` (``reyn.core.op_runtime.plugin_install._builtin_plugin_dir``)
 resolves a name to ``<this dir>/<name>/`` — a self-contained plugin
-directory (``.reyn-plugin/plugin.json`` + optional ``mcp``/``pipelines``/
+directory (``plugin.json`` + optional ``mcp``/``pipelines``/
 ``skills`` subdirs, same shape as any other plugin source).
 
 Empty for now — P2 ships the install MACHINERY only. ADR 0064 §3.1 frames

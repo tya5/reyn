@@ -153,7 +153,7 @@ _NOT_EXTERNAL = {
     "install_plugin", "uninstall_plugin",
     # #3202 symptom 3: list_plugins ONLY enumerates BUILTIN_PLUGINS
     # -- reyn's own shipped plugin directories and their own reyn-authored
-    # .reyn-plugin/plugin.json manifests. Unlike skill_list/pipeline_list
+    # plugin.json manifests. Unlike skill_list/pipeline_list
     # (which can surface operator/third-party text registered via a
     # {kind:"local"/"git"} install), there is no local/git listing here, so
     # no third-party text ever flows through this handler.

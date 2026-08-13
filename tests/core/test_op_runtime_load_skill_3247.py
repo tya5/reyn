@@ -117,8 +117,7 @@ def test_load_skill_does_not_expand_unregistered_plugin_root(tmp_path, monkeypat
     monkeypatch.setenv("HOME", str(home))
     fake_plugin_dir = home / ".reyn" / "plugins" / "not-really-installed"
     (fake_plugin_dir / "skills" / "x").mkdir(parents=True)
-    (fake_plugin_dir / ".reyn-plugin").mkdir()
-    (fake_plugin_dir / ".reyn-plugin" / "plugin.json").write_text(
+    (fake_plugin_dir / "plugin.json").write_text(
         json.dumps({"name": "not-really-installed", "version": "1.0.0"}),
         encoding="utf-8",
     )  # a hand-placed marker, no completion sidecar -- must NOT count
@@ -348,12 +347,14 @@ def test_plugin_install_bakes_plugin_root_load_skill_resolves_the_rest(tmp_path,
 
     from reyn.core.op_runtime.plugin_install import handle as install_handle
     from reyn.core.op_runtime.plugin_install import plugins_root
+    from reyn.plugins.manifest import PLUGIN_MANIFEST_SCHEMA_URL
     from reyn.schemas.models import PluginInstallIROp
 
     source = tmp_path / "src-plugin"
-    (source / ".reyn-plugin").mkdir(parents=True)
-    (source / ".reyn-plugin" / "plugin.json").write_text(
+    source.mkdir(parents=True)
+    (source / "plugin.json").write_text(
         json.dumps({
+            "$schema": PLUGIN_MANIFEST_SCHEMA_URL,
             "name": "loadertest", "version": "0.1.0", "description": "d",
             "capabilities": [{"kind": "skills"}],
         }),

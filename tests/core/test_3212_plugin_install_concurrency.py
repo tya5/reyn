@@ -53,6 +53,7 @@ from reyn.core.op_runtime.plugin_install import (
     reconcile_plugin_installs,
 )
 from reyn.core.op_runtime.plugin_install import handle as install_handle
+from reyn.plugins.manifest import PLUGIN_MANIFEST_SCHEMA_URL
 from reyn.schemas.models import PluginInstallIROp
 from reyn.security.permissions.permissions import PermissionDecl, PermissionResolver
 
@@ -100,9 +101,10 @@ def _make_ctx(tmp_path):
 
 def _make_plugin_source(base, name: str = "concplugin"):
     plugin_dir = base / name
-    (plugin_dir / ".reyn-plugin").mkdir(parents=True, exist_ok=True)
-    (plugin_dir / ".reyn-plugin" / "plugin.json").write_text(
+    plugin_dir.mkdir(parents=True, exist_ok=True)
+    (plugin_dir / "plugin.json").write_text(
         json.dumps({
+            "$schema": PLUGIN_MANIFEST_SCHEMA_URL,
             "name": name, "version": "0.1.0", "description": "concurrency test plugin",
             "capabilities": [{"kind": "skills"}],
         }),

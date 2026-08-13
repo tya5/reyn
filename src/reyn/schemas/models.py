@@ -589,7 +589,7 @@ class PluginInstallIROp(BaseModel):
     """Promote/install a plugin (ADR 0064 §3.2/§3.8): resolve `source` → a
     source directory, copy it to `~/.reyn/plugins/<name>/`, expand
     `${REYN_*}` stable-location tokens (P1 `reyn.plugins.tokens`), validate
-    its `.reyn-plugin/plugin.json` manifest (P1 `reyn.plugins.manifest`),
+    its `plugin.json` manifest (P1 `reyn.plugins.manifest`),
     materialise any per-plugin runtime deps (§3.11 — install-time network
     fetch, spawn stays network-free), then register whatever capabilities
     the manifest declares by calling the EXISTING `skill_install` /

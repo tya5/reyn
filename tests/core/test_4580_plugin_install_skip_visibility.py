@@ -24,15 +24,19 @@ from reyn.core.events.events import EventLog
 from reyn.core.op_runtime.context import OpContext
 from reyn.core.op_runtime.plugin_install import handle as install_handle
 from reyn.data.workspace.workspace import Workspace
+from reyn.plugins.manifest import PLUGIN_MANIFEST_SCHEMA_URL
 from reyn.runtime.hot_reload import HotReloader
 from reyn.schemas.models import PluginInstallIROp
 from reyn.security.permissions.permissions import PermissionDecl, PermissionResolver
 
 
 def _make_plugin(root: Path, *, servers: dict) -> Path:
-    (root / ".reyn-plugin").mkdir(parents=True)
-    (root / ".reyn-plugin" / "plugin.json").write_text(
-        json.dumps({"name": root.name, "version": "0.1.0", "capabilities": [{"kind": "mcp"}]}),
+    root.mkdir(parents=True)
+    (root / "plugin.json").write_text(
+        json.dumps({
+            "$schema": PLUGIN_MANIFEST_SCHEMA_URL,
+            "name": root.name, "version": "0.1.0", "capabilities": [{"kind": "mcp"}],
+        }),
         encoding="utf-8",
     )
     (root / ".mcp.json").write_text(

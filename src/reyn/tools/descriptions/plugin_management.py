@@ -20,7 +20,7 @@ plugin_install = ToolDescription(
     ),
     text=(
         "Install a plugin — a self-contained directory with a "
-        ".reyn-plugin/plugin.json manifest declaring which capabilities "
+        "plugin.json manifest declaring which capabilities "
         "(mcp / pipelines / skills, any subset) it ships. The source is one "
         "of three kinds, pick exactly one field set: "
         "{kind: 'builtin', name: '<name>'} for one of reyn's own shipped "
@@ -42,7 +42,7 @@ plugin_install = ToolDescription(
         "the install/registry key."
     ),
     ja=(
-        "プラグイン（.reyn-plugin/plugin.json マニフェストを持つ自己完結"
+        "プラグイン（plugin.json マニフェストを持つ自己完結"
         "ディレクトリ）をインストールする。source は builtin/local/git の"
         "いずれか一つ。local が主要な日常フロー（自分が書いてテスト済みの"
         "成果物を再利用可能にする「昇格」）。git は最もリスクが高い（信頼"

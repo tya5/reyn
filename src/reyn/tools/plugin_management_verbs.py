@@ -206,7 +206,7 @@ async def _handle_plugin_list(
     a pure enumeration has no side effect to gate). Delegates to
     ``reyn.builtin.discovery.list_builtin_plugins``, which reads
     ``BUILTIN_PLUGINS`` (the allowlist -- which names to advertise) and each
-    name's own ``.reyn-plugin/plugin.json`` manifest (description +
+    name's own ``plugin.json`` manifest (description +
     capabilities), never a copy of either baked into this handler."""
     from reyn.builtin.discovery import list_builtin_plugins
 

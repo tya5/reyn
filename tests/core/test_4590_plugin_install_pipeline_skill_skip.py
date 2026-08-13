@@ -37,6 +37,7 @@ from reyn.core.op_runtime.context import OpContext
 from reyn.core.op_runtime.plugin_install import handle as install_handle
 from reyn.core.op_runtime.plugin_install import plugins_root
 from reyn.data.workspace.workspace import Workspace
+from reyn.plugins.manifest import PLUGIN_MANIFEST_SCHEMA_URL
 from reyn.schemas.models import PluginInstallIROp
 from reyn.security.permissions.permissions import PermissionDecl, PermissionResolver
 
@@ -73,9 +74,10 @@ def _make_plugin(
     manifest's own ``entries`` list is the "declared" side of the
     declared-vs-registered diff this file tests)."""
     plugin_dir = base / name
-    (plugin_dir / ".reyn-plugin").mkdir(parents=True, exist_ok=True)
-    (plugin_dir / ".reyn-plugin" / "plugin.json").write_text(
+    plugin_dir.mkdir(parents=True, exist_ok=True)
+    (plugin_dir / "plugin.json").write_text(
         json.dumps({
+            "$schema": PLUGIN_MANIFEST_SCHEMA_URL,
             "name": name, "version": "0.1.0", "description": "test plugin",
             "capabilities": [
                 {"kind": "pipelines", "entries": pipeline_entries},

@@ -1,4 +1,15 @@
-"""Typed schema for ``.reyn-plugin/plugin.json`` (ADR 0064 §3.1).
+"""Typed schema for a plugin's ``plugin.json`` manifest (ADR 0064 §3.1,
+relocated to the plugin root — #4570 conversion A).
+
+**#4570 conversion A**: the manifest lives at ``<plugin_dir>/plugin.json``
+(the Agent Plugins 1.0 canonical location, agent-plugins.org's
+``plugin.schema.json``), not ``<plugin_dir>/.reyn-plugin/plugin.json`` —
+architect's measurement (#4570) found reyn's own manifest FIELD shape
+already standard-compatible; only its directory position and the required
+``$schema`` const were the actual gaps. ``.reyn-plugin/`` still exists as
+reyn's own internal state directory (``_install_state.json`` mid-install
+marker, ``_source_kind.json``/``_provenance.json`` sidecars) — only the
+manifest itself moved out of it.
 
 A plugin is a self-contained directory; the manifest declares its identity
 (``name`` / ``version``) and WHICH capability subdirs are present — every
@@ -15,14 +26,23 @@ plugin layout convention expects" (root ``.mcp.json`` for ``mcp``,
 ``pipelines/*.yaml`` for ``pipelines``, ``skills/*/SKILL.md`` for
 ``skills`` — ADR §3.1's directory layout). Discovery/registration itself is
 P2 (install machinery); this module only defines and validates the shape.
-"""
+This field is a reyn-native extension the standard's ``additionalProperties:
+false`` root does not permit (#4570 conversion B moves it into
+``extensions["dev.reyn"]`` — not yet done as of this module's own #4570
+conversion A slice; kept here unchanged in the meantime)."""
 from __future__ import annotations
 
 import json
 from pathlib import Path
 from typing import Annotated, Literal, Union
 
-from pydantic import BaseModel, Field, ValidationError, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
+
+# The Agent Plugins 1.0 canonical manifest schema URL (agent-plugins.org,
+# published 2026-08-06) — the ``$schema`` field's required, ``const`` value
+# (#4570 conversion A). Measured directly against the published
+# ``plugin.schema.json`` (architect, #4570) rather than assumed.
+PLUGIN_MANIFEST_SCHEMA_URL = "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json"
 
 # Reserved so a future collision-precedence read (ADR §3.8, see
 # ``reyn.plugins.source``) can trust ``name`` as the stable collision key
@@ -33,7 +53,7 @@ _RESERVED_NAME_CHARS = "."
 
 
 class PluginManifestError(ValueError):
-    """Raised when ``.reyn-plugin/plugin.json`` is missing, malformed, or
+    """Raised when a plugin's ``plugin.json`` is missing, malformed, or
     fails schema validation. Wraps the lower-level ``OSError`` /
     ``json.JSONDecodeError`` / pydantic ``ValidationError`` so callers have
     one exception type to catch."""
@@ -78,7 +98,12 @@ PluginCapability = Annotated[
 
 
 class PluginManifest(BaseModel):
-    """``.reyn-plugin/plugin.json`` — the typed plugin manifest (ADR §3.1).
+    """``plugin.json`` (plugin root) — the typed plugin manifest (ADR §3.1,
+    relocated #4570 conversion A).
+
+    ``$schema`` (JSON key, Python attribute ``schema_``) is REQUIRED and
+    must equal :data:`PLUGIN_MANIFEST_SCHEMA_URL` — the Agent Plugins 1.0
+    canonical manifest schema's own ``const`` requirement.
 
     ``name`` is the plugin's stable identity — the collision key for
     ``reyn.plugins.source.resolve_name_collision`` and the ``~/.reyn/plugins/
@@ -93,6 +118,9 @@ class PluginManifest(BaseModel):
     capability at most once).
     """
 
+    model_config = ConfigDict(populate_by_name=True)
+
+    schema_: str = Field(alias="$schema")
     name: str
     version: str
     description: str = ""
@@ -104,6 +132,11 @@ class PluginManifest(BaseModel):
 
     @model_validator(mode="after")
     def _validate(self) -> "PluginManifest":
+        if self.schema_ != PLUGIN_MANIFEST_SCHEMA_URL:
+            raise ValueError(
+                f"PluginManifest.$schema must equal {PLUGIN_MANIFEST_SCHEMA_URL!r}, "
+                f"got {self.schema_!r}"
+            )
         if not self.name:
             raise ValueError("PluginManifest.name must be non-empty")
         if any(ch in self.name for ch in _RESERVED_NAME_CHARS):
@@ -120,7 +153,7 @@ class PluginManifest(BaseModel):
         return self
 
 
-_MANIFEST_RELATIVE_PATH = Path(".reyn-plugin") / "plugin.json"
+_MANIFEST_RELATIVE_PATH = Path("plugin.json")
 
 
 def manifest_path_for(plugin_dir: Path) -> Path:
@@ -129,7 +162,7 @@ def manifest_path_for(plugin_dir: Path) -> Path:
 
 
 def load_plugin_manifest(plugin_dir: Path) -> PluginManifest:
-    """Read + validate ``<plugin_dir>/.reyn-plugin/plugin.json``.
+    """Read + validate ``<plugin_dir>/plugin.json``.
 
     Raises ``PluginManifestError`` (never a bare ``OSError`` / JSON /
     pydantic error) on a missing file, invalid JSON, or a schema violation,

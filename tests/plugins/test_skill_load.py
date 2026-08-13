@@ -8,7 +8,8 @@ Pins (real instances throughout — no mocks):
      and returns ``(body, env_names_expanded, env_names_denied)`` (Tier 1,
      ``reyn.plugins.skill_load``).
   2. ``resolve_plugin_root`` walks up from a skill dir to a real
-     ``.reyn-plugin/plugin.json`` written to disk, and returns a DIFFERENT
+     ``plugin.json`` written to disk (plugin root — #4570 conversion A),
+     and returns a DIFFERENT
      value than ``skill_dir`` when one exists — falls back to ``skill_dir``
      itself when none does (no collapse in either direction).
   3. ``${CLAUDE_*}`` aliases expand to the SAME value as their canonical
@@ -60,12 +61,11 @@ def test_is_skill_body_path_matches_only_skill_md_basename(tmp_path):
 # ── resolve_plugin_root ──────────────────────────────────────────────────────
 
 def test_resolve_plugin_root_finds_manifest_walking_up(tmp_path):
-    """Tier 1: a real .reyn-plugin/plugin.json above the skill dir is found,
-    and the returned root is a DIFFERENT path than skill_dir itself."""
+    """Tier 1: a real plugin.json above the skill dir is found, and the
+    returned root is a DIFFERENT path than skill_dir itself."""
     plugin_dir = tmp_path / "my-plugin"
-    manifest_dir = plugin_dir / ".reyn-plugin"
-    manifest_dir.mkdir(parents=True)
-    (manifest_dir / "plugin.json").write_text(
+    plugin_dir.mkdir(parents=True)
+    (plugin_dir / "plugin.json").write_text(
         json.dumps({"name": "my-plugin", "version": "1.0.0"}), encoding="utf-8",
     )
     skill_dir = plugin_dir / "skills" / "rag-search"
@@ -94,9 +94,8 @@ def test_load_skill_body_expands_reyn_tokens_to_distinct_real_paths(tmp_path):
     """Tier 1: PLUGIN_ROOT / SKILL_DIR / PROJECT_DIR each expand to their
     own real, non-default, DISTINCT filesystem path."""
     plugin_dir = tmp_path / "acme-plugin"
-    manifest_dir = plugin_dir / ".reyn-plugin"
-    manifest_dir.mkdir(parents=True)
-    (manifest_dir / "plugin.json").write_text(
+    plugin_dir.mkdir(parents=True)
+    (plugin_dir / "plugin.json").write_text(
         json.dumps({"name": "acme-plugin", "version": "2.3.4"}), encoding="utf-8",
     )
     skill_dir = plugin_dir / "skills" / "widget-maker"

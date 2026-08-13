@@ -34,6 +34,7 @@ import pytest
 import yaml
 
 from reyn.interfaces.cli.commands import plugin as plugin_cli
+from reyn.plugins.manifest import PLUGIN_MANIFEST_SCHEMA_URL
 
 # ── shared fixtures ─────────────────────────────────────────────────────────
 
@@ -48,9 +49,10 @@ def _make_git_plugin_repo(base: Path, name: str = "gitplugin") -> Path:
     URL would instead keep failing (clone error → same SystemExit) and mask
     the strip."""
     repo = base / "repo"
-    (repo / ".reyn-plugin").mkdir(parents=True, exist_ok=True)
-    (repo / ".reyn-plugin" / "plugin.json").write_text(
+    repo.mkdir(parents=True, exist_ok=True)
+    (repo / "plugin.json").write_text(
         json.dumps({
+            "$schema": PLUGIN_MANIFEST_SCHEMA_URL,
             "name": name, "version": "0.1.0", "description": "git plugin",
             "capabilities": [{"kind": "skills"}],
         }),
@@ -72,9 +74,10 @@ def _write_local_plugin(base: Path, name: str = "myplugin") -> Path:
     """A minimal real local plugin dir: manifest + one skills capability
     (mirrors tests/core/test_plugin_install.py::_make_plugin_source)."""
     plugin_dir = base / name
-    (plugin_dir / ".reyn-plugin").mkdir(parents=True, exist_ok=True)
-    (plugin_dir / ".reyn-plugin" / "plugin.json").write_text(
+    plugin_dir.mkdir(parents=True, exist_ok=True)
+    (plugin_dir / "plugin.json").write_text(
         json.dumps({
+            "$schema": PLUGIN_MANIFEST_SCHEMA_URL,
             "name": name, "version": "0.1.0", "description": "test plugin",
             "capabilities": [{"kind": "skills"}],
         }),

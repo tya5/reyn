@@ -1003,8 +1003,10 @@ Events emitted: `presentation_install_blocked` (structural gate),
 ## `plugin_install` / `plugin_uninstall`
 
 ADR 0064 (plugin model) P2 install machinery. A plugin is a self-contained
-directory (`.reyn-plugin/plugin.json` manifest + optional `mcp`/`pipelines`/
-`skills` subdirs, ADR §3.1) — `plugin_install` copies it to
+directory (`plugin.json` manifest at the plugin root + optional `mcp`/`pipelines`/
+`skills` subdirs, ADR §3.1, relocated from `.reyn-plugin/plugin.json` — #4570
+conversion A, aligning with the Agent Plugins 1.0 standard's manifest
+location) — `plugin_install` copies it to
 `~/.reyn/plugins/<name>/` (global, once), expands `${REYN_*}` stable-location
 tokens, and REGISTERS whatever capabilities the manifest declares by calling
 the SAME existing verbs `skill_install` / `pipeline_install` already provide
@@ -1150,7 +1152,7 @@ higher-trust one.
 1. Resolve `source` → a source directory per its `kind`, applying the source's
    gate(s): `{kind: "git"}` runs the run-code trust gate (2) then
    `require_http_get` before cloning; `builtin`/`local` touch no network.
-2. Load + validate `.reyn-plugin/plugin.json` via `reyn.plugins.manifest.
+2. Load + validate `plugin.json` (plugin root) via `reyn.plugins.manifest.
    load_plugin_manifest` (P1) — a missing/malformed manifest refuses
    (`status="error"`) BEFORE any copy.
 3. Name-collision precedence check (above).

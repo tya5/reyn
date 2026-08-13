@@ -10,7 +10,7 @@ but nothing enumerated it). The architect's firm design layers this as:
      the explicit-dict SSoT of WHICH plugin names are advertised (#3196-
      shaped: no directory auto-scan).
   2. ``reyn.builtin.discovery.list_builtin_plugins`` -- reads the registry
-     × each name's own ``.reyn-plugin/plugin.json`` manifest, deriving
+     × each name's own ``plugin.json`` manifest, deriving
      description/capabilities rather than duplicating them (the
      redundant-projection drift class #3164 hit for a different value).
   3. ``list_plugins`` tool (``src/reyn/tools/plugin_management_verbs.py``)
@@ -35,7 +35,7 @@ This module pins:
      for the tool's output rather than some other hardcoded path.
 
 No mocks: the real ``reyn.builtin.registry`` module, the real
-``.reyn-plugin/plugin.json`` on disk, and the real registered
+``plugin.json`` on disk, and the real registered
 ``list_plugins`` ``ToolDefinition``.
 """
 from __future__ import annotations
@@ -68,7 +68,7 @@ def _tool_ctx() -> ToolContext:
 
 def _manifest_json() -> dict:
     manifest_path = (
-        Path(registry_module.__file__).parent / "plugins" / "rag" / ".reyn-plugin" / "plugin.json"
+        Path(registry_module.__file__).parent / "plugins" / "rag" / "plugin.json"
     )
     return json.loads(manifest_path.read_text(encoding="utf-8"))
 

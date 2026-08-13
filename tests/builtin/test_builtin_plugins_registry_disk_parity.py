@@ -36,12 +36,12 @@ _PLUGINS_DIR = _BUILTIN_DIR / "plugins"
 
 def _plugin_dirs_on_disk() -> "set[str]":
     """Every immediate subdirectory of ``builtin/plugins/`` that carries a
-    ``.reyn-plugin/plugin.json`` manifest (a real plugin, not e.g. an
+    ``plugin.json`` manifest (a real plugin, not e.g. an
     ``__init__.py``-only package marker dir)."""
     return {
         p.name
         for p in _PLUGINS_DIR.iterdir()
-        if p.is_dir() and (p / ".reyn-plugin" / "plugin.json").is_file()
+        if p.is_dir() and (p / "plugin.json").is_file()
     }
 
 
@@ -55,10 +55,10 @@ def test_every_builtin_plugins_entry_exists_on_disk() -> None:
     )
     for name in BUILTIN_PLUGINS:
         plugin_dir = _PLUGINS_DIR / name
-        manifest_path = plugin_dir / ".reyn-plugin" / "plugin.json"
+        manifest_path = plugin_dir / "plugin.json"
         assert manifest_path.is_file(), (
             f"BUILTIN_PLUGINS[{name!r}] has no matching "
-            f"src/reyn/builtin/plugins/{name}/.reyn-plugin/plugin.json on disk"
+            f"src/reyn/builtin/plugins/{name}/plugin.json on disk"
         )
 
 
