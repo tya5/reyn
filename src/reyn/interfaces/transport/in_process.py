@@ -202,6 +202,31 @@ class InProcessTransport(ClientTransport):
             SlashContext(transport=self, session=s), name, args,
         )
 
+    async def request_attach(self, agent_name: str) -> bool:
+        # #4534 PR-1: the local execution side, calling the SAME
+        # registry.attach() operation registry._forwarder's
+        # __attach_request__ branch calls today (that sentinel path is
+        # unchanged, still live) — this is a second, direct way to reach
+        # it, not a replacement of it yet.
+        if not agent_name or not self._registry.exists(agent_name):
+            return False
+        await self._registry.attach(agent_name)
+        return True
+
+    async def request_session_switch(self, session_id: str) -> bool:
+        # #4534 PR-1: mirrors request_attach above; calls registry.
+        # attach_session directly, the same operation the
+        # __session_switch_request__ sentinel branch calls. Graceful on a
+        # bad/vanished sid, matching the sentinel path's own tolerance.
+        s = self._attached()
+        if s is None or not session_id:
+            return False
+        try:
+            await self._registry.attach_session(s.agent_name, session_id)
+        except KeyError:
+            return False
+        return True
+
     async def answer_intervention_text(
         self, text: str, *, intervention_id: "str | None" = None
     ) -> bool:

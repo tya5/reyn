@@ -671,6 +671,30 @@ async def agui_submit(request: Request, agent_name: str):
         cancel_queued_fn = getattr(session, "cancel_queued", None)
         if callable(cancel_queued_fn) and msg_id:
             await cancel_queued_fn(msg_id)
+    elif ptype == "attach_request":
+        # #4534 PR-1: the remote execution side, mirroring slash_command
+        # above — a typed payload naming the target agent, re-resolved
+        # against THIS process's registry (never the raw
+        # __attach_request__ sentinel string). ADD-ONLY: the sentinel
+        # path is unchanged and still live.
+        target = str(payload.get("agent_name", "")).strip()
+        attached = False
+        if target and registry.exists(target):
+            await registry.attach(target)
+            attached = True
+        return JSONResponse({"status": "ok", "attached": attached})
+    elif ptype == "session_switch_request":
+        # #4534 PR-1: mirrors attach_request above, retiring
+        # __session_switch_request__.
+        target_sid = str(payload.get("session_id", "")).strip()
+        switched = False
+        if target_sid:
+            try:
+                await registry.attach_session(agent_name, target_sid)
+                switched = True
+            except KeyError:
+                pass
+        return JSONResponse({"status": "ok", "switched": switched})
     return JSONResponse({"status": "ok"})
 
 
