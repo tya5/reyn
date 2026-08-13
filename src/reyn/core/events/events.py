@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import contextvars
 import logging
+import secrets
 from datetime import date
 from pathlib import Path
 from typing import Callable
@@ -47,6 +48,8 @@ class EventLog:
         *,
         agent_id: str | None = None,
         run_id: str | None = None,
+        emitter: str | None = None,
+        track_audit_seq: bool = True,
     ) -> None:
         # #3868 PR-1: a folded derived state for `present`'s "was this ref
         # already read this session?" question (source.py's compute_ingested),
@@ -74,6 +77,38 @@ class EventLog:
         # TUI) can distinguish events from a parent agent turn versus a
         # sub-agent turn (which inherits the parent's subscriber list).
         self._run_id = run_id
+        # #4496 PR-1 (architect's contract 3): every audit-event carries a
+        # monotonic `audit_seq` per `emitter`, so a subscriber can detect a
+        # gap (a dropped event) without needing delivery-order guarantees —
+        # NOT the WAL's own `seq` (a different concept: WAL seq is the
+        # recovery coordinate; audit_seq is purely an audit-continuity
+        # witness — see events.md and CLAUDE.md's own warning against
+        # reusing that name for a second thing).
+        #
+        # `emitter` identifies ONE execution of a session, not the session
+        # itself (a session_id is stable across restarts — reusing it would
+        # let two different process runs both emit `audit_seq` 1..N under
+        # the same emitter, making a genuine gap indistinguishable from "a
+        # new run started"). Measured directly, not assumed: the session's
+        # own audit EventLog (session.py's `audit_events = EventLog(...)`)
+        # passes `agent_id` only, `run_id` stays unset there — so `run_id`
+        # is NOT a reliable per-execution identity for this specific
+        # EventLog instance, and this can't just alias it. A fresh EventLog
+        # is constructed exactly once per real process execution (never
+        # reloaded/reused across a restart), so a random token minted HERE,
+        # once, at construction, is already unique per execution BY
+        # CONSTRUCTION — no dependency on any other field being populated.
+        # `emitter=` lets a caller override this (e.g. `emit_cli_event`
+        # passing the literal `"cli"` label for its one-off, non-
+        # continuous events — see that function's own construction site).
+        self._emitter = emitter if emitter is not None else secrets.token_hex(8)
+        # CLI one-off events have no continuity to protect (one event, one
+        # process, never a second call from the same EventLog instance) —
+        # architect's own ruling: "a series of exactly one has no meaning
+        # for gap-detection", so `track_audit_seq=False` omits the key
+        # entirely rather than always stamping a meaningless `1`.
+        self._track_audit_seq = track_audit_seq
+        self._audit_seq = 0
 
     @property
     def subscribers(self) -> list[Callable[[Event], None]]:
@@ -106,6 +141,15 @@ class EventLog:
         """The run_id this EventLog stamps onto emitted events (issue #134)."""
         return self._run_id
 
+    @property
+    def emitter(self) -> str:
+        """The emitter label this EventLog stamps onto every emitted event
+        (#4496 PR-1, contract 3) — auto-generated at construction when not
+        explicitly given. Public read-only view, same rationale as
+        ``agent_id``/``run_id`` above: lets a caller confirm identity
+        without reaching into private state."""
+        return self._emitter
+
     def add_subscriber(self, fn: Callable[[Event], None]) -> None:
         self._subscribers.append(fn)
 
@@ -137,6 +181,17 @@ class EventLog:
         # row when a child agent shares the parent's subscriber list.
         if self._run_id and "run_id" not in data:
             data = {**data, "run_id": self._run_id}
+        # #4496 PR-1: emitter + audit_seq are ALWAYS this EventLog's own —
+        # deliberately NOT caller-wins (unlike agent_id/run_id above).
+        # Letting a caller supply either would open a path to skip a
+        # number or forge one, which would make a real gap indistinguishable
+        # from an intentional skip — the exact failure mode contract 3
+        # exists to prevent. Overwrites any caller-supplied same-named key
+        # rather than merely defaulting it.
+        data = {**data, "emitter": self._emitter}
+        if self._track_audit_seq:
+            self._audit_seq += 1
+            data["audit_seq"] = self._audit_seq
         event = Event(type=type, data=data)
         # #3868 PR-1: fold this event's contribution to `_ingested` at emit
         # time (a dict update) instead of re-scanning full history at every
@@ -237,5 +292,12 @@ def emit_cli_event(kind: str, **payload) -> None:
     # Use a date-named suffix so each day's CLI events land in one predictable file.
     # max_bytes=0 / max_age_seconds=0 disables rotation — the suffix IS the date.
     store = EventStore(cli_dir, max_bytes=0, max_age_seconds=0, suffix=f"_{today}")
-    event_log = EventLog(subscribers=[store])
+    # #4496 PR-1: a one-off CLI event has no continuity to protect — a
+    # single event from a single process is not a series a gap can be
+    # detected in, so audit_seq is omitted entirely (architect's ruling)
+    # rather than always stamping a meaningless `1`. `emitter="cli"` is a
+    # legible label (not a random per-instance token — nothing needs to
+    # distinguish one CLI invocation's emitter from another's, since
+    # neither carries a sequence to compare).
+    event_log = EventLog(subscribers=[store], emitter="cli", track_audit_seq=False)
     event_log.emit(kind, **payload)
