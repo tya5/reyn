@@ -30,7 +30,10 @@ Phase 4 wires every pane to its CANONICAL reyn source (no placeholders):
   resident buffer — see :meth:`TextualChatApp._artifact_rows`'s own docstring
   for why the two are not interchangeable). Each openable row carries an
   ``/open <ref>`` command (:func:`pane_commands`) that launches the OS's own
-  default app on the resolved path.
+  default app on the resolved path. A pure-inline row (no backing file, no
+  ref) instead opens via #4574 design B's own materialize-to-OS-temp route
+  — see :func:`artifact_pane_commands`'s own docstring for why that is NOT
+  expressed as a slash command the way the ref-backed case is.
 - **Cost / Ctx** — the live token/cost + context-window figures from the same
   status snapshot the plain path's status bar reads. Cost is the 5-row ×
   3-scope breakdown table (:func:`_cost_breakdown_table`) plus the cumulative
@@ -934,6 +937,16 @@ def artifact_row_label(row: "ArtifactRow") -> str:
     if row.error is not None:
         return f"✗ {row.name or '(unresolved)'} — {row.error}"
     if row.is_inline:
+        # #4574: the content genuinely IS shown above now (the fallback
+        # `artifact` render branch, `present_renderer._render_artifact`) —
+        # this label used to be written before that branch existed, which
+        # made it false (nothing was shown). A row with content also gets a
+        # materialize+open route (design B, `app._handle_open_inline_
+        # artifact_request`) — mentioned here so the label states what
+        # Enter does, matching a ref-backed row's own convention (the label
+        # names the same thing the open action reaches).
+        if row.inline_content is not None:
+            return f"{row.name} (inline — shown above; Enter opens a copy)"
         return f"{row.name} (inline — already shown above)"
     return row.resolved_path or row.name
 
@@ -946,10 +959,17 @@ def artifact_pane_options(rows: "Sequence[ArtifactRow]") -> list[str]:
 
 def artifact_pane_commands(rows: "Sequence[ArtifactRow]") -> list[str]:
     """The ``/open <ref>`` command parallel to each row in
-    :func:`artifact_pane_options` — empty string (non-actionable, same as
-    History/Menu) for a row with nothing to open: an inline artifact (no
-    real file — the content already reached the conversation pane
-    directly) or an error marker (nothing resolved)."""
+    :func:`artifact_pane_options` — empty string for a ref-less row: an
+    error marker (nothing resolved), or a pure-inline artifact.
+
+    An inline row's empty string here does NOT mean non-actionable
+    (unlike History/Menu, which really have nothing to do) — #4574 design
+    B gave it a materialize+open route, but raw multi-line/binary-ish
+    artifact content cannot safely ride through this module's plain
+    slash-command TEXT pipeline as an argument the way a `ref` token can.
+    ``app.on_option_list_option_selected`` special-cases the "artifacts"
+    pane and reads the ``ArtifactRow`` objects directly (never this
+    command list) for exactly that row shape — see its own docstring."""
     return [
         f"/open {r.ref}" if r.ref is not None else ""
         for r in rows

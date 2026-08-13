@@ -44,6 +44,25 @@ class OpContext:
     permission_resolver: "PermissionResolver | None" = None
     actor: str = ""
 
+    # #4574: the live agent's NAME (the "default"/"worker"-style slug
+    # AgentRegistry keys sessions by — NOT `actor` above, a fixed per-CALLER-
+    # ROLE literal like "chat_router"/"pipeline_run_cli", and NOT `agent_id`
+    # below, the `reyn.yaml` `agent.id` / FP-0016 X-Reyn-Agent-Id host
+    # identity, an entirely different string — see `embed.py`'s own docstring
+    # on why `agent_id` is the WRONG key for a per-agent scope). Root-caused
+    # in #4574's own issue thread: `artifact_payload.build_source_artifact_
+    # payload`'s `mint_ref` call was passing `ctx.actor` ("chat_router",
+    # constant) where the artifact-ref store's OWN per-agent scope (`artifact_
+    # ref.py`'s "Scope is per-agent") needs the real agent name — the SAME
+    # name `resolve_ref` is later called with client-side (`self._agent_name`
+    # on the TUI) — so a mint always wrote under "chat_router" and a resolve
+    # always read under the real agent name: permanently orphaned refs,
+    # `/open` unconditionally "artifact not found". `None` (a router op
+    # context this field's supplier doesn't populate, e.g. the
+    # pipeline_run_cli path) is a real "unknown" — a consumer needing this
+    # falls back to something else rather than crashing on a missing name.
+    agent_name: "str | None" = None
+
     model: str = "standard"
     resolver: "ModelResolver | None" = None
     subscribers: list = field(default_factory=list)

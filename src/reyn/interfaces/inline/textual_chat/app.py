@@ -1160,6 +1160,14 @@ class TextualChatApp(App):
         # the SAME per-pane entry list (``chrome._PANE_ENTRY_BUILDERS``), so the
         # option row and its command never drift.
         self._pane_commands: "dict[str, list[str]]" = {}
+        # #4574 design B: the "artifacts" tab's own rows, cached alongside
+        # ``_pane_commands`` at the SAME refresh (``_refresh_pane``) — a
+        # pure-inline row (`ref is None`) carries no slash command at all
+        # (there is no OS ref to `/open`), so `on_option_list_option_selected`
+        # needs the row OBJECT itself (for `inline_content`/`media_type`) to
+        # materialize+open it, not just the command-string list every other
+        # pane action reads.
+        self._artifact_rows_cache: "list[ArtifactRow]" = []
         # #3288 ③c: in-flight streamed reply, keyed by ``chain_id`` — the SAME
         # authoritative correlation id ``RouterLoop._emit_agent_delta`` stamps
         # on every ``agent_delta`` audit-event AND the one the terminal
@@ -2441,8 +2449,15 @@ class TextualChatApp(App):
         upstream, in :meth:`_history_turns`."""
         snapshot = self._snapshot() if snap is _UNSET else snap
         rows = self._pane_rows(tab_id, snapshot)
+        # #4574 design B: computed ONCE and reused for both the command list
+        # AND the row cache `on_option_list_option_selected` reads for a
+        # pure-inline row's materialize+open path — `_artifact_rows()` does
+        # real I/O (one `stat()` per ref-bearing row), so a second call here
+        # would double that work for no reason.
+        artifact_rows = self._artifact_rows()
+        self._artifact_rows_cache = artifact_rows
         self._pane_commands[tab_id] = pane_commands(  # type: ignore[arg-type]
-            tab_id, snapshot, artifacts=self._artifact_rows(),
+            tab_id, snapshot, artifacts=artifact_rows,
         )
         child = self.query_one(f"#{tab_id}")
         if isinstance(child, OptionList):
@@ -2472,12 +2487,91 @@ class TextualChatApp(App):
         index can never address a different row's action. Non-actionable panes
         (History/Menu, and a category's read-only fallback listing) carry no
         command and just collapse. Then close the drawer and return focus to the
-        composer."""
+        composer.
+
+        **#4574 design B carve-out**: the "artifacts" tab's pure-inline rows
+        (`ref is None`, `is_inline` True) carry NO slash command at all —
+        there is no OS ref for `/open` to address (see :meth:`_artifact_rows`'s
+        own ``ArtifactRow`` docstring) — so the empty-command branch below
+        would silently collapse them, same as a genuinely non-actionable row.
+        Materializing raw artifact content through the SAME text-command
+        pipeline every other row uses is not viable either (arbitrary
+        multi-line/binary-ish text as a command argument), so this ONE pane's
+        rows are special-cased here, reading :attr:`_artifact_rows_cache`
+        (the SAME rows :meth:`_refresh_pane` built alongside the (mostly
+        empty, for this pane's inline rows) command list) directly rather
+        than going through `self._submit`."""
         tab_id = event.option_list.id
+        if tab_id == "artifacts":
+            rows = self._artifact_rows_cache
+            if 0 <= event.option_index < len(rows):
+                row = rows[event.option_index]
+                if row.error is None and row.ref is None and row.inline_content is not None:
+                    await self._handle_open_inline_artifact_request(row)
+                    self._open_drawer(None)
+                    return
         cmds = self._pane_commands.get(tab_id or "", [])
         if 0 <= event.option_index < len(cmds) and cmds[event.option_index]:
             await self._submit(cmds[event.option_index])
         self._open_drawer(None)
+
+    async def _handle_open_inline_artifact_request(self, row: "ArtifactRow") -> None:
+        """#4574 design B: materialize a pure-inline artifact's content to a
+        fresh OS-temp file and open it with the OS default app — the CLIENT
+        doing this, never the agent (which may hold no write permission at
+        all — a read-only session's only output route for rich content IS
+        inline `present`, per the issue's own owner ruling) and never an
+        OS-side mint into the `.reyn` artifact-ref store (this content has
+        no backing project file for a ref to even point at).
+
+        Owner ruling (#4574, verbatim: "/tmp ファイルにすれば良いのでは"):
+        the temp file's retention is the OS's own — reyn does NOT track or
+        clean it up (a FOURTH retention axis reyn would then own, which the
+        owner explicitly declined). Never `delete=True`: the OS opener is a
+        SEPARATE process launched asynchronously (`open_with_os_default`'s
+        own `subprocess.Popen`/`os.startfile`) — a delete-on-close temp file
+        can vanish before that process even gets to read it.
+
+        `media_type` -> extension: architect's #4574 review, verbatim —
+        "the extension is treated as the real permission surface" (`present.
+        md:79`), so a media_type this process cannot map to a real extension
+        does NOT fall back to opening WITHOUT one (an extension-less file
+        resolves to no OS handler on any platform, or worse, an arbitrary
+        one) — it reports a status line instead. The content is not lost:
+        it already rendered in the conversation body (#4574's own fallback
+        render, `present_renderer._render_artifact`)."""
+        import mimetypes
+        import tempfile
+
+        from reyn.interfaces.repl._open_with_os_default import open_with_os_default
+        from reyn.runtime.outbox import OutboxMessage
+
+        ext = mimetypes.guess_extension(row.media_type or "") if row.media_type else None
+        if not ext:
+            self._ingest_frame(OutboxMessage(
+                kind="status",
+                text=(
+                    f"cannot open {row.name!r} — unknown extension for media_type "
+                    f"{row.media_type!r} (content is shown above in the conversation)"
+                ),
+            ))
+            return
+        try:
+            with tempfile.NamedTemporaryFile(
+                mode="w", suffix=ext, delete=False, encoding="utf-8",
+            ) as fh:
+                fh.write(row.inline_content or "")
+                temp_path = fh.name
+        except OSError as exc:
+            self._ingest_frame(OutboxMessage(
+                kind="status", text=f"could not write a temp file for {row.name!r}: {exc}",
+            ))
+            return
+        ok = open_with_os_default(temp_path)
+        if not ok:
+            self._ingest_frame(OutboxMessage(
+                kind="status", text=f"could not open {row.name} — no OS opener available",
+            ))
 
     def action_jump_to_latest(self) -> None:
         """Return to the newest output and resume following it (#3712)."""

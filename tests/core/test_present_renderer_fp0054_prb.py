@@ -91,6 +91,58 @@ def test_unsupported_component_does_not_crash_the_render_loop() -> None:
     assert "not-a-real-component" in out
 
 
+# ── 1c. #4574 — the artifact fallback render (was: always "unsupported") ────
+
+
+def test_artifact_node_no_longer_renders_as_unsupported() -> None:
+    """Tier 2: #4574's own reported symptom, directly — an `artifact` node
+    used to fall through to the SAME unregistered-component fallback as a
+    typo'd component name (this file's test right above), on every text
+    client (REPL + this TUI's own body renderer, which calls this exact
+    function). It must now render something ELSE."""
+    node = {
+        "component": "artifact", "media_type": "text/html", "name": "report.html",
+        "body": {"ref": "abc123", "size": 20, "inline": "<h1>hi</h1>"},
+    }
+    out = _render_to_text([node])
+    assert "unsupported present component" not in out
+    assert "report.html" in out
+    assert "<h1>hi</h1>" in out
+
+
+def test_artifact_inline_preview_is_capped_at_a_bounded_line_count() -> None:
+    """Tier 2: an artifact's inline body has NO upstream cap (unlike code/diff,
+    which `guard.cap_leaf` truncates before this renderer ever sees them —
+    see `_render_code_or_diff`'s own comment) — this render layer bounds it
+    itself, per architect's #4574 fallback spec ("先頭 N 行"). A giant inline
+    preview must not reach the terminal whole."""
+    huge = "\n".join(f"line-{i}" for i in range(500))
+    node = {
+        "component": "artifact", "media_type": "text/plain", "name": "big.txt",
+        "body": {"ref": "abc123", "size": len(huge), "inline": huge},
+    }
+    out = _render_to_text([node], width=200)
+    assert "line-0" in out
+    assert "line-499" not in out
+    assert "[preview truncated]" in out
+
+
+def test_artifact_error_marker_renders_the_error_not_a_crash() -> None:
+    """Tier 2: a `source_not_found` error marker (the source file vanished
+    between present-time and render-time — `apply_artifact_resolution`'s own
+    documented shape) renders the error, never raises."""
+    out = _render_to_text([{"component": "artifact", "error": "source_not_found"}])
+    assert "source_not_found" in out
+
+
+def test_artifact_soft_binding_miss_renders_without_a_body() -> None:
+    """Tier 2: a bare `{"component": "artifact"}` (present's own soft-skip
+    philosophy — nothing resolved yet) renders a placeholder, not a crash on
+    a missing `body`/`name`/`media_type`."""
+    out = _render_to_text([{"component": "artifact"}])
+    assert "nothing resolved" in out
+
+
 # ── 1b. #3846 ③ — image_cache real-pixel rendering ───────────────────────────
 
 

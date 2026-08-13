@@ -21,10 +21,21 @@ issue thread)::
       media_type  : <IANA, OPTIONAL, best-effort> (None -> "application/octet-stream")
       name        : <str>  required for a source-backed artifact, absent for inline
       description : <str, optional>
-      body        : Inline | Reference
+      body        : Reference | (Reference & Inline) | Inline
     }
-    Inline    := {"inline": <str>}            # text-serialized only, never base64
     Reference := {"ref": <str>, "size": <int>}
+    Inline    := {"inline": <str>}            # text-serialized only, never base64
+
+    #4574 design C (owner GO, 2026-08-13): for a SOURCE-backed artifact, ``body``
+    ALWAYS carries a ``ref`` — never gated on the inline-probe outcome — with the
+    small-and-decodable-text ``inline`` PREVIEW added alongside it when the probe
+    succeeds, never in its place. Before #4574, a small decodable source file got
+    ``Inline`` ONLY: no ``ref`` meant no text-client renderer could show it (the
+    #4574 REPL/TUI ``artifact`` render-branch gap) AND nothing was openable via
+    the OS (the Art tab's row had ``ref=None``) — a real file the agent handed
+    over that the operator could neither see nor open. Bare ``Inline`` (no
+    ``ref``) is now reachable ONLY through :func:`build_inline_artifact_payload`
+    — agent-DECLARED content with no backing file to mint a ref FOR.
 
 **② agent-facing slots** — an agent says EITHER:
   - ``source`` + ``description`` — the OS derives ``media_type``/``name``/
@@ -117,19 +128,25 @@ def build_source_artifact_payload(
     media_type = _derive_media_type(name)
     size = resolved.stat().st_size
 
-    body: "dict | None" = None
+    # #4574 design C (owner GO): a source-backed artifact ALWAYS mints a ref
+    # — never gated on the probe outcome — with the small-and-decodable-text
+    # inline preview added ALONGSIDE it, not instead of it. Before this, a
+    # small decodable file got `{"inline": ...}` and NOTHING ELSE: no `ref`
+    # meant `_artifact_row_from_node` (artifact_list.py) built an
+    # `is_inline=True` row with `ref=None`, so the Art tab's Enter had
+    # nothing to open (#4574's own reported symptom — "gave a real file,
+    # couldn't open it"). The probe's outcome now only decides whether an
+    # inline PREVIEW is attached, never whether the file is openable.
+    ref = mint_ref(project_root, agent_name, resolved)
+    body: dict = {"ref": ref, "size": size}
     if size <= probe_max_bytes:
         probe = resolved.read_bytes()[:probe_max_bytes]
         try:
             inline_text = probe.decode("utf-8")
         except UnicodeDecodeError:
-            body = None
+            pass
         else:
-            body = {"inline": inline_text}
-
-    if body is None:
-        ref = mint_ref(project_root, agent_name, resolved)
-        body = {"ref": ref, "size": size}
+            body["inline"] = inline_text
 
     payload: dict = {"media_type": media_type, "name": name, "body": body}
     if description is not None:

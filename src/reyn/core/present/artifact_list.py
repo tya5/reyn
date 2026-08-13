@@ -45,9 +45,15 @@ from typing import Any
 class ArtifactRow:
     """One listable artifact — everything needed to DISPLAY a row and to
     OPEN it, with no further derivation. `ref` is `None` for an inline
-    (no-real-file) artifact — nothing to open with the OS, the content
-    already reached the conversation pane directly (present's own inline
-    rendering handles it, same as any other component).
+    (no-real-file) artifact — no OS file for :func:`~reyn.data.workspace.
+    artifact_ref.resolve_ref` to open the ORDINARY way.
+
+    `inline_content` (#4574 design B): a pure-inline row (`ref is None`,
+    `is_inline` True) still carries its raw text here — #4574's own fix is
+    that the CLIENT (never the agent, never an OS-side mint) materializes
+    this to a temp file + opens it on request, rather than "nothing to
+    open with the OS" being permanent. `None` for a ref-backed row (its
+    content lives at `ref`, not duplicated here) or an error row.
 
     `resolved_path` (#4482 PR-3 review, lead-coder/architect — a real
     block, not a nit): `name` alone is a BASENAME — it names WHAT the
@@ -69,6 +75,7 @@ class ArtifactRow:
     is_inline: bool
     error: "str | None" = None
     resolved_path: "str | None" = None
+    inline_content: "str | None" = None
 
 
 def _artifact_row_from_node(node: dict) -> "ArtifactRow | None":
@@ -95,13 +102,18 @@ def _artifact_row_from_node(node: dict) -> "ArtifactRow | None":
             description=description,
             is_inline=False,
         )
-    # Inline body — no real file, nothing for the OS to open.
+    # Inline body — no real file to point a ref at. #4574 design B: the raw
+    # content is carried on the row so the CLIENT can materialize+open it on
+    # request (never "nothing to open" permanently — see inline_content's
+    # own docstring above).
+    inline = body.get("inline")
     return ArtifactRow(
         ref=None,
         name=str(node.get("name") or "(inline)"),
         media_type=media_type,
         description=description,
         is_inline=True,
+        inline_content=str(inline) if isinstance(inline, str) else None,
     )
 
 

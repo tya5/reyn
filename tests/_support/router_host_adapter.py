@@ -37,6 +37,7 @@ _INERT_OP_CONTEXT_SOURCE_FIELDS: dict = {
     "sandbox_backend": None,
     "sandbox_policy_fn": None,
     "agent_id": None,
+    "agent_name": None,  # #4574
     "intervention_bus_factory": None,
     "presentation_renderer_factory": None,
     "presentation_registry_fn": None,
@@ -183,6 +184,7 @@ def make_adapter(
             (lambda: workspace_base_dir) if workspace_base_dir is not None else None
         ),
         session_id_fn=(lambda: session_id) if session_id is not None else None,
+        agent_name=agent_name,  # #4574: mirrors the real Session's own wiring
     )
     mcp_gateway_inputs = McpGatewayInputs(
         mcp_connection_service=None,
