@@ -1209,7 +1209,11 @@ higher-trust one.
    unexpanded, not a guess) or on a token the bake doesn't touch at all.
    Report-only: never blocks the install, surfaced via the result dict
    (below), same "present but empty when nothing to report" shape as
-   `skipped` (#4580).
+   `skipped` (#4580). Each finding also emits `plugin_install_token_
+   vocabulary_mismatch` (payload: `name`, `warning` — the identical string
+   the result dict carries, no re-derivation) — the durable audit-trail
+   counterpart, so a plugin installed once and never re-inspected still
+   has a record (#4610 PR-2).
 7. Register (#3209: register-only, no dep materialise step; #4570
    conversion B: capability presence is derived from directory/file
    EXISTENCE, not a manifest-declared list — the manifest carries no
@@ -1276,7 +1280,8 @@ Result fields (`plugin_uninstall`): `status` (`"uninstalled"` / `"error"`),
 directory exists for the uninstalled name, #4570 conversion D).
 
 Events emitted: `plugin_install_started` / `_copied` / `_registered` /
-`_completed`; `plugin_uninstall_started` / `_registry_dropped` /
+`_completed` / `_token_vocabulary_mismatch` (#4610, one per stale-token
+finding, above); `plugin_uninstall_started` / `_registry_dropped` /
 `_completed`.
 
 ## `embed`
