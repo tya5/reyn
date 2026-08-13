@@ -1,6 +1,13 @@
-"""`reyn media stats` — read-only on-disk footprint report for
+"""`reyn storage stats` — read-only on-disk footprint report for
 ``.reyn/media/``, ``.reyn/tool-results/`` (#4478 Phase 1), and every
 ``history.jsonl`` under ``.reyn/agents/`` (#4476 Phase 1).
+
+Named ``storage``, not ``media`` (renamed from the original #4485 name once
+#4476 landed on the same command — lead-coder review on #4488): once
+``history.jsonl`` reports through here too, "media" no longer describes
+what the command covers. ``storage`` is the name all three share — "how
+much of reyn's own on-disk footprint currently exists" — and stays correct
+as more subsystems land measurement here.
 
 Exists so these measurement methods — each named by their own subsystem's
 module docstring as the precondition for a future Phase 2 eviction/retention
@@ -27,11 +34,11 @@ from pathlib import Path
 
 def register(sub) -> None:
     p = sub.add_parser(
-        "media", help="Inspect Reyn-managed media / tool-result / history storage",
+        "storage", help="Inspect Reyn-managed media / tool-result / history storage",
     )
-    media_sub = p.add_subparsers(dest="media_command", metavar="<subcommand>")
-    media_sub.required = True
-    stats_p = media_sub.add_parser(
+    storage_sub = p.add_subparsers(dest="storage_command", metavar="<subcommand>")
+    storage_sub.required = True
+    stats_p = storage_sub.add_parser(
         "stats",
         help=(
             "Print on-disk file counts + byte totals for "

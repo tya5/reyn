@@ -1,10 +1,13 @@
-"""Tier 2: #4478/#4476 Phase 1 — ``reyn media stats`` CLI contract.
+"""Tier 2: #4478/#4476 Phase 1 — ``reyn storage stats`` CLI contract.
 
 Gives ``MediaStore.storage_stats`` and ``aggregate_history_stats`` an actual
 caller (lead-coder's #4478 review condition ①: a measurement surface with
 no reader is a mechanism nobody uses, the shape flagged repeatedly this
-session; #4476 lands on this SAME surface per the same review). No mocks —
-drives the real ``run_stats`` against real on-disk state under ``tmp_path``.
+session; #4476 lands on this SAME surface per the same review). Command
+renamed ``media`` → ``storage`` on lead-coder's #4488 review, once
+``history.jsonl`` reporting made the original name mismatch what it covers
+— this is that rename's follow-through test file. No mocks — drives the
+real ``run_stats`` against real on-disk state under ``tmp_path``.
 """
 from __future__ import annotations
 
@@ -12,7 +15,7 @@ from argparse import Namespace
 from pathlib import Path
 
 from reyn.data.workspace.media_store import MediaStore, MediaStoreConfig
-from reyn.interfaces.cli.commands.media import register, run_stats
+from reyn.interfaces.cli.commands.storage import register, run_stats
 
 
 def test_stats_reports_zero_on_a_fresh_project(tmp_path: Path, monkeypatch, capsys):
@@ -73,8 +76,8 @@ def test_stats_reflects_a_real_history_jsonl(tmp_path: Path, monkeypatch, capsys
     assert str(hist.stat().st_size) in hist_line
 
 
-def test_media_stats_is_registered_on_the_reyn_parser():
-    """Tier 2: (reachability) 'reyn media stats' is wired into the real
+def test_storage_stats_is_registered_on_the_reyn_parser():
+    """Tier 2: (reachability) 'reyn storage stats' is wired into the real
     top-level parser, not just importable in isolation — this is the exact
     shape ('declared, implemented, tested, invoked by nobody') #4478's
     review flagged; asserts the subcommand is actually reachable through
@@ -86,5 +89,5 @@ def test_media_stats_is_registered_on_the_reyn_parser():
     sub.required = True
     register(sub)
 
-    args = parser.parse_args(["media", "stats", "--project-root", "/tmp"])
+    args = parser.parse_args(["storage", "stats", "--project-root", "/tmp"])
     assert args.func is run_stats

@@ -2,7 +2,7 @@
 (`history_file_stats`/`aggregate_history_stats`).
 
 Read-only, policy-independent — feeds the SAME "measurement first, owner
-decides retention numbers later" order as #4478/#4485 (`reyn media stats`).
+decides retention numbers later" order as #4478/#4485 (`reyn storage stats`).
 No truncation/deletion is introduced anywhere in this file or by the
 functions it tests.
 """
