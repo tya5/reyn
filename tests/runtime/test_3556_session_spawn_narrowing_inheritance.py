@@ -206,10 +206,12 @@ def _spawn_ctx(spawner: Session, reg: AgentRegistry, state_log: StateLog) -> Too
     async def _spawn_session_bound(
         *, request: str, mode: str, narrowing: "dict | None" = None,
         base_dir: "str | None" = None,
+        agent: "str | None" = None, session: "str | None" = None,
     ) -> dict:
         return await host.spawn_session(
             request=request, mode=mode, narrowing=narrowing,
             base_dir=base_dir, chain_id="p3556-chain",
+            agent=agent, session=session,
         )
 
     return ToolContext(

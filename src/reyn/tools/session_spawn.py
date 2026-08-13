@@ -4,11 +4,15 @@ identifiers keep the old spelling; only the registered ``name=`` (the
 LLM-visible string) and everything keyed off it changed.
 
 Router-only (gates.router=allow). Async-dispatch posture: the LLM
-spawns a FRESH-context session under its own agent to run a task in isolation; the
-handler calls ctx.router_state.spawn_session_fn(...) and returns a spawn-ack. The
-spawned session RUNS the task (its run-loop is started); the result stays in the
-spawned session — routing it back to the spawner is the S1bc-exec follow-on (FP-0043
-Stage-4 non-main routing).
+spawns a FRESH-context session under its own agent (or, with the optional
+``agent`` argument, #4556: under any agent in its own spawn subtree — the
+same ``is_spawn_descendant`` predicate ``create_topology`` uses) to run a task
+in isolation; the handler calls ctx.router_state.spawn_session_fn(...) and
+returns a spawn-ack. The spawned session RUNS the task (its run-loop is
+started); the result stays in the spawned session — routing it back to the
+spawner is the S1bc-exec follow-on (FP-0043 Stage-4 non-main routing; the
+#2130 run_prompt/agent_response mechanism already covers explicitly pulling
+a spawned-under-another-agent session's result back).
 
 Scope-time mode (the owner's explicit spawn-time choice): ``mode`` is ephemeral |
 persistent. Both are rewind-safe (a session spawned after a rewind cut is dropped). The
@@ -73,6 +77,14 @@ _SESSION_SPAWN_PARAMETERS: dict[str, Any] = {
             "type": "string",
             "description": _delegation_descriptions.PARAMS["spawn_session"]["base_dir"].text,
         },
+        "agent": {
+            "type": "string",
+            "description": _delegation_descriptions.PARAMS["spawn_session"]["agent"].text,
+        },
+        "session": {
+            "type": "string",
+            "description": _delegation_descriptions.PARAMS["spawn_session"]["session"].text,
+        },
     },
     "required": ["request"],
 }
@@ -100,6 +112,7 @@ async def _handle(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
     return await rs.spawn_session_fn(
         request=args["request"], mode=mode, narrowing=args.get("narrowing"),
         base_dir=args.get("base_dir"),
+        agent=args.get("agent"), session=args.get("session"),
     )
 
 

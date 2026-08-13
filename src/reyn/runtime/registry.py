@@ -3022,7 +3022,7 @@ class AgentRegistry:
         return new_sid
 
     async def spawn_session_recorded(
-        self, name: str, *, mode: str = "persistent",
+        self, name: str, *, sid: "str | None" = None, mode: str = "persistent",
         narrowing: "dict | None" = None,
         base_dir: "Path | None" = None,
         attended: bool = True,
@@ -3039,6 +3039,13 @@ class AgentRegistry:
         it. Mirrors ``create_agent`` (the agent CREATE seam): the mechanism stays sync;
         the event marks the LLM action. ``session_spawned`` is config-complete
         (mode + narrowing) for symmetric re-materialise. Returns the new sid.
+
+        ``sid`` (#4556, optional): pass a caller-chosen session id instead of
+        letting ``spawn_session`` auto-generate one via ``uuid4``. Threaded
+        straight through — the sync primitive already raises ``ValueError``
+        on a duplicate ``(name, sid)`` pair (its own existing guard), which
+        this async wrapper does NOT catch; the caller (``RouterHostAdapter.
+        spawn_session``) reshapes it into a typed error response.
 
         ``attended`` (#4193 ①, default ``True``): whether THIS CALLER is going to
         wait on the spawned session — a CALLER decision, never derived from
@@ -3094,7 +3101,7 @@ class AgentRegistry:
         # "still impossible". The primitive's channel is for callers that do not run that
         # refresh (``/session new``, #3562).
         sid = self.spawn_session(
-            name,
+            name, sid,
             presentation_consumer=presentation_consumer,
             intervention_bridge=intervention_bridge,
         )
