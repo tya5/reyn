@@ -16,21 +16,32 @@ non-linear primitives are now implemented; ``refine`` (a pipeline-level
 construct, not a step kind) stays out of scope.
 
 **Fan-out recovery commit unit = the ITEM (READ THIS before touching
-``for_each`` recovery).** ``for_each`` runs ``do`` over each list item as an
-ISOLATED concurrent sub-scope (Hard rule 6: read-only ctx, no sibling comm), a
-coordinator recording each item's result AS IT LANDS via ``asyncio.as_completed``
-(never bare ``gather``). The recovery commit unit is the ITEM: a LANDED item is
+``for_each``/``parallel`` recovery).** ``for_each`` runs ``do`` over each list
+item (``parallel`` runs each named branch) as an ISOLATED concurrent sub-scope
+(Hard rule 6: read-only ctx, no sibling comm), a coordinator recording each
+item's/branch's result AS IT LANDS via ``asyncio.as_completed`` (never bare
+``gather``). The recovery commit unit is the ITEM/BRANCH: a LANDED one is
 exactly-once (its key is durable before the next boundary; resume replays it,
-never re-runs it). A single-step ``do`` (the common case) therefore has NO
-recovery gap — it is exactly-once identical to a durable step. The ONE gap: a
-COMPOSITIONAL ``do`` (``call``/``match``/``fold``) that is IN-FLIGHT at a crash
-re-runs ATOMICALLY on resume (its item key was never recorded), so its already-
-completed INTERNAL side effects may re-fire — because item tasks record through a
-NO-OP recorder (only the single coordinator coroutine calls the real ``record``,
-serialized by construction, avoiding the read-modify-write race concurrent
-per-task recording would cause). Per-internal-sub-step durability for
-compositional fan-out items (a lock-guarded serialized-recorder path) is a
-tracked follow-up, not a silent gap.
+never re-runs it). A single-step ``do`` has always been exactly-once this way.
+
+**#2582: the compositional-``do`` (``call``/``match``/``fold``) gap is CLOSED.**
+Previously an item/branch task recorded through a NO-OP recorder (only the
+coordinator coroutine ever called the real ``record``), so a crash mid-item
+lost the compositional ``do``'s internal progress and re-ran it ATOMICALLY on
+resume — its already-completed INTERNAL side effects re-fired. Each item/branch
+task now gets its OWN real recorder
+(:func:`_make_fan_out_sub_step_recorder`) that journals its compositional
+``do``'s internal sub-steps durably AS THEY LAND, same as the top-level/single-
+``call`` path already did. The read-modify-write race that motivated the
+original no-op design (concurrent tasks racing to write
+``completed_step_results``) is closed by :class:`_FanOutRecordBox`'s ONE
+``asyncio.Lock``, shared by every writer touching a given fan-out step's state
+— the coordinator's own end-of-item/branch record calls AND every item/branch's
+sub-step recorder. A mid-item crash now replays its completed internal
+sub-step(s) on resume instead of re-firing them; a within-process ``retry(n)``
+gets the identical benefit (a failed attempt's already-durable sub-steps are
+not re-run on the next attempt either) since both paths share the same
+``_run_scope`` replay-by-key check.
 
 **Dispatch tables (R7 — the parallel-primitive seam).** Step execution is a
 ``dict``-dispatch keyed by the step's dataclass type
@@ -701,6 +712,80 @@ def _is_dropped_marker(value: Any) -> bool:
     return isinstance(value, dict) and set(value) == {_FAN_OUT_DROPPED_KEY, "error"}
 
 
+class _FanOutRecordBox:
+    """#2582: the fan-out coordinator's growing ``completed_step_results``, plus
+    the ONE ``asyncio.Lock`` serializing every writer that touches it — the
+    coordinator's own end-of-item/branch record calls AND the per-item/branch
+    sub-step recorders :func:`_make_fan_out_sub_step_recorder` hands to a
+    compositional ``do`` (``call``/``match``/``fold``). A plain local variable
+    cannot be shared this way: item/branch tasks are separate coroutines, and
+    reassigning a nested function's enclosing-scope name needs an object to
+    mutate (``nonlocal`` only rebinds inside the SAME lexical function), so this
+    is threaded explicitly instead.
+
+    The lock exists for the SAME reason the original no-op recorder did (see the
+    module docstring's "commit unit = the ITEM"): two concurrent writers must
+    never both read ``state_log.last_durable_seq`` and race to
+    ``submit_durable`` before either advances it — whichever write lands second
+    would silently clobber the first's generation at the SAME seq. Serializing
+    every writer through this one lock (dict-merge + the durable write, as one
+    critical section) closes that race, so per-internal-sub-step durability can
+    be added SAFELY on top of the concurrent fan-out this already was."""
+
+    __slots__ = ("value", "lock")
+
+    def __init__(self, initial: "dict[str, Any]") -> None:
+        self.value = initial
+        self.lock = asyncio.Lock()
+
+
+def _make_fan_out_sub_step_recorder(
+    box: "_FanOutRecordBox", outer_record: Recorder, item_prefix: str,
+) -> Recorder:
+    """#2582: a REAL (no longer no-op) per-item/per-branch recorder for a
+    compositional ``do`` reached from inside ``for_each``/``parallel``. Closes
+    the documented atomic-re-run gap — a compositional ``do``'s internal
+    sub-steps (``call``/``match``/``fold``'s own ``_run_scope`` recursion) now
+    journal durably as they land, instead of only the item/branch's FINAL
+    result being recorded once the whole task returns. On resume, a mid-item
+    crash therefore replays its already-completed internal sub-step(s) instead
+    of re-firing them (the SAME ``_run_scope`` replay-by-key check the
+    top-level/single-``call`` path already relies on — see ``for_each`` items
+    with a single-step ``do`` were already exactly-once; this extends the SAME
+    mechanism one level deeper).
+
+    Filters to keys under ``item_prefix + "."`` ONLY: a compositional runner
+    only ever grows its OWN sub-scope's dotted keys, never the item/branch's
+    own bare label key (the coordinator records that separately once the task
+    returns) — so this recorder can never race the coordinator over the SAME
+    key, and per-item state stays isolated (Hard rule 6). The trailing dot is
+    load-bearing: without it, item 1's filter would ALSO match item 10's keys
+    (``"...for_each.1"`` is a plain string prefix of ``"...for_each.10..."``).
+
+    ``forwarded`` (closed over per call to this factory, i.e. per item/branch)
+    tracks which keys THIS item has already pushed into ``box``, so a later
+    call — ``_run_scope`` re-invokes ``record`` once per newly-completed
+    sub-step, each call carrying the item's WHOLE local snapshot, not just the
+    delta — only forwards the genuinely new key(s), never re-merges (and
+    re-writes a generation for) ones already durable."""
+    prefix = item_prefix + "."
+    forwarded: "set[str]" = set()
+
+    async def _record(*, completed_step_results: "dict[str, Any]", durable: bool) -> None:
+        new_keys = {
+            k: v for k, v in completed_step_results.items()
+            if k.startswith(prefix) and k not in forwarded
+        }
+        if not new_keys:
+            return
+        async with box.lock:
+            box.value = {**box.value, **new_keys}
+            forwarded.update(new_keys)
+            await outer_record(completed_step_results=box.value, durable=durable)
+
+    return _record
+
+
 class SpawnBudget:
     """S5 guard (c) — a per-RUN monotonic session-spawn counter. Constructed ONCE
     per top-level ``run``/``resume`` and shared BY REFERENCE across every nested
@@ -1334,16 +1419,20 @@ async def _run_for_each_step(inv: "_StepInvocation") -> "tuple[Any, bool, dict[s
 
     Resolve the list source, then a SINGLE coordinator coroutine fans ``do`` out
     over the items via ``asyncio.as_completed`` gated by a ``Semaphore`` (S5 guard
-    a), recording each item's result AS IT LANDS (only the coordinator ever calls
-    the real ``record`` — item tasks use a NO-OP recorder, so there is no
-    concurrent read-modify-write race on ``completed_step_results``; see the
-    module docstring's "commit unit = the ITEM"). ``on_error`` decides an item
-    failure: ``continue`` records a DROPPED kind-marker (so resume never re-runs
-    it); ``retry(n)`` re-runs the item up to ``n`` more times then falls back to
-    ``abort``; ``abort`` cancels the still-pending items and fails the step (the
-    already-landed items stay durably recorded, so a resume after an abort-crash
-    skips them). After every item index has a key, ``collect`` runs ONCE over the
-    filtered ordered results and its result is this step's N2 return value.
+    a), recording each item's result AS IT LANDS. #2582: every writer — the
+    coordinator's own end-of-item record AND each item's compositional-``do``
+    sub-step recorder (:func:`_make_fan_out_sub_step_recorder`) — goes through
+    the SAME :class:`_FanOutRecordBox` lock, so concurrent items cannot race the
+    read-modify-write of ``completed_step_results`` (see the module docstring's
+    "commit unit = the ITEM"). ``on_error`` decides an item failure: ``continue``
+    records a DROPPED kind-marker (so resume never re-runs it); ``retry(n)``
+    re-runs the item up to ``n`` more times then falls back to ``abort``;
+    ``abort`` cancels the still-pending items and fails the step (the
+    already-landed items — including a still-in-flight compositional item's
+    already-durable internal sub-steps — stay durably recorded, so a resume
+    after an abort-crash skips them). After every item index has a key,
+    ``collect`` runs ONCE over the filtered ordered results and its result is
+    this step's N2 return value.
 
     S5 guards: (a) the ``Semaphore`` caps live concurrency; (b) ``fan_out_depth``
     is +1'd through ``_RunDeps`` into every item/collect sub-scope, failing the
@@ -1353,13 +1442,13 @@ async def _run_for_each_step(inv: "_StepInvocation") -> "tuple[Any, bool, dict[s
     deps = inv.deps
     context = inv.context
     label = inv.step_label
-    completed = inv.completed_step_results
+    box = _FanOutRecordBox(inv.completed_step_results)
 
     # Full-completion replay: if collect already ran (its key is present) the whole
     # for_each is done — replay its N2 result, execute nothing.
     collect_key = f"{label}.for_each.collect"
-    if collect_key in completed:
-        return completed[collect_key], False, completed
+    if collect_key in box.value:
+        return box.value[collect_key], False, box.value
 
     source = _resolve_list_source(step, context, label, "for_each")
     n = len(source)
@@ -1380,11 +1469,6 @@ async def _run_for_each_step(inv: "_StepInvocation") -> "tuple[Any, bool, dict[s
     outer_stores = context["ctx"]
     outer_pipe = context["pipe"]
 
-    async def _noop_record(**_kw: Any) -> None:
-        # Item tasks NEVER record: only the single coordinator does (serialized),
-        # so concurrent items cannot race the read-modify-write of the snapshot.
-        return None
-
     async def _run_item(item_idx: int, item: Any) -> "tuple[int, Any, bool, Exception | None]":
         # Retry(n) re-runs INSIDE the same task (same semaphore slot — a retry
         # does not raise live concurrency). Any Exception is an item failure
@@ -1392,15 +1476,27 @@ async def _run_for_each_step(inv: "_StepInvocation") -> "tuple[Any, bool, dict[s
         # abort-cancel propagates out and the task is gathered in the finally).
         attempts = 1 + (on_err.retries if on_err.kind == "retry" else 0)
         last_exc: "Exception | None" = None
+        item_label = f"{label}.for_each.{item_idx}"
         for _attempt in range(attempts):
             item_ctx = {"ctx": dict(outer_stores), "pipe": outer_pipe, "item": item}
             runner = STEP_DISPATCH.get(type(step.do))
             if runner is None:  # pragma: no cover - Step is a closed union
                 raise PipelineExecutionError(f"unknown step type: {step.do!r}")
+            # #2582: a REAL recorder (not a no-op) — a compositional `do`
+            # (call/match/fold) journals its own internal sub-steps durably
+            # AS THEY LAND, through the shared `box` lock. A leaf `do`
+            # (transform/tool/agent) never calls `record` at all (leaf
+            # runners don't — see the module docstring), so this changes
+            # nothing for the single-step case the exactly-once item-commit
+            # gate already covers. A retried attempt re-reads `box.value`
+            # fresh, so a sub-step durably recorded by a FAILED prior
+            # attempt replays (does not re-fire) on the next attempt too —
+            # the same exactly-once mechanism, not crash-recovery-only.
             do_inv = _StepInvocation(
                 executor=inv.executor, step=step.do, context=item_ctx,
-                step_label=f"{label}.for_each.{item_idx}", deps=child_deps,
-                completed_step_results=completed, record=_noop_record,
+                step_label=item_label, deps=child_deps,
+                completed_step_results=box.value,
+                record=_make_fan_out_sub_step_recorder(box, inv.record, item_label),
             )
             try:
                 result, durable, _ = await runner(do_inv)
@@ -1423,7 +1519,7 @@ async def _run_for_each_step(inv: "_StepInvocation") -> "tuple[Any, bool, dict[s
 
     # Only items whose key is ABSENT run (resume re-runs exactly the absent ones;
     # a present success key replays, a present dropped-marker stays dropped).
-    pending = [i for i in range(n) if f"{label}.for_each.{i}" not in completed]
+    pending = [i for i in range(n) if f"{label}.for_each.{i}" not in box.value]
     any_durable = False
     if pending:
         effective_max_parallel = step.max_parallel or min(len(pending), _DEFAULT_MAX_PARALLEL)
@@ -1438,19 +1534,24 @@ async def _run_for_each_step(inv: "_StepInvocation") -> "tuple[Any, bool, dict[s
             for fut in asyncio.as_completed(tasks):
                 item_idx, result, durable, exc = await fut
                 key = f"{label}.for_each.{item_idx}"
+                # #2582: the coordinator's own end-of-item write shares `box.lock`
+                # with the item's own sub-step recorder, so the two can never race
+                # each other's read-modify-write of `box.value`.
                 if exc is None:
-                    completed = {**completed, key: result}
-                    any_durable = any_durable or durable
-                    await inv.record(completed_step_results=completed, durable=durable)
+                    async with box.lock:
+                        box.value = {**box.value, key: result}
+                        any_durable = any_durable or durable
+                        await inv.record(completed_step_results=box.value, durable=durable)
                 elif on_err.kind == "continue":
                     # DROP the failed item: record a kind-marker (NOT absent — else
                     # resume re-runs it forever; NOT bare None — a legit result).
-                    completed = {
-                        **completed,
-                        key: {_FAN_OUT_DROPPED_KEY: True, "error": str(exc)},
-                    }
-                    any_durable = True  # a drop MUST survive to resume (awaited-durable)
-                    await inv.record(completed_step_results=completed, durable=True)
+                    async with box.lock:
+                        box.value = {
+                            **box.value,
+                            key: {_FAN_OUT_DROPPED_KEY: True, "error": str(exc)},
+                        }
+                        any_durable = True  # a drop MUST survive to resume (awaited-durable)
+                        await inv.record(completed_step_results=box.value, durable=True)
                 else:
                     # abort (incl. retry(n) exhausted): the landed items above are
                     # already durably recorded; fail the step now.
@@ -1467,7 +1568,7 @@ async def _run_for_each_step(inv: "_StepInvocation") -> "tuple[Any, bool, dict[s
             await asyncio.gather(*tasks, return_exceptions=True)
 
     # collect runs ONCE over the ordered surviving results (dropped filtered out).
-    results_list = _for_each_results(completed, label, n)
+    results_list = _for_each_results(box.value, label, n)
     collect_ctx = {"ctx": outer_stores, "pipe": results_list}
     collect_runner = STEP_DISPATCH.get(type(step.collect))
     if collect_runner is None:  # pragma: no cover - Step is a closed union
@@ -1475,13 +1576,13 @@ async def _run_for_each_step(inv: "_StepInvocation") -> "tuple[Any, bool, dict[s
     collect_inv = _StepInvocation(
         executor=inv.executor, step=step.collect, context=collect_ctx,
         step_label=collect_key, deps=child_deps,
-        completed_step_results=completed, record=inv.record,
+        completed_step_results=box.value, record=inv.record,
     )
-    collect_result, collect_durable, completed = await collect_runner(collect_inv)
-    completed = {**completed, collect_key: collect_result}
+    collect_result, collect_durable, box.value = await collect_runner(collect_inv)
+    box.value = {**box.value, collect_key: collect_result}
     any_durable = any_durable or collect_durable
-    await inv.record(completed_step_results=completed, durable=collect_durable)
-    return collect_result, any_durable, completed
+    await inv.record(completed_step_results=box.value, durable=collect_durable)
+    return collect_result, any_durable, box.value
 
 
 def _parallel_results(
@@ -1524,23 +1625,24 @@ def _parallel_branch_errors(
 async def _run_parallel_step(inv: "_StepInvocation") -> "tuple[Any, bool, dict[str, Any]]":
     """The heterogeneous NAMED-branch fan-out runner (S5-bounded) — reuses the
     EXACT fan-out substrate :func:`_run_for_each_step` established (concurrent
-    recovery via a single serializing coordinator + a NO-OP recorder inside
-    each branch task, the ``__fan_out_dropped__`` kind-marker, the
-    fan_out_depth/SpawnBudget S5 guards). The one structural difference: the
-    source is a STATIC FINITE dict of DISTINCT named branches (each its own
-    heterogeneous Step) rather than one ``do`` re-invoked per list item, so
-    every branch runs concurrently with NO Semaphore (the branch count IS the
-    bound — there is no ``max_parallel`` field), and ``collect`` runs ONCE
-    over the NAMED MAP of surviving branch results (:func:`_parallel_results`),
-    not an ordered list.
+    recovery via a single serializing coordinator, #2582's :class:`_FanOutRecordBox`
+    lock shared with each branch's compositional-``do`` sub-step recorder, the
+    ``__fan_out_dropped__`` kind-marker, the fan_out_depth/SpawnBudget S5 guards).
+    The one structural difference: the source is a STATIC FINITE dict of DISTINCT
+    named branches (each its own heterogeneous Step) rather than one ``do``
+    re-invoked per list item, so every branch runs concurrently with NO Semaphore
+    (the branch count IS the bound — there is no ``max_parallel`` field), and
+    ``collect`` runs ONCE over the NAMED MAP of surviving branch results
+    (:func:`_parallel_results`), not an ordered list.
 
     ``on_error`` (optional, default ``abort`` — normalized the same way
     ``for_each.on_error`` is, via :func:`_parse_on_error`) decides a branch
     failure: ``continue`` records a DROPPED kind-marker (so resume never
     re-runs it); ``retry(n)`` re-runs the branch's Step up to ``n`` more times
     then falls back to ``abort``; ``abort`` cancels the still-pending branches
-    and fails the step (the already-landed branches stay durably recorded, so
-    a resume after an abort-crash skips them).
+    and fails the step (the already-landed branches — including a still-in-
+    flight compositional branch's already-durable internal sub-steps — stay
+    durably recorded, so a resume after an abort-crash skips them).
 
     S5 guards: (b) ``fan_out_depth`` is +1'd through ``_RunDeps`` into every
     branch/collect sub-scope, failing the step if it would exceed
@@ -1550,13 +1652,13 @@ async def _run_parallel_step(inv: "_StepInvocation") -> "tuple[Any, bool, dict[s
     deps = inv.deps
     context = inv.context
     label = inv.step_label
-    completed = inv.completed_step_results
+    box = _FanOutRecordBox(inv.completed_step_results)
 
     # Full-completion replay: if collect already ran (its key is present) the
     # whole parallel is done — replay its N2 result, execute nothing.
     collect_key = f"{label}.parallel.collect"
-    if collect_key in completed:
-        return completed[collect_key], False, completed
+    if collect_key in box.value:
+        return box.value[collect_key], False, box.value
 
     names = list(step.branches)
     on_err = _parse_on_error(step.on_error)
@@ -1577,13 +1679,6 @@ async def _run_parallel_step(inv: "_StepInvocation") -> "tuple[Any, bool, dict[s
     outer_stores = context["ctx"]
     outer_pipe = context["pipe"]
 
-    async def _noop_record(**_kw: Any) -> None:
-        # Branch tasks NEVER record: only the single coordinator does
-        # (serialized), so concurrent branches cannot race the
-        # read-modify-write of the snapshot (identical to for_each's item
-        # tasks).
-        return None
-
     async def _run_branch(name: str) -> "tuple[str, Any, bool, Exception | None]":
         branch_step = step.branches[name]
         # Retry(n) re-runs INSIDE the same task. Any Exception is a branch
@@ -1591,15 +1686,19 @@ async def _run_parallel_step(inv: "_StepInvocation") -> "tuple[Any, bool, dict[s
         # propagates out and the task is gathered in the finally).
         attempts = 1 + (on_err.retries if on_err.kind == "retry" else 0)
         last_exc: "Exception | None" = None
+        branch_label = f"{label}.parallel.{name}"
         for _attempt in range(attempts):
             branch_ctx = {"ctx": dict(outer_stores), "pipe": outer_pipe}
             runner = STEP_DISPATCH.get(type(branch_step))
             if runner is None:  # pragma: no cover - Step is a closed union
                 raise PipelineExecutionError(f"unknown step type: {branch_step!r}")
+            # #2582: same real, lock-serialized sub-step recorder for_each's
+            # item tasks now use — see the matching comment in _run_item.
             branch_inv = _StepInvocation(
                 executor=inv.executor, step=branch_step, context=branch_ctx,
-                step_label=f"{label}.parallel.{name}", deps=child_deps,
-                completed_step_results=completed, record=_noop_record,
+                step_label=branch_label, deps=child_deps,
+                completed_step_results=box.value,
+                record=_make_fan_out_sub_step_recorder(box, inv.record, branch_label),
             )
             try:
                 result, durable, _ = await runner(branch_inv)
@@ -1623,7 +1722,7 @@ async def _run_parallel_step(inv: "_StepInvocation") -> "tuple[Any, bool, dict[s
     # Only branches whose key is ABSENT run (resume re-runs exactly the absent
     # ones; a present success key replays, a present dropped-marker stays
     # dropped).
-    pending = [n for n in names if f"{label}.parallel.{n}" not in completed]
+    pending = [n for n in names if f"{label}.parallel.{n}" not in box.value]
     any_durable = False
     if pending:
         # No Semaphore: the branch set is statically finite (there is no
@@ -1633,20 +1732,24 @@ async def _run_parallel_step(inv: "_StepInvocation") -> "tuple[Any, bool, dict[s
             for fut in asyncio.as_completed(tasks):
                 name, result, durable, exc = await fut
                 key = f"{label}.parallel.{name}"
+                # #2582: shares `box.lock` with each branch's own sub-step
+                # recorder — see the matching comment in _run_for_each_step.
                 if exc is None:
-                    completed = {**completed, key: result}
-                    any_durable = any_durable or durable
-                    await inv.record(completed_step_results=completed, durable=durable)
+                    async with box.lock:
+                        box.value = {**box.value, key: result}
+                        any_durable = any_durable or durable
+                        await inv.record(completed_step_results=box.value, durable=durable)
                 elif on_err.kind == "continue":
                     # DROP the failed branch: record a kind-marker (NOT absent
                     # — else resume re-runs it forever; NOT bare None — a
                     # legit branch result).
-                    completed = {
-                        **completed,
-                        key: {_FAN_OUT_DROPPED_KEY: True, "error": str(exc)},
-                    }
-                    any_durable = True  # a drop MUST survive to resume (awaited-durable)
-                    await inv.record(completed_step_results=completed, durable=True)
+                    async with box.lock:
+                        box.value = {
+                            **box.value,
+                            key: {_FAN_OUT_DROPPED_KEY: True, "error": str(exc)},
+                        }
+                        any_durable = True  # a drop MUST survive to resume (awaited-durable)
+                        await inv.record(completed_step_results=box.value, durable=True)
                 else:
                     # abort (incl. retry(n) exhausted): the landed branches
                     # above are already durably recorded; fail the step now.
@@ -1665,11 +1768,11 @@ async def _run_parallel_step(inv: "_StepInvocation") -> "tuple[Any, bool, dict[s
 
     # collect runs ONCE over the NAMED MAP of surviving results (dropped
     # filtered out).
-    results_map = _parallel_results(completed, label, names)
+    results_map = _parallel_results(box.value, label, names)
     # #3070: inject the dropped branches' real error text under the reserved
     # key ONLY when at least one branch actually dropped — a `collect` step
     # that never fails a branch sees no shape change at all.
-    branch_errors = _parallel_branch_errors(completed, label, names)
+    branch_errors = _parallel_branch_errors(box.value, label, names)
     if branch_errors:
         results_map = {**results_map, PARALLEL_BRANCH_ERRORS_KEY: branch_errors}
     collect_ctx = {"ctx": outer_stores, "pipe": results_map}
@@ -1679,13 +1782,13 @@ async def _run_parallel_step(inv: "_StepInvocation") -> "tuple[Any, bool, dict[s
     collect_inv = _StepInvocation(
         executor=inv.executor, step=step.collect, context=collect_ctx,
         step_label=collect_key, deps=child_deps,
-        completed_step_results=completed, record=inv.record,
+        completed_step_results=box.value, record=inv.record,
     )
-    collect_result, collect_durable, completed = await collect_runner(collect_inv)
-    completed = {**completed, collect_key: collect_result}
+    collect_result, collect_durable, box.value = await collect_runner(collect_inv)
+    box.value = {**box.value, collect_key: collect_result}
     any_durable = any_durable or collect_durable
-    await inv.record(completed_step_results=completed, durable=collect_durable)
-    return collect_result, any_durable, completed
+    await inv.record(completed_step_results=box.value, durable=collect_durable)
+    return collect_result, any_durable, box.value
 
 
 # Dispatch table: step dataclass type -> its runner. A future primitive ADDS an
