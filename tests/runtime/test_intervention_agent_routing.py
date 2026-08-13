@@ -26,8 +26,6 @@ import asyncio
 import inspect
 from pathlib import Path
 
-import pytest
-
 from reyn.runtime.agent import Agent
 from reyn.runtime.services.recovery import build_recovery, default_snapshot_path
 from reyn.runtime.session import Session

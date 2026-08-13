@@ -6,11 +6,6 @@ callbacks are used throughout. No private state assertions — public surface on
 """
 from __future__ import annotations
 
-import asyncio
-from pathlib import Path
-
-import pytest
-
 from reyn.core.events.events import EventLog
 from reyn.llm.model_resolver import ModelResolver
 from reyn.runtime.router_loop import RouterLoopHost

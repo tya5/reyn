@@ -34,7 +34,6 @@ import inspect
 import os
 import subprocess
 import sys
-from pathlib import Path
 
 from reyn.runtime.session_pure import (
     merge_memory_indexes,

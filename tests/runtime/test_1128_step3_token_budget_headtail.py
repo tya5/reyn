@@ -124,7 +124,6 @@ def _make_session_with_t_max(tmp_path: Path, monkeypatch, t_max: int):
     from reyn.config import CompactionConfig
     from reyn.core.events.state_log import StateLog
     from reyn.runtime.budget.budget import BudgetTracker, CostConfig
-    from reyn.runtime.session import Session
 
     monkeypatch.setattr(_mb, "get_max_input_tokens", lambda model, **kw: t_max)
     return make_session(

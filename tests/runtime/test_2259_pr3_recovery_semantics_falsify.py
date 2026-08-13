@@ -23,7 +23,6 @@ Real StateLog + SnapshotJournal + AgentRegistry + restore_all (no mocks).
 from __future__ import annotations
 
 import asyncio
-import json
 from pathlib import Path
 
 import pytest
@@ -234,7 +233,7 @@ async def test_durability_failure_fail_stops_and_surfaces(tmp_path):
     (the owner's "no silent unbounded loss"). RED if the consumer is absent (the op is accepted /
     the loop keeps running)."""
     from reyn.core.events.durability_worker import DurabilityWorker
-    from reyn.runtime.session import DurabilityHaltError, Session
+    from reyn.runtime.session import DurabilityHaltError
 
     worker = DurabilityWorker(max_write_attempts=1)  # fail-fast: no slow backoff in the test
     log = StateLog(tmp_path / "wal.jsonl", worker=worker)

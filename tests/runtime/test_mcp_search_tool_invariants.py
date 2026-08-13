@@ -18,7 +18,7 @@ Policy compliance (docs/deep-dives/contributing/testing.ja.md):
 """
 from __future__ import annotations
 
-from reyn.runtime.router_tools import MCP_SEARCH_THRESHOLD, build_mcp_search_tool, build_tools
+from reyn.runtime.router_tools import build_mcp_search_tool, build_tools
 
 # ── Shared fixtures ───────────────────────────────────────────────────────────
 

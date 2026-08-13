@@ -39,7 +39,6 @@ and ``tests/tools/test_pipeline_is5_surfacing.py``).
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
 
 import pytest
 

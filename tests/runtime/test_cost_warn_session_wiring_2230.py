@@ -16,7 +16,6 @@ from reyn.config import CostWarnConfig
 from reyn.core.events.state_log import StateLog
 from reyn.llm.model_resolver import ModelResolver
 from reyn.runtime.model_cost_warn import maybe_block_high_cost_model
-from reyn.runtime.session import Session
 from tests._support.agent_session import make_session
 
 

@@ -22,7 +22,7 @@ from reyn.security.permissions.capability_profile import (
     resolve_profile,
 )
 from reyn.security.permissions.effective import CapabilityAxis, ContextualLayer
-from reyn.user_intervention import InterventionAnswer, UserIntervention
+from reyn.user_intervention import UserIntervention
 
 # ── the built-in secure default + override ──────────────────────────────────
 

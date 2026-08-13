@@ -35,7 +35,7 @@ from pathlib import Path
 import pytest
 
 from reyn.core.events.state_log import StateLog
-from reyn.intervention_choices import YES, generic_yn_choices
+from reyn.intervention_choices import YES
 from reyn.runtime.registry import AgentRegistry
 from reyn.runtime.session import DEFAULT_CHAT_CHANNEL_ID, Session
 from reyn.runtime.session_api import _build_agent_step_narrowing, spawn_ephemeral_session

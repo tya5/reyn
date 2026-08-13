@@ -24,13 +24,10 @@ Policy compliance (docs/deep-dives/contributing/testing.md):
 """
 from __future__ import annotations
 
-import asyncio
-import shutil
 from pathlib import Path
 
 import pytest
 
-from reyn.core.events.state_log import StateLog
 from reyn.dev.dogfood.scenarios import Scenario
 from reyn.llm.llm import LLMToolCallResult
 from reyn.llm.pricing import TokenUsage
