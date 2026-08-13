@@ -120,14 +120,11 @@ list_actions = ToolDescription(
     tool_name="list_actions",
     surfaced="router (gates.router=allow) — universal catalog wrapper",
     purpose=(
-        "Enumerate actions in the full catalog by category (a superset of "
-        "the hot-list functions), so the LLM can discover category-listable "
-        "capabilities before refusing a request."
+        "Enumerate actions in the full catalog by category, so the LLM can "
+        "discover category-listable capabilities before refusing a request."
     ),
     text=(
-        "WHAT: Discover actions in the FULL catalog (= a superset of the hot-list "
-        "function entries you can see directly). The hot-list shown in your "
-        "function list is a curated subset; this tool reveals the rest. "
+        "WHAT: Discover actions in the FULL catalog. "
         "Filter by category: `category=[...]` array (enum-restricted, exact "
         "category match). Omit or pass [] to enumerate everything visible. "
         "Returns {items: [{action_name, short_description}, ...], total: int}. "
@@ -137,7 +134,7 @@ list_actions = ToolDescription(
         "lookup when you already know the category but not the exact entry. "
         "ALWAYS call list_actions BEFORE refusing a category-listable capability "
         "request. Refusing without a list_actions check is a FAILURE MODE "
-        "(= the action you assumed missing may exist behind the hot-list). "
+        "(= the action you assumed missing often exists). "
         "For known-category enumeration pass `category=['exec']` to narrow. "
         "WHEN NOT: For semantic / natural-language / free-text discovery (e.g. "
         "'find an action that can ...', 'related to X', 'something for X' — the "
@@ -155,10 +152,10 @@ list_actions = ToolDescription(
         "honestly tell the user no matching actions are available."
     ),
     ja=(
-        "フルカタログ（ホットリストの上位互換）からカテゴリ指定でアクショ"
-        "ンを列挙する。既知カテゴリの列挙や、カテゴリは分かるが正確な"
-        "エントリ名が分からない場合に最初に呼ぶべきツール。自由文/意味的"
-        "検索には search_actions を使う。"
+        "フルカタログからカテゴリ指定でアクションを列挙する。既知カテゴ"
+        "リの列挙や、カテゴリは分かるが正確なエントリ名が分からない場合"
+        "に最初に呼ぶべきツール。自由文/意味的検索には search_actions を"
+        "使う。"
     ),
 )
 

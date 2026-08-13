@@ -374,7 +374,7 @@ tool_use:
 
 | キー | 型 | デフォルト | 説明 |
 |-----|------|---------|-------------|
-| `scheme` | 文字列 | `enumerate-all` | トップレベル chat レイヤーの presentation: `category` / `enumerate-all` / `retrieval`。**デフォルト `enumerate-all`** — アクションをフラットに列挙し LLM が直接呼び出せるようにする（`invoke_action` 名のハルシネーションを防ぎ、非ホットリストの tool-use が ~30%→100% に改善）。少数サーフェス / 多数ツールのカタログには `category` を設定（discover-then-call）。 |
+| `scheme` | 文字列 | `enumerate-all` | トップレベル chat レイヤーの presentation: `category` / `enumerate-all` / `retrieval`。**デフォルト `enumerate-all`** — アクションをフラットに列挙し LLM が直接呼び出せるようにする（`invoke_action` 名のハルシネーションを防ぎ、direct tool-use が ~30%→100% に改善）。少数サーフェス / 多数ツールのカタログには `category` を設定（discover-then-call）。 |
 | `transport` | 文字列 | `tool_calls` | モデルが選択したアクションをどう表現するか: `tool_calls`（ネイティブ tool-calling）または `content_fence`（応答テキスト内のフェンス付きコードとしてアクションを表現 — CodeAct）。 |
 
 上記の軸の値の組み合わせは、現時点ですべて実装済みです:
@@ -566,7 +566,6 @@ sandbox:
 ```yaml
 action_retrieval:
   universal_wrappers_enabled: true    # デフォルト; false でオプトアウト
-  hot_list_n: 0                       # 0 = 無効（デフォルト）; opt-in は例えば 10
   mode: default                       # default | minimal | performance
 embedding:
   enabled: false                      # デフォルト（無効）; opt-in するには true
@@ -577,9 +576,15 @@ embedding:
 
 | フィールド | 型 | デフォルト | 説明 |
 |-----|------|---------|-------------|
-| `universal_wrappers_enabled` | bool | `true` | `tool_use` scheme が `universal-category` に解決される layer について、`true`(デフォルト)の時、その layer の `tools=` は 4 universal wrappers (`list_actions` / `search_actions` / `describe_action` / `invoke_action`) + hot list direct aliases のみ。 legacy per-kind tool (`invoke_skill` / `call_mcp_tool` 等) はその layer で LLM に surface されず、 wrapper の backing handler として残存。 `search_actions` は `embedding.enabled` で別途ゲート（下記参照）。 `false` 設定でその layer の wrapper surface 自体を無効化 (= legacy のみが addressing path)。 scheme が `enumerate-all`(`chat` layer 自身のデフォルト)である layer には影響しない — その scheme はこのフラグを一切参照しない。 |
-| `hot_list_n` | int | `0` | top-N `freq+recency` direct alias のホットリスト投影サイズ。 デフォルト `0` (= 無効) — `list_actions` が正規の discovery path。 opt-in は `10` 以上を設定; seed・usage tracker・alias-builder は完全維持。 |
-| `mode` | string | `"default"` | 運用モードラベル: `"minimal"` (キャッシュ安定性最大、 ホットリストなし) / `"default"` (バランス) / `"performance"` (大規模ホットリスト)。 自由文字列で、 呼び出し側がセマンティクスを上乗せ。 |
+| `universal_wrappers_enabled` | bool | `true` | `tool_use` scheme が `universal-category` に解決される layer について、`true`(デフォルト)の時、その layer の `tools=` は 4 universal wrappers (`list_actions` / `search_actions` / `describe_action` / `invoke_action`) のみ。 legacy per-kind tool (`invoke_skill` / `call_mcp_tool` 等) はその layer で LLM に surface されず、 wrapper の backing handler として残存。 `search_actions` は `embedding.enabled` で別途ゲート（下記参照）。 `false` 設定でその layer の wrapper surface 自体を無効化 (= legacy のみが addressing path)。 scheme が `enumerate-all`(`chat` layer 自身のデフォルト)である layer には影響しない — その scheme はこのフラグを一切参照しない。 |
+| `mode` | string | `"default"` | 運用モードラベル: `"minimal"` / `"default"` / `"performance"`。 自由文字列で、現在どの呼び出し元も参照していない。 |
+
+> **#4552（2026-08）— hot list 撤去。** 従来の `hot_list_n` / `hot_list_seed`
+> フィールド（top-N freq+recency の direct-alias 投影）は**削除、alias なし**
+> — owner 指示: 機構の役割はすでに無くなっており、`list_actions` が正規の
+> discovery path として代替済み。 これらのキーを持つ `reyn.yaml` は通常の
+> unknown-key 許容（無視されるだけで parse エラーにはならない）を受ける —
+> 移行先が無いので移行パスも無い。
 
 ### クイックスタート — semantic `search_actions` を opt-in
 

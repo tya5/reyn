@@ -1,110 +1,49 @@
-"""Tier 2: ``/clear-history`` slash command + ``ActionUsageTracker.reset()``.
+"""Tier 2: ``/clear-history`` slash command (REGISTRY dispatch, on-disk wipe).
 
-User dogfood 2026-05-25 asked for a slash that resets history +
-action_usage to initial state without touching anything else. This
-file pins:
+User dogfood 2026-05-25 asked for a slash that resets history + action_usage
+to initial state without touching anything else. This file pins the
+history half of that request end-to-end through the real slash REGISTRY:
 
 1. Two-step confirmation (= bare ``/clear-history`` warns, requires
    ``confirm`` to actually wipe).
 2. ``confirm`` form clears ``session.history`` (in-memory) AND removes
    ``session.history_path`` (on-disk).
-3. ``confirm`` form calls ``tracker.reset()`` when tracker is wired.
-4. ``tracker.reset()`` empties the in-memory table + removes the
-   persist file but leaves the tracker instance reusable.
-5. The slash does NOT touch the ``events/`` directory, the WAL, or the
+3. The slash does NOT touch the ``events/`` directory, the WAL, or the
    per-agent snapshot.
+
+#4552: this file used to also pin ``session._action_usage_tracker.reset()``
+being called on confirm — removed with the hot-list feature the tracker
+existed for (owner directive: discarded, superseded by ``list_actions`` as
+the canonical discovery path). The command no longer reads or clears any
+tracker; only the history side of the original user request survives.
+``ActionUsageTracker.reset()``'s own unit tests lived here too and are gone
+along with the deleted ``reyn.tools.action_usage_tracker`` module.
 
 These are Tier 2 (= OS invariant — wipe surface guarantees) rather
 than Tier 1 because they involve the slash router + filesystem.
 """
 from __future__ import annotations
 
-import asyncio
 import json
 from pathlib import Path
 
 import pytest
 
 from reyn.interfaces.slash import REGISTRY
-from reyn.runtime.outbox import OutboxMessage
-from reyn.tools.action_usage_tracker import ActionUsageTracker
 from tests._support.slash import slash_ctx
 
 
 class _StubSession:
     """Minimal session-shaped object the slash handler reads from.
 
-    The handler uses ``history``, ``history_path`` and
-    ``_action_usage_tracker``; its replies go through the client transport
-    (#3595 S4), not through this object. Everything else can be absent.
+    The handler uses ``history`` and ``history_path``; its replies go
+    through the client transport (#3595 S4), not through this object.
+    Everything else can be absent.
     """
 
-    def __init__(self, *, history: list, history_path: Path, tracker):
+    def __init__(self, *, history: list, history_path: Path):
         self.history = history
         self.history_path = history_path
-        self._action_usage_tracker = tracker
-
-
-# ── ActionUsageTracker.reset() ────────────────────────────────────────────
-
-
-def test_tracker_reset_empties_in_memory_state(tmp_path: Path):
-    """Tier 2: tracker.reset() clears the compacted table."""
-    path = tmp_path / "action_usage.json"
-    tracker = ActionUsageTracker(persist_path=path)
-    tracker.merge_compacted([("read_file", 100.0), ("write_file", 101.0)])
-    tracker_size = len(tracker)
-    assert tracker_size == 2
-
-    tracker.reset()
-    tracker_size = len(tracker)
-    assert tracker_size == 0
-
-
-def test_tracker_reset_removes_persist_file(tmp_path: Path):
-    """Tier 2: tracker.reset() deletes the on-disk persist file."""
-    path = tmp_path / "action_usage.json"
-    tracker = ActionUsageTracker(persist_path=path)
-    tracker.merge_compacted([("read_file", 100.0)])
-    assert path.exists()
-
-    tracker.reset()
-    assert not path.exists()
-
-
-def test_tracker_reset_safe_when_file_already_gone(tmp_path: Path):
-    """Tier 2: reset() is idempotent — second call is a no-op, no exception."""
-    path = tmp_path / "action_usage.json"
-    tracker = ActionUsageTracker(persist_path=path)
-    tracker.merge_compacted([("read_file", 100.0)])
-    tracker.reset()
-    # Second reset should not raise even though file is gone.
-    tracker.reset()
-    tracker_size = len(tracker)
-    assert tracker_size == 0
-
-
-def test_tracker_reset_preserves_instance_identity(tmp_path: Path):
-    """Tier 2: tracker stays usable after reset — merge_compacted still
-    appends from a clean slate so the caller's wiring keeps working."""
-    path = tmp_path / "action_usage.json"
-    tracker = ActionUsageTracker(persist_path=path)
-    tracker.merge_compacted([("read_file", 50.0)])
-    tracker.reset()
-    tracker.merge_compacted([("write_file", 200.0)])
-    names = {r["action_name"] for r in tracker.full_ranking()}
-    assert "read_file" not in names
-    assert "write_file" in names
-
-
-def test_tracker_reset_with_no_persist_path():
-    """Tier 2: tracker constructed without persist_path → reset() doesn't
-    crash trying to unlink a None path."""
-    tracker = ActionUsageTracker(persist_path=None)
-    tracker.merge_compacted([("read_file", 1.0)])
-    tracker.reset()
-    tracker_size = len(tracker)
-    assert tracker_size == 0
 
 
 # ── /clear-history slash command ──────────────────────────────────────────
@@ -124,14 +63,8 @@ async def test_bare_slash_prints_warning_and_does_not_wipe(tmp_path: Path):
     prints a warning that asks for the confirm token."""
     history_path = tmp_path / "history.jsonl"
     history_path.write_text("nonempty\n")
-    tracker = ActionUsageTracker(persist_path=tmp_path / "action_usage.json")
-    tracker.merge_compacted([("read_file", 100.0)])
 
-    session = _StubSession(
-        history=["turn1", "turn2"],
-        history_path=history_path,
-        tracker=tracker,
-    )
+    session = _StubSession(history=["turn1", "turn2"], history_path=history_path)
     ctx = slash_ctx(session)
     cmd = REGISTRY.get("clear-history")
     assert cmd is not None
@@ -144,33 +77,23 @@ async def test_bare_slash_prints_warning_and_does_not_wipe(tmp_path: Path):
     # Data still intact.
     assert session.history == ["turn1", "turn2"]
     assert history_path.exists()
-    names = {r["action_name"] for r in tracker.full_ranking()}
-    assert "read_file" in names
 
 
 @pytest.mark.asyncio
-async def test_confirm_clears_history_and_tracker(tmp_path: Path):
-    """Tier 2: ``/clear-history confirm`` wipes both."""
+async def test_confirm_clears_history(tmp_path: Path):
+    """Tier 2: ``/clear-history confirm`` wipes history in-memory and on disk."""
     history_path = tmp_path / "history.jsonl"
     history_path.write_text(
         json.dumps({"role": "user", "content": "hi"}) + "\n",
     )
-    tracker = ActionUsageTracker(persist_path=tmp_path / "action_usage.json")
-    tracker.merge_compacted([("read_file", 100.0), ("write_file", 101.0)])
 
-    session = _StubSession(
-        history=["turn1", "turn2", "turn3"],
-        history_path=history_path,
-        tracker=tracker,
-    )
+    session = _StubSession(history=["turn1", "turn2", "turn3"], history_path=history_path)
     ctx = slash_ctx(session)
     cmd = REGISTRY.get("clear-history")
     await cmd.handler(ctx, "confirm")
 
     assert session.history == []
     assert not history_path.exists()
-    tracker_size = len(tracker)
-    assert tracker_size == 0
     msgs = ctx.transport.displayed
     success_lines = [m.text for m in msgs if "Cleared" in m.text]
     assert success_lines, f"expected a confirmation; got {[m.text for m in msgs]}"
@@ -192,12 +115,7 @@ async def test_confirm_preserves_unrelated_files(tmp_path: Path):
     snapshot_sentinel = tmp_path / "snapshot.json"
     snapshot_sentinel.write_text("{}\n")
 
-    tracker = ActionUsageTracker(persist_path=tmp_path / "action_usage.json")
-    tracker.merge_compacted([("read_file", 1.0)])
-
-    session = _StubSession(
-        history=["x"], history_path=history_path, tracker=tracker,
-    )
+    session = _StubSession(history=["x"], history_path=history_path)
     ctx = slash_ctx(session)
     cmd = REGISTRY.get("clear-history")
     await cmd.handler(ctx, "confirm")
@@ -208,30 +126,9 @@ async def test_confirm_preserves_unrelated_files(tmp_path: Path):
 
 
 @pytest.mark.asyncio
-async def test_confirm_when_tracker_missing(tmp_path: Path):
-    """Tier 2: session without tracker (= test / minimal session) still
-    succeeds — only the history side runs."""
-    history_path = tmp_path / "history.jsonl"
-    history_path.write_text("h\n")
-    session = _StubSession(
-        history=["x"], history_path=history_path, tracker=None,
-    )
-    ctx = slash_ctx(session)
-    cmd = REGISTRY.get("clear-history")
-    await cmd.handler(ctx, "confirm")
-    assert session.history == []
-    assert not history_path.exists()
-
-
-@pytest.mark.asyncio
 async def test_confirm_when_history_already_empty(tmp_path: Path):
-    """Tier 2: empty history + no tracker → success message stays
-    informative, no crash."""
-    session = _StubSession(
-        history=[],
-        history_path=tmp_path / "nonexistent.jsonl",
-        tracker=None,
-    )
+    """Tier 2: empty history → success message stays informative, no crash."""
+    session = _StubSession(history=[], history_path=tmp_path / "nonexistent.jsonl")
     ctx = slash_ctx(session)
     cmd = REGISTRY.get("clear-history")
     await cmd.handler(ctx, "confirm")

@@ -201,7 +201,7 @@ async def test_enumerate_all_excludes_catalog_mcp_wrapper_3219() -> None:
     assert any(e["function"]["name"] == "mcp_call_tool" for e in real_catalog)
 
     real_base = build_tools(
-        [], mcp_servers=[{"name": "srv", "description": "d"}], hot_list_aliases=[],
+        [], mcp_servers=[{"name": "srv", "description": "d"}],
     )
     # Sanity: native call_mcp_tool is present via base_tools (real build_tools).
     assert any(t["function"]["name"] == "call_mcp_tool" for t in real_base)

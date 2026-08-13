@@ -49,7 +49,6 @@ def _on() -> str:
         universal_wrappers_enabled=True,
         search_actions_enabled=True,
         discovery_mandate=True,
-        has_hot_list_aliases=False,
         non_interactive=False,
     )
     return build_system_prompt(**_BASE, tool_use_sp=slots)
@@ -60,7 +59,6 @@ def _off() -> str:
         universal_wrappers_enabled=True,
         search_actions_enabled=True,
         discovery_mandate=False,
-        has_hot_list_aliases=False,
         non_interactive=False,
     )
     return build_system_prompt(**_BASE, tool_use_sp=slots)
@@ -171,7 +169,6 @@ def test_reinforcements_in_static_cacheable_prefix() -> None:
         universal_wrappers_enabled=True,
         search_actions_enabled=True,
         discovery_mandate=True,
-        has_hot_list_aliases=False,
         non_interactive=False,
     )
     on = build_system_prompt(**_BASE, project_context=marker, tool_use_sp=slots)

@@ -3,6 +3,12 @@
 `_format_currently_line` is a pure introspection helper; `clear_history_cmd`
 has three behavioural paths: (1) no "confirm" token → warning, (2) confirm
 with clearable state → clear + success reply, (3) confirm but nothing to clear.
+
+#4552: this file used to also pin an ``ActionUsageTracker.reset()`` call the
+handler made on confirm (the "hot list" tracker's own reset, distinct from
+history clearing) — removed with the hot-list feature (owner directive:
+discarded). ``_format_currently_line`` and the handler now only ever read
+``session.history``.
 """
 from __future__ import annotations
 
@@ -34,11 +40,9 @@ class _FakeSession:
         *,
         history: list | None = None,
         history_path=None,
-        tracker=None,
     ) -> None:
         self.history = history
         self.history_path = history_path
-        self._action_usage_tracker = tracker
         self._outbox: list[OutboxMessage] = []
 
     async def _put_outbox(self, msg: OutboxMessage) -> None:
@@ -51,29 +55,17 @@ class _FakeSession:
         return " ".join(m.text for m in self._outbox if m.kind == "error")
 
 
-class _FakeTracker:
-    def __init__(self, n: int) -> None:
-        self._n = n
-        self.reset_called = False
-
-    def __len__(self) -> int:
-        return self._n
-
-    def reset(self) -> None:
-        self.reset_called = True
-
-
 # ── _format_currently_line pure helper ────────────────────────────────────
 
 
 def test_format_currently_no_attrs_returns_empty() -> None:
-    """Tier 2: session with no history/tracker attrs → empty string."""
-    session = object()  # has neither .history nor ._action_usage_tracker
+    """Tier 2: session with no history attr → empty string."""
+    session = object()  # has no .history
     assert _format_currently_line(session) == ""
 
 
 def test_format_currently_history_only() -> None:
-    """Tier 2: only history wired → 'Currently: N history turns.'"""
+    """Tier 2: history wired → 'Currently: N history turns.'"""
     session = _FakeSession(history=["a", "b", "c"])
     out = _format_currently_line(session)
     assert out.startswith("Currently:")
@@ -86,22 +78,6 @@ def test_format_currently_history_singular() -> None:
     out = _format_currently_line(session)
     assert "1 history turn" in out
     assert "turns" not in out
-
-
-def test_format_currently_tracker_only() -> None:
-    """Tier 2: only tracker wired → 'Currently: N tracked tools.'"""
-    session = _FakeSession(tracker=_FakeTracker(5))
-    out = _format_currently_line(session)
-    assert "5 tracked tools" in out
-
-
-def test_format_currently_both_attrs() -> None:
-    """Tier 2: history + tracker → both counts in the 'Currently:' line."""
-    session = _FakeSession(history=["x", "y"], tracker=_FakeTracker(3))
-    out = _format_currently_line(session)
-    assert "Currently:" in out
-    assert "2 history turns" in out
-    assert "3 tracked tools" in out
 
 
 # ── clear_history_cmd handler paths ───────────────────────────────────────
@@ -136,18 +112,9 @@ async def test_clear_history_confirm_clears_history_list() -> None:
 
 
 @pytest.mark.asyncio
-async def test_clear_history_confirm_calls_tracker_reset() -> None:
-    """Tier 2: /clear-history confirm calls tracker.reset()."""
-    tracker = _FakeTracker(4)
-    session = _FakeSession(tracker=tracker)
-    await clear_history_cmd(_ctx(session), "confirm")
-    assert tracker.reset_called
-
-
-@pytest.mark.asyncio
 async def test_clear_history_confirm_sends_success_reply() -> None:
     """Tier 2: /clear-history confirm sends a system (success) reply, not an error."""
-    session = _FakeSession(history=["x"], tracker=_FakeTracker(2))
+    session = _FakeSession(history=["x"])
     await clear_history_cmd(_ctx(session), "confirm")
     kinds = [m.kind for m in session._outbox]
     assert "error" not in kinds
@@ -156,8 +123,8 @@ async def test_clear_history_confirm_sends_success_reply() -> None:
 
 @pytest.mark.asyncio
 async def test_clear_history_confirm_nothing_to_clear() -> None:
-    """Tier 2: /clear-history confirm with empty history + no tracker → nothing-to-clear reply."""
-    session = _FakeSession()  # no history, no tracker
+    """Tier 2: /clear-history confirm with empty history → nothing-to-clear reply."""
+    session = _FakeSession()  # no history
     await clear_history_cmd(_ctx(session), "confirm")
     text = session.reply_text()
     assert "nothing" in text.lower() or "empty" in text.lower()

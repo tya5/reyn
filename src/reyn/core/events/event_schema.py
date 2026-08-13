@@ -128,16 +128,15 @@ EVENT_AUDIT_REQUIREMENTS: dict[str, frozenset[str]] = {
     # FP-0034 Phase 3: Universal catalog routing decision (Self-improvement Loop)
     # #3455: emitted by RouterLoop._dispatch_resolved — the single dispatch
     # chokepoint every catalog action call funnels through, regardless of
-    # entry surface (invoke_action wrapper / bare hot-list alias / ARS-
-    # salvaged direct call / flat bare-name dispatch when universal wrappers
-    # are off). Previously emitted from a run_loop-local block gated on
-    # `if _univ_enabled:`, which meant the opt-out config (an operator
-    # setting `action_retrieval.universal_wrappers_enabled: false` in
-    # reyn.yaml) never emitted it at all even though catalog routing was
-    # happening.
+    # entry surface (invoke_action wrapper / ARS-salvaged direct call /
+    # flat bare-name dispatch when universal wrappers are off). Previously
+    # emitted from a run_loop-local block gated on `if _univ_enabled:`,
+    # which meant the opt-out config (an operator setting
+    # `action_retrieval.universal_wrappers_enabled: false` in reyn.yaml)
+    # never emitted it at all even though catalog routing was happening.
     # action_name: the resolved action_name (e.g. "agent.peer__alice")
     # source: how the routing happened
-    #   ("invoke_action" | "hot_list_alias" | "ars_direct")
+    #   ("invoke_action" | "ars_direct")
     # outcome: "success" | "error" based on the tool result status
     # chain_id: for cross-agent tracing (P6)
     "routing_decided": frozenset({"action_name", "source", "outcome", "chain_id"}),
@@ -258,7 +257,6 @@ AUDIT_EVENT_KINDS: frozenset[str] = frozenset({
     "hook_event_emitted",
     "hook_push_fired",
     "hook_shell_executed",
-    "hot_list_updated",
     "inbox_cancel",
     "index_dropped",
     "index_update_cost_warning",

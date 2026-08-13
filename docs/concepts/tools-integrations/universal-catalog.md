@@ -26,7 +26,7 @@ a single fixed path.** Since Phase 6 (2026-05-16) the wrapper-only path was
 briefly the sole production behaviour, but an owner-driven H1 fix later flipped
 the `chat` layer's own default to `enumerate-all` — a flat, no-wrapper tool
 list — because flat listing stops `invoke_action` name-hallucination (30%→100%
-non-hot-list tool-use accuracy). `universal-category` (this page's wrapper path)
+direct tool-use accuracy). `universal-category` (this page's wrapper path)
 remains a registered scheme, reachable when an operator sets `tool_use.scheme:
 universal-category` in `reyn.yaml`. See [Tool-Use Schemes](tool-use-schemes.md)
 for the full, current model — the sections below describe the
@@ -298,9 +298,9 @@ models (`router_model: light`) exhibit two reliable failure modes that the
 catalog addresses **structurally**, so weak-model support never costs
 strong-model flexibility:
 
-1. **Satisficing** — the model invokes a visible hot-list action
-   (`write_file`) instead of discovering a better-fit one (`edit_file`),
-   because the hot action is "good enough".
+1. **Satisficing** — the model invokes a familiar action (`write_file`)
+   instead of discovering a better-fit one (`edit_file`), because the
+   familiar action is "good enough".
 2. **Discovery-skip** — the model does not proactively call `list_actions`;
    it guesses an action name from training priors, often malformed
    (`file.write`, `file__read`).
@@ -506,11 +506,11 @@ in a single retry. See `_LEGACY_CATEGORY_REDIRECTS` in
 - **`exec` enumeration** — needs sandbox-backend introspection. The
   visibility predicate exists; the catalogue body waits for the
   introspection API.
-- **Hot-list** — `action_retrieval.hot_list_n` defaults to `0` (off)
-  following N=0 viability measurements. `list_actions` is the canonical
-  discovery path. Operators can opt in by setting `hot_list_n: 10+` in
-  `reyn.yaml`; the seed, usage tracker, and alias-builder remain fully
-  operative.
+
+**Retired (#4552, 2026-08):** a hot-list mechanism (`action_retrieval.hot_list_n`,
+a top-N freq+recency direct-alias projection, default off) previously existed
+here — removed, owner directive: the mechanism's role is gone, superseded by
+`list_actions` as the canonical discovery path.
 
 ## Reference files
 

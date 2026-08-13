@@ -37,10 +37,11 @@ if TYPE_CHECKING:
 # Fresh-mode state annotation
 # ---------------------------------------------------------------------------
 
-#: Default state mode — fresh means every scenario starts from
-#: DEFAULT_HOT_LIST_SEED with no carry-over action_usage.jsonl / wal.jsonl /
-#: history.jsonl / reyn/local/ state. Override via env var
-#: REYN_DOGFOOD_STATE_MODE for deliberate non-fresh comparison runs.
+#: Default state mode — fresh means every scenario starts with no
+#: carry-over wal.jsonl / history.jsonl / reyn/local/ state (#4552: this
+#: used to also mean no carry-over action_usage.jsonl / hot-list state —
+#: discarded with the hot-list feature, owner directive). Override via env
+#: var REYN_DOGFOOD_STATE_MODE for deliberate non-fresh comparison runs.
 _DEFAULT_STATE_MODE = "fresh"
 
 
@@ -91,10 +92,10 @@ class ScenarioRunResult:
     events_outcome: str = "inconclusive"   # from verifiers.events
     overall_outcome: str = "inconclusive"  # worst-case of the two
     detail: dict = field(default_factory=dict)
-    #: Explicit hot-list state annotation — "fresh" means the scenario ran
-    #: from DEFAULT_HOT_LIST_SEED with no carry-over state. Set to
-    #: "non-fresh" (or a custom label) when a deliberate warm-state run is
-    #: needed for comparison. See §6.7 of dogfood-discipline.md.
+    #: Explicit per-scenario state annotation — "fresh" means the scenario
+    #: ran with no carry-over state. Set to "non-fresh" (or a custom label)
+    #: when a deliberate warm-state run is needed for comparison. See §6.7
+    #: of dogfood-discipline.md.
     state_mode: str = field(default_factory=_resolve_state_mode)
 
     def __post_init__(self) -> None:

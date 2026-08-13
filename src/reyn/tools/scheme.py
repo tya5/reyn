@@ -387,7 +387,7 @@ def registered_scheme_names() -> list[str]:
 
 # The default scheme name — enumerate-all (#1657: owner default switch, the H1
 # fix; enumerate-all flat-lists actions so the LLM invokes them directly instead
-# of hallucinating invoke_action names → 30%→100% non-hot-list tool-use).
+# of hallucinating invoke_action names → 30%→100% direct tool-use).
 # universal-category remains available via config (tool_use.scheme) for many-tool /
 # minimal-surface setups. The OS holds the *name* string (a config key), not
 # scheme logic, so this stays P7-clean.

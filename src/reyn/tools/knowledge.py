@@ -51,7 +51,7 @@ pins the classification.
 
 **visibility (firm §6)**: the ``knowledge`` category (and therefore
 ``search_knowledge`` / this tool's registry entry, reachable via
-``invoke_action``/hot-list) is enumerated only when ``embedding.enabled:
+``invoke_action``) is enumerated only when ``embedding.enabled:
 true`` — ``universal_catalog._enumerate_category``'s ``"knowledge"``
 branch calls the SAME ``is_search_available`` predicate ``search_actions``
 already uses (shared helper, not a duplicated embedding-config re-check —

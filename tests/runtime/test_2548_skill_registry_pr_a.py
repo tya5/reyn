@@ -355,7 +355,6 @@ def test_sp_skills_block_present_when_skills_available() -> None:
         universal_wrappers_enabled=True,
         search_actions_enabled=False,
         discovery_mandate=False,
-        has_hot_list_aliases=False,
         available_skills=skills,
     )
     sp = slots.get("slot_post_skills", "")
@@ -374,7 +373,6 @@ def test_sp_skills_block_absent_when_no_skills() -> None:
         universal_wrappers_enabled=True,
         search_actions_enabled=False,
         discovery_mandate=False,
-        has_hot_list_aliases=False,
         available_skills=[],
     )
     assert "slot_post_skills" not in slots_empty, (
@@ -385,7 +383,6 @@ def test_sp_skills_block_absent_when_no_skills() -> None:
         universal_wrappers_enabled=True,
         search_actions_enabled=False,
         discovery_mandate=False,
-        has_hot_list_aliases=False,
         available_skills=None,
     )
     assert "slot_post_skills" not in slots_none, (
@@ -405,7 +402,6 @@ def test_sp_skills_block_excludes_disabled_skills() -> None:
         universal_wrappers_enabled=True,
         search_actions_enabled=False,
         discovery_mandate=False,
-        has_hot_list_aliases=False,
         available_skills=skills,
     )
     sp = slots.get("slot_post_skills", "")
@@ -432,7 +428,6 @@ def test_sp_skills_block_excludes_non_menu_skills() -> None:
         universal_wrappers_enabled=True,
         search_actions_enabled=False,
         discovery_mandate=False,
-        has_hot_list_aliases=False,
         available_skills=skills,
     )
     sp = slots.get("slot_post_skills", "")
@@ -451,7 +446,6 @@ def test_sp_skills_block_absent_when_all_filtered_out() -> None:
         universal_wrappers_enabled=True,
         search_actions_enabled=False,
         discovery_mandate=False,
-        has_hot_list_aliases=False,
         available_skills=skills,
     )
     assert "slot_post_skills" not in slots, (
@@ -509,7 +503,6 @@ def test_e2e_config_to_system_prompt_universal_scheme(tmp_path: Path) -> None:
         universal_wrappers_enabled=True,
         search_actions_enabled=False,
         discovery_mandate=False,
-        has_hot_list_aliases=False,
         available_skills=skills,
     )
     prompt = build_system_prompt(tool_use_sp=slots, **_sp_base_kwargs())
@@ -605,7 +598,6 @@ def test_e2e_enumerate_scheme_threads_skills(tmp_path: Path) -> None:
         universal_wrappers_enabled=False,
         search_actions_enabled=False,
         discovery_mandate=False,
-        has_hot_list_aliases=False,
         available_skills=skills,
     )
     prompt = build_system_prompt(tool_use_sp=slots, **_sp_base_kwargs())
@@ -631,7 +623,6 @@ def test_e2e_no_skills_config_omits_section(tmp_path: Path) -> None:
         universal_wrappers_enabled=True,
         search_actions_enabled=False,
         discovery_mandate=False,
-        has_hot_list_aliases=False,
         available_skills=skills,
     )
     prompt = build_system_prompt(tool_use_sp=slots, **_sp_base_kwargs())

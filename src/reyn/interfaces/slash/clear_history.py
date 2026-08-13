@@ -1,10 +1,8 @@
-"""``/clear-history`` — wipe chat history + action-usage table.
+"""``/clear-history`` — wipe chat history.
 
 Sibling to ``/reset`` (run state) at a different scope: this command
 clears the conversation thread (``Session.history`` + per-agent
-``history.jsonl``) and the action-usage tracker (= the ranking that
-backs the Memory tab's hot-list augmentation, persisted at
-``.reyn/agents/<name>/action_usage.json`` — #2357 docstring-drift fix). Everything else stays intact:
+``history.jsonl``). Everything else stays intact:
 
 - ``.reyn/events/``                (P6 audit truth — never touched)
 - ``.reyn/state/wal.jsonl``        (run resume — preserved)
@@ -14,6 +12,14 @@ backs the Memory tab's hot-list augmentation, persisted at
 
 User dogfood 2026-05-25:
   「ヒストリとagents_usage を初期状態にする、 他はクリアしない」
+
+#4552: this command used to also clear the action-usage tracker (the
+freq+recency ranking that backed the Memory tab's hot-list augmentation,
+persisted at ``.reyn/agents/<name>/action_usage.json``) — removed with
+the hot-list feature it existed for (owner directive: discarded,
+superseded by ``list_actions`` as the canonical discovery path). Only
+the history half of the original user request survives; there is no
+longer an action-usage table to clear.
 
 Two-step confirmation pattern mirrors ``/reset`` because the history
 delete is irreversible (= history.jsonl isn't tracked by git in any
@@ -25,33 +31,20 @@ from reyn.interfaces.slash import SlashContext, reply, reply_error, slash
 
 
 def _format_currently_line(session: "object") -> str:
-    """Build a 'Currently: N history turns, M tracked tools' context line."""
+    """Build a 'Currently: N history turns' context line."""
     history = getattr(session, "history", None)
-    tracker = getattr(session, "_action_usage_tracker", None)
-
-    parts: list[str] = []
-    if history is not None:
-        n_turns = len(history)
-        word = "turn" if n_turns == 1 else "turns"
-        parts.append(f"{n_turns} history {word}")
-    if tracker is not None:
-        try:
-            n_tools = len(tracker)
-        except TypeError:
-            n_tools = 0
-        word = "tool" if n_tools == 1 else "tools"
-        parts.append(f"{n_tools} tracked {word}")
-    if not parts:
+    if history is None:
         return ""
-    return "Currently: " + ", ".join(parts) + "."
+    n_turns = len(history)
+    word = "turn" if n_turns == 1 else "turns"
+    return f"Currently: {n_turns} history {word}."
 
 
 @slash(
     "clear-history",
     aliases=("clear",),
     summary=(
-        "Clear conversation history + action-usage table (= events, "
-        "run state, profile preserved)"
+        "Clear conversation history (= events, run state, profile preserved)"
     ),
     usage="/clear-history confirm",
 )
@@ -63,10 +56,9 @@ async def clear_history_cmd(ctx: "SlashContext", args: str) -> None:
         await reply(
             ctx,
             f"{preamble}"
-            "⚠ This will clear the chat history and the action-usage "
-            "ranking. Audit logs (.reyn/events/), in-flight run state "
-            "(WAL + snapshots), agent profile, and MEMORY.md are all "
-            "preserved.\n"
+            "⚠ This will clear the chat history. Audit logs "
+            "(.reyn/events/), in-flight run state (WAL + snapshots), "
+            "agent profile, and MEMORY.md are all preserved.\n"
             "Type `/clear-history confirm` to proceed, or anything else "
             "to abort.",
         )
@@ -74,9 +66,6 @@ async def clear_history_cmd(ctx: "SlashContext", args: str) -> None:
 
     history = getattr(ctx.session, "history", None)
     history_path = getattr(ctx.session, "history_path", None)
-    tracker = getattr(ctx.session, "_action_usage_tracker", None)
-
-    cleared_parts: list[str] = []
 
     # Snapshot size before any mutation so the report is accurate even if
     # disk deletion is attempted first.
@@ -97,27 +86,13 @@ async def clear_history_cmd(ctx: "SlashContext", args: str) -> None:
             )
             return
 
-    if isinstance(history, list):
-        history.clear()
-        cleared_parts.append(f"{n_turns_before} history turn(s)")
-
-    if tracker is not None and hasattr(tracker, "reset"):
-        try:
-            n_tools_before = len(tracker)
-        except TypeError:
-            n_tools_before = 0
-        tracker.reset()
-        cleared_parts.append(f"{n_tools_before} tracked tool(s)")
-
-    if not cleared_parts:
-        await reply(
-            ctx,
-            "✓ Nothing to clear (= history empty, no action-usage tracker).",
-        )
+    if not isinstance(history, list):
+        await reply(ctx, "✓ Nothing to clear (= no history).")
         return
 
+    history.clear()
     await reply(
         ctx,
-        "✓ Cleared: " + ", ".join(cleared_parts) + ". "
+        f"✓ Cleared: {n_turns_before} history turn(s). "
         "Audit logs and run state preserved.",
     )

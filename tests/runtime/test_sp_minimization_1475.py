@@ -36,7 +36,6 @@ def _sp(*, universal_wrappers_enabled: bool = True,
         universal_wrappers_enabled=universal_wrappers_enabled,
         search_actions_enabled=search_actions_enabled,
         discovery_mandate=discovery_mandate,
-        has_hot_list_aliases=False,
         non_interactive=False,
     )
     return build_system_prompt(

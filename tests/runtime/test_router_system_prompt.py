@@ -24,7 +24,6 @@ def _default_slots() -> "dict[str, str]":
         universal_wrappers_enabled=True,
         search_actions_enabled=True,
         discovery_mandate=False,
-        has_hot_list_aliases=False,
         non_interactive=False,
     )
 

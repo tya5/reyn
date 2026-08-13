@@ -42,13 +42,21 @@ attempt to override. A future structural follow-up (= seed
 LLM sees server existence without discovery) will be evaluated after
 A+B production data is collected.
 
+#4552: the hot-list feature described above (fix (A), the SP-side
+HOT-LIST/subset paragraph, and its "subset" framing in fix (B)'s
+description) was removed entirely, owner directive. The tests pinning
+fix (A) and the "subset" wording of fix (B) were removed with it; the
+remaining discovery-gateway-shape assertions of fix (B) (FULL catalog /
+before-refusing / failure-mode framing, POST_CALL directive,
+domain-agnosticism) are unaffected and still pinned below.
+
 Pins:
 
-  1. ``_LIST_ACTIONS_DESCRIPTION`` mentions "HOT-LIST" / "subset" /
+  1. ``_LIST_ACTIONS_DESCRIPTION`` mentions "FULL catalog" /
      "before refusing" — the discovery-gateway positioning.
-  2. ``build_system_prompt`` output includes the catalog-partial
-     signal section under ``## Action categories``.
-  3. Both signals are domain-agnostic — no specific MCP server name
+  2. ``build_system_prompt`` output still renders ``## Action
+     categories`` with its list_actions discovery vocabulary.
+  3. The description is domain-agnostic — no specific MCP server name
      or fixed token mentioned (= non-overfit per project policy).
 """
 from __future__ import annotations
@@ -58,97 +66,31 @@ from reyn.tools.schemes._universal_sp import build_universal_tool_use_slots
 from reyn.tools.universal_catalog import _LIST_ACTIONS_DESCRIPTION
 
 
-def _slots(*, has_hot_list_aliases: bool, universal_wrappers_enabled: bool = True) -> "dict[str, str]":
+def _slots(*, universal_wrappers_enabled: bool = True) -> "dict[str, str]":
     """Build slot-map for catalog-partial signal tests."""
     return build_universal_tool_use_slots(
         universal_wrappers_enabled=universal_wrappers_enabled,
         search_actions_enabled=False,
         discovery_mandate=False,
-        has_hot_list_aliases=has_hot_list_aliases,
         non_interactive=False,
     )
 
 
 # ── A: SP partial-signal ─────────────────────────────────────────────
-
-
-def test_sp_catalog_partial_signal_present_when_wrappers_enabled() -> None:
-    """Tier 2: when universal wrappers are enabled with hot-list aliases
-    (has_hot_list_aliases=True), the SP includes the HOT-LIST subset signal.
-    #1627 Stage 4: slot-map via build_universal_tool_use_slots.
-    """
-    sp = build_system_prompt(
-        agent_name="test",
-        agent_role="tester",
-        available_agents=[],
-        memory_index={},
-        tool_use_sp=_slots(has_hot_list_aliases=True),
-    )
-    assert "HOT-LIST" in sp
-    assert "subset" in sp
-    assert "list_actions" in sp
-    assert "refusing" in sp.lower() or "refuse" in sp.lower()
-
-
-def test_sp_no_aliases_branch_omits_hot_list_paragraph() -> None:
-    """Tier 2: when has_hot_list_aliases=False (new default N=0), the
-    HOT-LIST paragraph is completely absent.
-    #1627 Stage 4: slot-map via build_universal_tool_use_slots.
-    """
-    sp = build_system_prompt(
-        agent_name="test",
-        agent_role="tester",
-        available_agents=[],
-        memory_index={},
-        tool_use_sp=_slots(has_hot_list_aliases=False),
-    )
-    assert "HOT-LIST" not in sp
-    assert "No actions are pre-loaded" not in sp
-    assert "subset" not in sp
-
-
-def test_sp_two_branches_are_distinct() -> None:
-    """Tier 2: the aliases-present and aliases-absent branches produce
-    different SP text — regression pin against the conditional being
-    silently stripped.
-    #1627 Stage 4: slot-map via build_universal_tool_use_slots.
-    """
-    sp_with = build_system_prompt(
-        agent_name="test", agent_role="tester", available_agents=[], memory_index={},
-        tool_use_sp=_slots(has_hot_list_aliases=True),
-    )
-    sp_without = build_system_prompt(
-        agent_name="test", agent_role="tester", available_agents=[], memory_index={},
-        tool_use_sp=_slots(has_hot_list_aliases=False),
-    )
-    assert sp_with != sp_without
-    assert "HOT-LIST" in sp_with and "HOT-LIST" not in sp_without
-
-
-def test_sp_partial_signal_appears_after_action_categories() -> None:
-    """Tier 2: position pin — the HOT-LIST signal (aliases branch) lives right
-    after the category enumeration.
-    #1627 Stage 4: slot-map via build_universal_tool_use_slots.
-    """
-    sp = build_system_prompt(
-        agent_name="test",
-        agent_role="tester",
-        available_agents=[],
-        memory_index={},
-        tool_use_sp=_slots(has_hot_list_aliases=True),
-    )
-    cat_pos = sp.find("## Action categories")
-    sig_pos = sp.find("HOT-LIST")
-    behav_pos = sp.find("## Behaviour")
-    assert cat_pos >= 0
-    assert sig_pos >= 0
-    assert behav_pos >= 0
-    assert cat_pos < sig_pos < behav_pos
+#
+# #4552: the hot-list feature (and its HOT-LIST subset-signal paragraph,
+# HOT_LIST_ALIASES_HINT) was removed entirely from
+# src/reyn/prompt/universal_slots.py. The tests that pinned that
+# paragraph's presence/absence (with-aliases signal text, no-aliases
+# omission, the with/without distinctness regression pin, its position
+# relative to ## Action categories, its absence when wrappers are off,
+# and its domain-agnostic wording) tested a behavior that no longer
+# exists and were deleted rather than kwarg-patched.
 
 
 def test_sp_no_aliases_action_categories_section_still_present() -> None:
-    """Tier 2: when has_hot_list_aliases=False, ## Action categories section
-    is still rendered (only the HOT-LIST paragraph is absent).
+    """Tier 2: ## Action categories section is still rendered with its
+    list_actions discovery vocabulary when universal wrappers are enabled.
     #1627 Stage 4: slot-map via build_universal_tool_use_slots.
     """
     sp = build_system_prompt(
@@ -156,54 +98,10 @@ def test_sp_no_aliases_action_categories_section_still_present() -> None:
         agent_role="tester",
         available_agents=[],
         memory_index={},
-        tool_use_sp=_slots(has_hot_list_aliases=False),
+        tool_use_sp=_slots(),
     )
     assert "## Action categories" in sp
     assert "list_actions" in sp
-
-
-def test_sp_partial_signal_absent_when_wrappers_disabled() -> None:
-    """Tier 2: the signal only applies to the universal-wrappers SP path.
-    When wrappers are off, no HOT-LIST paragraph.
-    #1627 Stage 4: slot-map via build_universal_tool_use_slots (wrappers=False).
-    """
-    sp = build_system_prompt(
-        agent_name="test",
-        agent_role="tester",
-        available_agents=[],
-        memory_index={},
-        tool_use_sp=_slots(has_hot_list_aliases=False, universal_wrappers_enabled=False),
-    )
-    assert "HOT-LIST" not in sp
-
-
-def test_sp_partial_signal_is_domain_agnostic() -> None:
-    """Tier 2: the HOT-LIST signal (aliases branch) MUST NOT mention specific
-    MCP server names, specific tools, or other domain-specific tokens.
-    #1627 Stage 4: slot-map via build_universal_tool_use_slots.
-    """
-    sp = build_system_prompt(
-        agent_name="test",
-        agent_role="tester",
-        available_agents=[],
-        memory_index={},
-        tool_use_sp=_slots(has_hot_list_aliases=True),
-    )
-    # Extract the catalog-partial signal paragraph.
-    cat_pos = sp.find("HOT-LIST")
-    behav_pos = sp.find("## Behaviour")
-    signal_block = sp[cat_pos:behav_pos]
-    # Forbidden tokens: server names of the 8 verified MCP servers.
-    forbidden = [
-        "sqlite", "everything", "fetch", "memory", "git",
-        "filesystem", "time", "sequential",
-    ]
-    for tok in forbidden:
-        assert tok.lower() not in signal_block.lower(), (
-            f"catalog-partial signal must not mention specific server "
-            f"name {tok!r}; signal block contains it: "
-            f"{signal_block[:300]!r}"
-        )
 
 
 # ── B: list_actions discovery-gateway description ────────────────────
@@ -219,7 +117,6 @@ def test_list_actions_description_positions_as_discovery_gateway() -> None:
     desc = _LIST_ACTIONS_DESCRIPTION
     # Discovery positioning.
     assert "FULL catalog" in desc or "full catalog" in desc.lower()
-    assert "subset" in desc.lower()
     # Anti-refuse directive.
     assert "before refusing" in desc.lower() or "BEFORE refusing" in desc
     # Failure-mode framing for the missing-check case.

@@ -1,14 +1,12 @@
-"""Tier 2: #1471 — mcp_install_package hot-list visibility + not-found guidance.
+"""Tier 2: #1471 — mcp_install_registry not-found guidance.
 
-Two invariants:
+mcp_install_registry not-found (HTTP 404) error carries decision-enabling
+guidance pointing to mcp_install_package — pins the LLM-visible error data
+so the model can immediately pivot without a list_actions round-trip.
 
-1. DEFAULT_HOT_LIST_SEED contains mcp_install_package — pins visibility parity
-   with mcp_install_registry (previously install_package was only reachable via
-   list_actions, causing plan-driven weak models to always grab install_registry).
-
-2. mcp_install_registry not-found (HTTP 404) error carries decision-enabling
-   guidance pointing to mcp_install_package — pins the LLM-visible error data
-   so the model can immediately pivot without a list_actions round-trip.
+Note: the hot-list visibility invariant (DEFAULT_HOT_LIST_SEED /
+ActionRetrievalConfig.hot_list_n) this file previously also pinned was
+removed along with the hot-list feature (#4552 PR-1).
 
 No mocks. Network-doing RegistryClient is replaced via monkeypatch.setattr with
 a real fake class (real async context manager, real get_server coroutine method
@@ -28,35 +26,7 @@ from reyn.data.workspace.workspace import Workspace
 from reyn.schemas.models import MCPInstallIROp
 from reyn.tools.types import RouterCallerState, ToolContext
 
-# ── 1. Seed contains install_package ────────────────────────────────────────
-
-
-def test_install_package_in_default_hot_list_seed() -> None:
-    """Tier 2: #1471 — mcp_install_package must be in DEFAULT_HOT_LIST_SEED.
-    Regression pin: removing it would reintroduce the visibility asymmetry."""
-    from reyn.tools.action_usage_tracker import DEFAULT_HOT_LIST_SEED
-    assert "mcp_install_package" in DEFAULT_HOT_LIST_SEED, (
-        "mcp_install_package must be in DEFAULT_HOT_LIST_SEED for hot-list "
-        "visibility parity with mcp_install_registry"
-    )
-
-
-def test_install_registry_also_in_seed() -> None:
-    """Tier 2: #1471 — mcp_install_registry must remain in seed (regression
-    pin: adding install_package must not accidentally remove install_registry)."""
-    from reyn.tools.action_usage_tracker import DEFAULT_HOT_LIST_SEED
-    assert "mcp_install_registry" in DEFAULT_HOT_LIST_SEED
-
-
-def test_hot_list_n_default_is_zero() -> None:
-    """Tier 2: #1471 → default-flip — ActionRetrievalConfig.hot_list_n default
-    is 0 (off). The seed and mechanism remain intact for opt-in (hot_list_n: 10+
-    in reyn.yaml). Regression pin against accidental revert to non-zero default."""
-    from reyn.config import ActionRetrievalConfig
-    assert ActionRetrievalConfig().hot_list_n == 0
-
-
-# ── 2. Not-found error carries install_package guidance ─────────────────────
+# ── Not-found error carries install_package guidance ─────────────────────
 
 
 class _RegistryClientNotFound:

@@ -144,7 +144,6 @@ def _sp_universal() -> str:
         universal_wrappers_enabled=True,
         search_actions_enabled=False,
         discovery_mandate=False,
-        has_hot_list_aliases=False,
         non_interactive=False,
     )
     return build_system_prompt(
@@ -158,7 +157,6 @@ def _sp_enumerate() -> str:
         universal_wrappers_enabled=False,
         search_actions_enabled=True,
         discovery_mandate=True,
-        has_hot_list_aliases=False,
         non_interactive=False,
     )
     return build_system_prompt(
@@ -172,7 +170,6 @@ def _sp_retrieval() -> str:
         universal_wrappers_enabled=False,
         search_actions_enabled=True,
         discovery_mandate=False,
-        has_hot_list_aliases=False,
         non_interactive=False,
     )
     slots["slot_post_catalog"] = (

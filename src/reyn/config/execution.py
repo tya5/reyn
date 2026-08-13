@@ -23,7 +23,7 @@ class ToolUseConfig:
     it is really ``enumerate-all`` presentation over the ``content_fence``
     transport. #1657: the default (``scheme=enumerate-all``,
     ``transport=tool_calls``) is the owner H1 fix — flat-listing actions
-    stops invoke_action name-hallucination, 30%→100% non-hot-list tool-use.
+    stops invoke_action name-hallucination, 30%→100% direct tool-use.
 
     ``tool_use.chat`` is REMOVED, clean-break (no compat alias) — a reyn.yaml
     still carrying it fails loud at parse time naming the migration (P4 firm

@@ -862,7 +862,6 @@ class RouterHistoryBuffer:
             universal_wrappers_enabled=univ,
             search_actions_enabled=True,  # conservative: assume enabled (larger SP)
             discovery_mandate=dm,
-            has_hot_list_aliases=False,   # conservative: assume no aliases (smaller SP)
             non_interactive=self._non_interactive,
             # #2548 PR-A: include the ## Skills block in the SP-size estimate so
             # the compaction budget accounts for it (same host accessor as live).

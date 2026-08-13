@@ -263,15 +263,15 @@ def _runs_dir() -> Path:
 
 def _scenario_state_targets(project_root: Path, agent_name: str) -> "dict[str, Path]":
     """#2357: the per-scenario ephemeral state the dogfood runner wipes between scenarios so each
-    run starts clean. The action_usage ledger MUST be the LIVE ``ActionUsageTracker`` persist path
-    (``.reyn/agents/<name>/action_usage.json`` — session.py); the previous ``.reyn/state/
-    action_usage.jsonl`` never existed, so the unlink was a silent no-op and hot-list frequency
-    counts bled across scenarios (measurement contamination). Kept as a pure, testable helper so the
-    wipe target can't silently drift from the tracker's real path again."""
+    run starts clean. Kept as a pure, testable helper so a wipe target can't silently drift from
+    the real path it targets.
+
+    #4552: this used to also wipe ``action_usage.json`` (the ``ActionUsageTracker`` persist path)
+    to stop hot-list frequency counts bleeding across scenarios — removed with the hot-list feature
+    (owner directive: discarded); nothing writes that file anymore."""
     agent_dir = project_root / ".reyn" / "agents" / agent_name
     return {
         "events_chat_dir": project_root / ".reyn" / "events" / "agents" / agent_name / "chat",
-        "action_usage": agent_dir / "action_usage.json",
         "history": agent_dir / "history.jsonl",
     }
 
@@ -431,8 +431,6 @@ def _build_live_runner(agent_name: str, *, env_backend=None, ws_base_dir=None, w
     Per-scenario state isolation:
     - Wipes events/agents/<name>/chat/ before each scenario so captured
       events contain only the events from that scenario's turns.
-    - Wipes state/action_usage.jsonl before each scenario so hot-list
-      frequency counters don't bleed across scenarios.
     - Wipes agents/<name>/history.jsonl before each scenario so chat
       history from prior scenarios is not injected into the LLM's
       messages. Without this, Session.load_history() (called by the
@@ -609,11 +607,10 @@ def _build_live_runner(agent_name: str, *, env_backend=None, ws_base_dir=None, w
         # returns events from this scenario's turns.
         if targets["events_chat_dir"].is_dir():
             shutil.rmtree(targets["events_chat_dir"], ignore_errors=True)
-        # Wipe the action_usage ledger (prevents hot-list frequency bleed) + the per-agent chat
-        # history (prevents prior scenarios' turns leaking into this scenario's LLM context —
-        # Session.load_history reads it unconditionally). dogfood_fresh_reset.sh defers the history
-        # wipe to the runner because it needs the agent name (which the script doesn't have).
-        targets["action_usage"].unlink(missing_ok=True)
+        # Wipe the per-agent chat history (prevents prior scenarios' turns leaking into this
+        # scenario's LLM context — Session.load_history reads it unconditionally).
+        # dogfood_fresh_reset.sh defers the history wipe to the runner because it needs the
+        # agent name (which the script doesn't have).
         targets["history"].unlink(missing_ok=True)
         # #2169: remove agents CREATED by spawn-arc scenarios (siblings under .reyn/agents/),
         # which otherwise leak across single-runs → "agent already exists" on re-run. The target

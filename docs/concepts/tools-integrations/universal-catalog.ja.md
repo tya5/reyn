@@ -21,7 +21,7 @@ tool / memory entry / file op / indexed corpus / … — は **1 つの名前**
 `describe_action`、 自然言語 / semantic 検索は `search_actions`
 (embedding-backed) で扱う。
 
-**状態の更新: ツール提示は今や pluggable な scheme であり、単一の固定パスではありません。** Phase 6 (2026-05-16) 以降、wrapper-only path は一時的に唯一の production 挙動でしたが、後に owner による H1 fix が `chat` レイヤー自身のデフォルトを `enumerate-all`(wrapper なしの flat なツールリスト)に切り替えました — flat listing が `invoke_action` の name-hallucination を防ぐためです(30%→100% の non-hot-list tool-use 精度)。`universal-category`(このページの wrapper path)は登録済み scheme として残存し、operator が `reyn.yaml` で `tool_use.scheme: category` を設定すれば到達できます(FP-0066 P4b #3247 — presentation 軸の名前は `category`、解決先の登録済み scheme 名が `universal-category`)。完全で現行のモデルは [Tool-Use Schemes](tool-use-schemes.md) を参照してください。以下のセクションは `universal-category` scheme 自体の仕組みを説明するものであり、どのレイヤーがそれをデフォルトで使うかではありません。(#2768 が死んだ phase-graph era の `step`/`phase` tool-use レイヤーを削除しました。)
+**状態の更新: ツール提示は今や pluggable な scheme であり、単一の固定パスではありません。** Phase 6 (2026-05-16) 以降、wrapper-only path は一時的に唯一の production 挙動でしたが、後に owner による H1 fix が `chat` レイヤー自身のデフォルトを `enumerate-all`(wrapper なしの flat なツールリスト)に切り替えました — flat listing が `invoke_action` の name-hallucination を防ぐためです(30%→100% の direct tool-use 精度)。`universal-category`(このページの wrapper path)は登録済み scheme として残存し、operator が `reyn.yaml` で `tool_use.scheme: category` を設定すれば到達できます(FP-0066 P4b #3247 — presentation 軸の名前は `category`、解決先の登録済み scheme 名が `universal-category`)。完全で現行のモデルは [Tool-Use Schemes](tool-use-schemes.md) を参照してください。以下のセクションは `universal-category` scheme 自体の仕組みを説明するものであり、どのレイヤーがそれをデフォルトで使うかではありません。(#2768 が死んだ phase-graph era の `step`/`phase` tool-use レイヤーを削除しました。)
 
 この wrapper path があるレイヤーで有効なとき、handler
 (`invoke_skill` / `call_mcp_tool` / …) は wrapper
@@ -267,7 +267,7 @@ strong model (`router_model: strong`) は category 一覧から action を柔軟
 はこれを **構造的に** 解く — weak 対応が strong の柔軟性を損なわない形で:
 
 1. **Satisficing** — より適した action (`edit_file`) を discover せず、
-   見えている hot-list action (`write_file`) を「十分」として invoke する。
+   馴染みの action (`write_file`) を「十分」として invoke する。
 2. **Discovery-skip** — 能動的に `list_actions` を呼ばず、 training prior
    から action 名を推測する (しばしば malformed: `file.write`,
    `file__read_file`)。
@@ -390,9 +390,11 @@ action_retrieval:
   stub、 visibility は `ActionEmbeddingIndex` 待ち。
 - **`exec` 列挙** — sandbox-backend introspection が必要。 visibility
   predicate は存在; カタログ本体は introspection API 待ち。
-- **Hot-list pinning** — `action_retrieval.hot_list_n` はパースされる
-  が未使用; Phase 2 で `list_actions` の順位を直近 invoke の action 寄り
-  に bias するために利用。
+
+**廃止済み（#4552、2026-08）:** hot-list 機構（`action_retrieval.hot_list_n`、
+top-N freq+recency の direct-alias 投影、デフォルト無効）がここに存在して
+いたが、削除された — owner 指示: 機構の役割はすでに無くなっており、
+`list_actions` が正規の discovery path として代替済み。
 
 ## 参照ファイル
 

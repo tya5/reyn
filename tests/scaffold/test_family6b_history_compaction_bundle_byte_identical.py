@@ -90,9 +90,7 @@ class TestFamily6bHistoryCompactionBundleByteIdentical:
         returns a ``_HistoryCompactionBundle`` wrapping the three real
         types — the builder's contract independent of ``__init__`` unpack
         wiring."""
-        bundle = session._build_history_compaction_bundle(
-            merge_action_usage=lambda candidates: None,
-        )
+        bundle = session._build_history_compaction_bundle()
         assert isinstance(bundle, _HistoryCompactionBundle)
         assert isinstance(bundle.history_buffer, RouterHistoryBuffer)
         assert isinstance(bundle.compaction_controller, CompactionController)
@@ -119,9 +117,7 @@ class TestFamily6bHistoryCompactionBundleByteIdentical:
         del session._compaction_controller
         del session._budget_advisor
 
-        bundle = session._build_history_compaction_bundle(
-            merge_action_usage=lambda candidates: None,
-        )
+        bundle = session._build_history_compaction_bundle()
 
         assert isinstance(bundle, _HistoryCompactionBundle)
 
@@ -136,9 +132,7 @@ class TestFamily6bHistoryCompactionBundleByteIdentical:
         bundle returns (not a fresh one, not left ``None``). This is the
         exact attribute the forward-patch sets — the extraction's own
         construction target, not a faked collaborator's internals."""
-        bundle = session._build_history_compaction_bundle(
-            merge_action_usage=lambda candidates: None,
-        )
+        bundle = session._build_history_compaction_bundle()
         patched_controller = bundle.history_buffer._compaction_controller
         assert patched_controller is bundle.compaction_controller
 
@@ -240,9 +234,7 @@ class TestFamily6bHistoryCompactionBundleByteIdentical:
         identity check above is genuinely reading the live patched wiring,
         not a check that would trivially pass regardless (e.g. because
         both sides are always ``None``)."""
-        bundle = session._build_history_compaction_bundle(
-            merge_action_usage=lambda candidates: None,
-        )
+        bundle = session._build_history_compaction_bundle()
         fresh_history_buffer = RouterHistoryBuffer(
             history_fn=session._active_branch_history,
             compaction=session._compaction,

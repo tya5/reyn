@@ -40,7 +40,6 @@ def _slots(*, universal_wrappers_enabled: bool) -> "dict[str, str]":
         universal_wrappers_enabled=universal_wrappers_enabled,
         search_actions_enabled=True,
         discovery_mandate=False,
-        has_hot_list_aliases=False,
         non_interactive=False,
     )
 

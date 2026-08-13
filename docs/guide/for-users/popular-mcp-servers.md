@@ -11,7 +11,7 @@ Reyn. Each section shows:
 3. **Usage from chat** — a real `reyn chat` conversation that
    exercises the server through the chat router. The router signals catalog partiality so the LLM proactively calls
    `list_actions` (or `search_actions` for keyword / semantic
-   queries) to discover capabilities it doesn't see in its hot-list.
+   queries) to discover capabilities it doesn't see in its function list.
 
 Servers covered:
 

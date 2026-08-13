@@ -2961,12 +2961,6 @@ class AgentRegistry:
         session.set_events_dir(
             session.events_dir.parent / "sessions" / self._encode_sid_for_dir(new_sid) / "chat"
         )
-        # action_usage.json stays agent-wide by design (name-only, NOT re-keyed): it is
-        # the agent's tool-habit ranking (writer = compactor, reader = RouterLoop's
-        # per-turn hot-list cold-start hint), an agent-knowledge tier — and per-turn
-        # freshness for the CURRENT conversation is already supplied separately by the
-        # live overlay (this session's uncompacted calls layered on each turn). So it is
-        # correctly shared across the agent's sessions, not per-conversation state.
         # #3561: re-resolve + inject the sid-keyed #2103-S1a narrowing, for the same
         # reason #2126 does it in spawn_session_recorded and at the same point in the
         # sequence — right after the per-session state dir is finalized, before the

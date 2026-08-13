@@ -718,7 +718,7 @@ tool_use:
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `scheme` | string | `enumerate-all` | Presentation for the top-level chat layer: `category` / `enumerate-all` / `retrieval`. **Default `enumerate-all`** — flat-lists actions so the LLM invokes them directly instead of hallucinating `invoke_action` names (raised non-hot-list tool-use ~30%→100%). Set to `universal-category` for a minimal-surface / many-tool catalog (discover-then-call). |
+| `scheme` | string | `enumerate-all` | Presentation for the top-level chat layer: `category` / `enumerate-all` / `retrieval`. **Default `enumerate-all`** — flat-lists actions so the LLM invokes them directly instead of hallucinating `invoke_action` names (raised direct tool-use ~30%→100%). Set to `universal-category` for a minimal-surface / many-tool catalog (discover-then-call). |
 | `transport` | string | `tool_calls` | How the model expresses a chosen action: `tool_calls` (native tool-calling) or `content_fence` (the action is expressed as fenced code in the reply text — CodeAct). |
 
 Every combination of the axis values above is implemented today:
@@ -1222,7 +1222,6 @@ Universal catalog visibility + retrieval settings.  Scheme *selection* is genera
 ```yaml
 action_retrieval:
   universal_wrappers_enabled: true    # default; set false to opt out
-  hot_list_n: 0                       # 0 = off (default); set e.g. 10 to opt in
   mode: default                       # default | minimal | performance
 embedding:
   enabled: false                      # default (off); set true to opt in to search_actions
@@ -1233,10 +1232,16 @@ embedding:
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `universal_wrappers_enabled` | bool | `true` | For a layer whose `tool_use` scheme resolves to `universal-category`, `true` (default) exposes only the 4 universal wrappers (`list_actions`, `search_actions`, `describe_action`, `invoke_action`) plus hot-list direct aliases in that layer's `tools=`.  Legacy per-kind tools (`invoke_skill`, `call_mcp_tool`, etc.) are no longer surfaced to the LLM on that layer but remain available as wrapper backing handlers.  `search_actions` is gated separately by [`embedding.enabled`](#embedding-block).  Set `false` to disable the wrapper surface entirely for that layer (= legacy tools become the only addressing path again).  Does not affect a layer whose scheme is `enumerate-all` (the `chat` layer's own default) — that scheme never consults this flag. |
-| `hot_list_n` | int | `0` | Hot-list projection size for top-N `freq+recency` direct aliases. `0` (default) disables hot-list entirely — `list_actions` is the canonical discovery path. Set to `10` or higher to opt in; the seed, usage tracker, and alias-builder remain fully operative. |
-| `mode` | string | `"default"` | Operational mode label: `"minimal"` (max cache stability, no hot list) / `"default"` (balanced) / `"performance"` (large hot list).  Free-form string; callers layer semantics on top. |
-| `hot_list_seed` | list \| string | `"default"` | Seed for the hot-list projection. `"default"` uses the built-in freq+recency seeding; a list of qualified action names (e.g. `["mcp_call_tool"]`) pins those as the initial hot list before usage stats accumulate. |
+| `universal_wrappers_enabled` | bool | `true` | For a layer whose `tool_use` scheme resolves to `universal-category`, `true` (default) exposes only the 4 universal wrappers (`list_actions`, `search_actions`, `describe_action`, `invoke_action`) in that layer's `tools=`.  Legacy per-kind tools (`invoke_skill`, `call_mcp_tool`, etc.) are no longer surfaced to the LLM on that layer but remain available as wrapper backing handlers.  `search_actions` is gated separately by [`embedding.enabled`](#embedding-block).  Set `false` to disable the wrapper surface entirely for that layer (= legacy tools become the only addressing path again).  Does not affect a layer whose scheme is `enumerate-all` (the `chat` layer's own default) — that scheme never consults this flag. |
+| `mode` | string | `"default"` | Operational mode label: `"minimal"` / `"default"` / `"performance"`.  Free-form string; currently unread — no caller layers semantics on it yet. |
+
+> **#4552 (2026-08) — hot-list retired.** The prior `hot_list_n` / `hot_list_seed`
+> fields (a top-N freq+recency direct-alias projection) are **removed, no
+> alias** — owner directive: the mechanism's role is gone, superseded by
+> `list_actions` as the canonical discovery path. A `reyn.yaml` still
+> carrying either key gets the standard unknown-key tolerance (ignored, not
+> a parse error) rather than a migration path — there is nothing left to
+> migrate TO.
 
 > **FP-0066 §7 (2026-07) — config clean-break.** The prior fragmented gate
 > `action_retrieval.embedding_class` (which conflated the on/off decision with

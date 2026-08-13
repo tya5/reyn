@@ -43,7 +43,7 @@ from typing import Any
 from reyn.tools.schemes._discovery import tier_wants_discovery_mandate
 
 
-def retrieval_sp_facts(available: Any, layer_ctx: Any) -> "dict[str, object]":
+def retrieval_sp_facts(layer_ctx: Any) -> "dict[str, object]":
     """The transport-neutral facts a transport needs to shape retrieval's tool-use
     system prompt. Facts only — the rendering is the encoder's.
 
@@ -56,7 +56,6 @@ def retrieval_sp_facts(available: Any, layer_ctx: Any) -> "dict[str, object]":
         "universal_wrappers_enabled": False,
         "search_actions_enabled": bool(layer_ctx.get("search_visible", False)),
         "discovery_mandate": tier_wants_discovery_mandate(layer_ctx.get("router_model")),
-        "has_hot_list_aliases": bool((available or {}).get("hot_list_aliases")),
         "non_interactive": bool(layer_ctx.get("non_interactive", False)),
         # #2548 PR-A: skill registry snapshot → ## Skills block (rendered into
         # the DEDICATED slot_post_skills, so the slot_post_catalog override

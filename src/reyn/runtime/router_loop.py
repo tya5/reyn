@@ -748,7 +748,13 @@ class RouterLoopHost(RouterLoopCore, Protocol):
 
 
 # ---------------------------------------------------------------------------
-# FP-0034 Phase 2 step 5: hot list alias builder
+# Catalog action-name membership (#4552: this used to also host the hot-list
+# alias builder — _filter_ghost_names_by_registry / _build_hot_list_aliases /
+# _operation_alias_metadata / _UNIVERSAL_WRAPPER_NAMES — removed with the
+# hot-list feature, owner directive: discarded, superseded by list_actions
+# as the canonical discovery path. _known_action_names()/_KNOWN_ACTION_NAMES
+# survive: _emit_routing_decided's ars_direct classification still needs
+# catalog-action membership independent of hot-list.)
 # ---------------------------------------------------------------------------
 
 def _known_action_names() -> "frozenset[str]":
@@ -759,216 +765,10 @@ def _known_action_names() -> "frozenset[str]":
     return KNOWN_ACTION_NAMES
 
 
-# Universal wrapper tool names that are already added by section I of
-# build_tools().  Filtering them here prevents duplicate function
-# declarations when ActionUsageTracker.get_top_n() returns a wrapper name
-# that was recorded as usage (B27-C1).
-_UNIVERSAL_WRAPPER_NAMES: frozenset[str] = frozenset({
-    "list_actions",
-    "search_actions",
-    "describe_action",
-    "invoke_action",
-})
-
 # The catalog's action set, bound once at import. Read by the ``routing_decided``
 # audit arm to tell a direct call on a catalog action from a direct call on a
 # base tool that the catalog does not carry.
 _KNOWN_ACTION_NAMES: frozenset[str] = _known_action_names()
-
-
-def _filter_ghost_names_by_registry(
-    names: "list[str]",
-    mcp_tool_map: "dict[str, dict] | None",
-    available_agents: "list[dict] | None",
-    *,
-    _warned: "set[str] | None" = None,
-) -> "list[str]":
-    """Drop hot-list names that are not catalog actions — the ghosts.
-
-    A hot-list name reaches here from the on-disk usage table or from the
-    operator-supplied ``action_retrieval.hot_list_seed``, and either can carry a
-    name that no longer exists (a rename, a retired tool, a typo in the seed).
-    Emitting one into ``tools=`` would advertise a function the dispatcher then
-    rejects, so the check is membership in ``KNOWN_ACTION_NAMES`` — the closed
-    table that IS the current action set (#3026: no category mints names from
-    operator data, so this is total).
-
-    B38 W2 found the gap this closes: the tracker's own filter was structural
-    ("does the name look like an action name"), which a stale name passes. #3429
-    then made structure and identity the same question — the check is the same
-    membership test the tracker now applies, so a name that survives one survives
-    the other.
-
-    Ghost names are logged once per unique name per session to stderr.
-    ``_warned`` is an optional set for cross-call deduplication.
-
-    P7-clean: data-driven from the catalog table only — no hardcoded ghost names.
-    ``mcp_tool_map`` / ``available_agents`` are the session-state signals the
-    per-resource categories needed before #3026 collapsed them; they stay in the
-    signature because the call sites thread them and a future dynamic category
-    would need them again.
-    """
-    import sys
-
-    from reyn.tools.universal_dispatch import is_known_action
-
-    if _warned is None:
-        _warned = set()
-
-    result: list[str] = []
-    for name in names:
-        if not is_known_action(name):
-            if name not in _warned:
-                print(
-                    f"[reyn] action_usage: skipping ghost alias "
-                    f"{name!r} — not a known action name",
-                    file=sys.stderr,
-                )
-                _warned.add(name)
-            continue
-        result.append(name)
-    return result
-
-
-def _build_hot_list_aliases(
-    names: list[str],
-    short_description_lookup: "dict[str, str] | None" = None,
-    *,
-    resource_metadata_lookup: "dict[str, dict] | None" = None,
-    mcp_tool_lookup: "dict[str, dict] | None" = None,
-) -> list[dict]:
-    """Build OpenAI-format ToolDefinition dicts for hot list direct aliases.
-
-    Each alias has additionalProperties=True so any args pass through.
-    The dispatcher routes these via invoke_action semantics (same path).
-
-    Lever D (B23-PRE-1): when ``short_description_lookup`` is provided,
-    embeds the target action's ``short_description`` in the alias
-    description with an assertive directive. This surfaces the action's
-    purpose directly in the tool listing so the LLM can pick the alias
-    without a list_actions / describe_action round-trip.
-
-    When ``short_description_lookup`` is None or the name is absent from
-    the map, falls back to the prior generic description so callers that
-    don't supply the lookup stay unaffected.
-
-    Universal wrapper names (``list_actions``, ``search_actions``,
-    ``describe_action``, ``invoke_action``) are filtered out defensively:
-    build_tools() already adds them in section I, so including them here
-    would produce duplicate function declarations that Gemini rejects.
-    """
-    # Defensive filter: drop universal wrapper names before alias construction
-    # so that any call site (present or future) cannot introduce duplicates.
-    names = [n for n in names if n not in _UNIVERSAL_WRAPPER_NAMES]
-    # #1456 runtime-boundary guard: a hot-list alias name becomes the OpenAI
-    # function name VERBATIM (``"name": name`` below). Drop any name that
-    # violates the provider function-name grammar (^[a-zA-Z0-9_-]{1,64}$ — the
-    # tightest, OpenAI's; dots are outside all three target providers' specs).
-    # This closes the wire-grammar hole BY CONSTRUCTION at the emission point —
-    # a dotted name from a collapsed/legacy category (agent.peer__* /
-    # mcp.tool__*) or a future dynamic prefix can never reach the wire as a
-    # function name, independent of whether every upstream source pre-filtered
-    # it. (invoke_action's action_name is an argument value, not a function
-    # name, so it is correctly unaffected.) Companion to the static canary in
-    # test_qualified_name_provider_grammar_1456.
-    import re
-
-    _wire_safe = re.compile(r"^[a-zA-Z0-9_-]{1,64}$")
-    _illegal = [n for n in names if not _wire_safe.match(n)]
-    if _illegal:
-        import logging
-
-        logging.getLogger(__name__).debug(
-            "hot-list: dropped %d name(s) violating the provider function-name "
-            "grammar (not wire-safe as a tools= function name): %s",
-            len(_illegal), _illegal,
-        )
-        names = [n for n in names if _wire_safe.match(n)]
-    result = []
-    lookup = short_description_lookup or {}
-    for name in names:
-        # D2-min: surface the target ToolDefinition's real description + JSON
-        # schema directly. Without this the alias arrives at the LLM as
-        # `description: "Direct alias for X. Use invoke_action for schema
-        # details."` + `parameters: {properties: {}, additionalProperties:
-        # true}` — the LLM has neither a use-case hint nor an arg
-        # signature, falls back to its training prior ("AI cannot access
-        # external sites") and refuses, or hallucinates control-character
-        # tool-call text. The FP-0034 D2 "hot list direct alias は full
-        # schema 提供" intent is realised here.
-        #
-        # #3026: this used to fall back to a ``_resource_alias_metadata`` helper
-        # for the resource categories (memory_entry__X / rag_corpus__X /
-        # mcp.tool__X.Y), which derived a per-resource schema from session state.
-        # Those categories are collapsed, so every alias is now an operation
-        # alias and the single lookup below is total.
-        rich = _operation_alias_metadata(name)
-        if rich is not None:
-            description, parameters = rich
-        else:
-            short_desc = lookup.get(name, "")
-            if short_desc:
-                description = (
-                    f"{short_desc}. "
-                    f"Use this direct alias to invoke {name} without going "
-                    "through invoke_action."
-                )
-            else:
-                description = (
-                    f"Direct alias for {name}. "
-                    "Use invoke_action for schema details."
-                )
-            parameters = {
-                "type": "object",
-                "properties": {},
-                "additionalProperties": True,
-            }
-        result.append({
-            "type": "function",
-            "function": {
-                "name": name,
-                "description": description,
-                "parameters": parameters,
-            },
-        })
-    return result
-
-
-def _operation_alias_metadata(
-    action_name: str,
-) -> "tuple[str, dict] | None":
-    """Return ``(description, parameters)`` for a hot-list action entry.
-
-    The hot list advertises a catalog action as a direct function so the model
-    can call it without a ``list_actions`` round-trip; the row it advertises is
-    the action's own ``ToolDefinition.description`` + ``.parameters``.
-
-    #3026: this is total for every name the hot list can hold. It used to
-    return ``None`` for resource-category entries (agent.peer / mcp.tool /
-    memory_entry / rag_corpus), whose generic-dispatcher target did not match
-    the resource's real schema, leaving a ``_resource_alias_metadata``
-    companion to introspect it per-resource (D2-full). Those categories are
-    collapsed and that companion is gone; a name that is not a catalog action
-    is not a hot-list candidate at all — the ghost filter drops it before this
-    is reached.
-    """
-    # Late imports to avoid circular dependency at module load time.
-    from reyn.tools import get_default_registry
-    from reyn.tools.types import parameters_for_export
-    from reyn.tools.universal_dispatch import is_known_action
-
-    if not is_known_action(action_name):
-        return None
-    tool = get_default_registry().lookup(action_name)
-    if tool is None:
-        return None
-    # #3383: ``_build_hot_list_aliases`` drops this value straight into an OpenAI
-    # ``{"type": "function", "function": {"parameters": ...}}`` entry, and
-    # ``build_tools`` appends those entries to the ``tools=`` payload VERBATIM —
-    # a LIVE LLM-payload seam on ordinary turns. Route through the one projection
-    # that owns the deep-copy obligation; a shallow ``dict()`` here let a single
-    # Gemini/Vertex turn rewrite the canonical schema for the rest of the process.
-    return tool.description, parameters_for_export(tool.parameters)
 
 
 def gate_effective_tool_name(name: str, args: "dict | None") -> "str | None":
@@ -1357,10 +1157,6 @@ class RouterLoop:
         self._total_usage = TokenUsage()
         self._last_call_usage = TokenUsage()
         host = self.host
-        # FP-0034 Phase 2 step 5: ActionUsageTracker for hot list recording.
-        # Resolved once per run() so recording below can reuse without re-fetching.
-        _tracker_getter = getattr(host, "get_action_usage_tracker", None)
-        _tracker = _tracker_getter() if _tracker_getter else None
         # FP-0034 PR-3b-iii: read universal wrapper visibility from host.
         # getattr fallback so narrow hosts (= test FakeRouterHost) that don't
         # implement the method default to off (= the prior flat tools= shape).
@@ -1487,88 +1283,6 @@ class RouterLoop:
                 )
             except Exception:
                 pass
-        # D2-wrapper scope expansion (B38): build session-level resource
-        # metadata maps when universal wrappers are enabled — regardless of
-        # whether a tracker is present. These maps feed both the hot-list
-        # alias builder (below) AND _collect_all_session_ars_entries (which
-        # needs resource / MCP tool schemas to populate the full ARS block).
-        _mcp_tool_map: dict[str, dict] = {}
-        if _univ_enabled:
-            # Skill enumeration removed (stage1 decouple): the short-description
-            # map stays declared (empty) because ``_build_hot_list_aliases``
-            # still takes it as its per-name description fallback. (#3026: it is
-            # no longer populated for memory_entry aliases either — that
-            # category, and the per-memory seeding that fed it, are gone.)
-            _short_desc_map: dict[str, str] = {}
-            # Issue #879: per-mcp-tool aliases (``mcp.tool__<srv>.<tool>``)
-            # were removed when the mcp surface collapsed to six verb
-            # actions. LLMs now dispatch tool calls through
-            # ``mcp_call_tool(server, mcp_tool_name, args)`` and learn
-            # the per-tool args via ``list_mcp_tools`` /
-            # ``describe_mcp_tool``. The previous per-tool input-schema
-            # lookup is no longer wired here.
-        # FP-0034 Phase 2 step 5: hot list aliases for frequent actions.
-        # Build only when universal wrappers are on and a tracker is present.
-        _hot_list_aliases: list[dict] | None = None
-        if _univ_enabled and _tracker is not None:
-            from reyn.config import ActionRetrievalConfig as _ARC
-            _ar_cfg_getter = getattr(host, "get_action_retrieval_config", None)
-            _ar_cfg = _ar_cfg_getter() if _ar_cfg_getter else None
-            if _ar_cfg is None:
-                _ar_cfg = _ARC()
-            _n = _ar_cfg.hot_list_n
-            if _n > 0:
-                from reyn.tools.action_usage_tracker import DEFAULT_HOT_LIST_SEED
-                _seed_cfg = _ar_cfg.hot_list_seed
-                _seed: list[str] = (
-                    list(DEFAULT_HOT_LIST_SEED)
-                    if _seed_cfg == "default"
-                    else (list(_seed_cfg) if isinstance(_seed_cfg, list) else [])
-                )
-                # #3026: the N4 (2026-05-17) per-memory hot-list seeding is
-                # removed with the ``memory_entry`` category. It appended one
-                # ``memory_entry__<slug>`` alias per shared memory file so a weak
-                # model could read a saved memory without a discovery step; those
-                # names no longer resolve, so seeding them would emit ghost
-                # function names the dispatcher rejects. The capability is
-                # ``list_memory`` + ``read_memory_body`` (which,
-                # unlike the alias, also reaches AGENT-layer memories). The cost is
-                # honest and known: cross-session memory retrieval is a discovery
-                # step again, which the N4 probe found the weak default model
-                # rarely takes proactively. The hot-list is capped at
-                # ``hot_list_n``, so this is a PRECISION trade, not a payload-size
-                # one — see the PR for the measurement.
-                # FP-0034 refactor: live (= uncompacted) tool-call records
-                # are scanned on demand so the hot-list reflects in-session
-                # invocations without needing per-call disk writes. Hosts
-                # without the accessor (= narrow test hosts)
-                # degrade to compacted-table-only ranking.
-                _live_records: list = []
-                _live_getter = getattr(
-                    host, "get_uncompacted_tool_call_records", None,
-                )
-                if _live_getter is not None:
-                    try:
-                        _live_records = list(_live_getter() or [])
-                    except Exception:
-                        _live_records = []
-                _top_names = _tracker.get_top_n(
-                    _n, _seed, live_records=_live_records,
-                )
-                # B38 W2: registry-existence check — filter names that pass
-                # structural validation but no longer resolve to a real action
-                # in the current session registry. Runs after get_top_n so
-                # RouterState (mcp / agent registry) is available.
-                _top_names = _filter_ghost_names_by_registry(
-                    _top_names,
-                    mcp_tool_map=_mcp_tool_map or None,
-                    available_agents=host.list_available_agents() or None,
-                )
-                if _top_names:
-                    _hot_list_aliases = _build_hot_list_aliases(
-                        _top_names,
-                        short_description_lookup=_short_desc_map or None,
-                    )
         # #272/#1128: compute the OS context-size signal once. It is None when
         # the window is ample (then compact stays hidden + the SP header is
         # omitted); non-None when filling (compact tool + header appear together).
@@ -1583,7 +1297,6 @@ class RouterLoop:
         # accumulated `presented` set. Stashed on self (RouterLoop is per-run state,
         # like self._catalog) — NOT the scheme (a registered singleton).
         _scheme_available = {
-            "hot_list_aliases": _hot_list_aliases,
             # #1593 PR-3 / #3378: the session's EFFECTIVE contextual narrowing, so a
             # scheme presenting actions outside tools= (CodeAct's code-API) omits the
             # same rows the JSON path drops — presentation parity with
@@ -1827,10 +1540,10 @@ class RouterLoop:
         # B28-Q2 Case A: per-turn counters for chat_turn_completed_inline.
         # #3455: routing_decided is now emitted from ``_dispatch_resolved`` —
         # the single chokepoint every catalog dispatch funnels through
-        # (invoke_action wrapper, bare hot-list alias, ARS-salvaged direct
-        # call, AND the flat/default bare-name dispatch that runs when
-        # universal wrappers are OFF, which the prior ``_univ_enabled``-gated
-        # emit never covered). An instance attribute (not a run_loop-local)
+        # (invoke_action wrapper, ARS-salvaged direct call, AND the
+        # flat/default bare-name dispatch that runs when universal wrappers
+        # are OFF, which the prior ``_univ_enabled``-gated emit never
+        # covered). An instance attribute (not a run_loop-local)
         # because the emit site moved to a method called from multiple
         # places; reset here so it reads "did routing happen THIS turn".
         # _tool_calls_attempted: count of tool_call rounds where the LLM
@@ -2405,10 +2118,10 @@ class RouterLoop:
                 # was happening on every dispatched call. The
                 # emit is now inside ``_dispatch_resolved`` (the #3429-census
                 # chokepoint every dispatch funnels through — invoke_action,
-                # bare hot-list alias, ARS-salvaged direct call, and the flat
-                # bare-name path alike), so coverage is structural rather than
-                # a property of which entry surface the model happened to
-                # use. ``self._routing_decided_this_turn`` (set there) is the
+                # ARS-salvaged direct call, and the flat bare-name path
+                # alike), so coverage is structural rather than a property of
+                # which entry surface the model happened to use.
+                # ``self._routing_decided_this_turn`` (set there) is the
                 # B28-Q2 inline-exclusivity flag consumed below.
                 # #1608: the active scheme builds the appendable message sequence
                 # (assistant tool-call turn + per-result {role:tool, tool_call_id}
@@ -2973,9 +2686,11 @@ class RouterLoop:
         weak LLMs sometimes read a qualified name from the ARS block
         inside ``invoke_action.description`` and emit it as a direct
         ``function_call`` rather than wrapping with
-        ``invoke_action(action_name=..., args=...)``.  The name lands
-        in ``self._catalog`` only when an actual hot-list alias was
-        surfaced; ARS-only entries don't get a top-level tool slot, so
+        ``invoke_action(action_name=..., args=...)``. #4552: the name
+        never lands in ``self._catalog`` (the hot-list mechanism that used
+        to put catalog-action names there directly was discarded); every
+        bare catalog-action call reaches here via this same #229/#3429
+        salvage. ARS-only entries don't get a top-level tool slot, so
         the dispatcher would otherwise reject with ``unknown_tool``.
         When the missed name resolves through ``universal_dispatch``,
         rewrite the call as ``invoke_action(action_name=name, args=args)``
@@ -3172,15 +2887,19 @@ class RouterLoop:
         ``"ars_direct"`` call as ``"invoke_action"``, silently changing the
         #241 discriminator's meaning the moment the emit moved here.
 
-        Source classification (unchanged from the relocated logic):
+        Source classification:
           - ``"invoke_action"``: the model called the universal wrapper;
             the real action name is nested in ``args["action_name"]``.
-          - ``"hot_list_alias"``: a bare catalog-action name that was
-            actually advertised in ``tools=`` (#241).
-          - ``"ars_direct"``: a bare catalog-action name NOT advertised —
-            reached only via the #229/#3429 salvage.
-          - anything else (e.g. ``spawn_session``, an async peer tool):
-            not a catalog action — no routing decision to record.
+          - ``"ars_direct"``: a bare catalog-action name — always reached
+            via the #229/#3429 salvage. #4552: this used to split into
+            ``"hot_list_alias"`` vs ``"ars_direct"`` depending on whether
+            ``surface`` was in ``self._catalog`` (= actually advertised in
+            ``tools=`` by the hot-list mechanism, #241); with hot-list
+            discarded nothing ever puts a bare catalog-action name in
+            ``self._catalog``, so that branch is now unreachable by
+            construction and the ternary collapses to this one constant.
+          - anything else (e.g. an async peer tool): not a catalog
+            action — no routing decision to record.
         """
         surface = raw_name if raw_name is not None else name
         if surface == "invoke_action":
@@ -3190,7 +2909,7 @@ class RouterLoop:
             source = "invoke_action"
         elif surface in _KNOWN_ACTION_NAMES:
             action_name = surface
-            source = "hot_list_alias" if surface in self._catalog else "ars_direct"
+            source = "ars_direct"
         else:
             return  # non-catalog tool — no routing decision to record
         if not action_name:
@@ -3235,7 +2954,6 @@ class RouterLoop:
             web_fetch_allowed=self.host.get_web_fetch_allowed(),
             universal_wrappers_enabled=univ,
             search_actions_visible=search_visible,
-            hot_list_aliases=available["hot_list_aliases"],
             compact_visible=layer_ctx["ctx_signal_present"],
         )
         return Presentation(
@@ -3256,7 +2974,6 @@ class RouterLoop:
             web_fetch_allowed=self.host.get_web_fetch_allowed(),
             universal_wrappers_enabled=False,
             search_actions_visible=False,
-            hot_list_aliases=available["hot_list_aliases"],
             compact_visible=layer_ctx["ctx_signal_present"],
         )
 

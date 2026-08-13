@@ -32,7 +32,7 @@ audience: [human, agent]
 > **pluggable scheme** (`tool_use.scheme` x `tool_use.transport` in `reyn.yaml`), and the **chat layer's
 > actual default is `enumerate-all`** (flat presentation, not the universal
 > wrapper) — a deliberate owner-driven fix (flat listing prevents `invoke_action`
-> name-hallucination, 30%→100% non-hot-list tool-use accuracy in evidence). The
+> name-hallucination, 30%→100% direct tool-use accuracy in evidence). The
 > chat-layer scheme *selection* generalizes the older
 > `action_retrieval.universal_wrappers_enabled` flag, but does not retire it — the
 > flag remains a live presentation sub-flag of the `universal-category` scheme
@@ -57,7 +57,7 @@ Reyn invokes the LLM via native function-calling tools over `RouterLoop` (intera
 
 **Tool surface:** `build_tools()` in `src/reyn/runtime/router_tools.py` assembles the tool list, returning the OpenAI `tools` array shape — but *which shape that list takes* is a **pluggable scheme**, not a single fixed format. `tool_use.scheme` (presentation) x `tool_use.transport` (how actions are expressed) in `reyn.yaml` resolves to a registered `ToolUseScheme` for the chat layer; every scheme routes every tool call through the same `exclude → permission → dispatch` gate regardless of which is active. See [Tool-Use Schemes](../tools-integrations/tool-use-schemes.md) and [Universal Action Catalog](../tools-integrations/universal-catalog.md) for the full model.
 
-- **The `chat` layer (this page's `RouterLoop` surface) defaults to `enumerate-all`** — a flat-native-JSON baseline that presents every usable tool flatly in `tools=` and dispatches by name, no universal-wrapper discovery indirection. This is a deliberate owner-driven default (an H1 fix): flat listing stops `invoke_action` name-hallucination, with 30%→100% non-hot-list tool-use accuracy as the evidence.
+- **The `chat` layer (this page's `RouterLoop` surface) defaults to `enumerate-all`** — a flat-native-JSON baseline that presents every usable tool flatly in `tools=` and dispatches by name, no universal-wrapper discovery indirection. This is a deliberate owner-driven default (an H1 fix): flat listing stops `invoke_action` name-hallucination, with 30%→100% direct tool-use accuracy as the evidence.
 - **`retrieval` (RAG-over-tools) and `CodeAct`** are supported, opt-in chat-layer schemes, for very large tool sets or weak models respectively.
 - **The chat layer's scheme is operator-configurable** via `tool_use.scheme` in `reyn.yaml` — an operator can, for example, opt the chat layer into `universal-category` instead of the `enumerate-all` default.
 

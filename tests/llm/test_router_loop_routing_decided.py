@@ -1,12 +1,15 @@
 """Tier 2: routing_decided P6 event emitted by RouterLoop (FP-0034 Phase 3).
 
-Five invariant tests:
+Invariant tests:
 
 1. invoke_action call → routing_decided(source="invoke_action", outcome="success")
-2. hot list alias call → routing_decided(source="hot_list_alias", outcome="success")
-3. error tool result → outcome="error"
-4. non-catalog tool (invoke_skill) → NO routing_decided event
-5. action_name absent in invoke_action args → no event
+2. error tool result → outcome="error"
+3. non-catalog tool (invoke_skill) → NO routing_decided event
+4. action_name absent in invoke_action args → no event
+5. a direct catalog call not surfaced via invoke_action → source="ars_direct"
+   (#4552: the hot-list feature that used to produce a second, distinguishable
+   "hot_list_alias" source value is retired — every bare catalog dispatch now
+   classifies as "ars_direct" unconditionally.)
 
 No MagicMock / AsyncMock.  call_llm_tools is replaced with a real
 coroutine function via monkeypatch.  FakeRouterHost and _FakeEventLog are
@@ -22,7 +25,6 @@ import pytest
 from reyn.llm.llm import LLMToolCallResult
 from reyn.llm.pricing import TokenUsage
 from reyn.runtime.router_loop import RouterLoop
-from reyn.tools.action_usage_tracker import ActionUsageTracker
 
 # ---------------------------------------------------------------------------
 # Shared primitives
@@ -86,7 +88,6 @@ class _FakeRouterHost:
     """Minimal host for routing_decided P6 event tests.
 
     universal_wrappers_enabled=True by default so routing_decided fires.
-    tracker: pass a real ActionUsageTracker to enable hot list alias injection.
     """
 
     agent_name: str = "test-agent"
@@ -97,14 +98,10 @@ class _FakeRouterHost:
         self,
         *,
         universal_wrappers_enabled: bool = True,
-        tracker: "ActionUsageTracker | None" = None,
         skills: list[dict] | None = None,
-        hot_list_n: int = 0,
     ) -> None:
         self._universal_wrappers_enabled = universal_wrappers_enabled
-        self._tracker = tracker
         self._skills = skills or []
-        self._hot_list_n = hot_list_n
         self.outbox: list[dict] = []
         self._events = _FakeEventLog()
 
@@ -115,9 +112,6 @@ class _FakeRouterHost:
     def get_universal_wrappers_enabled(self) -> bool:
         return self._universal_wrappers_enabled
 
-    def get_action_usage_tracker(self) -> "ActionUsageTracker | None":
-        return self._tracker
-
     def get_action_embedding_index(self):  # type: ignore[return]
         return None
 
@@ -126,10 +120,6 @@ class _FakeRouterHost:
 
     def get_embedding_model_class(self):  # type: ignore[return]
         return None
-
-    def get_action_retrieval_config(self):
-        from reyn.config import ActionRetrievalConfig
-        return ActionRetrievalConfig(hot_list_n=self._hot_list_n)
 
     def list_available_skills(self) -> list[dict]:
         return list(self._skills)
@@ -440,18 +430,20 @@ def test_routing_decided_skipped_when_action_name_empty(monkeypatch: pytest.Monk
 def test_routing_decided_source_ars_direct_for_action_not_in_catalog(monkeypatch: pytest.MonkeyPatch):
     """Tier 2: an action name not in tools[] tags ``source="ars_direct"``.
 
-    Issue #241: distinguish "the alias was a real hot-list entry the LLM
-    used correctly" (= name actually surfaced in tools[]) from "the LLM
-    picked a name from the ARS text and called it directly" (= name appeared
-    only in invoke_action.description's ARS block). Pre-#241 the label
-    was unconditionally ``"hot_list_alias"`` for any such direct call,
-    regardless of catalog landing.
+    Issue #241 originally distinguished "the alias was a real hot-list entry
+    the LLM used correctly" (= name actually surfaced in tools[]) from "the
+    LLM picked a name from the ARS text and called it directly" (= name
+    appeared only in invoke_action.description's ARS block). #4552 retired
+    the hot-list feature entirely — a bare catalog name can structurally
+    never land in tools[]/self._catalog anymore, so ``source`` is now always
+    ``"ars_direct"`` for this shape (see ``_emit_routing_decided`` in
+    router_loop.py). This test now pins that constant classification rather
+    than a two-way split.
 
     #3429: this used ``bogus_category__action``, which qualified as a "direct
     catalog call" only because the arm tested for ``__``. The label under test
-    is about CATALOG LANDING, so the name has to be a real action that did not
-    land — which is what ``read_file`` is here (no hot-list tracker, so it is
-    never advertised as a row). The error outcome is incidental.
+    is about CATALOG LANDING, so the name has to be a real action — which is
+    what ``read_file`` is here. The error outcome is incidental.
     """
     host = _FakeRouterHost(universal_wrappers_enabled=True)
     _run_with_llm_sequence(
@@ -468,37 +460,6 @@ def test_routing_decided_source_ars_direct_for_action_not_in_catalog(monkeypatch
     assert ev["source"] == "ars_direct", (
         f"Expected source='ars_direct' for an action not in the catalog, "
         f"got {ev['source']!r}"
-    )
-
-
-def test_routing_decided_source_hot_list_alias_only_when_in_catalog(monkeypatch: pytest.MonkeyPatch):
-    """Tier 2: ``source="hot_list_alias"`` requires name to be in tools[].
-
-    Pin the discriminator: with a tracker pre-loaded, the alias IS in tools[]
-    → ``"hot_list_alias"`` (covered by
-    ``test_routing_decided_emitted_for_hot_list_alias``). Without a tracker,
-    the SAME name tags ``"ars_direct"`` (= the #241 split).
-    """
-    # Same action, same call shape, but no tracker → not surfaced as a
-    # hot-list alias → NOT in tools[] / self._catalog.
-    host = _FakeRouterHost(
-        universal_wrappers_enabled=True,
-        tracker=None,
-    )
-    _run_with_llm_sequence(
-        host,
-        [
-            _tool_result([{"name": "read_file", "args": {"path": "/nonexistent/x"}}]),
-            _text_result("done"),
-        ],
-        monkeypatch,
-    )
-    events = _routing_decided_events(host)
-    (ev,) = events
-    assert ev["action_name"] == "read_file"
-    assert ev["source"] == "ars_direct", (
-        f"Without hot-list landing, source must be 'ars_direct' not "
-        f"'hot_list_alias' (issue #241); got {ev['source']!r}"
     )
 
 
@@ -620,10 +581,9 @@ def test_routing_decided_both_entry_surfaces_no_double_emit(
     # missing emit (a drop would surface as a missing name).
     assert sorted(e["action_name"] for e in events) == ["list_agents", "skill_list"]
     by_action = {e["action_name"]: e for e in events}
-    # No tracker on this host → list_agents is not advertised as a hot-list
-    # row (same "no tracker" baseline as the existing ars_direct tests
-    # above), so the bare direct call classifies as "ars_direct" — the
-    # #229/#3429 salvage path, not "hot_list_alias".
+    # A bare direct call not routed via invoke_action always classifies as
+    # "ars_direct" (#4552: the hot-list feature retired) — the #229/#3429
+    # salvage path.
     assert by_action["list_agents"]["source"] == "ars_direct"
     assert by_action["list_agents"]["outcome"] == "success"
     assert by_action["skill_list"]["source"] == "invoke_action"

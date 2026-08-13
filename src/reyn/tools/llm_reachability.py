@@ -54,13 +54,14 @@ can deliver it to the model:
 
 **"Any one route suffices" is the deliberate reading** — the issue does
 not require a SPECIFIC path, only that the model can reach the tool
-SOMEHOW. ``hot_list_aliases`` and the MCP ``tool_search_tool`` meta-tool
-are not independent THIRD routes: both are dynamically-selected SUBSETS of
-route (a)/(b)'s pool (hot-list seeds are catalog action names, ghost-filtered
-against ``KNOWN_ACTION_NAMES``; ``tool_search_tool`` wraps the same MCP-server-derived
-dicts route (a) already assembles) — neither can make an otherwise
-structurally-unreachable tool reachable, so neither is modeled as a
-separate route here.
+SOMEHOW. The MCP ``tool_search_tool`` meta-tool is not an independent
+THIRD route: it is a dynamically-selected SUBSET of route (a)'s pool
+(it wraps the same MCP-server-derived dicts route (a) already assembles)
+— it cannot make an otherwise structurally-unreachable tool reachable, so
+it is not modeled as a separate route here. (The hot-list mechanism this
+paragraph used to also name here as a subset was discarded — #4552 — a
+retired opt-in feature, not a reachability route this gate ever needed
+to model on its own terms.)
 
 ``gates.router="deny"`` tools (e.g. ``ask_user`` — CLI/internal-only by
 design) are out of scope by construction: the census only looks at

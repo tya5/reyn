@@ -16,24 +16,28 @@ const, and ``presentation_install_local``'s untyped ``blueprint`` became
 but the defect is in the product: the schema the LLM receives was a function of
 process history.
 
-These tests assert the invariant directly, at each of the FOUR seams where a
+These tests assert the invariant directly, at each of the THREE seams where a
 canonical schema leaves its ToolDefinition: the router payload
-(``render_for_router``), the ``build_tools`` payload (``ToolSpec``), the
-``describe_action`` tool result, and the hot-list direct aliases
-(``router_loop._operation_alias_metadata`` → ``_build_hot_list_aliases``, whose
-entries ``build_tools`` appends to ``tools=`` verbatim). Each drives the defect
-by CONSTRUCTING the precondition — mutating the handed-out payload in place,
-exactly as a provider transform does — rather than depending on a provider being
-reachable or on a particular test order.
+(``render_for_router``), the ``build_tools`` payload (``ToolSpec``), and the
+``describe_action`` tool result. Each drives the defect by CONSTRUCTING the
+precondition — mutating the handed-out payload in place, exactly as a
+provider transform does — rather than depending on a provider being reachable
+or on a particular test order.
+
+Note: a fourth seam, the hot-list direct aliases
+(``router_loop._operation_alias_metadata`` → ``_build_hot_list_aliases``),
+used to be covered here too — it was removed along with the hot-list feature
+(#4552 PR-1), and its dedicated arm below went with it.
 
 ★ Coverage has TWO axes, and enumerating the registry only closes one of them.
 The per-seam arms are total in the *tool* axis (registry-enumerated, so a future
 tool is covered the day it is registered) and were **partial in the *seam* axis**
-— the hot-list alias path renders through none of the first three, so a live
-LLM-payload seam sat outside a gate that looked exhaustive. The seam axis is
-closed from both ends here, and the two claims are NOT interchangeable:
+— the hot-list alias path (now removed) rendered through none of the other
+three, so a live LLM-payload seam sat outside a gate that looked exhaustive.
+The seam axis is closed from both ends here, and the two claims are NOT
+interchangeable:
 
-  - the four per-seam arms  = the escape points that EXIST route through the
+  - the per-seam arms  = the escape points that EXIST route through the
     projection helper (``parameters_for_export``);
   - ``test_no_shallow_parameters_copy_outside_the_projection_helper``  = a NEW
     escape point CANNOT avoid it. Needed because the absence of an arm is
@@ -50,12 +54,10 @@ from copy import deepcopy
 from pathlib import Path
 from typing import Any
 
-from reyn.runtime.router_loop import _build_hot_list_aliases
 from reyn.runtime.router_tools import build_tools
 from reyn.tools import get_default_registry
 from reyn.tools.types import ToolContext, parameters_for_export
 from reyn.tools.universal_catalog import _handle_describe_action
-from reyn.tools.universal_dispatch import KNOWN_ACTION_NAMES_SORTED
 
 _SENTINEL_KEY = "__injected_by_a_provider_transform__"
 
@@ -203,40 +205,6 @@ def test_describe_action_survives_in_place_mutation_of_its_input_schema() -> Non
     assert _SENTINEL_KEY not in str(canonical.parameters), (
         "the ToolDefinition's own parameters were rewritten by a mutation of a "
         "describe_action result (#3383)"
-    )
-
-
-def test_hot_list_alias_survives_in_place_mutation_of_its_tools_entry() -> None:
-    """Tier 1: mutating a hot-list alias entry cannot alter the definition.
-
-    The seam arms 1-3 could not see: ``_build_hot_list_aliases`` takes its
-    ``parameters`` from ``_operation_alias_metadata`` — the target
-    ``ToolDefinition.parameters`` — and ``build_tools`` appends the resulting
-    entries to the ``tools=`` payload verbatim, so this reaches litellm on an
-    ordinary turn without passing through ``render_for_router``.
-    """
-    action = "install_plugin"
-    assert action in KNOWN_ACTION_NAMES_SORTED, (
-        f"{action} is no longer an alias candidate — pick another operation "
-        "alias with a nested schema, or this arm proves nothing"
-    )
-    canonical = get_default_registry().lookup(action)
-    assert canonical is not None
-    pristine = deepcopy(canonical.parameters)
-
-    entries = _build_hot_list_aliases([action])
-    entry = next(e for e in entries if e["function"]["name"] == action)
-    handed_out = entry["function"]["parameters"]
-    touched = _mutate_in_place(handed_out)
-    assert touched > 1, f"mutation did not reach nested sub-schemas (touched={touched})"
-
-    assert canonical.parameters == pristine, (
-        "the ToolDefinition's parameters changed after a hot-list alias entry "
-        "was mutated in place — the canonical schema escaped by reference into "
-        "the tools= payload (#3383)"
-    )
-    assert _build_hot_list_aliases([action])[0]["function"]["parameters"] == pristine, (
-        "a later hot-list alias build served the corrupted schema (#3383)"
     )
 
 

@@ -254,14 +254,6 @@ _SESSION_RESIDUE: "dict[str, _Residue]" = {
         needed_for=("/image",),
         resolution="The bus the media gate prompts on — moves with _perm, same operation.",
     ),
-    "_action_usage_tracker": _Residue(
-        needed_for=("/clear-history",),
-        resolution=(
-            "Half of what /clear-history clears (the other half, `history` / "
-            "`history_path`, is already public). A published clear-history "
-            "operation takes both, and the command stops knowing the parts."
-        ),
-    ),
     "_compact_now_for_op": _Residue(
         needed_for=("/compact",),
         resolution=(

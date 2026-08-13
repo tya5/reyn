@@ -29,7 +29,6 @@ def build_universal_tool_use_slots(
     universal_wrappers_enabled: bool,
     search_actions_enabled: bool,
     discovery_mandate: bool,
-    has_hot_list_aliases: bool,
     non_interactive: bool = False,  # sp-autonomy-revision: accepted for backward compat only —
     # the ambiguity/proceed-vs-ask fork this used to gate moved to the OS-frame
     # ``build_system_prompt(non_interactive=...)`` Behaviour rule (scheme-
@@ -46,7 +45,7 @@ def build_universal_tool_use_slots(
 
     Slots:
       - ``slot_pre_environment``  — R1: ``## Capabilities (routing guide)`` block.
-      - ``slot_post_environment`` — R2: ``## Action categories`` + hot-list +
+      - ``slot_post_environment`` — R2: ``## Action categories`` +
                                     discovery-mandate paragraph (between Environment
                                     and ``## Behaviour``).
       - ``slot_in_behaviour``     — R3: never-invent / search guidance + ROUTING RULE
@@ -77,11 +76,10 @@ def build_universal_tool_use_slots(
         discovery_mandate=discovery_mandate,
     )
 
-    # ── R2: ## Action categories + hot-list + discovery-mandate ──────────────
+    # ── R2: ## Action categories + discovery-mandate ──────────────────────────
     # Content moved to reyn.prompt.universal_slots.build_action_categories_slot.
     _r2_slot = build_action_categories_slot(
         universal_wrappers_enabled=universal_wrappers_enabled,
-        has_hot_list_aliases=has_hot_list_aliases,
         discovery_mandate=discovery_mandate,
     )
     if _r2_slot is not None:

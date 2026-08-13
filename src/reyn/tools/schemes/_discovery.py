@@ -13,15 +13,17 @@ from __future__ import annotations
 # ---------------------------------------------------------------------------
 # #187 Stage C: mechanical discovery mandate (weak-tier list_actions-first)
 # ---------------------------------------------------------------------------
-# Weak models under-explore the catalog: they satisfice (refuse / give up /
-# act on the visible hot-list) instead of calling list_actions to discover the
-# action they need. The fix composes INTO the existing V18 intent taxonomy
-# rather than bolting on a standalone unconditional mandate: branch-3 (task →
-# single-target) already routes "obvious/named action → invoke directly;
-# OTHERWISE <discovery chain>", but that OTHERWISE is a SOFT routing hint —
-# the ~33% under-fire root. Stage C strengthens ONLY that OTHERWISE branch into
-# a mechanical MUST, reinforced 3x (branch-3 / §D9 hot-list / Behaviour), each
-# carrying a "NON-obvious / unknown / not-named action" scope qualifier.
+# Weak models under-explore the catalog: they satisfice (refuse / give up)
+# instead of calling list_actions to discover the action they need. The fix
+# composes INTO the existing V18 intent taxonomy rather than bolting on a
+# standalone unconditional mandate: branch-3 (task → single-target) already
+# routes "obvious/named action → invoke directly; OTHERWISE <discovery
+# chain>", but that OTHERWISE is a SOFT routing hint — the ~33% under-fire
+# root. Stage C strengthens ONLY that OTHERWISE branch into a mechanical
+# MUST, reinforced at branch-3 and in Behaviour (#4552: this used to also
+# reinforce at §D9's hot-list hint text, discarded with the hot-list
+# feature — owner directive), each carrying a "NON-obvious / unknown /
+# not-named action" scope qualifier.
 #
 # Why scoped, not unconditional (owner decision + B11-R3 evidence): a bare
 # "list_actions FIRST always" reverses B11-R3 (named action → invoke directly,
