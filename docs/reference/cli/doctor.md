@@ -79,8 +79,8 @@ External-event producer/consumer pairing (a producer with 0
 subscribing hooks is a real gap; a point with no producer is not
 reported — see 'not checked' below for why some points aren't):
   ✗ file_changed: producer present (1 declared fs_watch path(s)) but 0 subscribing hooks — this point's notifications have nowhere to go
-  ? mcp_resource_updated: not seen in the newest 0 event file(s) scanned — a producer whose last arrival is older than that is not covered here, so this is NOT proof no producer exists
-  ? webhook_received: not seen in the newest 0 event file(s) scanned — a producer whose last arrival is older than that is not covered here, so this is NOT proof no producer exists
+  ? mcp_resource_updated: no event history yet
+  ? webhook_received: no event history yet
 ```
 
 ### `.reyn/events/` — declared vs. actual
@@ -147,6 +147,12 @@ one directly. Producer evidence differs per point:
   catch, so both points ALWAYS print a line — `✓`/`✗` when seen within the window, or
   `? <point>: not seen in the newest N event file(s) scanned — ... NOT proof no producer
   exists` otherwise — never folded into the "no producer → no finding" rule below.
+  **#4624 exception**: when `.reyn/events` has NO dated files at all (a fresh install, or
+  retention already purged everything), N is 0 and "a producer whose last arrival predates
+  the window" cannot be true — there is no window to predate. The #4614 caveat would be a
+  TRUE but EMPTY statement there, and an empty caveat printed on every fresh install trains
+  the reader to skip caveats (architect's finding, #4622 co-vet), so this one case prints
+  the plain fact instead: `? <point>: no event history yet`, no window talk.
   `webhook_received` has no config surface of its own (unlike `file_changed`/`cron_fired`),
   so it can ONLY ever be evidence-based here — there is no complete-read alternative for it.
 
