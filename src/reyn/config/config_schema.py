@@ -526,23 +526,43 @@ class DisabledByHint:
 def _check_universal_wrappers_enabled_scheme_mismatch(
     raw: dict,
 ) -> "DisabledByHint | None":
-    """#4231: ``action_retrieval.universal_wrappers_enabled`` only affects
-    the ``universal-category`` ``tool_use.scheme`` — the OTHER schemes
-    (``enumerate-all`` the #1657 owner default, and ``retrieval``) have
-    their own, mutually-exclusive presentation mechanism and never read
-    it (``router_loop.py``'s ``base_tools()``: "the universal wrappers
-    OFF... enumerate-all adds catalog_entries ON TOP OF the wrappers,
-    INSTEAD").
+    """#4231: does ``action_retrieval.universal_wrappers_enabled: true``
+    reach anything a non-``universal-category`` ``tool_use.scheme`` would
+    render? Answered by DESTINATION, not by "who reads the flag" (#4564's
+    lesson: a discriminator grounded in the reader missed a real effect
+    the flag had via a DERIVED value, not a direct read — see below).
 
-    Re-measured before writing this check (architect's own explicit
-    caveat on the #4231 ruling — "re-measure before implementing, don't
-    build a mechanism on an assumption"): ``universal_wrappers_enabled``
-    DOES have a real read path — ``RouterHostAdapter.
-    get_universal_wrappers_enabled()`` returns the live config value,
-    consumed by ``_category_exposure.build_category_exposure`` (imported
-    by ``universal_category.py``'s scheme, and nowhere else) to compute
-    real ``sp_facts`` differences (``search_actions_enabled``'s formula
-    changes under it). Confirmed via a full read-path trace, not assumed.
+    Where the flag's effect actually lands, as of #4564:
+
+    - The ``universal-category`` scheme's OWN 3 non-search wrapper
+      functions (``list_actions`` / ``describe_action`` / ``invoke_action``)
+      — real, scheme-scoped, confirmed via ``RouterHostAdapter.
+      get_universal_wrappers_enabled()`` → ``_category_exposure.
+      build_category_exposure`` (imported by ``universal_category.py``'s
+      scheme, and nowhere else).
+    - That SAME scheme's own ``search_actions_enabled`` SP-text claim
+      (``_category_exposure.py``: ``sv if univ else True``) — also real,
+      also scheme-scoped.
+    - Nothing else. Before #4564, the flag ALSO gated whether
+      ``search_actions`` was VISIBLE AT ALL, for every scheme — not
+      through a read of ``get_universal_wrappers_enabled()`` inside any
+      scheme file, but because ``router_loop.py``'s OS-level
+      ``_search_visible`` computation (the shared D14 gate every scheme's
+      ``present()`` call reads via ``layer_ctx["search_visible"]``) sat
+      inside an ``if _univ_enabled:`` block that was never part of
+      ``search_actions``'s declared contract (``embedding.py``: "gated
+      separately via ``embedding.enabled``"). #4564 removed that
+      undeclared gate — the flag's reach is now exactly the two bullets
+      above, matching this check's original #4231 premise for the first
+      time.
+
+    Re-measured before EXTENDING this check for #4564 (architect's own
+    explicit caveat on the #4231 ruling, reapplied — "re-measure before
+    implementing, don't build a mechanism on an assumption"): a
+    flag=False-side check was drafted and discarded once the code fix
+    landed, because after #4564 the flag has ZERO effect on
+    ``search_actions`` in any scheme — there is nothing left for a
+    False-side arm to detect.
 
     Fires ONLY when the raw file EXPLICITLY sets the flag to ``True``
     (the resolved *default* is also ``True`` — firing on the unset
