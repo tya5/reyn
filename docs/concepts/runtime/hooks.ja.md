@@ -87,7 +87,7 @@ message ベースの `cron:` ジョブが自身のセッションに配送され
 
 ```yaml
 hooks:
-  - on: mcp_resource_updated
+  - "on": mcp_resource_updated
     matcher: {server: "github", uri: "file:///repo/**"}
     template_push:
       message: "{{ uri }} changed on {{ server }}."
@@ -135,7 +135,7 @@ C と同じですが、`wake: true` フラグがランループに新しいタ�
 
 ```yaml
 hooks:
-  - on: mcp_resource_updated
+  - "on": mcp_resource_updated
     matcher: {uri: "file:///repo/docs/**"}
     pipeline_launch:
       name: reindex_docs
@@ -268,19 +268,19 @@ exec: <コマンド> [rc=N]
 
 ```yaml
 hooks:
-  - on: turn_end
+  - "on": turn_end
     template_push:
       message: "Run complete. Check for pending tasks."
       wake: true
 
-  - on: session_start
+  - "on": session_start
     exec: ["touch", "/tmp/reyn-session-started"]   # argv のみ — シェルリダイレクト(">>")は行われない
 
   - name: dynamic
-    on: turn_end
+    "on": turn_end
     exec_capture: ["scripts/decide-next.sh"]   # {"push_when":true,"wake":true,"message":"..."} を出力
 
-  - on: mcp_resource_updated
+  - "on": mcp_resource_updated
     matcher: {server: "github", uri: "file:///repo/docs/**"}
     pipeline_launch:
       name: reindex_docs

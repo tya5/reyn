@@ -369,7 +369,7 @@ against the firing event's template vars **before** the hook's action runs:
 
 ```yaml
 hooks:
-  - on: mcp_resource_updated
+  - "on": mcp_resource_updated
     matcher: {server: "github", uri: "file:///repo/**"}
     template_push:
       message: "{{ uri }} changed on {{ server }}."
@@ -459,7 +459,7 @@ built from the firing event's template vars:
 
 ```yaml
 hooks:
-  - on: mcp_resource_updated
+  - "on": mcp_resource_updated
     matcher: {uri: "file:///repo/docs/**"}
     pipeline_launch:
       name: reindex_docs
@@ -656,19 +656,19 @@ matcher-narrowed `mcp_resource_updated` `pipeline_launch`:
 
 ```yaml
 hooks:
-  - on: turn_end
+  - "on": turn_end
     template_push:
       message: "Run complete. Check for pending tasks."
       wake: true
 
-  - on: session_start
+  - "on": session_start
     exec: ["touch", "/tmp/reyn-session-started"]   # argv only — no shell redirection (">>")
 
   - name: dynamic
-    on: turn_end
+    "on": turn_end
     exec_capture: ["scripts/decide-next.sh"]   # emits {"push_when":true,"wake":true,"message":"..."}
 
-  - on: mcp_resource_updated
+  - "on": mcp_resource_updated
     matcher: {server: "github", uri: "file:///repo/docs/**"}
     pipeline_launch:
       name: reindex_docs
@@ -768,7 +768,7 @@ by, this Sync consumer.
 
 ```yaml
 hooks:
-  - on: composed:deploy_approved      # a composed event as a Sync on: target
+  - "on": composed:deploy_approved      # a composed event as a Sync on: target
     exec: ["reyn", "deploy.sh"]
 
 composers:
@@ -946,7 +946,7 @@ composers:
     emit: { kind: composed:deploy_approved }
 
 hooks:
-  - on: composed:deploy_approved
+  - "on": composed:deploy_approved
     template_push:
       message: "Deploy artifact {{ inputs[0].artifact }} approved — proceeding."
       wake: false
