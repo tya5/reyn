@@ -24,6 +24,23 @@ def _write_yaml(path: Path, content: str) -> None:
     path.write_text(content, encoding="utf-8")
 
 
+def _this_hosts_default_backend_can_probe() -> bool:
+    """Whether ``get_default_backend()`` — the SAME resolution ``doctor.py``
+    itself calls — can actually run a differential probe here. False on a
+    CI runner with no `sandbox-linux` extra installed (this repo's normal
+    pytest job does not install it, ``test.yml``): the resolved backend
+    there is `NoopBackend` (no `sandbox-exec`/no Landlock package), whose
+    `probe_binary()` is documented `None` by design (#4364 PR-2) — the
+    probe correctly reports "cannot probe", not a broken mechanism. The 3
+    tests below assert a REAL launch outcome and would otherwise fail on
+    such a runner for a reason that has nothing to do with the code under
+    test — mirrors ``test_probe_argv_4364.py``'s own
+    ``_live_probing_backend()`` skip guard for the identical reason."""
+    from reyn.security.sandbox.launcher import resolve_backend
+
+    return resolve_backend(None, None).probe_binary() is not None
+
+
 def test_no_configured_hooks_reports_that_plainly(tmp_path: Path, capsys):
     """Tier 2: (accept-side, absence) no exec/exec_capture hooks configured
     -> the section says so, never silently absent or a crash."""
@@ -44,6 +61,8 @@ def test_a_runnable_hook_argv0_reports_ok(tmp_path: Path, capsys):
     backend, so this test exercises the SAME binary the probe would find
     on its own — not a coincidence, a deliberate choice so the test can't
     silently pass by probing a DIFFERENT thing than what production does."""
+    if not _this_hosts_default_backend_can_probe():
+        pytest.skip("this host's default sandbox backend cannot probe (see helper docstring)")
     _write_yaml(
         tmp_path / "reyn.yaml",
         MINIMAL_REYN_YAML + (
@@ -75,6 +94,8 @@ def test_a_nonexistent_hook_argv0_reports_target_failed_with_the_false_positive_
     must name the no-arguments caveat rather than asserting "broken" —
     ``probe_argv``'s own module docstring on why ``target_failed`` is not
     resolved further."""
+    if not _this_hosts_default_backend_can_probe():
+        pytest.skip("this host's default sandbox backend cannot probe (see helper docstring)")
     _write_yaml(
         tmp_path / "reyn.yaml",
         MINIMAL_REYN_YAML + (
@@ -106,6 +127,8 @@ def test_the_probe_never_passes_the_hooks_own_configured_arguments(
     Uses this test's own throwaway script as the target so it fully
     controls both branches' exit codes, rather than depending on a real
     system binary's flag-parsing behavior."""
+    if not _this_hosts_default_backend_can_probe():
+        pytest.skip("this host's default sandbox backend cannot probe (see helper docstring)")
     script = tmp_path / "probe_target.sh"
     script.write_text(
         "#!/bin/sh\n"
