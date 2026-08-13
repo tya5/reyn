@@ -12,6 +12,7 @@ from . import auth as auth
 from . import chat as chat
 from . import config as config
 from . import cron as cron
+from . import doctor as doctor
 from . import dogfood as dogfood
 from . import embeddings as embeddings
 from . import events as events
@@ -31,4 +32,4 @@ from . import web as web
 # Order is the order shown in `reyn --help`.
 # `source` (reyn source list/describe/rm) retired FP-0066 P1c — user-facing
 # in-core RAG source creation/management is gone; user RAG = FP-0063 plugin.
-ALL = [init, config, run_once, chat, agent, topology, memory, permissions, auth, events, web, mcp, storage, pipe, plugin, secret, cron, dogfood, embeddings, support_bundle, audit]
+ALL = [init, config, run_once, chat, agent, topology, memory, permissions, auth, events, web, mcp, storage, pipe, plugin, secret, cron, dogfood, embeddings, support_bundle, audit, doctor]
