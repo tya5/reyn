@@ -1195,6 +1195,21 @@ higher-trust one.
      `~/.reyn/plugins/<name>/` copy can be enabled into more than one project
      (§3.3) — baking one install call's project into the shared copy would
      freeze every later enabling project to whichever one installed it first.
+
+   **Stale-token warnings (#4610):** the two vocabularies above are
+   per-FILE, not interchangeable — a plugin author guessing the wrong
+   token for a given file (`${PLUGIN_ROOT}` inside `pipelines/*.yaml` or
+   `SKILL.md`; `${REYN_PLUGIN_ROOT}`/`${REYN_PROJECT_DIR}`/`${REYN_SKILL_DIR}`
+   inside `mcp.json`'s `args`/`env`/`cwd`) previously survived as a silent
+   literal string, expanded by neither bake. Each of the three bake
+   functions now also scans its OWN expanded output for the OTHER
+   vocabulary's token shape (`_stale_token_warnings`) and, if found,
+   appends a warning naming the file and the correct token for that
+   location — never firing on `mcp.json`'s `command`/`url` (intentionally
+   unexpanded, not a guess) or on a token the bake doesn't touch at all.
+   Report-only: never blocks the install, surfaced via the result dict
+   (below), same "present but empty when nothing to report" shape as
+   `skipped` (#4580).
 7. Register (#3209: register-only, no dep materialise step; #4570
    conversion B: capability presence is derived from directory/file
    EXISTENCE, not a manifest-declared list — the manifest carries no
@@ -1252,7 +1267,8 @@ config-generation recovery path via `skill_install` / `pipeline_install`.
 
 Result fields (`plugin_install`): `status` (`"installed"` / `"skipped"` /
 `"error"`), `name`, `plugin_root`, `source_kind`, `capabilities`, `registered`
-(per-capability sub-results).
+(per-capability sub-results), `stale_token_warnings` (list of strings, empty
+when the bake found nothing stale — #4610, above).
 
 Result fields (`plugin_uninstall`): `status` (`"uninstalled"` / `"error"`),
 `name`, `removed` (per-registry list of dropped entry names), `copy_removed`,
