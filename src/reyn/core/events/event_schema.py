@@ -340,6 +340,7 @@ AUDIT_EVENT_KINDS: frozenset[str] = frozenset({
     "plugin_install_reconciled",
     "plugin_install_registered",
     "plugin_install_started",
+    "plugin_install_token_vocabulary_mismatch",
     "plugin_uninstall_completed",
     "plugin_uninstall_registry_dropped",
     "plugin_uninstall_started",
