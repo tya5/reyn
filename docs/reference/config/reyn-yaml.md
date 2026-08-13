@@ -1223,7 +1223,6 @@ Universal catalog visibility + retrieval settings.  Scheme *selection* is genera
 ```yaml
 action_retrieval:
   universal_wrappers_enabled: true    # default; set false to opt out
-  mode: default                       # default | minimal | performance
 embedding:
   enabled: false                      # default (off); set true to opt in to search_actions
   # default_class: standard           # which embedding class to use when enabled
@@ -1234,7 +1233,12 @@ embedding:
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `universal_wrappers_enabled` | bool | `true` | For a layer whose `tool_use` scheme resolves to `universal-category`, `true` (default) exposes only the 4 universal wrappers (`list_actions`, `search_actions`, `describe_action`, `invoke_action`) in that layer's `tools=`.  Legacy per-kind tools (`invoke_skill`, `call_mcp_tool`, etc.) are no longer surfaced to the LLM on that layer but remain available as wrapper backing handlers.  `search_actions` is gated separately by [`embedding.enabled`](#embedding-block).  Set `false` to disable the wrapper surface entirely for that layer (= legacy tools become the only addressing path again).  Does not affect a layer whose scheme is `enumerate-all` (the `chat` layer's own default) — that scheme never consults this flag. |
-| `mode` | string | `"default"` | Operational mode label: `"minimal"` / `"default"` / `"performance"`.  Free-form string; currently unread — no caller layers semantics on it yet. |
+
+> **#4552 PR-2 (2026-08) — `mode` retired.** The prior `mode: "default" |
+> "minimal" | "performance"` field was always free-form and unread (no
+> caller ever layered semantics on it) — removed, no alias. A `reyn.yaml`
+> still carrying it gets the standard unknown-key tolerance (ignored, not
+> a parse error).
 
 > **#4552 (2026-08) — hot-list retired.** The prior `hot_list_n` / `hot_list_seed`
 > fields (a top-N freq+recency direct-alias projection) are **removed, no
