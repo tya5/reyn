@@ -78,9 +78,6 @@ class _FakeHost:
     def get_universal_wrappers_enabled(self) -> bool:
         return False
 
-    def get_action_usage_tracker(self):
-        return None
-
     def get_action_embedding_index(self):
         return None
 
@@ -89,10 +86,6 @@ class _FakeHost:
 
     def get_embedding_model_class(self):
         return None
-
-    def get_action_retrieval_config(self):
-        from reyn.config import ActionRetrievalConfig
-        return ActionRetrievalConfig(hot_list_n=0)
 
     def resolve_model(self, name: str) -> str:
         return "fake-model"

@@ -4403,7 +4403,6 @@ class Session:
             action_embedding_index=self._action_embedding_index,
             embedding_provider=self._embedding_provider,
             embedding_model_class=self._embedding_model_class,
-            action_retrieval_config=self._action_retrieval,
             available_skills=self._available_skills,  # #2548 PR-A
             # Read the injected sandbox_backend INSTANCE's .name, not the
             # config string — a mismatch silently HIDES a working exec

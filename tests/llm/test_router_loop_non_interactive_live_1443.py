@@ -79,8 +79,6 @@ class _FakeRouterHost:
     def get_embedding_model_class(self):  # type: ignore[return]
         return None
 
-    def get_action_retrieval_config(self):  # type: ignore[return]
-        return None
 
     def list_available_skills(self) -> list[dict]:
         return []

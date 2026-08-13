@@ -113,9 +113,6 @@ class _FakeRouterHost:
     def get_universal_wrappers_enabled(self) -> bool:
         return self._universal_wrappers_enabled
 
-    def get_action_usage_tracker(self):  # type: ignore[return]
-        return None
-
     def get_action_embedding_index(self):  # type: ignore[return]
         return None
 
@@ -123,9 +120,6 @@ class _FakeRouterHost:
         return None
 
     def get_embedding_model_class(self):  # type: ignore[return]
-        return None
-
-    def get_action_retrieval_config(self):  # type: ignore[return]
         return None
 
     def list_available_skills(self) -> list[dict]:
