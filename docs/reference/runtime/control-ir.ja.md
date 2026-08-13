@@ -605,7 +605,7 @@ Permission ゲート（§3.10 — EXISTING ゲートから合成、新しい boo
 名前衝突の優先順位（§3.8/§3.10）: `~/.reyn/plugins/<name>/` が既に**別の種類**の完了済み install を保持している場合、`reyn.plugins.source.resolve_name_collision` が勝者を決定します（`builtin <= local << git`）— 信頼度の低い source は拒否され（`status="skipped"`）、決して信頼度の高いものを黙って上書きしません。
 
 `plugin_install` ハンドラーのライフサイクル（one-shot）:
-0. Reconcile: `.reyn-plugin/_install_state.json` マーカーを残した、以前のクラッシュ/中断した install が残した `~/.reyn/plugins/<name>/` は、この install が進む前にロールバックされます（`reconcile_plugin_installs`、§3.11 — 次回の `plugin_install` 呼び出し時の self-healing。このリポジトリには汎用の process-startup フックが無いため、「次回使用時」がドキュメント化された reconcile トリガーです）。ロールバックは uninstall の**drop-registry-first** の順序を反映します: 一部の capability を登録した後にクラッシュした partial install は、これから削除されるディレクトリを指す `plugin_id` タグ付きのレジストリエントリを残しているため、それらのエントリはコピーが削除される**前**に 3 つの `.reyn/config/*.yaml` レジストリすべてから削除されます（ungated — 既に壊れたエントリの OS-internal な修復）。そうしないと dangling なレジストリエントリが残ってしまいます。
+0. Reconcile: `.reyn-plugin/_install_state.json` マーカーを残した、以前のクラッシュ/中断した install が残した `~/.reyn/plugins/<name>/` は、この install が進む前にロールバックされます（`reconcile_plugin_installs`、§3.11 — 次回の `plugin_install` 呼び出し時の self-healing。このリポジトリには汎用の process-startup フックが無いため、「次回使用時」がドキュメント化された reconcile トリガーです）。ロールバックは uninstall の**drop-registry-first** の順序を反映します: 一部の capability を登録した後にクラッシュした partial install は、これから削除されるディレクトリを指す `plugin_id` タグ付きのレジストリエントリを残しているため、それらのエントリはコピーが削除される**前**に 3 つの `.reyn/config/*.yaml` レジストリすべてから削除されます（ungated — 既に壊れたエントリの OS-internal な修復）。そうしないと dangling なレジストリエントリが残ってしまいます。実際にロールバックされた plugin ごとに `plugin_install_reconciled`（`name`、`action` — 現状 `"rolled_back"` のみ）を発行します。
 1. `source` をその `kind` に応じてソースディレクトリへ解決し、source のゲートを適用します: `{kind: "git"}` はクローン前に run-code trust ゲート（2）に続いて `require_http_get` を実行；`builtin`/`local` はネットワークに触れません。
 2. `reyn.plugins.manifest.load_plugin_manifest`（P1）経由で `plugin.json`（plugin root）をロード + 検証 — 欠落/不正な形式のマニフェストはコピーの**前**に拒否されます（`status="error"`）。
 3. 名前衝突の優先順位チェック（上記）。
@@ -632,7 +632,7 @@ Permission ゲート（§3.10 — EXISTING ゲートから合成、新しい boo
 
 結果フィールド（`plugin_uninstall`）: `status`（`"uninstalled"` / `"error"`）、`name`、`removed`（削除されたエントリ名のレジストリごとのリスト）、`copy_removed`、`plugin_data_retained_at`（uninstall した名前に対応する `~/.reyn/plugin-data/<name>/` ディレクトリが存在する場合のみ、#4570 conversion D）。
 
-発行されるイベント: `plugin_install_started` / `_copied` / `_registered` / `_completed` / `_token_vocabulary_mismatch`（#4610、stale-token finding ごとに 1 件、上記）；`plugin_uninstall_started` / `_registry_dropped` / `_completed`。
+発行されるイベント: `plugin_install_reconciled`（step 0、上記 — 以前の壊れた install の self-healing ロールバック、`_started` より前に、見つかった場合のみ発行）/ `plugin_install_started` / `_copied` / `_registered` / `_completed` / `_token_vocabulary_mismatch`（#4610、stale-token finding ごとに 1 件、上記）；`plugin_uninstall_started` / `_registry_dropped` / `_completed`。
 
 ## `embed`
 
