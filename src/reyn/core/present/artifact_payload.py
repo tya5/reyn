@@ -2,6 +2,21 @@
 LLM-produced file the terminal can't render natively (html/office/pdf/
 images), which a user opens with the OS's own default app.
 
+★ Isolation note (temporary, deliberate — not an oversight): as of this
+PR, nothing in ``core/present/catalog.py`` or ``core/present/binding.py``
+calls this module yet. The "artifact" component/slot naming (architect's
+#4482 ruling: ``component="artifact"``; agent-writable slots ``source`` /
+``content`` / ``media_type`` / ``description``, with ``name`` NOT a slot)
+was decided in a follow-up comment landing alongside this PR's merge, and
+the actual catalog-gate + binding-resolution wiring is PR-2b, a separate
+PR — not silently deferred, named here so this module's "no caller yet"
+state reads as a known, temporary staging point rather than the
+"declared/implemented/tested/invoked-by-nobody" shape this session has
+flagged repeatedly elsewhere tonight.
+
+**① server/client payload shape** (architect's final corrected form, #4482
+issue thread)::
+
 **① server/client payload shape** (architect's final corrected form, #4482
 issue thread)::
 
