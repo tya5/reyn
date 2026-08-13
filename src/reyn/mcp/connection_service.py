@@ -91,8 +91,9 @@ is fully re-establishable and matches the gen-store runtime-only-state invariant
 consequence: a fresh session (post-restart) starts with NO subscriptions (same as a fresh
 ``MCPClient`` starts with none), and a RECONNECT within the same live session (the F1
 transport-death path) must explicitly RE-ISSUE ``subscribe_resource`` for every URI
-tracked for that server on the fresh client — a brand-new ``mcp.ClientSession`` has no
-memory of what the OLD (now-dead) session's client subscribed to. :meth:`_ensure_open`
+tracked for that server on the fresh client — a brand-new ``mcp.Client`` (#3698 PR-1;
+was a raw ``mcp.ClientSession``) has no memory of what the OLD (now-dead) session's
+client subscribed to. :meth:`_ensure_open`
 does this re-subscribe immediately after opening a NEW client (whether that is the very
 first open, where the tracked set is empty and the loop is a no-op, or a reconnect, where
 it is the whole point) — see that method's inline comment.
@@ -131,7 +132,7 @@ missed update a missed hook fire): ②b re-subscribes every tracked URI on a
 transport-death reconnect (the loop in :meth:`_ensure_open`, described above), but a
 resource that actually CHANGED while the connection was dead never produced a
 ``resources/updated`` push — that notification simply never arrived on the dead
-transport, and the fresh ``mcp.ClientSession`` has no way to redeliver a notification it
+transport, and the fresh ``mcp.Client`` has no way to redeliver a notification it
 never received. Q4 (S2-pre spike, decided, do not relitigate): reyn keeps NO resource
 content cache — subscriptions are runtime-only (see ②b's docstring above), so there is
 no baseline to diff the post-reconnect content against and no way to know WHICH tracked
@@ -389,8 +390,9 @@ class MCPConnectionService:
             # is empty (nothing to do yet); on a reconnect (this same branch runs
             # because the dead client was already popped from self._clients by
             # _reconnect below) this is what makes a subscription survive a
-            # transport-death reconnect — a brand-new mcp.ClientSession has no
-            # memory of what the OLD session subscribed to. Per-URI try/except: a
+            # transport-death reconnect — a brand-new mcp.Client (#3698 PR-1; was a
+            # raw mcp.ClientSession) has no memory of what the OLD session subscribed
+            # to. Per-URI try/except: a
             # server that no longer supports subscribe post-reconnect (or a single
             # bad URI) must not abort re-subscribing the REST of the tracked set,
             # and must not crash the reconnect itself.
