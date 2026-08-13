@@ -806,8 +806,14 @@ def test_status_fits_last_row_pure() -> None:
     """Tier 1: :func:`status_fits_last_row` (#3326) — pure fit-decision helper.
 
     Mirrors the existing #3338 ``pack_menu_rows`` pure-function convention:
-    testable without mounting anything."""
+    testable without mounting anything. The fit math includes
+    ``_STATUS_SEPARATOR``'s length whenever ``rows`` is non-empty AND the
+    status text is non-empty — the boundary marker
+    (:func:`_merged_status_text`) IS rendered in that case, so the predicted
+    fit must account for it byte-for-byte (an under-count here would predict
+    a fit the real merged row overflows)."""
     from reyn.interfaces.inline.textual_chat.chrome import (
+        _STATUS_SEPARATOR,
         pack_menu_rows,
         status_fits_last_row,
     )
@@ -823,11 +829,15 @@ def test_status_fits_last_row_pure() -> None:
     # nearly full) is what gets checked.
     narrow_rows = pack_menu_rows(_MENU_TABS, 40)
     last_row_used = sum(len(label) + 2 for _tid, label in narrow_rows[-1])
-    max_fitting_len = 40 - last_row_used - 2  # 2 == _STATUS_H_PADDING
+    # 2 == _STATUS_H_PADDING; len(_STATUS_SEPARATOR) == the boundary marker
+    # rendered ONLY because status_text_len > 0 here (a merge with tabs
+    # present and non-empty text).
+    max_fitting_len = 40 - last_row_used - 2 - len(_STATUS_SEPARATOR)
     assert status_fits_last_row(narrow_rows, 40, status_text_len=max_fitting_len) is True
     assert status_fits_last_row(narrow_rows, 40, status_text_len=max_fitting_len + 1) is False
 
-    # No tabs at all: fits iff the text alone fits the width.
+    # No tabs at all: fits iff the text alone fits the width — no separator
+    # (nothing to separate from without a tab row to merge onto).
     assert status_fits_last_row([], 20, status_text_len=15) is True
     assert status_fits_last_row([], 20, status_text_len=25) is False
 
@@ -888,6 +898,98 @@ async def test_status_line_on_screen_and_merge_matches_prediction(
         assert actually_merged == predicted_merge, (
             f"at {screen_size} (content_width={content_width}): predicted "
             f"merge={predicted_merge} but the live tree shows merged={actually_merged}"
+        )
+
+
+def _merged_in_live_tree(line: StatusLine) -> bool:
+    """Public-surface merge check — mirrors
+    ``test_status_line_on_screen_and_merge_matches_prediction``'s own
+    technique (StatusLine's parent row also carrying Tab children), so this
+    reads the ACTUAL mounted tree rather than :class:`MenuBar`'s private
+    ``_merged`` bookkeeping."""
+    from textual.widgets import Tab
+
+    parent_row = line.parent
+    return bool(list(parent_row.query(Tab))) if parent_row is not None else False
+
+
+@pytest.mark.asyncio
+async def test_status_separator_present_only_when_merged_and_survives_live_updates(
+    tmp_path,
+) -> None:
+    """Tier 2b: owner feedback — the tab/status boundary was unmarked (a
+    padding gap alone, indistinguishable from ordinary inter-tab spacing).
+    Two invariants:
+
+    1. When StatusLine SHARES a row with Tab widgets, its rendered text
+       starts with :data:`_STATUS_SEPARATOR` — the boundary is now visibly
+       marked, not just padded.
+    2. When StatusLine has its OWN row (no tabs to share with — forced here
+       by mounting a bare :class:`MenuBar` with a single tab far wider than
+       the screen, its PUBLIC constructor's ordinary input, not a private-
+       state poke), the separator is ABSENT — there is nothing to mark a
+       boundary against.
+
+    Also covers :meth:`MenuBar.update_status`'s no-remount fast path (an
+    unchanged-length tick): the separator must survive a LIVE update, not
+    just the initial mount — a bug scoped to only the mount-time render
+    path would pass invariant 1 above and still regress on the very next
+    cost/ctx tick."""
+    from textual.app import App, ComposeResult
+
+    from reyn.interfaces.inline.textual_chat import StatusLine, TextualChatApp
+    from reyn.interfaces.inline.textual_chat.chrome import _STATUS_SEPARATOR
+
+    snap, _session, _registry = await _real_snapshot(tmp_path)
+    snap["cost_agent"] = 0.0100
+    read_model = _MutableSnapshotReadModel(snap)
+    transport = _EventOnlyTransport()
+    app = TextualChatApp(transport=transport, read_model=read_model)
+
+    # A very wide screen: trivially enough room for all 13 (abbreviated)
+    # tabs + a short status string on one row (the merged case) — 100
+    # columns measured NOT wide enough for this fixture's tabs+status
+    # combination, so this deliberately goes wider rather than assuming.
+    async with app.run_test(size=(220, 30)) as pilot:
+        await pilot.pause()
+        line = app.query_one(StatusLine)
+        assert _merged_in_live_tree(line), "test setup expected a merge at 220 columns"
+        rendered = str(line.render())
+        assert rendered.startswith(_STATUS_SEPARATOR), (
+            f"merged StatusLine missing the boundary separator: {rendered!r}"
+        )
+
+        # A live, unchanged-length tick (the common cost/ctx-only update
+        # path) — the separator must still be there afterward, not only at
+        # mount.
+        read_model.snap["cost_agent"] = 0.0200
+        await transport.push_event(_llm_response_event())
+        await pilot.pause()
+        await pilot.pause()
+        after = str(app.query_one(StatusLine).render())
+        assert after.startswith(_STATUS_SEPARATOR), (
+            f"separator lost after a live update_status tick: {after!r}"
+        )
+        assert after != rendered, "status text did not actually change"
+
+    # A single tab far wider than the screen forces status onto its OWN
+    # row (nothing merges) — the separator must be ABSENT there. A bare
+    # MenuBar mounted directly (its public constructor's ordinary input),
+    # not the full TextualChatApp — no private-state reach-in needed to
+    # force this shape.
+    class _BareMenuBarApp(App):
+        def compose(self) -> ComposeResult:
+            yield MenuBar([("x", "x" * 90)], status_text="model m │ agent a", id="menubar")
+
+    async with _BareMenuBarApp().run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        line2 = pilot.app.query_one(StatusLine)
+        assert not _merged_in_live_tree(line2), (
+            "test setup expected NO merge with a 90-char tab"
+        )
+        rendered2 = str(line2.render())
+        assert not rendered2.startswith(_STATUS_SEPARATOR), (
+            f"unmerged StatusLine wrongly carries the boundary separator: {rendered2!r}"
         )
 
 

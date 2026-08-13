@@ -1582,6 +1582,24 @@ _TAB_H_PADDING = 2
 #: packed row (#3326).
 _STATUS_H_PADDING = 2
 
+#: The boundary marker prepended to the status-values text ONLY when it
+#: SHARES a row with Tab widgets (owner feedback: the tab/status boundary
+#: was unmarked — a padding gap alone, indistinguishable from ordinary
+#: inter-tab spacing at a glance). Matches the SAME ``│`` delimiter
+#: :func:`status_line_text` already uses between its own fields, so the
+#: line reads as one consistent ``│``-delimited style rather than
+#: introducing a second glyph. Never applied when StatusLine has its own
+#: row (nothing to separate from there) — see :func:`_merged_status_text`.
+_STATUS_SEPARATOR = "│ "
+
+
+def _merged_status_text(text: str) -> str:
+    """The status-values text as rendered when :class:`StatusLine` shares a
+    row with Tab widgets — prefixed with :data:`_STATUS_SEPARATOR`. Guarded
+    on non-empty ``text``: an empty status has nothing to mark a boundary
+    before, so no bare separator glyph renders mid-row."""
+    return f"{_STATUS_SEPARATOR}{text}" if text else text
+
 
 def pack_menu_rows(
     items: "Sequence[tuple[str, str]]", width: int
@@ -1623,13 +1641,21 @@ def status_fits_last_row(
     """True if the status-values segment fits alongside the last packed tab row.
 
     Pure, mirroring :func:`pack_menu_rows`'s testability-without-mounting
-    convention (#3326). ``rows`` is the output of :func:`pack_menu_rows`; an
+    convention (#3326). ``rows`` is the output of :func:`pack_menu_rows``; an
     empty ``rows`` (no tabs at all) trivially fits if the text alone fits
-    ``width``. Never truncates or squeezes — the caller falls back to giving
+    ``width`` — no :data:`_STATUS_SEPARATOR` in that case (nothing to
+    separate from). When ``rows`` is non-empty, the cell width includes the
+    separator's length too (rendered ONLY in the merged case — see
+    :func:`_merged_status_text`), so a fit predicted here matches what
+    actually mounts byte-for-byte; omitting it would under-count the row and
+    risk exactly the off-screen overflow #3326's own geometry guard exists
+    to catch. Never truncates or squeezes — the caller falls back to giving
     the status segment its own row when this returns ``False``."""
     status_cell = status_text_len + _STATUS_H_PADDING
     if not rows:
         return status_cell <= width
+    if status_text_len:
+        status_cell += len(_STATUS_SEPARATOR)
     used = sum(len(label) + _TAB_H_PADDING for _tab_id, label in rows[-1])
     return used + status_cell <= width
 
@@ -1700,6 +1726,13 @@ class MenuBar(Widget, can_focus=True):
         self._packed_width = -1
         self._last_seen_width = -1
         self._status_text = status_text
+        #: True iff StatusLine currently shares a row with Tab widgets — set
+        #: by :meth:`_repack` (:func:`status_fits_last_row`'s decision),
+        #: read by :meth:`update_status`'s no-remount fast path so the
+        #: boundary separator (:func:`_merged_status_text`) stays applied
+        #: consistently across BOTH the initial mount and every later
+        #: in-place text update, not just the mount.
+        self._merged = False
         #: The highlighted tab id. Seeded to the first item so the row has a
         #: highlight from the very first frame (before any resize has landed).
         self.active = self._items[0][0] if self._items else ""
@@ -1715,12 +1748,13 @@ class MenuBar(Widget, can_focus=True):
         self._packed_width = width
         rows = pack_menu_rows(self._items, width)
         merge_status = status_fits_last_row(rows, width, len(self._status_text))
+        self._merged = merge_status
         self.remove_children()
         menu_rows = [
             Horizontal(
                 *(Tab(label, id=tab_id) for tab_id, label in row),
                 *(
-                    [StatusLine(self._status_text, classes="-shared")]
+                    [StatusLine(_merged_status_text(self._status_text), classes="-shared")]
                     if merge_status and i == len(rows) - 1
                     else []
                 ),
@@ -1743,7 +1777,10 @@ class MenuBar(Widget, can_focus=True):
         values and far longer than the steady-state text — so a length change
         forces a fresh repack rather than an in-place ``Static.update``. An
         unchanged length (the common case: cost/ctx ticking within the same
-        format) updates the mounted widget directly, no remount."""
+        format) updates the mounted widget directly, no remount — going
+        through :func:`_merged_status_text` (a no-op when ``self._merged`` is
+        False) so the tab/status boundary separator stays present on every
+        tick, not just the frame that first merged the row."""
         changed_len = len(text) != len(self._status_text)
         self._status_text = text
         if not self.is_mounted:
@@ -1753,7 +1790,8 @@ class MenuBar(Widget, can_focus=True):
             self._repack(self._last_seen_width)
         else:
             try:
-                self.query_one(StatusLine).update(text)
+                display = _merged_status_text(text) if self._merged else text
+                self.query_one(StatusLine).update(display)
             except NoMatches:
                 pass
 
