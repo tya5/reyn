@@ -11,6 +11,13 @@ no content, no tool calls) produces:
 
 Normal (non-empty) responses must NOT emit the new event (regression guard).
 
+#4486: an empty response that follows a tool call ALREADY dispatched this
+turn is a separate, turn-scoped case — no failure message, no retry (the
+model may correctly have nothing further to add once a tool call already
+answered the turn). Covered separately below; does not change ADR-0021's
+original (first-response, no-preceding-tool-call) detection, which the rest
+of this file still exercises unchanged.
+
 No unittest.mock.MagicMock / AsyncMock / patch-with-new_callable used.
 _ScriptedLLM is a real callable — see testing policy.
 """
@@ -476,3 +483,82 @@ async def test_tool_call_reply_does_not_emit_empty_response_event(monkeypatch):
         "No router_empty_response_detected event on normal tool-call path"
     )
     assert scripted.call_count == 2
+
+
+@pytest.mark.asyncio
+async def test_empty_response_after_a_tool_call_this_turn_is_not_the_glitch_failure(
+    monkeypatch,
+):
+    """Tier 2: #4486 architect ruling — an empty response AFTER a tool call
+    already fired this turn is NOT ADR-0021's provider-glitch failure state.
+    The model may correctly have nothing further to add (e.g. `present`'s
+    entire contract is that the tool call itself is the answer); the OS must
+    not assert a failure that did not happen. No `router_empty_response_*`
+    event, no outbox failure message, no retry (`call_llm_tools` called
+    exactly twice: the tool-call round + the empty round — never a third,
+    retry-injected call)."""
+    host = FakeRouterHost()
+    loop = make_loop(host)
+    scripted = _ScriptedLLM([
+        tool_result([{"name": "list_actions", "args": {}}]),
+        empty_stop_result(),
+    ])
+    monkeypatch.setattr("reyn.runtime.router_loop.call_llm_tools", scripted)
+
+    await loop.run("show me something", [])
+
+    empty_events = [
+        e for e in host.events.emitted
+        if e["type"].startswith("router_empty_response")
+    ]
+    assert not empty_events, (
+        f"expected no empty-response detection/retry event after a tool "
+        f"call this turn, got: {empty_events}"
+    )
+    assert not host.outbox, f"expected no failure message in outbox, got: {host.outbox}"
+    assert scripted.call_count == 2, (
+        "expected exactly the tool-call round + the empty round — a third "
+        "call would mean the (now-exempted) retry path still fired"
+    )
+
+
+@pytest.mark.asyncio
+async def test_empty_response_after_a_tool_call_stays_exempt_even_with_retry_auto_on(
+    monkeypatch,
+):
+    """Tier 2: #4486 — the turn-scoped exemption takes priority over the
+    empty-stop retry, even when `empty_stop_retry_auto=True` (production's
+    own default — `router_loop_driver.py`). Without this ordering, a
+    tool-call-only turn would still burn a retry round-trip before landing
+    on the same (correct) silent-completion outcome — this proves it
+    doesn't, by asserting the SAME two-call count as the auto-off case
+    above (`make_loop`'s default)."""
+    from reyn.prompt.loop_control import EMPTY_STOP_RETRY_DIRECTIVE
+    from reyn.runtime.router_loop import RouterLoop
+
+    host = FakeRouterHost()
+    loop = RouterLoop(
+        host=host, chain_id="chain-test", max_iterations=5,
+        empty_stop_retry_directive=EMPTY_STOP_RETRY_DIRECTIVE,
+        empty_stop_retry_auto=True,
+    )
+    scripted = _ScriptedLLM([
+        tool_result([{"name": "list_actions", "args": {}}]),
+        empty_stop_result(),
+    ])
+    monkeypatch.setattr("reyn.runtime.router_loop.call_llm_tools", scripted)
+
+    await loop.run("show me something", [])
+
+    empty_events = [
+        e for e in host.events.emitted
+        if e["type"].startswith("router_empty_response")
+    ]
+    assert not empty_events, (
+        f"expected no empty-response detection/retry event, got: {empty_events}"
+    )
+    assert not host.outbox, f"expected no failure message in outbox, got: {host.outbox}"
+    assert scripted.call_count == 2, (
+        "the exemption must win before the retry check runs — a retry "
+        "would make this 3, not 2"
+    )
