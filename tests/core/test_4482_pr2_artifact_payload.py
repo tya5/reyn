@@ -26,14 +26,19 @@ def _write(path: Path, content: bytes) -> Path:
 # ── build_source_artifact_payload ───────────────────────────────────────
 
 
-def test_small_utf8_text_file_is_inlined(tmp_path: Path):
-    """Tier 2: invariant 3 — a small, UTF-8-decodable file inlines its
-    text directly, no ref minted."""
+def test_small_utf8_text_file_is_inlined_alongside_a_ref(tmp_path: Path):
+    """Tier 2: invariant 3 (as of #4574 design C) — a small, UTF-8-decodable
+    file gets an inline PREVIEW *alongside* a minted ref, never inline-only.
+    #4574's own reported symptom was exactly the pre-fix shape this guards
+    against: inline-only meant no `ref`, so the Art tab had nothing to open
+    for a source-backed file the agent handed over."""
     target = _write(tmp_path / "notes.txt", "hello, world\n".encode("utf-8"))
 
     payload = build_source_artifact_payload(tmp_path, "alice", target)
 
-    assert payload["body"] == {"inline": "hello, world\n"}
+    assert payload["body"]["inline"] == "hello, world\n"
+    assert "ref" in payload["body"]
+    assert payload["body"]["size"] == target.stat().st_size
     assert payload["name"] == "notes.txt"
 
 

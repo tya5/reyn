@@ -222,15 +222,29 @@ async def handle(op: PresentIROp, ctx: OpContext) -> dict:
     #    strings (resolve_bindings only bound them — it stays pure/I/O-free,
     #    see binding.py's own "artifact" branch comment) into the final
     #    OS-derived payload. This is the layer that legitimately has
-    #    project_root (ctx.workspace.base_dir) / agent_name (ctx.actor) —
+    #    project_root (ctx.workspace.base_dir) / agent_name (ctx.agent_name) —
     #    lead-coder's ruling on where this step belongs, not inside
     #    resolve_bindings or _resolve_presentation. Rewrites rendered.nodes
     #    only — the audit event above already carries refs + stats, never
     #    node content, so ordering relative to it does not matter; placed
     #    here because THIS is the only thing that needs it.
+    #
+    #    #4574 root-cause fix: this used to pass `ctx.actor` — a fixed
+    #    per-CALLER-ROLE literal ("chat_router"/"pipeline_run_cli"), never a
+    #    per-AGENT scope — into `mint_ref`'s `agent_name` parameter.
+    #    `artifact_ref.py`'s own store is documented "Scope is per-agent", and
+    #    the CLIENT-side resolve (`app.py`'s `_handle_open_artifact_request` →
+    #    `resolve_ref(project_root, self._agent_name, ref)`) always used the
+    #    real agent name — so every source-backed artifact was minted under
+    #    "chat_router" and resolved under the real agent, permanently
+    #    orphaning the ref: `/open` was `artifact not found` unconditionally.
+    #    `ctx.agent_name` falls back to `ctx.actor` only when unset (a router
+    #    op-context supplier that doesn't populate it, e.g. pipeline_run_cli)
+    #    — never crashes on a missing name, but never silently keeps the
+    #    wrong-scope value for the path this bug was actually reported on.
     from reyn.core.present.artifact_payload import apply_artifact_resolution
     rendered.nodes = apply_artifact_resolution(
-        rendered.nodes, ctx.workspace.base_dir, ctx.actor,
+        rendered.nodes, ctx.workspace.base_dir, ctx.agent_name or ctx.actor,
     )
 
     # 4. Hand the actually-rendered model to the wired surface (PR-B). Fire-and-

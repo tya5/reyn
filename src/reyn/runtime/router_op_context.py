@@ -56,6 +56,7 @@ def build_router_op_context(
     sandbox_policy: Any,  # raw policy → resolve_sandbox_policy here (#1339)
     # ── fields the single supplier resolves per call ───────────────────────
     agent_id: str | None,  # FP-0016 identity → the MCP client's X-Reyn-Agent-Id header
+    agent_name: str | None = None,  # #4574: the live agent's NAME — see OpContext.agent_name's own docstring for why this is a DIFFERENT value from agent_id above
     intervention_bus: Any = None,  # the surface that answers a router op's intervention
     presentation_renderer: Any,  # #2708 P1: REQUIRED (no default) — the present sink must be an EXPLICIT decision (a PresentationRenderer or None), never a silent omission.
     presentation_registry: Any = None,  # FP-0054 PR-C: operator named-template registry (hot-reloadable)
@@ -153,6 +154,7 @@ def build_router_op_context(
         permission_decl=decl,
         permission_resolver=permission_resolver,
         actor="chat_router",
+        agent_name=agent_name,
         mcp_servers=mcp_servers_flat,
         run_id=run_id,
         agent_id=agent_id,
@@ -239,6 +241,7 @@ class RouterOpContextSource:
         sandbox_backend: Any,
         sandbox_policy_fn: Any,
         agent_id: Any,
+        agent_name: Any,  # #4574: the live agent's NAME — see OpContext.agent_name's own docstring
         intervention_bus_factory: Any,
         presentation_renderer_factory: Any,
         presentation_registry_fn: Any,
@@ -272,6 +275,7 @@ class RouterOpContextSource:
         self._sandbox_backend = sandbox_backend
         self._sandbox_policy_fn = sandbox_policy_fn
         self._agent_id = agent_id
+        self._agent_name = agent_name
         self._intervention_bus_factory = intervention_bus_factory
         self._presentation_renderer_factory = presentation_renderer_factory
         self._presentation_registry_fn = presentation_registry_fn
@@ -338,6 +342,7 @@ class RouterOpContextSource:
             sandbox_backend=self._sandbox_backend,
             sandbox_policy=self._resolve(self._sandbox_policy_fn),
             agent_id=self._agent_id,
+            agent_name=self._agent_name,
             intervention_bus=self._resolve(self._intervention_bus_factory),
             presentation_renderer=self._resolve(self._presentation_renderer_factory),
             presentation_registry=self._resolve(self._presentation_registry_fn),

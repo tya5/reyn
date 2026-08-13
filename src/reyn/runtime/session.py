@@ -4250,6 +4250,9 @@ class Session:
             ),
             # FP-0016: this agent's identity → the MCP client's X-Reyn-Agent-Id.
             agent_id=self._agent.agent_id,
+            # #4574: the live agent's NAME — a DIFFERENT string from agent_id
+            # above (see OpContext.agent_name's own docstring).
+            agent_name=self._agent.agent_name,
             # FP-0022 fix (#53) / #3049: bridge-aware — resolved per call so an
             # attached pipeline driver's op reaches the ORIGINATOR's operator.
             intervention_bus_factory=self._make_router_intervention_bus,

@@ -12,8 +12,10 @@ import os
 import stat
 import sys
 import time
+from pathlib import Path
 
 import pytest
+from textual.widgets import OptionList
 from textual_flowview import FlowView
 
 from reyn.data.workspace.artifact_ref import mint_ref
@@ -183,3 +185,108 @@ async def test_open_artifact_with_an_unresolvable_ref_reports_not_found(tmp_path
 
         entry = list(app.query_one(FlowView).entries)[-1]
         assert "not found" in entry.item.text
+
+
+# ── #4574 design B: pure-inline artifacts (no source file, no ref) ──────────
+
+
+def _inline_presentation_frame(*, name: str, content: str, media_type: str) -> OutboxMessage:
+    return OutboxMessage(
+        kind="presentation",
+        text="",
+        meta={"nodes": [{
+            "component": "artifact",
+            "media_type": media_type,
+            "name": name,
+            "body": {"inline": content},
+        }]},
+    )
+
+
+@pytest.mark.asyncio
+async def test_inline_artifact_materializes_to_a_temp_file_and_launches_the_opener(
+    tmp_path, monkeypatch,
+):
+    """Tier 2: #4574 design B end-to-end — a pure-inline artifact (no
+    `source`, no ref — the agent-declared-content shape, the ONLY output
+    route a read-only session has) is materialized to a fresh OS-temp file
+    with a real ``.html`` extension (derived from ``media_type``) and
+    opened, driven through the SAME production path a real Enter keypress
+    on the Artifacts pane row takes
+    (``on_option_list_option_selected`` -> ``_handle_open_inline_artifact_
+    request``), not called directly — proves the pane-selection wiring
+    reaches it, not just the handler in isolation."""
+    (tmp_path / "reyn.yaml").write_text(MINIMAL_REYN_YAML, encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+
+    opener_name = "open" if sys.platform == "darwin" else "xdg-open"
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    sink = tmp_path / "opened.txt"
+    script = bindir / opener_name
+    script.write_text(f"#!/bin/sh\necho \"$1\" > {sink}\n")
+    script.chmod(script.stat().st_mode | stat.S_IXUSR)
+    monkeypatch.setenv("PATH", str(bindir) + os.pathsep + os.environ["PATH"])
+
+    app = TextualChatApp(transport=QueueTransport())
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app._ingest_frame(_inline_presentation_frame(
+            name="report.html", content="<h1>agent-authored</h1>", media_type="text/html",
+        ))
+        await pilot.pause()
+        app._open_drawer("artifacts")
+        await pilot.pause()
+
+        row = app._artifact_rows_cache[0]
+        assert row.ref is None and row.is_inline is True  # test premise
+        artifacts_pane = app.query_one("#artifacts", OptionList)
+        event = OptionList.OptionSelected(
+            artifacts_pane, artifacts_pane.get_option_at_index(0), 0,
+        )
+        await app.on_option_list_option_selected(event)
+        await pilot.pause()
+
+        while not sink.exists():  # unbounded — CI's own timeout is the backstop
+            time.sleep(0.05)
+        opened_path = sink.read_text().strip()
+        assert opened_path.endswith(".html"), opened_path
+        assert Path(opened_path).read_text(encoding="utf-8") == "<h1>agent-authored</h1>"
+
+
+@pytest.mark.asyncio
+async def test_inline_artifact_with_no_mappable_extension_reports_status_never_opens(
+    tmp_path, monkeypatch,
+):
+    """Tier 2: a `media_type` this process cannot map to a real extension
+    does NOT open extension-less (architect's #4574 review: "the extension
+    is the real permission surface") — it reports a status line, and no
+    opener is ever launched (the content already reached the conversation
+    body via the fallback render, so nothing is silently lost)."""
+    (tmp_path / "reyn.yaml").write_text(MINIMAL_REYN_YAML, encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    sink = tmp_path / "opened.txt"
+    opener_name = "open" if sys.platform == "darwin" else "xdg-open"
+    script = bindir / opener_name
+    script.write_text(f"#!/bin/sh\necho \"$1\" > {sink}\n")
+    script.chmod(script.stat().st_mode | stat.S_IXUSR)
+    monkeypatch.setenv("PATH", str(bindir) + os.pathsep + os.environ["PATH"])
+
+    app = TextualChatApp(transport=QueueTransport())
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app._ingest_frame(_inline_presentation_frame(
+            name="mystery", content="opaque bytes as text",
+            media_type="application/x-reyn-nonexistent-type",
+        ))
+        await pilot.pause()
+
+        row = app._artifact_rows()[0]
+        await app._handle_open_inline_artifact_request(row)
+        await pilot.pause()
+
+        assert not sink.exists(), "no opener should launch for an unmappable media_type"
+        entry = list(app.query_one(FlowView).entries)[-1]
+        assert "extension" in entry.item.text

@@ -166,6 +166,67 @@ def _render_list(node: dict) -> "Any":
     return Group(*items)
 
 
+# #4574: an artifact's inline body has NO upstream cap (binding.py's own
+# "artifact" branch comment: the OS-derivation pass that fills `body` runs
+# AFTER resolve_bindings, so `guard.cap_leaf`'s pre-render capping — the
+# thing `_render_code_or_diff` above relies on — never sees it). This is the
+# render layer's own bound instead, matching architect's #4574 fallback spec
+# verbatim ("先頭 N 行" — the first N lines, never the whole file): a small
+# HTML/text file inlined via the size probe (`INLINE_PROBE_MAX_BYTES`,
+# artifact_payload.py) can still run to hundreds of lines, and this is a
+# PREVIEW alongside the real `body["ref"]` (#4574 design C) — the truncation
+# discards nothing that isn't ALSO fully openable via that ref.
+_ARTIFACT_INLINE_PREVIEW_LINES = 20
+
+
+def _render_artifact(node: dict) -> "Any":
+    """#4574: an ``artifact`` node — an LLM-produced file the terminal can't
+    render natively (see ``core/present/catalog.py``'s own "artifact"
+    section). Before this, EVERY artifact node fell through to
+    ``_render_node``'s unregistered-component fallback
+    (``<unsupported present component 'artifact'>``) regardless of source
+    or inline, on every text client (REPL + this TUI's own body renderer,
+    which calls this same module — ``presenter.py``'s ``_render_row``).
+
+    This is a FALLBACK, not a real HTML/office/pdf renderer (out of scope —
+    the terminal genuinely cannot render those) — it shows what the #4574
+    design calls for: name/media_type/description, plus (when the resolved
+    payload carries an inline preview — design C mints a ``ref`` alongside
+    it for small source-backed files, so this is a PREVIEW, not the only
+    way to see the content) the first ``_ARTIFACT_INLINE_PREVIEW_LINES``
+    lines. A row with an ``error`` (e.g. ``source_not_found`` — the source
+    file vanished between present-time and render-time) or nothing resolved
+    yet (a soft binding-miss, present's own philosophy) shows that instead
+    of guessing at a body."""
+    from rich.console import Group
+    from rich.text import Text
+
+    if "error" in node:
+        return Text(f"[artifact: {node['error']}]", style="dim")
+    body = node.get("body")
+    if not isinstance(body, dict):
+        return Text("[artifact: nothing resolved]", style="dim")
+    name = node.get("name")
+    media_type = node.get("media_type") or "unknown type"
+    header = f"📎 {name}" if name else "📎 artifact"
+    header += f" ({media_type})"
+    lines: "list[Any]" = [Text(header, style="bold")]
+    description = node.get("description")
+    if description:
+        lines.append(Text(str(description), style="dim"))
+    inline = body.get("inline")
+    if isinstance(inline, str):
+        preview_lines = inline.splitlines()
+        truncated = len(preview_lines) > _ARTIFACT_INLINE_PREVIEW_LINES
+        preview = "\n".join(preview_lines[:_ARTIFACT_INLINE_PREVIEW_LINES])
+        lines.append(Text(preview))
+        if truncated:
+            lines.append(Text("[preview truncated]", style="dim"))
+    if "ref" in body:
+        lines.append(Text("[open via the Artifacts tab]", style="dim"))
+    return Group(*lines)
+
+
 def _render_code_or_diff(node: dict, *, lexer: str) -> "Any":
     from rich.syntax import Syntax
 
@@ -201,6 +262,8 @@ def _render_node(
         return _render_list(node)
     if component == "image":
         return _render_image(node, image_cache, decoded_image_cache)
+    if component == "artifact":
+        return _render_artifact(node)
     # Unregistered/future component — never crash the render loop over one bad node.
     return Text(f"<unsupported present component {component!r}>", style="dim")
 

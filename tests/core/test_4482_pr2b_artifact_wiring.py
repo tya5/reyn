@@ -271,4 +271,7 @@ def test_handle_end_to_end_reaches_the_renderer_with_the_built_payload(tmp_path:
     assert node["component"] == "artifact"
     assert node["media_type"] == "text/html"
     assert node["name"] == "report.html"
-    assert node["body"] == {"inline": "<h1>hi</h1>"}
+    # #4574 design C: a source-backed artifact's body always carries a ref
+    # (the Art tab's openable route) alongside the small-file inline preview.
+    assert node["body"]["inline"] == "<h1>hi</h1>"
+    assert "ref" in node["body"]

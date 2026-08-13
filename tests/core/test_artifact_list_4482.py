@@ -47,6 +47,26 @@ def test_collects_a_reference_backed_artifact():
     )]
 
 
+def test_a_ref_carrying_inline_preview_is_still_treated_as_openable():
+    """Tier 1: #4574 design C — a small source-backed file's body carries
+    BOTH `ref` AND an `inline` preview (never inline-ONLY, as of #4574).
+    This must still resolve to an openable (`is_inline=False`) row, not a
+    `(inline — already shown above)` one — the exact label-truthfulness
+    fix #4574 required: before it, a small source-backed file got
+    `is_inline=True` with NO ref, so the Art tab's row both lied about
+    "already shown above" (nothing was shown — the body renderer had no
+    `artifact` branch at all) AND had nothing to open."""
+    node = {
+        "component": "artifact", "media_type": "text/html", "name": "report.html",
+        "body": {"ref": "abc123", "size": 20, "inline": "<h1>hi</h1>"},
+    }
+    rows = collect_artifact_rows([[node]])
+    assert rows == [ArtifactRow(
+        ref="abc123", name="report.html", media_type="text/html",
+        description=None, is_inline=False,
+    )]
+
+
 def test_inline_artifact_has_no_ref_and_is_marked_inline():
     """Tier 1: an inline (no-real-file) artifact has nothing for the OS to
     open — ref is None, is_inline is True, distinguishable from a
