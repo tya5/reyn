@@ -231,12 +231,52 @@ cannot observe directly anyway (the same architect correction C-2's own
 producer↔consumer design rests on). D-2 holds: doctor never connects to a server
 itself, only reads what a real connection already recorded.
 
+### Model reachability — 0-token `GET {api_base}/v1/models` (C-4)
+
+```
+Model reachability — 0-token GET {api_base}/v1/models (never a
+real completion call; D-2: doctor never spends inference cost):
+  ✓ http://127.0.0.1:8998: reachable (HTTP 200)
+    ✓ light ('gpt-4o'): accepted by the proxy's model list
+    ✗ standard ('gpt-5.6-luna'): NOT in the proxy's model list — check the name form (bare vs 'provider/name')
+```
+
+The motivating real case (architect's own note, #4364): a configured model name
+(`openai/gpt-5.6-luna`) that the LiteLLM proxy expected bare (`gpt-5.6-luna`) — no
+error until the first real chat turn.
+
+**The original ask was replaced, not implemented as first proposed** — a real litellm
+completion probe would make `reyn doctor` itself charge the operator for inference,
+exactly what the cross-cutting cost/budget band exists to keep OS-internal diagnostics
+from doing. The 0-token `GET {api_base}/v1/models` answers the SAME two questions
+(is `api_base` reachable, is the configured model name's form accepted) in one
+request, at zero inference cost — reachability from the HTTP response itself (any
+response, including 401/403, proves reachability; a connection error does not), model
+acceptance from checking each declared `llm.models` entry's BARE name (stripped of the
+`provider/` routing prefix reyn's own config uses) against the response's own model
+list, when the response is a 200 carrying one.
+
+Only `llm.api_base` (a LiteLLM proxy) is checked — a provider with no declared
+`api_base` routes straight to its own hosted endpoint, which this module has no
+per-provider URL table for and was not architect's motivating case (a local proxy).
+`? not checked — no llm.api_base declared` when absent (D-3, same "cannot confirm"
+shape `webhook_received` had before it gained a surface).
+
+**API keys are never read** (litellm-boundary convention, owner's standing
+instruction) — the request carries no `Authorization` header at all; a provider that
+requires one to list models still proves reachability by responding (401/403 is a
+real HTTP response, not a failure this check reports as unreachable).
+
+Uses `reyn._network.build_sync_http_client` (the repo's own single httpx-client
+constructor, #3075) — never a free-hand `httpx.Client(...)`, so this call site is
+covered by the same standard-proxy-env/CA completeness gate every other reyn-owned
+HTTP client is.
+
 ## Out of scope for this PR (later slices, same arc)
 
-- **C-6** (listen port and model-name declared-vs-effective pairs) — each needs
-  its own new measurement code (introspecting a live bound socket, a real
-  litellm probe call), unlike C-1/C-2/C-3(b)/C-5/C-7, which reuse existing
-  measurement functions.
+- **C-6's remaining named pair** (listen port declared-vs-effective) — needs its
+  own new measurement code (introspecting a live bound socket), unlike
+  C-1/C-2/C-3(b)/C-4/C-5/C-7, which reuse existing measurement functions.
 
 ## Related
 

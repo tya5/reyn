@@ -90,11 +90,28 @@ and #4624's empty-history branch), never a live probe (C-3(a), a real
 exists from connections ``reyn`` itself made, and a held MCP connection
 is a session concept doctor's separate one-shot process cannot observe
 directly anyway, the same architect correction C-2's own
-producer↔consumer design rests on). C-6's other named pairs (listen
-port, model-name acceptance) are a later slice — each needs its own NEW
-measurement code (introspecting a live bound socket, a real litellm
-probe call), not reuse of an existing function the way
-C-1/C-2/C-3(b)/C-5/C-7 are.
+producer↔consumer design rests on). C-4 (model/api_base reachability,
+this slice's own addition, question REPLACED per this session's
+ruling): the original ask was a real litellm completion call — doctor
+charging the operator for inference is exactly what the cross-cutting
+cost/budget band exists to keep OS-internal diagnostics from doing.
+Replaced with a 0-token ``GET {api_base}/v1/models``
+(:func:`_print_model_reachability`, via
+:func:`reyn._network.build_sync_http_client` — never a free-hand
+``httpx.Client(...)``, so this call site is covered by #3075's
+standard-proxy-env/CA completeness gate) — reachability from the HTTP
+response itself (any response, including 401/403, proves reachability;
+API keys are NEVER read, litellm-boundary convention, no
+``Authorization`` header sent) and, when the response lists models,
+whether each declared ``llm.models`` entry's BARE name (stripped of the
+``provider/`` routing prefix) is in that list — architect's own repro
+was exactly this name-form mismatch. Only ``llm.api_base`` (a LiteLLM
+proxy) is checked; a provider with no declared ``api_base`` has no URL
+this module knows to probe, so it prints "not checked" (D-3) rather
+than guessing a per-provider hosted endpoint. C-6's remaining named pair
+(listen port) is a later slice — it needs its own NEW measurement code
+(introspecting a live bound socket), not reuse of an existing function
+the way C-1/C-2/C-3(b)/C-4/C-5/C-7 are.
 """
 from __future__ import annotations
 
@@ -277,6 +294,12 @@ def run(args: argparse.Namespace) -> None:
     print("MCP servers — last negotiated version/capabilities (audit-log")
     print("evidence, not a live probe; D-2: doctor never connects):")
     _print_mcp_negotiation(config, resolved_root)
+
+    # ── C-4: model/api_base reachability, 0-token (#4364) ──────────────────
+    print()
+    print("Model reachability — 0-token GET {api_base}/v1/models (never a")
+    print("real completion call; D-2: doctor never spends inference cost):")
+    _print_model_reachability(config)
 
 
 def _configured_exec_hooks(config: object) -> "list[HookDef]":
@@ -752,4 +775,87 @@ def _print_mcp_negotiation(config: object, project_root: Path) -> None:
                 f"file(s) scanned — a connection whose last occurrence is "
                 f"older than that is not covered here, so this is NOT "
                 f"proof the server was never reached",
+            )
+
+
+_MODEL_REACHABILITY_TIMEOUT_SECONDS: Final[float] = 3.0
+
+
+def _print_model_reachability(config: object) -> None:
+    """#4364 C-4, question REPLACED per this session's ruling (owner-bound,
+    band-relevant): the original ask was a real litellm completion probe —
+    doctor charging the operator a real inference call is exactly the kind
+    of thing the cross-cutting cost/budget band exists to keep OS-internal
+    diagnostics from doing. Replaced with a 0-token ``GET {api_base}/v1/models``
+    — reachability AND (when the response lists models) whether the
+    declared model name's BARE form is accepted are both answered by the
+    same request, at zero inference cost. API keys are NEVER read here
+    (litellm-boundary convention, owner's standing instruction) — the
+    request carries no Authorization header; a provider that requires one
+    to list models still proves reachability by responding at all (401/403
+    is a real HTTP response, not a connection failure).
+
+    Only ``llm.api_base`` (a LiteLLM proxy) is checked — a provider with no
+    declared ``api_base`` routes straight to its own hosted endpoint, which
+    this module has no per-provider URL table for and is not this check's
+    motivating case (architect's own repro was a local proxy). D-3: prints
+    "cannot confirm" rather than silently omitting the line (same shape as
+    C-2's ``webhook_received`` before it gained a surface, #4618/#4620)."""
+    llm_config = getattr(config, "llm", None)
+    api_base = (getattr(llm_config, "api_base", "") or "").strip()
+    models = getattr(llm_config, "models", None) or {}
+
+    if not api_base:
+        print(
+            "  ? not checked — no llm.api_base declared (a provider-hosted "
+            "endpoint has no URL this check knows to probe)",
+        )
+        return
+
+    from reyn._network import build_sync_http_client
+
+    url = api_base.rstrip("/") + "/v1/models"
+    try:
+        with build_sync_http_client(
+            egress="doctor_model_reachability", timeout=_MODEL_REACHABILITY_TIMEOUT_SECONDS,
+        ) as client:
+            response = client.get(url)
+    except Exception as exc:  # noqa: BLE001 — D-2: report the failure, never raise
+        print(f"  ✗ {api_base}: unreachable ({type(exc).__name__}: {exc})")
+        return
+
+    print(f"  ✓ {api_base}: reachable (HTTP {response.status_code})")
+
+    listed_ids: "set[str] | None" = None
+    if response.status_code == 200:
+        try:
+            body = response.json()
+            data = body.get("data") if isinstance(body, dict) else None
+            if isinstance(data, list):
+                listed_ids = {
+                    str(item["id"]) for item in data
+                    if isinstance(item, dict) and isinstance(item.get("id"), str)
+                }
+        except Exception:  # noqa: BLE001 — malformed body is not a crash
+            listed_ids = None
+
+    if listed_ids is None:
+        print(
+            f"    model name form not checked — HTTP {response.status_code} "
+            f"response did not carry a model list",
+        )
+        return
+
+    for model_class in sorted(models):
+        raw_name = models[model_class]
+        model_name = raw_name if isinstance(raw_name, str) else raw_name.get("model") if isinstance(raw_name, dict) else None
+        if not isinstance(model_name, str):
+            continue
+        bare_name = model_name.split("/", 1)[1] if "/" in model_name else model_name
+        if bare_name in listed_ids:
+            print(f"    ✓ {model_class} ({bare_name!r}): accepted by the proxy's model list")
+        else:
+            print(
+                f"    ✗ {model_class} ({bare_name!r}): NOT in the proxy's model "
+                f"list — check the name form (bare vs 'provider/name')",
             )
