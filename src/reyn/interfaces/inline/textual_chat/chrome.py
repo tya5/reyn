@@ -959,9 +959,17 @@ def artifact_row_label(row: "ArtifactRow") -> str:
 #: regardless of row count, so an empty ref-table fallback still explains
 #: WHY, rather than reading like "no artifacts" (#4494's own falsify
 #: requirement: emptying the table empties the rows but this text stays).
+#: English (review fix, lead-coder, #4599): every OTHER user-facing string
+#: in this pane (and this whole module) is English — e.g. `_COST_ROW_LABELS`
+#: below — with Japanese appearing only inside code COMMENTS quoting the
+#: owner verbatim, never in a string a user reads. There is no UI i18n
+#: mechanism here (`output_language` governs LLM output, not this chrome);
+#: a Japanese UI would be a whole-surface owner decision, not one string
+#: at a time.
 ARTIFACT_REF_TABLE_FALLBACK_DISCLOSURE = (
-    "この一覧はartifact-ref表から作られます。agentがinlineで直接渡した"
-    "artifact（実ファイルなし）はその表に記録されないため、ここには出せません。"
+    "This list is built from the artifact-ref table. An artifact the "
+    "agent passed inline (no real file) is never recorded there, so it "
+    "cannot appear here."
 )
 
 
