@@ -45,10 +45,11 @@ reyn config migrate-mcp [--dry-run]
 `reyn config set` always writes to `reyn.local.yaml` (gitignored) — never to `reyn.yaml`.
 
 `reyn config validate` always exits `0`, even when it reports findings — it REPORTS, it
-never gates (owner ruling: warn, never hard-fail, anywhere). It checks four things,
+never gates (owner ruling: warn, never hard-fail, anywhere). It checks five things,
 each printed as its own labeled section (never merged into one list — the fix differs
-per section, and merging would lose "which one do I fix, and how"). Note the last
-check (hook entries) covers three separate config *files* under one section, not one:
+per section, and merging would lose "which one do I fix, and how"). Note the last two
+checks (hook entries, MCP server placement) each cover multiple separate config
+*files* under one section, not one:
 
 - **Unrecognized/renamed/removed keys, policy tier** (`reyn.yaml` / `reyn.local.yaml` /
   `~/.reyn/config.yaml`) — the same check `load_config`'s own startup warning runs.
@@ -82,6 +83,20 @@ check (hook entries) covers three separate config *files* under one section, not
     - **every `.reyn/agents/<name>/hooks.yaml`** — the per-agent layer, one
       finding per agent directory that has a malformed entry.
   Fix: edit the offending hook entry in whichever labeled file the finding names.
+- **MCP server placement** (#4631) — the same class of gap as hook entries above,
+  for a different config surface: `unknown_config_keys` confirms `mcp:` itself is a
+  recognized key but never opens what's under it, so a server entry written
+  directly at `mcp.<name>` (instead of `mcp.servers.<name>`) loads WITHOUT error
+  and WITHOUT warning — `cfg.mcp.servers` silently stays empty and the server is
+  never registered. Detected by shape (a dict directly under `mcp:`, other than
+  the real `servers` key, carrying `command`/`url`/`type` — a scalar config knob
+  like `mcp.timeout_seconds` never takes that shape), checked PER SOURCE FILE
+  (not the merged view the other checks above use) so the finding can name which
+  file to fix: the same 3 static locations `migrate-mcp` already scans
+  (`reyn.yaml` / `reyn.local.yaml` / `~/.reyn/config.yaml`) plus the dynamic
+  `.reyn/config/mcp.yaml`. Fix: add the missing `servers:` key by hand —
+  `migrate-mcp` relocates already-correctly-nested `mcp.servers` entries between
+  files, but does not add a missing `servers:` key to a misplaced entry.
 
 `reyn config migrate` only rewrites an entry whose registered rename has an automatic
 destination (a plain rename, no value transform); a rename that also transforms the
