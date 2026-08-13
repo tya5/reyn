@@ -109,7 +109,7 @@ class CostLimitConfig:
     axis it was actually built for, which #2448 removed too. Same shape
     as ``ask_on_exceed`` below it in git history: declared, parsed,
     never read (CLAUDE.md's testing-policy six-questions ③ names this
-    exact class — #3850). See ``_build_cost_limit_config``
+    exact class — #3850). See ``_build_cost_limit``
     (config/chat.py) for the deprecation warning an operator who still
     sets this key gets.
     """
