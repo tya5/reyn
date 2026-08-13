@@ -1,7 +1,7 @@
 """Tier 2: FP-0034 PR-3b-ii ActionRetrievalConfig + parser contract.
 
 Tests for the ``action_retrieval:`` config block:
-  - Default config has the safe defaults (= wrappers enabled, mode='default').
+  - Default config has the safe defaults (= wrappers enabled).
   - Parser accepts each field independently, validates types, and
     raises on bad values.
   - ReynConfig.action_retrieval is populated by load_config from the
@@ -18,7 +18,12 @@ The on/off decision now lives at ``embedding.enabled: bool`` (default
 False); the model-class field is the (pre-existing) ``embedding.default_class``
 (default "standard"). Its tests live in ``tests/config/test_embedding_config.py``;
 this file keeps only the ``action_retrieval:`` block's own fields
-(``universal_wrappers_enabled`` / ``mode``).
+(``universal_wrappers_enabled``).
+
+#4552 PR-2: ``mode`` (§D24 operational-mode label) is removed — 0 real
+consumers, 3-shape census (literal field / ``get_action_retrieval_config()``
+symbol / the orphaned ``action_retrieval_config=`` call site it fed) found
+in the PR body. Its dedicated tests here are deleted.
 
 No mocks; uses real load_config with a yaml file written to tmp_path.
 """
@@ -48,7 +53,6 @@ def test_default_action_retrieval_config_is_on() -> None:
     """
     cfg = ActionRetrievalConfig()
     assert cfg.universal_wrappers_enabled is True
-    assert cfg.mode == "default"
 
 
 def test_reyn_config_carries_action_retrieval_default() -> None:
@@ -82,26 +86,12 @@ def test_parser_universal_wrappers_enabled_true() -> None:
     assert cfg.universal_wrappers_enabled is True
 
 
-def test_parser_mode_minimal() -> None:
-    """Tier 2: mode='minimal' (§D24) flows through."""
-    cfg = _build_action_retrieval_config({"mode": "minimal"})
-    assert cfg.mode == "minimal"
-
-
-def test_parser_mode_performance() -> None:
-    """Tier 2: mode='performance' (§D24) flows through."""
-    cfg = _build_action_retrieval_config({"mode": "performance"})
-    assert cfg.mode == "performance"
-
-
 def test_parser_all_fields_at_once() -> None:
     """Tier 2: all supported fields can be set together."""
     cfg = _build_action_retrieval_config({
         "universal_wrappers_enabled": True,
-        "mode": "performance",
     })
     assert cfg.universal_wrappers_enabled is True
-    assert cfg.mode == "performance"
 
 
 # ── 3. Parser — validation errors ─────────────────────────────────────────
@@ -117,12 +107,6 @@ def test_parser_rejects_non_bool_wrappers_enabled() -> None:
     """Tier 2: universal_wrappers_enabled with non-bool raises."""
     with pytest.raises(ValueError, match="universal_wrappers_enabled"):
         _build_action_retrieval_config({"universal_wrappers_enabled": "yes"})
-
-
-def test_parser_rejects_non_string_mode() -> None:
-    """Tier 2: mode with non-string raises."""
-    with pytest.raises(ValueError, match="mode"):
-        _build_action_retrieval_config({"mode": 42})
 
 
 def test_parser_ignores_unknown_keys() -> None:
@@ -151,14 +135,12 @@ def test_load_config_picks_up_action_retrieval_yaml(tmp_path: Path) -> None:
         """
 action_retrieval:
   universal_wrappers_enabled: true
-  mode: performance
 """,
         encoding="utf-8",
     )
 
     cfg = load_config(cwd=tmp_path)
     assert cfg.action_retrieval.universal_wrappers_enabled is True
-    assert cfg.action_retrieval.mode == "performance"
 
 
 def test_load_config_without_action_retrieval_uses_defaults(tmp_path: Path) -> None:
@@ -175,7 +157,6 @@ def test_load_config_without_action_retrieval_uses_defaults(tmp_path: Path) -> N
 
     cfg = load_config(cwd=tmp_path)
     assert cfg.action_retrieval.universal_wrappers_enabled is True
-    assert cfg.action_retrieval.mode == "default"
 
 
 def test_load_config_with_explicit_opt_out(tmp_path: Path) -> None:

@@ -43,11 +43,9 @@ class _FakeHost:
     def events(self): return self._events
 
     def get_universal_wrappers_enabled(self) -> bool: return True
-    def get_action_usage_tracker(self): return None
     def get_action_embedding_index(self): return None
     def get_embedding_provider(self): return None
     def get_embedding_model_class(self): return None
-    def get_action_retrieval_config(self): return None
     def list_available_skills(self) -> list[dict]: return []
     def list_available_agents(self) -> list[dict]: return []
     def get_memory_index(self) -> dict: return {"status": "not_found", "content": ""}
@@ -112,11 +110,9 @@ def test_mcp_servers_missing_method_falls_back_to_none() -> None:
             subscribers: list = []
         events = _E()
         def get_universal_wrappers_enabled(self): return True
-        def get_action_usage_tracker(self): return None
         def get_action_embedding_index(self): return None
         def get_embedding_provider(self): return None
         def get_embedding_model_class(self): return None
-        def get_action_retrieval_config(self): return None
         def list_available_skills(self): return []
         def list_available_agents(self): return []
         def get_memory_index(self): return {"status": "not_found", "content": ""}

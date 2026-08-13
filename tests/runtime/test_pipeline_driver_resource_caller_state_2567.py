@@ -94,7 +94,6 @@ class _FakeHost:
     def get_action_embedding_index(self): return self._embedding_index
     def get_embedding_provider(self): return self._embedding_provider
     def get_embedding_model_class(self): return "EmbedCls"
-    def get_action_retrieval_config(self): return None
     def get_sandbox_backend(self): return "sandboxed"
     def get_mcp_servers(self) -> list[dict]: return self._mcp_servers
     def get_available_skills(self): return self._skills

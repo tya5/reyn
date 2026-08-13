@@ -347,16 +347,15 @@ class ActionRetrievalConfig:
             in-process local-model embedding backend; reyn depends on
             litellm exclusively for embeddings).
 
-        mode:
-            Operational mode label (§D24): ``"minimal"`` /
-            ``"default"`` / ``"performance"``. Stored as a free-form
-            string so callers can layer interpretations on top
-            without further config breaking changes. Default
-            ``"default"`` is the §D24 balanced setting.
+    #4552 PR-2: ``mode`` (§D24 operational-mode label — "minimal" /
+    "default" / "performance") is removed — a census (both the literal
+    field and the ``get_action_retrieval_config()`` symbol that existed
+    solely to expose it to a future consumer) found 0 real consumers;
+    the "future PR reading .mode" PR-1 anticipated never happened and
+    PR-2 retires the intent instead.
     """
 
     universal_wrappers_enabled: bool = True
-    mode: str = "default"
 
 
 def _build_action_retrieval_config(raw: object) -> ActionRetrievalConfig:
@@ -388,13 +387,5 @@ def _build_action_retrieval_config(raw: object) -> ActionRetrievalConfig:
                 f"got {type(val).__name__}"
             )
         cfg.universal_wrappers_enabled = val
-
-    if "mode" in raw:
-        val = raw["mode"]
-        if not isinstance(val, str):
-            raise ValueError(
-                f"action_retrieval.mode must be a string, got {type(val).__name__}"
-            )
-        cfg.mode = val
 
     return cfg

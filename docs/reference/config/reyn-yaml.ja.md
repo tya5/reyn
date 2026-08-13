@@ -566,7 +566,6 @@ sandbox:
 ```yaml
 action_retrieval:
   universal_wrappers_enabled: true    # デフォルト; false でオプトアウト
-  mode: default                       # default | minimal | performance
 embedding:
   enabled: false                      # デフォルト（無効）; opt-in するには true
   # default_class: standard           # enabled 時に使う embedding class
@@ -577,7 +576,6 @@ embedding:
 | フィールド | 型 | デフォルト | 説明 |
 |-----|------|---------|-------------|
 | `universal_wrappers_enabled` | bool | `true` | `tool_use` scheme が `universal-category` に解決される layer について、`true`(デフォルト)の時、その layer の `tools=` は 4 universal wrappers (`list_actions` / `search_actions` / `describe_action` / `invoke_action`) のみ。 legacy per-kind tool (`invoke_skill` / `call_mcp_tool` 等) はその layer で LLM に surface されず、 wrapper の backing handler として残存。 `search_actions` は `embedding.enabled` で別途ゲート（下記参照）。 `false` 設定でその layer の wrapper surface 自体を無効化 (= legacy のみが addressing path)。 scheme が `enumerate-all`(`chat` layer 自身のデフォルト)である layer には影響しない — その scheme はこのフラグを一切参照しない。 |
-| `mode` | string | `"default"` | 運用モードラベル: `"minimal"` / `"default"` / `"performance"`。 自由文字列で、現在どの呼び出し元も参照していない。 |
 
 > **#4552（2026-08）— hot list 撤去。** 従来の `hot_list_n` / `hot_list_seed`
 > フィールド（top-N freq+recency の direct-alias 投影）は**削除、alias なし**
@@ -585,6 +583,12 @@ embedding:
 > discovery path として代替済み。 これらのキーを持つ `reyn.yaml` は通常の
 > unknown-key 許容（無視されるだけで parse エラーにはならない）を受ける —
 > 移行先が無いので移行パスも無い。
+
+> **#4552 PR-2（2026-08）— `mode` 撤去。** `mode` フィールド
+> （`"minimal"`/`"default"`/`"performance"`、§D24）は実際の消費者が 0 だった
+> — どの呼び出し元も参照しておらず、将来の仮想的な消費者のためだけに存在
+> していた accessor（`get_action_retrieval_config()`）も同じ PR で削除。
+> 上記と同じ unknown-key 許容がこのキーを持つ `reyn.yaml` にも適用される。
 
 ### クイックスタート — semantic `search_actions` を opt-in
 

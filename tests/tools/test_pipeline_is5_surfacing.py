@@ -122,7 +122,6 @@ class _FakeHost:
     def get_action_embedding_index(self): return None
     def get_embedding_provider(self): return None
     def get_embedding_model_class(self): return None
-    def get_action_retrieval_config(self): return None
     def list_available_skills(self) -> list[dict]: return []
     def list_available_agents(self) -> list[dict]: return []
     def get_memory_index(self) -> dict: return {"status": "not_found", "content": ""}

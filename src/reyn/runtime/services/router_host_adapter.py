@@ -367,11 +367,6 @@ class RouterHostAdapter:
         # dispatch built a host-cwd Workspace (the #187 wrong-FS defect: file
         # ops on the reyn repo, not /testbed).
         environment_backend: Any = None,
-        # #4552: ActionRetrievalConfig — currently unused pending a future
-        # PR reading ``.mode`` (this param used to also feed the hot-list
-        # feature's ``hot_list_n``/``hot_list_seed``, discarded — owner
-        # directive). Session passes its config; None → default.
-        action_retrieval_config: Any = None,
         # #2548 PR-A: enabled skill registry snapshot (list[SkillEntry]).
         # Session builds it via build_skill_registry(config.skills) and passes
         # it in; RouterLoop reads it via get_available_skills() to render the
@@ -587,7 +582,6 @@ class RouterHostAdapter:
         # FP-0034 Phase 2
         self._sandbox_backend = sandbox_backend
         self._environment_backend = environment_backend
-        self._action_retrieval_config = action_retrieval_config
         # FP-0022 fix (#53): intervention-bus factory used by
         # make_router_op_context to populate ``ctx.intervention_bus`` so
         # web_fetch / mcp install / mcp drop handlers can run their
@@ -1135,18 +1129,6 @@ class RouterHostAdapter:
         empty list) → no Skills section.
         """
         return self._available_skills
-
-    def get_action_retrieval_config(self) -> Any:
-        """Return the ActionRetrievalConfig.
-
-        #4552: currently unused pending a future PR reading ``.mode`` — this
-        accessor's sole caller used to be ``router_loop.py``'s hot-list alias
-        builder (determining ``hot_list_n`` aliases to generate and which
-        seed to apply), removed with the hot-list feature (owner directive:
-        discarded). Returns None when not set; callers fall back to a
-        default-constructed ActionRetrievalConfig.
-        """
-        return self._action_retrieval_config
 
     # --- Web ops ---
 
