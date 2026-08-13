@@ -68,19 +68,19 @@ def _churn_and_truncate_wal(wal_path: Path) -> None:
     # asserting it says nothing about whether anything was removed (#2839's
     # own shape — assert the source entries before, and their absence after).
     #
-    # "Absence" here is partial, and deliberately asserted as such:
-    # `_do_truncate` clamps its floor to the highest seq present ("never drop
-    # the highest seq present, even if min_keep_seq exceeds it"), so one entry
-    # always survives a truncate-past-everything. Asserting zero remained
-    # would fail against correct behaviour; asserting "fewer than before" is
-    # what actually witnesses that the rewrite dropped entries.
-    before_n = seen["before"].count('"inbox_put"')
-    after_n = seen["after"].count('"inbox_put"')
-    assert before_n == 5, f"test setup: the appends must have landed (saw {before_n})"
-    assert after_n < before_n, (
-        f"test setup: truncate_below removed nothing ({after_n} of {before_n} "
-        "entries still present) — every assertion below would then be "
-        "measuring an untruncated WAL while claiming otherwise"
+    # The "after" side reads the primitive's OWN report (`last_truncate_stats`,
+    # the public surface #3180's own truncate-falsify already uses) rather than
+    # counting lines ourselves. Counting works but measures a proxy: an
+    # external guess at what the rewrite did, which also has to encode the
+    # clamp `_do_truncate` applies ("never drop the highest seq present, even
+    # if min_keep_seq exceeds it" — so a truncate-past-everything over a single
+    # kind always leaves one entry, and "zero remain" would fail against
+    # correct behaviour). Asking the mechanism how many it dropped needs none
+    # of that.
+    assert seen["before"].count('"inbox_put"') == 5, "test setup: the appends must have landed"
+    assert log.last_truncate_stats["dropped"] >= 1, (
+        "test setup: truncate_below dropped nothing — every assertion below "
+        "would then be measuring an untruncated WAL while claiming otherwise"
     )
     StateLog(wal_path)  # the reconstruct step: a fresh process attaching here
 
