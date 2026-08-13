@@ -45,21 +45,24 @@ jobs:
       - name: Install sandbox-linux + builtin-rag extras
         run: pip install -e ".[dev,sandbox-linux,builtin-rag]"
 
-      # #4302: chunker_server.py/vector_store_server.py (launched directly
-      # by the test above, same interpreter running pytest — see that
-      # test's own docstring) import fastmcp, which the `builtin-rag` extra
-      # above does NOT cover (it's a dev/test convenience for
-      # chonkie/apsw/sqlite-vec only, #3209 — `plugin_install` never reads
-      # this file, so it isn't part of that extra). fastmcp was a reyn CORE
-      # dependency until #4302 dropped it, which is what quietly kept this
-      # job green before; the plugin declares its OWN dependency floor here
-      # (`fastmcp>=3.4,<4` as of #4388, independent of reyn's former
-      # `==3.4.5` core pin), so the gate that runs the plugin's scripts
-      # installs the plugin's OWN requirements.txt — not a hand-picked
-      # subset that would drift
-      # from it silently.
-      - name: Install the rag plugin's own requirements (#4302)
-        run: pip install -r src/reyn/builtin/plugins/rag/requirements.txt
+      # #4302's own "install the plugin's own requirements.txt into the
+      # runner venv" step USED TO live here — REMOVED (design correction,
+      # not #4302's original plan): chunker_server.py/vector_store_server.py
+      # import `fastmcp`, which hard-pins `mcp<2.0`. Installing it into THIS
+      # job's own venv retroactively uninstalled reyn's own `mcp>=2.0` floor
+      # (`pip install fastmcp` here silently downgraded/removed `mcp` for
+      # every step after it) — invisible until #4545 (the first PR to
+      # `from mcp import Client` directly) made a downstream `ImportError`
+      # surface it. The two dependency floors (`mcp>=2.0` for reyn's own
+      # client, `mcp<2.0` transitively via fastmcp for the plugin scripts)
+      # cannot coexist in ONE venv, so the plugin scripts below now launch
+      # via the SEPARATE, per-plugin `rag_plugin_python` fixture venv
+      # (`tests/_support/rag_plugin_venv.py`, #4302's OWN option-A design —
+      # this restores that design rather than departing from it; the
+      # runner-venv install above was the part that never should have
+      # existed) — that venv builds itself from the plugin's
+      # `requirements.txt` (including `fastmcp`) on first use, isolated
+      # from this job's own dependency floor entirely.
 
       # `uvx` (bundled with the `uv` PyPI package) for the third representative
       # server probe below (markitdown-mcp, #3030) — the RAG server with the

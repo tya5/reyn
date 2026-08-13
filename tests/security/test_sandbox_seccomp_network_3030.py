@@ -456,7 +456,7 @@ def _patch_landlock_backend(monkeypatch: pytest.MonkeyPatch) -> None:
 
 @pytest.mark.asyncio
 async def test_chunker_server_starts_and_responds_under_seccomp_allowlist(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, rag_plugin_python: str,
 ) -> None:
     """Tier 2c: the builtin ``rag`` plugin's chunker server (a real MCP server
     RAG actually uses) starts and answers a real tool call through the
@@ -464,13 +464,20 @@ async def test_chunker_server_starts_and_responds_under_seccomp_allowlist(
 
     Runs at ``network=True`` — see the "why network=True" note above. Needs the
     ``builtin-rag`` extra (chonkie import happens lazily inside the tool,
-    exercised here for real, not stubbed). Launched directly as
-    ``<this interpreter> <plugin script path>`` — ADR 0064 P5 retired the
-    ``reyn-rag-chunker`` console script (a real plugin install spawns via a
-    materialised per-plugin venv's own interpreter instead); this test's
-    job is the seccomp-allowlist completeness property, which needs only
-    SOME real chonkie-backed MCP server process, not the install mechanism
-    itself (covered by tests/core/test_plugin_install.py)."""
+    exercised here for real, not stubbed). Launched via ``rag_plugin_python``
+    (the #4302 option-A dedicated venv — see ``tests/_support/rag_plugin_venv.py``),
+    NOT ``sys.executable``: the plugin script imports ``fastmcp``, which hard-pins
+    ``mcp<2.0`` — running it under the SAME interpreter as pytest would require
+    installing fastmcp into the shared runner venv, retroactively uninstalling
+    reyn's own ``mcp>=2.0`` floor from under it (measured: #4545's CI, the first
+    PR to `from mcp import Client` directly, is what surfaced this — the Landlock
+    job's ``pip install fastmcp`` step silently broke ``import mcp.Client`` for
+    every job that ran after it). ADR 0064 P5 retired the ``reyn-rag-chunker``
+    console script (a real plugin install spawns via a materialised per-plugin
+    venv's own interpreter instead); this test's job is the seccomp-allowlist
+    completeness property, which needs only SOME real chonkie-backed MCP server
+    process, not the install mechanism itself (covered by
+    tests/core/test_plugin_install.py)."""
     pytest.importorskip("chonkie", reason="builtin-rag extra not installed")
     from reyn.mcp.client import MCPClient
 
@@ -481,7 +488,7 @@ async def test_chunker_server_starts_and_responds_under_seccomp_allowlist(
 
     cfg = {
         "type": "stdio",
-        "command": sys.executable,
+        "command": rag_plugin_python,
         "args": [str(script)],
         "network": True,
         "subprocess": True,  # the stdio-MCP default this fix is about
@@ -506,7 +513,7 @@ async def test_chunker_server_starts_and_responds_under_seccomp_allowlist(
 @requires_landlock
 @pytest.mark.asyncio
 async def test_chunker_server_reaches_serving_under_network_false(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, rag_plugin_python: str,
 ) -> None:
     """Tier 2c: #3060 reachable-for-purpose witness — the real chunker FastMCP
     server INITIALIZES AND SERVES under ``network=False`` (the whole point of
@@ -544,7 +551,7 @@ async def test_chunker_server_reaches_serving_under_network_false(
 
     cfg = {
         "type": "stdio",
-        "command": sys.executable,
+        "command": rag_plugin_python,
         "args": [str(script)],
         "network": False,  # the exact config #3060 makes work for the chunker
         "subprocess": True,  # the stdio-MCP default
@@ -580,7 +587,7 @@ async def test_chunker_server_reaches_serving_under_network_false(
 @requires_landlock
 @pytest.mark.asyncio
 async def test_vector_store_server_starts_and_responds_under_seccomp_allowlist(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, rag_plugin_python: str,
 ) -> None:
     """Tier 2c: the builtin ``rag`` plugin's vector-store server starts and
     answers a real tool call through the now-unconditional seccomp allowlist.
@@ -590,9 +597,10 @@ async def test_vector_store_server_starts_and_responds_under_seccomp_allowlist(
     surfaced the `fsync`/`fdatasync` durability gap (SQLite "disk I/O error"),
     network-independently. Needs the ``builtin-rag`` extra (apsw/sqlite-vec) —
     skips (not fails) when absent, same posture as
-    ``test_fp0063_p3_rag_pipelines.py``. See the chunker test above for why
-    this launches the plugin script directly rather than via a console
-    script (ADR 0064 P5)."""
+    ``test_fp0063_p3_rag_pipelines.py``. Launched via ``rag_plugin_python``,
+    NOT ``sys.executable`` — see the chunker test above for why (the plugin
+    script's ``fastmcp`` import hard-pins ``mcp<2.0``, incompatible with the
+    shared runner venv's own ``mcp>=2.0`` floor)."""
     pytest.importorskip("apsw", reason="builtin-rag extra not installed")
     from reyn.mcp.client import MCPClient
 
@@ -603,7 +611,7 @@ async def test_vector_store_server_starts_and_responds_under_seccomp_allowlist(
 
     cfg = {
         "type": "stdio",
-        "command": sys.executable,
+        "command": rag_plugin_python,
         "args": [str(script)],
         "network": True,
         "subprocess": True,
