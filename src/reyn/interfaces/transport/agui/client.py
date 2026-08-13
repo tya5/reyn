@@ -212,6 +212,19 @@ class AgUiTransport(ClientTransport):
         )
         return bool((result or {}).get("switched"))
 
+    async def request_artifact_list(self, *, agent: str) -> "list[dict]":
+        # #4494 design C: POST a typed request; the server reads its OWN
+        # copy of the durable artifact-ref table (never a client-supplied
+        # path) and answers with the current entries. Same shape as
+        # ``request_attach``/``request_session_switch`` above. ``agent``
+        # is accepted for parity with the ``ClientTransport`` signature —
+        # the server's own ``agent_name`` (baked into the endpoint URL at
+        # connect time) is what it actually reads against, so this
+        # transport does not thread it onto the wire separately.
+        result = await self._send({"type": "artifact_list_request"})
+        entries = (result or {}).get("entries")
+        return entries if isinstance(entries, list) else []
+
     async def answer_intervention_text(
         self, text: str, *, intervention_id: "str | None" = None
     ) -> bool:

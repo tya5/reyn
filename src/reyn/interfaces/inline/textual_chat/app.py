@@ -1168,6 +1168,14 @@ class TextualChatApp(App):
         # materialize+open it, not just the command-string list every other
         # pane action reads.
         self._artifact_rows_cache: "list[ArtifactRow]" = []
+        # #4494 design C: which source the CURRENT cache above came from —
+        # "live" (the conversation-derived list, the default) or
+        # "ref_table_fallback" (the durable artifact-ref table, consulted
+        # only once the live list comes back empty — see
+        # :meth:`_maybe_refresh_remote_artifact_fallback`). Threaded into
+        # ``chrome.pane_payload``/``pane_commands`` so the disclosure row
+        # is appended (or not) alongside the right rows/commands.
+        self._artifact_rows_source: str = "live"
         # #3288 ③c: in-flight streamed reply, keyed by ``chain_id`` — the SAME
         # authoritative correlation id ``RouterLoop._emit_agent_delta`` stamps
         # on every ``agent_delta`` audit-event AND the one the terminal
@@ -1683,6 +1691,11 @@ class TextualChatApp(App):
             if entry.item.kind == "presentation"
         ]
         rows = collect_artifact_rows(node_lists)
+        # #4494 design C: THIS call always reflects the live-conversation
+        # source (whatever it finds, empty or not) — the fallback is a
+        # SEPARATE, async step (:meth:`_maybe_refresh_remote_artifact_fallback`)
+        # triggered only after a sync render already ran with this source.
+        self._artifact_rows_source = "live"
         if not rows:
             return rows
         project_root = _find_project_root(Path.cwd()) or Path.cwd()
@@ -1702,6 +1715,7 @@ class TextualChatApp(App):
             commands=REGISTRY.all_commands(),
             history=self._history_turns(),
             artifacts=self._artifact_rows(),
+            artifact_source=self._artifact_rows_source,
             app_bindings=self._app_binding_help(),
         )
 
@@ -2458,6 +2472,7 @@ class TextualChatApp(App):
         self._artifact_rows_cache = artifact_rows
         self._pane_commands[tab_id] = pane_commands(  # type: ignore[arg-type]
             tab_id, snapshot, artifacts=artifact_rows,
+            artifact_source=self._artifact_rows_source,
         )
         child = self.query_one(f"#{tab_id}")
         if isinstance(child, OptionList):
@@ -2472,8 +2487,72 @@ class TextualChatApp(App):
         elif isinstance(child, Static):
             child.update("\n".join(rows))
 
-    def on_menu_bar_selected(self, event: "MenuBar.Selected") -> None:
-        self._open_drawer(None if event.tab_id == "__close__" else event.tab_id)
+    async def _maybe_refresh_remote_artifact_fallback(self) -> None:
+        """#4494 design C: once the artifacts pane has rendered its
+        LIVE-conversation rows (via :meth:`_refresh_pane`, always
+        synchronous — this method never runs before it), consult the
+        durable artifact-ref table through the transport when that live
+        list came back empty. Covers a remote client (its past turns are
+        not on the wire at all) and a local client right after a restart
+        (the identical gap, #4584's own measured finding —
+        ``restore.project_restored_frames`` has no "presentation" kind
+        reconstruction). A non-empty live list is never overridden — it
+        carries real ``media_type``/``description`` the ref table cannot
+        offer, so this is strictly a fallback, not a merge.
+
+        Re-renders the "artifacts" OptionList in place with the fallback
+        rows PLUS the source-limitation disclosure
+        (``chrome.ARTIFACT_REF_TABLE_FALLBACK_DISCLOSURE``) appended —
+        always appended, even when the fallback itself is empty (#4494's
+        own falsify requirement: emptying the ref table empties the rows
+        but the disclosure text stays)."""
+        if self._artifact_rows_cache:
+            return  # live list already had content — no fallback needed
+        from pathlib import Path
+
+        from reyn.config import _find_project_root
+        from reyn.core.present.artifact_list import (
+            resolve_display_paths,
+            rows_from_ref_table_entries,
+        )
+
+        entries = await self._transport.request_artifact_list(agent=self._agent_name)
+        fallback_rows = rows_from_ref_table_entries(entries)
+        if fallback_rows:
+            # Same resolved_path fill-in the live path gets (#4482 PR-3
+            # review, "表示から実行まで同じ path を使う") — a bare `name`
+            # is a basename, which cannot distinguish two same-named
+            # artifacts in different directories.
+            project_root = _find_project_root(Path.cwd()) or Path.cwd()
+            fallback_rows = resolve_display_paths(
+                fallback_rows, project_root, self._agent_name,
+            )
+        self._artifact_rows_cache = fallback_rows
+        self._artifact_rows_source = "ref_table_fallback"
+        try:
+            drawer = self.query_one("#drawer", ContentSwitcher)
+        except Exception:
+            return  # not mounted (e.g. a headless/test harness) — nothing to update
+        if drawer.current != "artifacts":
+            return  # operator navigated away before the fallback arrived
+        self._pane_commands["artifacts"] = pane_commands(
+            "artifacts", artifacts=fallback_rows, artifact_source="ref_table_fallback",
+        )
+        rows = pane_payload(
+            "artifacts", artifacts=fallback_rows, artifact_source="ref_table_fallback",
+        )
+        child = self.query_one("#artifacts")
+        if isinstance(child, OptionList):
+            child.clear_options()
+            child.add_options(
+                _literal_option_content(rows) if pane_needs_literal_rows("artifacts") else rows
+            )
+
+    async def on_menu_bar_selected(self, event: "MenuBar.Selected") -> None:
+        tab_id = None if event.tab_id == "__close__" else event.tab_id
+        self._open_drawer(tab_id)
+        if tab_id == "artifacts":
+            await self._maybe_refresh_remote_artifact_fallback()
 
     async def on_option_list_option_selected(
         self, event: "OptionList.OptionSelected"

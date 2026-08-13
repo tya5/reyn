@@ -224,6 +224,21 @@ class InProcessTransport(ClientTransport):
             return False
         return True
 
+    async def request_artifact_list(self, *, agent: str) -> "list[dict]":
+        # #4494 design C: local execution side — reads the durable
+        # artifact-ref table directly (no wire hop). ``list_refs_for_agent``
+        # wants the PROJECT ROOT (it appends ".reyn"/"memory"/... itself,
+        # the same way ``mint_ref``/``resolve_ref`` do) — one level ABOVE
+        # ``reyn_state_root()``, which is the ``.reyn`` directory itself
+        # (see that method's own docstring). No attached session means no
+        # root to read, so the fallback is empty, same as an unattached
+        # ``has_session()``.
+        from reyn.data.workspace.artifact_ref import list_refs_for_agent
+        reyn_root = self.reyn_state_root()
+        if reyn_root is None:
+            return []
+        return list_refs_for_agent(reyn_root.parent, agent)
+
     async def answer_intervention_text(
         self, text: str, *, intervention_id: "str | None" = None
     ) -> bool:

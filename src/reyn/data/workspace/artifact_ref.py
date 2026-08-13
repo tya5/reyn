@@ -166,3 +166,26 @@ def resolve_ref(project_root: Path, agent_name: str, ref: str) -> "Path | None":
             candidate = Path(entry["path"])
             return candidate if candidate.exists() else None
     return None
+
+
+def list_refs_for_agent(project_root: Path, agent_name: str) -> "list[dict]":
+    """#4494 design C: every ``{"ref", "path"}`` entry minted under
+    *agent_name*'s scope, newest-first — the durable source a REMOTE
+    client's own artifact list falls back to when its live conversation
+    view carries nothing (frame-sufficiency: past turns are not on the
+    wire — the SAME gap also affects a LOCAL client right after a
+    restart, since ``restore.project_restored_frames`` has no
+    "presentation" kind reconstruction either, #4584's own measured
+    finding — this function is transport-agnostic and serves both).
+
+    Deliberately raw entries, not :class:`~reyn.core.present.artifact_list.
+    ArtifactRow` objects — this module has no ``media_type``/
+    ``description`` to offer (the table was never designed to carry them;
+    only :func:`mint_ref`'s two fields exist), and no existence check
+    (mirrors :func:`~reyn.core.present.artifact_list.collect_artifact_rows`'s
+    own "stat only what's about to be displayed" discipline — the CALLER
+    decides how many rows it is about to render before paying that I/O).
+    """
+    entries = [e for e in _load_table(project_root) if e.get("agent") == agent_name]
+    entries.reverse()  # newest-first, matching collect_artifact_rows' own convention
+    return [{"ref": e["ref"], "path": e["path"]} for e in entries if "ref" in e and "path" in e]

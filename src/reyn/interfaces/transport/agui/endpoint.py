@@ -771,6 +771,24 @@ async def agui_submit(request: Request, agent_name: str):
             except KeyError:
                 pass
         return JSONResponse({"status": "ok", "switched": switched})
+    elif ptype == "artifact_list_request":
+        # #4494 design C: the durable artifact-ref table's own entries for
+        # *agent_name*, read server-side (never trusting a client-supplied
+        # path) — the fallback a remote client's own Artifacts pane
+        # consults when its live conversation view carries nothing (its
+        # past turns are simply not on the wire). Mirrors
+        # ``attach_request``/``session_switch_request`` above: client
+        # names an operation, server executes it against ITS OWN state.
+        from reyn.data.workspace.artifact_ref import list_refs_for_agent
+        # ``workspace_dir`` = <project_root>/.reyn/agents/<agent_name> — three
+        # levels down, so PROJECT ROOT (what list_refs_for_agent wants, same
+        # as mint_ref/resolve_ref) needs three .parent hops, not two (two
+        # only reaches the .reyn directory itself — InProcessTransport's own
+        # reyn_state_root() derivation, a DIFFERENT thing this handler does
+        # not want).
+        project_root = session.workspace_dir.parent.parent.parent
+        entries = list_refs_for_agent(project_root, agent_name)
+        return JSONResponse({"status": "ok", "entries": entries})
     return JSONResponse({"status": "ok"})
 
 
