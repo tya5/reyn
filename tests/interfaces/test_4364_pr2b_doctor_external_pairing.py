@@ -51,10 +51,15 @@ def test_no_producers_configured_reports_only_the_windowed_points(
     signal — those two checks are COMPLETE config reads, so "no producer"
     can be asserted outright). mcp_resource_updated/webhook_received are
     different (#4614/#4620): both checks are windowed, so both print a
-    "?" disclosure line even with zero event-log evidence — "not seen"
-    there is never proof of "no producer", only "not seen in the
-    window", so silence would hide exactly the state C-2 exists to
-    catch."""
+    "?" disclosure line even with zero event-log evidence.
+
+    #4624: a FRESH install (no `.reyn/events` files at all, scanned==0)
+    is the "no window to predate" case — the #4614 window caveat would
+    be a true but EMPTY statement here, so this prints the plain fact
+    ("no event history yet") instead of the windowed wording. The
+    windowed wording itself is covered separately by
+    ``test_mcp_resource_updated_evidence_outside_the_scan_window_is_disclosed_not_silent``
+    / its webhook_received sibling, where scanned > 0."""
     _write_yaml(tmp_path / "reyn.yaml", MINIMAL_REYN_YAML)
 
     run(Namespace(project_root=str(tmp_path)))
@@ -63,9 +68,10 @@ def test_no_producers_configured_reports_only_the_windowed_points(
     assert "External-event producer/consumer pairing" in out
     assert "file_changed" not in out
     assert "cron_fired" not in out
-    assert "? mcp_resource_updated: not seen in the newest" in out
-    assert "? webhook_received: not seen in the newest" in out
-    assert "NOT proof no producer exists" in out
+    assert "? mcp_resource_updated: no event history yet" in out
+    assert "? webhook_received: no event history yet" in out
+    assert "not seen in the newest" not in out
+    assert "NOT proof no producer exists" not in out
 
 
 def test_file_changed_producer_with_zero_consumers_is_flagged(

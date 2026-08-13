@@ -526,6 +526,18 @@ def _print_external_point_pairing(config: object, project_root: Path) -> None:
                     f"{scanned} event file(s) scanned) but 0 subscribing "
                     f"hooks — this point's notifications have nowhere to go",
                 )
+            elif scanned == 0:
+                # #4624: scanned == 0 means .reyn/events has NO dated files
+                # at all (a fresh install, or retention already purged
+                # everything) — "a producer whose last arrival predates
+                # the window" cannot be true when there is no window to
+                # predate, so the #4614 caveat below would be a TRUE but
+                # EMPTY statement here. An empty caveat printed on every
+                # fresh install trains the reader to skip caveats, which
+                # is exactly what #4614 introduced the caveat to prevent
+                # (architect's finding, #4622 co-vet). Say the plain fact
+                # instead — no window talk.
+                print(f"  ? {point}: no event history yet")
             else:
                 print(
                     f"  ? {point}: not seen in the newest {scanned} event "
