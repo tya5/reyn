@@ -80,7 +80,7 @@ subscribing hooks is a real gap; a point with no producer is not
 reported — see 'not checked' below for why some points aren't):
   ✗ file_changed: producer present (1 declared fs_watch path(s)) but 0 subscribing hooks — this point's notifications have nowhere to go
   ? mcp_resource_updated: not seen in the newest 0 event file(s) scanned — a producer whose last arrival is older than that is not covered here, so this is NOT proof no producer exists
-  ? webhook_received: not checked (no config or audit-log surface exists for its producer)
+  ? webhook_received: not seen in the newest 0 event file(s) scanned — a producer whose last arrival is older than that is not covered here, so this is NOT proof no producer exists
 ```
 
 ### `.reyn/events/` — declared vs. actual
@@ -134,21 +134,21 @@ one directly. Producer evidence differs per point:
 
 - `file_changed` — a declared `fs_watch.paths` entry.
 - `cron_fired` — an *enabled* `cron.jobs[]` entry (a disabled job is not a producer).
-- `mcp_resource_updated` — past evidence in `.reyn/events` (this kind IS an audit-event,
-  `event_schema.py`), scanned newest-first, bounded to the most recent 20 dated files (a
-  kind lookup has no index — `.reyn/events` is append-only — so this bound keeps a "did
-  it ever happen" query cheap even with retention disabled; the question only needs "at
-  least once," so an early exit can never turn a real positive into a false negative).
-  **This check is windowed, unlike the other two** (#4614): "not seen in the newest 20
-  files" is NOT proof of "no producer" — a real producer whose last arrival predates the
-  window is indistinguishable from one that never fired. Reporting nothing here (the
-  pre-#4614 behavior) silently hid exactly the state C-2 exists to catch, so this point
-  ALWAYS prints a line — `✓`/`✗` when seen within the window, or `? mcp_resource_updated:
-  not seen in the newest N event file(s) scanned — ... NOT proof no producer exists`
-  otherwise — never folded into the "no producer → no finding" rule below.
-- `webhook_received` — **not checked**: no config declaration and no `AUDIT_EVENT_KINDS`
-  entry exist for it, so there is no surface to read a producer from at all. Reported as
-  `? webhook_received: not checked`, never silently omitted (D-3).
+- `mcp_resource_updated` / `webhook_received` — past evidence in `.reyn/events` (both
+  kinds ARE audit-events, `event_schema.py` — `webhook_received` gained its own kind in
+  #4618, joining this check in #4620), scanned newest-first, bounded to the most recent
+  20 dated files (a kind lookup has no index — `.reyn/events` is append-only — so this
+  bound keeps a "did it ever happen" query cheap even with retention disabled; the
+  question only needs "at least once," so an early exit can never turn a real positive
+  into a false negative). **This check is windowed, unlike the other two** (#4614): "not
+  seen in the newest 20 files" is NOT proof of "no producer" — a real producer whose last
+  arrival predates the window is indistinguishable from one that never fired. Reporting
+  nothing here (the pre-#4614 behavior) silently hid exactly the state C-2 exists to
+  catch, so both points ALWAYS print a line — `✓`/`✗` when seen within the window, or
+  `? <point>: not seen in the newest N event file(s) scanned — ... NOT proof no producer
+  exists` otherwise — never folded into the "no producer → no finding" rule below.
+  `webhook_received` has no config surface of its own (unlike `file_changed`/`cron_fired`),
+  so it can ONLY ever be evidence-based here — there is no complete-read alternative for it.
 
 A point with a COMPLETE producer read (`file_changed`/`cron_fired`) and no producer
 prints no finding at all — reporting "0 subscribing hooks" for
