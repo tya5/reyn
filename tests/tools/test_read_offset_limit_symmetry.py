@@ -28,8 +28,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-
 from reyn.runtime.reyn_repo import read_text, resolve_reyn_root, safe_resolve_inside
 
 # ── reyn_repo_read slice semantics ────────────────────────────────────────────

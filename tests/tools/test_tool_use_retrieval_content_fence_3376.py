@@ -44,7 +44,6 @@ from reyn.tools.scheme import (
     AdvertisedTools,
     NoToolsChannel,
     Presentation,
-    advertised_entries,
     get_scheme,
 )
 from reyn.tools.schemes._content_fence_cell import ContentFenceCellScheme

@@ -14,8 +14,6 @@ No private state assertions.
 """
 from __future__ import annotations
 
-import pytest
-
 from reyn.tools.mcp import (
     _CALL_MCP_TOOL_DESCRIPTION,
     _CALL_MCP_TOOL_PARAMETERS,

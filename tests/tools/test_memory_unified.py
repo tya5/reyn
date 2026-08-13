@@ -21,7 +21,7 @@ from reyn.tools.memory import (
     REMEMBER_AGENT,
     REMEMBER_SHARED,
 )
-from reyn.tools.types import ToolDefinition, ToolGates
+from reyn.tools.types import ToolDefinition
 
 # ── 1. All 5 are ToolDefinition instances ────────────────────────────────────────
 

@@ -38,10 +38,6 @@ freely as long as they don't re-add the failure-mode caveat.
 """
 from __future__ import annotations
 
-from pathlib import Path
-
-import pytest
-
 _NEGATIVE_PHRASES = (
     "OS rejects at runtime",
     "PermissionError if undeclared",

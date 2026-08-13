@@ -22,7 +22,6 @@ No mocks. No private-state assertions.
 from __future__ import annotations
 
 import asyncio
-from typing import Any
 
 import pytest
 

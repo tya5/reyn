@@ -13,10 +13,7 @@ Pins the contract for ``expand_env()``:
 """
 from __future__ import annotations
 
-import os
 import warnings
-
-import pytest
 
 from reyn.security.secrets.interpolation import expand_env
 

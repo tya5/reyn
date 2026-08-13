@@ -18,7 +18,6 @@ import pytest
 from reyn.security.permissions.effective import (
     AgentLayer,
     CapabilityAxis,
-    EffectivePermission,
 )
 from reyn.security.permissions.permissions import PermissionDecl
 

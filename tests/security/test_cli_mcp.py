@@ -14,7 +14,6 @@ Covers:
 from __future__ import annotations
 
 import argparse
-import os
 from pathlib import Path
 
 import pytest
@@ -22,14 +21,12 @@ import yaml
 
 from reyn.interfaces.cli.commands.mcp import (
     _all_servers_with_scope,
-    _get_servers_from_scope,
     _infer_credentials,
     _infer_status,
     _infer_transport,
     _load_yaml_file,
     _scope_path,
     _server_env_keys,
-    _write_yaml_file,
     register,
     run_clear_secret,
     run_list,

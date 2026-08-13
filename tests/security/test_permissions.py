@@ -7,11 +7,10 @@ the project-wide config approval.
 from __future__ import annotations
 
 import asyncio
-from pathlib import Path
 
 import pytest
 
-from reyn.security.permissions.permissions import PermissionDecl, PermissionResolver
+from reyn.security.permissions.permissions import PermissionDecl
 from reyn.user_intervention import InterventionAnswer, InterventionBus, UserIntervention
 from tests._support.permissions import make_resolver as _make_resolver
 

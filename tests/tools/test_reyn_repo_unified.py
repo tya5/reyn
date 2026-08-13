@@ -12,8 +12,6 @@ No private state assertions.
 """
 from __future__ import annotations
 
-import pytest
-
 from reyn.tools.registry import ToolRegistry
 from reyn.tools.reyn_repo import (
     _REYN_REPO_LIST_DESCRIPTION,

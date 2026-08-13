@@ -14,7 +14,6 @@ substrate (which has its own tests).
 from __future__ import annotations
 
 import sys
-from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -31,7 +30,6 @@ from reyn.tools.scheme import (
     ExecutionResult,
     PlainText,
     Presentation,
-    SchemeOps,
     ToolUseScheme,
     advertised_entries,
 )

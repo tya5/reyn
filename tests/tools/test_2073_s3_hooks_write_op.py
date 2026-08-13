@@ -22,7 +22,6 @@ import pytest
 from reyn.core.events.events import EventLog
 from reyn.core.events.state_log import StateLog
 from reyn.runtime.hot_reload import HotReloader, set_active_hot_reloader
-from reyn.runtime.session import Session
 from reyn.tools.hooks import HOOKS_ADD, _handle_hooks_add
 from reyn.tools.types import ToolContext
 from tests._support.agent_session import make_session

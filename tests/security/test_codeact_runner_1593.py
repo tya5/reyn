@@ -374,7 +374,6 @@ def test_harness_subprocess_env_goes_through_the_shared_chokepoint(monkeypatch) 
     this test's positive-and-negative pair below stops moving together (the
     denied name would leak too, since a bespoke copy has no deny mechanism at
     all)."""
-    import os
 
     from reyn.core.kernel.codeact_runner import _harness_subprocess_env
     from reyn.security.sandbox import SandboxPolicy

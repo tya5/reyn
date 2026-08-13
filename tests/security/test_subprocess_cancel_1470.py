@@ -16,7 +16,6 @@ import textwrap
 
 import pytest
 
-from reyn.security.sandbox.backend import SandboxResult
 from reyn.security.sandbox.noop_backend import NoopBackend
 from reyn.security.sandbox.policy import SandboxPolicy
 
@@ -244,7 +243,6 @@ async def test_landlock_cancel_none_equivalence() -> None:
 async def test_sandboxed_exec_op_cancel_event_p6_p5() -> None:
     """Tier 2: sandboxed_exec handle() with cancel_event → P6 sandboxed_exec_cancelled
     + P5 result status='cancelled'. Uses real NoopBackend + cancel_event=set."""
-    import dataclasses  # noqa: PLC0415
 
     from reyn.core.events.events import EventLog  # noqa: PLC0415
     from reyn.core.op_runtime import execute_op  # noqa: PLC0415
