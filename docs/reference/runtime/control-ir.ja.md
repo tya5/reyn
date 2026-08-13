@@ -616,7 +616,7 @@ Permission ゲート（§3.10 — EXISTING ゲートから合成、新しい boo
    - `pipelines/*.yaml`: 変更なし — #4570 以前からの reyn-native な `${REYN_*}` フルテキスト bake（P1 の `reyn.plugins.tokens.expand_reyn_tokens`、コピー時のコンテキストが値を持つすべてのトークン）。pipeline は標準が定義しない reyn の拡張であるため、conversion D はこの候補を意図的に触っていません。
    - `skills/*/SKILL.md`: より狭い焼き込みを受けます: `${REYN_PLUGIN_ROOT}` のみ（`plugin_install.py` の `_bake_plugin_root_only`）— `${REYN_SKILL_DIR}` と `${REYN_PROJECT_DIR}` は意図的にリテラルトークンのまま残され、skill-load verb（`reyn.plugins.skill_load.load_skill_body`、P4/#3070）が invocation のたびに新たに解決します。plugin のグローバルな `~/.reyn/plugins/<name>/` コピーは複数のプロジェクトへ enable される可能性がある（§3.3）ためです — 1 回の install 呼び出しのプロジェクトを共有コピーに焼き込んでしまうと、後で enable するすべてのプロジェクトが最初に install したプロジェクトに凍結されてしまいます。
 
-   **stale-token 警告（#4610）**: 上記 2 つの語彙はファイルごとであり互換ではありません — plugin 作者があるファイルに対して間違ったトークンを推測した場合（`pipelines/*.yaml`/`SKILL.md` の中の `${PLUGIN_ROOT}`、あるいは `mcp.json` の `args`/`env`/`cwd` の中の `${REYN_PLUGIN_ROOT}`/`${REYN_PROJECT_DIR}`/`${REYN_SKILL_DIR}`）、以前はどちらの bake にも展開されずリテラル文字列のまま黙って生き残っていました。3 つの bake 関数はいずれも、自身の展開後出力を「もう一方の語彙」のトークン形（`_stale_token_warnings`）についてもスキャンし、見つかれば該当ファイルとその場所の正しいトークン名を含む警告を追加するようになりました — `mcp.json` の `command`/`url`（意図的に非展開であり、推測ミスではない）や、そもそも bake が触れないトークンには決して発火しません。report-only です: install をブロックすることは決してなく、結果 dict で開示されます（下記）。「報告すべきものが無ければ空」という `skipped`（#4580）と同じ形です。
+   **stale-token 警告（#4610）**: 上記 2 つの語彙はファイルごとであり互換ではありません — plugin 作者があるファイルに対して間違ったトークンを推測した場合（`pipelines/*.yaml`/`SKILL.md` の中の `${PLUGIN_ROOT}`、あるいは `mcp.json` の `args`/`env`/`cwd` の中の `${REYN_PLUGIN_ROOT}`/`${REYN_PROJECT_DIR}`/`${REYN_SKILL_DIR}`）、以前はどちらの bake にも展開されずリテラル文字列のまま黙って生き残っていました。3 つの bake 関数はいずれも、自身の展開後出力を「もう一方の語彙」のトークン形（`_stale_token_warnings`）についてもスキャンし、見つかれば該当ファイルとその場所の正しいトークン名を含む警告を追加するようになりました — `mcp.json` の `command`/`url`（意図的に非展開であり、推測ミスではない）や、そもそも bake が触れないトークンには決して発火しません。report-only です: install をブロックすることは決してなく、結果 dict で開示されます（下記）。「報告すべきものが無ければ空」という `skipped`（#4580）と同じ形です。各 finding は `plugin_install_token_vocabulary_mismatch`（payload: `name`、`warning` — 結果 dict と同一の文字列、再導出なし）も発行します — 永続的な監査証跡側の対応物であり、一度 install されて二度と再検査されない plugin でも記録が残ります（#4610 PR-2）。
 7. 登録（#3209: register-only、依存の実体化ステップ無し。#4570 conversion B: capability の有無はディレクトリ/ファイルの存在から導出され、マニフェストはもう `capabilities` フィールドを持ちません）: `mcp.json`（旧 `.mcp.json`）は常に probe されます（存在しなければ穏やかに no-op）— `.reyn/config/mcp.yaml` への直接書き込み（probe-then-commit、`mcp_install_local` を反映）。`pipelines/` ディレクトリが存在すればその `*.yaml` 全てを `pipeline_install.handle` で、`skills/` ディレクトリが存在すればそのサブディレクトリ全てを `skill_install.handle`（各サブ op は `plugin_id=<name>` を持つ、§3.7）で登録します — server の `command` はそのまま登録され、venv-interpreter の書き換えはありません。`plugin_install_registered` を発行。
 8. `_install_state.json` マーカーを削除（不在 = 完了）し、`plugin_install_completed` を発行。
 
@@ -632,7 +632,7 @@ Permission ゲート（§3.10 — EXISTING ゲートから合成、新しい boo
 
 結果フィールド（`plugin_uninstall`）: `status`（`"uninstalled"` / `"error"`）、`name`、`removed`（削除されたエントリ名のレジストリごとのリスト）、`copy_removed`、`plugin_data_retained_at`（uninstall した名前に対応する `~/.reyn/plugin-data/<name>/` ディレクトリが存在する場合のみ、#4570 conversion D）。
 
-発行されるイベント: `plugin_install_started` / `_copied` / `_registered` / `_completed`；`plugin_uninstall_started` / `_registry_dropped` / `_completed`。
+発行されるイベント: `plugin_install_started` / `_copied` / `_registered` / `_completed` / `_token_vocabulary_mismatch`（#4610、stale-token finding ごとに 1 件、上記）；`plugin_uninstall_started` / `_registry_dropped` / `_completed`。
 
 ## `embed`
 
