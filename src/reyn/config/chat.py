@@ -544,6 +544,56 @@ def _build_history_resident_config(raw: object) -> "HistoryResidentConfig":
 
 
 @dataclass
+class ImageConfig:
+    """`image:` — operator-tunable inline image render bounds (#4474).
+
+    ``row_height_cells`` — the FIXED height, in terminal rows, every
+    `present`-rendered image (reyn's own ``HalfBlockImage`` renderable) is
+    shown at — width is derived FROM this height and the image's own
+    pixel aspect ratio (see ``interfaces/repl/present_renderer.py``'s
+    ``decode_image_body``); ``HalfBlockImage`` takes an explicit
+    width/height in cells with no aspect-ratio derivation of its own, so a
+    fixed height is what makes aspect-ratio-correct rendering possible at
+    all.
+
+    **Why this is operator-configurable, not a bare constant** (owner's
+    standing rule — no unjustified number embedded without either a
+    reasoning comment or a user-facing override): the "right" row count is
+    a function of the OPERATOR'S OWN terminal height and how much
+    scrollback real estate they want a photo to occupy — a property this
+    repo cannot decide FOR every operator's environment. 20 is a shipped
+    default (tall enough to show real photo detail, short enough not to
+    dominate a typical terminal's scrollback), not a measured "correct"
+    number — the config key exists specifically so an operator on a
+    short terminal (or one who wants larger previews) can change it
+    without a code edit.
+    """
+    row_height_cells: int = 20
+
+
+def _build_image_config(raw: object) -> "ImageConfig":
+    """Parse the `image:` section (#4474).
+
+    Missing or malformed -> default (20 rows). A non-numeric or
+    non-positive value falls back to the default -- same discipline as
+    ``_build_read_cap_config``: an operator typo must not silently produce
+    a zero/negative row height (which would either draw nothing or invert
+    the layout math downstream).
+    """
+    if not isinstance(raw, dict):
+        return ImageConfig()
+    defaults = ImageConfig()
+    row_height_cells = raw.get("row_height_cells", defaults.row_height_cells)
+    try:
+        row_height_cells = int(row_height_cells)
+        if row_height_cells <= 0:
+            row_height_cells = defaults.row_height_cells
+    except (TypeError, ValueError):
+        row_height_cells = defaults.row_height_cells
+    return ImageConfig(row_height_cells=row_height_cells)
+
+
+@dataclass
 class SpawnConfig:
     """`safety.spawn:` — operator bounds on the LLM spawn tree (#2103 C3).
 

@@ -31,6 +31,7 @@ from reyn.config.chat import (
     CompactionConfig,
     CostWarnConfig,
     HistoryResidentConfig,
+    ImageConfig,
     LoopConfig,
     OffloadConfig,
     OnLimitConfig,
@@ -223,6 +224,11 @@ class ReynConfig:
     # footprint — bytes, model-independent, config-driven (#4431's role
     # split, same shape as read_cap above). Default 256 MiB.
     history_resident: HistoryResidentConfig = field(default_factory=HistoryResidentConfig)
+    # #4474: the fixed row-height (in cells) every present-rendered inline
+    # image (reyn's own HalfBlockImage renderable) is shown at, so width
+    # can be derived to preserve the image's real aspect ratio (see
+    # ImageConfig's own docstring). Default 20.
+    image: ImageConfig = field(default_factory=ImageConfig)
     # FP-0022 follow-up: declarative SSL config for web_fetch + MCP registry.
     # Priority: web_fetch.ca_bundle → web_fetch.verify_ssl → SSL_VERIFY env →
     # litellm.ssl_verify → SSL_CERT_FILE → True (default).

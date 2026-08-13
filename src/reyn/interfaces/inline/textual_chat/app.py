@@ -4739,28 +4739,39 @@ async def run_textual_chat(
     regardless. Returns so the driver's caller can tear the transport down
     + print the cost summary.
     """
-    # #3846 ③: trigger textual_image.renderable's ONE-TIME, process-global
-    # terminal-capability auto-detection HERE — strictly BEFORE
-    # app.run_async() hands stdin to Textual. That auto-detection (Sixel/TGP
-    # support) sends a raw escape sequence to the real terminal and
-    # synchronously reads the reply off `sys.__stdout__`/stdin; the LIBRARY'S
-    # OWN docstring (`textual_image.renderable.sixel.query_terminal_support`)
-    # warns this "will not work anymore once Textual is started" — Textual
-    # runs its own stdin-reading thread that races (and usually wins) this
-    # read once the app loop is live. `present_renderer.py`'s `_render_image`
-    # imports `textual_image.renderable` lazily (its own "No I/O" module
-    # invariant), which would otherwise defer this exact query to the first
-    # image actually presented — i.e. DURING a live app.run_async() session,
-    # guaranteeing the query loses the race and every image in the TUI falls
-    # back to unicode/half-block even on a real Kitty/WezTerm/Sixel terminal.
-    # Importing here, before Textual owns stdin, lets the query succeed and
-    # the module-level `Image` binding (see that module's own `__init__.py`)
-    # resolve to the real terminal's actual capability once, for the whole
-    # process. A missing/failed import is swallowed — image nodes simply
-    # keep falling back to the pre-③ status-line text, same as an
-    # environment without pillow/textual-image at all.
+    # #4474 (was #3846 ③): this used to eagerly `import
+    # textual_image.renderable` — a ONE-TIME, process-global terminal-
+    # capability query that had to run strictly BEFORE Textual owned
+    # stdin (a real race hazard: `textual_image`'s own docstring warned
+    # the query "will not work anymore once Textual is started"). That
+    # entire eager-timing concern is GONE: reyn's `HalfBlockImage`
+    # (`present_renderer.py`) needs no terminal capability query at
+    # all — flowview's own README (0.18.1) states why `textual_image`'s
+    # auto-detecting import broke here in the first place (it picks
+    # Sixel first, and Sixel occupies ZERO cells in FlowView's
+    # virtualized, cell-repainting row model, so FlowView cannot
+    # position or clip it), and 0.19.0's own follow-up (Kitty
+    # Unicode-placeholder mode is undetectably broken on WezTerm/
+    # Konsole — no query exists for "do placeholders actually draw")
+    # concluded half-block cells are the only form that needs NO
+    # protocol negotiation and renders correctly everywhere. See
+    # `HalfBlockImage`'s own docstring for the full chain.
+
+    # #4474: thread the operator-configured fixed image row height (owner's
+    # standing rule — no unjustified number embedded without either a
+    # reasoning comment or a user-facing override; `ImageConfig`'s own
+    # docstring, `config/chat.py`, carries the reasoning). `config` is
+    # `None` for a caller with no `ReynConfig` (falls back to
+    # `present_renderer.py`'s own module-level default).
     try:
-        import textual_image.renderable  # noqa: F401,PLC0415
+        image_config = getattr(config, "image", None)
+        row_height_cells = getattr(image_config, "row_height_cells", None)
+        if row_height_cells is not None:
+            from reyn.interfaces.repl.present_renderer import (
+                set_image_row_height_cells,
+            )
+
+            set_image_row_height_cells(row_height_cells)
     except Exception:
         pass
 
