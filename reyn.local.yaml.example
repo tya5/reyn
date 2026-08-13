@@ -264,9 +264,9 @@
 #
 # Per-server entry (kept as a raw dict so new transport options can be added
 # without OS changes per P7):
-#   type:    "stdio" | "http" | "sse"   (required transport selector)
+#   type:    "stdio" | "streamable-http" | "sse"   (required transport selector)
 #   command, args, env, cwd             (stdio)
-#   url, headers, timeout               (http / sse)
+#   url, headers, timeout               (streamable-http / sse)
 #
 # ``headers`` supports ``${VAR}`` interpolation so secrets stay out of YAML.
 #
@@ -287,7 +287,7 @@
 #     - https://mcp-registry.example.com/v1
 #   servers:
 #     github:
-#       type: http
+#       type: streamable-http
 #       url: https://api.githubcopilot.com/mcp/
 #       headers:
 #         Authorization: "Bearer ${GITHUB_TOKEN}"

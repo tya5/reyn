@@ -115,9 +115,9 @@ class ReynConfig:
     #
     # Per-server schema (raw dict; no dataclass — kept flexible so new MCP SDK
     # transport options can be added without OS changes per P7):
-    #   `type`:  "stdio" | "http" | "sse"   (required; transport selector)
+    #   `type`:  "stdio" | "streamable-http" | "sse"   (required; transport selector)
     #   command, args, env, cwd             (stdio transport)
-    #   url, headers, timeout               (http / streamable-http transport)
+    #   url, headers, timeout               (streamable-http / sse transport)
     #
     # ``headers`` is an optional ``dict[str, str]`` of HTTP headers passed at
     # connection time to HTTP-mode MCP servers (FP-0016 Component A). Used
@@ -130,7 +130,7 @@ class ReynConfig:
     #   mcp:
     #     servers:
     #       github:
-    #         `type`: http
+    #         `type`: streamable-http
     #         url: https://api.githubcopilot.com/mcp/
     #         headers:
     #           Authorization: "Bearer ${GITHUB_TOKEN}"

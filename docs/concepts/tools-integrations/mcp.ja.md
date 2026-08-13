@@ -18,7 +18,7 @@ MCP は AI エージェントがツールを公開する「サーバー」に接
 
 | ロール | 方向 | 仕組み |
 |--------|------|--------|
-| **MCP クライアント** — Reyn が外部サーバーを呼ぶ | アウトバウンド | Phase の `mcp` Control IR op + `permissions.mcp:` 宣言。ワークフローは「このサーバーのこのツールを呼んでほしい」と指示し、OS が `MCPClient`（stdio / http / sse）経由でディスパッチします。例：ワークフローが `filesystem` MCP サーバーを通じてファイルを読む。 |
+| **MCP クライアント** — Reyn が外部サーバーを呼ぶ | アウトバウンド | Phase の `mcp` Control IR op + `permissions.mcp:` 宣言。ワークフローは「このサーバーのこのツールを呼んでほしい」と指示し、OS が `MCPClient`（stdio / streamable-http / sse）経由でディスパッチします。例：ワークフローが `filesystem` MCP サーバーを通じてファイルを読む。 |
 | **MCP サーバー** — 外部クライアントが Reyn を呼ぶ | インバウンド | `reyn mcp serve --project .` を実行すると Reyn が JSON-RPC サーバーになります。Claude Code、Cursor、OpenAI Agents SDK など MCP に対応した任意のクライアントが、`list_agents()` と `send_to_agent(agent_name, message)` の 2 つのツールを通じて Reyn のエージェントを呼び出せます。 |
 
 このページでは以降、各ロールを順に解説します。
@@ -99,14 +99,14 @@ router が自動的に `list_mcp_tools` → `mcp_call_tool` を呼び出しま�
 ```
 phase frontmatter         LLM が Control IR を発行    OS がディスパッチ
   permissions:        →     {kind: mcp,           →   MCPClient
-    mcp: [filesystem]        server: filesystem,        (stdio | http | sse)
+    mcp: [filesystem]        server: filesystem,        (stdio | streamable-http | sse)
                              tool: read_text_file,
                              args: {path: ...}}
 ```
 
 1. ワークフローの Phase は frontmatter で `permissions.mcp: [server_name]` を宣言します。宣言がなければ、ランタイムはそのサーバーへのすべての呼び出しを拒否します。
 2. LLM は `mcp` Control IR op として `{server, tool, args}` を発行します。サーバー名を勝手に作ることはできません。`reyn.yaml` で設定され Phase のパーミッションに宣言されたサーバーだけが到達可能です。
-3. OS はサーバーのトランスポート（`stdio`、`http`、`sse`）を解決し、`MCPClient` 経由でディスパッチして、ツールの結果を Phase ループに返します。
+3. OS はサーバーのトランスポート（`stdio`、`streamable-http`、`sse`）を解決し、`MCPClient` 経由でディスパッチして、ツールの結果を Phase ループに返します。
 4. 呼び出しごとに event が発行されます。呼び出し前に `mcp_called`、正常終了後に `mcp_completed`（またはエラー時に `mcp_failed`）。監査証跡は他の op と同一です。
 
 境界が明確なのは意図的です。ワークフローは何が必要かを記述し、OS がどう取得するかを決めます。新しい MCP サーバーを追加しても OS コードには一切触れません（P7）。
@@ -183,7 +183,7 @@ mcp:
 
     # http: ホスト型サーバー、Streamable HTTP 越しの JSON-RPC
     internal_tools:
-      type: http
+      type: streamable-http
       url: https://tools.example.internal/mcp
       headers:
         Authorization: "Bearer ${INTERNAL_TOOLS_TOKEN}"
@@ -191,7 +191,7 @@ mcp:
 
 | フィールド | stdio | http | 説明 |
 |-----------|-------|------|------|
-| `type` | 必須 | 必須 | `stdio` \| `http` \| `sse` |
+| `type` | 必須 | 必須 | `stdio` \| `streamable-http` \| `sse` |
 | `command` | 必須 | — | 起動する実行ファイル（例：`npx`、`python`、絶対パス） |
 | `args` | 任意 | — | `command` に渡す引数リスト |
 | `env` | 任意 | — | 起動プロセスへの追加環境変数 |
@@ -212,7 +212,7 @@ API キーとトークンは `~/.reyn/secrets.env`（`reyn secret set` で管理
 mcp:
   servers:
     hosted_tool:
-      type: http
+      type: streamable-http
       url: https://tools.example.com/mcp
       auth: oauth   # {type: oauth} の省略形
       # または、scope や特定のクライアントが必要な場合の完全形式:

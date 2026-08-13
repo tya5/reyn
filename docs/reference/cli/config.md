@@ -45,11 +45,11 @@ reyn config migrate-mcp [--dry-run]
 `reyn config set` always writes to `reyn.local.yaml` (gitignored) — never to `reyn.yaml`.
 
 `reyn config validate` always exits `0`, even when it reports findings — it REPORTS, it
-never gates (owner ruling: warn, never hard-fail, anywhere). It checks five things,
+never gates (owner ruling: warn, never hard-fail, anywhere). It checks six things,
 each printed as its own labeled section (never merged into one list — the fix differs
-per section, and merging would lose "which one do I fix, and how"). Note the last two
-checks (hook entries, MCP server placement) each cover multiple separate config
-*files* under one section, not one:
+per section, and merging would lose "which one do I fix, and how"). Note the last
+three checks (hook entries, MCP server placement, MCP transport type) each cover
+multiple separate config *files* under one section, not one:
 
 - **Unrecognized/renamed/removed keys, policy tier** (`reyn.yaml` / `reyn.local.yaml` /
   `~/.reyn/config.yaml`) — the same check `load_config`'s own startup warning runs.
@@ -97,6 +97,15 @@ checks (hook entries, MCP server placement) each cover multiple separate config
   `.reyn/config/mcp.yaml`. Fix: add the missing `servers:` key by hand —
   `migrate-mcp` relocates already-correctly-nested `mcp.servers` entries between
   files, but does not add a missing `servers:` key to a misplaced entry.
+- **MCP transport type** (#4604) — reyn's own `mcp.servers.<name>.type` vocabulary
+  renamed `"http"` to `"streamable-http"`, aligning with the Agent Plugins 1.0
+  canonical `mcp.schema.json`. `MCPClient` already rejects the old value at
+  connection time with a clear error naming the rename, but that only fires the
+  next time the server is actually used — this check finds a stale `type: http`
+  entry proactively, without connecting to anything, checked PER SOURCE FILE (the
+  same 3 static locations + the dynamic `.reyn/config/mcp.yaml` the placement check
+  above scans). Fix: change `type: http` to `type: streamable-http` by hand in the
+  file the finding names.
 
 `reyn config migrate` only rewrites an entry whose registered rename has an automatic
 destination (a plain rename, no value transform); a rename that also transforms the

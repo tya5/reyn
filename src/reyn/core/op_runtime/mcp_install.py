@@ -131,7 +131,7 @@ def _build_server_entry(pkg_raw: dict, env_keys: list[str]) -> dict:
 
     issue #318: ``type:`` is ALWAYS written (= matches the loader's
     ``MCPClient`` expectation that ``type`` be one of
-    ``stdio | http | sse``). Pre-fix the function omitted the field
+    ``stdio | streamable-http | sse``). Pre-fix the function omitted the field
     for the default stdio case + wrote a ``transport:`` key (not
     ``type:``) for non-stdio — both produced configs that the loader
     rejected with ``Unsupported MCP server type: None``.
@@ -228,7 +228,7 @@ async def probe_mcp_server(
     way the pool's ``__aexit__`` has already torn the transport down (stdio subprocess
     kill via ``kill_process_tree`` / HTTP close) by the time this function returns/
     raises, and because the config write is strictly AFTER this probe, nothing gets
-    committed. **Transport-uniform**: stdio and remote (http/sse) share this one path —
+    committed. **Transport-uniform**: stdio and remote (streamable-http/sse) share this one path —
     ``MCPClient.__aexit__`` owns the transport-appropriate teardown, so the probe never
     branches on transport (mirrors ``RouterHostAdapter.mcp_list_tools``, #3447)."""
     from reyn.mcp.client import expand_env  # noqa: PLC0415
@@ -251,9 +251,9 @@ async def probe_mcp_server(
     expanded = expand_env(server_entry)
     if not isinstance(expanded, dict):
         return f"server config must be a dict, got {type(expanded).__name__}"
-    # A url-only remote entry defaults to http (mirrors mcp_list_tools).
+    # A url-only remote entry defaults to streamable-http (mirrors mcp_list_tools).
     if "type" not in expanded and expanded.get("url"):
-        expanded = {**expanded, "type": "http"}
+        expanded = {**expanded, "type": "streamable-http"}
     gateway = MCPGateway(agent_id=agent_id, cancel_event=cancel_event)
     try:
         await gateway.list_tools(server_name, expanded)

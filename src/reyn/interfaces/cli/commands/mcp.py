@@ -918,7 +918,7 @@ def _infer_transport(cfg: dict) -> str:
     if cfg.get("command"):
         return "stdio"
     if cfg.get("url"):
-        return "http"
+        return "streamable-http"
     return "(unknown)"
 
 

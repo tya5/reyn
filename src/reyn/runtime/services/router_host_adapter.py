@@ -2041,7 +2041,7 @@ class RouterHostAdapter:
         if not isinstance(expanded, dict):
             return [{"error": f"MCP server {server!r} config must be a dict"}]
         if "type" not in expanded and expanded.get("url"):
-            expanded = {**expanded, "type": "http"}
+            expanded = {**expanded, "type": "streamable-http"}
         return expanded
 
     async def _mcp_list_via_gateway(

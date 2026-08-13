@@ -47,7 +47,7 @@ async def _execute(op: MCPSubscribeResourceIROp, ctx: OpContext) -> dict:
                 "error": f"MCP server '{op.server}' config must be a dict."}
 
     if "type" not in expanded and expanded.get("url"):
-        expanded = {**expanded, "type": "http"}
+        expanded = {**expanded, "type": "streamable-http"}
 
     if ctx.mcp_connection_service is None:
         return {

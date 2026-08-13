@@ -153,7 +153,7 @@ def test_mcp_client_injects_x_reyn_agent_id_header(monkeypatch) -> None:
 
     captured = _capture_http_headers(monkeypatch)
     client = MCPClient(
-        {"type": "http", "url": "https://example.com/mcp", "init_timeout": 1},
+        {"type": "streamable-http", "url": "https://example.com/mcp", "init_timeout": 1},
         agent_id="reyn/test-agent",
     )
     _initialize_and_swallow_connect_failure(client)
@@ -165,7 +165,7 @@ def test_mcp_client_no_agent_id_no_header(monkeypatch) -> None:
     from reyn.mcp.client import MCPClient
 
     captured = _capture_http_headers(monkeypatch)
-    client = MCPClient({"type": "http", "url": "https://example.com/mcp", "init_timeout": 1})
+    client = MCPClient({"type": "streamable-http", "url": "https://example.com/mcp", "init_timeout": 1})
     _initialize_and_swallow_connect_failure(client)
     assert "X-Reyn-Agent-Id" not in captured["headers"]
 
@@ -181,7 +181,7 @@ def test_mcp_client_operator_header_wins(monkeypatch) -> None:
     captured = _capture_http_headers(monkeypatch)
     client = MCPClient(
         {
-            "type": "http",
+            "type": "streamable-http",
             "url": "https://example.com/mcp",
             "headers": {"X-Reyn-Agent-Id": "reyn/spoofed"},
             "init_timeout": 1,

@@ -284,7 +284,7 @@ HTML レスポンスはテキスト抽出されます（script、style、非コ�
 
 > **提示名。** Phase はこの op を chat-tool 名 `call_mcp_tool` として LLM に提示し、OS がパース境界で `mcp` kind にエイリアスし直します。`mcp` は `OP_KIND_MODEL_MAP` 上およびディスパッチされる op 上の正規 kind のままです。
 
-OS は server のトランスポート（`stdio`、`http`、`sse`）を解決し、`MCPClient` 経由でディスパッチして、ツール結果を返します。呼び出しごとに `mcp_called`、`mcp_completed`、（失敗時）`mcp_failed` イベントが発行されます。
+OS は server のトランスポート（`stdio`、`streamable-http`、`sse`）を解決し、`MCPClient` 経由でディスパッチして、ツール結果を返します。呼び出しごとに `mcp_called`、`mcp_completed`、（失敗時）`mcp_failed` イベントが発行されます。
 
 server の設定、トランスポートの選択、セキュリティモデルについては [concepts/tools-integrations/mcp.md](../../concepts/tools-integrations/mcp.md) を参照してください。
 

@@ -58,7 +58,7 @@ mcp:
         GITHUB_PERSONAL_ACCESS_TOKEN: ${GITHUB_PERSONAL_ACCESS_TOKEN}
 
     internal_tools:
-      type: http
+      type: streamable-http
       url: https://tools.example.internal/mcp
       headers:
         Authorization: "Bearer ${INTERNAL_TOOLS_TOKEN}"

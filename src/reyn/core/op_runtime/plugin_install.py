@@ -808,19 +808,14 @@ def _build_mcp_entries(mcp_json: Path) -> dict:
     ``{"mcpServers": {"<name>": {"type", "command", "args", "env"?, "url"?}}}``)
     into reyn's ``mcp.servers.<name>`` entry shape.
 
-    **Transport-type ADAPTER (#4570 conversion C1, temporary)**: the
-    Agent Plugins 1.0 canonical mcp.schema.json spells the HTTP-family
-    transport ``"streamable-http"``; reyn's OWN ``.reyn/config/mcp.yaml``
-    vocabulary still says ``"http"`` (``mcp/client.py``'s
-    ``_SUPPORTED_TYPES``) — that repo-wide rename is split off into #4604
-    (conversion C2, deliberately NOT done here: 18 src files + 9 test
-    files outside the plugin subsystem, lead-coder ruling). This function
-    is the ONE translation point: a spec-legal ``"streamable-http"``
-    becomes reyn-internal ``"http"``; ``"sse"`` passes through UNCHANGED
-    (it is a DISTINCT value in both vocabularies — mapping it into
-    ``"http"`` too would be a real bug, not just an incomplete rename).
-    Remove this translation once #4604 lands and reyn's own vocabulary
-    says ``"streamable-http"`` natively.
+    No transport-type translation any more (#4604): the Agent Plugins 1.0
+    canonical mcp.schema.json's HTTP-family transport, ``"streamable-http"``,
+    is now reyn's OWN ``.reyn/config/mcp.yaml`` vocabulary too
+    (``mcp/client.py``'s ``_SUPPORTED_TYPES``) — a plugin-declared
+    ``"streamable-http"`` passes straight through unchanged. Before #4604 this
+    function was the ONE translation point (#4570 conversion C1's temporary
+    adapter, translating spec-legal ``"streamable-http"`` into reyn-internal
+    ``"http"``); removed once the rename landed repo-wide.
 
     ``command`` is registered AS-IS (#3209 — register-only redesign: no
     venv-interpreter rewrite here any more). A plugin whose server needs a
@@ -842,8 +837,7 @@ def _build_mcp_entries(mcp_json: Path) -> dict:
             continue
         if "url" in spec:
             spec_type = spec.get("type", "streamable-http")
-            reyn_type = "http" if spec_type == "streamable-http" else spec_type
-            entry: dict = {"type": reyn_type, "url": spec["url"]}
+            entry: dict = {"type": spec_type, "url": spec["url"]}
         else:
             entry = {
                 "type": "stdio",
