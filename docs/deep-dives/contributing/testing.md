@@ -1155,8 +1155,15 @@ silently start running the full suite locally again without updating it.
    replace asking it.
 2. **ruff** — lint + import-sort (`I001`):
    ```bash
-   ruff check src tests        # add --fix for autofixable I001 / formatting
+   ruff check .                # add --fix for autofixable I001 / formatting
    ```
+   The bare `.` is load-bearing, not shorthand: CI runs `ruff check .`
+   (`test.yml:162`), so a narrower local run leaves `scripts/`, the repo root
+   and every other top-level directory ungated locally while they still gate
+   the merge. This line read `ruff check src tests` until #4630 measured the
+   gap — an author who followed it exactly still went red, and widening it
+   surfaced 17 genuinely-dead imports outside `src/` that this checklist had
+   never once looked at.
 3. **test-tier audit** — `scripts/test_tier_audit.py --strict` on each new or
    modified test file (the linter described under
    [Tier compliance auditor](#tier-compliance-auditor)). A Tier-4 format pin
