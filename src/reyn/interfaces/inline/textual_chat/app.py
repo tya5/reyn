@@ -858,6 +858,16 @@ class TextualChatApp(App):
         height: 1;
         text-style: @telemetry@;
         padding: 0 1;
+        /* #4542: pins the text to the row's RIGHT edge without touching
+           width — in the ``.-shared`` (merged) case the box is already
+           auto-tight to its own text, so this is a no-op there; in the
+           own-row fallback below, width stays 100% (load-bearing — see
+           that rule's own comment on why an auto-width own-row status
+           line can overflow), so text-align is what achieves "pinned
+           right" there instead of a spacer, which would need width: auto
+           to have anything to push against and would reopen the overflow
+           this rule protects against. */
+        text-align: right;
     }
     /* #4194: bold, not a colour — palette.py's own rule (@attention@ is the
        ONLY semantic colour this CUI claims, for the intervention panel;
