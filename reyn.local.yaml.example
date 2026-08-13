@@ -1037,16 +1037,16 @@
 # -----------------------------------------------------------------------------
 # hooks:
 #   - name: next_step          # optional label → the [hook:next_step] attribution
-#     on: turn_end             #   (absent → defaults to the hook-point, e.g. [hook:turn_end])
+#     "on": turn_end             #   (absent → defaults to the hook-point, e.g. [hook:turn_end])
 #     template_push:
 #       message: "Turn complete — consider the next step."
 #       wake: false
-#   - on: session_start
+#   - "on": session_start
 #     shell_exec: "echo session-started >> /tmp/reyn-hooks.log"
 #   - name: dynamic            # stdout decides whether/what/how to push
-#     on: turn_end
+#     "on": turn_end
 #     shell_push: "scripts/decide-next.sh"   # emits e.g. {"push_when":true,"wake":true,"message":"..."}
-#   - on: composed:deploy_approved   # subscribe to a composer's output (below) — a
+#   - "on": composed:deploy_approved   # subscribe to a composer's output (below) — a
 #     shell_exec: "reyn deploy.sh"   # Sync side-effect triggered by the composition.
 
 
