@@ -320,9 +320,12 @@ below for what happens when the model tries to act on one of those old,
 now-dead paths.
 
 Reuses `reyn.plugins.tokens` (`PluginTokenContext` / `expand_reyn_tokens`) —
-the same expansion primitive an mcp server's spawn config and a pipeline's
-`ctx` params use (ADR §3.4's "uniform across capabilities" split) — rather
-than a skill-specific reimplementation.
+the same expansion primitive a pipeline's `ctx` params use (ADR §3.4's
+"uniform across capabilities" split) — rather than a skill-specific
+reimplementation. An mcp server's `mcp.json` no longer shares this
+primitive: #4570 conversion D gave it a field-aware, standard-vocabulary
+bake (`${PLUGIN_ROOT}`/`${PLUGIN_DATA}`, expanded only in `args`/`env`/`cwd`,
+never `command`/`url` — see [Control IR: `plugin_install`](../../reference/runtime/control-ir.md#plugin_install-plugin_uninstall)).
 
 ## Config cascade
 
