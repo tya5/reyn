@@ -178,35 +178,13 @@ async def test_agent_outside_the_callers_subtree_is_rejected(tmp_path: Path) -> 
 
     assert result["status"] == "error"
     assert result["kind"] == "agent_outside_subtree"
-    assert reg.get_session("stranger", "main") is None, (
+    # #4575 review (lead-coder): a bare ``get_session("stranger", "main")``
+    # check is vacuous — spawn_session always mints a fresh uuid4 sid unless
+    # ``session`` is given (which this call doesn't), so "main" was never
+    # going to match regardless of whether the guard fired. ``session_ids``
+    # over the whole agent is the check that actually witnesses "nothing was
+    # spawned into 'stranger' at all".
+    assert reg.session_ids("stranger") == [], (
         "a rejected out-of-subtree target must not have been spawned into "
         "regardless of the error"
-    )
-
-
-@pytest.mark.asyncio
-async def test_falsify_removing_the_subtree_guard_wrongly_accepts_a_stranger(
-    tmp_path: Path,
-) -> None:
-    """Tier 2: LOAD-BEARING falsification — proves the guard above is doing
-    real work, not just returning a fixed error unconditionally — directly
-    exercises the SAME predicate the guard calls
-    (``AgentRegistry.is_spawn_descendant``) and shows it genuinely
-    distinguishes "stranger" (rejected above) from "worker" (an in-subtree
-    descendant, accepted by the sibling accept-path test above). Mirrors
-    ``test_create_topology_rejects_non_subtree_member``'s own falsification
-    shape for the identical predicate."""
-    reg, _coord = await _registry_with_live_coordinator(tmp_path, child_of_coord="worker")
-    reg.create("stranger")
-
-    assert reg.is_spawn_descendant("worker", "coord"), (
-        "test setup: 'worker' must actually be in coord's subtree — the "
-        "predicate this guard calls must accept it, or the accept-path "
-        "sibling test proves nothing"
-    )
-    assert not reg.is_spawn_descendant("stranger", "coord"), (
-        "the SAME predicate the agent_outside_subtree guard calls must "
-        "reject 'stranger' — if this ever goes True, the guard above would "
-        "silently start accepting it too (both call the identical "
-        "AgentRegistry.is_spawn_descendant(target, caller))"
     )

@@ -651,7 +651,9 @@ class RouterLoopHost(RouterLoopCore, Protocol):
     # it unbound (= hasattr-guarded at caller-state build).
     async def spawn_session(self, *, request: str, mode: str,
                             narrowing: "dict | None", chain_id: str,
-                            base_dir: "str | None" = None) -> dict: ...
+                            base_dir: "str | None" = None,
+                            agent: "str | None" = None,
+                            session: "str | None" = None) -> dict: ...
 
     # Proposal 0067 P5 (#3978): fire-and-forget delivery to a peer (agent,
     # session) via TurnOrigin.PEER_SESSION. Multi-session hosts implement it;
