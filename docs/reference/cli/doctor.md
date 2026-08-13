@@ -28,10 +28,10 @@ from the given path to find `reyn.yaml`).
 ## Design constraints (why the output reads the way it does)
 
 - **Measure, don't assert.** "A hook is registered" is `reyn config show`'s job;
-  "a hook's argv actually launched" is a *later* doctor slice (#4364's own C-1/C-2,
-  not implemented by this PR). This PR's own checks (disk usage) follow the same
-  rule: every number comes from `os.stat`/`Path.rglob`, never from re-reading a
-  config object.
+  "a hook's argv actually launched" is a separate measurement, landed since as
+  C-1 (#4596 — see the hook launch-probe section below). The disk-usage checks
+  follow the same rule: every number comes from `os.stat`/`Path.rglob`, never
+  from re-reading a config object.
 - **Report-only, never mutate.** `doctor` reaches into wider internals than any
   other CLI surface (sandbox / MCP / hook, in later slices). Every local-CLI
   precedent surveyed for this design (`npm doctor`, `claude doctor`,
@@ -95,12 +95,19 @@ absent from every report. Reuses `MediaStore.storage_stats()` and
 
 ## Out of scope for this PR (later slices, same arc)
 
-- **C-1 / C-2** (hook argv launch probe / zero-responder subscription detection) — a
-  separate PR once their own execution semantics were settled: C-1 launches only
-  `argv[0]` in the hook's own sandbox, never the hook's configured args, and its
-  output is explicitly labeled a launch probe, not a run (owner ruling: running a
-  hook's real configured args as a side effect of `reyn doctor` would make the
-  diagnostic itself a footgun).
+- **C-2** (zero-responder subscription detection) — still a later slice.
+
+  **C-1 landed in #4596** and is no longer out of scope. It is a *differential*
+  probe, not an exec check: the backend's own known-good control binary is
+  launched under the hook's policy first, and only the difference between that
+  and the hook's `argv[0]` is reported (`ok` / `target_failed` / `sandbox_failed`,
+  or `None` where the resolved backend cannot probe at all — Noop, or Docker,
+  whose image contents reyn cannot assume). It launches only `argv[0]`, never the
+  hook's configured args, and its output is labeled a launch probe rather than a
+  run (owner ruling: running a hook's real configured args as a side effect of
+  `reyn doctor` would make the diagnostic itself a footgun). A program that
+  *requires* arguments therefore reports here without being broken — disclosed in
+  the output rather than papered over by passing the args.
 - **C-5 / C-6** (sandbox posture, listen port, and model-name declared-vs-effective
   pairs) — each needs its own new measurement code (reading the resolved sandbox
   backend object, introspecting a live bound socket, a real litellm probe call),
