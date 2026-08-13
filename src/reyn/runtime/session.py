@@ -515,10 +515,15 @@ class _RetrievalBundle:
     """#3082 Family 5: the retrieval spine — the embedding block
     (``embedding_provider`` / ``embedding_model_class`` /
     ``action_embedding_index``, three attrs, one conditional construction
-    guarded SOLELY by ``embedding.enabled`` (FP-0066 §7 — "Single switch
-    embedding.enabled ... ON → action-retrieval...", no AND with
-    ``universal_wrappers_enabled`` anywhere in the ratified proposal) with
-    a try/except None-fallback. #4564 follow-up: an undeclared
+    guarded by ``embedding.enabled AND embedding.index.actions`` (#4156 —
+    ``enabled`` is the provider/cost gate, ``index.actions`` is the
+    workload switch; ``index.actions`` defaults True so this is byte-
+    identical to the old ``embedding.enabled``-only gate for an operator
+    who never sets it. FP-0066 §7's original "single switch" design — no
+    AND with ``universal_wrappers_enabled`` — still holds for THAT axis;
+    #4156 narrowed ``embedding.enabled``'s OWN scope instead, it did not
+    reintroduce the ``universal_wrappers_enabled`` coupling #4564 removed)
+    with a try/except None-fallback. #4564 follow-up: an undeclared
     ``universal_wrappers_enabled`` AND-condition here used to make
     #4564's own router_loop.py fix unreachable in a real session — see
     ``_build_retrieval_bundle``'s docstring for the full account.)
@@ -4056,9 +4061,11 @@ class Session:
         embedding_config: "EmbeddingConfig | None",
     ) -> "_RetrievalBundle":
         """#3082 Family 5: build the retrieval spine — the embedding block
-        (three attrs, one conditional construction guarded SOLELY by
-        ``embedding.enabled`` (FP-0066 §7, clean-break replacement for the
-        retired ``embedding_class`` truthy gate) with a try/except
+        (three attrs, one conditional construction guarded by
+        ``embedding.enabled AND embedding.index.actions`` (#4156 —
+        ``index.actions`` defaults True; FP-0066 §7's original single-
+        switch gate, clean-break replacement for the retired
+        ``embedding_class`` truthy gate) with a try/except
         None-fallback). ``render_bounds`` (never existed in this codebase)
         and ``subscription_writer`` (WAL-derived task-subscription state,
         not retrieval) are excluded per the Family 4 spec's own DAG
@@ -4110,8 +4117,10 @@ class Session:
         # EmbeddingProvider once per session when the operator has set
         # ``embedding.enabled: true`` (FP-0066 §7 — clean-break
         # replacement for the retired ``action_retrieval.embedding_class``
-        # on/off gate; the model CLASS is ``embedding.default_class``).
-        # Both stay None when embedding is not enabled, in which case the
+        # on/off gate; the model CLASS is ``embedding.default_class``) AND
+        # ``embedding.index.actions`` is true (#4156 — default True, so
+        # this is a no-op change for an operator who never sets it). Both
+        # stay None when either gate is off, in which case the
         # ``search_actions`` wrapper is hidden by ``build_tools`` and
         # the handler degrades to an empty-result response.
         action_embedding_index: Any = None
@@ -4120,6 +4129,11 @@ class Session:
         if (
             embedding_config is not None
             and embedding_config.enabled
+            # #4156: `embedding.enabled` is the provider/cost gate only —
+            # WHICH workload runs is `embedding.index.*`'s job. Default
+            # True, so this AND adds no behavior change for an operator
+            # who never touches `embedding.index.actions`.
+            and embedding_config.index.actions
         ):
             try:
                 from reyn.data.embedding import get_provider as _get_provider

@@ -106,11 +106,19 @@ def _patch_embedding_config_enabled(monkeypatch: pytest.MonkeyPatch, *, enabled:
     ``load_config().embedding.enabled`` directly (not the op_runtime.embed
     private gate) — patched at the ``reyn.config`` package attribute (what
     ``_embedding_enabled``'s ``from reyn.config import load_config``
-    actually resolves at call time) so a test can control it."""
+    actually resolves at call time) so a test can control it.
+
+    #4156: also sets ``embedding.index.repo_knowledge`` to the same value
+    — this file's whole subject IS the repo-knowledge workload, which now
+    needs its own opt-in (default False) alongside ``enabled``. Tying both
+    to one ``enabled`` param keeps every existing call site in this file
+    unchanged; a test wanting the two gates to diverge would need its own
+    setup, and none currently does."""
     import reyn.config as _config_mod
 
     cfg = _config_mod.load_config()
     monkeypatch.setattr(cfg.embedding, "enabled", enabled, raising=False)
+    monkeypatch.setattr(cfg.embedding.index, "repo_knowledge", enabled, raising=False)
     monkeypatch.setattr(_config_mod, "load_config", lambda *a, **kw: cfg)
 
 
@@ -259,6 +267,92 @@ def test_sync_repo_ingest_background_noops_when_embedding_disabled(
     manifest = get_source_manifest(ws_root)
     assert _run(manifest.get(KNOWLEDGE_REPO_DOC_SOURCE_ID)) is None
     assert _run(manifest.get(KNOWLEDGE_REPO_SRC_SOURCE_ID)) is None
+
+
+def test_sync_repo_ingest_background_noops_when_repo_knowledge_index_off(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Tier 3a: #4156 — the SECOND gate. `embedding.enabled=True` alone is
+    no longer sufficient; `embedding.index.repo_knowledge` (default False)
+    must also be true. Same no-op shape as the `enabled=False` test above,
+    but reached via the other axis — proves the two gates are genuinely
+    independent, not one flag under two names.
+
+    Strip-falsify: removing the `_repo_knowledge_index_enabled()` check
+    from `sync_repo_ingest_background` turns this RED — a manifest entry
+    gets created even though `index.repo_knowledge` is false."""
+    import reyn.config as _config_mod
+    from reyn.data.index import knowledge_ingest as _ki_mod
+
+    _ki_mod._reset_repo_knowledge_skip_warning_for_tests()
+
+    repo_root = tmp_path / "fake_repo"
+    _make_fake_repo(repo_root)
+    _patch_repo_root(monkeypatch, repo_root)
+
+    # embedding.enabled=True but index.repo_knowledge stays at its own
+    # default (False) — NOT the `_patch_embedding_config_enabled` helper,
+    # which ties both together; this test needs them to diverge.
+    cfg = _config_mod.load_config()
+    monkeypatch.setattr(cfg.embedding, "enabled", True, raising=False)
+    monkeypatch.setattr(cfg.embedding.index, "repo_knowledge", False, raising=False)
+    monkeypatch.setattr(_config_mod, "load_config", lambda *a, **kw: cfg)
+
+    ws_root = tmp_path / "workspace"
+    ws_root.mkdir()
+    coordinator = IndexCoordinator(ws_root)
+    op_ctx = _make_op_ctx(ws_root)
+
+    _run(sync_repo_ingest_background(coordinator, op_ctx, events=None))
+
+    manifest = get_source_manifest(ws_root)
+    assert _run(manifest.get(KNOWLEDGE_REPO_DOC_SOURCE_ID)) is None
+    assert _run(manifest.get(KNOWLEDGE_REPO_SRC_SOURCE_ID)) is None
+
+
+def test_repo_knowledge_skip_logs_exactly_once_per_process(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Tier 3a: #4156, lead-coder's "don't disable quietly" condition —
+    the skip is logged, but only ONCE per process (this function is called
+    on every router-loop turn; a WARN every turn would be noise, not
+    signal). Calling twice must produce exactly one record.
+
+    Strip-falsify: removing `_warn_repo_knowledge_skip_once`'s call (or
+    its one-shot latch) either drops the message entirely or spams one
+    per call — either way this test goes RED."""
+    import logging
+
+    import reyn.config as _config_mod
+    from reyn.data.index import knowledge_ingest as _ki_mod
+
+    _ki_mod._reset_repo_knowledge_skip_warning_for_tests()
+
+    repo_root = tmp_path / "fake_repo"
+    _make_fake_repo(repo_root)
+    _patch_repo_root(monkeypatch, repo_root)
+
+    cfg = _config_mod.load_config()
+    monkeypatch.setattr(cfg.embedding, "enabled", True, raising=False)
+    monkeypatch.setattr(cfg.embedding.index, "repo_knowledge", False, raising=False)
+    monkeypatch.setattr(_config_mod, "load_config", lambda *a, **kw: cfg)
+
+    ws_root = tmp_path / "workspace"
+    ws_root.mkdir()
+    coordinator = IndexCoordinator(ws_root)
+    op_ctx = _make_op_ctx(ws_root)
+
+    with caplog.at_level(logging.WARNING, logger="reyn.data.index.knowledge_ingest"):
+        _run(sync_repo_ingest_background(coordinator, op_ctx, events=None))
+        _run(sync_repo_ingest_background(coordinator, op_ctx, events=None))
+        _run(sync_repo_ingest_background(coordinator, op_ctx, events=None))
+
+    skip_messages = [
+        r.message for r in caplog.records if "repo knowledge indexing is off" in r.message
+    ]
+    assert skip_messages, "expected the skip WARN to fire at least once"
+    (only_message,) = skip_messages  # raises ValueError if not exactly one
+    assert "embedding.index.repo_knowledge" in only_message
 
 
 # ── 2. doc/src classification ────────────────────────────────────────────

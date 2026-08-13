@@ -605,6 +605,51 @@ def _embedding_enabled() -> bool:
         return False
 
 
+def _repo_knowledge_index_enabled() -> bool:
+    """#4156: the SECOND gate for the repo-knowledge workload specifically
+    — ``embedding.index.repo_knowledge`` (default False). Distinct from
+    ``_embedding_enabled`` above (the provider/cost gate, checked first):
+    an operator can have embedding enabled (for ``search_actions``) without
+    this — that combination is exactly what caused the owner's TPM
+    incident this split exists to prevent (issue #4156)."""
+    try:
+        from reyn.config import load_config
+        return bool(load_config().embedding.index.repo_knowledge)
+    except Exception:
+        return False
+
+
+_REPO_KNOWLEDGE_SKIP_LOGGED = False
+
+
+def _warn_repo_knowledge_skip_once() -> None:
+    """#4156, lead-coder ruling: defaulting ``repo_knowledge`` to False
+    must not go silent (the same "don't disable quietly" discipline
+    #4580 applied to a dropped MCP server) — emit exactly one line per
+    process the first time a turn would have ingested the repo-knowledge
+    index and didn't, naming the config key so an operator who wants it
+    knows what to set. Same one-shot-WARN pattern as
+    ``security.sandbox.noop_backend._warn_once``."""
+    global _REPO_KNOWLEDGE_SKIP_LOGGED
+    if _REPO_KNOWLEDGE_SKIP_LOGGED:
+        return
+    _REPO_KNOWLEDGE_SKIP_LOGGED = True
+    import logging
+    logging.getLogger(__name__).warning(
+        "repo knowledge indexing is off (embedding.index.repo_knowledge: "
+        "false, the default) — knowledge_repo_doc/knowledge_repo_src are "
+        "not being built. Set embedding.index.repo_knowledge: true to "
+        "opt in.",
+    )
+
+
+def _reset_repo_knowledge_skip_warning_for_tests() -> None:
+    """Test hook: reset the one-shot warning latch (mirrors
+    ``noop_backend._reset_warning_for_tests``)."""
+    global _REPO_KNOWLEDGE_SKIP_LOGGED
+    _REPO_KNOWLEDGE_SKIP_LOGGED = False
+
+
 async def sync_repo_ingest_background(
     coordinator: IndexCoordinator,
     op_ctx: "OpContext",
@@ -629,9 +674,15 @@ async def sync_repo_ingest_background(
     even though these are "static", not "dynamic" — an unaware caller,
     the router-loop turn preamble, must never fail because of this
     scheduling call). No-ops entirely (does not even register/ensure_built)
-    when ``embedding.enabled`` is false — see ``_embedding_enabled``.
+    when ``embedding.enabled`` is false — see ``_embedding_enabled`` — OR
+    when ``embedding.index.repo_knowledge`` is false (#4156 — see
+    ``_repo_knowledge_index_enabled``), the latter case logging one
+    process-lifetime WARN so the skip isn't silent.
     """
     if not _embedding_enabled():
+        return
+    if not _repo_knowledge_index_enabled():
+        _warn_repo_knowledge_skip_once()
         return
     try:
         model_class = resolve_default_embedding_model_class()
