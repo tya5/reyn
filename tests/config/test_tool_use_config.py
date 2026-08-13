@@ -58,13 +58,11 @@ def test_reyn_config_carries_tool_use_default() -> None:
 
 
 # ── 2. Parser — happy path ────────────────────────────────────────────────
-
-
-def test_parser_universal_wrappers_enabled_true() -> None:
-    """Tier 2: setting universal_wrappers_enabled True flows through
-    alongside the field's scheme/transport siblings."""
-    cfg = _build_tool_use_config({"universal_wrappers_enabled": True})
-    assert cfg.universal_wrappers_enabled is True
+# (No "set True, assert True" case here — that value is indistinguishable
+# from the parser silently ignoring the key entirely, since True is also
+# the field's own default. test_parser_omitted_defaults_to_true already
+# covers the default; _false / _with_explicit_opt_out below cover the
+# parser actually READING a non-default value.)
 
 
 def test_parser_universal_wrappers_enabled_false() -> None:
@@ -105,11 +103,18 @@ def test_parser_rejects_non_bool_wrappers_enabled() -> None:
 # ── 4. End-to-end load_config integration ─────────────────────────────────
 
 
-def test_load_config_picks_up_tool_use_universal_wrappers_enabled(
+def test_load_config_picks_up_tool_use_scheme(
     tmp_path: Path,
 ) -> None:
-    """Tier 2: load_config reads tool_use.universal_wrappers_enabled from
-    reyn.yaml, alongside scheme."""
+    """Tier 2: load_config reads tool_use.scheme from reyn.yaml, alongside
+    the sibling universal_wrappers_enabled key.
+
+    Only ``scheme`` (non-default: ``category``) is asserted here — a
+    ``universal_wrappers_enabled: true`` assertion would be indistinguishable
+    from the parser silently ignoring that key (True is also the field's
+    own default); the read-through for that key is exercised at its
+    non-default value by ``test_load_config_with_explicit_opt_out`` below.
+    """
     (tmp_path / "reyn.yaml").write_text(
         """
 tool_use:
@@ -120,7 +125,6 @@ tool_use:
     )
 
     cfg = load_config(cwd=tmp_path)
-    assert cfg.tool_use.universal_wrappers_enabled is True
     assert cfg.tool_use.scheme == "category"
 
 
