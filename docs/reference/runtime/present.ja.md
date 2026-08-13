@@ -63,7 +63,7 @@ guard/renderer の分割）については [コンセプト: Present レイヤ](
 | `keyvalue` | `rows: [{label, value}]` |
 | `table` | `rows`（bind → 配列）, `columns: [{header, path}]` |
 | `list` | `items`（bind → 配列）, `item_path?`（項目単位パス） |
-| `image` | `src`, `alt?` — TUI（`textual_chat`）は `src` を取得し（owner 裁定 C — client 自身が URL を取得、#3846）実ピクセルを描画する（Kitty/WezTerm の実ピクセル、または Sixel。それ以外は半ブロック/unicode 近似 — 端末ごとに自動判定、#3846 ③）。resolution stage の無いサーフェス（`reyn chat --cui`、`reyn pipe`）は `[image: <alt>]` という dim テキストのプレースホルダーを表示する。取得/デコード失敗時は区別可能な `[image failed: ...]` 状態を表示し、プレースホルダーと同じテキストにはならない |
+| `image` | `src`, `alt?` — TUI（`textual_chat`）は `src` を取得し（owner 裁定 C — client 自身が URL を取得、#3846）半ブロック Unicode セルとして描画する（`HalfBlockImage`、#4474 — 固定行高 `image.row_height_cells`、既定 20、幅はアスペクト比を保つよう derive）。本doc の以前の版は実ピクセル（Kitty/Sixel）経路＋半ブロック fallback を記述していたが、#4474 でその経路は `textual-image` 依存ごと完全に廃止された — Sixel はカーソル相対に描画するため virtualized なセル再描画行モデルでは位置決め/クリップができず、Kitty のプレースホルダー protocol も reyn が対象とする端末上では検出不能な形で壊れていることが判明し、実ピクセルは実運用上一度も届いていなかった。resolution stage の無いサーフェス（`reyn chat --cui`、`reyn pipe`）は `[image: <alt>]` という dim テキストのプレースホルダーを表示する。取得/デコード失敗時は区別可能な `[image failed: ...]` 状態を表示し、プレースホルダーと同じテキストにはならない |
 
 v1 に**対話コンポーネント**（ボタン / フォーム）は存在しない。
 

@@ -61,7 +61,7 @@ A view is a **declarative component tree**, never code. It is built from a fixed
 | `keyvalue` | a card of label/value rows |
 | `table` | rows × columns |
 | `list` | a bullet list |
-| `image` | the TUI fetches the URL itself and renders REAL pixels (Kitty/WezTerm/Sixel, half-block/unicode fallback, auto-detected per-terminal — #3846 ③); surfaces without a resolution stage (`--cui`, `reyn pipe`) fall back to an `[image: <alt>]` dim-text placeholder |
+| `image` | the TUI fetches the URL itself and renders it as half-block Unicode cells (`HalfBlockImage`, #4474 — a real-pixel Kitty/Sixel path was tried and dropped: it never actually rendered on the terminals reyn targets); surfaces without a resolution stage (`--cui`, `reyn pipe`) fall back to an `[image: <alt>]` dim-text placeholder |
 
 Data is joined to the view by **JSON Pointer (RFC 6901)** path bindings — expressed
 structurally as `{"$bind": "<pointer>"}`. `table` and `list` paths resolve **row-relative**
