@@ -51,6 +51,14 @@ from tests._support.minimal_reyn_yaml import MINIMAL_REYN_YAML
 # distinguish "loader read+coerced" from a real no-op. Supply a domain-valid
 # non-default so the guard stays decisive. Keyed by dotted key; the iteration
 # itself is still live-walk-derived — this only overrides the candidate VALUE.
+#
+# `audit_events.backend` (#4496 PR-2) does NOT need an entry here: it is
+# typed `Literal["local", "discard"]`, not a bare coercing `str`, so
+# `_nondefault_candidate`'s existing Literal branch (below) already picks
+# a real, non-default member automatically — no override needed. Left as
+# the discriminator for FUTURE soft-coercing string fields (the override
+# mechanism itself stays correct; this dict is empty because nothing
+# currently needs it, not because it doesn't work).
 _VALID_NONDEFAULT_OVERRIDES: dict[str, object] = {}
 
 

@@ -2070,6 +2070,7 @@ audit_events:
   max_age_seconds: 86400           # rotate after 1 day (default)
   cleanup_period_days: 30          # auto-delete files older than 30 days (default)
   max_disk_usage_percent: 10       # auto-delete oldest files past 10% of free space (default)
+  backend: local                   # where events are written (default)
 ```
 
 | Field | Type | Default | Description |
@@ -2078,8 +2079,9 @@ audit_events:
 | `max_age_seconds` | int | `86400` (1 day) | Rotate the active event file when it exceeds this age in seconds. `0` = no age-based rotation. |
 | `cleanup_period_days` | int | `30` | Automatic-purge age axis (#4479) — files whose filename date is older than this many days are deleted. `0` disables this axis. |
 | `max_disk_usage_percent` | float | `10` | Automatic-purge size axis (#4479) — once the events directory's own total size exceeds this percent of the filesystem's current FREE space, oldest files are deleted until back under. `0` disables this axis. |
+| `backend` | string | `local` | **#4496 — where audit-events are WRITTEN.** `local` (default) preserves current behavior — events land under `.reyn/events` exactly as before this field existed. `discard` (sink-null) writes nothing to disk; subscriber delivery (the TUI/AG-UI forwarders, hooks, OTEL) and the per-emitter `audit_seq` continuity (#4496 PR-1) are UNCHANGED either way — see [Concepts: events](../../concepts/runtime/events.md#write-side-backend-4496) for the structural guarantee. **`discard` means `reyn events replay` / support-bundle / dogfood_trace have nothing to read for this run — in particular, support-bundle is the tool operators use to report bugs, so this trades that away.** `network` is not yet a valid value (an unrecognized string, `network` included, falls back to `local`) — its on-failure semantics are an open design question tracked in #4496. |
 
-Setting both `max_bytes` and `max_age_seconds` to `0` disables rotation entirely.
+Setting both `max_bytes` and `max_age_seconds` to `0` disables rotation entirely. `backend: discard` makes both rotation fields moot (nothing is ever written to rotate).
 
 ### Automatic purge (#4479)
 

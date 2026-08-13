@@ -519,12 +519,22 @@
 # forever) — documented plainly here on purpose: Claude Code carries an
 # open report of its own ``cleanupPeriodDays`` knob being ambiguous about
 # what ``0`` means, and this is that precedent deliberately not repeated.
+#
+# ``backend`` (#4496, default "local"): where audit-events are WRITTEN.
+# "local" (default) is unchanged from before this field existed. "discard"
+# (sink-null) writes nothing to disk — subscriber delivery (TUI/AG-UI,
+# hooks, OTEL) and the per-emitter ``audit_seq`` continuity (#4496 PR-1)
+# are UNCHANGED either way, but ``reyn events replay`` / support-bundle /
+# dogfood_trace have nothing to read for a discard run. "network" is not
+# yet a valid value (falls back to "local") — its on-failure semantics
+# are an open design question tracked in #4496.
 # -----------------------------------------------------------------------------
 # audit_events:
 #   max_bytes: 10485760              # 10 MB
 #   max_age_seconds: 86400           # 1 day
 #   cleanup_period_days: 30          # 0 = never auto-delete by age
 #   max_disk_usage_percent: 10       # 0 = never auto-delete by size
+#   backend: local                   # local | discard
 
 
 # -----------------------------------------------------------------------------

@@ -7,6 +7,7 @@ from datetime import date
 from pathlib import Path
 from typing import Callable
 
+from reyn.core.events.backend import EventBackend
 from reyn.schemas.models import Event
 
 logger = logging.getLogger(__name__)
@@ -50,6 +51,7 @@ class EventLog:
         run_id: str | None = None,
         emitter: str | None = None,
         track_audit_seq: bool = True,
+        backend: "EventBackend | None" = None,
     ) -> None:
         # #3868 PR-1: a folded derived state for `present`'s "was this ref
         # already read this session?" question (source.py's compute_ingested),
@@ -109,6 +111,12 @@ class EventLog:
         # entirely rather than always stamping a meaningless `1`.
         self._track_audit_seq = track_audit_seq
         self._audit_seq = 0
+        # #4496 PR-2: the WRITE-side backend (local disk / discard — see
+        # `backend.py`'s module docstring for the full contract and why
+        # this is NOT a subscriber). None preserves the pre-PR-2 shape
+        # (no write side at all — callers that want persistence add an
+        # EventStore as a plain subscriber, same as before this PR).
+        self._backend = backend
 
     @property
     def subscribers(self) -> list[Callable[[Event], None]]:
@@ -142,6 +150,14 @@ class EventLog:
         return self._run_id
 
     @property
+    def backend(self) -> "EventBackend | None":
+        """The active write-side backend (#4496 PR-2), or None (no write
+        side — pre-PR-2 shape). Public read-only view so a consumer
+        (`reyn events` CLI) can call `declare_gaps()` without reaching into
+        private state."""
+        return self._backend
+
+    @property
     def emitter(self) -> str:
         """The emitter label this EventLog stamps onto every emitted event
         (#4496 PR-1, contract 3) — auto-generated at construction when not
@@ -152,6 +168,15 @@ class EventLog:
 
     def add_subscriber(self, fn: Callable[[Event], None]) -> None:
         self._subscribers.append(fn)
+
+    def set_backend(self, backend: "EventBackend | None") -> None:
+        """Swap the WRITE-side backend (#4496 PR-2) — e.g. re-pointing to a
+        new `EventStore`-backed `LocalEventBackend` after `set_events_dir`
+        re-keys a spawned session's events directory. Deliberately a plain
+        setter, not add/remove: exactly one backend is active at a time
+        (unlike subscribers, which are a list) — the PREVIOUS backend is
+        simply dropped, no explicit "remove" step needed."""
+        self._backend = backend
 
     def remove_subscriber(self, fn: Callable[[Event], None]) -> bool:
         """Detach a previously added subscriber.
@@ -212,6 +237,22 @@ class EventLog:
                             self._ingested[path] = "partial"
                     else:
                         self._ingested[path] = "full"
+        # #4496 PR-2: the backend writes BEFORE the subscriber loop runs,
+        # and its own exception is caught right here — never let a backend
+        # failure (e.g. a future network backend's connection error) reach
+        # a subscriber, and (by running first) never let a raising
+        # subscriber prevent the backend from having already written. See
+        # `backend.py`'s module docstring for the full "not a subscriber"
+        # rationale.
+        if self._backend is not None:
+            try:
+                self._backend.write(event)
+            except Exception:
+                logger.exception(
+                    "event backend write failed (emitter=%s type=%s) — "
+                    "continuing to subscriber dispatch",
+                    self._emitter, type,
+                )
         for sub in self._subscribers:
             sub(event)
         return event

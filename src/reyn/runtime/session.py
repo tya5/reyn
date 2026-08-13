@@ -37,6 +37,7 @@ from reyn.config import (  # noqa: F401
 )
 from reyn.core.events.agent_snapshot import AgentSnapshot
 from reyn.core.events.anchor_store import truncate_anchor as _truncate_anchor
+from reyn.core.events.backend import DiscardEventBackend, EventBackend, LocalEventBackend
 from reyn.core.events.event_store import EventStore
 from reyn.core.events.events import EventLog
 from reyn.core.events.snapshot_generations import SnapshotGenerationStore
@@ -1432,11 +1433,13 @@ class Session:
         registry's ``spawn_session`` fixup calls this — parallel to the snapshot/WAL
         re-key — before the run-loop goes live, so no event lands in the shared tree.
 
-        Swaps ONLY the ``EventStore`` subscriber on ``_audit_events`` (remove old, add
-        new); every OTHER subscriber (the ``ChatLifecycleForwarder`` outbox bridge, the
-        state-change converter, any attach-time focus listener) is preserved. A rebuild
-        of the subscriber list would silently drop them and audit events would stop
-        reaching the outbox / TUI — so the swap is surgical, not a reconstruction.
+        #4496 PR-2: swaps ONLY the WRITE-side backend on ``_audit_events``
+        (``set_backend``, a plain setter — the backend is a singleton, not
+        a subscriber list entry, since PR-2 moved ``EventStore`` off the
+        subscriber list entirely). Every SUBSCRIBER (the
+        ``ChatLifecycleForwarder`` outbox bridge, the state-change
+        converter, any attach-time focus listener, OTEL) is untouched by
+        this swap — the subscriber list is never rebuilt here.
         """
         new_store = EventStore(
             events_dir,
@@ -1445,8 +1448,7 @@ class Session:
             cleanup_period_days=self._events_config.cleanup_period_days,
             max_disk_usage_percent=self._events_config.max_disk_usage_percent,
         )
-        self._audit_events.remove_subscriber(self._event_store)
-        self._audit_events.add_subscriber(new_store)
+        self._audit_events.set_backend(self._build_events_backend(new_store))
         self.events_dir = events_dir
         self._event_store = new_store
 
@@ -3760,6 +3762,25 @@ class Session:
         registry-derived-enumeration discipline the family gate itself uses."""
         return self._hot_reloader.seam_names()
 
+    def _build_events_backend(self, event_store: EventStore) -> "EventBackend":
+        """#4496 PR-2: resolve ``self._events_config.backend`` (``"local"`` /
+        ``"discard"`` — ``"network"`` is not yet a real value, see
+        ``AuditEventsConfig.backend``'s own docstring) to a concrete
+        ``EventBackend`` wrapping *event_store*.
+
+        Deliberately NOT threaded as an ``EventLog`` subscriber (unlike
+        pre-PR-2 shape) — see ``reyn.core.events.backend``'s module
+        docstring for why a backend must be called from inside
+        ``EventLog.emit()`` itself, before the subscriber loop, rather than
+        sit in the subscriber list alongside ``ChatLifecycleForwarder`` /
+        the state-change converter / OTEL: a raising backend in the
+        subscriber list would abort delivery to every subscriber
+        registered after it (the exact "discard silences the UI" failure
+        mode #4496 forbids)."""
+        if self._events_config.backend == "discard":
+            return DiscardEventBackend()
+        return LocalEventBackend(event_store)
+
     # ── #3082 Family 1: audit-event spine builder. See session-construction.md. ──
 
     def _build_audit_event_bundle(
@@ -3803,7 +3824,10 @@ class Session:
             max_disk_usage_percent=self._events_config.max_disk_usage_percent,
         )
         audit_events = EventLog(
-            subscribers=[event_store],
+            # #4496 PR-2: event_store is no longer threaded in as a
+            # subscriber (see self._build_events_backend's own docstring
+            # for why) — it's wrapped as the WRITE-side backend instead.
+            backend=self._build_events_backend(event_store),
             agent_id=self._agent.agent_id,  # FP-0016 E: auto-inject agent_id into every event
         )
         otel_exporter = None
