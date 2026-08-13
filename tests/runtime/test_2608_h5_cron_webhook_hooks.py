@@ -39,6 +39,7 @@ from reyn.runtime.session import Session
 from reyn.runtime.session_params import ReactivityConfig
 from reyn.runtime.turn_origin import TurnOrigin
 from tests._support.agent_session import make_session
+from tests._support.events import collect_events
 
 
 class _NoRunAgentRegistry(AgentRegistry):
@@ -231,6 +232,39 @@ async def test_cron_empty_registry_leaves_ingress_delivery_unaffected(tmp_path):
     assert payload["text"] == "hi"  # no hook message — pure no-op
 
 
+@pytest.mark.asyncio
+async def test_cron_fire_emits_cron_fired_audit_event_with_no_hook_configured(tmp_path):
+    """Tier 2: #4605 — the arrival of a ``cron_fired`` signal is recorded on
+    ``session._audit_events`` even with NO ``cron_fired`` hook configured
+    (empty-registry equivalence, mirroring H1's own
+    ``test_no_configured_hook_leaves_hook_side_a_pure_noop``). Before #4605
+    this was the silent gap: cron_fired/file_changed/webhook_received never
+    emitted an arrival audit event regardless of hook config; only
+    ``mcp_resource_updated`` did."""
+    reg = _make_registry(tmp_path, hooks_config=None)
+    _seed(tmp_path, "news_agent")
+
+    async def _inbox_pusher(to: str, envelope: dict, native_id: str) -> str:
+        session = resolve_cron_session(reg, to, native_id)
+        dispatch_cron_fired(session, native_id, to)
+        await session._put_inbox(TurnOrigin.CRON, envelope)
+        return "ok"
+
+    runner = build_default_runner(inbox_pusher=_inbox_pusher)
+    # resolve_cron_session is idempotent get-or-spawn — resolving once here
+    # (before the fire) to subscribe collect_events, then letting the
+    # runner's own resolve inside _inbox_pusher return the SAME session.
+    session = resolve_cron_session(reg, "news_agent", "morning_news")
+    collected = collect_events(session._audit_events)
+    job = CronJob(name="morning_news", schedule="0 9 * * *", to="news_agent", message="hi")
+    await runner(job)
+
+    await _wait_for(lambda: any(e.type == "cron_fired" for e in collected))
+    (event,) = [e for e in collected if e.type == "cron_fired"]
+    assert event.data["job_name"] == "morning_news"
+    assert event.data["to"] == "news_agent"
+
+
 # ---------------------------------------------------------------------------
 # Tier 2: (b) an inbound webhook -> webhook_received hook fires with
 # transport/sender
@@ -353,4 +387,36 @@ async def test_webhook_received_template_vars_carry_no_raw_payload_text(tmp_path
     hook_items = [p for k, p in items if k == "hook"]
     (hook_payload,) = hook_items  # exactly one hook fired — unpack asserts the count
     assert hook_payload["text"] == "NO_SECRET"
-    assert "TOP_SECRET_TOKEN_abc123" not in hook_payload["text"]
+
+
+@pytest.mark.asyncio
+async def test_webhook_receipt_emits_webhook_received_audit_event_with_no_hook_configured(tmp_path):
+    """Tier 2: #4605 — the arrival of a ``webhook_received`` signal is recorded
+    on ``session._audit_events`` even with NO ``webhook_received`` hook
+    configured (empty-registry equivalence, mirroring H1's own
+    ``test_no_configured_hook_leaves_hook_side_a_pure_noop``). Same
+    SECURITY invariant as the hook payload: only ``transport``/``sender``,
+    never the raw inbound body."""
+    from reyn.gateway.api import push_to_agent
+    from reyn.hooks.ingress import WebhookIngressAdapter
+
+    reg = _make_registry(tmp_path, hooks_config=None)
+    _seed(tmp_path, "support_agent")
+    # resolve_session is idempotent get-or-spawn — resolving once here
+    # (before the request) to subscribe collect_events, then letting
+    # push_to_agent's own resolve return the SAME session.
+    session = WebhookIngressAdapter().resolve_session(reg, "support_agent", "slack:U456")
+    collected = collect_events(session._audit_events)
+
+    await push_to_agent(
+        target_agent="support_agent",
+        text="TOP_SECRET_TOKEN_abc123",
+        sender="slack:U456",
+        registry=reg,
+    )
+
+    await _wait_for(lambda: any(e.type == "webhook_received" for e in collected))
+    (event,) = [e for e in collected if e.type == "webhook_received"]
+    assert event.data["transport"] == "slack"
+    assert event.data["sender"] == "slack:U456"
+    assert "TOP_SECRET_TOKEN_abc123" not in str(event.data)

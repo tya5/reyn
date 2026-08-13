@@ -22,7 +22,11 @@ the same ingress coroutine as the job's own inbox delivery (see
 """
 from __future__ import annotations
 
+import logging
+
 from reyn.hooks.ingress import CronIngressAdapter
+
+_log = logging.getLogger(__name__)
 
 CRON_TRANSPORT = "cron"
 
@@ -70,6 +74,18 @@ def dispatch_cron_fired(session, job_name: str, to: str) -> None:
     ``reyn.runtime.webhook_routing.dispatch_webhook_received``). ``job_name``
     is the matchable field (exact match — not a glob field, see
     ``reyn.hooks.matcher``), e.g. ``matcher: {job_name: "backup"}``.
+
+    #4605: also emits a ``cron_fired`` AUDIT event on ``session._audit_events``
+    (P6, distinct from the hook fire above) — the ARRIVAL of the signal is
+    recorded even when no hook is configured to consume it, mirroring
+    ``ReynMCPMessageHandler.emit_resource_updated``'s ``mcp_resource_updated``
+    precedent (the one of the 4 external points that already did this; #4605
+    closes the other 3). Best-effort: a sink fault must never break the job's
+    own inbox delivery.
     """
+    try:
+        session._audit_events.emit("cron_fired", job_name=job_name, to=to)
+    except Exception:  # noqa: BLE001 — audit emit is best-effort, never blocks the job
+        _log.debug("dispatch_cron_fired: audit emit failed for job %r", job_name, exc_info=True)
     event = _ADAPTER.to_event(job_name, to)
     _ADAPTER.deliver(event, session)

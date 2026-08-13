@@ -3981,6 +3981,10 @@ class Session:
             paths=fs_watch_cfg.paths,
             debounce_seconds=fs_watch_cfg.debounce_seconds,
             hook_trigger=lambda point, template_vars: self._hook_dispatcher.dispatch(point, template_vars),
+            # #4605: audit-emit sink, mirrors ComposerRegistry's own emit_event
+            # wiring two lines below — records file_changed arrival even when
+            # no hook is configured to consume it.
+            emit_event=lambda et, **kw: self._audit_events.emit(et, **kw),
         )
         # Composer/consumer registry: build != start — starting here has no
         # async context to run in; run() starts/stops them (#2880/#2881;

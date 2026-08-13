@@ -241,6 +241,7 @@ AUDIT_EVENT_KINDS: frozenset[str] = frozenset({
     "config_reloaded",
     "control_ir_failed",
     "control_ir_skipped",
+    "cron_fired",
     "direct_alias_call_salvaged",
     "elide_evaluated",
     "embed_attempts",
@@ -252,6 +253,7 @@ AUDIT_EVENT_KINDS: frozenset[str] = frozenset({
     "embedding_index_build_started",
     "exec_threat_blocked",
     "exec_threat_match",
+    "file_changed",
     "file_read_media_denied",
     "force_close_triggered",
     "hook_event_emitted",
@@ -419,6 +421,7 @@ AUDIT_EVENT_KINDS: frozenset[str] = frozenset({
     "web_search_completed",
     "web_search_failed",
     "web_search_started",
+    "webhook_received",
     "workspace_updated",
 })
 

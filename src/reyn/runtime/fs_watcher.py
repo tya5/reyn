@@ -144,10 +144,19 @@ class FsWatcher:
         paths: "list[str] | None" = None,
         hook_trigger: "HookTrigger | None" = None,
         debounce_seconds: float = 0.2,
+        emit_event: "Callable[..., Any] | None" = None,
     ) -> None:
         self._paths: list[str] = list(paths or [])
         self._hook_trigger = hook_trigger
         self._debounce_seconds = debounce_seconds
+        # #4605: audit-emit sink (session._audit_events.emit), distinct from
+        # hook_trigger — records the ARRIVAL of a file_changed signal even
+        # when no hook is configured to consume it, mirroring
+        # ReynMCPMessageHandler.emit_resource_updated's mcp_resource_updated
+        # precedent (the one of the 4 external points that already did
+        # this). None when the caller hasn't wired one (e.g. unit tests
+        # constructing a bare FsWatcher) — _enqueue no-ops the emit then.
+        self._emit_event = emit_event
         self._observer: Any = None
         self._loop: "asyncio.AbstractEventLoop | None" = None
         # Hook-Event Redesign Phase 2 (proposal 0059 §6.3): the bounded
@@ -276,7 +285,19 @@ class FsWatcher:
         just factored into the adapter), then hands it to the SAME bounded
         queue+drain-task bridge ``McpIngressAdapter`` uses (``deliver``) — the
         bound/drop-newest-and-log/drain behaviour is byte-identical, no
-        longer duplicated per-source."""
+        longer duplicated per-source.
+
+        #4605: also emits a ``file_changed`` AUDIT event via ``emit_event``
+        (distinct from the hook-trigger queue below) — best-effort, a sink
+        fault must never break the drain path."""
+        if self._emit_event is not None:
+            try:
+                self._emit_event("file_changed", path=path, event_type=event_type)
+            except Exception:  # noqa: BLE001 — audit emit is best-effort
+                logger.debug(
+                    "FsWatcher: emit_event failed for %r on %r", event_type, path,
+                    exc_info=True,
+                )
         event = self._fs_ingress_adapter.to_event(path, event_type)
         self._fs_ingress_adapter.deliver(event)
 
