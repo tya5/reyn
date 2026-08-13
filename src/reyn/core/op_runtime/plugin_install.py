@@ -155,8 +155,8 @@ from reyn.data.index.build_lock import (
 )
 from reyn.plugins.manifest import (
     PluginManifestError,
+    capability_kinds_present,
     load_plugin_manifest,
-    manifest_path_for,
 )
 from reyn.plugins.source import resolve_name_collision
 from reyn.plugins.tokens import PluginTokenContext, expand_reyn_tokens
@@ -930,8 +930,18 @@ async def handle(op: PluginInstallIROp, ctx: OpContext) -> dict:
         _expand_plugin_files(plugin_root, token_ctx)
 
         # ── 7. Register capabilities (#3209: register-only — no dep materialise) ──
-        manifest_path = manifest_path_for(plugin_root)
-        reloaded_manifest = load_plugin_manifest(plugin_root) if manifest_path.exists() else manifest
+        # #4570 conversion B: capability presence is now derived PURELY
+        # from directory/file existence, never a manifest-declared list —
+        # the manifest no longer carries `capabilities` at all (lead-coder
+        # ruling, #4570: the `entries` explicit-subset feature had 0
+        # production readers and 0 declaring manifests, so it — and the
+        # `capabilities` field it lived on — is DROPPED, not relocated
+        # into `extensions["dev.reyn"]`; a manifest still declaring it is
+        # a typed-error rejection at parse time, `PluginManifest`'s own
+        # `_reject_removed_capabilities_key`). Each sub-install below now
+        # always RUNS when its directory/file exists — no per-kind branch
+        # to skip, no `entries` ternary to narrow which files get picked
+        # up (discover-everything is the only mode left).
         registered: dict[str, list] = {"mcp": [], "pipelines": [], "skills": []}
         # #4590: declared-vs-registered diff, per capability kind. Pipelines
         # and skills DO have a drop path — unlike mcp's probe-then-commit
@@ -950,57 +960,49 @@ async def handle(op: PluginInstallIROp, ctx: OpContext) -> dict:
         # (#4580 dropped quietly; this claimed success for a drop).
         skipped: dict[str, list] = {"mcp": [], "pipelines": [], "skills": []}
 
-        for cap in reloaded_manifest.capabilities:
-            if cap.kind == "mcp":
-                mcp_result = await _register_mcp(
-                    plugin_root, safe_name, ctx, project_root,
+        # mcp: _register_mcp already no-ops gracefully when `.mcp.json` is
+        # absent (returns {"registered": [], "skipped": []}) — safe to call
+        # unconditionally, same as every other install regardless of
+        # whether this plugin ships an mcp server.
+        mcp_result = await _register_mcp(plugin_root, safe_name, ctx, project_root)
+        registered["mcp"] = mcp_result["registered"]
+        skipped["mcp"] = mcp_result["skipped"]
+
+        pipelines_dir = plugin_root / "pipelines"
+        if pipelines_dir.is_dir():
+            for dsl_file in sorted(pipelines_dir.glob("*.yaml")):
+                sub_op = PipelineInstallIROp(
+                    kind="pipeline_install", path=str(dsl_file), plugin_id=safe_name,
                 )
-                registered["mcp"] = mcp_result["registered"]
-                skipped["mcp"] = mcp_result["skipped"]
-            elif cap.kind == "pipelines":
-                pipelines_dir = plugin_root / "pipelines"
-                files = (
-                    [pipelines_dir / e for e in cap.entries]
-                    if cap.entries
-                    else (sorted(pipelines_dir.glob("*.yaml")) if pipelines_dir.is_dir() else [])
-                )
-                for dsl_file in files:
-                    sub_op = PipelineInstallIROp(
-                        kind="pipeline_install", path=str(dsl_file), plugin_id=safe_name,
+                sub_result = await _pipeline_install_handle(sub_op, ctx)
+                if sub_result.get("status") == "installed":
+                    registered["pipelines"].append(sub_result)
+                else:
+                    skipped["pipelines"].append(sub_result)
+                    ctx.events.emit(
+                        "pipeline_install_skipped",
+                        plugin_id=safe_name, path=str(dsl_file),
+                        reason=sub_result.get("status", "error"),
+                        error=sub_result.get("error", ""),
                     )
-                    sub_result = await _pipeline_install_handle(sub_op, ctx)
-                    if sub_result.get("status") == "installed":
-                        registered["pipelines"].append(sub_result)
-                    else:
-                        skipped["pipelines"].append(sub_result)
-                        ctx.events.emit(
-                            "pipeline_install_skipped",
-                            plugin_id=safe_name, path=str(dsl_file),
-                            reason=sub_result.get("status", "error"),
-                            error=sub_result.get("error", ""),
-                        )
-            elif cap.kind == "skills":
-                skills_dir = plugin_root / "skills"
-                dirs = (
-                    [skills_dir / e for e in cap.entries]
-                    if cap.entries
-                    else (sorted(p for p in skills_dir.glob("*") if p.is_dir()) if skills_dir.is_dir() else [])
+
+        skills_dir = plugin_root / "skills"
+        if skills_dir.is_dir():
+            for skill_dir in sorted(p for p in skills_dir.glob("*") if p.is_dir()):
+                sub_op = SkillInstallIROp(
+                    kind="skill_install", path=str(skill_dir), plugin_id=safe_name,
                 )
-                for skill_dir in dirs:
-                    sub_op = SkillInstallIROp(
-                        kind="skill_install", path=str(skill_dir), plugin_id=safe_name,
+                sub_result = await _skill_install_handle(sub_op, ctx)
+                if sub_result.get("status") == "installed":
+                    registered["skills"].append(sub_result)
+                else:
+                    skipped["skills"].append(sub_result)
+                    ctx.events.emit(
+                        "skill_install_skipped",
+                        plugin_id=safe_name, path=str(skill_dir),
+                        reason=sub_result.get("status", "error"),
+                        error=sub_result.get("error", ""),
                     )
-                    sub_result = await _skill_install_handle(sub_op, ctx)
-                    if sub_result.get("status") == "installed":
-                        registered["skills"].append(sub_result)
-                    else:
-                        skipped["skills"].append(sub_result)
-                        ctx.events.emit(
-                            "skill_install_skipped",
-                            plugin_id=safe_name, path=str(skill_dir),
-                            reason=sub_result.get("status", "error"),
-                            error=sub_result.get("error", ""),
-                        )
 
         ctx.events.emit("plugin_install_registered", name=safe_name, registered=registered)
 
@@ -1014,7 +1016,11 @@ async def handle(op: PluginInstallIROp, ctx: OpContext) -> dict:
             "name": safe_name,
             "plugin_root": str(plugin_root),
             "source_kind": source_kind,
-            "capabilities": sorted(reloaded_manifest.capability_kinds),
+            # #4570 conversion B: derived from directory/file existence —
+            # the SAME derivation discovery.py's listing uses
+            # (capability_kinds_present), so "declared" and "listed" can
+            # never independently drift.
+            "capabilities": sorted(capability_kinds_present(plugin_root)),
             "registered": registered,
             "skipped": skipped,  # #4580: declared-but-dropped, per capability kind
         }

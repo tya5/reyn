@@ -8,13 +8,17 @@ Before this module, the ONLY path by which an LLM could learn that
 WHICH plugin directories are advertised (the allowlist, #3196-shaped: a
 directory appearing under ``src/reyn/builtin/plugins/`` never
 self-advertises); this module answers WHAT each one is, by reading its own
-``plugin.json`` manifest (``description`` + ``capabilities``)
-at call time rather than duplicating that text into the registry (the
-redundant-projection drift class #3164 hit for a different value). Two
-disjoint reads, one SSoT each:
+``plugin.json`` manifest's ``description`` at call time (never duplicated
+into the registry — the redundant-projection drift class #3164 hit for a
+different value) plus its ``capabilities``, derived from directory/file
+existence (#4570 conversion B — the manifest no longer carries a
+capabilities declaration at all, see
+``reyn.plugins.manifest.capability_kinds_present``). Two disjoint reads,
+one SSoT each:
 
   registry (``BUILTIN_PLUGINS``)  -> which names to advertise
-  manifest (``plugin.json``)      -> what a name IS (description, capabilities)
+  manifest (``plugin.json``)      -> what a name IS (description)
+  disk (plugin_dir contents)      -> what a name CAN DO (capabilities)
 
 ``reyn.tools.plugin_management_verbs._handle_plugin_list`` is the tool-level
 consumer that surfaces this to the LLM through the ordinary tool-call flow
@@ -27,7 +31,11 @@ from pathlib import Path
 from typing import Any
 
 import reyn.builtin.registry as _registry
-from reyn.plugins.manifest import PluginManifestError, load_plugin_manifest
+from reyn.plugins.manifest import (
+    PluginManifestError,
+    capability_kinds_present,
+    load_plugin_manifest,
+)
 
 
 def _builtin_plugins_root() -> Path:
@@ -78,7 +86,12 @@ def list_builtin_plugins() -> "list[dict[str, Any]]":
             {
                 "name": name,
                 "description": manifest.description,
-                "capabilities": sorted(manifest.capability_kinds),
+                # #4570 conversion B: derived from directory/file existence
+                # (the manifest itself no longer carries a capabilities
+                # declaration to read) — same derivation plugin_install.py's
+                # registration step consults, see capability_kinds_present's
+                # own docstring.
+                "capabilities": sorted(capability_kinds_present(plugin_dir)),
                 "install": {
                     "tool": "install_plugin",
                     "args": {"source": {"kind": "builtin", "name": name}},

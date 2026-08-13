@@ -356,7 +356,6 @@ def test_plugin_install_bakes_plugin_root_load_skill_resolves_the_rest(tmp_path,
         json.dumps({
             "$schema": PLUGIN_MANIFEST_SCHEMA_URL,
             "name": "loadertest", "version": "0.1.0", "description": "d",
-            "capabilities": [{"kind": "skills"}],
         }),
         encoding="utf-8",
     )

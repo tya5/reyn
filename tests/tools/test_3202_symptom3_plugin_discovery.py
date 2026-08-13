@@ -142,14 +142,20 @@ def test_rag_description_matches_manifest_verbatim() -> None:
     READ from the manifest at call time, not copied into BUILTIN_PLUGINS (the
     redundant-projection drift class #3164 hit for a different value). Edit
     plugin.json and this test's expectation changes with it -- there is no
-    second string anywhere to fall out of sync."""
+    second string anywhere to fall out of sync.
+
+    #4570 conversion B: `capabilities` is no longer a manifest field at
+    all -- the expected set here is derived the SAME way
+    `list_builtin_plugins` itself derives it (directory/file existence,
+    `capability_kinds_present`), not read back off the manifest JSON."""
+    from reyn.plugins.manifest import capability_kinds_present
+
     manifest = _manifest_json()
     plugins = {p["name"]: p for p in list_builtin_plugins()}
+    rag_dir = Path(registry_module.__file__).parent / "plugins" / "rag"
 
     assert plugins["rag"]["description"] == manifest["description"]
-    assert set(plugins["rag"]["capabilities"]) == {
-        cap["kind"] for cap in manifest["capabilities"]
-    }
+    assert set(plugins["rag"]["capabilities"]) == set(capability_kinds_present(rag_dir))
 
 
 def test_builtin_plugins_registry_holds_no_description_key() -> None:

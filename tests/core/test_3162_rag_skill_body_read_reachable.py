@@ -73,7 +73,6 @@ def _copy_real_skill_as_plugin_source(base: Path) -> Path:
             "$schema": PLUGIN_MANIFEST_SCHEMA_URL,
             "name": "rag_skill_only", "version": "0.1.0",
             "description": "skills-only witness copy of the real rag skill",
-            "capabilities": [{"kind": "skills"}],
         }),
         encoding="utf-8",
     )

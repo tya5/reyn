@@ -1,11 +1,11 @@
 """Tier 1: Contract — ``plugin.json`` typed manifest schema (ADR 0064 §3.1,
 #3067; relocated to the plugin root + required ``$schema`` — #4570
-conversion A, aligning with the Agent Plugins 1.0 standard).
+conversion A; ``capabilities`` removed entirely — #4570 conversion B,
+Agent Plugins 1.0 alignment).
 
-Round-trips a manifest with non-default values (all three capability kinds,
-non-empty explicit ``entries``, a non-empty ``description``) through the real
-``PluginManifest`` schema and the real ``load_plugin_manifest`` file-reading
-path — no fakes, real ``Path``/JSON I/O via ``tmp_path``.
+Round-trips a manifest through the real ``PluginManifest`` schema and the
+real ``load_plugin_manifest`` file-reading path — no fakes, real
+``Path``/JSON I/O via ``tmp_path``.
 """
 from __future__ import annotations
 
@@ -18,9 +18,7 @@ from reyn.plugins.manifest import (
     PLUGIN_MANIFEST_SCHEMA_URL,
     PluginManifest,
     PluginManifestError,
-    PluginMCPCapability,
-    PluginPipelinesCapability,
-    PluginSkillsCapability,
+    capability_kinds_present,
     load_plugin_manifest,
     manifest_path_for,
 )
@@ -32,20 +30,14 @@ def _write_manifest(plugin_dir, data: dict) -> None:
 
 
 def test_manifest_round_trips_nondefault_values(tmp_path):
-    """Tier 1: non-default round-trip — all 3 capability kinds present,
-    non-empty entries, description set, real file I/O + model_dump_json ->
-    model_validate round-trip."""
+    """Tier 1: non-default round-trip — description set, real file I/O +
+    model_dump_json -> model_validate round-trip."""
     plugin_dir = tmp_path / "my-plugin"
     data = {
         "$schema": PLUGIN_MANIFEST_SCHEMA_URL,
         "name": "rag",
         "version": "1.2.3",
         "description": "builtin RAG plugin (dogfood template, ADR §3.1)",
-        "capabilities": [
-            {"kind": "mcp"},
-            {"kind": "pipelines", "entries": ["ingest.yaml", "query.yaml"]},
-            {"kind": "skills", "entries": ["rag-search"]},
-        ],
     }
     _write_manifest(plugin_dir, data)
 
@@ -55,17 +47,6 @@ def test_manifest_round_trips_nondefault_values(tmp_path):
     assert manifest.name == "rag"
     assert manifest.version == "1.2.3"
     assert manifest.description == "builtin RAG plugin (dogfood template, ADR §3.1)"
-    assert manifest.capability_kinds == frozenset({"mcp", "pipelines", "skills"})
-
-    pipelines_cap = next(
-        cap for cap in manifest.capabilities if isinstance(cap, PluginPipelinesCapability)
-    )
-    assert pipelines_cap.entries == ("ingest.yaml", "query.yaml")
-    skills_cap = next(
-        cap for cap in manifest.capabilities if isinstance(cap, PluginSkillsCapability)
-    )
-    assert skills_cap.entries == ("rag-search",)
-    assert any(isinstance(cap, PluginMCPCapability) for cap in manifest.capabilities)
 
     # Round-trip through model_dump -> model_validate (JSON mode, the
     # serialised shape a P2 install step would persist/copy). by_alias=True
@@ -76,10 +57,10 @@ def test_manifest_round_trips_nondefault_values(tmp_path):
     assert reloaded == manifest
 
 
-def test_manifest_capabilities_are_optional_any_subset(tmp_path):
-    """Tier 1: §3.1 'every capability subdir is optional' — a manifest with
-    zero capabilities (declares only identity) is valid, matching the common
-    case of building just an MCP server with no skill (§1)."""
+def test_manifest_description_defaults_to_empty_string(tmp_path):
+    """Tier 1: description is optional — a manifest declaring only
+    identity is valid (§1: the primary use case is "just an MCP server",
+    which may carry no prose description at all)."""
     plugin_dir = tmp_path / "bare"
     _write_manifest(
         plugin_dir,
@@ -88,8 +69,7 @@ def test_manifest_capabilities_are_optional_any_subset(tmp_path):
 
     manifest = load_plugin_manifest(plugin_dir)
 
-    assert manifest.capabilities == ()
-    assert manifest.capability_kinds == frozenset()
+    assert manifest.description == ""
 
 
 def test_manifest_path_for_matches_the_plugin_root_layout(tmp_path):
@@ -157,6 +137,27 @@ def test_manifest_wrong_schema_value_raises_typed_error(tmp_path):
         load_plugin_manifest(plugin_dir)
 
 
+def test_manifest_declaring_capabilities_raises_typed_error(tmp_path):
+    """Tier 1: (#4570 conversion B) ``capabilities`` is REMOVED from this
+    schema — a manifest still declaring it is a typed-error REJECTION,
+    never a silent no-op (lead-coder ruling: the same "config that
+    doesn't take effect" trap class as ``_build_tool_use_config``'s
+    ``chat``-key rejection). Pydantic's default "drop unknown fields"
+    behavior would otherwise swallow this with no error at all."""
+    plugin_dir = tmp_path / "still-declares-capabilities"
+    _write_manifest(
+        plugin_dir,
+        {
+            "$schema": PLUGIN_MANIFEST_SCHEMA_URL,
+            "name": "old-style", "version": "1.0.0",
+            "capabilities": [{"kind": "mcp"}],
+        },
+    )
+
+    with pytest.raises(PluginManifestError, match="capabilities"):
+        load_plugin_manifest(plugin_dir)
+
+
 def test_manifest_name_rejects_reserved_namespace_separator():
     """Tier 1: ``name`` rejects ``.`` — the reserved namespace-separator
     character (mirrors ``PipelineInstallIROp``/``SkillInstallIROp``)."""
@@ -164,32 +165,33 @@ def test_manifest_name_rejects_reserved_namespace_separator():
         PluginManifest(schema_=PLUGIN_MANIFEST_SCHEMA_URL, name="a.b", version="1.0.0")
 
 
-def test_manifest_rejects_duplicate_capability_kind():
-    """Tier 1: a manifest declaring the same capability kind twice is
-    malformed — each capability is registered at most once (P2 register step
-    has no 'merge two pipelines blocks' semantics to fall back on)."""
-    with pytest.raises(ValidationError):
-        PluginManifest(
-            schema_=PLUGIN_MANIFEST_SCHEMA_URL,
-            name="dup",
-            version="1.0.0",
-            capabilities=[
-                PluginPipelinesCapability(entries=("a.yaml",)),
-                PluginPipelinesCapability(entries=("b.yaml",)),
-            ],
-        )
+# ── capability_kinds_present (directory/file-existence derivation) ─────────
 
 
-def test_manifest_capability_kind_is_a_typed_discriminated_union_not_a_string():
-    """Tier 1: Tool-Contract lens — an unrecognised ``kind`` value fails
-    validation at the schema boundary rather than being silently
-    form-sniffed/ignored."""
-    with pytest.raises(ValidationError):
-        PluginManifest.model_validate(
-            {
-                "$schema": PLUGIN_MANIFEST_SCHEMA_URL,
-                "name": "x",
-                "version": "1.0.0",
-                "capabilities": [{"kind": "not-a-real-capability"}],
-            }
-        )
+def test_capability_kinds_present_detects_mcp_json(tmp_path):
+    """Tier 1: (#4570 conversion B) ``.mcp.json`` presence alone is the mcp
+    capability declaration — no manifest field involved."""
+    plugin_dir = tmp_path / "mcp-only"
+    plugin_dir.mkdir()
+    (plugin_dir / ".mcp.json").write_text("{}", encoding="utf-8")
+
+    assert capability_kinds_present(plugin_dir) == frozenset({"mcp"})
+
+
+def test_capability_kinds_present_detects_pipelines_and_skills_dirs(tmp_path):
+    """Tier 1: a ``pipelines/`` and/or ``skills/`` directory each
+    independently contributes its own capability kind."""
+    plugin_dir = tmp_path / "pipes-and-skills"
+    (plugin_dir / "pipelines").mkdir(parents=True)
+    (plugin_dir / "skills").mkdir(parents=True)
+
+    assert capability_kinds_present(plugin_dir) == frozenset({"pipelines", "skills"})
+
+
+def test_capability_kinds_present_empty_for_bare_plugin_dir(tmp_path):
+    """Tier 1: (accept-side) a plugin directory with none of the three
+    marker paths -> no capabilities, not a crash."""
+    plugin_dir = tmp_path / "bare"
+    plugin_dir.mkdir()
+
+    assert capability_kinds_present(plugin_dir) == frozenset()

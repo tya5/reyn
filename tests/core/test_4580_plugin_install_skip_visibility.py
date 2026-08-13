@@ -35,7 +35,7 @@ def _make_plugin(root: Path, *, servers: dict) -> Path:
     (root / "plugin.json").write_text(
         json.dumps({
             "$schema": PLUGIN_MANIFEST_SCHEMA_URL,
-            "name": root.name, "version": "0.1.0", "capabilities": [{"kind": "mcp"}],
+            "name": root.name, "version": "0.1.0",
         }),
         encoding="utf-8",
     )
