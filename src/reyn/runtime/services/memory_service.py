@@ -223,7 +223,7 @@ class MemoryService:
         fail-open.
         """
         cfg = self._threat_scan
-        if cfg is None or not getattr(cfg, "enabled", False):
+        if cfg is None or not getattr(cfg, "enabled", True):  # #4523: shadow default matches ThreatScanConfig.enabled's own declared True
             return None
         from reyn.security.content_guard import first_blocking_match, scan_for_threats
         try:

@@ -492,7 +492,7 @@ async def handle(
 
     # ── 3. Threat-scan the description (scope="strict") ──────────────────────
     _ts = getattr(ctx, "threat_scan", None)
-    if _ts is not None and getattr(_ts, "enabled", False) and description:
+    if _ts is not None and getattr(_ts, "enabled", True) and description:  # #4523: shadow default matches ThreatScanConfig.enabled's own declared True
         _matches = scan_for_threats(description, _ts, scope="strict")
         if _matches:
             for _m in _matches:

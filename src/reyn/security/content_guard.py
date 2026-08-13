@@ -10,6 +10,18 @@ the config gate; the *source-trust* gate lives at the call site, FP-0050 §3).
 ``custom_patterns``) to avoid a security→config import. Both helpers fail-open
 (return the safe no-op) on scanner error when ``fail_open`` — detection must
 never wedge a turn.
+
+#4523: every ``getattr(config, "enabled"/"fence_enabled", ...)`` shadow
+default below matches ``ThreatScanConfig``'s own declared default (``True``
+for both) — was ``False`` until #4523, silently disagreeing with the
+declared "default-on" posture the moment a config object reached these
+helpers without the attribute (a duck-typed object with a genuine partial
+shape, or a future rename that dropped the field). Unreachable today (every
+real caller passes a full ``ThreatScanConfig``), but the shape this repo
+explicitly forbids elsewhere (``hooks/sandbox_scope.py``'s own docstring:
+"a security field that is silently ignored reads as an applied restriction
+that was never applied") — a declared-vs-read default flip on a security
+gate is exactly that shape, whether or not it has fired yet.
 """
 from __future__ import annotations
 
@@ -29,7 +41,7 @@ def scan_for_threats(
     scope: str = "context",
 ) -> list[ThreatMatch]:
     """Scan ``content`` at ``scope`` when enabled; [] when disabled / on fail-open."""
-    if config is None or not getattr(config, "enabled", False):
+    if config is None or not getattr(config, "enabled", True):
         return []
     try:
         extra = getattr(config, "custom_patterns", None) or None
@@ -66,7 +78,7 @@ def fence_if_enabled(content: str, config: "ThreatScanConfig | Any") -> str:
     The *source-trust* decision (only untrusted-source content is fenced) is the
     caller's — this only applies the config gate + the fence transform.
     """
-    if config is None or not getattr(config, "enabled", False) or not getattr(config, "fence_enabled", False):
+    if config is None or not getattr(config, "enabled", True) or not getattr(config, "fence_enabled", True):
         return content
     try:
         return fence(content).wrapped

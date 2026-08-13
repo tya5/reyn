@@ -42,7 +42,7 @@ async def handle(
     # emits + proceeds. Orthogonal to the sandbox (which confines exec EFFECTS) —
     # both fire (§4 non-duplication). No-op when threat_scan is absent/disabled.
     _ts = getattr(ctx, "threat_scan", None)
-    if _ts is not None and getattr(_ts, "enabled", False):
+    if _ts is not None and getattr(_ts, "enabled", True):  # #4523: shadow default matches ThreatScanConfig.enabled's own declared True
         from reyn.security.content_guard import first_blocking_match, scan_for_threats
         _matches = scan_for_threats(" ".join(op.argv), _ts, scope="exec")
         for _m in _matches:

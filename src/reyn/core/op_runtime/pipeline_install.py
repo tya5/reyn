@@ -346,7 +346,7 @@ async def handle(
     # A multi-doc file has N author-written descriptions; each is untrusted
     # free-text (esp. for a source install) — scan them all, block on any match.
     _ts = getattr(ctx, "threat_scan", None)
-    if _ts is not None and getattr(_ts, "enabled", False):
+    if _ts is not None and getattr(_ts, "enabled", True):  # #4523: shadow default matches ThreatScanConfig.enabled's own declared True
         for _p in pipelines:
             _desc = _p.description or ""
             if not _desc:
