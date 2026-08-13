@@ -779,6 +779,14 @@ async def agui_submit(request: Request, agent_name: str):
         # past turns are simply not on the wire). Mirrors
         # ``attach_request``/``session_switch_request`` above: client
         # names an operation, server executes it against ITS OWN state.
+        #
+        # #4601: capped at the SAME join point (``list_refs_for_agent``'s
+        # own ``limit``) InProcessTransport's local path caps at too —
+        # this endpoint was the ORIGINAL #4601 finding (unbounded, no
+        # stat), fixed here at the one place both transports share rather
+        # than as an endpoint-only patch (which would leave the TUI's
+        # identical fallback broken, architect's own #4601 correction).
+        from reyn.config.loader import load_config
         from reyn.data.workspace.artifact_ref import list_refs_for_agent
         # ``workspace_dir`` = <project_root>/.reyn/agents/<agent_name> — three
         # levels down, so PROJECT ROOT (what list_refs_for_agent wants, same
@@ -787,8 +795,11 @@ async def agui_submit(request: Request, agent_name: str):
         # reyn_state_root() derivation, a DIFFERENT thing this handler does
         # not want).
         project_root = session.workspace_dir.parent.parent.parent
-        entries = list_refs_for_agent(project_root, agent_name)
-        return JSONResponse({"status": "ok", "entries": entries})
+        config = load_config(project_root)
+        entries, total = list_refs_for_agent(
+            project_root, agent_name, limit=config.artifacts.remote_fallback_limit,
+        )
+        return JSONResponse({"status": "ok", "entries": entries, "total": total})
     return JSONResponse({"status": "ok"})
 
 

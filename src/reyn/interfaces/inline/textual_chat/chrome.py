@@ -966,15 +966,36 @@ def artifact_row_label(row: "ArtifactRow") -> str:
 #: mechanism here (`output_language` governs LLM output, not this chrome);
 #: a Japanese UI would be a whole-surface owner decision, not one string
 #: at a time.
-ARTIFACT_REF_TABLE_FALLBACK_DISCLOSURE = (
-    "This list is built from the artifact-ref table. An artifact the "
-    "agent passed inline (no real file) is never recorded there, so it "
-    "cannot appear here."
-)
+#:
+#: #4601 (lead-coder/architect ruling): CONSOLIDATED into one sentence
+#: with the #4599 disclosure gap architect found (a ref whose FILE was
+#: deleted after being recorded still appears here — it was never
+#: covered, #4599's own wording only ever described what does NOT
+#: appear, never "appears but can't open") and the new "newest N of M"
+#: truncation notice (#4601's own cap — see ``ArtifactsConfig`` in
+#: ``config/infra.py``). ``shown``/``total`` ARE the count this text
+#: states — a deliberate exception to "never a count" above: THAT rule
+#: was about being unable to count something the fallback has no record
+#: of; ``total`` here is exactly what the fallback DOES have a record
+#: of (the full matching-row count before the #4601 cap), so stating it
+#: is not the thing the earlier ruling forbade.
+def artifact_fallback_disclosure_text(shown: int, total: int) -> str:
+    """The Artifacts pane's ref-table-fallback disclosure, naming exactly
+    what this source cannot show (inline artifacts, never recorded;
+    deleted-but-still-referenced files, recorded but unopenable) and how
+    much of it is showing (#4601's own "newest N of M" — never a silent
+    truncation)."""
+    return (
+        "This list is built from the artifact-ref table. An artifact the "
+        "agent passed inline (no real file) is never recorded there, so it "
+        "cannot appear here. A file that was deleted after being recorded "
+        "still appears here but cannot be opened. Showing the newest "
+        f"{shown} of {total}."
+    )
 
 
 def artifact_pane_options(
-    rows: "Sequence[ArtifactRow]", *, source: str = "live",
+    rows: "Sequence[ArtifactRow]", *, source: str = "live", fallback_total: int = 0,
 ) -> list[str]:
     """Rows for the Artifacts drawer pane — newest-first, already the order
     :func:`~reyn.core.present.artifact_list.collect_artifact_rows` returns
@@ -984,11 +1005,14 @@ def artifact_pane_options(
     the live-conversation list is empty: a remote client's past turns are
     not on the wire, and a local client right after a restart has the
     identical gap, #4584's own measured finding). The fallback source
-    ALWAYS appends :data:`ARTIFACT_REF_TABLE_FALLBACK_DISCLOSURE` — the
-    source limitation, never a count."""
+    ALWAYS appends :func:`artifact_fallback_disclosure_text` — the
+    source limitation AND the #4601 "newest N of M" truncation notice,
+    where N is ``len(rows)`` (already capped by the caller, #4601's own
+    join point) and M is ``fallback_total`` (the pre-cap count the
+    caller threads through — see ``app._maybe_refresh_remote_artifact_fallback``)."""
     body = [artifact_row_label(r) for r in rows] if rows else ["(no artifacts yet)"]
     if source == "ref_table_fallback":
-        return [*body, ARTIFACT_REF_TABLE_FALLBACK_DISCLOSURE]
+        return [*body, artifact_fallback_disclosure_text(len(rows), fallback_total)]
     return body
 
 
@@ -1422,6 +1446,7 @@ def pane_payload(
     history: "Sequence[str]" = (),
     artifacts: "Sequence[ArtifactRow]" = (),
     artifact_source: str = "live",
+    artifact_fallback_total: int = 0,
     app_bindings: "Iterable[tuple[str, str]]" = (),
 ) -> list[str]:
     """The display rows for ``tab_id``'s drawer pane, derived from canonical reyn
@@ -1430,7 +1455,9 @@ def pane_payload(
     (the app assembles them from its live snapshot / the slash REGISTRY / the
     conversation model) so this stays pure + testable.
 
-    ``artifact_source`` — see :func:`artifact_pane_options` (#4494 design C)."""
+    ``artifact_source`` — see :func:`artifact_pane_options` (#4494 design C).
+    ``artifact_fallback_total`` — the #4601 pre-cap count, only meaningful
+    when ``artifact_source == "ref_table_fallback"``."""
     snap = snapshot or {}
     builder = _PANE_ENTRY_BUILDERS.get(tab_id)
     if builder is not None:
@@ -1438,7 +1465,9 @@ def pane_payload(
     if tab_id == "history":
         return history_pane_options(history)
     if tab_id == "artifacts":
-        return artifact_pane_options(artifacts, source=artifact_source)
+        return artifact_pane_options(
+            artifacts, source=artifact_source, fallback_total=artifact_fallback_total,
+        )
     if tab_id == "menu":
         return menu_pane_options(commands)
     if tab_id == "cost":

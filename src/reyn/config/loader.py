@@ -27,6 +27,7 @@ from reyn.config.execution import (  # #1682 #3 cross-section
 )
 from reyn.config.infra import (  # #1682 #3 cross-section
     _build_agent_id,
+    _build_artifacts_config,
     _build_audit_events_config,
     _build_auth_config,
     _build_cron_config,
@@ -846,6 +847,7 @@ def load_config(cwd: Path | None = None) -> ReynConfig:
         auth=_build_auth_config(merged.get("auth")),
         chat=_build_chat_config(merged.get("chat")),
         audit_events=_build_audit_events_config(merged.get("audit_events")),
+        artifacts=_build_artifacts_config(merged.get("artifacts")),
         observability=_build_observability_config(merged.get("observability")),
         cost=cost,
         tool_use=_build_tool_use_config(merged.get("tool_use")),

@@ -538,6 +538,23 @@
 
 
 # -----------------------------------------------------------------------------
+# artifacts: the artifact-ref table fallback's own row cap (#4601). A
+# remote client's (and a local client right after a restart's, #4584)
+# Artifacts pane consults this durable, append-only, persist-tier table
+# when its live conversation view carries nothing — with no cap of its
+# own it would return an ever-growing, unbounded list. ``remote_fallback_limit``
+# (default 50) caps it to the N newest entries; the pane's own disclosure
+# text still names the full count ("newest N of M") so a truncation is
+# never silent. This is a UX-scale default (how many rows a human would
+# ever scroll through), not a performance one (a single stat() costs
+# order-microseconds) — raise it if your own Artifacts pane usage wants
+# more history visible at once.
+# -----------------------------------------------------------------------------
+# artifacts:
+#   remote_fallback_limit: 50
+
+
+# -----------------------------------------------------------------------------
 # observability: downstream OpenTelemetry (OTLP) export. OPT-IN and OFF by
 # default — with no ``observability.otel.endpoint`` (and no
 # ``OTEL_EXPORTER_OTLP_ENDPOINT`` env var) the exporter is never attached and

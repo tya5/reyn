@@ -212,7 +212,7 @@ class AgUiTransport(ClientTransport):
         )
         return bool((result or {}).get("switched"))
 
-    async def request_artifact_list(self, *, agent: str) -> "list[dict]":
+    async def request_artifact_list(self, *, agent: str) -> "tuple[list[dict], int]":
         # #4494 design C: POST a typed request; the server reads its OWN
         # copy of the durable artifact-ref table (never a client-supplied
         # path) and answers with the current entries. Same shape as
@@ -221,9 +221,17 @@ class AgUiTransport(ClientTransport):
         # the server's own ``agent_name`` (baked into the endpoint URL at
         # connect time) is what it actually reads against, so this
         # transport does not thread it onto the wire separately.
+        #
+        # #4601: the server's own entries are already capped — ``total``
+        # (the pre-cap count) rides alongside on the wire so this client
+        # can disclose "newest N of M" without a second round-trip.
         result = await self._send({"type": "artifact_list_request"})
         entries = (result or {}).get("entries")
-        return entries if isinstance(entries, list) else []
+        total = (result or {}).get("total")
+        return (
+            entries if isinstance(entries, list) else [],
+            total if isinstance(total, int) else 0,
+        )
 
     async def answer_intervention_text(
         self, text: str, *, intervention_id: "str | None" = None
