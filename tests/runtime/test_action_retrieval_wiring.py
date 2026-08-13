@@ -22,8 +22,6 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-import pytest
-
 from reyn.config import ReynConfig, load_config
 from reyn.runtime.router_tools import build_tools
 from reyn.runtime.services.router_host_adapter import (

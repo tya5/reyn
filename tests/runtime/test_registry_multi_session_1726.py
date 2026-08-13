@@ -15,7 +15,6 @@ import pytest
 from reyn.runtime.budget.budget import BudgetTracker, CostConfig
 from reyn.runtime.profile import AgentProfile
 from reyn.runtime.registry import _DEFAULT_SID, AgentRegistry
-from reyn.runtime.session import Session
 from tests._support.agent_session import make_session
 
 

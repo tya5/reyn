@@ -23,7 +23,7 @@ from pathlib import Path
 
 import pytest
 
-from reyn.config import LoopConfig, OnLimitConfig, SafetyConfig
+from reyn.config import LoopConfig, SafetyConfig
 from reyn.llm.llm import LLMToolCallResult
 from reyn.llm.pricing import TokenUsage
 from reyn.runtime.budget.budget import BudgetTracker, CostConfig

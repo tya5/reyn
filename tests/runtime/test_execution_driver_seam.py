@@ -20,7 +20,6 @@ Policy compliance (docs/deep-dives/contributing/testing.md):
 from __future__ import annotations
 
 from reyn.runtime.services.router_loop_driver import RouterLoopDriver
-from reyn.runtime.session import Session
 from tests._support.agent_session import make_session
 
 # ---------------------------------------------------------------------------

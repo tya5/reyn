@@ -19,9 +19,7 @@ This file pins:
 """
 from __future__ import annotations
 
-import asyncio
 from pathlib import Path
-from typing import Any
 
 import pytest
 
@@ -31,7 +29,6 @@ from reyn.runtime.services.intervention_handler import InterventionHandler
 from reyn.security.permissions.permissions import PermissionDecl, PermissionResolver
 from reyn.user_intervention import (
     InterventionAnswer,
-    InterventionBus,
     UserIntervention,
 )
 

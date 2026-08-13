@@ -25,8 +25,6 @@ from __future__ import annotations
 
 import json
 
-import pytest
-
 from reyn.runtime.chat_message import ChatMessage
 from tests._support.session import make_session as _make_session
 

@@ -235,8 +235,7 @@ async def test_handle_agent_request_appends_history_emits_event(
     assert entry["meta"].get("chain_id") == "chain-test-001"
 
     # Event log must have agent_request_received.
-    from reyn.core.events.event_store import EventStore
-    store: EventStore = trackers["event_log"]._subscribers[0]
+    store = trackers["event_log"]._subscribers[0]
     # We can't directly iterate events; use the WAL as a proxy for chain events.
     # For the EventLog subscriber we verify via the outbox path is not applicable
     # here — but history entry + chain_id propagation is the primary observable.

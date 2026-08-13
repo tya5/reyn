@@ -16,7 +16,6 @@ added in the same PR per Tier policy).
 """
 from __future__ import annotations
 
-import asyncio
 import time
 from pathlib import Path
 

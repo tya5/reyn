@@ -41,7 +41,6 @@ _EMPTY_MCP_GATEWAY = McpGatewayInputs(
     mcp_connection_service=None, mcp_agent_id=None, ephemeral_fn=None,
 )
 
-from reyn.runtime.session import Session
 from tests._support.agent_session import make_session
 
 _REASONING = "REYN_1652_THOUGHTS: 17*23 = 391."

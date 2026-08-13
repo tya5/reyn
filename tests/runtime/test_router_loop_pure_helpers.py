@@ -15,7 +15,6 @@ runtime/services/memory_service.py with the read_body operation that calls it).
 from __future__ import annotations
 
 import sys
-from pathlib import Path
 
 from tests._support.paths import REPO_ROOT
 

@@ -16,7 +16,6 @@ No mocks. Real-construct fakes.
 """
 from __future__ import annotations
 
-import os
 from pathlib import Path
 
 from reyn.runtime.router_system_prompt import build_system_prompt

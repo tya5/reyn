@@ -10,15 +10,14 @@ config→CronJob→CronScheduler→runner pipeline end-to-end without LLM.
 """
 from __future__ import annotations
 
-import asyncio
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 import pytest
 import yaml
 
-from reyn.config import CronConfig, CronJobConfig, _build_cron_config, load_config
+from reyn.config import CronConfig, _build_cron_config, load_config
 from reyn.runtime.cron import CronJob as CronJobRuntime
 from reyn.runtime.cron import CronScheduler
 

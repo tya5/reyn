@@ -24,7 +24,6 @@ handler with a real MediaStore.
 """
 from __future__ import annotations
 
-import asyncio
 import base64
 import json
 from pathlib import Path
@@ -35,7 +34,6 @@ from reyn.runtime.router_loop import (
     _build_media_followup_message,
 )
 from reyn.services.compaction.engine import _IMAGE_FIXED_TOKEN_COST, estimate_tokens
-from reyn.tools.types import RouterCallerState, ToolContext
 
 
 def _store(tmp_path: Path) -> MediaStore:

@@ -25,7 +25,6 @@ from reyn.runtime.transport import (
     AgentRef,
     McpRef,
     SystemRef,
-    TransportRef,
     TuiRef,
 )
 from tests._support.agent_session import make_session

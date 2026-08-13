@@ -20,7 +20,6 @@ from __future__ import annotations
 
 import pytest
 
-from reyn.runtime.session import Session
 from tests._support.agent_session import make_session
 from tests._support.events import collect_events
 

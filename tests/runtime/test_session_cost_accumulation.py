@@ -18,7 +18,6 @@ from reyn.core.events.events import EventLog
 from reyn.llm.llm import LLMToolCallResult
 from reyn.llm.pricing import TokenUsage, estimate_cost
 from reyn.runtime.router_loop import RouterLoop
-from reyn.runtime.session import Session
 from tests._support.agent_session import make_session
 
 # ---------------------------------------------------------------------------

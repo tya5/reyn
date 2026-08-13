@@ -21,8 +21,6 @@ import asyncio
 from dataclasses import dataclass, field
 from pathlib import Path
 
-import pytest
-
 from reyn.config import MultimodalConfig
 from reyn.interfaces.slash import REGISTRY
 from reyn.runtime.chat_message import ChatMessage

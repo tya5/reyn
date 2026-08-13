@@ -342,7 +342,6 @@ async def test_session_owned_watcher_fires_configured_hook_into_inbox(tmp_path):
     (public) inbox."""
     from reyn.config.infra import FsWatchConfig
     from reyn.core.events.state_log import StateLog
-    from reyn.runtime.session import Session
 
     watched_dir = tmp_path / "watched"
     watched_dir.mkdir()

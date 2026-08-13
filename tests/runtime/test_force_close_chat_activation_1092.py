@@ -20,7 +20,6 @@ from __future__ import annotations
 from pathlib import Path
 
 from reyn.core.events.state_log import StateLog
-from reyn.runtime.session import Session
 from reyn.services.compaction.engine import estimate_tokens
 from reyn.services.turn_budget import (
     DEFAULT_WRAP_UP_OUTPUT_RESERVE_TOKENS,

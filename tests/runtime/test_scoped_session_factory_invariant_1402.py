@@ -34,7 +34,6 @@ from __future__ import annotations
 import ast
 import dataclasses
 import inspect
-from pathlib import Path
 
 from reyn.runtime.factory_config import SessionFactoryConfig
 from reyn.runtime.scoped_session_factory import build_scoped_chat_session

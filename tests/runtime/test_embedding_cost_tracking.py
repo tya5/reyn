@@ -173,8 +173,6 @@ def test_reset_all_clears_embedding_aggregate() -> None:
 
 
 def _registry(tmp_path, tracker: "BudgetTracker | None" = None) -> AgentRegistry:
-    from reyn.runtime.session import Session
-
     shared = tracker if tracker is not None else BudgetTracker(CostConfig())
 
     def factory(profile: AgentProfile):

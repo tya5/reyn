@@ -27,7 +27,6 @@ No mocks — real InterAgentMessaging + real Session + real scripted LLM callabl
 """
 from __future__ import annotations
 
-import asyncio
 from typing import Any
 
 import pytest
@@ -38,7 +37,6 @@ from reyn.llm.pricing import TokenUsage
 from reyn.runtime.errors import RouterCapExceeded
 from reyn.runtime.services.chain_manager import ChainManager
 from reyn.runtime.services.inter_agent_messaging import InterAgentMessaging
-from reyn.runtime.session import Session
 from tests._support.agent_session import make_session
 from tests._support.router_loop import FakeEventLog
 
