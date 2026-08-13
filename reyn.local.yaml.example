@@ -797,15 +797,25 @@
 # -----------------------------------------------------------------------------
 # embedding: RAG embedding settings.
 #
-# ``enabled`` is the ONE switch, and it is OFF by default. Nothing else in this
-# block turns embedding on — the rest only chooses how it behaves once it is.
-# Until you set it, the embedding-backed semantic-discovery layer stays dark:
-# ``search_actions``, knowledge retrieval, and the FP-0063 plugin's
-# ``rag_ingest`` embed step. Plain ``list_*`` discovery and the load / read /
-# invoke verbs are unaffected either way.
+# ``enabled`` is the provider/cost gate — ONE meaning only (#4156): may reyn
+# call an embedding provider at all. OFF by default. Until you set it, the
+# embedding-backed semantic-discovery layer stays dark. Plain ``list_*``
+# discovery and the load / read / invoke verbs are unaffected either way.
 #
 #   embedding:
 #     enabled: true
+#     index:
+#       actions: true          # default — the ~10-entry action/mcp/pipeline catalog
+#       repo_knowledge: false  # default — the repo-wide knowledge index (#4156)
+#
+# ``index.*`` decides WHAT gets embedded, given ``enabled: true`` (#4156 —
+# split out of ``enabled`` after a 5M-TPM incident: an operator opting into
+# the ~10-entry action catalog for ``search_actions`` was also silently
+# opting into an unconditional, repo-size-proportional knowledge-index
+# build). ``index.actions`` defaults ON (negligible TPM); ``index.
+# repo_knowledge`` defaults OFF (the workload that caused the incident) —
+# set it ``true`` explicitly if you want ``knowledge_repo_doc``/
+# ``knowledge_repo_src`` built.
 #
 # Off by default because embedding needs a provider and costs money per call —
 # a predictable-safe default, not an oversight. With it on, the built-in
@@ -823,7 +833,10 @@
 # ``search_actions`` visibility gate falls back to hidden gracefully).
 # -----------------------------------------------------------------------------
 # embedding:
-#   enabled: true                 # ← the switch; everything below is inert without it
+#   enabled: true                 # ← provider/cost gate; index.* below decides what gets built
+#   index:
+#     actions: true                 # default
+#     repo_knowledge: false         # default
 #   default_class: standard
 #   classes:
 #     light:    openai/text-embedding-3-small

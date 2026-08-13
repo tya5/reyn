@@ -10,6 +10,57 @@ from reyn.runtime.budget.budget import CostConfig, CostLimitConfig
 
 
 @dataclass
+class EmbeddingIndexConfig:
+    """`embedding.index:` — WHICH workloads `embedding.enabled: true` actually
+    turns on (#4156, architect design + lead-coder's one default-value ruling).
+
+    `embedding.enabled` used to have two jobs at once: "may reyn call the
+    embedding provider" (a cost/credential gate) AND "what does reyn embed"
+    (action catalog + repo-knowledge, bundled — no way to get one without
+    the other). Splitting them here restores the single meaning the field's
+    OWN name implies: `enabled` is the provider/cost gate; this class is
+    the workload selector.
+
+    The owner hit this directly: `embedding.enabled: true` (opting into
+    `search_actions`, ~10 catalog entries, negligible TPM) also silently
+    triggered the FP-0066 P3b repo-knowledge index — ~1,609 chunks,
+    ~4.86M tokens measured against this repo (#4156 tui-coder measurement)
+    — and burned through a 5M TPM budget in one burst. TPM is a
+    tokens-PER-MINUTE ceiling, not a request-count one, so batching cannot
+    reduce it; the only lever that reduces total tokens sent is not
+    indexing the workload at all — which is exactly what
+    `repo_knowledge: false` now does.
+
+    Fields:
+        actions:        Build the ~10-entry action/mcp/pipeline catalog
+                         index `search_actions` depends on. Default
+                         **True** — negligible TPM (architect's own
+                         4-axis table: population ~10, fixed; contribution
+                         to a TPM burst: negligible), the OS's own
+                         `search_actions` capability, unaffected by the
+                         owner's incident.
+        repo_knowledge:  Build the FP-0066 P3b whole-repo knowledge index
+                         (`knowledge_repo_doc` + `knowledge_repo_src`) —
+                         every reachable doc + source file, chunked,
+                         scales with repo size. Default **False** — this
+                         is the workload that caused the owner's TPM
+                         incident; population is unbounded (repo-size-
+                         proportional) and updates every commit, a
+                         fundamentally different shape from `actions`
+                         (architect's 4-axis table: population / lifetime
+                         / update frequency / TPM contribution all
+                         differ). Reyn is pre-release, so the only
+                         population this default could regress is the
+                         owner, who is the incident's own reporter — lead-
+                         coder's ruling that made this call rather than
+                         deferring to an owner:decide gate.
+    """
+
+    actions: bool = True
+    repo_knowledge: bool = False
+
+
+@dataclass
 class EmbeddingClassSpec:
     """A single class entry under ``embedding.classes``.
 
@@ -52,26 +103,37 @@ class EmbeddingConfig:
     ``reyn.yaml`` changes required.
 
     Fields:
-        enabled:       FP-0066 §7 — single opt-in switch for the whole
-                       embedding-backed semantic-discovery layer (action
-                       retrieval `search_actions` + knowledge retrieval +
-                       the FP-0063 plugin's `rag_ingest` embed step).
+        enabled:       FP-0066 §7 / #4156 — **one meaning only: may reyn
+                       call an embedding provider at all** (the
+                       cost/credential gate the field's own NAME implies).
                        Default **False** (opt-in / predictable-safe
                        default — embedding needs a provider + cost).
                        Clean-break replacement for the fragmented
                        ``action_retrieval.embedding_class`` on/off gate
                        (#3218 / FP-0066 §7): the on/off decision now lives
-                       HERE, single switch, no per-group/source
-                       granularity (YAGNI). The MODEL used when enabled is
+                       HERE. The MODEL used when enabled is
                        ``default_class`` below (unchanged field, already
                        defaulted to ``"standard"``) — ``enabled`` and
                        ``default_class`` are orthogonal (which model
                        vs whether to embed at all).
 
+                       #4156 narrowed this field's scope: it used to ALSO
+                       decide WHAT gets embedded (action catalog + the
+                       whole-repo knowledge index, bundled — no way to
+                       get one without the other). That decision now
+                       lives in ``index`` below; ``enabled: false`` still
+                       hides everything (both workloads need it AND their
+                       own ``index.*`` switch), but ``enabled: true``
+                       alone no longer builds anything by itself.
+
                        Symmetric model (§7): ``enabled=False`` hides only
                        the *semantic-discovery* layer (`search_actions` /
                        future `search_knowledge`) — `list_*` discovery and
                        load/read/invoke verbs are unaffected.
+        index:         #4156 — WHICH embedding-backed workloads run, given
+                       ``enabled: true``. See ``EmbeddingIndexConfig`` for
+                       the full per-workload rationale (the owner's 5M TPM
+                       incident this field exists to prevent).
         default_class: Name of the class used when callers don't specify one.
         classes:       Named embedding class → EmbeddingClassSpec mapping.
         batch_size:    Texts per embedding API call (1–2048).
@@ -106,6 +168,7 @@ class EmbeddingConfig:
     """
 
     enabled: bool = False
+    index: EmbeddingIndexConfig = field(default_factory=EmbeddingIndexConfig)
     default_class: str = "standard"
     classes: dict[str, EmbeddingClassSpec] = field(
         default_factory=lambda: dict(_DEFAULT_EMBEDDING_CLASSES)
@@ -219,6 +282,30 @@ def _build_embedding_config(raw: object) -> EmbeddingConfig:
         )
     enabled = raw_enabled
 
+    # #4156: `embedding.index.*` — which workloads `enabled: true` turns on.
+    raw_index = raw.get("index") or {}
+    if not isinstance(raw_index, dict):
+        raise ValueError(
+            f"embedding.index must be a mapping, got {type(raw_index).__name__}"
+        )
+    defaults_for_index = EmbeddingIndexConfig()
+    raw_index_actions = raw_index.get("actions", defaults_for_index.actions)
+    if not isinstance(raw_index_actions, bool):
+        raise ValueError(
+            f"embedding.index.actions must be a bool, got {type(raw_index_actions).__name__}"
+        )
+    raw_index_repo_knowledge = raw_index.get(
+        "repo_knowledge", defaults_for_index.repo_knowledge,
+    )
+    if not isinstance(raw_index_repo_knowledge, bool):
+        raise ValueError(
+            "embedding.index.repo_knowledge must be a bool, got "
+            f"{type(raw_index_repo_knowledge).__name__}"
+        )
+    index = EmbeddingIndexConfig(
+        actions=raw_index_actions, repo_knowledge=raw_index_repo_knowledge,
+    )
+
     raw_classes = raw.get("classes") or {}
     if not isinstance(raw_classes, dict):
         raw_classes = {}
@@ -281,6 +368,7 @@ def _build_embedding_config(raw: object) -> EmbeddingConfig:
 
     return EmbeddingConfig(
         enabled=enabled,
+        index=index,
         default_class=default_class,
         classes=classes,
         batch_size=batch_size,
