@@ -1626,7 +1626,7 @@ Layers 5 and 6 are scoped: each carries only its own section (`mcp.servers` / `c
 
 Budget caps and rate limits. All fields are optional; omitting a field (or setting its `hard_limit` to `null`) means **unlimited**.
 
-Each token / cost cap (`per_agent_tokens`, `per_agent_cost_usd`, `daily_*`, `monthly_*`) is a `CostLimitConfig` with three sub-fields: `hard_limit` (the cap; `null` = unlimited), `warn_ratio` (warn threshold as a fraction of `hard_limit`, default `0.8`), and `extension_calls` (per-grant extension amount; `> 0` opts the dimension into the unified `safety.on_limit` flow, whose ask-vs-auto-extend-vs-deny behaviour follows `safety.on_limit.mode`). The examples below set only the commonly-tuned `hard_limit` / `warn_ratio`; `extension_calls` defaults to `0` (hard-refuse on hit). The per-dimension `ask_on_exceed` bool was removed (subsumed into `safety.on_limit.mode`).
+Each token / cost cap (`per_agent_tokens`, `per_agent_cost_usd`, `daily_*`, `monthly_*`) is a `CostLimitConfig` with two sub-fields: `hard_limit` (the cap; `null` = unlimited) and `warn_ratio` (warn threshold as a fraction of `hard_limit`, default `0.8`). Hitting a hard cap refuses the call outright — reyn has no per-dimension ask-for-extension flow today (#4522: an earlier `extension_calls` field promised one, but its only real implementation was a since-removed subsystem, #2448 — the key is now deprecated and ignored if set). The per-dimension `ask_on_exceed` bool was removed earlier (subsumed into `safety.on_limit.mode`, which drives other safety-limit checkpoints — router cap, max hop depth, chain seconds — not the cost caps here).
 
 ```yaml
 cost:

@@ -1181,17 +1181,27 @@ def _build_cost_limit(raw: object) -> CostLimitConfig:
             "Remove this key; set safety.on_limit.mode instead.",
             DeprecationWarning, stacklevel=2,
         )
-    extension_calls_raw = raw.get("extension_calls", 0)
-    try:
-        extension_calls = int(extension_calls_raw)
-    except (TypeError, ValueError):
-        extension_calls = 0
-    if extension_calls < 0:
-        extension_calls = 0
+    # #4522: ``extension_calls`` removed — its only real, tested implementation
+    # was the `per_chain_skill_calls` dimension (#1877/#1879's
+    # `Session._ask_budget_extension` / `SkillRunner` spawn gate), and that
+    # whole subsystem was deliberately, audit-approved removed in #2448
+    # ("skill machinery is gone"). The field's name lived on here only because
+    # every CostLimitConfig (daily_tokens/per_agent_tokens/etc.) shares this
+    # one dataclass — none of THOSE dimensions ever had a working consumer
+    # for it (CostLimitConfig's own docstring has the full trace). Same
+    # deprecation shape as ``ask_on_exceed`` above.
+    if "extension_calls" in raw:
+        import warnings
+        warnings.warn(
+            "cost.*.extension_calls is deprecated and ignored — removed in "
+            "#4522. Its only real implementation (the per_chain_skill_calls "
+            "budget-extension flow) was removed in #2448; it was never wired "
+            "for any other cost dimension. Remove this key.",
+            DeprecationWarning, stacklevel=2,
+        )
     return CostLimitConfig(
         hard_limit=hard,
         warn_ratio=warn_ratio,
-        extension_calls=extension_calls,
     )
 def _build_cost_config(raw: object) -> CostConfig:
     if not isinstance(raw, dict):

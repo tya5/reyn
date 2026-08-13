@@ -91,19 +91,31 @@ class BudgetExceeded(Exception):
 class CostLimitConfig:
     """A single hybrid-cap dimension. None hard_limit = unlimited.
 
-    FP-0005 (#1877): ``extension_calls`` is the per-grant extension amount
-    for the unified ``safety.on_limit`` 3-mode policy; ``> 0`` opts the
-    dimension into the on_limit flow (``interactive`` = ask the user,
-    ``auto_extend`` = bounded auto-grant, ``unattended`` = deny). ``0``
-    (default) keeps the hard-refuse behaviour regardless of mode (nothing to
-    grant).
+    #4522: ``extension_calls`` was removed (was ``FP-0005``/#1877's
+    per-grant extension amount for the unified ``safety.on_limit``
+    3-mode policy) — investigation traced its actual, tested, working
+    implementation to the ``per_chain_skill_calls`` dimension only
+    (``Session._ask_budget_extension`` / ``SkillRunner``'s spawn gate,
+    #1879's own test file: ``test_ask_budget_extension_on_limit_1877.py``
+    keys its fixture on ``hard_dimension="per_chain_skill_calls"``
+    specifically). That whole subsystem was later deliberately, audit-
+    approved removed (#2448, "skill machinery is gone → zero live
+    callers") — but the field's NAME lived on here too, since every
+    ``CostLimitConfig`` (``daily_tokens``/``per_agent_tokens``/etc.)
+    shares this one dataclass. None of THOSE dimensions ever had a
+    dedicated consumer for it — the field's presence on them was
+    incidental, not a separate design decision — so #2448's removal left
+    it silently orphaned everywhere except the ``per_chain_skill_calls``
+    axis it was actually built for, which #2448 removed too. Same shape
+    as ``ask_on_exceed`` below it in git history: declared, parsed,
+    never read (CLAUDE.md's testing-policy six-questions ③ names this
+    exact class — #3850). See ``_build_cost_limit``
+    (config/chat.py) for the deprecation warning an operator who still
+    sets this key gets.
     """
 
     hard_limit: float | None = None
     warn_ratio: float = 0.8
-    # FP-0005 (#1877): per-grant extension amount. ``> 0`` makes the
-    # dimension participate in the ``safety.on_limit`` flow.
-    extension_calls: int = 0
 
     @property
     def warn_threshold(self) -> float | None:
