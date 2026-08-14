@@ -837,6 +837,7 @@ class Session:
         project_context_path: "Path | None" = None,
         compaction_config: "CompactionConfig | None" = None,
         reasoning_config: "ReasoningConfig | None" = None,  # #1652 chat.reasoning
+        empty_stop_retry: bool = False,  # #4677 chat.empty_stop_retry (owner default False, 2026-08-14)
         registry: "AgentRegistry | None" = None,
         allowed_mcp: list[str] | None = None,
         events_config: AuditEventsConfig | None = None,
@@ -1182,6 +1183,7 @@ class Session:
         from reyn.config import CompactionConfig, ReasoningConfig
         self._compaction = compaction_config or CompactionConfig()
         self._reasoning = reasoning_config or ReasoningConfig()  # #1652: reasoning capture/continuity/display, on-by-default
+        self._empty_stop_retry = empty_stop_retry  # #4677
         self._next_seq = 1
 
         # agents/<name>/ is state-only (PR20); Agent-derived workspace_dir, ensure it exists (FP-0043 Stage 2)
@@ -1405,6 +1407,7 @@ class Session:
                 next_seq_fn=lambda: self._next_seq,
                 append_history_fn=self._append_history,
                 chat_scheme_name=self._chat_tool_use_scheme,  # #1593 PR-2
+                empty_stop_retry=self._empty_stop_retry,  # #4677
             )
         )
 

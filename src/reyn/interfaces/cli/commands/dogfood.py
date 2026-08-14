@@ -555,6 +555,7 @@ def _build_live_runner(agent_name: str, *, env_backend=None, ws_base_dir=None, w
                 agent_role=profile.role,
                 compaction_config=config.chat.compaction,
                 reasoning_config=config.chat.reasoning,  # #1652
+                empty_stop_retry=config.chat.empty_stop_retry,  # #4677
                 registry=_reg,  # #3593 ②: always the real registry — see the note above
                 allowed_mcp=profile.allowed_mcp,
                 events_config=config.audit_events,

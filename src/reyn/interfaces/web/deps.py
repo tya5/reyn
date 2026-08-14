@@ -363,6 +363,7 @@ def _get_registry():
                 agent_role=profile.role,
                 compaction_config=config.chat.compaction,
                 reasoning_config=config.chat.reasoning,  # #1652
+                empty_stop_retry=config.chat.empty_stop_retry,  # #4677
                 registry=registry,
                 events_config=config.audit_events,
                 state_log=state_log,

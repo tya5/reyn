@@ -402,8 +402,10 @@ def _is_empty_router_response(response: Any) -> bool:
     Reyn does not retry at all, which stopped matching production the
     moment B42-NF-W6-1 landed): the OS-level retry decision is NOT made
     here either — see the "Option F" block at the `_is_empty_router_response`
-    call site, and `empty_stop_retry_auto` (default `True` in production,
-    `router_loop_driver.py`) for the actual current behavior.
+    call site, and `empty_stop_retry_auto` (#4677: config-driven via
+    `chat.empty_stop_retry`, owner default `False` since 2026-08-14 —
+    was hardcoded `True`, `router_loop_driver.py`) for the actual current
+    behavior.
     """
     if response is None:
         return True
@@ -882,7 +884,7 @@ class RouterLoop:
         contextual_permission: "object | None" = None,  # #1827 S1: per-session ContextualPermission (TOOL-axis enforcement); None → bridged from exclude_tools
         memo_provider: Any = None,  # SubLoopMemoProvider | None (ADR-0025)
         empty_stop_retry_directive: str | None = None,  # B42-NF-W6-1 opt-in retry
-        empty_stop_retry_auto: bool = False,  # #187: always-on (no env opt-in); all prod sites pass True
+        empty_stop_retry_auto: bool = False,  # #187/#4677: config-driven (chat.empty_stop_retry, owner default False since 2026-08-14) — the one prod site (router_loop_driver.py) reads it from config, not a hardcoded True
         max_tool_calls_per_turn: int = 50,  # #1666 — safety.loop.max_tool_calls_per_turn (0 = unlimited)
         on_limit: "Any | None" = None,  # OnLimitConfig | None — FP-0005 max_iterations checkpoint
         llm_caller: "Any | None" = None,  # Tier 2 test seam: real-fake injection
@@ -2198,9 +2200,10 @@ class RouterLoop:
             # switch models when it fires.  #4486 drift fix: this comment
             # previously also said "does NOT retry" — that stopped matching
             # production the moment B42-NF-W6-1 shipped `empty_stop_retry_auto`
-            # (see below; the real driver, `router_loop_driver.py`, wires it
-            # `True`, so a retry attempt IS the default production behavior,
-            # not an opt-in one).
+            # (see below; the real driver, `router_loop_driver.py`, reads it
+            # from `chat.empty_stop_retry` — #4677, owner default `False`
+            # since 2026-08-14, was hardcoded `True`; an operator on a weak
+            # model that needs the retry sets the config key back on).
             #
             # #4486: this is turn-scoped, not response-scoped — a tool call
             # dispatched EARLIER this turn (`_tool_calls_attempted > 0`) means

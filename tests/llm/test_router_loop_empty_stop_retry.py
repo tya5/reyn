@@ -9,11 +9,14 @@ Pinned invariants:
 - When the env var is unset, the directive is plumbed in but ignored — the
   loop falls through to the existing "observe + surface" path (= no behaviour
   change for the default chat-router policy).
-- #187: when ``empty_stop_retry_auto=True`` (= the agent-path always-on flag
-  set by phase_executor), the retry fires WITHOUT the env var. The directive
-  gate still holds (auto replaces the env opt-in, it does not fabricate a
-  missing directive). chat / plan-step sites leave auto False so they stay
-  env-gated (no regression).
+- #187/#4677: when ``empty_stop_retry_auto=True``, the retry fires WITHOUT
+  the env var. The directive gate still holds (auto replaces the env
+  opt-in, it does not fabricate a missing directive). The single
+  production wiring site is ``router_loop_driver.py``, reading
+  ``chat.empty_stop_retry`` (owner default ``False`` since 2026-08-14 —
+  was hardcoded ``True``, #4677); these tests exercise the flag's own
+  mechanism directly at the ``RouterLoop`` level, independent of that
+  production default.
 - When the directive is None, the env var is also ignored — no retry attempt
   even with the env var set.
 - Retries are bounded at 1 per turn: a second empty-stop in the same turn
@@ -165,17 +168,19 @@ async def test_no_retry_when_directive_is_none(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# #187: agent-path always-on flag — retry fires WITHOUT the env var
+# #187/#4677: the auto flag — retry fires WITHOUT the env var when True
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
 async def test_auto_flag_fires_retry_without_env_var(monkeypatch):
     """Tier 2: #187 — ``empty_stop_retry_auto=True`` fires the retry with the
-    ``REYN_EMPTY_STOP_RETRY`` env var UNSET. This is the agent-path always-on
-    path (phase_executor sets auto=True): the agent op-loop must recover from a
-    post-tool empty stop without an operator opt-in, because a dead-ended agent
-    cannot make progress (real-task: 67% empty-stop). Mirror of
+    ``REYN_EMPTY_STOP_RETRY`` env var UNSET — the mechanism itself, exercised
+    directly at the ``RouterLoop`` level. Whether production actually passes
+    ``True`` here is a SEPARATE, config-driven question (#4677,
+    ``chat.empty_stop_retry``, owner default ``False`` since 2026-08-14) —
+    this test only pins that the flag, when set, works without needing the
+    env var too. Mirror of
     ``test_retry_path_injects_user_msg_when_env_var_set`` with env unset + auto.
     """
     monkeypatch.delenv("REYN_EMPTY_STOP_RETRY", raising=False)

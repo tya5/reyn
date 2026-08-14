@@ -890,6 +890,25 @@ class ChatConfig:
     httpx client cannot fetch anything else). Same rationale as
     ``neutralize_body`` for living under ``chat:`` rather than ``safety:`` —
     this is a display-boundary narrowing, not a stop condition.
+
+    ``empty_stop_retry`` (#4677, owner instruction 2026-08-14: "resume 注入を
+    デフォルト off にしてくれないかな"): the B42-NF-W6-1 empty-response
+    detect-and-retry (one resend, with the uniform "resume" directive, when
+    the router loop sees an empty ``finish_reason="stop"``) was previously
+    ALWAYS ON in production (``RouterLoopDriver`` hardcoded
+    ``empty_stop_retry_auto=True``, no config knob at all). Owner default is
+    now OFF, after an incident where 30 empty-response detections in one
+    ``reyn-self`` run each cost a second LLM call (30 turns → 63
+    ``llm_called``) — see #4677 for the measured amplification. Architect's
+    own recorded measurement (``router_loop.py``'s
+    ``empty_stop_retry_directive``-adjacent comment) is real: Trace-patch-
+    replay showed 0/10 → 10/10 narration recovery on a specific empty-stop
+    case with the retry ON — turning this OFF trades that recovery away in
+    whatever environment relies on it, which is why the knob exists at all
+    rather than deleting the retry outright. Do NOT write "empty responses
+    are fixed" anywhere this flag is discussed — the empty response's own
+    root cause is unmeasured (#3698's anyio cancel-scope is a candidate);
+    this flag only changes what happens AFTER one occurs.
     """
     compaction: CompactionConfig = field(default_factory=CompactionConfig)
     reasoning: ReasoningConfig = field(default_factory=ReasoningConfig)
@@ -897,6 +916,7 @@ class ChatConfig:
     gutters: GutterConfig = field(default_factory=GutterConfig)
     neutralize_body: bool = False
     image_url_schemes: "list[str]" = field(default_factory=list)
+    empty_stop_retry: bool = False
 
 
 def _build_reasoning_config(raw: object) -> ReasoningConfig:
@@ -956,11 +976,15 @@ def _build_chat_config(raw: object) -> ChatConfig:
     image_url_schemes = (
         [str(s) for s in raw_schemes] if isinstance(raw_schemes, list) else []
     )
+    # #4677: so does the empty-stop-retry knob (owner default False — see the
+    # field's own docstring for the incident + the tradeoff being made).
+    empty_stop_retry = bool(raw.get("empty_stop_retry", ChatConfig().empty_stop_retry))
     compaction_raw = raw.get("compaction") or {}
     if not isinstance(compaction_raw, dict):
         return ChatConfig(  # type: ignore[arg-type]
             reasoning=reasoning, render_mode=render_mode, gutters=gutters,
             neutralize_body=neutralize_body, image_url_schemes=image_url_schemes,
+            empty_stop_retry=empty_stop_retry,
         )
     # #1128: head_size/tail_size (step 3) + trigger_total_tokens/min_compact_batch
     # (PR-a, axis-1 removal) were removed — head/tail sizing is token-budget via
@@ -1041,7 +1065,7 @@ def _build_chat_config(raw: object) -> ChatConfig:
     return ChatConfig(
         compaction=compaction, reasoning=reasoning, render_mode=render_mode,  # type: ignore[arg-type]
         gutters=gutters, neutralize_body=neutralize_body,
-        image_url_schemes=image_url_schemes,
+        image_url_schemes=image_url_schemes, empty_stop_retry=empty_stop_retry,
     )
 
 

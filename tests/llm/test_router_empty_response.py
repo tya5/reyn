@@ -528,11 +528,13 @@ async def test_empty_response_after_a_tool_call_stays_exempt_even_with_retry_aut
 ):
     """Tier 2: #4486 — the turn-scoped exemption takes priority over the
     empty-stop retry, even when `empty_stop_retry_auto=True` (production's
-    own default — `router_loop_driver.py`). Without this ordering, a
-    tool-call-only turn would still burn a retry round-trip before landing
-    on the same (correct) silent-completion outcome — this proves it
-    doesn't, by asserting the SAME two-call count as the auto-off case
-    above (`make_loop`'s default)."""
+    switch when `chat.empty_stop_retry` is turned on — #4677,
+    `router_loop_driver.py`; owner default is now False, but the ordering
+    this test pins must hold whenever the retry IS enabled). Without this
+    ordering, a tool-call-only turn would still burn a retry round-trip
+    before landing on the same (correct) silent-completion outcome — this
+    proves it doesn't, by asserting the SAME two-call count as the
+    auto-off case above (`make_loop`'s default)."""
     from reyn.prompt.loop_control import EMPTY_STOP_RETRY_DIRECTIVE
     from reyn.runtime.router_loop import RouterLoop
 
