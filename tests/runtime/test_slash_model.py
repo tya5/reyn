@@ -359,3 +359,74 @@ async def test_compaction_engine_rebuilt_on_model_switch(tmp_path):
     after = session._compaction_controller._engine
     assert after is not before  # rebuilt, not the same cached engine
     assert after.model != before_model  # ...and resolves against the NEW model
+
+
+# ===========================================================================
+# Group E: #4685 — /model switch to a bare (no provider-prefix) model name
+# ===========================================================================
+
+@pytest.mark.asyncio
+async def test_turn_budget_engine_rebuild_does_not_raise_for_a_bare_model_name(tmp_path):
+    """Tier 2: #4685 — real bug, owner's real config shape. Every model
+    value in ``_make_resolver()`` (the fixture Group D's own tests reuse)
+    happens to carry a provider prefix ("openai/gpt-4o", ...), which is
+    EXACTLY why the pre-#4685 bug never showed up here: the buggy call
+    pre-resolved the class into its NAME, then fed that NAME to an
+    internal EMPTY resolver — but a NAME containing "/" still passes that
+    empty resolver's own passthrough branch (``ModelResolver.resolve``
+    checks "/" in name before it ever needs a class table), so the
+    coincidence hid the defect. The owner's real ``reyn.yaml`` used a bare
+    model id with no provider prefix (``gpt-5.6-terra``) — this test
+    reproduces exactly that shape: a class ("terra") whose resolved model
+    value carries NO "/", so a caller that (incorrectly) hands the empty
+    resolver a bare NAME instead of the real CLASS+resolver pair hits
+    ``ModelResolver.resolve``'s class-position raise
+    ("model class 'gpt-5.6-terra' not found among known classes (none)").
+
+    Two independent bugs stacked to break this, both fixed in the same
+    PR: (1) this call site pre-resolved the class and dropped the
+    resolver (architect's/lead-coder's own diagnosis); (2)
+    ``TurnBudgetEngine.__init__`` ITSELF double-resolves — it resolves
+    ``model`` once into ``self._model``, then passes that
+    ALREADY-RESOLVED name to ``compute_turn_budget``, which resolves it
+    a SECOND time; a resolved NAME with no "/" is never itself a
+    declared class key, so the second resolve always raised regardless
+    of whether the real resolver reached this far (found while writing
+    THIS test — not in the original issue/diagnosis, which only reached
+    the Session-level bug).
+
+    Only the PUBLIC surface (construction did not raise, and a real
+    engine — not None — resulted) is asserted; ``TurnBudgetEngine``
+    exposes no public accessor for the resolved model string, and
+    reading ``._model`` would be a private-state assertion."""
+    session = _make_session(tmp_path, model="standard")
+    session._resolver = _make_resolver({"terra": {"model": "gpt-5.6-terra"}})
+
+    ctx = _ctx(session)
+    await model_cmd(ctx, "terra")  # must not raise
+
+    engine = session._router_host._turn_budget_engine
+    assert engine is not None, "a viable model must produce a real engine, not None"
+
+
+def test_lazy_startup_turn_budget_engine_does_not_raise_for_a_bare_model_name(tmp_path):
+    """Tier 2: #4685 — the SECOND, independent Session-level call site
+    with the identical defect shape (``Session``'s lazy
+    ``_build_chat_turn_budget_engine`` closure, built at RouterHostAdapter
+    construction and realized on first reference — #3671's deferred-build
+    discipline). Not named in the original issue/diagnosis; found while
+    fixing the first site. Also exercises the SAME ``TurnBudgetEngine``
+    double-resolve bug the sibling test above documents.
+
+    An override already in effect BEFORE the lazy engine is first
+    referenced (a session resumed/constructed with a prior ``/model``
+    switch already applied, whose first force-close check comes later —
+    the realistic shape #3671's own deferred-build discipline describes)
+    reproduces the same bug independently of the ``/model`` command path
+    tested above."""
+    session = _make_session(tmp_path, model="standard")
+    session._resolver = _make_resolver({"terra": {"model": "gpt-5.6-terra"}})
+    session._model_override = "terra"
+
+    engine = session._router_host._ensure_turn_budget_engine()  # must not raise
+    assert engine is not None
