@@ -412,7 +412,16 @@ def test_no_slash_module_reaches_the_session_outbox() -> None:
 #: what this ceiling actually measures. No new slash-reachable capability
 #: was added — the name, its meaning, and every external caller's access
 #: pattern (``session.output_language``) are unchanged.
-_PUBLIC_MEMBER_CEILING = 106
+#: Raised 106 -> 107 for #4686: ``mcp_subscription_state`` — a NEW public
+#: read-only method, the status-bar/MCP-pane's subscription read model
+#: (mirrors ``capability_visibility_state``/``hook_state``'s own forwarder
+#: shape, both already public before this change). Genuinely unrelated to
+#: #3595 S4's slash-handler-encapsulation concern: it is a read accessor a
+#: status-readout seam (``status.py``'s ``_session_mcp_subscriptions``) and
+#: the LLM-facing ``list_mcp_subscriptions`` tool (via
+#: ``RouterHostAdapter``) both call — not a private-state leak a slash
+#: handler needed publishing to keep reaching into the session.
+_PUBLIC_MEMBER_CEILING = 107
 
 
 def test_session_public_surface_does_not_grow() -> None:

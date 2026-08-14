@@ -742,6 +742,24 @@ def build_tools(
                     dispatch_kind=_list_mcp_servers_def.dispatch_kind,
                 ))
 
+            # ── D1b: list_mcp_subscriptions (#4686) ──────────────────────────
+            # Same threshold rule as D1: excluded under search-tool mode
+            # alongside it — a small, session-local (never a per-server
+            # schema, never a gateway call) discovery verb, so it rides
+            # D1's own on/off switch rather than getting a separate one.
+            _list_mcp_subscriptions_def = _registry.lookup("list_mcp_subscriptions")
+            if (
+                _list_mcp_subscriptions_def is not None
+                and _list_mcp_subscriptions_def.gates.router == "allow"
+            ):
+                _list_mcp_subscriptions_rendered = _list_mcp_subscriptions_def.render_for_router()
+                specs.append(ToolSpec(
+                    name=_list_mcp_subscriptions_rendered["function"]["name"],
+                    description=_list_mcp_subscriptions_rendered["function"]["description"],
+                    parameters=_list_mcp_subscriptions_rendered["function"]["parameters"],
+                    dispatch_kind=_list_mcp_subscriptions_def.dispatch_kind,
+                ))
+
             # ── D2: list_mcp_tools ───────────────────────────────────────────
             _list_mcp_tools_def = _registry.lookup("list_mcp_tools")
             if _list_mcp_tools_def is not None and _list_mcp_tools_def.gates.router == "allow":

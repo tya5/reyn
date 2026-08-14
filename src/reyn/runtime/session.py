@@ -8151,6 +8151,40 @@ class Session:
         ``_mcp_connection_service`` directly."""
         return self._mcp_connection_service.held_servers()
 
+    def mcp_subscription_state(self) -> "list[dict]":
+        """#4686: the status-bar/MCP-pane's subscription read model — the
+        session-level seam ``_session_mcp_subscriptions`` (status.py) reads,
+        mirroring ``capability_visibility_state``'s / ``hook_state``'s own
+        forwarder shape.
+
+        Shape: ``[{"server": name, "mode": "legacy" | "listen" | None,
+        "uris": [...], "unhonored": [...] | None}, ...]`` — one entry per
+        HELD server that has at least one subscribed URI (a held server with
+        none has nothing this adds over the existing ``visibility_items``
+        row, so it's omitted rather than emitted empty). ``mode`` is per
+        CONNECTION, never merged across servers — the #4686 issue's own
+        "per-connection, not aggregated" requirement, since what a
+        subscription even means differs between the two.
+
+        ``uris`` is the REQUESTED set (``MCPConnectionService.subscribed_uris``)
+        — never honored-only, so a URI the server declined stays visible
+        instead of disappearing (the owner-approved #4686 design; see
+        ``unhonored_uris``'s own docstring for the full three-state
+        rationale this mirrors). ``unhonored`` is the subset of ``uris`` the
+        server did NOT confirm on the most recent (re)connect, or ``None``
+        if that can't be determined right now (a Legacy connection, which
+        has no such concept, or no successful open yet).
+
+        Always ``[]`` for an ephemeral session (never populates the
+        connection service — same condition ``mcp_held_servers`` documents).
+
+        Thin forwarder to ``MCPConnectionService.subscription_summary`` —
+        see that method's own docstring for why the composition lives there
+        and not here (the single-producer reasoning behind both this method
+        and ``RouterHostAdapter.mcp_list_subscriptions`` reading the same
+        source)."""
+        return self._mcp_connection_service.subscription_summary()
+
     async def aclose_mcp_connections(self) -> None:
         """#2597 S2a teardown: close every held MCP connection this session opened.
 

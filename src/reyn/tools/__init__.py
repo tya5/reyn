@@ -74,6 +74,7 @@ def get_default_registry() -> ToolRegistry:
         LIST_MCP_RESOURCE_TEMPLATES,
         LIST_MCP_RESOURCES,
         LIST_MCP_SERVERS,
+        LIST_MCP_SUBSCRIPTIONS,
         LIST_MCP_TOOLS,
         READ_MCP_RESOURCE,
         SUBSCRIBE_MCP_RESOURCE,
@@ -174,6 +175,10 @@ def get_default_registry() -> ToolRegistry:
     # FP-0032: DESCRIBE_MCP_TOOL added as D4 (mirror of describe_skill).
     registry.register(CALL_MCP_TOOL)
     registry.register(LIST_MCP_SERVERS)
+    # #4686: per-connection subscription state — never touches the network
+    # (session-local), placed beside LIST_MCP_SERVERS as the other
+    # no-args/no-gateway MCP discovery verb.
+    registry.register(LIST_MCP_SUBSCRIPTIONS)
     registry.register(LIST_MCP_TOOLS)
     registry.register(DESCRIBE_MCP_TOOL)
     # #2597 slice ②a: resources consumption (list/read/templates) — parallel

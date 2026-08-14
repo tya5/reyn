@@ -709,6 +709,9 @@ class RouterLoopHost(RouterLoopCore, Protocol):
     # MCP ops
     async def mcp_list_servers(self) -> list[dict]: ...
 
+    # #4686: per-connection resource-subscription state (never aggregated).
+    async def mcp_list_subscriptions(self) -> list[dict]: ...
+
     async def mcp_list_tools(self, server: str) -> list[dict]: ...
 
     async def mcp_call_tool(self, server: str, tool: str,

@@ -47,6 +47,11 @@ _EXPECTED_DISPATCH: "frozenset[str]" = frozenset({
     "list_mcp_resources", "list_mcp_resource_templates", "read_mcp_resource",
     # #2597 slice ②b: resource subscriptions — the async push event-source.
     "subscribe_mcp_resource", "unsubscribe_mcp_resource",
+    # #4686: list_mcp_subscriptions — the read-back for the async push
+    # source above (per-connection tracked/honored state), router_dispatched
+    # so chat + pipeline both reach it, mirroring list_mcp_servers's own
+    # no-args discovery shape.
+    "list_mcp_subscriptions",
     # #2597 slice ②c: prompts consumption — parallel to the resources surface above.
     "list_mcp_prompts", "get_mcp_prompt",
     "remember_shared", "remember_agent", "forget_memory", "list_memory", "read_memory_body",

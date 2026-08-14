@@ -257,6 +257,16 @@ class MCPConnectionService:
         # re-subscribe every tracked URI on a fresh client (first open: empty, no-op;
         # reconnect: the whole point).
         self._subscriptions: dict[str, set[str]] = {}
+        # #4686: the ``honored`` value from the most recent ``adapter.open()``
+        # for each server — a set (the honored subset the server actually
+        # confirmed) or ``None`` (cannot report honored-ness: a Legacy
+        # connection, or no successful open yet). Was previously computed
+        # and discarded locally inside ``_ensure_open`` (used only to decide
+        # which URIs get a synthetic resync fire on reopen); kept here too so
+        # ``unhonored_uris`` can expose the requested-vs-honored distinction
+        # without re-deriving it. Runtime-only, no WAL, same Q4 reasoning as
+        # ``_subscriptions`` above.
+        self._last_honored: "dict[str, set[str] | None]" = {}
         # #3698 PR-2: the active SubscriptionAdapter per server — rebuilt on
         # every (re)connect by _ensure_open (see subscription_port.py's own
         # module docstring for the full design). Read by _HeldConnection.
@@ -454,6 +464,7 @@ class MCPConnectionService:
                     "after (re)connect", server, exc_info=True,
                 )
                 honored = None
+            self._last_honored[server] = honored
             if is_reopen and handler is not None:
                 for uri in (honored if honored is not None else tracked):
                     handler.emit_resource_updated(uri, resync=True)
@@ -583,8 +594,83 @@ class MCPConnectionService:
     def subscribed_uris(self, server: str) -> list[str]:
         """Sorted list of URIs currently tracked as subscribed for ``server``.
         Read-only introspection for callers/tests (mirrors :meth:`held_servers`'s
-        public-surface pattern) — never reach into ``_subscriptions`` directly."""
+        public-surface pattern) — never reach into ``_subscriptions`` directly.
+
+        This is the REQUESTED set — the one reyn is trying to maintain — not
+        the honored set. See :meth:`unhonored_uris` for which of these the
+        server actually confirmed (#4686: the requested set stays the
+        population on purpose, so a URI the server declined doesn't vanish
+        from view — see that method's docstring)."""
         return sorted(self._subscriptions.get(server, ()))
+
+    def subscription_mode(self, server: str) -> "str | None":
+        """``"listen"`` or ``"legacy"`` — which :class:`SubscriptionAdapter`
+        kind is currently active for ``server``, or ``None`` if no adapter
+        has been built yet (no successful (re)connect). Read-only
+        introspection (#4686), mirroring ``subscribed_uris``'s
+        never-reach-into-private-state pattern — a caller distinguishing
+        Legacy from Listen (e.g. the ``list_mcp_subscriptions`` tool's
+        per-connection ``mode`` field) reads this instead of the adapter
+        type directly."""
+        adapter = self._subscription_adapters.get(server)
+        if adapter is None:
+            return None
+        return "listen" if isinstance(adapter, ListenSubscriptionAdapter) else "legacy"
+
+    def unhonored_uris(self, server: str) -> "list[str] | None":
+        """Of ``subscribed_uris(server)``, the ones the server did NOT confirm
+        on the most recent (re)connect — or ``None`` if honored-ness cannot be
+        determined at all for this server right now (a Legacy connection,
+        which has no such concept, or no successful open yet).
+
+        #4686, per the issue's owner-approved design: the row population is
+        the REQUESTED set (``subscribed_uris``), never the honored set —
+        collapsing to honored-only would make a declined URI disappear from
+        the screen instead of surfacing it, reproducing the exact
+        "subscribed but can't tell if it's still alive" blind spot this
+        issue exists to close. This method answers the complementary
+        question — which of the requested URIs are *not* currently honored —
+        so a caller marks the individual URI rows (``· not honored``) rather
+        than collapsing the two axes into one marker (#3378 "two axes, two
+        markers"). ``None`` is a THIRD, distinct state from "empty list":
+        empty means every requested URI was confirmed; ``None`` means the
+        service cannot say either way (render as a server-level
+        ``· unconfirmed``, not a per-URI mark, since there is nothing to
+        distinguish URI-by-URI)."""
+        honored = self._last_honored.get(server)
+        if honored is None:
+            return None
+        return sorted(set(self._subscriptions.get(server, ())) - honored)
+
+    def subscription_summary(self) -> "list[dict]":
+        """#4686: per-CONNECTION subscription state — one entry per held
+        server with at least one subscribed URI, composed from
+        :meth:`held_servers` / :meth:`subscribed_uris` /
+        :meth:`subscription_mode` / :meth:`unhonored_uris` above. The single
+        producer both ``Session.mcp_subscription_state`` (the TUI pane's
+        read model) and ``RouterHostAdapter.mcp_list_subscriptions`` (the
+        LLM-facing tool) call, so the composition logic exists in exactly
+        ONE place rather than being re-derived at each of those two call
+        sites and risking drift between what the operator sees and what the
+        LLM reads (the issue's own explicit "don't split ①②" requirement,
+        extended to the code that answers both).
+
+        Shape: ``[{"server": name, "mode": "legacy" | "listen" | None,
+        "uris": [...], "unhonored": [...] | None}, ...]``. See
+        ``subscribed_uris``/``unhonored_uris``/``subscription_mode`` for the
+        field-level semantics this only assembles."""
+        out: "list[dict]" = []
+        for server in self.held_servers():
+            uris = self.subscribed_uris(server)
+            if not uris:
+                continue
+            out.append({
+                "server": server,
+                "mode": self.subscription_mode(server),
+                "uris": uris,
+                "unhonored": self.unhonored_uris(server),
+            })
+        return out
 
     def _resolve_elicitation_bus(self) -> "RequestBus | None":
         """#2597 slice ③ D4/D6: called by an elicitation handler at request
@@ -820,7 +906,13 @@ class _HeldConnection:
             adapter = self._service._subscription_adapters.get(self._server)
             if isinstance(adapter, ListenSubscriptionAdapter):
                 all_uris = set(self._service._subscriptions.get(self._server, ())) | {uri}
-                await adapter.open(all_uris)
+                # #4686: this IS the honored-computing open() call for an
+                # incremental add — _ensure_open's own honored-storage line
+                # only runs at (re)connect time, never here, so without this
+                # ``unhonored_uris`` would read a STALE (pre-this-URI)
+                # honored set for every subscribe added to an
+                # already-open Listen connection.
+                self._service._last_honored[self._server] = await adapter.open(all_uris)
             else:
                 await c.subscribe_resource(uri)
 
@@ -832,7 +924,9 @@ class _HeldConnection:
             adapter = self._service._subscription_adapters.get(self._server)
             if isinstance(adapter, ListenSubscriptionAdapter):
                 remaining = set(self._service._subscriptions.get(self._server, ())) - {uri}
-                await adapter.open(remaining)
+                # #4686: mirrors subscribe_resource's own honored-storage —
+                # see that method's comment.
+                self._service._last_honored[self._server] = await adapter.open(remaining)
             else:
                 await c.unsubscribe_resource(uri)
 

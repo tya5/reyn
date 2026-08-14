@@ -181,6 +181,22 @@ _NOT_EXTERNAL = {
     "list_agents", "describe_agent",
     "list_actions", "search_actions", "describe_action",
     "list_mcp_servers", "cron_list",
+    # #4686: list_mcp_subscriptions — NOT the same class as list_mcp_tools/
+    # list_mcp_resources/list_mcp_prompts above (server-AUTHORED free text:
+    # descriptions, schemas, content — genuinely fenceable injection
+    # surface). Every string this tool returns is bounded by URIs REYN
+    # ITSELF already tracks (subscribe_mcp_resource's own argument, chosen
+    # by the agent) — ``uris`` is that tracked set verbatim; ``unhonored``
+    # is ``tracked - honored`` (connection_service.py's own
+    # ``unhonored_uris``), a SET-DIFFERENCE against the tracked set, so it
+    # can only ever be a SUBSET of already-known strings, never a new
+    # server-authored string smuggled in. ``mode`` is reyn-computed (the
+    # adapter class name), not server content either. Same "derived from
+    # reyn's own state, not a relay of external content" rationale as
+    # embed/render_template above — a malicious server can narrow which of
+    # the agent's own URIs get marked unconfirmed, but cannot inject
+    # arbitrary text through this response shape.
+    "list_mcp_subscriptions",
     # — presentation (#2692, part of the #2688 sweep) —
     # present: fire-and-continue → returns a compact ACK (reached-user + view-bind
     # stats), NOT the presented data itself → no external content forwarded (same

@@ -90,6 +90,18 @@ _LIST_MCP_SERVERS_PARAMETERS: dict[str, Any] = {
     "required": [],
 }
 
+# #4686 — the LLM-facing read tool. Takes no params, same shape as
+# list_mcp_servers: it reports across every held connection at once
+# (per-connection, never merged — see the ToolDefinition below), not one
+# server at a time.
+_LIST_MCP_SUBSCRIPTIONS_DESCRIPTION = _mcp_descriptions.list_mcp_subscriptions.text
+
+_LIST_MCP_SUBSCRIPTIONS_PARAMETERS: dict[str, Any] = {
+    "type": "object",
+    "properties": {},
+    "required": [],
+}
+
 _LIST_MCP_TOOLS_PARAMETERS: dict[str, Any] = {
     "type": "object",
     "properties": {
@@ -330,6 +342,22 @@ async def _handle_list_mcp_servers(
     if error is not None:
         return {"error": error}
     return {"servers": result}
+
+
+async def _handle_list_mcp_subscriptions(
+    args: Mapping[str, Any], ctx: ToolContext
+) -> ToolResult:
+    """Adapter for list_mcp_subscriptions (#4686).
+
+    Delegates to host.mcp_list_subscriptions() via ctx.router_state — mirrors
+    _handle_list_mcp_servers's no-args shape, NOT the gateway-backed
+    _handle_list_mcp_resources shape: this never touches the network
+    (subscription tracking is session-local state, see
+    RouterHostAdapter.mcp_list_subscriptions's own docstring), so there is
+    no _mcp_list_error/_call_mcp_list gateway-failure sentinel to check."""
+    host = _require_host(ctx)
+    result = await host.mcp_list_subscriptions()
+    return {"subscriptions": result}
 
 
 async def _handle_list_mcp_tools(
@@ -657,6 +685,7 @@ from reyn.core.offload.canonical import (  # noqa: E402
     list_mcp_resource_templates_to_canonical,
     list_mcp_resources_to_canonical,
     list_mcp_servers_to_canonical,
+    list_mcp_subscriptions_to_canonical,
     list_mcp_tools_to_canonical,
     mcp_get_prompt_to_canonical,
     mcp_read_resource_to_canonical,
@@ -673,6 +702,18 @@ LIST_MCP_SERVERS = ToolDefinition(
     parameters=_LIST_MCP_SERVERS_PARAMETERS,
     gates=ToolGates(router="allow"),
     handler=_handle_list_mcp_servers,
+    category="discovery",
+    purity="read_only",
+)
+
+LIST_MCP_SUBSCRIPTIONS = ToolDefinition(
+    canonical=list_mcp_subscriptions_to_canonical,
+    name="list_mcp_subscriptions",
+    router_dispatched=True,
+    description=_LIST_MCP_SUBSCRIPTIONS_DESCRIPTION,
+    parameters=_LIST_MCP_SUBSCRIPTIONS_PARAMETERS,
+    gates=ToolGates(router="allow"),
+    handler=_handle_list_mcp_subscriptions,
     category="discovery",
     purity="read_only",
 )

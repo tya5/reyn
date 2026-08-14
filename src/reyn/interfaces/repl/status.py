@@ -316,6 +316,25 @@ def _session_hook_items(session) -> list[dict]:
         return []
 
 
+def _session_mcp_subscriptions(session) -> list[dict]:
+    """Read the MCP subscription read model from the session (#4686 backend
+    seam). Shape: ``[{"server", "uris", "unhonored"}, ...]`` — see
+    ``Session.mcp_subscription_state``'s own docstring for the field
+    semantics. Mirrors ``_session_pipelines``'s defensiveness (a
+    getattr + try/except around an accessor that's always constructed, not
+    a "not wired yet" seam like ``visibility_items``/``hook_items``) — [] on
+    any missing accessor or unexpected raise, never a crash of the whole
+    status readout."""
+    getter = getattr(session, "mcp_subscription_state", None)
+    if getter is None:
+        return []
+    try:
+        return list(getter() or [])
+    except Exception:  # noqa: BLE001
+        logger.warning("mcp_subscription_state() raised; mcp pane subscription rows degraded to []", exc_info=True)
+        return []
+
+
 def _session_pipelines(session) -> list[dict]:
     """Read registered pipeline names + descriptions from the session's
     PipelineRegistry — always constructed at Session.__init__ (never a "not
@@ -475,6 +494,11 @@ def _snapshot(registry, config=None):
         # needs that distinction to say "not wired" rather than "(none)".
         "visibility_items": _session_visibility_items(s),
         "hook_items": _session_hook_items(s),
+        # #4686: per-server subscription read model for the mcp pane's
+        # "subscribed"/"not honored"/"unconfirmed" rows. Always [] rather
+        # than a not-wired seam — Session always owns an MCPConnectionService
+        # (see Session.mcp_subscription_state's own docstring).
+        "mcp_subscriptions": _session_mcp_subscriptions(s),
         # Always available (Session owns a PipelineRegistry from __init__) —
         # not a "not wired yet" seam like the two lines above.
         "pipelines": _session_pipelines(s),

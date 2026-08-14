@@ -174,6 +174,37 @@ unsubscribe_mcp_resource = ToolDescription(
     ),
 )
 
+list_mcp_subscriptions = ToolDescription(
+    tool_name="list_mcp_subscriptions",
+    surfaced="router (gates.router=allow) — #4686",
+    purpose=(
+        "Report currently-tracked resource subscriptions, per MCP "
+        "connection — never aggregated across connections, since what "
+        "'subscribed' confirms differs by connection mode (Legacy can't "
+        "report honored-ness; Listen can)."
+    ),
+    text=(
+        "List currently-tracked MCP resource subscriptions, one entry per "
+        "connection with at least one subscribed URI. Each entry reports "
+        "the connection's mode (legacy/listen), the URIs this session is "
+        "trying to keep subscribed, and which of those the server did NOT "
+        "confirm (or null if that can't be determined for this connection "
+        "right now). A URI the server declined still appears here — it is "
+        "never dropped from the list, so a subscription that silently "
+        "stopped working stays visible instead of disappearing."
+    ),
+    ja=(
+        "現在追跡している MCP リソース購読を、接続ごとに一覧表示する — "
+        "接続をまたいだ集計は行わない（'subscribed' が意味することは接続の"
+        "モードで異なるため — Legacy は honored かどうかを報告できず、"
+        "Listen はできる）。エントリごとに接続モード（legacy/listen）、この"
+        "セッションが購読を維持しようとしている URI 一覧、そのうちサーバー"
+        "が確認しなかったもの（この接続では判定できない場合は null）を返す。"
+        "サーバーが拒否した URI も一覧から消えない — 静かに機能しなくなった"
+        "購読が画面から消えて見えなくなることを防ぐため。"
+    ),
+)
+
 list_mcp_prompts = ToolDescription(
     tool_name="list_mcp_prompts",
     surfaced="router (gates.router=allow) — #2597 slice ②c",
