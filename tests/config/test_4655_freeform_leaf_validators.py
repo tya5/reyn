@@ -130,22 +130,20 @@ def test_model_class_by_purpose_compaction_gets_its_own_removal_note() -> None:
 # ── llm.router.retry_policy ─────────────────────────────────────────────
 
 
-def test_retry_policy_valid_field_is_not_flagged() -> None:
-    """Tier 1: a real ``litellm.RetryPolicy`` field name is not flagged."""
-    result = config_schema.unknown_config_keys({
-        "llm": {"router": {"retry_policy": {"TimeoutErrorRetries": 2}}},
-    })
-    assert result == {}
-
-
-def test_retry_policy_invalid_field_is_flagged() -> None:
-    """Tier 1: an unrecognized ``retry_policy`` field is flagged here
-    (``reyn config validate`` time) — earlier and friendlier than the
-    ``TypeError`` it would otherwise only surface at Router-build time."""
+def test_retry_policy_is_registered_open_not_validated() -> None:
+    """Tier 1: #4655 review (lead-coder) reverted this leaf from Kind① to
+    Kind② — an earlier revision imported ``litellm.types.router.RetryPolicy``
+    directly to introspect its field names, which (a) broke the
+    litellm-boundary import seam and (b) took over a third party's
+    vocabulary reyn doesn't need to duplicate (litellm already fails
+    loudly on an unknown key at Router-build time). A bogus field is
+    accepted here (unflagged) because litellm's own TypeError is the real
+    enforcement — this is the CORRECT disposition, not an oversight."""
+    assert config_schema.freeform_leaf_registration_kind("llm.router.retry_policy") == "open"
     result = config_schema.unknown_config_keys({
         "llm": {"router": {"retry_policy": {"NotARealField": 2}}},
     })
-    assert "llm.router.retry_policy.NotARealField" in result
+    assert result == {}
 
 
 # ── gateway.surfaces.enabled ─────────────────────────────────────────────

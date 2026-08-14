@@ -866,35 +866,34 @@ def _register_model_class_by_purpose_validator() -> None:
 _register_model_class_by_purpose_validator()
 
 
-def _retry_policy_freeform_validator(raw: dict) -> "dict[str, object]":
-    """#4655 Kind① — ``llm.router.retry_policy`` already fails LOUDLY (a
+def _register_retry_policy_open() -> None:
+    """#4655 Kind② — ``llm.router.retry_policy`` already fails LOUDLY (a
     ``TypeError`` from ``litellm.RetryPolicy(**rcfg.retry_policy)`` at
     Router-build time, ``llm/llm.py``) on an unknown key — this is NOT the
-    B-3 "silently accepted, does nothing" shape #4655 is about. Registered
-    anyway (every dict-leaf needs exactly one explicit disposition) as
-    Kind① rather than Kind②, purely to give an earlier, friendlier
-    ``reyn config validate``-time warning instead of a hard crash at
-    Router-build time — ``litellm.RetryPolicy`` is a pydantic model, so its
-    accepted field names are cheaply introspectable via
-    ``.model_fields.keys()`` with no new heavy import (``llm.py`` already
-    imports ``litellm``). Do NOT read a bare unknown key here as evidence
-    this leaf was silently ignored elsewhere — it never was; see above.
+    B-3 "silently accepted, does nothing" shape #4655 is about, so reyn
+    does not need a second check ahead of that one.
+
+    A prior revision of this registration WAS Kind① — it introspected
+    ``litellm.RetryPolicy.model_fields`` to validate earlier, friendlier,
+    at ``reyn config validate`` time. Reverted (lead-coder, #4665 review):
+    two problems, not one. (1) It broke the litellm-boundary import seam
+    (``tests/security/test_4421_litellm_import_seam.py`` — reyn code above the
+    litellm layer must never import litellm types directly). (2) Even
+    seam-compliant, it would have been reyn TAKING OVER a third party's
+    vocabulary — "does reyn's code grow when litellm's RetryPolicy field
+    set grows?" is yes, the exact test
+    ``feedback_third_party_responsibility_is_not_ours_to_take_over``
+    names. litellm already owns this enforcement and already fails
+    loudly; reyn duplicating it would only be able to drift stale against
+    upstream, never actually needed for the "silently ignored" defect
+    class #4655 exists to close.
     """
-    from litellm.types.router import RetryPolicy
-
-    valid = frozenset(RetryPolicy.model_fields.keys())
-    return {key: None for key in raw if key not in valid}
-
-
-def _register_retry_policy_validator() -> None:
     from reyn.config import config_schema
 
-    config_schema.register_freeform_leaf_validator(
-        "llm.router.retry_policy", _retry_policy_freeform_validator
-    )
+    config_schema.register_freeform_leaf_open("llm.router.retry_policy")
 
 
-_register_retry_policy_validator()
+_register_retry_policy_open()
 
 
 def _gateway_surfaces_enabled_freeform_validator(raw: dict) -> "dict[str, object]":
