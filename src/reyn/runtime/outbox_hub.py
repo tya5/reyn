@@ -143,8 +143,17 @@ class OutboxHub:
 
     def _ensure_drain(self) -> None:
         if self._drain_task is None or self._drain_task.done():
+            # appends_wal=False (the default, stated explicitly here): this
+            # drain loop is a pure in-memory fan-out (queue -> subscriber
+            # queues), never itself a WAL writer -- a mid-rewind quiesce
+            # point (Session.await_quiescent) must never cancel it, only
+            # real session teardown may (#4759 review: an earlier version
+            # of this axis was lifetime-named ("scope") rather than
+            # invariant-named, and a rewind's quiesce killed this loop,
+            # silently stopping the session from answering).
             self._drain_task = self._task_tracker.spawn(
-                self._drain(), disposition="cancel_join", name=f"outbox-drain-{self._name}",
+                self._drain(), disposition="cancel_join", appends_wal=False,
+                name=f"outbox-drain-{self._name}",
             )
 
     async def _drain(self) -> None:

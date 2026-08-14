@@ -59,7 +59,7 @@ async def test_aclose_reentrant_from_a_task_it_is_itself_tracking_does_not_raise
         await tracker.aclose()
         reentrant_call_completed.set()
 
-    task = tracker.spawn(self_referencing_task(), disposition="await")
+    task = tracker.spawn(self_referencing_task(), disposition="await", name="self-referencing")
 
     await reentrant_call_completed.wait()
     await task
@@ -93,8 +93,8 @@ async def test_reentrant_aclose_still_drains_a_different_tracked_task():
         await sibling_started.wait()
         await tracker.aclose()
 
-    tracker.spawn(sibling(), disposition="cancel_join")
-    task = tracker.spawn(self_referencing_task(), disposition="await")
+    tracker.spawn(sibling(), disposition="cancel_join", name="sibling")
+    task = tracker.spawn(self_referencing_task(), disposition="await", name="self-referencing")
 
     await task
     assert sibling_was_cancelled
@@ -125,8 +125,8 @@ async def test_aclose_cancels_cancel_join_and_leaves_await_disposition_to_finish
         await asyncio.sleep(0)
         await_disposition_completed = True
 
-    tracker.spawn(cancel_join_task(), disposition="cancel_join")
-    tracker.spawn(await_task(), disposition="await")
+    tracker.spawn(cancel_join_task(), disposition="cancel_join", name="cancel-join-task")
+    tracker.spawn(await_task(), disposition="await", name="await-task")
     # Let cancel_join_task actually start (reach its own sleep) before
     # aclose() cancels it -- cancelling a task before its coroutine has ever
     # run means its own except-block never executes at all, which would
@@ -197,7 +197,7 @@ async def test_non_reentrant_aclose_does_not_log_the_reentrancy_warning(caplog):
         await asyncio.sleep(0)
 
     with caplog.at_level(logging.WARNING, logger="reyn.runtime.tracked_tasks"):
-        tracker.spawn(ordinary_task(), disposition="cancel_join")
+        tracker.spawn(ordinary_task(), disposition="cancel_join", name="ordinary-task")
         await started.wait()
         await tracker.aclose()  # called from the TEST's own task, not a tracked one
 

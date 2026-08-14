@@ -618,9 +618,13 @@ async def _spawn_pipeline_driver_session(
         # (tracked_tasks.py) so AgentRegistry.shutdown() reaches it directly
         # instead of only via remove_session's bare (never-awaited) .cancel()
         # — see Session._hook_bus_bridge_task's own note above.
+        # appends_wal=False (the default, stated explicitly here): this
+        # bridges hook events for the LIFE of the driver session and does
+        # not itself append to the WAL -- a mid-rewind quiesce must not
+        # tear it down while the session keeps running.
         session._hook_bus_bridge_task = session._background_tasks.spawn(
             bridge_child_bus_to_parent(session._hook_bus, attached_parent_session._hook_bus),
-            disposition="cancel_join", name="hook-bus-bridge",
+            disposition="cancel_join", appends_wal=False, name="hook-bus-bridge",
         )
     driver = PipelineExecutorDriver(
         work_order, registry=registry, state_log=state_log,
@@ -1230,9 +1234,14 @@ async def run_prompt_async(
         # the target's cancel_inflight() running here, not the caller's) —
         # was a bare ensure_future with no reference kept anywhere.
         task = asyncio.ensure_future(target.cancel_inflight())
+        task.set_name(f"cross-session-cancel-forward-{chain_id}")
         target_tracker = getattr(target, "_background_tasks", None)
         if target_tracker is not None:
-            target_tracker.register(task, disposition="cancel_join")
+            # appends_wal=False (the default, stated explicitly here): a
+            # cancel-forward is a short-lived one-shot, unrelated to
+            # rewind/WAL-quiesce semantics -- no reason for a mid-rewind
+            # quiesce point to newly start touching it.
+            target_tracker.register(task, disposition="cancel_join", appends_wal=False)
 
     await caller_session.chains.register(
         chain_id=chain_id,

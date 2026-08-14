@@ -2525,19 +2525,34 @@ class Session:
         # for the _turn_idle / _turn_owner_task rationale).
         if asyncio.current_task() is not self._turn_owner_task:
             await self._turn_idle.wait()
-        # 2. drain every "cancel_join"-disposition tracked task to a fixpoint
-        #    (chain-timeout watchdogs + fire-and-forget WAL-append tasks — see
-        #    the docstring above). Cancel — not join-only — is required: the
-        #    intervention-dispatch task awaits the user-answer future
-        #    indefinitely; these tasks are drop-safe so cancelling is
-        #    correct. The fixpoint loop (TrackedTaskSet.aclose's own #2115
-        #    re-check) covers a joined task scheduling a NEW tracked append
-        #    (or re-spawn) DURING the gather, which a one-shot snapshot would
-        #    miss. On reconstruct, restore() re-arms timers/watchdogs from
-        #    the recovered snapshot (proposal 0067 P8, #3978: against the
-        #    REMAINING time on a persisted arm_at deadline, not necessarily a
-        #    fresh window), so cancelling here is reversible.
-        await self._background_tasks.aclose()
+        # 2. drain every "cancel_join"-disposition, appends_wal=True tracked
+        #    task to a fixpoint (chain-timeout watchdogs + fire-and-forget
+        #    WAL-append tasks — see the docstring above). Cancel — not
+        #    join-only — is required: the intervention-dispatch task awaits
+        #    the user-answer future indefinitely; these tasks are drop-safe
+        #    so cancelling is correct. The fixpoint loop (TrackedTaskSet.
+        #    aclose's own #2115 re-check) covers a joined task scheduling a
+        #    NEW tracked append (or re-spawn) DURING the gather, which a
+        #    one-shot snapshot would miss. On reconstruct, restore()
+        #    re-arms timers/watchdogs from the recovered snapshot (proposal
+        #    0067 P8, #3978: against the REMAINING time on a persisted
+        #    arm_at deadline, not necessarily a fresh window), so cancelling
+        #    here is reversible.
+        #
+        #    appends_wal=True is NOT optional here (#4759/#4765 review,
+        #    caught live by CI, then corrected again by architect co-vet —
+        #    the axis was first named by task LIFETIME, "scope", which
+        #    fixed the CI regression but was still the wrong name for the
+        #    invariant this method actually protects; see tracked_tasks.py's
+        #    own module docstring): this method runs during a REWIND, not
+        #    only at shutdown — an unfiltered aclose() would ALSO fold every
+        #    appends_wal=False task (OutboxHub's drain loop, the hook-bus
+        #    bridge, ...), silently killing mechanisms the session needs to
+        #    keep answering turns after the rewind completes. Only real
+        #    shutdown (Session.aclose_background_tasks, called from
+        #    AgentRegistry.shutdown()) drains every task regardless of the
+        #    flag.
+        await self._background_tasks.aclose(appends_wal=True, caller="await_quiescent")
         # ChainManager's own _timers dict (chain_id -> task, used by
         # cancel_timeout's lookup) isn't cleared by the tracker's own aclose
         # above -- it owns a SEPARATE bookkeeping concern (lookup, not
@@ -2567,7 +2582,9 @@ class Session:
         the rewind reset-record. A new untracked append path would leak past a
         rewind (the #2115 bug class).
         """
-        return self._background_tasks.register(task, disposition="cancel_join")
+        return self._background_tasks.register(
+            task, disposition="cancel_join", appends_wal=True,
+        )
 
     def attach_anchor_store(self, anchor_store) -> None:
         """Attach the shared per-checkpoint anchor store (#1547). Thin forwarder — see
@@ -6083,9 +6100,19 @@ class Session:
             # from a normal shutdown path (only reset_for_rewind, a
             # DIFFERENT path, cancels-without-awaiting them). disposition
             # "cancel_join": each awaits a possibly-never-arriving user
-            # answer, drop-safe on shutdown.
-            for _t in self._restore_intervention_tasks:
-                self._background_tasks.register(_t, disposition="cancel_join")
+            # answer, drop-safe on shutdown. appends_wal=False (the
+            # default, stated explicitly here): these were NEVER part of
+            # await_quiescent's pre-#4759 scope (only reset_for_rewind's own
+            # separate, still-untouched cancel loop reaches them during a
+            # rewind) -- a mid-rewind quiesce must not fold them.
+            # zip: restore()'s own docstring guarantees FIFO order matches
+            # the input list, so `restored[i]` is the intervention `tasks[i]`
+            # watches -- used only to name the task for diagnostics below.
+            for _iv, _t in zip(restored, self._restore_intervention_tasks, strict=True):
+                _t.set_name(f"restored-intervention-{_iv.id}")
+                self._background_tasks.register(
+                    _t, disposition="cancel_join", appends_wal=False,
+                )
         self._audit_events.emit(
             "session_restored",
             applied_seq=snapshot.applied_seq,
@@ -6712,11 +6739,17 @@ class Session:
         # "cancel_join": a truncation check is a maintenance op, safe to
         # cancel mid-flight (the next turn boundary re-checks; nothing here
         # is a partial-write hazard — maybe_truncate_for_size only acts once
-        # its own check passes).
+        # its own check passes). appends_wal=False (the default, stated
+        # explicitly here): a size-truncation check is not itself a WAL
+        # append in the append-past-reset-record sense await_quiescent
+        # guards against, and this was NEVER part of await_quiescent's
+        # pre-#4759 scope (it wasn't tracked anywhere at all before) — a
+        # mid-rewind quiesce has no reason to newly start touching it.
         if self._registry is not None:
             self._background_tasks.spawn(
                 self._registry.maybe_truncate_for_size(),
                 disposition="cancel_join",
+                appends_wal=False,
                 name="wal-size-safety-net",
             )
 
@@ -7504,7 +7537,9 @@ class Session:
         # iv resolution — the iv.future will resolve when the new
         # channel's listener calls deliver_answer, independent of this
         # method's return.
-        self._track_wal_task(asyncio.ensure_future(self._dispatch_intervention(iv)))
+        _redispatch_task = asyncio.ensure_future(self._dispatch_intervention(iv))
+        _redispatch_task.set_name(f"intervention-redispatch-{iv.id}")
+        self._track_wal_task(_redispatch_task)
         return PendingOpView.from_intervention(iv)
 
     async def _dispatch_intervention(self, iv: UserIntervention) -> InterventionAnswer:
@@ -8417,7 +8452,7 @@ class Session:
         NOT independently time-bounded — see ``AgentRegistry.shutdown()``'s
         own bounded wrapping of this call for why and by how much.
         """
-        await self._background_tasks.aclose()
+        await self._background_tasks.aclose(caller="AgentRegistry.shutdown")
 
     async def aclose_mcp_connections(self) -> None:
         """#2597 S2a teardown: close every held MCP connection this session opened.

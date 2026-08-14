@@ -261,7 +261,28 @@ class SpawnTracker:
         # the root cause #4759 traced: a normal shutdown could return while
         # this was still mid-flight, orphaning whatever OS subprocess
         # remove_session -> aclose_mcp_connections was about to close.
+        # appends_wal=True (NOT the default False): remove_session() itself
+        # appends "session_vanished" to the state log (registry.py's own
+        # remove_session, near its end: `await self._state_log.append(
+        # "session_vanished", ...)`) — the state log IS the WAL in this
+        # codebase's own terminology (registry.py's remove_session docstring
+        # calls it "the global WAL" in the same breath). A GLOBAL rewind's
+        # await_quiescent sweep runs this session alongside every other
+        # loaded session; if this task were excluded from that drain (the
+        # scope="session"/lifetime-based axis this replaced would have
+        # excluded it), a session_vanished append landing AFTER the
+        # rewind's own reset-record would be exactly the straggler-append
+        # class await_quiescent exists to prevent (#1533/#2115). disposition
+        # stays "await" (not cancel_join): the append is the CONSEQUENCE of
+        # letting remove_session run to completion, not something to cancel
+        # around — cancelling this task would both defeat its MCP-close
+        # purpose (#4759's own root cause) and leave the append half-done.
+        # NOTE: no existing test exercises an ephemeral session vanishing
+        # DURING a global rewind specifically (the 9-file await_quiescent
+        # witness set all use non-ephemeral sessions where this task is
+        # never populated) — this is a reasoned extension of the invariant,
+        # not something the test suite independently confirms.
         coro = self._registry.remove_session(self._agent_name, self._session_id_provider())
         self._vanish_task = self._task_tracker.spawn(
-            coro, disposition="await", name="ephemeral-vanish",
+            coro, disposition="await", appends_wal=True, name="ephemeral-vanish",
         )

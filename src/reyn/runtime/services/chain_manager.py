@@ -509,18 +509,38 @@ class ChainManager:
             chain_id, on_fire=on_fire, duration_seconds=duration_seconds
         )
         # #4759: ALSO registered with the owning Session's task funnel
-        # (tracked_tasks.py), disposition="cancel_join" -- this dict stays
-        # the primary chain_id-keyed lookup `cancel_timeout` needs; the
-        # tracker registration is what makes this watchdog reachable from
-        # AgentRegistry.shutdown() without it needing to know ChainManager
-        # exists. Cancelling the same task from both `cancel_and_join_timers`
-        # and the tracker's own aclose() is safe -- Task.cancel() is
-        # idempotent.
+        # (tracked_tasks.py), disposition="cancel_join", appends_wal=True
+        # -- this dict stays the primary chain_id-keyed lookup
+        # `cancel_timeout` needs; the tracker registration is what makes
+        # this watchdog reachable from AgentRegistry.shutdown() without it
+        # needing to know ChainManager exists. appends_wal=True (NOT the
+        # default False): firing appends "chain_timeout_fired" to the WAL,
+        # and a chain-timeout watchdog is EXACTLY the class of task the
+        # pre-#4759 `await_quiescent` always cancelled mid-rewind via its
+        # own `cancel_and_join_timers()` call -- drop-safe, re-armed by
+        # `restore()` from the recovered snapshot. Cancelling the same task
+        # from both `cancel_and_join_timers` and the tracker's own
+        # aclose() is safe -- Task.cancel() is idempotent.
         if self._task_tracker is not None:
             self._timers[chain_id] = self._task_tracker.spawn(
-                coro, disposition="cancel_join", name=f"chain-timeout-{chain_id}",
+                coro, disposition="cancel_join", appends_wal=True,
+                name=f"chain-timeout-{chain_id}",
             )
         else:
+            # #4765 co-vet (architect): a caller that constructs a
+            # ChainManager without a task_tracker (deliberately kept
+            # optional -- see __init__'s own #4759 comment for the
+            # measured cost/benefit) silently falls back to an untracked
+            # task here, same as before this funnel existed. Warned (not
+            # silent) so a future caller who SHOULD have passed one but
+            # forgot has a signal to find, without forcing every existing
+            # test call site (12, across 9 files) to thread one through.
+            logger.warning(
+                "ChainManager._start_watchdog: no task_tracker configured -- "
+                "chain-timeout watchdog for %r is NOT reachable from "
+                "AgentRegistry.shutdown()'s drain (see tracked_tasks.py).",
+                chain_id,
+            )
             self._timers[chain_id] = asyncio.create_task(coro)
 
     def cancel_timeout(self, chain_id: str) -> None:

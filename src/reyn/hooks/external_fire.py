@@ -93,10 +93,29 @@ class _SessionFireBridge:
             # (a test double may not carry the attribute).
             tracker = getattr(self._session, "_background_tasks", None)
             if tracker is not None:
+                # appends_wal=False (the default, stated explicitly here):
+                # this drain loop dispatches external-event hooks, it does
+                # not itself append to the WAL -- a mid-rewind quiesce point
+                # must never cancel it (#4759 review: an earlier version of
+                # this axis was lifetime-named ("scope") rather than
+                # invariant-named, and a rewind's quiesce killed OutboxHub's
+                # own drain loop the same way; this bridge is the same
+                # shape).
                 self._drain_task = tracker.spawn(
-                    self._drain(), disposition="cancel_join", name="external-fire-drain",
+                    self._drain(), disposition="cancel_join", appends_wal=False,
+                    name="external-fire-drain",
                 )
             else:
+                # #4765 co-vet (architect): a session-like object without
+                # `_background_tasks` (a test double, typically) falls back
+                # to an untracked task here, same as before this funnel
+                # existed. Warned (not silent) so a caller that SHOULD have
+                # a real Session but doesn't has a signal to find.
+                logger.warning(
+                    "_SessionFireBridge: session has no _background_tasks -- "
+                    "external-event drain task is NOT reachable from "
+                    "AgentRegistry.shutdown()'s drain (see tracked_tasks.py)."
+                )
                 self._drain_task = asyncio.create_task(self._drain())
         try:
             self._queue.put_nowait((point, template_vars))
