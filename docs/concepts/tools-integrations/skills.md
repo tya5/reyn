@@ -355,6 +355,42 @@ Use `pypdf` for form-field operations...
 
 **`name` spelling.** The [Agent Skills specification](https://agentskills.io/specification) constrains `name` to **lowercase letters, numbers, and hyphens only** (max 64 characters, no leading/trailing hyphen, no consecutive hyphens, and it must match the parent directory name). Every skill reyn itself ships obeys that rule — `reyn-cheat-sheet`, `draft-judge-revise`, `reactive-orchestration-plugins`, and the `rag` plugin's `build-and-query-rag-corpus` (#3567 renamed all four from an earlier underscore spelling; there is no alias for the old spelling, so `:draft-judge-revise` is the only way to invoke it). Note what reyn does **not** do: it does not *enforce* the rule on an operator-registered or third-party skill. The `:name` token grammar and the install-time path-safety check (below) both still accept `_`, because rejecting a non-conformant third-party `SKILL.md` outright would be a separate decision from spelling reyn's own skills to the standard.
 
+## Design pattern: don't bundle a final answer with a completion-signaling tool call
+
+If a skill (or any agent-authoring convention on top of reyn) has the model
+signal "I'm done" via a tool call — a `.turn_done`-style exec, a completion
+marker, anything the loop reads as "stop here" — instruct the model to send
+that signal in its OWN message, never in the same message as the final
+answer text. Correct order:
+
+1. One message containing ONLY the completion-signaling tool call, no
+   answer content.
+2. The next message (after the tool result comes back) contains ONLY the
+   answer text.
+
+**Why this matters** (architect's measurement, a real `reyn-self` incident,
+2026-08-14): when a message carries both real answer content AND a tool
+call, the presence of the tool call keeps the loop going — the LLM reading
+that history back sees its own answer sitting alongside a still-open tool
+call and treats the answer as **intermediate**, not final, so it writes the
+answer again on the next turn. Contrast, from the same `history.jsonl` (all
+22 entries after a `/clear`, not a filtered sample):
+
+| Turn shape | `content` | `tool_calls` | Outcome |
+|---|---|---|---|
+| 3 normal answer-only turns (seq 976/982/988) | present | 0 | answer stands, no repeat |
+| 3 completion-signal-only turns (seq 974/980/986) | empty | 1 | signal fires, no repeat |
+| **1 mixed turn (seq 1010)** | **2,060 chars (a full answer)** | **1** (`.turn_done` exec) | the SAME ~2,252-char answer was written again at seq 1012 |
+
+**What this data does and doesn't support.** The "answer becomes
+intermediate output, triggering another turn" mechanism is well-supported —
+6 contrasting examples land exactly where the pattern predicts. The
+duplicate-answer OUTCOME itself is N=1 — only one mixed turn has been
+observed, so "a mixed message always duplicates the answer" is not
+established, only "a mixed message keeps the loop open, and in the one
+case observed, that produced a duplicate." Design against the mechanism
+(don't mix), not against a guaranteed-duplication claim.
+
 ## Three-layer exposure
 
 | Layer | What the model sees | Mechanism |

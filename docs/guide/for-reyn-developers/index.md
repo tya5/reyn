@@ -8,7 +8,11 @@ audience: [human]
 
 Orientation for contributors to the Reyn OS core. If you're adding a new op kind, fixing a runtime bug, or extending the event system, start here.
 
-If you're building workflows on top of Reyn rather than modifying the OS itself, see the workflow authoring docs instead.
+If you're building on top of Reyn rather than modifying the OS itself, see
+[Skills](../../concepts/tools-integrations/skills.md) (writing a `SKILL.md`)
+or [Pipeline DSL](../../reference/runtime/pipeline-dsl.md) (writing a
+pipeline) instead — there is no single "workflow authoring docs" landing
+page today; this line named one that doesn't exist.
 
 ---
 
