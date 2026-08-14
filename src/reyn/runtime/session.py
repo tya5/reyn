@@ -1714,6 +1714,10 @@ class Session:
             use_chars4=getattr(self._compaction, "use_chars4_estimate", False),
             # #3580: operator-tunable offload ceiling feeds the layer-1 reserve.
             max_inline_bytes=self._offload_config.max_inline_bytes,
+            # #4680: so a cold/unrecognized model lookup here is visible via
+            # the same model_budget_fallback audit-event compaction's own
+            # lookup already emits.
+            events=self._audit_events,
         )
         self._router_host.set_turn_budget_engine(engine)
         self._compaction_controller.rebuild_engine()
@@ -4284,6 +4288,10 @@ class Session:
                 use_chars4=getattr(self._compaction, "use_chars4_estimate", False),
                 # #3580: operator-tunable offload ceiling feeds the layer-1 reserve.
                 max_inline_bytes=self._offload_config.max_inline_bytes,
+                # #4680: so a cold/unrecognized model lookup here is visible
+                # via the same model_budget_fallback audit-event compaction's
+                # own lookup already emits.
+                events=self._audit_events,
             )
 
         # #3607: the ONE chat-router op-context supplier for this Session.

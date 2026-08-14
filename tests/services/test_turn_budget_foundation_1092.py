@@ -165,6 +165,44 @@ def test_engine_does_not_double_resolve_a_class_with_no_provider_prefix() -> Non
     assert eng.budget.T_wrap_SP > 0
 
 
+def test_cold_model_lookup_emits_model_budget_fallback_when_events_threaded() -> None:
+    """Tier 2: #4680 — a cold/unrecognized model landing on the conservative
+    fallback inside ``compute_turn_budget`` must be observable: with a real
+    ``EventLog`` passed as ``events=``, the SAME ``model_budget_fallback``
+    audit-event ``CompactionEngine``'s own lookup already emits must fire
+    here too. Before this fix, ``compute_turn_budget``'s call to
+    ``get_max_input_tokens`` passed no ``events=`` at all, so a turn_budget-
+    side cold value was invisible to the audit log (and to the process
+    logger too, if compaction's own lookup for the same model had already
+    warned once — the module-global ``_warned_models`` de-dupe is shared).
+
+    Real ``EventLog`` + a real subscriber, no mock — the audit-event
+    surface itself is what this test verifies exists."""
+    from reyn.core.events.events import EventLog
+
+    captured: list[str] = []
+    log = EventLog(subscribers=[lambda e: captured.append(e.type)])
+    eng = TurnBudgetEngine(
+        "openai/totally-unrecognized-model-xyz",
+        output_reserve=4000,
+        offload_cap=8000,
+        events=log,
+    )
+    assert eng.budget.max_input > 0  # the fallback value, not a raise
+    assert "model_budget_fallback" in captured
+
+
+def test_events_omitted_is_still_backward_compatible() -> None:
+    """Tier 2: #4680 — every pre-existing caller of ``TurnBudgetEngine``/
+    ``compute_turn_budget`` that never passes ``events=`` (the default,
+    ``None``) must keep working unchanged — the new parameter is additive,
+    never required."""
+    eng = TurnBudgetEngine(
+        _MODEL, output_reserve=4000, offload_cap=8000,
+    )
+    assert eng.budget.max_input > 0
+
+
 # ── fail-fast bounds (sibling of compaction assert_static_bounds) ─────────────
 
 
