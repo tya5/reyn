@@ -104,6 +104,33 @@ def test_a_server_entry_with_type_http_in_reyn_yaml_is_flagged(project, capsys):
     assert "streamable-http" in out
 
 
+def test_a_reyn_yaml_finding_says_it_self_heals_with_no_reload_or_restart(
+    project, capsys,
+):
+    """Tier 2: #4658 — a stale entry in a policy-tier file (reyn.yaml /
+    reyn.local.yaml / ~/.reyn/config.yaml) is watched by
+    RouterHostAdapter.maybe_refresh_mcp_tools_from_yaml's own independent
+    per-turn mtime-check (measured directly, not assumed) — the fix must
+    say it applies automatically on the next message, so an agent that
+    just fixed the line doesn't retry-and-loop waiting for something that
+    already happened."""
+    from reyn.interfaces.cli.commands.config import _validate
+
+    _write_yaml(
+        project / "reyn.yaml",
+        MINIMAL_REYN_YAML + (
+            "mcp:\n  servers:\n    myserver:\n"
+            "      type: http\n      url: \"https://example.com/mcp\"\n"
+        ),
+    )
+    _validate()
+    out = capsys.readouterr().out
+
+    assert "reyn.yaml self-heal automatically" in out
+    assert "no /reload and no restart needed" in out
+    assert "does not self-heal automatically" not in out
+
+
 def test_a_server_entry_in_dot_reyn_config_mcp_yaml_is_flagged_with_its_own_file_name(
     project, capsys,
 ):
@@ -122,6 +149,56 @@ def test_a_server_entry_in_dot_reyn_config_mcp_yaml_is_flagged_with_its_own_file
     assert "MCP transport type" in out
     assert "[.reyn/config/mcp.yaml] mcp.servers.myserver.type: http" in out
     assert "[reyn.yaml]" not in out.split("MCP transport type")[1]
+
+
+def test_a_dot_reyn_mcp_yaml_finding_says_it_needs_reload_not_restart(
+    project, capsys,
+):
+    """Tier 2: #4658 — the IN-set file is NOT covered by
+    maybe_refresh_mcp_tools_from_yaml's mtime-watch (measured: that watch
+    only stats the 3 policy-tier paths) — a fix there needs an explicit
+    `/reload`, and the finding must say so rather than silently matching
+    the policy-tier "self-heals" wording (which would be false here) or
+    telling the operator to restart (which overstates what's needed)."""
+    from reyn.interfaces.cli.commands.config import _validate
+
+    _write_yaml(project / "reyn.yaml", MINIMAL_REYN_YAML)
+    _write_yaml(
+        project / ".reyn" / "config" / "mcp.yaml",
+        "mcp:\n  servers:\n    myserver:\n      type: http\n      url: \"https://example.com/mcp\"\n",
+    )
+    _validate()
+    out = capsys.readouterr().out
+
+    assert "does not self-heal automatically" in out
+    assert "/reload" in out
+    assert "reyn mcp refresh" in out
+    assert "self-heal automatically once fixed" not in out
+
+
+def test_findings_in_both_kinds_of_file_get_both_kinds_of_guidance(project, capsys):
+    """Tier 2: #4658 — a policy-tier finding and an IN-set finding present
+    at once must each get their OWN correct guidance, not one overwriting
+    or hiding the other."""
+    from reyn.interfaces.cli.commands.config import _validate
+
+    _write_yaml(
+        project / "reyn.yaml",
+        MINIMAL_REYN_YAML + (
+            "mcp:\n  servers:\n    policyserver:\n"
+            "      type: http\n      url: \"https://a.example.com/mcp\"\n"
+        ),
+    )
+    _write_yaml(
+        project / ".reyn" / "config" / "mcp.yaml",
+        "mcp:\n  servers:\n    dynamicserver:\n"
+        "      type: http\n      url: \"https://b.example.com/mcp\"\n",
+    )
+    _validate()
+    out = capsys.readouterr().out
+
+    assert "reyn.yaml self-heal automatically" in out
+    assert "does not self-heal automatically" in out
 
 
 def test_two_renamed_servers_in_the_same_file_are_both_named(project, capsys):
@@ -177,3 +254,23 @@ def test_real_client_construction_rejects_the_renamed_value_by_name():
 
     with pytest.raises(ValueError, match="renamed to 'streamable-http'"):
         MCPClient({"type": "http", "url": "https://example.com/mcp"})
+
+
+def test_client_construction_error_names_both_when_it_could_apply():
+    """Tier 1: #4658 — MCPClient never knows which file its config dict
+    came from, so unlike `reyn config validate` (which DOES know the
+    source file and can give one definitive answer) it cannot say a
+    single unconditional "when does this apply". It must give a safe
+    answer that covers BOTH real cases instead of guessing one — an
+    agent fixing this from the raw error alone (no validate run first)
+    still gets a correct next step regardless of which file it edits."""
+    from reyn.mcp.client import MCPClient
+
+    with pytest.raises(ValueError) as exc_info:
+        MCPClient({"type": "http", "url": "https://example.com/mcp"})
+
+    message = str(exc_info.value)
+    assert "reyn.yaml" in message
+    assert "picked up automatically on your next message" in message
+    assert ".reyn/config/mcp.yaml" in message
+    assert "/reload" in message

@@ -867,9 +867,29 @@ class MCPClient:
             # told what it's now called, not just that it's invalid (the
             # #4401 shape: a silent/ambiguous failure discovered only when
             # the server later shows up degraded).
+            #
+            # #4658: this error alone doesn't say WHEN a fix takes effect —
+            # an agent that edits the file and immediately retries hits the
+            # SAME stale error (the server isn't reconstructed until
+            # something re-probes it) and can loop fixing the same line
+            # over and over. This constructor has no idea which file the
+            # config came from, so it can't give a single unconditional
+            # answer — measured (not guessed) both halves instead of
+            # picking one: a change to ~/.reyn/config.yaml / reyn.yaml /
+            # reyn.local.yaml is picked up by
+            # RouterHostAdapter.maybe_refresh_mcp_tools_from_yaml's own
+            # independent per-turn mtime-watch (re-probed automatically on
+            # the very next message); a change to .reyn/config/mcp.yaml is
+            # NOT covered by that watch and needs an explicit `/reload`
+            # (or `reyn mcp refresh`) to apply before a restart would.
             raise ValueError(
                 "MCP server type 'http' was renamed to 'streamable-http' "
-                "(#4604) — update this server's 'type' in your MCP config."
+                "(#4604) — update this server's 'type' in your MCP config. "
+                "If it's declared in reyn.yaml/reyn.local.yaml/"
+                "~/.reyn/config.yaml the fix is picked up automatically on "
+                "your next message; if it's in .reyn/config/mcp.yaml, run "
+                "`/reload` (or `reyn mcp refresh`) to apply it without "
+                "restarting."
             )
         if srv_type not in _SUPPORTED_TYPES:
             raise ValueError(

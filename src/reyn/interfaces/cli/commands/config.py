@@ -607,6 +607,30 @@ def _validate() -> None:
             "now by hand: change 'type: http' to 'type: streamable-http' "
             "in the file named above."
         )
+        # #4658: WHEN a fix takes effect differs by file — an agent (or
+        # operator) that isn't told this fixes the line, retries, hits the
+        # SAME error (nothing re-probed the server yet), and fixes it again
+        # in a loop. Measured, not assumed: unlike this dict's other keys,
+        # ~/.reyn/config.yaml / reyn.yaml / reyn.local.yaml are watched by
+        # RouterHostAdapter.maybe_refresh_mcp_tools_from_yaml's own
+        # independent per-turn mtime-check and self-heal on the very next
+        # message — .reyn/config/mcp.yaml, despite being the general
+        # hot-reload IN-set, is NOT covered by that specific watch and
+        # needs an explicit `/reload` (or `reyn mcp refresh`) first.
+        in_set_sources = sorted(s for s in mcp_renamed_http if s == ".reyn/config/mcp.yaml")
+        policy_sources = sorted(s for s in mcp_renamed_http if s != ".reyn/config/mcp.yaml")
+        if policy_sources:
+            print(
+                f"\n{', '.join(policy_sources)} self-heal automatically once "
+                f"fixed — the corrected value is re-probed on your very next "
+                f"message, no /reload and no restart needed."
+            )
+        if in_set_sources:
+            print(
+                "\n.reyn/config/mcp.yaml does not self-heal automatically — "
+                "run `/reload` (or `reyn mcp refresh`) after fixing it there "
+                "to apply the change without restarting."
+            )
 
 
 def _migrate(*, dry_run: bool = False) -> None:
