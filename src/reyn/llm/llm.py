@@ -1856,6 +1856,9 @@ def _may_need_responses_endpoint(model: str) -> bool:
 
 def _emit_chat_cost_events(
     model: str, usage: "TokenUsage | None", chain_id: str | None = None,
+    *,
+    call_id: "str | None" = None,
+    finish_reason: "str | None" = None,
 ) -> None:
     """#1683: emit the cost-tab's usage events for the chat path via the #1669
     ambient EventLog. The TUI cost tab reads ``llm_called`` (model) then accumulates
@@ -1868,7 +1871,23 @@ def _emit_chat_cost_events(
     stamped on both events when a turn is in scope, so the audit trail can be
     re-grouped per turn — the same key ``turn_started`` / ``turn_completed``
     already carry. Omitted entirely when there is no turn: an unattributable
-    call must read as "no turn", never as a turn it did not belong to."""
+    call must read as "no turn", never as a turn it did not belong to.
+
+    #4691 Phase 1 ①: ``call_id``/``finish_reason`` — the litellm
+    ``ModelResponse``'s own ``id`` and ``choices[0].finish_reason`` — are
+    stamped on ``llm_response_received`` ONLY (not ``llm_called``, which
+    fires before the response exists; both events happen to be emitted
+    from the same post-response call site today, but that is an
+    implementation detail, not a reason to backdate response fields onto
+    the pre-response event). This is the CALL-granularity key the outbox
+    meta (router_loop.py) and the flowview tree (#4691 Phase B) both need
+    to know which litellm call a given row belongs to — measured
+    (architect, #4691): litellm's ``ModelResponse`` always carries ``id``
+    for the ROUTER's own synchronous call path; the STREAMING path's own
+    id-availability is unmeasured, tracked as this feature's own accept
+    condition (a streamed turn's rows must still connect parent/child).
+    Both ``None`` only when genuinely absent off the response — never a
+    fabricated placeholder."""
     if usage is None:
         return
     try:
@@ -1899,6 +1918,9 @@ def _emit_chat_cost_events(
             # turns are findable AFTER THE FACT via ``reyn events`` (the numbers
             # are already grouped by ``chain_id``).
             usage_source=usage.source.value,
+            # #4691 Phase 1 ①: see this function's own docstring.
+            call_id=call_id,
+            finish_reason=finish_reason,
             **turn_key,
         )
     except Exception:  # noqa: BLE001 — observability emit must never break the call
@@ -2632,7 +2654,27 @@ async def recorded_acompletion(
     # (Interim: a future cleanup could centralize the kernel's emission into this
     # chokepoint and drop the flag — out of scope here.)
     if emit_cost_events:
-        _emit_chat_cost_events(_cost_model, usage, _chain_id)
+        # #4691 Phase 1 ①: measured directly off the response, never
+        # invented — a provider that omits either field means None, not a
+        # minted placeholder (see _emit_chat_cost_events's own docstring).
+        # ``or None`` (lead-coder review, #4722): litellm's own
+        # ``ChunkProcessor._get_chunk_id`` returns "" — not None — when no
+        # stream chunk carried an id, and litellm's ``ModelResponse.__init__``
+        # only mints a fresh id when the field is None, so "" survives
+        # untouched onto the reconstructed response. Left as "", every row
+        # missing an id would share the SAME falsy key and get bundled as one
+        # call by any future consumer keying on it (#4691 Phase B's tree) —
+        # worse than a missing key, since it fabricates a false grouping. The
+        # `or None` collapses any falsy id (`""`, `0`) to a genuine absence.
+        _call_id = getattr(response, "id", None) or None
+        _finish_reason = None
+        _choices = getattr(response, "choices", None)
+        if _choices:
+            _finish_reason = getattr(_choices[0], "finish_reason", None)
+        _emit_chat_cost_events(
+            _cost_model, usage, _chain_id,
+            call_id=_call_id, finish_reason=_finish_reason,
+        )
     return response
 
 
