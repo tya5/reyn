@@ -1163,9 +1163,11 @@ class TextualChatApp(App):
         # frame transitions the SAME entry RUNNING → SUCCESS/ERROR (CC parity).
         self._running_tools: "dict[object, Entry[OutboxMessage]]" = {}
         # #4691 Phase B B1: the litellm-call TREE PARENT for a given call_id
-        # (#4691 Phase 1 ①②, #4734) — every ``kind="agent"`` row carrying
-        # ``meta["finish_reason"] == "tool_calls"`` registers itself here on
-        # arrival, and every ``tool_call_started``/``completed``/``failed``
+        # (#4691 Phase 1 ①②, #4734) — every ``kind="agent"`` row carrying a
+        # ``call_id`` registers itself here on arrival (#4777: unconditional,
+        # NOT gated on a provider's own ``finish_reason`` string — see the
+        # registration site's own comment, ``_ingest_frame``), and every
+        # ``tool_call_started``/``completed``/``failed``
         # frame carrying a matching ``meta["call_id"]`` looks itself up here
         # to find which Entry to nest under (``parent.append_child(...)``
         # instead of the flat ``self.conversation.append(...)``). KEYED, not
@@ -3654,22 +3656,38 @@ class TextualChatApp(App):
         # #3712: an entry just arrived. Counted HERE, by the thing that
         # produced it — not reconstructed later from two reads of the model.
         self._note_entry_landed()
-        if (
-            kind == "agent"
-            and call_id
-            and meta.get("finish_reason") == "tool_calls"
-        ):
-            # This row IS a call boundary that dispatches tool_calls next —
-            # register it so those tool rows (about to arrive with the SAME
-            # call_id) find it. A terminal reply (finish_reason == "stop")
-            # or any other kind never registers: nothing ever looks up a
-            # call_id belonging to a call that dispatched no tools.
+        if kind == "agent" and call_id:
+            # #4777 (owner-reported, provider-dependence bug): registration no
+            # longer gates on ``finish_reason`` — a PROVIDER's own summary
+            # string, self-reported at its own discretion (litellm passes it
+            # through verbatim, ``llm.py``'s own ``choices[0].finish_reason``).
+            # The owner's own provider never returns ``"tool_calls"``, so the
+            # old gate here never fired on their screen — #4691 Phase B's
+            # entire Group construction was provider-dependent and silently
+            # inert for them, despite being green in every test written
+            # against a provider that DOES report it correctly.
+            #
+            # Registering unconditionally for every ``call_id``-bearing agent
+            # row is harmless even for an ordinary terminal reply that
+            # dispatched no tools: nothing ever looks up a call_id belonging
+            # to a call that dispatched no tools, so an unused entry here is
+            # dead weight, never a wrong nesting (#4776 tracks this dict's
+            # own session-lifetime growth separately — not this fix's scope).
             self._call_parents[call_id] = entry
-            # #4691 Phase B ④: the parent's own spinner starts here — its
-            # children are about to arrive RUNNING too, and
-            # ``_recompute_parent_state`` (called from every child settle)
-            # keeps it RUNNING until every child has settled.
-            entry.set_state(EntryState.RUNNING)
+            if meta.get("dispatched_tool_calls"):
+                # #4691 Phase B ④: the parent's own spinner starts here — its
+                # children are about to arrive RUNNING too, and
+                # ``_recompute_parent_state`` (called from every child
+                # settle) keeps it RUNNING until every child has settled.
+                #
+                # #4777: gated on ``dispatched_tool_calls`` — a REYN-OBSERVED
+                # fact (router_loop.py stamps it from the LLM result's own
+                # ``tool_calls`` list, non-empty precisely when this round
+                # actually dispatches tools), not the provider's
+                # ``finish_reason`` string. A terminal reply that dispatches
+                # no tools registers (harmless, above) but never spins —
+                # there is nothing for it to wait on.
+                entry.set_state(EntryState.RUNNING)
         if kind == "presentation":
             self._begin_image_resolutions(entry, msg)
         if kind == "intervention":
