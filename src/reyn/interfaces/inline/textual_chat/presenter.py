@@ -835,6 +835,21 @@ class ReynPresenter:
             decoded_image_cache=self._decoded_image_cache,
             now=self._clock(),
         )
+        # #4691 Phase B B1 (dogfood follow-up, lead-coder review): a
+        # collapsed Group parent must show its child COUNT — "count is
+        # information, not design" (lead-coder's own framing). Without
+        # this, folding a content-less tool-turn-text row (#4691 ③) left
+        # a bare state glyph with NOTHING indicating anything was even
+        # hidden — worse than not being able to fold at all, since the
+        # owner has no way to tell "nothing here" from "3 rows folded
+        # away". Deliberately minimal per the same review's scope: a
+        # bare count, no summary wording, no icon vocabulary beyond the
+        # existing dim style every other secondary line already uses —
+        # the SHAPE of the summary (#4691 issue §5's own "▸ read_file,
+        # grep ×2" example) is B2's call, not this fix's.
+        if entry.collapsed and entry.children:
+            count_line = Text(f"  ({len(entry.children)} folded)", style=_CC_DIM)
+            body = Group(body, count_line)
         return Presentation(
             height=self._measure(body, width),
             renderable=body,
