@@ -1,12 +1,15 @@
-"""#3508 — a settled tool row shows its FULL result while the highlight is on it.
+"""#3508 — a settled tool row shows its FULL result via its tool-detail fold.
 
 The one-line summary (`⎿ Read 42 lines`) is what the pane normally shows; the
 raw result survives on the frame, so "expand" is a different rendering of data
-the row already carries. Moving the highlight onto the row unfolds it and moving
-away folds it back — no extra keystroke, which is the whole point: the owner's
-report on Claude Code's expand was **"使いづらいから使ってない"** (not "I don't
-want it"), so an affordance that costs a deliberate action was the thing that
-failed, not the capability.
+the row already carries.
+
+#4697 (owner ruling, #4691 §6): the fold no longer follows the highlight —
+moving the highlight and choosing to open/close ONE row's detail are two
+different intents, and coupling them meant a reader could never move past a
+big result without collapsing it first. Space (outside flowview's character-
+cursor mode — `c` toggles that) is the dedicated open/close trigger now; the
+highlight moves the read position without touching any row's fold state.
 
 Asserted on the PAINTED body via the presenter, never on the meta flag: the flag
 is an implementation detail of how the presenter is told, and a test that
@@ -100,11 +103,36 @@ async def _focus(pilot, app) -> FlowView:
     return app.query_one(FlowView)
 
 
+async def _toggle_fold(pilot, flow: FlowView) -> None:
+    """#4697: press Space to fold/unfold the highlighted entry — the
+    dedicated trigger that replaced #3508's auto-expand-on-highlight.
+
+    Waits on TWO actual conditions in sequence, rather than a fixed pause
+    count (testing.md § Time): first the current entry's ``_EXPANDED_KEY``
+    meta flag settling to its post-press value (Space now round-trips
+    through ``ToggleFoldRequested``, a POSTED message handled on a LATER
+    event-loop tick than #3508's original synchronous ``_set_expanded``
+    call was), then the row's own rendered content clearing flowview's
+    lazy-render ``"Loading..."`` placeholder (``Entry.update()``'s reflow
+    is itself a further tick after the flag flips)."""
+    from reyn.interfaces.inline.textual_chat._meta_keys import EXPANDED_KEY
+
+    entry = flow.current
+    assert entry is not None
+    before = bool((entry.item.meta or {}).get(EXPANDED_KEY))
+    await pilot.press("space")
+    while bool((entry.item.meta or {}).get(EXPANDED_KEY)) == before:
+        await pilot.pause()
+    while "Loading..." in _painted(flow):
+        await pilot.pause()
+
+
 @pytest.mark.asyncio
-async def test_the_highlighted_tool_row_shows_the_full_result() -> None:
-    """Tier 2b: the row summarised as one line unfolds to the whole result when
-    the highlight arrives — and the summary line stays, so the row reads the
-    same shape expanded or not."""
+async def test_space_unfolds_the_highlighted_tool_row() -> None:
+    """Tier 2b: #4697 — the row summarised as one line unfolds to the whole
+    result on Space, and the summary line stays, so the row reads the same
+    shape expanded or not. Arriving via highlight ALONE (no Space) must NOT
+    unfold it — #4691 §6's owner ruling decoupled the two."""
     # A LIST is the clearest hidden case: the summary collapses it to "3 items"
     # and shows none of the content. (A short scalar result is NOT hidden — the
     # summary falls back to the value itself, so such a row looks the same
@@ -124,18 +152,24 @@ async def test_the_highlighted_tool_row_shows_the_full_result() -> None:
         )
 
         await _focus(pilot, app)
+        assert "line two" not in _painted(flow), (
+            "highlight arrival alone unfolded the row — #4697 decoupled this"
+        )
+
+        await _toggle_fold(pilot, flow)
         painted = _painted(flow)
         assert "line two" in painted and "line three" in painted, (
-            f"the highlighted tool row did not unfold; pane shows:\n{painted}"
+            f"Space did not unfold the highlighted tool row; pane shows:\n{painted}"
         )
         assert "⎿" in painted, "the summary line was replaced instead of extended"
 
 
 @pytest.mark.asyncio
-async def test_moving_the_highlight_away_folds_the_row_back() -> None:
-    """Tier 2b: the expansion follows the highlight — the row left behind
-    returns to its one-line summary, so a walk through the log does not leave a
-    trail of unfolded rows that pushes everything off screen."""
+async def test_moving_the_highlight_away_no_longer_folds_the_row_back() -> None:
+    """Tier 2b: #4697 — an EXPANDED row stays expanded when the highlight
+    moves away (inverts #3508's original auto-fold-on-move-away — the
+    whole point of decoupling movement from open/close: a reader can walk
+    past a big result without it collapsing under them)."""
     app = TextualChatApp(transport=_Transport())
     async with app.run_test(size=(100, 30)) as pilot:
         await pilot.pause()
@@ -146,14 +180,60 @@ async def test_moving_the_highlight_away_folds_the_row_back() -> None:
 
         await pilot.press("up")
         await pilot.pause()
+        await _toggle_fold(pilot, flow)
         assert "expanded detail line" in _painted(flow), (
-            "setup: the highlight did not reach the tool row"
+            "setup: Space did not unfold the tool row"
         )
 
         await pilot.press("down")
         await pilot.pause()
+        assert "expanded detail line" in _painted(flow), (
+            "the row folded back after the highlight left it — #4697 decoupled this"
+        )
+
+
+@pytest.mark.asyncio
+async def test_space_folds_an_expanded_row_back() -> None:
+    """Tier 2b: #4697 — Space is a TOGGLE, not just an unfold — pressing it
+    again on an already-expanded row folds it back."""
+    app = TextualChatApp(transport=_Transport())
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        app.conversation.append(_settled_tool(["expanded detail line", "second"]))
+        await pilot.pause()
+        flow = await _focus(pilot, app)
+
+        await _toggle_fold(pilot, flow)
+        assert "expanded detail line" in _painted(flow), "setup: Space did not unfold"
+
+        await _toggle_fold(pilot, flow)
         assert "expanded detail line" not in _painted(flow), (
-            "the row stayed unfolded after the highlight left it"
+            "a second Space press did not fold the row back"
+        )
+
+
+@pytest.mark.asyncio
+async def test_space_in_character_cursor_mode_still_copies_not_folds() -> None:
+    """Tier 2b: #4697's own explicit measurement/guard — while flowview's
+    character-cursor mode is engaged (toggled by ``c``), Space must fall
+    through to the ordinary copy commit, never fold, so an in-progress
+    text selection is never disrupted."""
+    app = TextualChatApp(transport=_Transport())
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        app.conversation.append(_settled_tool(["expanded detail line", "second"]))
+        await pilot.pause()
+        flow = await _focus(pilot, app)
+
+        await pilot.press("c")  # engage character-cursor mode
+        await pilot.pause()
+        assert flow.cursor_visible, "setup: character-cursor mode did not engage"
+
+        await pilot.press("space")
+        await pilot.pause()
+        assert "expanded detail line" not in _painted(flow), (
+            "Space folded the row while the character cursor was engaged — "
+            "the #4697 guard did not fire"
         )
 
 
@@ -188,10 +268,12 @@ async def test_an_ordinary_row_is_untouched_by_the_highlight() -> None:
 async def test_a_huge_result_is_capped_and_says_so() -> None:
     """Tier 2b: a large result does not shove the conversation off screen.
 
-    The expansion is triggered by the highlight merely ARRIVING, so an uncapped
-    body would be a side effect of pressing ``k`` that the reader never asked
-    for. The cap is stated in the row rather than silently truncating, and the
-    untruncated text stays reachable through the row's own copy."""
+    #4697: the expansion is now triggered by an explicit Space, not the
+    highlight merely arriving — so an uncapped body is no longer a side
+    effect of pressing ``k``/``j`` at all; the cap protects the deliberate
+    Space press instead. The cap is stated in the row rather than silently
+    truncating, and the untruncated text stays reachable through the row's
+    own copy."""
     from reyn.interfaces.inline.textual_chat.presenter import _EXPANDED_MAX_LINES
 
     detail = [f"line {i}" for i in range(_EXPANDED_MAX_LINES + 25)]
@@ -204,6 +286,7 @@ async def test_a_huge_result_is_capped_and_says_so() -> None:
         app.conversation.append(_settled_tool(detail))
         await pilot.pause()
         flow = await _focus(pilot, app)
+        await _toggle_fold(pilot, flow)
 
         painted = _painted(flow)
         assert "more lines" in painted, (
@@ -258,9 +341,10 @@ async def test_a_result_the_summary_already_shows_is_not_duplicated() -> None:
         app.conversation.append(_settled_tool("Presented to the user. rows=0"))
         await pilot.pause()
         flow = await _focus(pilot, app)
+        await _toggle_fold(pilot, flow)
 
         painted = _painted(flow)
         assert painted.count("Presented to the user. rows=0") == 1, (
-            "the highlighted row repeated its own summary as 'detail':\n"
+            "the expanded row repeated its own summary as 'detail':\n"
             f"{painted}"
         )

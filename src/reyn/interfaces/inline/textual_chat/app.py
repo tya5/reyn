@@ -352,17 +352,76 @@ class KeyCommitted(Message, namespace="flow_view"):
         return self.flow_view
 
 
+class ToggleFoldRequested(Message, namespace="flow_view"):
+    """#4697: posted by :meth:`_CursorFlowView.action_toggle_fold` when
+    Space is pressed OUTSIDE character-cursor mode (``cursor_visible`` was
+    already ``False`` at post time — the app-side handler does not
+    re-check it). Distinct from :class:`KeyCommitted` (Enter/Space's copy
+    commit, #3624): this is the entry-mode fold/unfold request, #4691 §6's
+    owner ruling that highlight movement and open/close are two different
+    intents and must not share a trigger."""
+
+    def __init__(self, flow_view: "FlowView[object]", entry: "Entry[object]") -> None:
+        self.flow_view = flow_view
+        self.entry = entry
+        super().__init__()
+
+    @property
+    def control(self) -> "FlowView[object]":
+        return self.flow_view
+
+
 class _CursorFlowView(FlowView["OutboxMessage"]):
     """FlowView with the Enter/Space commit split from the click commit
     (#3624) — posts :class:`KeyCommitted` in addition to upstream's
     ``Selected``, so :meth:`TextualChatApp.on_flow_view_key_committed` can
-    copy on a KEYBOARD commit without also firing on a click."""
+    copy on a KEYBOARD commit without also firing on a click.
+
+    #4697: Space is ALSO rebound (overriding upstream's own
+    ``Binding("space", "activate")`` for this subclass — Enter keeps its
+    original meaning, only Space moves) to fold/unfold the highlighted
+    entry's tool detail instead of committing — #4691 §6's owner ruling
+    that decoupled that from highlight movement. See
+    :meth:`action_toggle_fold` for the character-cursor-mode guard this
+    needed before implementation (measured, issue #4697)."""
+
+    BINDINGS = [
+        Binding("space", "toggle_fold", "Fold/unfold tool detail", show=False),
+    ]
 
     def action_activate(self) -> None:
         entry = self.current
         super().action_activate()
         if entry is not None:
             self.post_message(KeyCommitted(self, entry))
+
+    def action_toggle_fold(self) -> None:
+        """#4697: Space, outside character-cursor mode, requests a fold
+        toggle on the highlighted entry (the app handles the actual
+        ``_set_expanded`` flip — see ``on_flow_view_toggle_fold_requested``).
+        Inside character-cursor mode, falls through to the ordinary
+        Enter/Space activate (copy) path instead, so an in-progress text
+        selection is never disrupted by a stray fold.
+
+        ``cursor_visible`` (public property) is used as the guard rather
+        than upstream's own private ``_text_active()`` — measured
+        equivalent (#4697 issue thread): ``_text_active()`` is
+        ``cursor_visible or _tc_anchor is not None``, but every
+        ``_set_cursor_visible(False)`` path ALSO clears ``_tc_anchor``
+        (installed flowview 0.19.0, read directly), so the anchor can
+        never be set while ``cursor_visible`` is ``False`` — ``cursor_
+        visible`` alone is a complete public-API proxy for it TODAY. This
+        is a DERIVED equivalence, not a contract upstream promises: if a
+        future flowview version stops clearing the anchor on hide, this
+        guard falls out of sync SILENTLY — Space would start folding an
+        entry mid text-selection instead of extending it, no exception,
+        no warning."""
+        if self.cursor_visible:
+            self.action_activate()
+            return
+        entry = self.current
+        if entry is not None:
+            self.post_message(ToggleFoldRequested(self, entry))
 
 
 class ScrollableDrawer(ContentSwitcher):
@@ -2270,13 +2329,31 @@ class TextualChatApp(App):
 
     def on_flow_view_highlighted(self, event: "FlowView.Highlighted") -> None:
         """#3490: move the rail with the highlight — repaint the row it left as
-        well as the one it arrived on. #3508: and unfold the arrived row's tool
-        detail, folding the one left behind."""
+        well as the one it arrived on.
+
+        #4691 §6 (owner ruling, #4697): highlight movement no longer
+        auto-expands/folds tool detail — moving to read the conversation
+        and choosing to open ONE row's detail are two different intents,
+        and coupling them meant a reader could never move past a big
+        result without collapsing it first (#3508's original own
+        trade-off). Space (:meth:`_CursorFlowView.action_toggle_fold`,
+        outside character-cursor mode) is the dedicated open/close
+        trigger now — see ``on_flow_view_toggle_fold_requested``."""
         previous, self._marked_cursor = self._marked_cursor, event.entry
-        self._set_expanded(previous, False)
-        self._set_expanded(event.entry, True)
         self._remark_entry(previous)
         self._remark_entry(event.entry)
+
+    def on_flow_view_toggle_fold_requested(self, event: "ToggleFoldRequested") -> None:
+        """#4697: Space (outside character-cursor mode —
+        :meth:`_CursorFlowView.action_toggle_fold` already applied that
+        guard before posting this) flips ONE entry's tool-detail fold,
+        independent of the highlight/cursor position — #4691 §6's owner
+        ruling."""
+        entry = event.entry
+        meta = entry.item.meta
+        if not meta or _RESULT_KIND_KEY not in meta:
+            return  # not a settled tool row — nothing to fold
+        self._set_expanded(entry, not bool(meta.get(_EXPANDED_KEY)))
 
     def _set_expanded(self, entry: "Entry[OutboxMessage] | None", expanded: bool) -> None:
         """Stamp/clear the expansion flag on ``entry``'s ITEM and re-present it.
