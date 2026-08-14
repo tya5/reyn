@@ -26,6 +26,10 @@ Three lenses name a *discipline* whose *universal mechanism* is a band member: *
 
 *Two honest thin areas (where new work is most valuable): **Retrieval** (the FP-0063 user-RAG plugin's bundled pipelines are the current agent-facing surface — a framework to build on for internal retrieval is `search_actions`/a planned `search_knowledge` verb over the OS-internal substrate, not an agent-callable `semantic_search`) and **Evaluation** (an `agent` step + `schema` is the surviving eval surface — the bespoke `judge_output` scorer op and the eval-export subsystem were both removed; scoring is ordinary agent work riding the OS's typed-schema + cost-tracking substrate, not a special-cased op).*
 
+*"event" is three distinct things — **audit-event** (P6 `.reyn/events`, the audit trail) / **WAL-event** (`.reyn/state/wal.jsonl`, the recovery substrate) / **hook-event** (lifecycle+external reactivity triggers). Never write bare "event".*
+
+*(The full 8×7 populated table lives in `docs/concepts/architecture/charter.md`; this skeleton is the durable core agents read before new work. Tagline: hero = the line above (T1); one-liner/meta = "An agent OS where agency is bounded by construction — decide, spawn, orchestrate, but only through typed, permissioned, auditable, rewindable ops." (T3).)*
+
 ### What the gate does not see (2026-08-14, owner-approved)
 
 The eight lenses and the band are a gate on **new features**. Four failures measured in
@@ -40,10 +44,13 @@ one day passed straight through, because none of them *was* a feature.
 3. **The side effect of a repair.** The only practical way to stop the incident was
    `/clear-history`, which unlinks the one file conversation content lives in — so
    asking afterwards what the model had been sent could not be answered (#4501).
-4. **What nobody wrote.** #4698 shipped a delta whose baseline is shared across
-   purposes. It passed the six questions and review: the tests construct one series,
-   and no one constructed the configuration that mixes two (#4703). The six questions
-   audit the tests that exist; they cannot find the test that was never written.
+4. **What nobody wrote.** #4698 shipped a delta over a baseline held in ONE field on
+   a process-shared tracker (`session.py:1176` — "process-shared budget/rate-limit
+   tracker"), so two live sessions of the same agent overwrite each other's baseline
+   even when every call is `purpose="main"`. It passed the six questions and review:
+   the tests construct one series, and no one constructed the configuration that mixes
+   two (#4703). The six questions audit the tests that exist; they cannot find the test
+   that was never written.
 
 Three questions cover 1–3, and unlike the lenses they apply to changes that add no
 capability at all — a changed default, a new fallback, a new recovery command:
@@ -59,9 +66,6 @@ every time — the same shape this section exists to catch. Case 4 was found bec
 someone asked how a number was computed, and writing the answer forced opening the
 call sites. That is a habit, not a gate.
 
-*"event" is three distinct things — **audit-event** (P6 `.reyn/events`, the audit trail) / **WAL-event** (`.reyn/state/wal.jsonl`, the recovery substrate) / **hook-event** (lifecycle+external reactivity triggers). Never write bare "event".*
-
-*(The full 8×7 populated table lives in `docs/concepts/architecture/charter.md`; this skeleton is the durable core agents read before new work. Tagline: hero = the line above (T1); one-liner/meta = "An agent OS where agency is bounded by construction — decide, spawn, orchestrate, but only through typed, permissioned, auditable, rewindable ops." (T3).)*
 
 ## Hard rules
 
