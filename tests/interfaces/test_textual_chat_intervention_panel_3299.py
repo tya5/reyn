@@ -454,7 +454,7 @@ async def test_pending_intervention_flow_entry_has_no_chip_options_rendered() ->
         await pilot.pause()
         await pilot.pause()
         entry = _iv_entry(app)
-        presentation = await app._presenter.present(entry.item, 80)
+        presentation = await app._presenter.present(entry, 80)
 
     console = Console(width=80, no_color=True)
     with console.capture() as cap:

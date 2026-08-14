@@ -26,6 +26,7 @@ from typing import AsyncIterator
 import pytest
 from rich.console import Console
 from rich.text import Text
+from textual_flowview import FlowModel
 
 from reyn.interfaces.inline.textual_chat.presenter import ReynPresenter
 from reyn.interfaces.repl.renderer import _CC_AMBIENT, _CC_DIM
@@ -150,7 +151,7 @@ async def test_the_rows_carrying_these_labels_have_no_tint() -> None:
             kind="tool_call_started", text="read_file", meta={"tool": "read_file"}
         ),
     ):
-        presentation = await presenter.present(message, 80)
+        presentation = await presenter.present(FlowModel().append(message), 80)
         assert presentation.background is None, (
             f"a {message.kind!r} row now carries the tint "
             f"{presentation.background!r} — the right gutter's label sits on it "

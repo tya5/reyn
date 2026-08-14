@@ -94,7 +94,7 @@ async def _entry_text(app: TextualChatApp, entry: object) -> str:
 
     from rich.console import Console
 
-    presentation = await app._presenter.present(entry.item, width=100)
+    presentation = await app._presenter.present(entry, width=100)
     buf = io.StringIO()
     Console(file=buf, color_system=None, width=100).print(presentation.renderable)
     return buf.getvalue()

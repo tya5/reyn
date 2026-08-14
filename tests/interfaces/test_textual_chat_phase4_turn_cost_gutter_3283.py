@@ -66,7 +66,7 @@ from typing import AsyncIterator
 
 import pytest
 from rich.cells import cell_len
-from textual_flowview import FlowModel, FlowView
+from textual_flowview import Entry, FlowModel, FlowView
 
 from reyn.core.events.state_log import StateLog
 from reyn.interfaces.inline.textual_chat import (
@@ -823,9 +823,9 @@ async def test_widened_gutter_still_leaves_the_body_most_of_the_terminal() -> No
             super().__init__()
             self.widths: "list[int]" = []
 
-        async def present(self, item: "OutboxMessage", width: int):
+        async def present(self, entry: "Entry[OutboxMessage]", width: int):
             self.widths.append(width)
-            return await super().present(item, width)
+            return await super().present(entry, width)
 
     transport = _QueueTransport()
     presenter = _WidthRecordingPresenter()

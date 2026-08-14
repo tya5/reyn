@@ -141,7 +141,7 @@ async def test_orphaned_running_tool_settles_neutral_on_turn_settled() -> None:
         assert (entry.item.meta or {}).get(_RUNNING_SINCE_KEY) is None
         meta = entry.item.meta or {}
         assert meta.get(_RESULT_KIND_KEY) not in ("tool_call_completed", "tool_call_failed")
-        pres = await ReynPresenter(clock=lambda: 100.0).present(entry.item, 80)
+        pres = await ReynPresenter(clock=lambda: 100.0).present(entry, 80)
         body = pres.renderable
         from rich.console import Console
 
@@ -193,7 +193,7 @@ async def test_completed_tool_is_untouched_by_the_sweep() -> None:
 
         assert entry.state is EntryState.SUCCESS
         assert (entry.item.meta or {}).get(_RESULT_KIND_KEY) == "tool_call_completed"
-        pres = await ReynPresenter(clock=lambda: 100.0).present(entry.item, 80)
+        pres = await ReynPresenter(clock=lambda: 100.0).present(entry, 80)
         from rich.console import Console
 
         console = Console(width=80)

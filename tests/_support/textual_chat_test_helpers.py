@@ -11,6 +11,8 @@ from __future__ import annotations
 import asyncio
 from typing import AsyncIterator
 
+from textual_flowview import Entry
+
 from reyn.interfaces.inline.textual_chat import ReynPresenter
 from reyn.interfaces.transport.client_transport import ClientTransport
 from reyn.interfaces.transport.frames import DisplayFrame
@@ -87,6 +89,6 @@ class WidthRecordingPresenter(ReynPresenter):
         super().__init__()
         self.widths: "list[int]" = []
 
-    async def present(self, item: "OutboxMessage", width: int):
+    async def present(self, entry: "Entry[OutboxMessage]", width: int):
         self.widths.append(width)
-        return await super().present(item, width)
+        return await super().present(entry, width)

@@ -37,7 +37,7 @@ from typing import AsyncIterator
 
 import pytest
 from rich.console import Console
-from textual_flowview import EntryState, FlowView
+from textual_flowview import Entry, EntryState, FlowModel, FlowView
 
 from reyn.interfaces.inline.textual_chat import ReynPresenter, TextualChatApp
 from reyn.interfaces.inline.textual_chat.presenter import (
@@ -199,11 +199,12 @@ class _CountingPresenter(ReynPresenter):
         super().__init__()
         self.present_counts: "dict[object, int]" = {}
 
-    async def present(self, item: "OutboxMessage", width: int):
+    async def present(self, entry: "Entry[OutboxMessage]", width: int):
+        item = entry.item
         if item.kind == "tool_call_started":
             op = (item.meta or {}).get("op_id")
             self.present_counts[op] = self.present_counts.get(op, 0) + 1
-        return await super().present(item, width)
+        return await super().present(entry, width)
 
 
 def _fast_app(**kwargs) -> TextualChatApp:
@@ -236,13 +237,13 @@ def test_running_tool_body_advances_as_the_clock_advances() -> None:
     body then does NOT change — so this positive assertion is load-bearing."""
     now = [1000.0]
     presenter = ReynPresenter(clock=lambda: now[0])
-    item = _running_item("op-live", since=1000.0)
+    entry = FlowModel().append(_running_item("op-live", since=1000.0))
 
     async def go() -> None:
         now[0] = 1002.0
-        a = await presenter.present(item, 80)
+        a = await presenter.present(entry, 80)
         now[0] = 1007.0
-        b = await presenter.present(item, 80)
+        b = await presenter.present(entry, 80)
         # Fixed height across ticks (no reflow): header row + the indicator row.
         assert a.height == b.height == 2
         ta, tb = _render(a.renderable), _render(b.renderable)
@@ -261,11 +262,11 @@ def test_frozen_clock_leaves_a_static_running_body() -> None:
     positive test proves it moves when the clock advances, so the animation is the
     only thing driving the change (not incidental noise)."""
     presenter = ReynPresenter(clock=lambda: 500.0)
-    item = _running_item("op-frozen", since=490.0)
+    entry = FlowModel().append(_running_item("op-frozen", since=490.0))
 
     async def go() -> None:
-        a = await presenter.present(item, 80)
-        b = await presenter.present(item, 80)
+        a = await presenter.present(entry, 80)
+        b = await presenter.present(entry, 80)
         assert _render(a.renderable) == _render(b.renderable), "frozen clock must not animate"
 
     asyncio.run(go())
@@ -292,7 +293,7 @@ def test_settled_tool_body_is_static_and_matches_the_header() -> None:
     spinner. Presented at two DIFFERENT clock readings the body is identical."""
     now = [10.0]
     presenter = ReynPresenter(clock=lambda: now[0])
-    settled = _started("op-settled")  # no _RUNNING_SINCE_KEY marker
+    settled = FlowModel().append(_started("op-settled"))  # no _RUNNING_SINCE_KEY marker
 
     async def go() -> None:
         a = await presenter.present(settled, 80)
@@ -300,7 +301,7 @@ def test_settled_tool_body_is_static_and_matches_the_header() -> None:
         b = await presenter.present(settled, 80)
         assert _render(a.renderable) == _render(b.renderable), "settled body must be static"
         assert a.height == 1  # header only, no indicator row
-        assert _render(a.renderable).strip() == _tool_head(settled).plain
+        assert _render(a.renderable).strip() == _tool_head(settled.item).plain
 
     asyncio.run(go())
 
@@ -322,7 +323,7 @@ async def test_app_marks_running_body_live_then_coalesces_on_success() -> None:
         entry = _entry_by_kind(live_app, "tool_call_started")[0]
         assert entry.state is EntryState.RUNNING
         assert (entry.item.meta or {}).get(_RUNNING_SINCE_KEY) is not None
-        pres = await ReynPresenter().present(entry.item, 80)
+        pres = await ReynPresenter().present(entry, 80)
         assert pres.height == 2  # header + live indicator row
         assert any(frame in _render(pres.renderable) for frame in _SPINNER)
 
@@ -336,7 +337,7 @@ async def test_app_marks_running_body_live_then_coalesces_on_success() -> None:
         entry = _entry_by_kind(done_app, "tool_call_started")[0]
         assert entry.state is EntryState.SUCCESS
         assert (entry.item.meta or {}).get(_RUNNING_SINCE_KEY) is None
-        pres = await ReynPresenter().present(entry.item, 80)
+        pres = await ReynPresenter().present(entry, 80)
         body = _render(pres.renderable)
         assert "⎿" in body  # the folded-in result sub-line
         assert not any(frame in body for frame in _SPINNER)  # no lingering spinner
@@ -356,7 +357,7 @@ async def test_app_coalesces_a_failure_and_tints_it() -> None:
         started = _entry_by_kind(app, "tool_call_started")[0]
         assert started.state is EntryState.ERROR
         assert (started.item.meta or {}).get(_RUNNING_SINCE_KEY) is None
-        pres = await ReynPresenter().present(started.item, 80)
+        pres = await ReynPresenter().present(started, 80)
         from reyn.interfaces.repl.renderer import _CC_ERR, _CC_ERR_BG
 
         # #3367: the failure tint is the dark failure BLOCK, never the coral
@@ -389,7 +390,7 @@ async def test_correlated_pair_coalesces_into_exactly_one_entry() -> None:
         assert [e.item.kind for e in flow.entries] == ["tool_call_started"]
         entry = flow.entries[0]
         assert (entry.item.meta or {}).get(_RESULT_KIND_KEY) == "tool_call_completed"
-        body = _render((await ReynPresenter().present(entry.item, 80)).renderable)
+        body = _render((await ReynPresenter().present(entry, 80)).renderable)
         assert "grep" in body and "⎿" in body  # call header AND result, one block
 
 

@@ -222,7 +222,7 @@ dependencies = [
     # FlowView's virtualized painting model at all, on the terminals reyn
     # targets — #3970's trade-off no longer applies because the option it
     # was weighing against never actually worked here.
-    "textual-flowview @ git+https://github.com/tya5/textual-flowview.git@ec10edb21516ca062a546f0511e69ca2500beca1",
+    "textual-flowview @ git+https://github.com/tya5/textual-flowview.git@728eb0070115ddea92153b5b9aca557b92f329b9",
     "numpy>=1.24",           # RAG index backend cosine similarity (ADR-0033)
     "croniter>=2.0",         # cron expression parsing for FP-0009 Component B
     "charset-normalizer>=3.0",  # #1452 read_file encoding detection (MIT, pure-python)
