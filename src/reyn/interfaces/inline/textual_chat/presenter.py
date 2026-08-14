@@ -293,11 +293,12 @@ def _tool_result_line(msg: "OutboxMessage") -> "tuple[Text, str | None]":
     summary = summarize_tool_result(meta.get("tool"), result_meta.get("result"))
     failed = summary.startswith("✗")
     if meta.get(_EXPANDED_KEY) and not failed:
-        # #3508: the highlight is on this row — show the result the summary
+        # #3508: the row is expanded (Space toggles this, #4697/#4691§6 —
+        # decoupled from highlight movement) — show the result the summary
         # dropped. The summary line is KEPT as the first line so the row reads
         # the same whether or not it is expanded; the detail is added under it
-        # rather than replacing it, which is what makes moving the highlight
-        # through a log feel like the rows are unfolding rather than swapping.
+        # rather than replacing it, which is what makes toggling a row feel
+        # like it's unfolding rather than swapping.
         lines = _result_detail_lines(msg)
         # Only unfold when the summary is actually WITHHOLDING something. For a
         # short scalar result ``summarize_tool_result`` falls back to the value
@@ -339,11 +340,11 @@ def _collapsed_retrieval_line(msg: "OutboxMessage") -> "Text | None":
     row reads identically whichever shape it takes, just spread over one
     line instead of two.
 
-    The full result is not lost: #3508's existing highlight-expand
-    mechanism (:func:`_tool_result_line`) still fires when the row's
-    highlight arrives, exactly as it does for a side-effect tool's row —
-    this function only changes the COLLAPSED, unhighlighted default,
-    never removes the expand path.
+    The full result is not lost: #3508's existing expand mechanism
+    (:func:`_tool_result_line`, Space-toggled per #4697/#4691§6) still
+    fires when the row is expanded, exactly as it does for a side-effect
+    tool's row — this function only changes the COLLAPSED, non-expanded
+    default, never removes the expand path.
 
     Failure is excluded on purpose, mirroring #3329's gutter demotion:
     a failed retrieval call still needs the operator's attention

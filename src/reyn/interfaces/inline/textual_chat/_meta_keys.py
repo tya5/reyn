@@ -28,10 +28,10 @@ RESULT_KIND_KEY = "_result_kind"
 #: frame's ``meta`` (carries ``result`` / ``error_message`` / ``error_kind``).
 RESULT_META_KEY = "_result"
 
-#: Present (and truthy) on a settled tool frame while the addressed-row
-#: highlight is ON it — the app stamps it in ``Highlighted`` and clears it when
-#: the highlight leaves, and the presenter renders the FULL result instead of
-#: the one-line summary while it is set (#3508).
+#: Present (and truthy) on a settled tool frame while its row is expanded —
+#: the app stamps/clears it on Space (:meth:`_CursorFlowView.action_toggle_fold`,
+#: #4697/#4691§6), and the presenter renders the FULL result instead of the
+#: one-line summary while it is set (#3508).
 #:
 #: It lives on the ITEM rather than in the view because ``FlowPresenter.present``
 #: is contractually pure with respect to ``(item, width)``: "expanded" has to be
