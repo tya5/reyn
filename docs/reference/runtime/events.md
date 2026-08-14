@@ -276,7 +276,19 @@ Every event has:
 }
 ```
 
-**The body field is `data`, read `e["data"][...]`, not `e["payload"]`** — "payload" is only the prose word this page (and elsewhere) uses to describe what `data` holds, never a key on the record itself. For a `llm_response_received` event, `e["data"]["finish_reason"]` / `e["data"]["call_id"]` are where those fields live; for `tool_called`, `e["data"]["caller_kind"]` / `e["data"]["caller_id"]` / `e["data"]["tool"]` / `e["data"]["args"]`. `e.get("payload", {})` returns `{}` for EVERY event, silently — every field reads as absent, not because it wasn't emitted, but because the read itself targeted a key that was never there.
+**An AUDIT-event's body field is `data`, read `e["data"][...]`, not
+`e["payload"]`.** For a `llm_response_received` event, `e["data"]["finish_reason"]`
+/ `e["data"]["call_id"]` are where those fields live; for `tool_called`,
+`e["data"]["caller_kind"]` / `e["data"]["caller_id"]` / `e["data"]["tool"]` /
+`e["data"]["args"]`. `e.get("payload", {})` returns `{}` for EVERY audit-event,
+silently — every field reads as absent, not because it wasn't emitted, but
+because the read itself targeted a key that was never on THIS vocabulary.
+`payload` is a real key, but on the WAL-event's own vocabulary (`.reyn/state/wal.jsonl`
+— see [Time-Travel § WAL vs audit-event separation](../../concepts/runtime/time-travel.md#wal-vs-audit-event-separation),
+and CLAUDE.md's "'event' is three distinct things"): `agent_snapshot.py`'s
+`inbox_put` replay reads `event.get("payload", {})` for real. Mixing the two
+vocabularies returns empty in EITHER direction — an audit-event read as
+`e["payload"]`, or (the mirror mistake) a WAL-event read as `e["data"]`.
 
 ## Agent ID field (all events)
 
