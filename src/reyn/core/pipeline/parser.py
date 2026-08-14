@@ -103,6 +103,7 @@ from typing import Any
 import yaml
 
 from reyn.core.pipeline.executor import (
+    STEP_KINDS,
     AgentStep,
     CallStep,
     ExprRef,
@@ -217,11 +218,13 @@ _PipelineLoader.add_constructor("!expr", _construct_expr_tag)
 # so a future Appendix-B step kind beyond this module's current scope has an
 # obvious place to land — see the parser module docstring).
 _UNSUPPORTED_STEP_KINDS: "tuple[str, ...]" = ()
-_LINEAR_STEP_KINDS = ("transform", "tool", "agent")
-# ``call``/``match``/``fold``/``for_each``/``parallel`` are compositional, not
-# linear, but ARE executable — listed separately so error text distinguishes
-# "the linear kinds" from the full supported set.
-_SUPPORTED_STEP_KINDS = _LINEAR_STEP_KINDS + ("call", "match", "fold", "for_each", "parallel")
+# #4646: DERIVED from executor.STEP_KINDS (the type->kind-string map already
+# authoritative for dispatch/serde), not hand-duplicated — closes the same
+# "two independent populations, no gate" hole #1983 closed for op kind (`Op`
+# DERIVES from `OP_KIND_MODEL_MAP`). Order matches STEP_KINDS' own insertion
+# order: the 3 linear kinds (transform/tool/agent) first, then the 5
+# compositional ones (call/match/fold/for_each/parallel).
+_SUPPORTED_STEP_KINDS = tuple(STEP_KINDS.values())
 _ALL_STEP_KINDS = _SUPPORTED_STEP_KINDS + _UNSUPPORTED_STEP_KINDS
 
 # Pipeline-level fields the full grammar allows but the linear executor has

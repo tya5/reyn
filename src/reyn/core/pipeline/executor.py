@@ -853,7 +853,7 @@ def _step_kind(step: Step) -> str:
     """The step's kind string (``transform`` / ``tool`` / ``agent`` / ``call``) for
     the IS-6 live-progress events — the same vocabulary the serde ``kind`` marker
     uses, derived from the dataclass type so it never drifts from the union."""
-    return _STEP_KINDS.get(type(step), "unknown")
+    return STEP_KINDS.get(type(step), "unknown")
 
 
 # ---------------------------------------------------------------------------
@@ -1805,7 +1805,14 @@ STEP_DISPATCH: "dict[type, Callable[[_StepInvocation], Awaitable[tuple[Any, bool
 }
 
 # Type -> kind-string, the inverse vocabulary the serde ``kind`` marker uses.
-_STEP_KINDS: "dict[type, str]" = {
+# #4646: public (not `_`-prefixed) because parser.py now DERIVES its
+# `kind`-string vocabulary from this map's values (`tuple(STEP_KINDS.values())`)
+# rather than hand-duplicating a separate str tuple — the same shape #1983
+# used for op kind (`Op` DERIVES from `OP_KIND_MODEL_MAP`, not compared
+# against a second population). Before this, parser.py's `_ALL_STEP_KINDS`
+# and this map were two independently-maintained 8-entry populations with
+# no gate keeping them in sync.
+STEP_KINDS: "dict[type, str]" = {
     TransformStep: "transform",
     ToolStep: "tool",
     AgentStep: "agent",
