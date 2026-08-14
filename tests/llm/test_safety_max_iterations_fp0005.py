@@ -147,9 +147,11 @@ async def test_max_iterations_interactive_yes_extends_loop() -> None:
     # Bus was asked exactly once (first exhaustion)
     (ask,) = bus.asks  # unpack-assertion: exactly 1 ask
     assert "max_iterations" in ask.kind
-    # Loop continued: agent reply emitted (not an error)
+    # Loop continued: agent reply emitted (not an error). #4691 Phase B ③:
+    # each exhausted/extra tool-calls round also emits its own (content-less)
+    # tree-parent placeholder now — the terminal reply is still LAST.
     agent_msgs = [m for m in host.outbox if m["kind"] == "agent"]
-    (agent_msg,) = agent_msgs
+    agent_msg = agent_msgs[-1]
     assert agent_msg["text"] == "done after extension"
 
 
@@ -255,9 +257,11 @@ async def test_max_iterations_limit_deny_fires_force_close_wrap_up() -> None:
         _univ_enabled=False,
     )
 
-    # Agent message emitted (wrap-up text), not canned error
+    # Agent message emitted (wrap-up text), not canned error. #4691 Phase B
+    # ③: the exhausted tool-calls round's own (content-less) tree-parent
+    # placeholder lands first now — the wrap-up text is still LAST.
     agent_msgs = [m for m in host.outbox if m["kind"] == "agent"]
-    (msg,) = agent_msgs  # unpack: exactly one
+    msg = agent_msgs[-1]
     assert msg["text"] == "work done: X; remaining: Y; stopped by limit"
     assert msg["meta"].get("limit_stopped") is True
     assert msg["meta"].get("limit_kind") == "max_iterations"
@@ -304,9 +308,10 @@ async def test_record_force_close_called_when_wrap_up_has_content() -> None:
     # record_force_close called exactly once with the wrap-up result
     (fc_result,) = host.recorded_fc
     assert getattr(fc_result, "content", None) == "step done; remaining: cleanup"
-    # agent message emitted
+    # agent message emitted — #4691 Phase B ③: the exhausted round's own
+    # placeholder lands first now, the wrap-up text is still LAST.
     agent_msgs = [m for m in host.outbox if m["kind"] == "agent"]
-    (msg,) = agent_msgs
+    msg = agent_msgs[-1]
     assert msg["meta"].get("limit_stopped") is True
 
 

@@ -2102,8 +2102,22 @@ class RouterLoop:
                 # no-tool_calls turn, so on a tool-turn the explanatory text was dropped
                 # from the conversation. Emit it as an ``agent`` bubble BEFORE
                 # _run_execute_round so the text renders ahead of the tool rows
-                # (lifecycle_forwarder queues tool_call_started during the round). Skip
-                # empty (no empty bubble).
+                # (lifecycle_forwarder queues tool_call_started during the round).
+                #
+                # #4691 Phase B ③: UNCONDITIONAL now — previously gated on
+                # ``if _tool_turn_text.strip():`` (skip empty, no empty bubble),
+                # deliberately deferred at Phase 1 because an empty-text row had
+                # no consumer: the TUI display path was unconditional even then
+                # (RouterHostAdapter.put_outbox never gated on text), so emitting
+                # one would have shown a bare, meaningless blank bubble. #4691
+                # Phase B's Group construction (app.py) is that consumer now —
+                # this row IS the call's own tree-parent placeholder, keyed by
+                # its own ``call_id`` below, so every tool-calls round gets a
+                # parent to nest its tool rows under even when the model called
+                # tools with no explanatory text. Owner ruling (#4691): keys are
+                # wired but the DEFAULT stays fully expanded — an empty-text
+                # parent row with its children shown under it is not a visual
+                # regression the way a bare empty bubble alone would have been.
                 #
                 # #3633: this call is DISPLAY-ONLY — ``persist=False``. The prior
                 # comment here ("no double-emit ... history persistence is unchanged")
@@ -2119,32 +2133,31 @@ class RouterLoop:
                 # twice (measured: 24/283 adjacent-duplicate assistant records in a
                 # real session, #3633).
                 _tool_turn_text = result.content or ""
-                if _tool_turn_text.strip():
-                    await self.host.put_outbox(
-                        kind="agent",
-                        text=_tool_turn_text,
-                        persist=False,
-                        # #1652: supply this turn's reasoning (host gates display/
-                        # continuity + emits the discrete kind="reasoning" signal).
-                        meta={
-                            "chain_id": self.chain_id,
-                            "source": "router_tool_turn_text",
-                            "reasoning": result.reasoning,
-                            # #4691: this row IS the call that just returned
-                            # ``result`` — its own real per-call tokens, not
-                            # the turn total (see gutter.py's ReynTurnUsageGutter
-                            # docstring for why this is the boundary fix).
-                            "prompt_tokens": getattr(result.usage, "prompt_tokens", None),
-                            "completion_tokens": getattr(result.usage, "completion_tokens", None),
-                            # #4691 Phase 1 ②: same call-granularity key item ①
-                            # stamps on this call's own llm_response_received —
-                            # threaded onto the row so a future flowview tree
-                            # (#4691 Phase B) can tell which litellm call this
-                            # row belongs to and whether it was a tool round.
-                            "call_id": result.call_id,
-                            "finish_reason": result.finish_reason,
-                        },
-                    )
+                await self.host.put_outbox(
+                    kind="agent",
+                    text=_tool_turn_text,
+                    persist=False,
+                    # #1652: supply this turn's reasoning (host gates display/
+                    # continuity + emits the discrete kind="reasoning" signal).
+                    meta={
+                        "chain_id": self.chain_id,
+                        "source": "router_tool_turn_text",
+                        "reasoning": result.reasoning,
+                        # #4691: this row IS the call that just returned
+                        # ``result`` — its own real per-call tokens, not
+                        # the turn total (see gutter.py's ReynTurnUsageGutter
+                        # docstring for why this is the boundary fix).
+                        "prompt_tokens": getattr(result.usage, "prompt_tokens", None),
+                        "completion_tokens": getattr(result.usage, "completion_tokens", None),
+                        # #4691 Phase 1 ②: same call-granularity key item ①
+                        # stamps on this call's own llm_response_received —
+                        # threaded onto the row so a future flowview tree
+                        # (#4691 Phase B) can tell which litellm call this
+                        # row belongs to and whether it was a tool round.
+                        "call_id": result.call_id,
+                        "finish_reason": result.finish_reason,
+                    },
+                )
                 # F5 fix (dogfood batch 1): dedupe duplicate async
                 # tool_calls within the same round. Weak models
                 # occasionally emit `delegate_to_agent` twice in one

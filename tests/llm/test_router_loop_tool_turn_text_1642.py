@@ -99,9 +99,20 @@ async def test_no_tool_calls_turn_emits_content_once(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_tool_turn_empty_content_skipped(monkeypatch):
-    """Tier 3a: a tool-turn with empty/whitespace content emits NO agent bubble on the
-    tool-turn (no empty-bubble noise) — only the terminal text appears."""
+async def test_tool_turn_empty_content_still_emits_a_placeholder_row(monkeypatch):
+    """Tier 3a: #4691 Phase B ③ — a tool-turn with empty/whitespace content
+    STILL emits its ``agent`` bubble (reversing #1642's original "no empty-
+    bubble noise" behavior, this test's own prior name and premise).
+
+    #1642 skipped this row because it had no consumer — displaying an empty
+    bubble was pure noise. #4691 Phase B gave it one: this row IS the tree-
+    parent placeholder every tool-calls round needs so its tool rows have
+    something to nest under (owner ruling, #4691) — every intermediate
+    round needs a parent, including a content-less one, or the Group
+    structure has a gap exactly where a weak model calls tools with no
+    explanatory text. The row is still marked with the fix's own
+    ``source="router_tool_turn_text"`` and carries its call_id/finish_reason
+    (#4691 Phase 1 ①②) same as a non-empty round."""
     host = FakeRouterHost()
     host._files["notes.txt"] = "file body"
     loop = make_loop(host)
@@ -113,5 +124,12 @@ async def test_tool_turn_empty_content_skipped(monkeypatch):
     await loop.run("go", [])
 
     agent = [m for m in host.outbox if m["kind"] == "agent"]
-    assert not any(m["meta"].get("source") == "router_tool_turn_text" for m in agent)
-    assert [m["text"] for m in agent] == ["done"]  # only the terminal text
+    placeholder = next(
+        (m for m in agent if m["meta"].get("source") == "router_tool_turn_text"), None,
+    )
+    assert placeholder is not None, (
+        "the tool-turn round must still emit its own row — #4691 Phase B's "
+        "Group parent, even with empty text"
+    )
+    assert placeholder["text"] == "   "  # verbatim — never neutralized/invented
+    assert [m["text"] for m in agent] == ["   ", "done"]

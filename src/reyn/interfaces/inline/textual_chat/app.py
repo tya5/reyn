@@ -1162,6 +1162,23 @@ class TextualChatApp(App):
         # deterministic args_hash, meta["op_id"]) so a later completion/failure
         # frame transitions the SAME entry RUNNING → SUCCESS/ERROR (CC parity).
         self._running_tools: "dict[object, Entry[OutboxMessage]]" = {}
+        # #4691 Phase B B1: the litellm-call TREE PARENT for a given call_id
+        # (#4691 Phase 1 ①②, #4734) — every ``kind="agent"`` row carrying
+        # ``meta["finish_reason"] == "tool_calls"`` registers itself here on
+        # arrival, and every ``tool_call_started``/``completed``/``failed``
+        # frame carrying a matching ``meta["call_id"]`` looks itself up here
+        # to find which Entry to nest under (``parent.append_child(...)``
+        # instead of the flat ``self.conversation.append(...)``). KEYED, not
+        # ORDER-based (owner ruling B, #4691, via #4734's review) — a dict
+        # lookup by call_id can never attach a tool row to the wrong parent
+        # even if dispatch order or interleaving assumptions ever break,
+        # unlike a single "most recently seen" pointer (the design #4734's
+        # review rejected for exactly this reason). Entries are never
+        # removed — a call_id is a member of exactly one turn's history and
+        # is never reused, so the dict only grows for the life of the
+        # conversation (bounded by the same session lifetime the flow model
+        # itself already is).
+        self._call_parents: "dict[str, Entry[OutboxMessage]]" = {}
         # #4380/#4429 originally had a lifecycle-marker bundling tracker
         # here — removed (2026-08-13): no reachable trigger ever produces
         # two adjacent occurrences (see ``_ingest_frame``'s own docstring
@@ -3618,10 +3635,38 @@ class TextualChatApp(App):
                     replace(streaming.entry.item, text=msg.text, meta=meta)
                 )
                 return
-        entry = self.conversation.append(msg)
+        # #4691 Phase B B1: nest under this frame's own litellm CALL, found
+        # by call_id lookup (never by "most recently appended" order — see
+        # ``self._call_parents``'s own docstring). A frame with no call_id,
+        # or one that matches no registered parent (a legacy/restored row,
+        # an op-loop caller that never threaded one through), falls through
+        # to the flat top-level append exactly as before B1 — nothing here
+        # narrows what USED to land flat.
+        call_id = meta.get("call_id")
+        parent = self._call_parents.get(call_id) if call_id else None
+        if parent is not None:
+            entry = parent.append_child(msg)
+        else:
+            entry = self.conversation.append(msg)
         # #3712: an entry just arrived. Counted HERE, by the thing that
         # produced it — not reconstructed later from two reads of the model.
         self._note_entry_landed()
+        if (
+            kind == "agent"
+            and call_id
+            and meta.get("finish_reason") == "tool_calls"
+        ):
+            # This row IS a call boundary that dispatches tool_calls next —
+            # register it so those tool rows (about to arrive with the SAME
+            # call_id) find it. A terminal reply (finish_reason == "stop")
+            # or any other kind never registers: nothing ever looks up a
+            # call_id belonging to a call that dispatched no tools.
+            self._call_parents[call_id] = entry
+            # #4691 Phase B ④: the parent's own spinner starts here — its
+            # children are about to arrive RUNNING too, and
+            # ``_recompute_parent_state`` (called from every child settle)
+            # keeps it RUNNING until every child has settled.
+            entry.set_state(EntryState.RUNNING)
         if kind == "presentation":
             self._begin_image_resolutions(entry, msg)
         if kind == "intervention":
@@ -3713,6 +3758,39 @@ class TextualChatApp(App):
             started.set_state(
                 EntryState.ERROR if summary.startswith("✗") else EntryState.SUCCESS
             )
+        # #4691 Phase B ④: this settle may be the last of the parent's
+        # children — recompute its own spinner state.
+        self._recompute_parent_state(started)
+
+    def _recompute_parent_state(self, child: "Entry[OutboxMessage]") -> None:
+        """#4691 Phase B ④ — after a child settles, recompute its Group
+        PARENT's own state (the spinner #4691 Phase B B1 asked for: RUNNING
+        while any of its children still are, SUCCESS/ERROR once all have
+        settled).
+
+        A no-op when ``child`` has no parent (an un-nested / top-level
+        row — B1's own call_id-lookup miss path, or a restored row). Reads
+        ``EntryState`` off every live child via ``entry.state`` — the SAME
+        public state the child's own gutter/animation already reflect, so
+        this can never disagree with what the child rows themselves show.
+        RUNNING wins over any terminal state (a parent with even one
+        in-flight child is still in flight); among terminal states ERROR
+        wins over SUCCESS (one failed child taints the whole call); CANCELLED
+        counts as neither RUNNING nor a taint — an orphan is not a failure
+        (#72's own reasoning, reused here at parent granularity)."""
+        parent = child.parent
+        if parent is None:
+            return
+        children = parent.children
+        if not children:
+            return
+        states = [c.state for c in children]
+        if EntryState.RUNNING in states:
+            parent.set_state(EntryState.RUNNING)
+        elif EntryState.ERROR in states:
+            parent.set_state(EntryState.ERROR)
+        else:
+            parent.set_state(EntryState.SUCCESS)
 
     def _coalesce_pipeline_step(self, msg: "OutboxMessage") -> bool:
         """Fold one pipeline step frame into that run's single row.
@@ -3823,7 +3901,34 @@ class TextualChatApp(App):
                 logger.exception(
                     "textual chat: could not set orphaned-tool state"
                 )
+            # #4691 Phase B ④: an orphan is a settle too — its parent (if
+            # any) must not spin forever waiting for a completion that will
+            # now never arrive.
+            try:
+                self._recompute_parent_state(entry)
+            except Exception:
+                logger.exception(
+                    "textual chat: could not recompute orphaned tool's parent state"
+                )
         self._running_tools.clear()
+        # #4691 Phase B ④: a parent whose children never arrived at all — the
+        # turn cancelled between the parent row landing and its first
+        # tool_call_started, or every one of its tool_calls was excluded
+        # pre-dispatch (#3455) and produced no started entry to track — is
+        # NOT in the loop above (nothing to recompute FROM: it has no
+        # settled child to trigger it) and would otherwise spin its own
+        # RUNNING marker forever. Same CANCELLED verdict as an orphaned
+        # tool itself (#72's own reasoning): the turn ending is not a
+        # failure of the call, it is the call's report simply never
+        # completing.
+        for parent in self._call_parents.values():
+            if parent.state is EntryState.RUNNING:
+                try:
+                    parent.set_state(EntryState.CANCELLED)
+                except Exception:
+                    logger.exception(
+                        "textual chat: could not settle an orphaned call-parent"
+                    )
 
     def _close_earlier_streaming_rounds(self, chain_id: str, round_index: object) -> None:
         """Finish any record of *chain_id* from a round before *round_index*.

@@ -538,7 +538,14 @@ async def test_empty_response_after_a_tool_call_this_turn_is_not_the_glitch_fail
         f"expected no empty-response detection/retry event after a tool "
         f"call this turn, got: {empty_events}"
     )
-    assert not host.outbox, f"expected no failure message in outbox, got: {host.outbox}"
+    # #4691 Phase B ③: the tool-calls round's own tree-parent placeholder
+    # row is now expected in the outbox (content-less here, since
+    # tool_result([...]) carries no text) — narrow to the one kind this
+    # test is actually about: no router_empty_response FAILURE marker.
+    failure_msgs = [
+        m for m in host.outbox if m["meta"].get("source") == "router_empty_response"
+    ]
+    assert not failure_msgs, f"expected no failure message in outbox, got: {failure_msgs}"
     assert scripted.call_count == 2, (
         "expected exactly the tool-call round + the empty round — a third "
         "call would mean the (now-exempted) retry path still fired"
@@ -582,7 +589,14 @@ async def test_empty_response_after_a_tool_call_stays_exempt_even_with_retry_aut
     assert not empty_events, (
         f"expected no empty-response detection/retry event, got: {empty_events}"
     )
-    assert not host.outbox, f"expected no failure message in outbox, got: {host.outbox}"
+    # #4691 Phase B ③: the tool-calls round's own tree-parent placeholder
+    # row is now expected in the outbox (content-less here, since
+    # tool_result([...]) carries no text) — narrow to the one kind this
+    # test is actually about: no router_empty_response FAILURE marker.
+    failure_msgs = [
+        m for m in host.outbox if m["meta"].get("source") == "router_empty_response"
+    ]
+    assert not failure_msgs, f"expected no failure message in outbox, got: {failure_msgs}"
     assert scripted.call_count == 2, (
         "the exemption must win before the retry check runs — a retry "
         "would make this 3, not 2"
