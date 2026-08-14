@@ -828,11 +828,19 @@ Handler lifecycle (`op_runtime/load_skill.py`):
    variant with `${REYN_SKILL_DIR}`/`${REYN_PLUGIN_ROOT}` (+ `${CLAUDE_*}`
    aliases) left LITERAL, plus the location-token map, surfaced as this
    op result's `content_history`/`token_map`/`skill_source_path` fields —
-   see step 8 below for why.
-7. **Self-bounding**: an oversized body is truncated to the resolver's
+   see step 9 below for why.
+7. **Threat-scan (#4699, the ratified band)**: `content_guard.scan_for_threats`
+   (`scope="strict"`, same shape `skill_install`'s description scan uses) runs
+   on the final `content` — the ONE chokepoint every skill body crosses
+   regardless of how it was registered (a hand-written `skills.yaml` entry
+   never passes through `skill_install`'s own scan). A blocking-severity
+   match returns `status: "blocked"` with `content: ""` — the body never
+   reaches this turn's context. Mirrors the existing `scan_tool_result`/
+   `fence_tool_result` tool-result chokepoint, not a new mechanism.
+8. **Self-bounding**: an oversized body is truncated to the resolver's
    inline cap (`control_ir_inline_cap`) rather than blowing the context;
    `status: "truncated"` + a `note` on that path.
-8. **#3629 — persist-safe history, not the expanded value**: `content` is
+9. **#3629 — persist-safe history, not the expanded value**: `content` is
    what the current turn's LLM call sees; `content_history` (present only
    alongside a set provenance) is what `router_loop.py`'s tool-result
    assembly persists to `history.jsonl` instead — history is immutable, so
@@ -845,13 +853,15 @@ Handler lifecycle (`op_runtime/load_skill.py`):
    persisted entry is replayed — `token_map` is audit-completeness
    metadata only (never a re-expansion source).
 
-Result fields: `status` (`"ok"` / `"truncated"` / `"not_found"` / `"error"`),
-`path`, `content`, plus `total_chars`/`_truncated`/`note` on a truncated
-result, `encoding` when a non-UTF-8 codec was used, and (#3629)
-`content_history`/`token_map`/`skill_source_path` when a provenance class
-matched (step 6).
+Result fields: `status` (`"ok"` / `"truncated"` / `"blocked"` / `"not_found"` /
+`"error"`), `path`, `content` (empty on `"blocked"`), plus
+`total_chars`/`_truncated`/`note` on a truncated result, `encoding` when a
+non-UTF-8 codec was used, and (#3629) `content_history`/`token_map`/
+`skill_source_path` when a provenance class matched (step 6).
 
-Events emitted: `tool_executed` (`op="load_skill"`) always; `skill_body_loaded`
+Events emitted: `tool_executed` (`op="load_skill"`) always; `skill_body_threat_match`
+/ `skill_body_threat_blocked` (#4699, threat scan, step 7) when the body
+matches; `skill_body_loaded`
 (`provenance`, `env_tokens_expanded`/`env_names_expanded`,
 `env_tokens_denied`/`env_names_denied` — names + counts only, NEVER the
 expanded/denied values) only when provenance was classified.

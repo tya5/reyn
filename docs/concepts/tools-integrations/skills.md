@@ -515,6 +515,27 @@ Fetches a skill from a git/GitHub URL and installs the clone:
 
 **Path-safety hardening** (both tools, since the resolved name feeds a filesystem path under `.reyn/skills/`): the derived name — from the `name` argument, `SKILL.md` frontmatter, or a URL/subdir basename — is rejected outright unless it is a single safe path component (`[A-Za-z0-9._-]+`, no `..`, no leading dot, no separators). A belt-and-suspenders containment check (`resolve()` + `relative_to()`) additionally refuses any install destination that would resolve outside `.reyn/skills/`, guarding against a gap in the name check itself. Neither check silently rewrites an unsafe name — installation is refused with an explicit error instead.
 
+### Body threat-scan is at `load_skill`, not here (#4699)
+
+The install-time scan above (step 3 of both tools) only covers the frontmatter
+`description` — the one-line menu text, never the place an attacker would put
+a payload. It also only runs when a skill is registered THROUGH one of these
+two tools; a `.reyn/config/skills.yaml` entry written by hand (or by any other
+means) never passes through it. **The `load_skill` op is the actual gate**:
+every skill body crosses it regardless of how the entry was registered, so
+`content_guard.scan_for_threats` (same `scope="strict"` shape) runs there, on
+the fully-expanded body, before it can reach the model's context — see
+[Skill-load variable expansion](#skill-load-variable-expansion) and
+`docs/reference/runtime/control-ir.md`'s `load_skill` section for the exact
+step. The description scan above stays as an install-time fail-fast (reject
+before persisting to disk); it is additive UX, not what makes a loaded body
+safe — that guarantee comes from `load_skill`'s own scan alone.
+
+`references/*.md` files a skill body points at are read through the ordinary
+`file.read` op when the model opens them, which carries no skill-specific
+provenance and is therefore NOT covered by this scan — tracked separately
+(see #4701).
+
 ## What's out of scope (for now)
 
 Deliberately not part of the current model — planned for a future layer, not a gap in this one:

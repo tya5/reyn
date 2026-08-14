@@ -379,6 +379,8 @@ AUDIT_EVENT_KINDS: frozenset[str] = frozenset({
     "session_restored",
     "session_started",
     "skill_body_loaded",
+    "skill_body_threat_blocked",
+    "skill_body_threat_match",
     "skill_install_skipped",
     "skill_install_threat_blocked",
     "skill_install_threat_match",
