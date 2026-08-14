@@ -134,6 +134,13 @@ def _entries(app: TextualChatApp):
     return app.query_one(FlowView).entries
 
 
+def _painted(flow: FlowView) -> str:
+    return "\n".join(
+        "".join(seg.text for seg in flow.render_line(y))
+        for y in range(flow.size.height)
+    )
+
+
 @pytest.mark.asyncio
 async def test_tool_rows_nest_under_the_matching_call_id_parent() -> None:
     """Tier 2b: a tool_call_started/completed pair carrying the SAME call_id
@@ -342,3 +349,60 @@ async def test_default_stays_fully_expanded() -> None:
         assert parent.collapsed is False
         (child,) = parent.children
         assert child.collapsed is False
+
+
+@pytest.mark.asyncio
+async def test_a_collapsed_parent_shows_its_child_count() -> None:
+    """Tier 2b: dogfood finding (#4691, post-#4748 merge) — a collapsed
+    Group parent must show its child COUNT, or folding hides both the
+    children AND any sign that anything was hidden at all (worse than not
+    being able to fold — a reader cannot tell "nothing here" from "3 rows
+    folded away"). Deliberately minimal: pins that the count is present
+    and correct, not any particular wording/symbol (design is #4691 Phase
+    B B2's own call, per lead-coder's explicit review scope)."""
+    transport = QueueTransport()
+    app = TextualChatApp(transport=transport, clock=lambda: 100.0)
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        await transport.push_display(_parent_row("resp-1"))
+        await pilot.pause()
+        await transport.push_display(_started("op-1", call_id="resp-1"))
+        await transport.push_display(_started("op-2", call_id="resp-1"))
+        await pilot.pause()
+
+        parent = _entries(app)[0]
+        flow = app.query_one(FlowView)
+
+        parent.collapse()
+        await pilot.pause()
+        collapsed_text = _painted(flow)
+        assert "2" in collapsed_text, (
+            f"a collapsed parent with 2 children must show the count "
+            f"somewhere on its own row, got: {collapsed_text!r}"
+        )
+
+
+@pytest.mark.asyncio
+async def test_an_expanded_parent_shows_no_count_line() -> None:
+    """Tier 2b: accept-side pair — the count line is collapsed-only; an
+    ordinary EXPANDED parent (today's default, and B1's own "zero visual
+    regression" promise) renders exactly as it did before this fix."""
+    transport = QueueTransport()
+    app = TextualChatApp(transport=transport, clock=lambda: 100.0)
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        await transport.push_display(_parent_row("resp-1", text="checking"))
+        await pilot.pause()
+        await transport.push_display(_started("op-1", call_id="resp-1"))
+        await pilot.pause()
+
+        parent = _entries(app)[0]
+        assert parent.collapsed is False
+        pres = await app._presenter.present(parent, 80)
+        from rich.console import Console
+
+        console = Console(width=80)
+        with console.capture() as cap:
+            console.print(pres.renderable)
+        text = cap.get()
+        assert "folded" not in text and "1" not in text
