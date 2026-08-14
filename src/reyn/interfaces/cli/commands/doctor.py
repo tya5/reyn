@@ -108,10 +108,27 @@ whether each declared ``llm.models`` entry's BARE name (stripped of the
 was exactly this name-form mismatch. Only ``llm.api_base`` (a LiteLLM
 proxy) is checked; a provider with no declared ``api_base`` has no URL
 this module knows to probe, so it prints "not checked" (D-3) rather
-than guessing a per-provider hosted endpoint. C-6's remaining named pair
-(listen port) is a later slice — it needs its own NEW measurement code
-(introspecting a live bound socket), not reuse of an existing function
-the way C-1/C-2/C-3(b)/C-4/C-5/C-7 are.
+than guessing a per-provider hosted endpoint. C-6's own "listen port"
+example (measured #4364, before writing any code, per lead-coder's
+instruction) does NOT apply to reyn's own config surface: ``reyn web``'s
+``--host``/``--port`` are bare CLI arguments (``interfaces/cli/commands/
+web.py``) with NO corresponding ``ReynConfig`` field anywhere — verified
+by walking the full schema (:func:`reyn.config.config_schema.
+walk_config_schema`) for any key naming a port; there is none. C-6's
+motivating incident (architect's own report, #4364: a *different*
+project's ``settings.port`` silently stopped taking effect across a
+dependency bump) illustrates the GENERAL "declared ≠ effective" shape —
+it was never a claim that reyn itself declares a listen port anywhere.
+A declared-vs-effective pair needs a DECLARATION to pair against; reyn's
+own port is set once, per-invocation, by the operator's own CLI
+argument — there is nothing upstream of that argument for doctor (a
+separate, later, short-lived process with no view into a sibling
+``reyn web`` process's argv) to compare it with. C-6's GENERAL form
+(declared config ↔ ACTUALLY-effective value, never re-reading the
+declaration as its own witness) is already implemented — C-5 above is
+architect's own named special case of it (sandbox posture: declared
+``sandbox.*`` next to the resolved backend), not a separate, still-owed
+slice.
 """
 from __future__ import annotations
 
