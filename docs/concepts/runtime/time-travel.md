@@ -48,9 +48,17 @@ After a rewind you can fork from that point instead of overwriting the current b
 
 The `checkout(seq)` primitive implements both: if the target seq is on the active branch it is an undo; if it is on an abandoned branch it is a fork-switch.
 
-### Act-turn rewind
+### Act-turn rewind — removed (#4711)
 
-For finer granularity, within a live workflow run you can rewind to an **act-turn boundary** (a step within the current turn). This is a runtime-only operation using the Ghost-Replay mechanism: the committed-step memo is truncated at the target seq, and on relaunch steps before the target replay as ghosts (0 tokens, recorded results replayed), while steps after the target re-execute. User workspace files are unaffected.
+> **Status: removed, not aspirational.** A finer, intra-turn "act-turn boundary"
+> rewind granularity (`e41929324`, "act-turn workspace restore") existed and was
+> deleted along with the phase-graph skill engine's dispatch machinery
+> (`SkillResumeCoordinator`/`OSRuntime` — #2434 stage3b's bulk-delete, `d3c8c7a1e`;
+> #2439's follow-up, `068ffcd29`) — confirmed via `git log -S` on both classes,
+> zero grep hits in current `src/`. Checkpoint-boundary rewind below is unaffected
+> and is the only granularity `/rewind` exposes today — [the operator
+> guide](../../guide/for-users/time-travel.md) never described act-turn rewind,
+> so no user-facing claim needed correcting.
 
 ---
 
@@ -93,10 +101,6 @@ The branch registry tracks all fork lineages: when a fork-switch creates a new b
 **Deferred-purge atomicity (#2125).** Rewinding past a spawned session's spawn point drops that session's on-disk directory as part of reconstruction. The destructive removal is deferred until the as-of-cut reconstruction has actually succeeded — if reconstruction raises partway through, the session directory still exists afterward, not half-torn-down. A failed rewind leaves state intact rather than partially destroyed.
 
 At rewind and fork-switch, the runtime reconstruct honors `is_active` (following the correct fork-lineage path for the target branch).
-
-### Act-turn Ghost-Replay
-
-Act-turn rewind (intra-turn granularity) uses `SkillResumeCoordinator.plan_for_act_turn_rewind`: the `SkillResumeAnalyzer` builds the full `ResumePlan`, then `committed_steps` are filtered to `seq ≤ target_seq`. On relaunch via `OSRuntime.run(resume_plan=...)`, steps in the memo replay as ghosts (0 LLM tokens); steps beyond the cutoff re-execute. This reuses the existing crash-resume dispatch path — no new runtime wiring.
 
 ### Boundary generation
 
@@ -155,11 +159,11 @@ Both are the price of crash-recovery and time-travel fidelity; neither is option
 | | Crash recovery | Time-travel |
 |--|--|--|
 | Trigger | Automatic on unexpected failure | User-initiated (`/rewind`) |
-| Direction | Forward-replay to resume | Backward to a past checkpoint |
+| Direction | Runtime/agent state forward-replays to where the run stopped; config/identity/pipeline state restores to the latest complete generation (no forward-replay) | Backward to a past checkpoint |
 | Workspace | Not rewound | Not rewound (`.reyn/` state only — git-free) |
 | Branching | None | Fork / branch tree |
-| Mechanism | `SkillResumeAnalyzer` + WAL forward-replay | PITR snapshot + WAL-diff reconstruct, git-free |
-| Design | [ADR-0002](../../deep-dives/decisions/0002-forward-replay-resume.md) | [ADR-0038 draft](https://github.com/tya5/reyn/pull/1536) |
+| Mechanism | Runtime/agent state: the same PITR reconstruct time-travel uses — nearest `AgentSnapshot` generation + forward-replay of WAL entries in `(gen.applied_seq, head]`; crash recovery is the special case `reconstruct(head)` (`snapshot_generations.py`). Config / identity / pipeline state: latest complete generation on the active branch, no forward-replay (`config_generations.py`, `agent_identity_generations.py`, `pipeline_recovery.py`) | PITR snapshot + WAL-diff reconstruct, git-free |
+| Design | [ADR-0002](../../deep-dives/decisions/0002-forward-replay-resume.md) — superseded; the phase-level forward-replay it adopted (op-level memoization within an in-flight phase) was removed with the phase-graph engine (#2434/#2439). Forward-replay today is `AgentSnapshot`'s WAL-diff reconstruct above, not phase/op memoization | [ADR-0038 draft](https://github.com/tya5/reyn/pull/1536) |
 
 ## See also
 

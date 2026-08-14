@@ -47,9 +47,9 @@ Reyn は履歴を書き換えません。過去のチェックポイント（seq
 
 `checkout(seq)` プリミティブが両方を実装します：目標 seq がアクティブブランチにある場合はアンドゥ、放棄ブランチにある場合はフォーク切り替えです。
 
-### アクトターン巻き戻し
+### アクトターン巻き戻し — 削除済み（#4711）
 
-より細かい粒度として、ライブなスキールラン内で**アクトターン境界**（現在のターン内のステップ）まで巻き戻せます。これは Ghost-Replay メカニズムを使うランタイム専用操作です：コミット済みステップのメモが目標 seq で切り捨てられ、再起動時に目標より前のステップがゴーストとして再生（0 トークン、記録済み結果を再生）され、目標より後のステップが再実行されます。ユーザーのワークスペースファイルには影響しません。
+> **状態: 削除済み、空想的な記述ではありません。** より細かい ターン内「アクトターン境界」巻き戻し粒度（`e41929324`、"act-turn workspace restore"）は実在し、phase-graph skill engine のディスパッチ機構（`SkillResumeCoordinator`/`OSRuntime` — #2434 stage3b の一括削除 `d3c8c7a1e`、#2439 の追随 `068ffcd29`）と共に削除されました — 両クラスとも `git log -S` で確認、現行 `src/` では grep 0 件です。以下のチェックポイント境界の巻き戻しは影響を受けず、今日 `/rewind` が公開している唯一の粒度です — [operator ガイド](../../guide/for-users/time-travel.md) はそもそもアクトターン巻き戻しに言及していないため、user-facing 側の修正は不要です。
 
 ---
 
@@ -88,10 +88,6 @@ WAL は**同期耐久ログ**（追記ごとに fsync）であり、P6 監査イ
 `is_active_seq` は `seq ≤ tip` と等価では**ありません**。seq が現在の先端以下でも、以前の巻き戻しから放棄区間内にある場合があります。アクティブ性は先端に対する位置からではなく、リセットレコードチェーンから派生します。
 
 巻き戻しとフォーク切り替えの両方において、ランタイム再構成は `is_active`（目標ブランチの正しいフォーク血統パスを追従）を尊重します。
-
-### アクトターン Ghost-Replay
-
-アクトターン巻き戻し（ターン内粒度）は `SkillResumeCoordinator.plan_for_act_turn_rewind` を使います：`SkillResumeAnalyzer` が完全な `ResumePlan` を構築し、`committed_steps` が `seq ≤ target_seq` でフィルタリングされます。`OSRuntime.run(resume_plan=...)` 経由での再起動で、メモ内のステップがゴーストとして再生（0 LLM トークン）され、カットオフを超えたステップが再実行されます。既存のクラッシュリカバリディスパッチパスを再利用するため、新しいランタイムの配線は不要です。
 
 ### 境界世代
 
@@ -134,10 +130,10 @@ WAL（`StateLog`、`.reyn/state/wal.jsonl`）と P6 監査イベントログ（`
 | | クラッシュリカバリ | タイムトラベル |
 |--|--|--|
 | トリガー | 予期しない障害時に自動 | ユーザー起動（`/rewind`） |
-| 方向 | 再開のための前方再生 | 過去のチェックポイントへの後退 |
+| 方向 | ランタイム / agent 状態は停止地点まで前方再生；config / identity / pipeline 状態は最新の完全な世代へ復元（前方再生なし） | 過去のチェックポイントへの後退 |
 | ワークスペース | 巻き戻しなし | 巻き戻しなし（`.reyn/` 状態のみ — git 不使用） |
 | ブランチング | なし | フォーク / ブランチツリー |
-| メカニズム | `SkillResumeAnalyzer` + WAL 前方再生 | PITR スナップショット + WAL 差分再構成、git 不使用 |
+| メカニズム | ランタイム / agent 状態: タイムトラベルと同じ PITR 再構成 — 直近の `AgentSnapshot` 世代 ＋ `(gen.applied_seq, head]` の WAL イベント前方再生。クラッシュリカバリは `reconstruct(head)` という特殊ケース（`snapshot_generations.py`）。config / identity / pipeline 状態: アクティブブランチの最新の完全な世代、前方再生なし（`config_generations.py`、`agent_identity_generations.py`、`pipeline_recovery.py`） | PITR スナップショット + WAL 差分再構成、git 不使用 |
 
 ## 参照
 
