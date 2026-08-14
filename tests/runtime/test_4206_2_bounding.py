@@ -37,6 +37,7 @@ from reyn.llm.model_resolver import (
 )
 from reyn.runtime.bounding import (
     BOUNDING_KEYS,
+    InvalidBoundingValueError,
     UnknownBoundingKeyError,
     compose_model_ceiling,
     validate_bounding,
@@ -78,10 +79,15 @@ def test_compose_model_ceiling_narrowest_wins_a_wider_child_cannot_widen() -> No
     assert compose_model_ceiling("light", "strong", "standard") == "light"
 
 
-def test_compose_model_ceiling_incomparable_value_ignored_not_raised() -> None:
-    """Tier 1: contract — a ceiling value outside STANDARD_CLASSES mirrors
-    ``model_class_exceeds_ceiling``'s own "not comparable" scope limit:
-    ignored, not raised, and never narrows anything by itself."""
+def test_compose_model_ceiling_project_layer_incomparable_value_ignored_not_raised() -> None:
+    """Tier 1: contract — compose_model_ceiling itself stays a LOCAL,
+    per-layer "not comparable" deferral (mirrors model_class_exceeds_
+    ceiling's own scope limit), for the ONE caller its own value is not
+    pre-validated by validate_bounding: the PROJECT layer
+    (resolver.class_ceiling(), validated by ModelResolver itself, not
+    this module). An agent/session-layer value can never reach this
+    function un-validated — see test_validate_bounding_raises_on_unknown_
+    model_value below for where THAT gets closed."""
     assert compose_model_ceiling("standard", "custom-tier") == "standard"
     assert compose_model_ceiling("custom-tier", "custom-tier-2") is None
 
@@ -94,8 +100,21 @@ def test_validate_bounding_raises_on_unknown_key() -> None:
 
 
 def test_validate_bounding_accepts_known_key() -> None:
-    """Tier 1: accept-side — a recognized key does not raise."""
+    """Tier 1: accept-side — a recognized key with a valid value does not
+    raise."""
     validate_bounding({"model": "light"}, source="test")
+
+
+def test_validate_bounding_raises_on_unknown_model_value() -> None:
+    """Tier 1: THE silent-widening-closure witness (lead-coder review,
+    #4727) — a typo'd/stale bounding.model value (e.g. "strogn") is NOT
+    silently ignored (which would let compose_model_ceiling drop that
+    layer entirely and, if no other layer sets a ceiling, compose to
+    None = unbounded with no exception/warning at all). Raised at the
+    SAME validate_bounding entry point UnknownBoundingKeyError uses, not
+    as a new branch in compose_model_ceiling."""
+    with pytest.raises(InvalidBoundingValueError):
+        validate_bounding({"model": "strogn"}, source="test")
 
 
 # ---------------------------------------------------------------------------
@@ -173,6 +192,23 @@ def test_agent_profile_load_raises_on_unknown_bounding_key(tmp_path: Path) -> No
         encoding="utf-8",
     )
     with pytest.raises(UnknownBoundingKeyError):
+        AgentProfile.load(agent_dir)
+
+
+def test_agent_profile_load_raises_on_invalid_bounding_model_value(tmp_path: Path) -> None:
+    """Tier 1: contract — a profile.yaml with a bounding.model value
+    outside STANDARD_CLASSES raises InvalidBoundingValueError at load()
+    time, the same entry point the unknown-key case above uses."""
+    agent_dir = tmp_path / "agents" / "bounder-3b"
+    agent_dir.mkdir(parents=True)
+    (agent_dir / "profile.yaml").write_text(
+        yaml.safe_dump({
+            "name": "bounder-3b", "role": "", "created_at": "",
+            "bounding": {"model": "strogn"},
+        }),
+        encoding="utf-8",
+    )
+    with pytest.raises(InvalidBoundingValueError):
         AgentProfile.load(agent_dir)
 
 
@@ -260,6 +296,76 @@ def test_model_class_ceiling_session_layer_also_cannot_widen(tmp_path: Path) -> 
     )
 
     assert session.model_class_ceiling == "standard"
+
+
+def test_model_class_ceiling_agent_layer_typo_is_logged_not_silent(
+    tmp_path: Path, caplog,
+) -> None:
+    """Tier 2: THE silent-widening-closure witness at Session level
+    (lead-coder review, #4727) — a typo'd agent-layer bounding.model
+    ("strogn") does not just fail to narrow anything invisibly: it is
+    LOGGED (validate_bounding raises InvalidBoundingValueError, caught
+    and surfaced by _agent_profile_bounding's own warning, the same
+    degrade-and-log shape UnknownPreferenceKeyError already uses).
+    Without this, an operator has NO way to discover why their intended
+    restriction never applied. The composed ceiling still correctly
+    falls back to the project's own value (standard) either way — the
+    thing THIS test proves is the log, not the value (compose_model_
+    ceiling already tolerates an incomparable value silently by design;
+    see test_compose_model_ceiling_project_layer_incomparable_value_
+    ignored_not_raised above — the fix is entirely about visibility)."""
+    import logging
+
+    resolver = ModelResolver({"standard": "openai/gpt-4o"}, model_max_class="standard")
+    session = make_session(
+        agent_name="bound-3c", workspace_state_dir=tmp_path / ".reyn", resolver=resolver,
+    )
+    agent_dir = _agent_dir(session)
+    agent_dir.mkdir(parents=True, exist_ok=True)
+    (agent_dir / "profile.yaml").write_text(
+        yaml.safe_dump({
+            "name": "bound-3c", "role": "", "created_at": "",
+            "bounding": {"model": "strogn"},
+        }),
+        encoding="utf-8",
+    )
+
+    with caplog.at_level(logging.WARNING):
+        assert session.model_class_ceiling == "standard"
+
+    assert any("bounding" in r.message.lower() for r in caplog.records), (
+        "a typo'd bounding.model value must be logged, not silently ignored"
+    )
+
+
+def test_model_class_ceiling_session_layer_typo_is_logged_not_silent(
+    tmp_path: Path, caplog,
+) -> None:
+    """Tier 2: the reverse leg of the same witness — a typo'd
+    SESSION-layer config.yaml bounding.model is ALSO logged (this is the
+    leg #4727 review actually caught: _read_bounding_override originally
+    had no validate_bounding call at all, so a session-layer typo was
+    invisible even though the agent-layer one already routed through
+    AgentProfile.load's validation)."""
+    import logging
+
+    resolver = ModelResolver({"standard": "openai/gpt-4o"}, model_max_class="standard")
+    session = make_session(
+        agent_name="bound-5b", workspace_state_dir=tmp_path / ".reyn", resolver=resolver,
+    )
+    cfg_path = _session_config_path(session)
+    cfg_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg_path.write_text(
+        yaml.safe_dump({"name": "_session_x", "bounding": {"model": "strogn"}}),
+        encoding="utf-8",
+    )
+
+    with caplog.at_level(logging.WARNING):
+        assert session.model_class_ceiling == "standard"
+
+    assert any("bounding" in r.message.lower() for r in caplog.records), (
+        "a typo'd bounding.model value must be logged, not silently ignored"
+    )
 
 
 def test_model_class_ceiling_narrowest_of_all_three_layers_wins(tmp_path: Path) -> None:

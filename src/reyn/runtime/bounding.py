@@ -55,10 +55,26 @@ class UnknownBoundingKeyError(ValueError):
     for the ③ axis."""
 
 
+class InvalidBoundingValueError(ValueError):
+    """A ``bounding.model`` value is not one of ``STANDARD_CLASSES`` —
+    raised loudly at the SAME entry point :class:`UnknownBoundingKeyError`
+    guards, for the same reason (lead-coder review, #4727): unlike
+    ``model_class_exceeds_ceiling``'s own "not comparable -> ignore"
+    scope limit (a LOCAL, single-judgment deferral), letting a typo'd
+    value (``"strogn"``) reach :func:`compose_model_ceiling` silently
+    drops that LAYER's ceiling from the composition entirely — if every
+    other layer is also unset, the composed result is ``None``
+    (unbounded), turning "restrict to standard" into "no restriction at
+    all" with no exception and no warning. Closed at the validation
+    entry point, not by adding a branch to the composition function."""
+
+
 def validate_bounding(bounding: "dict[str, object]", *, source: str) -> None:
     """Raise :class:`UnknownBoundingKeyError` for any key in *bounding* that
-    is not in :data:`BOUNDING_KEYS`. *source* names where this mapping came
-    from (an agent name or a session id) so the error is actionable."""
+    is not in :data:`BOUNDING_KEYS`, and :class:`InvalidBoundingValueError`
+    for a ``model`` value outside ``STANDARD_CLASSES``. *source* names
+    where this mapping came from (an agent name or a session id) so the
+    error is actionable."""
     unknown = set(bounding) - BOUNDING_KEYS
     if unknown:
         raise UnknownBoundingKeyError(
@@ -66,6 +82,15 @@ def validate_bounding(bounding: "dict[str, object]", *, source: str) -> None:
             f"not in BOUNDING_KEYS ({sorted(BOUNDING_KEYS)!r}). A typo'd "
             f"or renamed bounding key would otherwise silently fail to "
             f"narrow anything."
+        )
+    if "model" in bounding and bounding["model"] not in STANDARD_CLASSES:
+        raise InvalidBoundingValueError(
+            f"{source}: bounding.model={bounding['model']!r} is not one of "
+            f"STANDARD_CLASSES ({list(STANDARD_CLASSES)!r}). A typo'd or "
+            f"stale class name would otherwise silently fail to narrow "
+            f"anything (compose_model_ceiling ignores an incomparable "
+            f"value), which can silently WIDEN the effective ceiling to "
+            f"unbounded if no other layer sets one."
         )
 
 
@@ -78,11 +103,19 @@ def compose_model_ceiling(*ceilings: "str | None") -> "str | None":
     A ceiling value outside :data:`reyn.llm.model_resolver.
     STANDARD_CLASSES` is NOT comparable on this axis (mirrors
     ``model_class_exceeds_ceiling``'s own "can only judge violations it can
-    actually order" scope limit) and is ignored rather than raised — the
-    layer that declared it simply does not narrow anything, the same
-    silent-no-op-on-an-incomparable-value shape the enforcement predicate
-    itself already has. Returns ``None`` when every layer is ``None``/
-    incomparable (fully unbounded, the compat default)."""
+    actually order" scope limit) and is ignored rather than raised HERE —
+    this is defense-in-depth for the one caller this function does NOT
+    validate first (the PROJECT layer, ``resolver.class_ceiling()``, which
+    predates ② and is validated by ``ModelResolver`` itself, not
+    ``validate_bounding``). The agent/session layers ARE validated before
+    they ever reach this function (:func:`validate_bounding` raises
+    :class:`InvalidBoundingValueError` at the entry point instead) — an
+    incomparable value from an agent/session layer should never actually
+    arrive here; a project-layer value slipping through uncomparable still
+    degrades to "this layer doesn't narrow", not a raise, matching
+    ``model_class_exceeds_ceiling``'s own local scope limit for THAT one
+    layer. Returns ``None`` when every layer is ``None``/incomparable
+    (fully unbounded, the compat default)."""
     comparable = [c for c in ceilings if c in STANDARD_CLASSES]
     if not comparable:
         return None
@@ -91,6 +124,7 @@ def compose_model_ceiling(*ceilings: "str | None") -> "str | None":
 
 __all__ = [
     "BOUNDING_KEYS",
+    "InvalidBoundingValueError",
     "UnknownBoundingKeyError",
     "compose_model_ceiling",
     "validate_bounding",

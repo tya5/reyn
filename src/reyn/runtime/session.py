@@ -1970,10 +1970,23 @@ class Session:
         """#4206 ②: read a ``bounding:`` mapping from *path* (this session's
         own ``config.yaml``) — or ``{}`` when absent/unset/malformed. Same
         raw-read/malformed-is-log-not-crash shape as
-        :meth:`_read_preferences_override`, one key name apart."""
+        :meth:`_read_preferences_override`, one key name apart, PLUS a
+        ``validate_bounding`` call this session-layer read didn't
+        originally have (lead-coder review, #4727): unlike ``preferences``,
+        an unvalidated bounding value reaching ``compose_model_ceiling``
+        doesn't just get ignored for THIS layer — a typo'd
+        ``bounding.model`` can silently drop the ONLY layer that would
+        have narrowed the ceiling, composing to unbounded with no
+        exception at all. Validated the same way ``AgentProfile.load``
+        validates the agent-layer file; a validation failure degrades to
+        ``{}`` (this layer contributes no override) rather than crashing
+        every subsequent property access on a hand-edited config typo."""
         if not path.is_file():
             return {}
         import yaml
+
+        from reyn.runtime.bounding import validate_bounding
+
         try:
             raw = yaml.safe_load(path.read_text(encoding="utf-8"))
         except Exception as e:  # noqa: BLE001 — hand/LLM-written yaml, surface not crash
@@ -1984,7 +1997,15 @@ class Session:
         if not isinstance(raw, dict):
             return {}
         value = raw.get("bounding")
-        return dict(value) if isinstance(value, dict) else {}
+        bounding = dict(value) if isinstance(value, dict) else {}
+        try:
+            validate_bounding(bounding, source=f"session config {path}")
+        except ValueError as e:
+            logger.warning(
+                "#4206: skipping unreadable session bounding at %s: %s", path, e,
+            )
+            return {}
+        return bounding
 
     def _agent_profile_bounding(self) -> "dict[str, object]":
         """#4206 ②: this agent's `profile.yaml` `bounding:` mapping — live
