@@ -272,11 +272,26 @@ constructor, #3075) — never a free-hand `httpx.Client(...)`, so this call site
 covered by the same standard-proxy-env/CA completeness gate every other reyn-owned
 HTTP client is.
 
-## Out of scope for this PR (later slices, same arc)
+## Not applicable, measured (not a later slice)
 
-- **C-6's remaining named pair** (listen port declared-vs-effective) — needs its
-  own new measurement code (introspecting a live bound socket), unlike
-  C-1/C-2/C-3(b)/C-4/C-5/C-7, which reuse existing measurement functions.
+C-6's "listen port declared-vs-effective" example does NOT apply to reyn's
+own config surface (measured before writing any code, per lead-coder's
+instruction, #4364): `reyn web`'s `--host`/`--port` are bare CLI arguments
+(`interfaces/cli/commands/web.py`) with no corresponding `ReynConfig` field
+anywhere — verified by walking the full schema
+(`reyn.config.config_schema.walk_config_schema`) for any key naming a port;
+there is none. A declared-vs-effective PAIR needs a DECLARATION to pair
+against, and reyn's own port is set once, per-invocation, by the
+operator's own CLI argument — there is nothing upstream of that argument
+for doctor (a separate, later, short-lived process with no view into a
+sibling `reyn web` process's argv) to compare it with. C-6's motivating
+incident (a *different* project's `settings.port` silently going dead
+across a dependency bump) illustrated the GENERAL "declared ≠ effective"
+shape, never a claim that reyn itself declares a listen port. C-6's
+GENERAL form is already implemented — C-5 above is architect's own named
+special case of it, not a separate slice still owed. A regression guard
+(`tests/interfaces/test_4364_c6_no_declared_listen_port.py`) fails the
+moment a port-shaped config field appears, naming this section to revisit.
 
 ## Related
 
