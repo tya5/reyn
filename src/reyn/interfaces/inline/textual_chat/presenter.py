@@ -370,7 +370,14 @@ def _tool_result_line(msg: "OutboxMessage") -> "tuple[Text, str | None]":
             or result_meta.get("text")
             or ""
         )
-        return Text(f"  ⎿ ✗ {err}", style=_CC_ERR), _CC_ERR_BG
+        # #4762: err is WORLD-derived -- dispatcher.py's own
+        # `message=f"{type(e).__name__}: {e}"` wraps ANY tool-handler
+        # exception (an MCP call, a sandboxed subprocess, a provider HTTP
+        # error), the same class #4758 fixed for tool_call_completed's own
+        # stderr branch. #4758's own fix never covered this branch
+        # (explicitly scoped out, tracked as #4762 -- measured here: err
+        # does mix in external content, so this IS the same hole).
+        return Text(f"  ⎿ ✗ {_neutralized_label(err)}", style=_CC_ERR), _CC_ERR_BG
     summary = summarize_tool_result(meta.get("tool"), result_meta.get("result"))
     failed = summary.startswith("✗")
     if meta.get(_EXPANDED_KEY) and not failed:
@@ -564,8 +571,13 @@ def _body_and_background(
         style = _CC_ERR if failed else _CC_DIM
         return Text(summary, style=style), (_CC_ERR_BG if failed else None)
     if kind == "tool_call_failed":
-        err = meta.get("error_message") or meta.get("error_kind") or msg.text
-        return Text(f"✗ {err}", style=_CC_ERR), _CC_ERR_BG
+        err = meta.get("error_message") or meta.get("error_kind") or msg.text or ""
+        # #4762: err is WORLD-derived -- see _tool_result_line's own #4762
+        # comment above for the full trace (dispatcher.py's exception-
+        # wrapping f-string). Same fix, this branch's own copy of it (the
+        # pre-coalesce standalone tool_call_failed row, not the coalesced
+        # nested one).
+        return Text(f"✗ {_neutralized_label(str(err))}", style=_CC_ERR), _CC_ERR_BG
     line = _KIND_LINE.get(kind)
     body_style = line[2] if line else _CC_TEXT
     body = _body_renderable(
