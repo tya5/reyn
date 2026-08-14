@@ -620,9 +620,11 @@ function this flag actually gates):
   World-derived text (a sandboxed process's arbitrary stderr bytes)
   reaches that summary through every caller of `summarize_tool_result`.
 - The inline TUI's **expanded tool-detail view** (Space-toggled, #4697 —
-  `_result_detail_lines`/`_dict_detail_lines` in
-  `textual_chat/presenter.py`) — unconditional, and NOT new: it neutralizes
-  at its own seam directly and takes no `neutralize_body` parameter at all.
+  `_result_detail_lines`/`_dict_detail_lines` in `textual_chat/presenter.py`)
+  — unconditional since **#4757**, at its own seam: it takes no
+  `neutralize_body` parameter at all, and never did. (Before #4757 this
+  path was not neutralized — `json.dumps` merely escaped control bytes as
+  a side effect, and the bare-string branch did not even do that.)
 
 So `neutralize_body` widens the SAME terminal neutralizer to exactly one
 more surface — the full, collapsed body text `_body_renderable` renders —
