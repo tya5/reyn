@@ -777,22 +777,40 @@ second hand-rolled column:
     RUNNING (read off the same start marker the ② live-spinner body uses), or
     the FINAL captured duration once SETTLED (stashed at settle time, before
     the live marker is stripped).
-  - **`ReynTurnUsageGutter` — the row's turn's real TOKEN SPLIT**
-    (`↑12k ↓1.8k` — `↑` prompt, `↓` completion), anchored to the `kind="agent"`
-    reply row: the row that concludes a turn's visible output, one figure per
-    turn rather than the same total repeated on every row of the turn. Read
-    through a keyed lookup over `BudgetTracker`'s bounded per-turn buckets
-    (`BudgetTracker.turn_usage` via `Session.turn_usage`, reached from the
-    status snapshot's `turn_usage_fn`) — the per-turn attribution #3339
-    captured at the source, with the prompt/completion split accumulated
-    alongside the total at the call. **Never derived by differencing cumulative
-    counters.** A row that NAMES a turn (`meta["chain_id"]`) whose figure the
-    runtime does not hold renders `—`, never `0`: a turn that made no LLM call,
-    a turn EVICTED from the bounded buckets, an unknown chain_id, and a REMOTE
-    client (per-turn buckets are session-local and not projected onto the wire
-    — `turn_usage_fn` is `None` there, the same frame-sufficiency boundary as
-    the past-turn log). A turn that recorded **0** tokens renders `↑0 ↓0` — a
-    measured fact, kept distinct from `—`.
+  - **`ReynTurnUsageGutter` — TWO different figures, two different anchor
+    rows** (`↑12k ↓1.8k` — `↑` prompt, `↓` completion). Earlier revisions
+    anchored both a per-call figure AND the turn total to the same
+    `kind="agent"` row, falling back to the turn total whenever a specific
+    agent row didn't carry its own `prompt_tokens` — ambiguous, since the
+    same visual slot answered two different questions depending on a hidden
+    fact about that one frame. Split into two anchors instead (#4691 arc
+    item ④, owner ruling):
+    - `kind="agent"` rows (`TURN_ANCHOR_KIND`) show ONLY their own per-call
+      absolute figure, straight from `entry.item.meta` — never a turn-total
+      fallback. A row with no per-call figure (a restored/legacy frame, or
+      an agent-kind emit site that never threaded one through) renders an
+      EMPTY cell, never a silently-substituted number.
+    - `kind="user"` rows (`TURN_TOTAL_ANCHOR_KIND`) — the line that OPENS a
+      turn — show the turn TOTAL via a keyed lookup over `BudgetTracker`'s
+      bounded per-turn buckets (`BudgetTracker.turn_usage` via
+      `Session.turn_usage`, reached from the status snapshot's
+      `turn_usage_fn`) — the per-turn attribution #3339 captured at the
+      source, with the prompt/completion split accumulated alongside the
+      total at the call. **Never derived by differencing cumulative
+      counters.** Anchoring to the opening line rather than a settled reply
+      also means the figure never repeats across a turn's multiple `agent`
+      rows the way the shared-anchor design risked. A row that NAMES a turn
+      (`meta["chain_id"]`) whose figure the runtime does not hold renders
+      `—`, never `0`: a turn that made no LLM call, a turn EVICTED from the
+      bounded buckets, an unknown chain_id, and a REMOTE client (per-turn
+      buckets are session-local and not projected onto the wire —
+      `turn_usage_fn` is `None` there, the same frame-sufficiency boundary
+      as the past-turn log). A turn that recorded **0** tokens renders
+      `↑0 ↓0` — a measured fact, kept distinct from `—`. A row naming NO
+      turn at all (every RESTORED row — `chain_id` is not carried onto a
+      re-projected persisted frame, and the per-turn buckets are in-memory
+      live-session state a restart does not rehydrate) renders an EMPTY
+      cell — nothing unknown to report on a row with no turn to report.
 
     The turn's **USD cost is deliberately not drawn here** even though the
     lookup returns it: tokens answer the question this column exists for, and
