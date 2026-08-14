@@ -607,11 +607,26 @@ def _enrich_router_schema(rendered: dict, state: "RouterCallerState") -> dict:
 async def _handle_describe_mcp_tool(
     args: Mapping[str, Any], ctx: ToolContext
 ) -> ToolResult:
-    """Return {name, description, input_schema} for the requested mcp_tool.
+    """Return {name, description, input_schema, annotations} for the
+    requested mcp_tool.
 
     Calls host.mcp_list_tools(server) to get the tool listing, then
     filters to the requested mcp_tool_name. The dotted form
     ``<server>.<tool>`` is resolved to the bare tool name for the lookup.
+
+    #4673: ``annotations`` (the MCP SDK's ``ToolAnnotations`` —
+    ``read_only_hint``/``destructive_hint``/``idempotent_hint``/
+    ``open_world_hint``/``title``, all "know before you call" signals)
+    is explicitly included alongside the 3 pre-existing keys — measured
+    (#3329's own follow-up): ``list_mcp_tools`` already carries it
+    verbatim (a shallow ``dict(t)`` copy of the SDK's full tool dict,
+    ``tools/mcp.py``'s own list handler above), so a "詳しく" (describe)
+    call returning LESS than the list it followed up on was the wrong
+    way round. Deliberately still a named, hand-picked key — not a
+    switch to ``dict(t)`` here (lead-coder's own recommendation,
+    #4673): passing through whatever fields the SDK happens to add next
+    is a different, "third-party vocabulary flows through unfiltered"
+    decision this one field addition does not make on its own.
     """
     host = _require_host(ctx)
     server = str(args["server"])
@@ -624,6 +639,7 @@ async def _handle_describe_mcp_tool(
                 "name": t.get("name"),
                 "description": t.get("description", ""),
                 "input_schema": t.get("inputSchema", {}),
+                "annotations": t.get("annotations"),
             }
     return {
         "error": (

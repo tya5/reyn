@@ -259,6 +259,93 @@ def test_describe_mcp_tool_handler_returns_input_schema():
     }
 
 
+def test_describe_mcp_tool_handler_carries_annotations() -> None:
+    """Tier 2: #4673 — describe_mcp_tool must not return LESS than
+    list_mcp_tools for the SAME tool. Before this fix it built a
+    hand-picked {name, description, input_schema} dict that never read
+    the SDK's ``annotations`` (read_only_hint/destructive_hint/
+    idempotent_hint/open_world_hint/title) — list_mcp_tools already
+    carries it verbatim (a shallow ``dict(t)`` copy), so a "describe"
+    call returning less than the "list" it followed up on was the wrong
+    way round. Real handler + real ToolContext, mirroring
+    ``test_describe_mcp_tool_handler_returns_input_schema`` above."""
+    annotations = {
+        "title": "Search the web", "read_only_hint": True,
+        "destructive_hint": False, "idempotent_hint": None, "open_world_hint": True,
+    }
+
+    class _FakeHost:
+        async def mcp_list_tools(self, server: str) -> list[dict]:
+            return [
+                {
+                    "name": "search",
+                    "description": "Search the web",
+                    "inputSchema": {"type": "object", "properties": {}},
+                    "annotations": annotations,
+                },
+            ]
+        async def mcp_list_servers(self) -> list[dict]:
+            return [{"name": "brave", "description": "Brave"}]
+        async def mcp_call_tool(self, server: str, tool: str, args: dict) -> dict:
+            return {}
+
+    host = _FakeHost()
+    rs = RouterCallerState(host=host)
+    ctx = ToolContext(
+        caller_kind="router",
+        events=None,
+        permission_resolver=None,
+        workspace=None,
+        router_state=rs,
+    )
+
+    result = asyncio.run(
+        DESCRIBE_MCP_TOOL.handler(
+            {"server": "brave", "mcp_tool_name": "brave.search"},
+            ctx,
+        )
+    )
+    assert "error" not in result, f"describe_mcp_tool returned error: {result}"
+    assert result.get("annotations") == annotations
+
+
+def test_describe_mcp_tool_handler_annotations_absent_is_none_not_a_crash() -> None:
+    """Tier 2: accept-side — a tool whose listing carries no ``annotations``
+    key at all (an older cache entry, or a server that predates the SDK
+    field) must not raise; the new key is simply ``None``, matching
+    list_mcp_tools' own behaviour for the same absent-field case (a plain
+    ``dict(t).get("annotations")`` there would be ``None`` too)."""
+    class _FakeHost:
+        async def mcp_list_tools(self, server: str) -> list[dict]:
+            return [
+                {"name": "search", "description": "Search the web", "inputSchema": {}},
+            ]
+        async def mcp_list_servers(self) -> list[dict]:
+            return [{"name": "brave", "description": "Brave"}]
+        async def mcp_call_tool(self, server: str, tool: str, args: dict) -> dict:
+            return {}
+
+    host = _FakeHost()
+    rs = RouterCallerState(host=host)
+    ctx = ToolContext(
+        caller_kind="router",
+        events=None,
+        permission_resolver=None,
+        workspace=None,
+        router_state=rs,
+    )
+
+    result = asyncio.run(
+        DESCRIBE_MCP_TOOL.handler(
+            {"server": "brave", "mcp_tool_name": "brave.search"},
+            ctx,
+        )
+    )
+    assert "error" not in result, f"describe_mcp_tool returned error: {result}"
+    assert "annotations" in result
+    assert result["annotations"] is None
+
+
 # ---------------------------------------------------------------------------
 # (7) describe_mcp_tool enum mirrors call_mcp_tool (symmetry invariant)
 # ---------------------------------------------------------------------------
