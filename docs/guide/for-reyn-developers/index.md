@@ -22,7 +22,7 @@ page today; this line named one that doesn't exist.
 
 **CLAUDE.md** — the *why* behind P1–P8, with worked examples.
 
-**[principles-and-code.md](principles-and-code.md)** — P1–P8 mapped to the exact files and classes that enforce them. Read this when you need to find where something lives.
+**[principles-and-code.md](principles-and-code.md)** — P5–P7 mapped to the exact files and classes that enforce them (P1–P4/P8 were retired with the phase-graph engine, #2434 — see the page's own banner).
 
 ---
 
@@ -49,7 +49,7 @@ The OS (`kernel/runtime.py`) is the only thing that calls the LLM, executes Cont
 
 ### Understanding the system
 
-- **[P1–P8 and the code that enforces them](principles-and-code.md)** — **historical.** A file-by-file map written against the deleted phase-graph skill engine; the page's own banner records which of its claims no longer hold. Read CLAUDE.md's eight lenses for the current framework.
+- **[P1–P8 and the code that enforces them](principles-and-code.md)** — P5–P7's file-by-file map is current; P1–P4/P8 (written against the deleted phase-graph skill engine) were retired in place rather than kept as stale mechanism prose (#4705). Read CLAUDE.md's eight lenses for the current framework the retired principles don't 1:1 map onto.
 
 ---
 

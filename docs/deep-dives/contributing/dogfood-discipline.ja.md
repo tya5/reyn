@@ -704,7 +704,7 @@ Reyn の 3 つのツール (`REYN_LLM_TRACE_DUMP` / `dogfood_trace.py` / `llm_re
 
 ### 6.5.1 なぜ plan-mode には特別な discipline が必要か
 
-Skill-side dogfood は、skill の phase graph が LLM の確率的決定の下で正しく実行されるかを検証します。Plan-mode はそれに加えて、質的に異なる 3 つの関心事を導入します。
+Skill-side dogfood は、skill 自体の instructions が LLM の確率的決定の下で正しい振る舞いを引き出すかを検証します（この節が元々説明していた 1.0 以前の phase-graph engine は既に存在しません、#2434）。Plan-mode はそれに加えて、質的に異なる 3 つの関心事を導入します。
 
 **非同期 dispatch と completion 順序。** Plan は background の `asyncio.Task` として実行されます。プランが in-flight の間も、ユーザーは新しいメッセージを送れます。複数のプランが重複できます。 Outbox メッセージはユーザーが issue した順ではなく、completion 順に届きます。これらの性質は skill-side のトレースでは見えません。意図的に concurrent plan を実行して outbox を観測したときのみ現れます。
 
