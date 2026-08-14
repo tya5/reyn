@@ -2049,7 +2049,10 @@ class RouterLoop:
                             # ``result`` — its own real per-call tokens, not
                             # the turn total (see gutter.py's ReynTurnUsageGutter
                             # docstring for why this is the boundary fix).
-                            "prompt_tokens": getattr(result.usage, "prompt_tokens", None),
+                            "context_growth": (
+                                self.budget.last_context_growth()
+                                if self.budget is not None else None
+                            ),
                             "completion_tokens": getattr(result.usage, "completion_tokens", None),
                         },
                     )
@@ -2152,7 +2155,10 @@ class RouterLoop:
                             "chain_id": self.chain_id,
                             "source": "agent_spawn_ack",
                             # #4691: same call as the tool-turn text row above.
-                            "prompt_tokens": getattr(result.usage, "prompt_tokens", None),
+                            "context_growth": (
+                                self.budget.last_context_growth()
+                                if self.budget is not None else None
+                            ),
                             "completion_tokens": getattr(result.usage, "completion_tokens", None),
                         },
                     )
@@ -2289,7 +2295,10 @@ class RouterLoop:
                         "chain_id": self.chain_id,
                         "source": "router_empty_response",
                         # #4691: a genuine (if content-empty) call's own usage.
-                        "prompt_tokens": getattr(result.usage, "prompt_tokens", None),
+                        "context_growth": (
+                            self.budget.last_context_growth()
+                            if self.budget is not None else None
+                        ),
                         "completion_tokens": getattr(result.usage, "completion_tokens", None),
                     },
                 )
@@ -2328,7 +2337,32 @@ class RouterLoop:
                 text=result.content or "",
                 # #1652: supply the turn's reasoning; the host applies the
                 # display/continuity gates + the discrete kind="reasoning" emit.
-                meta={"chain_id": self.chain_id, "reasoning": result.reasoning},
+                meta={
+                    "chain_id": self.chain_id,
+                    "reasoning": result.reasoning,
+                    # #4691 Phase A.5 (co-vet finding, architect + lead-coder,
+                    # format decided by the owner): Phase A left this row on
+                    # the turn-total lookup, which kept the owner's ORIGINAL
+                    # reported symptom alive for any turn whose only
+                    # kind="agent" row IS this terminal one (every
+                    # intermediate tool-turn-text emit above is gated on
+                    # non-empty content — a turn of content-less tool calls
+                    # never fires them). Embedding this call's own
+                    # context-growth delta here closes it. The owner's own
+                    # ruling picked the SIGNED DELTA over the absolute
+                    # prompt-window value Phase A first tried: an absolute
+                    # figure duplicates ctx tab's own number in a second
+                    # place (which is what confused the owner in the first
+                    # place), while the delta carries real per-row
+                    # information and a sign that can never be mistaken for
+                    # a total — see gutter.py's ReynTurnUsageGutter
+                    # docstring for the full reasoning.
+                    "context_growth": (
+                        self.budget.last_context_growth()
+                        if self.budget is not None else None
+                    ),
+                    "completion_tokens": getattr(result.usage, "completion_tokens", None),
+                },
             )
             return self._total_usage
 
