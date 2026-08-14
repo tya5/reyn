@@ -974,9 +974,9 @@ the file you started with) comes back empty.
 
 ## 20. The enumeration hit and the classification missed — a correct population is not a correct verdict
 
-2026-08-09/10, three sessions independently hit the same shape during the
-same M4 test-migration arc, each getting the POPULATION right and the
-PER-ITEM CLASSIFICATION wrong:
+Four sessions independently hit the same shape — three during the same M4
+test-migration arc, 2026-08-09/10, and a fourth on 2026-08-14 — each getting
+the POPULATION right and the PER-ITEM CLASSIFICATION wrong:
 
 - **e2e-coder (#3976):** an AST scan surfaced a real call site; the session
   classified it as "correctly uses `default_sandbox_policy`" without
@@ -995,6 +995,25 @@ PER-ITEM CLASSIFICATION wrong:
   checking each one — one of the un-sampled hits was actually a
   `_TCLI = "tests/…py"` registry constant, a programmatic reference, not
   prose.
+- **architect (#4765, 2026-08-14):** reviewing a fix that routes every
+  background-task producer through one owned collection (so a shutdown
+  path has a single seam to drain, instead of enumerating named fields),
+  the population was enumerated correctly — every `asyncio.create_task`
+  call site in the diff. The per-site verdict used the wrong predicate:
+  the classification's discriminator was drawn from the FIX'S OWN
+  MECHANISM ("does this producer route through the funnel") rather than
+  from the DEFECT'S PROPERTY the fix exists to close ("is this task
+  reachable from an ordinary teardown"). One production construction site
+  did not pass the tracker through and fell back to a bare
+  `asyncio.create_task` outside the funnel entirely — correctly absent
+  from the enumeration of sites that *do* route through it, and so
+  invisible to a verdict framed in the mechanism's own terms; a verdict
+  framed in the defect's terms ("can this task outlive teardown
+  unreachably") would have flagged it regardless of which mechanism, if
+  any, it happened to go through. Caught by a second, independent
+  reviewer's own call-site trace, not by re-running the same
+  enumeration — confirmed by reading the draining method's own ~6 lines
+  directly, no execution required.
 
 **Why the pattern recurs together:** getting the population right is a
 *procedural* improvement (switch grep to an AST scan, take the superset
@@ -1025,11 +1044,12 @@ correct throughout, and the verdicts attached to its members were not.
   and checks existence directly, no classification step at all.
 - Every instance above was caught by something OTHER than the sweep that
   produced the miscount: CI (#3989/#3994), `ruff`'s `I001` surfacing an
-  unusual import (#4011's dotted-form gap), or the referenced side's own
-  test suite (#4011's registry constant). An audit does not reliably find
-  its own blind spot — plan for a second, independent mechanism to catch
-  what the first one's classification step missed, rather than trusting a
-  repeated pass by the same method.
+  unusual import (#4011's dotted-form gap), the referenced side's own test
+  suite (#4011's registry constant), or a second reviewer's independent
+  call-site trace (#4765's construction-site gap). An audit does not
+  reliably find its own blind spot — plan for a second, independent
+  mechanism to catch what the first one's classification step missed,
+  rather than trusting a repeated pass by the same method.
 
 ## 21. The search's shape decides the population — and a predicate can leave a gap no item falls into
 
