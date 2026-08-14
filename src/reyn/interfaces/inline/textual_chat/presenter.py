@@ -243,6 +243,73 @@ def _tool_head(msg: "OutboxMessage") -> Text:
 _EXPANDED_MAX_LINES = 40
 
 
+def _dict_detail_lines(result: dict) -> "list[str]":
+    """#4756: ``json.dumps(result, indent=2)``'s ``indent`` only inserts real
+    newlines BETWEEN a dict's structural elements (keys/values) — never
+    inside a string VALUE's own content, so a multi-line string field
+    (``exec``'s ``stdout``, ``read_file``'s ``content``, ...) collapses to
+    one JSON-escaped line of literal ``\\n`` text, defeating the whole
+    point of expanding the row: the field a reader opened it to actually
+    read becomes unreadable. Scoped to the TOP-LEVEL fields of a dict
+    result (every #4756 repro — ``sandboxed_exec``, ``read_file`` — is
+    this shape; a value nested a level deeper falls back to plain
+    ``json.dumps`` for that sub-structure, unchanged from before this fix,
+    since no repro exercises that depth).
+
+    A top-level string field containing ``\\n`` gets its OWN real lines
+    (opening ``"key": "``, its raw content lines verbatim, a closing
+    ``"``), matching a human's mental model of "the file/output's actual
+    lines" rather than JSON's escaped single-line encoding. Every other
+    field keeps the ordinary compact ``"key": value,`` JSON rendering.
+
+    lead-coder review, #4757: ``json.dumps`` incidentally neutralized
+    terminal-control bytes in the value it was replacing (it escapes
+    ``\\x1b`` etc. to ``\\u001b``) — an accidental side effect, not a
+    designed defense, but a real one this fix silently removed by
+    ``splitlines()``-ing the raw value verbatim. ``exec``'s ``stdout`` /
+    ``read_file``'s ``content`` are arbitrary bytes from the world, not
+    operator-typed ``reyn.yaml`` text — the SAME rule
+    :func:`_neutralized_label` (this module) already states for exactly
+    this reason (FP-0054): "text is not from the operator... must go
+    through here". The multi-line value is neutralized via the SAME
+    ``get_neutralizer("terminal")`` seam BEFORE splitting — its own
+    control-char regex explicitly excludes tab/newline/carriage-return,
+    so splitting on the neutralized value's real newlines is unaffected."""
+    if not result:
+        return ["{}"]
+    from reyn.core.present.guard import get_neutralizer
+    _terminal = get_neutralizer("terminal")
+    lines: "list[str]" = ["{"]
+    items = list(result.items())
+    for i, (key, value) in enumerate(items):
+        comma = "," if i < len(items) - 1 else ""
+        try:
+            key_json = json.dumps(str(key), ensure_ascii=False)
+        except Exception:
+            key_json = f'"{key}"'
+        if isinstance(value, str) and "\n" in value:
+            clean_value, _ = _terminal.neutralize(value)
+            lines.append(f"  {key_json}: \"")
+            lines.extend(clean_value.splitlines())
+            lines.append(f"\"{comma}")
+        else:
+            try:
+                value_json = json.dumps(value, ensure_ascii=False, indent=2)
+            except Exception:
+                value_json = json.dumps(str(value), ensure_ascii=False)
+            # Re-indent a multi-line nested structure (list/dict) by 2 spaces
+            # so it still reads as nested under this key, not flush-left.
+            value_lines = value_json.splitlines()
+            if len(value_lines) == 1:
+                lines.append(f"  {key_json}: {value_lines[0]}{comma}")
+            else:
+                lines.append(f"  {key_json}: {value_lines[0]}")
+                lines.extend(f"  {line}" for line in value_lines[1:-1])
+                lines.append(f"  {value_lines[-1]}{comma}")
+    lines.append("}")
+    return lines
+
+
 def _result_detail_lines(msg: "OutboxMessage") -> "list[str]":
     """The FULL tool result as display lines — what the one-line summary drops.
 
@@ -251,17 +318,31 @@ def _result_detail_lines(msg: "OutboxMessage") -> "list[str]":
     expansion is a different RENDERING of data the row already carries, not a
     re-fetch. A dict/list is pretty-printed rather than ``repr``'d so a JSON-ish
     result reads as structure; anything unprintable degrades to ``str`` rather
-    than raising, because a presenter that raises takes the whole row down."""
+    than raising, because a presenter that raises takes the whole row down.
+
+    #4756: a dict result routes through :func:`_dict_detail_lines` instead of
+    a flat ``json.dumps`` — see that function's own docstring for why. A bare
+    STRING result is neutralized here too (lead-coder review, #4757 follow-up
+    sweep: this branch never went through ``json.dumps`` at all, so it was
+    open to the SAME unneutralized-control-byte gap independently of, and
+    predating, this PR's own dict fix — same function, same seam, closed in
+    the same PR rather than left open one branch over)."""
+    from reyn.core.present.guard import get_neutralizer
     result = ((msg.meta or {}).get(_RESULT_META_KEY) or {}).get("result")
     if result is None or result == "":
         return []
     if isinstance(result, str):
-        text = result
-    else:
+        text = get_neutralizer("terminal").neutralize(result)[0]
+        return text.splitlines() or [text]
+    if isinstance(result, dict):
         try:
-            text = json.dumps(result, ensure_ascii=False, indent=2)
+            return _dict_detail_lines(result)
         except Exception:
-            text = str(result)
+            pass  # fall through to the generic json.dumps below
+    try:
+        text = json.dumps(result, ensure_ascii=False, indent=2)
+    except Exception:
+        text = str(result)
     return text.splitlines() or [text]
 
 

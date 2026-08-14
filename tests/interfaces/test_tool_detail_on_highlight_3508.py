@@ -298,6 +298,71 @@ async def test_a_huge_result_is_capped_and_says_so() -> None:
 
 
 @pytest.mark.asyncio
+async def test_multiline_field_in_a_dict_result_expands_to_real_lines() -> None:
+    """Tier 2b: #4756 — a dict result whose FIELD is itself a multi-line
+    string (``exec``'s ``stdout``, ``read_file``'s ``content``) unfolds to
+    its REAL lines, not one JSON-escaped line of literal ``\\n`` text. The
+    pre-#4756 bug: ``json.dumps(result, indent=2)`` only inserts real
+    newlines between dict structural elements, never inside a string
+    VALUE's own escaped content — the whole point of expanding a row (see
+    the content a reader opened it for) was defeated for exactly this
+    shape."""
+    app = TextualChatApp(transport=_Transport())
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        app.conversation.append(_settled_tool(
+            {"kind": "sandboxed_exec", "status": "ok", "returncode": 0,
+             "stdout": "line one\nline two\nline three", "stderr": "",
+             "truncated": False, "denial_class": None},
+            tool="exec",
+        ))
+        await pilot.pause()
+        flow = await _focus(pilot, app)
+        await _toggle_fold(pilot, flow)
+
+        painted = _painted(flow)
+        assert "line one" in painted and "line two" in painted and "line three" in painted, (
+            f"the multi-line stdout field did not unfold to real lines; pane shows:\n{painted}"
+        )
+        assert "\\n" not in painted, (
+            "the multi-line field rendered as one JSON-escaped line "
+            f"(literal backslash-n) instead of real lines; pane shows:\n{painted}"
+        )
+
+
+@pytest.mark.asyncio
+async def test_a_big_multiline_field_makes_the_cap_engage() -> None:
+    """Tier 2b: #4756's own required permanent condition — the fix must
+    make ``_EXPANDED_MAX_LINES`` actually ENGAGE for a dict result whose
+    size lives inside one multi-line field, not just for a top-level list
+    (the pre-existing ``test_a_huge_result_is_capped_and_says_so`` case).
+    Before #4756, a big ``content``/``stdout`` field collapsed to ONE
+    structural JSON line, so the line-count cap never saw the real size —
+    the cap that exists specifically to stop a huge result shoving the
+    conversation off-screen did not engage for this shape at all."""
+    from reyn.interfaces.inline.textual_chat.presenter import _EXPANDED_MAX_LINES
+
+    big_content = "\n".join(f"line {i}" for i in range(_EXPANDED_MAX_LINES + 25))
+    app = TextualChatApp(transport=_Transport())
+    async with app.run_test(size=(100, 60)) as pilot:
+        await pilot.pause()
+        app.conversation.append(_settled_tool(
+            {"op": "read", "path": "big.py", "status": "ok", "content": big_content},
+        ))
+        await pilot.pause()
+        flow = await _focus(pilot, app)
+        await _toggle_fold(pilot, flow)
+
+        painted = _painted(flow)
+        assert "more lines" in painted, (
+            f"the cap did not engage for a big multi-line dict field; pane shows:\n{painted}"
+        )
+        assert f"line {_EXPANDED_MAX_LINES + 24}" not in painted, (
+            "the cap did not hold — the whole multi-line field was rendered"
+        )
+
+
+@pytest.mark.asyncio
 async def test_a_failed_tool_row_keeps_its_failure_line() -> None:
     """Tier 2b: a FAILURE row is not expanded. Its body is already the error
     message rather than a summary hiding a result, and it carries the failure
