@@ -531,10 +531,31 @@ step. The description scan above stays as an install-time fail-fast (reject
 before persisting to disk); it is additive UX, not what makes a loaded body
 safe — that guarantee comes from `load_skill`'s own scan alone.
 
+### References get the same treatment via a directory-containment tag (#4701)
+
 `references/*.md` files a skill body points at are read through the ordinary
-`file.read` op when the model opens them, which carries no skill-specific
-provenance and is therefore NOT covered by this scan — tracked separately
-(see #4701).
+`file.read` op when the model opens them, not through `load_skill` — so the
+scan above never sees them by default. Owner ruling (#4701): a skill's
+reference files are the SAME content class as its SKILL.md body — both are
+instructions the model reads and follows — so `file.read` applies the SAME
+strict+block scan (reusing the identical event kinds, `skill_body_threat_match`
+/`skill_body_threat_blocked`) whenever the resolved path is CONTAINED under a
+**registered** skill's own directory (the parent of its `SKILL.md`, checked
+against `ctx.available_skills` the same way `load_skill`'s own provenance
+check is — never a hand-curated path list). This is deliberately narrower than
+"scan every read": `file.read`'s other callers (ordinary project files) are
+completely unaffected — applying strict+block to every read would spread
+false-positives across all file reading, which the ruling explicitly rejected.
+
+A blocked reference never reaches the model (`status: "blocked"`, empty
+`content`, same as a blocked SKILL.md body); a CLEAN reference is additionally
+tagged `_external_source` on the op's own result — a **per-call** override of
+the (otherwise static) `returns_external_content` tool flag, so only THIS
+read gets fenced at the tool-result chokepoint, not every `read_file` call.
+An undeterminable containment check (e.g. a broken/malicious symlink in a
+registered skill's own path) errs toward treating the read as skill content
+rather than silently excluding it — the reverse would let a single symlink
+evade the check entirely.
 
 ## What's out of scope (for now)
 
