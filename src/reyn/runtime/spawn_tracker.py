@@ -56,7 +56,10 @@ from __future__ import annotations
 
 import asyncio
 from collections import OrderedDict
-from typing import Callable, Protocol
+from typing import TYPE_CHECKING, Callable, Protocol
+
+if TYPE_CHECKING:
+    from reyn.runtime.tracked_tasks import TrackedTaskSet
 
 _MAX_SPAWNED_TASKS = 256
 
@@ -108,6 +111,7 @@ class SpawnTracker:
         agent_name: str,
         session_id_provider: "Callable[[], str]",
         ephemeral_provider: "Callable[[], bool]",
+        task_tracker: "TrackedTaskSet",
     ) -> None:
         self._registry = registry
         self._journal = journal
@@ -116,6 +120,18 @@ class SpawnTracker:
         self._agent_name = agent_name
         self._session_id_provider = session_id_provider
         self._ephemeral_provider = ephemeral_provider
+        # #4759: the owning Session's single background-task funnel
+        # (tracked_tasks.py) -- the vanish task below is real cleanup work
+        # (it closes this session's own held MCP connections via
+        # remove_session -> aclose_mcp_connections) that was previously
+        # detached and invisible to AgentRegistry.shutdown()'s drain, the
+        # #4759 root cause. REQUIRED (no None-tolerant fallback): the one
+        # production construction site (session.py) always supplies one, and
+        # an optional fallback here would silently recreate #4759's own
+        # defect shape at a FUTURE construction site that forgets to pass
+        # one -- exactly the class of hole this PR exists to close, not
+        # reintroduce in its own new code.
+        self._task_tracker = task_tracker
         # #4740: (agent_name, sid) -> trusted original-task record for spawned
         # sessions, so a compromised sub-session can't forge task framing
         # (#2103 S1bc-exec). Two-level dict, SAME shape as registry.py's own
@@ -234,8 +250,39 @@ class SpawnTracker:
         if self._chains.all_chain_ids():
             return
         self._vanish_scheduled = True
-        # Keep a strong ref (self._vanish_task) so the task is not GC'd before it runs
-        # (it self-cancels this run-loop, so it is otherwise unreferenced).
-        self._vanish_task = asyncio.create_task(
-            self._registry.remove_session(self._agent_name, self._session_id_provider())
+        # #4759: routed through the owning Session's task funnel
+        # (tracked_tasks.py), disposition="await" -- this task performs the
+        # actual teardown work (remove_session closes this session's held
+        # MCP connections among other things), so it must be allowed to run
+        # to completion, not cancelled. self._vanish_task is ALSO kept below
+        # (unconditionally, for the 3 existing tests that await it directly)
+        # -- before #4759 it was a bare asyncio.create_task with ONLY that
+        # ref, invisible to AgentRegistry.shutdown()'s own drain, which is
+        # the root cause #4759 traced: a normal shutdown could return while
+        # this was still mid-flight, orphaning whatever OS subprocess
+        # remove_session -> aclose_mcp_connections was about to close.
+        # appends_wal=True (NOT the default False): remove_session() itself
+        # appends "session_vanished" to the state log (registry.py's own
+        # remove_session, near its end: `await self._state_log.append(
+        # "session_vanished", ...)`) — the state log IS the WAL in this
+        # codebase's own terminology (registry.py's remove_session docstring
+        # calls it "the global WAL" in the same breath). A GLOBAL rewind's
+        # await_quiescent sweep runs this session alongside every other
+        # loaded session; if this task were excluded from that drain (the
+        # scope="session"/lifetime-based axis this replaced would have
+        # excluded it), a session_vanished append landing AFTER the
+        # rewind's own reset-record would be exactly the straggler-append
+        # class await_quiescent exists to prevent (#1533/#2115). disposition
+        # stays "await" (not cancel_join): the append is the CONSEQUENCE of
+        # letting remove_session run to completion, not something to cancel
+        # around — cancelling this task would both defeat its MCP-close
+        # purpose (#4759's own root cause) and leave the append half-done.
+        # NOTE: no existing test exercises an ephemeral session vanishing
+        # DURING a global rewind specifically (the 9-file await_quiescent
+        # witness set all use non-ephemeral sessions where this task is
+        # never populated) — this is a reasoned extension of the invariant,
+        # not something the test suite independently confirms.
+        coro = self._registry.remove_session(self._agent_name, self._session_id_provider())
+        self._vanish_task = self._task_tracker.spawn(
+            coro, disposition="await", appends_wal=True, name="ephemeral-vanish",
         )

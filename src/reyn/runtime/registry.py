@@ -3680,6 +3680,71 @@ class AgentRegistry:
                 t.cancel()
             if pending:
                 await asyncio.gather(*pending, return_exceptions=True)
+        # #4759: drain every loaded session's own background-task funnel
+        # (Session.aclose_background_tasks -> TrackedTaskSet.aclose, see
+        # tracked_tasks.py) — covers the ephemeral auto-vanish task
+        # (SpawnTracker._vanish_task, itself the #4759 root cause: it closes
+        # this session's held MCP connections via remove_session, but was
+        # previously a bare detached asyncio.create_task with no strong ref
+        # anywhere this drain could see, so a normal shutdown could return
+        # while it was still mid-flight, orphaning the OS subprocess it was
+        # about to close), plus chain-timeout watchdogs, fire-and-forget
+        # WAL-append tasks, the hook-bus bridge (session_api.py's
+        # _hook_bus_bridge_task), OutboxHub's drain loop,
+        # hooks/external_fire.py's own SEPARATE drain loop (a different
+        # bridge from the hook-bus one above — both happen to say
+        # "hook"/"drain" but are two distinct producers), and
+        # restored-intervention watchers — this loop itself needs no
+        # per-task-type knowledge, so THIS method never grows regardless of
+        # how many producers exist.
+        #
+        # That is not quite the same as "a future producer is automatically
+        # covered", though: SpawnTracker and OutboxHub made task_tracker a
+        # REQUIRED constructor param (their fallback path was deleted, so
+        # skipping the funnel there is now a TypeError, not a silent gap).
+        # ChainManager and hooks/external_fire.py's bridge, by contrast,
+        # still accept a caller that doesn't pass/expose one (ChainManager:
+        # DELIBERATELY, optional param — see its own #4759 comment for the
+        # measured cost/benefit; external_fire: a getattr(self._session,
+        # "_background_tasks", None) guard against an arbitrary session-like
+        # object, not a constructor default) — for THOSE two, a reviewer
+        # adding a NEW watchdog/drain-task producer inside them still needs
+        # to remember to route it through self._task_tracker/the getattr
+        # result, same as any other new code. "Spawn through the funnel" is
+        # covered by construction only where the funnel is a required
+        # dependency; where it's optional, it is still a discipline, not a
+        # guarantee.
+        #
+        # Run AFTER the run-loop tasks have drained/cancelled above (same
+        # reasoning #2714's own MCP-close comment below gives: no in-flight
+        # call should race this close) and BEFORE the MCP-connection sweep —
+        # the vanish task's own remove_session() call does that session's
+        # aclose_mcp_connections() as part of ITS work, so letting it run
+        # first means the later MCP sweep below sees an already-clean state
+        # for a session that just vanished (aclose_mcp_connections is
+        # idempotent either way, so this ordering is a clarity choice, not a
+        # correctness requirement).
+        #
+        # Time-bounded with the SAME grace window the task-drain above uses
+        # (_SHUTDOWN_GRACE_S) — a background task that doesn't respond to
+        # its own funnel's cancel within that window is logged and left
+        # rather than hanging /quit indefinitely (testing.md's "no test/no
+        # caller waits unboundedly" principle applied to a caller, not a
+        # test: an unbounded await_quiescent-style drain here would trade
+        # one orphan-risk for a hang-risk, a worse defect, not a fix).
+        for _name, session in self._iter_named_sessions():
+            aclose_bg = getattr(session, "aclose_background_tasks", None)
+            if callable(aclose_bg):
+                try:
+                    await asyncio.wait_for(aclose_bg(), timeout=_SHUTDOWN_GRACE_S)
+                except TimeoutError:
+                    logger.warning(
+                        "background-task teardown timed out for %r after %.1fs — "
+                        "some background task(s) may still be running",
+                        _name, _SHUTDOWN_GRACE_S,
+                    )
+                except Exception as exc:
+                    logger.warning("background-task teardown failed for %r: %s", _name, exc)
         # #2714: close held MCP connections (Option C) for EVERY loaded session on the
         # NORMAL-exit path too — the REPL's /quit + Ctrl-C/EOF (interfaces/repl/repl.py)
         # route through here, but pre-#2714 only ``remove_session`` (spawned-session
