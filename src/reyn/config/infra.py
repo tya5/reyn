@@ -697,6 +697,351 @@ def _register_sandbox_policy_validator() -> None:
 _register_sandbox_policy_validator()
 
 
+# ---------------------------------------------------------------------------
+# #4655: every OTHER ``is_dict_leaf`` field in the ``ReynConfig`` schema gets
+# an EXPLICIT disposition — Kind ① (a real inner-vocabulary validator, same
+# ``register_freeform_leaf_validator`` mechanism as ``sandbox.policy`` above)
+# or Kind ② (``register_freeform_leaf_open`` — "we looked, it's genuinely
+# open, we deliberately do not check it"). Never silence: an unregistered
+# leaf and a declared-open leaf both currently accept every sub-key, but
+# only the completeness check (``config_schema.unregistered_freeform_leaves``,
+# asserted empty by
+# ``tests/core/test_4655_freeform_leaf_registration_completeness.py``) can
+# tell "nobody looked at this yet" apart from "somebody looked and it's
+# open" — that is the whole defect this issue closes (a future 19th
+# dict-leaf field silently joining the unregistered pile the way these did).
+#
+# All registered here, in the config layer (same home as the
+# ``sandbox.policy`` precedent above) rather than scattered across each
+# leaf's own owning module — each validator does its OWN lazy import of the
+# real consumer it verified (matching ``_sandbox_policy_freeform_validator``'s
+# own pattern), so this module still never eagerly imports a leaf module,
+# only defers the import to validate-time, when an operator's config
+# actually has something to check.
+# ---------------------------------------------------------------------------
+
+
+def _external_transports_freeform_validator(
+    raw: dict,
+) -> "dict[str, object]":
+    """#4655 Kind① — ``external_transports``'s real finite vocabulary is
+    ONE LEVEL DEEPER than its own direct sub-keys: the direct sub-keys are
+    transport NAMES, genuinely operator-chosen (never flagged here). Each
+    transport's own entry, however, is read by
+    :func:`reyn.runtime.external_routing.parse_external_transports` via
+    exactly two literal keys — ``mcp_tool`` / ``args_template`` (see that
+    function's own docstring and body) — any other per-entry key is
+    silently dropped by the defensive ``.get()`` parse, never applied.
+
+    Returns keys relative to ``external_transports`` itself, two levels
+    deep (e.g. ``"broker.foo_bar"``) — :func:`~reyn.config.config_schema.
+    unknown_config_keys` prefixes them with ``external_transports.`` the
+    same way it prefixes a one-level relative key, so the final report
+    reads ``external_transports.broker.foo_bar``.
+    """
+    result: "dict[str, object]" = {}
+    for name, entry in raw.items():
+        if not isinstance(name, str) or not isinstance(entry, dict):
+            continue
+        for sub_key in entry:
+            if sub_key not in ("mcp_tool", "args_template"):
+                result[f"{name}.{sub_key}"] = None
+    return result
+
+
+def _register_external_transports_validator() -> None:
+    from reyn.config import config_schema
+
+    config_schema.register_freeform_leaf_validator(
+        "external_transports", _external_transports_freeform_validator
+    )
+
+
+_register_external_transports_validator()
+
+
+#: #4655 — the ONLY two top-level sub-keys ever read from a raw ``mcp:``
+#: dict anywhere in the codebase: ``servers`` (``config.mcp.get("servers")``
+#: — e.g. ``Session._mcp_servers_flat`` in ``runtime/session.py``,
+#: ``interfaces/cli/commands/pipe.py``'s ``configured_mcp_servers``) and
+#: ``registries`` (``config/loader.py``'s ``REYN_MCP_REGISTRY_URLS``
+#: propagation, consumed by ``mcp/registry.py`` and
+#: ``core/registry/client.py``). Not the same check as #4631's
+#: ``_mcp_misplaced_server_entries`` (that one flags a key whose VALUE is
+#: shaped like a server entry written at the wrong depth — a narrower,
+#: shape-based defect); this one flags any OTHER direct sub-key at all.
+_MCP_TOP_LEVEL_KEYS: frozenset[str] = frozenset({"servers", "registries"})
+
+
+def _mcp_freeform_validator(raw: dict) -> "dict[str, object]":
+    """#4655 Kind① — ``mcp``'s own inner vocabulary: see
+    :data:`_MCP_TOP_LEVEL_KEYS`."""
+    return {key: None for key in raw if key not in _MCP_TOP_LEVEL_KEYS}
+
+
+def _register_mcp_validator() -> None:
+    from reyn.config import config_schema
+
+    config_schema.register_freeform_leaf_validator("mcp", _mcp_freeform_validator)
+
+
+_register_mcp_validator()
+
+
+#: #4655 — ``chat.compaction.component_weights``'s real finite vocabulary,
+#: matching ``CompactionConfig``'s own docstring (``config/chat.py``) and
+#: its ``default_factory`` dict keys: head / body / tail / new_msg /
+#: compaction_batch. All five are consumed — the first four by name at
+#: ``services/compaction/engine.py``'s ``compute_budgets`` (``cw.get("head"
+#: /"body"/"tail"/"new_msg")``); ``compaction_batch`` is never fetched by
+#: name there but DOES count toward the normalisation denominator
+#: (``sum(cw.values())``) — a deliberate budget-reservation weight, per
+#: ``CompactionConfig``'s own docstring, not a dead key.
+_COMPONENT_WEIGHT_KEYS: frozenset[str] = frozenset({
+    "head", "body", "tail", "new_msg", "compaction_batch",
+})
+
+
+def _component_weights_freeform_validator(raw: dict) -> "dict[str, object]":
+    """#4655 Kind① — see :data:`_COMPONENT_WEIGHT_KEYS`."""
+    return {key: None for key in raw if key not in _COMPONENT_WEIGHT_KEYS}
+
+
+def _register_component_weights_validator() -> None:
+    from reyn.config import config_schema
+
+    config_schema.register_freeform_leaf_validator(
+        "chat.compaction.component_weights", _component_weights_freeform_validator
+    )
+
+
+_register_component_weights_validator()
+
+
+def _model_class_by_purpose_freeform_validator(raw: dict) -> "dict[str, object]":
+    """#4655 Kind① — reuses :data:`MODEL_CLASS_PURPOSES` (the SAME
+    frozenset ``_build_model_class_by_purpose`` already checks against at
+    real ``load_config()`` time) so ``reyn config validate`` can ALSO see
+    an unknown ``llm.model_class_by_purpose`` key — closing the off-surface
+    gap noted in that function's own docstring: ``build_policy_tier_config``
+    (what ``reyn config validate`` walks) returns the raw merged dict
+    without ever calling ``_build_model_class_by_purpose``, so before this
+    validator, a typo'd purpose here was invisible to ``validate`` even
+    though it already warned at real startup.
+
+    ``compaction`` gets its own explanatory note (mirroring
+    ``_build_model_class_by_purpose``'s hard-fail message) rather than a
+    bare unknown-key ``None`` — it is a KNOWN, deliberately-removed key
+    (#3785), not a typo, and this reporting path must never raise (owner
+    ruling — see ``unknown_config_keys``'s own docstring), so it can only
+    ever WARN here, never reproduce the real load-time hard fail.
+    """
+    from reyn.config.config_schema import RenamedKeyHint
+
+    result: "dict[str, object]" = {}
+    for key in raw:
+        if key == "compaction":
+            result[key] = RenamedKeyHint(
+                note=(
+                    "llm.model_class_by_purpose.compaction is no longer "
+                    "configurable (#3785) — compaction always follows the "
+                    "conversation's active model now. This key will make "
+                    "reyn refuse to start (ValueError) — remove it from "
+                    "your reyn.yaml/reyn.local.yaml."
+                ),
+            )
+        elif key not in MODEL_CLASS_PURPOSES:
+            result[key] = None
+    return result
+
+
+def _register_model_class_by_purpose_validator() -> None:
+    from reyn.config import config_schema
+
+    config_schema.register_freeform_leaf_validator(
+        "llm.model_class_by_purpose", _model_class_by_purpose_freeform_validator
+    )
+
+
+_register_model_class_by_purpose_validator()
+
+
+def _register_retry_policy_open() -> None:
+    """#4655 Kind② — ``llm.router.retry_policy`` already fails LOUDLY (a
+    ``TypeError`` from ``litellm.RetryPolicy(**rcfg.retry_policy)`` at
+    Router-build time, ``llm/llm.py``) on an unknown key — this is NOT the
+    B-3 "silently accepted, does nothing" shape #4655 is about, so reyn
+    does not need a second check ahead of that one.
+
+    A prior revision of this registration WAS Kind① — it introspected
+    ``litellm.RetryPolicy.model_fields`` to validate earlier, friendlier,
+    at ``reyn config validate`` time. Reverted (lead-coder, #4665 review):
+    two problems, not one. (1) It broke the litellm-boundary import seam
+    (``tests/security/test_4421_litellm_import_seam.py`` — reyn code above the
+    litellm layer must never import litellm types directly). (2) Even
+    seam-compliant, it would have been reyn TAKING OVER a third party's
+    vocabulary — "does reyn's code grow when litellm's RetryPolicy field
+    set grows?" is yes, the exact test
+    ``feedback_third_party_responsibility_is_not_ours_to_take_over``
+    names. litellm already owns this enforcement and already fails
+    loudly; reyn duplicating it would only be able to drift stale against
+    upstream, never actually needed for the "silently ignored" defect
+    class #4655 exists to close.
+    """
+    from reyn.config import config_schema
+
+    config_schema.register_freeform_leaf_open("llm.router.retry_policy")
+
+
+_register_retry_policy_open()
+
+
+def _gateway_surfaces_enabled_freeform_validator(raw: dict) -> "dict[str, object]":
+    """#4655 Kind① — ``gateway.surfaces.enabled``'s finite vocabulary is the
+    LIVE surface registry (``interfaces/web/surfaces.py``'s
+    ``build_registry()``) — the exact same names ``resolve_enabled``
+    resolves ``enabled.get(spec.name)`` against, so this can never drift
+    from the real registry the way a hand-copied name list could.
+    """
+    from reyn.interfaces.web.surfaces import build_registry
+
+    valid = frozenset(spec.name for spec in build_registry())
+    return {key: None for key in raw if key not in valid}
+
+
+def _register_gateway_surfaces_enabled_validator() -> None:
+    from reyn.config import config_schema
+
+    config_schema.register_freeform_leaf_validator(
+        "gateway.surfaces.enabled", _gateway_surfaces_enabled_freeform_validator
+    )
+
+
+_register_gateway_surfaces_enabled_validator()
+
+
+def _entries_only_freeform_validator(raw: dict) -> "dict[str, object]":
+    """#4655 Kind① — shared by ``pipelines`` / ``presentations``: each
+    top-level dict-leaf's registry loader (``data/pipelines/registry.py``,
+    ``data/presentations/registry.py``) reads ONLY ``raw.get("entries")``
+    from it — no other top-level sub-key is ever consumed by either.
+    NOT shared with ``skills`` — see
+    :func:`_skills_freeform_validator` for why that one has a wider
+    vocabulary."""
+    return {key: None for key in raw if key != "entries"}
+
+
+def _register_entries_only_validators() -> None:
+    from reyn.config import config_schema
+
+    for dotted_key in ("pipelines", "presentations"):
+        config_schema.register_freeform_leaf_validator(
+            dotted_key, _entries_only_freeform_validator
+        )
+
+
+_register_entries_only_validators()
+
+
+#: #4655 — ``skills``' own vocabulary is WIDER than ``pipelines`` /
+#: ``presentations``' bare ``{"entries"}``: ``config/loader.py``'s ``_merge``
+#: (the ``skills`` branch) rides ``_provenance`` / ``_collisions`` INSIDE the
+#: merged ``skills`` dict across config tiers — internal bookkeeping keys
+#: ``reyn.interfaces.skill_invoke``'s ``:skill`` path reads to fire a loud
+#: collision warning, not something an operator writes but real,
+#: consumed data nonetheless (see ``loader.py``'s own comment on that
+#: branch). Flagging them here would make a WELL-FORMED, freshly-loaded
+#: config warn about its own internal bookkeeping — exactly the false
+#: "not applied" #4515 already burned reyn once on.
+_SKILLS_TOP_LEVEL_KEYS: frozenset[str] = frozenset({
+    "entries", "_provenance", "_collisions",
+})
+
+
+def _skills_freeform_validator(raw: dict) -> "dict[str, object]":
+    """#4655 Kind① — see :data:`_SKILLS_TOP_LEVEL_KEYS`."""
+    return {key: None for key in raw if key not in _SKILLS_TOP_LEVEL_KEYS}
+
+
+def _register_skills_validator() -> None:
+    from reyn.config import config_schema
+
+    config_schema.register_freeform_leaf_validator("skills", _skills_freeform_validator)
+
+
+_register_skills_validator()
+
+
+def _register_declared_open_freeform_leaves() -> None:
+    """#4655 Kind② — every OTHER free-form dict-leaf, verified genuinely
+    open (consumed via ``.get(name)``/``.items()`` with a truly
+    operator-chosen sub-key name — a model name, a provider name, a header
+    name, ... — no bounded finite vocabulary exists to check). Each is a
+    short, cited disposition, not a shrug: a leaf simply absent from every
+    registration would be indistinguishable from nobody ever having looked
+    at it, which is the exact defect #4655 exists to catch.
+    """
+    from reyn.config import config_schema
+
+    # `permissions`: `PermissionResolver._is_config_approved`/
+    # `_is_config_denied` (security/permissions/permissions.py) look up
+    # `self._config.get(key)` for the CURRENT op's dotted key at runtime —
+    # e.g. "web.fetch", f"http.get.{host}" (host is unboundedly open). The
+    # valid key set is reyn's whole tool/capability catalog, resolved
+    # elsewhere (permission decls, `ALL_OP_KINDS`-shaped op-kind names,
+    # host names) — no single importable, already-enumerated catalog of
+    # valid `permissions.*` keys exists anywhere in the codebase (the
+    # closest candidate, `ALL_OP_KINDS`/`ALL_TOOL_NAMES`, is a DIFFERENT
+    # vocabulary — op-kind names like "read_file", not permission-dotted
+    # keys like "web.fetch" — mapping one to the other is hand-written
+    # translation logic, not a genuine reuse of an existing catalog).
+    # Building a new one would be a significant new abstraction, not a
+    # "read one existing symbol" job, so this stays Kind②.
+    config_schema.register_freeform_leaf_open("permissions")
+
+    # `chat.compaction.section_weights`: unlike `component_weights`, its
+    # own direct consumer (`services/compaction/engine.py`'s
+    # `compute_budgets`, the `sw.items()` comprehension building
+    # `section_caps`) reads EVERY key generically — no fixed set filters it
+    # at this layer. A deeper indirection (the resulting `section_caps`
+    # dict feeding an LLM-facing prompt hint that may not map to a real
+    # summary section) is a real but DIFFERENT, deeper problem than the
+    # "accepted but silently unused right here" shape #4655 covers.
+    config_schema.register_freeform_leaf_open("chat.compaction.section_weights")
+
+    # `llm.router.fallbacks`: `llm/llm.py` reads
+    # `rcfg.fallbacks.get(original_model)` / `.get(model)` — keyed by
+    # arbitrary operator-declared model names.
+    config_schema.register_freeform_leaf_open("llm.router.fallbacks")
+
+    # `llm.models`: `llm/model_resolver.py`'s `ModelResolver` resolves
+    # every key present in the mapping — arbitrary operator-declared model
+    # class names, no fixed set.
+    config_schema.register_freeform_leaf_open("llm.models")
+
+    # `auth.providers`: `_build_auth_config` (this module) iterates
+    # `raw_providers.items()` — arbitrary operator-declared provider names,
+    # each entry structurally validated but the NAME itself unconstrained.
+    config_schema.register_freeform_leaf_open("auth.providers")
+
+    # `observability.otel.headers`: `config/observability.py` builds
+    # `{str(k): str(v) for k, v in headers_raw.items()}` — arbitrary HTTP
+    # header names.
+    config_schema.register_freeform_leaf_open("observability.otel.headers")
+
+    # `cost.rate_limit_per_minute`: `runtime/budget/budget.py` reads
+    # `self._config.rate_limit_per_minute.get(model)` — keyed by arbitrary
+    # model name.
+    config_schema.register_freeform_leaf_open("cost.rate_limit_per_minute")
+
+    # `embedding.classes`: `config/embedding.py`'s parser iterates
+    # `raw.items()` — arbitrary operator-declared embedding class names.
+    config_schema.register_freeform_leaf_open("embedding.classes")
+
+
+_register_declared_open_freeform_leaves()
+
+
 @dataclass
 class SandboxConfig:
     """`sandbox:` — backend selection and unsupported-platform policy (FP-0017).
