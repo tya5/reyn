@@ -269,7 +269,9 @@ class RouterHostAdapter:
         pipeline_registry: Any = None,          # PipelineRegistry | None — IS-5
         chains: Any = None,                     # ChainManager | None — #3978 P4
         presentation_registry: Any = None,      # PresentationRegistry | None — FP-0054 PR-C
-        record_spawned_task: "Callable[[str, str], None] | None" = None,  # #2103 S1bc-exec
+        # #4740: (agent_name, sid, task) — sid alone collides across agents
+        # (see SpawnTracker's own constructor comment for the full defect).
+        record_spawned_task: "Callable[[str, str, str], None] | None" = None,  # #2103 S1bc-exec
         agent_workspace_dir: Path,
         # MCP op callbacks
         mcp_call_tool: Callable[..., Awaitable[dict]],
@@ -1466,11 +1468,13 @@ class RouterHostAdapter:
                 "status": "error", "kind": "session_already_exists",
                 "error": str(exc),
             }
-        # #2103 S1bc-exec: record sid→task BEFORE submitting, so a fast result finds the
-        # trusted task on return (else it falls back to the from=-only rendering — both
-        # still kind=prompt, proposal 0067 P4 #3978, architect ruling 2026-08-10).
+        # #2103 S1bc-exec: record (target_agent, sid)→task BEFORE submitting, so a
+        # fast result finds the trusted task on return (else it falls back to the
+        # from=-only rendering — both still kind=prompt, proposal 0067 P4 #3978,
+        # architect ruling 2026-08-10). #4740: agent_name included — sid alone
+        # collides across agents (see SpawnTracker's own comment for the defect).
         if self._record_spawned_task is not None:
-            self._record_spawned_task(sid, request)
+            self._record_spawned_task(target_agent, sid, request)
         spawned_session = self._registry.ensure_session_running(target_agent, sid)
         if spawned_session is not None:
             await spawned_session.submit_agent_request(

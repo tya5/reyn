@@ -203,7 +203,9 @@ class InterAgentMessaging:
         # #2103 S1bc-exec: this session's LIVE sid (for the responder_sid tag when a
         # spawned session replies) + the spawner's trusted spawned-task lookup.
         session_id_fn: "Callable[[], str | None] | None" = None,
-        lookup_spawned_task: "Callable[[str | None], str | None] | None" = None,
+        # #4740: (agent_name, sid) — sid alone collides across agents (see
+        # SpawnTracker's own comment for the defect).
+        lookup_spawned_task: "Callable[[str | None, str | None], str | None] | None" = None,
         # Proposal 0067 P4e (#3978): fires task_settled for a settled
         # kind="prompt" chain — the SAME dispatch_external_event seam
         # PipelineExecutorDriver._finish uses, injected here rather than a
@@ -582,8 +584,14 @@ class InterAgentMessaging:
         # preserve verbatim (the compensating condition for collapsing the
         # kind axis at all).
         responder_sid = payload.get("responder_sid")
+        # #4740: the responder's agent identity is `from_agent` (the agent
+        # THIS agent_response arrived from) — a spawned child's result
+        # routes back with `from_agent` == the child agent we recorded the
+        # trusted task under. Required alongside sid — sid alone collides
+        # across agents (see SpawnTracker's own comment for the defect).
         spawned_task = (
-            self._lookup_spawned_task(responder_sid) if self._lookup_spawned_task else None
+            self._lookup_spawned_task(from_agent, responder_sid)
+            if self._lookup_spawned_task else None
         )
         if spawned_task is not None:
             injected_text = (
