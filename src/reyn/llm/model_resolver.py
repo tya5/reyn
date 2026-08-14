@@ -121,6 +121,18 @@ class ModelSpec:
     # finished reply (#3627). ``None`` = no operator opinion, decide from the
     # catalog.
     stream: bool | None = None
+    # #4689 (owner instruction): operator-declared CEILING OVERRIDE for
+    # ``reyn.llm.model_budget.get_max_input_tokens`` — takes priority over
+    # the litellm catalog lookup unconditionally (not just when the catalog
+    # lookup fails). A REYN field, same reasoning as ``stream`` above: left
+    # in ``kwargs`` it would silently pass through to litellm as an unknown
+    # completion kwarg (accepted, does nothing) — the #4655 B-3 shape this
+    # field exists specifically to NOT reproduce. ``None`` = no operator
+    # opinion, defer to the catalog (byte-identical to before this field
+    # existed). See ``ModelResolver.max_input_token_overrides`` for how this
+    # reaches ``get_max_input_tokens`` without threading a resolver/class
+    # name through every one of its 8 call sites.
+    max_input_tokens: int | None = None
 
     def __post_init__(self) -> None:
         # #1650: validate the operator-declared ``reasoning_effort`` at
@@ -256,13 +268,32 @@ class ModelSpec:
                 raise ValueError(
                     f"ModelSpec 'stream' must be a boolean, got {type(stream).__name__}"
                 )
+            # #4689: same explicit-field treatment as api_base/provider/stream
+            # above — left in kwargs it would silently pass through to
+            # litellm as an unrecognized completion kwarg (accepted, does
+            # nothing — see ModelSpec.max_input_tokens's own docstring).
+            max_input_tokens = value.get("max_input_tokens")
+            if max_input_tokens is not None:
+                if isinstance(max_input_tokens, bool) or not isinstance(max_input_tokens, int):
+                    raise ValueError(
+                        "ModelSpec 'max_input_tokens' must be an int, got "
+                        f"{type(max_input_tokens).__name__}"
+                    )
+                if max_input_tokens <= 0:
+                    raise ValueError(
+                        f"ModelSpec 'max_input_tokens' must be positive, got {max_input_tokens}"
+                    )
             kwargs = {
                 k: v for k, v in value.items()
-                if k not in ("model", "extends", "api_base", "provider", "stream")
+                if k not in (
+                    "model", "extends", "api_base", "provider", "stream",
+                    "max_input_tokens",
+                )
             }
             return cls(
                 model=model, kwargs=kwargs, api_base=api_base,
                 provider=provider, stream=stream,
+                max_input_tokens=max_input_tokens,
             )
         raise ValueError(
             f"ModelSpec.from_config expects str or dict, got {type(value).__name__}"
@@ -326,9 +357,26 @@ def model_family(model: str) -> str:
 
 
 def _spec_to_dict(spec: ModelSpec) -> dict[str, Any]:
-    """Convert a ModelSpec back to a flat dict for merging."""
+    """Convert a ModelSpec back to a flat dict for merging (the ``extends``
+    resolution path's base-class side). Carries every explicit ModelSpec
+    field (``api_base``/``provider``/``stream``/``max_input_tokens``), not
+    just ``model``/``kwargs`` — #4689: a prior revision omitted these,
+    which meant a base class's ``stream``/``api_base``/``provider`` never
+    reached an ``extends``-ing override at all (the field simply vanished
+    on that path, even though the override side round-tripped correctly
+    through ``ModelSpec.from_config``). Only a set (non-``None``) field is
+    included, so an override's own value is never masked by a base's
+    unset default via ``_deep_merge``."""
     result: dict[str, Any] = {"model": spec.model}
     result.update(spec.kwargs)
+    if spec.api_base is not None:
+        result["api_base"] = spec.api_base
+    if spec.provider is not None:
+        result["provider"] = spec.provider
+    if spec.stream is not None:
+        result["stream"] = spec.stream
+    if spec.max_input_tokens is not None:
+        result["max_input_tokens"] = spec.max_input_tokens
     return result
 
 
@@ -476,6 +524,48 @@ class ModelResolver:
         """
         return self._model_max_class
 
+    def max_input_token_overrides(self) -> "dict[str, int]":
+        """#4689: ``{resolved LiteLLM model string: declared max_input_tokens}``
+        for every class in this resolver's namespace that set one — the
+        bridge from "operator declares a CEILING per model CLASS"
+        (``llm.models.<tier>.max_input_tokens``) to
+        ``reyn.llm.model_budget.get_max_input_tokens``, which only ever
+        sees the already-resolved model STRING, at 8 call sites that have
+        no access to a class name or this resolver. The caller (wherever a
+        ``ModelResolver`` is constructed — ``registry_bootstrap.py`` and 3
+        other sites) registers this dict once via
+        ``model_budget.register_max_input_overrides``; ``_resolve_max_input``
+        then consults that registration by MODEL STRING, so all 8 call
+        sites benefit without any of them changing.
+
+        Every namespace entry is already resolved (``__init__``'s own
+        "resolve all entries at startup, fail-fast" pass), so this is a
+        pure read — no re-resolution, no I/O.
+
+        Raises ``ValueError`` if two classes in THIS resolver's own
+        namespace resolve to the SAME model string with DIFFERENT declared
+        ``max_input_tokens`` — ambiguous (which one wins?), caught here
+        before it ever reaches the process-shared registration step
+        (which does its OWN, separate collision check across resolvers —
+        see that function's docstring for why both checks exist)."""
+        result: "dict[str, int]" = {}
+        for name, spec in self._resolved.items():
+            if spec.max_input_tokens is None:
+                continue
+            existing = result.get(spec.model)
+            if existing is not None and existing != spec.max_input_tokens:
+                raise ValueError(
+                    f"conflicting max_input_tokens for model {spec.model!r}: "
+                    f"multiple classes resolve to this same model string "
+                    f"with different declared values ({existing} vs "
+                    f"{spec.max_input_tokens}, class {name!r}) — which one "
+                    f"should win is ambiguous; give the model classes "
+                    f"agreeing max_input_tokens values, or point them at "
+                    f"different model strings."
+                )
+            result[spec.model] = spec.max_input_tokens
+        return result
+
     def class_for_purpose(self, purpose: str) -> str:
         """#1672: the model CLASS for a logical call *purpose* (router / control_ir
         / tool / judge — NOT compaction, #3785: compaction always follows
@@ -615,8 +705,20 @@ class ModelResolver:
                         f"ModelSpec for '{name}' is missing a 'model' field "
                         f"after resolving extends chain"
                     )
-                model = merged.pop("model")
-                return ModelSpec(model=model, kwargs=merged)
+                # #4689: reuse from_config's own field extraction, rather
+                # than constructing ModelSpec(model=model, kwargs=merged)
+                # directly — the direct-construction form left
+                # api_base/provider/stream (and now max_input_tokens) in
+                # kwargs instead of extracting them as their own fields
+                # (a pre-existing gap on the extends-merge path specifically:
+                # _spec_to_dict already carries them into `merged` via
+                # `base_dict`, but nothing pulled them back OUT before this
+                # constructor call). Routing through from_config closes
+                # that for all four fields at once, in the same PR that
+                # would otherwise have left max_input_tokens as the sole
+                # newly-added field with the same bug the other three
+                # already had.
+                return ModelSpec.from_config(merged)
             else:
                 # Plain dict form (no extends): use from_config.
                 return ModelSpec.from_config(value)

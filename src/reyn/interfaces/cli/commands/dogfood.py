@@ -493,6 +493,11 @@ def _build_live_runner(agent_name: str, *, env_backend=None, ws_base_dir=None, w
         purpose_classes=config.llm.model_class_by_purpose,
         model_max_class=config.llm.model_max_class,  # #4206 T1 (②bounding)
     )
+    # #4689: same registration registry_bootstrap.py's own ModelResolver
+    # construction does — see that call site's comment.
+    from reyn.llm.model_budget import register_max_input_overrides
+
+    register_max_input_overrides(resolver.max_input_token_overrides())
     model = config.llm.model
     output_language = config.output_language
     safety = config.safety

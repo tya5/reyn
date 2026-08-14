@@ -26,12 +26,18 @@ class InvocationContext:
         # here was purely redundant (``load_config`` above already exported it via
         # idempotent ``setdefault``); a single-writer AST guard now enforces this.
         config = load_config()
-        return cls(config=config, resolver=ModelResolver(
+        resolver = ModelResolver(
             config.llm.models,
             default_class=config.llm.model,
             purpose_classes=config.llm.model_class_by_purpose,
             model_max_class=config.llm.model_max_class,  # #4206 T1 (②bounding)
-        ))
+        )
+        # #4689: same registration registry_bootstrap.py's own
+        # ModelResolver construction does — see that call site's comment.
+        from reyn.llm.model_budget import register_max_input_overrides
+
+        register_max_input_overrides(resolver.max_input_token_overrides())
+        return cls(config=config, resolver=resolver)
 
     # ── argparse-aware setting resolution (CLI > config) ─────────────────────
 

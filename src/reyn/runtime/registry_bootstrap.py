@@ -174,6 +174,16 @@ def build_agent_registry_from_project(
         purpose_classes=config.llm.model_class_by_purpose,
         model_max_class=config.llm.model_max_class,  # #4206 T1 (②bounding)
     )
+    # #4689: register this resolver's llm.models.<tier>.max_input_tokens
+    # declarations (class -> resolved model string -> declared ceiling)
+    # into the process-shared registry reyn.llm.model_budget's 8 call
+    # sites all consult — done HERE (a ModelResolver-construction site),
+    # not inside config parsing, because a class -> model-string
+    # resolution needs the resolver itself, which does not exist yet at
+    # config-load time.
+    from reyn.llm.model_budget import register_max_input_overrides
+
+    register_max_input_overrides(resolver.max_input_token_overrides())
     factory_config = SessionFactoryConfig.from_config(config, project_root)
     ws_base_dir = project_root
     ws_state_dir = project_root / ".reyn"

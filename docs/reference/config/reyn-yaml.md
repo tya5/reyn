@@ -195,13 +195,14 @@ llm:
 | `provider` | no | Per-class litellm `custom_llm_provider` — a routing field, not forwarded as a litellm kwarg. |
 | `stream` | no | Whether calls for this class stream. A **reyn** field, not forwarded to litellm; overrides the capability query in both directions. Omit to let reyn decide — see below. |
 | `stream_options` | no | **Not settable.** No reyn meaning, and it breaks the collect-whole branch — **rejected at load**. |
+| `max_input_tokens` | no | Operator-declared context-window CEILING for this class (#4689). A **reyn** field, not forwarded to litellm — takes priority over the LiteLLM catalog UNCONDITIONALLY (not just when the catalog lookup fails). Omit to let reyn read the catalog, falling back to a conservative 128,000-token default if the model isn't cataloged. |
 | *(any other field)* | no | Silently passed through to litellm (passthrough policy). |
 
 > **Cost limit**: use `max_completion_tokens`, not `max_tokens`.  `max_tokens` is a legacy
 > soft hint that many providers ignore; it has no enforcement power on OpenAI o1+ or
 > Anthropic models.  `max_completion_tokens` is enforced at the API level.
 
-**Field policy**: `model` is the only required field. Most other fields are passed directly to `litellm.acompletion` without validation — unknown fields are silently forwarded (future-proof); typos cause silent litellm failures, not reyn errors. Three exceptions are handled at load instead: `reasoning_effort` (below), `stream` (consumed by reyn, type-checked), and `stream_options` (**rejected outright**).
+**Field policy**: `model` is the only required field. Most other fields are passed directly to `litellm.acompletion` without validation — unknown fields are silently forwarded (future-proof); typos cause silent litellm failures, not reyn errors. Four exceptions are handled at load instead: `reasoning_effort` (below), `stream` (consumed by reyn, type-checked), `stream_options` (**rejected outright**), and `max_input_tokens` (consumed by reyn, type-checked — never forwarded to litellm, closing the same "accepted but silently does nothing" gap the other three exceptions close).
 
 ### `stream` — whether this class's calls stream
 
@@ -249,6 +250,50 @@ here would otherwise never reach anything that could complain about it.
 Rejected at config load (`ValueError`, fail-fast). It has no reyn meaning, and
 riding the kwargs passthrough it produces the same broken shape described
 above.
+
+### `max_input_tokens` (per-class context-window ceiling, #4689)
+
+Declare the context window reyn should budget against for a class — overriding
+the LiteLLM catalog **unconditionally**, not just when the catalog lookup
+fails:
+
+```yaml
+llm:
+  models:
+    gpt-5-6-luna:
+      model: openai/gpt-5.6-luna
+      max_input_tokens: 128000   # operator's own answer, wins over the catalog
+```
+
+Every consumer of `reyn.llm.model_budget.get_max_input_tokens` (compaction, the
+turn-budget force-close threshold, the status-bar context chip, ...) only ever
+holds an already-resolved LiteLLM model STRING, never a class name — none of
+those call sites change. Instead, at each `reyn.llm.model_resolver.ModelResolver`
+construction (session/CLI/web startup), every class's declared
+`max_input_tokens` is resolved to its model string and registered into a
+process-shared table `get_max_input_tokens` consults FIRST, ahead of the
+catalog.
+
+**Two classes resolving to the SAME model string must agree.** If `light` and
+`standard` both point at `openai/gpt-4o` but declare different
+`max_input_tokens` values, registration raises
+`reyn.llm.model_budget.MaxInputTokensConflictError` — which value should win is
+ambiguous, so reyn refuses to guess (give them the same value, or point them at
+different model strings). The SAME check applies across sessions sharing one
+process with different configs — a later, conflicting declaration for a model
+string another session already registered raises rather than silently
+overwriting the first.
+
+A non-positive or non-integer value is rejected at load, the same discipline
+`stream` above uses — a config typo here would otherwise silently ride
+`spec.kwargs` into `litellm.acompletion` as an unrecognized kwarg (accepted,
+does nothing).
+
+Complementary, not exclusive: some LiteLLM proxies also advertise a model's
+window via `GET /model/info` (verified live for some providers, not yet for
+others) — `max_input_tokens` here is the operator's own, explicit override,
+useful specifically when that proxy-side declaration is absent, wrong, or the
+model predates reyn's bundled catalog snapshot.
 
 ### `reasoning_effort` (per-model reasoning budget)
 
