@@ -1694,8 +1694,23 @@ class Session:
         section for the fuller argument).
         """
         from reyn.services.turn_budget import try_build_default_turn_budget_engine
+        # #4685: `self.model` was pre-resolved through `self._resolver` here,
+        # then handed to `try_build_default_turn_budget_engine`'s `model`
+        # param WITHOUT `resolver=` — a CLASS-position API fed an
+        # already-resolved NAME (e.g. "gpt-5.6-terra", not the class
+        # "terra"), against an internal empty resolver (`resolver=None` ->
+        # `ModelResolver({})`) that knows no classes either. Any /model
+        # switch to a real class raised ValueError ("not found among known
+        # classes (none)") — architect's + lead-coder's diagnosis, both
+        # halves independently sufficient to break this. `self.model` is
+        # ALREADY the right CLASS-position value (the property returns the
+        # active override's class name, or the agent's configured model id
+        # when no override is active — both are exactly what `resolve()`
+        # expects at this position); passing it straight through, with this
+        # session's own real resolver, fixes both at once.
         engine = try_build_default_turn_budget_engine(
-            self._resolver.resolve(self.model).model,
+            self.model,
+            resolver=self._resolver,
             use_chars4=getattr(self._compaction, "use_chars4_estimate", False),
             # #3580: operator-tunable offload ceiling feeds the layer-1 reserve.
             max_inline_bytes=self._offload_config.max_inline_bytes,
@@ -4255,8 +4270,17 @@ class Session:
         # unchanged, just realized lazily instead of at construction.
         def _build_chat_turn_budget_engine() -> Any:
             from reyn.services.turn_budget import try_build_default_turn_budget_engine
+            # #4685: the same pre-resolve-then-empty-resolver bug as
+            # `_rebuild_derived_model_engines_for_model` (see that method's
+            # own comment) — a second, independent call site with the
+            # identical defect shape, not previously named in the
+            # investigation. Same fix: pass `self.model` (already the
+            # right CLASS-position value) with this session's real
+            # resolver, instead of pre-resolving through it and dropping
+            # the resolver on the floor.
             return try_build_default_turn_budget_engine(
-                self._resolver.resolve(self.model).model,
+                self.model,
+                resolver=self._resolver,
                 use_chars4=getattr(self._compaction, "use_chars4_estimate", False),
                 # #3580: operator-tunable offload ceiling feeds the layer-1 reserve.
                 max_inline_bytes=self._offload_config.max_inline_bytes,

@@ -195,8 +195,20 @@ class TurnBudgetEngine:
         self._T_wrap_SP: int = estimate_tokens(
             _WRAP_UP_SYSTEM_PROMPT, self._model, use_chars4=use_chars4
         )
+        # #4685: pass the ORIGINAL *model* here, not `self._model` — `self._model`
+        # is ALREADY resolved (the line above), and `compute_turn_budget` does its
+        # OWN `resolver.resolve(...)` call. Resolving an ALREADY-resolved model
+        # NAME a second time raises whenever that name is not itself a declared
+        # class key and carries no provider prefix (e.g. a bare `gpt-5.6-terra`
+        # class value with no "/") — `resolve()`'s class-position closed-world
+        # check (#4349) does not know "this string is already a resolved name,
+        # skip the class lookup". `resolver.resolve()` is idempotent for the
+        # SAME input (a class resolves to the same ModelSpec every time), so
+        # resolving the original `model` again here is safe and correct — the
+        # double-resolve on `self._model` was the actual defect, independent of
+        # whether `resolver` itself is real or the empty default.
         self._budget: TurnBudget = compute_turn_budget(
-            self._model,
+            model,
             T_wrap_SP=self._T_wrap_SP,
             output_reserve=output_reserve,
             offload_cap=offload_cap,

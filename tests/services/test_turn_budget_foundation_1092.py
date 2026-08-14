@@ -139,6 +139,32 @@ def test_engine_resolves_model_class_for_wrap_sp_and_budget() -> None:
     assert via_class.budget.T_wrap_SP == via_literal.budget.T_wrap_SP
 
 
+def test_engine_does_not_double_resolve_a_class_with_no_provider_prefix() -> None:
+    """Tier 2: #4685 — every OTHER test in this file (including its sibling
+    directly above) maps a class to a "/"-containing model value
+    (``_MODEL = "openai/gpt-4o-mini"``), which is EXACTLY why the bug this
+    test pins survived undetected: ``TurnBudgetEngine.__init__`` resolved
+    ``model`` once into ``self._model``, then passed that ALREADY-RESOLVED
+    name to ``compute_turn_budget``, which resolved it a SECOND time — a
+    resolved NAME with no "/" is never itself a declared class key, so the
+    second resolve always raised, but only when the resolved value had no
+    provider prefix to fall through on (as the real owner config did:
+    ``gpt-5.6-terra``, no "/"). ``resolver.resolve()`` is idempotent for
+    the SAME input, so resolving the ORIGINAL ``model`` argument twice
+    (once inside ``__init__``, once inside ``compute_turn_budget``) is
+    safe; the defect was resolving the ALREADY-RESOLVED name a second
+    time instead.
+
+    Falsification: reverting the src fix (passing ``self._model`` instead
+    of ``model`` to ``compute_turn_budget`` inside ``__init__``)
+    reproduces this exact raise."""
+    resolver = ModelResolver({"myclass": {"model": "gpt-5.6-terra"}})
+    eng = TurnBudgetEngine(  # must not raise
+        "myclass", output_reserve=4000, offload_cap=8000, resolver=resolver,
+    )
+    assert eng.budget.T_wrap_SP > 0
+
+
 # ── fail-fast bounds (sibling of compaction assert_static_bounds) ─────────────
 
 
