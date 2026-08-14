@@ -679,6 +679,7 @@ def _run(args: argparse.Namespace) -> None:
             agent_role=profile.role,
             compaction_config=session_cfg.config.chat.compaction,
             reasoning_config=session_cfg.config.chat.reasoning,  # #1652
+            empty_stop_retry=session_cfg.config.chat.empty_stop_retry,  # #4677
             registry=registry,  # back-reference for :agents / :attach + PR11 messaging
             allowed_mcp=profile.allowed_mcp,
             events_config=session_cfg.config.audit_events,

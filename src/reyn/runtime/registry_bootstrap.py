@@ -206,6 +206,7 @@ def build_agent_registry_from_project(
             agent_role=profile.role,
             compaction_config=config.chat.compaction,
             reasoning_config=config.chat.reasoning,
+            empty_stop_retry=config.chat.empty_stop_retry,  # #4677
             registry=registry,
             allowed_mcp=profile.allowed_mcp,
             events_config=config.audit_events,

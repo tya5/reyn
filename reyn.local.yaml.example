@@ -486,6 +486,21 @@
 # always rejected regardless of this list (nothing else is fetchable).
 #   image_url_schemes: []
 
+# chat.empty_stop_retry: opt-in retry of an empty router response (#4677).
+# When the LLM returns finish_reason="stop" with no content and no tool
+# calls (a provider-level glitch, observed at ~50% rate with weak models),
+# reyn can resend ONE "resume" continuation prompt. Owner default is now
+# false (2026-08-14) — was hardcoded true with no config knob at all,
+# after an incident where 30 empty-response detections in one reyn-self
+# run each cost a second LLM call. Set true to restore the retry — a
+# measured benefit exists for some environments (Trace-patch-replay:
+# 0/10 -> 10/10 narration recovery on a specific case), particularly with
+# weaker/local models (Qwen/LM Studio/Ollama/vLLM/LiteLLM-fronted setups
+# have reported this shape). This does NOT fix empty responses themselves
+# (root cause unmeasured, #3698's anyio cancel-scope is a candidate) — it
+# only changes what happens after one is detected.
+#   empty_stop_retry: false
+
 
 # -----------------------------------------------------------------------------
 # audit_events: audit-log rotation + automatic purge policy (#4174 T5:

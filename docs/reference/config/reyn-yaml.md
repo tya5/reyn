@@ -511,6 +511,7 @@ chat:
     right: true           # TUI right gutter (elapsed/tokens, 12 cols) shown at start
   neutralize_body: false  # opt-in ESC/OSC strip on agent-reply/tool-result body text
   image_url_schemes: []   # opt-in scheme allowlist for present's image src fetch
+  empty_stop_retry: false # opt-in resend on an empty router response
 ```
 
 ### `chat.render_mode`
@@ -585,6 +586,29 @@ independent of this scheme setting.
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `image_url_schemes` | list[str] | `[]` | Restrict `present`'s image-src fetch to these schemes; empty = unrestricted (http + https). |
+
+### `chat.empty_stop_retry`
+
+Opt-in retry of an empty router response (#4677). When the LLM returns
+`finish_reason="stop"` with no content and no tool calls — a provider-level
+glitch, observed at ~50% rate with weak models (B7-G12 measurement) — reyn
+can resend ONE "resume" continuation prompt before surfacing the failure.
+Owner default is now `false` (2026-08-14) — the retry was previously
+hardcoded on in production with no config knob at all, until an incident
+where 30 empty-response detections in one `reyn-self` run each cost a
+second LLM call (30 turns → 63 `llm_called`). A measured benefit exists for
+some environments (Trace-patch-replay: 0/10 → 10/10 narration recovery on a
+specific empty-stop case with the retry on) — reports of this shape have
+come from weaker/local-model setups (Qwen, LM Studio, Ollama, vLLM,
+LiteLLM-fronted proxies); an operator on one of those sets this back to
+`true`. This does **not** fix empty responses themselves — their root cause
+is unmeasured (#3698's anyio cancel-scope is a candidate) — it only changes
+what happens *after* one is detected. The `router_empty_response_detected`
+audit event fires regardless of this setting.
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `empty_stop_retry` | bool | `false` | Resend one "resume" prompt when the router loop detects an empty `finish_reason="stop"` response. |
 
 ### `chat.reasoning` fields
 

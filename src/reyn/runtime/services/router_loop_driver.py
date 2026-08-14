@@ -79,6 +79,7 @@ class RouterLoopDriver:
         next_seq_fn: Callable[[], int], # Session._next_seq reader
         append_history_fn: Callable,    # Session._append_history
         chat_scheme_name: "str | None" = None,  # #1593 PR-2: chat-layer ToolUseScheme name → RouterLoop(scheme_name=); None → universal default
+        empty_stop_retry: bool = False,  # #4677: chat.empty_stop_retry (owner default False, 2026-08-14) — was hardcoded True below
         _loop_observer: "Callable | None" = None,  # Tier-2 test seam: called with the constructed RouterLoop before run
     ) -> None:
         self._router_host = router_host
@@ -104,6 +105,7 @@ class RouterLoopDriver:
         self._next_seq_fn = next_seq_fn
         self._append_history_fn = append_history_fn
         self._chat_scheme_name = chat_scheme_name  # #1593 PR-2
+        self._empty_stop_retry = empty_stop_retry  # #4677
         # #1468: per-turn cooperative cancellation flag + asyncio.Event for
         # deep-cancel propagation into running subprocess ops (#1470).
         self._turn_cancel_requested: bool = False
@@ -357,10 +359,16 @@ class RouterLoopDriver:
                 if self._contextual_for_turn_fn is not None
                 else self._contextual_permission
             ),
-            # B43-NF-W6-1 / #187: chat router empty-stop retry — always-on +
-            # uniform "resume" directive.
+            # B43-NF-W6-1 / #187: chat router empty-stop retry + uniform
+            # "resume" directive. #4677 (owner, 2026-08-14): the auto-retry
+            # switch is now config-driven (chat.empty_stop_retry, default
+            # False) rather than hardcoded True — see that field's own
+            # docstring for the incident + tradeoff. The directive itself
+            # is still always threaded (it is inert unless
+            # empty_stop_retry_auto is True), so a config-driven re-enable
+            # needs no other change here.
             empty_stop_retry_directive=EMPTY_STOP_RETRY_DIRECTIVE,
-            empty_stop_retry_auto=True,
+            empty_stop_retry_auto=self._empty_stop_retry,
             # #1666: per-turn tool_call count cap (cost-bound).
             max_tool_calls_per_turn=_max_tool_calls_per_turn,
             # FP-0005: wire safety.on_limit so max_iterations exhaustion routes
