@@ -848,6 +848,31 @@ class TextualChatApp(App):
         height: 1fr;
         scrollbar-size-vertical: 0;
         margin-bottom: 1;
+        /* #4691 Phase 2: NO-OP today, measured, not assumed — kept for what
+           breaks if `scrollbar-size-vertical: 0` above is ever removed.
+           flowview 0.21.0's CHANGELOG names a real cost: a fold that shrinks
+           content below the viewport drops the scrollbar, which widens the
+           body — and width is part of the presentation cache key, so
+           everything re-presents (upstream's own 50-entry-group figure: 0
+           presents reserved vs 12 unreserved). A local repro of that exact
+           collapse (1 parent + 50 children + 3 filler rows, 20-row viewport,
+           counting presents on collapse) measured FOUR configurations:
+           neither declaration = 8 presents; `scrollbar-gutter: stable` alone
+           (upstream's own fix) = 4; `scrollbar-size-vertical: 0` ALONE
+           (reyn's pre-existing CSS, one line up) = 4 — already the full
+           mitigation, because a scrollbar whose SIZE is fixed at 0 never has
+           a size to remove, so the body width never moves regardless of
+           gutter reservation; adding `scrollbar-gutter: stable` on top of
+           `scrollbar-size-vertical: 0` = still 4 — no measurable change.
+           Declared anyway, at zero measured cost, because it is the residue
+           that survives the day `scrollbar-size-vertical: 0` above is
+           removed or changed: without this line, that edit would silently
+           reopen the exact re-present storm this comment describes, with no
+           test in this repo pinned to catch it (upstream's own mitigation
+           lives in ITS test suite, not reyn's, and reyn does not fold/nest
+           entries yet — #4691 Phase B — so there is nothing here to exercise
+           the interaction today). */
+        scrollbar-gutter: stable;
     }
     /* #3496 / flowview#5: ``flowview--highlight`` (``--selected`` was its
        0.11.x synonym for the SAME class; 0.12.0 / #3624 removed the alias, so

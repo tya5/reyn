@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING, Callable
 from rich.console import Console, Group, RenderableType
 from rich.text import Text
 from textual.content import Content
-from textual_flowview import Presentation
+from textual_flowview import Entry, Presentation
 
 from reyn.interfaces.repl.renderer import (
     _CC_ACCENT,
@@ -816,7 +816,13 @@ class ReynPresenter:
         head_h = self._measure(head, width)
         return Presentation(height=head_h + 1, renderable=Group(head, indicator))
 
-    async def present(self, item: "OutboxMessage", width: int) -> Presentation:
+    async def present(self, entry: "Entry[OutboxMessage]", width: int) -> Presentation:
+        # #4691 Phase 2: flowview 0.21.0 breaking change — present() now
+        # receives the Entry, not the item, so FlowView can carry state
+        # (entry.depth, entry.collapsed) without mirroring it into reyn's own
+        # item. Unpack immediately; everything below is byte-identical to the
+        # pre-0.21.0 body, which always operated on the item.
+        item = entry.item
         meta = item.meta or {}
         if item.kind == "intervention":
             return self._present_intervention_pending(item, width)

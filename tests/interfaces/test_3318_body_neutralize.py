@@ -24,6 +24,7 @@ import io
 import pytest
 from rich.console import Console
 from rich.text import Text
+from textual_flowview import FlowModel
 
 from reyn.config.chat import ChatConfig, _build_chat_config
 from reyn.config.root import ReynConfig
@@ -268,7 +269,7 @@ async def test_textual_chat_app_wires_config_neutralize_body_into_default_presen
     config = ReynConfig(chat=ChatConfig(neutralize_body=True))
     app = TextualChatApp(transport=QueueTransport(), config=config)
     presentation = await app._presenter.present(
-        OutboxMessage(kind="status", text=_RAW_ESC), width=80
+        FlowModel().append(OutboxMessage(kind="status", text=_RAW_ESC)), width=80
     )
     rendered = _render_to_text(presentation.renderable)
     assert "\x1b" not in rendered
@@ -283,7 +284,7 @@ async def test_textual_chat_app_default_config_leaves_presenter_off() -> None:
     presenter that always neutralizes regardless of the flag)."""
     app = TextualChatApp(transport=QueueTransport())
     presentation = await app._presenter.present(
-        OutboxMessage(kind="status", text=_RAW_ESC), width=80
+        FlowModel().append(OutboxMessage(kind="status", text=_RAW_ESC)), width=80
     )
     rendered = _render_to_text(presentation.renderable)
     assert "\x1b" in rendered

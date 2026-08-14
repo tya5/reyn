@@ -391,7 +391,7 @@ async def test_running_to_error_turns_gutter_coral_and_tints_failure_row() -> No
 
         # The coalesced failure entry is tinted edge-to-edge with the dark
         # failure block — NOT with the coral foreground colour (#3367).
-        pres = await ReynPresenter().present(started.item, 80)
+        pres = await ReynPresenter().present(started, 80)
         assert pres.background == _CC_ERR_BG
 
 

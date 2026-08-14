@@ -48,7 +48,7 @@ import re
 from typing import AsyncIterator
 
 import pytest
-from textual_flowview import EntryState, FlowModel, FlowView
+from textual_flowview import Entry, EntryState, FlowModel, FlowView
 
 from reyn.interfaces.inline.textual_chat import (
     ReynGutter,
@@ -227,9 +227,9 @@ class _WidthRecordingPresenter(ReynPresenter):
         super().__init__()
         self.widths: "list[int]" = []
 
-    async def present(self, item: "OutboxMessage", width: int):
+    async def present(self, entry: "Entry[OutboxMessage]", width: int):
         self.widths.append(width)
-        return await super().present(item, width)
+        return await super().present(entry, width)
 
 
 # ── Gate 1: content for an entry that has it (Tier 1, pure decorate()) ────────

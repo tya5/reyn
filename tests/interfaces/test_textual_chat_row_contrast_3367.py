@@ -250,7 +250,7 @@ async def test_row_ink_is_never_painted_in_its_own_background() -> None:
     checked = 0
     tinted_kinds: set[str] = set()
     for label, msg in _scenarios():
-        presentation = await presenter.present(msg, _WIDTH)
+        presentation = await presenter.present(FlowModel().append(msg), _WIDTH)
         background = presentation.background
         if background is not None:
             tinted_kinds.add(msg.kind)
@@ -298,12 +298,20 @@ async def test_failure_rows_keep_a_distinct_row_tint() -> None:
     """
     presenter = ReynPresenter(clock=lambda: 0.0)
     failed = await presenter.present(
-        OutboxMessage(kind="tool_call_failed", text="boom", meta={"error_message": "boom"}),
+        FlowModel().append(
+            OutboxMessage(kind="tool_call_failed", text="boom", meta={"error_message": "boom"}),
+        ),
         _WIDTH,
     )
-    errored = await presenter.present(OutboxMessage(kind="error", text="boom"), _WIDTH)
-    user = await presenter.present(OutboxMessage(kind="user", text="hello"), _WIDTH)
-    agent = await presenter.present(OutboxMessage(kind="agent", text="hello"), _WIDTH)
+    errored = await presenter.present(
+        FlowModel().append(OutboxMessage(kind="error", text="boom")), _WIDTH,
+    )
+    user = await presenter.present(
+        FlowModel().append(OutboxMessage(kind="user", text="hello")), _WIDTH,
+    )
+    agent = await presenter.present(
+        FlowModel().append(OutboxMessage(kind="agent", text="hello")), _WIDTH,
+    )
 
     assert failed.background is not None
     assert errored.background == failed.background
