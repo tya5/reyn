@@ -1,6 +1,13 @@
 # ADR-0002: Forward-replay resume (no phase-head re-execution)
 
-**Status**: Accepted (2026-05-02)
+**Status**: Superseded by ADR-0038 (2026-08-14) — the phase/op-level
+forward-replay this ADR adopted (op memoization within an in-flight phase)
+was removed with the phase-graph engine (#2434/#2439). The question it
+answered — crash resume without re-running completed work — is answered
+today by `AgentSnapshot` generation + WAL-diff reconstruct
+(`snapshot_generations.py`: "Crash recovery is the special case
+`reconstruct(head)`"), recorded in ADR-0038. The op-memoization
+**granularity itself has no successor**.
 **Track**: D-track (D3b)
 
 ## Context
