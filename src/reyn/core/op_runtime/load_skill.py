@@ -58,6 +58,19 @@ now-dead path into ``.reyn/agents/<id>/history.jsonl``, which is immutable
 by design. See ``reyn.plugins.skill_load.load_skill_body``'s docstring for
 the full mechanism and ``refresh_location_tokens`` for how a persisted entry
 re-resolves fresh on replay.
+
+**#4699 — the threat-scan chokepoint.** ``skill_install``'s scan
+(``op_runtime/skill_install.py``) only covers the frontmatter ``description``
+and only runs when a skill is registered THROUGH that op — a hand-written
+``.reyn/config/skills.yaml`` entry bypasses it entirely. ``load_skill`` is
+the one path every skill body crosses regardless of how it was registered,
+so the OS-required scan (``content_guard.scan_for_threats(scope="strict")``,
+same shape ``skill_install`` uses) runs here, on the final ``content`` —
+mirroring the existing ``scan_tool_result``/``fence_tool_result`` tool-result
+chokepoint (``router_loop.py``), not a new mechanism. A blocking-severity
+match returns ``status="blocked"`` with an empty ``content`` — the body
+never reaches this turn's context. ``skill_install``'s own scan stays as an
+additive install-time fail-fast; it is not what makes a loaded body safe.
 """
 from __future__ import annotations
 
@@ -68,6 +81,10 @@ from reyn.data.text_codec import decode_text_or_none
 from reyn.plugins.body_read import read_plugin_body_bytes
 from reyn.plugins.skill_load import load_skill_body
 from reyn.schemas.models import LoadSkillIROp
+
+# Module-level import so tests can monkeypatch the threat-scan callables —
+# same reasoning `skill_install.py` states for the identical import (#4699).
+from reyn.security.content_guard import first_blocking_match, scan_for_threats
 
 from . import register
 from .context import OpContext, resolve_path_for_gate
@@ -230,6 +247,54 @@ async def handle(op: LoadSkillIROp, ctx: OpContext) -> dict:
     # unremarkable read. `content` stays byte-identical to disk; no
     # expansion, no `skill_body_loaded` event (the `tool_executed` event
     # below still fires as for any other load).
+
+    # ── #4699 (②, the ratified band): threat-scan the body BEFORE it can
+    # reach the model's context. `skill_install`'s own scan (scope="strict",
+    # `skill_install.py:494-530`) only covers the frontmatter `description`
+    # and only fires when a skill is installed THROUGH that op — a
+    # hand-written `.reyn/config/skills.yaml` entry (or any other path this
+    # op is called against) never passes through it. `load_skill` is the one
+    # chokepoint every skill body crosses regardless of how it was
+    # registered, so this is where the OS actually gates the capability
+    # (CLAUDE.md Security lens: "no capability reaches the world without
+    # passing the gatekeeper") — mirrors the existing `scan_tool_result`/
+    # `fence_tool_result` tool-result chokepoint (`router_loop.py`), not a
+    # new mechanism. Scans the FINAL `content` (post-expansion when
+    # provenance matched) — what this turn's call actually delivers — so a
+    # payload split across `${...}` expansion still reads as one string.
+    # `skill_install`'s own scan is unaffected by this addition and stays in
+    # place as an install-time fail-fast; it is additive UX, not a second
+    # gate this one depends on.
+    _ts = getattr(ctx, "threat_scan", None)
+    if _ts is not None and getattr(_ts, "enabled", True) and content:  # #4523: shadow default matches ThreatScanConfig.enabled's own declared True
+        _matches = scan_for_threats(content, _ts, scope="strict")
+        if _matches:
+            for _m in _matches:
+                ctx.events.emit(
+                    "skill_body_threat_match",
+                    pattern_id=_m.pattern_id,
+                    severity=_m.severity,
+                    scope=_m.scope,
+                )
+            _block = first_blocking_match(_matches, getattr(_ts, "block_severity", "block"))
+            if _block is not None:
+                ctx.events.emit(
+                    "skill_body_threat_blocked",
+                    pattern_id=_block.pattern_id,
+                    severity=_block.severity,
+                    path=op.path,
+                )
+                return {
+                    "kind": "load_skill",
+                    "path": op.path,
+                    "status": "blocked",
+                    "content": "",
+                    "error": (
+                        f"load blocked: SKILL.md body matched threat pattern "
+                        f"'{_block.pattern_id}' ({_block.scope}/{_block.severity}). "
+                        "The body was not loaded into context."
+                    ),
+                }
 
     # #1209-style read-bounding: a skill body is loaded WHOLE (no offset/
     # limit windowing — this is a dedicated "load the whole thing" verb, not
