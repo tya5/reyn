@@ -2657,7 +2657,16 @@ async def recorded_acompletion(
         # #4691 Phase 1 ①: measured directly off the response, never
         # invented — a provider that omits either field means None, not a
         # minted placeholder (see _emit_chat_cost_events's own docstring).
-        _call_id = getattr(response, "id", None)
+        # ``or None`` (lead-coder review, #4722): litellm's own
+        # ``ChunkProcessor._get_chunk_id`` returns "" — not None — when no
+        # stream chunk carried an id, and litellm's ``ModelResponse.__init__``
+        # only mints a fresh id when the field is None, so "" survives
+        # untouched onto the reconstructed response. Left as "", every row
+        # missing an id would share the SAME falsy key and get bundled as one
+        # call by any future consumer keying on it (#4691 Phase B's tree) —
+        # worse than a missing key, since it fabricates a false grouping. The
+        # `or None` collapses any falsy id (`""`, `0`) to a genuine absence.
+        _call_id = getattr(response, "id", None) or None
         _finish_reason = None
         _choices = getattr(response, "choices", None)
         if _choices:

@@ -273,6 +273,66 @@ def test_call_id_and_finish_reason_land_on_the_response_event_only(
     assert "finish_reason" not in called.data
 
 
+def _make_streaming_acompletion_with_empty_chunk_id(*, provider_reports_usage: bool):
+    """Like ``_make_streaming_acompletion``, but every chunk carries
+    ``id=""`` — litellm's own ``ChunkProcessor._get_chunk_id`` returns ``""``,
+    not ``None``, when no real provider chunk carried an id, and
+    ``ModelResponse.__init__`` only mints a fresh id when the field is
+    ``None`` — so a genuinely id-less stream reconstructs with ``id=""``,
+    never ``id=None`` (lead-coder measurement, #4722 review)."""
+
+    async def _acompletion(model: str, messages: list, **kw: Any) -> Any:
+        def _chunk(delta: Delta, finish_reason: "str | None" = None) -> ModelResponseStream:
+            return ModelResponseStream(
+                id="", created=1, model=model, object="chat.completion.chunk",
+                choices=[StreamingChoices(index=0, delta=delta, finish_reason=finish_reason)],
+            )
+
+        async def _gen():
+            yield _chunk(Delta(role="assistant", content=_CONTENT))
+            yield _chunk(Delta(), finish_reason="stop")
+            if provider_reports_usage:
+                usage_chunk = _chunk(Delta())
+                usage_chunk.usage = Usage(
+                    prompt_tokens=_PROVIDER_PROMPT_TOKENS,
+                    completion_tokens=_PROVIDER_COMPLETION_TOKENS,
+                    total_tokens=_PROVIDER_PROMPT_TOKENS + _PROVIDER_COMPLETION_TOKENS,
+                )
+                yield usage_chunk
+
+        return _gen()
+
+    return _acompletion
+
+
+def test_an_empty_string_id_is_reported_as_a_genuine_absence(
+    monkeypatch, _reset_event_log,
+) -> None:
+    """Tier 2: #4722 review (lead-coder) — a stream whose chunks all carry
+    litellm's own ``id=""`` (not ``None``) must not leak that ``""`` onto
+    ``call_id``. Left unfixed, every id-less row would share the SAME falsy
+    key and a future consumer keying on it (#4691 Phase B's tree) would
+    bundle unrelated calls as one — worse than a missing key, since it
+    fabricates a false grouping instead of reporting a genuine absence."""
+    tracker = BudgetTracker(CostConfig())
+    monkeypatch.setattr(
+        litellm, "acompletion",
+        _make_streaming_acompletion_with_empty_chunk_id(provider_reports_usage=True),
+    )
+    log = EventLog()
+    collected = collect_events(log)
+    set_llm_request_event_log(log)
+    _run_turn(tracker, "turn-empty-id")
+
+    received = next(e for e in collected if e.type == "llm_response_received")
+    received_payload = json.loads(json.dumps(received.data))
+    assert received_payload["call_id"] is None
+    assert received_payload["finish_reason"] == "stop", (
+        "the falsy-collapse must be scoped to call_id — finish_reason is a "
+        "genuine non-empty string here and must still come through"
+    )
+
+
 def test_provenance_survives_the_call_llm_tools_re_extraction(monkeypatch) -> None:
     """Tier 2: ``call_llm_tools`` — the entry point ``RouterLoop`` uses for every
     chat turn — re-reads usage from the response object it got back from the
