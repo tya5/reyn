@@ -1931,6 +1931,41 @@ class Session:
         )
         return bool(resolved)
 
+    def warn_ratio_overrides(self) -> "dict[str, float]":
+        """#4206 Slice B (#4724): the ③ preference-axis overrides for the 7
+        ``cost.*.warn_ratio`` keys, as a dotted-key -> ratio mapping — the
+        SAME shape ``BudgetTracker.check_pre_llm``/``record_llm`` accept
+        directly (Design C, lead-coder ruling: the CALLER resolves, the
+        tracker never learns a session/agent identity).
+
+        Deliberately does NOT call ``resolve_preference`` (which needs a
+        project-level *default* this Session does not hold — the
+        project-level ratio lives inside the process-shared
+        ``BudgetTracker``'s own ``CostConfig``, not on Session): a key is
+        included ONLY when an agent or session preference for it actually
+        exists (session wins over agent, same precedence order), and
+        omitted otherwise — an omitted key means "use the tracker's own
+        project-level ratio, unchanged", which is EXACTLY what
+        ``resolve_preference`` would have returned anyway had a project
+        default been available to pass it (last-present-wins over an
+        absent default is the default itself). Live re-read on every call,
+        same shape as `reasoning_display`/`output_language`."""
+        from reyn.runtime.preferences import PREFERENCE_KEYS
+
+        session_preferences = self._read_preferences_override(
+            Path(self._snapshot_path).parent / "config.yaml"
+        )
+        agent_preferences = self._agent_profile_preferences()
+        overrides: "dict[str, float]" = {}
+        for key in PREFERENCE_KEYS:
+            if not key.startswith("cost."):
+                continue
+            if key in agent_preferences:
+                overrides[key] = float(agent_preferences[key])  # type: ignore[arg-type]
+            if key in session_preferences:  # session wins — checked LAST
+                overrides[key] = float(session_preferences[key])  # type: ignore[arg-type]
+        return overrides
+
     @property
     def _reyn_state_root(self) -> "Path":
         """#3705: the SAME anchor `Agent.workspace_dir` resolves against
@@ -4205,6 +4240,14 @@ class Session:
             events=audit_events,
             agent_name=agent_name,
             default_router_cap=router_cap,
+            # #4206 Slice B (#4724): same bound-method-reference-at-
+            # construction-time pattern as `reasoning_display_fn` above —
+            # `self.warn_ratio_overrides` isn't CALLED here, just captured;
+            # by the time `/budget` actually invokes it, Session is fully
+            # constructed. Makes the `/budget` display match the SAME
+            # overrides that gate this session's own warn events, not
+            # silently the project default.
+            warn_ratio_overrides_fn=self.warn_ratio_overrides,
         )
 
     def _build_retrieval_bundle(
@@ -4657,6 +4700,10 @@ class Session:
             # instead of reading the frozen `reasoning_config.display` this
             # session was constructed with.
             reasoning_display_fn=lambda: self.reasoning_display,
+            # #4206 Slice B (#4724): ③ preference-axis live override for
+            # the cost.*.warn_ratio keys — same callback shape immediately
+            # above.
+            warn_ratio_overrides_fn=self.warn_ratio_overrides,
             # Issue #383 PR-C: shared MediaStore for image + tool-result storage.
             media_store=self._media_store,
             # #1128 size axis: per-turn tool-result cap/offload (dead-end #1).

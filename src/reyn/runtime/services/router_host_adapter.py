@@ -413,6 +413,11 @@ class RouterHostAdapter:
         # every test host) falls back to the frozen `reasoning_config.display`
         # value, byte-identical to before this slice.
         reasoning_display_fn: "Callable[[], bool] | None" = None,
+        # #4206 Slice B (#4724): ③ preference-axis live overrides for the 7
+        # cost.*.warn_ratio keys — same callback shape as
+        # reasoning_display_fn above. None (every pre-Slice-B caller, every
+        # test host) means "no overrides", byte-identical to before Slice B.
+        warn_ratio_overrides_fn: "Callable[[], dict[str, float]] | None" = None,
         # Issue #383 PR-C: media + tool-result file storage.
         media_store: Any = None,
         # #1128 size axis: per-turn tool-result cap/offload callable. Takes the
@@ -605,6 +610,9 @@ class RouterHostAdapter:
         self._reasoning_continuity_section_fn = reasoning_continuity_section_fn
         # #4206 slice 2: ③ preference-axis live override for `display` ONLY.
         self._reasoning_display_fn = reasoning_display_fn
+        # #4206 Slice B (#4724): ③ preference-axis live override for the
+        # cost.*.warn_ratio keys.
+        self._warn_ratio_overrides_fn = warn_ratio_overrides_fn
         # Issue #383 PR-C: store the MediaStore for path-ref save/read.
         self._media_store = media_store
         # #1128 size axis: per-turn tool-result cap/offload callable (or None).
@@ -1999,6 +2007,15 @@ class RouterHostAdapter:
         if self._reasoning_display_fn is not None:
             return bool(self._reasoning_display_fn())
         return bool(getattr(self._reasoning_config, "display", False))
+
+    def warn_ratio_overrides(self) -> "dict[str, float]":
+        """#4206 Slice B (#4724): the caller-resolved ③ preference-axis
+        overrides for the cost.*.warn_ratio keys, or ``{}`` when
+        ``warn_ratio_overrides_fn`` was not supplied (every pre-Slice-B
+        caller, every test host) — byte-identical to before this slice."""
+        if self._warn_ratio_overrides_fn is not None:
+            return self._warn_ratio_overrides_fn()
+        return {}
 
     def reasoning_continuity_enabled(self) -> bool:
         """Whether reasoning is persisted to history + replayed into the next

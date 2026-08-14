@@ -2740,6 +2740,7 @@ async def call_llm_tools(
     model_class: "str | None" = None,  # #4206 T1: forwarded to recorded_acompletion — see its docstring (None = not subject to ceiling enforcement)
     model_class_ceiling: "str | None" = None,  # #4206 T1: the caller's effective ceiling, if any (None = unbounded)
     prompt_cache_key: str | None = None,  # #4700: forwarded to recorded_acompletion — see its docstring for the full reasoning
+    warn_ratio_overrides: "dict[str, float] | None" = None,  # #4206 Slice B (#4724): forwarded to budget.check_pre_llm/record_llm — see BudgetTracker's own docstring
 ) -> LLMToolCallResult:
     """Tool-use variant of call_llm. Returns raw assistant message.
 
@@ -2780,6 +2781,14 @@ async def call_llm_tools(
     reasoning. ``None`` (every call site that does not pass one) is
     byte-identical to before #4700 — nothing is sent, matching today's
     behavior exactly.
+
+    ``warn_ratio_overrides`` (#4206 Slice B, #4724): forwarded verbatim to
+    ``budget.check_pre_llm``/``budget.record_llm`` when ``budget`` is set —
+    Design C (lead-coder ruling): the CALLER resolves the ③ preference-axis
+    override (session/agent/project composition) and passes the final
+    ratio map in; ``BudgetTracker`` never resolves it itself. ``None``
+    (every call site that does not pass one) is byte-identical to before
+    Slice B.
     """
     # Normalize model to ModelSpec — accept both str (backward compat) and ModelSpec.
     spec: ModelSpec = model if isinstance(model, ModelSpec) else ModelSpec(model=model, kwargs={})
@@ -2787,7 +2796,10 @@ async def call_llm_tools(
     # Budget pre-check — runs before the LLM call
     if budget is not None:
         from reyn.runtime.budget.budget import BudgetExceeded, format_refusal_message
-        check = budget.check_pre_llm(model=spec.model, agent=budget_agent)
+        check = budget.check_pre_llm(
+            model=spec.model, agent=budget_agent,
+            warn_ratio_overrides=warn_ratio_overrides,
+        )
         if not check.allowed:
             # #1868: route the exceed through the 3-mode limit policy (deny /
             # auto-allow / ask-user). Denied — or NO policy context (fail-closed)
@@ -2977,6 +2989,7 @@ async def call_llm_tools(
             # — this path records its own call, so it must key it too or a
             # tool-bearing turn's spend would silently miss its bucket.
             chain_id=get_active_turn_chain_id(),
+            warn_ratio_overrides=warn_ratio_overrides,
         )
 
     # Normalize tool_calls to plain dicts so callers don't depend on litellm internals

@@ -64,6 +64,22 @@ block):
   callback shape `reasoning_continuity_section_fn` already established for
   the sibling continuity-section renderer) — `None` (every pre-slice-2 host)
   falls back to the frozen `reasoning_config.display` read, byte-identical.
+- `warn_ratio_overrides()` (#4206 Slice B, #4724) — public METHOD (not a
+  property — returns a fresh `dict[str, float]` each call, not a scalar), the
+  ③ resolution for the 7 `cost.*.warn_ratio` keys. A DIFFERENT shape from
+  `output_language`/`reasoning_display` above: `BudgetTracker` is
+  process-shared (one instance across every agent/session in a process), so
+  it cannot resolve a session/agent identity itself the way a per-`Session`
+  property can — this method collects only the keys actually overridden at
+  either the agent or session layer (an omitted key means "use the
+  tracker's own project-level ratio, unchanged") and the CALLER
+  (`RouterLoop`/`BudgetGateway`, via `RouterHostAdapter.
+  warn_ratio_overrides()` / `BudgetGateway`'s own `warn_ratio_overrides_fn`
+  callback, both wired at construction the SAME way `reasoning_display_fn`
+  is) passes the resulting mapping into `BudgetTracker.check_pre_llm`/
+  `record_llm`/`format_budget_full` as an explicit argument ("Design C",
+  #4724 — no process-shared override registry, no session-id plumbed into
+  the tracker itself).
 - `_sandbox_backend` (#1200 PR-F2) — the agent's `SandboxBackend` INSTANCE for the chat exec
   seam (the router `OpContext`); `None` → `get_default_backend`. This is the INSTANCE, not
   the `sandbox_config.backend` STRING used for exec-tool gating — for a docker agent it is

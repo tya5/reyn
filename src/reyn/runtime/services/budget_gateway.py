@@ -39,10 +39,17 @@ class BudgetGateway:
         events: EventLog,
         agent_name: str,
         default_router_cap: int = 3,
+        # #4206 Slice B (#4724): ③ preference-axis live override for the
+        # cost.*.warn_ratio keys, same callback shape as RouterHostAdapter's
+        # own `warn_ratio_overrides_fn` — makes `/budget`'s display match
+        # the SAME overrides gating this session's own warn events. None
+        # (every pre-Slice-B caller) -> {} -> byte-identical display.
+        warn_ratio_overrides_fn=None,  # Callable[[], dict[str, float]] | None
     ) -> None:
         self._tracker = budget_tracker
         self._events = events
         self._agent_name = agent_name
+        self._warn_ratio_overrides_fn = warn_ratio_overrides_fn
         self._total_usage: TokenUsage = TokenUsage()
         self._last_call_usage: TokenUsage = TokenUsage()
         self._total_cost_usd: float = 0.0
@@ -297,12 +304,18 @@ class BudgetGateway:
         """Return the full budget breakdown for ``/budget``.
 
         Returns None when tracker is None (unlimited mode).
+
+        #4206 Slice B (#4724): the displayed "warn at" figures reflect the
+        SAME ③ preference-axis overrides (``warn_ratio_overrides_fn``, when
+        supplied) that gate this session's own warn events — not silently
+        the project default.
         """
         if self._tracker is None:
             return None
         from reyn.runtime.budget.budget import format_budget_full
         snap = self._tracker.snapshot()
-        return format_budget_full(snap, attached=self._agent_name)
+        _overrides = self._warn_ratio_overrides_fn() if self._warn_ratio_overrides_fn else None
+        return format_budget_full(snap, attached=self._agent_name, warn_ratio_overrides=_overrides)
 
     def reset_all(self) -> dict | None:
         """Reset BudgetTracker if present, emit ``budget_reset`` event, and

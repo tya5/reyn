@@ -1136,6 +1136,17 @@ class RouterLoop:
         measurement and reasoning, not repeated here."""
         return getattr(self.host, "live_session_id", None) or "main"
 
+    def _warn_ratio_overrides(self) -> "dict[str, float]":
+        """#4206 Slice B (#4724): the ③ preference-axis overrides for the 7
+        cost.*.warn_ratio keys, read live each call via
+        ``host.warn_ratio_overrides()`` — ``getattr``-guarded so a test
+        host without the method (every pre-Slice-B host) gets ``{}``,
+        byte-identical to before this slice. Forwarded to
+        ``call_llm_tools`` at every LLM-call site in this file, matching
+        ``_prompt_cache_key`` immediately above."""
+        _fn = getattr(self.host, "warn_ratio_overrides", None)
+        return _fn() if _fn is not None else {}
+
     def _emit_agent_delta(self, text: str) -> None:
         """#3288 ③b: forward one streamed content-delta chunk as an audit-event
         — the owner-ratified L4 replacement (issue #3288 comment thread): a
@@ -1889,6 +1900,7 @@ class RouterLoop:
                         model_class=self.router_model,
                         model_class_ceiling=self._model_class_ceiling,
                         prompt_cache_key=self._prompt_cache_key(),  # #4700
+                        warn_ratio_overrides=self._warn_ratio_overrides(),  # #4206 Slice B
                     )
                 # Record the fresh result for future resume hit. Defensive:
                 # never let recording failure break the loop. NOT for a
@@ -2653,6 +2665,7 @@ class RouterLoop:
                     model_class=self.router_model,
                     model_class_ceiling=self._model_class_ceiling,
                     prompt_cache_key=self._prompt_cache_key(),  # #4700
+                    warn_ratio_overrides=self._warn_ratio_overrides(),  # #4206 Slice B
                 )
             except Exception as exc:
                 if attempt == 0:
@@ -2741,6 +2754,7 @@ class RouterLoop:
             model_class=self.router_model,
             model_class_ceiling=self._model_class_ceiling,
             prompt_cache_key=self._prompt_cache_key(),  # #4700
+            warn_ratio_overrides=self._warn_ratio_overrides(),  # #4206 Slice B
         )
 
     async def _force_close_call_with_retry(
