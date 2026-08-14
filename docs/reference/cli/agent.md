@@ -138,16 +138,24 @@ An unrecognized key under `preferences:` (a typo, or a key retired from
 UnknownPreferenceKeyError`) rather than silently doing nothing — the same
 discipline #4655 established for config-schema dict-leaves.
 
-**Scope of this slice**: read/resolve only — of the 9 keys above, this PR
-wires `output_language` into `Session.output_language`; `chat.reasoning.
-display` and the 7 `warn_ratio` keys are declared in `PREFERENCE_KEYS`
-but not yet threaded through their own consumers (a follow-up). No
-`preferences`-specific CLI/slash write surface exists yet — set an
-agent-layer value by editing `profile.yaml` directly (the same
-existing pattern `allowed_mcp` already uses); a session-layer value by
-whatever spawns the session passing a `narrowing` dict whose own
-`preferences` sub-key is set (`AgentRegistry.spawn_session`'s existing
-`narrowing=` parameter — no new API).
+**Scope so far**: read/resolve only — of the 9 keys, `output_language`
+(slice 1) and `chat.reasoning.display` (slice 2, #4206) are wired into a
+live `Session` property (`Session.output_language` /
+`Session.reasoning_display`) that re-resolves the session/agent/project
+composition on every access. The remaining 7 `warn_ratio` keys are
+declared in `PREFERENCE_KEYS` but not yet wired — they all funnel into ONE
+process-shared `BudgetTracker` (built once per process from the
+project-level config only), so wiring them needs a collision-safe
+per-agent/session override registry (the same shape `#4700`'s
+`register_max_input_overrides` established for `llm.models.<tier>.
+max_input_tokens`), not a bare live property — tracked as a follow-up, not
+mixed into this slice. No `preferences`-specific CLI/slash write surface
+exists yet for any key — set an agent-layer value by editing
+`profile.yaml` directly (the same existing pattern `allowed_mcp` already
+uses); a session-layer value by whatever spawns the session passing a
+`narrowing` dict whose own `preferences` sub-key is set
+(`AgentRegistry.spawn_session`'s existing `narrowing=` parameter — no new
+API).
 
 ## See also
 

@@ -1872,6 +1872,29 @@ class Session:
             )
             return {}
 
+    def _resolve_session_preference(self, key: str, project_default: object) -> object:
+        """#4206: shared ③ preference-axis resolution — session-layer
+        `config.yaml` `preferences.<key>` wins over agent-layer
+        `profile.yaml` `preferences.<key>` wins over *project_default*.
+        Live re-read on every call (never cached), same shape
+        `_workspace_base_dir` uses for `base_dir`. Factored out of
+        `output_language` (slice 1's own implementation) so every
+        subsequent ③ key (this one's first user: `reasoning_display`,
+        slice 2) shares ONE resolution path rather than re-deriving the
+        same three-step read — the exact "mechanism stays the same as ③
+        grows" promise `preferences.py`'s own module docstring makes."""
+        from reyn.runtime.preferences import resolve_preference
+
+        session_preferences = self._read_preferences_override(
+            Path(self._snapshot_path).parent / "config.yaml"
+        )
+        agent_preferences = self._agent_profile_preferences()
+        return resolve_preference(
+            key, project_default,
+            agent_preferences=agent_preferences,
+            session_preferences=session_preferences,
+        )
+
     @property
     def output_language(self) -> "str | None":
         """#4206 slice 1: ③ preference axis, free-override composition —
@@ -1880,17 +1903,8 @@ class Session:
         the project-level default this Session was constructed with
         (`self._project_output_language`). Live re-read on every access,
         same shape `_workspace_base_dir` already uses for `base_dir`."""
-        from reyn.runtime.preferences import resolve_preference
-
-        session_preferences = self._read_preferences_override(
-            Path(self._snapshot_path).parent / "config.yaml"
-        )
-        agent_preferences = self._agent_profile_preferences()
-        resolved = resolve_preference(
-            "output_language",
-            self._project_output_language,
-            agent_preferences=agent_preferences,
-            session_preferences=session_preferences,
+        resolved = self._resolve_session_preference(
+            "output_language", self._project_output_language,
         )
         # resolve_preference's return type is `object` (it's generic across
         # every ③ key, not just this str-typed one) — an override value
@@ -1898,6 +1912,24 @@ class Session:
         # output_language was never a valid value at ANY layer), so this
         # narrows rather than silently propagating the wrong type.
         return str(resolved) if resolved is not None else None
+
+    @property
+    def reasoning_display(self) -> bool:
+        """#4206 slice 2: ③ preference axis — session-layer
+        `preferences.chat.reasoning.display` wins over agent-layer wins
+        over the project-level default this Session was constructed with
+        (`self._reasoning.display`). Live re-read on every access, same
+        shape `output_language` uses.
+
+        Deliberately narrow: only `display` (whether reasoning text is
+        SURFACED to the UI) is ③. `chat.reasoning.continuity` /
+        `chat.reasoning.recent_turns` are ② bounding (#4206's own ratified
+        classification) and stay read directly off `self._reasoning` —
+        this property does not touch them."""
+        resolved = self._resolve_session_preference(
+            "chat.reasoning.display", bool(self._reasoning.display),
+        )
+        return bool(resolved)
 
     @property
     def _reyn_state_root(self) -> "Path":
@@ -4617,6 +4649,14 @@ class Session:
             # the router loop for emit-gating, persist-gating, and SP replay.
             reasoning_config=self._reasoning,
             reasoning_continuity_section_fn=self.reasoning_continuity_section,
+            # #4206 slice 2: ③ preference-axis live override for `display`
+            # ONLY (continuity/recent_turns stay ② bounding, read off
+            # `reasoning_config` above, untouched) — a callback, same shape
+            # as `reasoning_continuity_section_fn` immediately above, so the
+            # adapter re-resolves session/agent overrides on every call
+            # instead of reading the frozen `reasoning_config.display` this
+            # session was constructed with.
+            reasoning_display_fn=lambda: self.reasoning_display,
             # Issue #383 PR-C: shared MediaStore for image + tool-result storage.
             media_store=self._media_store,
             # #1128 size axis: per-turn tool-result cap/offload (dead-end #1).

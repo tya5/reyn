@@ -421,7 +421,14 @@ def test_no_slash_module_reaches_the_session_outbox() -> None:
 #: the LLM-facing ``list_mcp_subscriptions`` tool (via
 #: ``RouterHostAdapter``) both call — not a private-state leak a slash
 #: handler needed publishing to keep reaching into the session.
-_PUBLIC_MEMBER_CEILING = 107
+#: Raised 107 -> 108 for #4206 slice 2: ``reasoning_display`` — a NEW
+#: ``@property``, the second ③ preference-axis key (after slice 1's
+#: ``output_language``) to get a live session/agent-override-resolving
+#: accessor. Same shape, same reason as the 106->107 entry above: not a
+#: private-state leak, a new read surface the ③ axis's own mechanism
+#: requires by design (``RouterHostAdapter.reasoning_display_enabled()``
+#: consults it via a callback).
+_PUBLIC_MEMBER_CEILING = 108
 
 
 def test_session_public_surface_does_not_grow() -> None:

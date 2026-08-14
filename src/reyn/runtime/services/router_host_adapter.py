@@ -407,6 +407,12 @@ class RouterHostAdapter:
         # history + applies the continuity gate). None → reasoning disabled.
         reasoning_config: Any = None,
         reasoning_continuity_section_fn: "Callable[[], str] | None" = None,
+        # #4206 slice 2: ③ preference-axis live override for `display` ONLY
+        # (continuity/recent_turns stay ② bounding, read off
+        # `reasoning_config` unchanged) — None (every pre-slice-2 caller,
+        # every test host) falls back to the frozen `reasoning_config.display`
+        # value, byte-identical to before this slice.
+        reasoning_display_fn: "Callable[[], bool] | None" = None,
         # Issue #383 PR-C: media + tool-result file storage.
         media_store: Any = None,
         # #1128 size axis: per-turn tool-result cap/offload callable. Takes the
@@ -597,6 +603,8 @@ class RouterHostAdapter:
         # #1652: reasoning capture/continuity/display config + the section renderer.
         self._reasoning_config = reasoning_config
         self._reasoning_continuity_section_fn = reasoning_continuity_section_fn
+        # #4206 slice 2: ③ preference-axis live override for `display` ONLY.
+        self._reasoning_display_fn = reasoning_display_fn
         # Issue #383 PR-C: store the MediaStore for path-ref save/read.
         self._media_store = media_store
         # #1128 size axis: per-turn tool-result cap/offload callable (or None).
@@ -1979,7 +1987,17 @@ class RouterHostAdapter:
 
     def reasoning_display_enabled(self) -> bool:
         """Whether the model's reasoning text should be surfaced to the UI
-        (config ``chat.reasoning.display``; default False when unconfigured)."""
+        (config ``chat.reasoning.display``; default False when unconfigured).
+
+        #4206 slice 2: when ``reasoning_display_fn`` was supplied (the
+        production `Session` path), calls it fresh EVERY time — the ③
+        preference-axis live re-resolution (session/agent overrides), not
+        the frozen ``reasoning_config.display`` this adapter was
+        constructed with. ``None`` (every pre-slice-2 caller, every test
+        host that doesn't pass the new callback) falls back to the
+        original frozen-config read, byte-identical to before this slice."""
+        if self._reasoning_display_fn is not None:
+            return bool(self._reasoning_display_fn())
         return bool(getattr(self._reasoning_config, "display", False))
 
     def reasoning_continuity_enabled(self) -> bool:
