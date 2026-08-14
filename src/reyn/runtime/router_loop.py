@@ -575,10 +575,10 @@ class RouterLoopHost(RouterLoopCore, Protocol):
     def get_project_context(self) -> str:
         """Project context text (= REYN.md / `project_context_path` content),
         or empty string when the operator has not configured one. Threaded
-        into the router's system prompt so the chat reply path knows about
-        the user's project — without this, only the phase-execution path
-        sees REYN.md and casual chat queries get answered without
-        project-specific context."""
+        into the router's system prompt (`build_system_prompt`) on every
+        turn — see `router_system_prompt.py`'s "Project context" section —
+        so every turn's model has the operator's project-specific
+        background, not only some turns."""
         ...
 
     def get_universal_wrappers_enabled(self) -> bool:
