@@ -1042,6 +1042,17 @@ class BudgetTracker:
         # "the last turn's cost" does not have to know a chain_id. None until
         # a call with a turn in scope is recorded.
         self._last_turn_chain_id: str | None = None
+        # #4691 Phase A.5: session-persistent baseline for the gutter's
+        # per-row "context growth" figure (the signed delta of prompt_tokens
+        # between the two most recent LLM calls) — deliberately tracked HERE,
+        # not on RouterLoop, because a fresh RouterLoop is constructed per
+        # TURN (router_loop_driver.py), so nothing turn-local could see the
+        # PREVIOUS turn's last call to diff against. In-memory only, same
+        # posture as the per-turn buckets above — a restart/restore starts
+        # both at None, which is exactly "no baseline yet" (never a
+        # fabricated 0 growth).
+        self._last_prompt_tokens: int | None = None
+        self._last_context_growth: int | None = None
         self._last_save_monotonic: float = 0.0  # 0 = never saved
         # R-D8: True once load_state was called. The loaded state already
         # includes every committed step's usage, so memo-hit forward-calc
@@ -1358,6 +1369,21 @@ class BudgetTracker:
         """
         # rate limit window
         self._call_window[model].append(time.monotonic())
+
+        # #4691 Phase A.5: this call's own contribution to context growth —
+        # the signed delta against the LAST call's prompt_tokens (None on
+        # the very first call this tracker has ever recorded — no baseline
+        # to diff against, never coerced to 0). Computed unconditionally
+        # (every real LLM call updates the baseline, whether or not it
+        # produces a visible outbox row), matching record_llm's own
+        # unconditional-call-site cadence — the ONE place every completion
+        # this session makes is guaranteed to pass through, unlike any
+        # router_loop.py emit site.
+        self._last_context_growth = (
+            None if self._last_prompt_tokens is None
+            else usage.prompt_tokens - self._last_prompt_tokens
+        )
+        self._last_prompt_tokens = usage.prompt_tokens
 
         warn_dims: list[str] = []
         priced_cost_usd, _ = estimate_cost(model, usage)
@@ -1833,6 +1859,20 @@ class BudgetTracker:
         if chain_id is None:
             return None
         return self._turn_usage_dict(chain_id)
+
+    def last_context_growth(self) -> int | None:
+        """#4691 Phase A.5: the signed delta of ``prompt_tokens`` between the
+        two most recent :meth:`record_llm` calls — ``None`` before this
+        tracker has recorded a second call (no baseline to diff against;
+        never coerced to a fabricated 0 — the same real-zero-vs-unknown
+        discipline the gutter's own per-turn lookup already applies).
+        Negative after a compaction shrinks the context.
+
+        Read ONCE, immediately after the call it describes, by the
+        ``kind="agent"`` emit call sites that stamp it onto that row's
+        ``meta`` — a later read would see whatever the NEXT call moved it
+        to, not this one's own figure."""
+        return self._last_context_growth
 
     def turn_usage(self, chain_id: str) -> dict | None:
         """#3283 ④: ``{"chain_id", "tokens", "prompt_tokens",

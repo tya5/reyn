@@ -434,6 +434,20 @@ def _format_tokens(tokens: int) -> str:
     return f"{round(n / 1_000_000)}M"
 
 
+def _format_signed_tokens(delta: int) -> str:
+    """A compact SIGNED delta — ``"+83"`` / ``"-120k"`` — the sign NEVER
+    dropped even when the magnitude must lose precision to fit
+    (owner ruling, via lead-coder: a bare unsigned number reads as a total,
+    the exact ambiguity this format replaces).
+
+    Bounded to 5 characters (:func:`_format_tokens`'s own 4-char magnitude
+    bound + 1 for the sign — whole-``k``/``M`` rounding, no ``.1f`` band,
+    same as that function). ``RIGHT_GUTTER_WIDTH`` was widened by 1 to fit
+    this — see its own comment."""
+    sign = "+" if delta >= 0 else "-"
+    return f"{sign}{_format_tokens(abs(delta))}"
+
+
 #: FlowView RIGHT-gutter column width (Phase ④, #3283) — wired into ``app.py``'s
 #: ``FlowView(right_gutter_width=…)`` config. COMPUTED in terminal CELLS
 #: (:func:`rich.cells.cell_len`, the renderer's own measure) from the widest
@@ -441,23 +455,26 @@ def _format_tokens(tokens: int) -> str:
 #:
 #: - elapsed (:func:`_format_elapsed`) — 3 (``"99s"``);
 #: - per-turn tokens (:class:`ReynTurnUsageGutter`) — the two-figure split
-#:   ``↑<prompt> ↓<completion>``: marker (1) + :func:`_format_tokens` (4) +
-#:   space (1) + marker (1) + :func:`_format_tokens` (4) = **11**
-#:   (e.g. ``"↑120k ↓120k"``). Both markers measure 1 cell — see
+#:   ``↑<growth> ↓<completion>``: marker (1) + :func:`_format_signed_tokens`
+#:   (5 — #4691 Phase A.5, ``sign`` + :func:`_format_tokens`'s own 4-char
+#:   magnitude bound) + space (1) + marker (1) + :func:`_format_tokens` (4)
+#:   = **12** (e.g. ``"↑-120k ↓120k"``). Both markers measure 1 cell — see
 #:   :data:`PROMPT_TOKENS_MARKER` for the ambiguous-width measurement.
 #:
 #: The two families are mutually exclusive on any one row by construction
 #: (elapsed lives on ``tool_call_started`` rows, the token figure on
-#: :data:`TURN_ANCHOR_KIND` rows), so the widest cell is ``max(3, 11) = 11``,
-#: not their sum — 11 + one column of breathing room = 12. If that exclusivity
-#: ever stopped holding, the combined label would simply be clipped by
-#: flowview's own fixed-width gutter — never allowed to steal body columns.
+#: :data:`TURN_ANCHOR_KIND` rows), so the widest cell is ``max(3, 12) = 12``,
+#: not their sum — 12 + one column of breathing room = 13 (#4691 Phase A.5
+#: raised this from 12 — the signed ↑ half costs one more character than the
+#: absolute figure it replaced). If that exclusivity ever stopped holding,
+#: the combined label would simply be clipped by flowview's own fixed-width
+#: gutter — never allowed to steal body columns.
 #:
 #: ★ Bound re-justified against #3337's body-width floor gate at THIS width
 #: (``test_right_gutter_leaves_the_body_at_least_half_the_terminal_width``):
-#: on an 80-column terminal the body keeps ``80 - 2 (left gutter) - 12 = 66``
+#: on an 80-column terminal the body keeps ``80 - 2 (left gutter) - 13 = 65``
 #: columns against a 40-column floor.
-RIGHT_GUTTER_WIDTH = 12
+RIGHT_GUTTER_WIDTH = 13
 
 
 class ReynTimingGutter:
@@ -586,11 +603,39 @@ class ReynTurnUsageGutter:
     figure repeating rather than a distinct call — exactly the duplicate
     this class's own docstring above says it exists to avoid, just not
     caught for the multi-anchor-row case. Each such row now carries its
-    OWN call's real ``prompt_tokens``/``completion_tokens`` in
-    ``entry.item.meta`` (known synchronously at the emit call site — no
-    read-model plumbing needed), and :meth:`label` prefers that over the
-    turn-total lookup when present. The terminal no-tool-calls reply row
-    is unchanged (still turn-anchored via the lookup)."""
+    OWN call's real ``completion_tokens`` (unchanged, absolute — no
+    ambiguity: a per-call completion count has no other figure it could be
+    confused with) plus a signed **context-growth** delta (see below) in
+    ``entry.item.meta``, and :meth:`label` prefers that over the turn-total
+    lookup when present.
+
+    **Phase A.5 (co-vet finding, architect + lead-coder; format decided by
+    the owner) — the ↑ half is a SIGNED DELTA, not an absolute figure, and
+    the terminal no-tool-calls reply row carries it too**, not just the
+    three non-terminal sites Phase A covered.
+
+    Two problems, one fix. (1) Leaving the terminal row on the turn-total
+    lookup kept the owner's ORIGINAL reported symptom alive for any turn
+    whose only ``kind="agent"`` row IS this terminal one (a turn of
+    content-less tool calls never fires the non-terminal emits, which are
+    gated on non-empty text). (2) Phase A's own first attempt put the
+    absolute per-call ``prompt_tokens`` on ↑ — which duplicated ctx tab's
+    own absolute figure in a SECOND place, reproducing the exact confusion
+    ("which number is which") the owner hit. Measured: the absolute figure
+    varies ~0.18% within one turn (near-zero information — the SAME
+    argument that rejected the pre-#4691 repeated turn total), while the
+    signed delta between consecutive calls (``BudgetTracker.
+    last_context_growth()``) varies meaningfully call to call (a real
+    session: 82/98/94/40/…/496) — a SIGN also makes it structurally
+    impossible to mistake for a total. ``None`` (no prior call this session
+    to diff against — a fresh session, or the row right after a restore)
+    renders as :data:`TURN_USAGE_UNKNOWN`, never a fabricated ``+0``. A
+    negative delta (a compaction shrank the context) renders WITH its
+    sign — see :func:`_format_signed_tokens`.
+
+    The turn-total lookup now only answers for a row that carries NO
+    per-call ``completion_tokens`` at all (a restored/legacy frame — every
+    LIVE emit site stamps one)."""
 
     def __init__(
         self,
@@ -612,25 +657,26 @@ class ReynTurnUsageGutter:
         if entry.item.kind != TURN_ANCHOR_KIND:
             return ""
         meta = entry.item.meta or {}
-        # #4691: a PER-CALL figure embedded directly in this row's own meta
-        # at emit time (router_loop.py's non-terminal tool-turn-text /
-        # spawn-ack rows, session.py's force-close wrap-up row) takes
-        # precedence over the turn-total lookup below. This is what fixes
-        # the "same total painted on every anchor row of a multi-call turn"
-        # bug #4691 names: a row that names its OWN call's real tokens is a
-        # genuine per-row figure, not a repeated one, and a call boundary
-        # reads directly off two adjacent rows differing — no new glyph,
-        # no Group/nesting needed (the owner's own accepted framing,
-        # #4691's scoping comment). Falls through to the turn-total lookup
-        # for any row that does NOT carry a per-call figure (the terminal
-        # no-tool-calls reply, still turn-anchored as before — unchanged).
-        call_prompt = meta.get("prompt_tokens")
+        # #4691 Phase A.5: a PER-CALL row (every LIVE kind="agent" emit site
+        # stamps completion_tokens — see router_loop.py) takes precedence
+        # over the turn-total lookup below. ↓ is this call's own real
+        # completion count (absolute, unambiguous). ↑ is the SIGNED context-
+        # growth delta (BudgetTracker.last_context_growth(), stamped at the
+        # same emit site as "context_growth") — None renders as
+        # TURN_USAGE_UNKNOWN for that half rather than a fabricated "+0"
+        # (see the class docstring for why this replaced an absolute
+        # per-call prompt figure, and #4691's scoping comment for why no
+        # new glyph/Group is needed to mark the call boundary either way).
         call_completion = meta.get("completion_tokens")
-        if isinstance(call_prompt, (int, float)) and isinstance(
-            call_completion, (int, float)
-        ):
+        if isinstance(call_completion, (int, float)):
+            growth = meta.get("context_growth")
+            growth_label = (
+                _format_signed_tokens(int(growth))
+                if isinstance(growth, (int, float))
+                else TURN_USAGE_UNKNOWN
+            )
             return (
-                f"{PROMPT_TOKENS_MARKER}{_format_tokens(int(call_prompt))} "
+                f"{PROMPT_TOKENS_MARKER}{growth_label} "
                 f"{COMPLETION_TOKENS_MARKER}{_format_tokens(int(call_completion))}"
             )
         chain_id = meta.get("chain_id")
