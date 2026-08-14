@@ -433,7 +433,14 @@ def test_no_slash_module_reaches_the_session_outbox() -> None:
 #: cost.*.warn_ratio keys (Design C: the caller resolves, BudgetTracker
 #: never learns a session/agent identity itself). Same shape, same reason
 #: as the 107->108 entry above.
-_PUBLIC_MEMBER_CEILING = 109
+#: Raised 109 -> 110 for #4206 ②: ``model_class_ceiling`` — a NEW
+#: ``@property``, the ②bounding-axis's live composed ``model`` ceiling
+#: (project resolver + agent-layer + session-layer, narrowest wins,
+#: restrict-only — see ``reyn.runtime.bounding``). Same "a new read
+#: surface the axis's own mechanism requires by design" reason as the
+#: 107->108/108->109 entries above (``RouterHostAdapter.model_class_ceiling()``
+#: consults it via the same callback shape), not a private-state leak.
+_PUBLIC_MEMBER_CEILING = 110
 
 
 def test_session_public_surface_does_not_grow() -> None:

@@ -80,6 +80,27 @@ block):
   `record_llm`/`format_budget_full` as an explicit argument ("Design C",
   #4724 — no process-shared override registry, no session-id plumbed into
   the tracker itself).
+- `model_class_ceiling` (#4206 ②) — public `@property`, the ②bounding
+  axis's ONE key so far (`model`). A DIFFERENT composition from
+  `output_language`/`reasoning_display`/`warn_ratio_overrides` above: those
+  are ③ (free-override, last-present-wins); this one is restrict-only
+  (narrowest-of-project/agent/session wins, via
+  `reyn.runtime.bounding.compose_model_ceiling`) because `model` consumes a
+  shared, bounded resource (`BudgetTracker`'s quota) that a free override
+  could exhaust. Composed from `self._resolver.class_ceiling()` (project)
+  + this agent's `profile.yaml` `bounding.model` + this session's own
+  `config.yaml` `bounding.model` (session wins over agent when both narrow,
+  same precedence order ③ uses) — a layer that declares a WIDER class than
+  a layer above it never widens the effective value. Live re-read on every
+  access, same shape as the ③ properties above. `RouterHostAdapter.
+  model_class_ceiling()` consults this live via a `model_class_ceiling_fn`
+  callback wired at construction (the SAME callback shape
+  `reasoning_display_fn` established) — `None` (every pre-② host) falls
+  back to `resolver.class_ceiling()` directly, byte-identical to
+  `RouterLoop`'s prior construction-time-cached read. The composed value
+  feeds the SAME #1190 chokepoint (`recorded_acompletion`) `model_class_ceiling`
+  has always fed — ② only changes WHERE that value comes from, not the
+  enforcement itself.
 - `_sandbox_backend` (#1200 PR-F2) — the agent's `SandboxBackend` INSTANCE for the chat exec
   seam (the router `OpContext`); `None` → `get_default_backend`. This is the INSTANCE, not
   the `sandbox_config.backend` STRING used for exec-tool gating — for a docker agent it is

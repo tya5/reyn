@@ -1966,6 +1966,100 @@ class Session:
                 overrides[key] = float(session_preferences[key])  # type: ignore[arg-type]
         return overrides
 
+    def _read_bounding_override(self, path: "Path") -> "dict[str, object]":
+        """#4206 ②: read a ``bounding:`` mapping from *path* (this session's
+        own ``config.yaml``) — or ``{}`` when absent/unset/malformed. Same
+        raw-read/malformed-is-log-not-crash shape as
+        :meth:`_read_preferences_override`, one key name apart, PLUS a
+        ``validate_bounding`` call this session-layer read didn't
+        originally have (lead-coder review, #4727): unlike ``preferences``,
+        an unvalidated bounding value reaching ``compose_model_ceiling``
+        doesn't just get ignored for THIS layer — a typo'd
+        ``bounding.model`` can silently drop the ONLY layer that would
+        have narrowed the ceiling, composing to unbounded with no
+        exception at all. Validated the same way ``AgentProfile.load``
+        validates the agent-layer file; a validation failure degrades to
+        ``{}`` (this layer contributes no override) rather than crashing
+        every subsequent property access on a hand-edited config typo."""
+        if not path.is_file():
+            return {}
+        import yaml
+
+        from reyn.runtime.bounding import validate_bounding
+
+        try:
+            raw = yaml.safe_load(path.read_text(encoding="utf-8"))
+        except Exception as e:  # noqa: BLE001 — hand/LLM-written yaml, surface not crash
+            logger.warning(
+                "#4206: skipping malformed bounding override config %s: %s", path, e,
+            )
+            return {}
+        if not isinstance(raw, dict):
+            return {}
+        value = raw.get("bounding")
+        bounding = dict(value) if isinstance(value, dict) else {}
+        try:
+            validate_bounding(bounding, source=f"session config {path}")
+        except ValueError as e:
+            logger.warning(
+                "#4206: skipping unreadable session bounding at %s: %s", path, e,
+            )
+            return {}
+        return bounding
+
+    def _agent_profile_bounding(self) -> "dict[str, object]":
+        """#4206 ②: this agent's `profile.yaml` `bounding:` mapping — live
+        re-read, `{}` when the profile is missing/malformed/carries none.
+        Mirrors :meth:`_agent_profile_preferences` one key name apart."""
+        from reyn.runtime.profile import AgentProfile
+
+        try:
+            return dict(AgentProfile.load(self.workspace_dir).bounding)
+        except FileNotFoundError:
+            return {}
+        except ValueError as e:
+            # UnknownBoundingKeyError (validate_bounding, raised inside
+            # AgentProfile.load) — surfaced, not silently eaten, but does
+            # not crash session construction/property access.
+            logger.warning(
+                "#4206: skipping unreadable agent bounding at %s: %s",
+                self.workspace_dir, e,
+            )
+            return {}
+
+    @property
+    def model_class_ceiling(self) -> "str | None":
+        """#4206 ②: the bounding axis's ONE current key (`model`) — the
+        EFFECTIVE model-class ceiling this session's turns must respect,
+        composed via ``compose_model_ceiling`` (narrowest wins, restrict-
+        only — a layer that declares no ceiling, or an incomparable value,
+        never WIDENS the effective one) across three layers:
+
+        - project: ``self._resolver.class_ceiling()`` (#4206 T1, unchanged)
+        - agent-layer: this agent's `profile.yaml` `bounding.model`
+        - session-layer: this session's own `config.yaml` `bounding.model`
+
+        Live re-read on every access, same shape `reasoning_display`/
+        `output_language` already use. The composed value feeds the SAME
+        #1190 chokepoint (`recorded_acompletion`) `model_class_ceiling` has
+        always fed — this property only changes WHERE that value comes
+        from (a live 3-layer composition, not a single project-only read
+        cached once at RouterLoop construction)."""
+        from reyn.runtime.bounding import compose_model_ceiling
+
+        project_ceiling = self._resolver.class_ceiling()
+        agent_bounding = self._agent_profile_bounding()
+        session_bounding = self._read_bounding_override(
+            Path(self._snapshot_path).parent / "config.yaml"
+        )
+        agent_ceiling = agent_bounding.get("model")
+        session_ceiling = session_bounding.get("model")
+        return compose_model_ceiling(
+            project_ceiling,
+            str(agent_ceiling) if agent_ceiling is not None else None,
+            str(session_ceiling) if session_ceiling is not None else None,
+        )
+
     @property
     def _reyn_state_root(self) -> "Path":
         """#3705: the SAME anchor `Agent.workspace_dir` resolves against
@@ -4704,6 +4798,11 @@ class Session:
             # the cost.*.warn_ratio keys — same callback shape immediately
             # above.
             warn_ratio_overrides_fn=self.warn_ratio_overrides,
+            # #4206 ②: bounding-axis live composed ceiling for `model` —
+            # same callback shape immediately above; replaces RouterLoop's
+            # prior construction-time-cached `_resolver.class_ceiling()`
+            # read with a live 3-layer (project/agent/session) composition.
+            model_class_ceiling_fn=lambda: self.model_class_ceiling,
             # Issue #383 PR-C: shared MediaStore for image + tool-result storage.
             media_store=self._media_store,
             # #1128 size axis: per-turn tool-result cap/offload (dead-end #1).
