@@ -29,7 +29,7 @@ future task, deliberately not mixed into this slice.
 """
 from __future__ import annotations
 
-#: The 8 keys #4206's confirmed classification places in axis ③ for this
+#: The 9 keys #4206's confirmed classification places in axis ③ for this
 #: first slice: ``output_language``, ``chat.reasoning.display``, one
 #: ``warn_ratio`` per of the 6 ``CostLimitConfig`` dimensions
 #: (``runtime/budget/budget.py``'s ``CostConfig``), and

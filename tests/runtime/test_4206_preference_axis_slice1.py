@@ -24,8 +24,8 @@ from tests._support.agent_session import make_session
 # ── PREFERENCE_KEYS / validate_preferences ──────────────────────────────
 
 
-def test_preference_keys_names_all_8_confirmed_keys():
-    """Tier 2: the 8 keys #4206's confirmed classification names for this
+def test_preference_keys_names_all_9_confirmed_keys():
+    """Tier 2: the 9 keys #4206's confirmed classification names for this
     slice — output_language, chat.reasoning.display, 6x cost.*.warn_ratio,
     cost.rate_limit_warn_ratio."""
     assert PREFERENCE_KEYS == frozenset({

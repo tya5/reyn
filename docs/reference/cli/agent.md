@@ -138,11 +138,12 @@ An unrecognized key under `preferences:` (a typo, or a key retired from
 UnknownPreferenceKeyError`) rather than silently doing nothing — the same
 discipline #4655 established for config-schema dict-leaves.
 
-**Scope of this slice**: read/resolve only — this PR wires the 8 keys
-above into `Session.output_language`; `chat.reasoning.display` and the 7
-`warn_ratio` keys are not yet threaded through their own consumers (a
-follow-up). No `preferences`-specific CLI/slash write surface exists yet
-— set an agent-layer value by editing `profile.yaml` directly (the same
+**Scope of this slice**: read/resolve only — of the 9 keys above, this PR
+wires `output_language` into `Session.output_language`; `chat.reasoning.
+display` and the 7 `warn_ratio` keys are declared in `PREFERENCE_KEYS`
+but not yet threaded through their own consumers (a follow-up). No
+`preferences`-specific CLI/slash write surface exists yet — set an
+agent-layer value by editing `profile.yaml` directly (the same
 existing pattern `allowed_mcp` already uses); a session-layer value by
 whatever spawns the session passing a `narrowing` dict whose own
 `preferences` sub-key is set (`AgentRegistry.spawn_session`'s existing
