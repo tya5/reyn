@@ -55,6 +55,14 @@ from dataclasses import dataclass
 # value would require a NEW runtime concept, which is a design decision, not a
 # repair. If such a concept ever lands, name it accurately instead of reviving
 # ``phase``.
+#
+# Name collision, not the same field: ``interfaces/transport/agui/protocol.py``
+# (``_encode_event``, the RUN_STARTED/RUN_FINISHED branch) also writes a
+# ``"phase"`` key — that one is the AG-UI wire protocol's own standard field,
+# live and populated with the run-lifecycle type string. It is unrelated to
+# THIS field and cannot be renamed either (it's the AG-UI spec's own
+# vocabulary). Two different "phase"s that happen to share a name — do not
+# read one as explaining the other.
 RETIRED_PHASE_FIELD = ""
 
 # Events that must carry these audit fields (FP-0021)
