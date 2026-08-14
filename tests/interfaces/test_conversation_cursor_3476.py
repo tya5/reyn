@@ -176,9 +176,13 @@ async def test_enter_copies_the_cursor_entry_directly(clipboard) -> None:
 
 
 @pytest.mark.asyncio
-async def test_space_also_activates_the_cursor_entry(clipboard) -> None:
-    """Tier 2b: Space is flowview's other built-in activate key — same effect
-    as Enter, verified independently rather than assumed from Enter's test."""
+async def test_space_no_longer_copies_since_4697_repurposed_it_for_folding(clipboard) -> None:
+    """Tier 2b: #4697 repurposed Space for tool-detail fold/unfold (owner
+    ruling, #4691 §6) — it is no longer flowview's second activate/copy
+    key (Enter alone still copies; see the Enter test above). On an
+    ordinary row with no foldable tool detail, Space is a no-op: it must
+    NOT copy (the pre-#4697 behavior this test used to pin) and must not
+    crash."""
     app = TextualChatApp(transport=_Transport())
     async with app.run_test(size=(100, 30)) as pilot:
         await pilot.pause()
@@ -187,11 +191,12 @@ async def test_space_also_activates_the_cursor_entry(clipboard) -> None:
         await _focus_flow(pilot, app)
 
         await pilot.press("space")
-        for _ in range(30):
-            await pilot.pause()
-            if clipboard() is not None:
-                break
-        assert clipboard() == "reply text"
+        await pilot.pause()
+        await pilot.pause()
+        assert clipboard() is None, (
+            "Space still copied — #4697 was supposed to move copy off Space "
+            "entirely, leaving it solely on Enter"
+        )
 
 
 @pytest.mark.asyncio
