@@ -338,6 +338,14 @@ def project_remote_snapshot(values: "dict | None") -> dict:
         # "nothing is narrowed", a statement this frame cannot support).
         "visibility_items": None,
         "hook_items": [],
+        # #4686: session-local read (MCPConnectionService is process-local,
+        # not projected onto the wire) → [] for remote, same "empty" shape
+        # as ``mcp_servers``/``hooks``/``skills`` above — a remote client's
+        # mcp pane shows base rows with no subscription augmentation rather
+        # than raising (``_mcp_pane_entries`` treats a server absent from
+        # this list as "nothing to add", not "not wired", since the base
+        # row itself already came from ``visibility_items``).
+        "mcp_subscriptions": [],
         "pipelines": [],
         # #3300 P2b: the server-authoritative sent-queue state IS on the wire
         # (state.py's ``_WIRE_KEYS`` / ``project_status``, folded in by P2a) —

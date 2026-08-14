@@ -1485,6 +1485,25 @@ def list_mcp_servers_to_canonical(result: dict) -> CanonicalToolResult:
     return _records_to_canonical(text, servers)
 
 
+def list_mcp_subscriptions_to_canonical(result: dict) -> CanonicalToolResult:
+    """``list_mcp_subscriptions`` result -> canonical (#4686). ``subscriptions``
+    entries carry ``{server, mode, uris, unhonored}`` — one per HELD
+    connection with at least one subscribed URI. Deliberately per-connection
+    (the preview names each SERVER, not a flattened URI count) — see
+    ``RouterHostAdapter.mcp_list_subscriptions``'s docstring for why an
+    aggregated total would lose the honored/unhonored + Legacy/Listen
+    distinction this tool exists to carry."""
+    subs = result.get("subscriptions") or []
+    n = len(subs)
+    preview = _bounded_join(subs, "server")
+    text = (
+        f"{n} MCP connection{'s' if n != 1 else ''} with subscriptions"
+        + (f": {preview}" if preview else "")
+        + "."
+    )
+    return _records_to_canonical(text, subs)
+
+
 def skill_list_to_canonical(result: dict) -> CanonicalToolResult:
     """``skill_list`` result -> canonical (#2971). ``skills`` entries carry
     ``{name, description, path}`` — the discovery view of every registered,

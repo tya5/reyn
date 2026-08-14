@@ -2102,6 +2102,34 @@ class RouterHostAdapter:
         """Returns the configured MCP server list with descriptions."""
         return self._get_mcp_servers_for_router()
 
+    async def mcp_list_subscriptions(self) -> list[dict]:
+        """#4686: per-CONNECTION resource-subscription state, one entry per
+        HELD server that has at least one subscribed URI. Discovery-only,
+        NOT permission-gated (no op-kind — same class as ``mcp_list_servers``
+        above), and — unlike every other ``mcp_list_*`` method here — never
+        a gateway round trip: subscription tracking is entirely session-local
+        state (``MCPConnectionService``, never WAL'd — see its own module
+        docstring), so there is nothing on the server side to query.
+
+        Shape (mirrors ``Session.mcp_subscription_state``'s own docstring
+        exactly, which is the sole producer):
+        ``[{"server", "mode": "legacy" | "listen" | None, "uris": [...],
+        "unhonored": [...] | None}, ...]``. Deliberately per-connection, not
+        merged/aggregated across servers — what "subscribed" even confirms
+        differs between a Legacy connection (can't report honored-ness) and
+        a Listen connection (can), so collapsing to one count across
+        connections of different modes would lose exactly the distinction
+        this tool exists to surface (#4686 issue thread).
+
+        Reads ``self._mcp_gateway.mcp_connection_service`` directly (the
+        raw ``McpGatewayInputs`` field, same object other gateway methods on
+        this class already reach via ``self._mcp_gateway`` — see e.g. the
+        pool-construction call a few lines below) rather than via an
+        injected async callback: unlike ``mcp_subscribe_resource``/
+        ``mcp_read_resource``, this never touches the network, so there is
+        no failure mode an ``_cb is None`` guard would need to degrade."""
+        return self._mcp_gateway.mcp_connection_service.subscription_summary()
+
     async def mcp_list_tools(self, server: str) -> list[dict]:
         """Query the MCP server for its tools list. Discovery-only, NOT
         permission-gated (no op-kind). Emits ``mcp_tools_listed``."""

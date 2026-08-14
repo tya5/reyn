@@ -72,7 +72,7 @@ always-loaded module.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING
 
 from rich.text import Text
@@ -811,10 +811,15 @@ def _denied_note(reason: "str | None") -> str:
     return "denied by capability profile"
 
 
-def _visibility_pane_entries(
+def _visibility_pane_rows(
     snap: dict, kind: str, fallback_key: "str | None"
-) -> "list[tuple[str, str]]":
-    """``(row, slash)`` for one capability-visibility category (tool/mcp/skill).
+) -> "list[DrawerRow]":
+    """The :class:`DrawerRow` objects for one capability-visibility category
+    (tool/mcp/skill) — the STRUCTURED form :func:`_visibility_pane_entries`
+    flattens to ``(row, slash)`` pairs. Split out (#4686) so a caller that
+    needs to keep editing the rows (the mcp pane's subscription augmentation
+    — see :func:`_mcp_pane_entries`) doesn't have to re-parse the flattened
+    text back into a note/state/label triple.
 
     Session-backed ``visibility_items`` give togglable rows whose slash FLIPS the
     current state (``/visibility off …`` for an on item and vice versa). Until the
@@ -862,11 +867,87 @@ def _visibility_pane_entries(
                 command=f"/visibility {'off' if it['on'] else 'on'} {kind} {it['name']}",
             ))
     if rows:
-        return [r.as_entry() for r in rows]
+        return rows
     names = [d["name"] for d in (snap.get(fallback_key) or [])] if fallback_key else []
     if names:
-        return [DrawerRow(label=n).as_entry() for n in names]
-    return [DrawerRow(label="(none)" if raw is not None else "(not wired)").as_entry()]
+        return [DrawerRow(label=n) for n in names]
+    return [DrawerRow(label="(none)" if raw is not None else "(not wired)")]
+
+
+def _visibility_pane_entries(
+    snap: dict, kind: str, fallback_key: "str | None"
+) -> "list[tuple[str, str]]":
+    """``(row, slash)`` for one capability-visibility category (tool/skill).
+    See :func:`_visibility_pane_rows` for the full grammar rationale — this
+    is just the flattened form :data:`_PANE_ENTRY_BUILDERS` needs. The mcp
+    pane no longer uses this directly (see :func:`_mcp_pane_entries`), which
+    needs the structured rows to attach the subscription augmentation."""
+    return [r.as_entry() for r in _visibility_pane_rows(snap, kind, fallback_key)]
+
+
+def _mcp_pane_entries(snap: dict) -> "list[tuple[str, str]]":
+    """``(row, slash)`` for the mcp pane — :func:`_visibility_pane_rows`'
+    rows (the ``tool``/``skill`` two-axes grammar, #3378) PLUS, per #4686, a
+    subscription note on each server row and an indented sub-row per
+    subscribed URI beneath it.
+
+    #4686 owner-approved grammar (issue #4686, architect comment
+    2026-08-14): rows are indented, unnumbered — a NEW capability for the
+    mcp pane specifically, mirroring the ``agent`` pane's own indented
+    session-under-agent rows (see :func:`_agent_pane_entries`) rather than
+    inventing a second indentation convention:
+
+        broker         [on]  · subscribed
+            broker://inbox/reyn-reviewer
+        filesystem     [on]
+        some-server    [--]  · turn_context
+
+    **The row population is the REQUESTED URI set, never honored-only**
+    (owner-approved, same issue, follow-up architect comment) — a URI the
+    server declined must stay ON SCREEN, not disappear, or this pane
+    reproduces the exact "subscribed but can't tell if it's still alive"
+    blind spot #4686 exists to close. Three URI-row states follow from that:
+
+    - requested ∈ honored           → no mark ("it's live")
+    - requested ∉ honored (honored is a set) → ``· not honored``
+    - honored is ``None`` for the server → the SERVER row (not each URI)
+      gets ``· unconfirmed`` instead; there is nothing to distinguish
+      URI-by-URI when the connection can't report honored-ness at all.
+
+    A server row that already carries a ``· <denial reason>`` note (the
+    ``[--]`` envelope/turn-context axis) gets the subscription note appended
+    after it, since the two notes answer different questions and #3378's
+    "two axes, two markers" rule is about STATE marks, not note text.
+
+    Listen-mode connections use this SAME grammar — ``SubscriptionAdapter``
+    (both Legacy and Listen) already speaks in one URI-set vocabulary at the
+    port level (subscription_port.py), so no Listen-specific row shape is
+    needed. The only per-adapter difference is whether ``unhonored`` comes
+    back as ``None`` (Legacy always; Listen only until #3698 makes a
+    per-URI ack observable) or a real set — i.e. which of the two marks
+    above applies, not a different row shape. As of #4686 no live connection
+    negotiates Listen yet, so ``· not honored`` cannot be observed in
+    production today; it is implemented anyway so #3698 landing does not
+    require redrawing this grammar, only exercising a branch already here."""
+    rows = _visibility_pane_rows(snap, "mcp", "mcp_servers")
+    subs_by_server = {s["server"]: s for s in (snap.get("mcp_subscriptions") or [])}
+    out: "list[DrawerRow]" = []
+    for row in rows:
+        sub = subs_by_server.get(row.label)
+        if sub is None or not sub.get("uris"):
+            out.append(row)
+            continue
+        uris = sub["uris"]
+        unhonored = sub.get("unhonored")
+        mark = "unconfirmed" if unhonored is None else "subscribed"
+        out.append(replace(row, note=f"{row.note} · {mark}" if row.note else mark))
+        unhonored_set = set(unhonored) if unhonored is not None else set()
+        for uri in uris:
+            out.append(DrawerRow(
+                label=f"    {uri}",
+                note="not honored" if uri in unhonored_set else None,
+            ))
+    return [r.as_entry() for r in out]
 
 
 def _hook_pane_entries(snap: dict) -> "list[tuple[str, str]]":
@@ -1406,7 +1487,7 @@ _PANE_ENTRY_BUILDERS: "dict[str, object]" = {
         s.get("agent_names") or [], s.get("attached_name"), s.get("session_tree") or []
     ),
     "tool": lambda s: _visibility_pane_entries(s, "tool", None),
-    "mcp": lambda s: _visibility_pane_entries(s, "mcp", "mcp_servers"),
+    "mcp": _mcp_pane_entries,
     "skill": lambda s: _visibility_pane_entries(s, "skill", "skills"),
     "hook": _hook_pane_entries,
 }
