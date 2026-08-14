@@ -95,16 +95,32 @@ def read_last_line(path: Path, *, chunk_size: int = 8192) -> "str | None":
     real assigned ``seq`` (post-#3704: every append does) — if it does not,
     ``load_history`` falls back to a full forward read rather than trust a
     partial tail slice for ``_next_seq`` derivation (see that module's own
-    reasoning)."""
-    if not path.is_file():
+    reasoning).
+
+    #4676 (sibling of #4671's ``history_file_stats`` fix, same reasoning):
+    a prior revision checked ``path.is_file()`` BEFORE ``stat()``/
+    ``open()`` — this docstring's own opening line promises ``None`` for
+    "missing", but a file that vanishes in the gap between the check and
+    the use instead raised ``FileNotFoundError``, breaking that promise.
+    Fixed the same way #4671 fixed ``history_file_stats``: catch
+    ``FileNotFoundError`` only — any OTHER ``OSError`` (e.g. a permission
+    error) is deliberately NOT swallowed, since silently returning the
+    "missing" result for a file that genuinely could not be read would
+    misreport it (D-1: measure, don't fake). (#4676 measured whether this
+    gap is reachable at all before fixing it — see that issue for the
+    finding; not restated here, since HOW a file could vanish is not this
+    docstring's promise to keep, only THAT a vanished file returns the
+    documented result rather than raising.)"""
+    try:
+        size = path.stat().st_size
+        if size == 0:
+            return None
+        read_size = min(chunk_size, size)
+        with path.open("rb") as f:
+            f.seek(size - read_size)
+            buf = f.read(read_size)
+    except FileNotFoundError:
         return None
-    size = path.stat().st_size
-    if size == 0:
-        return None
-    read_size = min(chunk_size, size)
-    with path.open("rb") as f:
-        f.seek(size - read_size)
-        buf = f.read(read_size)
     search_end = len(buf) - 1 if buf.endswith(b"\n") else len(buf)
     idx = buf.rfind(b"\n", 0, search_end)
     if idx == -1:
@@ -123,30 +139,36 @@ def read_history_tail(
     """Read *path* backward from EOF, returning raw JSON-line strings in
     FILE order (oldest line in the returned slice first). Empty list if the
     file is missing or empty. See module docstring for the stop condition.
-    """
-    if not path.is_file():
-        return []
 
+    #4676: see :func:`read_last_line`'s docstring — same TOCTOU shape,
+    same fix: this function's own opening line already promises an empty
+    list for "missing"; catching ``FileNotFoundError`` (only) around the
+    read that can raise it, instead of a preceding ``is_file()`` check,
+    is what keeps that promise."""
     collected: list[str] = []
     seen_summary = False
-    # Stop condition is (seen_summary AND collected >= min_lines) — NEVER
-    # "collected >= min_lines" alone. Without a summary, we cannot tell
-    # "no compaction has EVER run" (everything is uncompacted, so a
-    # short-circuit here would violate the watermark-completeness invariant
-    # every bounded consumer depends on) apart from "the summary is just
-    # further back than min_lines" (test_read_history_tail_reads_past_the_
-    # floor_to_include_the_latest_summary) — both look identical until BOF
-    # is actually reached, so BOF is the only safe fallback stop.
-    for line in _iter_raw_lines_reverse(path, chunk_size=chunk_size):
-        collected.append(line)
-        if not seen_summary:
-            try:
-                if json.loads(line).get("role") == "summary":
-                    seen_summary = True
-            except (json.JSONDecodeError, AttributeError):
-                pass
-        if len(collected) >= min_lines and seen_summary:
-            break
+    try:
+        # Stop condition is (seen_summary AND collected >= min_lines) —
+        # NEVER "collected >= min_lines" alone. Without a summary, we
+        # cannot tell "no compaction has EVER run" (everything is
+        # uncompacted, so a short-circuit here would violate the
+        # watermark-completeness invariant every bounded consumer depends
+        # on) apart from "the summary is just further back than min_lines"
+        # (test_read_history_tail_reads_past_the_floor_to_include_the_
+        # latest_summary) — both look identical until BOF is actually
+        # reached, so BOF is the only safe fallback stop.
+        for line in _iter_raw_lines_reverse(path, chunk_size=chunk_size):
+            collected.append(line)
+            if not seen_summary:
+                try:
+                    if json.loads(line).get("role") == "summary":
+                        seen_summary = True
+                except (json.JSONDecodeError, AttributeError):
+                    pass
+            if len(collected) >= min_lines and seen_summary:
+                break
+    except FileNotFoundError:
+        return []
 
     collected.reverse()
     return collected
@@ -247,30 +269,34 @@ def read_history_after(
     here. #4477's own first task is measuring ``head_budget + tail_budget``'s
     worst case, not implementing the warn — reachability is confirmed
     before a mechanism is built.
-    """
-    if not path.is_file():
-        return [], False
 
+    #4676: see :func:`read_last_line`'s docstring — same TOCTOU shape,
+    same fix (this docstring's own promise for a missing file, kept by
+    the implementation).
+    """
     collected: list[str] = []
     total_bytes = 0
     truncated = False
-    with path.open("r", encoding="utf-8") as f:
-        for raw in f:
-            line = raw.strip()
-            if not line:
-                continue
-            try:
-                seq = int(json.loads(line).get("seq", 0) or 0)
-            except (json.JSONDecodeError, AttributeError, TypeError, ValueError):
-                seq = 0
-            if seq != 0 and seq <= after_seq:
-                continue
-            line_bytes = len(line.encode("utf-8"))
-            if collected and total_bytes + line_bytes > max_bytes:
-                truncated = True
-                break
-            collected.append(line)
-            total_bytes += line_bytes
+    try:
+        with path.open("r", encoding="utf-8") as f:
+            for raw in f:
+                line = raw.strip()
+                if not line:
+                    continue
+                try:
+                    seq = int(json.loads(line).get("seq", 0) or 0)
+                except (json.JSONDecodeError, AttributeError, TypeError, ValueError):
+                    seq = 0
+                if seq != 0 and seq <= after_seq:
+                    continue
+                line_bytes = len(line.encode("utf-8"))
+                if collected and total_bytes + line_bytes > max_bytes:
+                    truncated = True
+                    break
+                collected.append(line)
+                total_bytes += line_bytes
+    except FileNotFoundError:
+        return [], False
 
     return collected, truncated
 
@@ -292,21 +318,25 @@ def read_history_before(
     whatever got the caller its current ``self.history`` in the first
     place); it is only answering "give me up to N more lines older than
     what I already have," which ``min_lines`` alone answers correctly.
-    """
-    if not path.is_file():
-        return []
 
+    #4676: see :func:`read_last_line`'s docstring — same TOCTOU shape,
+    same fix (this docstring's own promise for a missing file, kept by
+    the implementation).
+    """
     collected: list[str] = []
-    for line in _iter_raw_lines_reverse(path, chunk_size=chunk_size):
-        try:
-            seq = int(json.loads(line).get("seq", 0) or 0)
-        except (json.JSONDecodeError, AttributeError, TypeError, ValueError):
-            seq = 0
-        if seq >= before_seq:
-            continue
-        collected.append(line)
-        if len(collected) >= min_lines:
-            break
+    try:
+        for line in _iter_raw_lines_reverse(path, chunk_size=chunk_size):
+            try:
+                seq = int(json.loads(line).get("seq", 0) or 0)
+            except (json.JSONDecodeError, AttributeError, TypeError, ValueError):
+                seq = 0
+            if seq >= before_seq:
+                continue
+            collected.append(line)
+            if len(collected) >= min_lines:
+                break
+    except FileNotFoundError:
+        return []
 
     collected.reverse()
     return collected
