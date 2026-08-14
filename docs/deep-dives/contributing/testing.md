@@ -1225,6 +1225,25 @@ rather than "suite passed" — that phrase implies the full local run this
 section no longer asks for, and CI is the only place all six now run
 together.
 
+**A PR that touches `docs/` also owes a seventh, separate check — the
+"docs build (strict)" CI job runs two steps, and both must pass:**
+
+```bash
+mkdocs build --strict -f .mkdocs/mkdocs.yml && python scripts/check_doc_anchors.py
+```
+
+Run them as a pair, in that order, not either alone. `mkdocs build
+--strict` catches a dangling *file* reference but never checks whether
+`#anchor` actually exists on the target page — that's
+`check_doc_anchors.py`'s own job, checked against the `site/` the
+mkdocs step just built (#3557/#3592: 42/42 line-number citations in
+`charter.md` had drifted, silently, before this script existed).
+Running `check_doc_anchors.py` alone, without a prior `mkdocs build`,
+raises an `AssertionError` from a missing `site/` — which reads as
+"main is broken," not as "run the other command first" (#4651: this
+exact confusion, live, the same night a `git grep` first found this
+script named in neither this file nor `CLAUDE.md`).
+
 ---
 
 ## Coverage checklist for a new OS feature

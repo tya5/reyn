@@ -261,6 +261,21 @@ full reasoning (why the full run was dropped, not just discouraged; what
 running it locally actually costs vs. CI; the #3750 count history) before
 changing this paragraph, in either doc. This line said `ruff check src tests` until #4630 measured the gap: CI runs `ruff check .` (`test.yml:162`), so the documented command silently skipped `scripts/` and every other top-level directory — a PR author who followed it exactly still went red, and 17 genuinely-dead imports outside `src/` had been invisible to the whole checklist. Run the same command CI runs; a narrower local gate is a green that does not mean what it says.
 
+**If your PR touches `docs/`, also run `mkdocs build --strict -f
+.mkdocs/mkdocs.yml && python scripts/check_doc_anchors.py`** — as a
+pair, in that order, not either alone. CI's "docs build (strict)" job
+runs both steps (`test.yml`'s `docs` job); `mkdocs build --strict`
+catches a dangling *file* reference but never checks whether `#anchor`
+actually exists on the target page, which is `check_doc_anchors.py`'s
+own job, run against the `site/` the mkdocs step just built (#3557/
+#3592: 42/42 line-number citations in `charter.md` had drifted,
+silently, before this script existed). Running `check_doc_anchors.py`
+alone without a prior `mkdocs build` first raises an `AssertionError`
+from a missing `site/` — which reads as "main is broken," not as "run
+the other command first" (#4651: this exact confusion, the same
+`git grep` finding 0 mentions of the script in either this file or
+`testing.md`, until now).
+
 A green scoped `pytest` alone is
 **not** a green CI run (`pytest-green ≠ CI-green`): ruff `I001` import-sort
 and a Tier-4 format pin (`len(...) == N`) both fail CI while `pytest`
