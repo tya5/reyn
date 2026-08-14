@@ -114,31 +114,33 @@ def test_usage_is_none_not_zero_when_the_response_carries_none(monkeypatch) -> N
     assert summary.cost_usd is None
 
 
-def test_compaction_completed_event_carries_the_usage_end_to_end() -> None:
-    """Tier 2: through the REAL CompactionController — the compaction_completed
-    event it emits (which lifecycle_forwarder.py reads to build the
-    conversation-face marker) carries the same real usage the engine
-    returned, not a re-derived or aggregated figure. Reuses
-    test_compaction_controller_invariants.py's own controller-construction
-    helper; only the stub engine's ChatSummary is new here."""
-    class _EngineWithUsage(CompactionEngine):
-        def __init__(self) -> None:
-            self._model = ""
-            self._events = EventLog()
-            self._budgets = _STUB_BUDGETS
+def test_compaction_completed_event_carries_the_usage_end_to_end(monkeypatch) -> None:
+    """Tier 2: through the REAL CompactionController AND a REAL
+    CompactionEngine (lead-coder's TESTS-READ block on this PR: a hand-made
+    ``__init__``-bypassing stub was unnecessary — this file's OWN first
+    test already proves a real ``CompactionEngine`` is cheap to construct
+    with a scripted ``litellm.acompletion``, the same Tier 2c pattern
+    ``test_cost_chokepoint_1190.py`` uses). Only ``_budgets`` is overridden
+    post-construction (a plain data attribute, not a faked collaborator —
+    ``compact()``/the chokepoint/usage-capture are all the genuine
+    methods) so this file's small synthetic history actually yields a
+    middle candidate, mirroring ``test_compaction_controller_invariants.py``'s
+    own ``_STUB_BUDGETS`` shaping."""
+    async def _fake(model, messages, **kw):  # noqa: ANN001, ANN003
+        return _resp(prompt=500, completion=50, content=_SUMMARY_CONTENT)
+    monkeypatch.setattr(litellm, "acompletion", _fake)
 
-        async def compact(self, input_chunk) -> ChatSummary:
-            seqs = [int(t.get("seq", 0)) for t in input_chunk.new_turns if isinstance(t, dict)]
-            return ChatSummary(
-                topic_arc="stub", covers_through_seq=max(seqs) if seqs else 0,
-                prompt_tokens=500, completion_tokens=50, cost_usd=0.0031,
-            )
+    engine = CompactionEngine(
+        model=_PRICED_MODEL, events=EventLog(),
+        cfg=CompactionConfig(use_chars4_estimate=True),
+    )
+    engine._budgets = _STUB_BUDGETS  # noqa: SLF001 — test-setup shaping, not an assertion
 
-    ctrl, collected, _ = _make_controller(history=_history(7), engine=_EngineWithUsage())
+    ctrl, collected, _ = _make_controller(history=_history(7), engine=engine)
     asyncio.run(ctrl.force_compact_now())
 
     completed = [e for e in collected if e.type == "compaction_completed"]
     assert completed, "compaction_completed must fire"
     assert completed[0].data["prompt_tokens"] == 500
     assert completed[0].data["completion_tokens"] == 50
-    assert completed[0].data["cost_usd"] == 0.0031
+    assert completed[0].data["cost_usd"] is not None and completed[0].data["cost_usd"] > 0.0
