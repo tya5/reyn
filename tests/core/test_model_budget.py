@@ -112,7 +112,22 @@ def test_unknown_prefixed_model_still_falls_back() -> None:
 
 def test_source_for_cataloged_model_names_litellm() -> None:
     """Tier 2: get_max_input_tokens_source (status-bar ctx chip's source line)
-    names "litellm catalog" — not the fallback — for a real cataloged model."""
+    names "litellm catalog" — not the fallback — for a real cataloged model.
+
+    #4680②: this test's own subject is the CATALOG-HIT path, which
+    requires litellm to have actually finished importing — a DIFFERENT
+    (and real, #4680② confirmed) axis is whether it has, which this test
+    is not about. Blocks on the real, non-mocked ``ensure_litellm_ready``
+    first (not a sleep — waits on the actual condition, unbounded, per
+    testing.md § Time) so this test exercises the catalog-hit path
+    deterministically regardless of run order — before this fix, running
+    this test FIRST in a fresh process (no prior call anywhere had warmed
+    litellm) hit the NOT_READY fallback instead, a pre-existing
+    order-dependent flake this PR's own NOT_READY/UNCATALOGED split made
+    newly legible (the assertion failure now names which state it hit)."""
+    from reyn.llm.litellm_bootstrap import ensure_litellm_ready
+    ensure_litellm_ready()
+
     source = get_max_input_tokens_source("gemini/gemini-2.5-flash-lite")
     assert source.startswith("litellm catalog:")
     assert "gemini/gemini-2.5-flash-lite" in source
@@ -131,7 +146,14 @@ def test_source_for_unknown_model_names_reyn_fallback() -> None:
 def test_source_for_prefix_strip_resolved_model_names_bare_litellm_hit() -> None:
     """Tier 2: a proxy-prefixed model that only resolves via #1162's bare-name
     retry still reports "litellm catalog" (naming the bare model), matching
-    what get_max_input_tokens actually used — not a fallback claim."""
+    what get_max_input_tokens actually used — not a fallback claim.
+
+    #4680②: same real-readiness precondition as
+    test_source_for_cataloged_model_names_litellm above — see its
+    docstring for why."""
+    from reyn.llm.litellm_bootstrap import ensure_litellm_ready
+    ensure_litellm_ready()
+
     if get_max_input_tokens(_BARE) == _FALLBACK_MAX_INPUT_TOKENS:
         pytest.skip(f"litellm catalog lacks {_BARE!r} in this env")
     source = get_max_input_tokens_source(f"openai/{_BARE}")
