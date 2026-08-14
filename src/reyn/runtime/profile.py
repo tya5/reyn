@@ -17,6 +17,14 @@ restricted to `reyn.runtime.preferences.PREFERENCE_KEYS`. Absent/empty is
 the common case (most agents set no preference override at all); a
 malformed key raises at `load()` time rather than being silently ignored
 (the `preferences` module's own `validate_preferences`).
+
+#4206 ② adds `bounding`: an agent-layer ceiling mapping (see
+`reyn.runtime.bounding`) — SAME flat dotted-key shape as `preferences`
+above, but a DIFFERENT composition (narrowest wins, never widens) and a
+DIFFERENT, disjoint key vocabulary (`BOUNDING_KEYS`, currently `{"model"}`
+only). Kept as a separate field/key rather than folded into `preferences`
+because the two axes' composition functions differ — see
+`reyn.runtime.bounding`'s module docstring for the full reasoning.
 """
 from __future__ import annotations
 
@@ -47,6 +55,10 @@ class AgentProfile:
     # shape `reyn.runtime.preferences.resolve_preference` expects directly
     # (no None-check needed at every call site).
     preferences: "dict[str, object]" = field(default_factory=dict)
+    # #4206 ②: bounding-axis ceilings, dotted key -> value, keys restricted
+    # to `reyn.runtime.bounding.BOUNDING_KEYS`. Same "empty dict, not None"
+    # shape as `preferences` above.
+    bounding: "dict[str, object]" = field(default_factory=dict)
 
     @classmethod
     def new(cls, name: str, role: str = "") -> "AgentProfile":
@@ -64,7 +76,12 @@ class AgentProfile:
         `reyn.runtime.preferences.PREFERENCE_KEYS` raises
         `UnknownPreferenceKeyError` — a typo'd/renamed preference key must
         not silently do nothing, the same discipline #4655 established for
-        config-schema dict-leaves."""
+        config-schema dict-leaves.
+
+        #4206 ②: a `bounding:` mapping with a key outside
+        `reyn.runtime.bounding.BOUNDING_KEYS` raises `UnknownBoundingKeyError`
+        the same way."""
+        from reyn.runtime.bounding import validate_bounding
         from reyn.runtime.preferences import validate_preferences
 
         path = agent_dir / PROFILE_FILENAME
@@ -81,12 +98,16 @@ class AgentProfile:
         raw_preferences = data.get("preferences") or {}
         preferences = dict(raw_preferences) if isinstance(raw_preferences, dict) else {}
         validate_preferences(preferences, source=f"agent {name!r} profile.yaml")
+        raw_bounding = data.get("bounding") or {}
+        bounding = dict(raw_bounding) if isinstance(raw_bounding, dict) else {}
+        validate_bounding(bounding, source=f"agent {name!r} profile.yaml")
         return cls(
             name=name,
             role=str(data.get("role", "") or ""),
             created_at=str(data.get("created_at", "") or ""),
             allowed_mcp=allowed_mcp,
             preferences=preferences,
+            bounding=bounding,
         )
 
     def save(self, agent_dir: Path) -> None:
@@ -104,6 +125,8 @@ class AgentProfile:
             payload["allowed_mcp"] = list(self.allowed_mcp)
         if self.preferences:
             payload["preferences"] = dict(self.preferences)
+        if self.bounding:
+            payload["bounding"] = dict(self.bounding)
         path.write_text(
             yaml.safe_dump(payload, allow_unicode=True, sort_keys=False),
             encoding="utf-8",

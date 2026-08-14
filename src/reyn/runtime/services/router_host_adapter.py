@@ -418,6 +418,11 @@ class RouterHostAdapter:
         # reasoning_display_fn above. None (every pre-Slice-B caller, every
         # test host) means "no overrides", byte-identical to before Slice B.
         warn_ratio_overrides_fn: "Callable[[], dict[str, float]] | None" = None,
+        # #4206 ②: bounding-axis live composed `model` ceiling — same
+        # callback shape as warn_ratio_overrides_fn above. None (every
+        # pre-② caller, every test host) falls back to the resolver's own
+        # project-level ceiling, byte-identical to before this slice.
+        model_class_ceiling_fn: "Callable[[], str | None] | None" = None,
         # Issue #383 PR-C: media + tool-result file storage.
         media_store: Any = None,
         # #1128 size axis: per-turn tool-result cap/offload callable. Takes the
@@ -613,6 +618,8 @@ class RouterHostAdapter:
         # #4206 Slice B (#4724): ③ preference-axis live override for the
         # cost.*.warn_ratio keys.
         self._warn_ratio_overrides_fn = warn_ratio_overrides_fn
+        # #4206 ②: bounding-axis live composed `model` ceiling.
+        self._model_class_ceiling_fn = model_class_ceiling_fn
         # Issue #383 PR-C: store the MediaStore for path-ref save/read.
         self._media_store = media_store
         # #1128 size axis: per-turn tool-result cap/offload callable (or None).
@@ -2016,6 +2023,16 @@ class RouterHostAdapter:
         if self._warn_ratio_overrides_fn is not None:
             return self._warn_ratio_overrides_fn()
         return {}
+
+    def model_class_ceiling(self) -> "str | None":
+        """#4206 ②: the caller-resolved bounding-axis composed ``model``
+        ceiling, or ``self._resolver.class_ceiling()`` (the project-only
+        value, #4206 T1's own accessor, unchanged) when
+        ``model_class_ceiling_fn`` was not supplied (every pre-② caller,
+        every test host) — byte-identical to before this slice."""
+        if self._model_class_ceiling_fn is not None:
+            return self._model_class_ceiling_fn()
+        return self._resolver.class_ceiling()
 
     def reasoning_continuity_enabled(self) -> bool:
         """Whether reasoning is persisted to history + replayed into the next

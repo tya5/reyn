@@ -99,7 +99,7 @@ Each agent owns `.reyn/agents/<name>/`:
 
 | Path | Purpose |
 |------|---------|
-| `profile.yaml` | name / role / created_at / allowed_mcp / preferences |
+| `profile.yaml` | name / role / created_at / allowed_mcp / preferences / bounding |
 | `history.jsonl` | append-only conversation + agent message log |
 | `events.jsonl` | runtime event audit log |
 | `memory/MEMORY.md` + body files | agent-scoped memory layer |
@@ -162,6 +162,55 @@ uses); a session-layer value by whatever spawns the session passing a
 `narrowing` dict whose own `preferences` sub-key is set
 (`AgentRegistry.spawn_session`'s existing `narrowing=` parameter — no new
 API).
+
+## `bounding` (#4206 ②) — restrict-only: a child may narrow, never widen
+
+A `bounding:` mapping in `profile.yaml` sets an agent-layer CEILING for one
+or more of a fixed set of dotted config keys
+(`reyn.runtime.bounding.BOUNDING_KEYS`) — today: `model` only. Unlike
+`preferences:` above, this axis exists BECAUSE the key it covers consumes
+a shared, bounded resource (the process-shared `BudgetTracker`'s
+daily/monthly quota) — a free override here would let a child exhaust the
+parent's own budget, so the composition is restrict-only instead.
+
+```yaml
+# .reyn/agents/researcher/profile.yaml
+name: researcher
+role: deep technical research, prefers primary sources
+created_at: "2026-08-14T00:00:00+00:00"
+bounding:
+  model: light
+```
+
+**Narrowest wins, restrict-only**: the EFFECTIVE `model` ceiling a session
+enforces (`Session.model_class_ceiling`) is the narrowest (cheapest, per
+`reyn.llm.model_resolver.STANDARD_CLASSES`' own `light < standard < strong`
+order) of three layers — the project's own `llm.model_max_class`, this
+agent's `bounding.model`, and (session wins over agent, same precedence
+③ uses) the spawned session's own `<session-state-dir>/config.yaml`
+`bounding.model`. A layer that declares a WIDER class than a layer above
+it never widens the effective ceiling — only a NARROWER declaration moves
+it. A layer that declares no ceiling at all, or a class outside the 3
+standard tiers, is simply ignored (not comparable), the same "not an
+error, just not a narrowing" shape `model_class_exceeds_ceiling` itself
+already has for an incomparable value.
+
+An unrecognized key under `bounding:` (a typo, or a key outside
+`BOUNDING_KEYS`) fails LOUDLY at load time (`reyn.runtime.bounding.
+UnknownBoundingKeyError`) rather than silently doing nothing — the same
+discipline `preferences:` above uses.
+
+**Enforcement**: the composed ceiling reaches the SAME #1190 chokepoint
+(`recorded_acompletion`) #4206 T1 already enforced a project-only ceiling
+at — a call whose resolved class exceeds it is REJECTED
+(`ModelClassExceedsCeilingError`) before `litellm.acompletion` is ever
+invoked. ②'s own change is only WHERE the ceiling value comes from: a
+live per-call 3-layer composition instead of a value read once at
+`RouterLoop` construction.
+
+**Scope**: `model` only — `timeout`/`router_max_iterations` are explicitly
+OUT of `BOUNDING_KEYS` for now (no driving reason measured yet for
+`timeout`, and `router_max_iterations` has no config key at all today).
 
 ## See also
 

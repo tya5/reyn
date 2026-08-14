@@ -914,18 +914,18 @@ class RouterLoop:
         self.router_model = resolve_purpose_class(
             router_model, _resolver, "router",
         )
-        # #4206 T1 (②bounding): the project-declared ceiling, if any — read
-        # once here (not re-fetched per call) since the resolver is
-        # process-wide and its ceiling doesn't change mid-session. No
-        # ``hasattr`` fallback here (unlike ``resolve_purpose_class`` above):
-        # that fallback's failure direction is a harmless value default
-        # ("standard"); this one's is a WIDENING one — a resolver that can't
-        # answer ``class_ceiling()`` would silently make the ceiling
-        # disappear. A host whose ``resolver`` is not a real ``ModelResolver``
-        # should raise (fail loud), not go unbounded (lead-coder review, #4318).
-        self._model_class_ceiling = (
-            _resolver.class_ceiling() if _resolver is not None else None
-        )
+        # #4206 T1 (②bounding): the project-declared ceiling. ``_resolver``
+        # itself is kept (not the resolved ceiling value) so
+        # ``_model_class_ceiling()`` below can re-read it LIVE on every
+        # call (#4206 ②'s own session/agent-layer composition, which can
+        # change mid-session as an operator edits config, unlike the
+        # single project-only value this ivar held before ②). ``None``
+        # when the host has no ``resolver`` at all (byte-identical to
+        # before — a compat default, never a raise); once a resolver
+        # exists, a resolver that can't answer ``class_ceiling()`` still
+        # raises (fail loud, not silently unbounded — lead-coder review,
+        # #4318, unchanged by ②'s conversion to a live read).
+        self._resolver = _resolver
         self.budget = budget
         # When set, RouterLoop skips ``build_system_prompt(host=...)`` and uses
         # this string verbatim as the system message. Plan executor uses this
@@ -1146,6 +1146,30 @@ class RouterLoop:
         ``_prompt_cache_key`` immediately above."""
         _fn = getattr(self.host, "warn_ratio_overrides", None)
         return _fn() if _fn is not None else {}
+
+    def _model_class_ceiling(self) -> "str | None":
+        """#4206 ②: the composed model-class ceiling, read live each call —
+        replaces the former construction-time-cached ``self.
+        _model_class_ceiling`` ivar (#4206 T1) with a per-call read so the
+        session/agent bounding-axis composition (#4206 ②) is reflected on
+        every call, not frozen at the value in effect when RouterLoop was
+        constructed.
+
+        ``self._resolver is None`` (a host with no ``resolver`` at all) ->
+        ``None``, byte-identical to the pre-② construction-time read.
+        Once a resolver exists, ``host.model_class_ceiling()`` is preferred
+        when the host offers it (the real ``RouterHostAdapter`` path, live
+        3-layer composition); a host that has a resolver but not that
+        method falls back to ``self._resolver.class_ceiling()`` directly —
+        the SAME un-guarded call the pre-② code made, so a resolver that
+        can't answer it still raises (fail loud, not silently unbounded —
+        lead-coder review, #4318, unchanged by this conversion)."""
+        if self._resolver is None:
+            return None
+        _fn = getattr(self.host, "model_class_ceiling", None)
+        if _fn is not None:
+            return _fn()
+        return self._resolver.class_ceiling()
 
     def _emit_agent_delta(self, text: str) -> None:
         """#3288 ③b: forward one streamed content-delta chunk as an audit-event
@@ -1898,7 +1922,7 @@ class RouterLoop:
                         # class via ``class_for_purpose`` (self.router_model)
                         # — subject to the ceiling.
                         model_class=self.router_model,
-                        model_class_ceiling=self._model_class_ceiling,
+                        model_class_ceiling=self._model_class_ceiling(),  # #4206 ②
                         prompt_cache_key=self._prompt_cache_key(),  # #4700
                         warn_ratio_overrides=self._warn_ratio_overrides(),  # #4206 Slice B
                     )
@@ -2663,7 +2687,7 @@ class RouterLoop:
                     # #4206 T1 (②bounding): same router-purpose class as the
                     # main tool-turn call.
                     model_class=self.router_model,
-                    model_class_ceiling=self._model_class_ceiling,
+                    model_class_ceiling=self._model_class_ceiling(),  # #4206 ②
                     prompt_cache_key=self._prompt_cache_key(),  # #4700
                     warn_ratio_overrides=self._warn_ratio_overrides(),  # #4206 Slice B
                 )
@@ -2752,7 +2776,7 @@ class RouterLoop:
             # #4206 T1 (②bounding): the wrap-up call still resolves the
             # router-purpose class — same ceiling applies.
             model_class=self.router_model,
-            model_class_ceiling=self._model_class_ceiling,
+            model_class_ceiling=self._model_class_ceiling(),  # #4206 ②
             prompt_cache_key=self._prompt_cache_key(),  # #4700
             warn_ratio_overrides=self._warn_ratio_overrides(),  # #4206 Slice B
         )
