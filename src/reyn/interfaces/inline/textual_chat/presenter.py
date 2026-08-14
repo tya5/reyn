@@ -42,6 +42,7 @@ from ._meta_keys import PIPELINE_RUN_KEY as _PIPELINE_RUN_KEY
 from ._meta_keys import RESULT_KIND_KEY as _RESULT_KIND_KEY
 from ._meta_keys import RESULT_META_KEY as _RESULT_META_KEY
 from ._meta_keys import RUNNING_SINCE_KEY as _RUNNING_SINCE_KEY
+from .gutter import _is_retrieval_tool
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -324,6 +325,52 @@ def _tool_result_line(msg: "OutboxMessage") -> "tuple[Text, str | None]":
     )
 
 
+def _collapsed_retrieval_line(msg: "OutboxMessage") -> "Text | None":
+    """#4662 (#3329's deferred body half): a SETTLED, non-expanded,
+    non-failed retrieval tool call's row, folded to ONE dim line —
+    ``tool(args) → summary`` — instead of the usual two-line ``tool(args)``
+    header + ``⎿ summary`` result. Returns ``None`` when the row does not
+    qualify (not settled, not retrieval, currently expanded, or failed),
+    so the caller falls through to the ordinary two-line form unchanged.
+
+    Reuses :func:`_is_retrieval_tool` (#3329's own ``ToolDefinition.purity``
+    derivation — no second taxonomy) and the SAME
+    :func:`summarize_tool_result` the two-line form already calls, so a
+    row reads identically whichever shape it takes, just spread over one
+    line instead of two.
+
+    The full result is not lost: #3508's existing highlight-expand
+    mechanism (:func:`_tool_result_line`) still fires when the row's
+    highlight arrives, exactly as it does for a side-effect tool's row —
+    this function only changes the COLLAPSED, unhighlighted default,
+    never removes the expand path.
+
+    Failure is excluded on purpose, mirroring #3329's gutter demotion:
+    a failed retrieval call still needs the operator's attention
+    regardless of the tool's op-class, so it keeps the ordinary
+    two-line/coral-tinted form."""
+    meta = msg.meta or {}
+    if meta.get(_EXPANDED_KEY):
+        return None
+    result_kind = meta.get(_RESULT_KIND_KEY)
+    if result_kind is None or result_kind == "tool_call_failed":
+        return None
+    tool = str(meta.get("tool", msg.text))
+    if not _is_retrieval_tool(tool):
+        return None
+    result_meta = meta.get(_RESULT_META_KEY) or {}
+    if result_kind == _ORPHANED_RESULT_KIND:
+        summary = "(no result — turn ended)"
+    else:
+        summary = summarize_tool_result(tool, result_meta.get("result"))
+        if summary.startswith("✗"):
+            return None  # a summary-shaped failure (D-2 kind, non-raising) — same exclusion
+    args = _summarize_args(meta.get("args"))
+    return Text.assemble(
+        (tool, _CC_DIM), (f"({args})", _CC_DIM), (" → ", _CC_DIM), (summary, _CC_DIM),
+    )
+
+
 def _running_indicator(msg: "OutboxMessage", now: float) -> Text:
     """The live ``⠙ elapsed Ns`` indicator line for an in-flight tool row.
 
@@ -416,12 +463,19 @@ def _body_and_background(
     # kind == "intervention" is intercepted earlier, in ``ReynPresenter.present``
     # (the pending/resolved placeholder — #3299 P1), so it never reaches here.
     if kind == "tool_call_started":
-        head = _tool_head(msg)
         if meta.get(_RESULT_KIND_KEY) is not None:
+            # #4662: a settled, non-expanded, non-failed retrieval call folds
+            # to ONE dim line instead of the usual header+result pair —
+            # checked BEFORE the two-line form below, never after (the two-
+            # line form is the fallback, not the default this overrides).
+            collapsed = _collapsed_retrieval_line(msg)
+            if collapsed is not None:
+                return collapsed, None
             # Settled (coalesced): the tool call folded together with its result.
+            head = _tool_head(msg)
             result_line, background = _tool_result_line(msg)
             return Group(head, result_line), background
-        return head, None
+        return _tool_head(msg), None
     if kind == "tool_call_completed":
         summary = summarize_tool_result(meta.get("tool"), meta.get("result"))
         failed = summary.startswith("✗")
