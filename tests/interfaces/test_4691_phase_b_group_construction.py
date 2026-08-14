@@ -7,10 +7,12 @@ emits, even content-less) and ④ (the parent's own RUNNING→settled spinner,
 aggregated from its children) are this Group construction's direct
 consumers — the reason both were deferred to Phase B in the first place.
 
-Default stays fully EXPANDED (owner ruling, #4691) — B1 wires the fold keys
-(flowview 0.21.1's own vim z-prefix, no reyn-side binding needed) but never
-calls ``.collapse()`` itself, so this file also pins that a freshly built
-Group is never auto-folded.
+Default stays fully EXPANDED (owner ruling, #4691) — B1 itself never calls
+``.collapse()``, so this file also pins that a freshly built Group is never
+auto-folded. flowview's own vim z-prefix (``za``, no reyn-side binding
+needed) reaches a Group parent's fold; Space does NOT yet (owner-reported,
+#4775 — separately scoped, its own test lives in that PR, not this file
+until #4775 lands).
 
 All use a real, mounted :class:`TextualChatApp`, real
 :class:`~reyn.runtime.outbox.OutboxMessage` / EventFrame, and a real
@@ -31,10 +33,21 @@ from reyn.runtime.outbox import OutboxMessage
 from reyn.schemas.models import Event
 
 
-def _parent_row(call_id: str, *, text: str = "") -> OutboxMessage:
+def _parent_row(
+    call_id: str,
+    *,
+    text: str = "",
+    finish_reason: "str | None" = "tool_calls",
+    dispatched_tool_calls: bool = True,
+) -> OutboxMessage:
     """The tool-turn-text row (#4691 ③'s own placeholder) — a real call
-    boundary, carrying the SAME call_id/finish_reason shape router_loop.py
-    stamps (#4691 Phase 1 ①②)."""
+    boundary, carrying the SAME call_id/finish_reason/dispatched_tool_calls
+    shape router_loop.py stamps (#4691 Phase 1 ①②, #4777). Defaults match a
+    provider that DOES report ``finish_reason == "tool_calls"`` correctly;
+    ``finish_reason`` is overridable so a test can pin #4777's own claim —
+    registration/spinner keyed on ``dispatched_tool_calls`` (a REYN-OBSERVED
+    fact) survives a provider that never reports it (#4777, owner-observed:
+    ``finish_reason`` stayed "stop" on every call, provider-side)."""
     return OutboxMessage(
         kind="agent",
         text=text,
@@ -42,7 +55,8 @@ def _parent_row(call_id: str, *, text: str = "") -> OutboxMessage:
             "chain_id": "chain-test",
             "source": "router_tool_turn_text",
             "call_id": call_id,
-            "finish_reason": "tool_calls",
+            "finish_reason": finish_reason,
+            "dispatched_tool_calls": dispatched_tool_calls,
             "prompt_tokens": 100,
             "completion_tokens": 5,
         },
@@ -406,3 +420,83 @@ async def test_an_expanded_parent_shows_no_count_line() -> None:
             console.print(pres.renderable)
         text = cap.get()
         assert "folded" not in text and "1" not in text
+
+
+@pytest.mark.asyncio
+async def test_group_construction_survives_a_provider_that_never_reports_tool_calls() -> None:
+    """Tier 2b: #4777 (owner-reported, provider-dependence bug) — the OWNER's
+    own live turns never had ``finish_reason == "tool_calls"`` on the parent
+    row (their provider reports every response as ``"stop"``, tool calls or
+    not), so B1's entire Group construction was silently inert on their
+    screen despite being green here — every existing test in this file used
+    a provider shape (``finish_reason == "tool_calls"``) that happened to
+    always be true. This is the ONE test in the suite that pins the
+    provider-INDEPENDENT claim directly: registration and the RUNNING
+    spinner both survive ``finish_reason="stop"`` as long as
+    ``dispatched_tool_calls`` (the REYN-OBSERVED fact, from the LLM result's
+    own ``tool_calls`` list, not the provider's self-reported string) is
+    true."""
+    transport = QueueTransport()
+    app = TextualChatApp(transport=transport, clock=lambda: 100.0)
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        await transport.push_display(
+            _parent_row("resp-1", finish_reason="stop", dispatched_tool_calls=True)
+        )
+        await pilot.pause()
+        await transport.push_display(_started("op-1", call_id="resp-1"))
+        await pilot.pause()
+
+        parent, child = _entries(app)
+        assert child.parent is parent, (
+            "a call whose OWN parent row was never labeled "
+            '\'finish_reason == "tool_calls"\' by the provider must still '
+            "nest its children — the registration fact is reyn's own "
+            "observation (dispatched_tool_calls), never the provider string"
+        )
+        assert parent.state is EntryState.RUNNING, (
+            "the spinner must still start — gated on dispatched_tool_calls, "
+            "not on finish_reason"
+        )
+
+
+@pytest.mark.asyncio
+async def test_a_terminal_reply_with_a_call_id_registers_but_never_spins() -> None:
+    """Tier 2b: accept-side pair — #4777's registration is now UNCONDITIONAL
+    for any call_id-bearing agent row (harmless per the code's own comment:
+    nothing ever looks up a call_id belonging to a call that dispatched no
+    tools), but the spinner stays gated on dispatched_tool_calls. An ordinary
+    terminal reply (no tools dispatched) must register without ever
+    spinning RUNNING — the accept side of the same fix.
+
+    Registration is proved through its only PUBLIC effect (a later same-
+    call_id tool row actually nesting as a child), not by reading the
+    private ``_call_parents`` dict directly (testing.md Tier 4)."""
+    transport = QueueTransport()
+    app = TextualChatApp(transport=transport, clock=lambda: 100.0)
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        await transport.push_display(
+            _parent_row("resp-1", finish_reason="stop", dispatched_tool_calls=False)
+        )
+        await pilot.pause()
+
+        (entry,) = _entries(app)
+        assert entry.state is not EntryState.RUNNING, (
+            "a call that dispatched no tools must never show a spinner"
+        )
+
+        # A same-call_id tool row would never nest at all if registration
+        # were skipped — this is unrealistic in production (a terminal
+        # reply's call never actually dispatches a tool), but it is the
+        # only way to observe "did registration happen" through the
+        # public surface rather than the private dict.
+        await transport.push_display(_started("op-1", call_id="resp-1"))
+        await pilot.pause()
+        _, child = _entries(app)
+        assert child.parent is entry, (
+            "registration is unconditional now — a terminal reply's "
+            "call_id still registers (harmless, nothing ever looks it "
+            "up in production; a real caller with unused entries pays "
+            "only dict growth, tracked separately by #4776)"
+        )
