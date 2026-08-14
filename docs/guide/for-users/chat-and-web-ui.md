@@ -202,7 +202,8 @@ Once the pane holds focus (via `Ctrl+O` or `Shift+Tab`), the cursor moves with `
 
 | Key | Action |
 |-----|--------|
-| `Enter` / `Space` | Copy the cursor's entry text to the clipboard |
+| `Enter` | Copy the cursor's entry text to the clipboard |
+| `Space` | Fold/unfold the highlighted entry's tool detail (#4697 — decoupled from highlight movement, which no longer auto-expands/folds). Inside the vim-style text cursor (`c`, above), falls through to the same copy as `Enter` instead, so an in-progress text selection is never disrupted |
 | `r` | Send a bare `/rewind` (the same as typing it) — not a jump to that specific entry |
 
 ### Working indicator
