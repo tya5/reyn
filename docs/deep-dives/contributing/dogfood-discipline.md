@@ -777,7 +777,7 @@ Reyn's three tools (`REYN_LLM_TRACE_DUMP`, `dogfood_trace.py`, `llm_replay.py`) 
 
 ### 6.5.1 Why plan-mode needs special discipline
 
-Skill-side dogfood verifies that a skill's phase graph executes correctly under the LLM's probabilistic decisions. Plan-mode adds three qualitatively different concerns:
+Skill-side dogfood verifies that a skill's own instructions drive the LLM to correct behavior under its probabilistic decisions (the pre-1.0 phase-graph engine this section originally described no longer exists, #2434). Plan-mode adds three qualitatively different concerns:
 
 **Async dispatch and completion ordering.** A plan runs as a background `asyncio.Task`. The user can issue new messages while the plan is in flight. Multiple plans can overlap. Outbox messages land in completion order, not user-issue order. These properties are invisible in skill-side traces — they only surface when you deliberately run concurrent plans and observe the outbox.
 
