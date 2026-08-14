@@ -26,6 +26,21 @@ from reyn.runtime.outbox import OutboxMessage
 from reyn.schemas.models import Event
 
 
+def _compact_token_count(n: int) -> str:
+    """A compact token count for a lifecycle marker — ``"812"`` / ``"8.2k"`` /
+    ``"120k"``. Deliberately a SMALL, self-contained duplicate of
+    ``gutter.py``'s own ``_format_tokens`` rather than an import of it:
+    ``gutter.py`` is UI-layer (``interfaces.inline.textual_chat``) and this
+    module is runtime-layer, so importing it here would invert the
+    dependency direction. #4703 axis①."""
+    n = max(0, n)
+    if n < 1_000:
+        return str(n)
+    if n < 9_950:
+        return f"{n / 1_000:.1f}k"
+    return f"{round(n / 1_000)}k"
+
+
 class ChatLifecycleForwarder:
     """Callable subscriber that bridges session-level events into the outbox."""
 
@@ -198,12 +213,32 @@ class ChatLifecycleForwarder:
         ``new_turn_count`` is the count of turns replaced by the rolling
         summary.  Falls back to a generic marker when the field is
         absent (= forward-compat with future event-shape variations).
-        """
+
+        #4703 axis①: the marker also names what the compaction LLM call
+        itself SPENT (``prompt_tokens``/``completion_tokens``/``cost_usd``,
+        CompactionController's own recent addition) — owner's own
+        complaint: this row already existed, it just never showed real
+        money, an off-screen high-cost call the conversation face was
+        silent about. Absent (pre-#4703-shape events, or usage genuinely
+        unreadable off the response) degrades to the pre-#4703 marker —
+        never a fabricated ``$0.00``."""
         count = data.get("new_turn_count")
         if count:
-            text = f"[↑ {count} turn{'s' if count != 1 else ''} compacted]"
+            text = f"[↑ {count} turn{'s' if count != 1 else ''} compacted"
         else:
-            text = "[↑ history compacted]"
+            text = "[↑ history compacted"
+        prompt = data.get("prompt_tokens")
+        completion = data.get("completion_tokens")
+        if isinstance(prompt, int) and isinstance(completion, int):
+            # Same ↑prompt/↓completion glyph convention gutter.py's
+            # ReynTurnUsageGutter already uses for a conversational row —
+            # a reader who has learned that convention reads this
+            # off-conversation marker the same way, no new vocabulary.
+            text += f" · ↑{_compact_token_count(prompt)} ↓{_compact_token_count(completion)}"
+        cost = data.get("cost_usd")
+        if isinstance(cost, (int, float)):
+            text += f" · ${cost:.2f}"
+        text += "]"
         self._enqueue(text)
 
     # ── Router cap / iteration limit ─────────────────────────────────────

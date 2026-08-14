@@ -434,6 +434,14 @@ class CompactionController:
                 for k, v in structured.items()
                 if k != "covers_through_seq"
             },
+            # #4703 axis①: the compact() LLM call's own real usage — see
+            # ChatSummary's own docstring for why it lives there and not in
+            # ``structured``/``to_dict()`` (never persisted to history.jsonl).
+            # None only when usage genuinely could not be read off the
+            # response — never coerced to 0.
+            prompt_tokens=chat_summary.prompt_tokens,
+            completion_tokens=chat_summary.completion_tokens,
+            cost_usd=chat_summary.cost_usd,
         )
 
 
