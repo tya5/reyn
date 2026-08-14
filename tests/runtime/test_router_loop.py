@@ -61,8 +61,10 @@ async def test_max_iterations_exhausted(monkeypatch):
     await loop.run("do stuff", [])
 
     assert scripted.call_count == 3
-    (msg,) = host.outbox
-    assert msg["kind"] == "error"
+    # #4691 Phase B ③: each of the 3 tool-calls rounds also emits its own
+    # (content-less, since always_tool has no text) tree-parent placeholder
+    # row now — filter to the one kind this test is actually about.
+    (msg,) = [m for m in host.outbox if m["kind"] == "error"]
     assert "max iterations" in msg["text"]
     assert "3" in msg["text"]
 
@@ -94,7 +96,9 @@ async def test_unknown_tool_returns_error_in_result(monkeypatch):
     # #2425 案B: a dispatch error renders the plain ``Error (<kind>): <message>`` string, not JSON.
     assert tool_msg["content"].startswith("Error (unknown_tool): ")
     assert "bogus" in tool_msg["content"]
-    assert host.outbox[0]["text"] == "Recovered."
+    # #4691 Phase B ③: round 1's own (content-less) tree-parent placeholder
+    # row lands first now — the terminal reply is still the LAST row.
+    assert host.outbox[-1]["text"] == "Recovered."
 
 
 @pytest.mark.asyncio
@@ -136,7 +140,9 @@ async def test_remember_shared_writes_file_and_regenerates_index(monkeypatch):
     (regen,) = host.index_regenerations
     assert regen["output_path"] == host.memory.memory_path("shared", "MEMORY")
 
-    assert host.outbox[0]["text"] == "Saved."
+    # #4691 Phase B ③: the tool-calls round's own tree-parent placeholder
+    # row lands first now — the terminal reply is still the LAST row.
+    assert host.outbox[-1]["text"] == "Saved."
 
 
 @pytest.mark.asyncio
@@ -371,7 +377,9 @@ async def test_forget_memory_deletes_file_and_regenerates_index(monkeypatch):
 
     assert existing_path in host.file_deletes
     (only_regen,) = host.index_regenerations
-    assert host.outbox[0]["text"] == "Forgotten."
+    # #4691 Phase B ③: the tool-calls round's own tree-parent placeholder
+    # row lands first now — the terminal reply is still the LAST row.
+    assert host.outbox[-1]["text"] == "Forgotten."
 
 
 @pytest.mark.asyncio
@@ -458,8 +466,10 @@ async def test_unknown_tool_name_returns_error_not_dispatched(monkeypatch):
     assert tool_msg["content"].startswith("Error (unknown_tool): ")
     assert "no_such_tool_xyz" in tool_msg["content"]
 
-    # Loop recovered and produced a reply
-    assert host.outbox[0]["text"] == "Sorry, let me try differently."
+    # Loop recovered and produced a reply — #4691 Phase B ③: the tool-calls
+    # round's own tree-parent placeholder row lands first now — the
+    # terminal reply is still the LAST row.
+    assert host.outbox[-1]["text"] == "Sorry, let me try differently."
 
 
 @pytest.mark.asyncio
