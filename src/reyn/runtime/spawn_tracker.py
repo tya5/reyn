@@ -13,10 +13,23 @@ does not construct a bundle and unpack it back into its own fields (the
 
 Ownership split:
 
-- **Owned here**: ``_spawned_tasks`` (bounded ``sid -> task`` OrderedDict),
-  ``_vanish_scheduled`` (bool), ``_vanish_task`` (the detached teardown
-  task's strong ref) — mutated ONLY by the four methods below, no other
-  ``Session`` code path touches them (verified by grep).
+- **Owned here**: ``_spawned_tasks`` (bounded, two-level
+  ``dict[str, OrderedDict[str, str]]`` — ``agent_name -> (sid -> task)``,
+  #4740: was a flat ``sid -> task`` OrderedDict until #4740 keyed it by
+  agent too, since sid alone is not process-wide-unique), ``_spawn_order``
+  (#4740: the companion ``OrderedDict[tuple[str, str], None]`` tracking
+  GLOBAL insertion order across every agent, for ``_MAX_SPAWNED_TASKS``
+  eviction — the nested dict above has no order of its own once split by
+  agent), ``_vanish_scheduled`` (bool), ``_vanish_task`` (the detached
+  teardown task's strong ref) — mutated ONLY by ``__init__`` +
+  ``record_spawned_task`` + ``lookup_and_evict_spawned_task`` +
+  ``_maybe_schedule_ephemeral_vanish`` (the four methods below), no other
+  ``Session`` code path touches them (re-verified by grep at #4740 review,
+  2026-08-14: grepped ``_spawned_tasks``, ``_spawn_order``,
+  ``_vanish_scheduled``, and ``_vanish_task`` across ``src/`` and
+  ``tests/`` separately — every hit outside this file is either a
+  read-only test bridge (``._vanish_task`` awaited in 3 vanish tests) or a
+  comment, never an assignment).
 - **Injected dependency (constructor)**: ``registry`` / ``journal`` /
   ``chains`` / ``inbox`` — stable for the session's lifetime, read but never
   reassigned here. ``agent_name`` is likewise stable (``Agent`` is frozen,
