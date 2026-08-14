@@ -697,3 +697,37 @@ def test_sandboxed_exec_error_truncates_long_stderr() -> None:
     detail = summary[len("✗ exit 1: "):]
     assert len(detail) < len(long_stderr), "long stderr must be truncated, not dumped verbatim"
     assert detail.endswith("…")
+
+
+def test_stderr_with_terminal_control_bytes_is_neutralized() -> None:
+    """Tier 2: THE mandatory security witness (#4758, lead-coder review) —
+    ``stderr`` is arbitrary bytes from a sandboxed process (world-derived),
+    not operator-typed ``reyn.yaml`` text. ``_short``'s own truncation
+    (``" ".join(s.split())``) does NOT strip ESC/control sequences —
+    ``str.split()`` splits on whitespace, and ESC is not whitespace — so
+    an ESC/CSI sequence embedded in real-world stderr survived to the
+    terminal through #4754's own new branch (the exact gap #4757 closed
+    for the tool-DETAIL expand path; this is the same class, in the
+    tool-SUMMARY line instead). ``summarize_tool_result``'s own single
+    return boundary is now neutralized via the SAME
+    ``get_neutralizer("terminal")`` FP-0054 seam."""
+    summary = summarize_tool_result(
+        "exec",
+        {"kind": "sandboxed_exec", "status": "error", "backend": "local",
+         "returncode": 1, "stdout": "", "stderr": "boom\x1b[2Jgone"},
+    )
+    assert "\x1b" not in summary, "an ESC byte reached the summary unneutralized"
+    assert "boom" in summary
+    assert "gone" in summary
+
+
+def test_neutralize_preserves_ordinary_text() -> None:
+    """Tier 2: accept-side of the same witness — neutralizing the summary
+    does not corrupt ordinary, control-byte-free content (the common
+    case, every pre-#4758 test in this file)."""
+    summary = summarize_tool_result(
+        "exec",
+        {"kind": "sandboxed_exec", "status": "error", "backend": "local",
+         "returncode": 1, "stdout": "", "stderr": "ordinary error text"},
+    )
+    assert summary == "✗ exit 1: ordinary error text"

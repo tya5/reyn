@@ -538,11 +538,34 @@ def summarize_tool_result(tool, result) -> str:
     Best-effort per tool name / result shape; ALWAYS degrades gracefully — any
     unrecognised shape (or an error reading it) falls back to a truncated repr,
     so it never raises and never loses the result entirely.
-    """
+
+    #4758 (lead-coder design decision, e2e-coder): every branch of
+    :func:`_summarize_result` can fold WORLD-derived bytes into the
+    returned summary — ``stderr``/``content``/``answer`` and friends are
+    arbitrary output from a sandboxed process or a fetched URL, not
+    operator-typed ``reyn.yaml`` text. ``_short``'s own truncation
+    (``" ".join(s.split())``) does NOT strip ESC/control sequences —
+    ``str.split()`` splits on whitespace, and ESC is not whitespace — so
+    a naive per-branch fix would need repeating at every CURRENT branch
+    and remembering at every FUTURE one (the #4754 gap this issue
+    reopened: that PR added exactly one such branch and missed it).
+    Neutralized ONCE here instead, at this function's own SINGLE return
+    boundary — every one of its 7 call sites, across 3 modules
+    (``renderer.py`` itself, ``presenter.py`` x3, ``app.py`` x3; grepped
+    at #4758 review after a stale "3 call sites" claim from #4753/#4754
+    was caught, uncounted, sitting a few lines above this docstring)
+    receives an already-safe string, structurally, not by each call
+    site remembering to ask for one. Same ``get_neutralizer("terminal")``
+    seam FP-0054 already established (``presenter.py``'s own
+    ``_neutralized_label``, applied there to a different leaf — labels,
+    not tool-result summaries — same discipline, different call site)."""
+    from reyn.core.present.guard import get_neutralizer
+
     try:
-        return _summarize_result(tool, result)
+        summary = _summarize_result(tool, result)
     except Exception:
-        return _short(result, 80)
+        summary = _short(result, 80)
+    return get_neutralizer("terminal").neutralize(summary)[0]
 
 
 def _summarize_result(tool, result) -> str:
@@ -658,7 +681,8 @@ def _summarize_result(tool, result) -> str:
         # returncode == 0 else ("timeout" if returncode == -1 else "error")`) fell
         # through every branch above to the bare `str(status)` = "error", discarding
         # returncode AND stderr — both present right here in `result`. This function
-        # is DISPLAY-ONLY (all 3 call sites are under `interfaces/`; the LLM's own
+        # is DISPLAY-ONLY (all 7 call sites, across 3 modules — renderer.py,
+        # presenter.py x3, app.py x3 — are under `interfaces/`; the LLM's own
         # `role: "tool"` content comes from `render_tool_result` via
         # `sandboxed_exec_to_canonical`, which already carries stdout/stderr and the
         # returncode). So what was lost was the OPERATOR's signal, not the model's:
