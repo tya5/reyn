@@ -147,3 +147,58 @@ async def test_aclose_on_an_empty_tracker_returns_immediately():
     background task at all)."""
     tracker = TrackedTaskSet()
     await tracker.aclose()
+
+
+@pytest.mark.asyncio
+async def test_reentrant_aclose_logs_a_warning_naming_the_excluded_task(caplog):
+    """Tier 1: the re-entrancy exclusion is not silent — lead-coder review
+    (#4759): ``AgentRegistry.shutdown()``'s own call is EXPECTED to always
+    be non-reentrant, but that expectation was not exhaustively traced
+    across every ``shutdown()`` call site in the codebase. Rather than
+    assert an unverified absolute, a reentrant exclusion always logs a
+    WARNING naming the excluded task -- diagnostic (reentrancy is normal
+    for the vanish task's own call), but a witness that would surface an
+    unexpected reentrant call from a DIFFERENT caller if one ever occurs."""
+    import logging
+
+    tracker = TrackedTaskSet()
+    reentrant_call_completed = asyncio.Event()
+
+    async def self_referencing_task() -> None:
+        await tracker.aclose()
+        reentrant_call_completed.set()
+
+    with caplog.at_level(logging.WARNING, logger="reyn.runtime.tracked_tasks"):
+        task = tracker.spawn(
+            self_referencing_task(), disposition="await", name="self-referencing",
+        )
+        await reentrant_call_completed.wait()
+        await task
+
+    assert any(
+        "reentrantly" in record.message and "self-referencing" in record.message
+        for record in caplog.records
+    )
+
+
+@pytest.mark.asyncio
+async def test_non_reentrant_aclose_does_not_log_the_reentrancy_warning(caplog):
+    """Tier 1: accept-side — an ordinary, non-reentrant aclose() call (the
+    shape every real AgentRegistry.shutdown() call takes) must NOT log the
+    reentrancy warning; otherwise the warning would be noise on every
+    normal shutdown instead of a signal for the unexpected case."""
+    import logging
+
+    tracker = TrackedTaskSet()
+    started = asyncio.Event()
+
+    async def ordinary_task() -> None:
+        started.set()
+        await asyncio.sleep(0)
+
+    with caplog.at_level(logging.WARNING, logger="reyn.runtime.tracked_tasks"):
+        tracker.spawn(ordinary_task(), disposition="cancel_join")
+        await started.wait()
+        await tracker.aclose()  # called from the TEST's own task, not a tracked one
+
+    assert not any("reentrantly" in record.message for record in caplog.records)

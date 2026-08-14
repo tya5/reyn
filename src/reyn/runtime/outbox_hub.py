@@ -93,7 +93,7 @@ class OutboxHub:
 
     def __init__(
         self, source: "asyncio.Queue", *, name: str = "",
-        task_tracker: "TrackedTaskSet | None" = None,
+        task_tracker: "TrackedTaskSet",
     ) -> None:
         self._source = source
         self._subs: "set[HubSubscription]" = set()
@@ -104,9 +104,12 @@ class OutboxHub:
         # own finally on every exit path) reaches this loop's queue.get()
         # and lets it return, but that PROCESSING happens in this separate
         # task, which is not otherwise joined by anything -- registering it
-        # is what lets registry.shutdown() actually wait for that to
-        # happen instead of returning while it's still catching up.
-        # None-tolerant for callers (tests) that construct a hub standalone.
+        # is what lets registry.shutdown() actually wait for that to happen
+        # instead of returning while it's still catching up. REQUIRED (no
+        # None-tolerant fallback): the one production construction site
+        # (session.py) always supplies one, and an optional fallback here
+        # would silently recreate #4759's own defect shape at a future
+        # construction site that forgets to pass one.
         self._task_tracker = task_tracker
 
     def subscribe(self, *, maxsize: int = 0) -> HubSubscription:
@@ -140,12 +143,9 @@ class OutboxHub:
 
     def _ensure_drain(self) -> None:
         if self._drain_task is None or self._drain_task.done():
-            if self._task_tracker is not None:
-                self._drain_task = self._task_tracker.spawn(
-                    self._drain(), disposition="cancel_join", name=f"outbox-drain-{self._name}",
-                )
-            else:
-                self._drain_task = asyncio.create_task(self._drain())
+            self._drain_task = self._task_tracker.spawn(
+                self._drain(), disposition="cancel_join", name=f"outbox-drain-{self._name}",
+            )
 
     async def _drain(self) -> None:
         """The SOLE ``source.get()`` consumer: drain and fan out forever, until

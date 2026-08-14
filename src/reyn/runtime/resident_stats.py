@@ -82,11 +82,20 @@ def _stat(name: str, container: Any) -> ContainerStat:
 # measurer, so this report presents one consistent method across every
 # row rather than mixing an internally-tracked figure for one row with
 # estimates for the rest).
+# #4759: `_inflight_wal_tasks` (the WAL-append fire-and-forget task set
+# #4497's own issue enumerated) was folded into `_background_tasks` — the
+# single funnel every session background task (not just WAL appends
+# anymore: the ephemeral-vanish task, chain-timeout watchdogs, the hook-bus
+# bridge, ...) now routes through (see tracked_tasks.py). Measuring
+# `_background_tasks` here is a STRICT WIDENING of what #4497's original
+# entry covered, not a like-for-like swap out of scope for this module —
+# `TrackedTaskSet.__len__`/`__iter__` (tracked_tasks.py) let it plug into
+# the same generic `_stat`/`_approx_bytes` machinery unmodified.
 _SESSION_ATTRS = (
     "history",
     "_pending_user_images",
     "_safety_extensions",
-    "_inflight_wal_tasks",
+    "_background_tasks",
     "_buffered_intervention_answers",
     "_router_loop_delegations",
     "_router_loop_agent_replies",

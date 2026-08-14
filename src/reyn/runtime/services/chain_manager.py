@@ -200,12 +200,27 @@ class ChainManager:
         self.max_hop_depth = max_hop_depth
         self._clock = clock_fn or (lambda: datetime.now(timezone.utc))
         self._sleep = sleep_fn or asyncio.sleep
-        # #4759: optional — every watchdog task ALSO registers with the
-        # owning Session's single task funnel (tracked_tasks.py) so
+        # #4759: every watchdog task ALSO registers with the owning
+        # Session's single task funnel (tracked_tasks.py) so
         # AgentRegistry.shutdown() can reach it without needing to know this
-        # class exists. None-tolerant (a caller that doesn't pass one, e.g.
-        # a standalone unit test, gets pre-#4759 behaviour unchanged) — the
-        # dedicated `_timers` dict below (chain_id-keyed lookup, needed by
+        # class exists.
+        #
+        # DELIBERATELY left None-tolerant (unlike SpawnTracker/OutboxHub,
+        # whose #4759 fix made task_tracker a REQUIRED param): measured, the
+        # ONE production construction site (session.py) always passes one,
+        # so this class's own #4759 reachability is not at risk in
+        # production either way. What's different here is the cost side —
+        # ChainManager has 12 existing test call sites across 9 files, NONE
+        # of which exercise #4759's teardown property (they test chain
+        # register/resolve/timeout semantics); forcing all 12 to thread a
+        # tracker through would touch files unrelated to this PR's own
+        # concern for zero behavioural gain in THOSE tests. A caller that
+        # doesn't pass one (every existing test) gets pre-#4759 behaviour
+        # for its own watchdog tasks unchanged — this class's core function
+        # (arm/cancel/fire a chain timeout) does not depend on the tracker
+        # at all; only #4759's reachability property does, and that
+        # property is not what these tests are checking. The dedicated
+        # `_timers` dict below (chain_id-keyed lookup, needed by
         # `cancel_timeout`) stays the primary bookkeeping either way; this is
         # an ADDITIONAL registration for teardown-reachability, not a
         # replacement for it.

@@ -111,7 +111,7 @@ class SpawnTracker:
         agent_name: str,
         session_id_provider: "Callable[[], str]",
         ephemeral_provider: "Callable[[], bool]",
-        task_tracker: "TrackedTaskSet | None" = None,
+        task_tracker: "TrackedTaskSet",
     ) -> None:
         self._registry = registry
         self._journal = journal
@@ -125,9 +125,12 @@ class SpawnTracker:
         # (it closes this session's own held MCP connections via
         # remove_session -> aclose_mcp_connections) that was previously
         # detached and invisible to AgentRegistry.shutdown()'s drain, the
-        # #4759 root cause. None-tolerant for a caller that doesn't pass one
-        # (pre-#4759 behaviour: _vanish_task is still set for the existing
-        # test bridge, just not registry-shutdown-reachable).
+        # #4759 root cause. REQUIRED (no None-tolerant fallback): the one
+        # production construction site (session.py) always supplies one, and
+        # an optional fallback here would silently recreate #4759's own
+        # defect shape at a FUTURE construction site that forgets to pass
+        # one -- exactly the class of hole this PR exists to close, not
+        # reintroduce in its own new code.
         self._task_tracker = task_tracker
         # #4740: (agent_name, sid) -> trusted original-task record for spawned
         # sessions, so a compromised sub-session can't forge task framing
@@ -248,21 +251,17 @@ class SpawnTracker:
             return
         self._vanish_scheduled = True
         # #4759: routed through the owning Session's task funnel
-        # (tracked_tasks.py) when available, disposition="await" -- this
-        # task performs the actual teardown work (remove_session closes this
-        # session's held MCP connections among other things), so it must be
-        # allowed to run to completion, not cancelled. Before #4759 this was
-        # a bare asyncio.create_task with only self._vanish_task as a strong
-        # ref (kept below, unconditionally, for the 3 existing tests that
-        # await it directly) -- invisible to AgentRegistry.shutdown()'s own
-        # drain, which is the root cause #4759 traced: a normal shutdown
-        # could return while this was still mid-flight, orphaning whatever
-        # OS subprocess remove_session -> aclose_mcp_connections was about
-        # to close.
+        # (tracked_tasks.py), disposition="await" -- this task performs the
+        # actual teardown work (remove_session closes this session's held
+        # MCP connections among other things), so it must be allowed to run
+        # to completion, not cancelled. self._vanish_task is ALSO kept below
+        # (unconditionally, for the 3 existing tests that await it directly)
+        # -- before #4759 it was a bare asyncio.create_task with ONLY that
+        # ref, invisible to AgentRegistry.shutdown()'s own drain, which is
+        # the root cause #4759 traced: a normal shutdown could return while
+        # this was still mid-flight, orphaning whatever OS subprocess
+        # remove_session -> aclose_mcp_connections was about to close.
         coro = self._registry.remove_session(self._agent_name, self._session_id_provider())
-        if self._task_tracker is not None:
-            self._vanish_task = self._task_tracker.spawn(
-                coro, disposition="await", name="ephemeral-vanish",
-            )
-        else:
-            self._vanish_task = asyncio.create_task(coro)
+        self._vanish_task = self._task_tracker.spawn(
+            coro, disposition="await", name="ephemeral-vanish",
+        )

@@ -122,12 +122,6 @@ from reyn.user_intervention import (
     UserIntervention,
 )
 
-# #2115: cap for await_quiescent's re-drain loop. In-flight WAL-append tasks are
-# finite + cancel-requested + spawn no new user-work under a rewind, so the drain
-# converges in 1-2 rounds; the cap is purely a guard against a pathological spin
-# (logged, never silently looped).
-_QUIESCE_MAX_ROUNDS = 50
-
 # #2103 S1bc-exec: spawned-task correlation cap now lives in spawn_tracker.py's
 # _MAX_SPAWNED_TASKS — see docs/reference/runtime/session-construction.md#capability-permission-visibility
 
@@ -4105,7 +4099,9 @@ class Session:
         byte-identical to no OTEL. The exporter is a lossy downstream: it
         never writes to .reyn/events or the WAL, so recovery/replay is
         independent of it (SR4)."""
-        outbox_hub = OutboxHub(self.outbox, name=self.agent_name)
+        outbox_hub = OutboxHub(
+            self.outbox, name=self.agent_name, task_tracker=self._background_tasks,
+        )
         event_store = EventStore(
             self.events_dir,
             max_bytes=self._events_config.max_bytes,

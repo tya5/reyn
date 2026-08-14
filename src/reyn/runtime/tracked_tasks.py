@@ -40,12 +40,21 @@ logger = logging.getLogger(__name__)
 #: :meth:`TrackedTaskSet.aclose` cancels these before joining them.
 Disposition = Literal["await", "cancel_join"]
 
-#: Mirrors ``session.py``'s own ``_QUIESCE_MAX_ROUNDS`` fixpoint bound: a
-#: joined task can itself spawn a NEW tracked task (e.g. a re-armed chain
-#: timer, or a vanish task's own ``remove_session()`` touching another
-#: tracked field) that a single snapshot-and-gather pass would miss — loop to
-#: a fixpoint instead of assuming one pass drains everything.
-_MAX_ACLOSE_ROUNDS = 8
+#: Cap for :meth:`TrackedTaskSet.aclose`'s re-drain loop — the SAME shape as
+#: the pre-#4759 ``await_quiescent``-only ``_QUIESCE_MAX_ROUNDS`` this
+#: replaces (#2115: a joined task can itself spawn a NEW tracked task — e.g.
+#: a re-armed chain timer, or the vanish task's own ``remove_session()``
+#: touching another tracked field — that a single snapshot-and-gather pass
+#: would miss), carrying over its ACTUAL value (50, not re-derived here) —
+#: #2115's own reasoning ("finite + cancel-requested + spawns no new
+#: user-work under a rewind, converges in 1-2 rounds; the cap is purely a
+#: guard against a pathological spin, logged, never silently looped") was
+#: scoped to WAL-append tasks specifically. This funnel now also carries
+#: "await"-disposition tasks (the vanish task) that perform real work and
+#: are not cancel-requested, so convergence is not guaranteed in 1-2 rounds
+#: the same way — reusing the wider, already-established 50 rather than
+#: inventing a smaller number for a case #2115 never measured.
+_MAX_ACLOSE_ROUNDS = 50
 
 
 class TrackedTaskSet:
@@ -55,6 +64,19 @@ class TrackedTaskSet:
 
     def __init__(self) -> None:
         self._tasks: "dict[asyncio.Task, Disposition]" = {}
+
+    def __len__(self) -> int:
+        """Total tracked task count (done or not) — lets a generic
+        container-measurement surface (``resident_stats.py``'s #4497
+        report) treat this like any other sized container without needing
+        to special-case it."""
+        return len(self._tasks)
+
+    def __iter__(self):
+        """Iterate the tracked ``asyncio.Task`` objects — same rationale
+        as ``__len__``; ``pending()`` remains the intentional-subset (not
+        yet done) read for callers that specifically want that."""
+        return iter(self._tasks)
 
     def spawn(
         self,
@@ -122,18 +144,46 @@ class TrackedTaskSet:
         NOT wait for its own caller-task, and a caller in that position
         cannot read "aclose() returned" as "everything is done" (its own
         task, by definition, is not done yet — it's still running the
-        ``aclose()`` call). A call made from any OTHER task (the ordinary
-        case — ``AgentRegistry.shutdown()``'s own call is always non-
-        reentrant, since the registry's task is never itself one this
-        tracker owns) has no such gap: EVERY tracked task, including one
-        that is mid-reentrant-``aclose()`` right now, is included in that
-        call's own drain and genuinely awaited to completion. This is what
-        makes ``AgentRegistry.shutdown()``'s call correct despite the
-        vanish task's own internal reentrant call resolving early — the
-        outer, non-reentrant call still waits for the vanish task itself to
-        finish, exactly as #4759 requires.
+        ``aclose()`` call). A call made from any OTHER task has no such
+        gap: EVERY tracked task, including one that is mid-reentrant-
+        ``aclose()`` right now, is included in that call's own drain and
+        genuinely awaited to completion.
+
+        ``AgentRegistry.shutdown()``'s OWN call is EXPECTED to always be
+        non-reentrant (the registry's task is never itself one this tracker
+        owns), which is what makes it correct despite the vanish task's own
+        internal reentrant call resolving early. This expectation is NOT
+        exhaustively verified across every ``shutdown()`` call site in the
+        codebase (6 call sites measured at #4759 review time; the 3
+        top-level CLI entry points are self-evidently not a tracked task,
+        but the other 3 — including a slash/dispatch.py path reachable via
+        hook/intervention machinery — were not individually traced for
+        whether a tracked task could ever be the one calling `shutdown()`).
+        Rather than assert an unverified absolute, a reentrant exclusion
+        below always logs a WARNING naming which task and disposition it
+        skipped — reentrancy itself is a NORMAL, expected event for the
+        vanish task's own internal call, so this is diagnostic, not an
+        error; but if this warning is ever observed to originate from
+        ``AgentRegistry.shutdown()``'s own call specifically, this
+        method's core assumption for that caller has broken and its
+        "everything is done" reading is no longer trustworthy.
         """
         current = asyncio.current_task()
+        if current is not None and current in self._tasks and not current.done():
+            # Logged ONCE per aclose() call, not per fixpoint round below —
+            # `current` cannot become done() while it is the task running
+            # THIS code, so re-checking inside the loop would just repeat
+            # the same warning up to _MAX_ACLOSE_ROUNDS times.
+            logger.warning(
+                "TrackedTaskSet.aclose: called reentrantly from a task "
+                "(%r, disposition=%r) this tracker is itself still "
+                "tracking -- that task is excluded from THIS call's own "
+                "drain (see aclose()'s own docstring for why). Normal for "
+                "the ephemeral-vanish task's internal call; if this "
+                "originates from AgentRegistry.shutdown()'s own call, its "
+                "non-reentrancy assumption has broken.",
+                current.get_name(), self._tasks.get(current),
+            )
         for _ in range(_MAX_ACLOSE_ROUNDS):
             pending = [t for t in self._tasks if not t.done() and t is not current]
             if not pending:
