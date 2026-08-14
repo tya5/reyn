@@ -5,7 +5,11 @@ build-backend = "hatchling.build"
 [project]
 name = "reyn"
 version = "0.1.0a2"
-description = "LLM-driven phase execution engine with a Markdown DSL"
+# #4737: "LLM-driven phase execution engine with a Markdown DSL" described
+# the phase-graph skill engine, removed #2434/#2438 — same class as
+# interfaces/cli/__init__.py's --help description, kept in sync with it.
+# Proposal wording, not an owner decision — see that PR's alternatives.
+description = "Agent OS — decide, spawn, orchestrate, bounded by construction"
 requires-python = ">=3.11"
 license = { text = "MIT" }
 readme = "README.md"

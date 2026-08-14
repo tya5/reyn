@@ -1,15 +1,15 @@
 # Reyn Project Context
 
-This file is auto-injected into the system prompt for every phase via
+This file is auto-injected into the system prompt on every turn via
 `project_context_path` in `reyn.yaml`. Put project-wide background here that
 all skills should implicitly know — domain glossary, conventions, references.
 
 ## About this project
 
-Reyn is an LLM-driven phase execution engine with a Markdown DSL.
-The runtime constrains LLM autonomy with closed candidate transitions,
-JSON-schema validated outputs, and per-phase permission scopes — see
-`CLAUDE.md` for the full architectural contract.
+Reyn is an operating system for LLM agents — they decide, organize, and
+orchestrate; the OS makes every action typed, permissioned, audited, and
+recoverable by construction — see `CLAUDE.md` for the full architectural
+contract.
 
 ## Conventions
 
