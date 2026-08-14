@@ -648,3 +648,52 @@ def test_sandboxed_exec_timeout_shows_failure_text() -> None:
         {"kind": "sandboxed_exec", "status": "timeout",
          "backend": "local", "returncode": -1, "stdout": "partial", "stderr": ""},
     ) == "✗ timeout (exit -1)"
+
+
+def test_sandboxed_exec_error_shows_returncode_and_stderr() -> None:
+    """Tier 2: #4753 — an ORDINARY nonzero exit (sandboxed_exec.py's own
+    ``status = "ok" if returncode == 0 else ("timeout" if returncode == -1
+    else "error")``, e.g. the command itself failed — not a sandbox
+    timeout/cancel) previously fell through every branch to the bare
+    fallback string ``"error"``, discarding ``returncode`` AND ``stderr``
+    even though both are present in the result dict. Display-only surface
+    (REPL renderer + inline TUI presenter): what a bare 'error' cost was
+    the OPERATOR's ability to see why the command failed. RED without the
+    fix: the summary is the bare 'error'."""
+    assert summarize_tool_result(
+        "exec",
+        {"kind": "sandboxed_exec", "status": "error", "backend": "landlock",
+         "returncode": 1, "stdout": "", "stderr": "printf: brace-expansion not supported",
+         "truncated": False, "denial_class": None, "argv0_resolved": "/usr/bin/printf"},
+    ) == "✗ exit 1: printf: brace-expansion not supported"
+
+
+def test_sandboxed_exec_error_with_no_stderr_still_shows_returncode() -> None:
+    """Tier 2: (accept-side) a nonzero exit with empty/absent stderr still
+    surfaces the returncode alone — never a bare 'error' with NO signal at
+    all, even in the degraded case where the failing process wrote
+    nothing to stderr."""
+    assert summarize_tool_result(
+        "exec",
+        {"kind": "sandboxed_exec", "status": "error", "backend": "local",
+         "returncode": 2, "stdout": "", "stderr": ""},
+    ) == "✗ exit 2"
+
+
+def test_sandboxed_exec_error_truncates_long_stderr() -> None:
+    """Tier 2: (accept-side) long stderr is truncated, not dumped verbatim
+    into the one-line summary — via the SAME ``_short(...)`` boundary the
+    ``error``/``error_message`` branches in this function already use for
+    a one-line error summary, not a freshly-minted constant (owner
+    instruction: reuse an existing truncation boundary for the same
+    purpose before adding a new one)."""
+    long_stderr = "x" * 200
+    summary = summarize_tool_result(
+        "exec",
+        {"kind": "sandboxed_exec", "status": "error", "backend": "local",
+         "returncode": 1, "stdout": "", "stderr": long_stderr},
+    )
+    assert summary.startswith("✗ exit 1: ")
+    detail = summary[len("✗ exit 1: "):]
+    assert len(detail) < len(long_stderr), "long stderr must be truncated, not dumped verbatim"
+    assert detail.endswith("…")
