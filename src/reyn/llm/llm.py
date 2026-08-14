@@ -704,6 +704,19 @@ class LLMToolCallResult:
                                      # empty list if none
     finish_reason: str | None
     usage: TokenUsage
+    # #4691 Phase 1 ②: the litellm response's own ``id`` — the same value
+    # ``_emit_chat_cost_events`` stamps as ``call_id`` on the
+    # ``llm_response_received`` audit event (item ①, #4722). Threaded through
+    # here so RouterLoop's ``kind="agent"`` outbox rows can carry the SAME key
+    # their own audit-event counterpart carries, without re-deriving it from
+    # ``raw_message`` (which is the assistant *message*, not the response
+    # envelope the id lives on). ``None`` when the provider omitted it — never
+    # a minted placeholder, same discipline as ``finish_reason`` above. Also
+    # ``None`` for litellm's own empty-string id (see the ``or None`` at the
+    # assignment site) — #4722 review found ``""``, not ``None``, is what a
+    # genuinely id-less reconstructed stream response carries, and left
+    # unfixed every such row would share the SAME falsy key.
+    call_id: str | None = None
     # raw message for debugging:
     raw_message: object | None = None
     # #1652/②: the model's reasoning as a normalized BUNDLE
@@ -2996,6 +3009,10 @@ async def call_llm_tools(
         tool_calls=tool_calls,
         finish_reason=finish_reason,
         usage=usage,
+        # #4691 Phase 1 ②: ``or None`` collapses litellm's own empty-string
+        # id (see ``LLMToolCallResult.call_id``'s own docstring) to a genuine
+        # absence — same fix #4722 applied at the audit-event call site.
+        call_id=getattr(response, "id", None) or None,
         raw_message=msg,
         # #1652/②: capture the provider reasoning as a normalized BUNDLE
         # (reasoning_content + thinking_blocks, the litellm cross-provider

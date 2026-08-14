@@ -349,6 +349,29 @@ async def test_empty_response_puts_failure_message_in_outbox(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_empty_response_outbox_meta_carries_call_id_and_finish_reason(monkeypatch):
+    """Tier 2: #4691 Phase 1 ② — the outbox row's meta carries the SAME
+    call_id/finish_reason as the LLMToolCallResult that triggered it, the
+    call-granularity key #4722 (item ①) stamps on this call's own
+    llm_response_received. A row with no per-call figure at all (a legacy/
+    restored frame) is a different, pre-existing case — untouched here."""
+    host = FakeRouterHost()
+    loop = make_loop(host)
+    result = LLMToolCallResult(
+        content=None, tool_calls=[], finish_reason="stop",
+        usage=_BASE_USAGE, call_id="resp-empty-glitch",
+    )
+    scripted = _ScriptedLLM([result])
+    monkeypatch.setattr("reyn.runtime.router_loop.call_llm_tools", scripted)
+
+    await loop.run("do something", [])
+
+    (msg,) = host.outbox
+    assert msg["meta"]["call_id"] == "resp-empty-glitch"
+    assert msg["meta"]["finish_reason"] == "stop"
+
+
+@pytest.mark.asyncio
 async def test_empty_response_failure_message_is_p7_clean(monkeypatch):
     """Tier 2: failure message sent to user contains no skill/tool-specific names (P7)."""
     host = FakeRouterHost()

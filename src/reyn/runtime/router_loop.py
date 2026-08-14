@@ -2076,6 +2076,13 @@ class RouterLoop:
                             # docstring for why this is the boundary fix).
                             "prompt_tokens": getattr(result.usage, "prompt_tokens", None),
                             "completion_tokens": getattr(result.usage, "completion_tokens", None),
+                            # #4691 Phase 1 ②: same call-granularity key item ①
+                            # stamps on this call's own llm_response_received —
+                            # threaded onto the row so a future flowview tree
+                            # (#4691 Phase B) can tell which litellm call this
+                            # row belongs to and whether it was a tool round.
+                            "call_id": result.call_id,
+                            "finish_reason": result.finish_reason,
                         },
                     )
                 # F5 fix (dogfood batch 1): dedupe duplicate async
@@ -2179,6 +2186,10 @@ class RouterLoop:
                             # #4691: same call as the tool-turn text row above.
                             "prompt_tokens": getattr(result.usage, "prompt_tokens", None),
                             "completion_tokens": getattr(result.usage, "completion_tokens", None),
+                            # #4691 Phase 1 ②: see the tool-turn-text row above
+                            # for the full reasoning.
+                            "call_id": result.call_id,
+                            "finish_reason": result.finish_reason,
                         },
                     )
                     return self._total_usage
@@ -2316,6 +2327,10 @@ class RouterLoop:
                         # #4691: a genuine (if content-empty) call's own usage.
                         "prompt_tokens": getattr(result.usage, "prompt_tokens", None),
                         "completion_tokens": getattr(result.usage, "completion_tokens", None),
+                        # #4691 Phase 1 ②: see the tool-turn-text row's own
+                        # comment (~line 2073) for the full reasoning.
+                        "call_id": result.call_id,
+                        "finish_reason": result.finish_reason,
                     },
                 )
                 return self._total_usage  # no retry
@@ -2372,6 +2387,10 @@ class RouterLoop:
                     # full reasoning.
                     "prompt_tokens": getattr(result.usage, "prompt_tokens", None),
                     "completion_tokens": getattr(result.usage, "completion_tokens", None),
+                    # #4691 Phase 1 ②: see the tool-turn-text row's own comment
+                    # (~line 2073) for the full reasoning.
+                    "call_id": result.call_id,
+                    "finish_reason": result.finish_reason,
                 },
             )
             return self._total_usage
