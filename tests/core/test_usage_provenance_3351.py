@@ -239,6 +239,40 @@ def test_the_cost_audit_event_reports_where_the_numbers_came_from(
     )
 
 
+def test_call_id_and_finish_reason_land_on_the_response_event_only(
+    monkeypatch, _reset_event_log,
+) -> None:
+    """Tier 2: #4691 Phase 1 ① — ``call_id``/``finish_reason`` are the litellm
+    response's own ``id``/``choices[0].finish_reason``, stamped on
+    ``llm_response_received`` (measured off the reconstructed response, not
+    invented) and deliberately ABSENT from ``llm_called`` (which fires before
+    the response exists, so it has no response fields to report)."""
+    tracker = BudgetTracker(CostConfig())
+    monkeypatch.setattr(
+        litellm, "acompletion",
+        _make_streaming_acompletion(provider_reports_usage=True),
+    )
+    log = EventLog()
+    collected = collect_events(log)
+    set_llm_request_event_log(log)
+    _run_turn(tracker, "turn-callid")
+
+    called = next(e for e in collected if e.type == "llm_called")
+    received = next(e for e in collected if e.type == "llm_response_received")
+    received_payload = json.loads(json.dumps(received.data))
+
+    # The scripted stand-in's chunks all carry id="resp-3351" and the content
+    # chunk's own finish_reason="stop" (see _make_streaming_acompletion) —
+    # litellm's stream reconstruction carries both onto the rebuilt response.
+    assert received_payload["call_id"] == "resp-3351"
+    assert received_payload["finish_reason"] == "stop"
+    assert "call_id" not in called.data, (
+        "llm_called fires before the response exists — it must not carry a "
+        "response-only field"
+    )
+    assert "finish_reason" not in called.data
+
+
 def test_provenance_survives_the_call_llm_tools_re_extraction(monkeypatch) -> None:
     """Tier 2: ``call_llm_tools`` — the entry point ``RouterLoop`` uses for every
     chat turn — re-reads usage from the response object it got back from the
