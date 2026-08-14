@@ -245,7 +245,11 @@ per-PR coders) authenticating as the same `gh` user.
 **Before you open a PR, run `ruff check .`, `python
 scripts/test_tier_audit.py --strict <changed test files>`, `python
 scripts/verify_module_docstrings.py <changed src files>`, `python
-scripts/mypy_ratchet.py`, `python
+scripts/mypy_ratchet.py`, `python scripts/flat_tests_ratchet.py`
+(#3879 Stage 0 — CI runs this unconditionally on every PR, no path
+filter, `.github/workflows/flat-tests-ratchet.yml`; it only fails when
+a NEW `.py` file lands directly in `tests/`, not in any subdirectory —
+cheap enough to just always run), `python
 scripts/check_tests_path_literal_reference.py` (#4065/#4068 — a `tests/...py`
 path-literal ratchet, ~2.6s; on a PR that moves/renames a `tests/...py` file,
 its whole-repo baseline goes stale the moment `main` moves underneath your
@@ -262,19 +266,53 @@ running it locally actually costs vs. CI; the #3750 count history) before
 changing this paragraph, in either doc. This line said `ruff check src tests` until #4630 measured the gap: CI runs `ruff check .` (`test.yml:162`), so the documented command silently skipped `scripts/` and every other top-level directory — a PR author who followed it exactly still went red, and 17 genuinely-dead imports outside `src/` had been invisible to the whole checklist. Run the same command CI runs; a narrower local gate is a green that does not mean what it says.
 
 **If your PR touches `docs/`, also run `mkdocs build --strict -f
-.mkdocs/mkdocs.yml && python scripts/check_doc_anchors.py`** — as a
-pair, in that order, not either alone. CI's "docs build (strict)" job
-runs both steps (`test.yml`'s `docs` job); `mkdocs build --strict`
+.mkdocs/mkdocs.yml && python scripts/check_doc_anchors.py && python
+scripts/check_retired_config_keys_denylist.py`** — as a sequence, in
+that order (the first two are a pair, not either alone; the third is
+independent of the first two but lives in the SAME CI job so belongs
+in the same local run). CI's "docs build (strict)" job runs all three
+steps (`test.yml`'s `docs` job — #4651 caught #4660's own fix stopping
+at 2 of the job's 3 steps, the same under-scoping class this whole
+paragraph exists to close); `mkdocs build --strict`
 catches a dangling *file* reference but never checks whether `#anchor`
 actually exists on the target page, which is `check_doc_anchors.py`'s
 own job, run against the `site/` the mkdocs step just built (#3557/
 #3592: 42/42 line-number citations in `charter.md` had drifted,
-silently, before this script existed). Running `check_doc_anchors.py`
+silently, before this script existed); `check_retired_config_keys_denylist.py`
+(#4327) is a separate, unrelated check in the same job — a retired
+top-level `reyn.yaml` key (renamed via #4174) must not appear, at
+YAML top level, in operator-facing docs or `reyn.local.yaml.example`.
+Running `check_doc_anchors.py`
 alone without a prior `mkdocs build` first raises an `AssertionError`
 from a missing `site/` — which reads as "main is broken," not as "run
 the other command first" (#4651: this exact confusion, the same
 `git grep` finding 0 mentions of the script in either this file or
 `testing.md`, until now).
+
+**If your PR touches `src/reyn/mcp/`, also run `python
+scripts/check_fastmcp_import_boundary.py`** (#3698 enforcement half) —
+a dedicated, path-filtered CI workflow
+(`.github/workflows/fastmcp-import-boundary-gate.yml`, triggered on
+`src/reyn/mcp/**`, not part of `test.yml`), so it never runs on a PR
+that doesn't touch this directory. Zero-baseline: no file under
+`src/reyn/mcp/` may `import fastmcp` at all, since the last file that
+needed to (`_fastmcp_boundary.py`) was retired clean-break (#4302).
+
+**If your PR touches `tests/`, also run `python
+scripts/check_bare_tests_import_reference.py` and `python
+scripts/check_file_depth_reference.py`** (#4008 / #3995-#4002-#4019) —
+two more dedicated, path-filtered workflows (both triggered on
+`tests/**`, both `tests_dir.rglob("*.py")` whole-tree scans against a
+baseline of zero, neither part of `test.yml`). The first rejects a
+bare `from _some_module import x` (no `tests.` prefix) in a test file
+— it resolves today only because pytest's "prepend" import mode
+happens to put a flat consumer's own directory on `sys.path`, and
+silently breaks the moment that consumer moves into a subdirectory.
+The second rejects a module-level `.glob(...)`/`.rglob(...)` call
+whose root, resolved from the file's OWN current location, escapes
+`tests/` or lands outside its current direct child directories — a
+static, add-time proxy for "this path expression won't survive a
+future move," not a check that anything has actually moved yet.
 
 A green scoped `pytest` alone is
 **not** a green CI run (`pytest-green ≠ CI-green`): ruff `I001` import-sort

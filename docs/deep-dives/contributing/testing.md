@@ -1226,15 +1226,15 @@ section no longer asks for, and CI is the only place all six now run
 together.
 
 **A PR that touches `docs/` also owes a seventh, separate check — the
-"docs build (strict)" CI job runs two steps, and both must pass:**
+"docs build (strict)" CI job runs three steps, and all three must pass:**
 
 ```bash
-mkdocs build --strict -f .mkdocs/mkdocs.yml && python scripts/check_doc_anchors.py
+mkdocs build --strict -f .mkdocs/mkdocs.yml && python scripts/check_doc_anchors.py && python scripts/check_retired_config_keys_denylist.py
 ```
 
-Run them as a pair, in that order, not either alone. `mkdocs build
---strict` catches a dangling *file* reference but never checks whether
-`#anchor` actually exists on the target page — that's
+Run the first two as a pair, in that order, not either alone. `mkdocs
+build --strict` catches a dangling *file* reference but never checks
+whether `#anchor` actually exists on the target page — that's
 `check_doc_anchors.py`'s own job, checked against the `site/` the
 mkdocs step just built (#3557/#3592: 42/42 line-number citations in
 `charter.md` had drifted, silently, before this script existed).
@@ -1242,7 +1242,48 @@ Running `check_doc_anchors.py` alone, without a prior `mkdocs build`,
 raises an `AssertionError` from a missing `site/` — which reads as
 "main is broken," not as "run the other command first" (#4651: this
 exact confusion, live, the same night a `git grep` first found this
-script named in neither this file nor `CLAUDE.md`).
+script named in neither this file nor `CLAUDE.md`). The third,
+`check_retired_config_keys_denylist.py` (#4327), is independent of the
+first two — it just happens to live in the same CI job — and rejects a
+retired top-level `reyn.yaml` key (renamed via #4174) still showing up
+at YAML top level in operator-facing docs or `reyn.local.yaml.example`;
+this doc's own first pass at documenting the job (this same PR's
+earlier commit) stopped at 2 of its 3 steps, caught by #4651's own
+follow-up measurement — the same under-scoping class the rest of this
+section exists to close.
+
+**If your PR touches `src/reyn/mcp/`, also run `python
+scripts/check_fastmcp_import_boundary.py`** (#3698 enforcement half)
+— a dedicated, path-filtered workflow
+(`.github/workflows/fastmcp-import-boundary-gate.yml`, triggered only
+on `src/reyn/mcp/**`, not part of `test.yml`'s own job list above).
+Zero-baseline: no file under `src/reyn/mcp/` may `import fastmcp` at
+all, since the last file that genuinely needed to
+(`_fastmcp_boundary.py`) was retired clean-break (#4302).
+
+**If your PR touches `tests/`, also run `python
+scripts/check_bare_tests_import_reference.py` and `python
+scripts/check_file_depth_reference.py`** (#4008 / #3995-#4002-#4019)
+— two more dedicated, path-filtered workflows (both triggered on
+`tests/**`, both whole-tree `tests_dir.rglob("*.py")` scans against a
+baseline of zero, neither part of `test.yml`). The first rejects a
+bare `from _some_module import x` import (no `tests.` prefix) in a
+test file, which resolves today only because pytest's "prepend" import
+mode happens to put a flat consumer's own directory on `sys.path`, and
+silently breaks the moment that consumer moves into a subdirectory.
+The second rejects a module-level `.glob(...)`/`.rglob(...)` call
+whose root, resolved from the file's own current location, escapes
+`tests/` or lands outside its current direct child directories — a
+static, add-time proxy for "this path expression won't survive a
+future move," not a check that anything has actually moved yet.
+
+Separately, `scripts/flat_tests_ratchet.py` (#3879 Stage 0) is
+**unconditional, not path-scoped like the checks above** — CI runs it
+on every PR with no path filter (`.github/workflows/flat-tests-ratchet.yml`),
+so it belongs alongside the six numbered gates rather than in this
+conditional section; see `CLAUDE.md`'s "Before you open a PR" for the
+command (`python scripts/flat_tests_ratchet.py`, no args needed
+locally — `--check-growth` is CI-only, diffed against a base ref).
 
 ---
 
