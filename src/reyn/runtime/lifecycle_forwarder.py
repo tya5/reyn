@@ -600,6 +600,13 @@ class ChatLifecycleForwarder:
             "chain_id": data.get("chain_id"),
             "caller_kind": data.get("caller_kind"),
             "caller_id": data.get("caller_id"),
+            # #4691 Phase B ①(remainder): the litellm call this tool call
+            # belongs to (dispatcher.py's own DispatchContext.call_id,
+            # #4725's RouterLoop._current_call_id) — the same key
+            # llm_response_received carries for that call (#4722). None for
+            # a dispatch that never threaded one through (op-loop / non-
+            # router callers) — never a minted placeholder.
+            "call_id": data.get("call_id"),
         }
         # Surface run_id when present so consumers can attribute the
         # row to a parent agent thread (= sub-agent spawned tool calls

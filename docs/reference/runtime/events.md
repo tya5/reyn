@@ -470,9 +470,23 @@ exclusive per call.
 
 | Kind | When | Key payload |
 |------|------|-------------|
-| `tool_called` | Before invocation, after argument validation. | `caller_kind`, `caller_id`, `tool`, `chain_id`, `args`, `args_hash` |
-| `tool_returned` | The invocation returned a value that does NOT declare an error (see `tool_failed`). | `caller_kind`, `caller_id`, `tool`, `chain_id`, `args_hash`, `result` |
+| `tool_called` | Before invocation, after argument validation. | `caller_kind`, `caller_id`, `tool`, `chain_id`, `call_id`, `args`, `args_hash` |
+| `tool_returned` | The invocation returned a value that does NOT declare an error (see `tool_failed`). | `caller_kind`, `caller_id`, `tool`, `chain_id`, `call_id`, `args_hash`, `result` |
 | `tool_failed` | The invocation was refused, raised, **or returned normally with a self-declared error** (#3450 — a handler's own `{"error": ...}` / `{"error_message": ...}` / `{"error_kind": ...}` return, plain or one level under its own `{"status": "error", "data": {...}}` self-envelope, promoted to this event instead of silently wrapped as a success). | same, plus `error_kind` (`permission_denied` \| `exception` \| a validation reason \| a handler-supplied kind \| `handler_error`) and `message` |
+
+`call_id` (#4691 Phase B ①, remainder — `DispatchContext.call_id`) is the
+litellm call (`LLMToolCallResult.call_id`, #4725) whose `tool_calls` this
+dispatch belongs to — the SAME key `llm_response_received` carries for that
+call (#4722). `None` for a dispatch whose `DispatchContext` never threaded one
+through (the router's own tool-turn dispatch always does, via
+`RouterLoop._current_call_id`; an op-loop or other non-router caller that
+constructs its own `DispatchContext` may still leave it unset) — never a
+minted placeholder. This is the key a TUI consumer uses to attach a tool row
+to its parent CALL (#4691 Phase B's flowview tree); `chain_id` alone cannot
+do this because one turn's `chain_id` can span several litellm calls, and
+dispatch order is explicitly NOT used for this (owner ruling B, #4691: order
+holds only while every reader reconstructs it identically, is one of several
+independent invariants, and a single broken one goes unnoticed silently).
 
 `args_hash` is a stable SHA-256 prefix over the canonical-JSON arguments — the
 correlation id that pairs a `tool_called` with its outcome across the log.

@@ -568,6 +568,37 @@ async def test_dispatch_tool_emits_tool_failed_on_unknown_tool(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_dispatched_tool_call_carries_the_llm_calls_own_call_id(monkeypatch):
+    """Tier 2: #4691 Phase B ①(remainder) — a tool_calls round's own
+    LLMToolCallResult.call_id (#4725) reaches tool_called/tool_returned's
+    audit-event payload via RouterLoop._current_call_id -> DispatchContext.
+    This is the key a TUI consumer keys a tool row to its parent litellm
+    CALL by — never dispatch order (owner ruling B, #4691)."""
+    host = FakeRouterHost()
+    loop = make_loop(host)
+
+    # list_agents is always in the catalog (build_tools includes it
+    # unconditionally, independent of registered agents) — a real,
+    # dispatchable tool, so tool_called fires instead of the pre-dispatch
+    # unknown_tool short-circuit the other tests in this file exercise.
+    rounds = [
+        tool_result([{"name": "list_agents", "args": {"path": ""}}], call_id="resp-round-1"),
+        text_result("done"),
+    ]
+
+    async def mock_llm(**kwargs):
+        return rounds.pop(0)
+
+    monkeypatch.setattr("reyn.runtime.router_loop.call_llm_tools", mock_llm)
+    await loop.run("call a tool", [])
+
+    called = [e for e in host.events.emitted if e["type"] == "tool_called"]
+    assert called, "tool_called never fired — nothing to assert call_id on"
+    for e in called:
+        assert e["call_id"] == "resp-round-1"
+
+
+@pytest.mark.asyncio
 async def test_session_spawn_dispatches_to_host_not_unhandled():
     """Tier 2: #2120 — _invoke_router_tool('spawn_session') reaches the registry handler
     and the host's spawn_session, NOT the {"error": "unhandled tool"} fall-through.

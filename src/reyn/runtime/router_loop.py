@@ -900,6 +900,19 @@ class RouterLoop:
     ):
         self.host = host
         self.chain_id = chain_id
+        # #4691 Phase B ①(remainder): the CURRENT iteration's LLMToolCallResult
+        # .call_id (#4725) — set once per ``for _iteration`` pass, right after
+        # the LLM call returns, before that round's tools dispatch. Read by
+        # ``_dispatch_resolved`` to stamp DispatchContext.call_id, so
+        # tool_called/tool_returned/tool_failed carry the SAME key
+        # llm_response_received carries for that call (#4722) — a TUI
+        # consumer keys a tool row to its parent CALL by this field, never by
+        # dispatch order (owner ruling B, #4691: order holds only while every
+        # reader reconstructs identically, and one skipped face goes
+        # unnoticed — not an invariant to key UI structure on). None before
+        # the first LLM call of a turn returns, or if the provider omitted an
+        # id (#4722's own "" -> None collapse) — never a minted placeholder.
+        self._current_call_id: "str | None" = None
         # Bumped per LLM round in ``run_loop``; initialised here so a delta
         # emitted from any other entry point carries 0 rather than raising —
         # narration must never break the turn it describes.
@@ -1943,6 +1956,11 @@ class RouterLoop:
             if result.usage:
                 self._total_usage += result.usage
                 self._last_call_usage = result.usage
+            # #4691 Phase B ①(remainder): this iteration's call boundary, read
+            # by ``_dispatch_resolved`` for every tool this round's execute
+            # phase is about to dispatch — see ``self._current_call_id``'s
+            # own docstring (set in __init__) for the full reasoning.
+            self._current_call_id = result.call_id
             # #1593 loop-unify (Issue-1): interpret-driven routing — the active
             # scheme classifies EVERY result, instead of the OS sniffing
             # ``result.tool_calls``. universal-category returns Execute when there
@@ -2998,6 +3016,10 @@ class RouterLoop:
             chain_id=self.chain_id,
             tool_catalog=catalog,
             events=self.host.events,
+            # #4691 Phase B ①(remainder): the call whose tool_calls this
+            # dispatch belongs to — see ``self._current_call_id``'s own
+            # docstring for the full reasoning.
+            call_id=self._current_call_id,
         )
 
         result = await dispatch_tool(

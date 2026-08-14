@@ -325,8 +325,10 @@ def text_result(text: str) -> LLMToolCallResult:
     )
 
 
-def tool_result(calls: list[dict]) -> LLMToolCallResult:
-    """calls: list of {id, name, arguments_dict}"""
+def tool_result(calls: list[dict], *, call_id: "str | None" = None) -> LLMToolCallResult:
+    """calls: list of {id, name, arguments_dict}. ``call_id`` (#4691 Phase B
+    ①, remainder) defaults to None — every existing caller that omits it
+    stays byte-identical."""
     tool_calls = [
         {
             "id": c.get("id", f"tc_{i}"),
@@ -343,6 +345,7 @@ def tool_result(calls: list[dict]) -> LLMToolCallResult:
         tool_calls=tool_calls,
         finish_reason="tool_calls",
         usage=EMPTY_USAGE,
+        call_id=call_id,
     )
 
 
