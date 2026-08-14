@@ -1,5 +1,10 @@
-"""Tier 1: #4691 — a per-call figure embedded in the row's own meta wins
-over the turn-total lookup on ``ReynTurnUsageGutter``.
+"""Tier 1: #4691 — an ``agent`` row's per-call figure, embedded in the
+row's own meta, on ``ReynTurnUsageGutter``. Since arc item ④ this is the
+ONLY thing an agent row ever shows — the turn-total lookup moved off this
+kind entirely, onto the ``user`` row (:data:`TURN_TOTAL_ANCHOR_KIND`,
+covered in ``test_textual_chat_phase4_turn_cost_gutter_3283.py``), so an
+agent row without its own per-call figure now renders an empty cell
+rather than falling back to a lookup that used to sit on this same kind.
 
 Root problem (architect's measurement, issue #4691): a turn with more than
 one ``kind="agent"`` anchor row (a tool-turn's own explanatory text, an
@@ -35,7 +40,6 @@ from textual_flowview import FlowModel
 from reyn.interfaces.inline.textual_chat.gutter import (
     RIGHT_GUTTER_WIDTH,
     TURN_ANCHOR_KIND,
-    TURN_USAGE_UNKNOWN,
     ReynTurnUsageGutter,
 )
 from reyn.runtime.outbox import OutboxMessage
@@ -94,18 +98,28 @@ def test_two_anchor_rows_of_one_turn_no_longer_show_the_same_duplicated_total() 
     assert "999" not in first and "999" not in second
 
 
-def test_a_row_with_no_per_call_figure_still_falls_back_to_the_turn_total_lookup() -> None:
-    """Tier 1: a row that carries NO per-call meta at all (a restored/legacy
-    frame — every LIVE ``kind="agent"`` emit site stamps these fields)
-    still uses the existing chain_id-keyed turn-total lookup exactly as
-    before #4691 — the ONLY case that lookup answers for now."""
+def test_a_row_with_no_per_call_figure_renders_empty_never_a_turn_total() -> None:
+    """Tier 1: #4691 arc item ④ (owner ruling) — a row that carries NO
+    per-call meta at all (a restored/legacy frame, or a future agent-kind
+    emit site that never threaded one through) renders an EMPTY cell, never
+    the chain_id-keyed turn-total lookup. That lookup moved to the ``user``
+    row entirely (:data:`TURN_TOTAL_ANCHOR_KIND`) — an agent row with a
+    ``chain_id`` but no per-call figures used to silently substitute the
+    turn total in the exact same visual slot a genuine per-call figure
+    occupies, which is the ambiguity item ④ closes: a reader could not
+    tell "this call's own tokens" from "the whole turn's total" without
+    already knowing this row's own hidden meta shape. The lookup is
+    present here specifically to prove it is NEVER consulted for an agent
+    row, not merely unconfigured."""
     def _lookup(chain_id: str) -> "dict | None":
-        assert chain_id == "turn-B"
-        return {"chain_id": chain_id, "tokens": 130, "prompt_tokens": 100, "completion_tokens": 30}
+        raise AssertionError(
+            f"an agent row must never consult the turn-total lookup, got "
+            f"chain_id={chain_id!r}"
+        )
 
     gutter = ReynTurnUsageGutter(usage_lookup=_lookup)
     row = OutboxMessage(kind=TURN_ANCHOR_KIND, text="done", meta={"chain_id": "turn-B"})
-    assert _label(gutter, row) == "↑100 ↓30"
+    assert _label(gutter, row) == ""
 
 
 def test_the_owners_originally_reported_symptom_is_closed() -> None:
@@ -133,16 +147,17 @@ def test_the_owners_originally_reported_symptom_is_closed() -> None:
     assert "138" not in _label(gutter, only_row_in_the_turn)
 
 
-def test_a_non_numeric_or_partial_per_call_pair_falls_back_not_crashes() -> None:
+def test_a_non_numeric_or_partial_per_call_pair_renders_empty_not_crashes() -> None:
     """Tier 1: meta carrying only ONE of the two fields (a malformed/partial
-    emit) is not treated as a valid per-call pair — falls through to the
-    turn-total lookup rather than rendering a bogus half-figure or raising."""
+    emit) is not treated as a valid per-call pair — renders an EMPTY cell
+    (#4691 arc item ④: no turn-total fallback exists on an agent row
+    anymore) rather than a bogus half-figure or a raised exception."""
     gutter = ReynTurnUsageGutter(usage_lookup=lambda cid: None)
     row = OutboxMessage(
         kind=TURN_ANCHOR_KIND, text="reply",
         meta={"chain_id": "turn-C", "prompt_tokens": 100},  # completion_tokens missing
     )
-    assert _label(gutter, row) == TURN_USAGE_UNKNOWN
+    assert _label(gutter, row) == ""
 
 
 def test_a_real_per_call_zero_still_renders_as_a_measured_zero() -> None:

@@ -4463,6 +4463,16 @@ class TextualChatApp(App):
             if msg_id:
                 self._sent_queue.remove_item(msg_id)
             meta = self._queue_item_meta.pop(msg_id, {}) if msg_id else {}
+            # #4691 arc item ④: stamp THIS turn's own chain_id onto the
+            # user row itself — the row is created here, at promotion time,
+            # before chain_id existed at queue time (a queued item's own
+            # meta predates the turn actually starting), so this is the
+            # first point it can be threaded through. ReynTurnUsageGutter
+            # reads it to show the turn's aggregate token total, now
+            # anchored to this row instead of an agent reply (see that
+            # class's own docstring for why the two were split).
+            meta = dict(meta)
+            meta.setdefault("chain_id", chain_id)
             text = _neutralized_label(str(item.get("text", "")))
             self._ingest_frame(OutboxMessage(kind="user", text=text, meta=meta))
 
