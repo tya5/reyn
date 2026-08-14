@@ -109,14 +109,28 @@ def session_container_stats(session: "Session") -> "list[ContainerStat]":
 
 
 def process_global_container_stats() -> "list[ContainerStat]":
-    """Count + approximate bytes for the 3 process-global
-    ``WeakKeyDictionary`` registries #4497's issue names — these are
-    NOT per-session; they aggregate every session/loop this PROCESS has
-    ever touched (bounded by garbage collection reclaiming a dead
-    session/loop key, not by this module). Imported lazily so this
-    module itself carries no import-time coupling to the 3 owning
-    modules — a diagnostic surface should not widen anyone's import
-    graph just by existing.
+    """Count + approximate bytes for the process-global
+    ``WeakKeyDictionary`` registries #4497's issue names, plus
+    ``_ROUTERS_BY_LOOP`` (#4497 Phase 2 — the "LLM client-related memory"
+    item the issue names as unmeasured; #4376 only ever covered the
+    image cache, a different layer). These are NOT per-session; they
+    aggregate every session/loop this PROCESS has ever touched (bounded
+    by garbage collection reclaiming a dead session/loop key, not by
+    this module). Imported lazily so this module itself carries no
+    import-time coupling to the owning modules — a diagnostic surface
+    should not widen anyone's import graph just by existing.
+
+    **Verified before adding `_ROUTERS_BY_LOOP` — same surface, checked
+    for the same reason #4485/#4488's surface was rejected**: it lives
+    in `reyn.llm.llm`, imported and cached in the SAME process as
+    `reyn chat` (not a separate MCP-server subprocess), so `/resident`
+    is the correct place for it. The OTHER Phase-2 candidate the issue
+    names, the embedding/sqlite index backend (`SqliteIndexBackend`),
+    was checked and found to hold NO persistent in-process state — it
+    opens/closes a fresh sqlite connection per call (no `self._conn`,
+    no cache dict); its growth is a disk metric, already the domain of
+    `reyn storage stats`, not this module. Reported to the issue, no
+    code added for it here.
     """
     stats = []
     try:
@@ -141,6 +155,23 @@ def process_global_container_stats() -> "list[ContainerStat]":
         stats.append(
             ContainerStat(
                 name=f"{base.name} ({inner_paths} path-keys across "
+                     f"{base.count} loop(s))",
+                count=base.count,
+                approx_bytes=base.approx_bytes,
+            ),
+        )
+    except ImportError:
+        pass
+    try:
+        from reyn.llm.llm import _ROUTERS_BY_LOOP
+        # Same two-level shape as `_LOCKS_BY_LOOP` above: the outer
+        # WeakKeyDictionary's own count (number of loops) undersells the
+        # real footprint — sum the inner per-loop Router caches too.
+        inner_routers = sum(len(v) for v in _ROUTERS_BY_LOOP.values())
+        base = _stat("_ROUTERS_BY_LOOP", _ROUTERS_BY_LOOP)
+        stats.append(
+            ContainerStat(
+                name=f"{base.name} ({inner_routers} router(s) across "
                      f"{base.count} loop(s))",
                 count=base.count,
                 approx_bytes=base.approx_bytes,

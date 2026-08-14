@@ -93,17 +93,58 @@ def test_session_container_stats_never_writes_to_the_session():
     assert first == second
 
 
-def test_process_global_container_stats_resolves_the_three_real_registries():
+def test_process_global_container_stats_resolves_the_four_real_registries():
     """Tier 2: process_global_container_stats successfully imports and
-    measures the 3 real module-level WeakKeyDictionary registries #4497's
-    issue names, not a stand-in — a broken import path would silently
-    drop a row (caught by ImportError -> skip), so this test names all 3
-    explicitly to catch that."""
+    measures the 4 real module-level WeakKeyDictionary registries (the 3
+    #4497 Phase 1 named, plus Phase 2's `_ROUTERS_BY_LOOP`), not a
+    stand-in — a broken import path would silently drop a row (caught by
+    ImportError -> skip), so this test names all 4 explicitly to catch
+    that."""
     stats = process_global_container_stats()
     names = [s.name for s in stats]
     assert any(n == "_session_bridges" for n in names)
     assert any(n == "_REWIND_INDEXES" for n in names)
     assert any(n.startswith("_LOCKS_BY_LOOP") for n in names)
+    assert any(n.startswith("_ROUTERS_BY_LOOP") for n in names)
+
+
+def _inner_router_count(row_name: str) -> int:
+    # Row name shape: "_ROUTERS_BY_LOOP (N router(s) across M loop(s))".
+    return int(row_name.split("(", 1)[1].split(" router", 1)[0])
+
+
+def test_process_global_stats_reflect_a_real_router_cache_entry():
+    """Tier 2: #4497 Phase 2 — a real entry placed in `_ROUTERS_BY_LOOP`
+    (the actual module global, not a stand-in) is reflected in the
+    reported inner router count, the same "real write shows up" check
+    Phase 1 ran for `_LOCKS_BY_LOOP`. The loop is kept alive (referenced
+    by this test function, never run/closed) for the duration of the
+    assertion — `_ROUTERS_BY_LOOP` is a WeakKeyDictionary, so a loop
+    that's already been GC'd would make this test observe nothing real,
+    not the write it just made. Asserts a DELTA, not an absolute count —
+    this is process-global state another test/real Router-build in the
+    same pytest process may have already populated."""
+    import asyncio
+
+    from reyn.llm.llm import _ROUTERS_BY_LOOP
+
+    before_row = next(
+        (s for s in process_global_container_stats() if s.name.startswith("_ROUTERS_BY_LOOP")),
+        None,
+    )
+    before = _inner_router_count(before_row.name) if before_row is not None else 0
+
+    loop = asyncio.new_event_loop()
+    try:
+        _ROUTERS_BY_LOOP[loop] = {"fake-cache-key-1": object(), "fake-cache-key-2": object()}
+
+        after_row = next(
+            s for s in process_global_container_stats() if s.name.startswith("_ROUTERS_BY_LOOP")
+        )
+        assert _inner_router_count(after_row.name) == before + 2
+    finally:
+        del _ROUTERS_BY_LOOP[loop]
+        loop.close()
 
 
 def test_process_global_stats_are_real_module_state_not_copies(monkeypatch):
