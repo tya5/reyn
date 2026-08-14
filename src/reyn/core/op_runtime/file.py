@@ -12,11 +12,22 @@ from reyn.data.text_codec import decode_text_or_none, encode_text
 from reyn.plugins.body_read import read_plugin_body_bytes
 from reyn.schemas.models import FileIROp
 
+# Module-level import so tests can monkeypatch the threat-scan callables —
+# same reasoning skill_install.py/load_skill.py state for the identical
+# import (#4701: the SAME strict+block treatment #4699 gave SKILL.md's own
+# body, extended to a skill's reference files under its own directory).
+from reyn.security.content_guard import first_blocking_match, scan_for_threats
+
 from . import register
 from .context import OpContext
 from .context import resolve_path_for_gate as _resolve_for_gate
 from .context import sandbox_policy_from_ctx as _sandbox_policy_from_ctx
 from .path_locks import get_path_lock, locked_paths
+
+# #4701 (lead-coder review, condition③): reuse skill_install.py's own
+# containment check rather than a second, independently-drifting
+# reimplementation of the same resolve+relative_to logic.
+from .skill_install import _contained_under, _resolve_skill_md
 
 _WRITE_OPS = frozenset({"write", "edit", "delete", "regenerate_index", "mkdir", "move"})
 _READ_OPS = frozenset({"read", "glob", "grep", "stat"})
@@ -48,6 +59,98 @@ def _image_mime_for_path(path: str) -> str | None:
 # ~8-suggestion shape that invoke_action's UnknownActionError emits so the
 # LLM's "did you mean X" narration looks the same across both surfaces.
 _NOT_FOUND_SUGGESTIONS_LIMIT = 8
+
+
+def _skill_reference_provenance(ctx: OpContext, resolved_path: str) -> bool:
+    """#4701: True when *resolved_path* — an ALREADY ``resolve_path_for_gate``d
+    absolute path — is CONTAINED under a registered skill's own directory
+    (the parent of its ``SKILL.md``), i.e. is a ``references/*.md``-shaped
+    file (or any other file) the skill's own body might point a model at.
+
+    Owner ruling (#4701 comment thread, lead-coder): a skill's reference
+    files are the SAME content class as the SKILL.md body itself — both are
+    instructions the model reads and follows — so a reference gets the SAME
+    strict+block treatment ``load_skill.py`` already gives the body, not a
+    weaker one. This is a CONTAINMENT check (directory, not exact path),
+    deliberately broader than ``load_skill.py``'s own
+    ``_config_registered_skill_body_provenance`` (which matches ONLY the
+    SKILL.md file itself) — that sibling function is unaffected and stays
+    exact-match; this one exists for everything ELSE under the same skill's
+    directory tree.
+
+    Enumerated from ``ctx.available_skills`` — the SAME registered-skill
+    snapshot ``load_skill.py``'s own provenance check and ``:skill``
+    invocation resolve against, never a hand-curated path list (the #3194
+    "curated subset diverges from the registry" bug class). ``None``/empty
+    (test/phase-fallback construction) returns ``False`` — no skill is
+    registered at all, so there is no directory to be "under".
+
+    #4701 review (lead-coder), 4 conditions:
+    ① the tag's source is config-derived containment ONLY — never a
+       model-supplied claim about the path.
+    ② an UNDETERMINABLE resolution (an entry's own path fails to resolve —
+       e.g. a broken/malicious symlink somewhere in its chain) returns
+       ``True`` (treat as skill content), never ``False``. The reverse
+       (silently skip an entry whose resolution failed) would let a single
+       broken symlink evade the check entirely — the exact class of gap
+       ``resolve_path_for_gate``'s own #3196 discipline exists to close
+       elsewhere. Only a CONFIDENT non-containment (both sides resolved
+       fine, genuinely different subtrees — ``_contained_under``'s
+       ``ValueError`` branch) counts as a real "no".
+    ③ containment itself reuses ``skill_install.py``'s own
+       ``_contained_under`` (not a second, independently-drifting
+       implementation of the same resolve+relative_to check).
+
+    #4701 follow-up review (lead-coder): ``SkillEntry.path`` is declared
+    "as-is" (``registry.py``'s own docstring) — it may name the SKILL.md
+    file directly OR its containing directory (``skills.md``: "Path to
+    SKILL.md (or its containing directory)"), and the registry does NOT
+    normalize between the two. Taking ``.parent`` unconditionally silently
+    assumed the file form; for a directory-form entry (``path: skills/foo``)
+    that widened ``skill_dir`` by one level (``skills/``), pulling every
+    OTHER sibling skill's files into strict+block scope — safe-DIRECTION
+    (② still errs toward scanning on failure) but excessively WIDE, not the
+    narrow per-skill containment this function promises. Reuses
+    ``skill_install.py``'s own ``_resolve_skill_md`` (the SAME
+    file-vs-directory normalization ``skill_install`` already applies to
+    this exact field) to anchor on the true SKILL.md path before taking
+    ``.parent`` — not a second, independently-drifting normalization.
+    """
+    entries = getattr(ctx, "available_skills", None)
+    if not entries:
+        return False
+    ws = getattr(ctx, "workspace", None)
+    base_dir = ws.base_dir if ws is not None else Path.cwd()
+    try:
+        resolved = Path(resolved_path)
+    except (OSError, ValueError):
+        return True  # ②: cannot even parse the candidate — err toward scanning
+    for entry in entries:
+        entry_path = getattr(entry, "path", None)
+        if not entry_path:
+            continue
+        p = Path(entry_path).expanduser()
+        if not p.is_absolute():
+            p = base_dir / p
+        # Normalize file-vs-directory BEFORE resolving — same helper
+        # skill_install.py itself uses for this exact field.
+        p = _resolve_skill_md(str(p))
+        try:
+            skill_dir = p.resolve().parent
+        except (OSError, RuntimeError):
+            # ②: this entry's OWN path can't resolve — err toward scanning.
+            # RuntimeError, not just OSError: a genuine symlink LOOP (the
+            # exact evasion shape ② names) raises ``RuntimeError("Symlink
+            # loop from ...")`` from ``Path.resolve()``, not ``OSError`` —
+            # confirmed live on the installed Python (pathlib wraps the
+            # underlying ELOOP OSError and re-raises RuntimeError). Catching
+            # only OSError here would let that exact loop propagate
+            # uncaught (crashing the whole read) instead of degrading to
+            # the safe "treat as skill content" default.
+            return True
+        if _contained_under(resolved, skill_dir):  # ③: reused, not reimplemented
+            return True
+    return False
 
 
 def _binary_skipped_result(ctx: OpContext, path: str, byte_size: int) -> dict:
@@ -390,6 +493,67 @@ async def handle(op: FileIROp, ctx: OpContext) -> dict:
         content, _detected_encoding = decode_text_or_none(raw_bytes)
         if content is None:
             return _binary_skipped_result(ctx, op.path, len(raw_bytes))
+
+        # ── #4701: skill-reference threat-scan (strict+block, same content
+        # class as #4699's SKILL.md-body scan) ─────────────────────────────
+        # A skill's own reference file (e.g. `references/*.md`, but ANY path
+        # under the skill's directory) is read through THIS ordinary
+        # read_file op — the model chooses when to open it, per the
+        # SKILL.md body's own text. `load_skill.py`'s strict+block scan
+        # never sees it. Scoped to ONLY the skill's own directory tree
+        # (`_skill_reference_provenance`) — read_file's other callers are
+        # completely unaffected; making every read strict+block would
+        # spread false-positives across all file reading, which the #4701
+        # ruling explicitly rejected. Reuses the SAME event kinds
+        # `load_skill.py` emits (`skill_body_threat_match`/`_blocked`) —
+        # same payload shape, same meaning ("skill content matched a threat
+        # pattern"), regardless of which op the content came through.
+        #
+        # `_is_skill_reference` is also the source of the `_external_source`
+        # tag on every content-bearing return below (fence, #4701 condition
+        # ④/lead-coder review) — computed ONCE here, condition①: the tag's
+        # ONLY source is this config-derived containment check, never a
+        # model-supplied claim about the path.
+        _is_skill_reference = (
+            _resolved_read_path is not None
+            and _skill_reference_provenance(ctx, _resolved_read_path)
+        )
+        if _is_skill_reference:
+            _ts = getattr(ctx, "threat_scan", None)
+            if _ts is not None and getattr(_ts, "enabled", True):  # #4523: shadow default matches ThreatScanConfig.enabled's own declared True
+                _matches = scan_for_threats(content, _ts, scope="strict")
+                if _matches:
+                    for _m in _matches:
+                        ctx.events.emit(
+                            "skill_body_threat_match",
+                            pattern_id=_m.pattern_id,
+                            severity=_m.severity,
+                            scope=_m.scope,
+                        )
+                    _block = first_blocking_match(
+                        _matches, getattr(_ts, "block_severity", "block"),
+                    )
+                    if _block is not None:
+                        ctx.events.emit(
+                            "skill_body_threat_blocked",
+                            pattern_id=_block.pattern_id,
+                            severity=_block.severity,
+                            path=op.path,
+                        )
+                        return {
+                            "kind": "file",
+                            "op": "read",
+                            "path": op.path,
+                            "status": "blocked",
+                            "content": "",
+                            "error": (
+                                f"read blocked: this file is a skill reference "
+                                f"that matched threat pattern '{_block.pattern_id}' "
+                                f"({_block.scope}/{_block.severity}). The content "
+                                "was not loaded into context."
+                            ),
+                        }
+
         # `encoding` is surfaced ONLY when a non-UTF-8 codec was used (BOM or
         # charset-normalizer); the plain-UTF-8 fast path keeps the result shape
         # byte-identical (no `encoding` field) for the common case.
@@ -426,7 +590,7 @@ async def handle(op: FileIROp, ctx: OpContext) -> dict:
             # multi-byte content against a byte-denominated cap.
             if len(joined.encode("utf-8")) <= cap:
                 ctx.events.emit("tool_executed", op="read_file", path=op.path)
-                return {
+                _window_result: dict = {
                     "kind": "file",
                     "op": "read",
                     "path": op.path,
@@ -434,6 +598,9 @@ async def handle(op: FileIROp, ctx: OpContext) -> dict:
                     "content": joined,
                     **_enc_field,
                 }
+                if _is_skill_reference:  # #4701: fence at the tool-result chokepoint
+                    _window_result["_external_source"] = True
+                return _window_result
 
         # #1209 read-bounding (keep-in-decide-context, not offloaded-out-of-view) + #2335 char-level
         # truncation. Accumulate WHOLE lines from (start_line, start_char); a multi-line overflow
@@ -556,10 +723,12 @@ async def handle(op: FileIROp, ctx: OpContext) -> dict:
             if next_char_offset is not None:
                 # #2335: mid-line resume position (set ONLY when a single line was char-truncated).
                 result["next_char_offset"] = next_char_offset
+            if _is_skill_reference:  # #4701: fence at the tool-result chokepoint
+                result["_external_source"] = True
             return result
 
         ctx.events.emit("tool_executed", op="read_file", path=op.path)
-        return {
+        _full_result: dict = {
             "kind": "file",
             "op": "read",
             "path": op.path,
@@ -567,6 +736,9 @@ async def handle(op: FileIROp, ctx: OpContext) -> dict:
             "content": "".join(shown),
             **_enc_field,
         }
+        if _is_skill_reference:  # #4701: fence at the tool-result chokepoint
+            _full_result["_external_source"] = True
+        return _full_result
 
     if op.op == "glob":
         # #2782: offloaded — pure read (tree-walk), no atomicity concern, safe to

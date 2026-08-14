@@ -464,6 +464,17 @@ class ToolDefinition:
     # The content-threat guard fences (structurally marks as data) such results
     # at the tool-result chokepoint; trusted-internal results are scan-only.
     # P7: a generic OS-level bool the tool sets — not a hardcoded tool-name list.
+    #
+    # #4701: this default can be overridden PER-CALL — an op's own result dict
+    # may set ``result["_external_source"] = True`` directly (router_loop.py's
+    # ``_execute_all`` only ever sets the tag TRUE from this flag, never resets
+    # it False, so an op-level True always wins). ``read_file`` is the first
+    # user: most reads of ordinary project files are trusted-internal (this
+    # flag stays False), but a read that lands under a REGISTERED skill's own
+    # directory (a `references/*.md`-shaped file, #4701) is the SAME content
+    # class as a SKILL.md body — external, per-call, without making every
+    # read_file call external. Externality is a property of the CONTENT'S
+    # OWN provenance, not of which tool happened to fetch it.
     returns_external_content: bool = False
 
     # #2123: the tool declares it routes through the unified registry dispatch path
