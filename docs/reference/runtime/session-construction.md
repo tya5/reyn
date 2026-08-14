@@ -45,6 +45,15 @@ block):
   `build_environment_backend`'s backend) — otherwise `read_file`/`grep`/`glob` resolve
   against the host cwd and the agent never sees the target tree (the #187 step-3 empty-FS
   defect this param closes).
+- `output_language` (#4206 slice 1) — public `@property`, NOT a plain constructor-set
+  attribute since this slice: live-resolves `reyn.runtime.preferences`'s ③ (free-override)
+  axis — session-layer `<session-state-dir>/config.yaml` `preferences.output_language` wins
+  over agent-layer `profile.yaml` `preferences.output_language` wins over
+  `_project_output_language` (the value this `Session` was constructed with, `config.
+  output_language` for the default factory). Live re-read on every access, the SAME
+  "session layer in front of agent layer, re-read every time" shape `_workspace_base_dir`
+  below already established for `base_dir` — an operator editing either file by hand takes
+  effect on the next read, not just the next process start.
 - `_sandbox_backend` (#1200 PR-F2) — the agent's `SandboxBackend` INSTANCE for the chat exec
   seam (the router `OpContext`); `None` → `get_default_backend`. This is the INSTANCE, not
   the `sandbox_config.backend` STRING used for exec-tool gating — for a docker agent it is

@@ -1046,7 +1046,11 @@ class Session:
         _fs_watch_cfg = (
             fs_watch_config if isinstance(fs_watch_config, FsWatchConfig) else FsWatchConfig()
         )
-        self.output_language = output_language
+        # #4206 slice 1: renamed to a private default — `output_language` is
+        # now a live-resolved @property (session pref -> agent pref ->
+        # this project-level default), same "live re-read, session layer in
+        # front of agent layer" shape `_workspace_base_dir` already uses.
+        self._project_output_language = output_language
         self._prompt_cache_enabled = prompt_cache_enabled
         self._project_context = project_context
         # Back-reference for slash commands (/agents, /attach) and agent-to-agent routing; wired by the chat factory (PR11)
@@ -1759,6 +1763,35 @@ class Session:
             return None
         return Path(str(value))
 
+    def _read_preferences_override(self, path: "Path") -> "dict[str, object]":
+        """#4206 slice 1: read a ``preferences:`` mapping from *path* — this
+        session's own per-session config or the calling agent's own
+        ``profile.yaml`` (this method is generic over which file; callers
+        pass the path) — or ``{}`` when absent/unset/malformed.
+
+        Same "raw read, not through ``load_capability_profile``" reasoning
+        as :meth:`_read_base_dir_override` — a ``preferences:`` key would
+        silently vanish through that loader's unknown-key-ignored contract.
+        A malformed file is surfaced (log, not a crash) and treated as "no
+        override" — a typo must not crash session construction, and (free
+        override, unlike capability narrowing) skipping it only falls back
+        to the next layer's own value, never widens/narrows anything by
+        itself."""
+        if not path.is_file():
+            return {}
+        import yaml
+        try:
+            raw = yaml.safe_load(path.read_text(encoding="utf-8"))
+        except Exception as e:  # noqa: BLE001 — hand/LLM-written yaml, surface not crash
+            logger.warning(
+                "#4206: skipping malformed preferences override config %s: %s", path, e,
+            )
+            return {}
+        if not isinstance(raw, dict):
+            return {}
+        value = raw.get("preferences")
+        return dict(value) if isinstance(value, dict) else {}
+
     @property
     def _workspace_base_dir(self) -> "Path | None":
         """#4200: this session's EFFECTIVE base_dir.
@@ -1802,6 +1835,65 @@ class Session:
     @property
     def _workspace_state_dir(self) -> "Path | None":
         return self._agent.workspace_state_dir
+
+    def _agent_profile_preferences(self) -> "dict[str, object]":
+        """#4206 slice 1: this agent's `profile.yaml` `preferences:` mapping
+        — a live re-read (same "session layer in front of agent layer"
+        shape `_workspace_base_dir` uses for `base_dir`), `{}` when the
+        profile is missing/malformed/carries none. A live re-read rather
+        than a value captured once at construction so an operator editing
+        `profile.yaml` by hand takes effect on the next preference read,
+        not just the next process start."""
+        from reyn.runtime.profile import AgentProfile
+
+        try:
+            return dict(AgentProfile.load(self.workspace_dir).preferences)
+        except FileNotFoundError:
+            # No profile.yaml on disk at all — the ordinary case for a
+            # programmatically-constructed Session (every make_session()
+            # test call, `reyn pipe run`'s default identity, ...), not an
+            # error. Silent {} here, matching _read_base_dir_override's own
+            # "absent file -> no override" contract, one level down.
+            return {}
+        except ValueError as e:
+            # UnknownPreferenceKeyError (validate_preferences, raised
+            # inside AgentProfile.load) — a REAL problem (a typo'd/renamed
+            # preference key sitting in a real, existing profile.yaml) —
+            # surfaced, not silently eaten, but does not crash session
+            # construction/property access; the caller falls back to "no
+            # agent-layer override" for this read.
+            logger.warning(
+                "#4206: skipping unreadable agent preferences at %s: %s",
+                self.workspace_dir, e,
+            )
+            return {}
+
+    @property
+    def output_language(self) -> "str | None":
+        """#4206 slice 1: ③ preference axis, free-override composition —
+        session-layer `config.yaml` `preferences.output_language` wins over
+        agent-layer `profile.yaml` `preferences.output_language` wins over
+        the project-level default this Session was constructed with
+        (`self._project_output_language`). Live re-read on every access,
+        same shape `_workspace_base_dir` already uses for `base_dir`."""
+        from reyn.runtime.preferences import resolve_preference
+
+        session_preferences = self._read_preferences_override(
+            Path(self._snapshot_path).parent / "config.yaml"
+        )
+        agent_preferences = self._agent_profile_preferences()
+        resolved = resolve_preference(
+            "output_language",
+            self._project_output_language,
+            agent_preferences=agent_preferences,
+            session_preferences=session_preferences,
+        )
+        # resolve_preference's return type is `object` (it's generic across
+        # every ③ key, not just this str-typed one) — an override value
+        # that isn't a str is a config-authoring mistake (a non-string
+        # output_language was never a valid value at ANY layer), so this
+        # narrows rather than silently propagating the wrong type.
+        return str(resolved) if resolved is not None else None
 
     @property
     def _reyn_state_root(self) -> "Path":

@@ -99,11 +99,54 @@ Each agent owns `.reyn/agents/<name>/`:
 
 | Path | Purpose |
 |------|---------|
-| `profile.yaml` | name / role / created_at / allowed_mcp |
+| `profile.yaml` | name / role / created_at / allowed_mcp / preferences |
 | `history.jsonl` | append-only conversation + agent message log |
 | `events.jsonl` | runtime event audit log |
 | `memory/MEMORY.md` + body files | agent-scoped memory layer |
 | `runs/<run_id>/` | per-workflow-spawn workspace |
+
+## `preferences` (#4206 slice 1) — the ③ axis: free-override, not restrict-only
+
+A `preferences:` mapping in `profile.yaml` sets an agent-layer override for
+one or more of a fixed set of dotted config keys
+(`reyn.runtime.preferences.PREFERENCE_KEYS`) — today: `output_language`,
+`chat.reasoning.display`, one `warn_ratio` per `cost.*` dimension
+(`per_agent_tokens` / `per_agent_cost_usd` / `daily_tokens` /
+`daily_cost_usd` / `monthly_tokens` / `monthly_cost_usd`), and
+`cost.rate_limit_warn_ratio`.
+
+```yaml
+# .reyn/agents/researcher/profile.yaml
+name: researcher
+role: deep technical research, prefers primary sources
+created_at: "2026-08-14T00:00:00+00:00"
+preferences:
+  output_language: ja
+```
+
+**Free override, unlike `allowed_mcp`'s restrict-only intersection**: an
+agent-layer preference REPLACES the project-level default outright — there
+is no "child can only narrow" check, because this axis (owner/lead-coder
+classification, #4206) covers settings that don't consume a shared,
+bounded resource (unlike `model`, which is ② bounding — see #4206). A
+session spawned under this agent can further override the SAME key in its
+own `<session-state-dir>/config.yaml` `preferences:` mapping — session
+wins over agent wins over the project default.
+
+An unrecognized key under `preferences:` (a typo, or a key retired from
+`PREFERENCE_KEYS`) fails LOUDLY at load time (`reyn.runtime.preferences.
+UnknownPreferenceKeyError`) rather than silently doing nothing — the same
+discipline #4655 established for config-schema dict-leaves.
+
+**Scope of this slice**: read/resolve only — this PR wires the 8 keys
+above into `Session.output_language`; `chat.reasoning.display` and the 7
+`warn_ratio` keys are not yet threaded through their own consumers (a
+follow-up). No `preferences`-specific CLI/slash write surface exists yet
+— set an agent-layer value by editing `profile.yaml` directly (the same
+existing pattern `allowed_mcp` already uses); a session-layer value by
+whatever spawns the session passing a `narrowing` dict whose own
+`preferences` sub-key is set (`AgentRegistry.spawn_session`'s existing
+`narrowing=` parameter — no new API).
 
 ## See also
 

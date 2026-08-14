@@ -10,10 +10,17 @@ config. Semantics:
 
 The `role` text is injected into the LLM's system prompt so each agent
 gets a distinct persona without changing the OS layer.
+
+#4206 slice 1 adds `preferences`: an agent-layer ③ (free-override, see
+`reyn.runtime.preferences`) mapping — dotted config key -> value, keys
+restricted to `reyn.runtime.preferences.PREFERENCE_KEYS`. Absent/empty is
+the common case (most agents set no preference override at all); a
+malformed key raises at `load()` time rather than being silently ignored
+(the `preferences` module's own `validate_preferences`).
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -35,6 +42,11 @@ class AgentProfile:
     # (inherits project config). "all" in YAML normalizes to None here.
     # list[str] = intersect with project allow-list.
     allowed_mcp: list[str] | None = None
+    # #4206 slice 1: ③ preference overrides, dotted key -> value. Empty
+    # dict (not None) is the "nothing set" case, matching the flat-dict
+    # shape `reyn.runtime.preferences.resolve_preference` expects directly
+    # (no None-check needed at every call site).
+    preferences: "dict[str, object]" = field(default_factory=dict)
 
     @classmethod
     def new(cls, name: str, role: str = "") -> "AgentProfile":
@@ -46,7 +58,15 @@ class AgentProfile:
 
     @classmethod
     def load(cls, agent_dir: Path) -> "AgentProfile":
-        """Load profile.yaml from `agent_dir`. Raises FileNotFoundError if missing."""
+        """Load profile.yaml from `agent_dir`. Raises FileNotFoundError if missing.
+
+        #4206 slice 1: a `preferences:` mapping with a key outside
+        `reyn.runtime.preferences.PREFERENCE_KEYS` raises
+        `UnknownPreferenceKeyError` — a typo'd/renamed preference key must
+        not silently do nothing, the same discipline #4655 established for
+        config-schema dict-leaves."""
+        from reyn.runtime.preferences import validate_preferences
+
         path = agent_dir / PROFILE_FILENAME
         if not path.is_file():
             raise FileNotFoundError(path)
@@ -57,18 +77,24 @@ class AgentProfile:
             allowed_mcp: list[str] | None = None
         else:
             allowed_mcp = [str(s) for s in raw_allowed_mcp]
+        name = str(data.get("name", agent_dir.name))
+        raw_preferences = data.get("preferences") or {}
+        preferences = dict(raw_preferences) if isinstance(raw_preferences, dict) else {}
+        validate_preferences(preferences, source=f"agent {name!r} profile.yaml")
         return cls(
-            name=str(data.get("name", agent_dir.name)),
+            name=name,
             role=str(data.get("role", "") or ""),
             created_at=str(data.get("created_at", "") or ""),
             allowed_mcp=allowed_mcp,
+            preferences=preferences,
         )
 
     def save(self, agent_dir: Path) -> None:
         agent_dir.mkdir(parents=True, exist_ok=True)
         path = agent_dir / PROFILE_FILENAME
-        # Hand-roll the dict so absent allowed_mcp (None) doesn't appear
-        # in the yaml as `null` — keep the on-disk shape minimal.
+        # Hand-roll the dict so absent allowed_mcp (None) / empty
+        # preferences don't appear in the yaml as `null`/`{}` — keep the
+        # on-disk shape minimal.
         payload: dict = {
             "name": self.name,
             "role": self.role,
@@ -76,6 +102,8 @@ class AgentProfile:
         }
         if self.allowed_mcp is not None:
             payload["allowed_mcp"] = list(self.allowed_mcp)
+        if self.preferences:
+            payload["preferences"] = dict(self.preferences)
         path.write_text(
             yaml.safe_dump(payload, allow_unicode=True, sort_keys=False),
             encoding="utf-8",
