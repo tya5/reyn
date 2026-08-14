@@ -609,6 +609,28 @@ strip) to the conversation body content itself, where a raw ESC/OSC sequence
 from tool output or an untrusted model reply could otherwise reach the
 terminal on both the TUI conversation pane and the plain (`--cui`) renderer.
 
+Two more cases are always neutralized regardless of this flag, same shape
+as #3302's, both structurally unable to read it (a different code path
+reaches the same terminal neutralizer, not `_body_renderable` — the ONE
+function this flag actually gates):
+
+- A tool's own **one-line summary** (`summarize_tool_result` — the
+  collapsed line shown above/instead of the full body, e.g. a failed
+  `exec`'s `exit 1: <stderr detail>`) — unconditional since #4760.
+  World-derived text (a sandboxed process's arbitrary stderr bytes)
+  reaches that summary through every caller of `summarize_tool_result`.
+- The inline TUI's **expanded tool-detail view** (Space-toggled, #4697 —
+  `_result_detail_lines`/`_dict_detail_lines` in `textual_chat/presenter.py`)
+  — unconditional since **#4757**, at its own seam: it takes no
+  `neutralize_body` parameter at all, and never did. (Before #4757 this
+  path was not neutralized — `json.dumps` merely escaped control bytes as
+  a side effect, and the bare-string branch did not even do that.)
+
+So `neutralize_body` widens the SAME terminal neutralizer to exactly one
+more surface — the full, collapsed body text `_body_renderable` renders —
+not to "tool-result rendering" as a whole; the summary line and the
+expanded detail view are unconditionally covered either way.
+
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `neutralize_body` | bool | `false` | Strip ESC/control sequences from agent-reply and tool-result body text before rendering. |
