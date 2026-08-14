@@ -20,8 +20,7 @@ mindmap
         Permission-gated IO
       ♻️ Crash Recovery
         WAL state log
-        Forward-replay resume
-        CommittedStep memo
+        Generation-based restore
       ⏱️ Time-Travel
         /rewind picker
         Consistent-cut rewind
@@ -202,9 +201,7 @@ mindmap
 | Config recovery (config-as-snapshot) | Config registries (`.reyn/config/`: mcp/cron/hooks/index) reconstruct from truncation-surviving config **generations** (full-state snapshots written by the durability worker, seq-keyed) — replacing the former `config_changed`-WAL-event replay, which a WAL truncation below the floor could silently drop (#2259 PR-1). The `.yaml` IS the durable snapshot, not a derived projection | [.reyn/ directory layout](reference/runtime/reyn-dir-layout.md) |
 | WAL state log | `step_started` / `step_completed` / `step_failed` written to `.reyn/state/wal.jsonl` (`StateLog`); fsync'd off the event loop via the shared `DurabilityWorker`. #2259: durable-RECORD writes (snapshots / config / identity) are async fire-and-forget — the task loop never blocks on durability; `step_started` BLOCKS by design (durable-before-side-effect, so a crash-mid-op is detected as ambiguous for non-idempotent ops — #2275). Truncatable after snapshot. **Not** the audit trail — see Event System (P6). | Skill Resume |
 | Async-decoupled durability (recover-to-last-durable) | In-memory state mutates immediately on the task loop; the seq-keyed durable record is submitted fire-and-forget to the serial `DurabilityWorker` (the seq is assigned IN the worker). Recovery restores to the last durable record — a consistent prefix; the un-durable tail at crash is lost (relaxed durability). A persistent (§4-exhausted) durable-write failure latches `durability_failed` → the session fail-stops (`DurabilityHaltError` on new ops + run-loop halt) so in-memory cannot race a dead disk (#2259). #2280: the fail-stop also emits a `session_halted` audit-event so an IDLE operator learns the halt proactively — the Textual TUI's always-visible status line and the plain `--cui` renderers' bottom toolbar both show a HALTED banner with the reason, not only the next-op's raised error | [.reyn/ directory layout](reference/runtime/reyn-dir-layout.md), [Session construction](reference/runtime/session-construction.md) |
-| Forward-replay resume | `SkillResumeAnalyzer` reconstructs run state from state log | Skill Resume |
-| `CommittedStep` memo | Replay recorded op results on resume without re-invoking | Skill Resume |
-| World-op bypass | Transient ops (web_search, web_fetch) re-execute fresh on resume | Skill Resume |
+| Generation-based restore | Config / snapshot / identity / pipeline state each reconstruct from the latest durable, seq-keyed **generation** on the active WAL branch (no forward-replay; a generation is a complete snapshot) — the model that replaced the phase-graph engine's forward-replay resume, removed with that engine (#2434/#2439) | [.reyn/ directory layout](reference/runtime/reyn-dir-layout.md) |
 
 #### Process identification
 
@@ -228,7 +225,6 @@ User-facing point-in-time rewind with branching. Phase 1 and Phase 2 (2a/2c/2d) 
 | Branch registry | Abandoned-interval lineage: each fork receives a registry entry with origin seq | [Time-Travel concepts](concepts/runtime/time-travel.md) |
 | `checkout(seq)` unified primitive | Active-branch seq → undo; inactive-branch seq → fork-switch. One primitive for both directions | [Time-Travel concepts](concepts/runtime/time-travel.md) |
 | Multi-fork tree UX (**substrate only — not wired into the picker**) | The 2a substrate (`list_branches`, `list_rewind_points(include_abandoned=True)`) is real and covers the fork-switch/checkout path; the 2b tree-layout function (`branch_tree.py::build_branch_tree_rows`) has a unit test (`tests/interfaces/test_branch_tree_2b.py`) as its only caller anywhere in the repo — `rewind_picker.py` (the actual `/rewind` widget) has no "branch"/"abandoned" logic at all and lists current-branch checkpoints only, matching `time-travel.md`'s own "not yet wired" pending-features entry | [How-to: rewind](guide/for-users/time-travel.md) |
-| Act-turn runtime-only rewind | Ghost-Replay memo truncate for rewind within an in-flight turn (no substrate round-trip) | [Time-Travel concepts](concepts/runtime/time-travel.md) |
 | Container-mode shadow-git | Shadow-git `as-of-N` rewind supported inside the container environment backend | [How-to: rewind](guide/for-users/time-travel.md) |
 | Deterministic CI rewind gate | `test_live_rewind_gate.py` — Phase-1 rewind deterministic gate | — |
 | Deterministic CI live-fork gate | `test_live_fork_gate.py` — Phase-2 fork / checkout deterministic gate | — |
