@@ -2407,9 +2407,12 @@ class TextualChatApp(App):
     def _set_expanded(self, entry: "Entry[OutboxMessage] | None", expanded: bool) -> None:
         """Stamp/clear the expansion flag on ``entry``'s ITEM and re-present it.
 
-        #3508 — a settled tool row shows its FULL result while the highlight is
-        on it, and its one-line summary otherwise. Two properties make this safe
-        rather than a hack:
+        #3508 — a settled tool row shows its FULL result when expanded, and its
+        one-line summary otherwise. #4697 (owner ruling #4691§6) decoupled this
+        from the highlight: Space (:meth:`_CursorFlowView.action_toggle_fold`)
+        is the trigger now, not highlight arrival — see
+        :meth:`on_flow_view_highlighted`. Two properties make this safe rather
+        than a hack:
 
         * the flag lives on the item, not in this app, because
           ``FlowPresenter.present`` is pure with respect to ``(item, width)`` —
