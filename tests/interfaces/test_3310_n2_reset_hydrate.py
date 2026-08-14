@@ -648,6 +648,74 @@ async def test_reset_streaming_replies_stale_chain_id_does_not_finalize_into_gho
         await asyncio.wait_for(reg.shutdown(), timeout=5.0)
 
 
+@pytest.mark.asyncio
+async def test_reset_call_parents_stale_call_id_does_not_nest_into_ghost_parent(
+    tmp_path, monkeypatch,
+) -> None:
+    """Tier 2: ``_call_parents`` witness (#4776) — an ``agent`` row carrying a
+    ``call_id`` on alpha registers itself as a potential tree-parent
+    (``_call_parents``, #4691 Phase B B1). Left un-child'd at switch time
+    (nobody nested under it before the switch — the common no-tool-calls
+    case, made the DEFAULT registration shape by #4777/#4779: EVERY
+    call_id-bearing agent row registers now, not only ones that go on to
+    dispatch tools), its Entry is exactly the shape ``_call_parents`` was
+    never previously proven to release.
+
+    ``_call_parents`` was OMITTED from :attr:`TextualChatApp.
+    _PER_SESSION_DICT_STATE` before this fix — its own docstring claimed a
+    conversation/session-bounded lifetime the code never actually enforced
+    (the real bound was the whole app PROCESS's lifetime). After switching
+    to beta, a tool_call_started frame carrying the SAME call_id must NOT be
+    silently nested under the (now off-model, orphaned) alpha-session
+    parent Entry — if ``_call_parents`` were not cleared,
+    ``parent.append_child(msg)`` would attach the child to a parent no
+    longer reachable from the current (freshly cleared) FlowModel, and the
+    row would vanish from the visible flow with zero trace — the identical
+    silent-swallow discriminator shape ``_running_tools``/
+    ``_streaming_replies`` above use for their own witnesses."""
+    monkeypatch.chdir(tmp_path)
+    reg = _registry(tmp_path)
+    try:
+        await reg.attach("alpha")
+        transport = QueueTransport()
+        app = TextualChatApp(
+            transport=transport, read_model=RegistryReadModel(reg), agent_name="alpha",
+        )
+        async with app.run_test(size=(100, 30)) as pilot:
+            await _settle(pilot)
+
+            transport.push_display(OutboxMessage(
+                kind="agent", text="alpha's own reply",
+                meta={"call_id": "call-stale"},
+            ))
+            await _settle(pilot)
+            assert _rows(app) == [("agent", "alpha's own reply")]
+
+            await reg.attach("beta")
+            transport.push_event(
+                "session_attached", {"agent": "beta", "session_id": _DEFAULT_SID}
+            )
+            await _settle(pilot)
+            assert _rows(app) == [], "switch must clear the retained model"
+
+            # Same call_id, now on beta — must NOT nest under the stale
+            # (removed-from-model) alpha parent Entry.
+            transport.push_display(OutboxMessage(
+                kind="tool_call_started", text="grep",
+                meta={"tool": "grep", "op_id": "op-1", "args": {}, "call_id": "call-stale"},
+            ))
+            await _settle(pilot)
+
+            rows = _rows(app)
+            assert rows == [("tool_call_started", "grep")], (
+                "a tool row for a call_id registered before the switch must "
+                "land as a fresh, flat top-level row after reset — a "
+                f"leftover _call_parents entry would swallow it silently: {rows!r}"
+            )
+    finally:
+        await asyncio.wait_for(reg.shutdown(), timeout=5.0)
+
+
 def _install_hanging_run_turn(session: Session):
     """Same no-mock seam ``tests/interfaces/test_3300_p2a_queue_state_publish.py`` uses
     (itself mirroring ``tests/core/test_2242_hard_cancel.py``): a real, plain
