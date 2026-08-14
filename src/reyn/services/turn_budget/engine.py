@@ -40,6 +40,7 @@ from reyn.prompt.turn_budget import (
 from reyn.services.compaction.engine import estimate_tokens
 
 if TYPE_CHECKING:
+    from reyn.core.events.events import EventLog
     from reyn.llm.model_resolver import ModelResolver
 
 # _WRAP_UP_SYSTEM_PROMPT / wrap_up_system_prompt: relocated to
@@ -80,6 +81,7 @@ def compute_turn_budget(
     output_reserve: int,
     offload_cap: int,
     resolver: "ModelResolver | None" = None,
+    events: "EventLog | None" = None,
 ) -> TurnBudget:
     """Derive the layer-1 force-close threshold (§5) — pure, no I/O beyond the
     model catalog lookup.
@@ -101,6 +103,15 @@ def compute_turn_budget(
         Upper bound on the tokens a single post-offload increment (one more
         normal turn's new content) can add — this is what makes "one more turn"
         a finite, known quantity (size axis = #1093 / ``services/offload/``).
+    events:
+        #4680: threaded into ``get_max_input_tokens`` so a cold/unrecognized
+        model landing on the conservative fallback here emits the SAME
+        ``model_budget_fallback`` audit-event compaction's own lookup already
+        does — before this, the call below passed no ``events`` at all, so a
+        turn_budget-side cold value was invisible to both the audit log AND
+        (if compaction's own lookup for the same model had already warned once)
+        the process logger's de-duplicated warning, making the miscount
+        unmeasurable from the outside.
 
     Returns
     -------
@@ -117,7 +128,7 @@ def compute_turn_budget(
         resolver = _MR({})
     resolved_model = resolver.resolve(model).model
 
-    max_input = get_max_input_tokens(resolved_model)
+    max_input = get_max_input_tokens(resolved_model, events=events)
     threshold = max_input - T_wrap_SP - output_reserve - offload_cap
     return TurnBudget(
         max_input=max_input,
@@ -184,6 +195,7 @@ class TurnBudgetEngine:
         offload_cap: int,
         resolver: "ModelResolver | None" = None,
         use_chars4: bool = False,
+        events: "EventLog | None" = None,
     ) -> None:
         if resolver is None:
             from reyn.llm.model_resolver import ModelResolver as _MR
@@ -213,6 +225,7 @@ class TurnBudgetEngine:
             output_reserve=output_reserve,
             offload_cap=offload_cap,
             resolver=resolver,
+            events=events,
         )
         assert_turn_budget_bounds(self._budget)
 
@@ -249,6 +262,7 @@ def build_default_turn_budget_engine(
     resolver: "ModelResolver | None" = None,
     use_chars4: bool = False,
     max_inline_bytes: "int | None" = None,
+    events: "EventLog | None" = None,
 ) -> TurnBudgetEngine:
     """Construct a TurnBudgetEngine with the shared cross-axis default reserves.
 
@@ -293,6 +307,7 @@ def build_default_turn_budget_engine(
         offload_cap=offload_cap,
         resolver=resolver,
         use_chars4=use_chars4,
+        events=events,
     )
 
 
@@ -302,6 +317,7 @@ def try_build_default_turn_budget_engine(
     resolver: "ModelResolver | None" = None,
     use_chars4: bool = False,
     max_inline_bytes: "int | None" = None,
+    events: "EventLog | None" = None,
 ) -> "TurnBudgetEngine | None":
     """:func:`build_default_turn_budget_engine`, but returns ``None`` instead of
     raising when the model's context is too small to satisfy the by-construction
@@ -323,7 +339,7 @@ def try_build_default_turn_budget_engine(
     try:
         return build_default_turn_budget_engine(
             model, resolver=resolver, use_chars4=use_chars4,
-            max_inline_bytes=max_inline_bytes
+            max_inline_bytes=max_inline_bytes, events=events,
         )
     except AssertionError:
         return None
