@@ -9,10 +9,16 @@ consumers — the reason both were deferred to Phase B in the first place.
 
 Default stays fully EXPANDED (owner ruling, #4691) — B1 itself never calls
 ``.collapse()``, so this file also pins that a freshly built Group is never
-auto-folded. flowview's own vim z-prefix (``za``, no reyn-side binding
-needed) reaches a Group parent's fold; Space does NOT yet (owner-reported,
-#4775 — separately scoped, its own test lives in that PR, not this file
-until #4775 lands).
+auto-folded. Two fold paths reach a Group parent: flowview's own vim
+z-prefix (``za``, no reyn-side binding needed) and, since #4775 (owner-
+reported: Space was silently inert on a Group parent — the documented/
+expected trigger, not the z-prefix sequence a typical user wouldn't know
+about), Space itself.
+
+Registration (and therefore the whole Group construction firing at all)
+is provider-independent since #4777 — keyed on ``dispatched_tool_calls``
+(the LLM result's own ``tool_calls`` list), never a provider's
+self-reported ``finish_reason`` string.
 
 All use a real, mounted :class:`TextualChatApp`, real
 :class:`~reyn.runtime.outbox.OutboxMessage` / EventFrame, and a real
@@ -27,6 +33,7 @@ import pytest
 from textual_flowview import EntryState, FlowView
 
 from reyn.interfaces.inline.textual_chat import TextualChatApp
+from reyn.interfaces.inline.textual_chat.chrome import Composer
 from reyn.interfaces.transport.client_transport import ClientTransport
 from reyn.interfaces.transport.frames import DisplayFrame, EventFrame
 from reyn.runtime.outbox import OutboxMessage
@@ -500,3 +507,61 @@ async def test_a_terminal_reply_with_a_call_id_registers_but_never_spins() -> No
             "up in production; a real caller with unused entries pays "
             "only dict growth, tracked separately by #4776)"
         )
+
+
+async def _focus_flow(pilot, app: TextualChatApp) -> FlowView:
+    app.query_one(Composer).focus()
+    await pilot.pause()
+    await pilot.press("shift+tab")
+    await pilot.pause()
+    return app.query_one(FlowView)
+
+
+@pytest.mark.asyncio
+async def test_space_folds_a_group_parent() -> None:
+    """Tier 2b: #4775 (owner-reported, live TUI) — Space, the owner's
+    documented/expected fold trigger, used to be silently inert on a Group
+    parent: ``on_flow_view_toggle_fold_requested`` early-returns for any
+    entry whose meta lacks ``_RESULT_KIND_KEY``, which a Group parent's
+    placeholder row (#4691 ③) always does. flowview's own ``za`` z-prefix
+    key sequence already reached ``toggle_fold()`` (a SEPARATE key path,
+    #4691's own doc), so a route existed — just not the one the owner
+    actually pressed. This drives the REAL Space key through the app
+    (not a direct ``.collapse()`` call, which #4750's own test already
+    covers as a presentation-only concern) to falsify the wiring gap
+    itself, not just the presenter's rendering of an already-collapsed
+    state."""
+    transport = QueueTransport()
+    app = TextualChatApp(transport=transport, clock=lambda: 100.0)
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        await transport.push_display(_parent_row("resp-1"))
+        await pilot.pause()
+        await transport.push_display(_started("op-1", call_id="resp-1"))
+        await transport.push_display(_started("op-2", call_id="resp-1"))
+        await pilot.pause()
+
+        parent = _entries(app)[0]
+        assert parent.collapsed is False, "setup: parent starts expanded"
+        flow = await _focus_flow(pilot, app)
+
+        # Arrival highlights the LAST entry (the second child) — move up
+        # twice to reach the parent itself before pressing Space.
+        await pilot.press("up")
+        await pilot.press("up")
+        await pilot.pause()
+        assert flow.current is parent, "setup: highlight must be on the parent"
+
+        await pilot.press("space")
+        while parent.collapsed is False:
+            await pilot.pause()
+        assert parent.collapsed is True, (
+            "Space on a highlighted Group parent must fold it — the owner's "
+            "own reported, expected trigger"
+        )
+
+        # Toggle: pressing Space again unfolds it.
+        await pilot.press("space")
+        while parent.collapsed is True:
+            await pilot.pause()
+        assert parent.collapsed is False
