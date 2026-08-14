@@ -242,6 +242,23 @@ available action.
 This repo is touched by multiple Claude sessions (lead-coder, e2e-coder,
 per-PR coders) authenticating as the same `gh` user.
 
+**Issue-triage label: `blocked:external`** (owner-introduced, 2026-08-14).
+An open issue carrying it needs owner judgment or an upstream
+third-party dependency before an OS-side session can move it forward
+alone — an open issue WITHOUT it is pickable by any peer session.
+Measured containment (#4549's own methodology, re-applied to all four
+labels): `owner:decide` / `needs:owner-decision` / `owner:verify-only` /
+`wait_owner_iv` are each entirely a SUBSET of `blocked:external`, but
+not the reverse — `blocked:external` also covers external blockers
+with none of those four labels (a pure third-party wait, no
+owner-decision axis at all — verified narrower the same night this
+paragraph was written: a first-pass reading of the gap between the
+four-label union and `blocked:external` mistook 3 genuinely
+owner-pending issues for third-party waits, because they were missing
+an owner-axis label, not because the containment claim itself was
+wrong). This paragraph is the label's only durable record; it existed
+only as broker chat before this.
+
 **Before you open a PR, run `ruff check .`, `python
 scripts/test_tier_audit.py --strict <changed test files>`, `python
 scripts/verify_module_docstrings.py <changed src files>`, `python
