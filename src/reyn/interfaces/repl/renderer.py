@@ -654,6 +654,23 @@ def _summarize_result(tool, result) -> str:
             return f"exit {returncode}"
         if isinstance(returncode, int) and status in ("cancelled", "timeout"):
             return f"✗ {status} (exit {returncode})"
+        # #4753: an ordinary nonzero exit (sandboxed_exec.py's `status = "ok" if
+        # returncode == 0 else ("timeout" if returncode == -1 else "error")`) fell
+        # through every branch above to the bare `str(status)` = "error", discarding
+        # returncode AND stderr — both present right here in `result`. This function
+        # is DISPLAY-ONLY (all 3 call sites are under `interfaces/`; the LLM's own
+        # `role: "tool"` content comes from `render_tool_result` via
+        # `sandboxed_exec_to_canonical`, which already carries stdout/stderr and the
+        # returncode). So what was lost was the OPERATOR's signal, not the model's:
+        # a human saw a bare "error" and had to expand the row to learn why.
+        # `stderr` is truncated via the SAME `_short(..., 78)` boundary the
+        # `error`/`error_message` branches above already use (don't mint a new
+        # constant when one for the same purpose — a one-line error summary —
+        # already exists in this file).
+        if isinstance(returncode, int) and status == "error":
+            stderr = result.get("stderr")
+            detail = _short(stderr, 78) if isinstance(stderr, str) and stderr else ""
+            return f"✗ exit {returncode}" + (f": {detail}" if detail else "")
         freed_tokens = result.get("freed_tokens")
         if isinstance(freed_tokens, int):
             return f"Freed {freed_tokens} token{'s' if freed_tokens != 1 else ''}"
