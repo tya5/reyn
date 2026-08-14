@@ -30,6 +30,43 @@ Three lenses name a *discipline* whose *universal mechanism* is a band member: *
 
 *(The full 8×7 populated table lives in `docs/concepts/architecture/charter.md`; this skeleton is the durable core agents read before new work. Tagline: hero = the line above (T1); one-liner/meta = "An agent OS where agency is bounded by construction — decide, spawn, orchestrate, but only through typed, permissioned, auditable, rewindable ops." (T3).)*
 
+### What the gate does not see (2026-08-14, owner-approved)
+
+The eight lenses and the band are a gate on **new features**. Four failures measured in
+one day passed straight through, because none of them *was* a feature.
+
+1. **Defaults themselves.** The empty-response `resume` retry was hardcoded on with no
+   knob (#4677); the LLM-payload dump that would have explained the incident was
+   off (#4501). Neither is a capability — both are a value.
+2. **The attitude to an unknown.** `get_max_input_tokens` answers "128,000" for both
+   *not loaded yet* and *not in the catalog*, in the same words, warned once per
+   process, never corrected (#4680). One value, two states.
+3. **The side effect of a repair.** The only practical way to stop the incident was
+   `/clear-history`, which unlinks the one file conversation content lives in — so
+   asking afterwards what the model had been sent could not be answered (#4501).
+4. **What nobody wrote.** #4698 shipped a delta over a baseline held in ONE field on
+   a process-shared tracker (`session.py:1176` — "process-shared budget/rate-limit
+   tracker"), so two live sessions of the same agent overwrite each other's baseline
+   even when every call is `purpose="main"`. It passed the six questions and review:
+   the tests construct one series, and no one constructed the configuration that mixes
+   two (#4703). The six questions audit the tests that exist; they cannot find the test
+   that was never written.
+
+Three questions cover 1–3, and unlike the lenses they apply to changes that add no
+capability at all — a changed default, a new fallback, a new recovery command:
+
+- **Who stops this if it repeats?** Name the bounding subject, or there isn't one.
+- **Is this visible with the shipped config?** If seeing it requires changing a
+  setting, it is not visible.
+- **Does the repair destroy the evidence?** If it does, say what survives it.
+
+**No question is proposed for 4, deliberately.** "What is missing" cannot be
+enumerated, and a checklist item asking whether you considered it is answered "yes"
+every time — the same shape this section exists to catch. Case 4 was found because
+someone asked how a number was computed, and writing the answer forced opening the
+call sites. That is a habit, not a gate.
+
+
 ## Hard rules
 
 - **A doc describing a mechanism is stale the moment that mechanism's code changes — fix the doc in the SAME PR, not a follow-up.** This is broader than adding a new enum-like variant: a doc goes stale just as easily by describing a *field*, a *call path*, or a *"when wired" claim* that the PR removes or falsifies. (#2949→#2958: `control-ir.md:805` kept asserting a recording path through a field that #2958 deleted — survived because the reviewing pass grepped the doc for the one keyword it expected, not the surrounding prose describing what the PR touched.) When a PR changes something a doc describes, re-read the whole section the change touches, not just the line whose keyword you already had in mind.
