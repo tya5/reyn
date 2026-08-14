@@ -653,7 +653,11 @@ class ReynTurnUsageGutter:
         read here; :attr:`_usage_lookup` never runs for an agent row."""
         meta = entry.item.meta or {}
         # #4691: every LIVE kind="agent" emit site stamps
-        # prompt_tokens/completion_tokens (see router_loop.py). Both halves
+        # prompt_tokens/completion_tokens (see router_loop.py), INCLUDING
+        # the terminal no-tool-calls reply row (Phase A.5) — without that
+        # stamp, a turn whose only agent row IS the terminal one renders an
+        # EMPTY cell here now (there is no turn-total fallback left to
+        # catch it; arc item ④ removed that path entirely). Both halves
         # are ABSOLUTE (owner ruling — see the class docstring for why an
         # absolute figure replaced #4698's signed-delta attempt): ↑ this
         # call's own real prompt_tokens, ↓ its own completion_tokens. No
