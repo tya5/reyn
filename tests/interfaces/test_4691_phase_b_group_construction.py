@@ -286,11 +286,22 @@ async def test_an_orphaned_call_parent_settles_cancelled_not_stuck_running() -> 
 
 
 @pytest.mark.asyncio
-async def test_without_the_recompute_the_parent_would_stay_running() -> None:
-    """Tier 2b: non-vacuity witness for ④ — with the SAME child settling but
-    the recompute call itself skipped, the parent stays RUNNING; this test
-    proves it by checking the app's own real code path rather than
-    asserting a tautology, mirroring #72's own paired witness shape."""
+async def test_the_parent_has_no_reactive_watcher_on_its_children() -> None:
+    """Tier 2b: #4748 review (lead-coder) — this is NOT ④'s non-vacuity
+    witness (that is the neighboring
+    ``test_parent_starts_running_and_settles_success_once_children_complete``,
+    which genuinely fails if ``_recompute_parent_state`` is removed — this
+    test does not, since it never calls the real settle path at all, so its
+    own earlier docstring calling it one was wrong).
+
+    What this DOES pin: ``_recompute_parent_state`` is called explicitly
+    from app's own settle paths (``_coalesce_tool_result``, the #72 orphan
+    sweep) — the parent is NOT a reactive/observed property that
+    re-evaluates itself whenever ANY child's state changes by whatever
+    means. A child mutated entirely outside app's own machinery (as this
+    test does, directly on the Entry) leaves the parent exactly as it was
+    — no polling, no watcher, no hidden recomputation trigger other than
+    the two call sites #4691 Phase B ④ actually wired."""
     transport = QueueTransport()
     app = TextualChatApp(transport=transport, clock=lambda: 100.0)
     async with app.run_test(size=(100, 30)) as pilot:
@@ -307,8 +318,9 @@ async def test_without_the_recompute_the_parent_would_stay_running() -> None:
         await pilot.pause()
 
         assert parent.state is EntryState.RUNNING, (
-            "the parent recomputes only when app's own settle path runs it "
-            "— an externally-mutated child must not retroactively affect it"
+            "the parent must not have re-evaluated itself — recompute only "
+            "runs from the two explicit call sites, never as a side effect "
+            "of a child's state changing by any other means"
         )
 
 
