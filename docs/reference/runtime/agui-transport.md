@@ -1010,7 +1010,8 @@ view directly and does not depend on the cursor at all.
 |-----|--------|
 | `Ctrl+O` / `Shift+Tab` | Focus the pane, landing on the remembered `current` entry (or the newest, on first entry) |
 | `↑` `↓` `PgUp` `PgDn` `Home` `End` | Move the cursor (flowview's own bindings) |
-| `Enter` / `Space` | Copy the cursor entry's text to the clipboard |
+| `Enter` | Copy the cursor entry's text to the clipboard |
+| `Space` | Fold/unfold the highlighted entry's tool detail (#4697); inside the text cursor below, falls through to the same copy as `Enter` instead |
 | a click | Move the cursor to the clicked entry (flowview 0.11.0+; does **not** copy — see below) |
 | `r` | Open `/rewind` |
 | `Esc` | Back to the composer (or, with an active text-cursor selection, cancels the selection first) |
@@ -1043,6 +1044,19 @@ This is a direct, ring-free path: `/copy N` addresses one of the last
 `COPY_BUFFER_MAX` **agent replies** by ordinal, whereas the cursor points at
 one exact, arbitrary entry of any kind (a user line, a tool result), so there
 is no ordinal to resolve and no reason to go through the ring.
+
+**#4697 further split Space itself**, on top of the Enter/Space-vs-click split
+above: `_CursorFlowView` overrides Space's own `BINDINGS` entry to
+`action_toggle_fold` instead of upstream's `action_activate`. Outside the text
+cursor below, Space no longer reaches `action_activate`/the clipboard at all —
+it posts `ToggleFoldRequested` to fold/unfold the highlighted entry's tool
+detail (`#4691` §6 owner ruling: highlight movement stopped auto-expanding/
+folding tool detail, so a dedicated open/close key was needed). Inside the
+text cursor (`cursor_visible`), `action_toggle_fold` falls through to
+`action_activate()` — the same clipboard-copy path Enter always takes — so an
+in-progress text selection is never disrupted by a stray fold. Enter's own
+binding and everything above about the Enter/Space-vs-click split is
+unaffected; only Space's *outside-text-cursor* behavior moved.
 
 **`r`** submits a bare `/rewind` through the ordinary submit seam — the same
 path a composer-typed `/rewind` takes, so the checkpoint picker and rewind's
