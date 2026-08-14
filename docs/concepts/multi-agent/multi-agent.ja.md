@@ -46,7 +46,9 @@ Reyn はマルチ agent 機能を 1 つ持つのではなく、**2 つの独立�
 
 Agent は `.reyn/agents/<name>/` にあるディレクトリ（その永続的なアイデンティティ）と、ランタイムがオンデマンドで起動する 1 つ以上のインメモリ **Session** です：
 
-- `profile.yaml` — 名前、役割(システムプロンプトのペルソナ)、`allowed_mcp`(オプション)
+- `profile.yaml` — 名前、役割(システムプロンプトのペルソナ)、`allowed_mcp`(オプション)、
+  `preferences`(オプション、#4206 ③ — free-override 設定、例: `output_language`;
+  [agent.md § `preferences`](../../reference/cli/agent.md#preferences-4206-slice-1-the-3-axis-free-override-not-restrict-only) 参照)
 - `history.jsonl` — 追記専用の会話ログ
 - `events.jsonl` — ランタイム監査ログ
 - `memory/` — agent スコープの memory レイヤー（`.reyn/memory/` の共有レイヤーはすべての agent から見える）

@@ -53,7 +53,8 @@ chat 固有のフラグ:
 
 各 agent は `.reyn/agents/<name>/` 配下に状態を永続化します:
 
-- `profile.yaml` — 名前、ロール、オプションの `allowed_mcp`(リファレンス)
+- `profile.yaml` — 名前、ロール、オプションの `allowed_mcp`、オプションの `preferences`
+  (#4206 ③: free-override 設定 — [agent.md § `preferences`](agent.md#preferences-4206-slice-1-the-3-axis-free-override-not-restrict-only) 参照)(リファレンス)
 - `history.jsonl` — 追記専用の会話ログ（chat + agent 間メッセージ、クロス agent トレース用の chain_id 付き）
 - `events.jsonl` — `reyn events` 用のランタイムイベント
 - `memory/` — agent スコープの Memory レイヤー（`MEMORY.md` + body ファイル）

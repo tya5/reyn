@@ -73,7 +73,7 @@ JSONL ファイルは `reyn events <file>` でリプレイ可能。[events リ�
 
 エージェントごとの Workspace。名前付きエージェントごとに 1 ディレクトリ（`reyn agent new` で作成）。`default` エージェントは常に存在します。
 
-- `profile.yaml` — エージェントのアイデンティティ: 名前、ロール、オプションの `allowed_mcp`。profile-yaml リファレンス を参照。
+- `profile.yaml` — エージェントのアイデンティティ: 名前、ロール、オプションの `allowed_mcp`、オプションの `preferences`(#4206 ③: free-override 設定 — [agent.md § Workspace layout](../cli/agent.md#preferences-4206-slice-1-the-3-axis-free-override-not-restrict-only) 参照)。profile-yaml リファレンス を参照。
 - `history.jsonl` — 追記専用の会話ログ（ユーザー + アシスタントのターン; クロスエージェントメッセージにはトレース用の `chain_id` が含まれます）。
 - `memory/` — エージェントスコープの Memory（`MEMORY.md` インデックス + body ファイル）。ルーターフェーズ中に自動的に検索・書き込み。
 - `state/skills/<run_id>.snapshot.json` — 実行中の Skill ランのクラッシュリカバリー用 WAL スナップショット。

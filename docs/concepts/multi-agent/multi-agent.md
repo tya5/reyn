@@ -46,7 +46,9 @@ Reyn does not have a single multi-agent feature. It has two distinct composition
 
 An agent is a directory at `.reyn/agents/<name>/` (its persistent identity) plus one or more in-memory **Sessions** the runtime spins up on demand:
 
-- `profile.yaml` — name, role (system-prompt persona), `allowed_mcp` (optional)
+- `profile.yaml` — name, role (system-prompt persona), `allowed_mcp` (optional),
+  `preferences` (optional, #4206 ③ — free-override config, e.g. `output_language`;
+  see [agent.md § `preferences`](../../reference/cli/agent.md#preferences-4206-slice-1-the-3-axis-free-override-not-restrict-only))
 - `history.jsonl` — append-only conversation log
 - `events.jsonl` — runtime audit log
 - `memory/` — agent-scoped memory layer (the shared layer at `.reyn/memory/` is visible to every agent)
