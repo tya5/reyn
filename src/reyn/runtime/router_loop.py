@@ -1112,6 +1112,30 @@ class RouterLoop:
         start of each ``run()`` like ``total_usage``."""
         return self._last_call_usage
 
+    def _prompt_cache_key(self) -> "str | None":
+        """#4700: the ``prompt_cache_key`` sent with every LLM call this loop
+        makes — SESSION-unit granularity, read live each call (not cached at
+        loop construction) via ``host.live_session_id`` the same way every
+        other per-turn identity value in this file is read (never the
+        construction-time ``session_id``, which is stale for a spawned
+        session — see ``RouterHostAdapter.live_session_id``'s own docstring).
+
+        ``or "main"`` (lead-coder review, #4704): ``live_session_id`` is
+        ``str | None`` and ``registry.py``'s own docstring states
+        ``sid=None`` means the IMPLICIT "main" session — an ordinary
+        interactive chat, not a spawned sub-session. Without this
+        normalization, a bare ``getattr(..., None)`` would send NO key for
+        exactly the case #4690 measured (reyn-self's own main session, 7.1%
+        hit rate) — the feature would be inert in the scenario it exists to
+        fix. Same normalization ``pipeline_verbs.py:516`` already uses for
+        the identical ``live_session_id`` ambiguity (``reply_sid``), not a
+        new constant. A ``getattr``-guarded test host with no
+        ``live_session_id`` attribute AT ALL still falls through the same
+        ``or`` to ``"main"`` — see ``recorded_acompletion``'s inline
+        comment (``llm.py``) for the full session-vs-agent granularity
+        measurement and reasoning, not repeated here."""
+        return getattr(self.host, "live_session_id", None) or "main"
+
     def _emit_agent_delta(self, text: str) -> None:
         """#3288 ③b: forward one streamed content-delta chunk as an audit-event
         — the owner-ratified L4 replacement (issue #3288 comment thread): a
@@ -1864,6 +1888,7 @@ class RouterLoop:
                         # — subject to the ceiling.
                         model_class=self.router_model,
                         model_class_ceiling=self._model_class_ceiling,
+                        prompt_cache_key=self._prompt_cache_key(),  # #4700
                     )
                 # Record the fresh result for future resume hit. Defensive:
                 # never let recording failure break the loop. NOT for a
@@ -2623,6 +2648,7 @@ class RouterLoop:
                     # main tool-turn call.
                     model_class=self.router_model,
                     model_class_ceiling=self._model_class_ceiling,
+                    prompt_cache_key=self._prompt_cache_key(),  # #4700
                 )
             except Exception as exc:
                 if attempt == 0:
@@ -2710,6 +2736,7 @@ class RouterLoop:
             # router-purpose class — same ceiling applies.
             model_class=self.router_model,
             model_class_ceiling=self._model_class_ceiling,
+            prompt_cache_key=self._prompt_cache_key(),  # #4700
         )
 
     async def _force_close_call_with_retry(
