@@ -842,6 +842,31 @@ missing one.
   but the fix here is choosing the inspecting command itself, not adding a
   separate identity-check step: prefer a command whose own invocation
   states the ref over one that defaults to an ambient, unstated state.
+  **The same hazard recurred a second time, and the second instance
+  explains why writing the rule down was not enough to stop it.** A
+  reviewing session ran `.venv/bin/reyn doctor --help` in its own
+  worktree, got `invalid choice: 'doctor'`, and filed the command as
+  unregistered — plus a blocker on a separate issue saying an
+  owner-facing recommendation was unrunnable. Both were false: the
+  worktree was ~5 hours old and the registering commit had landed after
+  its checkout, so `origin/main` had the command all along (#4736,
+  2026-08-14). What makes this worth recording next to #4215 rather
+  than as its own hazard is the MOTIVE, which the prescription above
+  does not reach: **execution looks like stronger evidence than a grep,
+  so it removes the felt need to state the scope — while actually being
+  NARROWER, pinned to one tree and one venv where `git show
+  origin/main:<path>` is tree-independent.** A doc that says "choose the
+  self-documenting command" is not read as applying here, because the
+  author believes they used a *better* method than the one being
+  regulated. So the trigger to write down is the strength of the
+  evidence, not its weakness: **an absence or a crash confirmed by
+  RUNNING something needs its `HEAD` SHA more than one confirmed by
+  grepping, not less** — absence reproduces from staleness just as
+  faithfully as from a real gap. One corollary, from what actually
+  contained this instance: once a single claim from a given tree is
+  falsified, re-derive every other claim drawn from that same tree —
+  they share its age. Here that was 5 claims re-run against
+  `origin/main`, of which 4 held and only the reported one fell.
 
 **This is where B combines with §16**, not a coincidence: the sessions that
 trusted a stale environment did so *because* their result matched `main`'s

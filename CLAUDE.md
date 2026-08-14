@@ -96,9 +96,13 @@ call sites. That is a habit, not a gate.
 The testing policy is at **`docs/deep-dives/contributing/testing.ja.md`** (English:
 `docs/deep-dives/contributing/testing.md`). It is normative — read it before adding
 or modifying tests. For co-vet review and gate-design specifically, also read
-`docs/deep-dives/contributing/verification-hazards.md` — a checklist of ways a
-green result can mean less than it looks like it means, each with a real instance
-and a detection technique that closed it.
+`docs/deep-dives/contributing/verification-hazards.md` — a checklist built on one
+root, stated in the doc's own words: **an observation does not name its own
+referent**. Most instances are a green that means less than it looks like, but
+the doc covers the other direction too (a red that overstates — a misattributed
+failure count, an absence that was really a stale tree), so do not read it as
+green-only. Each entry carries a real instance and a detection technique that
+closed it.
 
 ## Comment policy (READ BEFORE WRITING OR MOVING A COMMENT)
 
@@ -604,8 +608,9 @@ and run the checklist below before continuing:
 
 ## When in doubt — read these
 
-- **Verification hazards** (why a green result can mean less than it looks
-  like — co-vet review, gate design): `docs/deep-dives/contributing/verification-hazards.md`
+- **Verification hazards** (why an observation may not name its own referent —
+  a green that means less, or a red that overstates; co-vet review, gate
+  design): `docs/deep-dives/contributing/verification-hazards.md`
 - **Workspace** (single source of truth): `docs/concepts/runtime/workspace.md`
 - **Events / replay** (audit truth): `docs/concepts/runtime/events.md`
 - **`.reyn/` directory layout** (what's recovery-core vs persist/audit/cache/outside, the
