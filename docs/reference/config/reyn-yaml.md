@@ -609,8 +609,8 @@ strip) to the conversation body content itself, where a raw ESC/OSC sequence
 from tool output or an untrusted model reply could otherwise reach the
 terminal on both the TUI conversation pane and the plain (`--cui`) renderer.
 
-Two more cases are always neutralized regardless of this flag, same shape
-as #3302's, both structurally unable to read it (a different code path
+Three more cases are always neutralized regardless of this flag, same shape
+as #3302's, all structurally unable to read it (a different code path
 reaches the same terminal neutralizer, not `_body_renderable` — the ONE
 function this flag actually gates):
 
@@ -625,11 +625,22 @@ function this flag actually gates):
   `neutralize_body` parameter at all, and never did. (Before #4757 this
   path was not neutralized — `json.dumps` merely escaped control bytes as
   a side effect, and the bare-string branch did not even do that.)
+- A **failed tool call's own error line** (`tool_call_failed`'s
+  `err`/`error_message`, shown on both the plain `--cui` renderer's
+  `format_inline_message` and the TUI's `_tool_result_line`/
+  `_body_and_background`) — unconditional since **#4762**. Traces to
+  `dispatcher.py`'s own catch-all (`f"{type(e).__name__}: {e}"` wrapping
+  any tool-handler exception — an MCP call, a sandboxed subprocess, a
+  provider HTTP error), the same class #4760 fixed for
+  `summarize_tool_result`'s stderr branch but explicitly did not cover —
+  this is a structurally separate code path that never goes through
+  `summarize_tool_result`'s own return boundary.
 
 So `neutralize_body` widens the SAME terminal neutralizer to exactly one
 more surface — the full, collapsed body text `_body_renderable` renders —
-not to "tool-result rendering" as a whole; the summary line and the
-expanded detail view are unconditionally covered either way.
+not to "tool-result rendering" as a whole; the summary line, the expanded
+detail view, and a failed call's own error line are unconditionally
+covered either way.
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
