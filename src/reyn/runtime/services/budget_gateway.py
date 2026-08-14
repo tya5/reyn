@@ -142,7 +142,21 @@ class BudgetGateway:
         sending nearly the same growing context; summing them would wildly
         overstate "how much of the context window is currently occupied"
         (status-bar ctx chip's headline figure). Overwritten (not
-        accumulated) on each call."""
+        accumulated) on each call.
+
+        #4703/#4709: this field's only two writers today are
+        :meth:`accumulate` (``session.py``'s own router-turn-result path)
+        and :meth:`add_router_usage` (``router_loop_driver.py``) — both
+        ROUTER calls. That is why the ctx chip's figure never needs a
+        ``purpose`` filter: compaction's own LLM call (a real, separate
+        recorder — ``BudgetTracker`` via ``recorder=self._budget_tracker``
+        in ``session.py``, never this gateway) has no path to this field at
+        all. If a THIRD writer is ever wired to this gateway from a
+        non-router call site (a purpose OTHER than the conversation turn),
+        it will overwrite this property with that call's usage instead —
+        silently, no exception, no raise — and the ctx chip will start
+        showing that OTHER call's prompt size as if it were the
+        conversation's own."""
         return self._last_call_usage
 
     def accumulate(self, result) -> None:
