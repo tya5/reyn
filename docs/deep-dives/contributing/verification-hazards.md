@@ -998,22 +998,22 @@ the POPULATION right and the PER-ITEM CLASSIFICATION wrong:
 - **architect (#4765, 2026-08-14):** reviewing a fix that routes every
   background-task producer through one owned collection (so a shutdown
   path has a single seam to drain, instead of enumerating named fields),
-  the population was enumerated correctly — every `asyncio.create_task`
-  call site in the diff. The per-site verdict used the wrong predicate:
-  the classification's discriminator was drawn from the FIX'S OWN
-  MECHANISM ("does this producer route through the funnel") rather than
-  from the DEFECT'S PROPERTY the fix exists to close ("is this task
-  reachable from an ordinary teardown"). One production construction site
-  did not pass the tracker through and fell back to a bare
-  `asyncio.create_task` outside the funnel entirely — correctly absent
-  from the enumeration of sites that *do* route through it, and so
-  invisible to a verdict framed in the mechanism's own terms; a verdict
-  framed in the defect's terms ("can this task outlive teardown
-  unreachably") would have flagged it regardless of which mechanism, if
-  any, it happened to go through. Caught by a second, independent
-  reviewer's own call-site trace, not by re-running the same
-  enumeration — confirmed by reading the draining method's own ~6 lines
-  directly, no execution required.
+  the population was enumerated correctly — a sibling call site
+  (`hooks/ingress.py`) was correctly found among the others. The verdict
+  on it was wrong, in the OVER-classifying direction: it was flagged as a
+  hole (not routed through the new funnel, therefore unreachable from
+  teardown), because the classification's discriminator was drawn from
+  the FIX'S OWN MECHANISM ("does this producer route through the funnel")
+  rather than from the DEFECT'S PROPERTY the fix exists to close ("is
+  this task reachable from an ordinary teardown"). The site had a
+  DIFFERENT reachable teardown path all along (a bounded event bridge's
+  own `aclose`, reached via the registry's existing shutdown chain) — a
+  verdict framed in the mechanism's terms read that absence as a gap;
+  a verdict framed in the defect's terms would have found the other path
+  and not flagged it. Caught by a second, independent mechanism — the
+  implementing session's own call-site trace, refuting the flagged site —
+  not by re-running the same review; confirmed by reading the alternate
+  teardown path's own ~6 lines directly, no execution required.
 
 **Why the pattern recurs together:** getting the population right is a
 *procedural* improvement (switch grep to an AST scan, take the superset
@@ -1045,11 +1045,11 @@ correct throughout, and the verdicts attached to its members were not.
 - Every instance above was caught by something OTHER than the sweep that
   produced the miscount: CI (#3989/#3994), `ruff`'s `I001` surfacing an
   unusual import (#4011's dotted-form gap), the referenced side's own test
-  suite (#4011's registry constant), or a second reviewer's independent
-  call-site trace (#4765's construction-site gap). An audit does not
-  reliably find its own blind spot — plan for a second, independent
-  mechanism to catch what the first one's classification step missed,
-  rather than trusting a repeated pass by the same method.
+  suite (#4011's registry constant), or an independent second pass tracing
+  the same call sites by hand (#4765's flagged-site refutation). An audit
+  does not reliably find its own blind spot — plan for a second,
+  independent mechanism to catch what the first one's classification step
+  missed, rather than trusting a repeated pass by the same method.
 
 ## 21. The search's shape decides the population — and a predicate can leave a gap no item falls into
 
