@@ -428,7 +428,12 @@ def test_no_slash_module_reaches_the_session_outbox() -> None:
 #: private-state leak, a new read surface the ③ axis's own mechanism
 #: requires by design (``RouterHostAdapter.reasoning_display_enabled()``
 #: consults it via a callback).
-_PUBLIC_MEMBER_CEILING = 108
+#: Raised 108 -> 109 for #4206 Slice B (#4724): ``warn_ratio_overrides`` — a
+#: NEW method, the ③ preference-axis resolution for the 7
+#: cost.*.warn_ratio keys (Design C: the caller resolves, BudgetTracker
+#: never learns a session/agent identity itself). Same shape, same reason
+#: as the 107->108 entry above.
+_PUBLIC_MEMBER_CEILING = 109
 
 
 def test_session_public_surface_does_not_grow() -> None:

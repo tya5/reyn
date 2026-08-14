@@ -43,6 +43,19 @@ from reyn.llm.pricing import (
 
 logger = logging.getLogger(__name__)
 
+#: #4206 Slice B (#4724): the cost.* warn-ratio subset of
+#: ``reyn.runtime.preferences.PREFERENCE_KEYS`` — DERIVED, not a second
+#: hand-maintained literal set (PREFERENCE_KEYS stays the ONE declaration
+#: of the ③ axis's vocabulary; this module only needs to know which of
+#: those keys IT is the consumer for).
+def _load_warn_ratio_preference_keys() -> "frozenset[str]":
+    from reyn.runtime.preferences import PREFERENCE_KEYS
+
+    return frozenset(k for k in PREFERENCE_KEYS if k.startswith("cost."))
+
+
+_WARN_RATIO_PREFERENCE_KEYS: "frozenset[str]" = _load_warn_ratio_preference_keys()
+
 #: Models already reported as unpriced (#3695). Once per model per process:
 #: the condition holds for every call to that model, so a per-call warning
 #: would be a flood, and a flood is read as noise and filtered out — which is
@@ -126,6 +139,59 @@ class CostLimitConfig:
     @property
     def is_active(self) -> bool:
         return self.hard_limit is not None
+
+
+def _effective_warn_threshold(
+    cap: "CostLimitConfig", override_ratio: "float | None",
+) -> "float | None":
+    """#4206 Slice B (#4724): *cap*'s warn threshold, using *override_ratio*
+    in place of ``cap.warn_ratio`` when given.
+
+    Design C (lead-coder ruling, #4724): the CALLER resolves the ③
+    preference-axis override (session/agent/project composition, via
+    ``reyn.runtime.preferences.resolve_preference``) and passes the final
+    ratio in — ``BudgetTracker`` itself never learns a session or agent
+    identity beyond the ``agent: str | None`` it already had. This mirrors
+    the SAME shape #4723 used for ``reasoning_display``: the tracker is a
+    read-only consumer of an already-resolved value, not a second
+    resolution point.
+
+    Never mutates ``cap`` — the SAME ``CostLimitConfig`` instance is shared
+    by every agent/session in this process (``self._config``), so mutating
+    it in place to reflect one caller's preference would leak that
+    preference to every OTHER caller reading the same field next."""
+    if cap.hard_limit is None:
+        return None
+    ratio = cap.warn_ratio if override_ratio is None else override_ratio
+    if ratio <= 0:
+        return None
+    return cap.hard_limit * ratio
+
+
+def _validate_warn_ratio_overrides(overrides: "dict[str, float] | None") -> None:
+    """#4724 condition (lead-coder): *overrides*' keys are checked against
+    the SAME ``PREFERENCE_KEYS`` vocabulary the ③ axis declares them in
+    (narrowed to the ``cost.*`` warn-ratio subset) — an unknown/typo'd key
+    raises loudly rather than silently doing nothing, the #4655 defect
+    class reproduced on the TRANSPORT side (a resolved override that never
+    reaches the tracker) rather than the storage side slice 1/#4655 already
+    closed."""
+    if not overrides:
+        return
+    from reyn.runtime.preferences import PREFERENCE_KEYS, UnknownPreferenceKeyError
+
+    unknown = set(overrides) - _WARN_RATIO_PREFERENCE_KEYS
+    if unknown:
+        raise UnknownPreferenceKeyError(
+            f"warn_ratio_overrides: unrecognized key(s) {sorted(unknown)!r} — "
+            f"not in the cost.* warn-ratio subset of PREFERENCE_KEYS "
+            f"({sorted(_WARN_RATIO_PREFERENCE_KEYS)!r})."
+        )
+    # Defensive: PREFERENCE_KEYS itself is the ONE declaration (#4206); this
+    # subset is DERIVED from it (never a second, independently-drifting
+    # literal set), so the assert below is a not-both-drifted guard, not a
+    # live check against operator input.
+    assert _WARN_RATIO_PREFERENCE_KEYS <= PREFERENCE_KEYS  # noqa: S101
 
 
 @dataclass
@@ -1281,10 +1347,22 @@ class BudgetTracker:
 
     def check_pre_llm(
         self, *, model: str, agent: str | None,
+        warn_ratio_overrides: "dict[str, float] | None" = None,
     ) -> BudgetCheck:
-        """Run before every LLM call. Returns allowed=False to refuse."""
+        """Run before every LLM call. Returns allowed=False to refuse.
+
+        ``warn_ratio_overrides`` (#4206 Slice B, #4724): an OPTIONAL,
+        already-resolved ③ preference-axis mapping (dotted PREFERENCE_KEYS
+        string -> ratio) the CALLER built (session/agent/project
+        composition, ``reyn.runtime.preferences.resolve_preference``) —
+        this tracker never resolves it itself. ``None``/absent-key falls
+        back to ``self._config``'s own project-level ratio, byte-identical
+        to before this slice. Only ``cost.rate_limit_warn_ratio`` affects
+        THIS method (via ``_check_rate_limit``); the cap/hard_limit checks
+        below are unaffected — warn ratio never moves a cap."""
+        _validate_warn_ratio_overrides(warn_ratio_overrides)
         # 1. Rate limit (per model)
-        rl_check = self._check_rate_limit(model)
+        rl_check = self._check_rate_limit(model, warn_ratio_overrides)
         if not rl_check.allowed:
             return rl_check
 
@@ -1328,8 +1406,15 @@ class BudgetTracker:
         usage: TokenUsage,
         purpose: str | None = None,
         chain_id: str | None = None,
+        warn_ratio_overrides: "dict[str, float] | None" = None,
     ) -> BudgetCheck:
         """Update counters after a successful LLM call.
+
+        ``warn_ratio_overrides`` (#4206 Slice B, #4724): see
+        ``check_pre_llm``'s own docstring — the same caller-resolved ③
+        mapping, threaded here to the per_agent_tokens/per_agent_cost_usd
+        warn-crossing checks below AND (via ``_check_period_warn``) the
+        daily/monthly ones. Never affects a hard_limit/cap.
 
         Computes USD cost via litellm (`reyn.pricing.estimate_cost`).
         Returns a BudgetCheck whose warn_dimensions list any dimensions
@@ -1356,6 +1441,7 @@ class BudgetTracker:
         traced back to a provider figure or to a local
         ``litellm.token_counter`` estimate instead of being indistinguishable.
         """
+        _validate_warn_ratio_overrides(warn_ratio_overrides)
         # rate limit window
         self._call_window[model].append(time.monotonic())
 
@@ -1397,13 +1483,19 @@ class BudgetTracker:
                 self._agent_cost_breakdown[agent] += breakdown
 
             cap = self._config.per_agent_tokens
-            if cap.is_active and cap.warn_threshold is not None:
-                if new_tokens >= cap.warn_threshold:
+            if cap.is_active:
+                threshold = _effective_warn_threshold(
+                    cap, (warn_ratio_overrides or {}).get("cost.per_agent_tokens.warn_ratio"),
+                )
+                if threshold is not None and new_tokens >= threshold:
                     self._maybe_warn(warn_dims, "per_agent_tokens", agent)
 
             cap = self._config.per_agent_cost_usd
-            if cap.is_active and cap.warn_threshold is not None:
-                if new_cost >= cap.warn_threshold:
+            if cap.is_active:
+                threshold = _effective_warn_threshold(
+                    cap, (warn_ratio_overrides or {}).get("cost.per_agent_cost_usd.warn_ratio"),
+                )
+                if threshold is not None and new_cost >= threshold:
                     self._maybe_warn(warn_dims, "per_agent_cost_usd", agent)
 
         # PR25: update daily / monthly counters and append to ledger
@@ -1423,7 +1515,7 @@ class BudgetTracker:
             )
 
         # Warn on daily / monthly thresholds
-        self._check_period_warn(warn_dims)
+        self._check_period_warn(warn_dims, warn_ratio_overrides)
 
         # R-D8: persist state for crash recovery (throttled)
         self._maybe_auto_save()
@@ -1706,7 +1798,9 @@ class BudgetTracker:
         self._warned.add(wkey)
         warn_dims.append(dimension)
 
-    def _check_rate_limit(self, model: str) -> BudgetCheck:
+    def _check_rate_limit(
+        self, model: str, warn_ratio_overrides: "dict[str, float] | None" = None,
+    ) -> BudgetCheck:
         cap = self._config.rate_limit_per_minute.get(model)
         if cap is None:
             return BudgetCheck(allowed=True)
@@ -1723,7 +1817,12 @@ class BudgetTracker:
                 context={"model": model, "current": used, "hard": cap},
             )
         warn_dims: list[str] = []
-        warn_threshold = int(cap * self._config.rate_limit_warn_ratio)
+        # #4724: caller-resolved override wins; falls back to the
+        # project-level ratio, byte-identical to before Slice B.
+        _ratio = (warn_ratio_overrides or {}).get(
+            "cost.rate_limit_warn_ratio", self._config.rate_limit_warn_ratio,
+        )
+        warn_threshold = int(cap * _ratio)
         if warn_threshold > 0 and used >= warn_threshold:
             wkey = ("rate_limit", model)
             if wkey not in self._warned:
@@ -1989,16 +2088,27 @@ class BudgetTracker:
             )
         return BudgetCheck(allowed=True)
 
-    def _check_period_warn(self, warn_dims: list[str]) -> None:
-        """Append warning dimension names for daily / monthly thresholds."""
+    def _check_period_warn(
+        self, warn_dims: list[str],
+        warn_ratio_overrides: "dict[str, float] | None" = None,
+    ) -> None:
+        """Append warning dimension names for daily / monthly thresholds.
+
+        ``warn_ratio_overrides`` (#4724): the counter (`used`) stays
+        PROCESS-SHARED, unchanged by this slice — only the ratio that
+        decides WHEN to warn about it is caller-resolvable, per lead-coder's
+        ruling ("同じ1つの数字について誰がいつ知らされるか")."""
         for dim, used, cap_cfg in (
             ("daily_tokens", self._daily_tokens, self._config.daily_tokens),
             ("daily_cost_usd", self._daily_cost_usd, self._config.daily_cost_usd),
             ("monthly_tokens", self._monthly_tokens, self._config.monthly_tokens),
             ("monthly_cost_usd", self._monthly_cost_usd, self._config.monthly_cost_usd),
         ):
-            if cap_cfg.is_active and cap_cfg.warn_threshold is not None:
-                if used >= cap_cfg.warn_threshold:
+            if cap_cfg.is_active:
+                threshold = _effective_warn_threshold(
+                    cap_cfg, (warn_ratio_overrides or {}).get(f"cost.{dim}.warn_ratio"),
+                )
+                if threshold is not None and used >= threshold:
                     key = self._day_key[1] if "daily" in dim else (
                         self._month_key[1] if self._month_key else "month"
                     )
@@ -2185,8 +2295,20 @@ _FLOOR_REASON_LABEL = {
 }
 
 
-def format_budget_full(snapshot: dict, attached: str | None) -> str:
-    """`/budget` full breakdown across all dimensions."""
+def format_budget_full(
+    snapshot: dict, attached: str | None,
+    warn_ratio_overrides: "dict[str, float] | None" = None,
+) -> str:
+    """`/budget` full breakdown across all dimensions.
+
+    ``warn_ratio_overrides`` (#4206 Slice B, #4724): same caller-resolved ③
+    mapping as ``BudgetTracker.check_pre_llm``/``record_llm`` — this
+    DISPLAY function is the 4th (and final) consumer of the cost.*
+    warn-ratio subset, so what an operator sees in ``/budget`` matches
+    what actually gated their own session's warn events, not silently the
+    project default."""
+    _validate_warn_ratio_overrides(warn_ratio_overrides)
+    _wr = warn_ratio_overrides or {}
     cfg: CostConfig = snapshot["config"]
     lines: list[str] = ["Usage (process invocation):", ""]
 
@@ -2281,7 +2403,9 @@ def format_budget_full(snapshot: dict, attached: str | None) -> str:
         cost = snapshot["agent_cost_usd"].get(agent, 0.0)
         tok_cap = cfg.per_agent_tokens
         if tok_cap.is_active:
-            warn = int(tok_cap.warn_threshold or 0)
+            warn = int(_effective_warn_threshold(
+                tok_cap, _wr.get("cost.per_agent_tokens.warn_ratio"),
+            ) or 0)
             mark = "  ⚠ approaching" if tok >= warn > 0 else ""
             lines.append(
                 f"    tokens:  {tok:>10,} / {int(tok_cap.hard_limit):,}  "
@@ -2291,7 +2415,9 @@ def format_budget_full(snapshot: dict, attached: str | None) -> str:
             lines.append(f"    tokens:  {tok:>10,}             (no cap)")
         cost_cap = cfg.per_agent_cost_usd
         if cost_cap.is_active:
-            warn = (cost_cap.warn_threshold or 0)
+            warn = _effective_warn_threshold(
+                cost_cap, _wr.get("cost.per_agent_cost_usd.warn_ratio"),
+            ) or 0
             mark = "  ⚠ approaching" if cost >= warn > 0 else ""
             lines.append(
                 f"    cost:    ${cost:>9.4f} / ${cost_cap.hard_limit:.2f}     "
@@ -2318,7 +2444,8 @@ def format_budget_full(snapshot: dict, attached: str | None) -> str:
         for model, used in sorted(snapshot["rate_window"].items()):
             cap = cfg.rate_limit_per_minute.get(model)
             if cap is not None:
-                warn = int(cap * cfg.rate_limit_warn_ratio)
+                _ratio = _wr.get("cost.rate_limit_warn_ratio", cfg.rate_limit_warn_ratio)
+                warn = int(cap * _ratio)
                 mark = "  ⚠" if used >= warn > 0 else ""
                 lines.append(f"    {model}:  {used} / {cap}  (warn at {warn}){mark}")
             else:

@@ -138,19 +138,25 @@ An unrecognized key under `preferences:` (a typo, or a key retired from
 UnknownPreferenceKeyError`) rather than silently doing nothing — the same
 discipline #4655 established for config-schema dict-leaves.
 
-**Scope so far**: read/resolve only — of the 9 keys, `output_language`
-(slice 1) and `chat.reasoning.display` (slice 2, #4206) are wired into a
-live `Session` property (`Session.output_language` /
-`Session.reasoning_display`) that re-resolves the session/agent/project
-composition on every access. The remaining 7 `warn_ratio` keys are
-declared in `PREFERENCE_KEYS` but not yet wired — they all funnel into ONE
-process-shared `BudgetTracker` (built once per process from the
-project-level config only), so wiring them needs a collision-safe
-per-agent/session override registry (the same shape `#4700`'s
-`register_max_input_overrides` established for `llm.models.<tier>.
-max_input_tokens`), not a bare live property — tracked as a follow-up, not
-mixed into this slice. No `preferences`-specific CLI/slash write surface
-exists yet for any key — set an agent-layer value by editing
+**Scope**: read/resolve only, all 9 keys now wired (#4206 Slices 1/2/B).
+`output_language`/`chat.reasoning.display` are live `Session` properties
+(`Session.output_language` / `Session.reasoning_display`) re-resolving the
+session/agent/project composition on every access. The 7 `cost.*.warn_ratio`
+keys use a DIFFERENT shape ("Design C", #4724): `BudgetTracker` is
+process-shared (one instance across every agent/session in a process, built
+once from the project-level config), so it never resolves a session/agent
+identity itself — instead `Session.warn_ratio_overrides()` resolves the ③
+composition (the SAME session/agent-preference files, collected into a
+`dict[str, float]` of only the keys actually overridden at either layer)
+and the CALLER (`RouterLoop`, via `RouterHostAdapter.warn_ratio_overrides()`,
+and the `/budget` display via `BudgetGateway`) passes that resolved mapping
+straight into `BudgetTracker.check_pre_llm`/`record_llm`/`format_budget_full`
+as an explicit argument. The tracker's own counters (token/cost totals)
+stay PROCESS-SHARED and unaffected by this — only the RATIO that decides
+WHEN to warn about an already-shared number is caller-resolvable; an
+unknown key in the mapping raises `UnknownPreferenceKeyError` the same way
+`validate_preferences` does. No `preferences`-specific CLI/slash write
+surface exists yet for any key — set an agent-layer value by editing
 `profile.yaml` directly (the same existing pattern `allowed_mcp` already
 uses); a session-layer value by whatever spawns the session passing a
 `narrowing` dict whose own `preferences` sub-key is set
