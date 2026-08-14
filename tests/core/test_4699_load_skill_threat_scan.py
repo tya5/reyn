@@ -9,25 +9,31 @@ regardless of how the entry was registered, so this is where the OS gate
 actually lives (mirrors the existing `scan_tool_result`/`fence_tool_result`
 tool-result chokepoint, not a new mechanism).
 
-No mocks: real Workspace / PermissionResolver / EventLog / SkillEntry
-throughout. `scan_for_threats`/`first_blocking_match` are monkeypatched at
-the `load_skill` module's own import site — the same technique
-`test_skill_install_pr_c.py`'s threat-scan test already uses for the
-sibling `skill_install` module, so a real `ThreatMatch`-shaped stub drives
-the block decision rather than depending on the real pattern catalog.
+No mocks: real Workspace / PermissionResolver / EventLog / ThreatScanConfig
+/ ThreatMatch throughout. Only `scan_for_threats` (the pattern-matching call
+itself) is monkeypatched, at `load_skill`'s own import site — the same
+technique `test_skill_install_pr_c.py`'s threat-scan test uses for the
+sibling `skill_install` module, so a deterministic marker string drives the
+block decision rather than depending on the real pattern catalog.
+`first_blocking_match` is the REAL function (`content_guard.py`) — it is a
+5-line pure function over `severity_blocks`'s rank comparison, not `==`, so
+faking it would test the fake's own semantics instead of reyn's threshold
+logic (a real bug in reyn's severity-ranking would not fail an `==`-based
+fake).
 """
 from __future__ import annotations
 
 import asyncio
 from pathlib import Path
 
+from reyn.config.chat import ThreatScanConfig
 from reyn.core.events.events import EventLog
 from reyn.core.op_runtime.context import OpContext
 from reyn.core.op_runtime.load_skill import handle as load_skill_handle
-from reyn.data.skills.registry import SkillEntry
 from reyn.data.workspace.workspace import Workspace
 from reyn.schemas.models import LoadSkillIROp
 from reyn.security.permissions.permissions import PermissionDecl, PermissionResolver
+from reyn.security.threat_patterns import ThreatMatch
 from tests._support.events import collect_events
 
 
@@ -35,20 +41,7 @@ def _run(coro):
     return asyncio.run(coro)
 
 
-class _ThreatMatch:
-    def __init__(self, pattern_id: str = "test-threat", severity: str = "block", scope: str = "strict"):
-        self.pattern_id = pattern_id
-        self.severity = severity
-        self.scope = scope
-
-
-class _FakeThreatScanConfig:
-    def __init__(self, *, enabled: bool = True, block_severity: str = "block"):
-        self.enabled = enabled
-        self.block_severity = block_severity
-
-
-def _make_ctx(project_root: Path, *, threat_scan=None, available_skills=None) -> tuple[OpContext, EventLog]:
+def _make_ctx(project_root: Path, *, threat_scan=None) -> tuple[OpContext, EventLog]:
     events = EventLog()
     ws = Workspace(events=events, base_dir=project_root)
     resolver = PermissionResolver(
@@ -61,7 +54,6 @@ def _make_ctx(project_root: Path, *, threat_scan=None, available_skills=None) ->
         permission_resolver=resolver,
         actor="test_load_skill_threat_scan",
         threat_scan=threat_scan,
-        available_skills=available_skills,
     )
     return ctx, events
 
@@ -71,16 +63,17 @@ def _write_skill(path: Path, body: str) -> None:
     path.write_text(body, encoding="utf-8")
 
 
-# ── the central witness: a HAND-WRITTEN skills.yaml entry (never installed
-# through skill_install) still gets its body scanned at load time ──────────
+# ── the central witness: a skill body reaching load_skill through ANY
+# registration path — including one that never went through skill_install's
+# own description-only scan — still gets its BODY scanned at load time ─────
 
 
-def test_load_skill_blocks_a_hand_registered_skill_with_a_threatening_body(tmp_path, monkeypatch):
-    """Tier 2: #4699's own reason for existing — a skill registered by
-    directly hand-writing `skills.yaml` (never through `skill_install`,
-    so its description-only scan never ran) still gets its BODY scanned
-    the moment `load_skill` reads it. RED without the fix: status='ok'
-    and the threatening body reaches `content`."""
+def test_load_skill_blocks_a_body_matching_a_threat_pattern(tmp_path, monkeypatch):
+    """Tier 2: #4699's own reason for existing — `load_skill` scans the BODY
+    regardless of how the entry reached `skills.yaml` (this op does its own
+    read + scan; it never consults `skill_install`'s own description-only
+    scan, so a hand-written config entry is covered too). RED without the
+    fix: status='ok' and the threatening body reaches `content`."""
     project_root = tmp_path / "project"
     skill_path = project_root / "skills" / "evil" / "SKILL.md"
     _write_skill(
@@ -88,27 +81,16 @@ def test_load_skill_blocks_a_hand_registered_skill_with_a_threatening_body(tmp_p
         "---\nname: evil\ndescription: a perfectly innocent description\n---\n"
         "EVIL_BODY_THREAT_MARKER\n",
     )
-    # Simulate a hand-written skills.yaml entry: a SkillEntry that exists in
-    # the live registry snapshot WITHOUT ever having gone through
-    # skill_install's own description scan.
-    entry = SkillEntry(
-        name="evil", description="a perfectly innocent description",
-        path=str(skill_path),
-    )
-    threat_config = _FakeThreatScanConfig()
-    ctx, events = _make_ctx(project_root, threat_scan=threat_config, available_skills=[entry])
+    threat_config = ThreatScanConfig()  # real type, every field its own default
+    ctx, events = _make_ctx(project_root, threat_scan=threat_config)
     collected = collect_events(events)
 
     def _fake_scan(content, config, *, scope="context"):
         if "EVIL_BODY_THREAT_MARKER" in content:
-            return [_ThreatMatch()]
+            return [ThreatMatch(pattern_id="test-threat", scope="strict", severity="block")]
         return []
 
     monkeypatch.setattr("reyn.core.op_runtime.load_skill.scan_for_threats", _fake_scan)
-    monkeypatch.setattr(
-        "reyn.core.op_runtime.load_skill.first_blocking_match",
-        lambda matches, threshold="block": matches[0] if matches else None,
-    )
 
     result = _run(load_skill_handle(
         LoadSkillIROp(kind="load_skill", path=str(skill_path)), ctx,
@@ -133,7 +115,7 @@ def test_load_skill_does_not_block_a_clean_body(tmp_path, monkeypatch):
     skill_path = project_root / "skills" / "clean" / "SKILL.md"
     _write_skill(skill_path, "---\nname: clean\n---\nJust a normal skill body.\n")
 
-    threat_config = _FakeThreatScanConfig()
+    threat_config = ThreatScanConfig()
     ctx, events = _make_ctx(project_root, threat_scan=threat_config)
 
     def _fake_scan(content, config, *, scope="context"):
@@ -155,27 +137,24 @@ def test_load_skill_does_not_block_a_clean_body(tmp_path, monkeypatch):
 def test_load_skill_emits_match_event_without_blocking_for_a_low_severity_match(tmp_path, monkeypatch):
     """Tier 2: (accept-side) a match below the block-severity threshold is
     recorded via `skill_body_threat_match` but does not prevent the load —
-    mirrors `skill_install`'s own match-vs-block distinction."""
+    mirrors `skill_install`'s own match-vs-block distinction. Drives the
+    REAL `first_blocking_match`/`severity_blocks` rank comparison (`warn` <
+    `block`), not a stand-in — a "warn" match must not block against the
+    default `block_severity="block"` threshold."""
     project_root = tmp_path / "project"
     skill_path = project_root / "skills" / "warn" / "SKILL.md"
     _write_skill(skill_path, "---\nname: warn\n---\nMILD_MARKER body text.\n")
 
-    threat_config = _FakeThreatScanConfig(block_severity="block")
+    threat_config = ThreatScanConfig()  # block_severity="block" (default)
     ctx, events = _make_ctx(project_root, threat_scan=threat_config)
     collected = collect_events(events)
 
     def _fake_scan(content, config, *, scope="context"):
         if "MILD_MARKER" in content:
-            return [_ThreatMatch(severity="warn")]
+            return [ThreatMatch(pattern_id="mild-threat", scope="strict", severity="warn")]
         return []
 
     monkeypatch.setattr("reyn.core.op_runtime.load_skill.scan_for_threats", _fake_scan)
-    monkeypatch.setattr(
-        "reyn.core.op_runtime.load_skill.first_blocking_match",
-        lambda matches, threshold="block": next(
-            (m for m in matches if m.severity == threshold), None,
-        ),
-    )
 
     result = _run(load_skill_handle(
         LoadSkillIROp(kind="load_skill", path=str(skill_path)), ctx,
