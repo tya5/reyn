@@ -116,9 +116,19 @@ def test_auth_providers_arbitrary_name_still_recognized():
     assert result == {}
 
 
-def test_gateway_surfaces_enabled_arbitrary_name_still_recognized():
-    """Tier 1: `gateway.surfaces.enabled` — same audit as above."""
+def test_gateway_surfaces_enabled_real_surface_name_still_recognized():
+    """Tier 1: `gateway.surfaces.enabled` — UPDATED by #4655, which gave
+    this leaf a real, finite inner vocabulary (the live
+    `interfaces.web.surfaces.build_registry()` surface names) rather than
+    leaving it free-form like its siblings above. This test used to assert
+    an ARBITRARY name ("web_ui", not a real surface) passed through
+    unchecked — that premise is no longer true on purpose (#4655's whole
+    point for this field); see
+    tests/config/test_4655_freeform_leaf_validators.py for the
+    accept/reject pair covering the new validator itself. Kept here, using
+    a REAL surface name, so the family-sweep table this file documents
+    still names every dict-leaf field's CURRENT disposition."""
     result = config_schema.unknown_config_keys({
-        "gateway": {"surfaces": {"enabled": {"web_ui": True}}},
+        "gateway": {"surfaces": {"enabled": {"webui": True}}},
     })
     assert result == {}

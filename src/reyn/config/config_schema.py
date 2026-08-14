@@ -371,6 +371,83 @@ def register_freeform_leaf_validator(
     _FREEFORM_LEAF_VALIDATORS[dotted_key] = validator
 
 
+#: #4655: the second, EXPLICIT registration kind a free-form dict-leaf can
+#: take — "we looked at this leaf's real consumer(s) and deliberately do
+#: NOT check its inner vocabulary" (genuinely open, operator-chosen names:
+#: model names, provider names, header names, ...). This is deliberately a
+#: SEPARATE registry from :data:`_FREEFORM_LEAF_VALIDATORS`, not a
+#: validator that always returns ``{}`` — a leaf simply absent from BOTH
+#: registries is indistinguishable from an oversight (nobody ever looked
+#: at it), which is the exact defect #4655 exists to catch. Every dict-leaf
+#: must end up in EXACTLY ONE of the two registries — see
+#: :func:`unregistered_freeform_leaves`.
+_FREEFORM_LEAF_DECLARED_OPEN: "set[str]" = set()
+
+
+def register_freeform_leaf_open(dotted_key: str) -> None:
+    """Explicitly declare a free-form dict-leaf's inner vocabulary as
+    Kind ② — deliberately NOT checked (#4655).
+
+    Use this instead of :func:`register_freeform_leaf_validator` when a
+    leaf's real consumer(s) read its sub-keys generically (``.get(name)``/
+    ``.items()`` with a genuinely operator-chosen name — a model name, a
+    provider name, an HTTP header name, ...) so there is no bounded finite
+    vocabulary to check. Recording the decision here — rather than simply
+    never calling anything for *dotted_key* — is the whole point: an
+    unregistered leaf and a deliberately-open leaf both currently accept
+    every sub-key silently, but only one of them was actually LOOKED AT.
+    See :func:`unregistered_freeform_leaves`, the completeness check that
+    reads this registry to tell the two apart.
+    """
+    _FREEFORM_LEAF_DECLARED_OPEN.add(dotted_key)
+
+
+def freeform_leaf_registration_kind(dotted_key: str) -> "str | None":
+    """Public read of a free-form dict-leaf's #4655 registration —
+    ``"validated"`` (:func:`register_freeform_leaf_validator`, Kind①),
+    ``"open"`` (:func:`register_freeform_leaf_open`, Kind②), or ``None``
+    (neither — registered under neither kind).
+
+    Exists so a caller (a test, ``reyn config fields``, ...) can ask "how
+    is this leaf disposed of" without reaching into
+    :data:`_FREEFORM_LEAF_VALIDATORS` / :data:`_FREEFORM_LEAF_DECLARED_OPEN`
+    directly — those two dicts/sets are the mechanism's storage, this
+    function is its read surface.
+    """
+    if dotted_key in _FREEFORM_LEAF_VALIDATORS:
+        return "validated"
+    if dotted_key in _FREEFORM_LEAF_DECLARED_OPEN:
+        return "open"
+    return None
+
+
+def unregistered_freeform_leaves() -> "frozenset[str]":
+    """#4655 completeness check: every ``is_dict_leaf`` key from the SAME
+    live :func:`walk_config_schema` this module already uses elsewhere
+    (:func:`_schema_index`, :func:`known_top_level_keys`) that has NEITHER
+    a :func:`register_freeform_leaf_validator` (Kind ①) NOR a
+    :func:`register_freeform_leaf_open` (Kind ②) registration.
+
+    A non-empty result means a dict-leaf field was added to ``ReynConfig``
+    (or gained ``is_dict_leaf=True`` via the ``dict_leaf`` metadata escape
+    hatch) without anyone deciding what its inner vocabulary check should
+    be — same shape as #1983 (``Op`` union ↔ ``OP_KIND_MODEL_MAP``) and
+    #4646 (parser step-kinds ↔ ``executor.STEP_KINDS``): a derived pair,
+    checked for drift, rather than a hand-maintained list nobody
+    re-verifies. ``tests/core/test_4655_freeform_leaf_registration_completeness.py``
+    asserts this is empty — every registration module that calls either
+    registration function must be IMPORTED before that assertion runs, or
+    its leaves report as "unregistered" false-positively (decorators /
+    module-level calls only execute once the module is imported).
+    """
+    _namespaces, dict_leaves, _scalar_leaves = _schema_index()
+    return frozenset(
+        dict_leaves
+        - _FREEFORM_LEAF_VALIDATORS.keys()
+        - _FREEFORM_LEAF_DECLARED_OPEN
+    )
+
+
 def known_top_level_keys() -> frozenset[str]:
     """The full set of valid top-level ``ReynConfig`` keys, derived from the
     SAME live schema :func:`walk_config_schema` already provides to
