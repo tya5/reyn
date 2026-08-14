@@ -47,6 +47,7 @@ from reyn.interfaces.inline.textual_chat.gutter import (
     _RUNNING_FRAMES,
     _cell_pad_right,
     _gutter_glyph_color,
+    _is_retrieval_tool,
 )
 from reyn.interfaces.repl.renderer import (
     _CC_DONE,
@@ -494,8 +495,103 @@ def test_left_gutter_vocabulary_is_all_single_cell() -> None:
 
     assert glyphs, "enumeration produced no glyphs — registry sources changed shape"
     for glyph in glyphs:
+        # #3329: the retrieval-demotion "no marker" case is the ONE
+        # deliberate 0-cell glyph (an intentional absence, not a vocabulary
+        # entry to pad) — `_cell_pad_right` already handles an empty label
+        # correctly (all spaces), so it is exempt from the 1-cell rule
+        # below rather than silently wrong.
+        if glyph == "":
+            continue
         assert cell_len(glyph) == 1, (
             f"{glyph!r} measures {cell_len(glyph)} cells, not 1 — a new "
             "vocabulary entry (e.g. an emoji marker) needs its column "
             "accounting revisited, not a silent single-cell assumption"
         )
+
+
+def test_retrieval_tool_call_carries_no_gutter_marker() -> None:
+    """Tier 1: #3329 — a started/completed call to a ``purity="read_only"``
+    tool (the real registry, ``read_file``) gets no gutter glyph at all —
+    the table's "gutter: 無し" cell. Contrasts with a side-effect tool
+    (``write_file``), which keeps today's ``●``/``⎿`` markers."""
+    glyph, _ = _gutter_glyph_color(
+        OutboxMessage(kind="tool_call_started", text="read_file", meta={"tool": "read_file"})
+    )
+    assert glyph == ""
+    glyph, _ = _gutter_glyph_color(
+        OutboxMessage(kind="tool_call_completed", text="", meta={"tool": "read_file"})
+    )
+    assert glyph == ""
+
+    glyph, _ = _gutter_glyph_color(
+        OutboxMessage(kind="tool_call_started", text="write_file", meta={"tool": "write_file"})
+    )
+    assert glyph == "●"
+    glyph, _ = _gutter_glyph_color(
+        OutboxMessage(kind="tool_call_completed", text="", meta={"tool": "write_file"})
+    )
+    assert glyph == "⎿"
+
+
+def test_a_failed_retrieval_tool_call_still_gets_a_marker() -> None:
+    """Tier 1: #3329 — demotion applies ONLY to started/completed
+    (the successful/in-flight path); a FAILURE still needs the operator's
+    attention regardless of the tool's op-class, so ``tool_call_failed``
+    is deliberately excluded from :func:`_is_retrieval_tool`'s reach."""
+    glyph, color = _gutter_glyph_color(
+        OutboxMessage(kind="tool_call_failed", text="", meta={"tool": "read_file"})
+    )
+    assert glyph == "⎿"
+    assert color == _CC_ERR
+
+
+def test_is_retrieval_tool_derives_from_the_real_registry_not_a_hardcoded_list() -> None:
+    """Tier 1: #3329's own completeness requirement — the demotion decision
+    reads :attr:`~reyn.tools.types.ToolDefinition.purity` off the REAL
+    default :class:`~reyn.tools.ToolRegistry`, not a name list living in
+    this display module (the #3273 deferred-track's own repeated failure
+    mode: "手動列挙は次も漏れる"). Witnessed by enumerating the real
+    registry rather than asserting on a handful of literals."""
+    from reyn.tools import get_default_registry
+
+    registry = get_default_registry()
+    names = registry.names()
+    assert names, "the default registry enumerated no tools — nothing to witness"
+
+    read_only_names = [n for n in names if registry.lookup(n).purity == "read_only"]
+    side_effect_names = [n for n in names if registry.lookup(n).purity == "side_effect"]
+    assert read_only_names and side_effect_names, (
+        "the real registry no longer has both purity values — this test's "
+        "own premise (a real read/write split exists to derive from) broke"
+    )
+
+    for name in read_only_names:
+        expected = name not in ("call_mcp_tool", "mcp_call_tool")
+        assert _is_retrieval_tool(name) is expected, (
+            f"{name!r}: purity=read_only but demotion={_is_retrieval_tool(name)}"
+        )
+    for name in side_effect_names:
+        assert _is_retrieval_tool(name) is False, (
+            f"{name!r}: purity=side_effect but demoted as retrieval"
+        )
+
+
+def test_dynamic_mcp_tool_calls_are_exempt_from_demotion_on_purpose() -> None:
+    """Tier 1: #3329 — lead-coder ruling: an individual MCP-server tool
+    installed at runtime (e.g. a genuinely read-only ``filesystem.read``)
+    dispatches through ONE of two fixed wrapper tools whose OWN name
+    (never the underlying MCP tool's identifier) is what
+    ``dispatcher.py``'s ``tool_called`` event — and therefore this
+    module's ``meta["tool"]`` — actually carries. No per-underlying-tool
+    purity is knowable here, so both wrappers are excluded explicitly,
+    not by coincidence of their current ``purity="side_effect"`` value."""
+    assert _is_retrieval_tool("call_mcp_tool") is False
+    assert _is_retrieval_tool("mcp_call_tool") is False
+
+
+def test_unknown_tool_name_is_not_demoted() -> None:
+    """Tier 1: #3329 — accept-side: a tool name absent from the registry
+    (e.g. a message replayed against an older/mismatched build) fails
+    closed to the PRE-#3329 behaviour (a normal marker), not to a silent
+    "no marker" that would hide an unrecognized entry from the operator."""
+    assert _is_retrieval_tool("this_tool_does_not_exist") is False

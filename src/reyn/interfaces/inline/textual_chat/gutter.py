@@ -62,6 +62,7 @@ if TYPE_CHECKING:
     from textual_flowview import Entry
 
     from reyn.runtime.outbox import OutboxMessage
+    from reyn.tools import ToolRegistry
 
 # EntryState → gutter colour (Phase 2 state-color gutter). The CC state
 # palette: RUNNING amber, SUCCESS green, ERROR coral. DEFAULT has NO entry
@@ -138,6 +139,57 @@ _MARK_RAIL = "▏"
 #: POSITION, so it must not borrow the ``_STATE_COLOR`` vocabulary either.
 _MARK_COLOR = _CC_TEXT
 
+# #3329: retrieval-demotion. A tool call's op-class taxonomy is NOT hardcoded
+# here as a name list (the #3273 deferred-track incident this issue names
+# twice: "手動列挙は次も漏れる") — it is DERIVED from the existing, complete
+# ``ToolDefinition.purity`` axis already declared per tool in ``reyn.tools``
+# (measured #3329: all 76 registered tools declare ``purity`` explicitly;
+# no tool relies on the dataclass default). ``purity="read_only"`` is the
+# authoritative "取得系" signal this table's left column names.
+#
+# One explicit exemption, not an accident of today's values (lead-coder
+# ruling, #3329): every dynamically-installed MCP server tool dispatches
+# through ONE of these two fixed wrapper tools (``mcp_tool_name``/
+# ``<server>__<tool>`` is an ARGUMENT, never the invoked function name — see
+# ``dispatcher.py``'s ``tool_called`` event, whose ``tool`` field is always
+# the wrapper's own name) — so no INDIVIDUAL MCP tool's real read/write
+# behaviour is knowable from ``purity`` here; the wrapper's own
+# ``purity="side_effect"`` already keeps this case un-demoted, but is
+# written explicitly below so that stays true ON PURPOSE, not by
+# coincidence if either wrapper's declared purity ever changes.
+_MCP_DYNAMIC_DISPATCH_EXEMPT: "frozenset[str]" = frozenset({
+    "call_mcp_tool", "mcp_call_tool",
+})
+
+
+def _default_tool_registry() -> "ToolRegistry":
+    """The default :class:`ToolRegistry`, built once and cached.
+
+    :func:`reyn.tools.get_default_registry` documents itself as a fresh,
+    lightweight construction callers may cache — :func:`_gutter_glyph_color`
+    runs on every gutter repaint (its own docstring's constraint), so this
+    module builds it once rather than on every frame."""
+    global _TOOL_REGISTRY
+    if _TOOL_REGISTRY is None:
+        from reyn.tools import get_default_registry
+        _TOOL_REGISTRY = get_default_registry()
+    return _TOOL_REGISTRY
+
+
+_TOOL_REGISTRY: "ToolRegistry | None" = None
+
+
+def _is_retrieval_tool(tool_name: str) -> bool:
+    """True iff *tool_name* is a "取得系" (retrieval) tool for #3329's gutter
+    demotion — derived from :attr:`ToolDefinition.purity`, never a hardcoded
+    name list (see the module-level note above this function)."""
+    if tool_name in _MCP_DYNAMIC_DISPATCH_EXEMPT:
+        return False
+    definition = _default_tool_registry().lookup(tool_name)
+    if definition is None:
+        return False
+    return definition.purity == "read_only"
+
 
 def _gutter_glyph_color(msg: "OutboxMessage") -> "tuple[str, str]":
     """The gutter glyph + kind-colour for one display frame, keyed off ``_KIND_LINE``.
@@ -147,11 +199,21 @@ def _gutter_glyph_color(msg: "OutboxMessage") -> "tuple[str, str]":
     tool-result markers otherwise. The colour returned here is the KIND colour;
     a non-DEFAULT :class:`EntryState` overrides it in :meth:`ReynGutter.decorate`
     (state-driven colour, Phase 2). Kept cheap — ``decorate`` runs on every repaint.
+
+    #3329: a SUCCESSFUL retrieval tool call (started/completed, never
+    failed — a failure still needs the operator's attention regardless of
+    the tool's op-class, so ``tool_call_failed`` is deliberately NOT
+    demoted below) carries no gutter marker at all — see
+    :func:`_is_retrieval_tool`.
     """
     kind = msg.kind
     if kind == "tool_call_started":
+        if _is_retrieval_tool(str((msg.meta or {}).get("tool", ""))):
+            return "", _CC_DIM
         return "●", _CC_TEXT
     if kind == "tool_call_completed":
+        if _is_retrieval_tool(str((msg.meta or {}).get("tool", ""))):
+            return "", _CC_DIM
         return "⎿", _CC_DIM
     if kind == "tool_call_failed":
         return "⎿", _CC_ERR
