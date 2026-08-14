@@ -746,12 +746,38 @@ def _print_mcp_negotiation(config: object, project_root: Path) -> None:
     reachability check from doctor would duplicate work doctor's own
     process cannot even perform faster (a held connection is a session
     concept, #4364 C-2's own architect correction). D-2: report-only,
-    never connects."""
+    never connects.
+
+    Also flags the #4631 shape defect (``mcp.<name>`` written where
+    ``mcp.servers.<name>`` belongs) when it explains why nothing is
+    declared here — reusing ``reyn config validate``'s own detector
+    against the SAME merged ``mcp:`` dict this function already has, not
+    a second raw-file read (validate needs to name which SOURCE FILE is
+    wrong; this only needs to say the shape is wrong at all). Report-only,
+    same as everything else here (D-2) — doctor never rewrites the entry."""
+    from reyn.interfaces.cli.commands.config import _mcp_misplaced_server_entries
+
     mcp_config = getattr(config, "mcp", None) or {}
     servers = sorted((mcp_config.get("servers") if isinstance(mcp_config, dict) else None) or {})
+    misplaced = _mcp_misplaced_server_entries(mcp_config)
     if not servers:
-        print("  no MCP servers declared")
+        if misplaced:
+            print(
+                f"  no MCP servers declared under mcp.servers — but "
+                f"{len(misplaced)} entr{'y' if len(misplaced) == 1 else 'ies'} "
+                f"directly under mcp: ({', '.join(sorted(misplaced))}) "
+                f"look like misplaced server entries (see `reyn config validate`)",
+            )
+        else:
+            print("  no MCP servers declared")
         return
+    if misplaced:
+        print(
+            f"  note: {len(misplaced)} entr{'y' if len(misplaced) == 1 else 'ies'} "
+            f"directly under mcp: ({', '.join(sorted(misplaced))}) also look "
+            f"like misplaced server entries, alongside the declared servers "
+            f"below (see `reyn config validate`)",
+        )
 
     events_dir = project_root / ".reyn" / "events"
     evidence, scanned = _mcp_initialized_evidence(events_dir)
