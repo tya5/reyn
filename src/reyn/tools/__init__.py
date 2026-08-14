@@ -222,7 +222,8 @@ def get_default_registry() -> ToolRegistry:
     registry.register(AGENT_SPAWN)
     registry.register(TOPOLOGY_CREATE)
     registry.register(SEND_TO_SESSION)  # proposal 0067 P5 (#3978)
-    registry.register(RUN_PROMPT)  # proposal 0067 P4d (#3978), collect="attached" only
+    registry.register(RUN_PROMPT)  # proposal 0067 P4d (#3978, collect="attached")
+    # + P4e (#4138, collect="async") — both registered, one ToolDefinition
     registry.register(REYN_REPO_LIST)
     registry.register(REYN_REPO_READ)
     # FP-0041 #489 PR-B2: cron action category (= LLM-callable cron
