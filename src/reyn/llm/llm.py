@@ -710,12 +710,8 @@ class LLMToolCallResult:
     # here so RouterLoop's ``kind="agent"`` outbox rows can carry the SAME key
     # their own audit-event counterpart carries, without re-deriving it from
     # ``raw_message`` (which is the assistant *message*, not the response
-    # envelope the id lives on). ``None`` when the provider omitted it — never
-    # a minted placeholder, same discipline as ``finish_reason`` above. Also
-    # ``None`` for litellm's own empty-string id (see the ``or None`` at the
-    # assignment site) — #4722 review found ``""``, not ``None``, is what a
-    # genuinely id-less reconstructed stream response carries, and left
-    # unfixed every such row would share the SAME falsy key.
+    # envelope the id lives on). Populated via ``_response_call_id`` — see
+    # its own docstring for the "" vs None collapse both call sites share.
     call_id: str | None = None
     # raw message for debugging:
     raw_message: object | None = None
@@ -1483,6 +1479,27 @@ def _read_usage_source(response: object) -> UsageSource:
     reads UNKNOWN only for a hand-built object. Never PROVIDER by default.
     """
     return parse_usage_source(getattr(response, _USAGE_SOURCE_ATTR, None))
+
+
+def _response_call_id(response: object) -> "str | None":
+    """The litellm response's own ``id``, or ``None`` when genuinely absent.
+
+    #4691 Phase 1 ①②: the ONE place this collapse lives (lead-coder review,
+    #4722/#4725 — it was duplicated inline at both call sites before this,
+    same "one rule, not two" condition as #4708). litellm's own
+    ``ChunkProcessor._get_chunk_id`` returns ``""``, not ``None``, when no
+    stream chunk carried an id, and ``ModelResponse.__init__`` only mints a
+    fresh id when the field is ``None`` — so a genuinely id-less STREAMED
+    response reconstructs with ``id=""``, never ``id=None``. The sync path
+    never hits this (litellm's own sync response either carries a real id or
+    leaves the attribute unset), but the collapse is unconditional here so a
+    future change to that assumption doesn't silently reopen the bug this
+    closes: every row missing a real id must share the SAME reported absence
+    (``None``), never a shared empty-string key — a future consumer (#4691
+    Phase B's tree) keying on ``call_id`` would otherwise bundle unrelated
+    calls as one.
+    """
+    return getattr(response, "id", None) or None
 
 
 def proxy_kwargs() -> dict:
@@ -2669,17 +2686,9 @@ async def recorded_acompletion(
     if emit_cost_events:
         # #4691 Phase 1 ①: measured directly off the response, never
         # invented — a provider that omits either field means None, not a
-        # minted placeholder (see _emit_chat_cost_events's own docstring).
-        # ``or None`` (lead-coder review, #4722): litellm's own
-        # ``ChunkProcessor._get_chunk_id`` returns "" — not None — when no
-        # stream chunk carried an id, and litellm's ``ModelResponse.__init__``
-        # only mints a fresh id when the field is None, so "" survives
-        # untouched onto the reconstructed response. Left as "", every row
-        # missing an id would share the SAME falsy key and get bundled as one
-        # call by any future consumer keying on it (#4691 Phase B's tree) —
-        # worse than a missing key, since it fabricates a false grouping. The
-        # `or None` collapses any falsy id (`""`, `0`) to a genuine absence.
-        _call_id = getattr(response, "id", None) or None
+        # minted placeholder (see _emit_chat_cost_events's own docstring and
+        # _response_call_id's own docstring for the "" vs None collapse).
+        _call_id = _response_call_id(response)
         _finish_reason = None
         _choices = getattr(response, "choices", None)
         if _choices:
@@ -3009,10 +3018,9 @@ async def call_llm_tools(
         tool_calls=tool_calls,
         finish_reason=finish_reason,
         usage=usage,
-        # #4691 Phase 1 ②: ``or None`` collapses litellm's own empty-string
-        # id (see ``LLMToolCallResult.call_id``'s own docstring) to a genuine
-        # absence — same fix #4722 applied at the audit-event call site.
-        call_id=getattr(response, "id", None) or None,
+        # #4691 Phase 1 ②: same collapse #4722's call site uses — see
+        # ``_response_call_id``'s own docstring for the "" vs None reasoning.
+        call_id=_response_call_id(response),
         raw_message=msg,
         # #1652/②: capture the provider reasoning as a normalized BUNDLE
         # (reasoning_content + thinking_blocks, the litellm cross-provider
