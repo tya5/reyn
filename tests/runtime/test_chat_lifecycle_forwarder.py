@@ -85,6 +85,64 @@ def test_compaction_zero_count_uses_generic_marker() -> None:
     assert msgs[0].text == "[↑ history compacted]"
 
 
+def test_compaction_completed_shows_the_calls_real_spend() -> None:
+    """Tier 2: #4703 axis① — owner's own complaint. The
+    ``[↑ N turns compacted]`` marker already existed (this file's own
+    pre-#4703 tests above); what was missing is that it never showed the
+    real money the compaction LLM call spent. prompt_tokens/
+    completion_tokens/cost_usd (CompactionController's own #4703 addition
+    to the event payload) now render as ``· ↑<tokens> ↓<tokens> · $<cost>``
+    — same ↑/↓ glyph convention as gutter.py's ReynTurnUsageGutter, so a
+    reader who already knows that convention reads this marker the same
+    way, no new vocabulary."""
+    q: asyncio.Queue = asyncio.Queue()
+    fwd = ChatLifecycleForwarder(q)
+    fwd(Event(
+        type="compaction_completed",
+        data={
+            "new_turn_count": 8, "covers_through_seq": 42,
+            "prompt_tokens": 8200, "completion_tokens": 340, "cost_usd": 0.05,
+        },
+    ))
+    msgs = _drain(q)
+    (only,) = msgs
+    assert only.kind == "system"
+    assert only.text == "[↑ 8 turns compacted · ↑8.2k ↓340 · $0.05]"
+
+
+def test_compaction_completed_without_usage_fields_degrades_to_the_bare_marker() -> None:
+    """Tier 2: absent usage fields (pre-#4703-shape events, or usage that
+    genuinely could not be read off the response) render the ORIGINAL
+    bare marker — never a fabricated ``$0.00``. Backward-compatible with
+    every pre-#4703 test in this file."""
+    q: asyncio.Queue = asyncio.Queue()
+    fwd = ChatLifecycleForwarder(q)
+    fwd(Event(
+        type="compaction_completed",
+        data={"new_turn_count": 8, "covers_through_seq": 42},
+    ))
+    msgs = _drain(q)
+    assert msgs[0].text == "[↑ 8 turns compacted]"
+
+
+def test_compaction_completed_shows_tokens_even_when_cost_is_unpriced() -> None:
+    """Tier 2: cost_usd and prompt/completion_tokens are independent —
+    an unpriced model (estimate_cost returns None, see budget.py's own
+    unpriced-call discipline) still shows the token spend, just no $
+    clause, rather than losing the whole usage clause."""
+    q: asyncio.Queue = asyncio.Queue()
+    fwd = ChatLifecycleForwarder(q)
+    fwd(Event(
+        type="compaction_completed",
+        data={
+            "new_turn_count": 2, "covers_through_seq": 10,
+            "prompt_tokens": 500, "completion_tokens": 50, "cost_usd": None,
+        },
+    ))
+    msgs = _drain(q)
+    assert msgs[0].text == "[↑ 2 turns compacted · ↑500 ↓50]"
+
+
 def test_unrelated_event_is_dropped() -> None:
     """Tier 2: events with no matching on_<type> handler don't write to outbox.
 

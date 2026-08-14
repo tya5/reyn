@@ -449,6 +449,17 @@ class ChatSummary:
     pending: list[str] = field(default_factory=list)
     session_user_facts: list[str] = field(default_factory=list)
     artifacts_referenced: list[str] = field(default_factory=list)
+    # #4703 axis①: the compaction LLM call's OWN usage — not persisted (see
+    # to_dict() below, which does NOT list these), read once by
+    # CompactionController to enrich its compaction_completed event. Owner's
+    # own complaint: the conversation-face marker already exists
+    # ("[↑ N turns compacted]"), what's missing is that it never showed the
+    # real money this call spent. None only if usage genuinely could not be
+    # read off the response (never coerced to 0 — the same real-figure-vs-
+    # unknown discipline #4691's gutter work already applies).
+    prompt_tokens: "int | None" = None
+    completion_tokens: "int | None" = None
+    cost_usd: "float | None" = None
 
     def to_dict(self) -> dict:
         """Serialise to the wire shape used in history.jsonl meta.structured."""
@@ -1287,6 +1298,24 @@ class CompactionEngine:
         response = await self._acompletion(
             messages, response_format={"type": "json_object"}
         )
+        # #4703 axis①: this call's own usage, for the compaction_completed
+        # marker CompactionController emits below (never a resummarize-pass
+        # call's usage — those are a rare, bounded-to-1-by-default backstop;
+        # the primary compact() call is the dominant cost, and capturing
+        # every resummarize pass too would need threading usage out of
+        # _resummarize_topic_arc as well, a disclosed follow-up, not silent
+        # scope creep). None if usage genuinely could not be read off the
+        # response — never coerced to 0.
+        _usage = getattr(response, "usage", None)
+        _prompt_tokens = getattr(_usage, "prompt_tokens", None)
+        _completion_tokens = getattr(_usage, "completion_tokens", None)
+        _cost_usd: "float | None" = None
+        if isinstance(_prompt_tokens, int) and isinstance(_completion_tokens, int):
+            from reyn.llm.pricing import TokenUsage, estimate_cost
+            _cost_usd, _ = estimate_cost(
+                self._model,
+                TokenUsage(prompt_tokens=_prompt_tokens, completion_tokens=_completion_tokens),
+            )
 
         raw = (response.choices[0].message.content or "").strip()
         if not raw:
@@ -1348,6 +1377,9 @@ class CompactionEngine:
             pending=list(parsed.get("pending") or []),
             session_user_facts=list(parsed.get("session_user_facts") or []),
             artifacts_referenced=list(parsed.get("artifacts_referenced") or []),
+            prompt_tokens=_prompt_tokens,
+            completion_tokens=_completion_tokens,
+            cost_usd=_cost_usd,
         )
 
 
