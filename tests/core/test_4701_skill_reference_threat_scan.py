@@ -189,6 +189,47 @@ def test_ordinary_file_outside_any_skill_directory_is_unaffected(tmp_path, monke
     assert not [e for e in collected if e.type in ("skill_body_threat_match", "skill_body_threat_blocked")]
 
 
+# ── lead-coder follow-up: a directory-form SkillEntry.path must not widen
+# containment to the parent of the SKILLS directory ─────────────────────────
+
+
+def test_a_directory_form_entry_path_does_not_scan_sibling_skills(tmp_path, monkeypatch):
+    """Tier 2: #4701 follow-up (lead-coder review) — `SkillEntry.path` may
+    name SKILL.md directly OR its containing directory (`registry.py`'s own
+    docstring: "as declared"; the registry does not normalize). Taking
+    `.parent` unconditionally, without first normalizing via
+    `_resolve_skill_md`, would treat a directory-form entry
+    (`path: "skills/my-skill"`) as if its OWN directory were `skills/` —
+    pulling every SIBLING skill's files into strict+block scope. RED
+    without the fix: a sibling skill's ordinary file gets scanned even
+    though it belongs to a DIFFERENT skill than the registered entry."""
+    project_root = tmp_path / "project"
+    my_skill_dir = project_root / "skills" / "my-skill"
+    _write(my_skill_dir / "SKILL.md", "---\nname: my-skill\n---\nbody\n")
+    sibling_file = project_root / "skills" / "sibling-skill" / "notes.md"
+    _write(sibling_file, "EVIL_REFERENCE_THREAT_MARKER\n")
+
+    # Directory-form path (no SKILL.md suffix) — the shape the registry
+    # accepts as-is per its own docstring.
+    entry = SkillEntry(name="my-skill", description="d", path=str(my_skill_dir))
+    threat_config = ThreatScanConfig()
+    ctx, events = _make_ctx(project_root, threat_scan=threat_config, available_skills=[entry])
+    collected = collect_events(events)
+
+    def _fail_if_called(*_a, **_k):
+        raise AssertionError("scan_for_threats must not run on a SIBLING skill's file")
+
+    monkeypatch.setattr("reyn.core.op_runtime.file.scan_for_threats", _fail_if_called)
+
+    result = _run(file_handle(
+        FileIROp(kind="file", op="read", path=str(sibling_file)), ctx,
+    ))
+
+    assert result["status"] == "ok", result
+    assert "EVIL_REFERENCE_THREAT_MARKER" in result["content"]
+    assert not [e for e in collected if e.type in ("skill_body_threat_match", "skill_body_threat_blocked")]
+
+
 def test_the_skill_own_directory_covers_nested_reference_subdirectories(tmp_path, monkeypatch):
     """Tier 2: (accept-side) containment is not limited to a literal
     `references/` name — ANY path under the skill's own directory tree

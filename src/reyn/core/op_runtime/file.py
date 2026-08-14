@@ -27,7 +27,7 @@ from .path_locks import get_path_lock, locked_paths
 # #4701 (lead-coder review, condition③): reuse skill_install.py's own
 # containment check rather than a second, independently-drifting
 # reimplementation of the same resolve+relative_to logic.
-from .skill_install import _contained_under
+from .skill_install import _contained_under, _resolve_skill_md
 
 _WRITE_OPS = frozenset({"write", "edit", "delete", "regenerate_index", "mkdir", "move"})
 _READ_OPS = frozenset({"read", "glob", "grep", "stat"})
@@ -100,6 +100,21 @@ def _skill_reference_provenance(ctx: OpContext, resolved_path: str) -> bool:
     ③ containment itself reuses ``skill_install.py``'s own
        ``_contained_under`` (not a second, independently-drifting
        implementation of the same resolve+relative_to check).
+
+    #4701 follow-up review (lead-coder): ``SkillEntry.path`` is declared
+    "as-is" (``registry.py``'s own docstring) — it may name the SKILL.md
+    file directly OR its containing directory (``skills.md``: "Path to
+    SKILL.md (or its containing directory)"), and the registry does NOT
+    normalize between the two. Taking ``.parent`` unconditionally silently
+    assumed the file form; for a directory-form entry (``path: skills/foo``)
+    that widened ``skill_dir`` by one level (``skills/``), pulling every
+    OTHER sibling skill's files into strict+block scope — safe-DIRECTION
+    (② still errs toward scanning on failure) but excessively WIDE, not the
+    narrow per-skill containment this function promises. Reuses
+    ``skill_install.py``'s own ``_resolve_skill_md`` (the SAME
+    file-vs-directory normalization ``skill_install`` already applies to
+    this exact field) to anchor on the true SKILL.md path before taking
+    ``.parent`` — not a second, independently-drifting normalization.
     """
     entries = getattr(ctx, "available_skills", None)
     if not entries:
@@ -117,6 +132,9 @@ def _skill_reference_provenance(ctx: OpContext, resolved_path: str) -> bool:
         p = Path(entry_path).expanduser()
         if not p.is_absolute():
             p = base_dir / p
+        # Normalize file-vs-directory BEFORE resolving — same helper
+        # skill_install.py itself uses for this exact field.
+        p = _resolve_skill_md(str(p))
         try:
             skill_dir = p.resolve().parent
         except (OSError, RuntimeError):
