@@ -568,6 +568,75 @@ async def test_dispatch_tool_emits_tool_failed_on_unknown_tool(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_dispatched_tool_call_carries_the_llm_calls_own_call_id(monkeypatch):
+    """Tier 2: #4691 Phase B ①(remainder) — a tool_calls round's own
+    LLMToolCallResult.call_id (#4725) reaches tool_called/tool_returned's
+    audit-event payload — threaded down the actual call graph as an explicit
+    parameter (dispatch()/_run_execute_round -> ExecContext.extra ->
+    DispatchContext.call_id), not a stored field. This is the key a TUI
+    consumer keys a tool row to its parent litellm CALL by — never dispatch
+    order (owner ruling B, #4691)."""
+    host = FakeRouterHost()
+    loop = make_loop(host)
+
+    # list_agents is always in the catalog (build_tools includes it
+    # unconditionally, independent of registered agents) — a real,
+    # dispatchable tool, so tool_called fires instead of the pre-dispatch
+    # unknown_tool short-circuit the other tests in this file exercise.
+    rounds = [
+        tool_result([{"name": "list_agents", "args": {"path": ""}}], call_id="resp-round-1"),
+        text_result("done"),
+    ]
+
+    async def mock_llm(**kwargs):
+        return rounds.pop(0)
+
+    monkeypatch.setattr("reyn.runtime.router_loop.call_llm_tools", mock_llm)
+    await loop.run("call a tool", [])
+
+    called = [e for e in host.events.emitted if e["type"] == "tool_called"]
+    assert called, "tool_called never fired — nothing to assert call_id on"
+    for e in called:
+        assert e["call_id"] == "resp-round-1"
+
+
+@pytest.mark.asyncio
+async def test_a_call_id_less_round_never_inherits_a_prior_rounds_call_id(monkeypatch):
+    """Tier 2: #4691 Phase B ①(remainder) — lead-coder review (#4734): the
+    ORIGINAL implementation stored call_id on ``self._current_call_id``,
+    which never reset — after one round ran, EVERY later dispatch (even one
+    whose own round genuinely carries no call_id) silently inherited the
+    PRIOR round's value. That is worse than a missing key: a stale id LOOKS
+    valid while pointing at the wrong call. Two tool_calls rounds back to
+    back — round 1 WITH a call_id, round 2 WITHOUT — pins that round 2's own
+    dispatch reports None, not round 1's leftover value."""
+    host = FakeRouterHost()
+    loop = make_loop(host)
+
+    rounds = [
+        tool_result([{"name": "list_agents", "args": {"path": ""}}], call_id="resp-round-1"),
+        tool_result([{"name": "list_agents", "args": {"path": ""}}], call_id=None),
+        text_result("done"),
+    ]
+
+    async def mock_llm(**kwargs):
+        return rounds.pop(0)
+
+    monkeypatch.setattr("reyn.runtime.router_loop.call_llm_tools", mock_llm)
+    await loop.run("call a tool twice", [])
+
+    called = [e for e in host.events.emitted if e["type"] == "tool_called"]
+    # Unpacking enforces "exactly one tool_called per round" — a structural
+    # correlation check, not a pinned figure.
+    first_call, second_call = called
+    assert first_call["call_id"] == "resp-round-1"
+    assert second_call["call_id"] is None, (
+        "round 2 genuinely has no call_id — it must NOT inherit round 1's "
+        f"'resp-round-1' (got {second_call['call_id']!r})"
+    )
+
+
+@pytest.mark.asyncio
 async def test_session_spawn_dispatches_to_host_not_unhandled():
     """Tier 2: #2120 — _invoke_router_tool('spawn_session') reaches the registry handler
     and the host's spawn_session, NOT the {"error": "unhandled tool"} fall-through.

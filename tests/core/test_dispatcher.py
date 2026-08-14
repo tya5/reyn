@@ -23,6 +23,7 @@ def make_ctx(
     caller_kind: str = "router",
     caller_id: str = "test_agent",
     chain_id: str | None = "c1",
+    call_id: str | None = None,
     catalog: dict | None = None,
     events: FakeEventEmitter | None = None,
 ) -> tuple[DispatchContext, FakeEventEmitter]:
@@ -34,6 +35,7 @@ def make_ctx(
             chain_id=chain_id,
             tool_catalog=catalog or {},
             events=e,
+            call_id=call_id,
         ),
         e,
     )
@@ -294,6 +296,55 @@ def test_caller_kind_and_id_propagated_in_events():
             assert ev_data["caller_kind"] == "router"
             assert ev_data["caller_id"] == "article_writer.write"
             assert ev_data["chain_id"] == "cabc"
+    asyncio.run(main())
+
+
+def test_call_id_propagates_to_every_emitted_event_kind():
+    """Tier 2: #4691 Phase B ①(remainder) — DispatchContext.call_id appears on
+    tool_called AND its outcome, across all 3 ways a call can end (success,
+    raised exception, handler-declared error) — the key a TUI consumer keys a
+    tool row to its parent litellm CALL by (never dispatch order, owner
+    ruling B, #4691)."""
+    async def ok_invoker(args):
+        return {"status": "ok"}
+
+    async def raising_invoker(args):
+        raise RuntimeError("boom")
+
+    async def declared_error_invoker(args):
+        return {"error": "cancelled"}
+
+    async def main():
+        for invoker, expect_kind in (
+            (ok_invoker, "tool_returned"),
+            (raising_invoker, "tool_failed"),
+            (declared_error_invoker, "tool_failed"),
+        ):
+            ctx, ev = make_ctx(call_id="resp-abc123", catalog=_SAMPLE_CATALOG)
+            await dispatch_tool(
+                name="list_skills", args={"path": "x"}, ctx=ctx, invoker=invoker,
+            )
+            types = [e[0] for e in ev.events]
+            assert types == ["tool_called", expect_kind]
+            for _, data in ev.events:
+                assert data["call_id"] == "resp-abc123"
+    asyncio.run(main())
+
+
+def test_call_id_defaults_to_none_never_a_minted_placeholder():
+    """Tier 1: a caller that never threads call_id through (DispatchContext's
+    own default) emits events with call_id=None, not a fabricated value —
+    matches the discipline #4722/#4725 established at the audit-event and
+    outbox-meta call sites."""
+    async def main():
+        async def invoker(args):
+            return None
+        ctx, ev = make_ctx(catalog=_SAMPLE_CATALOG)  # call_id omitted
+        await dispatch_tool(
+            name="list_skills", args={"path": "x"}, ctx=ctx, invoker=invoker,
+        )
+        for _, data in ev.events:
+            assert data["call_id"] is None
     asyncio.run(main())
 
 

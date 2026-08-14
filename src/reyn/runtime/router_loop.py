@@ -2001,7 +2001,9 @@ class RouterLoop:
                 # returns observation messages; the OS *appends* in either case. The arms
                 # stay separate because the INTERPRETATION differs (snippet vs tool_calls),
                 # not because the feedback shape differs.
-                cb_feedback = await self._run_codeblock_round(interp)
+                cb_feedback = await self._run_codeblock_round(
+                    interp, call_id=result.call_id,
+                )
                 _cb_content = result.content or ""
                 messages.append({"role": "assistant", "content": _cb_content})
                 _cb_append = getattr(host, "append_history_entry", None)
@@ -2155,7 +2157,9 @@ class RouterLoop:
                 # loop level above → ``interp`` carries the resolved actions). The OS
                 # exclude-gates pre-dispatch inside _run_execute_round → dispatch →
                 # format_feedback; returns (tool_calls, tool_results) in deduped order.
-                tool_calls, tool_results = await self._run_execute_round(interp)
+                tool_calls, tool_results = await self._run_execute_round(
+                    interp, call_id=result.call_id,
+                )
                 # Detect async-deferred dispatches via the canonical
                 # registry (router_tools.get_dispatch_kind() →
                 # ToolDefinition.dispatch_kind).  Async tools'
@@ -2851,8 +2855,13 @@ class RouterLoop:
                     raise
                 cur = shrunk
 
-    async def _execute_tool(self, tc: dict) -> dict:
+    async def _execute_tool(self, tc: dict, *, call_id: "str | None" = None) -> dict:
         """Dispatch one tool call via dispatch_tool (cross-cutting concerns).
+
+        Test-only seam (no production call site — see the callers survey in
+        #4691 Phase B ①'s own PR). ``call_id`` (#4691 Phase B ①, remainder)
+        defaults to None so every existing direct-call test stays byte-
+        identical.
 
         Returns the tool_result content (will be JSON-serialized into the
         next round's messages).
@@ -2883,7 +2892,9 @@ class RouterLoop:
             # iterated ALL tool_results, excluded ones included).
             self._emit_routing_decided(name, args, excluded, raw_name=raw_name)
             return excluded
-        return await self._dispatch_resolved(name, args, raw_name=raw_name)
+        return await self._dispatch_resolved(
+            name, args, raw_name=raw_name, call_id=call_id,
+        )
 
     def _resolve_tool_call(self, tc: dict) -> "tuple[str, dict, str]":
         """#1593: name + args + #229 salvage → the effective ``(name, args)``,
@@ -2982,7 +2993,8 @@ class RouterLoop:
         return None
 
     async def _dispatch_resolved(
-        self, name: str, args: dict, *, raw_name: "str | None" = None,
+        self, name: str, args: dict, *,
+        raw_name: "str | None" = None, call_id: "str | None" = None,
     ) -> dict:
         """#1593: dispatch a resolved, exclude-cleared tool call via the OS substrate
         (DispatchContext / ``dispatch_tool`` — P5). The pure-OS dispatch
@@ -3005,7 +3017,22 @@ class RouterLoop:
         call via ``_run_codeblock_round``'s ``_os_gate`` — the latter has no
         separate "raw" surface, so it omits ``raw_name`` and
         ``_emit_routing_decided`` falls back to ``name``), which is what
-        makes it the right place for ``routing_decided`` (#3455)."""
+        makes it the right place for ``routing_decided`` (#3455).
+
+        #4691 Phase B ①(remainder): ``call_id`` — the litellm call whose
+        ``tool_calls`` this dispatch belongs to — is an explicit PARAMETER,
+        not a ``self.`` field. Lead-coder review (#4734): a stored field
+        (``self._current_call_id``) never resets, so any dispatch reached
+        outside the exact per-iteration reassignment path (a test seam, a
+        future caller, a code path this review didn't anticipate) silently
+        inherits a PRIOR round's id — worse than a missing key, because a
+        stale id looks valid while pointing at the wrong call (the same
+        "" vs None shape #4722's own review caught). Passing it down the
+        actual call graph (``dispatch()``/``_run_execute_round`` ->
+        ``ExecContext.extra["call_id"]`` -> the 3 delegating schemes'
+        ``ops.dispatch(..., call_id=...)``; ``_run_codeblock_round``'s
+        ``_os_gate`` closure captures it directly) makes a stale value
+        structurally impossible — there is no field left to go stale."""
         catalog = (
             self._dispatch_catalog
             if self._dispatch_catalog is not None
@@ -3017,6 +3044,7 @@ class RouterLoop:
             chain_id=self.chain_id,
             tool_catalog=catalog,
             events=self.host.events,
+            call_id=call_id,
         )
 
         result = await dispatch_tool(
@@ -3257,7 +3285,9 @@ class RouterLoop:
             actions.append({"tc": tc, "name": name, "args": args, "raw_name": raw_name})
         return actions
 
-    async def dispatch(self, actions: list[dict]) -> list[dict]:
+    async def dispatch(
+        self, actions: list[dict], *, call_id: "str | None" = None,
+    ) -> list[dict]:
         """SchemeOps.dispatch: run the resolved (exclude-cleared) actions SERIALLY in
         declaration order via the OS dispatch substrate.
 
@@ -3272,11 +3302,16 @@ class RouterLoop:
         same way ``gather`` did. Error semantics are unchanged: ``dispatch_tool``
         normalizes every exception to ``{status: error}`` and never raises, so serial
         does not short-circuit (every call still runs). The only thing given up is
-        parallel latency for genuinely-independent calls."""
+        parallel latency for genuinely-independent calls.
+
+        ``call_id`` (#4691 Phase B ①, remainder): the litellm call this batch
+        of actions belongs to — forwarded verbatim to every ``_dispatch_
+        resolved`` call in this batch. An explicit parameter, not a stored
+        field (see ``_dispatch_resolved``'s own docstring for why)."""
         results: list[dict] = []
         for a in actions:
             results.append(await self._dispatch_resolved(
-                a["name"], a["args"], raw_name=a.get("raw_name"),
+                a["name"], a["args"], raw_name=a.get("raw_name"), call_id=call_id,
             ))
         # FP-0050/#1822 S2: tag untrusted-source results by the EFFECTIVE resolved
         # name (``a["name"]``). feedback() iterates the raw tool_calls whose name
@@ -3656,11 +3691,20 @@ class RouterLoop:
         for source/behaviour compatibility with existing callers."""
         return _tool_call_cap_notice_text(attempted, kept)
 
-    async def _run_execute_round(self, interp) -> "tuple[list[dict], list[dict]]":
+    async def _run_execute_round(
+        self, interp, *, call_id: "str | None" = None,
+    ) -> "tuple[list[dict], list[dict]]":
         """The ``Execute`` arm — **byte-identical** to the former
         ``_run_scheme_tool_round`` body. The OS exclude-gate produces the same
         ``tool_excluded`` error result **in place** (not a drop), so order +
-        ``tool_call_id`` alignment are preserved across the dispatch."""
+        ``tool_call_id`` alignment are preserved across the dispatch.
+
+        ``call_id`` (#4691 Phase B ①, remainder): the litellm call this round
+        dispatches on behalf of — threaded through ``ExecContext.extra``
+        (the established per-round-context bag ``_run_codeblock_round``
+        already uses for its own ``dispatch`` gate) so the delegating
+        schemes' ``execute()`` can forward it to ``ops.dispatch(...,
+        call_id=...)`` without widening their own signature."""
         from reyn.tools.scheme import ExecContext, Execute
 
         actions = interp.actions
@@ -3684,7 +3728,9 @@ class RouterLoop:
                 to_dispatch.append((i, a))
 
         exec_res = await self._scheme.execute(
-            Execute(actions=[a for _, a in to_dispatch]), ExecContext(), ops=self,
+            Execute(actions=[a for _, a in to_dispatch]),
+            ExecContext(extra={"call_id": call_id}),
+            ops=self,
         )
         for (i, _), r in zip(to_dispatch, exec_res.tool_results):
             results[i] = r
@@ -3694,7 +3740,9 @@ class RouterLoop:
         # former format_feedback call here was a no-op passthrough.)
         return tool_calls, results
 
-    async def _run_codeblock_round(self, interp) -> "list[dict]":
+    async def _run_codeblock_round(
+        self, interp, *, call_id: "str | None" = None,
+    ) -> "list[dict]":
         """The ``CodeBlock`` arm body — run the CodeAct snippet via the scheme's
         ``execute`` under the OS per-call gate + sandbox, and return the scheme's
         ``format_feedback`` message(s) for the loop to append (design (a)).
@@ -3703,7 +3751,11 @@ class RouterLoop:
         call: ``_excluded_result`` (exclude, pre-dispatch, resolved effective name) →
         ``_dispatch_resolved`` (``dispatch_tool`` → permission_resolver, P5). The
         snippet runs in the sandboxed subprocess (``CodeActRunner`` via
-        ``exec_ctx.sandbox``, fail-closed); the scheme orchestrates, the OS gates."""
+        ``exec_ctx.sandbox``, fail-closed); the scheme orchestrates, the OS gates.
+
+        ``call_id`` (#4691 Phase B ①, remainder): the litellm call this
+        snippet's tool() calls belong to — captured by ``_os_gate``'s own
+        closure (no field, see ``_dispatch_resolved``'s docstring)."""
         from reyn.security.sandbox import get_default_backend  # noqa: PLC0415
         from reyn.tools.scheme import ExecContext  # noqa: PLC0415
 
@@ -3717,7 +3769,7 @@ class RouterLoop:
                 # the exclude gate is itself a routing decision.
                 self._emit_routing_decided(name, args, excluded)
                 return excluded
-            return await self._dispatch_resolved(name, args)
+            return await self._dispatch_resolved(name, args, call_id=call_id)
 
         # CodeAct-safe default policy (operator-overridable in S4 via the host's
         # configured sandbox policy); the backend auto-selects per platform and the

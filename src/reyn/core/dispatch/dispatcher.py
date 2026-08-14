@@ -41,6 +41,16 @@ class DispatchContext:
         events: callable matching events.emit signature
             (def emit(self, event_type: str, **data) -> None).
         chain_id is included as an event field automatically.
+        call_id: #4691 Phase B ①(remainder) — the litellm call (LLMToolCallResult
+            .call_id, #4725) whose tool_calls this dispatch belongs to. None for
+            any caller that does not thread it through (byte-identical to before
+            this field existed) — never a minted placeholder. This is the SAME
+            key llm_response_received's own call_id carries (#4722); a TUI
+            consumer keys a tool row to its parent CALL by this field, not by
+            dispatch order (owner ruling B: order is true only while every
+            reader reconstructs identically, is one of four faces, and one
+            skipped face goes unnoticed — not an invariant to key UI structure
+            on).
     """
 
     caller_kind: Literal["router"]
@@ -48,6 +58,7 @@ class DispatchContext:
     chain_id: str | None
     tool_catalog: dict[str, dict]
     events: Any  # has .emit(type: str, **data) -> None
+    call_id: str | None = None
 
 
 async def dispatch_tool(
@@ -97,10 +108,10 @@ async def dispatch_tool(
     risk regressing it.
 
     Events emitted (via ctx.events.emit):
-        - tool_called (caller_kind, caller_id, tool, chain_id, args, args_hash)
-        - tool_returned (caller_kind, caller_id, tool, chain_id, result, args_hash)
+        - tool_called (caller_kind, caller_id, tool, chain_id, call_id, args, args_hash)
+        - tool_returned (caller_kind, caller_id, tool, chain_id, call_id, result, args_hash)
             on success.
-        - tool_failed (caller_kind, caller_id, tool, chain_id, error_kind, message)
+        - tool_failed (caller_kind, caller_id, tool, chain_id, call_id, error_kind, message)
             on error.
 
     The invoker callable receives the validated args dict and returns the
@@ -144,6 +155,7 @@ async def dispatch_tool(
         caller_id=ctx.caller_id,
         tool=name,
         chain_id=ctx.chain_id,
+        call_id=ctx.call_id,
         args=args,
         args_hash=args_hash,
     )
@@ -159,6 +171,7 @@ async def dispatch_tool(
             caller_id=ctx.caller_id,
             tool=name,
             chain_id=ctx.chain_id,
+            call_id=ctx.call_id,
             args_hash=args_hash,
             error_kind="permission_denied",
             message=enriched,
@@ -172,6 +185,7 @@ async def dispatch_tool(
             caller_id=ctx.caller_id,
             tool=name,
             chain_id=ctx.chain_id,
+            call_id=ctx.call_id,
             args_hash=args_hash,
             error_kind="exception",
             message=f"{type(e).__name__}: {e}",
@@ -195,6 +209,7 @@ async def dispatch_tool(
                 caller_id=ctx.caller_id,
                 tool=name,
                 chain_id=ctx.chain_id,
+                call_id=ctx.call_id,
                 args_hash=args_hash,
                 error_kind=_err_kind,
                 message=_err_message,
@@ -209,6 +224,7 @@ async def dispatch_tool(
         caller_id=ctx.caller_id,
         tool=name,
         chain_id=ctx.chain_id,
+        call_id=ctx.call_id,
         args_hash=args_hash,
         result=result,
     )
@@ -423,6 +439,7 @@ def _error(ctx: DispatchContext, name: str, kind: str, message: str) -> dict:
         caller_id=ctx.caller_id,
         tool=name,
         chain_id=ctx.chain_id,
+        call_id=ctx.call_id,
         error_kind=kind,
         message=message,
     )

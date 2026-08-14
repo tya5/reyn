@@ -118,6 +118,48 @@ def test_on_tool_failed_enqueues_tool_call_failed_with_error_in_meta() -> None:
     assert msg.meta["error_message"] == "shell outside cwd: /etc/passwd"
 
 
+def test_call_id_flows_through_all_three_lifecycle_phases() -> None:
+    """Tier 2: #4691 Phase B ①(remainder) — dispatcher.py's ``call_id``
+    (threaded from RouterLoop's current round, down to
+    DispatchContext.call_id as an explicit parameter) reaches
+    ``meta["call_id"]`` on all 3 outbox kinds, and a dispatch that
+    never threads one through (call_id absent from the event data) renders
+    as ``None`` — never a minted placeholder. This is the key a TUI
+    consumer keys a tool row to its parent litellm CALL by."""
+    q: asyncio.Queue = asyncio.Queue()
+    fwd = ChatLifecycleForwarder(q)
+    fwd(Event(
+        type="tool_called",
+        data={
+            "caller_kind": "router", "caller_id": "agent_default",
+            "tool": "read_file", "chain_id": "chain-abc", "call_id": "resp-xyz",
+            "args": {"path": "/tmp/x.txt"}, "args_hash": "hash-xyz",
+        },
+    ))
+    fwd(Event(
+        type="tool_returned",
+        data={
+            "caller_kind": "router", "caller_id": "agent_default",
+            "tool": "read_file", "chain_id": "chain-abc", "call_id": "resp-xyz",
+            "args_hash": "hash-xyz", "result": {"status": "ok"},
+        },
+    ))
+    fwd(Event(
+        type="tool_failed",
+        data={
+            "caller_kind": "router", "caller_id": "agent_default",
+            "tool": "shell", "chain_id": "chain-abc",
+            # call_id genuinely absent — a caller that never threaded it.
+            "args_hash": "hash-shell", "error_kind": "exception", "message": "boom",
+        },
+    ))
+    msgs = _drain(q)
+    started, completed, failed = msgs
+    assert started.meta["call_id"] == "resp-xyz"
+    assert completed.meta["call_id"] == "resp-xyz"
+    assert failed.meta["call_id"] is None
+
+
 def test_op_id_correlates_across_three_lifecycle_events() -> None:
     """Tier 2: same ``args_hash`` source → same ``op_id`` across phases."""
     q: asyncio.Queue = asyncio.Queue()

@@ -41,7 +41,8 @@ class _OrderedDispatchLoop(RouterLoop):
         self.trace: list[str] = []
 
     async def _dispatch_resolved(
-        self, name: str, args: dict, *, raw_name: "str | None" = None,
+        self, name: str, args: dict, *,
+        raw_name: "str | None" = None, call_id: "str | None" = None,
     ) -> dict:
         if name == "write":
             await asyncio.sleep(0)  # yield: under gather the reader runs here, before the write lands
@@ -118,7 +119,8 @@ class _RealEventDispatchLoop(RouterLoop):
         self.event_log_collected = collect_events(self.event_log)
 
     async def _dispatch_resolved(
-        self, name: str, args: dict, *, raw_name: "str | None" = None,
+        self, name: str, args: dict, *,
+        raw_name: "str | None" = None, call_id: "str | None" = None,
     ) -> dict:
         async def _invoker(a: dict):
             if name == "write":

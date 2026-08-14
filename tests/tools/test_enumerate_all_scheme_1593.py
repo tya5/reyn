@@ -54,7 +54,9 @@ class _FakeOps:
     def resolve(self, llm_response, tool_catalog: dict) -> list[dict]:
         return [{"tc": llm_response, "name": "git__commit", "args": {}}]
 
-    async def dispatch(self, actions: list[dict]) -> list[dict]:
+    async def dispatch(
+        self, actions: list[dict], *, call_id: "str | None" = None,
+    ) -> list[dict]:
         self.dispatched = actions
         return [{"name": a["name"], "ok": True} for a in actions]
 

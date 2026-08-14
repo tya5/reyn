@@ -49,7 +49,9 @@ class _RecordingOps:
         tcs = getattr(llm_response, "tool_calls", None) or []
         return [{"tc": tc, "name": tc["name"], "args": {}} for tc in tcs]
 
-    async def dispatch(self, actions: list[dict]) -> list[dict]:
+    async def dispatch(
+        self, actions: list[dict], *, call_id: "str | None" = None,
+    ) -> list[dict]:
         self.calls.append("dispatch")
         return [{"status": "ok", "for": a["name"]} for a in actions]
 

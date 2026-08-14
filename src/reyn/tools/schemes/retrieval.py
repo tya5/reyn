@@ -232,7 +232,11 @@ class RetrievalScheme:
 
     async def execute(self, interp: Interpretation, exec_ctx: ExecContext, ops: SchemeOps) -> ExecutionResult:
         assert isinstance(interp, Execute), "retrieval routes RePresent via the OS loop"
-        results = await ops.dispatch(interp.actions)
+        # #4691 Phase B ①(remainder): forward the round's call_id — see
+        # universal_category.py's own execute() for the full reasoning.
+        results = await ops.dispatch(
+            interp.actions, call_id=(getattr(exec_ctx, "extra", None) or {}).get("call_id"),
+        )
         return ExecutionResult(tool_results=results)
 
     def format_feedback(self, result: ExecutionResult, ops: SchemeOps) -> list[dict]:

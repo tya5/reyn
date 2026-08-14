@@ -97,7 +97,12 @@ class UniversalCategoryScheme:
         # RePresent / CodeBlock here in PR-1. Dispatch via the OS substrate (ops),
         # which carries the DispatchContext / permission (P5) path.
         assert isinstance(interp, Execute), "universal-category emits only Execute"
-        results = await ops.dispatch(interp.actions)
+        # #4691 Phase B ①(remainder): forward the round's call_id (threaded
+        # via ExecContext.extra, the established per-round-context bag) so
+        # every dispatched tool call carries the litellm call it belongs to.
+        results = await ops.dispatch(
+            interp.actions, call_id=(getattr(exec_ctx, "extra", None) or {}).get("call_id"),
+        )
         return ExecutionResult(tool_results=results)
 
     def format_feedback(self, result: ExecutionResult, ops: SchemeOps) -> list[dict]:

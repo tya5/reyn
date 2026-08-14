@@ -54,7 +54,7 @@ class _FakeOps:
     def resolve(self, llm_response, tool_catalog):
         return [{"tc": tc, "name": tc["function"]["name"], "args": {}} for tc in llm_response.tool_calls]
 
-    async def dispatch(self, actions):
+    async def dispatch(self, actions, *, call_id: "str | None" = None):
         return [{"status": "ok", "for": a["name"]} for a in actions]
 
     def feedback(self, result):
