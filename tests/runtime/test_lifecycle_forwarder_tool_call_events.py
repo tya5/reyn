@@ -120,8 +120,9 @@ def test_on_tool_failed_enqueues_tool_call_failed_with_error_in_meta() -> None:
 
 def test_call_id_flows_through_all_three_lifecycle_phases() -> None:
     """Tier 2: #4691 Phase B ①(remainder) — dispatcher.py's ``call_id``
-    (threaded from RouterLoop._current_call_id / DispatchContext.call_id)
-    reaches ``meta["call_id"]`` on all 3 outbox kinds, and a dispatch that
+    (threaded from RouterLoop's current round, down to
+    DispatchContext.call_id as an explicit parameter) reaches
+    ``meta["call_id"]`` on all 3 outbox kinds, and a dispatch that
     never threads one through (call_id absent from the event data) renders
     as ``None`` — never a minted placeholder. This is the key a TUI
     consumer keys a tool row to its parent litellm CALL by."""

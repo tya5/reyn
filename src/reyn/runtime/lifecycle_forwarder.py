@@ -602,7 +602,8 @@ class ChatLifecycleForwarder:
             "caller_id": data.get("caller_id"),
             # #4691 Phase B ①(remainder): the litellm call this tool call
             # belongs to (dispatcher.py's own DispatchContext.call_id,
-            # #4725's RouterLoop._current_call_id) — the same key
+            # threaded from RouterLoop's current round as an explicit
+            # parameter, never a stored field) — the same key
             # llm_response_received carries for that call (#4722). None for
             # a dispatch that never threaded one through (op-loop / non-
             # router callers) — never a minted placeholder.

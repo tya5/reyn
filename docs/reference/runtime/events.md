@@ -478,9 +478,12 @@ exclusive per call.
 litellm call (`LLMToolCallResult.call_id`, #4725) whose `tool_calls` this
 dispatch belongs to — the SAME key `llm_response_received` carries for that
 call (#4722). `None` for a dispatch whose `DispatchContext` never threaded one
-through (the router's own tool-turn dispatch always does, via
-`RouterLoop._current_call_id`; an op-loop or other non-router caller that
-constructs its own `DispatchContext` may still leave it unset) — never a
+through (the router's own tool-turn dispatch always does — `RouterLoop`
+reads it off the current round's `LLMToolCallResult.call_id` and passes it
+as an explicit parameter down `dispatch()`/`_run_execute_round()`/
+`_dispatch_resolved()`, never a stored field, so there is nothing that can go
+stale between rounds; an op-loop or other non-router caller that constructs
+its own `DispatchContext` may still leave it unset) — never a
 minted placeholder. This is the key a TUI consumer uses to attach a tool row
 to its parent CALL (#4691 Phase B's flowview tree); `chain_id` alone cannot
 do this because one turn's `chain_id` can span several litellm calls, and
