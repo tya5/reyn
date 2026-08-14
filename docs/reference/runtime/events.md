@@ -276,6 +276,8 @@ Every event has:
 }
 ```
 
+**The body field is `data`, read `e["data"][...]`, not `e["payload"]`** — "payload" is only the prose word this page (and elsewhere) uses to describe what `data` holds, never a key on the record itself. For a `llm_response_received` event, `e["data"]["finish_reason"]` / `e["data"]["call_id"]` are where those fields live; for `tool_called`, `e["data"]["caller_kind"]` / `e["data"]["caller_id"]` / `e["data"]["tool"]` / `e["data"]["args"]`. `e.get("payload", {})` returns `{}` for EVERY event, silently — every field reads as absent, not because it wasn't emitted, but because the read itself targeted a key that was never there.
+
 ## Agent ID field (all events)
 
 Every event emitted from a session whose `agent_id` is configured (in `reyn.yaml`) automatically carries an `agent_id` field in its payload. The default value is `reyn/<hostname>`. This enables RBAC and multi-agent audit trails per SOC2 / ISO 27001 / METI v1.1 requirements.
