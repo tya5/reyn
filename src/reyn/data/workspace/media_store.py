@@ -238,9 +238,19 @@ def _dir_stats(directory: Path) -> tuple[int, int]:
     storage dirs use (see the module docstring's filename convention —
     neither dir nests subdirectories). Missing directory → ``(0, 0)``,
     same as "nothing written yet" rather than an error; a file that
-    disappears mid-scan (a concurrent delete) is skipped rather than
-    raising, since this is a best-effort snapshot, not a transactional
-    read."""
+    disappears mid-scan (a concurrent delete, raising
+    ``FileNotFoundError``) is skipped rather than propagating, since this
+    is a best-effort snapshot, not a transactional read.
+
+    #4671 census: any OTHER ``OSError`` (e.g. a permission error) is
+    deliberately NOT swallowed here — a prior revision caught bare
+    ``OSError``, which would silently under-count a file this process
+    genuinely could not measure, with no disclosure that anything was
+    skipped (same defect class as ``history_tail_reader.history_file_stats``,
+    #4671's own reported crash — there the same overbroad-except shape
+    manifested as a raised exception instead of a silent undercount,
+    because the failing check and the failing use weren't in the same
+    try block there)."""
     if not directory.is_dir():
         return 0, 0
     count = 0
@@ -250,7 +260,7 @@ def _dir_stats(directory: Path) -> tuple[int, int]:
             if entry.is_file():
                 count += 1
                 total += entry.stat().st_size
-        except OSError:
+        except FileNotFoundError:
             continue
     return count, total
 

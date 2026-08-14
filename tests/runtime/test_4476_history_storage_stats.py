@@ -10,6 +10,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from reyn.runtime.history_tail_reader import (
     aggregate_history_stats,
     history_file_stats,
@@ -46,6 +48,53 @@ def test_counts_bytes_and_nonempty_lines(tmp_path: Path):
     b, lines = history_file_stats(hist)
     assert b == hist.stat().st_size
     assert lines == 3
+
+
+def test_file_vanishing_between_stat_and_open_still_reports_zero(tmp_path: Path, monkeypatch):
+    """Tier 2: #4671 — a prior revision checked ``path.is_file()`` BEFORE
+    ``stat()``/``open()``, a TOCTOU window where a concurrent unlink
+    (``/clear-history``, or a short-lived spawned agent's session ending)
+    between the check and the use raised ``FileNotFoundError`` in exactly
+    the case this function's own docstring promises ``(0, 0)`` for.
+    Simulates the race by making a REAL, existing file's ``open()`` raise
+    ``FileNotFoundError`` (the file vanished after ``stat()`` succeeded,
+    before ``open()`` ran) — proves the fix wraps stat+open in ONE try,
+    not just the entry check."""
+    hist = tmp_path / "history.jsonl"
+    _write_history(hist, ['{"seq": 1}'])
+
+    real_open = Path.open
+
+    def _open_raises_after_stat_succeeded(self, *args, **kwargs):
+        if self == hist:
+            raise FileNotFoundError(f"simulated race: {self} vanished before open()")
+        return real_open(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", _open_raises_after_stat_succeeded)
+
+    assert history_file_stats(hist) == (0, 0)
+
+
+def test_permission_error_is_not_swallowed(tmp_path: Path, monkeypatch):
+    """Tier 2: #4671 — only ``FileNotFoundError`` (the TOCTOU race) is
+    treated as "vanished, report (0, 0)". Any OTHER ``OSError`` (a
+    permission error being the real-world example) must propagate, not
+    be silently reported as an empty file — a lie about coverage
+    (D-1: measure, don't fake)."""
+    hist = tmp_path / "history.jsonl"
+    _write_history(hist, ['{"seq": 1}'])
+
+    real_stat = Path.stat
+
+    def _stat_raises_permission_error(self, *args, **kwargs):
+        if self == hist:
+            raise PermissionError(13, "Permission denied", str(self))
+        return real_stat(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "stat", _stat_raises_permission_error)
+
+    with pytest.raises(PermissionError):
+        history_file_stats(hist)
 
 
 def test_never_writes_to_the_file_it_measures(tmp_path: Path):

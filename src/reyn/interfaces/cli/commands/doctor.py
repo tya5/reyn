@@ -177,18 +177,32 @@ def _events_dir_stats(root: Path) -> "tuple[int, int, date | None]":
     """(file_count, total_bytes, oldest_start_date) for every dated
     ``.jsonl`` under ``root`` — read-only, mirrors
     ``event_purge.collect_dated_files``'s own file discovery so this
-    reports on exactly the population a real purge would consider."""
+    reports on exactly the population a real purge would consider.
+
+    #4364 C-7 census (#4671): ``count`` used to be fixed to
+    ``len(files)`` BEFORE the per-file ``stat()`` loop, so a file that
+    vanished mid-scan (e.g. a concurrent ``reyn events purge``) still
+    counted toward ``count`` while silently NOT counting toward
+    ``total_bytes`` — the two figures could disagree with no disclosure
+    (a D-3 gap). Fixed by only incrementing ``count`` alongside a
+    successful ``stat()``, keeping both figures over the SAME population.
+    Only ``FileNotFoundError`` is treated as "vanished mid-scan, skip
+    silently" — any OTHER ``OSError`` (e.g. a permission error) is
+    deliberately not swallowed; see
+    ``history_tail_reader.history_file_stats``'s identical reasoning.
+    """
     from reyn.core.events.event_purge import collect_dated_files
 
     files = collect_dated_files(root)
-    count = len(files)
+    count = 0
     total_bytes = 0
     oldest: "date | None" = None
     for path, start_date in files:
         try:
             total_bytes += path.stat().st_size
-        except OSError:
+        except FileNotFoundError:
             continue
+        count += 1
         if start_date is not None and (oldest is None or start_date < oldest):
             oldest = start_date
     return count, total_bytes, oldest
