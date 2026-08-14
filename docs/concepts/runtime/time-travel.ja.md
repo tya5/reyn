@@ -130,10 +130,10 @@ WAL（`StateLog`、`.reyn/state/wal.jsonl`）と P6 監査イベントログ（`
 | | クラッシュリカバリ | タイムトラベル |
 |--|--|--|
 | トリガー | 予期しない障害時に自動 | ユーザー起動（`/rewind`） |
-| 方向 | 最新の耐久世代への復元（前方再生なし） | 過去のチェックポイントへの後退 |
+| 方向 | ランタイム / agent 状態は停止地点まで前方再生；config / identity / pipeline 状態は最新の完全な世代へ復元（前方再生なし） | 過去のチェックポイントへの後退 |
 | ワークスペース | 巻き戻しなし | 巻き戻しなし（`.reyn/` 状態のみ — git 不使用） |
 | ブランチング | なし | フォーク / ブランチツリー |
-| メカニズム | 世代ベースの復元 — config / snapshot / identity / pipeline の各世代、seq キー付き、アクティブブランチの最新が優先、前方再生なし（`config_generations.py`、`snapshot_generations.py`、`agent_identity_generations.py`、`pipeline_recovery.py`） | PITR スナップショット + WAL 差分再構成、git 不使用 |
+| メカニズム | ランタイム / agent 状態: タイムトラベルと同じ PITR 再構成 — 直近の `AgentSnapshot` 世代 ＋ `(gen.applied_seq, head]` の WAL イベント前方再生。クラッシュリカバリは `reconstruct(head)` という特殊ケース（`snapshot_generations.py`）。config / identity / pipeline 状態: アクティブブランチの最新の完全な世代、前方再生なし（`config_generations.py`、`agent_identity_generations.py`、`pipeline_recovery.py`） | PITR スナップショット + WAL 差分再構成、git 不使用 |
 
 ## 参照
 

@@ -159,11 +159,11 @@ Both are the price of crash-recovery and time-travel fidelity; neither is option
 | | Crash recovery | Time-travel |
 |--|--|--|
 | Trigger | Automatic on unexpected failure | User-initiated (`/rewind`) |
-| Direction | Restore to last durable generation (no forward-replay) | Backward to a past checkpoint |
+| Direction | Runtime/agent state forward-replays to where the run stopped; config/identity/pipeline state restores to the latest complete generation (no forward-replay) | Backward to a past checkpoint |
 | Workspace | Not rewound | Not rewound (`.reyn/` state only — git-free) |
 | Branching | None | Fork / branch tree |
-| Mechanism | Generation-based restore — config / snapshot / identity / pipeline generations, seq-keyed, latest-active-branch-wins, no forward-replay (`config_generations.py`, `snapshot_generations.py`, `agent_identity_generations.py`, `pipeline_recovery.py`) | PITR snapshot + WAL-diff reconstruct, git-free |
-| Design | [ADR-0002](../../deep-dives/decisions/0002-forward-replay-resume.md) — superseded; the phase-level forward-replay it adopted was removed with the phase-graph engine (#2434/#2439), replaced by the generation model above | [ADR-0038 draft](https://github.com/tya5/reyn/pull/1536) |
+| Mechanism | Runtime/agent state: the same PITR reconstruct time-travel uses — nearest `AgentSnapshot` generation + forward-replay of WAL entries in `(gen.applied_seq, head]`; crash recovery is the special case `reconstruct(head)` (`snapshot_generations.py`). Config / identity / pipeline state: latest complete generation on the active branch, no forward-replay (`config_generations.py`, `agent_identity_generations.py`, `pipeline_recovery.py`) | PITR snapshot + WAL-diff reconstruct, git-free |
+| Design | [ADR-0002](../../deep-dives/decisions/0002-forward-replay-resume.md) — superseded; the phase-level forward-replay it adopted (op-level memoization within an in-flight phase) was removed with the phase-graph engine (#2434/#2439). Forward-replay today is `AgentSnapshot`'s WAL-diff reconstruct above, not phase/op memoization | [ADR-0038 draft](https://github.com/tya5/reyn/pull/1536) |
 
 ## See also
 
