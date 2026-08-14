@@ -178,12 +178,19 @@ async def test_tool_rows_nest_under_the_matching_call_id_parent() -> None:
 
         # FlowView.entries is the full document-order traversal (each
         # parent immediately followed by its subtree, per flowview's own
-        # CHANGELOG) — 2 entries here means "1 parent + its 1 child", not
-        # "2 unrelated top-level rows". depth/parent below is what actually
-        # proves the nesting.
+        # CHANGELOG) — but only while EXPANDED; a collapsed entry's
+        # subtree is excluded from the flat traversal entirely, and the
+        # parent is collapsed by default now (arc item 3) from its first
+        # child onward. Expand it first so 2 entries here means "1 parent
+        # + its 1 child", not "2 unrelated top-level rows" or "1 entry,
+        # subtree hidden". depth/parent below is what actually proves the
+        # nesting, once both are actually visible to unpack.
         # Unpacking (not a bare len() check) pins "exactly 1 parent + 1
         # nested child" the same way a count would, but reads as a
         # structural shape check.
+        (parent,) = _entries(app)
+        assert parent.collapsed is True, "setup: defaults collapsed (arc item 3)"
+        parent.expand()
         parent, child = _entries(app)
         assert parent.item.meta.get("call_id") == "resp-1"
         assert parent.depth == 0
@@ -353,23 +360,70 @@ async def test_the_parent_has_no_reactive_watcher_on_its_children() -> None:
 
 
 @pytest.mark.asyncio
-async def test_default_stays_fully_expanded() -> None:
-    """Tier 2b: owner ruling (#4691) — B1 wires the fold keys but the
-    DEFAULT is unchanged: neither the parent nor its children are ever
-    auto-collapsed by construction."""
+async def test_a_group_parent_defaults_collapsed() -> None:
+    """Tier 2b: owner ruling (#4691 arc item 3) — a completion Group starts
+    COLLAPSED, not expanded-then-folded. Collapsing is asserted the instant
+    the FIRST child actually lands (never before — ``Entry.collapse()`` is
+    a documented no-op on a leaf, and the parent IS a leaf at registration
+    time, before any tool row has arrived) and never repeated on a second/
+    third child (so a reader who already opened it by hand, za/Space
+    #4775, is not re-folded out from under them). A CHILD's own detail-
+    expand state (the #3508/#4697 Space-toggle axis, unrelated to Group
+    fold) is untouched — only the top-level Group fold defaults to
+    collapsed."""
     transport = QueueTransport()
     app = TextualChatApp(transport=transport, clock=lambda: 100.0)
     async with app.run_test(size=(100, 30)) as pilot:
         await pilot.pause()
         await transport.push_display(_parent_row("resp-1"))
         await pilot.pause()
+        parent = _entries(app)[0]
+        assert parent.collapsed is False, (
+            "setup: not yet collapsed — no child has landed, the parent "
+            "is still a leaf"
+        )
+
         await transport.push_display(_started("op-1", call_id="resp-1"))
         await pilot.pause()
-
-        parent = _entries(app)[0]
-        assert parent.collapsed is False
+        assert parent.collapsed is True, (
+            "the FIRST child landing must collapse the parent by default"
+        )
         (child,) = parent.children
-        assert child.collapsed is False
+        assert child.collapsed is False, (
+            "the CHILD's own fold state is untouched — only the parent "
+            "Group defaults to collapsed"
+        )
+
+        # A reader who opens it by hand (za/Space) must not be re-folded
+        # when a SECOND child lands — collapse fires once, on the first
+        # child only.
+        parent.expand()
+        await transport.push_display(_started("op-2", call_id="resp-1"))
+        await pilot.pause()
+        assert parent.collapsed is False, (
+            "a manually-reopened parent must stay open when a later "
+            "child arrives — collapse-on-first-child fires exactly once"
+        )
+
+
+@pytest.mark.asyncio
+async def test_a_terminal_reply_never_starts_collapsed() -> None:
+    """Tier 2b: accept-side pair — a call that dispatches no tools
+    (dispatched_tool_calls False, #4777) registers (harmless) but is never
+    collapsed either — there is nothing behind it to hide, and collapsing an
+    ordinary conversational reply would be a visible regression no owner
+    ruling asked for."""
+    transport = QueueTransport()
+    app = TextualChatApp(transport=transport, clock=lambda: 100.0)
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        await transport.push_display(
+            _parent_row("resp-1", finish_reason="stop", dispatched_tool_calls=False)
+        )
+        await pilot.pause()
+
+        (entry,) = _entries(app)
+        assert entry.collapsed is False
 
 
 @pytest.mark.asyncio
@@ -405,9 +459,12 @@ async def test_a_collapsed_parent_shows_its_child_count() -> None:
 
 @pytest.mark.asyncio
 async def test_an_expanded_parent_shows_no_count_line() -> None:
-    """Tier 2b: accept-side pair — the count line is collapsed-only; an
-    ordinary EXPANDED parent (today's default, and B1's own "zero visual
-    regression" promise) renders exactly as it did before this fix."""
+    """Tier 2b: accept-side pair — the count line is collapsed-only. A
+    Group parent now defaults collapsed (arc item 3, #4691), so this
+    explicitly EXPANDS it first (the owner's own za/Space, #4775) to prove
+    the count line disappears once opened — B1's own "zero visual
+    regression on the expanded body" promise still holds for that state,
+    it's just no longer the default one lands on."""
     transport = QueueTransport()
     app = TextualChatApp(transport=transport, clock=lambda: 100.0)
     async with app.run_test(size=(100, 30)) as pilot:
@@ -418,6 +475,8 @@ async def test_an_expanded_parent_shows_no_count_line() -> None:
         await pilot.pause()
 
         parent = _entries(app)[0]
+        assert parent.collapsed is True, "setup: defaults collapsed now (arc item 3)"
+        parent.expand()
         assert parent.collapsed is False
         pres = await app._presenter.present(parent, 80)
         from rich.console import Console
@@ -454,7 +513,12 @@ async def test_group_construction_survives_a_provider_that_never_reports_tool_ca
         await transport.push_display(_started("op-1", call_id="resp-1"))
         await pilot.pause()
 
-        parent, child = _entries(app)
+        # Read nesting off Entry.children/.parent directly, not
+        # FlowView.entries's flat traversal — the parent is collapsed by
+        # default from its first child onward (arc item 3), and a
+        # collapsed entry's subtree is excluded from that traversal.
+        (parent,) = _entries(app)
+        (child,) = parent.children
         assert child.parent is parent, (
             "a call whose OWN parent row was never labeled "
             '\'finish_reason == "tool_calls"\' by the provider must still '
@@ -500,7 +564,10 @@ async def test_a_terminal_reply_with_a_call_id_registers_but_never_spins() -> No
         # public surface rather than the private dict.
         await transport.push_display(_started("op-1", call_id="resp-1"))
         await pilot.pause()
-        _, child = _entries(app)
+        # Entry.children directly, not FlowView.entries's flat traversal —
+        # collapse-on-first-child (arc item 3) fires here too, hiding the
+        # subtree from that traversal.
+        (child,) = entry.children
         assert child.parent is entry, (
             "registration is unconditional now — a terminal reply's "
             "call_id still registers (harmless, nothing ever looks it "
@@ -541,27 +608,25 @@ async def test_space_folds_a_group_parent() -> None:
         await transport.push_display(_started("op-2", call_id="resp-1"))
         await pilot.pause()
 
-        parent = _entries(app)[0]
-        assert parent.collapsed is False, "setup: parent starts expanded"
+        # The parent defaults collapsed from its first child onward (arc
+        # item 3) — it is therefore the ONLY entry FlowView.entries's flat
+        # traversal exposes (children are hidden while folded), so arrival
+        # highlight lands directly on it; no up/down navigation needed.
+        (parent,) = _entries(app)
+        assert parent.collapsed is True, "setup: defaults collapsed (arc item 3)"
         flow = await _focus_flow(pilot, app)
-
-        # Arrival highlights the LAST entry (the second child) — move up
-        # twice to reach the parent itself before pressing Space.
-        await pilot.press("up")
-        await pilot.press("up")
-        await pilot.pause()
         assert flow.current is parent, "setup: highlight must be on the parent"
 
         await pilot.press("space")
-        while parent.collapsed is False:
-            await pilot.pause()
-        assert parent.collapsed is True, (
-            "Space on a highlighted Group parent must fold it — the owner's "
-            "own reported, expected trigger"
-        )
-
-        # Toggle: pressing Space again unfolds it.
-        await pilot.press("space")
         while parent.collapsed is True:
             await pilot.pause()
-        assert parent.collapsed is False
+        assert parent.collapsed is False, (
+            "Space on a highlighted Group parent must unfold it — the "
+            "owner's own reported, expected trigger"
+        )
+
+        # Toggle: pressing Space again folds it back.
+        await pilot.press("space")
+        while parent.collapsed is False:
+            await pilot.pause()
+        assert parent.collapsed is True
