@@ -1120,21 +1120,40 @@ class RouterLoop:
         construction-time ``session_id``, which is stale for a spawned
         session — see ``RouterHostAdapter.live_session_id``'s own docstring).
 
-        ``or "main"`` (lead-coder review, #4704): ``live_session_id`` is
-        ``str | None`` and ``registry.py``'s own docstring states
-        ``sid=None`` means the IMPLICIT "main" session — an ordinary
-        interactive chat, not a spawned sub-session. Without this
-        normalization, a bare ``getattr(..., None)`` would send NO key for
-        exactly the case #4690 measured (reyn-self's own main session, 7.1%
-        hit rate) — the feature would be inert in the scenario it exists to
-        fix. Same normalization ``pipeline_verbs.py:516`` already uses for
-        the identical ``live_session_id`` ambiguity (``reply_sid``), not a
-        new constant. A ``getattr``-guarded test host with no
-        ``live_session_id`` attribute AT ALL still falls through the same
-        ``or`` to ``"main"`` — see ``recorded_acompletion``'s inline
-        comment (``llm.py``) for the full session-vs-agent granularity
-        measurement and reasoning, not repeated here."""
-        return getattr(self.host, "live_session_id", None) or "main"
+        #4735 (lead-coder review, owner-caught): the key is
+        ``f"{agent_name}:{sid or 'main'}"``, NOT ``sid`` alone —
+        ``live_session_id`` (= sid) is namespaced by ``(agent_name, sid)``
+        on disk (``registry.py``'s own ``_session_state_dir(self, name,
+        sid)`` docstring: "on-disk state dir for ``(name, sid)``"), so a
+        bare sid is not process-wide-unique — and ``sid=None`` (the
+        implicit main session) collapses EVERY agent's main session to the
+        identical unqualified key. ``prompt_cache_key`` is litellm/OpenAI's
+        PRIMARY routing key (same machine ⇒ same key), so pre-#4735 every
+        agent's unrelated main-session tail (#4700 measured B at 20x A's
+        size) was contending for cache slots on ONE machine — worse than
+        sending no key at all, and the exact "unrelated prefixes collide
+        on the same box" failure architect already rejected agent-only
+        granularity for, now happening at a COARSER grain than agent.
+        ``host.agent_name`` is the same identity value ``budget_agent=``
+        already reads at this file's call sites.
+
+        ``or "main"`` (lead-coder review, #4704, unchanged by #4735):
+        ``live_session_id`` is ``str | None`` and ``registry.py``'s own
+        docstring states ``sid=None`` means the IMPLICIT "main" session —
+        an ordinary interactive chat, not a spawned sub-session. Without
+        this normalization, a bare ``getattr(..., None)`` would send NO
+        key for exactly the case #4690 measured (reyn-self's own main
+        session, 7.1% hit rate) — the feature would be inert in the
+        scenario it exists to fix. Same normalization
+        ``pipeline_verbs.py:516`` already uses for the identical
+        ``live_session_id`` ambiguity (``reply_sid``), not a new constant.
+        A ``getattr``-guarded test host with no ``live_session_id``
+        attribute AT ALL still falls through the same ``or`` to ``"main"``
+        — see ``recorded_acompletion``'s inline comment (``llm.py``) for
+        the full session-vs-agent granularity measurement and reasoning,
+        not repeated here."""
+        sid = getattr(self.host, "live_session_id", None) or "main"
+        return f"{self.host.agent_name}:{sid}"
 
     def _warn_ratio_overrides(self) -> "dict[str, float]":
         """#4206 Slice B (#4724): the ③ preference-axis overrides for the 7

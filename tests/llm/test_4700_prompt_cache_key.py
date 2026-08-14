@@ -164,7 +164,8 @@ async def test_router_loop_prompt_cache_key_reads_live_session_id():
     for the A/B measurement this decision is based on). Driven through the
     PUBLIC ``RouterLoop.run`` surface (a real turn's captured LLM-call
     kwargs), not the private helper directly (testing.md's private-state
-    ban)."""
+    ban). #4735: the key is ``agent_name:sid``, not sid alone — see the
+    dedicated agent-collision tests below for why."""
     from reyn.llm.model_resolver import ModelResolver
     from reyn.runtime.router_loop import RouterLoop
     from tests._support.router_host_adapter import make_adapter
@@ -176,7 +177,7 @@ async def test_router_loop_prompt_cache_key_reads_live_session_id():
     llm = _CapturingFinishLLM()
     await RouterLoop(host=host, chain_id="c1", llm_caller=llm).run("hi", [])
 
-    assert llm.last_kwargs.get("prompt_cache_key") == "session-xyz-789"
+    assert llm.last_kwargs.get("prompt_cache_key") == f"{host.agent_name}:session-xyz-789"
 
 
 @pytest.mark.asyncio
@@ -191,7 +192,10 @@ async def test_router_loop_prompt_cache_key_is_main_for_the_implicit_main_sessio
     fix. Same normalization ``pipeline_verbs.py:516`` already uses for the
     identical ambiguity, not a new constant. RED without the fix:
     prompt_cache_key is None (nothing sent) even for a real, live-session-id
-    -capable host whose main session has no explicit sid."""
+    -capable host whose main session has no explicit sid. #4735: the
+    "main" tail is now agent-qualified (``agent_name:main``) — see the
+    dedicated agent-collision tests below for why a bare "main" alone
+    would collide across agents."""
     from reyn.llm.model_resolver import ModelResolver
     from reyn.runtime.router_loop import RouterLoop
     from tests._support.router_host_adapter import make_adapter
@@ -205,7 +209,7 @@ async def test_router_loop_prompt_cache_key_is_main_for_the_implicit_main_sessio
     llm = _CapturingFinishLLM()
     await RouterLoop(host=host, chain_id="c1", llm_caller=llm).run("hi", [])
 
-    assert llm.last_kwargs.get("prompt_cache_key") == "main"
+    assert llm.last_kwargs.get("prompt_cache_key") == f"{host.agent_name}:main"
 
 
 @pytest.mark.asyncio
@@ -214,7 +218,8 @@ async def test_router_loop_prompt_cache_key_is_main_when_host_has_no_live_sessio
     attribute at all (``FakeRouterHost``, the common test-construction
     shape) falls through the SAME ``or "main"`` normalization —
     ``getattr``-guarded, never a raise, consistent with the real-host
-    None-case above rather than a special test-only path."""
+    None-case above rather than a special test-only path. #4735:
+    agent-qualified the same way."""
     from reyn.runtime.router_loop import RouterLoop
     from tests._support.router_loop import FakeRouterHost
 
@@ -222,4 +227,77 @@ async def test_router_loop_prompt_cache_key_is_main_when_host_has_no_live_sessio
     llm = _CapturingFinishLLM()
     await RouterLoop(host=host, chain_id="c1", llm_caller=llm).run("hi", [])
 
-    assert llm.last_kwargs.get("prompt_cache_key") == "main"
+    assert llm.last_kwargs.get("prompt_cache_key") == f"{host.agent_name}:main"
+
+
+# ── Tier 2: #4735 — the agent-collision falsify witness ─────────────────────
+
+
+@pytest.mark.asyncio
+async def test_prompt_cache_key_differs_across_agents_for_the_same_main_session():
+    """Tier 2: THE mandatory falsify witness (lead-coder's own required
+    condition, #4735) — agent A's main session and agent B's main session
+    MUST send DIFFERENT prompt_cache_key values. Before #4735, both sent
+    the bare, agent-unqualified "main" — the same litellm/OpenAI routing
+    key, so unrelated agents' cache tails contended for the same machine
+    (worse than sending no key at all: prompt_cache_key is the PRIMARY
+    routing key, same key -> same machine). RED without the fix: both
+    assertions below would see the same "main" value for agent_a and
+    agent_b."""
+    from reyn.llm.model_resolver import ModelResolver
+    from reyn.runtime.router_loop import RouterLoop
+    from tests._support.router_host_adapter import make_adapter
+
+    resolver = ModelResolver({"standard": "openai/gpt-4o"})
+    host_a = make_adapter(
+        agent_name="agent-a", session_id=None,
+        universal_wrappers_enabled=False, resolver=resolver,
+    )
+    host_b = make_adapter(
+        agent_name="agent-b", session_id=None,
+        universal_wrappers_enabled=False, resolver=resolver,
+    )
+
+    llm_a = _CapturingFinishLLM()
+    await RouterLoop(host=host_a, chain_id="c1", llm_caller=llm_a).run("hi", [])
+    llm_b = _CapturingFinishLLM()
+    await RouterLoop(host=host_b, chain_id="c2", llm_caller=llm_b).run("hi", [])
+
+    key_a = llm_a.last_kwargs.get("prompt_cache_key")
+    key_b = llm_b.last_kwargs.get("prompt_cache_key")
+    assert key_a == "agent-a:main"
+    assert key_b == "agent-b:main"
+    assert key_a != key_b, (
+        "agent A's and agent B's main-session prompt_cache_key must differ "
+        f"— both resolved to {key_a!r}, which would route their unrelated "
+        f"cache tails onto the same machine"
+    )
+
+
+@pytest.mark.asyncio
+async def test_prompt_cache_key_same_for_the_same_agent_and_session():
+    """Tier 2: accept-side of the same witness — the SAME agent, the SAME
+    session, across two separate turns/loops, sends the SAME
+    prompt_cache_key (the whole point of the feature: repeat traffic from
+    one identity routes to the same machine)."""
+    from reyn.llm.model_resolver import ModelResolver
+    from reyn.runtime.router_loop import RouterLoop
+    from tests._support.router_host_adapter import make_adapter
+
+    resolver = ModelResolver({"standard": "openai/gpt-4o"})
+    host_1 = make_adapter(
+        agent_name="agent-c", session_id="sess-1",
+        universal_wrappers_enabled=False, resolver=resolver,
+    )
+    host_2 = make_adapter(
+        agent_name="agent-c", session_id="sess-1",
+        universal_wrappers_enabled=False, resolver=resolver,
+    )
+
+    llm_1 = _CapturingFinishLLM()
+    await RouterLoop(host=host_1, chain_id="c1", llm_caller=llm_1).run("hi", [])
+    llm_2 = _CapturingFinishLLM()
+    await RouterLoop(host=host_2, chain_id="c2", llm_caller=llm_2).run("hi", [])
+
+    assert llm_1.last_kwargs.get("prompt_cache_key") == "agent-c:sess-1"
+    assert llm_2.last_kwargs.get("prompt_cache_key") == "agent-c:sess-1"
