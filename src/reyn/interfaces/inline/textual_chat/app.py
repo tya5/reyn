@@ -2399,8 +2399,25 @@ class TextualChatApp(App):
         :meth:`_CursorFlowView.action_toggle_fold` already applied that
         guard before posting this) flips ONE entry's tool-detail fold,
         independent of the highlight/cursor position — #4691 §6's owner
-        ruling."""
+        ruling.
+
+        #4775 (owner-reported, live TUI): a Group parent (``entry.children``
+        truthy — #4691 B1's ONLY producer of ``append_child``, confirmed by
+        grep, so this is an exclusive signal, never a false positive on some
+        unrelated children-bearing row) is not a settled tool row and used to
+        hit the early return below unconditionally, leaving #4750's collapsed
+        child-count display unreachable from Space — the owner's own expected
+        trigger. ``Entry.toggle_collapsed()`` (flowview's own fold/unfold
+        primitive, already the mechanism ``za`` reaches through flowview's
+        OWN z-prefix key handling — this only wires the SAME primitive to
+        Space, no new key) is called for a Group parent BEFORE the settled-
+        tool-row check, since a Group parent's own ``meta`` has no
+        ``_RESULT_KIND_KEY`` and would otherwise never reach a fold path at
+        all."""
         entry = event.entry
+        if entry.children:
+            entry.toggle_collapsed()
+            return
         meta = entry.item.meta
         if not meta or _RESULT_KIND_KEY not in meta:
             return  # not a settled tool row — nothing to fold
