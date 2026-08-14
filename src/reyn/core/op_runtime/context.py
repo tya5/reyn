@@ -74,7 +74,6 @@ class OpContext:
     sub_state_dir_override: str | None = None
     state_dir_strategy: str = "control_ir"  # "control_ir" or "preprocessor"
     # Used when state_dir_strategy=="preprocessor"
-    preprocessor_phase_name: str = ""
     preprocessor_step_index: int = 0
 
     # MCP
