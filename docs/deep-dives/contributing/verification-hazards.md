@@ -1198,6 +1198,72 @@ every time: state the real precondition explicitly in the test (call the
 real chokepoint, or reset the relevant global in an autouse fixture)
 instead of relying on some other file having already done it first.
 
+## 23. A stated limitation does not travel — the structure gets copied, the caveat does not
+
+Every hazard above is about reading a result. This one is about *writing*
+one, and it is the only member of that class here so far: the shape you
+choose for a finding decides which of its parts survive being passed on.
+
+Two mechanisms, which showed up the same night and compound each other.
+
+**The change-verb asserts the state before the change.** "It disappears on
+expand," "the count is lost," "that used to hold" — each names two states
+and claims to have observed both. Reviewing #4750 against a settled spec
+item (a tool-execution count on a completion group's parent row), a
+reviewer with no TTY wrote the finding as a contrast: *collapsed shows the
+count, expanding loses it; the spec says it should stay.* The conclusion —
+"do not count this spec item as satisfied" — was right. The route was
+false. A session with a real terminal then looked: **there is no tool count
+on that parent row in either state.** The collapsed row's `(2 folded)` is a
+fold affordance whose number coincides with the tool count only because the
+children happen to be tool rows. The reviewer had disclosed the inference
+("collapsed and expanded look alike is derived from item ②, not observed —
+no TTY"), and the disclosure was true and did nothing, because *"loses it"*
+had already asserted the collapsed state as observed fact (#4691 ⑤ / #4750,
+2026-08-14).
+
+**A qualifier does not survive transcription; a table does.** The lead
+copied that contrast into the tracking issue and framed the open decision
+as "on expand, keep the count or drop it" — a question whose premise was
+false, since nothing was there to keep. The scope note stayed behind as the
+word "inference," attached to nothing the question depended on. The same
+night, the same asymmetry with a number instead of a table: a criterion for
+"does this event kind have a documentation row" was declared up front
+(a token in a markdown table row outside the flat enum block; *prose-only
+mentions do not count*), producing "130 of 221 have no row" — and only the
+130 was carried into every later report. The criterion was itself wrong —
+`events.md` says in its own text that "the per-kind sections below document
+the payloads **in prose**" — so what got dropped in transit was precisely
+the part that was falsifiable, leaving a number that looked like a
+measurement and could not be argued with (#4738, 2026-08-14).
+
+Note which direction the loss runs. It is not that qualified claims get
+weakened in transit — it is that the *load-bearing, checkable* half is the
+half that gets dropped, because tables, counts, and contrasts are the parts
+worth copying. §14 is the neighbouring hazard (a completion *declaration*
+propagating into a second person's model without its referent ever being
+checked); this one is not about a declaration of completion but about which
+*parts* of any finding are structurally copyable.
+
+### The detection technique
+
+- **Before writing "A does X, B does Y", confirm you observed both A and
+  B.** If one is derived, do not write a contrast — write the observed side
+  and list the other as unobserved, with what it was derived from. The
+  contrast form is not a stylistic choice; it is an existence claim about
+  both sides.
+- **Treat change-verbs — disappears, is lost, stays, reverts, regresses —
+  as assertions about the prior state.** If you did not observe the prior
+  state, no change-verb is available to you.
+- **Put the limit inside the structure, not after it.** A row reading
+  `expanded | not observed (inferred from ②)` travels; a closing paragraph
+  saying "some of the above is inferred" does not. Same rule for a count:
+  if the criterion can change the number, the criterion belongs in the same
+  sentence as the number, every time it is repeated.
+- **When a session with the real instrument exists, ask before you infer.**
+  The TTY-holding session was mid-dogfood and answered in minutes; the
+  false route existed only because nobody spent one message.
+
 ## See also
 
 - [Testing policy](testing.md) — Tier model, Mock vs Fake, decision flow.
