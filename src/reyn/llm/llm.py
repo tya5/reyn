@@ -2053,6 +2053,7 @@ async def recorded_acompletion(
     routing: dict | None = None,  # #309: per-class api_base/provider; None → global proxy_kwargs()
     on_content_delta: "Callable[[str], None] | None" = None,  # #3288 ③b: opt-in per-chunk content-delta callback (see _stream_and_reconstruct)
     stream_override: "bool | None" = None,  # a model class's ``stream:`` — operator policy, NOT a litellm kwarg
+    prompt_cache_key: str | None = None,  # #4700: routing hint — see the call-kwargs block below for the full reasoning
 ) -> object:
     """Single cost-observability chokepoint for ALL ``litellm.acompletion`` calls (#1190).
 
@@ -2100,6 +2101,13 @@ async def recorded_acompletion(
     LLM call it is merely narrating. The reconstructed WHOLE response (below) is
     unaffected either way — this is purely an additional notification channel, not a
     change to what this function returns or records.
+
+    ``prompt_cache_key`` (#4700): OPTIONAL — sent to litellm only when set
+    (``None``, the default, is byte-identical to before #4700). See the
+    inline comment at the ``base_kwargs`` assembly below for the full
+    session-unit-granularity measurement and reasoning; whitelisted via
+    ``allowed_openai_params`` the same way ``reasoning_effort`` already is,
+    so it never raises regardless of proxy vs. direct-provider routing.
     """
     # #4206 T1: enforce BEFORE anything else — before ensure_litellm_ready(),
     # before litellm is even imported, so a rejected call touches litellm in
@@ -2216,6 +2224,46 @@ async def recorded_acompletion(
         _allowed = list(base_kwargs.get("allowed_openai_params") or [])
         if "reasoning_effort" not in _allowed:
             _allowed.append("reasoning_effort")
+        base_kwargs["allowed_openai_params"] = _allowed
+
+    # #4700: send OpenAI's ``prompt_cache_key`` — the public spec (developers.
+    # openai.com/api/docs/guides/prompt-caching) states requests are routed to
+    # a machine keyed FIRST on this value, prefix-hash only as a secondary
+    # signal; reyn sent nothing, so every call fell back to prefix-hash-only
+    # routing. Granularity = SESSION (not agent), decided against real
+    # measurement, not a default:
+    #   reyn-self, 2026-08-14, cached_tokens breakdown across 84 hits —
+    #     A (shared head, e.g. system prompt + tool schemas): 9,728 tokens,
+    #       hit 43 times across 10 DIFFERENT files (session-crossing reuse)
+    #     B (session-specific tail): 163,328-280,064 tokens, each hit only
+    #       WITHIN its own single file (session-local reuse)
+    #   B is worth ~20x more than A by volume in this sample — a session-unit
+    #   key protects B (the 20x side) at the cost of A's session-crossing
+    #   reuse (~4% of the total, 9,728 / ~240,000) — the ratio is THIS
+    #   day/agent's value; a short-conversation agent (small B, A dominates
+    #   proportionally) could invert it.
+    #   Selection reason: OpenAI's own spec text — "use more keys for
+    #   higher-volume workloads" — points AT finer-grained keys as volume
+    #   grows, and per-session is the natural finer unit above per-agent.
+    #   Unmeasured, carried as assumptions: (1) the provider's cache capacity
+    #   is ORGANIZATION-wide, not per-key (read from the spec's prose, not
+    #   measured); (2) parallel sessions were never run for real — this is
+    #   extrapolated from a single sequential session log; (3) what the
+    #   shared 9,728-token head actually IS (system prompt + tool schemas is
+    #   the working guess, matched against the session's own measured
+    #   minimum prompt size of 14,540 — not confirmed against a payload dump).
+    # Whitelisted via ``allowed_openai_params`` for the SAME reason as
+    # ``reasoning_effort`` above (proxy forces custom_llm_provider="openai";
+    # a direct, non-proxy provider route, #309, would otherwise raise
+    # UnsupportedParamsError — verified live against both shapes with the
+    # installed litellm: bare-model+custom_llm_provider="openai" already
+    # passes unwhitelisted, gemini/anthropic direct-provider raises without
+    # the whitelist and passes with it).
+    if prompt_cache_key:
+        base_kwargs["prompt_cache_key"] = prompt_cache_key
+        _allowed = list(base_kwargs.get("allowed_openai_params") or [])
+        if "prompt_cache_key" not in _allowed:
+            _allowed.append("prompt_cache_key")
         base_kwargs["allowed_openai_params"] = _allowed
 
     # #1678 → delegated to litellm at #3288-follow-up (issue #3288 comment
@@ -2627,6 +2675,7 @@ async def call_llm_tools(
     on_content_delta: "Callable[[str], None] | None" = None,  # #3288 ③b: forwarded to recorded_acompletion — see its docstring
     model_class: "str | None" = None,  # #4206 T1: forwarded to recorded_acompletion — see its docstring (None = not subject to ceiling enforcement)
     model_class_ceiling: "str | None" = None,  # #4206 T1: the caller's effective ceiling, if any (None = unbounded)
+    prompt_cache_key: str | None = None,  # #4700: forwarded to recorded_acompletion — see its docstring for the full reasoning
 ) -> LLMToolCallResult:
     """Tool-use variant of call_llm. Returns raw assistant message.
 
@@ -2661,6 +2710,12 @@ async def call_llm_tools(
     callers (tests, other op-loop shapes) that are not subject to the ceiling
     axis at all; ``RouterLoop`` — the one caller whose calls ARE class-based —
     passes its resolved ``router_model`` class explicitly at every call site.
+
+    ``prompt_cache_key`` (#4700): forwarded verbatim to ``recorded_acompletion``
+    — see its docstring / inline comment for the full session-unit-granularity
+    reasoning. ``None`` (every call site that does not pass one) is
+    byte-identical to before #4700 — nothing is sent, matching today's
+    behavior exactly.
     """
     # Normalize model to ModelSpec — accept both str (backward compat) and ModelSpec.
     spec: ModelSpec = model if isinstance(model, ModelSpec) else ModelSpec(model=model, kwargs={})
@@ -2820,6 +2875,7 @@ async def call_llm_tools(
             stream_override=spec.stream,  # operator policy from the model class
             model_class=model_class,  # #4206 T1: forwarded straight through
             model_class_ceiling=model_class_ceiling,  # #4206 T1: forwarded straight through
+            prompt_cache_key=prompt_cache_key,  # #4700: forwarded straight through
         )
 
     # #2210 HIGH layer: when the per-call HTTP timeout + the Router/Reyn retries are ALL
