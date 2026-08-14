@@ -54,6 +54,16 @@ block):
   "session layer in front of agent layer, re-read every time" shape `_workspace_base_dir`
   below already established for `base_dir` — an operator editing either file by hand takes
   effect on the next read, not just the next process start.
+- `reasoning_display` (#4206 slice 2) — public `@property`, the SAME shape as
+  `output_language` immediately above, factored through a shared
+  `Session._resolve_session_preference(key, project_default)` helper both now
+  call. Resolves ONLY `chat.reasoning.display` — `chat.reasoning.continuity`/
+  `recent_turns` stay ② bounding (read directly off `self._reasoning`,
+  unaffected). `RouterHostAdapter.reasoning_display_enabled()` consults this
+  live via a `reasoning_display_fn` callback wired at construction (the SAME
+  callback shape `reasoning_continuity_section_fn` already established for
+  the sibling continuity-section renderer) — `None` (every pre-slice-2 host)
+  falls back to the frozen `reasoning_config.display` read, byte-identical.
 - `_sandbox_backend` (#1200 PR-F2) — the agent's `SandboxBackend` INSTANCE for the chat exec
   seam (the router `OpContext`); `None` → `get_default_backend`. This is the INSTANCE, not
   the `sandbox_config.backend` STRING used for exec-tool gating — for a docker agent it is
