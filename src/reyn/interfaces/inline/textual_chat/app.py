@@ -2402,9 +2402,14 @@ class TextualChatApp(App):
         ruling.
 
         #4775 (owner-reported, live TUI): a Group parent (``entry.children``
-        truthy — #4691 B1's ONLY producer of ``append_child``, confirmed by
-        grep, so this is an exclusive signal, never a false positive on some
-        unrelated children-bearing row) is not a settled tool row and used to
+        truthy — the ONLY call site producing an ``append_child`` is this
+        Group construction (#4691 B1), and it only nests a tool row whose
+        ``call_id`` matches an already-registered parent, so ``children``
+        being non-empty is an exclusive signal — never a false positive on
+        some unrelated children-bearing row; a call that dispatches no
+        tools never produces a matching tool row to nest, #4779's
+        unconditional registration notwithstanding) is not a settled tool
+        row and used to
         hit the early return below unconditionally, leaving #4750's collapsed
         child-count display unreachable from Space — the owner's own expected
         trigger. ``Entry.toggle_collapsed()`` (flowview's own fold/unfold
@@ -3668,6 +3673,18 @@ class TextualChatApp(App):
         parent = self._call_parents.get(call_id) if call_id else None
         if parent is not None:
             entry = parent.append_child(msg)
+            # #4691 Phase B item 3 (owner ruling): a completion Group
+            # defaults COLLAPSED — but only from its FIRST child onward.
+            # ``Entry.collapse()`` at registration time (when the parent
+            # is still a leaf) is a documented no-op ("a no-op on a
+            # removed entry, a leaf, or when unchanged") — collapse has to
+            # be re-asserted here, the first moment the parent actually
+            # HAS a subtree to fold. ``len == 1`` (not unconditional) means
+            # this fires exactly once per parent, on its first child only
+            # — never re-collapsing a parent the reader already opened by
+            # hand (za/Space, #4775) once a second/third child lands.
+            if len(parent.children) == 1:
+                parent.collapse()
         else:
             entry = self.conversation.append(msg)
         # #3712: an entry just arrived. Counted HERE, by the thing that
@@ -3705,6 +3722,17 @@ class TextualChatApp(App):
                 # no tools registers (harmless, above) but never spins —
                 # there is nothing for it to wait on.
                 entry.set_state(EntryState.RUNNING)
+                # #4691 Phase B item 3 (owner ruling via #4691's arc): a
+                # completion Group defaults COLLAPSED — the actual
+                # ``.collapse()`` call is at the ``append_child`` call
+                # site below, not here: this entry is still a LEAF at
+                # this point (no child has arrived yet), and
+                # ``Entry.set_collapsed`` is a documented no-op on a leaf
+                # ("a no-op on a removed entry, a leaf, or when
+                # unchanged") — collapsing here would silently do
+                # nothing. The parent's own RUNNING spinner (just above)
+                # lives on the row's own gutter, independent of the
+                # body-collapse state, so it is unaffected either way.
         if kind == "presentation":
             self._begin_image_resolutions(entry, msg)
         if kind == "intervention":
