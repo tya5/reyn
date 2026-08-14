@@ -17,7 +17,12 @@ from pathlib import Path
 
 import pytest
 
-from reyn.interfaces.cli.commands.doctor import _MEASURABLE_LEAF_KEYS, register, run
+from reyn.interfaces.cli.commands.doctor import (
+    _MEASURABLE_LEAF_KEYS,
+    _events_dir_stats,
+    register,
+    run,
+)
 from tests._support.minimal_reyn_yaml import MINIMAL_REYN_YAML
 
 
@@ -135,6 +140,58 @@ def test_events_reports_real_file_count_and_bytes(project, capsys):
     actual_line = next(line for line in out.splitlines() if line.strip().startswith("actual:"))
     assert "2 file(s)" in actual_line
     assert "50 bytes" in actual_line  # 42 + 8
+
+
+def test_events_dir_stats_count_and_bytes_stay_consistent_when_a_file_vanishes_mid_scan(
+    project, monkeypatch,
+):
+    """Tier 2: #4671 census — a prior revision fixed ``count`` to
+    ``len(files)`` BEFORE the per-file ``stat()`` loop, so a file that
+    vanished mid-scan (e.g. a concurrent ``reyn events purge``) still
+    counted toward ``count`` while silently not counting toward
+    ``total_bytes`` — the two figures could disagree with no disclosure.
+    Fixed by only incrementing ``count`` alongside a successful ``stat()``
+    — this asserts both figures now describe the SAME population."""
+    events_dir = project / ".reyn" / "events"
+    survivor = _write_event_file(events_dir, start_date=date.today(), size_bytes=10, suffix="s")
+    vanishing = _write_event_file(
+        events_dir, start_date=date.today(), size_bytes=25, suffix="v",
+    )
+
+    real_stat = Path.stat
+
+    def _stat_raises_for_vanishing(self, *args, **kwargs):
+        if self == vanishing:
+            raise FileNotFoundError(f"simulated race: {self} vanished mid-scan")
+        return real_stat(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "stat", _stat_raises_for_vanishing)
+
+    count, total_bytes, _oldest = _events_dir_stats(events_dir)
+    assert count == 1
+    assert total_bytes == 10
+    assert survivor.is_file()
+
+
+def test_events_dir_stats_permission_error_is_not_swallowed(project, monkeypatch):
+    """Tier 2: #4671 census — only ``FileNotFoundError`` (a race-vanished
+    file) is treated as "skip silently". A ``PermissionError`` must
+    propagate, not be absorbed into a quietly-undercounted total (D-1:
+    measure, don't fake)."""
+    events_dir = project / ".reyn" / "events"
+    blocked = _write_event_file(events_dir, start_date=date.today(), size_bytes=10, suffix="b")
+
+    real_stat = Path.stat
+
+    def _stat_raises_permission_error(self, *args, **kwargs):
+        if self == blocked:
+            raise PermissionError(13, "Permission denied", str(self))
+        return real_stat(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "stat", _stat_raises_permission_error)
+
+    with pytest.raises(PermissionError):
+        _events_dir_stats(events_dir)
 
 
 def test_a_declared_policy_violation_is_detected(project, capsys):

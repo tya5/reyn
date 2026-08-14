@@ -5,10 +5,17 @@ any '; charset=...' suffix. Returns '' for unknown types.
 
 _safe_token(value) sanitises a string for embedding in a filename, replacing
 path-separators, spaces, and other shell-unfriendly characters with '_'.
+
+_dir_stats(directory) is (file_count, total_bytes) for a flat directory —
+see its own #4671 census tests below for the narrowed-except behavior.
 """
 from __future__ import annotations
 
-from reyn.data.workspace.media_store import _ext_for_mime, _safe_token
+from pathlib import Path
+
+import pytest
+
+from reyn.data.workspace.media_store import _dir_stats, _ext_for_mime, _safe_token
 
 # ── _ext_for_mime ─────────────────────────────────────────────────────────────
 
@@ -98,3 +105,63 @@ def test_safe_token_special_chars_replaced() -> None:
 def test_safe_token_empty_returns_empty() -> None:
     """Tier 2: empty string returns empty string."""
     assert _safe_token("") == ""
+
+
+# ── _dir_stats ───────────────────────────────────────────────────────────
+
+
+def test_dir_stats_missing_directory_reports_zero(tmp_path: Path) -> None:
+    """Tier 2: no directory at all — (0, 0), not an error."""
+    assert _dir_stats(tmp_path / "does-not-exist") == (0, 0)
+
+
+def test_dir_stats_counts_files_and_bytes(tmp_path: Path) -> None:
+    """Tier 2: real files on disk — count and byte total match exactly."""
+    (tmp_path / "a.bin").write_bytes(b"x" * 10)
+    (tmp_path / "b.bin").write_bytes(b"y" * 25)
+    assert _dir_stats(tmp_path) == (2, 35)
+
+
+def test_dir_stats_file_vanishing_mid_scan_is_skipped(tmp_path: Path, monkeypatch) -> None:
+    """Tier 2: #4671 — a file that disappears between ``iterdir()`` listing
+    it and this function's own ``stat()`` call (a concurrent delete) is
+    skipped, not raised — the existing, intentional best-effort behavior,
+    now scoped to ``FileNotFoundError`` specifically rather than a blanket
+    ``OSError`` (see the next test for why that distinction matters)."""
+    survivor = tmp_path / "survivor.bin"
+    vanishing = tmp_path / "vanishing.bin"
+    survivor.write_bytes(b"x" * 10)
+    vanishing.write_bytes(b"y" * 25)
+
+    real_stat = Path.stat
+
+    def _stat_raises_for_vanishing(self, *args, **kwargs):
+        if self == vanishing:
+            raise FileNotFoundError(f"simulated race: {self} vanished mid-scan")
+        return real_stat(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "stat", _stat_raises_for_vanishing)
+
+    assert _dir_stats(tmp_path) == (1, 10)
+
+
+def test_dir_stats_permission_error_is_not_swallowed(tmp_path: Path, monkeypatch) -> None:
+    """Tier 2: #4671 — only ``FileNotFoundError`` is treated as "vanished,
+    skip silently". A ``PermissionError`` on one file must propagate, not
+    be silently absorbed as "this file doesn't count" — swallowing it
+    would under-report the directory's real footprint with no disclosure
+    that anything was skipped (D-1: measure, don't fake)."""
+    blocked = tmp_path / "blocked.bin"
+    blocked.write_bytes(b"z" * 5)
+
+    real_stat = Path.stat
+
+    def _stat_raises_permission_error(self, *args, **kwargs):
+        if self == blocked:
+            raise PermissionError(13, "Permission denied", str(self))
+        return real_stat(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "stat", _stat_raises_permission_error)
+
+    with pytest.raises(PermissionError):
+        _dir_stats(tmp_path)

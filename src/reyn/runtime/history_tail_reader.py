@@ -346,15 +346,32 @@ def history_file_stats(path: Path) -> "tuple[int, int]":
     :func:`read_history_after` already uses — so this count agrees with
     what a durable-store reader actually sees, not a raw ``wc -l``.
     Missing file → ``(0, 0)``, matching "nothing written yet" rather than
-    an error."""
-    if not path.is_file():
+    an error.
+
+    #4671: a prior revision checked ``path.is_file()`` BEFORE ``stat()``/
+    ``open()`` — a TOCTOU window (the file can vanish between the check
+    and the use, e.g. a concurrent ``/clear-history`` unlink, or a
+    short-lived spawned agent's session ending) that made this function
+    raise ``FileNotFoundError`` in EXACTLY the case its own docstring
+    promised would return ``(0, 0)``. ``reyn doctor`` walks every
+    ``history.jsonl`` under a project (C-7's disk-visibility scan), so a
+    session clearing its history WHILE doctor is running crashed the
+    diagnostic tool an operator reaches for specifically when something
+    looks wrong. Fixed by wrapping the stat+open+read in one ``try``,
+    catching ``FileNotFoundError`` only — any OTHER ``OSError`` (e.g. a
+    permission error) is deliberately NOT swallowed: silently returning
+    ``(0, 0)`` for a file that genuinely could not be measured would
+    misreport it as empty, which is worse than an honest failure (D-1:
+    measure, don't fake)."""
+    try:
+        total_bytes = path.stat().st_size
+        lines = 0
+        with path.open("r", encoding="utf-8") as f:
+            for raw in f:
+                if raw.strip():
+                    lines += 1
+    except FileNotFoundError:
         return 0, 0
-    total_bytes = path.stat().st_size
-    lines = 0
-    with path.open("r", encoding="utf-8") as f:
-        for raw in f:
-            if raw.strip():
-                lines += 1
     return total_bytes, lines
 
 
