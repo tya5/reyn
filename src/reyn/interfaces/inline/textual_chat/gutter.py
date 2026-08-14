@@ -577,7 +577,20 @@ class ReynTurnUsageGutter:
 
     ``usage_lookup=None`` (no read model / pre-session / plain fallback) makes
     every row's lookup unknown, so a row that names a turn still renders ``—``
-    rather than silently nothing."""
+    rather than silently nothing.
+
+    **#4691: a per-call figure embedded in the row's own meta wins over the
+    lookup above.** A turn with multiple ``kind="agent"`` anchor rows (a
+    tool-turn's explanatory text, a spawn ack — see router_loop.py) used to
+    paint the SAME turn total on every one of them, which reads as the
+    figure repeating rather than a distinct call — exactly the duplicate
+    this class's own docstring above says it exists to avoid, just not
+    caught for the multi-anchor-row case. Each such row now carries its
+    OWN call's real ``prompt_tokens``/``completion_tokens`` in
+    ``entry.item.meta`` (known synchronously at the emit call site — no
+    read-model plumbing needed), and :meth:`label` prefers that over the
+    turn-total lookup when present. The terminal no-tool-calls reply row
+    is unchanged (still turn-anchored via the lookup)."""
 
     def __init__(
         self,
@@ -598,7 +611,29 @@ class ReynTurnUsageGutter:
         every gutter repaint and must never be able to kill a render."""
         if entry.item.kind != TURN_ANCHOR_KIND:
             return ""
-        chain_id = (entry.item.meta or {}).get("chain_id")
+        meta = entry.item.meta or {}
+        # #4691: a PER-CALL figure embedded directly in this row's own meta
+        # at emit time (router_loop.py's non-terminal tool-turn-text /
+        # spawn-ack rows, session.py's force-close wrap-up row) takes
+        # precedence over the turn-total lookup below. This is what fixes
+        # the "same total painted on every anchor row of a multi-call turn"
+        # bug #4691 names: a row that names its OWN call's real tokens is a
+        # genuine per-row figure, not a repeated one, and a call boundary
+        # reads directly off two adjacent rows differing — no new glyph,
+        # no Group/nesting needed (the owner's own accepted framing,
+        # #4691's scoping comment). Falls through to the turn-total lookup
+        # for any row that does NOT carry a per-call figure (the terminal
+        # no-tool-calls reply, still turn-anchored as before — unchanged).
+        call_prompt = meta.get("prompt_tokens")
+        call_completion = meta.get("completion_tokens")
+        if isinstance(call_prompt, (int, float)) and isinstance(
+            call_completion, (int, float)
+        ):
+            return (
+                f"{PROMPT_TOKENS_MARKER}{_format_tokens(int(call_prompt))} "
+                f"{COMPLETION_TOKENS_MARKER}{_format_tokens(int(call_completion))}"
+            )
+        chain_id = meta.get("chain_id")
         if not isinstance(chain_id, str) or not chain_id:
             return ""
         usage: "dict | None" = None

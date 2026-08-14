@@ -2045,6 +2045,12 @@ class RouterLoop:
                             "chain_id": self.chain_id,
                             "source": "router_tool_turn_text",
                             "reasoning": result.reasoning,
+                            # #4691: this row IS the call that just returned
+                            # ``result`` — its own real per-call tokens, not
+                            # the turn total (see gutter.py's ReynTurnUsageGutter
+                            # docstring for why this is the boundary fix).
+                            "prompt_tokens": getattr(result.usage, "prompt_tokens", None),
+                            "completion_tokens": getattr(result.usage, "completion_tokens", None),
                         },
                     )
                 # F5 fix (dogfood batch 1): dedupe duplicate async
@@ -2145,6 +2151,9 @@ class RouterLoop:
                         meta={
                             "chain_id": self.chain_id,
                             "source": "agent_spawn_ack",
+                            # #4691: same call as the tool-turn text row above.
+                            "prompt_tokens": getattr(result.usage, "prompt_tokens", None),
+                            "completion_tokens": getattr(result.usage, "completion_tokens", None),
                         },
                     )
                     return self._total_usage
@@ -2279,6 +2288,9 @@ class RouterLoop:
                     meta={
                         "chain_id": self.chain_id,
                         "source": "router_empty_response",
+                        # #4691: a genuine (if content-empty) call's own usage.
+                        "prompt_tokens": getattr(result.usage, "prompt_tokens", None),
+                        "completion_tokens": getattr(result.usage, "completion_tokens", None),
                     },
                 )
                 return self._total_usage  # no retry
