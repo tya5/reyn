@@ -96,7 +96,7 @@ While a session is active, lines starting with `/` are intercepted and never rou
 | `/quit` | Exit the chat (alias: `/exit`, Ctrl+D) |
 | `/reload` | Hot-reload runtime config (`.reyn/*.yaml`) at the next turn boundary |
 | `/reset confirm` | Reset in-flight run state (snapshots + WAL; audit logs preserved) |
-| `/resident` | Approximate resident-memory breakdown by in-process container — count + shallow `sys.getsizeof` estimate, session-lifetime and process-global, no threshold, no eviction (#4497 Phase 1) |
+| `/resident` | Approximate resident-memory breakdown by in-process container — count + shallow `sys.getsizeof` estimate, session-lifetime and process-global (including the LLM-client Router cache), no threshold, no eviction (#4497) |
 | `/rewind [seq]` | Time-travel to an earlier checkpoint — no arg opens the picker menu; `seq` jumps directly (see [Time-travel](../../concepts/runtime/time-travel.md) · [How-to](../../guide/for-users/time-travel.md)) |
 | `/session new \| switch <sid> \| list` | Open / switch / list conversation sessions for the attached agent (see [Sessions](../../concepts/multi-agent/sessions.md)) |
 | `/visibility on\|off <tool\|mcp\|category> <name>` | Toggle this session's LLM visibility of a capability (hidden next turn / restored up to the agent's authorized envelope — an envelope-denied capability stays hidden) |
