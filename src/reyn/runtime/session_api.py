@@ -612,12 +612,15 @@ async def _spawn_pipeline_driver_session(
         # to. See bridge_child_bus_to_parent's own docstring for why this
         # goes through neither session's HookDispatcher, and Session.
         # _hook_bus_bridge_task for where teardown cancels it.
-        import asyncio
-
         from reyn.hooks.bus import bridge_child_bus_to_parent
 
-        session._hook_bus_bridge_task = asyncio.create_task(
-            bridge_child_bus_to_parent(session._hook_bus, attached_parent_session._hook_bus)
+        # #4759: registered with the owning session's task funnel
+        # (tracked_tasks.py) so AgentRegistry.shutdown() reaches it directly
+        # instead of only via remove_session's bare (never-awaited) .cancel()
+        # — see Session._hook_bus_bridge_task's own note above.
+        session._hook_bus_bridge_task = session._background_tasks.spawn(
+            bridge_child_bus_to_parent(session._hook_bus, attached_parent_session._hook_bus),
+            disposition="cancel_join", name="hook-bus-bridge",
         )
     driver = PipelineExecutorDriver(
         work_order, registry=registry, state_log=state_log,
@@ -1223,7 +1226,13 @@ async def run_prompt_async(
         # Fire-and-forget — _PendingChain.cancel is a synchronous zero-arg
         # hook, cancel_inflight() is async; mirrors run_pipeline_attached's
         # own cross-session cancel-forward registration.
-        asyncio.ensure_future(target.cancel_inflight())
+        # #4759: registered on the TARGET session's own task funnel (it's
+        # the target's cancel_inflight() running here, not the caller's) —
+        # was a bare ensure_future with no reference kept anywhere.
+        task = asyncio.ensure_future(target.cancel_inflight())
+        target_tracker = getattr(target, "_background_tasks", None)
+        if target_tracker is not None:
+            target_tracker.register(task, disposition="cancel_join")
 
     await caller_session.chains.register(
         chain_id=chain_id,

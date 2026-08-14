@@ -25,6 +25,7 @@ from reyn.runtime.task_types import Requester, RunStatus
 if TYPE_CHECKING:
     from reyn.core.events.agent_snapshot import AgentSnapshot
     from reyn.runtime.task_types import Requester
+    from reyn.runtime.tracked_tasks import TrackedTaskSet
 
 logger = logging.getLogger(__name__)
 
@@ -191,6 +192,7 @@ class ChainManager:
         max_hop_depth: int,
         clock_fn: "Callable[[], datetime] | None" = None,
         sleep_fn: "Callable[[float], Awaitable[None]] | None" = None,
+        task_tracker: "TrackedTaskSet | None" = None,
     ) -> None:
         self._journal = journal
         self._events = events
@@ -198,6 +200,16 @@ class ChainManager:
         self.max_hop_depth = max_hop_depth
         self._clock = clock_fn or (lambda: datetime.now(timezone.utc))
         self._sleep = sleep_fn or asyncio.sleep
+        # #4759: optional — every watchdog task ALSO registers with the
+        # owning Session's single task funnel (tracked_tasks.py) so
+        # AgentRegistry.shutdown() can reach it without needing to know this
+        # class exists. None-tolerant (a caller that doesn't pass one, e.g.
+        # a standalone unit test, gets pre-#4759 behaviour unchanged) — the
+        # dedicated `_timers` dict below (chain_id-keyed lookup, needed by
+        # `cancel_timeout`) stays the primary bookkeeping either way; this is
+        # an ADDITIONAL registration for teardown-reachability, not a
+        # replacement for it.
+        self._task_tracker = task_tracker
 
         self._chains: dict[str, _PendingChain] = {}
         self._timers: dict[str, asyncio.Task] = {}
@@ -478,11 +490,23 @@ class ChainManager:
         existing = self._timers.pop(chain_id, None)
         if existing is not None and not existing.done():
             existing.cancel()
-        self._timers[chain_id] = asyncio.create_task(
-            self._chain_timeout_watch(
-                chain_id, on_fire=on_fire, duration_seconds=duration_seconds
-            )
+        coro = self._chain_timeout_watch(
+            chain_id, on_fire=on_fire, duration_seconds=duration_seconds
         )
+        # #4759: ALSO registered with the owning Session's task funnel
+        # (tracked_tasks.py), disposition="cancel_join" -- this dict stays
+        # the primary chain_id-keyed lookup `cancel_timeout` needs; the
+        # tracker registration is what makes this watchdog reachable from
+        # AgentRegistry.shutdown() without it needing to know ChainManager
+        # exists. Cancelling the same task from both `cancel_and_join_timers`
+        # and the tracker's own aclose() is safe -- Task.cancel() is
+        # idempotent.
+        if self._task_tracker is not None:
+            self._timers[chain_id] = self._task_tracker.spawn(
+                coro, disposition="cancel_join", name=f"chain-timeout-{chain_id}",
+            )
+        else:
+            self._timers[chain_id] = asyncio.create_task(coro)
 
     def cancel_timeout(self, chain_id: str) -> None:
         """Cancel the watchdog task for ``chain_id``, if any."""

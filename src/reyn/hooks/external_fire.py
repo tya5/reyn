@@ -86,7 +86,18 @@ class _SessionFireBridge:
         if self._queue is None:
             self._queue = asyncio.Queue(maxsize=self._maxsize)
         if self._drain_task is None or self._drain_task.done():
-            self._drain_task = asyncio.create_task(self._drain())
+            # #4759: route through the owning session's task funnel
+            # (tracked_tasks.py) when available, so AgentRegistry.shutdown()
+            # can reach this drain loop without needing to know this bridge
+            # exists — getattr-guarded since ``self._session`` is typed Any
+            # (a test double may not carry the attribute).
+            tracker = getattr(self._session, "_background_tasks", None)
+            if tracker is not None:
+                self._drain_task = tracker.spawn(
+                    self._drain(), disposition="cancel_join", name="external-fire-drain",
+                )
+            else:
+                self._drain_task = asyncio.create_task(self._drain())
         try:
             self._queue.put_nowait((point, template_vars))
         except asyncio.QueueFull:

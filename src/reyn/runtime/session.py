@@ -113,6 +113,7 @@ from reyn.runtime.session_pure import (
 )
 from reyn.runtime.spawn_tracker import SpawnTracker
 from reyn.runtime.task_types import CurrentTask
+from reyn.runtime.tracked_tasks import TrackedTaskSet
 from reyn.runtime.turn_origin import TurnOrigin
 from reyn.security.permissions.permissions import PermissionResolver
 from reyn.services.compaction.engine import CompactionEngine
@@ -1102,6 +1103,16 @@ class Session:
         # session-construction.md#family-2-recovery-wal-journal).
         self._generation_store = generation_store
         self._journal = journal
+        # #4759: the single funnel every background task this session (or a
+        # sub-component it owns — SpawnTracker's ephemeral-vanish task, the
+        # WAL fire-and-forget appends below, ...) spawns via
+        # asyncio.create_task routes through, so registry.shutdown() needs to
+        # know about exactly ONE seam (aclose_background_tasks below) instead
+        # of enumerating named task fields — see tracked_tasks.py's own
+        # module docstring for the root cause this replaces. Constructed
+        # early (before any sub-component that might spawn a background task
+        # during ITS OWN construction) and threaded into SpawnTracker below.
+        self._background_tasks = TrackedTaskSet()
         # Turn-idle event for quiescence; lets a global rewind await_quiescent before the reset-record append (ADR-0038 Stage 1c, see session-construction.md#family-2-recovery-wal-journal)
         self._turn_idle = asyncio.Event()
         self._turn_idle.set()
@@ -1141,8 +1152,11 @@ class Session:
         # RE-RAISED, not swallowed, so the driver's own cancellation completes
         # normally instead of silently surviving a cancel that was never ours.
         self._turn_cancel_self_initiated: bool = False
-        # Joinable handle for fire-and-forget WAL-append tasks so await_quiescent can join them too (ADR-0038 Stage 1c coverage, see session-construction.md#family-2-recovery-wal-journal)
-        self._inflight_wal_tasks: set[asyncio.Task] = set()
+        # #4759: fire-and-forget WAL-append tasks are tracked via
+        # self._background_tasks now (the single task funnel, see
+        # tracked_tasks.py) — this used to be a dedicated set here
+        # (ADR-0038 Stage 1c), folded in so await_quiescent's join covers
+        # them alongside every other background task through one seam.
         # Kept directly (not only via journal), see docs/reference/runtime/session-construction.md#family-2-recovery-wal-journal
         self._state_log = state_log
         self._halted_reason: "str | None" = None  # #2259 PR-3: set on FAIL-STOP, see session-construction.md#family-2-recovery-wal-journal
@@ -1338,6 +1352,7 @@ class Session:
             agent_name=self.agent_name,
             session_id_provider=lambda: self._session_id,
             ephemeral_provider=lambda: self._ephemeral,
+            task_tracker=self._background_tasks,
         )
 
         # Delegation tracking for RouterLoop runs; None outside a run, cleared after each (F2)
@@ -2502,50 +2517,41 @@ class Session:
         Coverage (the exhaustive set of append-capable spawned tasks in this
         surface — see #1533 source→gated-by table): the current turn (``_turn_idle``),
         chain-timeout watchdogs (``_chains`` timers, cancel+join), and fire-and-forget
-        WAL-append tasks — intervention dispatch + intervention_answer_consumed
-        (``_inflight_wal_tasks``).
+        WAL-append tasks — intervention dispatch + intervention_answer_consumed.
+        #4759: both of the latter two are tracked via ``self._background_tasks``
+        (the single task funnel — see ``tracked_tasks.py``), so step 2 below is
+        one call instead of the two separately-named, separately-shaped drains
+        this method used to hand-roll (a cancel+join loop over ChainManager's
+        own dict, then ANOTHER cancel+join loop over ``_inflight_wal_tasks``) —
+        a 3rd background-task type registered through the same funnel needs no
+        change here.
         """
         # 1. wait for the current turn to go idle -- re-entrancy-safe (see
         # docs/reference/runtime/session-construction.md#family-2-recovery-wal-journal
         # for the _turn_idle / _turn_owner_task rationale).
         if asyncio.current_task() is not self._turn_owner_task:
             await self._turn_idle.wait()
-        # 2. cancel + join chain-timeout watchdogs. A cancelled timer cannot fire
-        #    (no chain_timeout_fired append); join settles any callback already
-        #    in-progress before this returns. On reconstruct, restore() re-arms a
-        #    watchdog from the recovered snapshot (proposal 0067 P8, #3978:
-        #    against the REMAINING time on a persisted arm_at deadline, not
-        #    necessarily a fresh window), so cancelling is reversible.
+        # 2. drain every "cancel_join"-disposition tracked task to a fixpoint
+        #    (chain-timeout watchdogs + fire-and-forget WAL-append tasks — see
+        #    the docstring above). Cancel — not join-only — is required: the
+        #    intervention-dispatch task awaits the user-answer future
+        #    indefinitely; these tasks are drop-safe so cancelling is
+        #    correct. The fixpoint loop (TrackedTaskSet.aclose's own #2115
+        #    re-check) covers a joined task scheduling a NEW tracked append
+        #    (or re-spawn) DURING the gather, which a one-shot snapshot would
+        #    miss. On reconstruct, restore() re-arms timers/watchdogs from
+        #    the recovered snapshot (proposal 0067 P8, #3978: against the
+        #    REMAINING time on a persisted arm_at deadline, not necessarily a
+        #    fresh window), so cancelling here is reversible.
+        await self._background_tasks.aclose()
+        # ChainManager's own _timers dict (chain_id -> task, used by
+        # cancel_timeout's lookup) isn't cleared by the tracker's own aclose
+        # above -- it owns a SEPARATE bookkeeping concern (lookup, not
+        # teardown-reachability). cancel_and_join_timers() is idempotent
+        # (every timer task the tracker just cancelled+joined is already
+        # done, so this is a fast no-op cancel/gather) and clears that dict.
         await self._chains.cancel_and_join_timers()
-        # 3-4. RE-DRAIN LOOP (#2115): cancel the tracked fire-and-forget WAL tasks
-        #    (cancel — not join-only — is required: the intervention-dispatch task
-        #    awaits the user-answer future indefinitely; the tasks are drop-safe so
-        #    cancelling is correct) + join the append-capable tasks
-        #    (_inflight_wal_tasks), then RE-CHECK. A joined task may schedule a NEW
-        #    tracked append (or re-spawn) DURING the gather — which the prior
-        #    one-shot snapshot would miss (#2115). Loop to a fixpoint (both sets fully
-        #    drained) so no append can land after this returns. On reconstruct,
-        #    restore() re-arms timers from the recovered snapshot (proposal 0067
-        #    P8, #3978: against the REMAINING time on a persisted arm_at deadline,
-        #    not necessarily a fresh window), so cancelling is reversible.
-        for _ in range(_QUIESCE_MAX_ROUNDS):
-            for task in list(self._inflight_wal_tasks):
-                if not task.done():
-                    task.cancel()
-            pending = [
-                t for t in self._inflight_wal_tasks
-                if not t.done()
-            ]
-            if not pending:
-                break
-            await asyncio.gather(*pending, return_exceptions=True)
-        else:
-            logger.warning(
-                "await_quiescent: WAL-append tasks did not drain to a fixpoint in "
-                "%d rounds — a straggler append may race the reset-record",
-                _QUIESCE_MAX_ROUNDS,
-            )
-        # 5. re-confirm turn-idle — a joined task may have enqueued a follow-up
+        # 3. re-confirm turn-idle — a joined task may have enqueued a follow-up
         #    turn; with cancel already requested it breaks immediately, so this
         #    settles. The double wait closes the join↔turn race.
         if asyncio.current_task() is not self._turn_owner_task:
@@ -2557,8 +2563,9 @@ class Session:
         Fire-and-forget tasks that append to the WAL (intervention dispatch,
         intervention_answer_consumed) have no natural join handle, so they would
         escape ``await_quiescent`` and could append past a rewind reset-record.
-        Tracking them in ``_inflight_wal_tasks`` (with discard-on-done to keep the
-        set bounded) makes them joinable. Returns the task for call-site chaining.
+        Tracking them (via ``self._background_tasks``, #4759's single task
+        funnel — see ``tracked_tasks.py``) makes them joinable. Returns the
+        task for call-site chaining.
 
         #2115 CONVENTION: every async WAL-append spawned outside the current turn —
         ESPECIALLY any completion append (WAL writes outside the current turn) — MUST be tracked here so
@@ -2566,9 +2573,7 @@ class Session:
         the rewind reset-record. A new untracked append path would leak past a
         rewind (the #2115 bug class).
         """
-        self._inflight_wal_tasks.add(task)
-        task.add_done_callback(self._inflight_wal_tasks.discard)
-        return task
+        return self._background_tasks.register(task, disposition="cancel_join")
 
     def attach_anchor_store(self, anchor_store) -> None:
         """Attach the shared per-checkpoint anchor store (#1547). Thin forwarder — see
@@ -2819,9 +2824,10 @@ class Session:
                                                plain assignment is unconditional, so no
                                                separate clear step is needed here)
 
-        The _inflight_wal_tasks task handles are already settled by
-        await_quiescent; this drops the (now-done) handles so the rewound
-        session starts clean.
+        The fire-and-forget WAL-append task handles are already settled by
+        await_quiescent (via self._background_tasks — #4759's task funnel,
+        which self-drops a handle the moment its task completes, so there is
+        no separate "drop the now-done handles" step needed here anymore).
         """
         while True:
             try:
@@ -2843,7 +2849,6 @@ class Session:
         # re-assigns it wholesale from the reconstructed snapshot, but clearing here keeps
         # the zero-residue guarantee robust independent of that assignment.
         self._hook_driven_turns = 0
-        self._inflight_wal_tasks.clear()
         # pending_inbox_item / cancelled_msg_ids / last_sender / last_reply_to
         # (proposal 0067 P1, #3978 InboxArbiter extraction): the same latent
         # gap current_task's own comment below names — NONE of these four
@@ -5035,6 +5040,7 @@ class Session:
             events=self._audit_events,
             chain_timeout_seconds=self._chain_timeout_seconds,
             max_hop_depth=self._max_hop_depth,
+            task_tracker=self._background_tasks,
         )
         interventions = InterventionRegistry(
             on_announce=self._announce_intervention,
@@ -6074,6 +6080,16 @@ class Session:
             self._restore_intervention_tasks = self._interventions.restore(
                 restored, watcher=_on_restored_resolved,
             )
+            # #4759: ALSO registered with the task funnel -- restore()'s own
+            # docstring already says the caller must keep references alive
+            # to avoid GC warnings (self._restore_intervention_tasks above
+            # satisfies that), but nothing previously joined/cancelled them
+            # from a normal shutdown path (only reset_for_rewind, a
+            # DIFFERENT path, cancels-without-awaiting them). disposition
+            # "cancel_join": each awaits a possibly-never-arriving user
+            # answer, drop-safe on shutdown.
+            for _t in self._restore_intervention_tasks:
+                self._background_tasks.register(_t, disposition="cancel_join")
         self._audit_events.emit(
             "session_restored",
             applied_seq=snapshot.applied_seq,
@@ -6693,9 +6709,18 @@ class Session:
 
         # R-D4: WAL size safety-net check at the chat turn boundary — see
         # docs/deep-dives/decisions/0014-wal-size-safety-net.md#decision
+        # #4759: routed through the task funnel (was a bare asyncio.create_task
+        # with NO reference kept anywhere — GC-vulnerable AND unreachable from
+        # any teardown path; tracked_tasks.py's own module docstring names
+        # this as one of the confirmed #4759 instances). disposition
+        # "cancel_join": a truncation check is a maintenance op, safe to
+        # cancel mid-flight (the next turn boundary re-checks; nothing here
+        # is a partial-write hazard — maybe_truncate_for_size only acts once
+        # its own check passes).
         if self._registry is not None:
-            asyncio.create_task(
+            self._background_tasks.spawn(
                 self._registry.maybe_truncate_for_size(),
+                disposition="cancel_join",
                 name="wal-size-safety-net",
             )
 
@@ -8374,6 +8399,29 @@ class Session:
         and ``RouterHostAdapter.mcp_list_subscriptions`` reading the same
         source)."""
         return self._mcp_connection_service.subscription_summary()
+
+    async def aclose_background_tasks(self) -> None:
+        """#4759 teardown: drain every background task this session (or a
+        sub-component it owns — SpawnTracker's ephemeral-vanish task,
+        ChainManager's timeout watchdogs, OutboxHub's drain loop, the hooks
+        bridge, restored-intervention watchers, ...) spawned via the single
+        task funnel (``self._background_tasks``, see ``tracked_tasks.py``).
+
+        Root cause this closes: before this method existed, none of those
+        tasks were reachable from a normal ``registry.shutdown()`` (only
+        some had a joiner at all, and even those were only invoked from the
+        REWIND path or ``remove_session``, never from an ordinary
+        shutdown/``/quit``) — a shutdown could return while the ephemeral
+        auto-vanish task (which itself closes this session's held MCP
+        connections) was still mid-flight, orphaning the OS subprocess it
+        was about to close. Idempotent (``TrackedTaskSet.aclose`` is). Called
+        from ``AgentRegistry.shutdown()`` — mirrors ``aclose_mcp_connections``
+        / ``aclose_event_store``'s existing getattr-duck-typed call shape, so
+        the registry needs no per-task-type knowledge, only this one seam.
+        NOT independently time-bounded — see ``AgentRegistry.shutdown()``'s
+        own bounded wrapping of this call for why and by how much.
+        """
+        await self._background_tasks.aclose()
 
     async def aclose_mcp_connections(self) -> None:
         """#2597 S2a teardown: close every held MCP connection this session opened.

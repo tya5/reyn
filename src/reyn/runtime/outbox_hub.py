@@ -44,6 +44,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from reyn.runtime.outbox import OutboxMessage
+    from reyn.runtime.tracked_tasks import TrackedTaskSet
 
 logger = logging.getLogger(__name__)
 
@@ -90,11 +91,23 @@ class HubSubscription:
 class OutboxHub:
     """Single-drain broadcast hub over one source ``asyncio.Queue``."""
 
-    def __init__(self, source: "asyncio.Queue", *, name: str = "") -> None:
+    def __init__(
+        self, source: "asyncio.Queue", *, name: str = "",
+        task_tracker: "TrackedTaskSet | None" = None,
+    ) -> None:
         self._source = source
         self._subs: "set[HubSubscription]" = set()
         self._drain_task: "asyncio.Task | None" = None
         self._name = name
+        # #4759: register the drain task with the owning Session's task
+        # funnel too (tracked_tasks.py) -- __end__ (put by Session.run()'s
+        # own finally on every exit path) reaches this loop's queue.get()
+        # and lets it return, but that PROCESSING happens in this separate
+        # task, which is not otherwise joined by anything -- registering it
+        # is what lets registry.shutdown() actually wait for that to
+        # happen instead of returning while it's still catching up.
+        # None-tolerant for callers (tests) that construct a hub standalone.
+        self._task_tracker = task_tracker
 
     def subscribe(self, *, maxsize: int = 0) -> HubSubscription:
         """Register a new surface. ``maxsize=0`` is unbounded (local sink);
@@ -127,7 +140,12 @@ class OutboxHub:
 
     def _ensure_drain(self) -> None:
         if self._drain_task is None or self._drain_task.done():
-            self._drain_task = asyncio.create_task(self._drain())
+            if self._task_tracker is not None:
+                self._drain_task = self._task_tracker.spawn(
+                    self._drain(), disposition="cancel_join", name=f"outbox-drain-{self._name}",
+                )
+            else:
+                self._drain_task = asyncio.create_task(self._drain())
 
     async def _drain(self) -> None:
         """The SOLE ``source.get()`` consumer: drain and fan out forever, until

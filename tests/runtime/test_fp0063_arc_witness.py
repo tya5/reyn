@@ -191,6 +191,7 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 import sys
 import uuid
 from pathlib import Path
@@ -575,6 +576,36 @@ def _build_registry(tmp_path: Path, project_root: Path):
     return reg, perm_resolver
 
 
+def _child_pids(parent_pid: int) -> "set[int]":
+    """OS-level snapshot of ``parent_pid``'s DIRECT child pids (``pgrep -P``).
+
+    #4759 structural-witness support: this is deliberately an OS-process-table
+    read, not a reyn-internal one (``MCPClient._child_pid`` or similar) -- the
+    child either exists in the kernel's process table or it doesn't,
+    independent of anything reyn's own bookkeeping claims about it, which is
+    the whole point of a *structural* witness over a *symptom* one (see the
+    test's own #4759 comment below). All of this arc's real MCP server
+    subprocesses (chunker, vector-store) are spawned in-process via
+    ``anyio.open_process``, so they are direct children of the pytest worker
+    process itself -- no need to walk a process tree.
+    """
+    proc = subprocess.run(
+        ["pgrep", "-P", str(parent_pid)], capture_output=True, text=True, check=False,
+    )
+    return {int(tok) for tok in proc.stdout.split()}
+
+
+def _pid_is_alive(pid: int) -> bool:
+    """True iff the OS process table still has ``pid`` (any owner)."""
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True  # exists, just not signalable by us -- still alive
+    return True
+
+
 async def _drive_one_turn(registry, prompt: str, timeout: float) -> str:
     """The SAME two primitives ``run_agent_step`` composes
     (``spawn_ephemeral_session`` + ``MessageBus.request``), called directly
@@ -837,63 +868,146 @@ async def test_llm_driven_install_ingest_query_arc_reaches_the_ingested_chunk(
     plugin_src = _prepare_local_plugin_copy(tmp_path, out_of_process_reyn)
     registry, _perm_resolver = _build_registry(tmp_path, project_root)
 
-    from reyn.dev.testing.replay import LLMReplay
-
-    generate = (
-        os.environ.get("REYN_FP0063_ARC_WITNESS_GENERATE") == "1"
-        or not _INSTALL_FIXTURE_PATH.exists()
-        or not _INGEST_QUERY_FIXTURE_PATH.exists()
-    )
-
-    # -- Turn 1: LLM drives install_plugin ----------------------
-    if generate:
-        monkeypatch.setattr(
-            "litellm.acompletion", _make_install_script(plugin_src), raising=False,
-        )
-    replay_install = LLMReplay(_INSTALL_FIXTURE_PATH, mode="record" if generate else "replay")
-    replay_install.install()
+    # #4759: this arc's Turn 1 (install_plugin) launches the rag plugin's
+    # REAL chunker/vector-store MCP servers as real OS subprocesses (a
+    # dedicated venv interpreter, _prepare_local_plugin_copy's own
+    # docstring) -- unlike every other test in this file's own family
+    # (test_fp0063_p3_rag_pipelines.py explicitly bypasses install_plugin;
+    # test_pipeline_r5_run_agent_step.py never touches MCP at all), so this
+    # is the ONE test in the family that actually opens one. Without an
+    # explicit registry.shutdown() (the #2714 production teardown seam,
+    # AgentRegistry's own method, NOT a test-invented mechanism -- it
+    # already closes every loaded session's held MCP connections on the
+    # normal-exit path), the child process's fate is left to whatever
+    # implicit cleanup the OS/asyncio-runner teardown happens to trigger.
+    # Investigated (#4759, architect): pytest-asyncio's own runner teardown
+    # (_cancel_all_tasks -> os.waitpid(pid, 0), BLOCKING, no WNOHANG) hits
+    # this leaked child and hangs INDEFINITELY if it hasn't already exited
+    # on its own by the time teardown reaches that point -- a genuine race
+    # (measured 1/6 reproduction rate), not a "slow" test; no amount of
+    # extra time budget fixes a wait that never returns. try/finally here
+    # closes the held MCP connections (and, by extension, terminates the
+    # subprocess -- MCPClient.close's own belt-and-suspenders reap,
+    # test_2714_mcp_shutdown_teardown.py's own precedent) BEFORE the
+    # function returns and pytest-asyncio's runner teardown ever begins,
+    # removing the race rather than budgeting more time for it.
+    #
+    # The SYMPTOM (this test not hanging) is not a sufficient witness that
+    # the above claim is what's actually happening: the underlying race
+    # resolves favorably (the child happens to have exited on its own by the
+    # time teardown reaches the blocking waitpid) roughly 5/6 of the time
+    # even with registry.shutdown() removed entirely -- so "the test passed"
+    # would stay green under a strip-falsify of the fix most of the time,
+    # which makes it a weak witness (lead-coder, #4759: a raw repeat-count
+    # would need n >= 17 clean runs for ~5% false-negative confidence, and
+    # even then never explains WHY). The MECHANISM claim -- that
+    # registry.shutdown() is what actually terminates the child, not luck --
+    # is instead witnessed structurally below: real OS pids captured while
+    # the arc's servers are confirmed running, asserted gone from the OS
+    # process table after registry.shutdown() returns. Stripping the
+    # shutdown() call must flip ONLY that assertion red, independent of
+    # whether this particular run happened to hang.
+    _baseline_children = _child_pids(os.getpid())
+    _arc_children: "set[int]" = set()
     try:
-        install_text = await _drive_one_turn(
-            registry, "Install the rag plugin.", timeout=60.0,
+        from reyn.dev.testing.replay import LLMReplay
+
+        generate = (
+            os.environ.get("REYN_FP0063_ARC_WITNESS_GENERATE") == "1"
+            or not _INSTALL_FIXTURE_PATH.exists()
+            or not _INGEST_QUERY_FIXTURE_PATH.exists()
+        )
+
+        # -- Turn 1: LLM drives install_plugin ----------------------
+        if generate:
+            monkeypatch.setattr(
+                "litellm.acompletion", _make_install_script(plugin_src), raising=False,
+            )
+        replay_install = LLMReplay(
+            _INSTALL_FIXTURE_PATH, mode="record" if generate else "replay",
+        )
+        replay_install.install()
+        try:
+            install_text = await _drive_one_turn(
+                registry, "Install the rag plugin.", timeout=60.0,
+            )
+        finally:
+            replay_install.restore()
+            if generate:
+                replay_install.flush()
+        assert install_text, "turn 1 (install) must reach a final assistant turn"
+
+        # -- Turn 2 (a FRESH ephemeral spawn -- see _make_install_script's
+        # docstring for why): LLM drives ingest then query -----------------------
+        if generate:
+            monkeypatch.setattr(
+                "litellm.acompletion", _make_ingest_query_script(project_root), raising=False,
+            )
+        replay_query = LLMReplay(
+            _INGEST_QUERY_FIXTURE_PATH, mode="record" if generate else "replay",
+        )
+        replay_query.install()
+        try:
+            final_text = await _drive_one_turn(
+                registry,
+                "Ingest the docs/ corpus into rag.sqlite, then query it for 'what is reyn'.",
+                timeout=60.0,
+            )
+        finally:
+            replay_query.restore()
+            if generate:
+                replay_query.flush()
+        assert final_text, "turn 2 (ingest/query) must reach a final assistant turn"
+
+        # #4759 structural witness, part 1: capture the arc's real MCP server
+        # subprocess(es) while still confirmed alive, BEFORE registry.shutdown()
+        # runs (below, in the finally). An empty set here would mean this
+        # witness has nothing to observe -- fail loudly rather than let part 2
+        # vacuously pass.
+        _arc_children = _child_pids(os.getpid()) - _baseline_children
+        assert _arc_children, (
+            "expected the rag plugin's real chunker/vector-store MCP server "
+            "subprocess(es) to be running as direct children of this process "
+            "at this point in the arc -- found none, so the #4759 structural "
+            "witness below would vacuously pass"
+        )
+        assert all(_pid_is_alive(pid) for pid in _arc_children), (
+            f"one or more of the arc's own captured child pids {_arc_children} "
+            "were already dead before registry.shutdown() ran"
+        )
+
+        from reyn.builtin.plugins.rag.scripts.vector_store_server import SqliteVecStore
+
+        with SqliteVecStore(str(project_root / "rag.sqlite")) as store:
+            rows = store.list_metadata()
+        assert rows, (
+            "the LLM-driven arc must have ingested at least one real chunk into "
+            "the sqlite store -- an empty store means install/register/ingest "
+            "never actually ran, regardless of what the final turn's text claims"
+        )
+        indexed = {Path(r["metadata"]["source_path"]).name for r in rows}
+        assert indexed == {"notes.txt"}, (
+            f"expected the ingested corpus to contain exactly notes.txt, got {sorted(indexed)}"
         )
     finally:
-        replay_install.restore()
-        if generate:
-            replay_install.flush()
-    assert install_text, "turn 1 (install) must reach a final assistant turn"
+        await registry.shutdown()
 
-    # -- Turn 2 (a FRESH ephemeral spawn -- see _make_install_script's
-    # docstring for why): LLM drives ingest then query -----------------------
-    if generate:
-        monkeypatch.setattr(
-            "litellm.acompletion", _make_ingest_query_script(project_root), raising=False,
-        )
-    replay_query = LLMReplay(
-        _INGEST_QUERY_FIXTURE_PATH, mode="record" if generate else "replay",
-    )
-    replay_query.install()
-    try:
-        final_text = await _drive_one_turn(
-            registry,
-            "Ingest the docs/ corpus into rag.sqlite, then query it for 'what is reyn'.",
-            timeout=60.0,
-        )
-    finally:
-        replay_query.restore()
-        if generate:
-            replay_query.flush()
-    assert final_text, "turn 2 (ingest/query) must reach a final assistant turn"
-
-    from reyn.builtin.plugins.rag.scripts.vector_store_server import SqliteVecStore
-
-    with SqliteVecStore(str(project_root / "rag.sqlite")) as store:
-        rows = store.list_metadata()
-    assert rows, (
-        "the LLM-driven arc must have ingested at least one real chunk into "
-        "the sqlite store -- an empty store means install/register/ingest "
-        "never actually ran, regardless of what the final turn's text claims"
-    )
-    indexed = {Path(r["metadata"]["source_path"]).name for r in rows}
-    assert indexed == {"notes.txt"}, (
-        f"expected the ingested corpus to contain exactly notes.txt, got {sorted(indexed)}"
+    # #4759 structural witness, part 2: registry.shutdown() (the #2714
+    # production teardown seam) must have actually reaped the arc's own MCP
+    # server subprocess(es) at the OS level -- not merely "the test function
+    # returned without hanging" (see the #4759 comment above this test for
+    # why that symptom alone is not trustworthy evidence). Strip-falsify:
+    # commenting out the ``await registry.shutdown()`` line above must flip
+    # ONLY this assertion red.
+    _still_alive = {pid for pid in _arc_children if _pid_is_alive(pid)}
+    if _still_alive:  # diagnostic aid on failure -- which server, not just which pid
+        for _pid in _still_alive:
+            _r = subprocess.run(
+                ["ps", "-p", str(_pid), "-o", "pid,ppid,command"],
+                capture_output=True, text=True, check=False,
+            )
+            print(f"#4759 survivor {_pid}:\n{_r.stdout}\n{_r.stderr}")
+    assert not _still_alive, (
+        f"MCP server subprocess(es) {_still_alive} survived registry.shutdown() "
+        "-- the #2714 teardown seam did not actually terminate them"
     )
