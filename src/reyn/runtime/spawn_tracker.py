@@ -103,35 +103,86 @@ class SpawnTracker:
         self._agent_name = agent_name
         self._session_id_provider = session_id_provider
         self._ephemeral_provider = ephemeral_provider
-        # sid -> trusted original-task record for spawned sessions, so a compromised
-        # sub-session can't forge task framing (#2103 S1bc-exec)
-        self._spawned_tasks: "OrderedDict[str, str]" = OrderedDict()
+        # #4740: (agent_name, sid) -> trusted original-task record for spawned
+        # sessions, so a compromised sub-session can't forge task framing
+        # (#2103 S1bc-exec). Two-level dict, SAME shape as registry.py's own
+        # `self._sessions.setdefault(name, {})[sid] = session` — sid alone is
+        # NOT process-wide-unique (registry.py's own `_session_state_dir(self,
+        # name, sid)` docstring: on-disk state dir is keyed by (name, sid)), so
+        # this spawner recording two DIFFERENT agents' sessions that happen to
+        # share a sid (both "main", the common default) would previously let
+        # the second record silently overwrite the first, and later let an
+        # UNRELATED agent's result consume and render the wrong trusted task=
+        # in the result header — the exact forgery this record exists to
+        # prevent, now reachable from an ordinary same-sid collision rather
+        # than a compromised sub-session (#4735's own agent-collision defect
+        # class, one level down: this is #4735's OWN "census remainder half"
+        # that got folded into #4735 and lost its open face when #4735 closed
+        # — lead-coder review, #4740).
+        self._spawned_tasks: "dict[str, OrderedDict[str, str]]" = {}
+        # #4740: GLOBAL (across every agent) insertion-order tracker for the
+        # `_MAX_SPAWNED_TASKS` bound — the nested dict above has no single
+        # order of its own once split by agent, so eviction needs a
+        # companion structure to keep the SAME "oldest in-flight, across
+        # every spawned agent" bound the prior flat OrderedDict enforced
+        # (not narrowed to a PER-agent cap, which would let N agents each
+        # hold their own 256-entry tail — an unintended widening of the
+        # bound while fixing the collision).
+        self._spawn_order: "OrderedDict[tuple[str, str], None]" = OrderedDict()
         # Spawned EPHEMERAL session auto-vanish state (#2103)
         self._vanish_scheduled: bool = False
         self._vanish_task: "asyncio.Task | None" = None
 
     # ── #2103 S1bc-exec: spawned-task correlation record (bounded) ──────────────
 
-    def record_spawned_task(self, sid: str, task: str) -> None:
-        """Record a session-I-spawned's ``sid -> task`` BEFORE submitting it, so when its
-        result routes back the header renders ``task=<my OWN request>`` from this TRUSTED
-        record (not the spawned session's echo). Bounded: evicted on result arrival;
-        ``_MAX_SPAWNED_TASKS`` cap evicts oldest so a never-arriving result can't grow it."""
-        self._spawned_tasks[sid] = task
-        self._spawned_tasks.move_to_end(sid)
-        while len(self._spawned_tasks) > _MAX_SPAWNED_TASKS:
-            self._spawned_tasks.popitem(last=False)  # evict oldest in-flight
+    def record_spawned_task(self, agent_name: str, sid: str, task: str) -> None:
+        """Record a session-I-spawned's ``(agent_name, sid) -> task`` BEFORE submitting
+        it, so when its result routes back the header renders ``task=<my OWN request>``
+        from this TRUSTED record (not the spawned session's echo). Bounded: evicted on
+        result arrival; ``_MAX_SPAWNED_TASKS`` cap evicts oldest (globally, across every
+        spawned agent) so a never-arriving result can't grow it.
 
-    def lookup_and_evict_spawned_task(self, sid: "str | None") -> "str | None":
-        """The TRUSTED task for a spawned ``sid``, or None (not one I spawned / already
-        consumed). Evict-on-read — a result is consumed once; a spoofed/unknown sid → None
-        → the caller renders the safe from=-only fallback (still fenced, still kind=prompt
-        — proposal 0067 P4 (#3978): the sid/from distinction rides the header's OTHER
-        field, not `kind`, since architect's 2026-08-10 ruling collapsed both branches
-        to `kind=prompt`)."""
-        if not sid:
+        #4740: keyed by ``(agent_name, sid)``, not ``sid`` alone — see this
+        class's own constructor comment for why a bare sid collides across
+        agents."""
+        key = (agent_name, sid)
+        self._spawned_tasks.setdefault(agent_name, OrderedDict())[sid] = task
+        self._spawned_tasks[agent_name].move_to_end(sid)
+        self._spawn_order[key] = None
+        self._spawn_order.move_to_end(key)
+        while len(self._spawn_order) > _MAX_SPAWNED_TASKS:
+            oldest_agent, oldest_sid = next(iter(self._spawn_order))
+            self._spawn_order.popitem(last=False)  # evict oldest in-flight
+            inner = self._spawned_tasks.get(oldest_agent)
+            if inner is not None:
+                inner.pop(oldest_sid, None)
+                if not inner:
+                    del self._spawned_tasks[oldest_agent]
+
+    def lookup_and_evict_spawned_task(
+        self, agent_name: "str | None", sid: "str | None",
+    ) -> "str | None":
+        """The TRUSTED task for a spawned ``(agent_name, sid)``, or None (not one I
+        spawned / already consumed). Evict-on-read — a result is consumed once; a
+        spoofed/unknown (agent_name, sid) → None → the caller renders the safe
+        from=-only fallback (still fenced, still kind=prompt — proposal 0067 P4
+        (#3978): the sid/from distinction rides the header's OTHER field, not
+        `kind`, since architect's 2026-08-10 ruling collapsed both branches to
+        `kind=prompt`).
+
+        #4740: agent_name is now REQUIRED alongside sid — see
+        :meth:`record_spawned_task`'s own docstring for why."""
+        if not sid or not agent_name:
             return None
-        return self._spawned_tasks.pop(sid, None)
+        inner = self._spawned_tasks.get(agent_name)
+        if inner is None:
+            return None
+        task = inner.pop(sid, None)
+        if task is not None:
+            self._spawn_order.pop((agent_name, sid), None)
+            if not inner:
+                del self._spawned_tasks[agent_name]
+        return task
 
     def attach_anchor_store(self, anchor_store: object) -> None:
         """Attach the shared per-checkpoint anchor store (#1547).

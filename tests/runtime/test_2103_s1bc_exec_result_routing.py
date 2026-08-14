@@ -95,8 +95,9 @@ async def test_main_spawn_result_routes_back_correlated_as_spawned_session(tmp_p
     sid = await reg.spawn_session_recorded("worker", mode="persistent", presentation_consumer=None, intervention_bridge=None)
     spawned = reg.ensure_session_running("worker", sid)
     assert spawned is not None
-    # the spawner records the trusted sid→task (= what the adapter does at spawn time).
-    main.record_spawned_task(sid, "summarize the Q3 report")
+    # the spawner records the trusted (agent, sid)→task (= what the adapter
+    # does at spawn time). #4740: agent_name included.
+    main.record_spawned_task("worker", sid, "summarize the Q3 report")
 
     chain_id = "chain-spawn-verify-1"
     # The spawned session completes + routes the result back (the run-loop's completion
@@ -114,7 +115,7 @@ async def test_main_spawn_result_routes_back_correlated_as_spawned_session(tmp_p
     assert "task=summarize the Q3 report" in txt
     assert chain_id in txt
     # the trusted record is evicted on arrival (bounded-by-construction).
-    assert main.lookup_and_evict_spawned_task(sid) is None
+    assert main.lookup_and_evict_spawned_task("worker", sid) is None
 
 
 @pytest.mark.asyncio
@@ -269,7 +270,10 @@ async def test_gone_spawner_sid_drops_does_not_fallback_to_main(tmp_path, caplog
 @pytest.mark.asyncio
 async def test_spawned_tasks_record_is_bounded(tmp_path):
     """Tier 2: S1bc-exec — the trusted spawned-task record is bounded (evict-oldest past
-    the cap) so never-arriving results can't grow it unbounded."""
+    the cap) so never-arriving results can't grow it unbounded. #4740: the bound is
+    GLOBAL across every agent, not per-agent — this test uses a single agent
+    ("worker") throughout, so it does not itself distinguish global-vs-per-agent;
+    see test_spawned_tasks_bound_is_global_across_agents below for that leg."""
     from reyn.runtime.spawn_tracker import _MAX_SPAWNED_TASKS
     reg = _registry(tmp_path)
     main = reg.get_or_load("worker")
@@ -277,9 +281,86 @@ async def test_spawned_tasks_record_is_bounded(tmp_path):
     # 10..cap+9 (exactly cap entries) are kept. Proven via the public lookup, not the
     # internal length.
     for i in range(_MAX_SPAWNED_TASKS + 10):
-        main.record_spawned_task(f"sid{i}", f"task{i}")
-    assert main.lookup_and_evict_spawned_task("sid0") is None      # oldest evicted
-    assert main.lookup_and_evict_spawned_task("sid9") is None      # last of the overflow
-    assert main.lookup_and_evict_spawned_task("sid10") == "task10"  # first kept (cap boundary)
-    assert main.lookup_and_evict_spawned_task(f"sid{_MAX_SPAWNED_TASKS + 9}") == \
-        f"task{_MAX_SPAWNED_TASKS + 9}"                            # newest kept
+        main.record_spawned_task("worker", f"sid{i}", f"task{i}")
+    assert main.lookup_and_evict_spawned_task("worker", "sid0") is None      # oldest evicted
+    assert main.lookup_and_evict_spawned_task("worker", "sid9") is None      # last of the overflow
+    assert main.lookup_and_evict_spawned_task("worker", "sid10") == "task10"  # first kept (cap boundary)
+    assert main.lookup_and_evict_spawned_task(
+        "worker", f"sid{_MAX_SPAWNED_TASKS + 9}",
+    ) == f"task{_MAX_SPAWNED_TASKS + 9}"                            # newest kept
+
+
+# ── #4740: agent-qualified spawned-task record (the collision fix) ──────────
+
+
+@pytest.mark.asyncio
+async def test_spawned_task_lookup_requires_matching_agent_not_just_sid(tmp_path):
+    """Tier 2: THE mandatory falsify witness (lead-coder's own required
+    condition, #4740) — a spawner that recorded TWO different agents'
+    sessions sharing the SAME sid (the common "main" default, or any
+    sid collision) does not let one agent's lookup consume the other's
+    record. Before #4740, sid alone was the key — the second
+    record_spawned_task call for the SAME sid, a DIFFERENT agent, would
+    silently overwrite the first, and either agent's result could
+    consume the other's trusted task=, defeating the anti-forgery record
+    this class exists for (SpawnTracker's own docstring: "so a
+    compromised sub-session can't forge task framing")."""
+    reg = _registry(tmp_path)
+    reg.create("agent-a")
+    reg.create("agent-b")
+    main = reg.get_or_load("worker")
+
+    main.record_spawned_task("agent-a", "sid-shared", "agent-a's own task")
+    main.record_spawned_task("agent-b", "sid-shared", "agent-b's own task")
+
+    # Looked up in REVERSE insertion order deliberately — a strip that
+    # ignores agent_name and searches by sid alone would return whichever
+    # agent's entry it happens to find FIRST in iteration order (agent-a,
+    # inserted first), which would make the "agent-a" lookup accidentally
+    # correct and mask the defect. Asking for agent-b's task FIRST forces
+    # the argument itself, not insertion order, to decide the answer.
+    assert main.lookup_and_evict_spawned_task("agent-b", "sid-shared") == "agent-b's own task"
+    assert main.lookup_and_evict_spawned_task("agent-a", "sid-shared") == "agent-a's own task"
+
+
+@pytest.mark.asyncio
+async def test_spawned_task_lookup_agent_mismatch_misses(tmp_path):
+    """Tier 2: accept-side of the same witness — looking up the SAME sid
+    under the WRONG agent name misses entirely (None), never returning a
+    different agent's task under a mismatched identity."""
+    reg = _registry(tmp_path)
+    reg.create("agent-a")
+    reg.create("agent-b")
+    main = reg.get_or_load("worker")
+
+    main.record_spawned_task("agent-a", "sid-shared", "agent-a's own task")
+
+    assert main.lookup_and_evict_spawned_task("agent-b", "sid-shared") is None
+    # the real record is still there, untouched by the mismatched lookup.
+    assert main.lookup_and_evict_spawned_task("agent-a", "sid-shared") == "agent-a's own task"
+
+
+@pytest.mark.asyncio
+async def test_spawned_tasks_bound_is_global_across_agents(tmp_path):
+    """Tier 2: the ``_MAX_SPAWNED_TASKS`` cap is GLOBAL across every
+    spawned agent, not a per-agent allowance — N agents cannot each hold
+    their own full-cap tail (that would be an unintended widening of the
+    bound while fixing the collision, #4740's own explicit constraint)."""
+    from reyn.runtime.spawn_tracker import _MAX_SPAWNED_TASKS
+    reg = _registry(tmp_path)
+    reg.create("agent-a")
+    reg.create("agent-b")
+    main = reg.get_or_load("worker")
+
+    # Fill to exactly the cap under agent-a, then add ONE more under
+    # agent-b — the oldest entry (agent-a's sid0) must be evicted, proving
+    # the two agents share ONE global bound, not `cap` each.
+    for i in range(_MAX_SPAWNED_TASKS):
+        main.record_spawned_task("agent-a", f"sid{i}", f"task{i}")
+    main.record_spawned_task("agent-b", "sid-extra", "task-extra")
+
+    assert main.lookup_and_evict_spawned_task("agent-a", "sid0") is None, (
+        "agent-a's oldest entry must be evicted once the GLOBAL cap is exceeded "
+        "by agent-b's new entry — a per-agent bound would keep it"
+    )
+    assert main.lookup_and_evict_spawned_task("agent-b", "sid-extra") == "task-extra"

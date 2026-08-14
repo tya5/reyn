@@ -3867,15 +3867,19 @@ class Session:
     # ── #2103 S1bc-exec: spawned-task correlation (SpawnTracker). See
     # session-construction.md. ──
 
-    def record_spawned_task(self, sid: str, task: str) -> None:
-        """Record a session-I-spawned's ``sid → task`` BEFORE submitting it. Thin
-        forwarder — see ``SpawnTracker.record_spawned_task`` for the full rationale."""
-        self._spawn_tracker.record_spawned_task(sid, task)
+    def record_spawned_task(self, agent_name: str, sid: str, task: str) -> None:
+        """Record a session-I-spawned's ``(agent_name, sid) → task`` BEFORE submitting
+        it. Thin forwarder — see ``SpawnTracker.record_spawned_task`` for the full
+        rationale (#4740: agent_name added — sid alone collides across agents)."""
+        self._spawn_tracker.record_spawned_task(agent_name, sid, task)
 
-    def lookup_and_evict_spawned_task(self, sid: "str | None") -> "str | None":
-        """The TRUSTED task for a spawned ``sid``, or None. Thin forwarder — see
-        ``SpawnTracker.lookup_and_evict_spawned_task`` for the full rationale."""
-        return self._spawn_tracker.lookup_and_evict_spawned_task(sid)
+    def lookup_and_evict_spawned_task(
+        self, agent_name: "str | None", sid: "str | None",
+    ) -> "str | None":
+        """The TRUSTED task for a spawned ``(agent_name, sid)``, or None. Thin
+        forwarder — see ``SpawnTracker.lookup_and_evict_spawned_task`` for the full
+        rationale (#4740: agent_name added)."""
+        return self._spawn_tracker.lookup_and_evict_spawned_task(agent_name, sid)
 
     async def shutdown(self) -> None:
         # `shutdown` is a control signal, not recovery state — skip WAL/snapshot.
