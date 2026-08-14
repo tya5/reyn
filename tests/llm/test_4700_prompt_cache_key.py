@@ -180,17 +180,41 @@ async def test_router_loop_prompt_cache_key_reads_live_session_id():
 
 
 @pytest.mark.asyncio
-async def test_router_loop_prompt_cache_key_none_when_host_has_no_live_session_id():
-    """Tier 2: (accept-side) a test host without a live session id (the
-    common test-construction shape, ``FakeRouterHost`` — no
-    ``live_session_id`` attribute at all) passes prompt_cache_key=None —
-    getattr-guarded, never a raise. ``call_llm_tools`` itself always names
-    the kwarg (its own default is ``None``); it is the DEEPER
-    ``recorded_acompletion`` boundary (see the earlier litellm-stub tests
-    above) that omits it from the wire entirely when falsy — the layer this
-    test observes (an injected ``llm_caller``, standing in for
-    ``call_llm_tools`` itself) sees every one of that function's named
-    params, by construction."""
+async def test_router_loop_prompt_cache_key_is_main_for_the_implicit_main_session():
+    """Tier 2: #4700 — THE lead-coder-caught regression guard. ``registry.py``'s
+    own docstring: ``live_session_id`` is ``str | None``, and ``sid=None``
+    means the IMPLICIT "main" session — an ordinary interactive chat, not a
+    spawned sub-session. This is the exact scenario #4690 measured
+    (reyn-self's own main session, 7.1% cache-hit rate) — a bare
+    ``getattr(host, "live_session_id", None)`` with no ``or "main"``
+    normalization would send NO key for precisely the case #4700 exists to
+    fix. Same normalization ``pipeline_verbs.py:516`` already uses for the
+    identical ambiguity, not a new constant. RED without the fix:
+    prompt_cache_key is None (nothing sent) even for a real, live-session-id
+    -capable host whose main session has no explicit sid."""
+    from reyn.llm.model_resolver import ModelResolver
+    from reyn.runtime.router_loop import RouterLoop
+    from tests._support.router_host_adapter import make_adapter
+
+    host = make_adapter(
+        session_id=None,  # the documented "implicit main session" shape
+        universal_wrappers_enabled=False,
+        resolver=ModelResolver({"standard": "openai/gpt-4o"}),
+    )
+    assert host.live_session_id is None, "setup: main session must report None"
+    llm = _CapturingFinishLLM()
+    await RouterLoop(host=host, chain_id="c1", llm_caller=llm).run("hi", [])
+
+    assert llm.last_kwargs.get("prompt_cache_key") == "main"
+
+
+@pytest.mark.asyncio
+async def test_router_loop_prompt_cache_key_is_main_when_host_has_no_live_session_id():
+    """Tier 2: (accept-side) a test host without a ``live_session_id``
+    attribute at all (``FakeRouterHost``, the common test-construction
+    shape) falls through the SAME ``or "main"`` normalization —
+    ``getattr``-guarded, never a raise, consistent with the real-host
+    None-case above rather than a special test-only path."""
     from reyn.runtime.router_loop import RouterLoop
     from tests._support.router_loop import FakeRouterHost
 
@@ -198,4 +222,4 @@ async def test_router_loop_prompt_cache_key_none_when_host_has_no_live_session_i
     llm = _CapturingFinishLLM()
     await RouterLoop(host=host, chain_id="c1", llm_caller=llm).run("hi", [])
 
-    assert llm.last_kwargs.get("prompt_cache_key") is None
+    assert llm.last_kwargs.get("prompt_cache_key") == "main"

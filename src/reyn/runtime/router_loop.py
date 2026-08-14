@@ -1119,12 +1119,22 @@ class RouterLoop:
         other per-turn identity value in this file is read (never the
         construction-time ``session_id``, which is stale for a spawned
         session — see ``RouterHostAdapter.live_session_id``'s own docstring).
-        ``getattr``-guarded → a test host without ``live_session_id`` gets
-        ``None`` → nothing is sent, byte-identical to before #4700. See
-        ``recorded_acompletion``'s inline comment (``llm.py``) for the full
-        session-vs-agent granularity measurement and reasoning — not
-        repeated here."""
-        return getattr(self.host, "live_session_id", None)
+
+        ``or "main"`` (lead-coder review, #4704): ``live_session_id`` is
+        ``str | None`` and ``registry.py``'s own docstring states
+        ``sid=None`` means the IMPLICIT "main" session — an ordinary
+        interactive chat, not a spawned sub-session. Without this
+        normalization, a bare ``getattr(..., None)`` would send NO key for
+        exactly the case #4690 measured (reyn-self's own main session, 7.1%
+        hit rate) — the feature would be inert in the scenario it exists to
+        fix. Same normalization ``pipeline_verbs.py:516`` already uses for
+        the identical ``live_session_id`` ambiguity (``reply_sid``), not a
+        new constant. A ``getattr``-guarded test host with no
+        ``live_session_id`` attribute AT ALL still falls through the same
+        ``or`` to ``"main"`` — see ``recorded_acompletion``'s inline
+        comment (``llm.py``) for the full session-vs-agent granularity
+        measurement and reasoning, not repeated here."""
+        return getattr(self.host, "live_session_id", None) or "main"
 
     def _emit_agent_delta(self, text: str) -> None:
         """#3288 ③b: forward one streamed content-delta chunk as an audit-event
