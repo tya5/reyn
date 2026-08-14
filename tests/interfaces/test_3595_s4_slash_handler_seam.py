@@ -399,7 +399,20 @@ def test_no_slash_module_reaches_the_session_outbox() -> None:
 #: kind of thin public wrapper ``conversation_history`` already is over
 #: ``self.history`` — a read-model seam reads ``Session`` through public
 #: members by design, unlike a slash handler reaching into private state.
-_PUBLIC_MEMBER_CEILING = 105
+#:
+#: Raised 105 -> 106 for #4206 slice 1: ``output_language`` was ALREADY a
+#: public Session field before this change — a plain ``self.output_language
+#: = ...`` instance attribute set in ``__init__``. This gate's own
+#: enumeration (``dir(Session)``, the CLASS, not an instance) never counted
+#: it, because a plain instance attribute assigned in ``__init__`` is
+#: invisible to ``dir()`` on the class itself. Converting it to a
+#: ``@property`` (so it can live-resolve the new ③ preference-axis
+#: session/agent overrides — see ``reyn.runtime.preferences``) makes the
+#: SAME external name a class-level descriptor for the first time, which is
+#: what this ceiling actually measures. No new slash-reachable capability
+#: was added — the name, its meaning, and every external caller's access
+#: pattern (``session.output_language``) are unchanged.
+_PUBLIC_MEMBER_CEILING = 106
 
 
 def test_session_public_surface_does_not_grow() -> None:
