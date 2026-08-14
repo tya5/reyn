@@ -3689,12 +3689,31 @@ class AgentRegistry:
         # anywhere this drain could see, so a normal shutdown could return
         # while it was still mid-flight, orphaning the OS subprocess it was
         # about to close), plus chain-timeout watchdogs, fire-and-forget
-        # WAL-append tasks, the hook-bus bridge, OutboxHub's drain loop, and
-        # restored-intervention watchers — every one of them now routes
-        # through the SAME funnel, so this loop needs no per-task-type
-        # knowledge and a future background-task producer is covered by
-        # construction (spawn through the funnel), not by a reviewer
-        # remembering to touch this method.
+        # WAL-append tasks, the hook-bus bridge (session_api.py's
+        # _hook_bus_bridge_task), OutboxHub's drain loop,
+        # hooks/external_fire.py's own SEPARATE drain loop (a different
+        # bridge from the hook-bus one above — both happen to say
+        # "hook"/"drain" but are two distinct producers), and
+        # restored-intervention watchers — this loop itself needs no
+        # per-task-type knowledge, so THIS method never grows regardless of
+        # how many producers exist.
+        #
+        # That is not quite the same as "a future producer is automatically
+        # covered", though: SpawnTracker and OutboxHub made task_tracker a
+        # REQUIRED constructor param (their fallback path was deleted, so
+        # skipping the funnel there is now a TypeError, not a silent gap).
+        # ChainManager and hooks/external_fire.py's bridge, by contrast,
+        # still accept a caller that doesn't pass/expose one (ChainManager:
+        # DELIBERATELY, optional param — see its own #4759 comment for the
+        # measured cost/benefit; external_fire: a getattr(self._session,
+        # "_background_tasks", None) guard against an arbitrary session-like
+        # object, not a constructor default) — for THOSE two, a reviewer
+        # adding a NEW watchdog/drain-task producer inside them still needs
+        # to remember to route it through self._task_tracker/the getattr
+        # result, same as any other new code. "Spawn through the funnel" is
+        # covered by construction only where the funnel is a required
+        # dependency; where it's optional, it is still a discipline, not a
+        # guarantee.
         #
         # Run AFTER the run-loop tasks have drained/cancelled above (same
         # reasoning #2714's own MCP-close comment below gives: no in-flight
