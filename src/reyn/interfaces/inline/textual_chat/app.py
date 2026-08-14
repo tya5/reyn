@@ -1123,6 +1123,7 @@ class TextualChatApp(App):
         "_queue_item_meta",
         "_streaming_replies",
         "_pending_own_cancels",
+        "_call_parents",
     )
 
     def __init__(
