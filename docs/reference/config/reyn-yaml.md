@@ -628,7 +628,7 @@ function this flag actually gates):
 - A **failed tool call's own error line** (`tool_call_failed`'s
   `err`/`error_message`, shown on both the plain `--cui` renderer's
   `format_inline_message` and the TUI's `_tool_result_line`/
-  `_body_and_background`) — unconditional since **#4762**. Traces to
+  `_body_and_background`) — unconditional since **#4770**. Traces to
   `dispatcher.py`'s own catch-all (`f"{type(e).__name__}: {e}"` wrapping
   any tool-handler exception — an MCP call, a sandboxed subprocess, a
   provider HTTP error), the same class #4760 fixed for
