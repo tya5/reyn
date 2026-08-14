@@ -336,6 +336,17 @@ def _encode_event(frame: EventFrame) -> AgUiEvent:
             "status": "error" if etype == "tool_failed" else "ok",
         }
     elif ag_type in (RUN_STARTED, RUN_FINISHED):
+        # This "phase" is the AG-UI wire protocol's own standard field for a
+        # RUN_STARTED/RUN_FINISHED event — it carries the run-lifecycle type
+        # string itself (``etype``, e.g. "run_started"), a live, populated
+        # value read by AG-UI clients. Same name, unrelated meaning to
+        # ``core.events.event_schema.RETIRED_PHASE_FIELD`` (reyn's own
+        # audit-event ``phase`` field, permanently the empty string since
+        # #2696 — the phase engine that once populated it is gone). Neither
+        # can be renamed: this one is the AG-UI spec's own vocabulary; that
+        # one is a persisted, replay-compatible audit-event schema field. Two
+        # different "phase"s that happen to sit in the same codebase — do not
+        # assume one explains the other.
         std = {"phase": etype}
     else:  # CUSTOM — user_answered_intervention et al.
         std = {"name": f"reyn.event.{etype}", "value": edata}
