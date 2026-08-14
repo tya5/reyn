@@ -576,8 +576,11 @@ class RouterLoopHost(RouterLoopCore, Protocol):
         """Project context text (= REYN.md / `project_context_path` content),
         or empty string when the operator has not configured one. Threaded
         into the router's system prompt (`build_system_prompt`) on every
-        turn — see `router_system_prompt.py`'s "Project context" section —
-        so every turn's model has the operator's project-specific
+        turn (except where a caller supplies its own system-prompt
+        override — `self._system_prompt_override`, the plan executor's
+        step-specific narrow prompt, skips `build_system_prompt` entirely)
+        — see `router_system_prompt.py`'s "Project context" section — so
+        every turn's model has the operator's project-specific
         background, not only some turns."""
         ...
 
