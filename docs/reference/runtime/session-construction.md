@@ -161,12 +161,22 @@ Adjacent recovery-adjacent state that stays inline (not builder-owned):
 - `_background_tasks` (`TrackedTaskSet`, #4759) — the single funnel every background
   task this session (or a sub-component it owns) spawns via `asyncio.create_task`
   routes through, replacing a prior per-field enumeration (`_inflight_wal_tasks` was
-  one such field, ADR-0038 Stage 1c coverage; folded in by #4759). Fire-and-forget
-  WAL-append tasks (intervention dispatch / `intervention_answer_consumed`) that would
-  otherwise escape `await_quiescent` register here via `_track_wal_task`, with
-  disposition `"cancel_join"`; `await_quiescent` calls `aclose()` on the whole set so
-  no such append can land past the rewind reset-record seq. See `tracked_tasks.py`'s
-  own module docstring for the root cause this replaced and why a single owned
+  one such field, ADR-0038 Stage 1c coverage; folded in by #4759). Each registration
+  carries two INDEPENDENT axes (`tracked_tasks.py`'s own module docstring has the
+  full rationale, including a first-attempt axis name that shipped a real
+  regression, #4759/#4765 co-vet): `disposition` (`"cancel_join"` vs `"await"` —
+  HOW a task folds) and `appends_wal` (WHETHER it's safe to fold it DURING a
+  rewind, not just at shutdown). Fire-and-forget WAL-append tasks (intervention
+  dispatch / `intervention_answer_consumed`) register with `disposition=
+  "cancel_join"`, `appends_wal=True` via `_track_wal_task`; `await_quiescent`
+  calls `aclose(appends_wal=True)` — the WAL-appending subset ONLY, not the whole
+  set — so no such append can land past the rewind reset-record seq, without also
+  tearing down `appends_wal=False` mechanisms (OutboxHub's drain loop, the
+  hook-bus bridge, …) that the session still needs mid-rewind. The unfiltered
+  drain (`aclose()` with no `appends_wal` filter) lives at
+  `Session.aclose_background_tasks`, reached only from real shutdown
+  (`AgentRegistry.shutdown()`). See `tracked_tasks.py`'s own module docstring for
+  the root cause this replaced and why a single owned
   collection, not another named field, is the fix.
 - `_state_log` is also kept directly (not only via the journal) because ops launched from
   this session need it to emit step events into the same WAL that the journal writes to.
@@ -195,19 +205,27 @@ Adjacent recovery-adjacent state that stays inline (not builder-owned):
 - `pending_inbox_item` (`#3792`; moved off `Session` onto `InboxArbiter` in `#3978` P1, née `_pending_inbox_item`) — a 1-slot, volatile (not WAL/snapshot-backed) peek buffer for mid-turn `CLIENT_INPUT` injection: `InboxArbiter.peek_mid_turn_injection` dequeues via `inbox.get_nowait()` into this slot WITHOUT telling the journal (`asyncio.Queue` has no peek/un-get API), so the snapshot-backed SSoT stays untouched until `Session._commit_mid_turn_injection` (stayed on `Session` — the extraction's scope was inbox-drain/dispatch-attribution state, not this commit path) actually commits it. `consume_inbox` checks this slot FIRST, ahead of a fresh `inbox.get()` — this is what makes an item that was peeked but never committed (an ineligible-origin head the peek deliberately left alone, or a genuine abnormal exit before commit) surface exactly where it would have if the peek had never happened, rather than being stranded or reordered.
 - `_turn_cancel_self_initiated` (`#2242`) — `True` only for the window between `cancel_inflight()` calling `_turn_owner_task.cancel()` and `run_one_iteration` observing the resulting `CancelledError`. It distinguishes OUR OWN hard-cancel (which the run-loop swallows so the driver task survives) from an externally-cancelled driver task — e.g. an anyio scope teardown cancelling the MCP/A2A request-handler task that pumps `run_one_iteration` directly (FP-0013 §ADR-A). In the external case, `await self._turn_owner_task` ALSO raises `CancelledError` (asyncio propagates an awaiting task's cancel into whatever Task/Future it is suspended on) — but that cancellation must be RE-RAISED, not swallowed, so the driver's own cancellation completes normally instead of silently surviving a cancel that was never ours. Confusing the two makes the runtime's cancellation bookkeeping and the caller's anyio scope diverge: the scope believes its teardown cancel completed; the driver task is still alive.
 - **RE-DRAIN LOOP** (`#2115`, generalised by `#4759`) — `await_quiescent` calls
-  `self._background_tasks.aclose()` (`TrackedTaskSet`, `tracked_tasks.py`) to cancel
-  every `"cancel_join"`-disposition tracked task (cancel, not join-only: the
-  intervention-dispatch task awaits the user-answer future indefinitely, and the
-  tasks are drop-safe so cancelling is correct) and join everything currently
-  tracked, looping to a fixpoint (bounded by `tracked_tasks.py`'s own
-  `_MAX_ACLOSE_ROUNDS`, née `await_quiescent`'s own `_QUIESCE_MAX_ROUNDS` before
-  #4759 moved the loop into the shared primitive) rather than a one-shot pass. A
-  joined task can register a NEW tracked task DURING the `gather` — a one-shot
-  snapshot-then-drain misses that reschedule (this was `#2115`, originally scoped
-  to WAL-append tasks alone: a straggler append landing after `await_quiescent`
-  had already returned, i.e. after the global-rewind reset-record was appended).
-  Looping until the set is fully drained closes that window, now for every
-  producer registered through the funnel, not just WAL appends. On reconstruct,
+  `self._background_tasks.aclose(appends_wal=True)` (`TrackedTaskSet`,
+  `tracked_tasks.py`) to cancel every `"cancel_join"`-disposition,
+  `appends_wal=True` tracked task (cancel, not join-only: the intervention-dispatch
+  task awaits the user-answer future indefinitely, and the tasks are drop-safe so
+  cancelling is correct) and join every `appends_wal=True` task currently tracked,
+  looping to a fixpoint (bounded by `tracked_tasks.py`'s own `_MAX_ACLOSE_ROUNDS`,
+  née `await_quiescent`'s own `_QUIESCE_MAX_ROUNDS` before #4759 moved the loop
+  into the shared primitive) rather than a one-shot pass. A joined task can
+  register a NEW tracked task DURING the `gather` — a one-shot snapshot-then-drain
+  misses that reschedule (this was `#2115`, originally scoped to WAL-append tasks
+  alone: a straggler append landing after `await_quiescent` had already returned,
+  i.e. after the global-rewind reset-record was appended). Looping until the
+  `appends_wal=True` subset is fully drained closes that window, now for every
+  WAL-appending producer registered through the funnel, not just the original
+  two. Deliberately NOT unfiltered: `await_quiescent` runs during a rewind, not
+  only at shutdown, and an unfiltered `aclose()` here regressed once already (CI
+  caught a session that silently stopped answering after a rewind, because the
+  unfiltered drain also killed `appends_wal=False` mechanisms like OutboxHub's
+  drain loop that the session still needs — #4759/#4765 co-vet; see
+  `tracked_tasks.py`'s own module docstring for the full regression story and why
+  the axis is named by WAL-appendability, not by task lifetime). On reconstruct,
   `restore()` re-arms timers from the recovered snapshot, so cancelling here
   remains reversible. See `TrackedTaskSet.aclose`'s own docstring for the
   re-entrancy case (a tracked task itself calling `aclose()`, e.g. the
