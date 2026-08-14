@@ -122,8 +122,6 @@ async def op_context_from_tool_context(ctx: ToolContext) -> Any:
         resolver=ctx.resolver,
         subscribers=getattr(ctx.events, "subscribers", []),
         output_language=None,
-        sub_state_dir_override=None,
-        state_dir_strategy="control_ir",
         mcp_servers={},
         intervention_bus=None,
         caller="direct",

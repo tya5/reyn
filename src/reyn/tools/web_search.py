@@ -74,8 +74,6 @@ async def _handle(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
         resolver=ctx.resolver,
         subscribers=getattr(ctx.events, "subscribers", []),
         output_language=None,
-        sub_state_dir_override=None,
-        state_dir_strategy="control_ir",
         mcp_servers={},
         intervention_bus=None,
         caller="direct",

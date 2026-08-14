@@ -68,15 +68,6 @@ class OpContext:
     subscribers: list = field(default_factory=list)
     output_language: str | None = None
 
-    # Sub-run state_dir layout strategy.
-    # When set, the sub-run handler uses this path verbatim. When None, the
-    # handler computes a layout based on `state_dir_strategy`.
-    sub_state_dir_override: str | None = None
-    state_dir_strategy: str = "control_ir"  # "control_ir" or "preprocessor"
-    # Used when state_dir_strategy=="preprocessor"
-    preprocessor_phase_name: str = ""
-    preprocessor_step_index: int = 0
-
     # MCP
     mcp_servers: dict = field(default_factory=dict)
     # #a359 P2: the per-turn structured MCP client pool (owns open+reuse+close in one task). Replaces
