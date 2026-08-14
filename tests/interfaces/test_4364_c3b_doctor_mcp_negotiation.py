@@ -155,3 +155,50 @@ def test_a_server_with_evidence_and_one_without_are_reported_independently(
 
     assert "✓ filesystem: last negotiated" in out
     assert "? brave: not seen in the newest" in out
+
+
+def test_misplaced_mcp_name_explains_why_nothing_is_declared(
+    tmp_path: Path, capsys,
+) -> None:
+    """Tier 2: #4631's own shape defect (``mcp.<name>`` written where
+    ``mcp.servers.<name>`` belongs) loads without error and without a
+    warning — ``mcp.servers`` stays empty. Before this fix doctor printed
+    the plain "no MCP servers declared" line here, which reads as "you
+    never wrote anything", even though the operator DID write an entry —
+    just at the wrong nesting. Doctor must name the misplaced entry
+    instead of the bare absence."""
+    _write_yaml(
+        tmp_path / "reyn.yaml",
+        MINIMAL_REYN_YAML
+        + 'mcp:\n  filesystem:\n    command: npx\n    args: ["-y", "@mcp/filesystem"]\n',
+    )
+
+    run(Namespace(project_root=str(tmp_path)))
+    out = capsys.readouterr().out
+
+    assert "no MCP servers declared under mcp.servers" in out
+    assert "filesystem" in out
+    assert "misplaced server entries" in out
+    assert "reyn config validate" in out
+
+
+def test_misplaced_mcp_name_alongside_a_real_server_is_noted_not_hidden(
+    tmp_path: Path, capsys,
+) -> None:
+    """Tier 2: a real ``mcp.servers.<name>`` entry AND a misplaced
+    ``mcp.<name>`` entry can coexist — the misplaced one must still surface
+    as a note, not be swallowed because the section wasn't empty."""
+    _write_yaml(
+        tmp_path / "reyn.yaml",
+        MINIMAL_REYN_YAML
+        + 'mcp:\n  servers:\n    filesystem:\n      command: npx\n'
+        + '      args: ["-y", "@mcp/filesystem"]\n'
+        + '  brave:\n    command: npx\n    args: ["-y", "@mcp/brave"]\n',
+    )
+
+    run(Namespace(project_root=str(tmp_path)))
+    out = capsys.readouterr().out
+
+    assert "✓ filesystem" in out or "? filesystem" in out
+    assert "misplaced server entries" in out
+    assert "brave" in out
