@@ -609,6 +609,16 @@ strip) to the conversation body content itself, where a raw ESC/OSC sequence
 from tool output or an untrusted model reply could otherwise reach the
 terminal on both the TUI conversation pane and the plain (`--cui`) renderer.
 
+A tool's own **one-line summary** (`summarize_tool_result` — the collapsed
+line shown above/instead of the full body, e.g. a failed `exec`'s
+`exit 1: <stderr detail>`) is a THIRD case, same shape as #3302's: always
+neutralized regardless of this flag (#4760), not gated by
+`neutralize_body`. World-derived text (a sandboxed process's arbitrary
+stderr bytes) reaches that summary through every caller of
+`summarize_tool_result`, so the strip is unconditional there too — this
+flag only widens the SAME neutralizer to the full body text, one rendering
+surface further out.
+
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `neutralize_body` | bool | `false` | Strip ESC/control sequences from agent-reply and tool-result body text before rendering. |
