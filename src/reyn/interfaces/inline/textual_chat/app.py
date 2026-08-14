@@ -407,15 +407,22 @@ class _CursorFlowView(FlowView["OutboxMessage"]):
         than upstream's own private ``_text_active()`` — measured
         equivalent (#4697 issue thread): ``_text_active()`` is
         ``cursor_visible or _tc_anchor is not None``, but every
-        ``_set_cursor_visible(False)`` path ALSO clears ``_tc_anchor``
-        (installed flowview 0.19.0, read directly), so the anchor can
-        never be set while ``cursor_visible`` is ``False`` — ``cursor_
-        visible`` alone is a complete public-API proxy for it TODAY. This
-        is a DERIVED equivalence, not a contract upstream promises: if a
-        future flowview version stops clearing the anchor on hide, this
-        guard falls out of sync SILENTLY — Space would start folding an
-        entry mid text-selection instead of extending it, no exception,
-        no warning."""
+        ``_set_cursor_visible(False)`` path ALSO clears ``_tc_anchor``,
+        so the anchor can never be set while ``cursor_visible`` is
+        ``False`` — ``cursor_visible`` alone is a complete public-API
+        proxy for it TODAY. Re-verified directly against
+        ``_view.py``'s source after #4729's 0.19.0 -> 0.21.1 bump
+        (``_set_cursor_visible`` still unconditionally does
+        ``self._tc_anchor = None`` inside its own ``if not visible:``
+        branch, same as at 0.19.0) — installed pin tracked in
+        ``pyproject.toml``, not repeated here as a number that would
+        just go stale again on the next bump. This is a DERIVED
+        equivalence, not a contract upstream promises: if a future
+        flowview version stops clearing the anchor on hide, this guard
+        falls out of sync SILENTLY — Space would start folding an entry
+        mid text-selection instead of extending it, no exception, no
+        warning. Re-verify this docstring's claim on every future
+        textual-flowview version bump."""
         if self.cursor_visible:
             self.action_activate()
             return
