@@ -276,6 +276,20 @@ Every event has:
 }
 ```
 
+**An AUDIT-event's body field is `data`, read `e["data"][...]`, not
+`e["payload"]`.** For a `llm_response_received` event, `e["data"]["finish_reason"]`
+/ `e["data"]["call_id"]` are where those fields live; for `tool_called`,
+`e["data"]["caller_kind"]` / `e["data"]["caller_id"]` / `e["data"]["tool"]` /
+`e["data"]["args"]`. `e.get("payload", {})` returns `{}` for EVERY audit-event,
+silently — every field reads as absent, not because it wasn't emitted, but
+because the read itself targeted a key that was never on THIS vocabulary.
+`payload` is a real key, but on the WAL-event's own vocabulary (`.reyn/state/wal.jsonl`
+— see [Time-Travel § WAL vs audit-event separation](../../concepts/runtime/time-travel.md#wal-vs-audit-event-separation),
+and CLAUDE.md's "'event' is three distinct things"): `agent_snapshot.py`'s
+`inbox_put` replay reads `event.get("payload", {})` for real. Mixing the two
+vocabularies returns empty in EITHER direction — an audit-event read as
+`e["payload"]`, or (the mirror mistake) a WAL-event read as `e["data"]`.
+
 ## Agent ID field (all events)
 
 Every event emitted from a session whose `agent_id` is configured (in `reyn.yaml`) automatically carries an `agent_id` field in its payload. The default value is `reyn/<hostname>`. This enables RBAC and multi-agent audit trails per SOC2 / ISO 27001 / METI v1.1 requirements.
