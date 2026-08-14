@@ -182,7 +182,20 @@ async def test_space_no_longer_copies_since_4697_repurposed_it_for_folding(clipb
     key (Enter alone still copies; see the Enter test above). On an
     ordinary row with no foldable tool detail, Space is a no-op: it must
     NOT copy (the pre-#4697 behavior this test used to pin) and must not
-    crash."""
+    crash.
+
+    Positive control (lead-coder's own TESTS-READ block on #4713):
+    ``clipboard() is None`` right after Space cannot by itself tell
+    "Space correctly doesn't copy" from "the copy mechanism is dead" —
+    and absence can't be waited on, so a fixed pause count would be an
+    unjustified constant (testing.md § Time) that quietly goes green the
+    day copying starts taking one more tick. Pressing Enter immediately
+    after and condition-waiting for the REAL clipboard value closes both
+    gaps at once: it proves copying still works at all (so the earlier
+    ``is None`` really means Space-specific, not broken-entirely), it is
+    an "wait for something to happen" condition (so it can be waited on
+    unboundedly, no pause constant needed), and it doubles as a witness
+    that #4697 did not break Enter's own copy path."""
     app = TextualChatApp(transport=_Transport())
     async with app.run_test(size=(100, 30)) as pilot:
         await pilot.pause()
@@ -192,10 +205,17 @@ async def test_space_no_longer_copies_since_4697_repurposed_it_for_folding(clipb
 
         await pilot.press("space")
         await pilot.pause()
-        await pilot.pause()
         assert clipboard() is None, (
             "Space still copied — #4697 was supposed to move copy off Space "
             "entirely, leaving it solely on Enter"
+        )
+
+        await pilot.press("enter")
+        while clipboard() is None:
+            await pilot.pause()
+        assert clipboard() == "reply text", (
+            "Enter's own copy path broke — positive control failed, so the "
+            "earlier Space assertion cannot be trusted either"
         )
 
 
