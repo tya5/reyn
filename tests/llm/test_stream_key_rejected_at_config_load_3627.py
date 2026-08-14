@@ -112,15 +112,28 @@ def test_the_stream_field_survives_the_reyn_config_models_layer():
     assert "stream" not in spec.kwargs
 
 
-def test_stream_key_rejected_through_extends_merge_path():
-    """Tier 1: #3627 — a `stream` introduced via an `extends` merge (the
-    OTHER ModelSpec producer besides `from_config`) is rejected too — single
-    validation site (`__post_init__`) covers both producers by construction."""
-    with pytest.raises(ValueError, match="reyn decides"):
-        ModelResolver({
-            "base": {"model": "openai/gpt-4o"},
-            "child": {"extends": "base", "stream": True},
-        })
+def test_stream_key_accepted_and_consumed_through_extends_merge_path():
+    """Tier 1: #4689 — inverted (again) from what this test used to pin, for
+    the SAME reason `test_a_model_class_stream_field_is_accepted_and_consumed`
+    above already inverted the plain-`from_config` case: the owner decision
+    that made `stream` a real, accepted ModelSpec field applies uniformly
+    to every producer of one, not just `from_config`. Before #4689, the
+    `extends`-merge path bypassed `from_config`'s field extraction entirely
+    (a direct `ModelSpec(model=model, kwargs=merged)` call), so `stream`
+    landed in `kwargs` unextracted and tripped THIS file's own rejection
+    guard — an inconsistency with the plain-dict path, not an intentional
+    stricter rule for `extends` specifically. #4689 routes the `extends`
+    path through `from_config` too (needed for that PR's own
+    `max_input_tokens` field to propagate through `extends` at all),
+    which closes the inconsistency as a side effect: `stream` via `extends`
+    now behaves identically to `stream` via a plain dict."""
+    resolver = ModelResolver({
+        "base": {"model": "openai/gpt-4o"},
+        "child": {"extends": "base", "stream": True},
+    })
+    spec = resolver.resolve("child")
+    assert spec.stream is True
+    assert "stream" not in spec.kwargs
 
 
 def test_no_stream_key_is_unaffected():

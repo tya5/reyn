@@ -12,6 +12,17 @@ Fallback policy (unknown models):
     knows the model is not cataloged. 128_000 was chosen as a floor that is
     below all commercial production models' actual context windows, so the
     compaction logic errs on the side of compacting more rather than less.
+
+Priority order (#4689, owner instruction): operator-declared config >
+LiteLLM catalog > the 128K fallback above — unconditionally, not just when
+the catalog lookup fails. ``register_max_input_overrides`` is how a
+``llm.models.<tier>.max_input_tokens`` declaration reaches this module:
+every one of this file's 8 call sites only ever holds an already-resolved
+LiteLLM model STRING (never a class name or a ``ModelResolver``), so the
+override is registered ONCE, wherever a ``ModelResolver`` is actually
+constructed (``reyn.llm.model_resolver.ModelResolver.max_input_token_overrides``
+does the class-name -> model-string resolution), keyed by model string —
+every call site here benefits without any of them changing.
 """
 from __future__ import annotations
 
@@ -33,6 +44,54 @@ _FALLBACK_MAX_INPUT_TOKENS = 128_000
 # Emit the fallback warning at most once per process per model string so noisy
 # repeated calls don't flood logs. Keyed by model string.
 _warned_models: set[str] = set()
+
+# #4689: operator-declared max_input_tokens, keyed by resolved LiteLLM
+# model string. PROCESS-SHARED, same lifetime/scope as _warned_models
+# above — reyn can hold multiple sessions (possibly different projects,
+# different configs) in one process. Cumulative collision detection (see
+# register_max_input_overrides) is what keeps that sharing safe: a second,
+# DIFFERENT declaration for the same model string is rejected loudly
+# rather than silently overwriting the first session's value (lead-coder
+# ruling, #4689 — the same "config wins here, silently doesn't win there"
+# confusion #4680 already caused, this time from cross-session sharing
+# rather than cross-call-site sharing).
+_config_max_input_overrides: "dict[str, int]" = {}
+
+
+class MaxInputTokensConflictError(ValueError):
+    """Two DIFFERENT registrations (same process, possibly different
+    sessions/configs) declared a different max_input_tokens for the SAME
+    resolved model string. Raised rather than silently letting the later
+    registration win — an operator whose config IS being honored must
+    never end up unknowingly overridden by another session's config for
+    the same model."""
+
+
+def register_max_input_overrides(mapping: "dict[str, int]") -> None:
+    """Register *mapping* (``{model string: max_input_tokens}``, typically
+    ``ModelResolver.max_input_token_overrides()``'s own return value) into
+    the process-shared registry ``_resolve_max_input`` consults first,
+    ahead of the LiteLLM catalog.
+
+    Idempotent for an identical re-registration (the same model string,
+    the same value — e.g. two Sessions sharing one project's config) —
+    only a GENUINE conflict (same model string, a DIFFERENT value) raises
+    :class:`MaxInputTokensConflictError`. Call once per ``ModelResolver``
+    construction (``registry_bootstrap.py`` and the 3 other sites that
+    build one) — never inside a hot path, this is a startup-time
+    registration, not a per-call operation."""
+    for model, value in mapping.items():
+        existing = _config_max_input_overrides.get(model)
+        if existing is not None and existing != value:
+            raise MaxInputTokensConflictError(
+                f"conflicting max_input_tokens registered for model "
+                f"{model!r}: {existing} (already registered) vs {value} "
+                f"(new registration) — two different sessions/configs in "
+                f"this process declared different values for the same "
+                f"model string. Give them the same value, or route them "
+                f"through different model classes/strings."
+            )
+        _config_max_input_overrides[model] = value
 
 
 def _lookup_max_input(model: str) -> "int | None":
@@ -68,7 +127,16 @@ def _resolve_max_input(model: str) -> "tuple[int, str, bool]":
     ``get_max_input_tokens`` and ``get_max_input_tokens_source`` both delegate
     to, so the #1162 prefix-strip-retry resolution order exists in ONE spot
     (previously duplicated across the two functions, a silent-drift risk if
-    the order ever changed in only one place)."""
+    the order ever changed in only one place).
+
+    #4689: an operator-declared config override (registered via
+    ``register_max_input_overrides``) wins UNCONDITIONALLY — checked
+    before the catalog lookup, not as a fallback for when the catalog
+    lookup fails (owner instruction: "catalog が外れた時だけ、ではない")."""
+    config_override = _config_max_input_overrides.get(model)
+    if config_override is not None:
+        return config_override, f"config: llm.models.<tier>.max_input_tokens ({model})", False
+
     max_input = _lookup_max_input(model)
     if max_input is not None:
         return max_input, f"litellm catalog: {model}", False
