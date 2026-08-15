@@ -23,9 +23,7 @@ keywords = [
     # "phase" removed (#4737): a PyPI discovery keyword for the phase-graph
     # skill engine, removed in #2434/#2438 — "dsl" above still applies (the
     # live pipeline DSL), this one described a feature that no longer
-    # exists. No wording choice here (unlike the `description` field two
-    # PRs up: #4745, owner-blocked) — just a dead entry with nothing left
-    # to point at.
+    # exists.
     "LLM workflow",
 ]
 classifiers = [
