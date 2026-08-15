@@ -3,6 +3,12 @@
 Tier 1 rules only. Rationale, instances and measurements live in the linked
 deep-dive docs — read those on demand, not every session.
 
+**Editing this file** — every line loads into every session. Before adding
+one, ask *would removing this cause a mistake?* If no, do not add it. **If CI
+can catch the violation, write the gate, not a rule here.** Prose is how this
+file grows: 1,310 → 2,443 words in three months, with no rules added at that
+rate. Put `wc -w CLAUDE.md` in the PR that touches it.
+
 ## Constitution
 
 > **Reyn is an operating system for LLM agents** — they decide, organize, and orchestrate; the OS makes every action typed, permissioned, audited, and recoverable by construction.
@@ -19,36 +25,35 @@ New features are read through **eight lenses** and must stand on the
 - Full 8×7 table: `docs/concepts/architecture/charter.md`.
 
 **The lenses gate features. These three gate everything else** — a changed
-default, a new fallback, a new recovery command (#4677 / #4680 / #4501):
+default, a new fallback, a new recovery command:
 
 1. **Who stops this if it repeats?** Name the bounding subject, or there isn't one.
 2. **Is this visible with the shipped config?** If seeing it requires changing a setting, it is not visible.
 3. **Does the repair destroy the evidence?** If it does, say what survives it.
 
-No fourth question for "what nobody wrote": a checklist item asking whether you
-considered it is answered "yes" every time.
+There is no fourth question for "what nobody wrote" — a checklist item asking
+whether you considered it is answered "yes" every time.
 
 ## Hard rules
 
-- **A doc describing a mechanism is stale the moment that mechanism's code — or a doc it mirrors — changes; fix it in the SAME PR.** Re-read the whole section your change touches, not just the line whose keyword you already had in mind (#2949→#2958). **The reviewer owns this too** — the author already searched, and **a search that missed something cannot report that it missed**; the reviewer's value is a *different* query, not a better one. Ask "what does this change make false?" before approving (#4841→#4843, #4851→#4853: two mirror-side misses, one day, both caught only after merge).
-- **`docs/reference/runtime/control-ir.md` must stay synced with `OP_KIND_MODEL_MAP`** (`src/reyn/schemas/models.py`). New op kind → new section, same PR. **No CI checks this** — the CI-checked pair is `OP_KIND_MODEL_MAP` ↔ the `Op` union (#3410).
-- **Audit-event kinds are a closed vocabulary.** Emitting a kind, declaring it in `AUDIT_EVENT_KINDS` (`src/reyn/core/events/event_schema.py`), and enumerating it in `docs/reference/runtime/events.md` is ONE three-part change; CI fails on any two without the third (`tests/core/test_audit_event_kind_vocabulary_3410.py`). **CI checks the flat enumeration only — the semantic table row is on you** (#4589 / #4591).
-- **Recovery-feature PRs need a truncate-falsify test**: set X → truncate the WAL past X's events → reconstruct → assert X survives. Same PR (#2259/#2260).
-- **`enforcement_self_test` (`src/reyn/security/sandbox/self_test.py`) stays 2-layer** (deny leg only, write + spawn axes). The richer per-axis contract is CI-conformance-only. Folding a new axis in needs an owner-level decision (#2983).
+- **A doc describing a mechanism is stale the moment that mechanism's code — or a doc it mirrors — changes; fix it in the SAME PR.** Re-read the whole section, not just the line whose keyword you had in mind. **The reviewer owns this too**: a search that missed something cannot report that it missed, so the reviewer's value is a *different* query. Ask "what does this change make false?" before approving.
+- **`docs/reference/runtime/control-ir.md` must stay synced with `OP_KIND_MODEL_MAP`** (`src/reyn/schemas/models.py`). New op kind → new section, same PR. **No CI checks this** — the CI-checked pair is `OP_KIND_MODEL_MAP` ↔ the `Op` union.
+- **Audit-event kinds are a closed vocabulary.** Emitting a kind, declaring it in `AUDIT_EVENT_KINDS` (`src/reyn/core/events/event_schema.py`), and enumerating it in `docs/reference/runtime/events.md` is ONE three-part change. **CI checks the enumeration only — the semantic table row is on you.**
+- **Recovery-feature PRs need a truncate-falsify test**: set X → truncate the WAL past X's events → reconstruct → assert X survives. Same PR.
+- **`enforcement_self_test` (`src/reyn/security/sandbox/self_test.py`) stays 2-layer** (deny leg only, write + spawn axes). The richer per-axis contract is CI-conformance-only. Folding a new axis in needs an owner-level decision.
 
 ### TUI colour policy
 
 Name the MEANING; the active Textual theme renders it. Never pick a colour
 first (owner ruling #3525). **No terminal dependence** (owner ruling #4840):
-reyn ships a full-colour theme, so there is nothing to defer to, and a slot in
-a terminal palette carries a colour name rather than a role anyway.
+reyn ships a full-colour theme, so there is nothing to defer to.
 
 1. Meaning has a convention a reader already carries (*error*, *success*, *in-flight*) → map it to a Textual theme meaning: a theme token (`$error`, `$text-muted`, `$markdown-*` …) or an SGR `text-style`. Never an ANSI name.
 2. Meaning is reyn-specific → any value that serves the design, full-colour included.
 
 - **A colour is not a meaning.** "Error" is the meaning; red is one theme's rendering.
-- **One thing is forbidden, and it does not limit expressiveness**: a literal in a widget stylesheet (every value goes through a token in `src/reyn/interfaces/palette.py`, and stylesheets write a `@name@` marker).
-- `tests/interfaces/test_tui_colour_tokens.py` enumerates every colour-bearing declaration under `interfaces/` and fails on any value named outside the palette. Textual's own `DEFAULT_CSS` and `interfaces/web/` are out of scope.
+- **One thing is forbidden**: a literal in a widget stylesheet. Every value goes through a token in `src/reyn/interfaces/palette.py`, and stylesheets write a `@name@` marker.
+- `tests/interfaces/test_tui_colour_tokens.py` fails on any colour value named outside the palette. Textual's own `DEFAULT_CSS` and `interfaces/web/` are out of scope.
 
 ## Testing policy (READ BEFORE WRITING TESTS)
 
@@ -60,13 +65,13 @@ observation does not name its own referent**.
 - Each test belongs to exactly one Tier (1 Contract / 2 OS invariant / 3 LLM-replay). Anything else is **Tier 4 — do not write**.
 - First docstring line declares the Tier: `"""Tier 3a: ..."""`.
 - Declaring a Tier presupposes a named behaviour that exists **outside the test's own docstring**.
-- **Never fake a collaborator** when a real instance is cheaply constructible — no `MagicMock`/`AsyncMock`/`patch`, no hand-rolled stand-in. Use real instances or the `LLMReplay` Fake (#3037). **Cheap to construct is not the same as drivable**: a collaborator whose only trigger is its own timer (a watcher on an mtime) leaves a test that may not fake it and may not wait for it — the repair is to give it an external drive (`check()` you can call), not a fake and not a `sleep` (#4847).
-- **A test must not depend on private state** — not merely "never assert on it". The old wording named a syntactic position, so extracting `obj._x` to a local var one line above the assert satisfied it while changing nothing; three test files say in a comment that this is why they do it (#4864). Use the public surface or a `snapshot()`-style read; if neither exists, that absence is the finding.
+- **Never fake a collaborator** when a real instance is cheaply constructible — no `MagicMock`/`AsyncMock`/`patch`, no hand-rolled stand-in. Use real instances or the `LLMReplay` Fake. **Cheap to construct is not the same as drivable**: a collaborator triggered only by its own timer may neither be faked nor waited for — give it an external drive (a `check()` you can call).
+- **A test must not depend on private state** — not merely "never assert on it": naming a syntactic position only moves the read one line up. Use the public surface or a `snapshot()`-style read; if neither exists, that absence is the finding. The corpus does not comply yet (#4864) and nothing mechanical enforces this.
 - **Never pin algorithm-level behaviour** — sort order, dict iteration order, cache structure, exact whitespace.
 - **No snapshot/golden-file tests** outside `tests/scaffold/`.
-- **A test writes no duration, in EITHER direction.** A duration is **rarely** the property under test; it is usually a stand-in for an observation nobody exposed — so reaching for one says the seam is missing. When a duration genuinely IS the subject (a timing instrument measuring elapsed time), the clock is still an **input** you supply, never a `sleep` you wait out: `sleep(0.05)` gives an approximation and makes the assert compare two clocks. Both shapes fail the same way: the machine that runs it decides whether the assert passes.
+- **A test writes no duration, in EITHER direction.** A duration is **rarely** the property under test; it usually stands in for an observation nobody exposed, so reaching for one says the seam is missing. When a duration genuinely IS the subject, the clock is an **input** you supply, never a `sleep` you wait out.
   - **Ceiling** (how long we will wait): no `@pytest.mark.timeout`, no `attempts=200`, no `range(N)` wrapping a wait. Wait on the condition unboundedly; CI's `--timeout=120` is the kill switch.
-  - **Floor** (how long something must take): **no `sleep(N)` the assertion depends on** — sized to outrun a threshold (`(_TRIPWIRE_MS + 150) / 1000` is the shape), to let a task settle, or to let a clock tick (an mtime, a TTL). Inject the threshold or the clock. `LoopProbe(threshold_ms=…)` has been injectable all along and no test used it; 4 unrelated PRs were reddened before anyone read the sleep (#4844). Splitting the decision out as a pure function removes the place a duration could be written at all (#4847).
+  - **Floor** (how long something must take): **no `sleep(N)` the assertion depends on** — not to outrun a threshold, not to let a task settle, not to let a clock tick (#4844). Inject the threshold or the clock. Splitting the decision out as a pure function removes the place a duration could be written at all.
 - Tests for an extracted refactor live in `tests/scaffold/` with `triggered_by`/`removed_by`, and are **deleted in the PR that lands the refactor**.
 
 ## Comment policy (READ BEFORE WRITING OR MOVING A COMMENT)
@@ -83,11 +88,11 @@ conflate it with `verification-hazards.md`, which is about misreading a green.
 `test_tier_audit.py` matches the Tier line as a *string*; a declaration is not
 a classification, and nothing else looks.
 
-1. **Which Tier does it fit — 1, 2, 3, or none?** Name the one. Two shapes that look like they fit and do not: **a third party's property** and **a past bug's fingerprint**. "It's reyn's" is not an answer — reyn's own trivia fits no Tier either. General form: *if this assert fails, whose bug is it?*
-2. **Is it the implementation, transcribed?** Same expression on both sides can only fail when someone edits that line — and they will edit both.
-3. **Who would miss this test if it were gone?** *nobody* → delete. *A situation only this test constructs* → delete. *A production consumer* → keep. "Was handed X" is not a witness for "used X".
-4. **Would it stay green having never run — or having run with nothing to bite on?** skip / collection error / zero collected all wear green's colour; so does an assert over an **empty** collection (`assert not [e for e in xs if …]` passes unconditionally when `xs` is empty). Name what a missing optional dependency silently skips.
-5. **What does it accumulate, and who bounds it?** A `list()` over a producer paced by the caller is unbounded by construction.
+1. **Which Tier does it fit — 1, 2, 3, or none?** *If this assert fails, whose bug is it?* Two shapes that look like they fit and do not: a third party's property, a past bug's fingerprint.
+2. **Is it the implementation, transcribed?** The same expression on both sides fails only when someone edits that line — and they will edit both.
+3. **Who would miss this test if it were gone?** "Was handed X" is not a witness for "used X".
+4. **Would it stay green having never run, or having run with nothing to bite on?** skip / collection error / zero collected / an assert over an **empty** collection all wear green's colour.
+5. **What does it accumulate, and who bounds it?**
 6. **Is the declared Tier the true one?** Only a human can answer this.
 
 | | blocks when the answer is |
@@ -99,10 +104,10 @@ a classification, and nothing else looks.
 | 5 | **anything outside the test bounds it** — a thread, a timer, the caller's pace |
 | 6 | the declared Tier is not the one question 1 named |
 
-- 4 blocks on the **silence**, not on the skip — a whole-file skip in CI is often correct; a green nobody qualified is not.
+- 4 blocks on the **silence**, not on the skip: a whole-file skip is often correct; a green nobody qualified is not.
 - 5 has no carve-out: "it is small today" is a measurement of today.
 - 3 needs no accept-side exception — an accept-side test's consumer is the operators the gate would have false-positived against.
-- **When something forces you to touch a test — a bump, a rebase, a CI failure — ask "should this exist" before "how do I make it pass again."** Repair-mode never runs that search, and a forced touch is when deletion is cheapest.
+- **When something forces you to touch a test — a bump, a rebase, a CI failure — ask "should this exist" before "how do I make it pass again."**
 - **Reviewer's note, on the PR**: record the answers per test before merging.
 
 Instances and the full essays: `docs/deep-dives/contributing/test-review-six-questions.md`.
@@ -120,7 +125,7 @@ files>`, `python scripts/verify_module_docstrings.py <changed src files>`,
 `python scripts/check_tests_path_literal_reference.py` (re-run right before
 pushing — its baseline goes stale when `main` moves), and `pytest` **scoped to
 your diff**. Do NOT run the full suite locally — CI does that in a clean
-checkout (#3791).
+checkout. A green scoped `pytest` is **not** a green CI run.
 
 Path-conditional gates:
 
@@ -128,16 +133,15 @@ Path-conditional gates:
 - `src/reyn/mcp/` → `python scripts/check_fastmcp_import_boundary.py` (zero baseline: no `import fastmcp` under that directory).
 - `tests/` → `python scripts/check_bare_tests_import_reference.py` and `python scripts/check_file_depth_reference.py`.
 
-A green scoped `pytest` is **not** a green CI run.
-
-1. **Finish your own Test plan before merge.** Tick every Manual/Visual item or replace with `- [x] (skipped — <reason>)`. **Never tick a check that did not happen.** **Standing waiver, Visual items only** (owner 2026-08-08): merge with the Visual box unchecked (leave it unchecked — do not fabricate it) — the operator can only see a TTY result on `main`. Falsification, consumer-sweep and CI gates are unaffected.
+1. **Finish your own Test plan before merge.** Tick every Manual/Visual item or replace with `- [x] (skipped — <reason>)`. **Never tick a check that did not happen.** **Standing waiver, Visual items only** (owner 2026-08-08): merge with the Visual box unchecked — do not fabricate it.
 2. **Role-prefix every issue / PR body / PR comment** — `**[lead-coder]** — `, etc. The PR body counts. This is the ONLY cross-session signal.
-3. **Broker is a hint; the PR is the contract.** It is in-memory, lags ~30s, and has no ack. Put critical pause/block signals on the PR **and** broker. **Deliver every new assignment over broker** — one written only on the issue reaches nobody (#4737 / #4763 / #4776).
-4. **Never place a closing keyword next to an issue number** unless the PR really closes it — GitHub matches literally, negation and context included. Sub-PRs use `part of #X`. Before writing `Closes #X`, enumerate open PRs with `part of #X` in the body. The same matching applies to **commit messages** (a squash body concatenates them), and a body edit does not fix a commit-message violation.
+3. **Broker is a hint; the PR is the contract.** It is in-memory, lags ~30s, has no ack. Put critical pause/block signals on the PR **and** broker. **Deliver every new assignment over broker** — one written only on the issue reaches nobody.
+4. **Never place a closing keyword next to an issue number** unless the PR really closes it — GitHub matches literally, negation and context included. Sub-PRs use `part of #X`; before writing `Closes #X`, enumerate open PRs with `part of #X`. The same matching applies to **commit messages** (a squash body concatenates them), and a body edit does not fix one.
 5. **No blanket en/ja mirror obligation.** Fix a `.ja.md` file only when the PR falsifies something it asserts.
 6. **Arc-closure remainder rule**: every remainder is **filed** or **explicitly dropped**, in the closing comment. "Next arc" is a third, silent state.
 7. **A reviewer's blocking point goes in the PR body** as `- [ ] 🔴 <point>`, not only in a review comment — `--request-changes` does not work here. Rule 4 applies to that edit too.
 8. **A PR touching `tests/` does not self-merge until a reviewer's TESTS-READ note lands on the PR.**
+9. **Arming auto-merge ends your reading of that PR** — a checkbox added afterwards is invisible to the merge. Do not arm while a reviewer's point is open, and re-check the body before arming.
 
 **Issue-triage label `blocked:external`** — needs owner judgment or an upstream
 dependency. An open issue WITHOUT it is pickable by any peer session.
