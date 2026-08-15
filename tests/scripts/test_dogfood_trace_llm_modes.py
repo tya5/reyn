@@ -166,6 +166,63 @@ class TestLlmPayloadsMode:
         assert "no LLM request records" in out
 
 
+class TestPromptCacheKeyDisplay:
+    """Tier 2: #4809 — llm-payloads and llm-detail both surface
+    prompt_cache_key, distinguishing "not recorded at all" (a trace
+    dumped before #4809 landed — SAMPLE_RECORDS has no such field, the
+    realistic pre-fix shape) from an explicit null from from a real
+    value."""
+
+    def test_pre_4809_trace_shows_unrecorded_not_a_crash_or_blank(self, tmp_path: Path) -> None:
+        """Tier 2: SAMPLE_RECORDS predates #4809 (no prompt_cache_key key at
+        all) — llm-payloads must say so explicitly, not silently omit the
+        field or crash on the missing key."""
+        trace = tmp_path / "trace.jsonl"
+        _write_trace(trace, SAMPLE_RECORDS)
+
+        out, rc = _run(["--mode", "llm-payloads", "--trace", str(trace)])
+        assert rc == 0
+        assert "unrecorded" in out
+
+    def test_explicit_none_shown_as_none_not_unrecorded(self, tmp_path: Path) -> None:
+        """Tier 2: a caller that resolved "no key for this call" (key
+        present, value null) must read differently from a pre-#4809 trace
+        that never had the key — the whole distinction #4809 exists for."""
+        records = [dict(r) for r in SAMPLE_RECORDS]
+        records[0]["prompt_cache_key"] = None
+        trace = tmp_path / "trace.jsonl"
+        _write_trace(trace, records)
+
+        out, rc = _run(["--mode", "llm-payloads", "--trace", str(trace)])
+        assert rc == 0
+        assert "prompt_cache_key=(none)" in out
+        assert "unrecorded" not in out.split(REQUEST_ID_A)[1].split("\n")[0], (
+            "the explicit-None request's own line must not say 'unrecorded'"
+        )
+
+    def test_real_value_shown_verbatim_in_payloads_mode(self, tmp_path: Path) -> None:
+        """Tier 2: a real prompt_cache_key value appears in the llm-payloads summary."""
+        records = [dict(r) for r in SAMPLE_RECORDS]
+        records[0]["prompt_cache_key"] = "alpha:main"
+        trace = tmp_path / "trace.jsonl"
+        _write_trace(trace, records)
+
+        out, rc = _run(["--mode", "llm-payloads", "--trace", str(trace)])
+        assert rc == 0
+        assert "prompt_cache_key=alpha:main" in out
+
+    def test_real_value_shown_verbatim_in_detail_mode(self, tmp_path: Path) -> None:
+        """Tier 2: a real prompt_cache_key value appears in the llm-detail view."""
+        records = [dict(r) for r in SAMPLE_RECORDS]
+        records[0]["prompt_cache_key"] = "alpha:main"
+        trace = tmp_path / "trace.jsonl"
+        _write_trace(trace, records)
+
+        out, rc = _run(["--mode", "llm-detail", REQUEST_ID_A, "--trace", str(trace)])
+        assert rc == 0
+        assert "alpha:main" in out
+
+
 class TestLlmDetailMode:
     """Tier 2: llm-detail mode pretty-prints a single request's full payload."""
 

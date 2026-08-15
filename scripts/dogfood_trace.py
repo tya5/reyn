@@ -442,9 +442,23 @@ def mode_llm_payloads(records: list[dict], multi_file: bool = False) -> None:
 
         tool_count = len(tools) if tools else 0
         file_tag = f"  [file={req.get('_source_file', '?')}]" if multi_file else ""
+        # #4809: prompt_cache_key printed on every line (not just llm-detail)
+        # so a scan across a session's own request list is enough to answer
+        # #4690's own open question — does the value stay stable turn to
+        # turn, or does it change per call — without opening each request
+        # individually. Three-way, not just "value or (none)": a trace
+        # dumped before #4809 landed never had this key in the record at
+        # all, and reading that the same as an explicit None would silently
+        # misreport "not sent" for a call that simply predates this fix.
+        if "prompt_cache_key" in req:
+            pck = req["prompt_cache_key"]
+            pck_display = "(none)" if pck is None else pck
+        else:
+            pck_display = "(unrecorded, pre-#4809 trace)"
         print(
             f"[{rel_req}] request_id={rid_full}  model={model}  "
-            f"caller={caller}  msgs={len(msgs)}  tools={tool_count}{file_tag}"
+            f"caller={caller}  msgs={len(msgs)}  tools={tool_count}  "
+            f"prompt_cache_key={pck_display}{file_tag}"
         )
 
         if resp is not None:
@@ -496,6 +510,13 @@ def mode_llm_detail(records: list[dict], request_id: str, full: bool = False) ->
     print(f"=== LLM Call Detail: {request_id} ===")
     print(f"  model:       {req.get('model', '?')}")
     print(f"  caller_hint: {req.get('caller_hint', 'unknown')}")
+    # #4809: same three-way distinction as mode_llm_payloads's own summary
+    # line — absent key (pre-#4809 trace) vs explicit None vs a real value.
+    if "prompt_cache_key" in req:
+        _pck = req["prompt_cache_key"]
+        print(f"  prompt_cache_key: {'(none)' if _pck is None else _pck}")
+    else:
+        print("  prompt_cache_key: (unrecorded, pre-#4809 trace)")
     print(f"  timestamp:   {req.get('timestamp', '?')}")
     if req.get("_source_file"):
         print(f"  source_file: {req['_source_file']}")
