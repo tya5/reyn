@@ -44,6 +44,7 @@ from reyn.core.events.snapshot_generations import (
     Branch,
     RewindBeyondRetentionError,
     RewindIntoAbandonedError,
+    RewindQuiesceTimeoutError,
     SnapshotGenerationStore,
     active_rewind_target,
     branch_ids_for,
@@ -68,6 +69,47 @@ DEFAULT_AGENT_NAME = "default"
 # that are still stuck — e.g. blocked mid-LLM-call on a slow/hung provider, which
 # never reaches the boundary to see the sentinel. Keeps /quit from hanging.
 _SHUTDOWN_GRACE_S = 3.0
+
+# #4771: per-connection worst-case for ONE MCP client's own close() teardown —
+# NOT reused from _SHUTDOWN_GRACE_S above (that name names shutdown, and its
+# meaning is different: shutdown can safely abandon a straggler because the
+# PROCESS exits right after; a rewound session keeps running, so proceeding
+# past an unquiesced session risks a straggler WAL append landing past the
+# reset-record — see RewindQuiesceTimeoutError's own docstring). Measured by
+# reading the installed SDK's own teardown source directly (#4771 — NOT a
+# guessed number, per the owner's standing "no baseless constant" rule),
+# `mcp/client/stdio.py` (installed mcp==2.0.0):
+#   PROCESS_TERMINATION_TIMEOUT (2.0s, wait after closing stdin)
+#   + FORCE_KILL_TIMEOUT        (2.0s, SIGTERM -> SIGKILL grace, POSIX)
+#   + _KILL_REAP_TIMEOUT        (2.0s, wait for the kill to land)
+#   + _WRITER_FLUSH_TIMEOUT     (0.5s, writer-side flush cap)
+#   = 6.5s, and critically the SDK's own teardown ALWAYS returns even in the
+#   worst case (a logged "abandoning it" rather than hanging further) — so
+#   reyn adds NO timeout of its own at the MCP-close layer (#4771's own
+#   conclusion: stacking a second, reyn-side timeout on an already-bounded
+#   third party would create two independent truths about how long
+#   teardown may take, with no way to tell which one actually fired).
+# ONLY the stdio transport was measured this way — HTTP/SSE transports'
+# close-path bound was not verified with the same rigor (#4771).
+_MCP_CLIENT_CLOSE_WORST_CASE_S = 6.5
+
+
+def _quiesce_bound_s(held_mcp_connections: int) -> float:
+    """The rewind quiesce timeout for a session holding
+    ``held_mcp_connections`` open MCP connections (#4771) — a pure
+    function, deliberately separate from :meth:`AgentRegistry.
+    _await_quiescent_bounded`'s own ``asyncio.wait_for`` call so a test
+    can assert on the VALUE this returns instead of racing a real clock
+    against it (lead-coder review, #4799).
+
+    ``max(1, held_mcp_connections)``: a floor of one whole
+    :data:`_MCP_CLIENT_CLOSE_WORST_CASE_S` unit even for a connection-less
+    session (the common case) — the OTHER quiesce steps (``_turn_idle``,
+    chain-timeout watchdog cancellation) still need a real, non-zero
+    window, not a timeout racing effectively zero."""
+    return max(1, held_mcp_connections) * _MCP_CLIENT_CLOSE_WORST_CASE_S
+
+
 # FP-0043 Stage 3: the implicit per-agent session id. Single-session paths
 # resolve to this id, keeping N=1 behaviour byte-identical. Spawned sessions get
 # generated ids (Stage 4 routes inbound messages to non-default sessions).
@@ -1440,6 +1482,59 @@ class AgentRegistry:
             name, self._session_generations_dir(name, sid),
         )
 
+    async def _await_quiescent_bounded(self, session: "object") -> None:
+        """``session.await_quiescent()``, bounded and fail-safe (#4771).
+
+        ``await_quiescent()`` is otherwise unbounded by design — see its own
+        docstring's "critical invariant": once it returns, no WAL append can
+        still land, because a straggler past the reset-record seq would
+        silently contaminate the active branch. This wraps that call for
+        REWIND specifically (not shutdown, and not a change to
+        ``await_quiescent()`` itself, which stays correct for any other
+        caller that genuinely needs to wait out true quiescence).
+
+        On timeout, raises :class:`RewindQuiesceTimeoutError` — the rewind
+        ABORTS before the reset-record is ever appended (see that
+        exception's own docstring for why this is the opposite tradeoff
+        from ``shutdown()``'s bounded wait: a rewound session keeps
+        running afterward, so "log and proceed" would risk landing the
+        straggler in a session the operator believes was reset — silent
+        corruption, not just a hang).
+
+        Cancellation caveat (lead-coder review, #4799): ``asyncio.wait_for``
+        cancels the ``await_quiescent()`` coroutine on timeout, but any
+        durable WAL write that had ALREADY been handed to
+        ``DurabilityWorker.submit`` before that moment is NOT itself
+        cancelled — the worker drains its queue on its OWN task,
+        independent of the caller that submitted the write (see
+        ``durability_worker.py``'s own docstring: "a background task
+        drained by ONE background task"). Such a write can still land
+        durably after this method raises. This is SAFE specifically
+        because ``checkout()`` never reaches step 4 (the reset-record
+        append) on this path — there is no reset-record for that write to
+        land "past"; it becomes an ordinary entry on the still-live,
+        un-rewound branch, exactly as if this rewind attempt had never
+        been made.
+
+        The bound value itself is computed by :func:`_quiesce_bound_s` — a
+        pure function, kept separate specifically so a test can assert on
+        the VALUE (0 connections -> 1 unit, 3 connections -> 3 units)
+        instead of racing a real clock against it (lead-coder review,
+        #4799: a sleep-vs-bound margin test is flaky under a loaded
+        runner, and a failure there can't distinguish "the formula broke"
+        from "the runner was slow")."""
+        held = len(session.mcp_held_servers())
+        bound_s = _quiesce_bound_s(held)
+        try:
+            await asyncio.wait_for(session.await_quiescent(), timeout=bound_s)
+        except TimeoutError as exc:
+            raise RewindQuiesceTimeoutError(
+                f"session {session.agent_name!r} did not quiesce within "
+                f"{bound_s:.1f}s ({held} held MCP connection(s)) — rewind "
+                "aborted before the reset-record was appended, to avoid a "
+                "straggler WAL append landing past it"
+            ) from exc
+
     async def checkout(self, seq: int) -> dict:
         """Global consistent-cut checkout to ANY WAL ``seq`` (ADR-0038 D8 Phase-2).
 
@@ -1501,8 +1596,14 @@ class AgentRegistry:
             for session in sessions:
                 await session.cancel_inflight()
             # 3. all-quiesce (re-drain to a fixpoint — no append lands past the reset).
+            # #4771: bounded + fail-safe — see _await_quiescent_bounded's own
+            # docstring. A session that can't confirm quiescence within its
+            # bound aborts the WHOLE checkout here, before step 4 ever
+            # appends the reset-record — nothing has been written yet, so
+            # this is a clean, no-op failure for the caller to retry or
+            # investigate, not a partial/torn rewind.
             for session in sessions:
-                await session.await_quiescent()
+                await self._await_quiescent_bounded(session)
             # 4. single global reset-record; supersedes = prior active head (audit).
             prior_head = self._state_log.last_durable_seq
             reset_seq = await _append_reset_record(
