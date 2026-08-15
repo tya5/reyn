@@ -38,20 +38,17 @@ considered it is answered "yes" every time.
 
 ### TUI colour policy
 
-Name the MEANING; the active theme renders it. Never pick a colour first
-(owner ruling #3525). **"The theme" is whichever theme is active** — reyn's own
-full-colour default, a Textual builtin, or an `ansi-*` theme that defers to the
-terminal emulator's palette. Terminal palettes are not a vocabulary: the escape
-codes are standardised, the RGB behind them is not, and a slot carries a colour
-name, not a role — that is why the roles live in a theme.
+Name the MEANING; the active Textual theme renders it. Never pick a colour
+first (owner ruling #3525). **No terminal dependence** (owner ruling #4840):
+reyn ships a full-colour theme, so there is nothing to defer to, and a slot in
+a terminal palette carries a colour name rather than a role anyway.
 
-1. Meaning has a convention a reader already carries (*error*, *success*, *in-flight*) → name it so every theme can render it: a theme token (`$error`, `$text-muted`, `$markdown-*` …) or an SGR `text-style`. **reyn never names an ANSI slot itself** (owner ruling #4840) — an operator who wants the terminal's own values selects an `ansi-*` theme, and the theme defers. `ansi_blue` in the palette forces that on themes that had a colour of their own.
-2. Meaning is reyn-specific → any value that serves the design, full-colour included. No theme has an opinion to defer to.
+1. Meaning has a convention a reader already carries (*error*, *success*, *in-flight*) → map it to a Textual theme meaning: a theme token (`$error`, `$text-muted`, `$markdown-*` …) or an SGR `text-style`. Never an ANSI name.
+2. Meaning is reyn-specific → any value that serves the design, full-colour included.
 
-- **A colour is not a meaning.** "Error" is the meaning; red is one theme's rendering. Never pick the colour first.
+- **A colour is not a meaning.** "Error" is the meaning; red is one theme's rendering.
 - **One thing is forbidden, and it does not limit expressiveness**: a literal in a widget stylesheet (every value goes through a token in `src/reyn/interfaces/palette.py`, and stylesheets write a `@name@` marker).
-- **`ansi_default` is now a theme-resolution hazard, not a palette rule.** ANSI default is the one colour with no RGB behind it: alpha-compositing over it destroys the terminal's own value and Textual's `dim_color` crashes on it (`filter.py:142`, #4850). reyn no longer names it — but an `ansi-*` theme can still resolve a token to it, so no grep over `palette.py` rules it out.
-- `tests/interfaces/test_tui_colour_tokens.py` enumerates every colour-bearing declaration under `interfaces/` and fails on any value named outside the palette. Textual's own `DEFAULT_CSS` and `interfaces/web/` (a browser, not a terminal — no terminal to defer to) are out of scope.
+- `tests/interfaces/test_tui_colour_tokens.py` enumerates every colour-bearing declaration under `interfaces/` and fails on any value named outside the palette. Textual's own `DEFAULT_CSS` and `interfaces/web/` are out of scope.
 
 ## Testing policy (READ BEFORE WRITING TESTS)
 
