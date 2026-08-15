@@ -17,11 +17,8 @@ def build_parser() -> argparse.ArgumentParser:
         # #4737: "Agent OS MVP — LLM-driven phase execution" described the
         # phase-graph skill engine, removed #2434/#2438 — a false present-
         # tense claim on the single most user-visible surface (`reyn --help`,
-        # every user's first command). This wording is a PROPOSAL, not an
-        # owner decision — the PR that landed this change lists alternative
-        # candidates; this string is the owner's own face on the product,
-        # so it should be picked deliberately rather than accepted as
-        # this default.
+        # every user's first command). Owner ruling 2026-08-15: A (see
+        # #4745 for B/C, the alternatives not chosen).
         description="Agent OS — decide, spawn, orchestrate, bounded by construction",
     )
     sub = parser.add_subparsers(dest="command", metavar="<command>")
