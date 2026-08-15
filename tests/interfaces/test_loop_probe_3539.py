@@ -21,7 +21,7 @@ import pytest
 from textual.widgets import Tab
 from textual_flowview import FlowView
 
-from reyn.interfaces.inline.textual_chat import TextualChatApp
+from reyn.interfaces.inline.textual_chat import TextualChatApp, loop_probe
 from reyn.interfaces.inline.textual_chat.chrome import StatusLine
 from reyn.interfaces.inline.textual_chat.loop_probe import (
     LoopTripwire,
@@ -190,6 +190,55 @@ def test_it_speaks_once_with_a_magnitude_and_a_next_step() -> None:
     assert "1.8s" in stall_log_line(first)
     assert "REYN_PROF_DUMP" in stall_log_line(first), (
         "the durable record must say how to capture the detail next time"
+    )
+
+
+def test_the_durable_record_keeps_landing_while_the_banner_stays_quiet(
+    monkeypatch, tmp_path: Path,
+) -> None:
+    """Tier 2: #4761 ① — one ``_fired`` flag used to gate BOTH the once-only
+    human notice AND the durable ``write_record`` call, so a stall lasting
+    past the first tick left no durable trace of whether it recovered or
+    kept getting worse — exactly the question a frozen screen cannot answer
+    on its own. The once-only rule stays for the notice (unchanged by this
+    fix — see ``test_it_speaks_once_with_a_magnitude_and_a_next_step``
+    above); the durable record must keep landing independently, at
+    :data:`~reyn.interfaces.inline.textual_chat.loop_probe._RECORD_INTERVAL_S`
+    granularity, for as long as the stall continues.
+    """
+    import json
+
+    target = tmp_path / "probe.jsonl"
+    monkeypatch.setenv("REYN_PROF_DUMP", str(target))
+
+    clock = [1000.0]
+    monkeypatch.setattr(loop_probe.time, "monotonic", lambda: clock[0])
+
+    tripwire = LoopTripwire(threshold_ms=250.0)
+
+    first = tripwire.observe(1800.0)  # crosses — records AND fires the notice
+    clock[0] += 0.5  # inside the interval — still stalled, must NOT record yet
+    still_quiet = tripwire.observe(1900.0)
+    clock[0] += loop_probe._RECORD_INTERVAL_S  # interval elapsed, still stalled
+    still_stalled = tripwire.observe(2000.0)
+    clock[0] += loop_probe._RECORD_INTERVAL_S
+    recovered = tripwire.observe(50.0)  # back under threshold — no record
+
+    assert first is not None, "the first crossing must still fire the notice"
+    assert still_quiet is None, "the once-only notice must not repeat mid-interval"
+    assert still_stalled is None, (
+        "the notice stays quiet after the first crossing regardless of the "
+        "record interval — this fix only changes the durable record's cadence"
+    )
+    assert recovered is None
+
+    records = [
+        json.loads(line) for line in target.read_text(encoding="utf-8").splitlines()
+    ]
+    lateness_values = [r["lateness_ms"] for r in records if r["kind"] == "tripwire"]
+    assert lateness_values == [1800.0, 2000.0], (
+        "expected exactly the first crossing and the one past the interval — "
+        f"the mid-interval tick and the recovered tick must not add entries: {records!r}"
     )
 
 

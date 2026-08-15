@@ -46,6 +46,19 @@ _TRIPWIRE_MS = 250.0
 #: a stall a human would notice cannot hide between two ticks.
 _TICK_SECONDS = 0.05
 
+#: Minimum gap between two durable ``write_record("tripwire", ...)`` calls for
+#: the SAME ongoing stall (#4761 ①). Deliberately independent of the
+#: once-only banner/log notice below — that silence is about not burying a
+#: human-facing reply; this one is about the durable record still being able
+#: to answer "did it recover, or keep getting worse?" while nobody is
+#: watching, which is exactly the question a frozen screen cannot answer on
+#: its own. 2s: short enough that a multi-second stall (#4761's own report)
+#: leaves several data points, long enough that a multi-tick stall spanning
+#: seconds doesn't write one record per :data:`_TICK_SECONDS` (20/s) and
+#: flood ``REYN_PROF_DUMP`` — no config knob added for this one, since it
+#: gates a file that is already opt-in behind ``REYN_PROF_DUMP`` itself.
+_RECORD_INTERVAL_S = 2.0
+
 _DUMP_ENV = "REYN_PROF_DUMP"
 
 
@@ -119,6 +132,10 @@ class LoopTripwire:
         self._threshold_ms = threshold_ms
         self._max_lateness_ms = 0.0
         self._fired = False
+        #: Wall-clock time of the last durable ``write_record`` call, or
+        #: ``None`` before the first one — independent of ``_fired`` (#4761
+        #: ①: one flag was gating two different questions).
+        self._last_recorded_monotonic: "float | None" = None
 
     @property
     def max_lateness_ms(self) -> float:
@@ -142,13 +159,31 @@ class LoopTripwire:
         always-visible chrome row, :func:`stall_log_line` for the durable
         record) — wording either one here would make this the place a caller
         has to work around.
+
+        #4761 ①: the once-only rule above governs the RETURN VALUE (what the
+        human-facing banner/log notice does) — it does not also govern the
+        internal :func:`write_record` call. Those answer different questions:
+        the notice is "tell someone now, once," the durable record is "can a
+        later reader tell whether this recovered or kept getting worse,"
+        which silence cannot answer either way. So ``write_record`` keeps
+        firing at :data:`_RECORD_INTERVAL_S` while ``lateness_ms`` stays
+        above threshold, independently of whether this call also returns a
+        value.
         """
         if lateness_ms > self._max_lateness_ms:
             self._max_lateness_ms = lateness_ms
-        if lateness_ms <= self._threshold_ms or self._fired:
+        if lateness_ms <= self._threshold_ms:
+            return None
+        now = time.monotonic()
+        if (
+            self._last_recorded_monotonic is None
+            or now - self._last_recorded_monotonic >= _RECORD_INTERVAL_S
+        ):
+            write_record("tripwire", lateness_ms=round(lateness_ms, 1))
+            self._last_recorded_monotonic = now
+        if self._fired:
             return None
         self._fired = True
-        write_record("tripwire", lateness_ms=round(lateness_ms, 1))
         return lateness_ms
 
 
