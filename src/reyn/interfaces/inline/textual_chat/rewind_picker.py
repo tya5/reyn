@@ -37,7 +37,7 @@ from textual.content import Content
 from textual.message import Message
 from textual.widgets import OptionList, Static
 
-from reyn.interfaces.inline.textual_chat import palette
+from reyn.interfaces import palette
 
 #: Max characters of a point's ``ts`` shown in a row — the WAL timestamp is a
 #: free-form string read straight off the WAL entry, so it is truncated rather

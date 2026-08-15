@@ -71,7 +71,7 @@ from textual.widgets import Static
 if TYPE_CHECKING:
     from textual.timer import Timer
 
-from reyn.interfaces.inline.textual_chat import palette
+from reyn.interfaces import palette
 from reyn.interfaces.inline.textual_chat.sent_queue import ROW_TEXT_COLUMN
 
 #: The cancel affordance shown while a turn runs. Plain ASCII: the key it names

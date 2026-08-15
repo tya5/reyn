@@ -653,7 +653,7 @@ async def test_an_expanded_group_parent_recedes() -> None:
     resolve through a ``palette.py`` token, never a literal."""
     from rich.styled import Styled
 
-    from reyn.interfaces.inline.textual_chat.palette import TOKENS
+    from reyn.interfaces.palette import TOKENS
 
     transport = QueueTransport()
     app = TextualChatApp(transport=transport, clock=lambda: 100.0)

@@ -84,7 +84,7 @@ from textual.content import Content
 from textual.message import Message
 from textual.widgets import Static
 
-from reyn.interfaces.inline.textual_chat import palette
+from reyn.interfaces import palette
 
 from .presenter import _neutralized_label
 

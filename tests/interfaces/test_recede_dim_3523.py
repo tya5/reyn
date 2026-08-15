@@ -19,9 +19,9 @@ from __future__ import annotations
 import pytest
 from textual.app import App, ComposeResult
 
-from reyn.interfaces.inline.textual_chat.palette import TOKENS
 from reyn.interfaces.inline.textual_chat.rewind_picker import RewindPicker
 from reyn.interfaces.inline.textual_chat.search_bar import SearchBar
+from reyn.interfaces.palette import TOKENS
 
 
 class _Probe(App):
