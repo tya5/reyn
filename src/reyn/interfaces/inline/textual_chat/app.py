@@ -1230,6 +1230,20 @@ class TextualChatApp(App):
         #: Watches how late the event loop runs (#3539). Always on; see
         #: ``loop_probe`` for why it is not opt-in.
         self._loop_tripwire = LoopTripwire()
+        #: #4761 ②: the App's own message-pump heartbeat — incremented by
+        #: :meth:`on_timer` ONLY for :attr:`_pump_heartbeat_timer`'s own
+        #: ticks, which (no ``callback=`` given to ``set_interval``) post an
+        #: ``events.Timer`` message that only advances this counter once
+        #: Textual's own message-processing loop for THIS App actually
+        #: dequeues and dispatches it — unlike ``self._loop_tripwire``'s
+        #: worker, which is an independent ``asyncio`` task and keeps running
+        #: even if the App's own pump is the thing that's stuck. Silent by
+        #: construction (nothing reads this except the two log lines below,
+        #: which were already once-per-episode before this existed) — see
+        #: :attr:`_pump_heartbeat_timer`'s own start site for why an
+        #: unboundedly-running counter needs no separate bound of its own.
+        self._pump_ticks = 0
+        self._pump_heartbeat_timer: "Timer | None" = None
         #: One row per pipeline RUN, keyed by ``run_id`` — every step frame for
         #: that run folds into it (:meth:`_coalesce_pipeline_step`).
         self._pipeline_runs: "dict[str, Entry[OutboxMessage]]" = {}
@@ -1932,6 +1946,7 @@ class TextualChatApp(App):
         """
         import asyncio  # noqa: PLC0415
         import time  # noqa: PLC0415
+        from collections import deque  # noqa: PLC0415
 
         from .loop_probe import (  # noqa: PLC0415
             _TICK_SECONDS,
@@ -1940,15 +1955,46 @@ class TextualChatApp(App):
             stall_recovered_log_line,
         )
 
+        # #4761 ② (lead-coder review): a stall that never recovers — #4761's
+        # own report, the operator killed the process rather than waiting —
+        # never reaches stall_recovered_log_line's own comparison, so H1
+        # would be unanswerable on the one occasion it matters most. This
+        # loop already wakes every _TICK_SECONDS regardless of stall state,
+        # so it can track its OWN trailing window of (wall-clock, pump_ticks)
+        # samples and hand the stall notice a self-contained delta — no
+        # second event required. 2.0s window: matches _RECORD_INTERVAL_S's
+        # own magnitude (loop_probe.py), long enough to span several
+        # pump_ticks intervals (1.0s each) so a healthy pump shows a
+        # non-zero delta, short enough that the memory here (at most
+        # 2.0/_TICK_SECONDS ~= 40 tuples of two floats) is negligible and
+        # bounded — old samples are popped every tick, so this deque's own
+        # size never grows past that regardless of session length.
+        _PUMP_WINDOW_S = 2.0
+        pump_history: "deque[tuple[float, int]]" = deque()
+
         last = time.perf_counter()
         while True:
             await asyncio.sleep(_TICK_SECONDS)
             now = time.perf_counter()
             lateness_ms = (now - last - _TICK_SECONDS) * 1000
             last = now
-            fired = self._loop_tripwire.observe(lateness_ms)
+            pump_history.append((now, self._pump_ticks))
+            while pump_history and now - pump_history[0][0] > _PUMP_WINDOW_S:
+                pump_history.popleft()
+            fired = self._loop_tripwire.observe(lateness_ms, pump_ticks=self._pump_ticks)
             if fired is not None:
-                logger.warning("textual chat: %s", stall_log_line(fired))
+                pump_delta = (
+                    self._pump_ticks - pump_history[0][1] if pump_history else 0
+                )
+                logger.warning(
+                    "textual chat: %s",
+                    stall_log_line(
+                        fired,
+                        pump_ticks=self._pump_ticks,
+                        pump_delta=pump_delta,
+                        pump_window_s=_PUMP_WINDOW_S,
+                    ),
+                )
                 try:
                     self.notify(stall_banner(fired), severity="warning")
                 except Exception:
@@ -1969,7 +2015,10 @@ class TextualChatApp(App):
                 # module emitted the record. Stall and recovery are the
                 # start and end of ONE episode; one line per episode at the
                 # same severity is not a second alarm).
-                logger.warning("textual chat: %s", stall_recovered_log_line())
+                logger.warning(
+                    "textual chat: %s",
+                    stall_recovered_log_line(pump_ticks=self._pump_ticks),
+                )
 
     def on_mount(self) -> None:
         # #3505: #3504 made ``App``'s own background ``ansi_default`` (the
@@ -2050,6 +2099,26 @@ class TextualChatApp(App):
         self.run_worker(
             self._watch_loop_responsiveness(), name="loop-tripwire", exclusive=False
         )
+        # #4761 ②: no ``callback=`` — a Timer with a callback invokes it
+        # directly from the Timer's OWN asyncio task (see textual/timer.py's
+        # ``_tick``), which would make this just as independent of the App's
+        # own message pump as ``_loop_tripwire``'s worker already is. Without
+        # one, each tick instead ``post_message``s an ``events.Timer`` onto
+        # THIS App's own queue, so :meth:`on_timer` only runs — and
+        # ``_pump_ticks`` only advances — when the App's own message-
+        # processing loop is actually dequeuing and dispatching, which is
+        # the one thing this counter needs to be true to answer H1 (#4761's
+        # own architect design: "does the pump keep beating"). 1s: cheap
+        # (an int increment), and short enough that even a several-second
+        # stall — #4761's own report was long enough to screenshot — has
+        # room for multiple ticks if the pump is in fact still alive.
+        # Unbounded FOR THE COUNTER's lifetime is fine: nothing here writes
+        # anything on its own tick, only reads the counter's current value
+        # (see :meth:`_watch_loop_responsiveness`) — the actual OUTPUT stays
+        # exactly as bounded as it already was (silent while healthy, two
+        # lines per stall episode), this just adds one more field to lines
+        # that already exist.
+        self._pump_heartbeat_timer = self.set_interval(1.0, name="pump-heartbeat")
         # Drawer starts collapsed — the default chrome is just the focusable
         # menu row (#3326: which also carries the status-values segment when
         # there's room — see MenuBar._repack). It only becomes visible when a
@@ -2644,6 +2713,42 @@ class TextualChatApp(App):
                 event.stop()
                 return
         await super().on_event(event)
+
+    async def on_timer(self, event: events.Timer) -> None:
+        """#4761 ②: advance the pump heartbeat for OUR OWN timer only, then
+        always delegate to Textual's own base handler.
+
+        ``MessagePump.on_timer`` is what actually invokes a Timer's
+        ``callback`` (see ``self._voice_timeout_timer`` /
+        ``self._streaming_catchup``, both real ``self.set_timer(...,
+        callback=...)`` calls elsewhere in this class) — overriding this
+        method without delegating would silently break both. Checking
+        ``event.timer is self._pump_heartbeat_timer`` rather than reacting
+        to every Timer event keeps this counter meaning ONE specific,
+        known-cheap interval, not "any timer anywhere in the app fired,"
+        which would make its cadence depend on unrelated widgets' own timer
+        churn.
+        """
+        if event.timer is self._pump_heartbeat_timer:
+            self._pump_ticks += 1
+        await super().on_timer(event)
+
+    @property
+    def pump_ticks(self) -> int:
+        """The message-pump heartbeat's current count (#4761 ②) — public
+        read, mirroring :attr:`LoopTripwire.max_lateness_ms`/``.fired``'s
+        own pattern, so a test or a future caller reads this off the same
+        surface the log lines already do rather than the underscore field."""
+        return self._pump_ticks
+
+    @property
+    def pump_heartbeat_timer(self) -> "Timer | None":
+        """The App's own heartbeat :class:`~textual.timer.Timer` — ``None``
+        before :meth:`on_mount` starts it. Public so a test can construct a
+        genuine ``events.Timer(timer=...)`` referencing the SAME object
+        :meth:`on_timer` compares against by identity, without reaching
+        into ``_pump_heartbeat_timer`` directly."""
+        return self._pump_heartbeat_timer
 
     async def on_key(self, event) -> None:
         # #3476 ⑥: 'r' while the cursor has focus is a keyboard shortcut for
