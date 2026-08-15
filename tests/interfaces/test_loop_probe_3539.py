@@ -328,13 +328,21 @@ async def test_recovery_notice_is_visible_without_arming_the_dump(caplog, monkey
     transport = QueueTransport()
     app = TextualChatApp(transport=transport)
     logger_name = "reyn.interfaces.inline.textual_chat.app"
+    # Derived from the real threshold, not a bare literal — a margin large
+    # enough to clear it stays correct if _TRIPWIRE_MS ever moves; 150ms of
+    # headroom mirrors the sibling test's own 250.0 -> 0.4s margin above.
+    stall_seconds = (loop_probe._TRIPWIRE_MS + 150) / 1000
     with caplog.at_level(logging.INFO, logger=logger_name):
         async with app.run_test(size=(80, 24)) as pilot:
             await pilot.pause()
             # A synchronous sleep stalls the loop; the ticks afterward are
             # healthy again, which is what the recovery notice fires on.
-            time.sleep(0.4)
-            for _ in range(6):
+            time.sleep(stall_seconds)
+            # No test-owned wait budget (CLAUDE.md/testing.md § Time): wait
+            # for the actual condition, unbounded — CI's own --timeout=120
+            # is the kill switch if the wiring is ever broken and this never
+            # arrives.
+            while "recovered" not in caplog.text:
                 await pilot.pause()
 
     assert "unresponsive" in caplog.text, "the stall itself must still be reported"
