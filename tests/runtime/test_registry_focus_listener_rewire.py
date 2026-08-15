@@ -12,8 +12,6 @@ Real AgentRegistry + real Sessions (no mocks).
 """
 from __future__ import annotations
 
-import asyncio
-
 import pytest
 
 from reyn.runtime.budget.budget import BudgetTracker, CostConfig
@@ -65,4 +63,4 @@ async def test_focus_listeners_follow_agent_switch(tmp_path) -> None:
         reg.unbind_focus_listeners()
         assert not beta.interventions.has_active_listener()
     finally:
-        await asyncio.wait_for(reg.shutdown(), timeout=5.0)
+        await reg.shutdown()

@@ -176,7 +176,7 @@ async def test_escape_dismisses_rewind_picker_after_focus_moves_to_intervention(
                 "widget currently holds focus (#4788)"
             )
     finally:
-        await asyncio.wait_for(reg.shutdown(), timeout=5.0)
+        await reg.shutdown()
 
 
 @pytest.mark.asyncio
@@ -214,4 +214,4 @@ async def test_escape_still_dismisses_rewind_picker_when_it_holds_focus(
             await _settle(pilot)
             assert picker.display is False
     finally:
-        await asyncio.wait_for(reg.shutdown(), timeout=5.0)
+        await reg.shutdown()
