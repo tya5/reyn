@@ -1,11 +1,16 @@
 """Tier 1: contract — the inline CUI names colours in exactly one file.
 
-Two censuses of the TUI's colours each missed something, and the second miss
+Three censuses of the TUI's colours each missed something, and the second
 reached an operator as an unreadable green block. The first grepped for
 ``$var NN%`` and did not see ``solid #3d434f`` — the hex sits behind a border
 keyword, so the pattern never matched it. The second grepped for
-``$text-muted`` and did not see ``background: $accent 30%``. Both were found
-only by enumerating the VALUES rather than matching an expected shape.
+``$text-muted`` and did not see ``background: $accent 30%``. The third
+(#4787) found a THIRD shape neither prior census's pattern could see at
+all: ``_CC_DIM = "#6b7280"`` — a Python assignment, not a CSS declaration, so
+``_DECLARATION``'s ``prop: value;`` shape never matches it regardless of the
+property list. All three were found only by enumerating the VALUES rather
+than matching an expected shape — the discipline this gate exists to remove
+the need for, extended here to cover the shape the gate itself had missed.
 
 Enumerating is what this gate removes the need for. Every colour lives in
 ``palette.py`` and every widget writes a ``$reyn-*`` token, so "what does this
@@ -14,7 +19,14 @@ rather than waiting for someone to grep for the right syntax.
 
 Scope is reyn's own stylesheets under ``interfaces/``. Textual's own
 ``DEFAULT_CSS`` is out of scope — reyn does not own it, and #3525 tracks the
-places it collides with the ansi themes.
+places it collides with the ansi themes. ``interfaces/web/`` is ALSO out of
+scope for the Python-hex-literal check specifically (#4787): it serves a
+browser, not a terminal — the whole premise this policy is built on ("the
+terminal emulator's theme decides, reyn names the meaning") has no terminal
+to defer to there, so a hex literal in ``web/`` (e.g. ``web_data.py``'s own
+``_COLOR_CYCLE``) is not the same kind of decision this gate polices. The
+CSS-declaration check above it is unaffected — ``web/`` has no ``.tcss``
+files or Textual stylesheets to begin with.
 """
 from __future__ import annotations
 
@@ -36,6 +48,23 @@ _DECLARATION = re.compile(
 
 #: Values that name no colour, so a rule using one is not a colour decision.
 _COLOURLESS = frozenset({"none", "transparent", "auto", "initial", "hidden"})
+
+#: A bare hex-colour string literal — ``"#6b7280"``/``'#3a1c1a'``, 6 or 8 hex
+#: digits (RGB or RGBA). #4787's own shape: a Python assignment, never a CSS
+#: declaration, so ``_DECLARATION`` cannot see it regardless of which
+#: property names it lists. Matches the LITERAL itself, not a reference to
+#: one — ``f"italic {_CC_DIM}"`` (a later USE of an already-declared name)
+#: does not match this pattern; only the assignment that first wrote the hex
+#: string does.
+#:
+#: Known limit (lead-coder review, non-blocking): this is a LITERAL-string
+#: pattern, not a value-flow analysis — ``"#" + "6b7280"`` or a hex string
+#: built from a variable/expression is invisible to it, the same class of
+#: gap ``_DECLARATION`` above already has for CSS. A green run here says "no
+#: bare hex-string literal", not "no hex value anywhere" — enumerating the
+#: actual escape shapes worth guarding is a separate, future exercise if one
+#: is ever found in practice, not a promise this pattern already makes.
+_PY_HEX_LITERAL = re.compile(r"""(['"])#[0-9a-fA-F]{6}(?:[0-9a-fA-F]{2})?\1""")
 
 
 def _declarations_only(sheet: str) -> str:
@@ -87,6 +116,54 @@ def _colour_values() -> "list[str]":
     return offenders
 
 
+#: Directory names, relative to ``_INTERFACES``, whose top-level component is
+#: excluded from :func:`_python_hex_literals` specifically — see the module
+#: docstring for why ``web`` (no terminal to defer to) doesn't belong to this
+#: check. The CSS-declaration check above (:func:`_colour_values`) is NOT
+#: filtered by this — it never matched anything under ``web/`` in the first
+#: place (no ``.tcss``/Textual stylesheets there), so there is nothing to
+#: exempt it FROM.
+_HEX_LITERAL_EXEMPT_DIRS = frozenset({"web"})
+
+
+#: File names (relative to ``_INTERFACES``) already KNOWN to hold Python hex
+#: literals as of #4787's own gate-broadening commit — tracked, not silently
+#: exempted. #4787's own migration (moving these 8 constants' MEANING
+#: assignment into ``palette.py``, per lead-coder's ordering: ①classify+move
+#: ②broaden THIS gate) had not finished landing when the broadened gate did,
+#: so enforcing immediately here would fail CI on sites already scheduled to
+#: move rather than on a NEW regression. This allowance is scoped to the ONE
+#: file #4787 measured (``renderer.py``, 8 constants / 66 call sites) — a NEW
+#: hex literal anywhere else still fails immediately, which is this gate's
+#: whole point. Remove entries as each constant actually moves; the file
+#: drops out entirely once all 8 do.
+_PY_HEX_LITERAL_TRACKED = {
+    "repl/renderer.py": "#4787 — 8 constants, meaning-classification done, "
+                        "migration to palette.py in progress",
+}
+
+
+def _python_hex_literals() -> "list[str]":
+    """Every bare hex-colour string literal in a ``.py`` file outside
+    ``palette.py`` (and outside :data:`_HEX_LITERAL_EXEMPT_DIRS`), as
+    ``path:line -> value`` — #4787's own shape, which :func:`_colour_values`
+    cannot see (its ``_DECLARATION`` regex requires a CSS ``prop: value;``
+    shape; a Python assignment like ``_CC_DIM = "#6b7280"`` has neither a
+    recognised property name nor a trailing semicolon)."""
+    offenders: "list[str]" = []
+    for path, number, line in _stylesheet_lines():
+        if path.suffix != ".py":
+            continue  # a .tcss hit is already a _colour_values() offender
+        if path.relative_to(_INTERFACES).parts[0] in _HEX_LITERAL_EXEMPT_DIRS:
+            continue
+        stripped = line.strip()
+        if stripped.startswith(("#", "*", "/*")) or "``" in line:
+            continue  # prose: comments, and doc/rationale text quoting a value
+        for match in _PY_HEX_LITERAL.finditer(line):
+            offenders.append(f"{path.relative_to(_INTERFACES)}:{number} -> {match.group(0)}")
+    return offenders
+
+
 def test_the_gate_is_looking_at_real_stylesheets() -> None:
     """Tier 1: setup — the enumeration finds the widgets it is meant to check.
 
@@ -108,6 +185,52 @@ def test_no_colour_is_named_outside_the_palette() -> None:
     assert not offenders, (
         "colour values declared outside palette.py — add a token there and "
         "reference it instead:\n" + "\n".join(f"  {o}" for o in offenders)
+    )
+
+
+def test_no_python_hex_literal_is_declared_outside_the_palette() -> None:
+    """Tier 1: #4787 — the shape this gate could not see until now.
+
+    ``_colour_values``'s ``_DECLARATION`` regex requires a CSS ``prop:
+    value;`` shape and never matched ``_CC_DIM = "#6b7280"`` (a Python
+    assignment, no property name, no trailing semicolon) — the exact
+    reason 8 hex constants across 66 call sites in ``interfaces/repl/
+    renderer.py`` sat outside this gate's reach since #3525's own arc
+    closed. A second, independent regex for the Python shape, rather than
+    trying to widen ``_DECLARATION`` to cover both — the two shapes share
+    no syntax to unify around (one needs a semicolon and a property name,
+    the other needs neither), and conflating them would make either
+    pattern's own failure harder to read.
+
+    ``_PY_HEX_LITERAL_TRACKED`` exempts the sites #4787's own measurement
+    already found and is actively migrating — a NEW site anywhere else
+    still fails here, which is the actual regression this test guards."""
+    offenders = [
+        o for o in _python_hex_literals()
+        if not any(o.startswith(f"{tracked}:") for tracked in _PY_HEX_LITERAL_TRACKED)
+    ]
+
+    assert not offenders, (
+        "Python hex-colour literals declared outside palette.py — add a "
+        "token there and reference it instead:\n"
+        + "\n".join(f"  {o}" for o in offenders)
+    )
+
+
+def test_the_tracked_hex_literal_allowance_stays_current() -> None:
+    """Tier 1: ``_PY_HEX_LITERAL_TRACKED`` names files that genuinely still
+    hold a Python hex literal — a real gap the main test above cannot
+    catch on its own, since a stale entry there makes that test MORE
+    likely to pass, not less (the same "is the allowance still true"
+    question ``_QUIET_ONLY_ALLOWED``'s own sibling test in this file asks)."""
+    offenders = _python_hex_literals()
+    seen_files = {o.split(":")[0] for o in offenders}
+
+    stale = sorted(set(_PY_HEX_LITERAL_TRACKED) - seen_files)
+    assert not stale, (
+        "these files no longer hold a Python hex literal — drop the "
+        f"tracked allowance rather than leaving a reason for something "
+        f"that is not there: {stale}"
     )
 
 
