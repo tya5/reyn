@@ -450,7 +450,15 @@ async def test_the_app_actually_shows_the_notice_when_the_loop_stalls(caplog) ->
             # holds it, which is exactly the condition being detected.
             status_before = str(app.query_one(StatusLine).render())
             time.sleep(0.4)
-            for _ in range(6):
+            # #4827 (same class, lead-coder's re-read caught what I missed):
+            # a fixed range(6) was trusted as "enough pauses for the stall
+            # notice to have been logged" before the POSITIVE assert below
+            # (`"unresponsive" in caplog.text`) — under real CI-host
+            # contention that assert can starve exactly like :794/:902 did.
+            # My own first pass wrongly called this a different, no-change-
+            # only concern; it is not — wait on the real condition instead,
+            # unbounded (CLAUDE.md testing policy).
+            while "unresponsive" not in caplog.text:
                 await pilot.pause()
             status_after = str(app.query_one(StatusLine).render())
 
@@ -502,7 +510,10 @@ async def test_a_stall_costs_no_row_of_layout(caplog) -> None:
             merged_before = bool(app.query_one(StatusLine).parent.query(Tab))
 
             time.sleep(0.4)
-            for _ in range(6):
+            # #4827 (same class as the sibling test above): wait on the
+            # real condition the positive assert below depends on, not a
+            # fixed pause count.
+            while "unresponsive" not in caplog.text:
                 await pilot.pause()
 
             rows_after = len(app.query_one(FlowView).entries)
@@ -516,7 +527,8 @@ async def test_a_stall_costs_no_row_of_layout(caplog) -> None:
     # Non-vacuity: without a stall, "nothing moved" is true for the
     # uninteresting reason and this test asserts nothing.
     assert "unresponsive" in caplog.text, (
-        "the stall did not trip the wire — raise the sleep or lower the threshold"
+        "non-vacuity: the wait loop above only exits once this is true, but "
+        "an empty caplog here would mean the stall never tripped the wire at all"
     )
     assert rows_after == rows_before, (
         "the stall added a conversation row"
