@@ -548,3 +548,72 @@ async def test_turn_settled_arriving_before_the_terminal_reply_leaves_it_flat() 
             "the turn parent CANCELLED (this file's own "
             "test_a_turn_with_no_completions_settles_cancelled_not_stuck_running)"
         )
+
+
+@pytest.mark.asyncio
+async def test_a_streamed_terminal_reply_still_lands_flat_never_nested() -> None:
+    """Tier 2b: 🔴 owner-observed real-machine contradiction — "folding the
+    turn group does not hide the final reply". Every OTHER test in this
+    file drives the terminal reply via ``transport.push_display(...)``, a
+    single non-streamed ``kind="agent"`` frame — the shape a provider
+    returns WITHOUT incremental deltas. A REAL interactive reply is
+    virtually always streamed: its entry is created by
+    :meth:`TextualChatApp._handle_agent_delta_event` on the FIRST
+    ``agent_delta`` audit-event (chain_id-keyed), which appends directly
+    to ``self.conversation`` — bypassing ``_ingest_frame``'s
+    ``_current_turn_parent``/``_call_parents`` nesting decision entirely.
+    The LATER terminal ``kind="agent"`` display frame does not re-parent
+    it either: ``_ingest_frame``'s streaming-settle branch finds the
+    tracked record, calls ``streaming.entry.set_item(...)`` on the
+    ALREADY-FLAT entry, and returns — never touching its parent. This
+    test reproduces that exact two-step production pipeline (an
+    ``agent_delta`` event, THEN the terminal display frame for the same
+    chain_id) and pins what actually happens today: the reply's parent is
+    ``None`` — confirming the owner's live observation and CONTRADICTING
+    every other push_display-only nesting test in this file, which never
+    exercises the streaming entry-creation path at all. THIS IS A KNOWN
+    DEFECT, not the desired end state — the fix (routing
+    ``_handle_agent_delta_event``'s entry creation through the same
+    nesting decision) is tracked separately; this test documents today's
+    actual behavior so a fix has something concrete to flip red→green
+    against, and so this gap can never again pass unnoticed under a
+    push_display-only test suite."""
+    from dataclasses import replace as _replace
+
+    from reyn.schemas.models import Event as _Event
+
+    transport = QueueTransport()
+    app = TextualChatApp(transport=transport, clock=lambda: 100.0)
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        await _open_turn(transport, pilot, chain_id="chain-A")
+
+        # The REAL production shape: content arrives as an agent_delta
+        # BEFORE the terminal completion frame — the streaming path every
+        # other test in this file skips entirely. Both carry the SAME
+        # chain_id (matching production: the correlating id
+        # ``_emit_agent_delta`` stamps IS the round's own chain_id, the
+        # same one the terminal completion frame's meta carries).
+        await transport.push_event(
+            _Event(type="agent_delta", data={"text": "done", "chain_id": "chain-A"})
+        )
+        await pilot.pause()
+        completion = _parent_row("resp-1", text="done", dispatched_tool_calls=False)
+        completion = _replace(
+            completion, meta={**completion.meta, "chain_id": "chain-A"}
+        )
+        await transport.push_display(completion)
+        await pilot.pause()
+
+        user_row, reply_row = _entries(app)
+        assert user_row.item.kind == "user"
+        assert reply_row.item.text == "done"
+        assert reply_row.parent is None, (
+            "KNOWN DEFECT (owner-observed, real machine): a STREAMED "
+            "terminal reply's entry is created flat by "
+            "_handle_agent_delta_event and never re-parented when the "
+            "terminal frame settles it — this is the actual behavior "
+            "today, not the intended one. If this assertion starts "
+            "failing (parent becomes user_row), the fix landed — update "
+            "this test to assert the FIXED behavior instead of deleting it."
+        )
