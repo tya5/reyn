@@ -369,7 +369,14 @@ async def test_agent_response_resolves_the_same_chain_session_chains_exposes(
     up. Two peers are registered as ``waiting_on``; only one responds, so
     resolution stays partial (no router loop / LLM needed) — the only
     observable effect is ``waiting_on`` shrinking on the chain
-    ``session.chains`` itself exposes."""
+    ``session.chains`` itself exposes.
+
+    Scope: this drives ``session._handle_agent_response`` directly, so it
+    proves the wiring FROM that call inward. It does not re-prove that the
+    real inbox actually reaches that call (the (b)-registration half) —
+    that call site is ``Session._run_turn_body``'s ``AGENT_RESPONSE``
+    branch (``session.py``, dispatched via ``_put_inbox``/``run_one_iteration``),
+    confirmed statically, not re-driven here."""
     monkeypatch.chdir(tmp_path)
     session = _make_session(tmp_path, on_limit=OnLimitConfig(mode="unattended"))
 
