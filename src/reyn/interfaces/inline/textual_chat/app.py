@@ -1244,6 +1244,28 @@ class TextualChatApp(App):
         #: unboundedly-running counter needs no separate bound of its own.
         self._pump_ticks = 0
         self._pump_heartbeat_timer: "Timer | None" = None
+        #: #4761 ③: total Key events this App has ever received, counted in
+        #: :meth:`on_event` — the earliest, focus-independent seam ②'s own
+        #: docstring already established. Distinguishes H3 (input never
+        #: reaching the App at all) from a live pump that simply has
+        #: nothing to do: ② alone can show the pump is still ticking during
+        #: a stall, but a ticking pump with zero keys arriving despite an
+        #: operator who reports pressing several is H3, not H1/H2. Same
+        #: rolling-window treatment as ②'s ``pump_ticks`` (see
+        #: ``_watch_loop_responsiveness``) — a raw cumulative total alone
+        #: cannot say whether it moved DURING the stall being reported.
+        self._keys_received = 0
+        #: The last ``events.Key`` OBJECT counted, by identity, not value —
+        #: measured directly (not assumed): Textual dispatches the SAME
+        #: Key event object to this App's own ``on_event`` twice for some
+        #: keys (``escape``, confirmed by ``id()``; an ordinary printable
+        #: key consumed by a focused Input along the way did not repeat).
+        #: Without this guard the counter would silently over-count
+        #: exactly the keys most likely to matter for a stall report
+        #: (Esc, an attempt to break out) — dedup by ``is``, not equality,
+        #: since two SEPARATE real presses of the same key are two
+        #: distinct objects and must both count.
+        self._last_counted_key_event: "object | None" = None
         #: One row per pipeline RUN, keyed by ``run_id`` — every step frame for
         #: that run folds into it (:meth:`_coalesce_pipeline_step`).
         self._pipeline_runs: "dict[str, Entry[OutboxMessage]]" = {}
@@ -1969,8 +1991,17 @@ class TextualChatApp(App):
         # 2.0/_TICK_SECONDS ~= 40 tuples of two floats) is negligible and
         # bounded — old samples are popped every tick, so this deque's own
         # size never grows past that regardless of session length.
+        # #4761 ③ reuses this same window (lead-coder: "②で作った形がそのまま
+        # 使える") — self._keys_received is sampled alongside pump_ticks at
+        # the SAME cadence, so one deque of triples covers both rather than
+        # a second, parallel bookkeeping structure. keys_delta lets the
+        # stall notice distinguish H3 (pump ticking, zero keys arriving
+        # despite an operator who reports pressing several) from H1/H2 on
+        # its own, in the same one line — same bound reasoning as ②'s own
+        # pump_delta: old samples popped every tick, size never exceeds
+        # ~2.0/_TICK_SECONDS regardless of session length.
         _PUMP_WINDOW_S = 2.0
-        pump_history: "deque[tuple[float, int]]" = deque()
+        pump_history: "deque[tuple[float, int, int]]" = deque()
 
         last = time.perf_counter()
         while True:
@@ -1978,13 +2009,16 @@ class TextualChatApp(App):
             now = time.perf_counter()
             lateness_ms = (now - last - _TICK_SECONDS) * 1000
             last = now
-            pump_history.append((now, self._pump_ticks))
+            pump_history.append((now, self._pump_ticks, self._keys_received))
             while pump_history and now - pump_history[0][0] > _PUMP_WINDOW_S:
                 pump_history.popleft()
             fired = self._loop_tripwire.observe(lateness_ms, pump_ticks=self._pump_ticks)
             if fired is not None:
                 pump_delta = (
                     self._pump_ticks - pump_history[0][1] if pump_history else 0
+                )
+                keys_delta = (
+                    self._keys_received - pump_history[0][2] if pump_history else 0
                 )
                 logger.warning(
                     "textual chat: %s",
@@ -1993,6 +2027,8 @@ class TextualChatApp(App):
                         pump_ticks=self._pump_ticks,
                         pump_delta=pump_delta,
                         pump_window_s=_PUMP_WINDOW_S,
+                        keys_received=self._keys_received,
+                        keys_delta=keys_delta,
                     ),
                 )
                 try:
@@ -2705,6 +2741,24 @@ class TextualChatApp(App):
         to close once it has lost focus (that is this fix's whole
         premise), while the panel already has one.
         """
+        if isinstance(event, events.Key):
+            # #4761 ③: counted here — the SAME "sees the raw event first,
+            # regardless of focus, regardless of what handling follows"
+            # seam this method's own docstring already relies on — not in
+            # a per-widget on_key, which only sees keys that widget's own
+            # bubble reaches (the composer's Input consumes printable keys
+            # itself, so a per-widget count would silently miss most
+            # keystrokes). Unconditional: every Key event reaching the App
+            # counts, whether it goes on to dismiss an overlay, close the
+            # picker, or fall through to ordinary focused-widget dispatch —
+            # the counter's only job is "did a key reach the App at all,"
+            # not what happened to it next. Deduped by object IDENTITY
+            # (see ``_last_counted_key_event``'s own docstring) — measured
+            # directly that Textual dispatches the SAME Key object to this
+            # method twice for some keys.
+            if event is not self._last_counted_key_event:
+                self._keys_received += 1
+                self._last_counted_key_event = event
         if isinstance(event, (events.Key, events.MouseScrollDown, events.MouseScrollUp)):
             # ``self._flow`` is created lazily in ``compose()``, not
             # ``__init__`` — ``on_event`` fires for every event from the
@@ -2760,6 +2814,12 @@ class TextualChatApp(App):
         :meth:`on_timer` compares against by identity, without reaching
         into ``_pump_heartbeat_timer`` directly."""
         return self._pump_heartbeat_timer
+
+    @property
+    def keys_received(self) -> int:
+        """Total Key events this App has ever received (#4761 ③) — public
+        read, same pattern as :attr:`pump_ticks`."""
+        return self._keys_received
 
     async def on_key(self, event) -> None:
         # #3476 ⑥: 'r' while the cursor has focus is a keyboard shortcut for

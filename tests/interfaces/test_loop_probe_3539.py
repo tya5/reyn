@@ -690,3 +690,107 @@ async def test_pump_heartbeat_reaches_the_default_visible_notices(
         "self-contained trailing-window delta — a freeze that never "
         f"recovers never reaches the recovery line at all: {stall_line!r}"
     )
+
+
+# ── #4761 ③: the key-arrival counter ────────────────────────────────────────
+
+
+def test_stall_line_carries_keys_received_and_delta() -> None:
+    """Tier 2: #4761 ③ — the stall line gains a THIRD, independently-optional
+    field for key arrival, in the same self-contained-in-one-line shape ②'s
+    own lead-coder review established (no pairing with a recovery-side
+    reading — an H3 diagnosis is needed most on a freeze that never
+    resolves)."""
+    with_keys = stall_log_line(
+        1800.0, pump_ticks=5, pump_delta=2, pump_window_s=2.0,
+        keys_received=7, keys_delta=0,
+    )
+    assert "keys received: 7" in with_keys
+    assert "+0" in with_keys  # the H3 signal: pump moved, keys did not
+
+    # keys_received alone (no delta/window) falls back to the bare form —
+    # a caller with a value but no window yet must not have to fabricate one.
+    ticks_only_no_keys = stall_log_line(1800.0, pump_ticks=5)
+    assert "keys received" not in ticks_only_no_keys
+
+    keys_only = stall_log_line(1800.0, keys_received=3)
+    assert "keys received: 3" in keys_only
+    assert "pump heartbeat" not in keys_only
+
+
+@pytest.mark.asyncio
+async def test_on_event_counts_key_events_only() -> None:
+    """Tier 2: #4761 ③ — the discriminator this counter depends on: every
+    real Key event reaching the App counts, and nothing else does (a mouse
+    scroll, in particular, is handled by the SAME isinstance-guarded block
+    in on_event that the overlay-dismiss logic already shares, so this
+    pins that the two checks stayed correctly split apart)."""
+    transport = QueueTransport()
+    app = TextualChatApp(transport=transport)
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        before = app.keys_received
+
+        await pilot.press("a")
+        assert app.keys_received == before + 1
+
+        await pilot.press("escape")
+        assert app.keys_received == before + 2, (
+            "a key that ALSO triggers other on_event handling (escape) "
+            "must still be counted — the counter's job is arrival, not outcome"
+        )
+
+        from textual import events
+
+        await app.on_event(
+            events.MouseScrollDown(None, 0, 0, 0, 0, 0, False, False, False)
+        )
+        assert app.keys_received == before + 2, (
+            "a non-Key event reaching the same on_event method must NOT "
+            "advance the key counter"
+        )
+
+
+@pytest.mark.asyncio
+async def test_keys_received_reaches_the_default_visible_stall_notice(
+    tmp_path, monkeypatch,
+) -> None:
+    """Tier 2b: #4761 ③ — REACHED end to end: real keypresses, then a real
+    stall, under the reconstructed real logging floor (no ``caplog``,
+    mirroring #4804/②'s own pattern) — the key-arrival count from the
+    App's real ``on_event`` wiring actually lands in the default-visible
+    stall notice, not just that the formatting function accepts the
+    parameter in isolation."""
+    import logging
+    import time
+
+    logfile = tmp_path / "reyn.log"
+    root = logging.getLogger()
+    saved_handlers = root.handlers[:]
+    saved_level = root.level
+    monkeypatch.delenv("REYN_PROF_DUMP", raising=False)
+    try:
+        logging.basicConfig(
+            filename=str(logfile), level=logging.WARNING, force=True,
+        )
+        stall_seconds = (loop_probe._TRIPWIRE_MS + 150) / 1000
+        transport = QueueTransport()
+        app = TextualChatApp(transport=transport)
+        async with app.run_test(size=(80, 24)) as pilot:
+            await pilot.pause()
+            await pilot.press("a", "b", "c")
+            time.sleep(stall_seconds)
+            while "recovered" not in logfile.read_text(encoding="utf-8"):
+                await pilot.pause()
+    finally:
+        for handler in root.handlers:
+            if handler not in saved_handlers:
+                handler.close()
+        root.handlers = saved_handlers
+        root.setLevel(saved_level)
+
+    content = logfile.read_text(encoding="utf-8")
+    stall_line = next(line for line in content.splitlines() if "unresponsive" in line)
+    assert "keys received: 3" in stall_line, (
+        f"the 3 real keypresses must show up in the stall notice's own count: {stall_line!r}"
+    )
