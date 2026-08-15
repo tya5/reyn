@@ -62,11 +62,13 @@ observation does not name its own referent**.
 - Each test belongs to exactly one Tier (1 Contract / 2 OS invariant / 3 LLM-replay). Anything else is **Tier 4 — do not write**.
 - First docstring line declares the Tier: `"""Tier 3a: ..."""`.
 - Declaring a Tier presupposes a named behaviour that exists **outside the test's own docstring**.
-- **Never fake a collaborator** when a real instance is cheaply constructible — no `MagicMock`/`AsyncMock`/`patch`, no hand-rolled stand-in. Use real instances or the `LLMReplay` Fake (#3037).
+- **Never fake a collaborator** when a real instance is cheaply constructible — no `MagicMock`/`AsyncMock`/`patch`, no hand-rolled stand-in. Use real instances or the `LLMReplay` Fake (#3037). **Cheap to construct is not the same as drivable**: a collaborator whose only trigger is its own timer (a watcher on an mtime) leaves a test that may not fake it and may not wait for it — the repair is to give it an external drive (`check()` you can call), not a fake and not a `sleep` (#4847).
 - **Never assert on private state.** Use the public surface or a `snapshot()`-style read.
 - **Never pin algorithm-level behaviour** — sort order, dict iteration order, cache structure, exact whitespace.
 - **No snapshot/golden-file tests** outside `tests/scaffold/`.
-- **Tests carry no time limit of their own** — no `@pytest.mark.timeout`, no wait-budget in the body (`attempts=200`, `range(N)`). Wait on the condition unboundedly; CI's `--timeout=120` is the kill switch. Straight-line `sleep(N)` as the thing that makes an assertion pass stays banned.
+- **A test writes no duration, in EITHER direction.** A duration is never the property under test; it is a stand-in for an observation nobody exposed — so reaching for one says the seam is missing, not that the test needs a clock. Both shapes fail the same way: the machine that runs it decides whether the assert passes.
+  - **Ceiling** (how long we will wait): no `@pytest.mark.timeout`, no `attempts=200`, no `range(N)` wrapping a wait. Wait on the condition unboundedly; CI's `--timeout=120` is the kill switch.
+  - **Floor** (how long something must take): **no `sleep(N)` the assertion depends on** — sized to outrun a threshold (`(_TRIPWIRE_MS + 150) / 1000` is the shape), to let a task settle, or to let a clock tick (an mtime, a TTL). Inject the threshold or the clock. `LoopProbe(threshold_ms=…)` has been injectable all along and no test used it; 4 unrelated PRs were reddened before anyone read the sleep (#4844). Splitting the decision out as a pure function removes the place a duration could be written at all (#4847).
 - Tests for an extracted refactor live in `tests/scaffold/` with `triggered_by`/`removed_by`, and are **deleted in the PR that lands the refactor**.
 
 ## Comment policy (READ BEFORE WRITING OR MOVING A COMMENT)
