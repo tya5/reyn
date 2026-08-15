@@ -2563,6 +2563,22 @@ class TextualChatApp(App):
         ``RECURSIVE`` ``r`` vs. this module's own ``/rewind`` ``r`` handling
         in :meth:`on_key`, only if either were declared priority=True). This
         stays scoped to one key and one widget instead.
+
+        ★Implicit ordering, when BOTH the picker and the intervention panel
+        are open at once: this catch runs first and consumes the Esc press
+        outright (``event.stop()``), so a single Esc closes ONLY the picker
+        — :class:`~.intervention_panel.InterventionPanel`'s own ``escape``
+        Binding (``action_dismiss_panel``) never fires on that same press.
+        No capability is lost: the panel's own Esc is documented as a
+        focus-only escape hatch, not a close ("every pending tab stays
+        exactly as it was" — ``InterventionPanel.Dismissed``'s own
+        docstring), so a SECOND Esc (picker now closed, this branch a no-op)
+        reaches it exactly as before. Picker-first is deliberate — the
+        picker has no other way to close once it has lost focus (that is
+        this fix's whole premise), while the panel already has one. Whether
+        this ordering, or the picker staying open across an intervention at
+        all, is the right UX is a separate, open question (#4788 tracks it;
+        not decided here).
         """
         if isinstance(event, (events.Key, events.MouseScrollDown, events.MouseScrollUp)):
             # ``self._flow`` is created lazily in ``compose()``, not
