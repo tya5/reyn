@@ -76,38 +76,42 @@ call sites. That is a habit, not a gate.
 - **Recovery-feature PR gate**: any PR adding recovery / reconstruction functionality (WAL-event-derived state, PITR, rewind/restore paths) MUST include a truncate-falsify test verifying the reconstruction source survives WAL truncation below its source events (set X → truncate past X's events → reconstruct → assert X survives). WAL-event-derived recovery state that isn't snapshot-backed is a silent data-loss vector. Same PR, not a follow-up. (Motivated by #2259/#2260.)
 - **Sandbox axis-witness gate stays 2-layer**: `enforcement_self_test` (`src/reyn/security/sandbox/self_test.py`) is the PRODUCTION gate every real backend resolution calls; its blast radius is every sandboxed op on every host, so it MUST keep witnessing the deny leg only, for the write + spawn axes only. The richer per-axis 3-tuple contract (deny / exception-boundary / workload — `reyn.security.sandbox.axis_contract`) is CI-conformance-only (`tests/security/test_sandbox_axis_contract_2983.py`, mirroring `scripts/sandbox_landlock_deny_gate.py`'s CI-only deny arms). A PR that folds a new axis or leg into `enforcement_self_test` widens the blast radius of a probe bug to every host's sandbox — do not do this without an explicit owner-level design decision (#2983).
 
-- **TUI colour policy: the terminal emulator's theme decides, reyn only names WHICH semantic colour, never WHICH RGB.** Owner ruling (#3525, 2026-07-31): "the terminal emulator's theme should take priority over Textual's own theme." Normative form **for a meaning the terminal's theme already has an opinion about** (see the scope test below — this is not every colour in the TUI): use ANSI 16 (`ansi_red` etc. — the terminal resolves it), `ansi_default`, `transparent` (paint nothing), or a `text-style` attribute (`dim`/`bold`/`reverse`) — never a hex literal in a stylesheet, and never alpha-composite over `ansi_default` (the blend loses the terminal's own value and becomes hex-equivalent, #3505's `#0c0c0c` residue). Every colour reyn's inline CUI uses lives in one file, `src/reyn/interfaces/inline/textual_chat/palette.py`; every widget stylesheet writes a `@name@` marker instead of a literal value, and `tests/interfaces/test_tui_colour_tokens.py` enumerates every colour-bearing declaration under `interfaces/` and fails on any value named outside the palette — added after two prior greps for an *expected shape* (`$text-muted`, `$var NN%`) each missed a real violation written in a shape nobody searched for (a hex value sitting behind a `border:` keyword). Textual's own `DEFAULT_CSS` is out of scope for this gate — reyn doesn't own it (#3525 tracks where it collides with the ansi themes).
+- **TUI colour policy: name the MEANING; the active theme renders it. Never pick a colour first.** Owner ruling (#3525, 2026-07-31): "the terminal emulator's theme should take priority over Textual's own theme." **"The theme" is whichever theme is active** — reyn's own full-colour default, a Textual builtin, or an `ansi-*` theme that defers to the terminal emulator's palette (#4840/#4841: an earlier "the terminal emulator's theme decides" phrasing read as an absolute, contradicting this same section's own clause 2 — "full-colour included" — and its own "this is not an ANSI-16-only policy" line; corrected so the opening states the same rule the rest of the section already gave). Terminal palettes are not a vocabulary: the escape codes are standardised, the RGB behind them is not, and a slot carries a colour name, not a role — that is why the roles live in a theme. Every colour reyn's inline CUI uses lives in one file, `src/reyn/interfaces/inline/textual_chat/palette.py`; every widget stylesheet writes a `@name@` marker instead of a literal value, and `tests/interfaces/test_tui_colour_tokens.py` enumerates every colour-bearing declaration under `interfaces/` and fails on any value named outside the palette — added after two prior greps for an *expected shape* (`$text-muted`, `$var NN%`) each missed a real violation written in a shape nobody searched for (a hex value sitting behind a `border:` keyword). Textual's own `DEFAULT_CSS` is out of scope for this gate — reyn doesn't own it (#3525 tracks where it collides with the ansi themes).
 
   **Scope — decide this before choosing any value:**
 
   1. Does the meaning have a convention a reader already carries (*error*,
-     *success*, *in-flight*)? → name the meaning, let the theme render it
-     (ANSI-16 / `ansi_default` / SGR attribute).
+     *success*, *in-flight*)? → name it so every theme can render it: a
+     theme token (`$error`, `$text-muted`, `$markdown-*` …), an SGR
+     `text-style`, or an ANSI name (`ansi_blue` / `ansi_default` /
+     `transparent`) where the terminal's own value is the point —
+     `@selection-bg@` and `@selection-fg@` (`palette.py`, `"ansi_blue"` /
+     `"ansi_black"`) are live examples of the last.
   2. Is the meaning reyn-specific? → any value that serves the design,
-     full-colour included. The theme has no opinion to defer to here.
+     full-colour included. No theme has an opinion to defer to here.
 
   **A colour is not a meaning.** "Error" is the meaning; red is one
-  terminal's rendering of it. Never pick the colour first.
+  theme's rendering of it. Never pick the colour first.
 
-  **This is not an ANSI-16-only policy.** ANSI-16 is how reyn defers on (1);
-  it is not a palette reyn is confined to. Only two things are forbidden, and
+  **This is not an ANSI-16-only policy.** Only two things are forbidden, and
   neither limits expressiveness: a literal in a widget stylesheet (values go
   through a `palette.py` token), and alpha-compositing over `ansi_default`
   (the blend destroys the terminal's own value).
 
   **Carve-out (owner, 2026-08-07, extends #3525 rather than replacing it):** a
   *reyn-specific* meaning — one with no established convention the way
-  *error* or *success* has one — may use a token value outside ANSI-16. A meaning WITH an
-  established convention still must resolve through ANSI-16 /
-  `ansi_default` / an SGR attribute, same as before; "is this meaning
-  conventional or reyn-specific" is a judgment call no gate can make, which
-  is exactly why the token-indirection requirement is not optional here —
-  **every value, conventional or reyn-specific, still goes through a
-  `palette.py` token, never a literal in a stylesheet.** Only the token
-  layer is where the carve-out applies; without that constraint, a
-  stylesheet could claim "reyn-specific" for anything and the value gate
-  would have nothing left to check. The semi-transparent-over-`ansi_default`
-  ban above is unchanged by this carve-out.
+  *error* or *success* has one — may use a token value outside the
+  theme-deferring set above. A meaning WITH an established convention still
+  must resolve through a theme token / `ansi_default` / an SGR attribute,
+  same as before; "is this meaning conventional or reyn-specific" is a
+  judgment call no gate can make, which is exactly why the token-indirection
+  requirement is not optional here — **every value, conventional or
+  reyn-specific, still goes through a `palette.py` token, never a literal in
+  a stylesheet.** Only the token layer is where the carve-out applies;
+  without that constraint, a stylesheet could claim "reyn-specific" for
+  anything and the value gate would have nothing left to check. The
+  semi-transparent-over-`ansi_default` ban above is unchanged by this
+  carve-out.
 
 ## Comment policy (READ BEFORE WRITING OR MOVING A COMMENT)
 
