@@ -203,9 +203,21 @@ def test_fallback_event_carries_reason_field() -> None:
 def test_not_ready_then_resolved_emits_a_correction_log(monkeypatch, caplog) -> None:
     """Tier 2: THE mandatory correction witness — a model warned as
     NOT_READY, then called again once litellm is (simulated) ready and
-    resolves to a real catalog value, gets an INFO-level correction log
+    resolves to a real catalog value, gets a WARNING-level correction log
     naming the resolved value. "Warned once, never corrected" (#4680's
-    own reported symptom) is wrong for this temporary case."""
+    own reported symptom) is wrong for this temporary case.
+
+    #4805: the capture floor below is WARNING, not INFO, DELIBERATELY —
+    the interactive CUI's own production floor (`interfaces/cli/commands/
+    chat.py`'s `basicConfig(level=WARNING, force=True)`) discards
+    anything below it, so a test that captured at INFO would stay green
+    even if this correction log were invisible in real production (the
+    exact "green but silent in production" defect #4805 exists to close
+    — this correction log used to be `logger.info(...)`, passing this
+    same test under a `caplog.at_level(logging.INFO)` capture while
+    genuinely emitting nothing under the real WARNING floor). Capturing
+    at WARNING here means this test can only pass if the log actually
+    clears the SAME floor production uses."""
     model = "gemini/gemini-2.5-flash-lite"  # a real, cataloged model
 
     monkeypatch.setattr(
@@ -221,11 +233,15 @@ def test_not_ready_then_resolved_emits_a_correction_log(monkeypatch, caplog) -> 
     from reyn.llm.litellm_bootstrap import ensure_litellm_ready
     ensure_litellm_ready()  # deterministic — real litellm is actually warm
 
-    with caplog.at_level(logging.INFO):
+    with caplog.at_level(logging.WARNING):
         second = get_max_input_tokens(model)
     assert second != _FALLBACK_MAX_INPUT_TOKENS
     assert any(
         "is now resolved via litellm catalog" in r.message for r in caplog.records
+    ), (
+        "the correction must be visible at the interactive CUI's own "
+        "production floor (WARNING) — not merely at a lower capture "
+        "level a real session never uses"
     )
 
 

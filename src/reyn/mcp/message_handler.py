@@ -281,7 +281,30 @@ class ReynMCPMessageHandler:
         handler doesn't act on — distinguishes "processed and silent" (the 5 shapes
         matched above) from "not one of ours, silently ignored" (everything else),
         so a future fastmcp/MCP protocol addition landing here unnoticed is
-        distinguishable in the log from an ordinary quiet run, not identical to it."""
+        distinguishable in the log from an ordinary quiet run, not identical to it.
+
+        #4805: stays at ``debug``, deliberately NOT raised to ``warning`` the
+        way the other two sites in this issue's population were. Those two
+        fire ONLY on a confirmed defect condition (a stream that produced
+        chunks but no delta; a value that never got the correction it was
+        due) — this one does not have that property. Its own call sites
+        (``__call__``'s ``case _:`` branch, and the ``else`` branch for
+        every ``RequestResponder``/transport exception) fire for ANY of the
+        ``ServerNotification`` union's members this handler doesn't act on
+        (only 5 of the union's shapes are matched above) and for EVERY
+        server-initiated request — both are legitimate, protocol-compliant
+        traffic a standards-conforming MCP server can send during entirely
+        normal operation, not just malformed/unexpected input. Raising this
+        to ``warning`` would fire on healthy traffic from a server that
+        simply uses a notification/request shape reyn doesn't act on by
+        design — the opposite of the "defect-only" property #4805's
+        severity-raise fix depends on. The underlying tension (this log
+        line's own stated purpose — "make it observable" — genuinely IS
+        defeated by the production floor for the cases that are actual
+        defects, same as the other two sites) is real but needs a design
+        answer this mechanical fix doesn't have (e.g. distinguishing "an
+        unexpected/never-seen message type" from "a known, legitimate one
+        we just don't act on"), not a blanket severity bump."""
         logger.debug(
             "ReynMCPMessageHandler: no handler for message type %s on server %r",
             type(message).__name__, self._server_name,

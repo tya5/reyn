@@ -2511,10 +2511,18 @@ async def recorded_acompletion(
         # would silently produce ZERO delta notifications forever — L9 still
         # surfaces the final text via the reconstructed whole response below,
         # so nothing user-visible breaks and nobody would ever notice.
-        # ONE debug log per STREAM (not per chunk, which would be noise) is
-        # cheap and makes that silent mode observable.
+        # ONE log per STREAM (not per chunk, which would be noise) is cheap
+        # and makes that silent mode observable.
+        #
+        # #4805: WARNING, not debug — this branch's OWN condition (a
+        # callback was supplied, chunks arrived, none exposed a delta) is
+        # EXCLUSIVELY the defect signal the comment above describes; it
+        # never fires on a normally-working stream (where at least one
+        # chunk exposes a delta). A guard whose firing is invisible under
+        # the interactive CUI's production floor (WARNING) is the same as
+        # having no guard at all — see this issue's own title.
         if on_content_delta is not None and chunks and not _delta_fired:
-            logger.debug(
+            logger.warning(
                 "recorded_acompletion: streamed %d chunk(s) but on_content_delta "
                 "never fired — the provider's chunk shape may not expose "
                 "delta.content the way this parsing expects",

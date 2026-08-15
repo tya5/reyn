@@ -310,12 +310,24 @@ def get_max_input_tokens(
         # symptom) is wrong specifically for this temporary case — the
         # permanent UNCATALOGED case never reaches here (reason stays
         # UNCATALOGED forever, so the `reason is not None` branch above,
-        # not this one, handles every subsequent call for it). Log only
-        # (info, not warning — this is good news), not a NEW audit event:
-        # `model_budget_fallback`'s own name means "a fallback occurred",
-        # and none is occurring at this call.
+        # not this one, handles every subsequent call for it). Not a NEW
+        # audit event: `model_budget_fallback`'s own name means "a
+        # fallback occurred", and none is occurring at this call.
+        #
+        # #4805: WARNING, not info — the interactive CUI's own root floor
+        # (`interfaces/cli/commands/chat.py`'s `basicConfig(level=WARNING,
+        # force=True)`) discards anything below it, so an `info` call here
+        # was invisible in production regardless of what this comment
+        # claimed. The PAIRED original warning above (NOT_READY fallback)
+        # is `logger.warning(...)` and IS seen; leaving the correction at
+        # `info` reproduced the exact "warned once, never corrected"
+        # failure #4680 exists to close, just moved one level down (the
+        # warning fires, its own resolution silently doesn't) — the
+        # asymmetry this issue's own title names. Raising the CALL's own
+        # severity (never the logger's `setLevel`, which would change what
+        # the floor means for every OTHER call this module makes).
         del _warned_models[model]
-        logger.info(
+        logger.warning(
             f"model_budget: max_input_tokens for model={model!r} is now "
             f"resolved via litellm catalog to {value:,} tokens (previously "
             f"used the temporary NOT_READY fallback of "

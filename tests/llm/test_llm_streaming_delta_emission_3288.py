@@ -217,10 +217,19 @@ def _make_fake_acompletion_no_content_deltas(chunk_witness: "list[int] | None" =
 def test_silent_zero_delta_stream_logs_once_per_stream(monkeypatch, caplog) -> None:
     """Tier 1: co-vet fix (recommendation (c)) — when a stream produces at
     least one chunk but ``on_content_delta`` never fires (no chunk exposed
-    ``delta.content``), exactly ONE debug log line is emitted for the whole
-    stream (not per chunk) — the cheap observability guard against a silent
-    functional-dead-mode where deltas quietly never happen for a given
-    provider's chunk shape while L9's final text keeps working, masking it."""
+    ``delta.content``), exactly ONE WARNING log line is emitted for the
+    whole stream (not per chunk) — the cheap observability guard against a
+    silent functional-dead-mode where deltas quietly never happen for a
+    given provider's chunk shape while L9's final text keeps working,
+    masking it.
+
+    #4805: captured at WARNING, not DEBUG, deliberately — the interactive
+    CUI's own production floor discards anything below WARNING, so a
+    DEBUG-level capture here would stay green even if this guard were
+    invisible in real production (this guard used to be `logger.debug`,
+    passing this same test under a DEBUG capture while genuinely never
+    reaching a real operator — the exact defect #4805 exists to close).
+    A guard whose firing nobody can see is the same as no guard."""
     import logging
 
     chunk_witness: list[int] = []
@@ -229,7 +238,7 @@ def test_silent_zero_delta_stream_logs_once_per_stream(monkeypatch, caplog) -> N
     )
 
     deltas: list[str] = []
-    with caplog.at_level(logging.DEBUG, logger="reyn.llm.llm"):
+    with caplog.at_level(logging.WARNING, logger="reyn.llm.llm"):
         result = asyncio.run(recorded_acompletion(
             model="gpt-4o-mini", messages=[{"role": "user", "content": "hi"}],
             purpose="main", recorder=None,
