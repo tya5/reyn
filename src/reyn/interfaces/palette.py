@@ -1,4 +1,4 @@
-"""The single place the inline CUI names a colour.
+"""The single place ``interfaces/`` names a colour.
 
 Every colour and emphasis decision the TUI makes is a token here, and every
 widget's ``DEFAULT_CSS`` interpolates one rather than writing a value. Checking
@@ -23,6 +23,22 @@ carried by SGR attributes (``dim``, ``bold``) for the same reason: under the
 ``$text 40%`` and ``$accent 30%`` do not fade anything, they either do nothing
 or paint a solid colour. An attribute leaves the hue to the terminal and
 survives the merge.
+
+**Location (#4787, lead-coder ruling):** lives directly under
+``interfaces/``, not inside ``interfaces/inline/textual_chat/`` where it
+started — that package's own ``__init__.py`` eagerly imports ``textual``/
+``textual_flowview`` through its submodules ("must only ever be imported on
+the TTY path", its own docstring), and Python always runs a package's
+``__init__.py`` before any of its submodules, so ANY import of
+``textual_chat.palette`` — even a direct one, even though this module itself
+has zero framework imports — paid that cost regardless. Verified directly:
+``'textual' in sys.modules`` was ``False`` after importing
+``interfaces.repl.renderer`` alone, ``True`` the moment
+``textual_chat.palette`` was imported. ``interfaces/repl/renderer.py`` (the
+plain/``--cui``/non-TTY chat path, which must stay usable without
+``flowview`` installed) needs these same token values without paying that
+cost — this module has none of its own for the SAME reason it never did:
+``interfaces/__init__.py`` is docstring-only.
 """
 from __future__ import annotations
 

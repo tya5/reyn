@@ -33,7 +33,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from reyn.interfaces.inline.textual_chat import palette
+from reyn.interfaces import palette
 from tests._support.paths import REPO_ROOT
 
 _INTERFACES = REPO_ROOT / "src" / "reyn" / "interfaces"

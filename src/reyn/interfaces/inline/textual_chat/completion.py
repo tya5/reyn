@@ -143,7 +143,7 @@ from typing import TYPE_CHECKING
 from rich.cells import cell_len, set_cell_size
 from textual.widgets import OptionList
 
-from reyn.interfaces.inline.textual_chat import palette
+from reyn.interfaces import palette
 
 from .presenter import _neutralized_label, option_content_rows
 

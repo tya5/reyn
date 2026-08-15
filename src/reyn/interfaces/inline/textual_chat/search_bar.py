@@ -40,7 +40,7 @@ from textual.containers import Horizontal
 from textual.message import Message
 from textual.widgets import Input, Static
 
-from reyn.interfaces.inline.textual_chat import palette
+from reyn.interfaces import palette
 
 
 class SearchBar(Horizontal):

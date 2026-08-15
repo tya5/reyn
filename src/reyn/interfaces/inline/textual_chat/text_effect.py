@@ -187,7 +187,7 @@ def _pulse_colours(dark: bool) -> "tuple[str, ...]":
     """
     from rich.color import Color, blend_rgb
 
-    from reyn.interfaces.inline.textual_chat import palette
+    from reyn.interfaces import palette
 
     peak = Color.parse(
         palette.BLINK_PEAK_DARK if dark else palette.BLINK_PEAK_LIGHT

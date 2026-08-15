@@ -22,6 +22,7 @@ from rich.text import Text
 from textual.content import Content
 from textual_flowview import Entry, Presentation
 
+from reyn.interfaces.palette import TOKENS
 from reyn.interfaces.repl.renderer import (
     _CC_ACCENT,
     _CC_DIM,
@@ -44,7 +45,6 @@ from ._meta_keys import RESULT_KIND_KEY as _RESULT_KIND_KEY
 from ._meta_keys import RESULT_META_KEY as _RESULT_META_KEY
 from ._meta_keys import RUNNING_SINCE_KEY as _RUNNING_SINCE_KEY
 from .gutter import _is_retrieval_tool
-from .palette import TOKENS
 
 if TYPE_CHECKING:
     from collections.abc import Sequence

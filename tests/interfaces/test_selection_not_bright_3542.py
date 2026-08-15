@@ -23,7 +23,7 @@ import pytest
 from textual.app import App, ComposeResult
 from textual.widgets import Static
 
-from reyn.interfaces.inline.textual_chat import palette
+from reyn.interfaces import palette
 
 #: ANSI slot numbers, named so the assertions below read as intent rather than
 #: as magic numbers. 4 is blue; 12 is its bright counterpart.

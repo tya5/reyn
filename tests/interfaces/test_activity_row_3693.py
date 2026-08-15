@@ -27,7 +27,8 @@ from typing import AsyncIterator
 
 import pytest
 
-from reyn.interfaces.inline.textual_chat import TextualChatApp, palette
+from reyn.interfaces import palette
+from reyn.interfaces.inline.textual_chat import TextualChatApp
 from reyn.interfaces.inline.textual_chat.activity_row import (
     _CANCEL_HINT,
     LATEST_HINT,

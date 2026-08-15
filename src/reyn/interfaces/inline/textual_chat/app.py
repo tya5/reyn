@@ -53,7 +53,7 @@ from textual_flowview import (
     FlowView,
 )
 
-from reyn.interfaces.inline.textual_chat import palette
+from reyn.interfaces import palette
 from reyn.interfaces.repl._clipboard import (
     copy_to_clipboard,
     copy_to_clipboard_async,
