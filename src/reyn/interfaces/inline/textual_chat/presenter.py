@@ -17,6 +17,7 @@ import time
 from typing import TYPE_CHECKING, Callable
 
 from rich.console import Console, Group, RenderableType
+from rich.styled import Styled
 from rich.text import Text
 from textual.content import Content
 from textual_flowview import Entry, Presentation
@@ -43,6 +44,7 @@ from ._meta_keys import RESULT_KIND_KEY as _RESULT_KIND_KEY
 from ._meta_keys import RESULT_META_KEY as _RESULT_META_KEY
 from ._meta_keys import RUNNING_SINCE_KEY as _RUNNING_SINCE_KEY
 from .gutter import _is_retrieval_tool
+from .palette import TOKENS
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -944,6 +946,31 @@ class ReynPresenter:
         if entry.collapsed and entry.children:
             count_line = Text(f"  ({len(entry.children)} folded)", style=_CC_DIM)
             body = Group(body, count_line)
+        elif entry.children:
+            # #4691 arc item ⑤ (owner ruling — "B で良いよ" + "親に弱い印も
+            # そうだね"): a Group parent's own line recedes while EXPANDED
+            # (children visible) — child = bright (UNCHANGED — the owner's
+            # own ruling is the parent weakening, never the children
+            # strengthening; the reverse would make children stand out
+            # MORE than an ordinary row, changing how the whole
+            # conversation reads), parent = dim, so the reader's eye lands
+            # on the tool rows carrying the actual content rather than the
+            # structural placeholder above them.
+            #
+            # ``palette.TOKENS["@recede@"]`` (``"dim"``, an SGR ATTRIBUTE,
+            # not a colour) — NOT the hex ``_CC_DIM`` this module uses
+            # elsewhere for the plain REPL renderer's own palette. CLAUDE.md's
+            # TUI colour policy requires every value here resolve through a
+            # ``palette.py`` token; ``@recede@`` already carries a measured
+            # justification for exactly this "recede" meaning (#3522/#3528:
+            # ``$text-muted`` resolves to the SAME ``ansi_default`` marker as
+            # ordinary text under the ansi themes, so it recedes by exactly
+            # nothing — ``dim`` is the value that actually changes what is
+            # drawn). Collapsed is excluded (the branch above already owns
+            # that state, and a collapsed parent recedes for a DIFFERENT
+            # reason — it names a hidden count, not a peer of visible
+            # children).
+            body = Styled(body, TOKENS["@recede@"])
         return Presentation(
             height=self._measure(body, width),
             renderable=body,

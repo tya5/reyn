@@ -481,7 +481,12 @@ async def test_an_expanded_parent_shows_no_count_line() -> None:
         pres = await app._presenter.present(parent, 80)
         from rich.console import Console
 
-        console = Console(width=80)
+        # no_color=True: an expanded parent recedes (#4691 arc item ⑤) via
+        # a real ANSI colour escape now — a colour-enabled capture would
+        # embed digits from the escape sequence itself (e.g. the "1" in
+        # "38;2;107;114;128") into the plain-text substring check below,
+        # a false positive unrelated to this test's own subject.
+        console = Console(width=80, no_color=True)
         with console.capture() as cap:
             console.print(pres.renderable)
         text = cap.get()
@@ -630,3 +635,90 @@ async def test_space_folds_a_group_parent() -> None:
         while parent.collapsed is False:
             await pilot.pause()
         assert parent.collapsed is True
+
+
+@pytest.mark.asyncio
+async def test_an_expanded_group_parent_recedes() -> None:
+    """Tier 2b: #4691 arc item ⑤ (owner ruling — "B で良いよ" + "親に弱い印
+    もそうだね") — a Group parent's own line dims while EXPANDED (children
+    visible), so the reader's eye lands on the tool rows carrying the
+    actual content. Value comes from ``palette.TOKENS["@recede@"]``
+    (``"dim"``, an SGR attribute with its own measured justification,
+    #3522/#3528) — CLAUDE.md's TUI colour policy requires every value here
+    resolve through a ``palette.py`` token, never a literal."""
+    from rich.styled import Styled
+
+    from reyn.interfaces.inline.textual_chat.palette import TOKENS
+
+    transport = QueueTransport()
+    app = TextualChatApp(transport=transport, clock=lambda: 100.0)
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        await transport.push_display(_parent_row("resp-1"))
+        await pilot.pause()
+        await transport.push_display(_started("op-1", call_id="resp-1"))
+        await pilot.pause()
+
+        parent = _entries(app)[0]
+        parent.expand()
+        assert parent.collapsed is False, "setup: expanded"
+        assert parent.children, "setup: has a child"
+
+        pres = await app._presenter.present(parent, 80)
+        assert isinstance(pres.renderable, Styled), (
+            "an expanded Group parent's body must be wrapped to recede"
+        )
+        assert pres.renderable.style == TOKENS["@recede@"]
+
+
+@pytest.mark.asyncio
+async def test_a_collapsed_group_parent_does_not_also_recede() -> None:
+    """Tier 2b: accept-side pair — a COLLAPSED parent already recedes via a
+    different mechanism (the "(N folded)" count line, #4750) and is
+    excluded from item ⑤'s own Styled-wrap branch — the two are distinct
+    reasons to dim, not doubled up on the same row."""
+    from rich.styled import Styled
+
+    transport = QueueTransport()
+    app = TextualChatApp(transport=transport, clock=lambda: 100.0)
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        await transport.push_display(_parent_row("resp-1"))
+        await pilot.pause()
+        await transport.push_display(_started("op-1", call_id="resp-1"))
+        await pilot.pause()
+
+        parent = _entries(app)[0]
+        assert parent.collapsed is True, "setup: defaults collapsed (arc item 3)"
+
+        pres = await app._presenter.present(parent, 80)
+        assert not isinstance(pres.renderable, Styled), (
+            "a collapsed parent's body is a Group (body + count line), "
+            "not item ⑤'s Styled-wrap — the two recede-reasons are "
+            "mutually exclusive by construction"
+        )
+
+
+@pytest.mark.asyncio
+async def test_a_leaf_row_never_recedes() -> None:
+    """Tier 2b: accept-side pair — a row with no children at all (an
+    ordinary tool row, or a Group parent before its first child lands) is
+    untouched by item ⑤'s Styled-wrap — receding is a Group-parent-only
+    concept, never applied to a leaf."""
+    from rich.styled import Styled
+
+    transport = QueueTransport()
+    app = TextualChatApp(transport=transport, clock=lambda: 100.0)
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        await transport.push_display(_parent_row("resp-1"))
+        await pilot.pause()
+        await transport.push_display(_started("op-1", call_id="resp-1"))
+        await pilot.pause()
+
+        parent = _entries(app)[0]
+        parent.expand()
+        (child,) = parent.children
+
+        pres = await app._presenter.present(child, 80)
+        assert not isinstance(pres.renderable, Styled)
