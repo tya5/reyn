@@ -606,6 +606,26 @@ def _pid_is_alive(pid: int) -> bool:
     return True
 
 
+def _ps_snapshot_or_reason() -> str:
+    """#4827②: best-effort ``ps -ef`` for a failing assert's diagnostic
+    message. Must NEVER raise -- this only runs inside that assert's
+    message expression (Python evaluates it exclusively on the falsy
+    path), so an exception here would replace the real AssertionError
+    with an unrelated one, hiding the very failure this diagnostic
+    exists to explain (lead-coder's review point). ``ps`` is POSIX and
+    already assumed available by this file's own ``_child_pids`` (a
+    plain, unguarded ``pgrep`` call on every run, not just on failure) --
+    but this string is built ONLY on an already-rare failure path, so
+    the extra defensiveness costs nothing and closes the hole rather
+    than merely documenting a judgment call."""
+    try:
+        return subprocess.run(
+            ["ps", "-ef"], capture_output=True, text=True, check=False,
+        ).stdout
+    except Exception as exc:  # noqa: BLE001 -- diagnostic-only, must degrade not raise
+        return f"(ps unavailable: {exc!r})"
+
+
 async def _drive_one_turn(registry, prompt: str, timeout: float) -> str:
     """The SAME two primitives ``run_agent_step`` composes
     (``spawn_ephemeral_session`` + ``MessageBus.request``), called directly
@@ -989,7 +1009,7 @@ async def test_llm_driven_install_ingest_query_arc_reaches_the_ingested_chunk(
             "witness below would vacuously pass. "
             f"os.getpid()={os.getpid()!r} baseline_children={_baseline_children!r}. "
             "Full OS process table at the moment of failure:\n"
-            f"{subprocess.run(['ps', '-ef'], capture_output=True, text=True).stdout}"
+            f"{_ps_snapshot_or_reason()}"
         )
         assert all(_pid_is_alive(pid) for pid in _arc_children), (
             f"one or more of the arc's own captured child pids {_arc_children} "
