@@ -280,7 +280,23 @@ async def test_staleness_gate_frames_produced_while_away_are_present(
                 f"cache-as-truth implementation would drop it: {_rows(app)!r}"
             )
     finally:
-        await asyncio.wait_for(reg.shutdown(), timeout=5.0)
+        # No test-owned timeout here (CLAUDE.md/testing.md § Time: tests carry
+        # no wait budget of their own) — this used to be
+        # ``asyncio.wait_for(reg.shutdown(), timeout=5.0)``, a self-timing
+        # wrapper around a call that COULD hang forever before #4765.
+        # #4765 bounded ``AgentRegistry.shutdown()`` itself (an internal
+        # ``asyncio.wait_for(..., timeout=_SHUTDOWN_GRACE_S)`` around
+        # ``session.aclose_background_tasks()``), so the outer wrapper became
+        # redundant, not merely superfluous: measured 2026-08-15, removing it
+        # across this same shape's whole family (5 files, 18 call sites, 23
+        # tests) left every test green with no hang, at ordinary timing. The
+        # one spot this note lives in is deliberate — the other 17 sites (this
+        # file's own siblings below, plus ``test_registry_focus_listener_
+        # rewire.py`` / ``test_4387_tui_paging_extends_from_disk.py`` /
+        # ``test_2280_durability_halt_observability.py`` /
+        # ``test_4788_rewind_picker_escape_dismiss.py``) carry the same bare
+        # ``await reg.shutdown()`` with no repeated comment.
+        await reg.shutdown()
 
 
 # ── 2. orphan gate ────────────────────────────────────────────────────────────
@@ -345,7 +361,7 @@ async def test_orphan_gate_tool_completed_while_away_is_not_running(
             )
             assert all(e.state is not EntryState.RUNNING for e in entries)
     finally:
-        await asyncio.wait_for(reg.shutdown(), timeout=5.0)
+        await reg.shutdown()
 
 
 # ── 3. per-state reset — ONE independent test per state ──────────────────────
@@ -408,7 +424,7 @@ async def test_reset_running_tools_stale_op_id_does_not_silently_coalesce(
                 f"_running_tools entry would swallow it silently: {rows!r}"
             )
     finally:
-        await asyncio.wait_for(reg.shutdown(), timeout=5.0)
+        await reg.shutdown()
 
 
 @pytest.mark.asyncio
@@ -465,7 +481,7 @@ async def test_reset_pending_interventions_closes_all_tabs(tmp_path, monkeypatch
                 "switch must close every pending tab from the OLD session"
             )
     finally:
-        await asyncio.wait_for(reg.shutdown(), timeout=5.0)
+        await reg.shutdown()
 
 
 @pytest.mark.asyncio
@@ -543,7 +559,7 @@ async def test_reset_pending_ivs_stale_key_answer_not_targeted(tmp_path, monkeyp
                 f"transport): {transport.answered_choice_ids!r}"
             )
     finally:
-        await asyncio.wait_for(reg.shutdown(), timeout=5.0)
+        await reg.shutdown()
 
 
 @pytest.mark.asyncio
@@ -590,7 +606,7 @@ async def test_reset_sent_queue_view_and_widget_and_item_meta(tmp_path, monkeypa
             )
             assert sent_queue.rendered_texts() == []
     finally:
-        await asyncio.wait_for(reg.shutdown(), timeout=5.0)
+        await reg.shutdown()
 
 
 @pytest.mark.asyncio
@@ -645,7 +661,7 @@ async def test_reset_streaming_replies_stale_chain_id_does_not_finalize_into_gho
                 f"_streaming_replies entry would swallow it silently: {rows!r}"
             )
     finally:
-        await asyncio.wait_for(reg.shutdown(), timeout=5.0)
+        await reg.shutdown()
 
 
 @pytest.mark.asyncio
@@ -713,7 +729,7 @@ async def test_reset_call_parents_stale_call_id_does_not_nest_into_ghost_parent(
                 f"leftover _call_parents entry would swallow it silently: {rows!r}"
             )
     finally:
-        await asyncio.wait_for(reg.shutdown(), timeout=5.0)
+        await reg.shutdown()
 
 
 def _install_hanging_run_turn(session: Session):
@@ -854,7 +870,7 @@ async def test_reset_queue_view_reseeds_from_new_sessions_own_queue(
         release.set()
         await asyncio.wait_for(turn_task, timeout=5)
     finally:
-        await asyncio.wait_for(reg.shutdown(), timeout=5.0)
+        await reg.shutdown()
 
 
 # ── 4. unvisited session ──────────────────────────────────────────────────────
@@ -902,4 +918,4 @@ async def test_unvisited_session_shows_its_history_not_blank(tmp_path, monkeypat
                 f"hydrate from its history, not show blank: {_rows(app)!r}"
             )
     finally:
-        await asyncio.wait_for(reg.shutdown(), timeout=5.0)
+        await reg.shutdown()

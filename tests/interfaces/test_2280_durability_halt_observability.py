@@ -205,7 +205,7 @@ async def test_status_line_text_surfaces_halted_reason(tmp_path) -> None:
         assert "HALTED" in text
         assert "durability_failure" in text
     finally:
-        await asyncio.wait_for(reg.shutdown(), timeout=5.0)
+        await reg.shutdown()
 
 
 def test_status_line_text_healthy_session_shows_no_banner() -> None:
@@ -356,7 +356,7 @@ async def test_idle_operator_sees_halted_status_line_mid_session(tmp_path) -> No
             assert "HALTED" in text_after
             assert "durability_failure" in text_after
     finally:
-        await asyncio.wait_for(reg.shutdown(), timeout=5.0)
+        await reg.shutdown()
 
 
 @pytest.mark.asyncio
@@ -381,4 +381,4 @@ async def test_idle_healthy_session_status_line_shows_no_banner(tmp_path) -> Non
             text = str(app.query_one(StatusLine).render())
             assert "HALTED" not in text
     finally:
-        await asyncio.wait_for(reg.shutdown(), timeout=5.0)
+        await reg.shutdown()

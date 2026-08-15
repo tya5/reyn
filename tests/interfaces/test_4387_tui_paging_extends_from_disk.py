@@ -210,7 +210,7 @@ async def test_scrolling_to_top_extends_from_disk_beyond_the_bounded_load(
                 "'the true start of the conversation'"
             )
     finally:
-        await asyncio.wait_for(reg.shutdown(), timeout=5.0)
+        await reg.shutdown()
 
 
 @pytest.mark.asyncio
@@ -261,4 +261,4 @@ async def test_search_finds_a_match_only_on_disk_beyond_the_bounded_load(
             )
             assert _count_text(app) == "1/1"
     finally:
-        await asyncio.wait_for(reg.shutdown(), timeout=5.0)
+        await reg.shutdown()
