@@ -2525,7 +2525,8 @@ class TextualChatApp(App):
         )
 
     async def on_event(self, event: events.Event) -> None:
-        """Any key press or scroll dismisses an active text-effect overlay.
+        """Any key press or scroll dismisses an active text-effect overlay;
+        Esc also dismisses an open rewind picker regardless of focus (#4788).
 
         The overlay (:meth:`action_toggle_text_effect`) is a full-viewport
         joke painted OVER the flow view; it should end the instant the reader
@@ -2543,6 +2544,25 @@ class TextualChatApp(App):
         The dismissing press is consumed and does nothing else: Escape while
         the joke plays closes the joke, not the joke AND cancel a text
         selection; a scroll dismisses it without also moving the flow view.
+
+        #4788: the same "sees the raw event first, regardless of focus" seam
+        also closes a real gap in :class:`~.rewind_picker.RewindPicker`'s own
+        ``escape`` Binding. That Binding only participates in Textual's
+        focused-widget-outward walk when the picker (or a descendant) is
+        somewhere in the current focus chain — an intervention arriving while
+        the picker is already open steals focus to its own free-text input,
+        and Esc then resolves against THAT chain instead, leaving the picker
+        visibly open with no way to close it via Esc (found investigating
+        #4761: the picker was never stuck — clicking back into it and Enter
+        still closed it normally — only its own Esc binding was unreachable).
+        Reusing this hook rather than declaring the picker's Binding
+        ``priority=True``: a priority Binding is checked DOM-wide before the
+        normal walk, so its reach crosses every focus boundary, not just this
+        one path — #4751's investigation (architect, same session) flagged a
+        live collision risk for exactly that shape (file_access's
+        ``RECURSIVE`` ``r`` vs. this module's own ``/rewind`` ``r`` handling
+        in :meth:`on_key`, only if either were declared priority=True). This
+        stays scoped to one key and one widget instead.
         """
         if isinstance(event, (events.Key, events.MouseScrollDown, events.MouseScrollUp)):
             # ``self._flow`` is created lazily in ``compose()``, not
@@ -2554,6 +2574,12 @@ class TextualChatApp(App):
             flow = getattr(self, "_flow", None)
             if flow is not None and flow.overlay_active:
                 flow.stop_overlay()
+                event.stop()
+                return
+        if isinstance(event, events.Key) and event.key == "escape":
+            picker = getattr(self, "_rewind_picker", None)
+            if picker is not None and picker.display:
+                picker.action_dismiss()
                 event.stop()
                 return
         await super().on_event(event)
