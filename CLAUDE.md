@@ -62,7 +62,7 @@ observation does not name its own referent**.
 - Each test belongs to exactly one Tier (1 Contract / 2 OS invariant / 3 LLM-replay). Anything else is **Tier 4 — do not write**.
 - First docstring line declares the Tier: `"""Tier 3a: ..."""`.
 - Declaring a Tier presupposes a named behaviour that exists **outside the test's own docstring**.
-- **Never fake a collaborator** when a real instance is cheaply constructible — no `MagicMock`/`AsyncMock`/`patch`, no hand-rolled stand-in. Use real instances or the `LLMReplay` Fake (#3037).
+- **Never fake a collaborator** when a real instance is cheaply constructible — no `MagicMock`/`AsyncMock`/`patch`, no hand-rolled stand-in. Use real instances or the `LLMReplay` Fake (#3037). **Cheap to construct is not the same as drivable**: a collaborator whose only trigger is its own timer (a watcher on an mtime) leaves a test that may not fake it and may not wait for it — the repair is to give it an external drive (`check()` you can call), not a fake and not a `sleep` (#4847).
 - **Never assert on private state.** Use the public surface or a `snapshot()`-style read.
 - **Never pin algorithm-level behaviour** — sort order, dict iteration order, cache structure, exact whitespace.
 - **No snapshot/golden-file tests** outside `tests/scaffold/`.
