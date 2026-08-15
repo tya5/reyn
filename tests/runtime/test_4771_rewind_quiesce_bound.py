@@ -13,25 +13,31 @@ file targets the NEW wrapper reyn's own rewind path adds one layer up
 owns, not a third-party promise, so a controlled bound here is appropriate
 (Tier 1/2's own discriminator).
 
-Two things this file proves, both by real execution:
+Two things this file proves — ① by real execution (through the public
+``checkout()`` surface), ② by asserting directly on
+:func:`registry._quiesce_bound_s`'s own return value rather than racing a
+real clock (lead-coder review, #4799: a sleep-vs-timeout margin test is
+flaky under a loaded runner, and a failure there can't distinguish "the
+formula broke" from "the runner was slow" — the fix is to test the pure
+function the timeout is COMPUTED from, not the timing of the timeout
+itself):
 
 ① A session that genuinely never quiesces makes the WHOLE ``checkout()``
    fail with :class:`RewindQuiesceTimeoutError` — never hangs forever, and
-   never silently proceeds to append the reset-record (fail-safe, #4771
-   owner ruling ①).
-② The bound SCALES with the session's own held-MCP-connection count
-   (#4771 review's own catch: a single fixed constant would mis-fire the
-   moment connection count grows, turning a healthy close into a false
-   rewind failure — "the worst way to be wrong"). A session reporting a
-   HIGHER held-connection count gets a proportionally longer bound before
-   ``_await_quiescent_bounded`` gives up.
+   never silently proceeds to append the reset-record (fail-safe,
+   lead-coder-approved #4771 ruling ①).
+② The bound VALUE scales with the held-MCP-connection count (#4771
+   review's own catch: a single fixed constant would mis-fire the moment
+   connection count grows, turning a healthy close into a false rewind
+   failure — "the worst way to be wrong"). ``_quiesce_bound_s(0)`` floors
+   to one unit; ``_quiesce_bound_s(3)`` is exactly three units.
 
 ``registry._MCP_CLIENT_CLOSE_WORST_CASE_S`` (the per-connection unit) is
-monkeypatched down to a small value so these tests run fast without
-changing the logic under test — the PRODUCTION value (6.5s, from reading
-the installed mcp SDK's own stdio teardown source) is exercised for real
-in ``registry.py`` itself, unaffected by this patch (module-global,
-restored by monkeypatch's own teardown).
+monkeypatched down to a small value for ①'s real-execution test so it
+runs fast without changing the logic under test — the PRODUCTION value
+(6.5s, from reading the installed mcp SDK's own stdio teardown source) is
+exercised for real in ``registry.py`` itself, unaffected by this patch
+(module-global, restored by monkeypatch's own teardown).
 """
 from __future__ import annotations
 
@@ -43,7 +49,11 @@ import pytest
 from reyn.core.events.state_log import StateLog
 from reyn.runtime import registry as registry_module
 from reyn.runtime.profile import AgentProfile
-from reyn.runtime.registry import AgentRegistry, RewindQuiesceTimeoutError
+from reyn.runtime.registry import (
+    AgentRegistry,
+    RewindQuiesceTimeoutError,
+    _quiesce_bound_s,
+)
 from reyn.runtime.session import Session
 from tests._support.agent_session import make_session
 
@@ -74,12 +84,6 @@ def _never_quiescent(*_a, **_kw):
     return asyncio.Event().wait()  # an Event nobody ever .set()s
 
 
-def _quiescent_after(delay: float):
-    def _inner(*_a, **_kw):
-        return asyncio.sleep(delay)
-    return _inner
-
-
 @pytest.mark.asyncio
 async def test_a_session_that_never_quiesces_fails_the_rewind_not_hangs(
     tmp_path, monkeypatch,
@@ -108,42 +112,22 @@ async def test_a_session_that_never_quiesces_fails_the_rewind_not_hangs(
     )
 
 
-@pytest.mark.asyncio
-async def test_the_bound_scales_with_held_mcp_connection_count(tmp_path, monkeypatch):
-    """Tier 2: ② the bound is not a single fixed constant — a session
-    reporting MORE held MCP connections gets a proportionally longer
-    window before _await_quiescent_bounded gives up. Pins the exact defect
-    #4771's review caught: a fixed number would mis-fire a HEALTHY close
-    the instant connection count grew."""
+def test_the_bound_value_scales_with_held_mcp_connection_count(monkeypatch):
+    """Tier 1: ② the bound VALUE is not a single fixed constant — asserted
+    directly on ``_quiesce_bound_s``'s own return value (no clock, no
+    ``asyncio.wait_for`` race — lead-coder review, #4799). Pins the exact
+    defect #4771's review caught: a fixed number would mis-fire a HEALTHY
+    close the instant connection count grew; a correctly-scaled bound
+    grows proportionally instead."""
     monkeypatch.setattr(registry_module, "_MCP_CLIENT_CLOSE_WORST_CASE_S", 0.15)
-    reg = _make_registry(tmp_path)
-    session = reg.get_or_load("alice")
-
-    # A quiesce that takes longer than ONE connection's worst case (0.15s)
-    # but less than THREE connections' worth (0.45s) — a fixed single-unit
-    # bound would wrongly fail this; a correctly-scaled bound must not.
-    monkeypatch.setattr(session, "await_quiescent", _quiescent_after(0.30))
-    monkeypatch.setattr(session, "mcp_held_servers", lambda: ["a", "b", "c"])
-
-    # Must NOT raise — 3 held connections -> bound = 3 * 0.15 = 0.45s > 0.30s.
-    await reg._await_quiescent_bounded(session)
+    assert _quiesce_bound_s(3) == pytest.approx(0.45)
+    assert _quiesce_bound_s(1) == pytest.approx(0.15)
 
 
-@pytest.mark.asyncio
-async def test_zero_held_connections_still_gets_a_real_nonzero_bound(
-    tmp_path, monkeypatch,
-):
-    """Tier 2: the floor (max(1, held)) — a connection-less session (the
-    common case) is not raced against an effectively-zero timeout; it gets
-    at least one full unit for the OTHER quiesce steps (_turn_idle,
-    chain-timeout-watchdog cancellation)."""
+def test_zero_held_connections_still_gets_a_real_nonzero_bound(monkeypatch):
+    """Tier 1: the floor (``max(1, held)``) — a connection-less session
+    (the common case) is not raced against an effectively-zero timeout;
+    ``_quiesce_bound_s(0)`` still returns one full unit, for the OTHER
+    quiesce steps (``_turn_idle``, chain-timeout-watchdog cancellation)."""
     monkeypatch.setattr(registry_module, "_MCP_CLIENT_CLOSE_WORST_CASE_S", 0.15)
-    reg = _make_registry(tmp_path)
-    session = reg.get_or_load("alice")
-
-    monkeypatch.setattr(session, "await_quiescent", _quiescent_after(0.05))
-    monkeypatch.setattr(session, "mcp_held_servers", lambda: [])
-
-    # Must NOT raise -- 0 held connections still floors to 1 unit (0.15s),
-    # comfortably above the 0.05s this quiesce actually takes.
-    await reg._await_quiescent_bounded(session)
+    assert _quiesce_bound_s(0) == pytest.approx(0.15)

@@ -139,8 +139,9 @@ class RewindQuiesceTimeoutError(Exception):
     ``Session.await_quiescent()`` is otherwise unbounded by design — its own
     docstring names the "critical invariant" this protects: when it returns,
     no WAL append can still land, because a straggler past the reset-record
-    seq would silently contaminate the active branch. Owner-approved
-    fail-safe (#4771): if that invariant can't be confirmed within the
+    seq would silently contaminate the active branch. Lead-coder-approved
+    fail-safe (#4771 — an engineering-reliability call, not an owner
+    ruling): if that invariant can't be confirmed within the
     bound, ``checkout``/``rewind_to`` abort BEFORE appending the
     reset-record, rather than proceeding and risking exactly the
     corruption the invariant exists to prevent. This is deliberately the

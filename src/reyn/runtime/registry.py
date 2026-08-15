@@ -92,6 +92,24 @@ _SHUTDOWN_GRACE_S = 3.0
 # ONLY the stdio transport was measured this way — HTTP/SSE transports'
 # close-path bound was not verified with the same rigor (#4771).
 _MCP_CLIENT_CLOSE_WORST_CASE_S = 6.5
+
+
+def _quiesce_bound_s(held_mcp_connections: int) -> float:
+    """The rewind quiesce timeout for a session holding
+    ``held_mcp_connections`` open MCP connections (#4771) — a pure
+    function, deliberately separate from :meth:`AgentRegistry.
+    _await_quiescent_bounded`'s own ``asyncio.wait_for`` call so a test
+    can assert on the VALUE this returns instead of racing a real clock
+    against it (lead-coder review, #4799).
+
+    ``max(1, held_mcp_connections)``: a floor of one whole
+    :data:`_MCP_CLIENT_CLOSE_WORST_CASE_S` unit even for a connection-less
+    session (the common case) — the OTHER quiesce steps (``_turn_idle``,
+    chain-timeout watchdog cancellation) still need a real, non-zero
+    window, not a timeout racing effectively zero."""
+    return max(1, held_mcp_connections) * _MCP_CLIENT_CLOSE_WORST_CASE_S
+
+
 # FP-0043 Stage 3: the implicit per-agent session id. Single-session paths
 # resolve to this id, keeping N=1 behaviour byte-identical. Spawned sessions get
 # generated ids (Stage 4 routes inbound messages to non-default sessions).
@@ -1483,26 +1501,30 @@ class AgentRegistry:
         straggler in a session the operator believes was reset — silent
         corruption, not just a hang).
 
-        The bound is NOT a single fixed constant (#4771 review: a fixed
-        number mis-fires the moment MCP connection count grows — an
-        operator with more MCP servers configured would see an entirely
-        HEALTHY close get mistaken for a hang, "the worst way to be
-        wrong": a fail-safe firing on a healthy path). It scales with
-        THIS session's own currently-held MCP connection count
-        (``mcp_held_servers()``, the public introspection surface) — the
-        one genuinely unbounded-until-measured piece of
-        ``await_quiescent()``'s own chain is the ephemeral-vanish task's
-        MCP-connection teardown, and each connection's own close is
-        already bounded by the SDK itself (see
-        :data:`_MCP_CLIENT_CLOSE_WORST_CASE_S`'s own comment) — reyn's
-        bound here is simply that per-connection worst case times however
-        many connections this session actually holds, with a floor of one
-        unit so a connection-less session (the common case) still gets a
-        real, non-zero window for the OTHER quiesce steps
-        (``_turn_idle``, chain-timeout watchdog cancellation) rather than
-        racing a timeout of effectively zero."""
+        Cancellation caveat (lead-coder review, #4799): ``asyncio.wait_for``
+        cancels the ``await_quiescent()`` coroutine on timeout, but any
+        durable WAL write that had ALREADY been handed to
+        ``DurabilityWorker.submit`` before that moment is NOT itself
+        cancelled — the worker drains its queue on its OWN task,
+        independent of the caller that submitted the write (see
+        ``durability_worker.py``'s own docstring: "a background task
+        drained by ONE background task"). Such a write can still land
+        durably after this method raises. This is SAFE specifically
+        because ``checkout()`` never reaches step 4 (the reset-record
+        append) on this path — there is no reset-record for that write to
+        land "past"; it becomes an ordinary entry on the still-live,
+        un-rewound branch, exactly as if this rewind attempt had never
+        been made.
+
+        The bound value itself is computed by :func:`_quiesce_bound_s` — a
+        pure function, kept separate specifically so a test can assert on
+        the VALUE (0 connections -> 1 unit, 3 connections -> 3 units)
+        instead of racing a real clock against it (lead-coder review,
+        #4799: a sleep-vs-bound margin test is flaky under a loaded
+        runner, and a failure there can't distinguish "the formula broke"
+        from "the runner was slow")."""
         held = len(session.mcp_held_servers())
-        bound_s = max(1, held) * _MCP_CLIENT_CLOSE_WORST_CASE_S
+        bound_s = _quiesce_bound_s(held)
         try:
             await asyncio.wait_for(session.await_quiescent(), timeout=bound_s)
         except TimeoutError as exc:
