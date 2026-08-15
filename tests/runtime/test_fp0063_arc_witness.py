@@ -965,11 +965,31 @@ async def test_llm_driven_install_ingest_query_arc_reaches_the_ingested_chunk(
         # witness has nothing to observe -- fail loudly rather than let part 2
         # vacuously pass.
         _arc_children = _child_pids(os.getpid()) - _baseline_children
+        # #4827②: this assert's failure message is enriched (NOT its truth
+        # condition — no wait/sync/new gate added; lead-coder's explicit
+        # instruction after two independently-refuted hypotheses on my own
+        # part: local reproduction is 0/1 and every further theory is
+        # speculation without a repro to iterate against). The enrichment
+        # itself is what makes the NEXT CI occurrence a usable n=2 instead
+        # of a repeat of the same bare "assert set()" — it captures exactly
+        # the two things this investigation needed and didn't have: the
+        # baseline set this diffed against, and the full OS process table
+        # at the moment of failure (mirrors the diagnostic I ran by hand
+        # locally, ``ps -ef``, under a real 3.11 venv -- on that PASSING
+        # run the vector-store server showed up as a genuine direct child,
+        # so "categorically not a direct child" is refuted; what's
+        # different in the CI-3.11-only failure remains open). ``ps -ef``
+        # is only invoked in the message expression itself, so it is NEVER
+        # run on a passing test (Python only evaluates an ``assert``'s
+        # message when the condition is falsy) -- zero cost on green.
         assert _arc_children, (
             "expected the rag plugin's real chunker/vector-store MCP server "
             "subprocess(es) to be running as direct children of this process "
             "at this point in the arc -- found none, so the #4759 structural "
-            "witness below would vacuously pass"
+            "witness below would vacuously pass. "
+            f"os.getpid()={os.getpid()!r} baseline_children={_baseline_children!r}. "
+            "Full OS process table at the moment of failure:\n"
+            f"{subprocess.run(['ps', '-ef'], capture_output=True, text=True).stdout}"
         )
         assert all(_pid_is_alive(pid) for pid in _arc_children), (
             f"one or more of the arc's own captured child pids {_arc_children} "
