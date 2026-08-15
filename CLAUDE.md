@@ -7,7 +7,9 @@ deep-dive docs — read those on demand, not every session.
 one, ask *would removing this cause a mistake?* If no, do not add it. **If CI
 can catch the violation, write the gate, not a rule here.** Prose is how this
 file grows: 1,310 → 2,443 words in three months, with no rules added at that
-rate. Put `wc -w CLAUDE.md` in the PR that touches it.
+rate. Put `wc -w CLAUDE.md` in the PR that touches it. **A rule that binds one
+directory belongs in that directory's own `CLAUDE.md`, not here** — it loads
+when someone opens those files and costs nothing to everyone else.
 
 ## Constitution
 
@@ -37,23 +39,12 @@ whether you considered it is answered "yes" every time.
 ## Hard rules
 
 - **A doc describing a mechanism is stale the moment that mechanism's code — or a doc it mirrors — changes; fix it in the SAME PR.** Re-read the whole section, not just the line whose keyword you had in mind. **The reviewer owns this too**: a search that missed something cannot report that it missed, so the reviewer's value is a *different* query. Ask "what does this change make false?" before approving.
-- **`docs/reference/runtime/control-ir.md` must stay synced with `OP_KIND_MODEL_MAP`** (`src/reyn/schemas/models.py`). New op kind → new section, same PR. **No CI checks this** — the CI-checked pair is `OP_KIND_MODEL_MAP` ↔ the `Op` union.
-- **Audit-event kinds are a closed vocabulary.** Emitting a kind, declaring it in `AUDIT_EVENT_KINDS` (`src/reyn/core/events/event_schema.py`), and enumerating it in `docs/reference/runtime/events.md` is ONE three-part change. **CI checks the enumeration only — the semantic table row is on you.**
 - **Recovery-feature PRs need a truncate-falsify test**: set X → truncate the WAL past X's events → reconstruct → assert X survives. Same PR.
-- **`enforcement_self_test` (`src/reyn/security/sandbox/self_test.py`) stays 2-layer** (deny leg only, write + spawn axes). The richer per-axis contract is CI-conformance-only. Folding a new axis in needs an owner-level decision.
 
 ### TUI colour policy
 
-Name the MEANING; the active Textual theme renders it. Never pick a colour
-first (owner ruling #3525). **No terminal dependence** (owner ruling #4840):
-reyn ships a full-colour theme, so there is nothing to defer to.
-
-1. Meaning has a convention a reader already carries (*error*, *success*, *in-flight*) → map it to a Textual theme meaning: a theme token (`$error`, `$text-muted`, `$markdown-*` …) or an SGR `text-style`. Never an ANSI name.
-2. Meaning is reyn-specific → any value that serves the design, full-colour included.
-
-- **A colour is not a meaning.** "Error" is the meaning; red is one theme's rendering.
-- **One thing is forbidden**: a literal in a widget stylesheet. Every value goes through a token in `src/reyn/interfaces/palette.py`, and stylesheets write a `@name@` marker.
-- `tests/interfaces/test_tui_colour_tokens.py` fails on any colour value named outside the palette. Textual's own `DEFAULT_CSS` and `interfaces/web/` are out of scope.
+Rules for colour live in `src/reyn/interfaces/CLAUDE.md`, next to the code they
+bind (owner ruling: an unrelated session should not carry them).
 
 ## Testing policy (READ BEFORE WRITING TESTS)
 
@@ -130,7 +121,6 @@ checkout. A green scoped `pytest` is **not** a green CI run.
 Path-conditional gates:
 
 - `docs/` → `mkdocs build --strict -f .mkdocs/mkdocs.yml && python scripts/check_doc_anchors.py && python scripts/check_retired_config_keys_denylist.py`, in that order (anchors needs the built `site/`).
-- `src/reyn/mcp/` → `python scripts/check_fastmcp_import_boundary.py` (zero baseline: no `import fastmcp` under that directory).
 - `tests/` → `python scripts/check_bare_tests_import_reference.py` and `python scripts/check_file_depth_reference.py`.
 
 1. **Finish your own Test plan before merge.** Tick every Manual/Visual item or replace with `- [x] (skipped — <reason>)`. **Never tick a check that did not happen.** **Standing waiver, Visual items only** (owner 2026-08-08): merge with the Visual box unchecked — do not fabricate it.
