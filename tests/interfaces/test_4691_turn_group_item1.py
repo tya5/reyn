@@ -460,3 +460,91 @@ async def test_a_row_with_no_open_turn_still_lands_flat() -> None:
         (only,) = _entries(app)
         assert only.item.meta.get("call_id") == "resp-1"
         assert only.parent is None
+
+
+@pytest.mark.asyncio
+async def test_a_no_tool_terminal_reply_nests_under_its_turns_user_row() -> None:
+    """Tier 2b: owner-flagged gap (post-merge review of the arc exit report)
+    — the exit report's live capture described a 0-tool-call turn as
+    rendering a "flat 2-row shape", read from the SCREEN. flowview never
+    indents, so "looks flat" and "IS flat (``parent is None``)" are
+    visually indistinguishable — the screen capture could not actually
+    tell them apart, and no automated test asserted ``.parent`` for this
+    exact shape (every existing nesting test used ``_parent_row``'s
+    ``dispatched_tool_calls=True`` default, a TOOL-dispatching completion,
+    never the true terminal-reply case). This asserts ``.parent`` directly
+    for a call that dispatches NO tools (``dispatched_tool_calls=False``,
+    the #4777 terminal-reply shape) — the SAME registration branch (call_id
+    lookup misses because this row is registering itself, falls through to
+    ``_current_turn_parent``) the tool-dispatching case already goes
+    through, so this closes the untested half rather than a new mechanism."""
+    transport = QueueTransport()
+    app = TextualChatApp(transport=transport, clock=lambda: 100.0)
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        await _open_turn(transport, pilot, chain_id="chain-A")
+        await transport.push_display(_parent_row("resp-1", dispatched_tool_calls=False))
+        await pilot.pause()
+
+        user_row, reply_row = _entries(app)
+        assert user_row.item.kind == "user"
+        assert reply_row.parent is user_row, (
+            "a no-tool-call terminal reply must nest under the turn's own "
+            "user row — an owner-flagged gap: a screen capture alone "
+            "cannot distinguish this from a truly flat, un-nested row, "
+            "since flowview never indents"
+        )
+        assert reply_row.item.meta.get("dispatched_tool_calls") is False
+
+
+@pytest.mark.asyncio
+async def test_turn_settled_arriving_before_the_terminal_reply_leaves_it_flat() -> None:
+    """Tier 2b: owner-flagged ordering question — CAN ``turn_settled``
+    reach this client before the terminal reply's own display frame for
+    the SAME turn, and if it does, what happens?
+
+    Structural reasoning (not a live measurement of the real transport's
+    scheduling): ``Session``'s turn-processing emits ``turn_settled`` from
+    a ``finally:`` block wrapping the whole turn (``session.py`` — "the
+    finally: block always emits ``turn_settled`` once, after all other
+    processing" was true even before this file), so for THIS turn's own
+    two writes, program order guarantees the display frame's ``put_outbox``
+    call has already returned before the event fires — a race is not
+    expected in production. This test is not a check of that guarantee
+    (this file cannot drive the real Session); it measures the OTHER
+    half of the owner's question — what this app's own code does if that
+    order were ever violated, whatever the cause.
+
+    Answer: the reply lands FLAT, never orphaned or crashing.
+    ``_current_turn_parent`` is cleared by ``_settle_turn_parent`` the
+    moment ``turn_settled`` is processed (this file's own
+    ``test_a_turn_with_no_completions_settles_cancelled_not_stuck_running``
+    covers that clearing), so a display frame arriving strictly AFTER it
+    finds no turn parent to nest under and falls through to the same flat
+    top-level append every call-id-less/no-open-turn row already takes —
+    a defined, safe fallback, not a new failure mode this ordering would
+    introduce."""
+    transport = QueueTransport()
+    app = TextualChatApp(transport=transport, clock=lambda: 100.0)
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        await _open_turn(transport, pilot, chain_id="chain-A")
+
+        # Adversarial order: the turn-end EVENT is processed before the
+        # terminal reply's own DISPLAY frame arrives for the same turn.
+        await transport.push_event(_turn_settled())
+        await pilot.pause()
+        await transport.push_display(_parent_row("resp-1", dispatched_tool_calls=False))
+        await pilot.pause()
+
+        user_row, reply_row = _entries(app)
+        assert reply_row.parent is None, (
+            "a reply arriving AFTER turn_settled has already cleared the "
+            "turn parent must land flat, not silently attach to a stale "
+            "or wrong parent"
+        )
+        assert user_row.state is EntryState.CANCELLED, (
+            "setup: turn_settled with zero completions landed yet settles "
+            "the turn parent CANCELLED (this file's own "
+            "test_a_turn_with_no_completions_settles_cancelled_not_stuck_running)"
+        )

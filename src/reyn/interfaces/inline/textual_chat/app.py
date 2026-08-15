@@ -3743,8 +3743,7 @@ class TextualChatApp(App):
         # to the flat top-level append exactly as before B1 — nothing here
         # narrows what USED to land flat.
         call_id = meta.get("call_id")
-        call_parent = self._call_parents.get(call_id) if call_id else None
-        parent = call_parent
+        parent = self._call_parents.get(call_id) if call_id else None
         if parent is None and kind != "user" and self._current_turn_parent is not None:
             # #4691 arc item ① (final item): the TURN's own nesting level,
             # one layer above item 5's per-call Group — a frame with no
@@ -3773,29 +3772,6 @@ class TextualChatApp(App):
             parent = self._current_turn_parent
         if parent is not None:
             entry = parent.append_child(msg)
-            # #4691 Phase B item 3 (owner ruling): a completion Group
-            # defaults COLLAPSED — but only from its FIRST child onward.
-            # ``Entry.collapse()`` at registration time (when the parent
-            # is still a leaf) is a documented no-op ("a no-op on a
-            # removed entry, a leaf, or when unchanged") — collapse has to
-            # be re-asserted here, the first moment the parent actually
-            # HAS a subtree to fold. ``len == 1`` (not unconditional) means
-            # this fires exactly once per parent, on its first child only
-            # — never re-collapsing a parent the reader already opened by
-            # hand (za/Space, #4775) once a second/third child lands.
-            #
-            # ``parent is call_parent`` — NOT unconditional — is #4691 arc
-            # item ①'s own addition: the owner's later ruling on the turn
-            # Group is the OPPOSITE default ("既定は turn Group = open /
-            # completion Group = hide", i.e. only the completion level
-            # collapses; the turn level stays open so "the conversation
-            # itself" — the sequence of turns — is always visible). Without
-            # this guard, the turn parent's OWN first child (its first
-            # completion Group) would trip this same ``len == 1`` collapse
-            # and fold the entire turn away by default, which is exactly
-            # the regression the owner's ruling forbids.
-            if parent is call_parent and len(parent.children) == 1:
-                parent.collapse()
         else:
             entry = self.conversation.append(msg)
         # #3712: an entry just arrived. Counted HERE, by the thing that
@@ -3833,17 +3809,34 @@ class TextualChatApp(App):
                 # no tools registers (harmless, above) but never spins —
                 # there is nothing for it to wait on.
                 entry.set_state(EntryState.RUNNING)
-                # #4691 Phase B item 3 (owner ruling via #4691's arc): a
-                # completion Group defaults COLLAPSED — the actual
-                # ``.collapse()`` call is at the ``append_child`` call
-                # site below, not here: this entry is still a LEAF at
-                # this point (no child has arrived yet), and
-                # ``Entry.set_collapsed`` is a documented no-op on a leaf
-                # ("a no-op on a removed entry, a leaf, or when
-                # unchanged") — collapsing here would silently do
-                # nothing. The parent's own RUNNING spinner (just above)
-                # lives on the row's own gutter, independent of the
-                # body-collapse state, so it is unaffected either way.
+                # #4691 Phase B item 3 (owner ruling): a completion Group
+                # defaults COLLAPSED — called HERE, at registration, even
+                # though this entry is still a LEAF (no child has arrived
+                # yet). Before textual-flowview 0.22.0's #14 fix this was a
+                # documented no-op on a leaf ("a no-op on a removed entry,
+                # a leaf, or when unchanged"), which forced the workaround
+                # this comment used to describe: watch the entry's own
+                # ``append_child`` call site and re-assert ``.collapse()``
+                # there, guarded to fire exactly once (``len(children) ==
+                # 1``) so a reader who had already opened the parent by
+                # hand (za/Space, #4775) was never re-folded once a
+                # second/third child landed. #14 fixed the underlying
+                # no-op itself — collapse state is now recorded on ANY
+                # live entry, leaf included, and a child appended later
+                # "walks its ancestors and is born folded" (release notes,
+                # 0.22.0) — so the watch-and-reassert workaround, the
+                # len==1 guard, and the "never re-fold a manually-reopened
+                # parent" guard it existed to give ARE ALL now upstream's
+                # own job, satisfied by this one call. This also removes
+                # #4691 arc item ①'s own guard (``parent is call_parent``)
+                # at the append_child call site below — that guard existed
+                # ONLY to keep this same collapse from also firing on the
+                # TURN parent's first child; with the collapse moved here,
+                # to a call site the turn parent's own registration
+                # (:meth:`_handle_turn_started_event`) never reaches, the
+                # turn parent is never a candidate for it in the first
+                # place, and the guard has nothing left to guard.
+                entry.collapse()
         if kind == "presentation":
             self._begin_image_resolutions(entry, msg)
         if kind == "intervention":
