@@ -297,3 +297,11 @@ These rules then keep multi-session work coherent:
    already closed elsewhere in this file. A doc line is the proportionate
    fix; only a human reading the PR before merging can tell a real
    TESTS-READ from an empty one.
+
+## Bundling and the owner's veto unit
+
+A doc PR that exists to give the owner a veto opportunity should ship alone.
+Bundling two such changes makes the revert unit one: the owner cannot reject
+half of it without rejecting both. (#4813 bundled broker rule 3 with the TUI
+colour-policy scope clarification; both were fine, but "veto rule 3 only" had
+no cheap path.)
