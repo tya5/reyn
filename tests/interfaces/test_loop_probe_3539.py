@@ -14,6 +14,7 @@ and a next step.
 from __future__ import annotations
 
 import asyncio
+import time
 from pathlib import Path
 from typing import AsyncIterator
 
@@ -93,6 +94,57 @@ def _painted(app: TextualChatApp) -> str:
         "".join(segment.text for segment in strip)
         for strip in app.screen._compositor.render_strips()
     )
+
+
+class _VirtualClock:
+    """#4844 (owner: "また時間依存テスト作ってるの？"): a ``time.perf_counter``
+    stand-in that behaves exactly like the real clock until told to
+    :meth:`jump` forward.
+
+    ``TextualChatApp._watch_loop_responsiveness`` computes lateness as
+    ``time.perf_counter() - last - _TICK_SECONDS`` every tick — a REAL
+    ``time.sleep(stall_seconds)`` was the only thing making that lateness
+    exceed the tripwire's threshold, with a 150ms margin meant to
+    guarantee it. That margin is real-wall-clock-relative, so it depends on
+    CI-host scheduling being fast enough to keep the *actual* delay within
+    150ms of the intended one — CLAUDE.md's banned "straight-line sleep(N)
+    as the thing that makes an assertion pass", and #4834 measured real
+    CI-host starvation at ~2s, an order of magnitude past that margin
+    (tracked separately in #4827 as "why does the starvation happen" —
+    this fixes "why does the test's OWN pass/fail depend on wall-clock
+    time at all").
+
+    A monkeypatched ``time.perf_counter`` that returns a FIXED large jump
+    unconditionally would break every *other* tick this same long-lived
+    background loop takes (it starts at ``on_mount``, runs the whole test)
+    — so this tracks a virtual offset, added to the REAL clock: every tick
+    before/after :meth:`jump` behaves physically (tiny real deltas, exactly
+    like an un-patched clock), and exactly one intended tick sees the
+    injected jump — deterministic, and zero real elapsed wall-clock time.
+
+    Patches ``time.perf_counter`` specifically (not ``time.monotonic``,
+    which is what ``asyncio``'s own scheduling and ``TextualChatApp``'s
+    ``self._clock``/``ActivityRow`` elapsed-time default to — confirmed via
+    ``app.py``'s own ``clock: Callable[[], float] = time.monotonic``), so
+    this is isolated to exactly the one call site it targets.
+    """
+
+    def __init__(self) -> None:
+        # Captured NOW, before any monkeypatch.setattr(time, "perf_counter",
+        # self) call — must be the REAL underlying function, not a dynamic
+        # `time.perf_counter` lookup inside __call__, which would resolve to
+        # THIS INSTANCE once patched in (infinite recursion).
+        self._real_perf_counter = time.perf_counter
+        self._offset = 0.0
+
+    def __call__(self) -> float:
+        return self._real_perf_counter() + self._offset
+
+    def jump(self, seconds: float) -> None:
+        """Advance the virtual clock by ``seconds``, with no real delay —
+        the NEXT tick's ``time.perf_counter()`` reads this far ahead of the
+        previous one."""
+        self._offset += seconds
 
 
 def test_detail_is_off_unless_a_path_is_named(monkeypatch) -> None:
@@ -322,22 +374,27 @@ async def test_recovery_notice_is_visible_without_arming_the_dump(caplog, monkey
     then the process died" on a session nobody armed in advance.
     """
     import logging
-    import time
 
     monkeypatch.delenv("REYN_PROF_DUMP", raising=False)
     transport = QueueTransport()
     app = TextualChatApp(transport=transport)
     logger_name = "reyn.interfaces.inline.textual_chat.app"
-    # Derived from the real threshold, not a bare literal — a margin large
-    # enough to clear it stays correct if _TRIPWIRE_MS ever moves; 150ms of
-    # headroom mirrors the sibling test's own 250.0 -> 0.4s margin above.
+    # #4844: a virtual clock, not a real time.sleep() — see _VirtualClock's
+    # own docstring for why a real sleep + margin is banned (CLAUDE.md) and
+    # CI-unsafe (#4834: real starvation measured at ~2s, an order of
+    # magnitude past any margin a test could afford to wait for).
+    clock = _VirtualClock()
+    monkeypatch.setattr(time, "perf_counter", clock)
     stall_seconds = (loop_probe._TRIPWIRE_MS + 150) / 1000
     with caplog.at_level(logging.WARNING, logger=logger_name):
         async with app.run_test(size=(80, 24)) as pilot:
             await pilot.pause()
-            # A synchronous sleep stalls the loop; the ticks afterward are
-            # healthy again, which is what the recovery notice fires on.
-            time.sleep(stall_seconds)
+            # No real delay: the tripwire's own tick reads this jump on its
+            # next wake, exactly as if the loop had actually gone
+            # unresponsive for stall_seconds — the ticks afterward are
+            # healthy again (no further jump), which is what the recovery
+            # notice fires on.
+            clock.jump(stall_seconds)
             # No test-owned wait budget (CLAUDE.md/testing.md § Time): wait
             # for the actual condition, unbounded — CI's own --timeout=120
             # is the kill switch if the wiring is ever broken and this never
@@ -376,13 +433,15 @@ async def test_recovery_notice_survives_the_real_interactive_logging_floor(
     prove the assertion, not that app.py's own call site still does.
     """
     import logging
-    import time
 
     logfile = tmp_path / "reyn.log"
     root = logging.getLogger()
     saved_handlers = root.handlers[:]
     saved_level = root.level
     monkeypatch.delenv("REYN_PROF_DUMP", raising=False)
+    # #4844: virtual clock, no real sleep — see _VirtualClock's docstring.
+    clock = _VirtualClock()
+    monkeypatch.setattr(time, "perf_counter", clock)
     try:
         logging.basicConfig(
             filename=str(logfile), level=logging.WARNING, force=True,
@@ -392,7 +451,7 @@ async def test_recovery_notice_survives_the_real_interactive_logging_floor(
         app = TextualChatApp(transport=transport)
         async with app.run_test(size=(80, 24)) as pilot:
             await pilot.pause()
-            time.sleep(stall_seconds)
+            clock.jump(stall_seconds)
             # No test-owned wait budget: wait on the file's actual content,
             # unbounded — CI's own --timeout=120 is the kill switch.
             while "recovered" not in logfile.read_text(encoding="utf-8"):
@@ -427,7 +486,7 @@ def test_the_worst_lateness_survives_the_tick_that_saw_it() -> None:
 
 
 @pytest.mark.asyncio
-async def test_the_app_actually_shows_the_notice_when_the_loop_stalls(caplog) -> None:
+async def test_the_app_actually_shows_the_notice_when_the_loop_stalls(caplog, monkeypatch) -> None:
     """Tier 2b: the tripwire is REACHED from the running app, not just correct.
 
     The unit tests above prove the tripwire computes the right answer. They
@@ -438,18 +497,21 @@ async def test_the_app_actually_shows_the_notice_when_the_loop_stalls(caplog) ->
     written to.
     """
     import logging
-    import time
 
     transport = QueueTransport()
     app = TextualChatApp(transport=transport)
+    # #4844: virtual clock, no real sleep — see _VirtualClock's docstring.
+    clock = _VirtualClock()
+    monkeypatch.setattr(time, "perf_counter", clock)
     with caplog.at_level(logging.WARNING, logger="reyn.interfaces.inline.textual_chat.app"):
         async with app.run_test(size=(80, 24)) as pilot:
             await pilot.pause()
 
-            # A synchronous sleep: the loop cannot run the watcher while this
-            # holds it, which is exactly the condition being detected.
+            # The virtual clock jump simulates the condition being detected
+            # — the loop appearing unable to run the watcher — with no real
+            # delay.
             status_before = str(app.query_one(StatusLine).render())
-            time.sleep(0.4)
+            clock.jump(0.4)
             # #4827 (same class, lead-coder's re-read caught what I missed):
             # a fixed range(6) was trusted as "enough pauses for the stall
             # notice to have been logged" before a positive assert — under
@@ -480,7 +542,7 @@ async def test_the_app_actually_shows_the_notice_when_the_loop_stalls(caplog) ->
 
 
 @pytest.mark.asyncio
-async def test_a_stall_costs_no_row_of_layout(caplog) -> None:
+async def test_a_stall_costs_no_row_of_layout(caplog, monkeypatch) -> None:
     """Tier 2b: the notice takes no row from the conversation or the chrome.
 
     The first fix put it in the flow, the second on the status line. Measured
@@ -497,11 +559,13 @@ async def test_a_stall_costs_no_row_of_layout(caplog) -> None:
     PR body.
     """
     import logging
-    import time
 
     transport = QueueTransport()
     app = TextualChatApp(transport=transport)
     logger_name = "reyn.interfaces.inline.textual_chat.app"
+    # #4844: virtual clock, no real sleep — see _VirtualClock's docstring.
+    clock = _VirtualClock()
+    monkeypatch.setattr(time, "perf_counter", clock)
     with caplog.at_level(logging.WARNING, logger=logger_name):
         async with app.run_test(size=(80, 24)) as pilot:
             await pilot.pause()
@@ -509,7 +573,7 @@ async def test_a_stall_costs_no_row_of_layout(caplog) -> None:
             status_before = str(app.query_one(StatusLine).render())
             merged_before = bool(app.query_one(StatusLine).parent.query(Tab))
 
-            time.sleep(0.4)
+            clock.jump(0.4)
             # #4827 (same class as the sibling test above): wait on the
             # real condition, unbounded — if the stall never trips the
             # wire, this waits forever and CI's own --timeout=120 kills
@@ -664,13 +728,26 @@ async def test_pump_heartbeat_reaches_the_default_visible_notices(
     isolation (the sibling unit test above), but that app.py's own call
     site actually supplies it."""
     import logging
-    import time
+
+    from textual import events
 
     logfile = tmp_path / "reyn.log"
     root = logging.getLogger()
     saved_handlers = root.handlers[:]
     saved_level = root.level
     monkeypatch.delenv("REYN_PROF_DUMP", raising=False)
+    # #4844: virtual clock, no real sleep — see _VirtualClock's docstring.
+    # This test's own "+" assertion below needs a NON-ZERO trailing-window
+    # pump-heartbeat delta, which the App's real 1.0s-interval Timer would
+    # normally supply — but a real Timer still needs REAL wall-clock time to
+    # fire, which the virtual-clock jump below does not provide (it only
+    # changes what the tripwire's OWN lateness computation perceives, not
+    # real elapsed time). Driving on_timer(...) directly (same technique
+    # test_on_timer_advances_pump_ticks_only_for_its_own_timer already
+    # uses) advances pump_ticks deterministically, with no dependence on
+    # the real Timer's own schedule either.
+    clock = _VirtualClock()
+    monkeypatch.setattr(time, "perf_counter", clock)
     try:
         logging.basicConfig(
             filename=str(logfile), level=logging.WARNING, force=True,
@@ -680,7 +757,11 @@ async def test_pump_heartbeat_reaches_the_default_visible_notices(
         app = TextualChatApp(transport=transport)
         async with app.run_test(size=(80, 24)) as pilot:
             await pilot.pause()
-            time.sleep(stall_seconds)
+            assert app.pump_heartbeat_timer is not None
+            await app.on_timer(
+                events.Timer(timer=app.pump_heartbeat_timer, time=0.0, count=1),
+            )
+            clock.jump(stall_seconds)
             while "recovered" not in logfile.read_text(encoding="utf-8"):
                 await pilot.pause()
     finally:
@@ -772,13 +853,15 @@ async def test_keys_received_reaches_the_default_visible_stall_notice(
     stall notice, not just that the formatting function accepts the
     parameter in isolation."""
     import logging
-    import time
 
     logfile = tmp_path / "reyn.log"
     root = logging.getLogger()
     saved_handlers = root.handlers[:]
     saved_level = root.level
     monkeypatch.delenv("REYN_PROF_DUMP", raising=False)
+    # #4844: virtual clock, no real sleep — see _VirtualClock's docstring.
+    clock = _VirtualClock()
+    monkeypatch.setattr(time, "perf_counter", clock)
     try:
         logging.basicConfig(
             filename=str(logfile), level=logging.WARNING, force=True,
@@ -802,7 +885,7 @@ async def test_keys_received_reaches_the_default_visible_stall_notice(
             # attempts=N / time-bound), never a race the test itself builds.
             while app.keys_received < 3:
                 await pilot.pause()
-            time.sleep(stall_seconds)
+            clock.jump(stall_seconds)
             while "recovered" not in logfile.read_text(encoding="utf-8"):
                 await pilot.pause()
     finally:
@@ -884,13 +967,23 @@ async def test_turn_active_reaches_the_default_visible_stall_notice(
     ``_activity.begin()`` reach-around) shows ``turn active`` in the
     default-visible log line, not gated behind ``REYN_PROF_DUMP``."""
     import logging
-    import time
 
     logfile = tmp_path / "reyn.log"
     root = logging.getLogger()
     saved_handlers = root.handlers[:]
     saved_level = root.level
     monkeypatch.delenv("REYN_PROF_DUMP", raising=False)
+    # #4844: virtual clock, no real sleep — see _VirtualClock's docstring.
+    # As a side effect this also narrows #4827①'s own recurring window: the
+    # tripwire's very next tick (a real, but tiny, _TICK_SECONDS=50ms
+    # asyncio.sleep) observes the jump immediately, instead of racing a
+    # real multi-hundred-ms time.sleep() during which CI-host starvation
+    # had room to disturb state between "confirmed active" and "observed".
+    # #4827's own "why does starvation happen at all" question stays open
+    # (tracked separately) — this only removes the real-time WINDOW the
+    # test itself used to hold open for it.
+    clock = _VirtualClock()
+    monkeypatch.setattr(time, "perf_counter", clock)
     try:
         logging.basicConfig(
             filename=str(logfile), level=logging.WARNING, force=True,
@@ -939,7 +1032,7 @@ async def test_turn_active_reaches_the_default_visible_stall_notice(
             _diag_activity_obj_id = id(app._activity)
             _diag_query_obj_id = id(app.query_one(ActivityRow))
             _diag_state_at_confirm = app._activity.state
-            time.sleep(stall_seconds)
+            clock.jump(stall_seconds)
             while "unresponsive" not in logfile.read_text(encoding="utf-8"):
                 await pilot.pause()
             # lead-coder's TESTS-READ (#4842): these 3 are read AFTER this
