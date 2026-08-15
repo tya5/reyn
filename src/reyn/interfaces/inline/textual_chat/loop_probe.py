@@ -257,9 +257,16 @@ def stall_recovered_log_line() -> str:
     session that never armed ``REYN_PROF_DUMP`` before a stall — the exact
     situation #4761's own report was in — got nothing new from that work.
     This line is deliberately NOT gated on the env var, so "it fired, then
-    it recovered" is readable from an ordinary, unarmed run's own logs —
-    lead-coder ruling: ``logger.info``, not ``.warning`` — the stall itself
-    already used the operator's attention budget once; recovery is good
-    news, not a second alarm.
+    it recovered" is readable from an ordinary, unarmed run's own logs.
+
+    The caller (``app.py``'s ``_watch_loop_responsiveness``) logs this at
+    ``logger.warning`` — same severity as the stall notice, not
+    ``.info``. An initial ``.info`` ruling was self-caught and reverted
+    before landing: the interactive CUI's own ``_setup_interactive_logging``
+    sets the ROOT logger's level to WARNING, so an INFO record from a
+    logger with no override of its own never reaches the file at all —
+    not quieter, genuinely absent. Stall and recovery are the start and
+    end of ONE episode; one WARNING line per episode is not a second
+    alarm.
     """
     return "the interface recovered from the stall reported above"

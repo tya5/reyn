@@ -332,7 +332,7 @@ async def test_recovery_notice_is_visible_without_arming_the_dump(caplog, monkey
     # enough to clear it stays correct if _TRIPWIRE_MS ever moves; 150ms of
     # headroom mirrors the sibling test's own 250.0 -> 0.4s margin above.
     stall_seconds = (loop_probe._TRIPWIRE_MS + 150) / 1000
-    with caplog.at_level(logging.INFO, logger=logger_name):
+    with caplog.at_level(logging.WARNING, logger=logger_name):
         async with app.run_test(size=(80, 24)) as pilot:
             await pilot.pause()
             # A synchronous sleep stalls the loop; the ticks afterward are
@@ -349,6 +349,66 @@ async def test_recovery_notice_is_visible_without_arming_the_dump(caplog, monkey
     assert "recovered" in caplog.text, (
         "the recovery notice must be readable with REYN_PROF_DUMP unset — "
         f"the exact situation #4761's own report was in: {caplog.text!r}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_recovery_notice_survives_the_real_interactive_logging_floor(
+    tmp_path, monkeypatch,
+) -> None:
+    """Tier 2b: #4801 follow-up (self-caught, measured, then corrected) —
+    REACHED from the running app under the REAL production logging floor,
+    not a hand-written log call standing in for it.
+
+    The interactive CUI's own startup (``interfaces/cli/commands/chat.py``'s
+    ``_setup_interactive_logging``) calls ``logging.basicConfig(level=
+    logging.WARNING, force=True, ...)``, setting the ROOT logger's level.
+    ``caplog.at_level(...)`` — what the sibling test above uses — overrides
+    exactly that floor FOR THE TEST, which is why an earlier version of
+    this PR's own ``logger.info`` recovery notice passed its own test while
+    being silently dropped in the real interactive path (measured
+    directly). The fix was raising the call site's severity to match the
+    stall notice's ``logger.warning``, not raising this logger's level —
+    so this test drives the SAME ``_watch_loop_responsiveness`` code path
+    the sibling test does, but reads the notice back from a real log FILE
+    under a reconstructed real floor, with no ``caplog`` involved at any
+    point. A test that called ``logger.warning`` directly here would only
+    prove the assertion, not that app.py's own call site still does.
+    """
+    import logging
+    import time
+
+    logfile = tmp_path / "reyn.log"
+    root = logging.getLogger()
+    saved_handlers = root.handlers[:]
+    saved_level = root.level
+    monkeypatch.delenv("REYN_PROF_DUMP", raising=False)
+    try:
+        logging.basicConfig(
+            filename=str(logfile), level=logging.WARNING, force=True,
+        )
+        stall_seconds = (loop_probe._TRIPWIRE_MS + 150) / 1000
+        transport = QueueTransport()
+        app = TextualChatApp(transport=transport)
+        async with app.run_test(size=(80, 24)) as pilot:
+            await pilot.pause()
+            time.sleep(stall_seconds)
+            # No test-owned wait budget: wait on the file's actual content,
+            # unbounded — CI's own --timeout=120 is the kill switch.
+            while "recovered" not in logfile.read_text(encoding="utf-8"):
+                await pilot.pause()
+    finally:
+        for handler in root.handlers:
+            if handler not in saved_handlers:
+                handler.close()
+        root.handlers = saved_handlers
+        root.setLevel(saved_level)
+
+    content = logfile.read_text(encoding="utf-8")
+    assert "unresponsive" in content, "the stall notice must reach the file under the real floor"
+    assert "recovered" in content, (
+        "the recovery notice must reach the file under the real floor too — "
+        f"both are logger.warning, the same severity: {content!r}"
     )
 
 
