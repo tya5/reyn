@@ -231,6 +231,21 @@ Adjacent recovery-adjacent state that stays inline (not builder-owned):
   re-entrancy case (a tracked task itself calling `aclose()`, e.g. the
   ephemeral-vanish task's own `await_quiescent` call) and exactly which
   guarantee that case weakens.
+- **Wall-clock bound on the whole call, rewind-path only** (`#4771`) — the
+  RE-DRAIN LOOP above is bounded by round count, not by time; `await_quiescent()`
+  itself stays unbounded by design (its own docstring's "critical invariant":
+  returning early risks a straggler append landing past the reset-record).
+  `AgentRegistry.checkout`'s step 3 wraps each session's call in
+  `_await_quiescent_bounded`, an `asyncio.wait_for` with a per-session bound
+  (`_quiesce_bound_s` — one `_MCP_CLIENT_CLOSE_WORST_CASE_S` unit, 6.5s, per
+  currently-held MCP connection, floored at one unit for a connection-less
+  session). On timeout it raises `RewindQuiesceTimeoutError` and `checkout`
+  aborts BEFORE the reset-record append (step 4) — fail-safe, not fail-open:
+  unlike `shutdown()` (safe to abandon a straggler because the process exits
+  right after), a rewound session keeps running, so proceeding past an
+  unquiesced session risks the exact silent-corruption class this whole
+  mechanism exists to prevent. Scoped to the rewind/`checkout` call site only
+  — `await_quiescent()` itself is unchanged for every other caller.
 
 ## Family 3 — Hook-event / reactivity
 
