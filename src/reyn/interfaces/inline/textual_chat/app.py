@@ -107,6 +107,7 @@ from .restore import RESUME_DIVIDER, project_restored_frames
 from .rewind_picker import RewindPicker
 from .search_bar import SearchBar
 from .sent_queue import SentQueue
+from .theme import REYN_THEME
 
 if TYPE_CHECKING:
     from textual.geometry import Offset
@@ -2084,42 +2085,40 @@ class TextualChatApp(App):
                 )
 
     def on_mount(self) -> None:
-        # #3505: #3504 made ``App``'s own background ``ansi_default`` (the
-        # terminal's true default), but two chrome regions still painted a
-        # concrete ``#0c0c0c`` — the alpha-blend of ``ansi_default`` with any
-        # other color drops the "send as terminal default" marker and
-        # produces a solid dark RGB instead (Textualize/textual#5452, closed
-        # not planned). Textual's own ``"ansi-dark"``/``"ansi-light"`` themes
-        # exist for exactly this: every alpha-bearing design-system variable
+        # #3505/#4840: #3504 made ``App``'s own background ``ansi_default``
+        # (the terminal's true default), but two chrome regions still
+        # painted a concrete ``#0c0c0c`` — the alpha-blend of
+        # ``ansi_default`` with any other color drops the "send as terminal
+        # default" marker and produces a solid dark RGB instead
+        # (Textualize/textual#5452, closed not planned). Switching the
+        # WHOLE APP to Textual's own ``"ansi-dark"`` theme was the fix at
+        # the time: every alpha-bearing design-system variable
         # (``$foreground``/``$background``/``$surface``/``$panel``/``$text``/
-        # ``$text-muted``/etc.) resolves to ``ansi_default`` (or another
-        # marker-carrying ``ansi_*`` value) instead of a literal hex, so the
-        # SAME blend that broke under the default theme now blends two
-        # marker-carrying values and the marker survives — measured: no
-        # ``48;2;`` truecolor background escape codes anywhere in a real
-        # terminal capture after this switch, versus 2 residue regions
-        # before. A LOCALIZED per-selector ``background: @app-background@;``
-        # override (mirroring how #3504 fixed ``App``) was tried first and
-        # does NOT work: the literal ``ansi_default`` value fails to
-        # propagate when declared on anything other than ``App`` itself
-        # (verified with a ``background: red;`` positive control on the same
-        # selectors, which DID paint immediately — ruling out a selector/
-        # specificity mistake). This theme switch is the only measured fix.
+        # ``$text-muted``/etc.) resolved to ``ansi_default`` (or another
+        # marker-carrying ``ansi_*`` value) under it, so the SAME blend that
+        # broke under Textual's DEFAULT theme now blended two
+        # marker-carrying values and the marker survived.
         #
-        # Known, accepted trade-off (owner-reviewed, 2026-07-30): every
-        # widget that reads a now-``ansi_default``-valued variable loses its
-        # concrete-hex identity — most visibly ``$panel``/``$surface`` (the
-        # drawer / completion popup / search bar / rewind picker, and
-        # ``Composer``'s own opt-out target) go ``transparent`` instead of
-        # their prior dark shade, and ``MenuBar``'s own
-        # ``color: $text-muted`` / ``:focus-within { color: $text }`` rule
-        # collapses to the identical value (partially offset by Tab's own
-        # ``:ansi`` variant, which still distinguishes active/inactive via
-        # dim/bold text-style). None of this is patched here — see the PR
-        # body for the full impact table; MenuBar re-coloring and any
-        # ``$panel``/``$surface`` follow-up are separate, out-of-scope
-        # issues pending a real-terminal look.
-        self.theme = "ansi-dark"
+        # #4840 (owner ruling, 2026-08-16) retires the premise this fix
+        # depended on: reyn no longer defers to the terminal's own colours
+        # by default (``@app-background@`` no longer names ``ansi_default``
+        # — see ``palette.py``), so there is no marker left for an
+        # alpha-blend to destroy under reyn's OWN theme (``.theme.py``,
+        # ``REYN_THEME``) — every design-system variable there is a
+        # concrete hex, not an ``ansi_*`` marker. The #3505 alpha-blend
+        # hazard is still real (documented on CLAUDE.md:52) for whoever
+        # selects an ``ansi-*`` theme explicitly — it just no longer governs
+        # what reyn ships as its OWN default.
+        #
+        # #3505's own accepted trade-off (owner-reviewed, 2026-07-30) — the
+        # drawer/completion popup/search bar/rewind picker/``Composer``
+        # losing their concrete-hex identity under ``ansi-dark``, MenuBar's
+        # active/inactive colour distinction collapsing — is likewise a
+        # property of the ``ansi-*`` themes specifically, not of reyn's own
+        # default theme, which keeps concrete ``$panel``/``$surface`` values
+        # throughout (``REYN_THEME.panel``/``.surface``).
+        self.register_theme(REYN_THEME)
+        self.theme = "reyn"
         # #3469 (generalizing #3326's single-key fix): push the COMPLETE
         # palette-derived markdown theme (``renderer.CHAT_MARKDOWN_THEME_STYLES``
         # — the plain renderers' Consoles consume the same constant) onto the
