@@ -38,13 +38,17 @@ considered it is answered "yes" every time.
 
 ### TUI colour policy
 
-The terminal emulator's theme decides; reyn names the MEANING, never the RGB
-(owner ruling #3525).
+Name the MEANING; the active theme renders it. Never pick a colour first
+(owner ruling #3525). **"The theme" is whichever theme is active** — reyn's own
+full-colour default, a Textual builtin, or an `ansi-*` theme that defers to the
+terminal emulator's palette. Terminal palettes are not a vocabulary: ECMA-48
+standardises the escape codes, not the RGB behind them, and 16 slots carry no
+meanings — that is why the meanings live in a theme.
 
-1. Meaning has a convention a reader already carries (*error*, *success*, *in-flight*) → name it, let the theme render it: ANSI-16 / `ansi_default` / `transparent` / an SGR `text-style`.
-2. Meaning is reyn-specific → any value that serves the design, full-colour included. The theme has no opinion to defer to.
+1. Meaning has a convention a reader already carries (*error*, *success*, *in-flight*) → name it so every theme can render it: a theme token (`$error`, `$text-muted`, `$markdown-*` …), an SGR `text-style`, or `ansi_default` / `transparent` where the terminal's own value is the point.
+2. Meaning is reyn-specific → any value that serves the design, full-colour included. No theme has an opinion to defer to.
 
-- **A colour is not a meaning.** "Error" is the meaning; red is one terminal's rendering. Never pick the colour first.
+- **A colour is not a meaning.** "Error" is the meaning; red is one theme's rendering. Never pick the colour first.
 - **This is not an ANSI-16-only policy.** Only two things are forbidden, and neither limits expressiveness: **a literal in a widget stylesheet** (every value goes through a token in `src/reyn/interfaces/inline/textual_chat/palette.py`, and stylesheets write a `@name@` marker) and **alpha-compositing over `ansi_default`** (the blend destroys the terminal's own value).
 - `tests/interfaces/test_tui_colour_tokens.py` enumerates every colour-bearing declaration under `interfaces/` and fails on any value named outside the palette. Textual's own `DEFAULT_CSS` is out of scope.
 
