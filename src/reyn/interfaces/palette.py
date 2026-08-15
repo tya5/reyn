@@ -14,15 +14,34 @@ of matching an expectation about their shape. Enumerating them is what this
 module makes unnecessary: ``test_tui_colour_tokens.py`` fails if any colour is
 written outside it.
 
-**Terminal-owned meanings stay with the terminal.** Where the terminal already
-has a meaning — its default foreground and background — the token names that
-rather than pinning a value the user's theme is entitled to choose. Emphasis is
-carried by SGR attributes (``dim``, ``bold``) for the same reason: under the
-``ansi-*`` themes ``$text`` and ``$text-muted`` both resolve to the
-``ansi_default`` marker, and alpha compositing DROPS that marker — so
-``$text 40%`` and ``$accent 30%`` do not fade anything, they either do nothing
-or paint a solid colour. An attribute leaves the hue to the terminal and
-survives the merge.
+**Colour meanings map to the Textual theme, not the terminal (owner ruling,
+#4840, 2026-08-16).** Deferring to the terminal's own default colours — an
+``ansi_default``/``ansi_blue``/``ansi_black`` marker naming one of its
+sixteen slots rather than an RGB value — made sense only while reyn had no
+theme of its own to defer to instead: "端末の既定色に従う意味は、テーマを
+採用した時点で消えます" (owner, verbatim). ``@app-background@`` maps to
+Textual's own ``$background`` under this ruling — the active theme decides
+the RGB, not the terminal. ``@selection-bg@``/``@selection-fg@`` name the
+SAME retired premise but are NOT remapped yet — landing them ahead of reyn's
+own default theme would regress #3542 (measured: ``ansi-dark``'s own
+``$screen-selection-background`` is the loud ``ansi_bright_blue`` #3542
+moved away from), so lead-coder's ruling sequences them after that theme
+exists (see the tokens' own comments below). ``@rule@`` stays a literal hex
+for an unrelated reason (documented on the token itself): it must read as a
+divider against both of the app's OWN light/dark grounds, which a theme
+variable would just vanish into on one of them — that is a THEME question,
+never a terminal one, and was never in this paragraph's scope.
+
+Emphasis is still carried by SGR attributes (``dim``, ``bold``), which this
+ruling does not reach — ``dim``/``bold`` are not colours, ANSI or otherwise,
+they are text-style attributes the terminal (or Textual's own ANSI-to-
+truecolor filter) applies on top of whatever colour is already chosen. Under
+a full-colour theme, ``$text``/``$text-muted`` resolve to concrete RGB, so
+``$text-muted`` alone is no longer the "recedes by exactly nothing" case
+#3522/#3528 measured under the ``ansi-*`` themes — but ``@recede@``/
+``@telemetry@`` stay ``dim`` regardless, because an attribute still changes
+what is drawn on top of a concrete colour the same way it always did, and
+introduces no new failure mode by staying.
 
 **Location (#4787, lead-coder ruling):** lives directly under
 ``interfaces/``, not inside ``interfaces/inline/textual_chat/`` where it
@@ -63,9 +82,13 @@ TOKENS: "dict[str, str]" = {
     #: and its prompt). The only semantic colour the CUI claims; anything else
     #: that must stand out uses an attribute instead.
     "@attention@": "$warning",
-    #: The app's ground. ``ansi_default`` is the marker meaning "whatever the
-    #: terminal's background is" — not a colour, deliberately.
-    "@app-background@": "ansi_default",
+    #: The app's ground. Was ``ansi_default`` ("whatever the terminal's
+    #: background is") until #4840's owner ruling retired that deferral —
+    #: reyn now has its own theme to defer to instead, so this maps to
+    #: Textual's own semantic token for exactly this role (``Screen``'s own
+    #: ``DEFAULT_CSS`` uses the identical ``background: $background;``).
+    #: The active theme's RGB shows through; no terminal slot is named.
+    "@app-background@": "$background",
     #: Hairline rules around the input row. A concrete value because it must
     #: read as a divider against BOTH terminal grounds; a theme variable would
     #: follow the theme and vanish into one of them.
@@ -110,10 +133,24 @@ TOKENS: "dict[str, str]" = {
     #: against the conversation (#3542). Both are ANSI FRAMES, not colours —
     #: what blue looks like is the terminal theme's decision and stays that
     #: way; this only chooses which of the sixteen slots to ask for.
+    #:
+    #: #4840 (owner ruling, 2026-08-16) retires this deferral in principle —
+    #: see ``@app-background@`` above, mapped already — but NOT here yet.
+    #: Mapping straight to Textual's own ``$screen-selection-background``
+    #: would regress #3542 under the CURRENT default theme: ``ansi-dark``'s
+    #: own value for that token is ``ansi_bright_blue`` (measured), the exact
+    #: loud one #3542 moved away from. lead-coder's ruling (#4840): land
+    #: ``@app-background@`` now (no such regression there — measured), build
+    #: reyn's own default theme next, and land this token + #3542's test
+    #: THEN — a theme `variables` shim on `ansi-dark` was explicitly rejected
+    #: ("1つのテーマの欠点を、全テーマに効く層で埋める" — the opposite of
+    #: mapping to theme meaning). Whether reyn's own theme preserves #3542's
+    #: quiet choice is undecided — read #3542 when that theme is designed.
     "@selection-bg@": "ansi_blue",
     #: The text inside that band. Unchanged from Textual's default, and named
     #: here so the pair is legible in one place: a background chosen without
-    #: its foreground beside it is how contrast regressions happen.
+    #: its foreground beside it is how contrast regressions happen. Same
+    #: #4840 deferral as ``@selection-bg@`` above — not mapped yet.
     "@selection-fg@": "ansi_black",
     #: #4787: the first 5 of ``interfaces/repl/renderer.py``'s 8 former
     #: ``_CC_*`` hex constants — the ones whose value #4787's own

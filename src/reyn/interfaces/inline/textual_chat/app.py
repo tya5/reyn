@@ -824,18 +824,21 @@ class TextualChatApp(App):
     ]
 
     CSS = palette.css("""
-    /* #3503: the app paints NO ground of its own — the terminal's background
-       shows through. Measured before this: ``#inputrow`` / ``#inputgutter`` /
-       ``SentQueue`` / ``MenuBar`` all declare ``transparent`` already, yet all
-       painted ``#121212``, because "transparent" means "show what is behind"
-       and what was behind is the SCREEN's own ``#121212`` (Textual's dark
-       theme). So this could not be fixed per widget — the Screen is the source,
-       which is why the fix reaches the whole surface rather than just the two
-       regions the report named. Regions that are meant to stand OUT keep
-       declaring ``$panel`` explicitly (drawer, completion popup, search bar,
-       rewind picker), and the presenter's deliberate ROW TINTS
-       (``_CC_USER_BG`` / ``_CC_ERR_BG``) are unaffected — those are content,
-       not ground. */
+    /* #3503: the App declares its own ground explicitly (``@app-background@``,
+       #4840's owner ruling: the active THEME's ``$background``, not "no
+       ground of its own" deferring to the terminal — that deferral made
+       sense only before reyn had a theme to defer to instead). #3503's own
+       original measurement still explains why this rule exists at the App
+       level rather than per-widget: ``#inputrow`` / ``#inputgutter`` /
+       ``SentQueue`` / ``MenuBar`` all declared ``transparent`` already, yet
+       all painted ``#121212``, because "transparent" means "show what is
+       behind" and what was behind was the SCREEN's own ``#121212`` (Textual's
+       built-in dark theme, before reyn had one) — the Screen was the source,
+       not any one widget, so the fix has to reach the whole surface. Regions
+       that are meant to stand OUT keep declaring ``$panel`` explicitly
+       (drawer, completion popup, search bar, rewind picker), and the
+       presenter's deliberate ROW TINTS (``_CC_USER_BG`` / ``_CC_ERR_BG``) are
+       unaffected — those are content, not ground. */
     App { background: @app-background@; }
     Screen { layout: vertical; background: transparent; }
     /* #3542: the drag-selection band. Textual's ansi-dark defaults to
@@ -847,7 +850,15 @@ class TextualChatApp(App):
        Textual COMPOSES the selection style onto each cell, so reverse would
        let every coloured run (tool rows, amber intervention headings, dim
        chrome) become its own background and the band would fragment — which
-       is a different complaint than "too loud". */
+       is a different complaint than "too loud".
+
+       #4840 (owner ruling, 2026-08-16) retires the "ask the terminal for a
+       slot" premise in principle, but NOT here yet — mapping to Textual's own
+       ``$screen-selection-background`` would regress this fix under the
+       CURRENT default theme (``ansi-dark``'s own value for that token is the
+       loud ``ansi_bright_blue`` this comment describes moving away from,
+       measured). Sequenced after reyn's own default theme exists (#4840);
+       see ``@selection-bg@``'s own comment in ``palette.py``. */
     Screen > .screen--selection {
         background: @selection-bg@;
         color: @selection-fg@;
