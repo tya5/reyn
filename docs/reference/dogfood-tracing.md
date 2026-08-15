@@ -110,7 +110,14 @@ not a secret, no redaction applied)
 
 **Response fields:** `kind`, `request_id`, `timestamp`, `content`,
 `tool_calls`, `finish_reason`, `usage` (`prompt_tokens`,
-`completion_tokens`)
+`completion_tokens`), `cached_tokens` (#4821 — joinable by `request_id`
+against the request's own `prompt_cache_key`, the pairing #4809's own
+acceptance condition asked for; a real int when the provider reports one
+(a genuine `0` is a real cache miss, not the same as unreported), `null`
+when the provider reports no cache field at all, absent as a key on a
+trace dumped before #4821 — not `_extract_cache_tokens`'s own 0-default,
+which is correct for cost accounting but would collapse those last two
+cases together here; not a secret, no redaction applied)
 
 ## Production hardening
 

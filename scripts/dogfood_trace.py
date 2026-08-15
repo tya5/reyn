@@ -469,9 +469,27 @@ def mode_llm_payloads(records: list[dict], multi_file: bool = False) -> None:
             usage = resp.get("usage", {})
             tokens_in = (usage.get("prompt_tokens") or "?") if usage else "?"
             tokens_out = (usage.get("completion_tokens") or "?") if usage else "?"
+            # #4821 (architect's own #4809 acceptance condition): the SAME
+            # request_id already printed on the request line above is the
+            # join key — one scan sees whether a stable prompt_cache_key
+            # (request line) actually correlates with a non-zero
+            # cached_tokens (this line), which the request-only fix #4818
+            # could not show on its own. Same three states as the request
+            # side: a real count, "(provider did not report)" for None
+            # (present key, unreported value — a real distinction from a
+            # genuine miss, see llm.py's _cached_tokens_for_trace), and
+            # "(unrecorded, pre-#4821 trace)" for a dump from before this
+            # fix, matching #4809's own pre-#4809 wording for the same
+            # absent-key shape.
+            if "cached_tokens" in resp:
+                ct = resp["cached_tokens"]
+                ct_display = "(provider did not report)" if ct is None else ct
+            else:
+                ct_display = "(unrecorded, pre-#4821 trace)"
             print(
                 f"[{rel_resp}] response_id={rid_full}  finish={finish}  "
-                f"tool_calls={len(tcs)}  tokens_in={tokens_in}  tokens_out={tokens_out}"
+                f"tool_calls={len(tcs)}  tokens_in={tokens_in}  tokens_out={tokens_out}  "
+                f"cached_tokens={ct_display}"
             )
         else:
             print(f"         response_id={rid_full}  (no response record)")
@@ -562,6 +580,14 @@ def mode_llm_detail(records: list[dict], request_id: str, full: bool = False) ->
         usage = resp.get("usage", {})
         if usage:
             print(f"  usage:        prompt_tokens={usage.get('prompt_tokens','?')}  completion_tokens={usage.get('completion_tokens','?')}")
+        # #4821: same three-way distinction as prompt_cache_key above —
+        # request_id ties this to that request's own reading, in the same
+        # one-request view (architect's own #4809 acceptance condition).
+        if "cached_tokens" in resp:
+            _ct = resp["cached_tokens"]
+            print(f"  cached_tokens: {'(provider did not report)' if _ct is None else _ct}")
+        else:
+            print("  cached_tokens: (unrecorded, pre-#4821 trace)")
         content = resp.get("content")
         if content:
             print(f"  content: {_truncate_content(content, full)}")

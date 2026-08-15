@@ -223,6 +223,84 @@ class TestPromptCacheKeyDisplay:
         assert "alpha:main" in out
 
 
+class TestCachedTokensDisplay:
+    """Tier 2: #4821 (architect's own #4809 acceptance condition) —
+    llm-payloads and llm-detail both surface response.cached_tokens,
+    joinable by request_id against the SAME request's prompt_cache_key —
+    the whole point being answering "did a stable key actually correlate
+    with a cache hit" from ONE scan of ONE trace file."""
+
+    def test_pre_4821_trace_shows_unrecorded(self, tmp_path: Path) -> None:
+        """Tier 2: SAMPLE_RECORDS predates #4821 — llm-payloads must say so
+        explicitly for the response's own cached_tokens field, mirroring
+        #4809's own pre-fix wording for prompt_cache_key."""
+        trace = tmp_path / "trace.jsonl"
+        _write_trace(trace, SAMPLE_RECORDS)
+
+        out, rc = _run(["--mode", "llm-payloads", "--trace", str(trace)])
+        assert rc == 0
+        assert "cached_tokens=(unrecorded, pre-#4821 trace)" in out
+
+    def test_provider_did_not_report_shown_distinctly_from_unrecorded(
+        self, tmp_path: Path,
+    ) -> None:
+        """Tier 2: an explicit None (provider reported nothing this call)
+        must read differently from a pre-#4821 trace that never had the
+        key — the same distinction #4809 established for the request
+        side, now on the response side."""
+        records = [dict(r) for r in SAMPLE_RECORDS]
+        records[1]["cached_tokens"] = None  # response record for REQUEST_ID_A
+        trace = tmp_path / "trace.jsonl"
+        _write_trace(trace, records)
+
+        out, rc = _run(["--mode", "llm-payloads", "--trace", str(trace)])
+        assert rc == 0
+        assert "cached_tokens=(provider did not report)" in out
+
+    def test_zero_shown_as_a_real_value_not_unreported(self, tmp_path: Path) -> None:
+        """Tier 2: a genuine cache miss (cached_tokens=0) must print as 0,
+        not be swallowed into either "unrecorded" or "did not report"."""
+        records = [dict(r) for r in SAMPLE_RECORDS]
+        records[1]["cached_tokens"] = 0
+        trace = tmp_path / "trace.jsonl"
+        _write_trace(trace, records)
+
+        out, rc = _run(["--mode", "llm-payloads", "--trace", str(trace)])
+        assert rc == 0
+        assert "cached_tokens=0" in out
+
+    def test_real_hit_joinable_with_prompt_cache_key_in_one_scan(
+        self, tmp_path: Path,
+    ) -> None:
+        """Tier 2: THE acceptance condition itself — a single llm-payloads
+        scan shows both the request's stable prompt_cache_key and the
+        response's non-zero cached_tokens for the SAME request_id,
+        answering "did the key actually correlate with a hit" without a
+        second tool or a hand join against the audit-event log."""
+        records = [dict(r) for r in SAMPLE_RECORDS]
+        records[0]["prompt_cache_key"] = "alpha:main"
+        records[1]["cached_tokens"] = 9728
+        trace = tmp_path / "trace.jsonl"
+        _write_trace(trace, records)
+
+        out, rc = _run(["--mode", "llm-payloads", "--trace", str(trace)])
+        assert rc == 0
+        assert f"request_id={REQUEST_ID_A}" in out
+        assert "prompt_cache_key=alpha:main" in out
+        assert "cached_tokens=9728" in out
+
+    def test_real_value_shown_in_detail_mode(self, tmp_path: Path) -> None:
+        """Tier 2: a real cached_tokens value appears in the llm-detail view."""
+        records = [dict(r) for r in SAMPLE_RECORDS]
+        records[1]["cached_tokens"] = 9728
+        trace = tmp_path / "trace.jsonl"
+        _write_trace(trace, records)
+
+        out, rc = _run(["--mode", "llm-detail", REQUEST_ID_A, "--trace", str(trace)])
+        assert rc == 0
+        assert "9728" in out
+
+
 class TestLlmDetailMode:
     """Tier 2: llm-detail mode pretty-prints a single request's full payload."""
 

@@ -1347,6 +1347,47 @@ def _extract_cache_tokens(u) -> tuple[int, int]:
     return cached, creation
 
 
+def _cached_tokens_for_trace(response) -> "int | None":
+    """``cached_tokens`` for the payload trace dump ONLY — #4809/#4821.
+
+    Deliberately NOT :func:`_extract_cache_tokens` (used for cost
+    accounting): that function collapses "provider reported zero cache
+    hits" and "provider reported no cache field at all" to the same ``0``
+    — the right default for pricing (0 either way costs the same) but
+    wrong for THIS diagnostic surface, where #4690's own investigation
+    needs exactly that distinction (a real miss vs. a provider that never
+    told us). Returns ``None`` when neither the top-level
+    ``cache_read_input_tokens`` nor the nested ``prompt_tokens_details.
+    cached_tokens`` is present on the raw usage object — best-effort, any
+    missing/malformed usage object also reads as ``None``, matching
+    ``_extract_cache_tokens``'s own best-effort stance.
+    """
+    try:
+        u = response.usage
+    except Exception:
+        return None
+    if u is None:
+        return None
+    top = getattr(u, "cache_read_input_tokens", None)
+    if top is not None:
+        try:
+            return int(top)
+        except (TypeError, ValueError):
+            return None
+    details = getattr(u, "prompt_tokens_details", None)
+    if details is not None:
+        getter = details.get if isinstance(details, dict) else (
+            lambda k, _d=details: getattr(_d, k, None)
+        )
+        nested = getter("cached_tokens")
+        if nested is not None:
+            try:
+                return int(nested)
+            except (TypeError, ValueError):
+                return None
+    return None
+
+
 def _dictify(v):
     """Best-effort convert a litellm sub-object to a JSON-serialisable form
     (so a reasoning bundle survives history persistence). ``model_dump`` for
@@ -3065,6 +3106,18 @@ async def call_llm_tools(
             "prompt_tokens": usage.prompt_tokens,
             "completion_tokens": usage.completion_tokens,
         },
+        # #4821 (architect's own #4809 acceptance condition, unmet by
+        # #4818's request-only fix): the SAME three-state discipline as
+        # request.prompt_cache_key — a real int (a genuine cache miss is a
+        # real 0, not the same as "not reported"), None when the provider
+        # reported nothing, and the key ABSENT ENTIRELY for a trace dumped
+        # before this fix landed (dogfood_trace.py's own display side
+        # tells that apart the same way it already does for
+        # prompt_cache_key). See _cached_tokens_for_trace's own docstring
+        # for why this is not _extract_cache_tokens (that one collapses
+        # "reported zero" and "not reported" together — correct for cost
+        # accounting, wrong for this diagnostic surface).
+        "cached_tokens": _cached_tokens_for_trace(response),
         **_extract_provider_response_fields(response),
     })
 
