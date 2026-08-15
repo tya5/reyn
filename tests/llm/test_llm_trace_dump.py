@@ -288,6 +288,78 @@ class TestCallerHint:
         assert req["caller_hint"] == "router"
 
 
+class TestPromptCacheKeyInDump:
+    """Tier 2: #4809 — the trace dump reflects prompt_cache_key (#4700),
+    distinguishing a caller that never set one from a caller that
+    explicitly resolved "no key" — #4690's own diagnosis needed exactly
+    this distinction ("is it being sent, and is the value stable") and the
+    trace record had no such field at all before this."""
+
+    def test_prompt_cache_key_recorded_when_given(self, tmp_path: Path, monkeypatch) -> None:
+        """Tier 2: a real prompt_cache_key value lands verbatim in the request record."""
+        import asyncio
+
+        import litellm
+
+        import reyn.llm.llm as llm_mod
+
+        trace_file = tmp_path / "trace_cache_key.jsonl"
+        monkeypatch.setenv("REYN_LLM_TRACE_DUMP", str(trace_file))
+
+        stub = _ScriptedLLM()
+        monkeypatch.setattr(litellm, "acompletion", stub)
+
+        asyncio.run(
+            llm_mod.call_llm_tools(
+                model=MODEL,
+                messages=[{"role": "user", "content": "hi"}],
+                tools=_minimal_tools(),
+                prompt_cache_key="alpha:main",
+            )
+        )
+
+        records = [json.loads(line) for line in trace_file.read_text(encoding="utf-8").splitlines() if line.strip()]
+        req = next(r for r in records if r.get("kind") == "request")
+        assert req["prompt_cache_key"] == "alpha:main"
+
+    def test_prompt_cache_key_present_as_null_when_not_given(
+        self, tmp_path: Path, monkeypatch,
+    ) -> None:
+        """Tier 2: a caller that never sets prompt_cache_key must still see
+        the KEY in the trace record, with value None — the whole point of
+        #4809 is telling that apart from a trace file dumped before this
+        fix existed (where the key is absent entirely, not present-as-null).
+        A missing key here would silently look identical to the pre-#4809
+        gap this issue exists to close."""
+        import asyncio
+
+        import litellm
+
+        import reyn.llm.llm as llm_mod
+
+        trace_file = tmp_path / "trace_no_cache_key.jsonl"
+        monkeypatch.setenv("REYN_LLM_TRACE_DUMP", str(trace_file))
+
+        stub = _ScriptedLLM()
+        monkeypatch.setattr(litellm, "acompletion", stub)
+
+        asyncio.run(
+            llm_mod.call_llm_tools(
+                model=MODEL,
+                messages=[{"role": "user", "content": "hi"}],
+                tools=_minimal_tools(),
+            )
+        )
+
+        records = [json.loads(line) for line in trace_file.read_text(encoding="utf-8").splitlines() if line.strip()]
+        req = next(r for r in records if r.get("kind") == "request")
+        assert "prompt_cache_key" in req, (
+            "the key must be present even when unset — an absent key is "
+            "indistinguishable from a trace dumped before #4809"
+        )
+        assert req["prompt_cache_key"] is None
+
+
 class TestMultipleCallsAccumulate:
     """Tier 2: consecutive calls append records, request_ids pair correctly."""
 

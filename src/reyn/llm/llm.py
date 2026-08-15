@@ -2959,6 +2959,19 @@ async def call_llm_tools(
             "timeout": timeout,
             "max_retries": max_retries,
         },
+        # #4809: #4700/#4704 added this field to the actual call kwargs
+        # (see the ``prompt_cache_key=prompt_cache_key`` forward below) but
+        # never to the trace dump — the one diagnostic surface #4690's own
+        # investigation needed to answer "is it being sent, and is the
+        # value stable across turns" was blind to the exact field in
+        # question. Always present as a key, even when None — a caller
+        # that never set one (every call site pre-#4700) and a caller
+        # that explicitly resolved "no key for this call" must both read
+        # as "not sent" from the trace, distinguishable from a real
+        # non-empty string. Not a secret (router_loop.py's own
+        # ``_prompt_cache_key``: f"{agent_name}:{sid}") — no redaction
+        # concern here, unlike message content.
+        "prompt_cache_key": prompt_cache_key,
     })
 
     async def _tools_call() -> object:
