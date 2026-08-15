@@ -947,10 +947,13 @@ class RouterHostAdapter:
         return True
 
     def get_project_context(self) -> str:
-        """Project context text (REYN.md / ``project_context_path``).
+        """Project context text: the project-wide file (REYN.md /
+        ``project_context_path``) additively composed with this agent's own
+        ``.reyn/agents/<agent_name>/AGENTS.md``, when either is present.
 
         Threaded into the router's system prompt so casual chat queries see
-        the operator's project context. Empty string when not configured.
+        the operator's project context. Empty string when neither side is
+        configured.
 
         #4830 (owner ruling A, #4690's root cause): NOT fenced. FP-0050/#1822
         S4b originally fenced this (structurally marked untrusted data) +
@@ -967,12 +970,59 @@ class RouterHostAdapter:
         (and here) is the file-write permission gate, not a per-turn
         marker. Detection telemetry (``scan_tool_result``) stays — only
         the fence-wrapping is gone.
+
+        #3787 (owner ruling B): the project-wide file stays exactly as
+        above — read ONCE at session construction (``self._project_context``
+        is frozen), never reloaded mid-session (owner: "project context path
+        は起動時のみで hot 対応不要"). The per-agent file is different: this
+        method reads ``self._workspace_dir / "AGENTS.md"`` FRESH on every
+        call — no cache, no watcher-driven update needed here — because this
+        method itself is already called fresh every turn (``router_loop.py``'s
+        ``build_system_prompt(project_context=host.get_project_context())``
+        and ``RouterHistoryBuffer.build_system_prompt``'s T_SP estimate both
+        call it live, not from a memoized value), so a plain synchronous read
+        IS the hot-reload — an edit to the agent's own file is reflected the
+        very next turn with no additional wiring. (``ProjectContextWatcher``,
+        constructed separately per agent in ``session.py``, still runs
+        alongside this — its role is now purely the audit-event signal for
+        "an edit was observed", not gating whether the reload happens.)
+        Same trust class, same scan-not-fence treatment as the project side
+        (owner: agent can write its own file; no dedicated op — controlled by
+        sandbox policy's ``allow_write_paths``/``deny_write_paths``, which
+        only narrows the write floor, never widens it — #3823/``infra.py``).
+
+        Composition is additive, never a "winner": when both sides have
+        content, each gets its own sub-heading so the model can tell which
+        part it may edit (`write_file` under `.reyn/agents/<agent_name>/`)
+        and which it may only read. When only one side has content, that
+        content is returned bare (byte-identical to the pre-#3787 shape —
+        the common case today, before any agent has written its own file).
         """
-        pc = self._project_context or ""
-        if not pc:
-            return pc
-        self.scan_tool_result(pc)  # detection telemetry (scan-all parity)
-        return pc
+        pc = (self._project_context or "").strip()
+        if pc:
+            self.scan_tool_result(pc)  # detection telemetry (scan-all parity)
+        agent_pc = self._read_agent_instructions().strip()
+        if agent_pc:
+            self.scan_tool_result(agent_pc)  # same telemetry, agent-authored half
+        if pc and agent_pc:
+            return (
+                "### Project\n\n" + pc + "\n\n"
+                "### Agent instructions (this agent only)\n\n" + agent_pc
+            )
+        return pc or agent_pc
+
+    def _read_agent_instructions(self) -> str:
+        """#3787: this agent's own ``.reyn/agents/<agent_name>/AGENTS.md`` —
+        a fresh, synchronous read on every call (see :meth:`get_project_context`'s
+        docstring for why no caching is needed). ``""`` when absent — never
+        raises (a missing/unreadable file is "nothing configured", not an
+        error, matching every other best-effort per-agent file read in this
+        codebase, e.g. ``Session._read_per_agent_composers``)."""
+        path = self._workspace_dir / "AGENTS.md"
+        try:
+            return path.read_text(encoding="utf-8")
+        except OSError:
+            return ""
 
     def get_cwd(self) -> str:
         """Agent-visible working directory for the SP Environment section.
