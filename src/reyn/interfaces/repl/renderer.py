@@ -355,7 +355,11 @@ class RichChatRenderer(ChatRenderer):
 # to signal STATE — error (red), needs-action (amber), done (green), ambient/low
 # (dim) — so a coloured glyph always means "something to notice".
 _CC_TEXT = "default"    # terminal default fg — normal text + markers (no forced colour)
-_CC_DIM = "#6b7280"     # low-importance / ambient, as a COLOUR (see _CC_AMBIENT)
+# #4787: moved alone, not with _CC_USER_BG/_CC_ERR_BG below (still blocked
+# on #4840's colour direction) — safe independently because the VALUE is
+# unchanged, only where it's declared; the WCAG-measured contrast pairing
+# against those two backgrounds (#3371, unmoved) is therefore untouched.
+_CC_DIM = palette.TOKENS["@dim@"]  # low-importance / ambient, as a COLOUR (see _CC_AMBIENT)
 # The same "low-importance" role expressed as an ATTRIBUTE rather than a colour
 # (#3536). ``dim`` emits SGR 2 and forces no colour, so the terminal's own theme
 # decides the shade — the owner's standing direction (#3525) and the only form
@@ -410,6 +414,12 @@ _CC_COOL = palette.TOKENS["@secondary@"]  # cool blue — a secondary accent (st
 # (still reads as "a faint dark block", not a new hue) to raise every
 # foreground's contrast against it, _CC_DIM's included — measured 3.30 at
 # this value. Not a new color: the same named constant, same design role.
+#
+# #4787 (architect finding): _CC_DIM's own value now lives in
+# interfaces/palette.py (TOKENS["@dim@"]), a DIFFERENT file from this one —
+# changing @dim@ there breaks this 3.30 measurement here, and re-measuring
+# only one side leaves the pairing's real number unknown. Re-measure BOTH
+# _CC_USER_BG and palette.TOKENS["@dim@"] together if either changes.
 _CC_USER_BG = "#1e222a"
 # Failure block-tint behind a failed tool call / error row. A desaturated dark
 # coral: it reads unmistakably as "the red row" edge to edge (CC's block-tint of
