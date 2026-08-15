@@ -794,3 +794,112 @@ async def test_keys_received_reaches_the_default_visible_stall_notice(
     assert "keys received: 3" in stall_line, (
         f"the 3 real keypresses must show up in the stall notice's own count: {stall_line!r}"
     )
+
+
+# ── #4761: turn_active, whether a turn was running at the moment ──────────
+
+
+def test_stall_line_carries_turn_active_when_given() -> None:
+    """Tier 2: #4761 (architect's outstanding point) — the STALL notice
+    embeds whether a turn was running at the instant it fired, and stays
+    exactly as it was when the caller doesn't have that signal — this
+    module has no idea whether a caller tracks turn activity at all, so the
+    parameter must be fully optional, same discipline as ``pump_ticks``.
+
+    Without this, a byte-identical frozen screen is not evidence of a
+    freeze on its own — it is equally consistent with "nothing was
+    happening" (idle, no turn in flight)."""
+    active = stall_log_line(1800.0, turn_active=True)
+    assert "(turn active at the time)" in active
+    idle = stall_log_line(1800.0, turn_active=False)
+    assert "(turn idle at the time)" in idle
+    assert "(turn active at the time)" not in idle
+    unspecified = stall_log_line(1800.0)
+    assert "turn active" not in unspecified and "turn idle" not in unspecified
+    assert unspecified == (
+        "the interface was unresponsive for 1.8s — re-run with "
+        "REYN_PROF_DUMP=<path> to record what it was doing"
+    )
+
+
+def test_observe_threads_turn_active_into_both_durable_record_kinds(
+    monkeypatch, tmp_path: Path,
+) -> None:
+    """Tier 2: #4761 — an armed session's durable trace carries the SAME
+    turn-active value the caller passed, for both the periodic
+    ``"tripwire"`` record and the ``"tripwire_recovered"`` one — mirrors
+    ``pump_ticks``'s own coverage above, same reasoning: consistency for
+    the opt-in detail dump, even though the default-visible notice (tested
+    separately below) is what actually matters for an unarmed session."""
+    import json
+
+    target = tmp_path / "probe.jsonl"
+    monkeypatch.setenv("REYN_PROF_DUMP", str(target))
+    tripwire = LoopTripwire(threshold_ms=250.0)
+
+    tripwire.observe(1800.0, turn_active=True)
+    tripwire.observe(50.0, turn_active=False)
+
+    records = [
+        json.loads(line) for line in target.read_text(encoding="utf-8").splitlines()
+    ]
+    by_kind = {r["kind"]: r for r in records}
+    assert by_kind["tripwire"]["turn_active"] is True
+    assert by_kind["tripwire_recovered"]["turn_active"] is False
+
+
+@pytest.mark.asyncio
+async def test_turn_active_reaches_the_default_visible_stall_notice(
+    tmp_path, monkeypatch,
+) -> None:
+    """Tier 2b: #4761 — REACHED end to end, under the reconstructed real
+    logging floor (no ``caplog``, mirroring #4804's own pattern and this
+    file's own ``test_pump_heartbeat_reaches_the_default_visible_notices``):
+    a real stall that happens WHILE a turn is running (a real
+    ``turn_started`` event pushed through the transport — the same public
+    path production uses to set ``ActivityRow``'s state, not a private
+    ``_activity.begin()`` reach-around) shows ``turn active`` in the
+    default-visible log line, not gated behind ``REYN_PROF_DUMP``."""
+    import logging
+    import time
+
+    logfile = tmp_path / "reyn.log"
+    root = logging.getLogger()
+    saved_handlers = root.handlers[:]
+    saved_level = root.level
+    monkeypatch.delenv("REYN_PROF_DUMP", raising=False)
+    try:
+        logging.basicConfig(
+            filename=str(logfile), level=logging.WARNING, force=True,
+        )
+        stall_seconds = (loop_probe._TRIPWIRE_MS + 150) / 1000
+        transport = QueueTransport()
+        app = TextualChatApp(transport=transport)
+        async with app.run_test(size=(80, 24)) as pilot:
+            await pilot.pause()
+            # A real turn_started event — the same public path
+            # _handle_turn_started_event uses to call
+            # self._activity.begin("WORKING") in production.
+            await transport.push_event(
+                Event(
+                    type="turn_started",
+                    data={"kind": "user", "chain_id": "chain-1", "seq": 1},
+                )
+            )
+            await pilot.pause()
+            time.sleep(stall_seconds)
+            while "unresponsive" not in logfile.read_text(encoding="utf-8"):
+                await pilot.pause()
+    finally:
+        for handler in root.handlers:
+            if handler not in saved_handlers:
+                handler.close()
+        root.handlers = saved_handlers
+        root.setLevel(saved_level)
+
+    content = logfile.read_text(encoding="utf-8")
+    stall_line = next(line for line in content.splitlines() if "unresponsive" in line)
+    assert "turn active" in stall_line, (
+        "a stall observed while a real turn_started event is in flight must "
+        f"say so in the default-visible notice: {stall_line!r}"
+    )

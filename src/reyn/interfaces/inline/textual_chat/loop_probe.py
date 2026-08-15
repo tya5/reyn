@@ -172,7 +172,11 @@ class LoopTripwire:
         return recovered
 
     def observe(
-        self, lateness_ms: float, *, pump_ticks: "int | None" = None,
+        self,
+        lateness_ms: float,
+        *,
+        pump_ticks: "int | None" = None,
+        turn_active: "bool | None" = None,
     ) -> "float | None":
         """Record one tick's lateness; return it the FIRST time it is bad.
 
@@ -207,17 +211,29 @@ class LoopTripwire:
         see whether the count kept moving DURING an ongoing, not-yet-
         recovered stall, which the once-per-episode default-visible notice
         (below) cannot show on its own.
+
+        ``turn_active``, if the caller has one (#4761: whether a turn was
+        running the instant this tick was observed — see
+        :func:`stall_log_line`'s own docstring for why this matters), rides
+        along the same way for the ARMED trace's own record — this method's
+        own default-visible RETURN VALUE is what :func:`stall_log_line`
+        actually surfaces to an unarmed session; this ``write_record`` call
+        only adds it to the opt-in detail dump for consistency with
+        ``pump_ticks``.
         """
         if lateness_ms > self._max_lateness_ms:
             self._max_lateness_ms = lateness_ms
+        extra: "dict[str, Any]" = {}
+        if pump_ticks is not None:
+            extra["pump_ticks"] = pump_ticks
+        if turn_active is not None:
+            extra["turn_active"] = turn_active
         if lateness_ms <= self._threshold_ms:
             if self._in_stall:
                 self._in_stall = False
                 self._just_recovered = True
                 write_record(
-                    "tripwire_recovered",
-                    lateness_ms=round(lateness_ms, 1),
-                    **({} if pump_ticks is None else {"pump_ticks": pump_ticks}),
+                    "tripwire_recovered", lateness_ms=round(lateness_ms, 1), **extra,
                 )
             return None
         self._in_stall = True
@@ -226,11 +242,7 @@ class LoopTripwire:
             self._last_recorded_monotonic is None
             or now - self._last_recorded_monotonic >= _RECORD_INTERVAL_S
         ):
-            write_record(
-                "tripwire",
-                lateness_ms=round(lateness_ms, 1),
-                **({} if pump_ticks is None else {"pump_ticks": pump_ticks}),
-            )
+            write_record("tripwire", lateness_ms=round(lateness_ms, 1), **extra)
             self._last_recorded_monotonic = now
         if self._fired:
             return None
@@ -258,6 +270,7 @@ def stall_log_line(
     pump_window_s: "float | None" = None,
     keys_received: "int | None" = None,
     keys_delta: "int | None" = None,
+    turn_active: "bool | None" = None,
 ) -> str:
     """The durable record of a stall — the one that survives the operator
     looking away.
@@ -289,6 +302,24 @@ def stall_log_line(
     resolves. A ticking pump (``pump_delta`` > 0) with ``keys_delta`` at
     ``0`` despite an operator who reports pressing several keys is H3, not
     H1/H2 — the pump is fine, input simply never arrived.
+
+    ``turn_active`` (#4761, architect's outstanding point, still unimplemented
+    when ①②③ landed): whether a turn was running AT THE MOMENT this notice
+    fired — the ①②③ trio (tripwire lateness, pump heartbeat, key-arrival
+    count) all discriminate BETWEEN hypotheses for what stopped the interface,
+    but only make sense if the interface was actually being asked to do
+    something. Without this, a byte-identical, unchanging screen is not
+    evidence of a freeze on its own — it is equally consistent with "nothing
+    was happening" (no turn in flight, an idle screen that simply has nothing
+    to redraw). Passes the same two design questions ①②③ already had to pass
+    (lead-coder, tonight, three times): visible with shipped defaults —
+    riding this line's own ``logger.warning`` call, the same always-on
+    surface ①②③'s own notices use, NOT a second ``write_record`` call that
+    would need ``REYN_PROF_DUMP`` armed in advance; and who binds it — the
+    caller (:meth:`~reyn.interfaces.inline.textual_chat.app.TextualChatApp.
+    _watch_loop_responsiveness`) reads its own ``ActivityRow.state`` (already
+    the app's existing "is a turn running" surface — see ``turn_active=`` at
+    the compact-caps call site) at the same instant it reads ``pump_ticks``.
     """
     ticks_note = ""
     if pump_ticks is not None:
@@ -308,10 +339,13 @@ def stall_log_line(
             )
         else:
             keys_note = f" (keys received: {keys_received})"
+    turn_note = ""
+    if turn_active is not None:
+        turn_note = f" (turn {'active' if turn_active else 'idle'} at the time)"
     return (
         f"the interface was unresponsive for {lateness_ms / 1000:.1f}s"
-        f"{ticks_note}{keys_note} — re-run with {_DUMP_ENV}=<path> to record "
-        "what it was doing"
+        f"{ticks_note}{keys_note}{turn_note} — re-run with {_DUMP_ENV}=<path> "
+        "to record what it was doing"
     )
 
 
