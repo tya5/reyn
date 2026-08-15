@@ -22,27 +22,43 @@ from pathlib import Path
 # Helpers: minimal real-callable LLM stub (allowed by testing policy)
 # ---------------------------------------------------------------------------
 
-def _make_fake_litellm_response(content: str = '{"type":"decide","control":{"type":"finish","decision":"finish","next_phase":null,"confidence":0.9,"reason":{"summary":"ok"}},"artifact":{"type":"test","data":{}},"ops":[]}'):
-    """Build a minimal response object that matches the litellm API surface."""
+def _make_fake_litellm_response(
+    content: str = '{"type":"decide","control":{"type":"finish","decision":"finish","next_phase":null,"confidence":0.9,"reason":{"summary":"ok"}},"artifact":{"type":"test","data":{}},"ops":[]}',
+    cache_read_input_tokens: "int | None" = None,
+):
+    """Build a minimal response object that matches the litellm API surface.
+
+    ``cache_read_input_tokens`` (#4821): omitted from the usage object
+    entirely when ``None`` (the default) — matching a provider that never
+    reports cache info at all, not a provider that reports a literal 0
+    (a real cache miss). Set to test ``_cached_tokens_for_trace``'s "a
+    real value" path.
+    """
     msg = type("_Msg", (), {"content": content, "tool_calls": None})()
     choice = type("_Choice", (), {
         "message": msg,
         "finish_reason": "stop",
     })()
-    usage = type("_Usage", (), {"prompt_tokens": 10, "completion_tokens": 5})()
+    usage_attrs = {"prompt_tokens": 10, "completion_tokens": 5}
+    if cache_read_input_tokens is not None:
+        usage_attrs["cache_read_input_tokens"] = cache_read_input_tokens
+    usage = type("_Usage", (), usage_attrs)()
     return type("_Resp", (), {"choices": [choice], "usage": usage})()
 
 
 class _ScriptedLLM:
     """Real callable stub — allowed by testing policy (not MagicMock)."""
 
-    def __init__(self, response_content: str = "{}"):
+    def __init__(self, response_content: str = "{}", cache_read_input_tokens: "int | None" = None):
         self._response_content = response_content
+        self._cache_read_input_tokens = cache_read_input_tokens
         self.call_count = 0
 
     async def __call__(self, **kwargs):
         self.call_count += 1
-        return _make_fake_litellm_response(self._response_content)
+        return _make_fake_litellm_response(
+            self._response_content, cache_read_input_tokens=self._cache_read_input_tokens,
+        )
 
 
 def _minimal_tools():
@@ -358,6 +374,112 @@ class TestPromptCacheKeyInDump:
             "indistinguishable from a trace dumped before #4809"
         )
         assert req["prompt_cache_key"] is None
+
+
+class TestCachedTokensInDump:
+    """Tier 2: #4821 (architect's own #4809 acceptance condition) — the
+    RESPONSE record reflects cached_tokens, joinable by request_id against
+    the request's own prompt_cache_key reading. Same three-state
+    discipline as TestPromptCacheKeyInDump, but with an extra distinction
+    on the response side: a real 0 (genuine cache miss) must not collapse
+    into the same value as "the provider reported nothing" — the exact
+    gap _extract_cache_tokens (cost accounting) papers over on purpose and
+    _cached_tokens_for_trace exists to NOT paper over."""
+
+    def test_cached_tokens_recorded_when_provider_reports_a_hit(
+        self, tmp_path: Path, monkeypatch,
+    ) -> None:
+        """Tier 2: a real cache_read_input_tokens value lands verbatim in the response record."""
+        import asyncio
+
+        import litellm
+
+        import reyn.llm.llm as llm_mod
+
+        trace_file = tmp_path / "trace_cached_hit.jsonl"
+        monkeypatch.setenv("REYN_LLM_TRACE_DUMP", str(trace_file))
+
+        stub = _ScriptedLLM(cache_read_input_tokens=9728)
+        monkeypatch.setattr(litellm, "acompletion", stub)
+
+        asyncio.run(
+            llm_mod.call_llm_tools(
+                model=MODEL,
+                messages=[{"role": "user", "content": "hi"}],
+                tools=_minimal_tools(),
+            )
+        )
+
+        records = [json.loads(line) for line in trace_file.read_text(encoding="utf-8").splitlines() if line.strip()]
+        resp = next(r for r in records if r.get("kind") == "response")
+        assert resp["cached_tokens"] == 9728
+
+    def test_cached_tokens_none_when_provider_reports_nothing(
+        self, tmp_path: Path, monkeypatch,
+    ) -> None:
+        """Tier 2: a provider that never surfaces cache fields at all must
+        read as an explicit None in the response record — present as a
+        key, not absent — the same "distinguishable from a pre-fix trace"
+        requirement #4809 established for the request side."""
+        import asyncio
+
+        import litellm
+
+        import reyn.llm.llm as llm_mod
+
+        trace_file = tmp_path / "trace_cached_unreported.jsonl"
+        monkeypatch.setenv("REYN_LLM_TRACE_DUMP", str(trace_file))
+
+        stub = _ScriptedLLM()  # cache_read_input_tokens=None (default) — omitted entirely
+        monkeypatch.setattr(litellm, "acompletion", stub)
+
+        asyncio.run(
+            llm_mod.call_llm_tools(
+                model=MODEL,
+                messages=[{"role": "user", "content": "hi"}],
+                tools=_minimal_tools(),
+            )
+        )
+
+        records = [json.loads(line) for line in trace_file.read_text(encoding="utf-8").splitlines() if line.strip()]
+        resp = next(r for r in records if r.get("kind") == "response")
+        assert "cached_tokens" in resp, (
+            "the key must be present even when the provider reports nothing — "
+            "an absent key is indistinguishable from a trace dumped before #4821"
+        )
+        assert resp["cached_tokens"] is None
+
+    def test_cached_tokens_zero_is_a_real_miss_not_unreported(
+        self, tmp_path: Path, monkeypatch,
+    ) -> None:
+        """Tier 2: a provider that EXPLICITLY reports cache_read_input_tokens=0
+        (a genuine miss) must record as the integer 0, not None — the exact
+        distinction _extract_cache_tokens (cost accounting) does not need
+        to make but this diagnostic surface does."""
+        import asyncio
+
+        import litellm
+
+        import reyn.llm.llm as llm_mod
+
+        trace_file = tmp_path / "trace_cached_zero.jsonl"
+        monkeypatch.setenv("REYN_LLM_TRACE_DUMP", str(trace_file))
+
+        stub = _ScriptedLLM(cache_read_input_tokens=0)
+        monkeypatch.setattr(litellm, "acompletion", stub)
+
+        asyncio.run(
+            llm_mod.call_llm_tools(
+                model=MODEL,
+                messages=[{"role": "user", "content": "hi"}],
+                tools=_minimal_tools(),
+            )
+        )
+
+        records = [json.loads(line) for line in trace_file.read_text(encoding="utf-8").splitlines() if line.strip()]
+        resp = next(r for r in records if r.get("kind") == "response")
+        assert resp["cached_tokens"] == 0
+        assert resp["cached_tokens"] is not None
 
 
 class TestMultipleCallsAccumulate:
