@@ -41,11 +41,11 @@ considered it is answered "yes" every time.
 Name the MEANING; the active theme renders it. Never pick a colour first
 (owner ruling #3525). **"The theme" is whichever theme is active** — reyn's own
 full-colour default, a Textual builtin, or an `ansi-*` theme that defers to the
-terminal emulator's palette. Terminal palettes are not a vocabulary: ECMA-48
-standardises the escape codes, not the RGB behind them, and 16 slots carry no
-meanings — that is why the meanings live in a theme.
+terminal emulator's palette. Terminal palettes are not a vocabulary: the escape
+codes are standardised, the RGB behind them is not, and a slot carries a colour
+name, not a role — that is why the roles live in a theme.
 
-1. Meaning has a convention a reader already carries (*error*, *success*, *in-flight*) → name it so every theme can render it: a theme token (`$error`, `$text-muted`, `$markdown-*` …), an SGR `text-style`, or `ansi_default` / `transparent` where the terminal's own value is the point.
+1. Meaning has a convention a reader already carries (*error*, *success*, *in-flight*) → name it so every theme can render it: a theme token (`$error`, `$text-muted`, `$markdown-*` …), an SGR `text-style`, or an ANSI name (`ansi_blue` / `ansi_default` / `transparent`) where the terminal's own value is the point — `@selection-bg@` and `@selection-fg@` are live examples of the last.
 2. Meaning is reyn-specific → any value that serves the design, full-colour included. No theme has an opinion to defer to.
 
 - **A colour is not a meaning.** "Error" is the meaning; red is one theme's rendering. Never pick the colour first.
