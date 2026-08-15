@@ -940,6 +940,38 @@ python scripts/verify_env_identity.py --only console-scripts
 
 **Never re-install a stale venv by running `pip install -e .` from inside a worktree.** That repoints the shared venv's editable `.pth` at that worktree, and every other consumer of the venv silently starts reading it. Install from the checkout the venv is meant to serve.
 
+## Prior art — the names for what this policy asks for
+
+Reyn's testing rules were re-derived from scratch in conversation on 2026-08-15
+before anyone searched for them. They are all established practice with names;
+carrying the names is what lets a reader look the rest up instead of waiting for
+someone to re-derive it (#4847).
+
+| what our rule says | the established name | where to read it |
+|---|---|---|
+| Split the decision out as a pure function; keep the untestable part thin | **Humble Object** | [steven-giesel.com](https://steven-giesel.com/blogPost/47acad0a-255c-489b-a805-d0f46bde23e5/the-humble-object-pattern) · [xUnit Test Patterns ch.26 (Design-for-Testability)](https://www.oreilly.com/library/view/xunit-test-patterns/9780131495050/ch26.html) |
+| Make the clock an input instead of sleeping | **Virtual Clock** (attributed to Perrotta — *attribution unverified, we do not hold the book*) | [xUnit Test Patterns ch.26](https://www.oreilly.com/library/view/xunit-test-patterns/9780131495050/ch26.html) |
+| A test that waits on asyncio/the OS is testing someone else's function | *(our phrasing — the maxim "don't unit test third-party code" is widely repeated, but we found no canonical source to send a reader to)* | — |
+| `MagicMock`/`patch` banned, `LLMReplay` allowed | the **test double** taxonomy — **five** kinds: dummy / stub / spy / mock / **fake** (Meszaros). `LLMReplay` is a *fake* (a working implementation taking a shortcut), which is why it is allowed where a *mock* is not | [xUnitPatterns — Mocks, Fakes, Stubs and Dummies](http://xunitpatterns.com/Mocks,%20Fakes,%20Stubs%20and%20Dummies.html) · [Fowler — Mocks Aren't Stubs](https://martinfowler.com/articles/mocksArentStubs.html) |
+
+**Before hand-rolling a clock**, evaluate what already exists — and say in the PR
+why it was not enough if you still hand-roll one:
+
+- **`freezegun`** — its `real_asyncio` flag exists for exactly the failure this
+  suite hit: the event loop keeps real monotonic time while `time.monotonic()`
+  is frozen, so `asyncio.sleep()` does not break.
+  ([repo](https://github.com/spulec/freezegun) · [comparison](https://betterstack.com/community/guides/testing/time-machine-vs-freezegun/))
+- **`time-machine`** — C extension, patches at interpreter level; advances time
+  in precise increments rather than only freezing it.
+- **`sleepfake`** — context manager replacing `time.sleep` / `asyncio.sleep`.
+  ([PyPI](https://pypi.org/project/sleepfake/))
+
+**A collaborator that is cheap to construct can still be undrivable** — a watcher
+whose only trigger is its own timer leaves a test that may neither fake it nor
+wait for it. Give it an external drive (a `check()` the test calls); that is the
+repair, not a fake and not a `sleep`.
+
+
 ## Out of policy
 
 These belong outside the test suite:
