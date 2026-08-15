@@ -1089,6 +1089,100 @@ The cursor's position is marked by the addressed-row rail described under
 *Textual TUI gutters* above. Its keys live in `CONVERSATION_CURSOR_KEYS`
 (`textual_chat/chrome.py`) for the Help pane.
 
+### Textual TUI conversation tree — Group nesting (#4691)
+
+Three levels of `FlowView.Entry` nesting, one mechanism per level, built on
+flowview's own `Entry.append_child`/`.children`/`.collapsed`/`.toggle_collapsed()`
+primitives — reyn adds no tree data structure of its own:
+
+- **Turn Group** — a `kind="user"` row (the line that OPENS a turn) is every
+  completion Group of that turn's PARENT.
+- **Completion Group** — a `kind="agent"` row that dispatched tool calls is
+  its own tool rows' PARENT.
+- **Tool rows** — leaves, nested under whichever completion Group's `call_id`
+  they carry.
+
+`_resolve_append_parent` (`textual_chat/app.py`) makes this recursive without
+per-level code: it checks (1) a `_call_parents[call_id]` match first, (2) the
+CURRENT turn's own open parent (`_current_turn_parent`) if no call-level match
+and the frame isn't itself `kind="user"`, (3) flat top-level otherwise (a
+legacy/restored row, an op-loop caller with no `call_id`, or no turn open).
+A turn's first `kind="agent"` row hits (2) — it has no parent of its OWN
+yet — then registers itself into `_call_parents` (`_register_call_parent`),
+so every later row sharing that `call_id` finds it via (1). One `call_id`
+lookup, checked at two different moments, produces both tree levels.
+
+**Registration is provider-independent** (#4777, owner-reported): gated on
+`dispatched_tool_calls`, a REYN-OBSERVED fact `router_loop.py` stamps from
+the LLM result's own `tool_calls` list — never on the provider's own
+self-reported `finish_reason` string, which some providers never emit as
+`"tool_calls"` even when they did dispatch one, silently disabling Group
+construction end-to-end on those providers if gated on it (found live, not
+in a test suite written against a provider that reports it correctly). A
+terminal reply that dispatches no tools still registers (harmless — nothing
+ever looks up an unused `call_id`) but never spins, since there is nothing
+for it to wait on. Both entry-creation call sites — the ordinary
+non-streaming append AND `_handle_agent_delta_event`'s first-streamed-delta
+creation — route through the same `_append_frame`/`_resolve_append_parent`
+pair, closing an earlier streaming-bypass class where a streamed reply's own
+entry-creation path never registered as a Group parent or nested under its
+turn at all, no matter what the non-streaming path did.
+
+**Defaults, opposite by design (owner ruling):**
+
+- The **turn Group defaults OPEN**. Its `RUNNING` state is SET, not derived,
+  at promotion (`_handle_turn_started_event`) — deriving it from zero
+  children (there are none yet) would show no state at all, and deriving it
+  incrementally as completion Groups settle mid-turn would flicker the row
+  to `SUCCESS` between calls while the turn itself is still in flight.
+  Settling happens exactly once, at the turn's own end
+  (`_settle_turn_parent`, called from the `_TURN_END_EVENT_TYPES` leg of
+  frame pumping).
+- A **completion Group defaults COLLAPSED**, called at registration time
+  (`entry.collapse()` inside `_register_call_parent`, guarded on
+  `dispatched_tool_calls`) — even though the entry may still be a leaf with
+  no child arrived yet. Before textual-flowview 0.22.0 this was a
+  documented no-op on a leaf, worked around by re-asserting `.collapse()`
+  at the entry's own `append_child` call site; 0.22.0's own fix (release
+  notes: a child appended later "walks its ancestors and is born folded")
+  made collapse state stick on any live entry, leaf included, so that
+  workaround is gone.
+
+**Open/close: `Space`, only on a row that HAS children.**
+`on_flow_view_toggle_fold_requested` checks `entry.children` truthy FIRST —
+an exclusive signal for a Group parent, since `append_child` is called from
+exactly one place — and calls `entry.toggle_collapsed()` (flowview's own
+fold/unfold primitive; flowview's own `za`/`zR`/`zM` z-prefix key family
+already reaches the same primitive through a separate path — Space just
+wires the SAME primitive to a second key, not a new one) before falling
+through to the settled-tool-row detail-expand check described under
+*Textual TUI keyboard cursor* above; a Group parent's own `meta` carries no
+`_RESULT_KIND_KEY`, so without this check-order it would never reach a fold
+path at all. A collapsed Group parent shows its child COUNT next to the
+state glyph (`"(2 folded)"`, dim) rather than a bare, uninformative row —
+deliberately minimal, no summary wording, no icon vocabulary.
+
+**Parent state is DERIVED from children, recomputed on every child settle**
+(`_recompute_parent_state`, called from each child's own settle path):
+`RUNNING` wins if any child still is; among terminal states `ERROR` wins
+over `SUCCESS` (one failed child taints the whole call); `CANCELLED` counts
+as neither — an orphan is not a failure. The turn parent reuses this same
+function one layer up at its own settle time, passing any one of its
+children so the recompute walks across every completion Group of that turn.
+A turn that ends with no completion Group having landed under it (cancelled
+before the first call) settles `CANCELLED` — there is nothing to recompute
+FROM, and nothing was observed to call a success.
+
+**A Group parent's own line recedes while EXPANDED** (children visible) —
+`palette.TOKENS["@recede@"]` (an SGR `dim` attribute, not a colour — CLAUDE.md's
+TUI colour policy token, distinct from the plain REPL renderer's own hex
+`_CC_DIM`), applied to the parent's body only; children are unchanged. Owner
+ruling: the parent weakens, never the children strengthen — the reverse
+would make a Group's children stand out MORE than an ordinary row, changing
+how the whole conversation reads. Excluded when collapsed (that state
+already recedes for a different reason — naming a hidden count, not sitting
+as a structural peer beside visible children).
+
 ### Textual TUI text cursor (#3507, #3692)
 
 flowview 0.13 replaced the earlier entry-gated cursor-entry step with an
