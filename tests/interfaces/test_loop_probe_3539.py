@@ -556,6 +556,29 @@ def test_stall_and_recovered_lines_carry_pump_ticks_when_given() -> None:
     assert stall_recovered_log_line() == "the interface recovered from the stall reported above"
 
 
+def test_stall_line_carries_a_self_contained_pump_delta() -> None:
+    """Tier 2: #4761 ② follow-up (lead-coder review) — a stall that never
+    recovers (#4761's own report: the operator killed the process rather
+    than waiting) never reaches stall_recovered_log_line's own comparison,
+    so H1 needs to be readable from the STALL line alone. pump_delta/
+    pump_window_s let it say "the pump advanced by D in the trailing W
+    seconds" in the SAME one line — 0 is the H1 signal, a positive delta
+    rules H1 out for this episode without a second event."""
+    frozen_pump = stall_log_line(1800.0, pump_ticks=12, pump_delta=0, pump_window_s=2.0)
+    assert "+0" in frozen_pump
+    assert "2s" in frozen_pump
+
+    live_pump = stall_log_line(1800.0, pump_ticks=12, pump_delta=3, pump_window_s=2.0)
+    assert "+3" in live_pump
+
+    # Partial info (ticks with no delta/window) falls back to the plain
+    # single-value form — a caller that hasn't started tracking a window
+    # yet must not have to supply values it doesn't have.
+    ticks_only = stall_log_line(1800.0, pump_ticks=12)
+    assert "12" in ticks_only
+    assert "+" not in ticks_only
+
+
 def test_observe_threads_pump_ticks_into_both_durable_record_kinds(
     monkeypatch, tmp_path: Path,
 ) -> None:
@@ -660,4 +683,10 @@ async def test_pump_heartbeat_reaches_the_default_visible_notices(
     content = logfile.read_text(encoding="utf-8")
     assert "pump heartbeat" in content, (
         f"the pump-ticks reading must reach the real, default-visible log: {content!r}"
+    )
+    stall_line = next(line for line in content.splitlines() if "unresponsive" in line)
+    assert "+" in stall_line, (
+        "the STALL line itself (not just the recovery line) must carry the "
+        "self-contained trailing-window delta — a freeze that never "
+        f"recovers never reaches the recovery line at all: {stall_line!r}"
     )

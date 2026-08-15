@@ -250,7 +250,13 @@ def stall_banner(lateness_ms: float) -> str:
     return f"unresponsive {lateness_ms / 1000:.1f}s"
 
 
-def stall_log_line(lateness_ms: float, *, pump_ticks: "int | None" = None) -> str:
+def stall_log_line(
+    lateness_ms: float,
+    *,
+    pump_ticks: "int | None" = None,
+    pump_delta: "int | None" = None,
+    pump_window_s: "float | None" = None,
+) -> str:
     """The durable record of a stall — the one that survives the operator
     looking away.
 
@@ -260,14 +266,29 @@ def stall_log_line(lateness_ms: float, *, pump_ticks: "int | None" = None) -> st
     magnitude AND how to record the detail on the next occurrence, which the
     short segment has no room for.
 
-    ``pump_ticks`` (#4761 ②), when given, is the App's own message-pump
-    heartbeat counter's value AT THE MOMENT the stall was noticed — the
-    other end of the comparison :func:`stall_recovered_log_line` reports
-    if this episode resolves. On its own it says nothing (there is no
-    prior value to compare it to yet); its purpose is being the FIRST of
-    the pair.
+    ``pump_ticks``/``pump_delta``/``pump_window_s`` (#4761 ②, lead-coder
+    review): a FIRST design compared this line's ``pump_ticks`` reading
+    against a SECOND one in :func:`stall_recovered_log_line`, at recovery.
+    That pair never completes for a freeze that never recovers — the exact
+    shape of #4761's own report (the operator killed the process; no
+    recovery line was ever going to fire) — which is precisely the case
+    where knowing whether the pump was still moving matters most.
+    ``pump_delta``, when given, is how much :attr:`TextualChatApp.
+    pump_ticks` changed over the trailing ``pump_window_s`` seconds
+    BEFORE this notice fired — self-contained in ONE line, no second
+    event required. ``0`` here is the H1 signal (pump had already
+    stopped advancing before the stall was even noticed); a positive
+    delta rules H1 out for this episode on its own.
     """
-    ticks_note = "" if pump_ticks is None else f" (pump heartbeat at {pump_ticks})"
+    ticks_note = ""
+    if pump_ticks is not None:
+        if pump_delta is not None and pump_window_s is not None:
+            ticks_note = (
+                f" (pump heartbeat at {pump_ticks}, +{pump_delta} in the "
+                f"last {pump_window_s:.0f}s)"
+            )
+        else:
+            ticks_note = f" (pump heartbeat at {pump_ticks})"
     return (
         f"the interface was unresponsive for {lateness_ms / 1000:.1f}s"
         f"{ticks_note} — re-run with {_DUMP_ENV}=<path> to record what it was doing"

@@ -1946,6 +1946,7 @@ class TextualChatApp(App):
         """
         import asyncio  # noqa: PLC0415
         import time  # noqa: PLC0415
+        from collections import deque  # noqa: PLC0415
 
         from .loop_probe import (  # noqa: PLC0415
             _TICK_SECONDS,
@@ -1954,17 +1955,45 @@ class TextualChatApp(App):
             stall_recovered_log_line,
         )
 
+        # #4761 ② (lead-coder review): a stall that never recovers — #4761's
+        # own report, the operator killed the process rather than waiting —
+        # never reaches stall_recovered_log_line's own comparison, so H1
+        # would be unanswerable on the one occasion it matters most. This
+        # loop already wakes every _TICK_SECONDS regardless of stall state,
+        # so it can track its OWN trailing window of (wall-clock, pump_ticks)
+        # samples and hand the stall notice a self-contained delta — no
+        # second event required. 2.0s window: matches _RECORD_INTERVAL_S's
+        # own magnitude (loop_probe.py), long enough to span several
+        # pump_ticks intervals (1.0s each) so a healthy pump shows a
+        # non-zero delta, short enough that the memory here (at most
+        # 2.0/_TICK_SECONDS ~= 40 tuples of two floats) is negligible and
+        # bounded — old samples are popped every tick, so this deque's own
+        # size never grows past that regardless of session length.
+        _PUMP_WINDOW_S = 2.0
+        pump_history: "deque[tuple[float, int]]" = deque()
+
         last = time.perf_counter()
         while True:
             await asyncio.sleep(_TICK_SECONDS)
             now = time.perf_counter()
             lateness_ms = (now - last - _TICK_SECONDS) * 1000
             last = now
+            pump_history.append((now, self._pump_ticks))
+            while pump_history and now - pump_history[0][0] > _PUMP_WINDOW_S:
+                pump_history.popleft()
             fired = self._loop_tripwire.observe(lateness_ms, pump_ticks=self._pump_ticks)
             if fired is not None:
+                pump_delta = (
+                    self._pump_ticks - pump_history[0][1] if pump_history else 0
+                )
                 logger.warning(
                     "textual chat: %s",
-                    stall_log_line(fired, pump_ticks=self._pump_ticks),
+                    stall_log_line(
+                        fired,
+                        pump_ticks=self._pump_ticks,
+                        pump_delta=pump_delta,
+                        pump_window_s=_PUMP_WINDOW_S,
+                    ),
                 )
                 try:
                     self.notify(stall_banner(fired), severity="warning")
