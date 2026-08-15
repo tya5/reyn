@@ -158,8 +158,10 @@ async def test_single_agent_inflight_skill_plan_intervention_drained_by_rewind(t
     """Tier 2: rewind drains in-flight intervention tasks — no straggler WAL
     append crosses the reset-record (await_quiescent coverage, #1533).
 
-    Within ONE agent, a fire-and-forget intervention task (``_inflight_wal_tasks``)
-    is parked *before* its would-be WAL append when the rewind fires. The barrier
+    Within ONE agent, a fire-and-forget intervention task (tracked via
+    ``self._background_tasks``, #4759's task funnel — was a dedicated
+    ``_inflight_wal_tasks`` set before #4759 folded it in) is parked
+    *before* its would-be WAL append when the rewind fires. The barrier
     (``cancel_inflight`` + ``await_quiescent``) must drain it so it cannot append
     past the reset-record. If it escaped, its append would land after R (the
     straggler bug #1533 guards) → this fails.

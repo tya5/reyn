@@ -1,10 +1,12 @@
 """ReynMCPMessageHandler — server->client notifications bridge (#2597 S2b).
 
-S2a (``MCPConnectionService``) holds one ``fastmcp.Client`` open per server for the
-whole session lifetime. Because the connection stays open, FastMCP's ``session_task``
-keeps its receive loop running — so server-pushed notifications (``tools/list_changed``,
-``prompts/list_changed``, ``notifications/progress``) ARRIVE on the wire, but nothing
-consumed them before S2b. This module installs the consumer.
+S2a (``MCPConnectionService``) holds one ``mcp.Client`` open per server for the whole
+session lifetime (was ``fastmcp.Client`` pre-#4282; fastmcp is retired from the client
+path, this module now binds to the official SDK's own ``Client``). Because the
+connection stays open, the client's own session task keeps its receive loop running —
+so server-pushed notifications (``tools/list_changed``, ``prompts/list_changed``,
+``notifications/progress``) ARRIVE on the wire, but nothing consumed them before S2b.
+This module installs the consumer.
 
 ## Composition, not inheritance (#3698 P3)
 
@@ -34,18 +36,28 @@ What the inheritance used to provide, and how this class now provides it itself:
     rather than silently reaching nothing (see below — this is a DELIBERATE behavior
     addition, not a byte-identical port).
 
-  - **Two-phase client binding** (unchanged mechanism, no longer inherited): the owning
-    ``fastmcp.Client`` does not exist yet when this handler must be constructed (FastMCP's
-    own ``Client(transport, message_handler=...)`` takes the handler as a constructor
-    argument, so the handler must exist first) — :meth:`bind_client`, called by
-    :class:`~reyn.mcp.client.MCPClient` immediately after constructing the ``fastmcp.Client``
-    and before ``__aenter__()`` opens the transport, completes a weakref binding
-    (``self._client_ref``) that :meth:`__call__` reads for task-status forwarding. No
-    message can be dispatched before ``__aenter__()`` completes the handshake, so
-    ``bind_client`` always runs before the first ``__call__``.
+  - **Two-phase client binding** (unchanged mechanism, no longer inherited; #4836
+    restated for the official SDK — fastmcp is retired from the client path, #4282):
+    the owning ``mcp.Client`` does not exist yet when this handler must be
+    constructed — the official SDK's own ``Client(transport, message_handler=...)``
+    takes the handler as a constructor argument (same contract fastmcp's ``Client``
+    had), so the handler must exist first. The reason THIS class needed a two-phase
+    bind rather than a single-shot constructor argument was never fastmcp-specific
+    (that constraint transferred unchanged to the official SDK's ``Client`` — same
+    "handler exists before client" ordering); what fastmcp genuinely provided that
+    the official SDK does not is a matching ``_handle_task_status_notification``
+    method (#4457: task-status notifications don't currently reach this handler at
+    all on mcp 2.0, so that forwarding call is presently dead code either way) —
+    :meth:`bind_client`, called by :class:`~reyn.mcp.client.MCPClient` immediately
+    after constructing the ``mcp.Client`` and before ``__aenter__()`` opens the
+    transport, completes a weakref binding (``self._client_ref``) that
+    :meth:`__call__` reads for task-status forwarding. No message can be dispatched
+    before ``__aenter__()`` completes the handshake, so ``bind_client`` always runs
+    before the first ``__call__``.
 
-  - **Synchronous hook bodies**: the handler runs on FastMCP's ``session_task`` (not the
-    agent turn task), but ``EventLog.emit()`` is fully synchronous and asyncio is
+  - **Synchronous hook bodies**: the handler runs on the client's own receive-loop task
+    (the ``mcp`` SDK's ``ClientSession``/``BaseSession`` machinery — not the agent turn
+    task), but ``EventLog.emit()`` is fully synchronous and asyncio is
     single-loop with no preemption mid-sync-call, so calling ``emit_sink(...)`` directly
     from a hook is safe — no marshalling, no ``call_soon``, no queue (verified against the
     WAL's lock-free design — see S2-pre spike / connection_service.py's Option C
@@ -99,10 +111,10 @@ OnExternalEvent = Callable[[str | None, bool], None]
 
 
 class ReynMCPMessageHandler:
-    """Bridges FastMCP server-pushed notifications on a held connection to reyn's
+    """Bridges MCP server-pushed notifications on a held connection to reyn's
     ``EventLog`` (#2597 S2b). One instance per held server connection.
 
-    Composes, does not inherit, fastmcp's message-handling contract — see module
+    Composes, does not inherit, the underlying message-handling contract — see module
     docstring's "#3698 P3" section for the full design and what changed.
 
     Scope (S2b): ``tools/list_changed``, ``prompts/list_changed``. ``resources/
@@ -183,10 +195,20 @@ class ReynMCPMessageHandler:
         self._listen_honors_resources = False
 
     def bind_client(self, client: Any) -> None:
-        """Complete the weakref binding once the owning ``fastmcp.Client`` exists.
-        MUST run before the first message is dispatched — see module docstring's
-        "two-phase client binding"."""
+        """Complete the weakref binding once the owning ``mcp.Client`` (the
+        official SDK's, since #4282/#4836 — was fastmcp's ``Client`` pre-#4282,
+        same constructor-ordering contract either way) exists. MUST run before
+        the first message is dispatched — see module docstring's "two-phase
+        client binding"."""
         self._client_ref = weakref.ref(client)
+
+    def is_bound(self) -> bool:
+        """#4836: True once :meth:`bind_client` has run and its weakref target
+        is still alive. The public surface a caller (or a test) checks for
+        "has the two-phase binding completed" — reads the same
+        ``self._client_ref`` :meth:`__call__` uses for task-status forwarding,
+        without exposing that private attribute itself."""
+        return self._client_ref() is not None
 
     def set_listen_honored(self, *, tools: bool, prompts: bool, resources: bool) -> None:
         """Called by :class:`~reyn.mcp.subscription_port.ListenSubscriptionAdapter`
@@ -281,7 +303,30 @@ class ReynMCPMessageHandler:
         handler doesn't act on — distinguishes "processed and silent" (the 5 shapes
         matched above) from "not one of ours, silently ignored" (everything else),
         so a future fastmcp/MCP protocol addition landing here unnoticed is
-        distinguishable in the log from an ordinary quiet run, not identical to it."""
+        distinguishable in the log from an ordinary quiet run, not identical to it.
+
+        #4805: stays at ``debug``, deliberately NOT raised to ``warning`` the
+        way the other two sites in this issue's population were. Those two
+        fire ONLY on a confirmed defect condition (a stream that produced
+        chunks but no delta; a value that never got the correction it was
+        due) — this one does not have that property. Its own call sites
+        (``__call__``'s ``case _:`` branch, and the ``else`` branch for
+        every ``RequestResponder``/transport exception) fire for ANY of the
+        ``ServerNotification`` union's members this handler doesn't act on
+        (only 5 of the union's shapes are matched above) and for EVERY
+        server-initiated request — both are legitimate, protocol-compliant
+        traffic a standards-conforming MCP server can send during entirely
+        normal operation, not just malformed/unexpected input. Raising this
+        to ``warning`` would fire on healthy traffic from a server that
+        simply uses a notification/request shape reyn doesn't act on by
+        design — the opposite of the "defect-only" property #4805's
+        severity-raise fix depends on. The underlying tension (this log
+        line's own stated purpose — "make it observable" — genuinely IS
+        defeated by the production floor for the cases that are actual
+        defects, same as the other two sites) is real but needs a design
+        answer this mechanical fix doesn't have (e.g. distinguishing "an
+        unexpected/never-seen message type" from "a known, legitimate one
+        we just don't act on"), not a blanket severity bump."""
         logger.debug(
             "ReynMCPMessageHandler: no handler for message type %s on server %r",
             type(message).__name__, self._server_name,

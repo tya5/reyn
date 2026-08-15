@@ -919,15 +919,44 @@ resolution, not on the source token — a real, computable comparison for
 "can a human read this," which is a strictly smaller question than "does
 this declaration do anything at all."
 
+**A second instance splits an axis the first one didn't need: what layer
+does the gating.** `ActivityRow`'s `@quiet@` was inert on the declaration's
+OWN layer — the CSS existed, resolved, and its resolved value happened to
+match the surrounding text. #4801's `logger.info` call for a stall-recovery
+notice held every premise A and B ask about: the call was real, reachable,
+and the right call for its own severity reasoning. It still wrote nothing
+to the operator-facing log file, because a DIFFERENT file, one layer up,
+gates it — `interfaces/cli/commands/chat.py`'s `_setup_interactive_logging`
+sets the ROOT logger's floor to WARNING via `logging.basicConfig(...,
+force=True)`, so an `INFO` record from a logger with no override of its own
+never reaches the file at all (#4801, severity reversed to `.warning` by
+#4804). This is still C — the object exists, is the right object, and has
+no observable effect — but "strip it and watch for a change" doesn't apply
+here the way it did for the CSS token: there is no signal for a strip to
+remove, because nothing was reaching the output before the strip either.
+**The detection technique has to move with the axis**: reconstruct the
+REAL floor (call the same `basicConfig` production does) and read the
+actual log FILE, not `caplog` — `caplog.at_level(...)` overrides exactly
+the floor being tested, so a test built on it measures a different path
+than production takes, and can stay green while the record it asserts on
+never reaches a real file. #4801's own regression test did exactly this
+and passed; #4804 rewrote it under a reconstructed production floor,
+reading the file, with no `caplog` anywhere: *the firing surface — does
+the call exist and get reached — was confirmed; the surviving surface —
+does that severity reach the output — was not.* #4801 passed review and
+merged; #4804 then overturned it via the author's own measurement, not an
+additional reviewer catching what the first review missed.
+
 **Apply**: before trusting a claim, ask which of the three premises it
 depends on is actually established — that the named thing EXISTS (resolve
 the symbol, don't grep for it), that what was MEASURED is the thing the
 claim is about (prove identity — version, tree, kind — before trusting the
 result), or that a real, correctly-identified thing has an observable
-EFFECT (strip it and watch for a change, in the narrowest domain where that
-comparison is computable — not as a general claim). A `0` or a clean run
-answers only the one you actually checked; treat an unestablished premise
-as unmeasured, not as confirmed absent.
+EFFECT (strip it and watch for a change when the object's own layer gates
+it; reconstruct the real floor and read the real output, not a test
+harness's override of that floor, when a SEPARATE layer gates it instead).
+A `0` or a clean run answers only the one you actually checked; treat an
+unestablished premise as unmeasured, not as confirmed absent.
 
 ## 19. Documenting an in-flight mechanism as absent invites a same-night rewrite
 

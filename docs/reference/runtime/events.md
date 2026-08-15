@@ -276,6 +276,20 @@ Every event has:
 }
 ```
 
+**An AUDIT-event's body field is `data`, read `e["data"][...]`, not
+`e["payload"]`.** For a `llm_response_received` event, `e["data"]["finish_reason"]`
+/ `e["data"]["call_id"]` are where those fields live; for `tool_called`,
+`e["data"]["caller_kind"]` / `e["data"]["caller_id"]` / `e["data"]["tool"]` /
+`e["data"]["args"]`. `e.get("payload", {})` returns `{}` for EVERY audit-event,
+silently — every field reads as absent, not because it wasn't emitted, but
+because the read itself targeted a key that was never on THIS vocabulary.
+`payload` is a real key, but on the WAL-event's own vocabulary (`.reyn/state/wal.jsonl`
+— see [Time-Travel § WAL vs audit-event separation](../../concepts/runtime/time-travel.md#wal-vs-audit-event-separation),
+and CLAUDE.md's "'event' is three distinct things"): `agent_snapshot.py`'s
+`inbox_put` replay reads `event.get("payload", {})` for real. Mixing the two
+vocabularies returns empty in EITHER direction — an audit-event read as
+`e["payload"]`, or (the mirror mistake) a WAL-event read as `e["data"]`.
+
 ## Agent ID field (all events)
 
 Every event emitted from a session whose `agent_id` is configured (in `reyn.yaml`) automatically carries an `agent_id` field in its payload. The default value is `reyn/<hostname>`. This enables RBAC and multi-agent audit trails per SOC2 / ISO 27001 / METI v1.1 requirements.
@@ -461,7 +475,7 @@ Required fields are declared in `src/reyn/core/events/event_schema.py`.
 | `turn_started` | A trigger has been consumed from the inbox and is about to be dispatched. | `kind` — the inbox message kind that triggered this turn, so a subscriber can tell human triggers from automated ones without parsing the payload. The vocabulary is CLOSED and enumerated in `TurnOrigin` (`src/reyn/runtime/turn_origin.py`) — read the member values there rather than a list here, which is how `"task_ready"` outlived the task system in this row. #3595 made `kind == "user"` TRUE rather than approximate: a pipeline agent step's prompt (step 1), a webhook / MCP / A2A / cron push (step 1b), and the attached-pipeline run nudge (S2) each used to arrive claiming it; each now carries its own member, so `"user"` means an operator typed the line at a first-party client and nothing else does. `chain_id`; `seq` |
 | `turn_completed` | The router loop reached a terminal condition — router path only. | `chain_id` |
 | `turn_settled` | The turn is done, for EVERY turn kind including slash / intervention short-circuits that return before the router. The reliable clear signal for a working indicator started on `turn_started`. | `kind`; `chain_id` (may be absent for non-user triggers) |
-| `project_context_changed` | Turn boundary (`ProjectContextWatcher.check`, `src/reyn/runtime/project_context_watch.py`, #3787): the project context file's (`AGENTS.md` / `REYN.md`) mtime differs from what was last observed. Fires once per edit, never repeats until the file changes again. **Detection only** — the live `project_context` a session's system prompt was built with is NOT reloaded; the file is fenced as untrusted operator data before it reaches the prompt (`RouterHostAdapter.get_project_context`), so re-reading it is deliberately not wired through the LLM-writable hot-reload IN-set. What to do with a detected change (surface-only vs. actually reload) is an open decision, not yet made. | `path` |
+| `project_context_changed` | Turn boundary (`ProjectContextWatcher.check`, `src/reyn/runtime/project_context_watch.py`, #3787): the project context file's (`AGENTS.md` / `REYN.md`) mtime differs from what was last observed. Fires once per edit, never repeats until the file changes again. **Detection only** — the live `project_context` a session's system prompt was built with is NOT reloaded; the file is scanned, not fenced (#4830 — operator/agent-editable content, the same trust class as Claude Code's CLAUDE.md, backstopped by the file-write permission gate rather than a per-turn fence marker), before it reaches the prompt (`RouterHostAdapter.get_project_context`), and re-reading it is deliberately not wired through the LLM-writable hot-reload IN-set. What to do with a detected change (surface-only vs. actually reload) is an open decision, not yet made. | `path` |
 
 ## Tool dispatch
 

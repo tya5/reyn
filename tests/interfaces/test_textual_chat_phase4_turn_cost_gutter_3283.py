@@ -81,6 +81,7 @@ from reyn.interfaces.inline.textual_chat.gutter import (
     PROMPT_TOKENS_MARKER,
     RIGHT_GUTTER_WIDTH,
     TURN_ANCHOR_KIND,
+    TURN_TOTAL_ANCHOR_KIND,
     TURN_USAGE_UNKNOWN,
     _cell_pad_left,
 )
@@ -106,11 +107,14 @@ _MODEL = "gpt-4o"
 _LEFT_GUTTER_WIDTH = 2
 
 
-def _agent_row(chain_id: "str | None") -> OutboxMessage:
-    """An agent-reply display frame — the turn-figure ANCHOR row. ``chain_id``
-    is the same key ``RouterLoop`` stamps on the real frame's meta."""
+def _user_row(chain_id: "str | None") -> OutboxMessage:
+    """A user-line display frame — the turn TOTAL's own anchor row since
+    #4691 arc item ⑤ (moved off the agent reply, which now shows only its
+    OWN per-call figure, never a turn total). ``chain_id`` is the same key
+    the app's own turn-promotion site (``_handle_turn_started_event``)
+    stamps on the real frame's meta."""
     meta = {"chain_id": chain_id} if chain_id is not None else {}
-    return OutboxMessage(kind=TURN_ANCHOR_KIND, text="done", meta=meta)
+    return OutboxMessage(kind=TURN_TOTAL_ANCHOR_KIND, text="hi", meta=meta)
 
 
 def _entry(item: OutboxMessage):
@@ -286,9 +290,9 @@ def test_gutter_renders_figure_for_known_turn_and_dash_for_unknown_and_evicted()
     evicted, kept = turns[0], turns[-1]
 
     gutter = ReynTurnUsageGutter(usage_lookup=tracker.turn_usage)
-    known_label = _label(gutter, _agent_row(kept))
-    evicted_label = _label(gutter, _agent_row(evicted))
-    unseen_label = _label(gutter, _agent_row("turn-never-seen"))
+    known_label = _label(gutter, _user_row(kept))
+    evicted_label = _label(gutter, _user_row(evicted))
+    unseen_label = _label(gutter, _user_row("turn-never-seen"))
 
     assert known_label not in ("", TURN_USAGE_UNKNOWN), known_label
     assert PROMPT_TOKENS_MARKER in known_label, (
@@ -317,7 +321,7 @@ def test_a_raising_lookup_degrades_to_unknown_rather_than_killing_the_render() -
         raise RuntimeError("tracker exploded")
 
     gutter = ReynTurnUsageGutter(usage_lookup=_boom)
-    assert _label(gutter, _agent_row("turn-A")) == TURN_USAGE_UNKNOWN
+    assert _label(gutter, _user_row("turn-A")) == TURN_USAGE_UNKNOWN
 
 
 def test_no_lookup_wired_still_renders_unknown_not_a_zero() -> None:
@@ -326,7 +330,7 @@ def test_no_lookup_wired_still_renders_unknown_not_a_zero() -> None:
     that NAMES a turn still renders ``—``. The failure mode being closed is a
     silently blank cell, which reads as a free turn."""
     gutter = ReynTurnUsageGutter(usage_lookup=None)
-    assert _label(gutter, _agent_row("turn-somewhere")) == TURN_USAGE_UNKNOWN
+    assert _label(gutter, _user_row("turn-somewhere")) == TURN_USAGE_UNKNOWN
 
 
 def test_remote_snapshot_publishes_no_turn_usage_lookup() -> None:
@@ -361,13 +365,13 @@ def test_zero_token_turn_renders_a_real_zero_distinct_from_unknown() -> None:
     )
 
     gutter = ReynTurnUsageGutter(usage_lookup=tracker.turn_usage)
-    label = _label(gutter, _agent_row("turn-empty"))
+    label = _label(gutter, _user_row("turn-empty"))
     assert label != TURN_USAGE_UNKNOWN, (
         f"a measured zero-token turn must show its real 0, not 'unknown': {label!r}"
     )
     assert label == f"{PROMPT_TOKENS_MARKER}0 {COMPLETION_TOKENS_MARKER}0", label
     # ...and the unknown leg still renders differently, on the same gutter.
-    assert _label(gutter, _agent_row("turn-absent")) == TURN_USAGE_UNKNOWN
+    assert _label(gutter, _user_row("turn-absent")) == TURN_USAGE_UNKNOWN
 
 
 def test_the_smallest_real_token_counts_render_exactly_not_rounded_away() -> None:
@@ -387,7 +391,7 @@ def test_the_smallest_real_token_counts_render_exactly_not_rounded_away() -> Non
             "cost_usd": 0.0,
         }
     )
-    label = _label(gutter, _agent_row("turn-tiny"))
+    label = _label(gutter, _user_row("turn-tiny"))
     assert label != TURN_USAGE_UNKNOWN, label
     assert label == f"{PROMPT_TOKENS_MARKER}1 {COMPLETION_TOKENS_MARKER}1", label
 
@@ -398,24 +402,26 @@ def test_the_smallest_real_token_counts_render_exactly_not_rounded_away() -> Non
 @pytest.mark.parametrize(
     "item",
     [
-        OutboxMessage(kind="user", text="hi", meta={"chain_id": "turn-A"}),
         OutboxMessage(
             kind="tool_call_started",
             text="grep",
             meta={"chain_id": "turn-A", "op_id": "op-1"},
         ),
         OutboxMessage(kind="reasoning", text="thinking", meta={"chain_id": "turn-A"}),
+        OutboxMessage(kind="agent", text="reply", meta={"chain_id": "turn-A"}),
     ],
 )
 def test_non_anchor_rows_of_a_recorded_turn_show_no_token_figure(
     item: OutboxMessage,
 ) -> None:
-    """Tier 1: the turn figure is ANCHORED to the reply row, so the turn's OTHER
-    rows — its user line, its tool calls, its reasoning — render no cost cell
-    even though their frames carry the very same recorded ``chain_id``.
-    Repeating one turn total down every row of the turn, in a column whose
-    other label family (elapsed) IS per-row, would read as N separate per-row
-    figures."""
+    """Tier 1: the turn TOTAL is anchored to the ``user`` row (#4691 arc item
+    ④), so the turn's OTHER rows — its tool calls, its reasoning, and now
+    even its OWN agent reply (which carries no per-call figure of its own
+    here) — render no cost cell even though their frames carry the very
+    same recorded ``chain_id``. An agent row is included deliberately: it
+    used to be the turn-total anchor itself, and now shows nothing rather
+    than the total unless it carries its own per-call figure — the whole
+    point of splitting the two anchors apart."""
     tracker = BudgetTracker(CostConfig())
     _record(tracker, "turn-A", prompt=1000, completion=200)
     gutter = ReynTurnUsageGutter(usage_lookup=tracker.turn_usage)
@@ -428,7 +434,7 @@ def test_non_anchor_rows_of_a_recorded_turn_show_no_token_figure(
     )
     # ...while the anchor row of that SAME turn does — so the empty cells above
     # are the anchoring decision, not a broken lookup.
-    assert _label(gutter, _agent_row("turn-A")) != ""
+    assert _label(gutter, _user_row("turn-A")) != ""
 
 
 def test_a_row_naming_no_turn_renders_an_empty_cell_not_a_dash() -> None:
@@ -437,7 +443,7 @@ def test_a_row_naming_no_turn_renders_an_empty_cell_not_a_dash() -> None:
     renders an empty cell, exactly as #3337's elapsed negative control does.
     ``—`` is reserved for "we know which turn, we do not know the figure"."""
     gutter = ReynTurnUsageGutter(usage_lookup=lambda cid: None)
-    assert _label(gutter, _agent_row(None)) == ""
+    assert _label(gutter, _user_row(None)) == ""
     assert _label(gutter, OutboxMessage(kind="agent", text="hi", meta={})) == ""
 
 
@@ -499,7 +505,7 @@ def test_the_composite_right_gutter_carries_both_label_families() -> None:
     assert _label(gutter, running) == "7s", (
         "the elapsed half must still speak through the composite"
     )
-    reply = _label(gutter, _agent_row("turn-A"))
+    reply = _label(gutter, _user_row("turn-A"))
     assert PROMPT_TOKENS_MARKER in reply and COMPLETION_TOKENS_MARKER in reply, (
         f"the turn-token half is missing: {reply!r}"
     )
@@ -530,7 +536,7 @@ def test_every_label_the_column_can_emit_fits_the_configured_width() -> None:
                 "cost_usd": 0.0,
             }
             gutter = ReynRightGutter(usage_lookup=lambda cid, u=usage: u)
-            label = _label(gutter, _agent_row("t"))
+            label = _label(gutter, _user_row("t"))
             assert cell_len(label) <= RIGHT_GUTTER_WIDTH - 1, (
                 f"{label!r} ({cell_len(label)} cells) leaves no breathing room "
                 f"in RIGHT_GUTTER_WIDTH={RIGHT_GUTTER_WIDTH} "
@@ -589,7 +595,7 @@ def test_the_rendered_gutter_cell_occupies_exactly_the_column_width() -> None:
             "completion_tokens": 1800, "cost_usd": 0.0,
         }
     )
-    padded = gutter.decorate(_entry(_agent_row("t")), RIGHT_GUTTER_WIDTH, 1).plain
+    padded = gutter.decorate(_entry(_user_row("t")), RIGHT_GUTTER_WIDTH, 1).plain
     assert cell_len(padded) == RIGHT_GUTTER_WIDTH, (
         f"{padded!r} occupies {cell_len(padded)} cells, not {RIGHT_GUTTER_WIDTH}"
     )
@@ -752,11 +758,13 @@ def _rendered_lines(flow: "FlowView[OutboxMessage]") -> "list[str]":
 async def test_mounted_app_shows_a_known_turns_split_and_dashes_an_unknown_one() -> None:
     """Tier 2b: end-to-end through the REAL mounted app — the real read-model
     seam, the real ``turn_usage_fn`` publication path, the real
-    ``right_decorator`` wiring — a reply row for a RECORDED turn ends in its
-    real prompt/completion split and a reply row for an unknown turn ends in
-    ``—``, read off the COMPOSED row text rather than a ``decorate()`` call.
-    Both rows are in the same render, so a wiring that fell back to one answer
-    for everything fails on the other row.
+    ``right_decorator`` wiring — a ``user`` row (#4691 arc item ④: the turn
+    total's own anchor, since a per-call agent row cannot answer this
+    ambiguously anymore) for a RECORDED turn ends in its real
+    prompt/completion split and one for an unknown turn ends in ``—``, read
+    off the COMPOSED row text rather than a ``decorate()`` call. Both rows
+    are in the same render, so a wiring that fell back to one answer for
+    everything fails on the other row.
 
     BOTH halves of the split are asserted on the rendered line: an
     implementation that rendered only the total, or only the prompt side, would
@@ -772,12 +780,12 @@ async def test_mounted_app_shows_a_known_turns_split_and_dashes_an_unknown_one()
         await pilot.pause()
         await transport.push(
             OutboxMessage(
-                kind="agent", text="recorded reply", meta={"chain_id": "turn-recorded"}
+                kind="user", text="recorded reply", meta={"chain_id": "turn-recorded"}
             )
         )
         await transport.push(
             OutboxMessage(
-                kind="agent", text="mystery reply", meta={"chain_id": "turn-gone"}
+                kind="user", text="mystery reply", meta={"chain_id": "turn-gone"}
             )
         )
         await pilot.pause()

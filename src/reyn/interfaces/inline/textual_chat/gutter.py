@@ -374,11 +374,21 @@ def _format_elapsed(seconds: float) -> str:
 #: would read as "this turn used nothing".
 TURN_USAGE_UNKNOWN = "—"
 
-#: The one display-frame kind the per-turn token figure is anchored to — the
-#: agent reply, i.e. the row that CONCLUDES a turn's visible output. See
-#: :class:`ReynTurnUsageGutter` for why the figure is anchored rather than
-#: repeated on every row of the turn.
+#: The display-frame kind a PER-CALL absolute token figure is anchored to —
+#: the agent reply, i.e. the row that carries that specific litellm call's
+#: own real ``prompt_tokens``/``completion_tokens`` in its meta. See
+#: :class:`ReynTurnUsageGutter` for why this and :data:`TURN_TOTAL_ANCHOR_KIND`
+#: are two DIFFERENT rows now, not one row wearing two meanings.
 TURN_ANCHOR_KIND = "agent"
+
+#: The display-frame kind the TURN TOTAL is anchored to — the ``"user"`` row
+#: that opens the turn, never an ``agent`` row (#4691 arc item ④, owner
+#: ruling). See :class:`ReynTurnUsageGutter`'s docstring for why an agent
+#: row's own per-call figure and a turn's aggregate total were AMBIGUOUS
+#: sharing one anchor: the same visual slot answered two different
+#: questions depending on an incidental fact (did THIS specific frame happen
+#: to carry its own ``prompt_tokens``?) invisible to the reader.
+TURN_TOTAL_ANCHOR_KIND = "user"
 
 #: Direction markers for the per-turn token split — ``↑`` what the turn SENT
 #: (prompt) and ``↓`` what it generated (completion), e.g. ``"↑12k ↓1.8k"``.
@@ -448,7 +458,8 @@ def _format_tokens(tokens: int) -> str:
 #:
 #: The two families are mutually exclusive on any one row by construction
 #: (elapsed lives on ``tool_call_started`` rows, the token figure on
-#: :data:`TURN_ANCHOR_KIND` rows), so the widest cell is ``max(3, 11) = 11``,
+#: :data:`TURN_ANCHOR_KIND`/:data:`TURN_TOTAL_ANCHOR_KIND` rows), so the
+#: widest cell is ``max(3, 11) = 11``,
 #: not their sum — 12 + one column of breathing room = 13 (#4691 Phase A.5
 #: raised this from 12 — the signed ↑ half costs one more character than the
 #: absolute figure it replaced). If that exclusivity ever stopped holding,
@@ -548,20 +559,39 @@ class ReynTurnUsageGutter:
     all the way from ``TokenUsage`` at the call site through
     ``BudgetTracker``'s per-turn buckets; it is never re-derived here.
 
-    **Anchored to one row per turn, not repeated on every row.** The figure is
-    a TURN total, so it is rendered on the row that concludes the turn's visible
-    output — the :data:`TURN_ANCHOR_KIND` (``"agent"``) reply. Painting the same
-    total onto the turn's user line and each of its tool rows would show one
-    number N times in a column whose every other label (elapsed) IS per-row,
-    which reads as N separate per-row figures. One turn, one figure.
+    **Two DIFFERENT anchors for two DIFFERENT figures (#4691 arc item ④,
+    owner ruling) — not one row wearing two meanings.** Earlier revisions of
+    this class anchored BOTH the turn total and a per-call absolute figure
+    to the same :data:`TURN_ANCHOR_KIND` (``"agent"``) row, falling back to
+    the turn total whenever a specific agent row happened not to carry its
+    own ``prompt_tokens``. That was AMBIGUOUS: the same visual slot answered
+    "this call's own tokens" or "the whole turn's total" depending on an
+    incidental fact — did THIS specific frame happen to carry per-call
+    figures in its meta? — invisible to the reader. A reader could not tell
+    which question a number on an agent row was answering without already
+    knowing that frame's own hidden shape.
 
-    **Three distinct renders, and they are distinct on purpose:**
+    - :data:`TURN_ANCHOR_KIND` (``"agent"``) rows now show ONLY their own
+      per-call absolute figure, straight from ``entry.item.meta`` — never a
+      turn-total fallback. A row with no per-call figure (a restored/legacy
+      frame, or an agent-kind emit site that never threaded one through)
+      renders an EMPTY cell — no ambiguous number, no silent substitution.
+    - :data:`TURN_TOTAL_ANCHOR_KIND` (``"user"``) rows — the line that OPENS
+      a turn — show the turn TOTAL via ``usage_lookup(chain_id)``, never a
+      per-call figure (a user row carries no LLM call of its own to report).
+      Anchoring to the opening line rather than a settled reply also means
+      the figure never repeats across a turn's multiple ``agent`` rows the
+      way the shared-anchor design risked (a tool-turn's explanatory text,
+      a spawn ack — see router_loop.py — one turn, one total, one row).
 
-    - the anchor row's turn HAS a figure → its token split (``"↑12k ↓1.8k"``).
+    **Three distinct renders on the ``user`` anchor, and they are distinct
+    on purpose:**
+
+    - the row's turn HAS a figure → its token split (``"↑12k ↓1.8k"``).
       Including a REAL zero (``"↑0 ↓0"``): a turn whose calls reported no usage
       genuinely used 0 tokens, and that is a fact, not an absence;
-    - the anchor row NAMES a turn (``meta["chain_id"]``) but the runtime holds
-      no figure for it → :data:`TURN_USAGE_UNKNOWN` (``"—"``). Covers a turn
+    - the row NAMES a turn (``meta["chain_id"]``) but the runtime holds no
+      figure for it → :data:`TURN_USAGE_UNKNOWN` (``"—"``). Covers a turn
       that made no LLM call, a turn EVICTED from the bounded buckets
       (``TURN_BUCKET_CAP`` — an old row scrolled far back), an unknown
       chain_id, and a REMOTE client (the buckets are session-local and not on
@@ -578,46 +608,23 @@ class ReynTurnUsageGutter:
       for elapsed.
 
     ``usage_lookup=None`` (no read model / pre-session / plain fallback) makes
-    every row's lookup unknown, so a row that names a turn still renders ``—``
-    rather than silently nothing.
+    every ``user`` row's lookup unknown, so a row that names a turn still
+    renders ``—`` rather than silently nothing.
 
-    **#4691: a per-call figure embedded in the row's own meta wins over the
-    lookup above.** A turn with multiple ``kind="agent"`` anchor rows (a
-    tool-turn's explanatory text, a spawn ack — see router_loop.py) used to
-    paint the SAME turn total on every one of them, which reads as the
-    figure repeating rather than a distinct call — exactly the duplicate
-    this class's own docstring above says it exists to avoid, just not
-    caught for the multi-anchor-row case. Each such row now carries its
-    OWN call's real ``prompt_tokens``/``completion_tokens`` in
-    ``entry.item.meta``, and :meth:`label` prefers that over the turn-total
-    lookup when present.
-
-    **Phase A.5 (co-vet finding, architect + lead-coder) — the terminal
-    no-tool-calls reply row carries a per-call figure too**, not just the
-    three non-terminal sites Phase A covered. Leaving it on the turn-total
-    lookup kept the owner's ORIGINAL reported symptom alive for any turn
-    whose only ``kind="agent"`` row IS this terminal one (a turn of
-    content-less tool calls never fires the non-terminal emits, which are
-    gated on non-empty text).
-
-    **The ↑ half is the call's real ABSOLUTE ``prompt_tokens`` — an owner
-    ruling (#4691), not a signed delta.** #4698 tried a signed
-    context-growth delta between consecutive calls first, reasoning that
-    an absolute figure duplicates ctx tab's own number in a second place.
-    The owner's final ruling reversed this: an absolute figure is
-    PRIMITIVE (a reader can derive the delta by subtracting adjacent
-    rows), while a delta is DERIVED and the absolute value can never be
-    recovered from it. #4698's own "9 exception cases" for a
-    session-shared delta baseline (cross-purpose/cross-session pollution,
-    ``/model`` switches, rewind, fork, compaction) all evaporate with an
-    absolute figure — only "no usage on the response" (``None``, never a
-    fabricated ``0``) remains. "Showing the jump" between calls is Group/
-    fold's own job (#4691 Phase B): the fold's summary row is what
-    concentrates a turn down to its call boundaries, not this column.
-
-    The turn-total lookup now only answers for a row that carries NO
-    per-call figure at all (a restored/legacy frame — every LIVE emit
-    site stamps one)."""
+    **The ↑ half of an agent row's per-call figure is the call's real
+    ABSOLUTE ``prompt_tokens`` — an owner ruling (#4691), not a signed
+    delta.** #4698 tried a signed context-growth delta between consecutive
+    calls first, reasoning that an absolute figure duplicates ctx tab's own
+    number in a second place. The owner's final ruling reversed this: an
+    absolute figure is PRIMITIVE (a reader can derive the delta by
+    subtracting adjacent rows), while a delta is DERIVED and the absolute
+    value can never be recovered from it. #4698's own "9 exception cases"
+    for a session-shared delta baseline (cross-purpose/cross-session
+    pollution, ``/model`` switches, rewind, fork, compaction) all evaporate
+    with an absolute figure — only "no usage on the response" (``None``,
+    never a fabricated ``0``) remains. "Showing the jump" between calls is
+    Group/fold's own job (#4691 Phase B): the fold's summary row is what
+    concentrates a turn down to its call boundaries, not this column."""
 
     def __init__(
         self,
@@ -627,24 +634,38 @@ class ReynTurnUsageGutter:
         self._usage_lookup = usage_lookup
 
     def label(self, entry: "Entry[OutboxMessage]") -> str:
-        """This entry's per-turn token label: the count, ``"—"`` when the row
-        names a turn with no known figure, or ``""`` when it names no turn.
-
-        Only ``tokens`` is read off the looked-up dict; ``cost_usd`` is present
-        and valid but not displayed (see the class docstring). A missing or
-        non-numeric ``tokens`` is treated as "no figure" rather than coerced.
+        """This entry's token label — an agent row's OWN per-call figure, a
+        user row's TURN total (``"—"`` when it names a turn with no known
+        figure), or ``""`` when the row is neither / names no turn.
 
         A lookup that raises is treated exactly like "no figure" — this runs on
         every gutter repaint and must never be able to kill a render."""
-        if entry.item.kind != TURN_ANCHOR_KIND:
-            return ""
+        kind = entry.item.kind
+        if kind == TURN_ANCHOR_KIND:
+            return self._per_call_label(entry)
+        if kind == TURN_TOTAL_ANCHOR_KIND:
+            return self._turn_total_label(entry)
+        return ""
+
+    def _per_call_label(self, entry: "Entry[OutboxMessage]") -> str:
+        """An agent row's OWN call figure, straight off its meta — never a
+        turn-total fallback (#4691 arc item ④). Only ``entry.item.meta`` is
+        read here; :attr:`_usage_lookup` never runs for an agent row."""
         meta = entry.item.meta or {}
-        # #4691: a PER-CALL row (every LIVE kind="agent" emit site stamps
-        # prompt_tokens/completion_tokens — see router_loop.py) takes
-        # precedence over the turn-total lookup below. Both halves are
-        # ABSOLUTE (owner ruling — see the class docstring for why an
+        # #4691: every LIVE kind="agent" emit site stamps
+        # prompt_tokens/completion_tokens (see router_loop.py), INCLUDING
+        # the terminal no-tool-calls reply row (Phase A.5) — without that
+        # stamp, a turn whose only agent row IS the terminal one renders an
+        # EMPTY cell here now (there is no turn-total fallback left to
+        # catch it; arc item ④ removed that path entirely). Both halves
+        # are ABSOLUTE (owner ruling — see the class docstring for why an
         # absolute figure replaced #4698's signed-delta attempt): ↑ this
-        # call's own real prompt_tokens, ↓ its own completion_tokens.
+        # call's own real prompt_tokens, ↓ its own completion_tokens. No
+        # figure here (a restored/legacy frame, or a future agent-kind emit
+        # site that never threaded one through) is an EMPTY cell — #4691
+        # arc item ④ removed the turn-total fallback that used to sit here,
+        # which is what made this row's own figure ambiguous with a turn
+        # total sharing the same slot.
         call_prompt = meta.get("prompt_tokens")
         call_completion = meta.get("completion_tokens")
         if isinstance(call_prompt, (int, float)) and isinstance(
@@ -654,6 +675,14 @@ class ReynTurnUsageGutter:
                 f"{PROMPT_TOKENS_MARKER}{_format_tokens(int(call_prompt))} "
                 f"{COMPLETION_TOKENS_MARKER}{_format_tokens(int(call_completion))}"
             )
+        return ""
+
+    def _turn_total_label(self, entry: "Entry[OutboxMessage]") -> str:
+        """The TURN total for a ``user`` row (#4691 arc item ④) — the line
+        that opens the turn, looked up by ``meta["chain_id"]``. See the
+        class docstring's "Three distinct renders" for the figure /
+        :data:`TURN_USAGE_UNKNOWN` / empty-cell trichotomy this implements."""
+        meta = entry.item.meta or {}
         chain_id = meta.get("chain_id")
         if not isinstance(chain_id, str) or not chain_id:
             return ""

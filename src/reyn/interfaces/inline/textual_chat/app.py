@@ -411,10 +411,11 @@ class _CursorFlowView(FlowView["OutboxMessage"]):
         so the anchor can never be set while ``cursor_visible`` is
         ``False`` — ``cursor_visible`` alone is a complete public-API
         proxy for it TODAY. Re-verified directly against
-        ``_view.py``'s source after #4729's 0.19.0 -> 0.21.1 bump
-        (``_set_cursor_visible`` still unconditionally does
+        ``_view.py``'s source after #4729's 0.19.0 -> 0.21.1 bump, and
+        again after #4792's 0.21.1 -> 0.22.0 bump — both times
+        ``_set_cursor_visible`` still unconditionally does
         ``self._tc_anchor = None`` inside its own ``if not visible:``
-        branch, same as at 0.19.0) — installed pin tracked in
+        branch, unchanged since 0.19.0 — installed pin tracked in
         ``pyproject.toml``, not repeated here as a number that would
         just go stale again on the next bump. This is a DERIVED
         equivalence, not a contract upstream promises: if a future
@@ -1123,6 +1124,7 @@ class TextualChatApp(App):
         "_queue_item_meta",
         "_streaming_replies",
         "_pending_own_cancels",
+        "_call_parents",
     )
 
     def __init__(
@@ -1163,9 +1165,11 @@ class TextualChatApp(App):
         # frame transitions the SAME entry RUNNING → SUCCESS/ERROR (CC parity).
         self._running_tools: "dict[object, Entry[OutboxMessage]]" = {}
         # #4691 Phase B B1: the litellm-call TREE PARENT for a given call_id
-        # (#4691 Phase 1 ①②, #4734) — every ``kind="agent"`` row carrying
-        # ``meta["finish_reason"] == "tool_calls"`` registers itself here on
-        # arrival, and every ``tool_call_started``/``completed``/``failed``
+        # (#4691 Phase 1 ①②, #4734) — every ``kind="agent"`` row carrying a
+        # ``call_id`` registers itself here on arrival (#4777: unconditional,
+        # NOT gated on a provider's own ``finish_reason`` string — see the
+        # registration site's own comment, ``_ingest_frame``), and every
+        # ``tool_call_started``/``completed``/``failed``
         # frame carrying a matching ``meta["call_id"]`` looks itself up here
         # to find which Entry to nest under (``parent.append_child(...)``
         # instead of the flat ``self.conversation.append(...)``). KEYED, not
@@ -1179,6 +1183,28 @@ class TextualChatApp(App):
         # conversation (bounded by the same session lifetime the flow model
         # itself already is).
         self._call_parents: "dict[str, Entry[OutboxMessage]]" = {}
+        # #4691 arc item ① (final item): the CURRENT turn's own ``kind="user"``
+        # row — set the moment :meth:`_handle_turn_started_event` promotes it,
+        # cleared at that same turn's end (the ``_TURN_END_EVENT_TYPES`` leg of
+        # :meth:`_pump_frames`). ``_ingest_frame``'s fallback append (no
+        # ``call_id`` parent found) nests under THIS entry when it is set,
+        # instead of appending flat — the turn boundary is the same one
+        # ``_handle_turn_started_event``/``_TURN_END_EVENT_TYPES`` already use
+        # for the sent-queue promotion and the orphan sweeps (architect's own
+        # finding: "no new surface needed — turn boundaries already exist on
+        # both sides, already consumed elsewhere"), so this reuses it rather
+        # than inventing a third.
+        #
+        # A single ``Entry | None`` field, NOT a dict — deliberately absent
+        # from :attr:`_PER_SESSION_DICT_STATE`, whose uniform ``.clear()`` loop
+        # only knows how to empty a dict/list. #4776 was the SAME omission
+        # once already (a per-session dict forgotten from that tuple); the
+        # shape here is different (not dict-valued at all, so it could never
+        # have joined that tuple even by inclusion) but the FAILURE MODE is
+        # the same one — a per-session field with no explicit reset — so the
+        # reset is spelled out explicitly at the session-switch site
+        # (:meth:`_handle_session_attached_event`) instead.
+        self._current_turn_parent: "Entry[OutboxMessage] | None" = None
         # #4380/#4429 originally had a lifecycle-marker bundling tracker
         # here — removed (2026-08-13): no reachable trigger ever produces
         # two adjacent occurrences (see ``_ingest_frame``'s own docstring
@@ -1204,6 +1230,42 @@ class TextualChatApp(App):
         #: Watches how late the event loop runs (#3539). Always on; see
         #: ``loop_probe`` for why it is not opt-in.
         self._loop_tripwire = LoopTripwire()
+        #: #4761 ②: the App's own message-pump heartbeat — incremented by
+        #: :meth:`on_timer` ONLY for :attr:`_pump_heartbeat_timer`'s own
+        #: ticks, which (no ``callback=`` given to ``set_interval``) post an
+        #: ``events.Timer`` message that only advances this counter once
+        #: Textual's own message-processing loop for THIS App actually
+        #: dequeues and dispatches it — unlike ``self._loop_tripwire``'s
+        #: worker, which is an independent ``asyncio`` task and keeps running
+        #: even if the App's own pump is the thing that's stuck. Silent by
+        #: construction (nothing reads this except the two log lines below,
+        #: which were already once-per-episode before this existed) — see
+        #: :attr:`_pump_heartbeat_timer`'s own start site for why an
+        #: unboundedly-running counter needs no separate bound of its own.
+        self._pump_ticks = 0
+        self._pump_heartbeat_timer: "Timer | None" = None
+        #: #4761 ③: total Key events this App has ever received, counted in
+        #: :meth:`on_event` — the earliest, focus-independent seam ②'s own
+        #: docstring already established. Distinguishes H3 (input never
+        #: reaching the App at all) from a live pump that simply has
+        #: nothing to do: ② alone can show the pump is still ticking during
+        #: a stall, but a ticking pump with zero keys arriving despite an
+        #: operator who reports pressing several is H3, not H1/H2. Same
+        #: rolling-window treatment as ②'s ``pump_ticks`` (see
+        #: ``_watch_loop_responsiveness``) — a raw cumulative total alone
+        #: cannot say whether it moved DURING the stall being reported.
+        self._keys_received = 0
+        #: The last ``events.Key`` OBJECT counted, by identity, not value —
+        #: measured directly (not assumed): Textual dispatches the SAME
+        #: Key event object to this App's own ``on_event`` twice for some
+        #: keys (``escape``, confirmed by ``id()``; an ordinary printable
+        #: key consumed by a focused Input along the way did not repeat).
+        #: Without this guard the counter would silently over-count
+        #: exactly the keys most likely to matter for a stall report
+        #: (Esc, an attempt to break out) — dedup by ``is``, not equality,
+        #: since two SEPARATE real presses of the same key are two
+        #: distinct objects and must both count.
+        self._last_counted_key_event: "object | None" = None
         #: One row per pipeline RUN, keyed by ``run_id`` — every step frame for
         #: that run folds into it (:meth:`_coalesce_pipeline_step`).
         self._pipeline_runs: "dict[str, Entry[OutboxMessage]]" = {}
@@ -1906,8 +1968,40 @@ class TextualChatApp(App):
         """
         import asyncio  # noqa: PLC0415
         import time  # noqa: PLC0415
+        from collections import deque  # noqa: PLC0415
 
-        from .loop_probe import _TICK_SECONDS, stall_banner, stall_log_line  # noqa: PLC0415
+        from .loop_probe import (  # noqa: PLC0415
+            _TICK_SECONDS,
+            stall_banner,
+            stall_log_line,
+            stall_recovered_log_line,
+        )
+
+        # #4761 ② (lead-coder review): a stall that never recovers — #4761's
+        # own report, the operator killed the process rather than waiting —
+        # never reaches stall_recovered_log_line's own comparison, so H1
+        # would be unanswerable on the one occasion it matters most. This
+        # loop already wakes every _TICK_SECONDS regardless of stall state,
+        # so it can track its OWN trailing window of (wall-clock, pump_ticks)
+        # samples and hand the stall notice a self-contained delta — no
+        # second event required. 2.0s window: matches _RECORD_INTERVAL_S's
+        # own magnitude (loop_probe.py), long enough to span several
+        # pump_ticks intervals (1.0s each) so a healthy pump shows a
+        # non-zero delta, short enough that the memory here (at most
+        # 2.0/_TICK_SECONDS ~= 40 tuples of two floats) is negligible and
+        # bounded — old samples are popped every tick, so this deque's own
+        # size never grows past that regardless of session length.
+        # #4761 ③ reuses this same window (lead-coder: "②で作った形がそのまま
+        # 使える") — self._keys_received is sampled alongside pump_ticks at
+        # the SAME cadence, so one deque of triples covers both rather than
+        # a second, parallel bookkeeping structure. keys_delta lets the
+        # stall notice distinguish H3 (pump ticking, zero keys arriving
+        # despite an operator who reports pressing several) from H1/H2 on
+        # its own, in the same one line — same bound reasoning as ②'s own
+        # pump_delta: old samples popped every tick, size never exceeds
+        # ~2.0/_TICK_SECONDS regardless of session length.
+        _PUMP_WINDOW_S = 2.0
+        pump_history: "deque[tuple[float, int, int]]" = deque()
 
         last = time.perf_counter()
         while True:
@@ -1915,13 +2009,68 @@ class TextualChatApp(App):
             now = time.perf_counter()
             lateness_ms = (now - last - _TICK_SECONDS) * 1000
             last = now
-            fired = self._loop_tripwire.observe(lateness_ms)
+            pump_history.append((now, self._pump_ticks, self._keys_received))
+            while pump_history and now - pump_history[0][0] > _PUMP_WINDOW_S:
+                pump_history.popleft()
+            # #4761 (architect's outstanding point, unimplemented when
+            # ①②③ landed): whether a turn was running THE INSTANT this tick
+            # was observed. ``ActivityRow.state`` is the app's existing
+            # "is a turn running" surface (already read the same way at the
+            # compact-caps call site, ``turn_active=self._activity.state is
+            # not None``) — reused here rather than adding a second signal
+            # for the same question. ``getattr`` defensively: this loop is
+            # scheduled in ``on_mount``, well after ``self._activity`` is
+            # created in ``compose()``, but matches the defensive idiom this
+            # module already uses for lazily-created widgets read from a
+            # long-lived background loop.
+            activity = getattr(self, "_activity", None)
+            turn_active = None if activity is None else activity.state is not None
+            fired = self._loop_tripwire.observe(
+                lateness_ms, pump_ticks=self._pump_ticks, turn_active=turn_active,
+            )
             if fired is not None:
-                logger.warning("textual chat: %s", stall_log_line(fired))
+                pump_delta = (
+                    self._pump_ticks - pump_history[0][1] if pump_history else 0
+                )
+                keys_delta = (
+                    self._keys_received - pump_history[0][2] if pump_history else 0
+                )
+                logger.warning(
+                    "textual chat: %s",
+                    stall_log_line(
+                        fired,
+                        pump_ticks=self._pump_ticks,
+                        pump_delta=pump_delta,
+                        pump_window_s=_PUMP_WINDOW_S,
+                        keys_received=self._keys_received,
+                        keys_delta=keys_delta,
+                        turn_active=turn_active,
+                    ),
+                )
                 try:
                     self.notify(stall_banner(fired), severity="warning")
                 except Exception:
                     logger.exception("textual chat: loop tripwire notice failed")
+            elif self._loop_tripwire.consume_recovered():
+                # #4797 follow-up (architect finding): default-visible, no
+                # REYN_PROF_DUMP required — everything else this tripwire
+                # writes goes through write_record, a no-op on the shipped
+                # default. logger.warning, matching the stall notice above
+                # (revised from an initial logger.info ruling, self-caught
+                # and corrected before landing: the interactive CUI's own
+                # _setup_interactive_logging sets the ROOT logger's level to
+                # WARNING, so an INFO call from a logger with no override of
+                # its own is silently dropped in the real interactive path —
+                # not "quieter", genuinely absent. Raising just this logger's
+                # level was rejected too: it would make "the operator's
+                # chosen floor" mean two different things depending which
+                # module emitted the record. Stall and recovery are the
+                # start and end of ONE episode; one line per episode at the
+                # same severity is not a second alarm).
+                logger.warning(
+                    "textual chat: %s",
+                    stall_recovered_log_line(pump_ticks=self._pump_ticks),
+                )
 
     def on_mount(self) -> None:
         # #3505: #3504 made ``App``'s own background ``ansi_default`` (the
@@ -2002,6 +2151,26 @@ class TextualChatApp(App):
         self.run_worker(
             self._watch_loop_responsiveness(), name="loop-tripwire", exclusive=False
         )
+        # #4761 ②: no ``callback=`` — a Timer with a callback invokes it
+        # directly from the Timer's OWN asyncio task (see textual/timer.py's
+        # ``_tick``), which would make this just as independent of the App's
+        # own message pump as ``_loop_tripwire``'s worker already is. Without
+        # one, each tick instead ``post_message``s an ``events.Timer`` onto
+        # THIS App's own queue, so :meth:`on_timer` only runs — and
+        # ``_pump_ticks`` only advances — when the App's own message-
+        # processing loop is actually dequeuing and dispatching, which is
+        # the one thing this counter needs to be true to answer H1 (#4761's
+        # own architect design: "does the pump keep beating"). 1s: cheap
+        # (an int increment), and short enough that even a several-second
+        # stall — #4761's own report was long enough to screenshot — has
+        # room for multiple ticks if the pump is in fact still alive.
+        # Unbounded FOR THE COUNTER's lifetime is fine: nothing here writes
+        # anything on its own tick, only reads the counter's current value
+        # (see :meth:`_watch_loop_responsiveness`) — the actual OUTPUT stays
+        # exactly as bounded as it already was (silent while healthy, two
+        # lines per stall episode), this just adds one more field to lines
+        # that already exist.
+        self._pump_heartbeat_timer = self.set_interval(1.0, name="pump-heartbeat")
         # Drawer starts collapsed — the default chrome is just the focusable
         # menu row (#3326: which also carries the status-values segment when
         # there's room — see MenuBar._repack). It only becomes visible when a
@@ -2397,8 +2566,30 @@ class TextualChatApp(App):
         :meth:`_CursorFlowView.action_toggle_fold` already applied that
         guard before posting this) flips ONE entry's tool-detail fold,
         independent of the highlight/cursor position — #4691 §6's owner
-        ruling."""
+        ruling.
+
+        #4775 (owner-reported, live TUI): a Group parent (``entry.children``
+        truthy — the ONLY call site producing an ``append_child`` is this
+        Group construction (#4691 B1), and it only nests a tool row whose
+        ``call_id`` matches an already-registered parent, so ``children``
+        being non-empty is an exclusive signal — never a false positive on
+        some unrelated children-bearing row; a call that dispatches no
+        tools never produces a matching tool row to nest, #4779's
+        unconditional registration notwithstanding) is not a settled tool
+        row and used to
+        hit the early return below unconditionally, leaving #4750's collapsed
+        child-count display unreachable from Space — the owner's own expected
+        trigger. ``Entry.toggle_collapsed()`` (flowview's own fold/unfold
+        primitive, already the mechanism ``za`` reaches through flowview's
+        OWN z-prefix key handling — this only wires the SAME primitive to
+        Space, no new key) is called for a Group parent BEFORE the settled-
+        tool-row check, since a Group parent's own ``meta`` has no
+        ``_RESULT_KIND_KEY`` and would otherwise never reach a fold path at
+        all."""
         entry = event.entry
+        if entry.children:
+            entry.toggle_collapsed()
+            return
         meta = entry.item.meta
         if not meta or _RESULT_KIND_KEY not in meta:
             return  # not a settled tool row — nothing to fold
@@ -2500,7 +2691,8 @@ class TextualChatApp(App):
         )
 
     async def on_event(self, event: events.Event) -> None:
-        """Any key press or scroll dismisses an active text-effect overlay.
+        """Any key press or scroll dismisses an active text-effect overlay;
+        Esc also dismisses an open rewind picker regardless of focus (#4788).
 
         The overlay (:meth:`action_toggle_text_effect`) is a full-viewport
         joke painted OVER the flow view; it should end the instant the reader
@@ -2518,7 +2710,71 @@ class TextualChatApp(App):
         The dismissing press is consumed and does nothing else: Escape while
         the joke plays closes the joke, not the joke AND cancel a text
         selection; a scroll dismisses it without also moving the flow view.
+
+        #4788: the same "sees the raw event first, regardless of focus" seam
+        also closes a real gap in :class:`~.rewind_picker.RewindPicker`'s own
+        ``escape`` Binding. That Binding only participates in Textual's
+        focused-widget-outward walk when the picker (or a descendant) is
+        somewhere in the current focus chain — an intervention arriving while
+        the picker is already open steals focus to its own free-text input,
+        and Esc then resolves against THAT chain instead, leaving the picker
+        visibly open with no way to close it via Esc (found investigating
+        #4761: the picker was never stuck — clicking back into it and Enter
+        still closed it normally — only its own Esc binding was unreachable).
+        Reusing this hook rather than declaring the picker's Binding
+        ``priority=True``: a priority Binding is checked DOM-wide before the
+        normal walk, so its reach crosses every focus boundary, not just this
+        one path — #4751's investigation (architect, same session) flagged a
+        live collision risk for exactly that shape (file_access's
+        ``RECURSIVE`` ``r`` vs. this module's own ``/rewind`` ``r`` handling
+        in :meth:`on_key`, only if either were declared priority=True). This
+        stays scoped to one key and one widget instead.
+
+        ★#4788 B (owner-approved, decided after this fix landed): the
+        scenario this fix was written for — an intervention arriving
+        while the picker is already open — can no longer put both modals
+        on screen at once. :meth:`_present_intervention` now closes the
+        picker outright the moment an intervention arrives (``RewindPicker
+        .hide()``, no Esc involved), rather than leaving it open behind
+        the panel. That leaves this Esc branch fully live for one purpose
+        only: the picker's own Esc-to-cancel, same as before this fix, now
+        simply never racing an intervention's arrival.
+
+        ★Implicit ordering, when BOTH the picker and the intervention panel
+        are STILL open at once (the one remaining path: the user opens the
+        picker via ``/rewind`` while an intervention panel is already
+        showing — #4788 B did not touch that direction, only "intervention
+        arrives while picker is open"): this catch runs first and consumes
+        the Esc press outright (``event.stop()``), so a single Esc closes
+        ONLY the picker — :class:`~.intervention_panel.InterventionPanel`'s
+        own ``escape`` Binding (``action_dismiss_panel``) never fires on
+        that same press. No capability is lost: the panel's own Esc is
+        documented as a focus-only escape hatch, not a close ("every
+        pending tab stays exactly as it was" —
+        ``InterventionPanel.Dismissed``'s own docstring), so a SECOND Esc
+        (picker now closed, this branch a no-op) reaches it exactly as
+        before. Picker-first is deliberate — the picker has no other way
+        to close once it has lost focus (that is this fix's whole
+        premise), while the panel already has one.
         """
+        if isinstance(event, events.Key):
+            # #4761 ③: counted here — the SAME "sees the raw event first,
+            # regardless of focus, regardless of what handling follows"
+            # seam this method's own docstring already relies on — not in
+            # a per-widget on_key, which only sees keys that widget's own
+            # bubble reaches (the composer's Input consumes printable keys
+            # itself, so a per-widget count would silently miss most
+            # keystrokes). Unconditional: every Key event reaching the App
+            # counts, whether it goes on to dismiss an overlay, close the
+            # picker, or fall through to ordinary focused-widget dispatch —
+            # the counter's only job is "did a key reach the App at all,"
+            # not what happened to it next. Deduped by object IDENTITY
+            # (see ``_last_counted_key_event``'s own docstring) — measured
+            # directly that Textual dispatches the SAME Key object to this
+            # method twice for some keys.
+            if event is not self._last_counted_key_event:
+                self._keys_received += 1
+                self._last_counted_key_event = event
         if isinstance(event, (events.Key, events.MouseScrollDown, events.MouseScrollUp)):
             # ``self._flow`` is created lazily in ``compose()``, not
             # ``__init__`` — ``on_event`` fires for every event from the
@@ -2531,7 +2787,55 @@ class TextualChatApp(App):
                 flow.stop_overlay()
                 event.stop()
                 return
+        if isinstance(event, events.Key) and event.key == "escape":
+            picker = getattr(self, "_rewind_picker", None)
+            if picker is not None and picker.display:
+                picker.action_dismiss()
+                event.stop()
+                return
         await super().on_event(event)
+
+    async def on_timer(self, event: events.Timer) -> None:
+        """#4761 ②: advance the pump heartbeat for OUR OWN timer only, then
+        always delegate to Textual's own base handler.
+
+        ``MessagePump.on_timer`` is what actually invokes a Timer's
+        ``callback`` (see ``self._voice_timeout_timer`` /
+        ``self._streaming_catchup``, both real ``self.set_timer(...,
+        callback=...)`` calls elsewhere in this class) — overriding this
+        method without delegating would silently break both. Checking
+        ``event.timer is self._pump_heartbeat_timer`` rather than reacting
+        to every Timer event keeps this counter meaning ONE specific,
+        known-cheap interval, not "any timer anywhere in the app fired,"
+        which would make its cadence depend on unrelated widgets' own timer
+        churn.
+        """
+        if event.timer is self._pump_heartbeat_timer:
+            self._pump_ticks += 1
+        await super().on_timer(event)
+
+    @property
+    def pump_ticks(self) -> int:
+        """The message-pump heartbeat's current count (#4761 ②) — public
+        read, mirroring :attr:`LoopTripwire.max_lateness_ms`/``.fired``'s
+        own pattern, so a test or a future caller reads this off the same
+        surface the log lines already do rather than the underscore field."""
+        return self._pump_ticks
+
+    @property
+    def pump_heartbeat_timer(self) -> "Timer | None":
+        """The App's own heartbeat :class:`~textual.timer.Timer` — ``None``
+        before :meth:`on_mount` starts it. Public so a test can construct a
+        genuine ``events.Timer(timer=...)`` referencing the SAME object
+        :meth:`on_timer` compares against by identity, without reaching
+        into ``_pump_heartbeat_timer`` directly."""
+        return self._pump_heartbeat_timer
+
+    @property
+    def keys_received(self) -> int:
+        """Total Key events this App has ever received (#4761 ③) — public
+        read, same pattern as :attr:`pump_ticks`."""
+        return self._keys_received
 
     async def on_key(self, event) -> None:
         # #3476 ⑥: 'r' while the cursor has focus is a keyboard shortcut for
@@ -3342,7 +3646,34 @@ class TextualChatApp(App):
         input (:meth:`on_intervention_panel_choice_selected` /
         :meth:`on_intervention_panel_text_submitted`) moved together, so there
         is never a moment where both the panel AND a chip/composer-match path
-        are live for the same intervention."""
+        are live for the same intervention.
+
+        #4788 B (owner-approved, via lead-coder's recommendation — not
+        decided by this session): an arriving intervention closes an
+        already-open rewind picker outright, rather than leaving both
+        modals live behind each other. Three reasons, all lead-coder's:
+        an intervention is the agent BLOCKED and waiting (urgent) while
+        the picker is a look-only browsing surface — different priority;
+        two simultaneous modals make the Esc key's destination ambiguous
+        — exactly the shape #4788 A (fixed in #4789) had to work around
+        for Esc specifically, and there is no reason to leave that
+        ambiguity standing for every OTHER key too; and what's lost is
+        small — the picker holds no state Rewind itself owns, so a single
+        ``r`` reopens it.
+
+        Calls :meth:`~.rewind_picker.RewindPicker.hide` directly, NOT
+        :meth:`~.rewind_picker.RewindPicker.action_dismiss` — the latter
+        posts ``Dismissed``, whose handler (:meth:`on_rewind_picker_
+        dismissed`) unconditionally re-focuses the Composer, which is
+        the right target for a user's own Esc-cancel but would fight
+        this intervention's own focus routing (``InterventionPanel.
+        add_pending`` → ``on_tabbed_content_tab_activated`` on a
+        first-arriving tab). ``hide()`` clears the picker's display and
+        state with no message and no focus side effect, leaving the
+        panel's own routing as the only thing deciding where focus lands."""
+        picker = getattr(self, "_rewind_picker", None)
+        if picker is not None and picker.display:
+            picker.hide()
         meta = msg.meta or {}
         iv_id = meta.get("intervention_id")
         key: object = iv_id if iv_id else id(entry)
@@ -3519,7 +3850,25 @@ class TextualChatApp(App):
 
         A ``kind`` other than ``"rewind"`` takes the text fallback too, rather
         than being force-fitted into a rewind picker: command-UI is a typed
-        request and this region answers exactly one of its kinds."""
+        request and this region answers exactly one of its kinds.
+
+        #4817 (#4788 B's untouched reverse direction, owner's B ruling
+        applied by lead-coder without a re-ask — "intervention is urgent,
+        picker is look-only, priority doesn't flip with which one opened
+        second"): the picker YIELDS — it does not open — while
+        :attr:`_iv_panel` is already showing. NOT a silent no-op: per
+        lead-coder's explicit condition, a typed ``/rewind`` that visibly
+        does nothing is the exact "ran, but no observable effect" class
+        #4801 closed elsewhere tonight (a mechanism exists, its result is
+        invisible). A ``kind="status"`` flow row — the same idiom this
+        module already uses for other command-triggered feedback (the
+        voice-transcription "⏳ transcribing…"/hint rows above) — says why,
+        and what to do instead. The read-model request is still consumed
+        (``clear_pending_command_ui``) even when refused: a request left
+        pending would replay onto whatever picker interaction happens
+        next, attributing THIS refused open to a later, unrelated one."""
+        from reyn.runtime.outbox import OutboxMessage  # noqa: PLC0415
+
         request = None
         if self._read_model is not None:
             try:
@@ -3528,6 +3877,19 @@ class TextualChatApp(App):
                 logger.exception("textual chat: command-UI read failed")
         points = (request or {}).get("points") if request else None
         if request and request.get("kind") == "rewind" and points:
+            if self._iv_panel.display:
+                try:
+                    self._read_model.clear_pending_command_ui()
+                except Exception:
+                    logger.exception("textual chat: command-UI clear failed")
+                self._ingest_frame(OutboxMessage(
+                    kind="status",
+                    text=(
+                        "rewind is on hold — answer the pending intervention "
+                        "first, then press r again"
+                    ),
+                ))
+                return
             self._rewind_picker.show_points(list(points))
             try:
                 self._read_model.clear_pending_command_ui()
@@ -3558,9 +3920,153 @@ class TextualChatApp(App):
         """Esc in the picker: no rewind, focus back to the composer."""
         self.query_one(Composer).focus()
 
-    def _ingest_frame(self, msg: "OutboxMessage") -> None:
+    def _resolve_append_parent(
+        self, *, kind: str, meta: dict
+    ) -> "Entry[OutboxMessage] | None":
+        """The ONE decision of where a NEW entry attaches — a registered
+        call_id Group parent, else the current turn's own parent, else
+        flat top-level (``None``). #4691 (owner-observed real-machine
+        contradiction, root-caused by architect via lead-coder): this used
+        to be inlined in :meth:`_ingest_frame` alone, and
+        :meth:`_handle_agent_delta_event`'s first-delta entry creation
+        called ``self.conversation.append(...)`` directly instead —
+        bypassing this decision entirely, so a STREAMED reply (the common
+        case for any provider that streams) never nested under its turn
+        or registered as a call-level Group parent, no matter what
+        :meth:`_ingest_frame` did. Both call sites now go through THIS
+        one method (via :meth:`_append_frame`), so the decision cannot
+        drift between them again — architect's own framing, via
+        lead-coder: "share the PARENT DECISION, not the entry-creation
+        procedure" (a streamed reply's own creation — seeding
+        :class:`_StreamingReply`, registering visibility tracking — stays
+        entirely its own, in :meth:`_handle_agent_delta_event`).
+
+        ① call_id lookup (never "most recently appended" order — see
+        :attr:`_call_parents`'s own docstring) — #4691 Phase B B1.
+        ② the CURRENT turn's own parent, if one is open — #4691 arc item
+        ①, one layer above ①. This is what makes the nesting RECURSIVE
+        without extra code: the turn's first ``kind="agent"`` row lands
+        here (② fires, ① doesn't yet — it has no call_id parent of its
+        OWN), then registers itself as a ``_call_parents`` entry
+        (:meth:`_register_call_parent`), so every LATER row for that same
+        call_id finds it via ① — user row → call row → tool rows, three
+        levels, one mechanism per level.
+        ③ flat top-level (``None``) — a legacy/restored row, an op-loop
+        caller that never threaded a call_id through, or no turn open.
+
+        ``kind != "user"`` in ② is deliberate, not incidental: a
+        ``kind="user"`` frame is never anything OTHER than a turn's own
+        parent row (the promotion in :meth:`_handle_turn_started_event`)
+        or a standalone intervention-answer fallback row
+        (:meth:`_handle_intervention_answer_event`) — neither should ever
+        nest under a PRIOR turn's parent. (Whether an intervention-answer
+        fallback row landing mid-turn should instead nest under the
+        CURRENT turn is an owner-visual call, not decided here.)"""
+        call_id = meta.get("call_id")
+        parent = self._call_parents.get(call_id) if call_id else None
+        if parent is None and kind != "user" and self._current_turn_parent is not None:
+            parent = self._current_turn_parent
+        return parent
+
+    def _append_frame(self, msg: "OutboxMessage") -> "Entry[OutboxMessage]":
+        """Append a NEW entry to the retained model, nested per
+        :meth:`_resolve_append_parent` — the ONLY place ``self.conversation
+        .append(`` is called for a freshly-created entry (#4691's own
+        acceptance line, architect via lead-coder: "zero direct
+        ``self.conversation.append(`` call sites left" outside this
+        method). Every entry-creating call site — :meth:`_ingest_frame`'s
+        normal (non-coalesced) append, and
+        :meth:`_handle_agent_delta_event`'s first-delta entry creation —
+        goes through this, so the nesting decision is made in exactly one
+        place, never two copies that can drift apart."""
+        parent = self._resolve_append_parent(kind=msg.kind, meta=msg.meta or {})
+        if parent is not None:
+            return parent.append_child(msg)
+        return self.conversation.append(msg)
+
+    def _register_call_parent(
+        self, entry: "Entry[OutboxMessage]", kind: str, meta: dict
+    ) -> None:
+        """Register ``entry`` as a call-level Group parent when it carries
+        a ``call_id`` — #4691 Phase B B1/④, #4777, #4691's own
+        streaming-bypass fix (architect via lead-coder). Called from TWO
+        sites: :meth:`_ingest_frame`'s normal (non-streaming) append, and
+        the streaming-settle branch of that same method, once a streamed
+        round's completion frame finally carries its real ``call_id``/
+        ``dispatched_tool_calls`` — neither is known any earlier than
+        that (a round is not classified as tool-dispatching until it
+        actually returns), so the settle leg is the FIRST point
+        registration could happen for a streamed round, not a late
+        correction.
+
+        #4777 (owner-reported, provider-dependence bug): registration no
+        longer gates on ``finish_reason`` — a PROVIDER's own summary
+        string, self-reported at its own discretion (litellm passes it
+        through verbatim, ``llm.py``'s own ``choices[0].finish_reason``).
+        The owner's own provider never returns ``"tool_calls"``, so the
+        old gate here never fired on their screen — #4691 Phase B's
+        entire Group construction was provider-dependent and silently
+        inert for them, despite being green in every test written
+        against a provider that DOES report it correctly.
+
+        Registering unconditionally for every ``call_id``-bearing agent
+        row is harmless even for an ordinary terminal reply that
+        dispatched no tools: nothing ever looks up a call_id belonging
+        to a call that dispatched no tools, so an unused entry here is
+        dead weight, never a wrong nesting (#4776 tracks this dict's
+        own session-lifetime growth separately — not this fix's scope)."""
+        call_id = meta.get("call_id")
+        if kind != "agent" or not call_id:
+            return
+        self._call_parents[call_id] = entry
+        if meta.get("dispatched_tool_calls"):
+            # #4691 Phase B ④: the parent's own spinner starts here — its
+            # children are about to arrive RUNNING too, and
+            # ``_recompute_parent_state`` (called from every child
+            # settle) keeps it RUNNING until every child has settled.
+            #
+            # #4777: gated on ``dispatched_tool_calls`` — a REYN-OBSERVED
+            # fact (router_loop.py stamps it from the LLM result's own
+            # ``tool_calls`` list, non-empty precisely when this round
+            # actually dispatches tools), not the provider's
+            # ``finish_reason`` string. A terminal reply that dispatches
+            # no tools registers (harmless, above) but never spins —
+            # there is nothing for it to wait on.
+            entry.set_state(EntryState.RUNNING)
+            # #4691 Phase B item 3 (owner ruling): a completion Group
+            # defaults COLLAPSED — called HERE, at registration, even
+            # though this entry may still be a LEAF (no child has
+            # arrived yet). Before textual-flowview 0.22.0's #14 fix
+            # this was a documented no-op on a leaf ("a no-op on a
+            # removed entry, a leaf, or when unchanged"), which forced
+            # a workaround this comment used to describe (watch the
+            # entry's own ``append_child`` call site and re-assert
+            # ``.collapse()`` there, guarded to fire exactly once). #14
+            # fixed the underlying no-op itself — collapse state is now
+            # recorded on ANY live entry, leaf included, and a child
+            # appended later "walks its ancestors and is born folded"
+            # (release notes, 0.22.0) — so that workaround is gone;
+            # this one call is upstream's whole job now. This also
+            # means #4691 arc item ①'s own guard (``parent is
+            # call_parent``, once needed to keep this collapse from
+            # ALSO firing on the TURN parent's first child) has nothing
+            # left to guard: the turn parent's own registration
+            # (:meth:`_handle_turn_started_event`) never calls this
+            # method at all (it is not ``kind="agent"``), so it was
+            # never a candidate for this collapse in the first place.
+            entry.collapse()
+
+    def _ingest_frame(self, msg: "OutboxMessage") -> "Entry[OutboxMessage] | None":
         """Fold one display frame into the retained model — appending a new entry,
         or COALESCING a correlated tool result into its RUNNING started entry.
+
+        Returns the entry the frame landed in (``None`` for a frame that
+        COALESCED into an existing entry rather than creating one — the two
+        early-return legs below). #4691 arc item ①: the only consumer of
+        this return today is :meth:`_handle_turn_started_event`, which needs
+        the freshly-promoted user row itself to record as
+        :attr:`_current_turn_parent` — every other call site already
+        ignored the old ``None`` return, so widening it costs nothing there.
 
         A ``tool_call_completed`` / ``tool_call_failed`` frame whose ``op_id``
         matches a tracked RUNNING tool does NOT append a second row: it SETTLES the
@@ -3637,45 +4143,59 @@ class TextualChatApp(App):
                 streaming.entry.set_item(
                     replace(streaming.entry.item, text=msg.text, meta=meta)
                 )
+                # #4691 (owner-observed, real-machine — "folding the turn
+                # group does not hide the final reply"; architect's own
+                # root-cause read, via lead-coder): a STREAMED reply's
+                # entry is created in :meth:`_handle_agent_delta_event`,
+                # not here — this branch only SETTLES it in place. Its
+                # TREE POSITION was already decided at creation time
+                # (:meth:`_append_frame`, the shared seam that call also
+                # goes through now), so nothing here needs to re-parent
+                # it. What DOES still belong here: CALL-LEVEL Group
+                # registration (:meth:`_register_call_parent` —
+                # ``_call_parents[call_id]``, the RUNNING spinner, the
+                # default collapse) was ONLY ever reachable from the
+                # non-streaming leg below, which this early ``return``
+                # never reaches — so a streamed tool round's own agent
+                # row never became a valid Group parent for its OWN tool
+                # rows either. ``meta`` here is the TERMINAL completion's
+                # own meta (call_id/dispatched_tool_calls/finish_reason)
+                # — call_id and dispatched_tool_calls are not known any
+                # earlier than this (a round is not classified as
+                # tool-dispatching until it actually returns), so this is
+                # the first point registration COULD happen, streamed or
+                # not — same call as the non-streaming leg, one shared
+                # method instead of two copies that can drift apart.
+                self._register_call_parent(streaming.entry, kind, meta)
                 return
-        # #4691 Phase B B1: nest under this frame's own litellm CALL, found
-        # by call_id lookup (never by "most recently appended" order — see
-        # ``self._call_parents``'s own docstring). A frame with no call_id,
-        # or one that matches no registered parent (a legacy/restored row,
-        # an op-loop caller that never threaded one through), falls through
-        # to the flat top-level append exactly as before B1 — nothing here
-        # narrows what USED to land flat.
-        call_id = meta.get("call_id")
-        parent = self._call_parents.get(call_id) if call_id else None
-        if parent is not None:
-            entry = parent.append_child(msg)
-        else:
-            entry = self.conversation.append(msg)
+        # #4691 Phase B B1 / arc item ① / owner-observed streaming-bypass
+        # fix: nest under this frame's own litellm CALL if one is already
+        # registered, else the CURRENT turn's own parent if one is open,
+        # else flat top-level (:meth:`_append_frame` — the ONE seam every
+        # entry-creating call site in this class goes through, so the
+        # nesting decision can never drift between them; see that
+        # method's own docstring for the 3-tier rule and why it is
+        # shared with :meth:`_handle_agent_delta_event`'s first-delta
+        # creation rather than each having its own copy).
+        entry = self._append_frame(msg)
         # #3712: an entry just arrived. Counted HERE, by the thing that
         # produced it — not reconstructed later from two reads of the model.
         self._note_entry_landed()
-        if (
-            kind == "agent"
-            and call_id
-            and meta.get("finish_reason") == "tool_calls"
-        ):
-            # This row IS a call boundary that dispatches tool_calls next —
-            # register it so those tool rows (about to arrive with the SAME
-            # call_id) find it. A terminal reply (finish_reason == "stop")
-            # or any other kind never registers: nothing ever looks up a
-            # call_id belonging to a call that dispatched no tools.
-            self._call_parents[call_id] = entry
-            # #4691 Phase B ④: the parent's own spinner starts here — its
-            # children are about to arrive RUNNING too, and
-            # ``_recompute_parent_state`` (called from every child settle)
-            # keeps it RUNNING until every child has settled.
-            entry.set_state(EntryState.RUNNING)
+        # #4777 / #4691 Phase B ④ (owner ruling): register this row as a
+        # Group parent when it carries a call_id — see
+        # :meth:`_register_call_parent`'s own docstring for the full
+        # reasoning (provider-independence, the RUNNING spinner, the
+        # default-collapse timing). Shared with the streaming-settle leg
+        # above, which reaches the SAME call once a streamed round's
+        # call_id is finally known.
+        self._register_call_parent(entry, kind, meta)
         if kind == "presentation":
             self._begin_image_resolutions(entry, msg)
         if kind == "intervention":
             self._present_intervention(msg, entry)
         else:
             self._apply_lifecycle_state(msg, entry)
+        return entry
 
     def _apply_lifecycle_state(
         self, msg: "OutboxMessage", entry: "Entry[OutboxMessage]"
@@ -3932,6 +4452,36 @@ class TextualChatApp(App):
                     logger.exception(
                         "textual chat: could not settle an orphaned call-parent"
                     )
+
+    def _settle_turn_parent(self) -> None:
+        """#4691 arc item ① — give the CURRENT turn's own parent (the user
+        row, :attr:`_current_turn_parent`) its terminal state and release it.
+
+        Called from the ``_TURN_END_EVENT_TYPES`` leg of :meth:`_pump_frames`,
+        AFTER :meth:`_sweep_orphaned_running_tools` — by then every
+        completion-Group child of this turn already carries a terminal state
+        (SUCCESS/ERROR from a normal settle, or CANCELLED from that sweep),
+        so this call never races an in-flight child.
+
+        The derivation reuses :meth:`_recompute_parent_state` verbatim, one
+        level higher than that method's own usual call sites: passing any one
+        of the turn parent's own children makes it recompute states across
+        ALL of ``child.parent``'s children (== every completion Group of this
+        turn) and set THAT entry's (the turn parent's) state — the same
+        RUNNING-wins/ERROR-wins/else-SUCCESS rule, applied one layer up. A
+        turn that ends with no completion Group ever having landed under it
+        (cancelled before the first call, or every one of its tool_calls
+        excluded pre-dispatch) has nothing to recompute FROM — CANCELLED,
+        same #72 reasoning as an orphaned call-parent with no settled child,
+        never SUCCESS (nothing was observed to call a success)."""
+        parent = self._current_turn_parent
+        if parent is not None:
+            children = parent.children
+            if children:
+                self._recompute_parent_state(children[0])
+            else:
+                parent.set_state(EntryState.CANCELLED)
+        self._current_turn_parent = None
 
     def _close_earlier_streaming_rounds(self, chain_id: str, round_index: object) -> None:
         """Finish any record of *chain_id* from a round before *round_index*.
@@ -4301,6 +4851,15 @@ class TextualChatApp(App):
         # human also remembers to edit this method.
         for attr_name in self._PER_SESSION_DICT_STATE:
             getattr(self, attr_name).clear()
+        # #4691 arc item ① — NOT in :attr:`_PER_SESSION_DICT_STATE` (it is a
+        # single ``Entry | None``, not a dict, so the uniform ``.clear()``
+        # loop above cannot express it — the exact shape the review flagged
+        # as a repeat of #4776's own omission: a per-session field with no
+        # explicit reset). ``self.conversation.clear()`` just above already
+        # dropped the whole tree this entry belonged to, so a stale
+        # reference here is not merely wrong-turn nesting: it is a POINTER
+        # INTO A TREE THAT NO LONGER EXISTS.
+        self._current_turn_parent = None
         self._iv_panel.collapse_all()
         # #3362, both non-``.clear()``-shaped per-session states this PR adds:
         # the ``/copy`` ring is emptied HERE (next to ``conversation.clear()``,
@@ -4374,7 +4933,17 @@ class TextualChatApp(App):
         of whether any item actually matched — checking membership only
         AFTER the call would miss the case where nothing matched (never
         promote), and re-checking on a stale/rejected delta (``False``) would
-        double-promote an item this app already promoted once."""
+        double-promote an item this app already promoted once.
+
+        #4691 arc item ① (final item): the promoted row also becomes
+        :attr:`_current_turn_parent` — this IS the "turn boundary" the arc's
+        design notes point to ("no new surface needed — turn boundaries
+        already exist on both sides, already consumed elsewhere"). Reset to
+        ``None`` FIRST, unconditionally, before the loop below can set a new
+        one: a ``turn_started`` for a genuinely NEW turn must never leave a
+        PRIOR turn's (possibly still-open, if its own end event was somehow
+        missed) parent lying around for this turn's own rows to
+        mis-nest under."""
         data = event.data or {}
         chain_id = data.get("chain_id")
         seq = data.get("seq", 0)
@@ -4389,6 +4958,7 @@ class TextualChatApp(App):
         # the whole turn.
         self._activity.begin("WORKING")
         self._reset_turn_entries()
+        self._current_turn_parent = None
         applied = self._queue_view.apply_turn_started(chain_id=chain_id, seq=seq)
         if not applied:
             return
@@ -4399,8 +4969,34 @@ class TextualChatApp(App):
             if msg_id:
                 self._sent_queue.remove_item(msg_id)
             meta = self._queue_item_meta.pop(msg_id, {}) if msg_id else {}
+            # #4691 arc item ④: stamp THIS turn's own chain_id onto the
+            # user row itself — the row is created here, at promotion time,
+            # before chain_id existed at queue time (a queued item's own
+            # meta predates the turn actually starting), so this is the
+            # first point it can be threaded through. ReynTurnUsageGutter
+            # reads it to show the turn's aggregate token total, now
+            # anchored to this row instead of an agent reply (see that
+            # class's own docstring for why the two were split).
+            meta = dict(meta)
+            meta.setdefault("chain_id", chain_id)
             text = _neutralized_label(str(item.get("text", "")))
-            self._ingest_frame(OutboxMessage(kind="user", text=text, meta=meta))
+            entry = self._ingest_frame(OutboxMessage(kind="user", text=text, meta=meta))
+            if entry is not None:
+                # #4691 arc item ①: owner ruling — "turn Group の親（user
+                # 行）そのターンが終わるまで RUNNING" (the turn's own parent
+                # stays RUNNING for the WHOLE turn, unlike a completion
+                # Group parent, whose RUNNING/settled state is DERIVED from
+                # its children as they resolve). Set unconditionally here,
+                # not derived, on purpose: deriving it from zero children
+                # (there are none yet, at promotion time) would show no
+                # state at all, and deriving it incrementally from
+                # completion-Group children as they settle mid-turn would
+                # flicker this row to SUCCESS between calls, while the turn
+                # itself is still very much in flight — settling only
+                # happens once, at the turn's own end
+                # (:meth:`_settle_turn_parent`).
+                entry.set_state(EntryState.RUNNING)
+                self._current_turn_parent = entry
 
     def _announced_intervention_entry(self, iv_id: str) -> "Entry[OutboxMessage] | None":
         """The flow entry ``InterventionHandler.announce`` produced for
@@ -4632,7 +5228,22 @@ class TextualChatApp(App):
             # lands. The 29 deltas that follow fold into it and are not
             # arrivals — one thing arrived, and this is where that is known.
             self._note_entry_landed()
-            entry = self.conversation.append(
+            # #4691 (owner-observed real-machine contradiction, root-caused
+            # by architect via lead-coder): THROUGH :meth:`_append_frame`,
+            # not a direct ``self.conversation.append(...)`` — this used to
+            # append flat, unconditionally, bypassing the SAME nesting
+            # decision every other entry-creating call site now shares
+            # (:meth:`_resolve_append_parent`), so a streamed reply never
+            # nested under its open turn (or, later, under a call-level
+            # Group) no matter what the non-streaming path did. call_id is
+            # not known yet at this point (a round is not classified as
+            # tool-dispatching until it returns), so this lands via the
+            # CURRENT TURN tier of that decision when one is open — the
+            # call-level Group registration itself happens later, at
+            # settle (:meth:`_register_call_parent`, called from
+            # :meth:`_ingest_frame`'s streaming-settle branch once the
+            # terminal frame's real call_id is known).
+            entry = self._append_frame(
                 OutboxMessage(kind="agent", text=text, meta={"chain_id": chain_id})
             )
             # The append already carries this first chunk, so rendered == text —
@@ -4906,7 +5517,11 @@ class TextualChatApp(App):
         path — consumed but not drawn, EXCEPT for the turn-end subset
         (:data:`_TURN_END_EVENT_TYPES`), which triggers
         :meth:`_sweep_orphaned_running_tools` (#72: force-settle any tool still
-        RUNNING when its turn ends — a confirmed orphan).
+        RUNNING when its turn ends — a confirmed orphan) and, after it,
+        :meth:`_settle_turn_parent` (#4691 arc item ①: give the turn's own
+        Group parent — the user row — its terminal state and release
+        :attr:`_current_turn_parent`, now that every completion-Group child
+        is guaranteed non-RUNNING).
 
         #3338: EVERY frame — event or display — ends with
         :meth:`_refresh_live_chrome`, so the status line and any OPEN drawer pane
@@ -5036,6 +5651,17 @@ class TextualChatApp(App):
                         except Exception:
                             logger.exception(
                                 "textual chat: orphaned-stream sweep failed"
+                            )
+                        try:
+                            # #4691 arc item ①: settle the turn's own parent
+                            # LAST — after both sweeps above have already
+                            # given every one of its completion-Group
+                            # children a terminal state, so nothing here can
+                            # observe a child still RUNNING.
+                            self._settle_turn_parent()
+                        except Exception:
+                            logger.exception(
+                                "textual chat: turn-parent settle failed"
                             )
                 else:
                     msg = frame.message

@@ -440,7 +440,15 @@ def test_no_slash_module_reaches_the_session_outbox() -> None:
 #: surface the axis's own mechanism requires by design" reason as the
 #: 107->108/108->109 entries above (``RouterHostAdapter.model_class_ceiling()``
 #: consults it via the same callback shape), not a private-state leak.
-_PUBLIC_MEMBER_CEILING = 110
+#: Raised 110 -> 111 for #4759: ``aclose_background_tasks`` — a NEW method,
+#: same public shape as the EXISTING ``aclose_mcp_connections``/
+#: ``aclose_event_store`` (already counted in the prior ceiling) —
+#: ``AgentRegistry.shutdown()``'s getattr-duck-typed teardown seam for the
+#: single background-task funnel (``tracked_tasks.py``). Genuinely unrelated
+#: to a slash handler reaching into the session (it is a registry-owned
+#: teardown call, not a read a slash command would use) — the gate's own
+#: documented carve-out for this case.
+_PUBLIC_MEMBER_CEILING = 111
 
 
 def test_session_public_surface_does_not_grow() -> None:

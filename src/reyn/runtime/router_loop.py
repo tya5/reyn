@@ -2156,6 +2156,20 @@ class RouterLoop:
                         # row belongs to and whether it was a tool round.
                         "call_id": result.call_id,
                         "finish_reason": result.finish_reason,
+                        # #4777: a REYN-OBSERVED fact (the result's own
+                        # ``tool_calls`` list, non-empty here by construction
+                        # — this call site is reached only inside
+                        # ``if isinstance(interp, Execute):``, and Execute's
+                        # own classification is itself derived from
+                        # ``result.tool_calls`` being non-empty), never a
+                        # provider's self-reported ``finish_reason`` string.
+                        # The consumer (app.py's Group-parent spinner) reads
+                        # THIS, not ``finish_reason`` — a provider that never
+                        # returns ``finish_reason == "tool_calls"`` (a real,
+                        # owner-observed case, #4777) still gets a correct
+                        # spinner, because this fact is not sourced from that
+                        # provider string at all.
+                        "dispatched_tool_calls": bool(result.tool_calls),
                     },
                 )
                 # F5 fix (dogfood batch 1): dedupe duplicate async
@@ -2265,6 +2279,11 @@ class RouterLoop:
                             # for the full reasoning.
                             "call_id": result.call_id,
                             "finish_reason": result.finish_reason,
+                            # #4777: see the tool-turn-text row above (~line
+                            # 2157) for the full reasoning — this row is the
+                            # SAME call, still inside the Execute branch, so
+                            # ``result.tool_calls`` is non-empty here too.
+                            "dispatched_tool_calls": bool(result.tool_calls),
                         },
                     )
                     return self._total_usage
@@ -2406,6 +2425,11 @@ class RouterLoop:
                         # comment (~line 2073) for the full reasoning.
                         "call_id": result.call_id,
                         "finish_reason": result.finish_reason,
+                        # #4777: this is the empty-response terminal path — no
+                        # tool call was dispatched, so this is False here (see
+                        # the tool-turn-text row, ~line 2157, for the fact's
+                        # full reasoning).
+                        "dispatched_tool_calls": bool(result.tool_calls),
                     },
                 )
                 return self._total_usage  # no retry
@@ -2466,6 +2490,11 @@ class RouterLoop:
                     # (~line 2073) for the full reasoning.
                     "call_id": result.call_id,
                     "finish_reason": result.finish_reason,
+                    # #4777: this is the ordinary terminal-reply path — no
+                    # tool call was dispatched, so this is False here (see
+                    # the tool-turn-text row, ~line 2157, for the fact's
+                    # full reasoning).
+                    "dispatched_tool_calls": bool(result.tool_calls),
                 },
             )
             return self._total_usage

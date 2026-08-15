@@ -193,8 +193,16 @@ class RegistryReadModel(ChatReadModel):
     """LOCAL read-model — delegates to the same registry/session accessors the
     inline driver called inline before P3 (behavior byte-identical)."""
 
-    def __init__(self, registry) -> None:
+    def __init__(self, registry, *, agent_name: "str | None" = None) -> None:
         self._registry = registry
+        #: #4824: the caller's INTENDED target agent, known before attach can
+        #: possibly succeed (same reasoning ``run_repl``'s own docstring
+        #: already gives for why it no longer waits on attach). Used ONLY as
+        #: :attr:`history_path`'s fallback during the startup race window —
+        #: once the initial (or any later ``/attach``) succeeds, ``_attached()``
+        #: is never ``None`` again for the rest of this read-model's life, so a
+        #: later agent switch never makes this stale value observably wrong.
+        self._agent_name = agent_name
 
     def snapshot(self, config=None):
         return _snapshot(self._registry, config)
@@ -224,13 +232,33 @@ class RegistryReadModel(ChatReadModel):
 
     @property
     def history_path(self) -> Path:
+        """#4824: tolerates an unattached registry, same as every OTHER
+        seam this class's own module docstring claims already does — a
+        piped/non-TTY ``reyn chat`` invocation reaches this property with
+        essentially no yield point since ``attach()`` was scheduled (see
+        ``run_repl``'s own docstring), so it was NOT a slow-WAL-restore
+        race: the background attach task had not ticked even once.
+
+        Falls back to :meth:`AgentRegistry.agent_workspace_dir` (the target
+        agent name this read-model was told about at construction, BEFORE
+        attach could possibly have succeeded) rather than raising. This is
+        the SAME path an attached session's own ``workspace_dir`` would
+        report once attach completes (see that method's own docstring for
+        why) — not a temporary/in-memory stand-in that gets silently
+        replaced later, which would create two truths about where the
+        input-history file lives. Once ``_attached()`` stops returning
+        ``None`` (initial attach, or any later ``/attach``), this fallback
+        is never reached again for the rest of this read-model's life."""
         s = self._attached()
-        if s is None:
-            raise RuntimeError(
-                "RegistryReadModel.history_path: no attached session "
-                "(call registry.attach() before starting the input driver)"
-            )
-        return s.workspace_dir / ".input_history"
+        if s is not None:
+            return s.workspace_dir / ".input_history"
+        if self._agent_name is not None:
+            return self._registry.agent_workspace_dir(self._agent_name) / ".input_history"
+        raise RuntimeError(
+            "RegistryReadModel.history_path: no attached session and no "
+            "target agent_name was given at construction — cannot resolve "
+            "a workspace-independent path either"
+        )
 
     def conversation_history(
         self,

@@ -65,7 +65,7 @@ def test_session_container_stats_reads_a_real_sessions_attributes():
     names = {s.name for s in stats}
     assert "_pending_user_images" in names
     assert "_safety_extensions" in names
-    assert "_inflight_wal_tasks" in names
+    assert "_background_tasks" in names
     assert "_buffered_intervention_answers" in names
     assert "_cancel_forward_targets" in names
     assert "_allowed_mcp" in names

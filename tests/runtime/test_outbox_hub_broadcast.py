@@ -28,6 +28,7 @@ import pytest
 
 from reyn.runtime.outbox import OutboxMessage
 from reyn.runtime.outbox_hub import OutboxHub
+from reyn.runtime.tracked_tasks import TrackedTaskSet
 
 _K = 20
 
@@ -50,7 +51,7 @@ async def _drain(sub) -> list[str]:
 async def test_two_surfaces_each_receive_full_stream_in_order() -> None:
     """Tier 2: N>=2 — two hub surfaces BOTH receive every frame in order (no steal)."""
     source: asyncio.Queue = asyncio.Queue()
-    hub = OutboxHub(source)
+    hub = OutboxHub(source, task_tracker=TrackedTaskSet())
     a = hub.subscribe()
     b = hub.subscribe()
     for msg in _script():
@@ -116,7 +117,7 @@ async def test_single_surface_is_transparent_pipe() -> None:
 
     # Same script through the hub at N=1.
     hub_source: asyncio.Queue = asyncio.Queue()
-    hub = OutboxHub(hub_source)
+    hub = OutboxHub(hub_source, task_tracker=TrackedTaskSet())
     sub = hub.subscribe()
     for msg in script:
         hub_source.put_nowait(msg)
@@ -133,7 +134,7 @@ async def test_slow_surface_disconnected_without_blocking_the_writer() -> None:
     ``get()`` returns ``None``) while a fast surface still receives the FULL
     stream and the source fully drains — the writer is never blocked."""
     source: asyncio.Queue = asyncio.Queue()
-    hub = OutboxHub(source)
+    hub = OutboxHub(source, task_tracker=TrackedTaskSet())
     fast = hub.subscribe()  # unbounded
     slow = hub.subscribe(maxsize=2)  # tiny cap, never drained → disconnect-slow
     k = 50
@@ -154,7 +155,7 @@ async def test_slow_surface_disconnected_without_blocking_the_writer() -> None:
 async def test_end_terminal_fans_out_to_all_surfaces() -> None:
     """Tier 2: ``__end__`` reaches every attached surface (terminal fan-out)."""
     source: asyncio.Queue = asyncio.Queue()
-    hub = OutboxHub(source)
+    hub = OutboxHub(source, task_tracker=TrackedTaskSet())
     subs = [hub.subscribe() for _ in range(3)]
     source.put_nowait(OutboxMessage(kind="agent", text="only"))
     source.put_nowait(OutboxMessage(kind="__end__", text=""))

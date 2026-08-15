@@ -25,6 +25,7 @@ from reyn.runtime.task_types import Requester, RunStatus
 if TYPE_CHECKING:
     from reyn.core.events.agent_snapshot import AgentSnapshot
     from reyn.runtime.task_types import Requester
+    from reyn.runtime.tracked_tasks import TrackedTaskSet
 
 logger = logging.getLogger(__name__)
 
@@ -191,6 +192,7 @@ class ChainManager:
         max_hop_depth: int,
         clock_fn: "Callable[[], datetime] | None" = None,
         sleep_fn: "Callable[[float], Awaitable[None]] | None" = None,
+        task_tracker: "TrackedTaskSet | None" = None,
     ) -> None:
         self._journal = journal
         self._events = events
@@ -198,6 +200,31 @@ class ChainManager:
         self.max_hop_depth = max_hop_depth
         self._clock = clock_fn or (lambda: datetime.now(timezone.utc))
         self._sleep = sleep_fn or asyncio.sleep
+        # #4759: every watchdog task ALSO registers with the owning
+        # Session's single task funnel (tracked_tasks.py) so
+        # AgentRegistry.shutdown() can reach it without needing to know this
+        # class exists.
+        #
+        # DELIBERATELY left None-tolerant (unlike SpawnTracker/OutboxHub,
+        # whose #4759 fix made task_tracker a REQUIRED param): measured, the
+        # ONE production construction site (session.py) always passes one,
+        # so this class's own #4759 reachability is not at risk in
+        # production either way. What's different here is the cost side —
+        # ChainManager has 12 existing test call sites across 9 files, NONE
+        # of which exercise #4759's teardown property (they test chain
+        # register/resolve/timeout semantics); forcing all 12 to thread a
+        # tracker through would touch files unrelated to this PR's own
+        # concern for zero behavioural gain in THOSE tests. A caller that
+        # doesn't pass one (every existing test) gets pre-#4759 behaviour
+        # for its own watchdog tasks unchanged — this class's core function
+        # (arm/cancel/fire a chain timeout) does not depend on the tracker
+        # at all; only #4759's reachability property does, and that
+        # property is not what these tests are checking. The dedicated
+        # `_timers` dict below (chain_id-keyed lookup, needed by
+        # `cancel_timeout`) stays the primary bookkeeping either way; this is
+        # an ADDITIONAL registration for teardown-reachability, not a
+        # replacement for it.
+        self._task_tracker = task_tracker
 
         self._chains: dict[str, _PendingChain] = {}
         self._timers: dict[str, asyncio.Task] = {}
@@ -478,11 +505,43 @@ class ChainManager:
         existing = self._timers.pop(chain_id, None)
         if existing is not None and not existing.done():
             existing.cancel()
-        self._timers[chain_id] = asyncio.create_task(
-            self._chain_timeout_watch(
-                chain_id, on_fire=on_fire, duration_seconds=duration_seconds
-            )
+        coro = self._chain_timeout_watch(
+            chain_id, on_fire=on_fire, duration_seconds=duration_seconds
         )
+        # #4759: ALSO registered with the owning Session's task funnel
+        # (tracked_tasks.py), disposition="cancel_join", appends_wal=True
+        # -- this dict stays the primary chain_id-keyed lookup
+        # `cancel_timeout` needs; the tracker registration is what makes
+        # this watchdog reachable from AgentRegistry.shutdown() without it
+        # needing to know ChainManager exists. appends_wal=True (NOT the
+        # default False): firing appends "chain_timeout_fired" to the WAL,
+        # and a chain-timeout watchdog is EXACTLY the class of task the
+        # pre-#4759 `await_quiescent` always cancelled mid-rewind via its
+        # own `cancel_and_join_timers()` call -- drop-safe, re-armed by
+        # `restore()` from the recovered snapshot. Cancelling the same task
+        # from both `cancel_and_join_timers` and the tracker's own
+        # aclose() is safe -- Task.cancel() is idempotent.
+        if self._task_tracker is not None:
+            self._timers[chain_id] = self._task_tracker.spawn(
+                coro, disposition="cancel_join", appends_wal=True,
+                name=f"chain-timeout-{chain_id}",
+            )
+        else:
+            # #4765 co-vet (architect): a caller that constructs a
+            # ChainManager without a task_tracker (deliberately kept
+            # optional -- see __init__'s own #4759 comment for the
+            # measured cost/benefit) silently falls back to an untracked
+            # task here, same as before this funnel existed. Warned (not
+            # silent) so a future caller who SHOULD have passed one but
+            # forgot has a signal to find, without forcing every existing
+            # test call site (12, across 9 files) to thread one through.
+            logger.warning(
+                "ChainManager._start_watchdog: no task_tracker configured -- "
+                "chain-timeout watchdog for %r is NOT reachable from "
+                "AgentRegistry.shutdown()'s drain (see tracked_tasks.py).",
+                chain_id,
+            )
+            self._timers[chain_id] = asyncio.create_task(coro)
 
     def cancel_timeout(self, chain_id: str) -> None:
         """Cancel the watchdog task for ``chain_id``, if any."""

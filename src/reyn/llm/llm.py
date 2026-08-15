@@ -1347,6 +1347,47 @@ def _extract_cache_tokens(u) -> tuple[int, int]:
     return cached, creation
 
 
+def _cached_tokens_for_trace(response) -> "int | None":
+    """``cached_tokens`` for the payload trace dump ONLY — #4809/#4821.
+
+    Deliberately NOT :func:`_extract_cache_tokens` (used for cost
+    accounting): that function collapses "provider reported zero cache
+    hits" and "provider reported no cache field at all" to the same ``0``
+    — the right default for pricing (0 either way costs the same) but
+    wrong for THIS diagnostic surface, where #4690's own investigation
+    needs exactly that distinction (a real miss vs. a provider that never
+    told us). Returns ``None`` when neither the top-level
+    ``cache_read_input_tokens`` nor the nested ``prompt_tokens_details.
+    cached_tokens`` is present on the raw usage object — best-effort, any
+    missing/malformed usage object also reads as ``None``, matching
+    ``_extract_cache_tokens``'s own best-effort stance.
+    """
+    try:
+        u = response.usage
+    except Exception:
+        return None
+    if u is None:
+        return None
+    top = getattr(u, "cache_read_input_tokens", None)
+    if top is not None:
+        try:
+            return int(top)
+        except (TypeError, ValueError):
+            return None
+    details = getattr(u, "prompt_tokens_details", None)
+    if details is not None:
+        getter = details.get if isinstance(details, dict) else (
+            lambda k, _d=details: getattr(_d, k, None)
+        )
+        nested = getter("cached_tokens")
+        if nested is not None:
+            try:
+                return int(nested)
+            except (TypeError, ValueError):
+                return None
+    return None
+
+
 def _dictify(v):
     """Best-effort convert a litellm sub-object to a JSON-serialisable form
     (so a reasoning bundle survives history persistence). ``model_dump`` for
@@ -2487,6 +2528,7 @@ async def recorded_acompletion(
             return _stamp_usage_source(chunk_stream, UsageSource.PROVIDER)
         chunks = []
         _delta_fired = False
+        _tool_calls_seen = False
         async for chunk in chunk_stream:
             chunks.append(chunk)
             if on_content_delta is not None:
@@ -2504,6 +2546,17 @@ async def recorded_acompletion(
                             "recorded_acompletion: on_content_delta callback raised; "
                             "continuing the stream"
                         )
+            # #4805 review (lead-coder catch): a tool-only round's chunks
+            # legitimately never expose delta.content at all (tool_calls is
+            # a SEPARATE field) — this is reyn's most common round shape,
+            # not a defect. Tracked here, alongside _delta_fired, so the
+            # guard below can tell "genuinely dead" apart from "just a
+            # normal tool round."
+            try:
+                if chunk.choices[0].delta.tool_calls:
+                    _tool_calls_seen = True
+            except Exception:  # noqa: BLE001 — malformed/empty chunk shape
+                pass
         # #3288 ③b co-vet fix: a silent functional-dead-mode guard. If the
         # provider streamed at least one chunk AND a callback was supplied,
         # but NOT ONE chunk ever exposed a non-empty delta.content (e.g. a
@@ -2511,10 +2564,27 @@ async def recorded_acompletion(
         # would silently produce ZERO delta notifications forever — L9 still
         # surfaces the final text via the reconstructed whole response below,
         # so nothing user-visible breaks and nobody would ever notice.
-        # ONE debug log per STREAM (not per chunk, which would be noise) is
-        # cheap and makes that silent mode observable.
-        if on_content_delta is not None and chunks and not _delta_fired:
-            logger.debug(
+        # ONE log per STREAM (not per chunk, which would be noise) is cheap
+        # and makes that silent mode observable.
+        #
+        # #4805: WARNING, not debug — but ONLY when genuinely dead (no text
+        # delta AND no tool_calls either). My first pass raised this to
+        # WARNING gated on `not _delta_fired` alone — lead-coder review
+        # caught that a TOOL-ONLY round (the assistant calls tools with no
+        # accompanying text, reyn's own most common round shape) ALSO never
+        # exposes delta.content, so that gate would have warned on every
+        # ordinary tool call, false-alarming exactly the way I flagged for
+        # message_handler.py's own case and failed to apply here. Excluding
+        # `_tool_calls_seen` restores the guard's own stated property (fires
+        # ONLY on the defect, never on healthy traffic) instead of just
+        # reverting the severity.
+        if (
+            on_content_delta is not None
+            and chunks
+            and not _delta_fired
+            and not _tool_calls_seen
+        ):
+            logger.warning(
                 "recorded_acompletion: streamed %d chunk(s) but on_content_delta "
                 "never fired — the provider's chunk shape may not expose "
                 "delta.content the way this parsing expects",
@@ -2930,6 +3000,19 @@ async def call_llm_tools(
             "timeout": timeout,
             "max_retries": max_retries,
         },
+        # #4809: #4700/#4704 added this field to the actual call kwargs
+        # (see the ``prompt_cache_key=prompt_cache_key`` forward below) but
+        # never to the trace dump — the one diagnostic surface #4690's own
+        # investigation needed to answer "is it being sent, and is the
+        # value stable across turns" was blind to the exact field in
+        # question. Always present as a key, even when None — a caller
+        # that never set one (every call site pre-#4700) and a caller
+        # that explicitly resolved "no key for this call" must both read
+        # as "not sent" from the trace, distinguishable from a real
+        # non-empty string. Not a secret (router_loop.py's own
+        # ``_prompt_cache_key``: f"{agent_name}:{sid}") — no redaction
+        # concern here, unlike message content.
+        "prompt_cache_key": prompt_cache_key,
     })
 
     async def _tools_call() -> object:
@@ -3023,6 +3106,18 @@ async def call_llm_tools(
             "prompt_tokens": usage.prompt_tokens,
             "completion_tokens": usage.completion_tokens,
         },
+        # #4821 (architect's own #4809 acceptance condition, unmet by
+        # #4818's request-only fix): the SAME three-state discipline as
+        # request.prompt_cache_key — a real int (a genuine cache miss is a
+        # real 0, not the same as "not reported"), None when the provider
+        # reported nothing, and the key ABSENT ENTIRELY for a trace dumped
+        # before this fix landed (dogfood_trace.py's own display side
+        # tells that apart the same way it already does for
+        # prompt_cache_key). See _cached_tokens_for_trace's own docstring
+        # for why this is not _extract_cache_tokens (that one collapses
+        # "reported zero" and "not reported" together — correct for cost
+        # accounting, wrong for this diagnostic surface).
+        "cached_tokens": _cached_tokens_for_trace(response),
         **_extract_provider_response_fields(response),
     })
 

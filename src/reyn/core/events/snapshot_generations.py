@@ -132,6 +132,28 @@ class RewindBeyondRetentionError(Exception):
     """
 
 
+class RewindQuiesceTimeoutError(Exception):
+    """A session did not settle to quiescence within its bound during rewind
+    (#4771).
+
+    ``Session.await_quiescent()`` is otherwise unbounded by design — its own
+    docstring names the "critical invariant" this protects: when it returns,
+    no WAL append can still land, because a straggler past the reset-record
+    seq would silently contaminate the active branch. Lead-coder-approved
+    fail-safe (#4771 — an engineering-reliability call, not an owner
+    ruling): if that invariant can't be confirmed within the
+    bound, ``checkout``/``rewind_to`` abort BEFORE appending the
+    reset-record, rather than proceeding and risking exactly the
+    corruption the invariant exists to prevent. This is deliberately the
+    OPPOSITE tradeoff from ``AgentRegistry.shutdown()``'s own bounded wait
+    (``_SHUTDOWN_GRACE_S``) — shutdown can safely abandon a straggler
+    because the PROCESS exits right after, so there is no active branch
+    left to contaminate; a rewound session keeps running, so the same
+    "log and proceed" shape would be a correctness defect here, not a
+    hang mitigation.
+    """
+
+
 class _RewindIndex:
     """Incrementally-maintained rewind reset-record list for ONE StateLog (#2939).
 

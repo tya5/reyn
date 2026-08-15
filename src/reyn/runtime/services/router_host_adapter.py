@@ -952,18 +952,27 @@ class RouterHostAdapter:
         Threaded into the router's system prompt so casual chat queries see
         the operator's project context. Empty string when not configured.
 
-        FP-0050/#1822 S4b (EP3, Class A): the operator-editable REYN.md/AGENTS.md
-        content is fenced (structurally marked untrusted data) + scanned before
-        it reaches the SP §6. behavior-neutral (legit content stays readable;
-        injection is neutralized). Empty stays empty (no markers) so §6's
-        skip-when-empty render is byte-identical.
+        #4830 (owner ruling A, #4690's root cause): NOT fenced. FP-0050/#1822
+        S4b originally fenced this (structurally marked untrusted data) +
+        scanned it before it reached the SP §6 — but ``fence()``'s
+        ``secrets.token_hex(8)`` marker id changes on every call, so the
+        rendered text was never byte-identical across turns even when
+        ``self._project_context`` itself never changed. Owner's own
+        measurement on #4690: that marker sat at char 5,781 of the system
+        prompt, splitting the prefix there and turning the ~230k chars
+        after it into a cache miss on every single turn. project_context
+        is operator/agent-editable content (REYN.md/AGENTS.md) — the same
+        trust class CLAUDE.md already is for Claude Code, which renders it
+        into the system prompt with no fence at all; the backstop there
+        (and here) is the file-write permission gate, not a per-turn
+        marker. Detection telemetry (``scan_tool_result``) stays — only
+        the fence-wrapping is gone.
         """
         pc = self._project_context or ""
         if not pc:
             return pc
-        from reyn.security.content_guard import fence_if_enabled
         self.scan_tool_result(pc)  # detection telemetry (scan-all parity)
-        return fence_if_enabled(pc, self._threat_scan)
+        return pc
 
     def get_cwd(self) -> str:
         """Agent-visible working directory for the SP Environment section.

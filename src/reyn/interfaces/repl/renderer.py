@@ -925,7 +925,19 @@ def format_inline_message(msg: OutboxMessage, *, neutralize_body: bool = False):
         return _gutter_grid("  ⎿ ", s, Text(summary, style=s))
     if kind == "tool_call_failed":
         err = meta.get("error_message") or meta.get("error_kind") or msg.text
-        return _gutter_grid("  ⎿ ", _CC_ERR, Text(f"✗ {_short(err, 80)}", style=_CC_ERR))
+        # #4762: err is WORLD-derived -- dispatcher.py's own
+        # `message=f"{type(e).__name__}: {e}"` wraps ANY tool-handler
+        # exception (an MCP call, a sandboxed subprocess, a provider HTTP
+        # error), the same class #4758 fixed for tool_call_completed's own
+        # stderr branch (via summarize_tool_result's single return
+        # boundary) -- that fix never covered this branch (explicitly
+        # scoped out, tracked as #4762; measured here: err does mix in
+        # external content, so this IS the same hole). _short's own
+        # truncation (" ".join(s.split())) does not strip ESC/control —
+        # neutralize AFTER truncating (same order #4758 used).
+        from reyn.core.present.guard import get_neutralizer
+        safe_err = get_neutralizer("terminal").neutralize(_short(err, 80))[0]
+        return _gutter_grid("  ⎿ ", _CC_ERR, Text(f"✗ {safe_err}", style=_CC_ERR))
 
     # #2770: an intervention announcement carries a `present`-shaped render model
     # (meta["nodes"], neutralized at the source in InterventionHandler.announce).
