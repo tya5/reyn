@@ -941,14 +941,11 @@ the floor being tested, so a test built on it measures a different path
 than production takes, and can stay green while the record it asserts on
 never reaches a real file. #4801's own regression test did exactly this
 and passed; #4804 rewrote it under a reconstructed production floor,
-reading the file, with no `caplog` anywhere. Architect's own framing:
-*the firing surface — does the call exist and get reached — was confirmed;
-the surviving surface — does that severity reach the output — was not*
-(発火する面は確かめた／生き残る面は確かめなかった; 検査した面 ≠ 効く面). Per
-architect's account, the same surface passed three separate people's
-review for three separate reasons; what stopped it was not an additional
-reviewer, but e2e-coder's own measurement, taken ahead of starting the
-next, unrelated task.
+reading the file, with no `caplog` anywhere: *the firing surface — does
+the call exist and get reached — was confirmed; the surviving surface —
+does that severity reach the output — was not.* #4801 passed review and
+merged; #4804 then overturned it via the author's own measurement, not an
+additional reviewer catching what the first review missed.
 
 **Apply**: before trusting a claim, ask which of the three premises it
 depends on is actually established — that the named thing EXISTS (resolve
