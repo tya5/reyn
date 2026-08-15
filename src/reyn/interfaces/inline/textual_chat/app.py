@@ -1182,6 +1182,28 @@ class TextualChatApp(App):
         # conversation (bounded by the same session lifetime the flow model
         # itself already is).
         self._call_parents: "dict[str, Entry[OutboxMessage]]" = {}
+        # #4691 arc item ① (final item): the CURRENT turn's own ``kind="user"``
+        # row — set the moment :meth:`_handle_turn_started_event` promotes it,
+        # cleared at that same turn's end (the ``_TURN_END_EVENT_TYPES`` leg of
+        # :meth:`_pump_frames`). ``_ingest_frame``'s fallback append (no
+        # ``call_id`` parent found) nests under THIS entry when it is set,
+        # instead of appending flat — the turn boundary is the same one
+        # ``_handle_turn_started_event``/``_TURN_END_EVENT_TYPES`` already use
+        # for the sent-queue promotion and the orphan sweeps (architect's own
+        # finding: "no new surface needed — turn boundaries already exist on
+        # both sides, already consumed elsewhere"), so this reuses it rather
+        # than inventing a third.
+        #
+        # A single ``Entry | None`` field, NOT a dict — deliberately absent
+        # from :attr:`_PER_SESSION_DICT_STATE`, whose uniform ``.clear()`` loop
+        # only knows how to empty a dict/list. #4776 was the SAME omission
+        # once already (a per-session dict forgotten from that tuple); the
+        # shape here is different (not dict-valued at all, so it could never
+        # have joined that tuple even by inclusion) but the FAILURE MODE is
+        # the same one — a per-session field with no explicit reset — so the
+        # reset is spelled out explicitly at the session-switch site
+        # (:meth:`_handle_session_attached_event`) instead.
+        self._current_turn_parent: "Entry[OutboxMessage] | None" = None
         # #4380/#4429 originally had a lifecycle-marker bundling tracker
         # here — removed (2026-08-13): no reachable trigger ever produces
         # two adjacent occurrences (see ``_ingest_frame``'s own docstring
@@ -3625,9 +3647,17 @@ class TextualChatApp(App):
         """Esc in the picker: no rewind, focus back to the composer."""
         self.query_one(Composer).focus()
 
-    def _ingest_frame(self, msg: "OutboxMessage") -> None:
+    def _ingest_frame(self, msg: "OutboxMessage") -> "Entry[OutboxMessage] | None":
         """Fold one display frame into the retained model — appending a new entry,
         or COALESCING a correlated tool result into its RUNNING started entry.
+
+        Returns the entry the frame landed in (``None`` for a frame that
+        COALESCED into an existing entry rather than creating one — the two
+        early-return legs below). #4691 arc item ①: the only consumer of
+        this return today is :meth:`_handle_turn_started_event`, which needs
+        the freshly-promoted user row itself to record as
+        :attr:`_current_turn_parent` — every other call site already
+        ignored the old ``None`` return, so widening it costs nothing there.
 
         A ``tool_call_completed`` / ``tool_call_failed`` frame whose ``op_id``
         matches a tracked RUNNING tool does NOT append a second row: it SETTLES the
@@ -3713,7 +3743,34 @@ class TextualChatApp(App):
         # to the flat top-level append exactly as before B1 — nothing here
         # narrows what USED to land flat.
         call_id = meta.get("call_id")
-        parent = self._call_parents.get(call_id) if call_id else None
+        call_parent = self._call_parents.get(call_id) if call_id else None
+        parent = call_parent
+        if parent is None and kind != "user" and self._current_turn_parent is not None:
+            # #4691 arc item ① (final item): the TURN's own nesting level,
+            # one layer above item 5's per-call Group — a frame with no
+            # call_id parent (the first agent row of a call, or a tool/
+            # status/intervention row with no call_id at all) falls under
+            # the CURRENT turn's own user row instead of the flat top
+            # level, provided a turn is actually open. This is exactly
+            # what makes the nesting RECURSIVE without any extra code: the
+            # turn's first ``kind="agent"`` row registers itself as a
+            # ``_call_parents`` entry below (still a child of the user row
+            # via THIS branch), and every later tool/agent row for that
+            # SAME call_id nests under IT via the branch above — user row
+            # → call row → tool rows, three levels, one mechanism per
+            # level.
+            #
+            # ``kind != "user"`` is deliberate, not incidental: a
+            # ``kind="user"`` frame is never anything OTHER than a turn's
+            # own parent row (the promotion in
+            # :meth:`_handle_turn_started_event`) or a standalone
+            # intervention-answer fallback row
+            # (:meth:`_handle_intervention_answer_event`) — neither should
+            # ever nest under a PRIOR turn's parent. (Whether an
+            # intervention-answer fallback row landing mid-turn should
+            # instead nest under the CURRENT turn is an owner-visual call,
+            # not decided here — see this PR's body.)
+            parent = self._current_turn_parent
         if parent is not None:
             entry = parent.append_child(msg)
             # #4691 Phase B item 3 (owner ruling): a completion Group
@@ -3726,7 +3783,18 @@ class TextualChatApp(App):
             # this fires exactly once per parent, on its first child only
             # — never re-collapsing a parent the reader already opened by
             # hand (za/Space, #4775) once a second/third child lands.
-            if len(parent.children) == 1:
+            #
+            # ``parent is call_parent`` — NOT unconditional — is #4691 arc
+            # item ①'s own addition: the owner's later ruling on the turn
+            # Group is the OPPOSITE default ("既定は turn Group = open /
+            # completion Group = hide", i.e. only the completion level
+            # collapses; the turn level stays open so "the conversation
+            # itself" — the sequence of turns — is always visible). Without
+            # this guard, the turn parent's OWN first child (its first
+            # completion Group) would trip this same ``len == 1`` collapse
+            # and fold the entire turn away by default, which is exactly
+            # the regression the owner's ruling forbids.
+            if parent is call_parent and len(parent.children) == 1:
                 parent.collapse()
         else:
             entry = self.conversation.append(msg)
@@ -3782,6 +3850,7 @@ class TextualChatApp(App):
             self._present_intervention(msg, entry)
         else:
             self._apply_lifecycle_state(msg, entry)
+        return entry
 
     def _apply_lifecycle_state(
         self, msg: "OutboxMessage", entry: "Entry[OutboxMessage]"
@@ -4038,6 +4107,36 @@ class TextualChatApp(App):
                     logger.exception(
                         "textual chat: could not settle an orphaned call-parent"
                     )
+
+    def _settle_turn_parent(self) -> None:
+        """#4691 arc item ① — give the CURRENT turn's own parent (the user
+        row, :attr:`_current_turn_parent`) its terminal state and release it.
+
+        Called from the ``_TURN_END_EVENT_TYPES`` leg of :meth:`_pump_frames`,
+        AFTER :meth:`_sweep_orphaned_running_tools` — by then every
+        completion-Group child of this turn already carries a terminal state
+        (SUCCESS/ERROR from a normal settle, or CANCELLED from that sweep),
+        so this call never races an in-flight child.
+
+        The derivation reuses :meth:`_recompute_parent_state` verbatim, one
+        level higher than that method's own usual call sites: passing any one
+        of the turn parent's own children makes it recompute states across
+        ALL of ``child.parent``'s children (== every completion Group of this
+        turn) and set THAT entry's (the turn parent's) state — the same
+        RUNNING-wins/ERROR-wins/else-SUCCESS rule, applied one layer up. A
+        turn that ends with no completion Group ever having landed under it
+        (cancelled before the first call, or every one of its tool_calls
+        excluded pre-dispatch) has nothing to recompute FROM — CANCELLED,
+        same #72 reasoning as an orphaned call-parent with no settled child,
+        never SUCCESS (nothing was observed to call a success)."""
+        parent = self._current_turn_parent
+        if parent is not None:
+            children = parent.children
+            if children:
+                self._recompute_parent_state(children[0])
+            else:
+                parent.set_state(EntryState.CANCELLED)
+        self._current_turn_parent = None
 
     def _close_earlier_streaming_rounds(self, chain_id: str, round_index: object) -> None:
         """Finish any record of *chain_id* from a round before *round_index*.
@@ -4407,6 +4506,15 @@ class TextualChatApp(App):
         # human also remembers to edit this method.
         for attr_name in self._PER_SESSION_DICT_STATE:
             getattr(self, attr_name).clear()
+        # #4691 arc item ① — NOT in :attr:`_PER_SESSION_DICT_STATE` (it is a
+        # single ``Entry | None``, not a dict, so the uniform ``.clear()``
+        # loop above cannot express it — the exact shape the review flagged
+        # as a repeat of #4776's own omission: a per-session field with no
+        # explicit reset). ``self.conversation.clear()`` just above already
+        # dropped the whole tree this entry belonged to, so a stale
+        # reference here is not merely wrong-turn nesting: it is a POINTER
+        # INTO A TREE THAT NO LONGER EXISTS.
+        self._current_turn_parent = None
         self._iv_panel.collapse_all()
         # #3362, both non-``.clear()``-shaped per-session states this PR adds:
         # the ``/copy`` ring is emptied HERE (next to ``conversation.clear()``,
@@ -4480,7 +4588,17 @@ class TextualChatApp(App):
         of whether any item actually matched — checking membership only
         AFTER the call would miss the case where nothing matched (never
         promote), and re-checking on a stale/rejected delta (``False``) would
-        double-promote an item this app already promoted once."""
+        double-promote an item this app already promoted once.
+
+        #4691 arc item ① (final item): the promoted row also becomes
+        :attr:`_current_turn_parent` — this IS the "turn boundary" the arc's
+        design notes point to ("no new surface needed — turn boundaries
+        already exist on both sides, already consumed elsewhere"). Reset to
+        ``None`` FIRST, unconditionally, before the loop below can set a new
+        one: a ``turn_started`` for a genuinely NEW turn must never leave a
+        PRIOR turn's (possibly still-open, if its own end event was somehow
+        missed) parent lying around for this turn's own rows to
+        mis-nest under."""
         data = event.data or {}
         chain_id = data.get("chain_id")
         seq = data.get("seq", 0)
@@ -4495,6 +4613,7 @@ class TextualChatApp(App):
         # the whole turn.
         self._activity.begin("WORKING")
         self._reset_turn_entries()
+        self._current_turn_parent = None
         applied = self._queue_view.apply_turn_started(chain_id=chain_id, seq=seq)
         if not applied:
             return
@@ -4516,7 +4635,23 @@ class TextualChatApp(App):
             meta = dict(meta)
             meta.setdefault("chain_id", chain_id)
             text = _neutralized_label(str(item.get("text", "")))
-            self._ingest_frame(OutboxMessage(kind="user", text=text, meta=meta))
+            entry = self._ingest_frame(OutboxMessage(kind="user", text=text, meta=meta))
+            if entry is not None:
+                # #4691 arc item ①: owner ruling — "turn Group の親（user
+                # 行）そのターンが終わるまで RUNNING" (the turn's own parent
+                # stays RUNNING for the WHOLE turn, unlike a completion
+                # Group parent, whose RUNNING/settled state is DERIVED from
+                # its children as they resolve). Set unconditionally here,
+                # not derived, on purpose: deriving it from zero children
+                # (there are none yet, at promotion time) would show no
+                # state at all, and deriving it incrementally from
+                # completion-Group children as they settle mid-turn would
+                # flicker this row to SUCCESS between calls, while the turn
+                # itself is still very much in flight — settling only
+                # happens once, at the turn's own end
+                # (:meth:`_settle_turn_parent`).
+                entry.set_state(EntryState.RUNNING)
+                self._current_turn_parent = entry
 
     def _announced_intervention_entry(self, iv_id: str) -> "Entry[OutboxMessage] | None":
         """The flow entry ``InterventionHandler.announce`` produced for
@@ -5022,7 +5157,11 @@ class TextualChatApp(App):
         path — consumed but not drawn, EXCEPT for the turn-end subset
         (:data:`_TURN_END_EVENT_TYPES`), which triggers
         :meth:`_sweep_orphaned_running_tools` (#72: force-settle any tool still
-        RUNNING when its turn ends — a confirmed orphan).
+        RUNNING when its turn ends — a confirmed orphan) and, after it,
+        :meth:`_settle_turn_parent` (#4691 arc item ①: give the turn's own
+        Group parent — the user row — its terminal state and release
+        :attr:`_current_turn_parent`, now that every completion-Group child
+        is guaranteed non-RUNNING).
 
         #3338: EVERY frame — event or display — ends with
         :meth:`_refresh_live_chrome`, so the status line and any OPEN drawer pane
@@ -5152,6 +5291,17 @@ class TextualChatApp(App):
                         except Exception:
                             logger.exception(
                                 "textual chat: orphaned-stream sweep failed"
+                            )
+                        try:
+                            # #4691 arc item ①: settle the turn's own parent
+                            # LAST — after both sweeps above have already
+                            # given every one of its completion-Group
+                            # children a terminal state, so nothing here can
+                            # observe a child still RUNNING.
+                            self._settle_turn_parent()
+                        except Exception:
+                            logger.exception(
+                                "textual chat: turn-parent settle failed"
                             )
                 else:
                     msg = frame.message
