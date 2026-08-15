@@ -126,7 +126,7 @@ Path-conditional gates:
 
 A green scoped `pytest` is **not** a green CI run.
 
-1. **Finish your own Test plan before merge.** Tick every Manual/Visual item or replace with `- [x] (skipped — <reason>)`. **Standing waiver, Visual items only** (owner 2026-08-08): merge with the Visual box unchecked — the operator can only see a TTY result on `main`. Falsification, consumer-sweep and CI gates are unaffected.
+1. **Finish your own Test plan before merge.** Tick every Manual/Visual item or replace with `- [x] (skipped — <reason>)`. **Never tick a check that did not happen.** **Standing waiver, Visual items only** (owner 2026-08-08): merge with the Visual box unchecked (leave it unchecked — do not fabricate it) — the operator can only see a TTY result on `main`. Falsification, consumer-sweep and CI gates are unaffected.
 2. **Role-prefix every issue / PR body / PR comment** — `**[lead-coder]** — `, etc. The PR body counts. This is the ONLY cross-session signal.
 3. **Broker supplements PR comments; it is a hint, the PR is the contract.** In-memory only, ~30s lag, no ack semantics. Critical pause/block signals go on the PR **and** broker. Typical uses: revision-ready, block raised, "I'm picking up #M", **and delivering a NEW assignment** — no peer polls every issue, so an assignment written only on the issue reaches nobody (#4737 / #4763 / #4776).
 4. **Never place a closing keyword next to an issue number** unless the PR really closes it — GitHub matches literally, negation and context included. Sub-PRs use `part of #X`. Before writing `Closes #X`, enumerate open PRs with `part of #X` in the body. The same matching applies to **commit messages** (a squash body concatenates them), and a body edit does not fix a commit-message violation.
