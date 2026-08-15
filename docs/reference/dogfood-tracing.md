@@ -103,7 +103,10 @@ paired by `request_id`.
 
 **Request fields:** `kind`, `request_id`, `timestamp`, `model`,
 `caller_hint`, `messages`, `tools` (full schema, or `null`),
-`tool_choice`, `sampling_params`
+`tool_choice`, `sampling_params`, `prompt_cache_key` (#4809 — always
+present as a key, `null` when the caller set none, so "not sent" reads the
+same for a pre-#4700 call site and a call that explicitly resolved no key;
+not a secret, no redaction applied)
 
 **Response fields:** `kind`, `request_id`, `timestamp`, `content`,
 `tool_calls`, `finish_reason`, `usage` (`prompt_tokens`,
