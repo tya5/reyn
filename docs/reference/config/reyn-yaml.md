@@ -462,7 +462,33 @@ llm:
 Unset (default) means unbounded — byte-identical to every deployment before
 this field existed. Enforcement happens once, inside `recorded_acompletion`
 (the single #1190 cost-observability chokepoint every LLM call passes
-through) — a new call site cannot forget to apply it.
+through) — **a call site that resolved a model CLASS cannot forget to apply
+it**, not "a new call site cannot forget to apply it" — the ceiling
+compares against a class, and #4324 records two structural (not
+implementation) exceptions where no class ever reaches this chokepoint:
+
+- **A raw model string** — `resolve_purpose_class` returns it unchanged;
+  there is no class to compare against, so the ceiling is a no-op for that
+  call. Not a bug: a raw string is, by construction, outside the
+  `light`/`standard`/`strong` vocabulary this field's ceiling is defined
+  over.
+- **A `model_class=None` call** — `dev/dogfood/interpretation.py` and
+  `dev/dogfood/verifiers/reply.py` both call out with no class at all
+  (real-cost calls, not free/auxiliary ones), so they never enter the
+  comparison this field performs.
+
+`model_max_class` is a **declared** boundary — complete only within its own
+vocabulary (a call that resolves to a class). It is not the tool for
+covering every call regardless of vocabulary; a **measured** boundary
+(`cost.*` below) is. Owner ruling, 2026-08-15: **cost caps stay opt-in** —
+reyn does not turn one on by default, matching the standing "security/cost
+gates are opt-in, UX and predictability come first" policy. Concretely:
+**in an environment with no `cost.*` hard limit configured, a raw
+model-string call has no ceiling at all** — neither this field's class
+comparison (structurally can't apply) nor a cost cap (unset by default)
+bounds it. An operator who wants that call bounded sets a `cost.*` hard
+limit explicitly (see the `cost` block below); nothing bounds it for them
+otherwise.
 
 ## `llm` block
 
