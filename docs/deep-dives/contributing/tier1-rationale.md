@@ -7,9 +7,9 @@ rule's shape is unclear or when proposing a change to one.
 
 ## Constitution
 
-> **Reyn is an operating system for LLM agents** — they decide, organize, and orchestrate; the OS makes every action typed, permissioned, audited, and recoverable by construction.
-
-Every new feature is read through **eight engineering lenses** and must stand on the **cross-cutting band**. A lens asks *"does this do X well?"*; the band asks *"does this obey the universals at all?"* — fail a band member and it does not ship.
+The one-line mission statement is `CLAUDE.md`'s own epigraph — quoted there in
+full, not repeated here. Every new feature is read through **eight engineering
+lenses** and must stand on the **cross-cutting band**. A lens asks *"does this do X well?"*; the band asks *"does this obey the universals at all?"* — fail a band member and it does not ship.
 
 ### The eight lenses — each line is the pass-line (a gate for new work)
 1. **System Design** — responsibility sits at the right layer (LLM decides / OS executes / feature owns its domain); no new cross-layer coupling.
@@ -54,13 +54,9 @@ one day passed straight through, because none of them *was* a feature.
    two (#4703). The six questions audit the tests that exist; they cannot find the test
    that was never written.
 
-Three questions cover 1–3, and unlike the lenses they apply to changes that add no
-capability at all — a changed default, a new fallback, a new recovery command:
-
-- **Who stops this if it repeats?** Name the bounding subject, or there isn't one.
-- **Is this visible with the shipped config?** If seeing it requires changing a
-  setting, it is not visible.
-- **Does the repair destroy the evidence?** If it does, say what survives it.
+Three questions cover 1–3 — quoted in `CLAUDE.md`, not repeated here — and,
+unlike the lenses, apply to changes that add no capability at all: a changed
+default, a new fallback, a new recovery command.
 
 **No question is proposed for 4, deliberately.** "What is missing" cannot be
 enumerated, and a checklist item asking whether you considered it is answered "yes"
@@ -70,38 +66,18 @@ call sites. That is a habit, not a gate.
 
 ## Hard rules
 
-- **A doc describing a mechanism is stale the moment that mechanism's code — or a doc it mirrors — changes; fix the doc in the SAME PR, not a follow-up.** This is broader than adding a new enum-like variant: a doc goes stale just as easily by describing a *field*, a *call path*, or a *"when wired" claim* that the PR removes or falsifies — or by mirroring a sibling doc's own wording that the PR's real edit lands in only one of the two. (#2949→#2958: `control-ir.md:805` kept asserting a recording path through a field that #2958 deleted — survived because the reviewing pass grepped the doc for the one keyword it expected, not the surrounding prose describing what the PR touched.) When a PR changes something a doc describes, re-read the whole section the change touches, not just the line whose keyword you already had in mind. **The reviewer owns this too** — the author already searched, and a search that missed something cannot report that it missed; the reviewer's value is a *different* query, not a better one. Ask "what does this change make false?" before approving. Two same-day instances of the mirror form specifically: #4841 fixed CLAUDE.md's TUI colour policy self-contradiction without touching this file's own copy of the same section (caught post-merge, #4843); #4851 added a real `interfaces/web/` exemption to the colour-token gate without updating either CLAUDE.md's or this file's "enumerates every colour-bearing declaration under `interfaces/`" claim (also caught post-merge, #4853).
+- **The rule (CLAUDE.md): a mechanism change — code or a doc it mirrors — makes the doc describing it stale, fixed in the same PR.** What's worth keeping here is how wide "describing a mechanism" runs, and why the author alone was never going to be enough to hold it. Wide: a doc goes stale just as easily by describing a *field*, a *call path*, or a *"when wired" claim* that a PR removes or falsifies as by adding a new enum-like variant — and, on the mirror side, by echoing a sibling doc's own wording when the PR's real edit only reaches one of the two copies. #2949→#2958: `control-ir.md:805` kept asserting a recording path through a field that #2958 deleted, surviving because the reviewing pass grepped the doc for the one keyword it expected rather than reading the surrounding prose the PR actually touched. Not enough: an author re-reading their own diff cannot notice the thing their own search never surfaced — a miss reports as silence, not as a flag — so catching it before merge needs a *second*, differently-aimed question, asked by whoever reviews: what does this change make false? Two same-day instances of the mirror form specifically, both caught only after merge, by this session's own doc-drift monitoring, not by review: #4841 fixed CLAUDE.md's TUI colour policy self-contradiction without touching this file's own copy of the same section (#4843); #4851 added a real `interfaces/web/` exemption to the colour-token gate without updating either file's "enumerates every colour-bearing declaration under `interfaces/`" claim (#4853).
 - **`docs/reference/runtime/control-ir.md` must stay synced with `OP_KIND_MODEL_MAP`** in `src/reyn/schemas/models.py` (#1983: relocated there from `op_runtime/registry.py` so the `Op` union derives from the same map). New op kinds get a section in the reference in the same PR. **This one is on you, not on CI** — the CI-checked pair is `OP_KIND_MODEL_MAP` ↔ the `Op` union (code ↔ code); nothing opens `control-ir.md` and compares it to anything. (#3410 measured it two ways: of the tests/scripts that name `control-ir.md`, all 8 only quote the convention in a docstring; of the 16 that read `docs/` as real files, none touches `control-ir` or `OP_KIND_MODEL_MAP`. This line previously called it "the sharpest, CI-checked instance" of the doc rule, which read as "a machine is watching" — the exact declared-vs-actual gap the doc rule exists to catch.)
 - **The one doc↔code pair CI *does* check** is `docs/reference/runtime/events.md`'s kind enumeration ↔ `AUDIT_EVENT_KINDS` in `src/reyn/core/events/event_schema.py` (#3410) — the audit-event `type` namespace is a **closed vocabulary**, because `.reyn/events` has consumers outside reyn and a kind set that cannot be enumerated is not an interface. Emitting a kind, declaring it, and **enumerating** it is one three-part change; `tests/core/test_audit_event_kind_vocabulary_3410.py` fails on any two without the third, in both directions. **"Enumerating" is the whole of what CI checks** — `_documented_kinds()` reads only the delimited flat list and matches bare identifiers on their own line. `events.md` has a dozen-plus other sections, and **the semantic table row saying what the kind MEANS and which payload fields it carries is on you, not on CI** — the same wording the `control-ir.md` bullet above uses, for the same reason. A kind can be emitted, declared, enumerated, green, and still undocumented in every sense a reader cares about; #4589 landed exactly there, and #4591 then found the five pre-existing `plugin_install_*` kinds (`_started`/`_copied`/`_registered`/`_completed`/`_reconciled`) had been sitting in that state all along, so this is an accumulating gap rather than a one-off. Do not close it by adding a "the table has a row" gate: an empty row satisfies that, which is the make-the-check-the-goal shape this file rejects everywhere else.
 - **Recovery-feature PR gate**: any PR adding recovery / reconstruction functionality (WAL-event-derived state, PITR, rewind/restore paths) MUST include a truncate-falsify test verifying the reconstruction source survives WAL truncation below its source events (set X → truncate past X's events → reconstruct → assert X survives). WAL-event-derived recovery state that isn't snapshot-backed is a silent data-loss vector. Same PR, not a follow-up. (Motivated by #2259/#2260.)
 - **Sandbox axis-witness gate stays 2-layer**: `enforcement_self_test` (`src/reyn/security/sandbox/self_test.py`) is the PRODUCTION gate every real backend resolution calls; its blast radius is every sandboxed op on every host, so it MUST keep witnessing the deny leg only, for the write + spawn axes only. The richer per-axis 3-tuple contract (deny / exception-boundary / workload — `reyn.security.sandbox.axis_contract`) is CI-conformance-only (`tests/security/test_sandbox_axis_contract_2983.py`, mirroring `scripts/sandbox_landlock_deny_gate.py`'s CI-only deny arms). A PR that folds a new axis or leg into `enforcement_self_test` widens the blast radius of a probe bug to every host's sandbox — do not do this without an explicit owner-level design decision (#2983).
 
-- **TUI colour policy: name the MEANING; the active theme renders it. Never pick a colour first.** Owner ruling (#3525, 2026-07-31): "the terminal emulator's theme should take priority over Textual's own theme." **"The theme" is whichever theme is active** — reyn's own full-colour default, a Textual builtin, or an `ansi-*` theme that defers to the terminal emulator's palette (#4840/#4841: an earlier "the terminal emulator's theme decides" phrasing read as an absolute, contradicting this same section's own clause 2 — "full-colour included" — and its own "this is not an ANSI-16-only policy" line; corrected so the opening states the same rule the rest of the section already gave). Terminal palettes are not a vocabulary: the escape codes are standardised, the RGB behind them is not, and a slot carries a colour name, not a role — that is why the roles live in a theme. Every colour reyn's inline CUI uses lives in one file, `src/reyn/interfaces/inline/textual_chat/palette.py`; every widget stylesheet writes a `@name@` marker instead of a literal value, and `tests/interfaces/test_tui_colour_tokens.py` enumerates every colour-bearing declaration under `interfaces/` and fails on any value named outside the palette — added after two prior greps for an *expected shape* (`$text-muted`, `$var NN%`) each missed a real violation written in a shape nobody searched for (a hex value sitting behind a `border:` keyword). Textual's own `DEFAULT_CSS` is out of scope for this gate — reyn doesn't own it (#3525 tracks where it collides with the ansi themes). `interfaces/web/` is also out of scope (#4787②): it serves a browser, not a terminal, so the "the terminal emulator's theme decides" premise this gate polices has no terminal to defer to there — a separate, deliberate exemption from a new Python-hex-literal check added the same PR, not a gap in the pre-existing CSS-declaration check (which never matched anything under `web/` to begin with).
-
-  **Scope — decide this before choosing any value:**
-
-  1. Does the meaning have a convention a reader already carries (*error*,
-     *success*, *in-flight*)? → name it so every theme can render it: a
-     theme token (`$error`, `$text-muted`, `$markdown-*` …), an SGR
-     `text-style`, or an ANSI name (`ansi_blue` / `ansi_default` /
-     `transparent`) where the terminal's own value is the point —
-     `@selection-bg@` and `@selection-fg@` (`palette.py`, `"ansi_blue"` /
-     `"ansi_black"`) are live examples of the last.
-  2. Is the meaning reyn-specific? → any value that serves the design,
-     full-colour included. No theme has an opinion to defer to here.
-
-  **A colour is not a meaning.** "Error" is the meaning; red is one
-  theme's rendering of it. Never pick the colour first.
-
-  **This is not an ANSI-16-only policy.** Only two things are forbidden, and
-  neither limits expressiveness: a literal in a widget stylesheet (values go
-  through a `palette.py` token), and alpha-compositing over `ansi_default`
-  (the blend destroys the terminal's own value).
+- **TUI colour policy** — the rule itself is stated in `CLAUDE.md` (owner ruling #3525, 2026-07-31, quoted there in full: "the terminal emulator's theme should take priority over Textual's own theme"); this entry holds what CLAUDE.md's compressed form leaves out — the wording history, the gate's own mechanics, and the carve-out's reasoning, not a second copy of the scope rule. **Wording history**: an earlier "the terminal emulator's theme decides" opening read as an absolute, contradicting the same section's own reyn-specific/full-colour clause and its own "not an ANSI-16-only policy" line — corrected same-day (#4840/#4841); this file's own copy briefly drifted out of sync with that fix before being caught (#4843), which is itself an instance of the mirror-drift class #4854/#4858 exist to close. **Gate mechanics**: `tests/interfaces/test_tui_colour_tokens.py` enumerates every colour-bearing declaration under `interfaces/` — added after two prior greps for an *expected shape* (`$text-muted`, `$var NN%`) each missed a real violation written in a shape nobody searched for (a hex value sitting behind a `border:` keyword). Textual's own `DEFAULT_CSS` is out of scope — reyn doesn't own it (#3525 tracks where it collides with the ansi themes); `interfaces/web/` is out of scope too (#4787②, a browser has no terminal to defer to) — a separate, deliberate exemption on the new Python-hex-literal check, not a gap in the pre-existing CSS-declaration check (which never matched anything under `web/` to begin with; this file's own copy of that fact also briefly drifted, #4851→#4853).
 
   **Carve-out (owner, 2026-08-07, extends #3525 rather than replacing it):** a
   *reyn-specific* meaning — one with no established convention the way
   *error* or *success* has one — may use a token value outside the
-  theme-deferring set above. A meaning WITH an established convention still
+  theme-deferring set CLAUDE.md's clause 1 names. A meaning WITH an established convention still
   must resolve through a theme token / `ansi_default` / an SGR attribute,
   same as before; "is this meaning conventional or reyn-specific" is a
   judgment call no gate can make, which is exactly why the token-indirection
@@ -110,18 +86,18 @@ call sites. That is a habit, not a gate.
   a stylesheet.** Only the token layer is where the carve-out applies;
   without that constraint, a stylesheet could claim "reyn-specific" for
   anything and the value gate would have nothing left to check. The
-  semi-transparent-over-`ansi_default` ban above is unchanged by this
-  carve-out.
+  semi-transparent-over-`ansi_default` ban CLAUDE.md states is unchanged by
+  this carve-out.
 
 ## Comment policy (READ BEFORE WRITING OR MOVING A COMMENT)
 
-The comment policy is at **`docs/deep-dives/contributing/comments.md`** — normative,
-read it before deleting, compressing, or relocating a code comment. It classifies
-comments by content (never by length), gives the one-question test for the class
-that must stay inline regardless of size, and states why a residue should read
-"X breaks" rather than "do not change this." This is a code-authoring policy, not
-a verification one — do not conflate it with `verification-hazards.md` above,
-which is about misreading a green test/gate result, a different axis entirely.
+The normative source is `docs/deep-dives/contributing/comments.md`, pointed to
+from `CLAUDE.md` — this note only draws the one boundary worth stating twice:
+what that doc governs (how a comment should read, judged by its content) is a
+different axis from what `verification-hazards.md` (linked from CLAUDE.md's
+Testing policy section) governs (whether a
+green result means what it looks like it means). Confusing the two would send a
+comment-wording question to a doc about misread test output, or the reverse.
 
 Key constraints (full rationale in the doc):
 

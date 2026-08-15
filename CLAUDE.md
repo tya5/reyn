@@ -49,7 +49,7 @@ name, not a role — that is why the roles live in a theme.
 2. Meaning is reyn-specific → any value that serves the design, full-colour included. No theme has an opinion to defer to.
 
 - **A colour is not a meaning.** "Error" is the meaning; red is one theme's rendering. Never pick the colour first.
-- **This is not an ANSI-16-only policy.** Only two things are forbidden, and neither limits expressiveness: **a literal in a widget stylesheet** (every value goes through a token in `src/reyn/interfaces/inline/textual_chat/palette.py`, and stylesheets write a `@name@` marker) and **alpha-compositing over `ansi_default`** (the blend destroys the terminal's own value).
+- **This is not an ANSI-16-only policy.** Only two things are forbidden, and neither limits expressiveness: **a literal in a widget stylesheet** (every value goes through a token in `src/reyn/interfaces/palette.py`, and stylesheets write a `@name@` marker) and **alpha-compositing over `ansi_default`** (the blend destroys the terminal's own value).
 - `tests/interfaces/test_tui_colour_tokens.py` enumerates every colour-bearing declaration under `interfaces/` and fails on any value named outside the palette. Textual's own `DEFAULT_CSS` and `interfaces/web/` (a browser, not a terminal — no terminal to defer to) are out of scope.
 
 ## Testing policy (READ BEFORE WRITING TESTS)
