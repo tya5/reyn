@@ -3850,7 +3850,25 @@ class TextualChatApp(App):
 
         A ``kind`` other than ``"rewind"`` takes the text fallback too, rather
         than being force-fitted into a rewind picker: command-UI is a typed
-        request and this region answers exactly one of its kinds."""
+        request and this region answers exactly one of its kinds.
+
+        #4817 (#4788 B's untouched reverse direction, owner's B ruling
+        applied by lead-coder without a re-ask — "intervention is urgent,
+        picker is look-only, priority doesn't flip with which one opened
+        second"): the picker YIELDS — it does not open — while
+        :attr:`_iv_panel` is already showing. NOT a silent no-op: per
+        lead-coder's explicit condition, a typed ``/rewind`` that visibly
+        does nothing is the exact "ran, but no observable effect" class
+        #4801 closed elsewhere tonight (a mechanism exists, its result is
+        invisible). A ``kind="status"`` flow row — the same idiom this
+        module already uses for other command-triggered feedback (the
+        voice-transcription "⏳ transcribing…"/hint rows above) — says why,
+        and what to do instead. The read-model request is still consumed
+        (``clear_pending_command_ui``) even when refused: a request left
+        pending would replay onto whatever picker interaction happens
+        next, attributing THIS refused open to a later, unrelated one."""
+        from reyn.runtime.outbox import OutboxMessage  # noqa: PLC0415
+
         request = None
         if self._read_model is not None:
             try:
@@ -3859,6 +3877,19 @@ class TextualChatApp(App):
                 logger.exception("textual chat: command-UI read failed")
         points = (request or {}).get("points") if request else None
         if request and request.get("kind") == "rewind" and points:
+            if self._iv_panel.display:
+                try:
+                    self._read_model.clear_pending_command_ui()
+                except Exception:
+                    logger.exception("textual chat: command-UI clear failed")
+                self._ingest_frame(OutboxMessage(
+                    kind="status",
+                    text=(
+                        "rewind is on hold — answer the pending intervention "
+                        "first, then press r again"
+                    ),
+                ))
+                return
             self._rewind_picker.show_points(list(points))
             try:
                 self._read_model.clear_pending_command_ui()
