@@ -45,6 +45,18 @@ async def run_repl(
     now-removed hard requirement that an attached :class:`Session` already
     exist, purely for the banner / Textual app's own display label.
 
+    #4824: this claim was NOT true for one seam — ``RegistryReadModel.
+    history_path`` hard-raised on an unattached registry instead of
+    tolerating it, and a piped/non-TTY ``reyn chat`` invocation reaches it
+    with essentially no ``await`` between ``attach()``'s ``create_task`` and
+    the ``FileHistory(...)`` construction that reads it, so the crash fired
+    on ~every such invocation, not occasionally. Fixed by giving
+    ``RegistryReadModel`` the SAME ``name`` this function already has
+    (below), so ``history_path`` can fall back to
+    :meth:`~reyn.runtime.registry.AgentRegistry.agent_workspace_dir` — a
+    pure path derivation needing no live :class:`Session`, so it costs
+    nothing and races nothing. The claim above is accurate again.
+
     ``config`` is the loaded ReynConfig (or None). When supplied it is threaded
     read-only to the status snapshot (``interfaces/repl/status.py``'s
     ``_snapshot``) so the ``…`` overflow chip can surface cron / mcp / hooks
@@ -80,9 +92,13 @@ async def run_repl(
         transport.start()
 
     # The LOCAL read-model reads status/region/tasks off the attached session —
-    # byte-identical to the pre-P3 inline reads.
+    # byte-identical to the pre-P3 inline reads. ``agent_name=name`` (#4824):
+    # the caller's intended target, known before attach can possibly have
+    # succeeded — lets ``RegistryReadModel.history_path`` tolerate the startup
+    # race window this function's own docstring already promises every OTHER
+    # seam tolerates.
     with stage("client-prep:read-model"):
-        read_model = RegistryReadModel(registry)
+        read_model = RegistryReadModel(registry, agent_name=name)
 
     try:
         await run_chat_client(
