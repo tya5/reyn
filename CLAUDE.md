@@ -66,7 +66,9 @@ observation does not name its own referent**.
 - **Never assert on private state.** Use the public surface or a `snapshot()`-style read.
 - **Never pin algorithm-level behaviour** — sort order, dict iteration order, cache structure, exact whitespace.
 - **No snapshot/golden-file tests** outside `tests/scaffold/`.
-- **Tests carry no time limit of their own** — no `@pytest.mark.timeout`, no wait-budget in the body (`attempts=200`, `range(N)`). Wait on the condition unboundedly; CI's `--timeout=120` is the kill switch. Straight-line `sleep(N)` as the thing that makes an assertion pass stays banned.
+- **A test writes no duration, in EITHER direction** — both shapes fail the same way: the machine that runs it decides whether the assert passes.
+  - **Ceiling** (how long we will wait): no `@pytest.mark.timeout`, no `attempts=200`, no `range(N)` wrapping a wait. Wait on the condition unboundedly; CI's `--timeout=120` is the kill switch.
+  - **Floor** (how long something must take): no `sleep(N)` sized to outrun a threshold — `(_TRIPWIRE_MS + 150) / 1000` is the shape. Inject the threshold or the clock. `LoopProbe(threshold_ms=…)` has been injectable all along and no test used it; 4 unrelated PRs were reddened before anyone read the sleep (#4844).
 - Tests for an extracted refactor live in `tests/scaffold/` with `triggered_by`/`removed_by`, and are **deleted in the PR that lands the refactor**.
 
 ## Comment policy (READ BEFORE WRITING OR MOVING A COMMENT)
