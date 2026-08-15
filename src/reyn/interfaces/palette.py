@@ -115,6 +115,41 @@ TOKENS: "dict[str, str]" = {
     #: here so the pair is legible in one place: a background chosen without
     #: its foreground beside it is how contrast regressions happen.
     "@selection-fg@": "ansi_black",
+    #: #4787: the first 5 of ``interfaces/repl/renderer.py``'s 8 former
+    #: ``_CC_*`` hex constants — the ones whose value #4787's own
+    #: classification found reusable AS-IS (no new colour chosen; the
+    #: MEANING decision was the whole exercise, per CLAUDE.md's "Never pick
+    #: a colour first"). Consumed DIRECTLY as Python values
+    #: (``palette.TOKENS["@success@"]``) by both ``renderer.py`` (the plain
+    #: REPL, ``rich.Text(style=...)``, no live Textual App to resolve a
+    #: ``$token`` against — #4840's own open question) and
+    #: ``presenter.py``/``gutter.py`` (the TUI, same values, same reason: no
+    #: reyn Textual theme exists yet to resolve ``$success`` etc. against).
+    #: NOT yet ``@name@``-embedded in any stylesheet string — these values
+    #: are plain dict lookups here, the marker-in-CSS mechanism above
+    #: doesn't apply to this batch.
+    #:
+    #: Each is expected to become a Textual token reference (``$success``,
+    #: ``$error``, ``$warning``, ``$accent``, ``$secondary``) once #4840's
+    #: reyn theme module exists — this is the meaning-assignment half of
+    #: that migration, landing first per lead-coder's own ordering (①
+    #: classify+move, ② broaden the gate — #4851, ③ relocate palette out
+    #: of textual_chat's TTY-only import boundary — #4857, ④ the colour
+    #: direction itself, on hold for the owner).
+    "@success@": "#7ee787",     # green — completion (was _CC_DONE)
+    "@error@": "#f97066",       # red — failure (was _CC_ERR)
+    #: Textual's own state-palette meaning (gutter.py's own comment: "RUNNING
+    #: amber, SUCCESS green, ERROR coral"), covering BOTH "in progress" and
+    #: "needs you" — broader in scope than @attention@ above, which stays
+    #: scoped to its own one widget (the intervention panel's border/prompt)
+    #: and is UNCHANGED by this addition. Textual's own vocabulary has one
+    #: amber-family token (``$warning``) for both meanings, so the two reyn
+    #: tokens are expected to converge on the SAME eventual Textual value
+    #: without being the same token — they answer different "why is this
+    #: amber" questions even when the colour ends up equal.
+    "@warning@": "#e3b341",     # amber — state-palette + SESSION HALTED (was _CC_WARN)
+    "@accent@": "#d97757",      # terracotta — primary interactive accent (was _CC_ACCENT)
+    "@secondary@": "#6cb6ff",   # blue — secondary/markdown accent (was _CC_COOL)
 }
 
 #: The NOW row's travelling shine (#3777), as a GROUND and a PEAK per terminal

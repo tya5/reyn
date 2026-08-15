@@ -8,6 +8,7 @@ from io import StringIO
 
 from prompt_toolkit.formatted_text import HTML, AnyFormattedText
 
+from reyn.interfaces import palette
 from reyn.llm.pricing import TokenUsage
 from reyn.runtime.outbox import OutboxMessage
 
@@ -379,11 +380,21 @@ _CC_DIM = "#6b7280"     # low-importance / ambient, as a COLOUR (see _CC_AMBIENT
 # ``tool_call_started`` rows have ``background=None``, and those are exactly the
 # rows the right gutter's token / elapsed labels ride on.
 _CC_AMBIENT = "dim"
-_CC_DONE = "#7ee787"    # green — completion
-_CC_ERR = "#f97066"     # red — failure
-_CC_WARN = "#e3b341"    # amber — an intervention that needs the user to act
-_CC_ACCENT = "#d97757"  # terracotta — spinner / accents
-_CC_COOL = "#6cb6ff"    # cool blue — a secondary accent (status-bar agent value)
+# #4787: these 5 no longer declare their own hex literal — they read the
+# SAME value from ``interfaces/palette.py``'s ``TOKENS`` dict, the one
+# place ``interfaces/`` names a colour (this file's own module-level
+# import: ``from reyn.interfaces import palette``, safe — palette.py has
+# zero framework imports, so this pulls in no Textual dependency, verified
+# directly). Each is expected to become a Textual token reference
+# (``$success``/``$error``/``$warning``/``$accent``/``$secondary``) once
+# #4840's reyn theme module exists; for now the VALUE is unchanged, only
+# WHERE it is declared moved — see palette.py's own comment on this batch
+# for the full reasoning.
+_CC_DONE = palette.TOKENS["@success@"]    # green — completion
+_CC_ERR = palette.TOKENS["@error@"]       # red — failure
+_CC_WARN = palette.TOKENS["@warning@"]    # amber — an intervention that needs the user to act
+_CC_ACCENT = palette.TOKENS["@accent@"]   # terracotta — spinner / accents
+_CC_COOL = palette.TOKENS["@secondary@"]  # cool blue — a secondary accent (status-bar agent value)
 # Row-TINT backgrounds. The convention (established by _CC_USER_BG, extended to
 # _CC_ERR_BG by #3367): a row tint is a FAINT DARK block that the row's normal
 # foreground colour stays legible against — never a saturated foreground colour
