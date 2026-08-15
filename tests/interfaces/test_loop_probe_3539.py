@@ -450,13 +450,21 @@ async def test_the_app_actually_shows_the_notice_when_the_loop_stalls(caplog) ->
             # holds it, which is exactly the condition being detected.
             status_before = str(app.query_one(StatusLine).render())
             time.sleep(0.4)
-            for _ in range(6):
+            # #4827 (same class, lead-coder's re-read caught what I missed):
+            # a fixed range(6) was trusted as "enough pauses for the stall
+            # notice to have been logged" before a positive assert — under
+            # real CI-host contention that assert can starve exactly like
+            # :794/:902 did. Wait on the real condition instead, unbounded
+            # (CLAUDE.md testing policy): if the stall never trips the
+            # wire, this waits forever and CI's own --timeout=120 kills
+            # it — the detector moved from a separate assert (now removed,
+            # six-questions ②: it would have been the same expression on
+            # both sides of this loop, unable to ever fail) to that
+            # timeout; detection isn't lost, only where it lands.
+            while "unresponsive" not in caplog.text:
                 await pilot.pause()
             status_after = str(app.query_one(StatusLine).render())
 
-    assert "unresponsive" in caplog.text, (
-        f"the loop stalled and nothing recorded it: {caplog.text!r}"
-    )
     assert "REYN_PROF_DUMP" in caplog.text, (
         "the record must say how to capture the detail next time"
     )
@@ -502,7 +510,14 @@ async def test_a_stall_costs_no_row_of_layout(caplog) -> None:
             merged_before = bool(app.query_one(StatusLine).parent.query(Tab))
 
             time.sleep(0.4)
-            for _ in range(6):
+            # #4827 (same class as the sibling test above): wait on the
+            # real condition, unbounded — if the stall never trips the
+            # wire, this waits forever and CI's own --timeout=120 kills
+            # it. The separate post-loop assert this replaced would have
+            # been the same expression on both sides of this loop
+            # (six-questions ②, unable to ever fail) — the detector moved
+            # to that timeout, not lost.
+            while "unresponsive" not in caplog.text:
                 await pilot.pause()
 
             rows_after = len(app.query_one(FlowView).entries)
@@ -513,11 +528,6 @@ async def test_a_stall_costs_no_row_of_layout(caplog) -> None:
             # this asserts the packing outcome itself.
             merged_after = bool(app.query_one(StatusLine).parent.query(Tab))
 
-    # Non-vacuity: without a stall, "nothing moved" is true for the
-    # uninteresting reason and this test asserts nothing.
-    assert "unresponsive" in caplog.text, (
-        "the stall did not trip the wire — raise the sleep or lower the threshold"
-    )
     assert rows_after == rows_before, (
         "the stall added a conversation row"
     )
@@ -779,6 +789,19 @@ async def test_keys_received_reaches_the_default_visible_stall_notice(
         async with app.run_test(size=(80, 24)) as pilot:
             await pilot.pause()
             await pilot.press("a", "b", "c")
+            # #4827①: pilot.press() awaits Textual's own message-queue-drain
+            # marker (Pilot._wait_for_screen), which is robust — but under
+            # real CI-host CPU contention the WHOLE process (this one, not
+            # just key dispatch) can be starved long enough that press()'s
+            # return is not yet followed by the counter's own read being
+            # observed consistent with it on this exact interpreter turn.
+            # Rather than trust press()'s return as an implicit guarantee,
+            # wait on the actual fact the rest of this test depends on
+            # before entering the timing-sensitive stall phase below — an
+            # unbounded condition wait (CLAUDE.md testing policy: no
+            # attempts=N / time-bound), never a race the test itself builds.
+            while app.keys_received < 3:
+                await pilot.pause()
             time.sleep(stall_seconds)
             while "recovered" not in logfile.read_text(encoding="utf-8"):
                 await pilot.pause()
@@ -886,7 +909,23 @@ async def test_turn_active_reaches_the_default_visible_stall_notice(
                     data={"kind": "user", "chain_id": "chain-1", "seq": 1},
                 )
             )
-            await pilot.pause()
+            # #4827 (same class as ①, folded here): a single pilot.pause()
+            # was trusted as "the pushed event has been processed", before
+            # immediately entering the real, blocking time.sleep() stall
+            # phase below — under real CI-host contention that trust can be
+            # wrong (measured: this exact assert failed in CI with
+            # "turn idle" instead of "turn active", same run that also hit
+            # ①'s failure). Wait on the real fact this test depends on — the
+            # App's own turn-activity surface, the same one
+            # ``_watch_loop_responsiveness`` reads (``self._activity.state
+            # is not None``) — via Textual's public widget query rather
+            # than reaching into the private attribute. Unbounded (CLAUDE.md
+            # testing policy: no attempts=N / time-bound); CI's own
+            # --timeout=120 is the kill switch if the wiring is ever
+            # actually broken and this never arrives.
+            from reyn.interfaces.inline.textual_chat.activity_row import ActivityRow
+            while app.query_one(ActivityRow).state is None:
+                await pilot.pause()
             time.sleep(stall_seconds)
             while "unresponsive" not in logfile.read_text(encoding="utf-8"):
                 await pilot.pause()
