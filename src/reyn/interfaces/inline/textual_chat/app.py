@@ -1957,10 +1957,19 @@ class TextualChatApp(App):
                 # #4797 follow-up (architect finding): default-visible, no
                 # REYN_PROF_DUMP required — everything else this tripwire
                 # writes goes through write_record, a no-op on the shipped
-                # default. logger.info, not .warning, per lead-coder's
-                # ruling: the stall already used the operator's attention
-                # budget once; recovery is good news, not a second alarm.
-                logger.info("textual chat: %s", stall_recovered_log_line())
+                # default. logger.warning, matching the stall notice above
+                # (revised from an initial logger.info ruling, self-caught
+                # and corrected before landing: the interactive CUI's own
+                # _setup_interactive_logging sets the ROOT logger's level to
+                # WARNING, so an INFO call from a logger with no override of
+                # its own is silently dropped in the real interactive path —
+                # not "quieter", genuinely absent. Raising just this logger's
+                # level was rejected too: it would make "the operator's
+                # chosen floor" mean two different things depending which
+                # module emitted the record. Stall and recovery are the
+                # start and end of ONE episode; one line per episode at the
+                # same severity is not a second alarm).
+                logger.warning("textual chat: %s", stall_recovered_log_line())
 
     def on_mount(self) -> None:
         # #3505: #3504 made ``App``'s own background ``ansi_default`` (the
