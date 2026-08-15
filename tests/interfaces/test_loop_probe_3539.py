@@ -452,19 +452,19 @@ async def test_the_app_actually_shows_the_notice_when_the_loop_stalls(caplog) ->
             time.sleep(0.4)
             # #4827 (same class, lead-coder's re-read caught what I missed):
             # a fixed range(6) was trusted as "enough pauses for the stall
-            # notice to have been logged" before the POSITIVE assert below
-            # (`"unresponsive" in caplog.text`) — under real CI-host
-            # contention that assert can starve exactly like :794/:902 did.
-            # My own first pass wrongly called this a different, no-change-
-            # only concern; it is not — wait on the real condition instead,
-            # unbounded (CLAUDE.md testing policy).
+            # notice to have been logged" before a positive assert — under
+            # real CI-host contention that assert can starve exactly like
+            # :794/:902 did. Wait on the real condition instead, unbounded
+            # (CLAUDE.md testing policy): if the stall never trips the
+            # wire, this waits forever and CI's own --timeout=120 kills
+            # it — the detector moved from a separate assert (now removed,
+            # six-questions ②: it would have been the same expression on
+            # both sides of this loop, unable to ever fail) to that
+            # timeout; detection isn't lost, only where it lands.
             while "unresponsive" not in caplog.text:
                 await pilot.pause()
             status_after = str(app.query_one(StatusLine).render())
 
-    assert "unresponsive" in caplog.text, (
-        f"the loop stalled and nothing recorded it: {caplog.text!r}"
-    )
     assert "REYN_PROF_DUMP" in caplog.text, (
         "the record must say how to capture the detail next time"
     )
@@ -511,8 +511,12 @@ async def test_a_stall_costs_no_row_of_layout(caplog) -> None:
 
             time.sleep(0.4)
             # #4827 (same class as the sibling test above): wait on the
-            # real condition the positive assert below depends on, not a
-            # fixed pause count.
+            # real condition, unbounded — if the stall never trips the
+            # wire, this waits forever and CI's own --timeout=120 kills
+            # it. The separate post-loop assert this replaced would have
+            # been the same expression on both sides of this loop
+            # (six-questions ②, unable to ever fail) — the detector moved
+            # to that timeout, not lost.
             while "unresponsive" not in caplog.text:
                 await pilot.pause()
 
@@ -524,12 +528,6 @@ async def test_a_stall_costs_no_row_of_layout(caplog) -> None:
             # this asserts the packing outcome itself.
             merged_after = bool(app.query_one(StatusLine).parent.query(Tab))
 
-    # Non-vacuity: without a stall, "nothing moved" is true for the
-    # uninteresting reason and this test asserts nothing.
-    assert "unresponsive" in caplog.text, (
-        "non-vacuity: the wait loop above only exits once this is true, but "
-        "an empty caplog here would mean the stall never tripped the wire at all"
-    )
     assert rows_after == rows_before, (
         "the stall added a conversation row"
     )
