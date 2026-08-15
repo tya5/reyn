@@ -2012,7 +2012,22 @@ class TextualChatApp(App):
             pump_history.append((now, self._pump_ticks, self._keys_received))
             while pump_history and now - pump_history[0][0] > _PUMP_WINDOW_S:
                 pump_history.popleft()
-            fired = self._loop_tripwire.observe(lateness_ms, pump_ticks=self._pump_ticks)
+            # #4761 (architect's outstanding point, unimplemented when
+            # ①②③ landed): whether a turn was running THE INSTANT this tick
+            # was observed. ``ActivityRow.state`` is the app's existing
+            # "is a turn running" surface (already read the same way at the
+            # compact-caps call site, ``turn_active=self._activity.state is
+            # not None``) — reused here rather than adding a second signal
+            # for the same question. ``getattr`` defensively: this loop is
+            # scheduled in ``on_mount``, well after ``self._activity`` is
+            # created in ``compose()``, but matches the defensive idiom this
+            # module already uses for lazily-created widgets read from a
+            # long-lived background loop.
+            activity = getattr(self, "_activity", None)
+            turn_active = None if activity is None else activity.state is not None
+            fired = self._loop_tripwire.observe(
+                lateness_ms, pump_ticks=self._pump_ticks, turn_active=turn_active,
+            )
             if fired is not None:
                 pump_delta = (
                     self._pump_ticks - pump_history[0][1] if pump_history else 0
@@ -2029,6 +2044,7 @@ class TextualChatApp(App):
                         pump_window_s=_PUMP_WINDOW_S,
                         keys_received=self._keys_received,
                         keys_delta=keys_delta,
+                        turn_active=turn_active,
                     ),
                 )
                 try:
