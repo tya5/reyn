@@ -950,9 +950,9 @@ someone to re-derive it (#4847).
 | what our rule says | the established name | where to read it |
 |---|---|---|
 | Split the decision out as a pure function; keep the untestable part thin | **Humble Object** | [steven-giesel.com](https://steven-giesel.com/blogPost/47acad0a-255c-489b-a805-d0f46bde23e5/the-humble-object-pattern) · [xUnit Test Patterns ch.26 (Design-for-Testability)](https://www.oreilly.com/library/view/xunit-test-patterns/9780131495050/ch26.html) |
-| Make the clock an input instead of sleeping | **Virtual Clock** (Perrotta) | [xUnit Test Patterns ch.26](https://www.oreilly.com/library/view/xunit-test-patterns/9780131495050/ch26.html) |
-| A test that waits on asyncio/the OS is testing someone else's function | **"don't unit test third-party code"** | [xUnitPatterns — Test Stub](http://xunitpatterns.com/Test%20Stub.html) |
-| `MagicMock`/`patch` banned, `LLMReplay` allowed | the **test double** taxonomy: mock / stub / **fake** / spy (Meszaros) | [xUnitPatterns](http://xunitpatterns.com/Test%20Stub.html) |
+| Make the clock an input instead of sleeping | **Virtual Clock** (attributed to Perrotta — *attribution unverified, we do not hold the book*) | [xUnit Test Patterns ch.26](https://www.oreilly.com/library/view/xunit-test-patterns/9780131495050/ch26.html) |
+| A test that waits on asyncio/the OS is testing someone else's function | *(our phrasing — the maxim "don't unit test third-party code" is widely repeated, but we found no canonical source to send a reader to)* | — |
+| `MagicMock`/`patch` banned, `LLMReplay` allowed | the **test double** taxonomy — **five** kinds: dummy / stub / spy / mock / **fake** (Meszaros). `LLMReplay` is a *fake* (a working implementation taking a shortcut), which is why it is allowed where a *mock* is not | [xUnitPatterns — Mocks, Fakes, Stubs and Dummies](http://xunitpatterns.com/Mocks,%20Fakes,%20Stubs%20and%20Dummies.html) · [Fowler — Mocks Aren't Stubs](https://martinfowler.com/articles/mocksArentStubs.html) |
 
 **Before hand-rolling a clock**, evaluate what already exists — and say in the PR
 why it was not enough if you still hand-roll one:
