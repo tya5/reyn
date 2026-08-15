@@ -217,10 +217,19 @@ def _make_fake_acompletion_no_content_deltas(chunk_witness: "list[int] | None" =
 def test_silent_zero_delta_stream_logs_once_per_stream(monkeypatch, caplog) -> None:
     """Tier 1: co-vet fix (recommendation (c)) — when a stream produces at
     least one chunk but ``on_content_delta`` never fires (no chunk exposed
-    ``delta.content``), exactly ONE debug log line is emitted for the whole
-    stream (not per chunk) — the cheap observability guard against a silent
-    functional-dead-mode where deltas quietly never happen for a given
-    provider's chunk shape while L9's final text keeps working, masking it."""
+    ``delta.content``), exactly ONE WARNING log line is emitted for the
+    whole stream (not per chunk) — the cheap observability guard against a
+    silent functional-dead-mode where deltas quietly never happen for a
+    given provider's chunk shape while L9's final text keeps working,
+    masking it.
+
+    #4805: captured at WARNING, not DEBUG, deliberately — the interactive
+    CUI's own production floor discards anything below WARNING, so a
+    DEBUG-level capture here would stay green even if this guard were
+    invisible in real production (this guard used to be `logger.debug`,
+    passing this same test under a DEBUG capture while genuinely never
+    reaching a real operator — the exact defect #4805 exists to close).
+    A guard whose firing nobody can see is the same as no guard."""
     import logging
 
     chunk_witness: list[int] = []
@@ -229,7 +238,7 @@ def test_silent_zero_delta_stream_logs_once_per_stream(monkeypatch, caplog) -> N
     )
 
     deltas: list[str] = []
-    with caplog.at_level(logging.DEBUG, logger="reyn.llm.llm"):
+    with caplog.at_level(logging.WARNING, logger="reyn.llm.llm"):
         result = asyncio.run(recorded_acompletion(
             model="gpt-4o-mini", messages=[{"role": "user", "content": "hi"}],
             purpose="main", recorder=None,
@@ -323,3 +332,89 @@ def test_silent_zero_delta_guard_does_not_fire_when_deltas_do(monkeypatch, caplo
         if "on_content_delta never fired" in r.message
     ]
     assert guard_records == []
+
+
+def _make_fake_acompletion_tool_calls_only(chunk_witness: "list[int] | None" = None):
+    """#4805 review (lead-coder catch): a real, scripted stand-in whose
+    streaming branch yields chunks carrying ONLY ``delta.tool_calls`` —
+    never ``delta.content`` — reyn's own MOST COMMON round shape (the
+    assistant calls a tool with no accompanying text). This never exposes
+    a content delta either, same surface symptom as the genuine dead-mode
+    case above, but for a completely different (and completely healthy)
+    reason."""
+
+    async def _fake_acompletion(model: str, messages: list, **kw: Any) -> Any:
+        if not kw.get("stream"):
+            return litellm.ModelResponse(
+                id="resp-3", created=1, model=model, object="chat.completion",
+                choices=[{
+                    "index": 0, "finish_reason": "tool_calls",
+                    "message": {"role": "assistant", "content": None, "tool_calls": []},
+                }],
+                usage=dict(_USAGE),
+            )
+
+        def _chunk(delta: Delta, finish_reason: "str | None" = None) -> ModelResponseStream:
+            return ModelResponseStream(
+                id="resp-3", created=1, model=model, object="chat.completion.chunk",
+                choices=[StreamingChoices(index=0, delta=delta, finish_reason=finish_reason)],
+            )
+
+        async def _gen():
+            pieces = [
+                _chunk(Delta(role="assistant", tool_calls=[
+                    {"index": 0, "id": "call_1", "type": "function",
+                     "function": {"name": "read_file", "arguments": '{"path"'}},
+                ])),
+                _chunk(Delta(tool_calls=[
+                    {"index": 0, "function": {"arguments": ': "x"}'}},
+                ])),
+            ]
+            last = _chunk(Delta(), finish_reason="tool_calls")
+            last.usage = Usage(**_USAGE)
+            pieces.append(last)
+            for piece in pieces:
+                if chunk_witness is not None:
+                    chunk_witness.append(1)
+                yield piece
+
+        return _gen()
+
+    return _fake_acompletion
+
+
+def test_a_tool_only_round_never_trips_the_dead_mode_guard(monkeypatch, caplog) -> None:
+    """Tier 1: accept-side — #4805 review's own catch. A tool-only round
+    (the assistant calls a tool with no text — reyn's most common round
+    shape, per lead-coder's live #4691 observation) legitimately never
+    exposes ``delta.content`` on ANY chunk, the exact same surface symptom
+    as the genuine dead-mode case ``test_silent_zero_delta_stream_logs_
+    once_per_stream`` covers. Without excluding a chunk that carried
+    ``tool_calls``, the WARNING-severity guard (#4805) would false-alarm
+    on EVERY ordinary tool call — the same "fires on a healthy path too"
+    defect this PR explicitly avoided for `message_handler.py`'s own
+    case, caught here for `llm.py` on review."""
+    import logging
+
+    chunk_witness: list[int] = []
+    monkeypatch.setattr(
+        litellm, "acompletion", _make_fake_acompletion_tool_calls_only(chunk_witness),
+    )
+
+    with caplog.at_level(logging.WARNING, logger="reyn.llm.llm"):
+        asyncio.run(recorded_acompletion(
+            model="gpt-4o-mini", messages=[{"role": "user", "content": "hi"}],
+            purpose="main", recorder=None,
+            model_class=None,  # #4206 T1: not subject to the axis (pre-existing call)
+            on_content_delta=lambda _t: None,
+        ))
+
+    assert chunk_witness == [1, 1, 1]  # real chunk consumption, not vacuous
+    guard_records = [
+        r for r in caplog.records
+        if "on_content_delta never fired" in r.message
+    ]
+    assert guard_records == [], (
+        "a tool-only round must never trip the dead-mode guard — it is "
+        "reyn's most common round shape, not a defect"
+    )
