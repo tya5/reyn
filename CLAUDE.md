@@ -30,7 +30,7 @@ considered it is answered "yes" every time.
 
 ## Hard rules
 
-- **A doc describing a mechanism is stale the moment that mechanism's code changes — fix it in the SAME PR.** Re-read the whole section your change touches, not just the line whose keyword you already had in mind (#2949→#2958).
+- **A doc describing a mechanism is stale the moment that mechanism's code changes — fix it in the SAME PR.** Re-read the whole section your change touches, not just the line whose keyword you already had in mind (#2949→#2958). **The reviewer owns this too** — ask "what does this change make false?" before approving, or the drift lands and someone else files the follow-up (#4841/#4843, #4851/#4853: two same-day misses, both caught after merge).
 - **`docs/reference/runtime/control-ir.md` must stay synced with `OP_KIND_MODEL_MAP`** (`src/reyn/schemas/models.py`). New op kind → new section, same PR. **No CI checks this** — the CI-checked pair is `OP_KIND_MODEL_MAP` ↔ the `Op` union (#3410).
 - **Audit-event kinds are a closed vocabulary.** Emitting a kind, declaring it in `AUDIT_EVENT_KINDS` (`src/reyn/core/events/event_schema.py`), and enumerating it in `docs/reference/runtime/events.md` is ONE three-part change; CI fails on any two without the third (`tests/core/test_audit_event_kind_vocabulary_3410.py`). **CI checks the flat enumeration only — the semantic table row is on you** (#4589 / #4591).
 - **Recovery-feature PRs need a truncate-falsify test**: set X → truncate the WAL past X's events → reconstruct → assert X survives. Same PR (#2259/#2260).
