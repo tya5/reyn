@@ -942,9 +942,18 @@ async def test_turn_active_reaches_the_default_visible_stall_notice(
             time.sleep(stall_seconds)
             while "unresponsive" not in logfile.read_text(encoding="utf-8"):
                 await pilot.pause()
-            _diag_pump_ticks_at_notice = app.pump_ticks
-            _diag_keys_received_at_notice = app.keys_received
-            _diag_state_at_notice = app._activity.state
+            # lead-coder's TESTS-READ (#4842): these 3 are read AFTER this
+            # test's OWN loop above observes "unresponsive" in the logfile —
+            # not synchronized with the tripwire's own tick that actually
+            # WROTE the line. By the time this runs, further ticks may have
+            # already advanced pump_ticks/keys_received past what the
+            # tripwire itself saw, and activity.state could in principle
+            # have moved again too. Still useful (a divergence AT LEAST this
+            # late is still a divergence), but "at observation-time" is the
+            # honest name — not "at the tripwire's own read".
+            _diag_pump_ticks_after_notice_observed = app.pump_ticks
+            _diag_keys_received_after_notice_observed = app.keys_received
+            _diag_state_after_notice_observed = app._activity.state
     finally:
         for handler in root.handlers:
             if handler not in saved_handlers:
@@ -962,7 +971,7 @@ async def test_turn_active_reaches_the_default_visible_stall_notice(
         f"id(query_one(ActivityRow)) at confirm-time={_diag_query_obj_id!r} "
         f"(same object: {_diag_activity_obj_id == _diag_query_obj_id}); "
         f"activity.state at confirm-time={_diag_state_at_confirm!r} "
-        f"activity.state at notice-time={_diag_state_at_notice!r}; "
-        f"pump_ticks at notice-time={_diag_pump_ticks_at_notice!r} "
-        f"keys_received at notice-time={_diag_keys_received_at_notice!r}"
+        f"activity.state after this test observed the notice={_diag_state_after_notice_observed!r}; "
+        f"pump_ticks after this test observed the notice={_diag_pump_ticks_after_notice_observed!r} "
+        f"keys_received after this test observed the notice={_diag_keys_received_after_notice_observed!r}"
     )
