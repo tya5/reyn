@@ -678,6 +678,22 @@ class AgentRegistry:
     def load_profile(self, name: str) -> AgentProfile:
         return AgentProfile.load(self._dir / name)
 
+    def agent_workspace_dir(self, name: str) -> Path:
+        """The agent's home directory, computed WITHOUT constructing or
+        attaching a :class:`Session` (#4824) — the same ``<state-root>/
+        agents/<name>`` this registry already uses internally for a
+        profile's own path (:meth:`load_profile`/:meth:`exists`/
+        :meth:`create`, all ``self._dir / name``), exposed publicly so a
+        caller that only knows the TARGET agent name — not yet an attached
+        Session, because attach hasn't run — can still resolve the same
+        path an attached ``Session.workspace_dir`` would report (verified:
+        :class:`~reyn.runtime.agent.Agent`'s own ``workspace_dir`` derives
+        from ``workspace_state_dir``, which every registry-constructed
+        agent gets set to this SAME ``project_root / ".reyn"`` at
+        bootstrap — not a re-derivation, the identical value by a
+        different, session-free route)."""
+        return self._dir / name
+
     def exists(self, name: str) -> bool:
         return (self._dir / name / PROFILE_FILENAME).is_file()
 
