@@ -337,6 +337,112 @@ async def test_chain_resolve_clears_snapshot_and_emits_resolve(tmp_path, monkeyp
 
 
 # ---------------------------------------------------------------------------
+# Test 2b: InterAgentMessaging's own chain manager IS session.chains
+# ---------------------------------------------------------------------------
+#
+# #4862 rescue: replaces `tests/scaffold/test_family7_intervention_bundle_
+# byte_identical.py::test_inter_agent_messaging_chain_manager_is_the_same_
+# chains_instance` / `test_strip_falsify_f8_dep_check_is_live`, which pinned
+# the F8→F7 cross-dependency via a private `is` identity check
+# (`session._inter_agent_messaging._chains is session._chains`). That check
+# has no equivalent elsewhere: every other InterAgentMessaging test in the
+# suite (`test_a2a_handler_invariants.py`) hand-pairs a fresh
+# InterAgentMessaging + ChainManager, never routing through a real Session's
+# own builder — so a broken F8→F7 wiring (the builder injecting a
+# DIFFERENT ChainManager into InterAgentMessaging than the one
+# `session.chains` exposes) would leave every existing test green.
+#
+# Witnessed here via effect, not identity: a chain registered through the
+# PUBLIC `session.chains.register()` is looked up by
+# `InterAgentMessaging.handle_agent_response` — real production behavior
+# (partial multi-hop resolution, no LLM/router loop needed since a second
+# peer is still outstanding). If the wiring were broken, the lookup would
+# miss (`pending is None`), and `waiting_on` would stay untouched.
+
+
+@pytest.mark.asyncio
+async def test_agent_response_resolves_the_same_chain_session_chains_exposes(
+    tmp_path, monkeypatch,
+):
+    """Tier 2: F8→F7 cross-dep — a chain registered via ``session.chains``
+    is the SAME chain ``InterAgentMessaging.handle_agent_response`` looks
+    up. Two peers are registered as ``waiting_on``; only one responds, so
+    resolution stays partial (no router loop / LLM needed) — the only
+    observable effect is ``waiting_on`` shrinking on the chain
+    ``session.chains`` itself exposes."""
+    monkeypatch.chdir(tmp_path)
+    session = _make_session(tmp_path, on_limit=OnLimitConfig(mode="unattended"))
+
+    await session.chains.register(
+        chain_id="chain-f8f7-001", depth=1,
+        original_text="need two peers", sender="origin_agent",
+        waiting_on={"peer_a", "peer_b"},
+        requester=Requester(agent_name="origin_agent", session_id="main"),
+        origin_depth=1,
+    )
+    assert session.chains.has("chain-f8f7-001")
+
+    # peer_a responds; peer_b has not. If InterAgentMessaging's own chain
+    # manager were a DIFFERENT instance than session.chains, this lookup
+    # would miss entirely (chain_id ∉ self._chains — the PR11
+    # user-initiated branch, a materially different code path that would
+    # attempt a fresh router loop instead of this partial-resolution no-op).
+    await session._handle_agent_response({
+        "from_agent": "peer_a",
+        "response": "partial answer from peer_a",
+        "depth": 1,
+        "chain_id": "chain-f8f7-001",
+    })
+
+    pending = session.chains.get("chain-f8f7-001")
+    assert pending is not None, (
+        "chain must still be pending after only ONE of TWO expected peers replied"
+    )
+    assert pending.waiting_on == {"peer_b"}, (
+        f"peer_a must be dropped from waiting_on by the SAME chain instance "
+        f"session.chains exposes; got {pending.waiting_on}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_strip_falsify_agent_response_chain_lookup_needs_the_prior_registration(
+    tmp_path, monkeypatch,
+):
+    """Tier 2: strip-falsify — a chain_id never registered via
+    ``session.chains`` must NOT be found by
+    ``InterAgentMessaging.handle_agent_response`` (``session.chains.has()``
+    stays False), proving the positive test above genuinely depends on
+    the PRIOR ``session.chains.register()`` call landing in the SAME
+    manager the lookup reads — not a check that would trivially pass for
+    any chain_id regardless of wiring. The unregistered chain_id instead
+    takes the PR11 user-initiated branch, which re-runs the router; a
+    scripted LLM keeps that branch from needing a real network call."""
+    monkeypatch.chdir(tmp_path)
+    session = _make_session(tmp_path, on_limit=OnLimitConfig(mode="unattended"))
+
+    assert not session.chains.has("chain-f8f7-never-registered")
+
+    stub = _make_llm_stub(_text_result("unrelated reply"))
+    monkeypatch.setattr("reyn.runtime.router_loop.call_llm_tools", stub)
+    await session._handle_agent_response({
+        "from_agent": "peer_a",
+        "response": "reply for a chain nobody registered",
+        "depth": 1,
+        "chain_id": "chain-f8f7-never-registered",
+    })
+
+    # PR11 user-initiated path never creates a _PendingChain entry — it
+    # replies upstream directly. session.chains must never have seen this
+    # chain_id at any point.
+    assert not session.chains.has("chain-f8f7-never-registered"), (
+        "an unregistered chain_id must never appear in session.chains — "
+        "if it did, the positive test's lookup would be vacuous (any "
+        "chain_id would resolve, not specifically the one registered "
+        "through session.chains)"
+    )
+
+
+# ---------------------------------------------------------------------------
 # Test 3: chain timeout fires upstream error and emits WAL event
 # ---------------------------------------------------------------------------
 
