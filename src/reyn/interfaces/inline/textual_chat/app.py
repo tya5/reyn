@@ -411,10 +411,11 @@ class _CursorFlowView(FlowView["OutboxMessage"]):
         so the anchor can never be set while ``cursor_visible`` is
         ``False`` — ``cursor_visible`` alone is a complete public-API
         proxy for it TODAY. Re-verified directly against
-        ``_view.py``'s source after #4729's 0.19.0 -> 0.21.1 bump
-        (``_set_cursor_visible`` still unconditionally does
+        ``_view.py``'s source after #4729's 0.19.0 -> 0.21.1 bump, and
+        again after #4792's 0.21.1 -> 0.22.0 bump — both times
+        ``_set_cursor_visible`` still unconditionally does
         ``self._tc_anchor = None`` inside its own ``if not visible:``
-        branch, same as at 0.19.0) — installed pin tracked in
+        branch, unchanged since 0.19.0 — installed pin tracked in
         ``pyproject.toml``, not repeated here as a number that would
         just go stale again on the next bump. This is a DERIVED
         equivalence, not a contract upstream promises: if a future
