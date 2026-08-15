@@ -3647,6 +3647,142 @@ class TextualChatApp(App):
         """Esc in the picker: no rewind, focus back to the composer."""
         self.query_one(Composer).focus()
 
+    def _resolve_append_parent(
+        self, *, kind: str, meta: dict
+    ) -> "Entry[OutboxMessage] | None":
+        """The ONE decision of where a NEW entry attaches — a registered
+        call_id Group parent, else the current turn's own parent, else
+        flat top-level (``None``). #4691 (owner-observed real-machine
+        contradiction, root-caused by architect via lead-coder): this used
+        to be inlined in :meth:`_ingest_frame` alone, and
+        :meth:`_handle_agent_delta_event`'s first-delta entry creation
+        called ``self.conversation.append(...)`` directly instead —
+        bypassing this decision entirely, so a STREAMED reply (the common
+        case for any provider that streams) never nested under its turn
+        or registered as a call-level Group parent, no matter what
+        :meth:`_ingest_frame` did. Both call sites now go through THIS
+        one method (via :meth:`_append_frame`), so the decision cannot
+        drift between them again — architect's own framing, via
+        lead-coder: "share the PARENT DECISION, not the entry-creation
+        procedure" (a streamed reply's own creation — seeding
+        :class:`_StreamingReply`, registering visibility tracking — stays
+        entirely its own, in :meth:`_handle_agent_delta_event`).
+
+        ① call_id lookup (never "most recently appended" order — see
+        :attr:`_call_parents`'s own docstring) — #4691 Phase B B1.
+        ② the CURRENT turn's own parent, if one is open — #4691 arc item
+        ①, one layer above ①. This is what makes the nesting RECURSIVE
+        without extra code: the turn's first ``kind="agent"`` row lands
+        here (② fires, ① doesn't yet — it has no call_id parent of its
+        OWN), then registers itself as a ``_call_parents`` entry
+        (:meth:`_register_call_parent`), so every LATER row for that same
+        call_id finds it via ① — user row → call row → tool rows, three
+        levels, one mechanism per level.
+        ③ flat top-level (``None``) — a legacy/restored row, an op-loop
+        caller that never threaded a call_id through, or no turn open.
+
+        ``kind != "user"`` in ② is deliberate, not incidental: a
+        ``kind="user"`` frame is never anything OTHER than a turn's own
+        parent row (the promotion in :meth:`_handle_turn_started_event`)
+        or a standalone intervention-answer fallback row
+        (:meth:`_handle_intervention_answer_event`) — neither should ever
+        nest under a PRIOR turn's parent. (Whether an intervention-answer
+        fallback row landing mid-turn should instead nest under the
+        CURRENT turn is an owner-visual call, not decided here.)"""
+        call_id = meta.get("call_id")
+        parent = self._call_parents.get(call_id) if call_id else None
+        if parent is None and kind != "user" and self._current_turn_parent is not None:
+            parent = self._current_turn_parent
+        return parent
+
+    def _append_frame(self, msg: "OutboxMessage") -> "Entry[OutboxMessage]":
+        """Append a NEW entry to the retained model, nested per
+        :meth:`_resolve_append_parent` — the ONLY place ``self.conversation
+        .append(`` is called for a freshly-created entry (#4691's own
+        acceptance line, architect via lead-coder: "zero direct
+        ``self.conversation.append(`` call sites left" outside this
+        method). Every entry-creating call site — :meth:`_ingest_frame`'s
+        normal (non-coalesced) append, and
+        :meth:`_handle_agent_delta_event`'s first-delta entry creation —
+        goes through this, so the nesting decision is made in exactly one
+        place, never two copies that can drift apart."""
+        parent = self._resolve_append_parent(kind=msg.kind, meta=msg.meta or {})
+        if parent is not None:
+            return parent.append_child(msg)
+        return self.conversation.append(msg)
+
+    def _register_call_parent(
+        self, entry: "Entry[OutboxMessage]", kind: str, meta: dict
+    ) -> None:
+        """Register ``entry`` as a call-level Group parent when it carries
+        a ``call_id`` — #4691 Phase B B1/④, #4777, #4691's own
+        streaming-bypass fix (architect via lead-coder). Called from TWO
+        sites: :meth:`_ingest_frame`'s normal (non-streaming) append, and
+        the streaming-settle branch of that same method, once a streamed
+        round's completion frame finally carries its real ``call_id``/
+        ``dispatched_tool_calls`` — neither is known any earlier than
+        that (a round is not classified as tool-dispatching until it
+        actually returns), so the settle leg is the FIRST point
+        registration could happen for a streamed round, not a late
+        correction.
+
+        #4777 (owner-reported, provider-dependence bug): registration no
+        longer gates on ``finish_reason`` — a PROVIDER's own summary
+        string, self-reported at its own discretion (litellm passes it
+        through verbatim, ``llm.py``'s own ``choices[0].finish_reason``).
+        The owner's own provider never returns ``"tool_calls"``, so the
+        old gate here never fired on their screen — #4691 Phase B's
+        entire Group construction was provider-dependent and silently
+        inert for them, despite being green in every test written
+        against a provider that DOES report it correctly.
+
+        Registering unconditionally for every ``call_id``-bearing agent
+        row is harmless even for an ordinary terminal reply that
+        dispatched no tools: nothing ever looks up a call_id belonging
+        to a call that dispatched no tools, so an unused entry here is
+        dead weight, never a wrong nesting (#4776 tracks this dict's
+        own session-lifetime growth separately — not this fix's scope)."""
+        call_id = meta.get("call_id")
+        if kind != "agent" or not call_id:
+            return
+        self._call_parents[call_id] = entry
+        if meta.get("dispatched_tool_calls"):
+            # #4691 Phase B ④: the parent's own spinner starts here — its
+            # children are about to arrive RUNNING too, and
+            # ``_recompute_parent_state`` (called from every child
+            # settle) keeps it RUNNING until every child has settled.
+            #
+            # #4777: gated on ``dispatched_tool_calls`` — a REYN-OBSERVED
+            # fact (router_loop.py stamps it from the LLM result's own
+            # ``tool_calls`` list, non-empty precisely when this round
+            # actually dispatches tools), not the provider's
+            # ``finish_reason`` string. A terminal reply that dispatches
+            # no tools registers (harmless, above) but never spins —
+            # there is nothing for it to wait on.
+            entry.set_state(EntryState.RUNNING)
+            # #4691 Phase B item 3 (owner ruling): a completion Group
+            # defaults COLLAPSED — called HERE, at registration, even
+            # though this entry may still be a LEAF (no child has
+            # arrived yet). Before textual-flowview 0.22.0's #14 fix
+            # this was a documented no-op on a leaf ("a no-op on a
+            # removed entry, a leaf, or when unchanged"), which forced
+            # a workaround this comment used to describe (watch the
+            # entry's own ``append_child`` call site and re-assert
+            # ``.collapse()`` there, guarded to fire exactly once). #14
+            # fixed the underlying no-op itself — collapse state is now
+            # recorded on ANY live entry, leaf included, and a child
+            # appended later "walks its ancestors and is born folded"
+            # (release notes, 0.22.0) — so that workaround is gone;
+            # this one call is upstream's whole job now. This also
+            # means #4691 arc item ①'s own guard (``parent is
+            # call_parent``, once needed to keep this collapse from
+            # ALSO firing on the TURN parent's first child) has nothing
+            # left to guard: the turn parent's own registration
+            # (:meth:`_handle_turn_started_event`) never calls this
+            # method at all (it is not ``kind="agent"``), so it was
+            # never a candidate for this collapse in the first place.
+            entry.collapse()
+
     def _ingest_frame(self, msg: "OutboxMessage") -> "Entry[OutboxMessage] | None":
         """Fold one display frame into the retained model — appending a new entry,
         or COALESCING a correlated tool result into its RUNNING started entry.
@@ -3734,116 +3870,52 @@ class TextualChatApp(App):
                 streaming.entry.set_item(
                     replace(streaming.entry.item, text=msg.text, meta=meta)
                 )
+                # #4691 (owner-observed, real-machine — "folding the turn
+                # group does not hide the final reply"; architect's own
+                # root-cause read, via lead-coder): a STREAMED reply's
+                # entry is created in :meth:`_handle_agent_delta_event`,
+                # not here — this branch only SETTLES it in place. Its
+                # TREE POSITION was already decided at creation time
+                # (:meth:`_append_frame`, the shared seam that call also
+                # goes through now), so nothing here needs to re-parent
+                # it. What DOES still belong here: CALL-LEVEL Group
+                # registration (:meth:`_register_call_parent` —
+                # ``_call_parents[call_id]``, the RUNNING spinner, the
+                # default collapse) was ONLY ever reachable from the
+                # non-streaming leg below, which this early ``return``
+                # never reaches — so a streamed tool round's own agent
+                # row never became a valid Group parent for its OWN tool
+                # rows either. ``meta`` here is the TERMINAL completion's
+                # own meta (call_id/dispatched_tool_calls/finish_reason)
+                # — call_id and dispatched_tool_calls are not known any
+                # earlier than this (a round is not classified as
+                # tool-dispatching until it actually returns), so this is
+                # the first point registration COULD happen, streamed or
+                # not — same call as the non-streaming leg, one shared
+                # method instead of two copies that can drift apart.
+                self._register_call_parent(streaming.entry, kind, meta)
                 return
-        # #4691 Phase B B1: nest under this frame's own litellm CALL, found
-        # by call_id lookup (never by "most recently appended" order — see
-        # ``self._call_parents``'s own docstring). A frame with no call_id,
-        # or one that matches no registered parent (a legacy/restored row,
-        # an op-loop caller that never threaded one through), falls through
-        # to the flat top-level append exactly as before B1 — nothing here
-        # narrows what USED to land flat.
-        call_id = meta.get("call_id")
-        call_parent = self._call_parents.get(call_id) if call_id else None
-        parent = call_parent
-        if parent is None and kind != "user" and self._current_turn_parent is not None:
-            # #4691 arc item ① (final item): the TURN's own nesting level,
-            # one layer above item 5's per-call Group — a frame with no
-            # call_id parent (the first agent row of a call, or a tool/
-            # status/intervention row with no call_id at all) falls under
-            # the CURRENT turn's own user row instead of the flat top
-            # level, provided a turn is actually open. This is exactly
-            # what makes the nesting RECURSIVE without any extra code: the
-            # turn's first ``kind="agent"`` row registers itself as a
-            # ``_call_parents`` entry below (still a child of the user row
-            # via THIS branch), and every later tool/agent row for that
-            # SAME call_id nests under IT via the branch above — user row
-            # → call row → tool rows, three levels, one mechanism per
-            # level.
-            #
-            # ``kind != "user"`` is deliberate, not incidental: a
-            # ``kind="user"`` frame is never anything OTHER than a turn's
-            # own parent row (the promotion in
-            # :meth:`_handle_turn_started_event`) or a standalone
-            # intervention-answer fallback row
-            # (:meth:`_handle_intervention_answer_event`) — neither should
-            # ever nest under a PRIOR turn's parent. (Whether an
-            # intervention-answer fallback row landing mid-turn should
-            # instead nest under the CURRENT turn is an owner-visual call,
-            # not decided here — see this PR's body.)
-            parent = self._current_turn_parent
-        if parent is not None:
-            entry = parent.append_child(msg)
-            # #4691 Phase B item 3 (owner ruling): a completion Group
-            # defaults COLLAPSED — but only from its FIRST child onward.
-            # ``Entry.collapse()`` at registration time (when the parent
-            # is still a leaf) is a documented no-op ("a no-op on a
-            # removed entry, a leaf, or when unchanged") — collapse has to
-            # be re-asserted here, the first moment the parent actually
-            # HAS a subtree to fold. ``len == 1`` (not unconditional) means
-            # this fires exactly once per parent, on its first child only
-            # — never re-collapsing a parent the reader already opened by
-            # hand (za/Space, #4775) once a second/third child lands.
-            #
-            # ``parent is call_parent`` — NOT unconditional — is #4691 arc
-            # item ①'s own addition: the owner's later ruling on the turn
-            # Group is the OPPOSITE default ("既定は turn Group = open /
-            # completion Group = hide", i.e. only the completion level
-            # collapses; the turn level stays open so "the conversation
-            # itself" — the sequence of turns — is always visible). Without
-            # this guard, the turn parent's OWN first child (its first
-            # completion Group) would trip this same ``len == 1`` collapse
-            # and fold the entire turn away by default, which is exactly
-            # the regression the owner's ruling forbids.
-            if parent is call_parent and len(parent.children) == 1:
-                parent.collapse()
-        else:
-            entry = self.conversation.append(msg)
+        # #4691 Phase B B1 / arc item ① / owner-observed streaming-bypass
+        # fix: nest under this frame's own litellm CALL if one is already
+        # registered, else the CURRENT turn's own parent if one is open,
+        # else flat top-level (:meth:`_append_frame` — the ONE seam every
+        # entry-creating call site in this class goes through, so the
+        # nesting decision can never drift between them; see that
+        # method's own docstring for the 3-tier rule and why it is
+        # shared with :meth:`_handle_agent_delta_event`'s first-delta
+        # creation rather than each having its own copy).
+        entry = self._append_frame(msg)
         # #3712: an entry just arrived. Counted HERE, by the thing that
         # produced it — not reconstructed later from two reads of the model.
         self._note_entry_landed()
-        if kind == "agent" and call_id:
-            # #4777 (owner-reported, provider-dependence bug): registration no
-            # longer gates on ``finish_reason`` — a PROVIDER's own summary
-            # string, self-reported at its own discretion (litellm passes it
-            # through verbatim, ``llm.py``'s own ``choices[0].finish_reason``).
-            # The owner's own provider never returns ``"tool_calls"``, so the
-            # old gate here never fired on their screen — #4691 Phase B's
-            # entire Group construction was provider-dependent and silently
-            # inert for them, despite being green in every test written
-            # against a provider that DOES report it correctly.
-            #
-            # Registering unconditionally for every ``call_id``-bearing agent
-            # row is harmless even for an ordinary terminal reply that
-            # dispatched no tools: nothing ever looks up a call_id belonging
-            # to a call that dispatched no tools, so an unused entry here is
-            # dead weight, never a wrong nesting (#4776 tracks this dict's
-            # own session-lifetime growth separately — not this fix's scope).
-            self._call_parents[call_id] = entry
-            if meta.get("dispatched_tool_calls"):
-                # #4691 Phase B ④: the parent's own spinner starts here — its
-                # children are about to arrive RUNNING too, and
-                # ``_recompute_parent_state`` (called from every child
-                # settle) keeps it RUNNING until every child has settled.
-                #
-                # #4777: gated on ``dispatched_tool_calls`` — a REYN-OBSERVED
-                # fact (router_loop.py stamps it from the LLM result's own
-                # ``tool_calls`` list, non-empty precisely when this round
-                # actually dispatches tools), not the provider's
-                # ``finish_reason`` string. A terminal reply that dispatches
-                # no tools registers (harmless, above) but never spins —
-                # there is nothing for it to wait on.
-                entry.set_state(EntryState.RUNNING)
-                # #4691 Phase B item 3 (owner ruling via #4691's arc): a
-                # completion Group defaults COLLAPSED — the actual
-                # ``.collapse()`` call is at the ``append_child`` call
-                # site below, not here: this entry is still a LEAF at
-                # this point (no child has arrived yet), and
-                # ``Entry.set_collapsed`` is a documented no-op on a leaf
-                # ("a no-op on a removed entry, a leaf, or when
-                # unchanged") — collapsing here would silently do
-                # nothing. The parent's own RUNNING spinner (just above)
-                # lives on the row's own gutter, independent of the
-                # body-collapse state, so it is unaffected either way.
+        # #4777 / #4691 Phase B ④ (owner ruling): register this row as a
+        # Group parent when it carries a call_id — see
+        # :meth:`_register_call_parent`'s own docstring for the full
+        # reasoning (provider-independence, the RUNNING spinner, the
+        # default-collapse timing). Shared with the streaming-settle leg
+        # above, which reaches the SAME call once a streamed round's
+        # call_id is finally known.
+        self._register_call_parent(entry, kind, meta)
         if kind == "presentation":
             self._begin_image_resolutions(entry, msg)
         if kind == "intervention":
@@ -4883,7 +4955,22 @@ class TextualChatApp(App):
             # lands. The 29 deltas that follow fold into it and are not
             # arrivals — one thing arrived, and this is where that is known.
             self._note_entry_landed()
-            entry = self.conversation.append(
+            # #4691 (owner-observed real-machine contradiction, root-caused
+            # by architect via lead-coder): THROUGH :meth:`_append_frame`,
+            # not a direct ``self.conversation.append(...)`` — this used to
+            # append flat, unconditionally, bypassing the SAME nesting
+            # decision every other entry-creating call site now shares
+            # (:meth:`_resolve_append_parent`), so a streamed reply never
+            # nested under its open turn (or, later, under a call-level
+            # Group) no matter what the non-streaming path did. call_id is
+            # not known yet at this point (a round is not classified as
+            # tool-dispatching until it returns), so this lands via the
+            # CURRENT TURN tier of that decision when one is open — the
+            # call-level Group registration itself happens later, at
+            # settle (:meth:`_register_call_parent`, called from
+            # :meth:`_ingest_frame`'s streaming-settle branch once the
+            # terminal frame's real call_id is known).
+            entry = self._append_frame(
                 OutboxMessage(kind="agent", text=text, meta={"chain_id": chain_id})
             )
             # The append already carries this first chunk, so rendered == text —

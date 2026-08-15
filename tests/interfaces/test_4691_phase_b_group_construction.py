@@ -362,15 +362,18 @@ async def test_the_parent_has_no_reactive_watcher_on_its_children() -> None:
 @pytest.mark.asyncio
 async def test_a_group_parent_defaults_collapsed() -> None:
     """Tier 2b: owner ruling (#4691 arc item 3) — a completion Group starts
-    COLLAPSED, not expanded-then-folded. Collapsing is asserted the instant
-    the FIRST child actually lands (never before — ``Entry.collapse()`` is
-    a documented no-op on a leaf, and the parent IS a leaf at registration
-    time, before any tool row has arrived) and never repeated on a second/
-    third child (so a reader who already opened it by hand, za/Space
-    #4775, is not re-folded out from under them). A CHILD's own detail-
-    expand state (the #3508/#4697 Space-toggle axis, unrelated to Group
-    fold) is untouched — only the top-level Group fold defaults to
-    collapsed."""
+    COLLAPSED, not expanded-then-folded. Collapse is asserted at
+    REGISTRATION time — while the parent is still a leaf, no child has
+    landed yet — since textual-flowview 0.22.0's #14 fix: ``.collapse()``
+    now records the state on any live entry (leaf included) rather than
+    silently discarding it, and a child appended later "walks its
+    ancestors and is born folded" (0.22.0 release notes). Before 0.22.0
+    this was a documented no-op on a leaf, which forced reyn to watch its
+    own ``append_child`` and re-assert collapse there, guarded to fire
+    exactly once — that workaround is gone; upstream now does the whole
+    job from one call. A CHILD's own detail-expand state (the #3508/#4697
+    Space-toggle axis, unrelated to Group fold) is untouched — only the
+    top-level Group fold defaults to collapsed."""
     transport = QueueTransport()
     app = TextualChatApp(transport=transport, clock=lambda: 100.0)
     async with app.run_test(size=(100, 30)) as pilot:
@@ -378,15 +381,16 @@ async def test_a_group_parent_defaults_collapsed() -> None:
         await transport.push_display(_parent_row("resp-1"))
         await pilot.pause()
         parent = _entries(app)[0]
-        assert parent.collapsed is False, (
-            "setup: not yet collapsed — no child has landed, the parent "
-            "is still a leaf"
+        assert parent.collapsed is True, (
+            "collapse is asserted at registration — before 0.22.0 this "
+            "had to wait for the first child (a leaf-collapse no-op); "
+            "now it fires immediately"
         )
 
         await transport.push_display(_started("op-1", call_id="resp-1"))
         await pilot.pause()
         assert parent.collapsed is True, (
-            "the FIRST child landing must collapse the parent by default"
+            "still collapsed once the first child actually lands"
         )
         (child,) = parent.children
         assert child.collapsed is False, (
@@ -395,14 +399,15 @@ async def test_a_group_parent_defaults_collapsed() -> None:
         )
 
         # A reader who opens it by hand (za/Space) must not be re-folded
-        # when a SECOND child lands — collapse fires once, on the first
-        # child only.
+        # when a SECOND child lands — reyn's own collapse call fires
+        # exactly once, at registration, and never again.
         parent.expand()
         await transport.push_display(_started("op-2", call_id="resp-1"))
         await pilot.pause()
         assert parent.collapsed is False, (
             "a manually-reopened parent must stay open when a later "
-            "child arrives — collapse-on-first-child fires exactly once"
+            "child arrives — reyn never re-asserts collapse after "
+            "registration"
         )
 
 

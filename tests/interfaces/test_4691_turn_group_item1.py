@@ -460,3 +460,212 @@ async def test_a_row_with_no_open_turn_still_lands_flat() -> None:
         (only,) = _entries(app)
         assert only.item.meta.get("call_id") == "resp-1"
         assert only.parent is None
+
+
+@pytest.mark.asyncio
+async def test_a_no_tool_terminal_reply_nests_under_its_turns_user_row() -> None:
+    """Tier 2b: owner-flagged gap (post-merge review of the arc exit report)
+    — the exit report's live capture described a 0-tool-call turn as
+    rendering a "flat 2-row shape", read from the SCREEN. flowview never
+    indents, so "looks flat" and "IS flat (``parent is None``)" are
+    visually indistinguishable — the screen capture could not actually
+    tell them apart, and no automated test asserted ``.parent`` for this
+    exact shape (every existing nesting test used ``_parent_row``'s
+    ``dispatched_tool_calls=True`` default, a TOOL-dispatching completion,
+    never the true terminal-reply case). This asserts ``.parent`` directly
+    for a call that dispatches NO tools (``dispatched_tool_calls=False``,
+    the #4777 terminal-reply shape) — the SAME registration branch (call_id
+    lookup misses because this row is registering itself, falls through to
+    ``_current_turn_parent``) the tool-dispatching case already goes
+    through, so this closes the untested half rather than a new mechanism."""
+    transport = QueueTransport()
+    app = TextualChatApp(transport=transport, clock=lambda: 100.0)
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        await _open_turn(transport, pilot, chain_id="chain-A")
+        await transport.push_display(_parent_row("resp-1", dispatched_tool_calls=False))
+        await pilot.pause()
+
+        user_row, reply_row = _entries(app)
+        assert user_row.item.kind == "user"
+        assert reply_row.parent is user_row, (
+            "a no-tool-call terminal reply must nest under the turn's own "
+            "user row — an owner-flagged gap: a screen capture alone "
+            "cannot distinguish this from a truly flat, un-nested row, "
+            "since flowview never indents"
+        )
+        assert reply_row.item.meta.get("dispatched_tool_calls") is False
+
+
+@pytest.mark.asyncio
+async def test_turn_settled_arriving_before_the_terminal_reply_leaves_it_flat() -> None:
+    """Tier 2b: owner-flagged ordering question — CAN ``turn_settled``
+    reach this client before the terminal reply's own display frame for
+    the SAME turn, and if it does, what happens?
+
+    Structural reasoning (not a live measurement of the real transport's
+    scheduling): ``Session``'s turn-processing emits ``turn_settled`` from
+    a ``finally:`` block wrapping the whole turn (``session.py`` — "the
+    finally: block always emits ``turn_settled`` once, after all other
+    processing" was true even before this file), so for THIS turn's own
+    two writes, program order guarantees the display frame's ``put_outbox``
+    call has already returned before the event fires — a race is not
+    expected in production. This test is not a check of that guarantee
+    (this file cannot drive the real Session); it measures the OTHER
+    half of the owner's question — what this app's own code does if that
+    order were ever violated, whatever the cause.
+
+    Answer: the reply lands FLAT, never orphaned or crashing.
+    ``_current_turn_parent`` is cleared by ``_settle_turn_parent`` the
+    moment ``turn_settled`` is processed (this file's own
+    ``test_a_turn_with_no_completions_settles_cancelled_not_stuck_running``
+    covers that clearing), so a display frame arriving strictly AFTER it
+    finds no turn parent to nest under and falls through to the same flat
+    top-level append every call-id-less/no-open-turn row already takes —
+    a defined, safe fallback, not a new failure mode this ordering would
+    introduce."""
+    transport = QueueTransport()
+    app = TextualChatApp(transport=transport, clock=lambda: 100.0)
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        await _open_turn(transport, pilot, chain_id="chain-A")
+
+        # Adversarial order: the turn-end EVENT is processed before the
+        # terminal reply's own DISPLAY frame arrives for the same turn.
+        await transport.push_event(_turn_settled())
+        await pilot.pause()
+        await transport.push_display(_parent_row("resp-1", dispatched_tool_calls=False))
+        await pilot.pause()
+
+        user_row, reply_row = _entries(app)
+        assert reply_row.parent is None, (
+            "a reply arriving AFTER turn_settled has already cleared the "
+            "turn parent must land flat, not silently attach to a stale "
+            "or wrong parent"
+        )
+        assert user_row.state is EntryState.CANCELLED, (
+            "setup: turn_settled with zero completions landed yet settles "
+            "the turn parent CANCELLED (this file's own "
+            "test_a_turn_with_no_completions_settles_cancelled_not_stuck_running)"
+        )
+
+
+@pytest.mark.asyncio
+async def test_a_streamed_terminal_reply_nests_under_its_turns_user_row() -> None:
+    """Tier 2b: 🔴 owner-observed real-machine contradiction, now CLOSED —
+    "folding the turn group does not hide the final reply". Every OTHER
+    turn-nesting test in this file drives the terminal reply via
+    ``transport.push_display(...)``, a single non-streamed ``kind="agent"``
+    frame — the shape a provider returns WITHOUT incremental deltas. A
+    REAL interactive reply is virtually always streamed: its entry is
+    created by :meth:`TextualChatApp._handle_agent_delta_event` on the
+    FIRST ``agent_delta`` audit-event (chain_id-keyed). Before the fix,
+    that creation appended straight to ``self.conversation`` — bypassing
+    ``_ingest_frame``'s nesting decision entirely — and the LATER terminal
+    ``kind="agent"`` display frame never re-parented it either (the
+    streaming-settle branch only called ``set_item`` and returned). This
+    test reproduces that exact two-step production pipeline (an
+    ``agent_delta`` event, THEN the terminal display frame for the same
+    chain_id) and pins the FIXED behavior: the reply nests under the
+    turn's own user row, exactly like the non-streamed nesting tests
+    elsewhere in this file. (Architect/lead-coder root-caused this as a
+    CLASS, not an item-①-only gap — see
+    :meth:`TextualChatApp._resolve_append_parent`'s own docstring for the
+    shared seam both the streaming and non-streaming paths now go
+    through.)"""
+    from dataclasses import replace as _replace
+
+    from reyn.schemas.models import Event as _Event
+
+    transport = QueueTransport()
+    app = TextualChatApp(transport=transport, clock=lambda: 100.0)
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        await _open_turn(transport, pilot, chain_id="chain-A")
+
+        # The REAL production shape: content arrives as an agent_delta
+        # BEFORE the terminal completion frame — the streaming path every
+        # other test in this file skips entirely. Both carry the SAME
+        # chain_id (matching production: the correlating id
+        # ``_emit_agent_delta`` stamps IS the round's own chain_id, the
+        # same one the terminal completion frame's meta carries).
+        await transport.push_event(
+            _Event(type="agent_delta", data={"text": "done", "chain_id": "chain-A"})
+        )
+        await pilot.pause()
+        completion = _parent_row("resp-1", text="done", dispatched_tool_calls=False)
+        completion = _replace(
+            completion, meta={**completion.meta, "chain_id": "chain-A"}
+        )
+        await transport.push_display(completion)
+        await pilot.pause()
+
+        user_row, reply_row = _entries(app)
+        assert user_row.item.kind == "user"
+        assert reply_row.item.text == "done"
+        assert reply_row.parent is user_row, (
+            "a STREAMED terminal reply must nest under its turn's own "
+            "user row — the same shape a non-streamed reply already "
+            "gets (test_a_no_tool_terminal_reply_nests_under_its_turns_"
+            "user_row) — the streaming entry-creation path is no longer "
+            "a second, un-nested code path"
+        )
+
+
+@pytest.mark.asyncio
+async def test_a_streamed_tool_round_becomes_a_valid_call_level_group_parent() -> None:
+    """Tier 2b: 🔴 the CALL-level half of the same bypass class (architect's
+    own finding, via lead-coder: "the same early return is also downstream
+    of ``_call_parents[call_id] = entry`` registration — #4779 onward").
+    A streamed tool round's own explanatory-text row used to settle
+    in place (``set_item``) without ever registering itself as a
+    call-level Group parent, since :meth:`_ingest_frame`'s streaming-
+    settle branch returned before reaching that registration block. This
+    reproduces the streamed pipeline for a TOOL-DISPATCHING round (not
+    the terminal no-tool case the sibling test above covers) and asserts
+    a SUBSEQUENT tool row for the SAME call_id nests under the streamed
+    row — proving :meth:`_register_call_parent` now runs from the
+    streaming-settle leg too, once the terminal frame's real call_id is
+    known."""
+    from dataclasses import replace as _replace
+
+    from reyn.schemas.models import Event as _Event
+
+    transport = QueueTransport()
+    app = TextualChatApp(transport=transport, clock=lambda: 100.0)
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        await _open_turn(transport, pilot, chain_id="chain-A")
+
+        await transport.push_event(
+            _Event(type="agent_delta", data={"text": "let me check", "chain_id": "chain-A"})
+        )
+        await pilot.pause()
+        completion = _parent_row("resp-1", text="let me check", dispatched_tool_calls=True)
+        completion = _replace(
+            completion, meta={**completion.meta, "chain_id": "chain-A"}
+        )
+        await transport.push_display(completion)
+        await pilot.pause()
+        await transport.push_display(_started("op-1", call_id="resp-1"))
+        await pilot.pause()
+
+        user_row, completion_row = _entries(app)
+        assert completion_row.item.text == "let me check"
+        assert completion_row.parent is user_row
+        assert completion_row.state is EntryState.RUNNING, (
+            "call-level registration (RUNNING spinner) must fire from the "
+            "streaming-settle leg too, not only the non-streaming path"
+        )
+        assert completion_row.collapsed is True, (
+            "the default-collapse-at-registration must also fire from "
+            "the streaming-settle leg"
+        )
+        completion_row.expand()
+        (tool_row,) = completion_row.children
+        assert tool_row.item.kind == "tool_call_started"
+        assert tool_row.parent is completion_row, (
+            "a tool row for the SAME call_id must nest under the "
+            "STREAMED completion row — proving it registered as a "
+            "valid call-level Group parent, not just a turn-nested leaf"
+        )
