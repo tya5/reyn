@@ -199,10 +199,18 @@ Ask each test in the diff:
    (#3859), and #3850 landed a field that was required, populated, tested,
    and read by nobody — the honest answer to "who would miss it" was
    already "nobody."
-4. **Would it stay green having never run?** skip / collection error / zero
-   collected all wear green's colour. Name what a missing optional dependency
-   silently skips — CI has no `effects` extra, so #3796's file skips whole and
-   its green says nothing (#2999 is the same shape with a docker-daemon skip).
+4. **Would it stay green having never run — or having run with nothing to
+   bite on?** skip / collection error / zero collected all wear green's
+   colour. Name what a missing optional dependency silently skips — CI has no
+   `effects` extra, so #3796's file skips whole and its green says nothing
+   (#2999 is the same shape with a docker-daemon skip). The same green covers
+   one step further in: a test that RAN, whose assert RAN, over an **empty**
+   collection — `assert not [e for e in xs if …]` passes unconditionally when
+   `xs` is empty, so the filter never decided anything (#4773: the author had
+   written the `assert xs` guard; the reviewing pass ran the six questions and
+   still didn't look, and an independent review found it). Count both the same
+   way — a green path that says nothing, whether the test never ran or the
+   assertion never had a subject.
 5. **What does it accumulate, and who bounds it?** A `list()` over a producer
    whose length is decided by the *caller's* pace is unbounded by construction.
    (#3872: the app's timer paced it at 10fps; `list()` paced it at CPU speed, and
@@ -222,13 +230,17 @@ So each question has a blocking answer, not just an answer:
 | 1 | **none** — including a third party's, a past bug's, and reyn's own trivia |
 | 2 | yes — the same expression is on both sides |
 | 3 | **nobody**, or only a configuration this test itself constructed |
-| 4 | it would be green having never run, **and the PR does not say so** |
+| 4 | it would be green having never run **or over an empty collection**, and the PR does not say so |
 | 5 | **anything outside the test bounds it** — a thread, a timer, the caller's pace |
 | 6 | the declared Tier is not the one question 1 named |
 
 ⚠️ 4 blocks on the *silence*, not on the skip: a file that skips whole in CI is
 often correct (an optional extra), and what makes it a defect is a green nobody
-qualified. 5 has no such carve-out — "it is small today" is a measurement of
+qualified. The empty-collection half reads the same way — a filter that finds
+nothing is often the right answer, and what makes it a defect is a green that
+never said whether the collection had anything in it. Naming it costs one
+sentence; the fix, when it is one, is usually a guard the author already knows
+how to write. 5 has no such carve-out — "it is small today" is a measurement of
 today, and the runaway that started this was small until it wasn't.
 
 **3 needs no accept-side exception.** An accept-side test ("this shape must
