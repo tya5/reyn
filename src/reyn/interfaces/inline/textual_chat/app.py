@@ -2678,21 +2678,32 @@ class TextualChatApp(App):
         in :meth:`on_key`, only if either were declared priority=True). This
         stays scoped to one key and one widget instead.
 
+        ★#4788 B (owner-approved, decided after this fix landed): the
+        scenario this fix was written for — an intervention arriving
+        while the picker is already open — can no longer put both modals
+        on screen at once. :meth:`_present_intervention` now closes the
+        picker outright the moment an intervention arrives (``RewindPicker
+        .hide()``, no Esc involved), rather than leaving it open behind
+        the panel. That leaves this Esc branch fully live for one purpose
+        only: the picker's own Esc-to-cancel, same as before this fix, now
+        simply never racing an intervention's arrival.
+
         ★Implicit ordering, when BOTH the picker and the intervention panel
-        are open at once: this catch runs first and consumes the Esc press
-        outright (``event.stop()``), so a single Esc closes ONLY the picker
-        — :class:`~.intervention_panel.InterventionPanel`'s own ``escape``
-        Binding (``action_dismiss_panel``) never fires on that same press.
-        No capability is lost: the panel's own Esc is documented as a
-        focus-only escape hatch, not a close ("every pending tab stays
-        exactly as it was" — ``InterventionPanel.Dismissed``'s own
-        docstring), so a SECOND Esc (picker now closed, this branch a no-op)
-        reaches it exactly as before. Picker-first is deliberate — the
-        picker has no other way to close once it has lost focus (that is
-        this fix's whole premise), while the panel already has one. Whether
-        this ordering, or the picker staying open across an intervention at
-        all, is the right UX is a separate, open question (#4788 tracks it;
-        not decided here).
+        are STILL open at once (the one remaining path: the user opens the
+        picker via ``/rewind`` while an intervention panel is already
+        showing — #4788 B did not touch that direction, only "intervention
+        arrives while picker is open"): this catch runs first and consumes
+        the Esc press outright (``event.stop()``), so a single Esc closes
+        ONLY the picker — :class:`~.intervention_panel.InterventionPanel`'s
+        own ``escape`` Binding (``action_dismiss_panel``) never fires on
+        that same press. No capability is lost: the panel's own Esc is
+        documented as a focus-only escape hatch, not a close ("every
+        pending tab stays exactly as it was" —
+        ``InterventionPanel.Dismissed``'s own docstring), so a SECOND Esc
+        (picker now closed, this branch a no-op) reaches it exactly as
+        before. Picker-first is deliberate — the picker has no other way
+        to close once it has lost focus (that is this fix's whole
+        premise), while the panel already has one.
         """
         if isinstance(event, (events.Key, events.MouseScrollDown, events.MouseScrollUp)):
             # ``self._flow`` is created lazily in ``compose()``, not
@@ -3559,7 +3570,34 @@ class TextualChatApp(App):
         input (:meth:`on_intervention_panel_choice_selected` /
         :meth:`on_intervention_panel_text_submitted`) moved together, so there
         is never a moment where both the panel AND a chip/composer-match path
-        are live for the same intervention."""
+        are live for the same intervention.
+
+        #4788 B (owner-approved, via lead-coder's recommendation — not
+        decided by this session): an arriving intervention closes an
+        already-open rewind picker outright, rather than leaving both
+        modals live behind each other. Three reasons, all lead-coder's:
+        an intervention is the agent BLOCKED and waiting (urgent) while
+        the picker is a look-only browsing surface — different priority;
+        two simultaneous modals make the Esc key's destination ambiguous
+        — exactly the shape #4788 A (fixed in #4789) had to work around
+        for Esc specifically, and there is no reason to leave that
+        ambiguity standing for every OTHER key too; and what's lost is
+        small — the picker holds no state Rewind itself owns, so a single
+        ``r`` reopens it.
+
+        Calls :meth:`~.rewind_picker.RewindPicker.hide` directly, NOT
+        :meth:`~.rewind_picker.RewindPicker.action_dismiss` — the latter
+        posts ``Dismissed``, whose handler (:meth:`on_rewind_picker_
+        dismissed`) unconditionally re-focuses the Composer, which is
+        the right target for a user's own Esc-cancel but would fight
+        this intervention's own focus routing (``InterventionPanel.
+        add_pending`` → ``on_tabbed_content_tab_activated`` on a
+        first-arriving tab). ``hide()`` clears the picker's display and
+        state with no message and no focus side effect, leaving the
+        panel's own routing as the only thing deciding where focus lands."""
+        picker = getattr(self, "_rewind_picker", None)
+        if picker is not None and picker.display:
+            picker.hide()
         meta = msg.meta or {}
         iv_id = meta.get("intervention_id")
         key: object = iv_id if iv_id else id(entry)
