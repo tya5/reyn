@@ -141,6 +141,16 @@ class LoopTripwire:
         #: healthy" (this was ``False``) apart, so the durable trace can say
         #: which one happened instead of just stopping either way.
         self._in_stall = False
+        #: One-shot recovery flag for :meth:`consume_recovered` — separate
+        #: from the ``write_record`` call at the same transition (architect
+        #: finding, #4797 follow-up): ``write_record`` is a no-op on the
+        #: shipped default (``REYN_PROF_DUMP`` unset), so recovery was only
+        #: ever visible to an already-armed session. This lets the CALLER
+        #: (:meth:`~reyn.interfaces.inline.textual_chat.app.TextualChatApp.
+        #: _watch_loop_responsiveness`) put a recovery notice on a surface
+        #: that needs no prior setup — the same "visible with the shipped
+        #: config" bar the once-only stall notice already clears.
+        self._just_recovered = False
 
     @property
     def max_lateness_ms(self) -> float:
@@ -151,6 +161,15 @@ class LoopTripwire:
     def fired(self) -> bool:
         """Whether the threshold has been crossed at least once."""
         return self._fired
+
+    def consume_recovered(self) -> bool:
+        """Whether the loop just recovered from a stall — ``True`` at most
+        once per episode, consumed on read (mirrors :meth:`observe`'s own
+        once-only return for the stall side) so a caller logging this on a
+        default-visible surface doesn't repeat it either."""
+        recovered = self._just_recovered
+        self._just_recovered = False
+        return recovered
 
     def observe(self, lateness_ms: float) -> "float | None":
         """Record one tick's lateness; return it the FIRST time it is bad.
@@ -184,6 +203,7 @@ class LoopTripwire:
         if lateness_ms <= self._threshold_ms:
             if self._in_stall:
                 self._in_stall = False
+                self._just_recovered = True
                 write_record("tripwire_recovered", lateness_ms=round(lateness_ms, 1))
             return None
         self._in_stall = True
@@ -226,3 +246,20 @@ def stall_log_line(lateness_ms: float) -> str:
         f"the interface was unresponsive for {lateness_ms / 1000:.1f}s "
         f"— re-run with {_DUMP_ENV}=<path> to record what it was doing"
     )
+
+
+def stall_recovered_log_line() -> str:
+    """The default-visible recovery notice — no ``REYN_PROF_DUMP`` required.
+
+    architect finding (#4797 follow-up): every OTHER new signal this module
+    gained (the repeated ``"tripwire"`` record, ``"tripwire_recovered"``)
+    goes through :func:`write_record`, a no-op on the shipped default. A
+    session that never armed ``REYN_PROF_DUMP`` before a stall — the exact
+    situation #4761's own report was in — got nothing new from that work.
+    This line is deliberately NOT gated on the env var, so "it fired, then
+    it recovered" is readable from an ordinary, unarmed run's own logs —
+    lead-coder ruling: ``logger.info``, not ``.warning`` — the stall itself
+    already used the operator's attention budget once; recovery is good
+    news, not a second alarm.
+    """
+    return "the interface recovered from the stall reported above"

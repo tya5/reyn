@@ -29,6 +29,7 @@ from reyn.interfaces.inline.textual_chat.loop_probe import (
     environment_axes,
     stall_banner,
     stall_log_line,
+    stall_recovered_log_line,
     write_record,
 )
 from reyn.interfaces.transport.client_transport import ClientTransport
@@ -283,6 +284,63 @@ def test_recovery_is_recorded_only_once_per_episode(monkeypatch, tmp_path: Path)
     ]
     assert recovered_lateness == [50.0, 40.0], (
         f"expected exactly one recovery record per episode: {records!r}"
+    )
+
+
+def test_consume_recovered_needs_no_dump_env_at_all(monkeypatch) -> None:
+    """Tier 2: #4797 follow-up (architect finding) — ``consume_recovered()``
+    is a plain in-memory flag, reachable with ``REYN_PROF_DUMP`` unset the
+    whole time. Every OTHER new signal added for #4761 ① (the repeated
+    ``"tripwire"`` record, ``"tripwire_recovered"``) goes through
+    :func:`write_record`, a no-op on the shipped default — a session that
+    never armed the dump got nothing new from that work, the exact
+    "visible with the shipped config?" gap CLAUDE.md names. This one does
+    not depend on the file at all.
+    """
+    monkeypatch.delenv("REYN_PROF_DUMP", raising=False)
+    tripwire = LoopTripwire(threshold_ms=250.0)
+
+    assert tripwire.consume_recovered() is False, "nothing has stalled yet"
+    tripwire.observe(1800.0)  # stall
+    assert tripwire.consume_recovered() is False, "still stalled — not recovered"
+    tripwire.observe(50.0)  # recovers
+    assert tripwire.consume_recovered() is True
+    assert tripwire.consume_recovered() is False, (
+        "consuming it must clear the flag — a second read must not repeat it"
+    )
+    assert "recovered" in stall_recovered_log_line()
+
+
+@pytest.mark.asyncio
+async def test_recovery_notice_is_visible_without_arming_the_dump(caplog, monkeypatch) -> None:
+    """Tier 2b: #4797 follow-up (architect finding), REACHED from the running
+    app with REYN_PROF_DUMP deliberately left UNSET — the exact "unarmed
+    session" situation #4761's own report was in. The stall notice already
+    proved reachable in ``test_the_app_actually_shows_the_notice_when_the_
+    loop_stalls`` above; this proves the RECOVERY notice is too, without
+    which "it fired, then went quiet" was indistinguishable from "it fired,
+    then the process died" on a session nobody armed in advance.
+    """
+    import logging
+    import time
+
+    monkeypatch.delenv("REYN_PROF_DUMP", raising=False)
+    transport = QueueTransport()
+    app = TextualChatApp(transport=transport)
+    logger_name = "reyn.interfaces.inline.textual_chat.app"
+    with caplog.at_level(logging.INFO, logger=logger_name):
+        async with app.run_test(size=(80, 24)) as pilot:
+            await pilot.pause()
+            # A synchronous sleep stalls the loop; the ticks afterward are
+            # healthy again, which is what the recovery notice fires on.
+            time.sleep(0.4)
+            for _ in range(6):
+                await pilot.pause()
+
+    assert "unresponsive" in caplog.text, "the stall itself must still be reported"
+    assert "recovered" in caplog.text, (
+        "the recovery notice must be readable with REYN_PROF_DUMP unset — "
+        f"the exact situation #4761's own report was in: {caplog.text!r}"
     )
 
 

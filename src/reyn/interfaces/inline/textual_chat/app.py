@@ -1933,7 +1933,12 @@ class TextualChatApp(App):
         import asyncio  # noqa: PLC0415
         import time  # noqa: PLC0415
 
-        from .loop_probe import _TICK_SECONDS, stall_banner, stall_log_line  # noqa: PLC0415
+        from .loop_probe import (  # noqa: PLC0415
+            _TICK_SECONDS,
+            stall_banner,
+            stall_log_line,
+            stall_recovered_log_line,
+        )
 
         last = time.perf_counter()
         while True:
@@ -1948,6 +1953,14 @@ class TextualChatApp(App):
                     self.notify(stall_banner(fired), severity="warning")
                 except Exception:
                     logger.exception("textual chat: loop tripwire notice failed")
+            elif self._loop_tripwire.consume_recovered():
+                # #4797 follow-up (architect finding): default-visible, no
+                # REYN_PROF_DUMP required — everything else this tripwire
+                # writes goes through write_record, a no-op on the shipped
+                # default. logger.info, not .warning, per lead-coder's
+                # ruling: the stall already used the operator's attention
+                # budget once; recovery is good news, not a second alarm.
+                logger.info("textual chat: %s", stall_recovered_log_line())
 
     def on_mount(self) -> None:
         # #3505: #3504 made ``App``'s own background ``ansi_default`` (the
