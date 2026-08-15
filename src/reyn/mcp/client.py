@@ -1229,6 +1229,15 @@ class MCPClient:
                 # this PR's own port closes).
                 mode=_resolve_client_mode(self._config),
             )
+            # #4836: complete the message handler's weakref binding to THIS
+            # client now that it exists (constructor kwarg above required
+            # the handler to exist first, so it couldn't bind to a client
+            # that wasn't there yet) — must run before `client.__aenter__()`
+            # opens the transport, since no message can arrive before that.
+            # See reyn/mcp/message_handler.py's module docstring "Two-phase
+            # client binding" section for the full reasoning.
+            if self._message_handler is not None:
+                self._message_handler.bind_client(client)
             # #3028/#3698 stage 1 — PR-1 REVERSES this bound's mechanism
             # (live-verified, not assumed): `anyio.fail_after` around
             # `Client.__aenter__()` raises "Attempted to exit a cancel scope
@@ -1437,6 +1446,10 @@ class MCPClient:
                 # full PR-1/PR-2 history.
                 mode=_resolve_client_mode(self._config),
             )
+            # #4836: see _initialize_stdio's matching comment — complete the
+            # weakref binding now that `client` exists, before `__aenter__`.
+            if self._message_handler is not None:
+                self._message_handler.bind_client(client)
             # PR-1: `asyncio.wait_for`, not `anyio.fail_after` — see
             # _initialize_stdio's matching comment for the full live-verified
             # root-cause (an anyio LIFO cancel-scope-nesting violation
