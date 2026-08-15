@@ -138,8 +138,15 @@ _HEX_LITERAL_EXEMPT_DIRS = frozenset({"web"})
 #: whole point. Remove entries as each constant actually moves; the file
 #: drops out entirely once all 8 do.
 _PY_HEX_LITERAL_TRACKED = {
-    "repl/renderer.py": "#4787 — 8 constants, meaning-classification done, "
-                        "migration to palette.py in progress",
+    # lead-coder review (#4861): no count here — a written number goes
+    # stale the moment a migration commit lands (measured: this said "8
+    # constants" after #4861 had already moved 5 of them to palette.py,
+    # and the staleness test below cannot catch a wrong COUNT — it only
+    # fires when the file stops holding ANY hex literal at all, existence
+    # not quantity). The remaining sites are whatever _python_hex_literals()
+    # finds for this file right now — read that, not this string.
+    "repl/renderer.py": "#4787 — meaning-classification done, migration to "
+                        "palette.py in progress",
 }
 
 
