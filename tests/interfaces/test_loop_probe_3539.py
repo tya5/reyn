@@ -240,6 +240,50 @@ def test_the_durable_record_keeps_landing_while_the_banner_stays_quiet(
         "expected exactly the first crossing and the one past the interval — "
         f"the mid-interval tick and the recovered tick must not add entries: {records!r}"
     )
+    recovered_lateness = [
+        r["lateness_ms"] for r in records if r["kind"] == "tripwire_recovered"
+    ]
+    assert recovered_lateness == [50.0], (
+        "the recovered tick must write exactly ONE tripwire_recovered record — "
+        "without it, a trace that just stops leaves 'it recovered' and 'the "
+        f"process died mid-stall' looking identical: {records!r}"
+    )
+
+
+def test_recovery_is_recorded_only_once_per_episode(monkeypatch, tmp_path: Path) -> None:
+    """Tier 2: #4761 ① follow-up — a SECOND healthy tick after recovery must
+    not write a second ``tripwire_recovered`` record (it was already healthy,
+    nothing changed), and a SECOND stall episode must be able to record its
+    own recovery independently of the first."""
+    import json
+
+    target = tmp_path / "probe.jsonl"
+    monkeypatch.setenv("REYN_PROF_DUMP", str(target))
+
+    clock = [2000.0]
+    monkeypatch.setattr(loop_probe.time, "monotonic", lambda: clock[0])
+
+    tripwire = LoopTripwire(threshold_ms=250.0)
+
+    tripwire.observe(1800.0)  # episode 1: stall
+    clock[0] += 1.0
+    tripwire.observe(50.0)  # episode 1: recovers
+    clock[0] += 1.0
+    tripwire.observe(60.0)  # still healthy — no NEW recovery
+    clock[0] += 1.0
+    tripwire.observe(1700.0)  # episode 2: stall again
+    clock[0] += 1.0
+    tripwire.observe(40.0)  # episode 2: recovers
+
+    records = [
+        json.loads(line) for line in target.read_text(encoding="utf-8").splitlines()
+    ]
+    recovered_lateness = [
+        r["lateness_ms"] for r in records if r["kind"] == "tripwire_recovered"
+    ]
+    assert recovered_lateness == [50.0, 40.0], (
+        f"expected exactly one recovery record per episode: {records!r}"
+    )
 
 
 def test_the_worst_lateness_survives_the_tick_that_saw_it() -> None:

@@ -136,6 +136,11 @@ class LoopTripwire:
         #: ``None`` before the first one — independent of ``_fired`` (#4761
         #: ①: one flag was gating two different questions).
         self._last_recorded_monotonic: "float | None" = None
+        #: Whether the most recent tick was above threshold — lets a healthy
+        #: tick tell "recovered" (this was ``True``) from "was already
+        #: healthy" (this was ``False``) apart, so the durable trace can say
+        #: which one happened instead of just stopping either way.
+        self._in_stall = False
 
     @property
     def max_lateness_ms(self) -> float:
@@ -168,12 +173,20 @@ class LoopTripwire:
         which silence cannot answer either way. So ``write_record`` keeps
         firing at :data:`_RECORD_INTERVAL_S` while ``lateness_ms`` stays
         above threshold, independently of whether this call also returns a
-        value.
+        value — AND a healthy tick that follows a stall writes one
+        ``"tripwire_recovered"`` record, for the same reason: a trace that
+        just stops leaves "it recovered" and "the process died mid-stall"
+        looking identical, the same silence-hides-two-states shape #4761's
+        original defect had, one level up.
         """
         if lateness_ms > self._max_lateness_ms:
             self._max_lateness_ms = lateness_ms
         if lateness_ms <= self._threshold_ms:
+            if self._in_stall:
+                self._in_stall = False
+                write_record("tripwire_recovered", lateness_ms=round(lateness_ms, 1))
             return None
+        self._in_stall = True
         now = time.monotonic()
         if (
             self._last_recorded_monotonic is None
