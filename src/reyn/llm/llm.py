@@ -2487,6 +2487,7 @@ async def recorded_acompletion(
             return _stamp_usage_source(chunk_stream, UsageSource.PROVIDER)
         chunks = []
         _delta_fired = False
+        _tool_calls_seen = False
         async for chunk in chunk_stream:
             chunks.append(chunk)
             if on_content_delta is not None:
@@ -2504,6 +2505,17 @@ async def recorded_acompletion(
                             "recorded_acompletion: on_content_delta callback raised; "
                             "continuing the stream"
                         )
+            # #4805 review (lead-coder catch): a tool-only round's chunks
+            # legitimately never expose delta.content at all (tool_calls is
+            # a SEPARATE field) — this is reyn's most common round shape,
+            # not a defect. Tracked here, alongside _delta_fired, so the
+            # guard below can tell "genuinely dead" apart from "just a
+            # normal tool round."
+            try:
+                if chunk.choices[0].delta.tool_calls:
+                    _tool_calls_seen = True
+            except Exception:  # noqa: BLE001 — malformed/empty chunk shape
+                pass
         # #3288 ③b co-vet fix: a silent functional-dead-mode guard. If the
         # provider streamed at least one chunk AND a callback was supplied,
         # but NOT ONE chunk ever exposed a non-empty delta.content (e.g. a
@@ -2514,14 +2526,23 @@ async def recorded_acompletion(
         # ONE log per STREAM (not per chunk, which would be noise) is cheap
         # and makes that silent mode observable.
         #
-        # #4805: WARNING, not debug — this branch's OWN condition (a
-        # callback was supplied, chunks arrived, none exposed a delta) is
-        # EXCLUSIVELY the defect signal the comment above describes; it
-        # never fires on a normally-working stream (where at least one
-        # chunk exposes a delta). A guard whose firing is invisible under
-        # the interactive CUI's production floor (WARNING) is the same as
-        # having no guard at all — see this issue's own title.
-        if on_content_delta is not None and chunks and not _delta_fired:
+        # #4805: WARNING, not debug — but ONLY when genuinely dead (no text
+        # delta AND no tool_calls either). My first pass raised this to
+        # WARNING gated on `not _delta_fired` alone — lead-coder review
+        # caught that a TOOL-ONLY round (the assistant calls tools with no
+        # accompanying text, reyn's own most common round shape) ALSO never
+        # exposes delta.content, so that gate would have warned on every
+        # ordinary tool call, false-alarming exactly the way I flagged for
+        # message_handler.py's own case and failed to apply here. Excluding
+        # `_tool_calls_seen` restores the guard's own stated property (fires
+        # ONLY on the defect, never on healthy traffic) instead of just
+        # reverting the severity.
+        if (
+            on_content_delta is not None
+            and chunks
+            and not _delta_fired
+            and not _tool_calls_seen
+        ):
             logger.warning(
                 "recorded_acompletion: streamed %d chunk(s) but on_content_delta "
                 "never fired — the provider's chunk shape may not expose "
