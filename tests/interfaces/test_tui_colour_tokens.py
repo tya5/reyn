@@ -56,6 +56,14 @@ _COLOURLESS = frozenset({"none", "transparent", "auto", "initial", "hidden"})
 #: one — ``f"italic {_CC_DIM}"`` (a later USE of an already-declared name)
 #: does not match this pattern; only the assignment that first wrote the hex
 #: string does.
+#:
+#: Known limit (lead-coder review, non-blocking): this is a LITERAL-string
+#: pattern, not a value-flow analysis — ``"#" + "6b7280"`` or a hex string
+#: built from a variable/expression is invisible to it, the same class of
+#: gap ``_DECLARATION`` above already has for CSS. A green run here says "no
+#: bare hex-string literal", not "no hex value anywhere" — enumerating the
+#: actual escape shapes worth guarding is a separate, future exercise if one
+#: is ever found in practice, not a promise this pattern already makes.
 _PY_HEX_LITERAL = re.compile(r"""(['"])#[0-9a-fA-F]{6}(?:[0-9a-fA-F]{2})?\1""")
 
 
