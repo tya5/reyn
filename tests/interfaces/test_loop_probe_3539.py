@@ -926,9 +926,34 @@ async def test_turn_active_reaches_the_default_visible_stall_notice(
             from reyn.interfaces.inline.textual_chat.activity_row import ActivityRow
             while app.query_one(ActivityRow).state is None:
                 await pilot.pause()
+            # #4827① recurrence diagnostic (lead-coder): the wait loop above
+            # reads `query_one(ActivityRow)`; the tripwire's own tick reads
+            # `self._activity` directly (app.py's `getattr(self, "_activity",
+            # None)`). "Same object" was only verified structurally
+            # (compose() assigns self._activity exactly once, the same
+            # object it yields into the tree) — never empirically, on a
+            # CI host, at the moment a real failure happened. Captured here,
+            # while the app is still alive/mounted (post-teardown queries
+            # are unreliable) — used only in the enriched assert message
+            # below, so this costs nothing on a passing run.
+            _diag_activity_obj_id = id(app._activity)
+            _diag_query_obj_id = id(app.query_one(ActivityRow))
+            _diag_state_at_confirm = app._activity.state
             time.sleep(stall_seconds)
             while "unresponsive" not in logfile.read_text(encoding="utf-8"):
                 await pilot.pause()
+            # lead-coder's TESTS-READ (#4842): these 3 are read AFTER this
+            # test's OWN loop above observes "unresponsive" in the logfile —
+            # not synchronized with the tripwire's own tick that actually
+            # WROTE the line. By the time this runs, further ticks may have
+            # already advanced pump_ticks/keys_received past what the
+            # tripwire itself saw, and activity.state could in principle
+            # have moved again too. Still useful (a divergence AT LEAST this
+            # late is still a divergence), but "at observation-time" is the
+            # honest name — not "at the tripwire's own read".
+            _diag_pump_ticks_after_notice_observed = app.pump_ticks
+            _diag_keys_received_after_notice_observed = app.keys_received
+            _diag_state_after_notice_observed = app._activity.state
     finally:
         for handler in root.handlers:
             if handler not in saved_handlers:
@@ -940,5 +965,13 @@ async def test_turn_active_reaches_the_default_visible_stall_notice(
     stall_line = next(line for line in content.splitlines() if "unresponsive" in line)
     assert "turn active" in stall_line, (
         "a stall observed while a real turn_started event is in flight must "
-        f"say so in the default-visible notice: {stall_line!r}"
+        f"say so in the default-visible notice: {stall_line!r}. "
+        "#4827① recurrence diagnostic — "
+        f"id(self._activity) at confirm-time={_diag_activity_obj_id!r} "
+        f"id(query_one(ActivityRow)) at confirm-time={_diag_query_obj_id!r} "
+        f"(same object: {_diag_activity_obj_id == _diag_query_obj_id}); "
+        f"activity.state at confirm-time={_diag_state_at_confirm!r} "
+        f"activity.state after this test observed the notice={_diag_state_after_notice_observed!r}; "
+        f"pump_ticks after this test observed the notice={_diag_pump_ticks_after_notice_observed!r} "
+        f"keys_received after this test observed the notice={_diag_keys_received_after_notice_observed!r}"
     )
