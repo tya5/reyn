@@ -899,7 +899,23 @@ async def test_turn_active_reaches_the_default_visible_stall_notice(
                     data={"kind": "user", "chain_id": "chain-1", "seq": 1},
                 )
             )
-            await pilot.pause()
+            # #4827 (same class as ①, folded here): a single pilot.pause()
+            # was trusted as "the pushed event has been processed", before
+            # immediately entering the real, blocking time.sleep() stall
+            # phase below — under real CI-host contention that trust can be
+            # wrong (measured: this exact assert failed in CI with
+            # "turn idle" instead of "turn active", same run that also hit
+            # ①'s failure). Wait on the real fact this test depends on — the
+            # App's own turn-activity surface, the same one
+            # ``_watch_loop_responsiveness`` reads (``self._activity.state
+            # is not None``) — via Textual's public widget query rather
+            # than reaching into the private attribute. Unbounded (CLAUDE.md
+            # testing policy: no attempts=N / time-bound); CI's own
+            # --timeout=120 is the kill switch if the wiring is ever
+            # actually broken and this never arrives.
+            from reyn.interfaces.inline.textual_chat.activity_row import ActivityRow
+            while app.query_one(ActivityRow).state is None:
+                await pilot.pause()
             time.sleep(stall_seconds)
             while "unresponsive" not in logfile.read_text(encoding="utf-8"):
                 await pilot.pause()
