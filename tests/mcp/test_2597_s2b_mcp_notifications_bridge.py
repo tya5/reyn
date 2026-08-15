@@ -18,6 +18,7 @@ import pytest
 
 from reyn.core.events.events import EventLog
 from reyn.llm.model_resolver import ModelResolver
+from reyn.mcp.client import MCPClient
 from reyn.mcp.connection_service import MCPConnectionService
 from reyn.mcp.message_handler import ReynMCPMessageHandler
 from reyn.runtime.services import (
@@ -287,6 +288,41 @@ async def test_task_status_routing_via_composed_call():
 
     (routed,) = fake_client.routed  # exactly one status notification was dispatched
     assert routed.params.taskId == "task-1"
+
+
+@pytest.mark.asyncio
+async def test_initialize_stdio_actually_binds_the_message_handler_to_the_real_client():
+    """Tier 2: #4836 — ``MCPClient._initialize_stdio``'s production call site
+    actually invokes ``bind_client(client)`` with the REAL ``mcp.Client`` it
+    just constructed, not merely that :meth:`ReynMCPMessageHandler.bind_client`
+    works in isolation when called directly (the sibling tests in this file,
+    and #4457's own skipped test, only ever call it by hand against a fake).
+    #4282 retired fastmcp from the client path and, with it, the ONE call site
+    that used to invoke ``bind_client`` at all — restored here targeting the
+    official SDK's ``Client`` instead. Real stdio connection (the same echo
+    server this file's other tests use), real ``MCPClient.initialize()`` —
+    the same production entrypoint ``MCPConnectionService``/every live chat
+    turn goes through — asserted via the handler's own public
+    :meth:`~reyn.mcp.message_handler.ReynMCPMessageHandler.is_bound`, not a
+    reach into either object's private state.
+
+    Falsify (owner-instructed weak-witness shape, mcp 2.0 doesn't currently
+    deliver ``TaskStatusNotification`` at all — #4457 — so the binding's
+    actual CONSUMER can't be witnessed end-to-end today): stripping the
+    restored ``bind_client`` call from ``_initialize_stdio`` flips this test
+    red (``is_bound()`` stays False, the weakref target is never set) while
+    every other test in this file's own bucket stays green — confirmed by
+    hand before landing."""
+    handler = ReynMCPMessageHandler(lambda *a, **k: None, "srv")
+    assert not handler.is_bound(), "unbound until a real client actually binds"
+
+    async with MCPClient(_CFG, message_handler=handler) as client:
+        assert client.is_initialized()
+        assert handler.is_bound(), (
+            "the real production init path must call bind_client() with the "
+            "client it just constructed, not leave the two-phase binding "
+            "incomplete"
+        )
 
 
 @pytest.mark.asyncio
