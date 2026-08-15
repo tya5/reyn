@@ -20,7 +20,10 @@ keywords = [
     "multi-agent",
     "orchestration",
     "os",
-    "phase",
+    # "phase" removed (#4737): a PyPI discovery keyword for the phase-graph
+    # skill engine, removed in #2434/#2438 — "dsl" above still applies (the
+    # live pipeline DSL), this one described a feature that no longer
+    # exists.
     "LLM workflow",
 ]
 classifiers = [
