@@ -39,6 +39,7 @@ from reyn.data.workspace.workspace import Workspace
 from reyn.runtime.hot_reload import (
     HotReloader,
     dispatch_install_reload,
+    get_active_hot_reloader,
     is_pure_addition,
     set_active_hot_reloader,
 )
@@ -258,6 +259,81 @@ async def test_operator_reload_still_runs_all_seams(tmp_path: Path) -> None:
 
     assert set(summary["applied"]) == {"skills", "pipelines"}
     assert ran == {"skills": 1, "pipelines": 1}
+
+
+# ===========================================================================
+# A2. #4862 rescue — session.hot_reloader IS wired to session.audit_events,
+# and get_active_hot_reloader() IS this session's own reloader
+# ===========================================================================
+#
+# Replaces tests/scaffold/test_family3_hook_event_bundle_byte_identical.py's
+# test_hot_reloader_events_is_the_family_audit_events (invariant 5) and
+# test_get_active_hot_reloader_is_this_sessions_reloader (invariant 6),
+# which pinned both via private-attribute identity (`session._hot_reloader`
+# / `session._audit_events`, a scaffold-only exception). Rescued at the
+# public surface via the new `session.hot_reloader` / `session.audit_events`
+# accessors (#4862 step ②).
+
+
+@pytest.mark.asyncio
+async def test_session_hot_reloader_reload_lands_in_session_audit_events(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Tier 2: a reload run through ``session.hot_reloader`` emits
+    ``config_reloaded`` that lands in ``session.audit_events`` specifically
+    — witnessed via effect (real reload + real subscriber), not a private
+    ``hot_reloader.events is audit_events`` identity peek. If the two were
+    wired to DIFFERENT EventLogs, this reload's event would never reach
+    ``session.audit_events``'s subscribers."""
+    monkeypatch.chdir(tmp_path)
+    session = _make_session(tmp_path)
+    collected = collect_events(session.audit_events)
+
+    await session.hot_reloader.apply_all(exclude=frozenset())
+
+    types = [e.type for e in collected]
+    assert "config_reloaded" in types, (
+        f"a reload through session.hot_reloader must emit config_reloaded "
+        f"onto session.audit_events; observed types={types}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_strip_falsify_hot_reloader_events_wiring_is_live(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Tier 2: strip-falsify — a reload run on a FRESH, independently-wired
+    ``HotReloader`` (events=a different EventLog, never ``session.
+    audit_events``) must NOT land its ``config_reloaded`` event on
+    ``session.audit_events``'s subscribers, proving the positive test
+    above is genuinely reading session.hot_reloader's OWN wiring, not a
+    check that would trivially pass for any reload anywhere."""
+    monkeypatch.chdir(tmp_path)
+    session = _make_session(tmp_path)
+    collected = collect_events(session.audit_events)
+
+    poisoned = HotReloader(project_root=tmp_path, events=EventLog())
+    await poisoned.apply_all(exclude=frozenset())
+
+    types = [e.type for e in collected]
+    assert "config_reloaded" not in types, (
+        "a reload on an INDEPENDENT HotReloader must not land on "
+        "session.audit_events — otherwise the positive test's assertion "
+        "would be vacuous"
+    )
+
+
+def test_get_active_hot_reloader_is_this_sessions_reloader(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Tier 2: ``get_active_hot_reloader()`` (the process-wide registration
+    every Session performs at construction) returns THIS session's own
+    ``hot_reloader`` — both sides now public (`get_active_hot_reloader`
+    always was; `session.hot_reloader` since #4862 step ②), so this is a
+    direct identity check, not an indirect effect."""
+    monkeypatch.chdir(tmp_path)
+    session = _make_session(tmp_path)
+    assert get_active_hot_reloader() is session.hot_reloader
 
 
 # ===========================================================================
