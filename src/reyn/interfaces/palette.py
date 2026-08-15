@@ -150,6 +150,36 @@ TOKENS: "dict[str, str]" = {
     "@warning@": "#e3b341",     # amber — state-palette + SESSION HALTED (was _CC_WARN)
     "@accent@": "#d97757",      # terracotta — primary interactive accent (was _CC_ACCENT)
     "@secondary@": "#6cb6ff",   # blue — secondary/markdown accent (was _CC_COOL)
+    #: The 6th of the 8 — moved alone, NOT together with ``_CC_USER_BG``/
+    #: ``_CC_ERR_BG`` (renderer.py's own remaining two), which stay blocked
+    #: on #4840's colour-direction question. Safe to move independently:
+    #: this changes WHERE the value is declared, never the value itself
+    #: (``#6b7280``, unchanged) — renderer.py's own comment on the
+    #: constant this replaces documents a WCAG-measured contrast PAIRING
+    #: against ``_CC_USER_BG`` (#3371: 3.30 at this exact value, below WCAG
+    #: AA-large's 3.0 threshold at the prior one); since neither value
+    #: changes, only the declaration site, that measured pairing is
+    #: untouched. Low-importance/ambient is its own clear meaning (unlike
+    #: the backgrounds, which double as candidates for #4840's
+    #: still-undecided ``background``/``panel`` — see #4787's own comment
+    #: thread), so this one didn't need to wait for that ruling.
+    #:
+    #: **★changing this value breaks renderer.py's own measured 3.30
+    #: contrast ratio against ``_CC_USER_BG`` there** (architect finding,
+    #: #4787) — the two halves of that ONE measurement now live in
+    #: different files, since ``_CC_USER_BG`` itself stays put pending
+    #: #4840. Re-measure BOTH sides together, not just this one, if either
+    #: changes.
+    #:
+    #: **Unlike the 5 above, this one does NOT become a Textual token
+    #: reference once #4840's theme exists** — it stays a permanently
+    #: CONCRETE value. renderer.py's own comment on the constant this
+    #: replaces documents two independent reasons: ``prompt_toolkit``
+    #: rejects an SGR-only style outright (``fg:dim`` raises
+    #: ``ValueError``, measured), and #3367's contrast gate "skips any
+    #: segment whose foreground is not concrete" — a ``$token`` reference
+    #: resolved at Textual-theme time would be invisible to both.
+    "@dim@": "#6b7280",  # low-importance / ambient, as a COLOUR (was _CC_DIM)
 }
 
 #: The NOW row's travelling shine (#3777), as a GROUND and a PEAK per terminal
