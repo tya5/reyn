@@ -256,6 +256,8 @@ def stall_log_line(
     pump_ticks: "int | None" = None,
     pump_delta: "int | None" = None,
     pump_window_s: "float | None" = None,
+    keys_received: "int | None" = None,
+    keys_delta: "int | None" = None,
 ) -> str:
     """The durable record of a stall — the one that survives the operator
     looking away.
@@ -279,6 +281,14 @@ def stall_log_line(
     event required. ``0`` here is the H1 signal (pump had already
     stopped advancing before the stall was even noticed); a positive
     delta rules H1 out for this episode on its own.
+
+    ``keys_received``/``keys_delta`` (#4761 ③) follow the SAME
+    self-contained-in-one-line shape, deliberately not a pair with a
+    recovery-side reading, for the same reason: an H3 diagnosis ("keys
+    aren't reaching the App at all") is needed most on a freeze that never
+    resolves. A ticking pump (``pump_delta`` > 0) with ``keys_delta`` at
+    ``0`` despite an operator who reports pressing several keys is H3, not
+    H1/H2 — the pump is fine, input simply never arrived.
     """
     ticks_note = ""
     if pump_ticks is not None:
@@ -289,9 +299,19 @@ def stall_log_line(
             )
         else:
             ticks_note = f" (pump heartbeat at {pump_ticks})"
+    keys_note = ""
+    if keys_received is not None:
+        if keys_delta is not None and pump_window_s is not None:
+            keys_note = (
+                f" (keys received: {keys_received}, +{keys_delta} in the "
+                f"last {pump_window_s:.0f}s)"
+            )
+        else:
+            keys_note = f" (keys received: {keys_received})"
     return (
         f"the interface was unresponsive for {lateness_ms / 1000:.1f}s"
-        f"{ticks_note} — re-run with {_DUMP_ENV}=<path> to record what it was doing"
+        f"{ticks_note}{keys_note} — re-run with {_DUMP_ENV}=<path> to record "
+        "what it was doing"
     )
 
 
