@@ -779,6 +779,19 @@ async def test_keys_received_reaches_the_default_visible_stall_notice(
         async with app.run_test(size=(80, 24)) as pilot:
             await pilot.pause()
             await pilot.press("a", "b", "c")
+            # #4827①: pilot.press() awaits Textual's own message-queue-drain
+            # marker (Pilot._wait_for_screen), which is robust — but under
+            # real CI-host CPU contention the WHOLE process (this one, not
+            # just key dispatch) can be starved long enough that press()'s
+            # return is not yet followed by the counter's own read being
+            # observed consistent with it on this exact interpreter turn.
+            # Rather than trust press()'s return as an implicit guarantee,
+            # wait on the actual fact the rest of this test depends on
+            # before entering the timing-sensitive stall phase below — an
+            # unbounded condition wait (CLAUDE.md testing policy: no
+            # attempts=N / time-bound), never a race the test itself builds.
+            while app.keys_received < 3:
+                await pilot.pause()
             time.sleep(stall_seconds)
             while "recovered" not in logfile.read_text(encoding="utf-8"):
                 await pilot.pause()
