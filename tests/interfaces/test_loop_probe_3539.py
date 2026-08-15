@@ -530,3 +530,134 @@ async def test_a_stall_costs_no_row_of_layout(caplog) -> None:
         "at 80 columns that spends a row of conversation, permanently, on a "
         "momentary hiccup"
     )
+
+
+# ── #4761 ②: the App pump heartbeat ─────────────────────────────────────────
+
+
+def test_stall_and_recovered_lines_carry_pump_ticks_when_given() -> None:
+    """Tier 2: #4761 ② — the two default-visible notices embed the pump
+    heartbeat's value when the caller has one, and stay exactly as they
+    were (#4801/#4804's own wording) when it doesn't — this module has no
+    idea whether a caller tracks pump ticks at all, so the parameter must
+    be fully optional."""
+    with_ticks = stall_log_line(1800.0, pump_ticks=42)
+    assert "1.8s" in with_ticks
+    assert "42" in with_ticks
+    without_ticks = stall_log_line(1800.0)
+    assert "42" not in without_ticks
+    assert without_ticks == (
+        "the interface was unresponsive for 1.8s — re-run with "
+        "REYN_PROF_DUMP=<path> to record what it was doing"
+    )
+
+    recovered_with_ticks = stall_recovered_log_line(pump_ticks=99)
+    assert "99" in recovered_with_ticks
+    assert stall_recovered_log_line() == "the interface recovered from the stall reported above"
+
+
+def test_observe_threads_pump_ticks_into_both_durable_record_kinds(
+    monkeypatch, tmp_path: Path,
+) -> None:
+    """Tier 2: #4761 ② — an armed session's durable trace carries the SAME
+    pump-ticks value the caller passed, for both the periodic ``"tripwire"``
+    record and the ``"tripwire_recovered"`` one — the comparable pair an
+    operator with detail on would need to see whether the count moved
+    during an ongoing stall."""
+    import json
+
+    target = tmp_path / "probe.jsonl"
+    monkeypatch.setenv("REYN_PROF_DUMP", str(target))
+    tripwire = LoopTripwire(threshold_ms=250.0)
+
+    tripwire.observe(1800.0, pump_ticks=5)
+    tripwire.observe(50.0, pump_ticks=8)
+
+    records = [
+        json.loads(line) for line in target.read_text(encoding="utf-8").splitlines()
+    ]
+    by_kind = {r["kind"]: r for r in records}
+    assert by_kind["tripwire"]["pump_ticks"] == 5
+    assert by_kind["tripwire_recovered"]["pump_ticks"] == 8
+
+
+@pytest.mark.asyncio
+async def test_on_timer_advances_pump_ticks_only_for_its_own_timer() -> None:
+    """Tier 2: #4761 ② — the discriminator this mechanism depends on:
+    ``on_timer`` must advance ``_pump_ticks`` for the App's OWN heartbeat
+    Timer and NOT for an unrelated one, or the counter's meaning drifts
+    from "this app's own message pump is alive" to "some timer somewhere
+    fired," which the docstring explicitly rules out. Delegation to
+    Textual's own base ``on_timer`` (which invokes a Timer's real
+    ``callback``, if any) is also exercised here via the two real
+    ``self.set_timer(..., callback=...)`` sites elsewhere in this class
+    — a broken delegation would leave voice-recording's own timeout or
+    the streamed-reply catch-up silently never firing, not just this
+    counter untested."""
+    from textual import events
+
+    transport = QueueTransport()
+    app = TextualChatApp(transport=transport)
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        before = app.pump_ticks
+        assert app.pump_heartbeat_timer is not None
+
+        # Our own timer's event: advances the counter.
+        await app.on_timer(events.Timer(timer=app.pump_heartbeat_timer, time=0.0, count=1))
+        assert app.pump_ticks == before + 1
+
+        # A DIFFERENT timer's event: must NOT advance it — the
+        # discriminator itself, not just "some timer event was handled".
+        other_timer = app.set_timer(999.0, name="unrelated-probe-timer")
+        try:
+            await app.on_timer(events.Timer(timer=other_timer, time=0.0, count=1))
+            assert app.pump_ticks == before + 1, (
+                "on_timer must only advance _pump_ticks for its OWN timer"
+            )
+        finally:
+            other_timer.stop()
+
+
+@pytest.mark.asyncio
+async def test_pump_heartbeat_reaches_the_default_visible_notices(
+    tmp_path, monkeypatch,
+) -> None:
+    """Tier 2b: #4761 ② — REACHED end to end: a real stall + recovery,
+    under the reconstructed real logging floor (no ``caplog``, mirroring
+    #4804's own pattern), and the pump-ticks value from the App's real
+    ``_pump_ticks`` counter actually lands in both default-visible notices
+    — not just that the formatting functions accept the parameter in
+    isolation (the sibling unit test above), but that app.py's own call
+    site actually supplies it."""
+    import logging
+    import time
+
+    logfile = tmp_path / "reyn.log"
+    root = logging.getLogger()
+    saved_handlers = root.handlers[:]
+    saved_level = root.level
+    monkeypatch.delenv("REYN_PROF_DUMP", raising=False)
+    try:
+        logging.basicConfig(
+            filename=str(logfile), level=logging.WARNING, force=True,
+        )
+        stall_seconds = (loop_probe._TRIPWIRE_MS + 150) / 1000
+        transport = QueueTransport()
+        app = TextualChatApp(transport=transport)
+        async with app.run_test(size=(80, 24)) as pilot:
+            await pilot.pause()
+            time.sleep(stall_seconds)
+            while "recovered" not in logfile.read_text(encoding="utf-8"):
+                await pilot.pause()
+    finally:
+        for handler in root.handlers:
+            if handler not in saved_handlers:
+                handler.close()
+        root.handlers = saved_handlers
+        root.setLevel(saved_level)
+
+    content = logfile.read_text(encoding="utf-8")
+    assert "pump heartbeat" in content, (
+        f"the pump-ticks reading must reach the real, default-visible log: {content!r}"
+    )

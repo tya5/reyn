@@ -171,7 +171,9 @@ class LoopTripwire:
         self._just_recovered = False
         return recovered
 
-    def observe(self, lateness_ms: float) -> "float | None":
+    def observe(
+        self, lateness_ms: float, *, pump_ticks: "int | None" = None,
+    ) -> "float | None":
         """Record one tick's lateness; return it the FIRST time it is bad.
 
         Returns ``None`` on every later crossing as well as on healthy ticks: a
@@ -197,6 +199,14 @@ class LoopTripwire:
         just stops leaves "it recovered" and "the process died mid-stall"
         looking identical, the same silence-hides-two-states shape #4761's
         original defect had, one level up.
+
+        ``pump_ticks``, if the caller has one (#4761 ②: ``TextualChatApp``'s
+        own message-pump heartbeat counter), rides along in every
+        ``write_record`` call this method makes — a *comparable* value
+        across the periodic ``"tripwire"`` records lets an armed session
+        see whether the count kept moving DURING an ongoing, not-yet-
+        recovered stall, which the once-per-episode default-visible notice
+        (below) cannot show on its own.
         """
         if lateness_ms > self._max_lateness_ms:
             self._max_lateness_ms = lateness_ms
@@ -204,7 +214,11 @@ class LoopTripwire:
             if self._in_stall:
                 self._in_stall = False
                 self._just_recovered = True
-                write_record("tripwire_recovered", lateness_ms=round(lateness_ms, 1))
+                write_record(
+                    "tripwire_recovered",
+                    lateness_ms=round(lateness_ms, 1),
+                    **({} if pump_ticks is None else {"pump_ticks": pump_ticks}),
+                )
             return None
         self._in_stall = True
         now = time.monotonic()
@@ -212,7 +226,11 @@ class LoopTripwire:
             self._last_recorded_monotonic is None
             or now - self._last_recorded_monotonic >= _RECORD_INTERVAL_S
         ):
-            write_record("tripwire", lateness_ms=round(lateness_ms, 1))
+            write_record(
+                "tripwire",
+                lateness_ms=round(lateness_ms, 1),
+                **({} if pump_ticks is None else {"pump_ticks": pump_ticks}),
+            )
             self._last_recorded_monotonic = now
         if self._fired:
             return None
@@ -232,7 +250,7 @@ def stall_banner(lateness_ms: float) -> str:
     return f"unresponsive {lateness_ms / 1000:.1f}s"
 
 
-def stall_log_line(lateness_ms: float) -> str:
+def stall_log_line(lateness_ms: float, *, pump_ticks: "int | None" = None) -> str:
     """The durable record of a stall — the one that survives the operator
     looking away.
 
@@ -241,14 +259,22 @@ def stall_log_line(lateness_ms: float) -> str:
     diagnosing it later is usually not that person. This line carries the
     magnitude AND how to record the detail on the next occurrence, which the
     short segment has no room for.
+
+    ``pump_ticks`` (#4761 ②), when given, is the App's own message-pump
+    heartbeat counter's value AT THE MOMENT the stall was noticed — the
+    other end of the comparison :func:`stall_recovered_log_line` reports
+    if this episode resolves. On its own it says nothing (there is no
+    prior value to compare it to yet); its purpose is being the FIRST of
+    the pair.
     """
+    ticks_note = "" if pump_ticks is None else f" (pump heartbeat at {pump_ticks})"
     return (
-        f"the interface was unresponsive for {lateness_ms / 1000:.1f}s "
-        f"— re-run with {_DUMP_ENV}=<path> to record what it was doing"
+        f"the interface was unresponsive for {lateness_ms / 1000:.1f}s"
+        f"{ticks_note} — re-run with {_DUMP_ENV}=<path> to record what it was doing"
     )
 
 
-def stall_recovered_log_line() -> str:
+def stall_recovered_log_line(*, pump_ticks: "int | None" = None) -> str:
     """The default-visible recovery notice — no ``REYN_PROF_DUMP`` required.
 
     architect finding (#4797 follow-up): every OTHER new signal this module
@@ -268,5 +294,18 @@ def stall_recovered_log_line() -> str:
     not quieter, genuinely absent. Stall and recovery are the start and
     end of ONE episode; one WARNING line per episode is not a second
     alarm.
+
+    ``pump_ticks`` (#4761 ②), when given, is the App's own message-pump
+    heartbeat counter's value at recovery — held against
+    :func:`stall_log_line`'s own reading from the SAME episode's start.
+    If the two differ, the pump kept dispatching messages throughout the
+    stall (H1 ruled out for this episode); if they're equal, the pump
+    never advanced at all (H1 the leading candidate).
     """
-    return "the interface recovered from the stall reported above"
+    if pump_ticks is None:
+        return "the interface recovered from the stall reported above"
+    return (
+        "the interface recovered from the stall reported above "
+        f"(pump heartbeat at {pump_ticks} — compare against the stall "
+        "notice's own reading)"
+    )
