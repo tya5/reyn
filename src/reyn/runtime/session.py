@@ -1276,6 +1276,23 @@ class Session:
         self._project_context_watcher = ProjectContextWatcher(
             path=project_context_path, events=self._audit_events,
         )
+        # #3787 (owner ruling B): a SECOND watcher, same class, for this
+        # agent's own ``.reyn/agents/<agent_name>/AGENTS.md``. Unlike the
+        # project-side instance above, the reload for THIS file doesn't
+        # depend on this watcher at all — RouterHostAdapter.get_project_context
+        # reads it fresh on every call (see that method's own docstring). This
+        # watcher's only job here is the audit-event signal ("an edit was
+        # observed") on the SAME project_context_changed kind, told apart from
+        # the project-wide one via the emitted `path` (this one is always
+        # `.reyn/agents/<agent_name>/AGENTS.md`, the other is
+        # `project_context_path`'s resolved file). No LIVE subscriber reads
+        # this today — same as every other `*_changed` kind (band:
+        # observability, see events.md's own row for this kind), it exists
+        # for the audit trail, not a reactive path. No new machinery: the
+        # existing mtime-compare class, constructed a second time.
+        self._agent_context_watcher = ProjectContextWatcher(
+            path=self.workspace_dir / "AGENTS.md", events=self._audit_events,
+        )
         # Publish this session's EventLog as the ambient LLM-chokepoint sink (#1669, see docs/reference/runtime/session-construction.md#family-1-audit-event-spine-p6)
         from reyn.core.events.events import set_llm_request_event_log
         set_llm_request_event_log(self._audit_events)
@@ -8690,6 +8707,13 @@ class Session:
             # #3787: project-context edit detection — read-only, emits at most once per
             # edit; does NOT reload ``self._project_context`` (see ProjectContextWatcher).
             self._project_context_watcher.check()
+            # #3787: the agent-side sibling — same audit-event kind, path
+            # tells the two apart. Unlike the line above, THIS file's
+            # content already reloads unconditionally on every
+            # RouterHostAdapter.get_project_context() call regardless of
+            # what this check() call returns — it exists purely so an edit
+            # is observable on the audit trail.
+            self._agent_context_watcher.check()
             # ADR-0038 Stage 1a: turn boundary = a user-facing checkpoint. #1547: the
             # user message is this checkpoint's anchor for the rewind-timeline preview.
             # #1533 2c: the FULL message is persisted alongside (edit-prefill source).
