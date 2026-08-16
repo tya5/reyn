@@ -1383,8 +1383,10 @@ A PR sat blocked for ten hours with no identifiable author. Its role prefix
 (`**[role]**`) is the only cross-session author signal in this repo — every
 session authenticates as the same `gh` account, so `--json author` cannot
 distinguish them. A broadcast went to fourteen sessions asking the author to
-come forward; the reviewing session had grepped the body for the prefix and
-found none.
+come forward. The reviewing session had grepped the body for the prefix and
+found none — but **that is not what the broadcast said**. It said the author
+could not be identified. The premise arrived without its evidence, so there
+was nothing available to re-derive except the conclusion itself.
 
 A second session picked it up and did its own work — grepped the body itself,
 got the same empty result, then widened to a 200-PR census to find out *how
@@ -1399,7 +1401,10 @@ The second session never asked *whether* the author was identifiable. The
 question it inherited — "why can't the author be identified?" — already
 asserted the answer, so opening the body was not a step in any plan it made.
 It searched for a cause, found a plausible one, and built a structural
-diagnosis on top of it. The two sessions' errors look identical (same regex)
+diagnosis on top of it. (Numbers here are as of 2026-08-16, over the 200
+most recent PRs at that time — a population is a function of when it was
+taken, and these are quoted below without a re-measurement.) The two
+sessions' errors look identical (same regex)
 but are not the same failure: the first made a measurement mistake; the
 second **adopted a conclusion as a starting condition** and then spent real
 effort downstream of it. Independent measurement is not independence when the
@@ -1430,6 +1435,11 @@ rather than the claim's content.
   If a task arrives with a fact already stated, that fact is unobserved by
   you until you observe it; "I measured everything downstream" is not a
   witness for it.
+- **Send premises with their evidence.** The prescription is not only on the
+  receiving side: "the author cannot be identified" gives a reader nothing to
+  check, while "I grepped the body with `<pattern>` and got zero" hands over
+  the exact thing that turned out to be wrong. A conclusion broadcast without
+  its derivation cannot be re-derived by anyone who receives it.
 - **The tell is a plan with no step that could fail.** A search for the
   cause of X has no branch where X turns out to be false — if nothing in
   your plan can end with "the premise was wrong," the premise is not being
