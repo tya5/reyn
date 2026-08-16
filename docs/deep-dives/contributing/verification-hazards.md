@@ -130,6 +130,19 @@ absences aggregate into a confident violation count that reads as
 discovery.** Nothing about "if a zero matters, re-run with one metacharacter
 dropped" reaches this, because the number that mattered was 60.
 
+It is also worth being precise about what this third instance is *not*: unlike
+the two above, it has no tool dependency. `[a-z-]+` excludes digits in every
+regex flavour — measured on this machine, both `git grep -E` and BSD
+`/usr/bin/grep -E` return zero for `\*\*\[[a-z-]+\]\*\*` against a literal
+`**[e2e-coder]**`, and both return one when the class admits digits. (The same
+measurement incidentally isolates the earlier trap further: for `\b`, ugrep and
+BSD `grep` both understand it and only `git grep` does not — so `git grep` is
+the outlier, not the majority.) Reaching for `-P` or a portable class fixes
+instances one and two and does nothing for this one: **the first two are a
+broken instrument, the third is a correct instrument answering the question
+that was actually asked.** No flavour of grep can tell you that you described
+the wrong population.
+
 What caught it was not a method. Two minutes earlier the same session had
 printed one PR body and read `**[e2e-coder]**` at the top of it with its own
 eyes, then watched the census classify that same body as prefix-less — a
