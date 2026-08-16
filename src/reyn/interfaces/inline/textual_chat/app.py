@@ -1018,6 +1018,26 @@ class TextualChatApp(App):
         padding: 0 1;
     }
     MenuBar:focus-within { text-style: none; }
+    /* #4840/#3528: re-affirms ``dim`` on every tab once focus enters the
+       menu — ``MenuBar:focus-within`` above clears ``text-style`` on the
+       WHOLE bar (including inherited ``dim``), and nothing re-applied it to
+       the tabs that are not the active one. #3528's own words above say
+       the inactive tabs should STAY "dim already, so the bar as a whole
+       does not visibly lift" — that was the intent from the start, but the
+       gap existed since #3528 itself; it was invisible until now because
+       Textual's OWN ``Tab`` widget carries a builtin
+       ``&:ansi { text-style: dim; ...}`` rule (``_tabs.py``) that stayed in
+       effect throughout under ``ansi-dark`` (``ansi=True`` disables
+       nothing about this — the ``:ansi`` pseudo-class match, not the
+       colour-conversion filter, is what applied it) and silently covered
+       for the missing reassertion. reyn's own theme (``ansi=False``,
+       this PR) is the first time that builtin rule stops matching,
+       exposing the gap (measured: `test_focus_does_not_restyle_the_other_tabs`,
+       this PR's own CI). More specific than the plain ``Tab.-active`` rule
+       below, so it does not undo that one's own emphasis — CSS cascade
+       order here mirrors Tab's own builtin ``&:ansi { ...; &.-active
+       {...} }`` nesting pattern. */
+    MenuBar:focus-within Tab { text-style: dim; }
     /* The "you are here" marker. Un-dimming alone is too quiet to answer the
        owner's report, and it reaches only the ACTIVE tab in practice (the
        inactive ones are dim already, so the bar as a whole does not visibly
