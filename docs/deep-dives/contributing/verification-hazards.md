@@ -1405,6 +1405,14 @@ second **adopted a conclusion as a starting condition** and then spent real
 effort downstream of it. Independent measurement is not independence when the
 question itself was handed to you.
 
+Stated as the propagation it is: **one session's wrong conclusion narrowed
+another session's search space**, and no amount of independent verification on
+the second session's side reaches that — it measured independently, but *what
+it measured* had been chosen by the first session's premise. In a repo worked
+by many sessions this is the failure mode that survives the "go measure it
+yourself" instruction, because that instruction is satisfied in full while the
+premise passes through untouched.
+
 This is distinct from §17, §20 and §21, which are all about a search the
 author constructed badly. Here the search was a *consequence*: a well-formed
 query, aimed by a premise nobody re-derived. It is the same shape as §2's
