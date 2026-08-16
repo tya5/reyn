@@ -761,8 +761,19 @@ async def test_pump_heartbeat_reaches_the_default_visible_notices(
             await app.on_timer(
                 events.Timer(timer=app.pump_heartbeat_timer, time=0.0, count=1),
             )
+            # #4855: mark where THIS test's own content begins — see the
+            # sibling test_keys_received_... 's comment for why (an earlier,
+            # unrelated stall's "unresponsive" line is not this test's own).
+            pre_jump_len = len(logfile.read_text(encoding="utf-8"))
             clock.jump(stall_seconds)
-            while "recovered" not in logfile.read_text(encoding="utf-8"):
+            # #4855 (same defect, same function, 2 lines up): waiting on
+            # "recovered" ANYWHERE in the file — not sliced to what THIS
+            # test's own jump caused — lets an earlier, unrelated
+            # recovery already in the file satisfy the wait before this
+            # test's own stall has even been logged, racing the read
+            # below against a "unresponsive" line that has not landed
+            # yet.
+            while "recovered" not in logfile.read_text(encoding="utf-8")[pre_jump_len:]:
                 await pilot.pause()
     finally:
         for handler in root.handlers:
@@ -771,11 +782,16 @@ async def test_pump_heartbeat_reaches_the_default_visible_notices(
         root.handlers = saved_handlers
         root.setLevel(saved_level)
 
-    content = logfile.read_text(encoding="utf-8")
+    content = logfile.read_text(encoding="utf-8")[pre_jump_len:]
     assert "pump heartbeat" in content, (
         f"the pump-ticks reading must reach the real, default-visible log: {content!r}"
     )
-    stall_line = next(line for line in content.splitlines() if "unresponsive" in line)
+    stall_line = next(
+        (line for line in content.splitlines() if "unresponsive" in line), None,
+    )
+    assert stall_line is not None, (
+        f"no 'unresponsive' line in this test's own content: {content!r}"
+    )
     assert "+" in stall_line, (
         "the STALL line itself (not just the recovery line) must carry the "
         "self-contained trailing-window delta — a freeze that never "
@@ -885,8 +901,21 @@ async def test_keys_received_reaches_the_default_visible_stall_notice(
             # attempts=N / time-bound), never a race the test itself builds.
             while app.keys_received < 3:
                 await pilot.pause()
+            # #4855: the "unresponsive" line this test reads must be the ONE
+            # ITS OWN clock.jump caused — not the first "unresponsive" line
+            # anywhere in the file (an unrelated stall during app mount can
+            # log one earlier, e.g. real CI-host contention). Position in
+            # the file is not identity; what this test itself caused is —
+            # so the offset right before the jump marks where THIS test's
+            # own content begins. No time is written in either direction.
+            pre_jump_len = len(logfile.read_text(encoding="utf-8"))
             clock.jump(stall_seconds)
-            while "recovered" not in logfile.read_text(encoding="utf-8"):
+            # #4855 (same defect, same function, 2 lines up): sliced to
+            # THIS test's own content — see
+            # test_pump_heartbeat_reaches_the_default_visible_notices's
+            # sibling comment for why an unsliced wait races an
+            # unrelated recovery already in the file.
+            while "recovered" not in logfile.read_text(encoding="utf-8")[pre_jump_len:]:
                 await pilot.pause()
     finally:
         for handler in root.handlers:
@@ -895,8 +924,13 @@ async def test_keys_received_reaches_the_default_visible_stall_notice(
         root.handlers = saved_handlers
         root.setLevel(saved_level)
 
-    content = logfile.read_text(encoding="utf-8")
-    stall_line = next(line for line in content.splitlines() if "unresponsive" in line)
+    content = logfile.read_text(encoding="utf-8")[pre_jump_len:]
+    stall_line = next(
+        (line for line in content.splitlines() if "unresponsive" in line), None,
+    )
+    assert stall_line is not None, (
+        f"no 'unresponsive' line in this test's own content: {content!r}"
+    )
     assert "keys received: 3" in stall_line, (
         f"the 3 real keypresses must show up in the stall notice's own count: {stall_line!r}"
     )
@@ -974,14 +1008,6 @@ async def test_turn_active_reaches_the_default_visible_stall_notice(
     saved_level = root.level
     monkeypatch.delenv("REYN_PROF_DUMP", raising=False)
     # #4844: virtual clock, no real sleep — see _VirtualClock's docstring.
-    # As a side effect this also narrows #4827①'s own recurring window: the
-    # tripwire's very next tick (a real, but tiny, _TICK_SECONDS=50ms
-    # asyncio.sleep) observes the jump immediately, instead of racing a
-    # real multi-hundred-ms time.sleep() during which CI-host starvation
-    # had room to disturb state between "confirmed active" and "observed".
-    # #4827's own "why does starvation happen at all" question stays open
-    # (tracked separately) — this only removes the real-time WINDOW the
-    # test itself used to hold open for it.
     clock = _VirtualClock()
     monkeypatch.setattr(time, "perf_counter", clock)
     try:
@@ -1032,8 +1058,12 @@ async def test_turn_active_reaches_the_default_visible_stall_notice(
             _diag_activity_obj_id = id(app._activity)
             _diag_query_obj_id = id(app.query_one(ActivityRow))
             _diag_state_at_confirm = app._activity.state
+            # #4855: mark where THIS test's own content begins — see
+            # test_keys_received_...'s comment for why (an earlier,
+            # unrelated stall's "unresponsive" line is not this test's own).
+            pre_jump_len = len(logfile.read_text(encoding="utf-8"))
             clock.jump(stall_seconds)
-            while "unresponsive" not in logfile.read_text(encoding="utf-8"):
+            while "unresponsive" not in logfile.read_text(encoding="utf-8")[pre_jump_len:]:
                 await pilot.pause()
             # lead-coder's TESTS-READ (#4842): these 3 are read AFTER this
             # test's OWN loop above observes "unresponsive" in the logfile —
@@ -1054,8 +1084,13 @@ async def test_turn_active_reaches_the_default_visible_stall_notice(
         root.handlers = saved_handlers
         root.setLevel(saved_level)
 
-    content = logfile.read_text(encoding="utf-8")
-    stall_line = next(line for line in content.splitlines() if "unresponsive" in line)
+    content = logfile.read_text(encoding="utf-8")[pre_jump_len:]
+    stall_line = next(
+        (line for line in content.splitlines() if "unresponsive" in line), None,
+    )
+    assert stall_line is not None, (
+        f"no 'unresponsive' line in this test's own content: {content!r}"
+    )
     assert "turn active" in stall_line, (
         "a stall observed while a real turn_started event is in flight must "
         f"say so in the default-visible notice: {stall_line!r}. "
