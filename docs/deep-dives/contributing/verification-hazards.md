@@ -86,6 +86,21 @@ ERE, which does not understand `\s` — so even a known hit
 Neither zero was distinguishable from a real zero without recognizing the
 query itself was narrow, then broken.
 
+**`\b` fails the identical way, and the same night reproduced it at a scale
+`\s` didn't.** `git grep -E` is POSIX ERE for both metacharacters — no error,
+just a silent zero — but `\b` is far more commonly reached for than `\s`, so
+the same broken instrument did more damage before anything caught it:
+`\bsetattr\(` counted 0 "non-monkeypatch" call sites where the true count was
+23, and a separate private-attribute-read census counted 158 where the true
+count was 3,727 — both undercounts by roughly two orders of magnitude,
+neither flagged by the check itself, only by disagreeing with a different
+count taken later. The same session measured the boundary precisely: on this
+machine, plain `grep -E` is shell-aliased to `ugrep`, which DOES understand
+`\b` — so the identical `-E` flag is two different regex languages depending
+on which binary answers it, and "I used `-E`" is not enough provenance to
+trust a result. **Measured on Darwin with `ugrep` only — CI's GNU/Linux
+`grep` was not tested, and this doc does not claim its behavior.**
+
 The other side of the same coin: **a nonzero hit is not itself an answer
 either** — it's a classification that isn't decided until the hit is opened.
 Auditing whether two issues were already landed, one search returned zero
@@ -104,10 +119,19 @@ checking for would leave a positive trace if present, or only an absence —
 only the first kind makes zero a real answer. Then calibrate the instrument
 itself: run the same query against one KNOWN hit before trusting a null
 result on the rest, and prefer `-P`/PCRE or a portable class like
-`[[:space:]]` over ERE metacharacters that vary by grep flavor. And when the
-count comes back nonzero, don't stop at the count — open every hit and read
-it before classifying it as "just a mention"; the classification isn't
-decided by the search, only by what's actually in the hit.
+`[[:space:]]` over ERE metacharacters that vary by grep flavor — `\b` and
+`\s` both silently return zero under `git grep -E`, not an error, so nothing
+in the output distinguishes "checked, absent" from "the tool didn't
+understand the pattern." A zero that matters is worth one extra move: drop
+one metacharacter and re-run — if the count jumps, the first zero was the
+tool, not the world. Note which binary actually answered the query (`git
+grep`, this shell's own `grep` alias, plain `/usr/bin/grep`) next to the
+count; the same `-E` flag is not the same regex language across them, so a
+number without its tool is not reproducible by a reader who tries to check
+it. And when the count comes back nonzero, don't stop at the count — open
+every hit and read it before classifying it as "just a mention"; the
+classification isn't decided by the search, only by what's actually in the
+hit.
 
 ## 4. Census vs. structure — extrapolation dies on use, not on review
 
