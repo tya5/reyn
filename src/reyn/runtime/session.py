@@ -2329,6 +2329,24 @@ class Session:
         return self._chains
 
     @property
+    def hot_reloader(self) -> "HotReloader":
+        """Read-only accessor for this session's own HotReloader.
+
+        #4862: fills an observability gap — there was previously no way
+        to ask "which HotReloader belongs to THIS session" other than the
+        process-global ``get_active_hot_reloader()`` (the LAST-registered
+        session's reloader — a multi-session footgun for anything that
+        wants THIS session's own instance specifically, e.g. debug
+        tooling or a test proving ``get_active_hot_reloader() is
+        session.hot_reloader`` right after construction). The reloader
+        carries rich public API (``pending`` / ``apply_now`` /
+        ``apply_all`` / ``request_reload``), so exposing the holder via a
+        public name keeps callers off the underscore field. The instance
+        is set once in ``__init__`` and never re-bound.
+        """
+        return self._hot_reloader
+
+    @property
     def buffered_intervention_answers(self) -> dict:
         """Read-only accessor for the per-session buffered intervention
         answers map. Used by the crash-recovery / restart path to
