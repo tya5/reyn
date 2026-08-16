@@ -160,6 +160,16 @@ async def test_the_placeholder_paints_darker_than_typed_text() -> None:
     background, so this compares actual painted luminance, not the
     pre-render `Style.color` (identical for both segments at that level —
     see the two tests above).
+
+    `dim_color` is used here as an INSTRUMENT, not tested for its own
+    sake (six-questions Q1: this asserts reyn's own placeholder-darker-
+    than-text guarantee, not Textual's internal darkening formula) — but
+    it is a THIRD-PARTY internal function, so if Textual changes it this
+    test can redden for a reason that is not reyn's bug. It also
+    unconditionally unpacks `background.triplet` (the same crash #4850
+    investigated, `filter.py:142`) — harmless here because reyn's own
+    theme always supplies concrete RGB, but would crash outright if this
+    test ever ran under an `ansi-*` ground instead.
     """
     app = TextualChatApp(transport=_Transport())
     async with app.run_test(size=(90, 20)) as pilot:
