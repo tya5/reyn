@@ -766,7 +766,14 @@ async def test_pump_heartbeat_reaches_the_default_visible_notices(
             # unrelated stall's "unresponsive" line is not this test's own).
             pre_jump_len = len(logfile.read_text(encoding="utf-8"))
             clock.jump(stall_seconds)
-            while "recovered" not in logfile.read_text(encoding="utf-8"):
+            # #4855 (same defect, same function, 2 lines up): waiting on
+            # "recovered" ANYWHERE in the file — not sliced to what THIS
+            # test's own jump caused — lets an earlier, unrelated
+            # recovery already in the file satisfy the wait before this
+            # test's own stall has even been logged, racing the read
+            # below against a "unresponsive" line that has not landed
+            # yet.
+            while "recovered" not in logfile.read_text(encoding="utf-8")[pre_jump_len:]:
                 await pilot.pause()
     finally:
         for handler in root.handlers:
@@ -779,7 +786,12 @@ async def test_pump_heartbeat_reaches_the_default_visible_notices(
     assert "pump heartbeat" in content, (
         f"the pump-ticks reading must reach the real, default-visible log: {content!r}"
     )
-    stall_line = next(line for line in content.splitlines() if "unresponsive" in line)
+    stall_line = next(
+        (line for line in content.splitlines() if "unresponsive" in line), None,
+    )
+    assert stall_line is not None, (
+        f"no 'unresponsive' line in this test's own content: {content!r}"
+    )
     assert "+" in stall_line, (
         "the STALL line itself (not just the recovery line) must carry the "
         "self-contained trailing-window delta — a freeze that never "
@@ -898,7 +910,12 @@ async def test_keys_received_reaches_the_default_visible_stall_notice(
             # own content begins. No time is written in either direction.
             pre_jump_len = len(logfile.read_text(encoding="utf-8"))
             clock.jump(stall_seconds)
-            while "recovered" not in logfile.read_text(encoding="utf-8"):
+            # #4855 (same defect, same function, 2 lines up): sliced to
+            # THIS test's own content — see
+            # test_pump_heartbeat_reaches_the_default_visible_notices's
+            # sibling comment for why an unsliced wait races an
+            # unrelated recovery already in the file.
+            while "recovered" not in logfile.read_text(encoding="utf-8")[pre_jump_len:]:
                 await pilot.pause()
     finally:
         for handler in root.handlers:
@@ -908,7 +925,12 @@ async def test_keys_received_reaches_the_default_visible_stall_notice(
         root.setLevel(saved_level)
 
     content = logfile.read_text(encoding="utf-8")[pre_jump_len:]
-    stall_line = next(line for line in content.splitlines() if "unresponsive" in line)
+    stall_line = next(
+        (line for line in content.splitlines() if "unresponsive" in line), None,
+    )
+    assert stall_line is not None, (
+        f"no 'unresponsive' line in this test's own content: {content!r}"
+    )
     assert "keys received: 3" in stall_line, (
         f"the 3 real keypresses must show up in the stall notice's own count: {stall_line!r}"
     )
@@ -1063,7 +1085,12 @@ async def test_turn_active_reaches_the_default_visible_stall_notice(
         root.setLevel(saved_level)
 
     content = logfile.read_text(encoding="utf-8")[pre_jump_len:]
-    stall_line = next(line for line in content.splitlines() if "unresponsive" in line)
+    stall_line = next(
+        (line for line in content.splitlines() if "unresponsive" in line), None,
+    )
+    assert stall_line is not None, (
+        f"no 'unresponsive' line in this test's own content: {content!r}"
+    )
     assert "turn active" in stall_line, (
         "a stall observed while a real turn_started event is in flight must "
         f"say so in the default-visible notice: {stall_line!r}. "
