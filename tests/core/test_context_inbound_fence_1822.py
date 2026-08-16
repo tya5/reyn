@@ -117,7 +117,7 @@ def test_agent_instructions_hot_reload_next_call_project_side_stays_static(tmp_p
 
     # Before the agent has written its own file: only the project side
     # appears, bare (no sub-heading) — byte-identical to the pre-#3787 shape.
-    before = s._router_host.get_project_context()
+    before = s.router_host.get_project_context()
     assert before == "project-wide instructions, set once at construction"
 
     # The agent writes its own file (owner ruling: a plain write_file call,
@@ -126,7 +126,7 @@ def test_agent_instructions_hot_reload_next_call_project_side_stays_static(tmp_p
     # READ/reload side #3787 actually adds).
     agent_agents_md.write_text("agent-specific instructions", encoding="utf-8")
 
-    after = s._router_host.get_project_context()
+    after = s.router_host.get_project_context()
     assert "agent-specific instructions" in after, (
         "an edit to the agent's own AGENTS.md must be reflected on the very "
         f"next call, no restart/wait required: {after!r}"
@@ -143,7 +143,7 @@ def test_agent_instructions_hot_reload_next_call_project_side_stays_static(tmp_p
     # and the project half must stay byte-identical across an arbitrary
     # number of agent-side edits — it was never re-read at all.
     agent_agents_md.write_text("second agent edit", encoding="utf-8")
-    third = s._router_host.get_project_context()
+    third = s.router_host.get_project_context()
     assert "second agent edit" in third
     assert "agent-specific instructions" not in third, (
         f"the agent side must reflect the latest file, not history: {third!r}"
@@ -167,7 +167,7 @@ def test_agent_instructions_missing_file_is_empty_not_an_error(tmp_path):
         project_context="",
         workspace_state_dir=tmp_path / ".reyn",
     )
-    out = s._router_host.get_project_context()
+    out = s.router_host.get_project_context()
     assert out == ""
 
 

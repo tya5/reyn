@@ -1282,10 +1282,13 @@ class Session:
         # depend on this watcher at all — RouterHostAdapter.get_project_context
         # reads it fresh on every call (see that method's own docstring). This
         # watcher's only job here is the audit-event signal ("an edit was
-        # observed") on the SAME project_context_changed kind — a consumer
-        # tells the two apart via the emitted `path` (this one is always
+        # observed") on the SAME project_context_changed kind, told apart from
+        # the project-wide one via the emitted `path` (this one is always
         # `.reyn/agents/<agent_name>/AGENTS.md`, the other is
-        # `project_context_path`'s resolved file). No new machinery: the
+        # `project_context_path`'s resolved file). No LIVE subscriber reads
+        # this today — same as every other `*_changed` kind (band:
+        # observability, see events.md's own row for this kind), it exists
+        # for the audit trail, not a reactive path. No new machinery: the
         # existing mtime-compare class, constructed a second time.
         self._agent_context_watcher = ProjectContextWatcher(
             path=self.workspace_dir / "AGENTS.md", events=self._audit_events,
