@@ -20,14 +20,18 @@ written outside it.
 sixteen slots rather than an RGB value — made sense only while reyn had no
 theme of its own to defer to instead: "端末の既定色に従う意味は、テーマを
 採用した時点で消えます" (owner, verbatim). ``@app-background@`` maps to
-Textual's own ``$background`` under this ruling — the active theme decides
-the RGB, not the terminal. ``@selection-bg@``/``@selection-fg@`` name the
-SAME retired premise but are NOT remapped yet — landing them ahead of reyn's
-own default theme would regress #3542 (measured: ``ansi-dark``'s own
-``$screen-selection-background`` is the loud ``ansi_bright_blue`` #3542
-moved away from), so lead-coder's ruling sequences them after that theme
-exists (see the tokens' own comments below). ``@rule@`` stays a literal hex
-for an unrelated reason (documented on the token itself): it must read as a
+Textual's own ``$background`` under this ruling (#4871), and
+``@selection-bg@``/``@selection-fg@`` map to ``$screen-selection-background``/
+``$screen-selection-foreground`` (#4875's own follow-up) — the active theme
+decides every one of these, not the terminal. The selection pair was
+sequenced AFTER reyn's own default theme existed (#4875), not landed
+alongside ``@app-background@``: mapping straight to Textual's generic
+token while ``ansi-dark`` was still the default would have regressed #3542
+(measured: ``ansi-dark``'s own ``$screen-selection-background`` is the loud
+``ansi_bright_blue`` #3542 moved away from) — reyn's own theme supplies a
+muted value instead (see the tokens' own comments below). ``@rule@`` stays
+a literal hex for an unrelated reason (documented on the token itself): it
+must read as a
 divider against both of the app's OWN light/dark grounds, which a theme
 variable would just vanish into on one of them — that is a THEME question,
 never a terminal one, and was never in this paragraph's scope.
@@ -128,30 +132,31 @@ TOKENS: "dict[str, str]" = {
     #: it. Pairing an attribute with SOMETHING in the text is the invariant —
     #: this token alone is not a selection mark.
     "@selected-style@": "bold",
-    #: The drag-selection band. ``ansi_blue`` rather than Textual's default
-    #: ``ansi_bright_blue``: the operator found the bright frame too loud
-    #: against the conversation (#3542). Both are ANSI FRAMES, not colours —
-    #: what blue looks like is the terminal theme's decision and stays that
-    #: way; this only chooses which of the sixteen slots to ask for.
-    #:
-    #: #4840 (owner ruling, 2026-08-16) retires this deferral in principle —
-    #: see ``@app-background@`` above, mapped already — but NOT here yet.
-    #: Mapping straight to Textual's own ``$screen-selection-background``
-    #: would regress #3542 under the CURRENT default theme: ``ansi-dark``'s
-    #: own value for that token is ``ansi_bright_blue`` (measured), the exact
-    #: loud one #3542 moved away from. lead-coder's ruling (#4840): land
-    #: ``@app-background@`` now (no such regression there — measured), build
-    #: reyn's own default theme next, and land this token + #3542's test
-    #: THEN — a theme `variables` shim on `ansi-dark` was explicitly rejected
-    #: ("1つのテーマの欠点を、全テーマに効く層で埋める" — the opposite of
-    #: mapping to theme meaning). Whether reyn's own theme preserves #3542's
-    #: quiet choice is undecided — read #3542 when that theme is designed.
-    "@selection-bg@": "ansi_blue",
-    #: The text inside that band. Unchanged from Textual's default, and named
-    #: here so the pair is legible in one place: a background chosen without
-    #: its foreground beside it is how contrast regressions happen. Same
-    #: #4840 deferral as ``@selection-bg@`` above — not mapped yet.
-    "@selection-fg@": "ansi_black",
+    #: The drag-selection band. Was ``ansi_blue`` (one of the terminal's
+    #: sixteen slots, chosen over Textual's louder default
+    #: ``ansi_bright_blue`` because the operator found that too loud against
+    #: the conversation — #3542) until #4840's owner ruling and its own
+    #: 3-step sequencing (① ``@app-background@`` -> ``$background``, #4871;
+    #: ② reyn's own default theme, #4875; ③ this token, here). Blocked on
+    #: ② specifically: mapping straight to Textual's own
+    #: ``$screen-selection-background`` under ``ansi-dark`` (the default
+    #: before ②) would have regressed #3542 — ``ansi-dark``'s own value for
+    #: that token is ``ansi_bright_blue``, the exact loud one #3542 moved
+    #: away from (measured). Now that "reyn" is the default (②), the same
+    #: mapping resolves through ``REYN_THEME``'s own
+    #: ``variables["screen-selection-background"]`` instead — a muted,
+    #: DISTINCT hue chosen explicitly to read #3542 forward (``theme.py``'s
+    #: own docstring has the full reasoning: NOT Textual's auto-derived
+    #: ``primary.with_alpha(0.5)`` either, which would be #3542's same
+    #: complaint with reyn's own accent hue in place of
+    #: ``ansi_bright_blue``).
+    "@selection-bg@": "$screen-selection-background",
+    #: The text inside that band. Was ``ansi_black``; now
+    #: ``$screen-selection-foreground``, the token this pairs with above —
+    #: kept adjacent here for the same reason as before: a background chosen
+    #: without its foreground beside it is how contrast regressions happen.
+    #: Same ② dependency as ``@selection-bg@`` above.
+    "@selection-fg@": "$screen-selection-foreground",
     #: #4787: the first 5 of ``interfaces/repl/renderer.py``'s 8 former
     #: ``_CC_*`` hex constants — the ones whose value #4787's own
     #: classification found reusable AS-IS (no new colour chosen; the

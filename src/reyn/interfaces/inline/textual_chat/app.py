@@ -842,24 +842,26 @@ class TextualChatApp(App):
        unaffected — those are content, not ground. */
     App { background: @app-background@; }
     Screen { layout: vertical; background: transparent; }
-    /* #3542: the drag-selection band. Textual's ansi-dark defaults to
-       `ansi_bright_blue`, which the operator found too loud against the
-       conversation. Dropping to `ansi_blue` asks the terminal for a different
-       one of its sixteen slots — reyn is not overriding the user's colours
-       here and never was, it only picks which frame to request. Declared as an
-       explicit background/foreground PAIR rather than `text-style: reverse`:
-       Textual COMPOSES the selection style onto each cell, so reverse would
-       let every coloured run (tool rows, amber intervention headings, dim
-       chrome) become its own background and the band would fragment — which
-       is a different complaint than "too loud".
-
-       #4840 (owner ruling, 2026-08-16) retires the "ask the terminal for a
-       slot" premise in principle, but NOT here yet — mapping to Textual's own
-       ``$screen-selection-background`` would regress this fix under the
-       CURRENT default theme (``ansi-dark``'s own value for that token is the
-       loud ``ansi_bright_blue`` this comment describes moving away from,
-       measured). Sequenced after reyn's own default theme exists (#4840);
-       see ``@selection-bg@``'s own comment in ``palette.py``. */
+    /* #3542: the drag-selection band. Until #4840's owner ruling this asked
+       the terminal for one of its sixteen ANSI slots (`ansi_blue`, dropped
+       from Textual's louder default `ansi_bright_blue` because the operator
+       found that too loud against the conversation) — reyn was not
+       overriding the user's colours, it only picked which frame to request.
+       Now maps to `$screen-selection-background`/`$screen-selection-foreground`
+       — Textual's own tokens for exactly this role — so reyn's OWN default
+       theme (`REYN_THEME`, `.theme.py`) supplies the RGB via its own
+       `variables` override, chosen explicitly to read #3542 forward (a
+       muted, distinct hue — see `theme.py`'s own docstring). This landed
+       ONLY after reyn's own theme became the default (#4875): mapping to
+       the generic token any earlier, while `ansi-dark` was still default,
+       would have regressed this fix — `ansi-dark`'s own value for that
+       token is the loud `ansi_bright_blue` this comment describes moving
+       away from (measured). Declared as an explicit background/foreground
+       PAIR rather than `text-style: reverse`: Textual COMPOSES the
+       selection style onto each cell, so reverse would let every coloured
+       run (tool rows, amber intervention headings, dim chrome) become its
+       own background and the band would fragment — which is a different
+       complaint than "too loud". */
     Screen > .screen--selection {
         background: @selection-bg@;
         color: @selection-fg@;
