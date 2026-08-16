@@ -91,6 +91,47 @@ def test_ep3_project_context_repeated_calls_match(tmp_path):
     )
 
 
+def test_ep3_project_context_trailing_whitespace_is_not_stripped(tmp_path):
+    """Tier 3: #4882 regression — project_context with real content plus
+    trailing whitespace (the ordinary shape of a real file read, e.g.
+    REYN.md's trailing newline) is returned byte-identical, not silently
+    stripped. Guards a regression #3787 briefly introduced (a `.strip()`
+    call added for a different purpose — deciding whether the agent side
+    also has content — accidentally applied to the RETURNED value too)."""
+    s = _make_session(tmp_path, project_context="stable project context\n\n")
+    out = s.router_host.get_project_context()
+    assert out == "stable project context\n\n", (
+        f"trailing whitespace must survive unchanged: {out!r}"
+    )
+
+
+def test_agent_instructions_whitespace_only_file_is_not_configured(tmp_path):
+    """Tier 3: #4882 — a freshly-touched agent AGENTS.md containing only
+    whitespace (e.g. a single ``"\\n"``, the shape ``touch``/an editor's
+    save-on-open can leave) must count as "nothing configured", the same
+    as the pre-#3787 empty shape — no ``### Agent instructions`` heading
+    with nothing under it, and no ``### Project`` sub-heading either
+    (single-side, bare, matching the common today-case)."""
+    workspace_state_dir = tmp_path / ".reyn"
+    s = make_session(
+        agent_name="t", model="standard",
+        state_log=StateLog(tmp_path / "s.wal"),
+        snapshot_path=tmp_path / "snap.json",
+        safety=SafetyConfig(),
+        project_context="stable project context",
+        workspace_state_dir=workspace_state_dir,
+    )
+    agent_agents_md = workspace_state_dir / "agents" / "t" / "AGENTS.md"
+    agent_agents_md.parent.mkdir(parents=True, exist_ok=True)
+    agent_agents_md.write_text("\n", encoding="utf-8")
+
+    out = s.router_host.get_project_context()
+
+    assert out == "stable project context", (
+        f"a whitespace-only agent file must not grow a heading: {out!r}"
+    )
+
+
 def test_agent_instructions_hot_reload_next_call_project_side_stays_static(tmp_path):
     """Tier 3: #3787 (owner ruling B) — the agent's own
     ``.reyn/agents/<agent_name>/AGENTS.md`` is picked up fresh on the very
