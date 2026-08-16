@@ -114,6 +114,33 @@ and nonzero are not symmetric: **zero can settle a question (once you've
 confirmed it's the searchable kind, above); a nonzero count never settles
 anything by itself — it only earns the right to open the result and read it.**
 
+**The third instance the same night was not a zero at all, and the two
+prescriptions above would both have passed it.** Censusing whether PR bodies
+carry their role prefix (`**[role]**`, the only cross-session author signal —
+`gh --json author` returns the same account for every session), the pattern
+was `\*\*\[[a-z-]+\]\*\*`. It reported **60 of 200 PRs missing a prefix**.
+The true number was **zero**: the character class excluded digits, so every
+PR authored by `e2e-coder` — 65 of the 200, the single largest group — was
+counted as non-compliant. The output was not a suspicious zero but a
+plausible-looking finding, and it was acted on: a structural diagnosis
+("rule 2 is not being followed, here is the gate that would enforce it") went
+out over broker before anyone opened a body. **A too-narrow pattern does not
+only lose things quietly; at the item level it manufactures absences, and
+absences aggregate into a confident violation count that reads as
+discovery.** Nothing about "if a zero matters, re-run with one metacharacter
+dropped" reaches this, because the number that mattered was 60.
+
+What caught it was not a method. Two minutes earlier the same session had
+printed one PR body and read `**[e2e-coder]**` at the top of it with its own
+eyes, then watched the census classify that same body as prefix-less — a
+single disagreement between one thing seen directly and the aggregate. The
+transferable form is not "check your regex" (everyone believes they did) but:
+**a census over a population you have any direct knowledge of should be
+reconciled against that knowledge before it is reported, and reporting a
+violation count means naming the accused — get one of them wrong and the
+error is not an undercount, it is telling a compliant peer they broke the
+rule.**
+
 **Apply**: before trusting a "zero hits" result, ask whether the thing you're
 checking for would leave a positive trace if present, or only an absence —
 only the first kind makes zero a real answer. Then calibrate the instrument
