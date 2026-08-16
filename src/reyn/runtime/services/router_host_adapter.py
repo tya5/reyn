@@ -998,10 +998,16 @@ class RouterHostAdapter:
         content is returned bare (byte-identical to the pre-#3787 shape —
         the common case today, before any agent has written its own file).
         """
-        pc = (self._project_context or "").strip()
+        # No .strip() on either side: the pre-#3787 code's own truthiness
+        # check (`if not pc`) and return value both used the raw string
+        # unmodified — stripping here would silently change what an
+        # operator's REYN.md (a real file read, routinely trailing a
+        # newline) renders in the SP, breaking the byte-identical claim
+        # this docstring makes for the single-side case.
+        pc = self._project_context or ""
         if pc:
             self.scan_tool_result(pc)  # detection telemetry (scan-all parity)
-        agent_pc = self._read_agent_instructions().strip()
+        agent_pc = self._read_agent_instructions()
         if agent_pc:
             self.scan_tool_result(agent_pc)  # same telemetry, agent-authored half
         if pc and agent_pc:
