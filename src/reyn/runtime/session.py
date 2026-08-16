@@ -2329,21 +2329,6 @@ class Session:
         return self._chains
 
     @property
-    def audit_events(self) -> "EventLog":
-        """Read-only accessor for the session's audit-event EventLog (P6).
-
-        #4862/#4864: fills a systematic observability gap — many tests
-        (and, per #4864, several other permanent test files) already read
-        ``session._audit_events`` via a local variable before asserting,
-        working around the absence of a public accessor. The log itself
-        carries rich public API (``all()`` / subscriber iteration via
-        ``collect_events``), so exposing the holder via a public name
-        keeps callers off the underscore field. The instance is set once
-        in ``__init__`` and never re-bound.
-        """
-        return self._audit_events
-
-    @property
     def hot_reloader(self) -> "HotReloader":
         """Read-only accessor for this session's own HotReloader.
 

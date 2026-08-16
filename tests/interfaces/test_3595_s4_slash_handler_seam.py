@@ -448,7 +448,18 @@ def test_no_slash_module_reaches_the_session_outbox() -> None:
 #: to a slash handler reaching into the session (it is a registry-owned
 #: teardown call, not a read a slash command would use) — the gate's own
 #: documented carve-out for this case.
-_PUBLIC_MEMBER_CEILING = 111
+#: Raised 111 -> 112 for #4862: ``hot_reloader`` — a NEW ``@property``
+#: answering a question nothing else could ("which HotReloader belongs to
+#: THIS session", vs. the process-global ``get_active_hot_reloader()``
+#: returning only the last-registered session's reloader). Genuinely
+#: unrelated to slash (added to close a scaffold-test rescue's private-read
+#: gap, #4862/#4864) — not a member published so a slash handler could keep
+#: reaching into the session, the gate's own documented carve-out. A sibling
+#: ``audit_events`` property was considered and DROPPED (not counted here)
+#: — per the gate's other half ("publishing _x as x ratifies the
+#: encapsulation break instead of closing it"), it answered no question
+#: nothing else could; it was a plain rename of already-private state.
+_PUBLIC_MEMBER_CEILING = 112
 
 
 def test_session_public_surface_does_not_grow() -> None:
