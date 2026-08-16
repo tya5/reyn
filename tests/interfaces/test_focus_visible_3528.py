@@ -9,6 +9,22 @@ resolves to the same value, so it had been painting nothing since #3505.
 Asserted on the PAINTED tab, and asserted in both directions — a marker that
 arrives but never leaves would make every tab look focused after the first
 visit, which an arrival-only test cannot see.
+
+This module used to ALSO pin the marker's resolved colour as
+``ColorType.DEFAULT``/system-defined (never a concrete truecolor), on the
+owner's then-standing direction that ``reverse`` should invert "whatever
+the terminal is already using" rather than reyn pinning a shade of its own.
+#4840's owner ruling (2026-08-16) retired that direction for reyn's
+default theme — ``$foreground``/``$background`` now resolve to concrete
+RGB structurally, so nothing under reyn's theme is ``ColorType.DEFAULT``
+or system-defined anymore, by construction. That test is REWRITTEN, not
+deleted (lead-coder review, #4875): pinning "colour matches reyn's current
+`$foreground`" would transcribe the CSS rule as the test (six-questions
+Q2), but the ORIGINAL guarantee — the marker changes NO colour of its own,
+only inverts what was already there — is a RELATIONSHIP between the
+focused and unfocused resolved styles, and that relationship survives
+#4840 untouched: `color`/`bgcolor` must be IDENTICAL in both states, only
+`text-style` (`reverse`/`bold`) may differ.
 """
 from __future__ import annotations
 
@@ -140,29 +156,39 @@ async def test_leaving_the_menu_clears_the_marker() -> None:
 
 
 @pytest.mark.asyncio
-async def test_the_marker_forces_no_colour_of_its_own() -> None:
-    """Tier 2b: the cue is an SGR attribute, not a palette entry.
+async def test_the_marker_changes_no_colour_of_its_own() -> None:
+    """Tier 2b: the cue is an SGR attribute, not a palette entry — re-expressed
+    RELATIONALLY (#4840, lead-coder review), not as a pinned value.
 
-    A concrete colour would look the same on every terminal theme, which is the
-    thing the app's colour direction rules out; ``reverse`` inverts whatever two
-    colours the terminal is already using, so it survives a light theme as well
-    as a dark one.
+    The invariant `reverse` was chosen FOR still holds regardless of any
+    theme's specific RGB: `reverse` inverts whatever two colours are ALREADY
+    there rather than the CSS declaring a color/bgcolor of its own
+    (``MenuBar:focus-within Tab.-active { text-style: reverse bold; }`` — no
+    `color`/`bgcolor` property). That is a RELATIONSHIP between the focused
+    and unfocused resolved styles — the same tab's `color`/`bgcolor` must be
+    IDENTICAL in both states, and only its `text-style` (`reverse`/`bold`)
+    may differ — which survives any theme's specific RGB, so it is what
+    this test asserts (see the module docstring for what this replaces).
     """
     app = TextualChatApp(transport=_Transport())
     async with app.run_test(size=(110, 30)) as pilot:
         await pilot.pause()
         app.query_one(Composer).focus()
         await pilot.pause()
+        unfocused = _active_tab_style(app)
+        assert not unfocused.reverse, "setup: the marker was already present"
+
         await pilot.press("tab")
         await pilot.pause()
+        focused = _active_tab_style(app)
+        assert focused.reverse, "setup: the marker never appeared"
 
-        style = _active_tab_style(app)
-        assert style.reverse, "setup: the marker never appeared"
-        for colour in (style.color, style.bgcolor):
-            assert colour is None or colour.is_default or colour.is_system_defined, (
-                f"the focus marker pinned a concrete colour ({colour!r}) instead of "
-                "inverting the terminal's own"
-            )
+        assert focused.color == unfocused.color and focused.bgcolor == unfocused.bgcolor, (
+            f"the focus marker changed the tab's own colour "
+            f"(unfocused={unfocused.color!r}/{unfocused.bgcolor!r}, "
+            f"focused={focused.color!r}/{focused.bgcolor!r}) instead of only "
+            "inverting whatever colour was already there"
+        )
 
 
 @pytest.mark.asyncio

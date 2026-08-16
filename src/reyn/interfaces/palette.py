@@ -217,6 +217,49 @@ TOKENS: "dict[str, str]" = {
     #: segment whose foreground is not concrete" — a ``$token`` reference
     #: resolved at Textual-theme time would be invisible to both.
     "@dim@": "#6b7280",  # low-importance / ambient, as a COLOUR (was _CC_DIM)
+    #: #4840: reyn's own default Textual theme's base tokens (``theme.py``,
+    #: ``REYN_THEME``) — the genuinely NEW colour choices, not reused from
+    #: any existing ``_CC_*``/``@name@`` constant (unlike
+    #: ``primary``/``secondary``/``warning``/``error``/``success``/``accent``,
+    #: which theme.py pulls from the tokens above instead of repeating
+    #: here). Consumed DIRECTLY as Python values by ``theme.py``
+    #: (``Theme(background=palette.TOKENS["@theme-background@"], ...)``) —
+    #: NOT CSS ``@name@`` markers; nothing in ``interfaces/``'s stylesheets
+    #: writes ``@theme-background@`` literally, this is the SAME
+    #: plain-dict-lookup mechanism the 5 ``@success@``-family tokens above
+    #: already use, for the same reason (a ``Theme`` constructor takes
+    #: Python values, not a CSS string ``css()`` could resolve markers in).
+    #: Reused here rather than left as literals directly in ``theme.py``
+    #: for the SAME invariant every other colour in ``interfaces/`` follows
+    #: — this file is the one place a value gets named, so
+    #: ``test_tui_colour_tokens.py``'s hex-literal census stays complete.
+    "@theme-background@": "#1a1d23",
+    #: Same hex as ``renderer.py``'s own ``_CC_USER_BG`` (#4787's remaining
+    #: 2, still unmigrated, blocked until now on this exact ruling) — a
+    #: DIFFERENT token key, not a shared one, because the two migrations
+    #: are independent tracks (this is the Textual theme's ``surface`` role;
+    #: ``_CC_USER_BG`` is the plain REPL's row-tint background) that happen
+    #: to agree on the same dark blue-gray value. Whether ``_CC_USER_BG``
+    #: itself later migrates to THIS token, or its own, is #4787's call, not
+    #: decided here.
+    "@theme-surface@": "#1e222a",
+    #: Explicit, not ``boost``-derived — see ``theme.py``'s own docstring
+    #: for the rejected alternative (auto-deriving ``panel`` from
+    #: ``surface.blend(primary, 0.1) + boost`` pulls it toward primary's
+    #: WARM terracotta hue, off the cool blue-gray family
+    #: ``background``/``surface`` are in — measured, not guessed).
+    "@theme-panel@": "#232833",
+    #: #3542 read explicitly, per #4840's own ruling (theme.py's docstring
+    #: has the full reasoning) — muted and DISTINCT from ``primary``, not
+    #: Textual's own auto-derived ``primary.with_alpha(0.5)`` (which would
+    #: be the loud selection #3542 was about, just with reyn's own accent
+    #: hue instead of Textual's ``ansi_bright_blue``).
+    "@theme-selection-bg@": "#3a5a80",
+    #: Paired with ``@theme-selection-bg@`` above for the same reason every
+    #: other background/foreground pair here is named adjacently — WCAG
+    #: contrast against it is 5.50:1 (measured), comfortably above AA's
+    #: 4.5:1 without being AAA-loud either.
+    "@theme-selection-fg@": "#e5e2dc",
 }
 
 #: The NOW row's travelling shine (#3777), as a GROUND and a PEAK per terminal

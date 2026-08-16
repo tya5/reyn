@@ -11,9 +11,28 @@ properties are pinned, not one: that the placeholder IS dimmed, and that typed
 text is NOT — a rule reaching further than the placeholder would make the user's
 own input look provisional, and only the second assertion can see that.
 
-The colour is deliberately left as the terminal's default (``dim`` rather than a
-muted colour): the owner's standing direction is that the terminal's own theme
-wins over any concrete shade reyn could pick.
+reyn's own CSS (``Composer > .text-area--placeholder { text-style: dim; }``,
+``app.py``) picks ``dim`` — an SGR ATTRIBUTE, not a colour — over a muted
+grey. This module used to ALSO pin the resolved colour as the terminal's
+default (``ColorType.DEFAULT``), on the owner's then-standing direction that
+the terminal's own theme should win over any concrete shade reyn could
+pick. #4840's owner ruling (2026-08-16) retired that direction — reyn's
+default theme now supplies concrete RGB for `$text` itself, so nothing
+under it resolves to `ColorType.DEFAULT` anymore, structurally.
+
+The third test here used to pin that absolute value; it is REWRITTEN, not
+deleted (lead-coder review, #4875) — pinning "colour matches reyn's `$text`
+value" would transcribe the CSS rule as the test (six-questions Q2), but
+the ORIGINAL guarantee ("the placeholder sinks", not "the placeholder is
+`ColorType.DEFAULT`") is a RELATIONSHIP, not a value, and that relationship
+survives #4840 untouched: the placeholder must still be DARKER than typed
+text once actually rendered. Resolved via
+``textual.filter.dim_color`` — the SAME function #4850's crash investigation
+found (``filter.py:129``) — applied to both segments' colour against the
+composer's own resolved background, so the comparison is the ACTUAL painted
+luminance a `dim=True` segment produces, not the pre-render `Style.color`
+(which is identical for both segments — only the `.dim` flag differs at
+that level, per the two tests above).
 """
 from __future__ import annotations
 
@@ -21,6 +40,8 @@ import asyncio
 from typing import AsyncIterator
 
 import pytest
+from rich.color import Color as RichColor
+from textual.filter import dim_color
 
 from reyn.interfaces.inline.textual_chat import TextualChatApp
 from reyn.interfaces.inline.textual_chat.chrome import Composer
@@ -120,20 +141,75 @@ async def test_typed_text_is_not_dimmed() -> None:
 
 
 @pytest.mark.asyncio
-async def test_the_placeholder_keeps_the_terminal_foreground_colour() -> None:
-    """Tier 2b: dimming does not pin a colour.
+async def test_the_placeholder_paints_darker_than_typed_text() -> None:
+    """Tier 2b: the placeholder must sink relative to real content — a
+    RELATIONSHIP (#4840, lead-coder review), not a pinned absolute colour.
 
-    A muted grey would dim it too, but it would also override whatever
-    foreground the user's terminal theme chose — the standing direction is that
-    the terminal's theme wins. ``dim`` is the only measured option that darkens
-    while leaving the hue to the terminal.
+    This module used to pin the placeholder's resolved colour as
+    `ColorType.DEFAULT`, on the standing-at-the-time direction that the
+    terminal's own theme should win over any concrete shade reyn could
+    pick. #4840's owner ruling retired that direction for reyn's default —
+    `$text` now resolves to concrete RGB structurally, so `ColorType.DEFAULT`
+    no longer describes anything reyn paints. The ORIGINAL guarantee this
+    protected — "the placeholder reads as an invitation, not as typed
+    text" (this module's own title) — was never really about the colour
+    TYPE; it was about the placeholder being VISUALLY DARKER than real
+    content, and that survives #4840 untouched. Resolved through
+    `textual.filter.dim_color` (the same function #4850's crash
+    investigation found, `filter.py:129`) against the composer's own
+    background, so this compares actual painted luminance, not the
+    pre-render `Style.color` (identical for both segments at that level —
+    see the two tests above).
+
+    `dim_color` is used here as an INSTRUMENT, not tested for its own
+    sake (six-questions Q1: this asserts reyn's own placeholder-darker-
+    than-text guarantee, not Textual's internal darkening formula) — but
+    it is a THIRD-PARTY internal function, so if Textual changes it this
+    test can redden for a reason that is not reyn's bug. It also
+    unconditionally unpacks `background.triplet` (the same crash #4850
+    investigated, `filter.py:142`) — harmless here because reyn's own
+    theme always supplies concrete RGB, but would crash outright if this
+    test ever ran under an `ansi-*` ground instead.
     """
     app = TextualChatApp(transport=_Transport())
     async with app.run_test(size=(90, 20)) as pilot:
         await pilot.pause()
-        colour = _body_segment(app.query_one(Composer)).style.color
+        composer = app.query_one(Composer)
+        assert composer.text == "", "setup: the composer was not empty"
+        placeholder_segment = _body_segment(composer)
 
-        assert colour is not None and colour.is_default, (
-            f"the placeholder pinned a concrete foreground colour ({colour!r}) "
-            "instead of deferring to the terminal's own theme"
+        composer.text = "a real message"
+        await pilot.pause()
+        typed_segment = _body_segment(composer)
+
+        background = composer.rich_style.bgcolor or composer.rich_style.color
+        assert background is not None, "setup: no resolvable ambient colour"
+        placeholder_color = placeholder_segment.style.color
+        typed_color = typed_segment.style.color
+        assert placeholder_color is not None and typed_color is not None, (
+            "setup: a segment painted with no foreground colour at all"
         )
+
+        placeholder_rgb = dim_color(background, placeholder_color)
+        typed_rgb = typed_color
+
+        placeholder_luminance = _relative_luminance(placeholder_rgb)
+        typed_luminance = _relative_luminance(typed_rgb)
+        assert placeholder_luminance < typed_luminance, (
+            f"the placeholder ({placeholder_luminance:.3f}) is not darker "
+            f"than typed text ({typed_luminance:.3f}) once actually rendered"
+        )
+
+
+def _relative_luminance(color: RichColor) -> float:
+    """WCAG relative luminance of a resolved (truecolor) `rich.color.Color` —
+    the same formula #4787/#4840's own contrast-measurement comments use,
+    inlined here rather than imported (no shared util module owns it)."""
+    triplet = color.get_truecolor()
+
+    def lin(component: int) -> float:
+        c = component / 255
+        return c / 12.92 if c <= 0.03928 else ((c + 0.055) / 1.055) ** 2.4
+
+    r, g, b = lin(triplet.red), lin(triplet.green), lin(triplet.blue)
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b
