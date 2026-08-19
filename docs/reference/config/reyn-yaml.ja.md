@@ -69,7 +69,7 @@ reload）、`reyn.yaml` 側に書いた同じキーは他と同じく再起動�
 | `sandbox` | マップ | PRJ のみ・**再起動** | バックエンド選択（`backend`）、非対応プラットフォームポリシー（`on_unsupported`）、強制モード（`mode`: compat / strict / custom）、agent-level サンドボックスポリシー（`policy`）。以下参照。 |
 | `embedding` | マップ | PRJ のみ・**再起動** | RAG 埋め込み: マスタースイッチ（`enabled`）、モデルクラス、バッチサイズと並列度、リトライ / バックオフ / タイムアウト、トークナイザ、コスト警告閾値。以下参照。 |
 | `chat` | マップ | PRJ のみ・**再起動** | チャットセッションのランタイム設定: 履歴の圧縮、reasoning（"thinking"）テキストの扱い、対話レンダラ（`render_mode`）、TUI の gutter、body の neutralize、許可する画像 URL スキーム。以下参照。 |
-| `voice` | マップ | PRJ のみ・**再起動** | ⚠️ 現在利用不可(consumerなし)。以下参照。 |
+| `voice` | マップ | PRJ のみ・**再起動** | inline CUI の F2 ディクテーション用の Whisper モデル/言語/デバイス設定(#4187/#4249 で復活)。以下参照。 |
 | `audit_events` | マップ | PRJ のみ・**再起動** | `.reyn/events` 配下の P6 **audit-event** ファイルのローテーション（サイズ / 経過時間 / 掃除周期）。WAL-event でも hook-event でもありません。以下参照。 |
 | `observability` | マップ | PRJ のみ・**再起動** | P6 監査イベントの OpenTelemetry (OTLP) エクスポート（オプトイン）。デフォルトは無効。以下参照。 |
 | `tool_use` | マップ | PRJ のみ・**再起動** | chat レイヤーの tool-use scheme x transport セレクタ（`scheme`、`transport`）。以下参照。 |
@@ -1188,13 +1188,11 @@ audit_events:
 
 ## `voice` ブロック
 
-**⚠️ 現在利用不可。** このブロックは今もparseされます(設定してもエラーにはなりません)が、consumerがありません — 旧 Textual TUI の Ctrl+R Whisper バインディング用に構築されたものですが、そのTUIは削除され inline CUI に置き換わりました(音声入力バインディングなし)。スキーマの完全性のためだけに残しています。[コンセプト: voice](../../concepts/tools-integrations/voice.md) を参照。
-
-音声入力(Whisper)設定(consumerが存在する場合)。オプション機能 — `pip install 'reyn[voice]'`(`sounddevice` + `faster-whisper`)が必要です。ブロックは遅延ロードされるため、`[voice]` extra がない場合は録音キーが自動的に無効化されます。
+inline CUI の F2 ディクテーション用の音声入力(Whisper)設定 — 元の Ctrl+R バインディングが、それを持っていた旧 Textual TUI ごと削除された後、現行 CUI 向けの再実装として復活しました(#4187/#4249)。[コンセプト: voice](../../concepts/tools-integrations/voice.md) を参照。オプション機能 — `pip install 'reyn[voice]'`(`sounddevice` + `faster-whisper`)が必要です。ブロックは遅延ロードされるため、`[voice]` extra がない場合は録音キーが自動的に無効化されます。
 
 ```yaml
 voice:
-  enabled: true           # deps がインストールされていても Ctrl+R を無効化するには false
+  enabled: true           # deps がインストールされていても F2 ディクテーションを無効化するには false
   model: small            # tiny | base | small | medium | large-v3
   language: ja            # ISO 639-1 コード; "" または null = 自動検出
   device: cpu             # cpu | cuda
@@ -1207,7 +1205,7 @@ voice:
 
 | フィールド | 型 | デフォルト | 説明 |
 |-------|------|---------|-------------|
-| `enabled` | bool | `true` | deps がインストールされていても Ctrl+R を完全に無効化するには `false`。 |
+| `enabled` | bool | `true` | deps がインストールされていても F2 ディクテーションを完全に無効化するには `false`。 |
 | `model` | 文字列 | `small` | Whisper モデルサイズ: `tiny` / `base` / `small` / `medium` / `large-v3`。 |
 | `language` | 文字列 \| null | `ja` | ISO 639-1 言語コード。`""` または `null` で自動検出（短いクリップでは信頼性が低い）。 |
 | `device` | 文字列 | `cpu` | 推論デバイス: `cpu` または `cuda`。`auto` は一部の Mac 環境で誤ったデバイスを選択するため非対応。 |
