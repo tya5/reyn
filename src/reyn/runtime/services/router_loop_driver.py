@@ -225,8 +225,12 @@ class RouterLoopDriver:
     async def _run_with_shrink(self, loop: Any, user_text: str) -> Any:
         """Run the router once with the reactive bounded-shrink ``retry_loop``.
 
-        Returns the router usage, or raises ``_ContextOverflowError`` when
-        even the floor overflows — the caller (#4381 PR-4) treats that as
+        Returns the router usage, or raises ``_ContextOverflowError``
+        (the context window is genuinely too small) or ``_UnrecoveredError``
+        (shrinking recovered the SAME cause repeatedly without resolving
+        it — #4885: e.g. an HTTP 413 request-body-byte limit, a DIFFERENT
+        axis from token count, which shrinking cannot address) when even
+        the floor overflows — the caller (#4381 PR-4) treats either as
         unrecovered on the first attempt; there is no consolidating retry
         loop here anymore (#1092 PR-F2b's force-close handoff, removed).
         Still rebuilds the history each call — a plain re-entry after ANY
@@ -241,11 +245,11 @@ class RouterLoopDriver:
             ContextOverflowError as _ContextOverflowError,
         )
         from reyn.services.compaction.engine import (
-            UnrecoveredError as _UnrecoveredError,
-        )
-        from reyn.services.compaction.engine import (
             is_context_overflow_error as _is_context_overflow_error,
         )
+        # `UnrecoveredError` is not imported here — it is no longer caught
+        # in this function (#4885: propagates unwrapped, see the comment
+        # below); `run_turn`'s own scope imports it for its widened except.
 
         history = self._history_buffer.build_history()
         try:
@@ -285,25 +289,35 @@ class RouterLoopDriver:
                     raise
                 return _RouterUsageShim(_usage)
 
-            try:
-                _shim = await _retry_loop(
-                    SP=self._history_buffer.build_system_prompt(),
-                    head=_head,
-                    summary=_summary_dict,
-                    raw_middle=_raw_middle,
-                    tail=_tail,
-                    new_msg=_new_msg,
-                    cfg=self._compaction,
-                    model=self._effective_router_model_class(),
-                    engine=engine,
-                    learner=self._token_learner,
-                    main_call=_router_main_call,
-                )
-                return _shim.usage
-            except (_ContextOverflowError, _UnrecoveredError) as _retry_exc:
-                raise _ContextOverflowError(
-                    f"Router context overflow after bounded shrink: {_retry_exc}"
-                ) from _retry_exc
+            # #4885 (architect finding, #4381's own late-stage remainder):
+            # this used to catch BOTH `_ContextOverflowError` (window too
+            # small) and `_UnrecoveredError` (shrinking recovered the SAME
+            # cause repeatedly without resolving it — a MISCLASSIFICATION,
+            # per retry_loop's own docstring) and re-raise both as a single
+            # `_ContextOverflowError("Router context overflow after bounded
+            # shrink: ...")`. That merge is the reported defect: it renamed
+            # `_UnrecoveredError`'s correct diagnosis ("shrink can't fix
+            # this cause") into the WRONG one ("the context window is too
+            # small") — an HTTP 413 (a request-BODY-BYTE limit) recovers
+            # via this exact path and got relabelled as a token-overflow.
+            # Let each propagate as itself; `run_turn`'s own except below
+            # widened to catch both (same audit event, same `repr(exc)`
+            # field — which now correctly names `UnrecoveredError` instead
+            # of always `ContextOverflowError`, no new event kind needed).
+            _shim = await _retry_loop(
+                SP=self._history_buffer.build_system_prompt(),
+                head=_head,
+                summary=_summary_dict,
+                raw_middle=_raw_middle,
+                tail=_tail,
+                new_msg=_new_msg,
+                cfg=self._compaction,
+                model=self._effective_router_model_class(),
+                engine=engine,
+                learner=self._token_learner,
+                main_call=_router_main_call,
+            )
+            return _shim.usage
 
     # ── Main turn entry point ─────────────────────────────────────────────────
 
@@ -319,6 +333,9 @@ class RouterLoopDriver:
         from reyn.runtime.router_loop import EMPTY_STOP_RETRY_DIRECTIVE, RouterLoop
         from reyn.services.compaction.engine import (
             ContextOverflowError as _ContextOverflowError,
+        )
+        from reyn.services.compaction.engine import (
+            UnrecoveredError as _UnrecoveredError,
         )
 
         # #1468 / #1470: reset cancel flag + event at turn entry so an idle
@@ -413,7 +430,14 @@ class RouterLoopDriver:
         # oversized single result from reaching this point at all.
         try:
             router_usage = await self._run_with_shrink(loop, user_text)
-        except _ContextOverflowError as _overflow_exc:
+        # #4885: widened from `_ContextOverflowError` alone — `_run_with_
+        # shrink` no longer merges `_UnrecoveredError` (shrinking recovered
+        # the SAME cause repeatedly without resolving it, e.g. an HTTP 413
+        # request-body-byte limit) into `_ContextOverflowError` (the context
+        # window itself is too small). Both still reach this ONE event with
+        # the SAME schema — `repr(_overflow_exc)` now correctly names
+        # whichever one actually happened instead of always the latter.
+        except (_ContextOverflowError, _UnrecoveredError) as _overflow_exc:
             self._events.emit(
                 "router_context_overflow_unrecovered",
                 error=repr(_overflow_exc),

@@ -12,6 +12,11 @@ Covers:
 - Exception class hierarchy: ContextOverflowError / CompactionOverflowError /
   UnrecoveredError all subclass Exception.
 - section_caps in ComputedBudgets derived from section_weights.
+- #4885: an HTTP 413 (request-BODY-BYTE limit) that survives token-only
+  shrinking binary-searches a LOCAL T_max override instead of immediately
+  claiming "exceeds T_max" (false — T_max, a TOKEN measure, was never
+  actually exceeded); the residual unfixable case (SP + new_msg alone too
+  large) gets an accurate terminal message instead.
 
 Policy compliance:
 - No unittest.mock / MagicMock / AsyncMock / patch.
@@ -392,6 +397,11 @@ class _OverflowingEngine:
         # #3783 stage 2: retry_loop emits compaction_shrink_recovered via
         # engine._events — a real EventLog, not a mock (cheaply constructible).
         self._events = EventLog()
+        # #4885: retry_loop's own byte-limit (413) recovery path reads this
+        # directly to re-derive budgets at a lower T_max via compute_budgets
+        # — mirrors the real CompactionEngine's own stored attribute
+        # (engine.py's Axis 2, "measured once at init time").
+        self._T_comp_SP = 100
 
     async def compact(self, input_chunk: HistoryChunkToCompact):
         if self._fail_compact:
@@ -837,3 +847,147 @@ def test_unrecovered_error_has_reason() -> None:
     assert exc.reason == "all paths exhausted"
     assert "all paths exhausted" in str(exc)
     assert isinstance(exc, Exception)
+
+
+# ---------------------------------------------------------------------------
+# #4885: HTTP 413 (byte limit) binary-search recovery
+# ---------------------------------------------------------------------------
+
+
+class _FakeStatusError(Exception):
+    """A minimal stand-in for openai.APIStatusError's own shape (a plain
+    ``status_code`` attribute set from the underlying HTTP response) —
+    mirrors ``test_4381_stage1_overflow_classification.py``'s own helper,
+    deliberately NOT a litellm/openai exception subclass, so this exercises
+    the ATTRIBUTE check directly, independent of whichever litellm
+    exception hierarchy happens to be installed."""
+
+    def __init__(self, message: str, *, status_code: int) -> None:
+        super().__init__(message)
+        self.status_code = status_code
+
+
+def test_413_recovery_does_not_claim_exceeds_t_max() -> None:
+    """Tier 2: #4885 — a 413 that never resolves (main_call always raises
+    it, tail/head start at/below their token minimums) exhausts the
+    binary-search floor and raises an ACCURATE message naming the byte
+    limit — never the old, false "exceeds T_max" (T_max is a TOKEN measure;
+    a 413 says nothing about it, and the whole point of this path is that
+    T_max was never actually exceeded)."""
+    cfg = _make_cfg()
+    engine = _OverflowingEngine(fail_compact=False)
+    learner = TokenMultiplierLearner(storage_path=Path(tempfile.mkdtemp()) / "m.json")
+
+    head = [{"role": "user", "content": "h", "seq": 1}]
+    tail = [{"role": "user", "content": "t", "seq": 2}]
+    raw_middle: list[dict] = []
+    new_msg = {"role": "user", "content": "q", "seq": 3}
+
+    async def _always_413(**kwargs):
+        raise ContextOverflowError("simulated 413") from _FakeStatusError(
+            "Request Entity Too Large", status_code=413,
+        )
+
+    # #4855-shaped caveat (no time bound in either direction): this needs
+    # enough max_iterations to reach the binary-search floor (SP + new_msg,
+    # both tiny here) — sized generously (40) rather than tuned to the
+    # EXACT halving count, so a later change to the halving formula doesn't
+    # silently re-introduce a timing-shaped dependency here.
+    with pytest.raises(UnrecoveredError) as excinfo:
+        asyncio.run(retry_loop(
+            SP="sp", head=head, summary=None, raw_middle=raw_middle,
+            tail=tail, new_msg=new_msg, cfg=cfg, model="test-model",
+            engine=engine,  # type: ignore[arg-type]
+            learner=learner,
+            main_call=_always_413,
+            max_iterations=40,
+        ))
+
+    message = str(excinfo.value)
+    assert "413" in message
+    assert "exceeds T_max" not in message
+
+
+def test_413_recovery_emits_t_max_override_in_the_audit_event() -> None:
+    """Tier 2: #4885 — the LOCAL T_max override this recovery uses is
+    visible in the SAME audit trail an operator already reads for shrink
+    activity (owner condition ②: not silently running with a smaller
+    window) — a new field on the EXISTING ``compaction_shrink_recovered``
+    event, not a new event kind."""
+    cfg = _make_cfg()
+    engine = _OverflowingEngine(fail_compact=False)
+    learner = TokenMultiplierLearner(storage_path=Path(tempfile.mkdtemp()) / "m.json")
+
+    head = [{"role": "user", "content": "h", "seq": 1}]
+    tail = [{"role": "user", "content": "t", "seq": 2}]
+    raw_middle: list[dict] = []
+    new_msg = {"role": "user", "content": "q", "seq": 3}
+
+    async def _always_413(**kwargs):
+        raise ContextOverflowError("simulated 413") from _FakeStatusError(
+            "Request Entity Too Large", status_code=413,
+        )
+
+    seen: list = []
+    engine._events.add_subscriber(lambda e: seen.append(e))
+
+    with pytest.raises(UnrecoveredError):
+        asyncio.run(retry_loop(
+            SP="sp", head=head, summary=None, raw_middle=raw_middle,
+            tail=tail, new_msg=new_msg, cfg=cfg, model="test-model",
+            engine=engine,  # type: ignore[arg-type]
+            learner=learner,
+            main_call=_always_413,
+            max_iterations=40,
+        ))
+
+    recovered = [e for e in seen if e.type == "compaction_shrink_recovered"]
+    assert recovered, "setup: no compaction_shrink_recovered events emitted"
+    # The FIRST recovery has no override yet (real T_max); a LATER one, once
+    # binary search starts halving, must carry the lowered value — not
+    # asserting a specific number (that pins the halving formula, six-
+    # questions Q2), only that the field is present and eventually non-None.
+    assert any(e.data.get("t_max_override") is not None for e in recovered), (
+        f"no recovered event ever carried a t_max_override: "
+        f"{[e.data for e in recovered]!r}"
+    )
+
+
+def test_413_recovery_same_cause_cap_does_not_cut_off_the_binary_search() -> None:
+    """Tier 2: #4885 — the pre-existing same-cause-recovers-N-times cap
+    (#3783 stage 2, ``_MAX_CONSECUTIVE_SAME_CAUSE_RECOVERS = 2``) does NOT
+    fire for a byte-limit cause, even though a 413 recurring while the
+    binary search lowers its ceiling is EXACTLY the shape that cap was
+    built to catch for a token-only cause. Falsified by the un-skipped
+    version: without the skip, this raises the cap's own "recovered N
+    consecutive times" message well before reaching the byte-limit-specific
+    one — asserted by NAME here, so a regression is unambiguous about
+    which mechanism fired."""
+    cfg = _make_cfg()
+    engine = _OverflowingEngine(fail_compact=False)
+    learner = TokenMultiplierLearner(storage_path=Path(tempfile.mkdtemp()) / "m.json")
+
+    head = [{"role": "user", "content": "h", "seq": 1}]
+    tail = [{"role": "user", "content": "t", "seq": 2}]
+    raw_middle: list[dict] = []
+    new_msg = {"role": "user", "content": "q", "seq": 3}
+
+    async def _always_413(**kwargs):
+        raise ContextOverflowError("simulated 413") from _FakeStatusError(
+            "Request Entity Too Large", status_code=413,
+        )
+
+    with pytest.raises(UnrecoveredError) as excinfo:
+        asyncio.run(retry_loop(
+            SP="sp", head=head, summary=None, raw_middle=raw_middle,
+            tail=tail, new_msg=new_msg, cfg=cfg, model="test-model",
+            engine=engine,  # type: ignore[arg-type]
+            learner=learner,
+            main_call=_always_413,
+            max_iterations=40,
+        ))
+
+    message = str(excinfo.value)
+    assert "consecutive times" not in message, (
+        f"the same-cause cap fired instead of the binary-search floor: {message!r}"
+    )

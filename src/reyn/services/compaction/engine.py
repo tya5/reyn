@@ -505,6 +505,7 @@ def compute_budgets(
     *,
     T_SP: int,
     T_comp_SP: int,
+    t_max_override: int | None = None,
 ) -> ComputedBudgets:
     """Derive all token budgets from component_weights + context window size.
 
@@ -521,9 +522,20 @@ def compute_budgets(
     T_comp_SP:
         Tokens consumed by the compactor's own system prompt (Axis 2).
         Measured independently; does NOT come out of main_pool.
+    t_max_override:
+        #4885: when set, used IN PLACE of ``get_max_input_tokens(model)`` —
+        does not call it at all, so this never touches the real model's
+        context window globally (owner's condition ③: "get_max_input_tokens
+        を大域で下げない"). ``retry_loop``'s own binary-search-on-T_max
+        recovery (for an HTTP 413 — a request-BODY-BYTE limit, which the
+        real T_max says nothing about) is the ONLY caller that passes this;
+        every other call site keeps deriving T_max from the model as before.
     """
-    from reyn.llm.model_budget import get_max_input_tokens
-    T_max = get_max_input_tokens(model)
+    if t_max_override is not None:
+        T_max = t_max_override
+    else:
+        from reyn.llm.model_budget import get_max_input_tokens
+        T_max = get_max_input_tokens(model)
     main_pool = T_max - T_SP
 
     # PR-N6: normalise component_weights.
@@ -1494,6 +1506,7 @@ async def retry_loop(
         Safety cap (default 8).  Finite-by-construction termination means
         this cap is rarely reached.
     """
+    from reyn.llm.model_budget import get_max_input_tokens
     from reyn.runtime.services.token_multiplier_learner import detect_content_type
 
     bg = engine.budgets
@@ -1503,6 +1516,54 @@ async def retry_loop(
 
     _last_recover_cause: str | None = None
     _consecutive_same_cause = 0
+
+    # #4885 (owner proposal, evaluated and approved by lead-coder): an HTTP
+    # 413 is a request-BODY-BYTE limit — a different axis entirely from the
+    # token budgets this whole ladder is built from (see this function's own
+    # "Bounded termination proof" above: every shrink step and floor here is
+    # measured in TOKENS). Lowering the EFFECTIVE T_max this invocation uses
+    # is the only lever that makes the EXISTING token-shrink mechanics
+    # respond to a byte-limit trigger at all — deliberately NOT a second,
+    # byte-built ladder alongside this one (one resource, one gate; two
+    # gates guarding the same resource is a shape this repo keeps re-
+    # learning not to build). Binary search, not a fixed "shrink by half the
+    # ceiling" guess: the byte/token ratio of whatever tripped the 413 is
+    # unknown (a base64 attachment, a verbose non-English message, and a
+    # repeated low-entropy block all have different ratios), so there is no
+    # ratio to aim for — halving the SAME retry_loop-scoped T_max override
+    # on each still-413 recovery converges in O(log T_max) steps regardless
+    # of what the ratio turns out to be, the identical guarantee
+    # ``max_iterations`` already relies on for the token-only case.
+    #
+    # Scope (owner condition ③): ``_t_max_override`` is a LOCAL variable —
+    # passed to ``compute_budgets`` only, never to ``get_max_input_tokens``
+    # or anywhere that would change the model's real context window for any
+    # OTHER call. It dies with this ``retry_loop`` invocation; nothing
+    # persists it past a single turn's shrink attempt (owner condition ②'s
+    # "temporary" — this repo's OWN scoping mechanism already bounds the
+    # lifetime to "this call", so there is no separate expiry to track).
+    #
+    # Floor (owner: "どこで諦めるか — そこはあなたが決めて"): ``SP`` and
+    # ``new_msg`` are the two pieces of context this ladder NEVER shrinks
+    # (``new_msg`` per this module's own #43 docstring: "NEVER dropped" —
+    # dropping the user's own newest message would silently answer a
+    # different question than the one asked; ``SP`` is the session's system
+    # prompt, dropping it changes the agent's own instructions mid-turn).
+    # Once a halved candidate T_max can no longer fit BOTH even with
+    # head/tail/summary all at zero, no further halving can possibly
+    # succeed — continuing would just re-hit the SAME terminal case one
+    # halving later, burning ``max_iterations`` for no new information. That
+    # is the floor: stop BEFORE trying a candidate that provably cannot fit
+    # ``SP`` + ``new_msg`` alone, and raise the corrected diagnosis instead
+    # (below) — not one more halved attempt, and not "exceeds T_max" (false
+    # in this specific case: a byte limit was hit, not a token one).
+    _last_recover_is_byte_limit = False
+    _t_max_override: int | None = None
+    # SP/new_msg never shrink (see the floor comment above) and never
+    # change across iterations (both are fixed parameters) — computed once,
+    # not on every floor check.
+    _sp_tokens_floor = estimate_tokens(SP, model, use_chars4=use_chars4)
+    _new_msg_tokens_floor = estimate_tokens_for_turn(new_msg, model, use_chars4=use_chars4)
 
     for _iteration in range(max_iterations):
         try:
@@ -1599,13 +1660,38 @@ async def retry_loop(
             else:
                 _last_recover_cause = _cause
                 _consecutive_same_cause = 1
+            # #4885: same status_code check `is_context_overflow_error` uses
+            # (a real attribute litellm/openai set from the underlying HTTP
+            # response, not string-matched) — checked on the ROOT cause, the
+            # same one `_cause` above already names, so "413" and the cause
+            # name agree about what actually happened.
+            _last_recover_is_byte_limit = (
+                getattr(_overflow_exc.__cause__, "status_code", None) == 413
+            )
             engine._events.emit(
                 "compaction_shrink_recovered",
                 cause=_cause,
                 iteration=_iteration,
                 consecutive=_consecutive_same_cause,
+                t_max_override=_t_max_override,
             )
-            if _consecutive_same_cause > _MAX_CONSECUTIVE_SAME_CAUSE_RECOVERS:
+            # #4885: this cap is skipped for a byte-limit cause. It exists to
+            # catch a TOKEN-shrink that keeps recovering the SAME cause
+            # without ever changing anything — evidence shrinking cannot fix
+            # THAT cause. For a 413, "the same cause recovers repeatedly" is
+            # the EXPECTED shape of active binary-search progress: one
+            # iteration lowers the ceiling, a later one actually shrinks
+            # content down to it, and the 413 keeps recurring in between
+            # simply because content has not caught up to the new, lower
+            # ceiling yet — not because shrinking has stalled. The floor
+            # check in the shrink-escalation branch below (SP + new_msg no
+            # longer fitting) is the correct stop condition for THIS cause;
+            # applying this cap on top of it would cut the search off after
+            # only 2 halvings regardless of how much headroom remains.
+            if (
+                _consecutive_same_cause > _MAX_CONSECUTIVE_SAME_CAUSE_RECOVERS
+                and not _last_recover_is_byte_limit
+            ):
                 raise UnrecoveredError(
                     f"retry_loop: cause {_cause!r} recovered "
                     f"{_consecutive_same_cause} consecutive times (limit "
@@ -1630,6 +1716,69 @@ async def retry_loop(
             chunk = max(len(head) // 2, 1)
             raw_middle = head[-chunk:] + raw_middle
             head = head[:-chunk]
+        elif _last_recover_is_byte_limit:
+            # #4885: token-only shrinking is exhausted (head/tail already at
+            # or below their token minimums) but the triggering cause was an
+            # HTTP 413 — a BYTE limit, which those minimums say nothing
+            # about. Halve the retry_loop-scoped T_max override (or start
+            # from the real T_max on the first attempt) and re-derive
+            # head_min/tail_min from it via `compute_budgets` — the SAME
+            # function every other T_max consumer uses, called here with
+            # `t_max_override` so nothing outside this local scope changes.
+            _t_max_for_candidate = (
+                _t_max_override if _t_max_override is not None
+                else get_max_input_tokens(model)
+            )
+            _candidate = _t_max_for_candidate // 2
+            if _candidate <= _sp_tokens_floor + _new_msg_tokens_floor:
+                # Floor: SP + new_msg alone (never shrunk — see the floor
+                # comment above the loop) would not fit even at this
+                # candidate with head/tail/summary at zero. Halving again
+                # cannot possibly succeed either (the candidate only shrinks
+                # further) — stop here, not one more attempt, and name what
+                # actually happened instead of the false "exceeds T_max".
+                raise UnrecoveredError(
+                    "retry_loop: HTTP 413 (a request-BODY-BYTE limit) "
+                    "recurred even after binary-search-halving the "
+                    f"in-turn token ceiling to {_candidate} tokens — SP "
+                    f"({_sp_tokens_floor} tokens) and the newest message "
+                    f"({_new_msg_tokens_floor} tokens) alone no longer fit, "
+                    "and neither is ever shrunk. This is a request-BODY-"
+                    "BYTE limit, not a token-count one — shrinking the "
+                    "token-count representation further cannot resolve it "
+                    "(most likely: the newest message alone exceeds the "
+                    "upstream byte limit)."
+                )
+            _t_max_override = _candidate
+            bg = compute_budgets(
+                cfg, model,
+                T_SP=_sp_tokens_floor, T_comp_SP=engine._T_comp_SP,
+                t_max_override=_t_max_override,
+            )
+            head_min_tokens = bg.head_budget
+            tail_min_tokens = bg.tail_budget
+            # Immediately re-check tail/head against the NEW, smaller
+            # minimums and shrink in this SAME iteration if either now
+            # exceeds them — without this, halving the ceiling costs one
+            # iteration and shrinking content down to it costs a second
+            # (main_call retried with UNCHANGED content just re-confirms the
+            # same 413, wasting a turn of `max_iterations`), roughly halving
+            # how many halvings fit under the safety cap for no reason: the
+            # data needed to shrink (tail/head, already read above) is
+            # already in hand at this exact point.
+            if _estimate_tokens_list(tail, model, use_chars4=use_chars4) > tail_min_tokens:
+                chunk = max(len(tail) // 2, 1)
+                raw_middle.extend(tail[:chunk])
+                tail = tail[chunk:]
+            elif _estimate_tokens_list(head, model, use_chars4=use_chars4) > head_min_tokens:
+                chunk = max(len(head) // 2, 1)
+                raw_middle = head[-chunk:] + raw_middle
+                head = head[:-chunk]
+            # If neither exceeds the new minimums either (head/tail were
+            # ALREADY below even the halved ceiling), there is nothing left
+            # to trim yet — still falls through without raising; the NEXT
+            # 413 (same content, same call) halves the ceiling again on its
+            # own next pass through this branch, continuing the search.
         else:
             raise UnrecoveredError(
                 "retry_loop: all shrink paths exhausted — "
