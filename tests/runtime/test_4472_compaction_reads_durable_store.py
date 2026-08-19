@@ -45,11 +45,25 @@ from reyn.runtime.chat_message import ChatMessage
 from reyn.runtime.session import Session
 from tests._support.agent_session import make_session
 
-_SUMMARY_JSON = json.dumps({
-    "topic_arc": "compacted summary of older turns",
-    "decisions": [], "pending": [],
-    "session_user_facts": [], "artifacts_referenced": [],
-})
+
+# #4883 update: new_turn_seqs is required by CompactionEngine.compact()'s
+# post-parse validation floor now (see engine.py's
+# _validate_chat_summary_fields) — a scripted response omitting it is
+# rejected as invalid and exhausts the re-prompt budget rather than reaching
+# the controller. Derived per-call from the REAL candidate turns the engine
+# was actually asked to summarize (parsed out of its own user-prompt
+# content), never a static value — this file's whole point is that
+# covers_through_seq must reflect only the ACTIVE-branch turns genuinely
+# examined, never an abandoned-branch turn or a hardcoded claim.
+def _summary_json_for_messages(messages: list) -> str:
+    user_content = json.loads(messages[1]["content"])
+    seqs = [t["seq"] for t in user_content.get("new_turns", []) if "seq" in t]
+    return json.dumps({
+        "new_turn_seqs": seqs,
+        "topic_arc": "compacted summary of older turns",
+        "decisions": [], "pending": [],
+        "session_user_facts": [], "artifacts_referenced": [],
+    })
 
 
 def _now() -> str:
@@ -85,7 +99,9 @@ def _script_compaction_llm(monkeypatch, captured_new_turn_seqs: list) -> None:
         # test can assert on real prompt CONTENT, not an internal seq list.
         captured_new_turn_seqs.append(json.dumps(messages))
         return SimpleNamespace(
-            choices=[SimpleNamespace(message=SimpleNamespace(content=_SUMMARY_JSON))]
+            choices=[SimpleNamespace(
+                message=SimpleNamespace(content=_summary_json_for_messages(messages))
+            )]
         )
     monkeypatch.setattr(litellm, "acompletion", _fake_acompletion)
 

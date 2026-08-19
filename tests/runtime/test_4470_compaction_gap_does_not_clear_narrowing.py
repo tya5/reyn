@@ -77,16 +77,27 @@ from reyn.runtime.session import Session
 from tests._support.agent_session import make_session
 from tests._support.untrusted_narrowing import narrowing_on
 
-# Mirrors test_slash_compact_191.py's own scripted summary — new_turn_seqs is
-# cosmetic here (the controller derives covers_through_seq from candidates,
-# not from the engine's own claim, unless the engine returns one explicitly;
-# omitting it keeps the controller's own candidates[-1].seq fallback live,
-# which is exactly the code path #4470 fixes).
-_SUMMARY_JSON = json.dumps({
-    "topic_arc": "compacted summary of older turns",
-    "decisions": [], "pending": [],
-    "session_user_facts": [], "artifacts_referenced": [],
-})
+
+# #4883 update: new_turn_seqs is NO LONGER cosmetic — CompactionEngine.compact()
+# now validates it is present (post-parse floor, see engine.py's
+# _validate_chat_summary_fields), so a scripted response omitting it would be
+# rejected as an invalid response and exhaust the re-prompt budget instead of
+# reaching the controller's own candidates[-1].seq fallback at all. Derived
+# dynamically from the REAL candidate turns each call was actually asked to
+# summarize (parsed out of the engine's own user-prompt content) rather than
+# a hardcoded list — a hardcoded value would let the summary's own claim
+# diverge from the real candidates, which is exactly the property #4470
+# exists to protect (covers_through_seq must reflect only what was
+# genuinely examined).
+def _summary_json_for_messages(messages: list) -> str:
+    user_content = json.loads(messages[1]["content"])
+    seqs = [t["seq"] for t in user_content.get("new_turns", []) if "seq" in t]
+    return json.dumps({
+        "new_turn_seqs": seqs,
+        "topic_arc": "compacted summary of older turns",
+        "decisions": [], "pending": [],
+        "session_user_facts": [], "artifacts_referenced": [],
+    })
 
 
 def _now() -> str:
@@ -119,7 +130,9 @@ def _make_session(tmp_path, monkeypatch, *, max_bytes: int) -> Session:
 def _script_compaction_llm(monkeypatch) -> None:
     async def _fake_acompletion(model, messages, **kw):  # noqa: ANN001, ANN003
         return SimpleNamespace(
-            choices=[SimpleNamespace(message=SimpleNamespace(content=_SUMMARY_JSON))]
+            choices=[SimpleNamespace(
+                message=SimpleNamespace(content=_summary_json_for_messages(messages))
+            )]
         )
     monkeypatch.setattr(litellm, "acompletion", _fake_acompletion)
 

@@ -1078,6 +1078,11 @@ def _build_chat_config(raw: object) -> ChatConfig:
         resummarize_passes=int(
             compaction_raw.get("resummarize_passes", defaults.resummarize_passes)
         ),
+        max_schema_reprompt_attempts=int(
+            compaction_raw.get(
+                "max_schema_reprompt_attempts", defaults.max_schema_reprompt_attempts
+            )
+        ),
         section_token_caps=section,
     )
     return ChatConfig(

@@ -39,6 +39,14 @@ from tests._support.events import collect_events
 _MODEL = "openai/gpt-4o"
 
 
+async def _async_true() -> bool:
+    return True
+
+
+async def _async_false() -> bool:
+    return False
+
+
 def _resp(content: str) -> SimpleNamespace:
     return SimpleNamespace(
         choices=[SimpleNamespace(message=SimpleNamespace(content=content))]
@@ -286,7 +294,7 @@ def test_structured_output_used_when_model_supports_it(monkeypatch) -> None:
     monkeypatch.setattr("litellm.acompletion", _scripted)
     monkeypatch.setattr(
         "reyn.services.compaction.engine._supports_structured_output",
-        lambda model: True,
+        lambda model: _async_true(),
     )
     asyncio.run(engine.compact(_chunk()))
 
@@ -316,7 +324,7 @@ def test_json_object_used_when_model_does_not_support_structured_output(monkeypa
     monkeypatch.setattr("litellm.acompletion", _scripted)
     monkeypatch.setattr(
         "reyn.services.compaction.engine._supports_structured_output",
-        lambda model: False,
+        lambda model: _async_false(),
     )
     summary = asyncio.run(engine.compact(_chunk()))  # must NOT raise
 
@@ -354,7 +362,7 @@ def test_provider_rejection_of_json_schema_is_not_caught_and_retried(monkeypatch
     monkeypatch.setattr("litellm.acompletion", _scripted)
     monkeypatch.setattr(
         "reyn.services.compaction.engine._supports_structured_output",
-        lambda model: True,
+        lambda model: _async_true(),
     )
 
     with pytest.raises(ValueError, match="provider rejected response_format"):

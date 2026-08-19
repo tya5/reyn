@@ -44,6 +44,7 @@ Drop priority when over budget:
 """
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import logging
@@ -941,7 +942,7 @@ _CHAT_SUMMARY_JSON_SCHEMA: dict = {
 }
 
 
-def _supports_structured_output(model: str) -> bool:
+async def _supports_structured_output(model: str) -> bool:
     """#4883: whether ``model`` supports schema-constrained JSON generation
     (``litellm.supports_response_schema``) — the SAME capability precheck
     0062's ``AgentStep.schema`` path already uses and has in production
@@ -951,6 +952,18 @@ def _supports_structured_output(model: str) -> bool:
     underlying gemini model, not misclassified as an unsupported literal
     OpenAI name — mirrors ``router_loop.py``'s own ``_precheck_model``
     derivation).
+
+    Routed through :func:`ensure_litellm_ready` — the sole chokepoint
+    equipped to handle a not-yet-warm or persistently-broken environment
+    (cooldown, the background warming thread, log-routing setup) — never a
+    second, independent ``import litellm`` (CI's
+    ``test_4421_litellm_import_seam.py`` enforces this repo-wide; a prior
+    revision of this function violated it). Unlike ``router_loop.py``'s own
+    precheck (``ignore_cooldown=True`` — it has no fallback, a schema
+    request was explicit), this call has a real fallback (plain
+    ``json_object``), so it stays on the DEFAULT cooldown-protected path —
+    a caller with a safe fallback is exactly what axis② cooldown exists to
+    protect from repeatedly re-attempting a broken import.
 
     Never raises: any failure (litellm not importable/not ready yet, the
     capability query itself erroring) degrades to ``False`` — compaction is
@@ -965,10 +978,11 @@ def _supports_structured_output(model: str) -> bool:
     per-turn request.
     """
     try:
-        import litellm
+        from reyn.llm.litellm_bootstrap import ensure_litellm_ready
+        litellm = await asyncio.to_thread(ensure_litellm_ready)
     except Exception:  # noqa: BLE001 — capability probe, never the caller's failure
         return False
-    if not hasattr(litellm, "supports_response_schema"):
+    if litellm is None or not hasattr(litellm, "supports_response_schema"):
         return False
     try:
         from reyn.llm.llm import proxy_kwargs
@@ -1497,7 +1511,7 @@ class CompactionEngine:
         # existing try/except (-> compaction_failed), which is the
         # pre-existing safety net this fix already leans on for the
         # exhausted-reprompt-budget case above.
-        if _supports_structured_output(self._model):
+        if await _supports_structured_output(self._model):
             _response_format = {
                 "type": "json_schema",
                 "json_schema": {
