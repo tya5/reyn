@@ -188,6 +188,36 @@ def test_assignment_with_a_different_ignore_code_not_flagged() -> None:
     assert findings == []
 
 
+def test_hashless_string_literal_containing_the_phrase_not_flagged() -> None:
+    """Tier 1: #4910 — an ATTRIBUTE assignment whose VALUE is a string
+    literal that happens to contain the text ``type: ignore[attr-defined]``
+    (no leading ``#`` anywhere on the source line, so it is DATA, not a
+    real suppression comment) must not fire.
+
+    Real-corpus-inspired (architect, #4910): ``tests/scripts/
+    test_3726_mypy_ratchet.py`` builds a string mimicking mypy stdout that
+    quotes the phrase ``"type: ignore[assignment]"`` as data — but that
+    file's own assignment target is a plain NAME (``text = (...)``), which
+    the rule already excludes by construction (only Attribute-target
+    assignments are even considered) regardless of the ``#`` requirement,
+    so it is not itself a witness for the ``#`` requirement specifically.
+    THIS test puts the same shape of string value on an Attribute-target
+    assignment instead — the one case that actually reaches
+    ``_ignore_codes`` — so a future regex change that dropped the literal
+    ``#`` requirement (matching the phrase anywhere on the line, comment
+    or not) would flip this test red without dropping the target-type
+    filter at the same time."""
+    audit = _load_audit_module()
+    source = (
+        "def _helper(obj):\n"
+        '    """Fixture helper."""\n'
+        '    obj.injected = \'Error code not covered by "type: ignore[attr-defined]" comment\'\n'
+        "    return obj\n"
+    )
+    findings = _fake_attr_findings(audit, source)
+    assert findings == []
+
+
 def test_ordinary_self_attribute_assignment_not_flagged() -> None:
     """Tier 1: sanity — a normal, unsuppressed ``self.x = value`` inside a
     real class (the overwhelming majority of assignments in any file) must
