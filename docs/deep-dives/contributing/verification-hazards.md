@@ -1560,7 +1560,7 @@ compaction exists as the backstop for a context window with nowhere else
 to go. Whether an unsupported model should raise or fall back **for this
 one caller** is a real design call the published spec cannot make for you
 — reading it closes the capability half of the question, not the policy
-half.
+half. **And that the spec cannot make the call does not mean the person reading the spec may.** That policy is owner-ratified, not a default someone chose: proposal 0062's own front matter reads *"owner-intent: ratified direction (owner GO 2026-07-13) … unsupported model errors, no silent degrade"*. So degrading for one caller is a departure from a ratified position — an owner decision, not a designer's discretion. The question has three steps, not two: what the spec permits, what this caller needs, and **who ratified the rule you are about to carve an exception out of**. Skipping the third turns a correct observation about specs into an unauthorised exception.
 
 **The discriminator that was misapplied**: "a third party's behavior is not
 ours to verify" governs *taking over the third party's own implementation*
