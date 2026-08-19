@@ -120,7 +120,7 @@ async def _run_n_turns_then_shutdown(session: Session, n: int) -> None:
     except asyncio.TimeoutError:
         run_task.cancel()
         await asyncio.gather(run_task, return_exceptions=True)
-    await session._journal.flush()  # #2259 PR-2b: drain async WAL+snapshot before the sync read
+    await session.journal.flush()  # #2259 PR-2b: drain async WAL+snapshot before the sync read
 
 
 # ---------------------------------------------------------------------------
@@ -291,13 +291,13 @@ async def test_c_staging_persist_and_restore(tmp_path) -> None:
     session = _make_session(tmp_path)
 
     # Directly call the journal method to stage a ride-along entry.
-    await session._journal.record_next_turn_context_staged(
+    await session.journal.record_next_turn_context_staged(
         kind="hook",
         payload={"name": "hook_a", "text": "ride-along context"},
     )
 
     # Verify the snapshot file contains the staged entry.
-    await session._journal.flush()  # #2259 PR-2b: drain async snapshot write before the load
+    await session.journal.flush()  # #2259 PR-2b: drain async snapshot write before the load
     snapshot_on_disk = AgentSnapshot.load(
         session.agent_name, session._snapshot_path,
     )

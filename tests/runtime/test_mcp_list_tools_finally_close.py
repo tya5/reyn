@@ -116,7 +116,7 @@ async def test_list_tools_error_path_still_closes_same_task(tmp_path, monkeypatc
     _install_fake(monkeypatch, sess, raises=True)
 
     with pytest.raises(MCPFault) as excinfo:
-        await sess._router_host.mcp_list_tools("srv")
+        await sess.router_host.mcp_list_tools("srv")
     assert "boom from list_tools" in str(excinfo.value), (
         "the fault propagates as MCPFault (#3447: the catch moved to tools/mcp.py's "
         "_handle_list_mcp_tools, not raised here)"
@@ -134,7 +134,7 @@ async def test_list_tools_success_path_closes_and_returns(tmp_path, monkeypatch)
     sess = await _session(tmp_path)
     _install_fake(monkeypatch, sess, raises=False)
 
-    result = await sess._router_host.mcp_list_tools("srv")
+    result = await sess.router_host.mcp_list_tools("srv")
 
     assert result == [{"name": "some_tool"}]
     client = _FakeMCPClient.instances[-1]

@@ -305,7 +305,7 @@ async def test_user_submitted_precedes_turn_started(tmp_path, monkeypatch) -> No
 
     await session.submit_user_text("hello")
     await _run_n_turns_then_shutdown(session, n=1)
-    await session._journal.flush()
+    await session.journal.flush()
 
     types = [e.type for e in sink.events]
     assert "user_submitted" in types
@@ -333,7 +333,7 @@ async def test_history_persistence_unaffected_by_the_echo_move(tmp_path, monkeyp
 
     await session.submit_user_text("persist me")
     await _run_n_turns_then_shutdown(session, n=1)
-    await session._journal.flush()
+    await session.journal.flush()
 
     texts = [m.content for m in session.history if m.role == "user"]
     assert any("persist me" in str(t) for t in texts)

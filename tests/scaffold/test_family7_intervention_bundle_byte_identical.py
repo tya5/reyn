@@ -91,8 +91,8 @@ class TestFamily7InterventionBundleByteIdentical:
         ``InterventionRegistry`` / ``InterventionHandler`` /
         ``InterventionCoordinator`` / ``ChainTimeoutGlue`` instances onto
         Session — the extraction's core contract."""
-        chains = session._chains
-        interventions = session._interventions
+        chains = session.chains
+        interventions = session.interventions
         intervention_handler = session._intervention_handler
         intervention_coordinator = session._intervention_coordinator
         chain_timeout_glue = session._chain_timeout_glue
@@ -183,7 +183,7 @@ class TestFamily7InterventionBundleByteIdentical:
         inter_agent_messaging = session._inter_agent_messaging
         assert isinstance(inter_agent_messaging, InterAgentMessaging)
         wired_chains = inter_agent_messaging._chains
-        session_chains = session._chains
+        session_chains = session.chains
         assert wired_chains is session_chains
 
     # ── deferred: chains → chain_timeout_glue resolves only via a bound method, at CALL time ──
@@ -244,14 +244,14 @@ class TestFamily7InterventionBundleByteIdentical:
         instance ``InterAgentMessaging`` actually holds — proving that
         pin is genuinely reading the live cross-family wiring."""
         fresh_chains = ChainManager(
-            journal=session._journal,
+            journal=session.journal,
             events=session._audit_events,
             chain_timeout_seconds=session._chain_timeout_seconds,
             max_hop_depth=session._max_hop_depth,
         )
 
         wired_chains = session._inter_agent_messaging._chains
-        session_chains = session._chains
+        session_chains = session.chains
 
         assert fresh_chains is not session_chains
         assert wired_chains is session_chains

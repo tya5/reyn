@@ -56,7 +56,7 @@ def _make_resolver(tmp_path: Path) -> PermissionResolver:
 
 
 def _make_source_decl(resolver: PermissionResolver) -> PermissionDecl:
-    canonical_config = str(resolver._project_root / ".reyn" / "config" / "mcp.yaml")
+    canonical_config = str(resolver.project_root / ".reyn" / "config" / "mcp.yaml")
     resolver.session_approve_path(canonical_config, "mcp_install_test", "file.write")
     return PermissionDecl(
         file_write=[{"path": canonical_config, "scope": "just_path"}],

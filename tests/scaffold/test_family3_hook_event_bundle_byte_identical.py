@@ -121,7 +121,7 @@ class TestFamily3HookEventBundleByteIdentical:
         is_fs_watcher = isinstance(s._fs_watcher, FsWatcher)
         is_composer_registry = isinstance(s._composer_registry, ComposerRegistry)
         is_composed_consumer = isinstance(s._composed_consumer, ComposedEventConsumer)
-        is_hot_reloader = isinstance(s._hot_reloader, HotReloader)
+        is_hot_reloader = isinstance(s.hot_reloader, HotReloader)
         assert is_hook_bus
         assert is_dispatcher
         assert is_fs_watcher
@@ -264,7 +264,7 @@ class TestFamily3HookEventBundleByteIdentical:
         s = _make_session(tmp_path)
         collected = collect_events(s._audit_events)
         before = len(collected)
-        await s._hot_reloader.apply_all(exclude=frozenset({"cron"}))
+        await s.hot_reloader.apply_all(exclude=frozenset({"cron"}))
         after = [e.type for e in collected]
         assert len(after) > before
         assert "config_reloaded" in after
@@ -275,7 +275,7 @@ class TestFamily3HookEventBundleByteIdentical:
         that moved WITH the family to after the builder call), so
         ``get_active_hot_reloader()`` returns THIS session's instance."""
         s = _make_session(tmp_path)
-        this_sessions_reloader = s._hot_reloader
+        this_sessions_reloader = s.hot_reloader
         assert get_active_hot_reloader() is this_sessions_reloader
 
     @pytest.mark.asyncio

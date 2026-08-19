@@ -420,7 +420,7 @@ async def test_emit_origin_self_stimulating_chain_force_closes_at_cap(tmp_path):
         # handler — the self-stimulating step of the chain.
         ctx = OpContext(
             workspace=None, events=session._audit_events, permission_decl=PermissionDecl(),
-            session_id=session._session_id, hook_bus=session._hook_bus,
+            session_id=session.session_id, hook_bus=session._hook_bus,
         )
         op = EmitHookEventIROp(kind="emit_hook_event", event_name="ping")
         await emit_handle(op, ctx)

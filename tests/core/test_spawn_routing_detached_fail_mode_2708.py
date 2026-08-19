@@ -383,7 +383,7 @@ async def _spawn_from(
 ) -> "tuple[Session, str]":
     """Spawn a child session from ``spawner`` via the LLM session_spawn adapter path (so the child
     gets the adapter's BridgeToParent routing), returning ``(child_session, child_sid)``."""
-    host = spawner._router_host
+    host = spawner.router_host
     host._live_sid_in = LiveSessionIdInputs(
         session_id=host._live_sid_in.session_id, live_session_id_fn=lambda: spawner_sid,
     )

@@ -104,7 +104,7 @@ def test_close_stderr_capture_clears_attribute() -> None:
     """Tier 2: after close, ``_stderr_capture`` is None and tail is empty."""
     client = _client()
     client._stderr_capture = tempfile.TemporaryFile(mode="w+t", encoding="utf-8")
-    client._stderr_capture.write("anything")
+    client.stderr_capture.write("anything")
     client.close_stderr_capture()
     assert client.stderr_capture is None
     assert client.read_stderr_tail() == ""

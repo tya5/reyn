@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Test policy compliance auditor — Reyn testing.ja.md automated linter.
 
-Detects 7 categories of Tier 4 violations and policy warnings in test files:
+Detects 8 categories of Tier 4 violations and policy warnings in test files:
   1. Missing Tier docstring (ERROR)
   2. Format pinning via len(...) < N (ERROR)
   3. Private state assertion via obj._attr (ERROR)
@@ -9,6 +9,8 @@ Detects 7 categories of Tier 4 violations and policy warnings in test files:
   5. Bounded-life test outside tests/scaffold/ (WARNING)
   6. Snapshot/golden test outside tests/scaffold/ (ERROR)
   7. Fake attribute on a real object, suppressed via type: ignore (ERROR)
+  8. Private read (obj._x, not just assert obj._x) with a same-class
+     public @property alternative (ERROR)
 
 Usage:
     python scripts/test_tier_audit.py tests/
@@ -225,6 +227,7 @@ RULE_NAMES = {
     "bounded-life",
     "snapshot",
     "fake-attr",
+    "private-read-public-alt",
 }
 
 # ---------------------------------------------------------------------------
@@ -680,6 +683,288 @@ def _check_fake_attr_assignments(source: str, tree: ast.Module) -> list[Finding]
     return findings
 
 
+def _annotation_class_names(node: ast.AST | None) -> set[str]:
+    """Every candidate class name spelled by an annotation node — ``Session``
+    from ``x: Session``, ``"Session"`` from a quoted forward-reference,
+    ``Session`` from ``x: module.Session``, and (load-bearing, not a nicety
+    — see below) BOTH names from a union: ``x: "Session | None"`` and
+    ``x: Optional[Session]`` alike.
+
+    The union case is not speculative completeness: it's the exact shape
+    that made this rule MISS one of architect's own 4 named positive
+    controls on its first pass (#4864 thread) —
+    ``def _op_ctx(tmp_path, session: "Session | None") -> OpContext:`` in
+    ``tests/core/test_2761_pr2_hotreload_immediate_apply.py`` — caught only
+    by re-checking each of the 4 named sites individually against this
+    PR's own findings before writing the PR body, not by any corpus-wide
+    measurement (only that one file was checked this way)."""
+    if node is None:
+        return set()
+    if isinstance(node, ast.Name):
+        return {node.id}
+    if isinstance(node, ast.Attribute):
+        return {node.attr}
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        try:
+            inner = ast.parse(node.value, mode="eval").body
+        except SyntaxError:
+            return set()
+        return _annotation_class_names(inner)
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.BitOr):
+        return _annotation_class_names(node.left) | _annotation_class_names(
+            node.right
+        )
+    if isinstance(node, ast.Subscript):
+        return _annotation_class_names(node.slice)  # Optional[X] / Union[X, Y]
+    if isinstance(node, ast.Tuple):
+        out: set[str] = set()
+        for elt in node.elts:
+            out |= _annotation_class_names(elt)
+        return out
+    return set()
+
+
+def _annotation_class_name(node: ast.AST | None, class_names: set[str]) -> str | None:
+    """The single name from ``_annotation_class_names(node)`` that is
+    actually one of *class_names* — resolves ``"Session | None"`` to
+    ``"Session"`` (``"None"`` is never a tracked class) without the caller
+    needing to know about unions at all. None if no candidate matches."""
+    candidates = _annotation_class_names(node) & class_names
+    if not candidates:
+        return None
+    return sorted(candidates)[0]
+
+
+def _build_class_property_index(src_root: Path) -> dict[str, tuple[set[str], str]]:
+    """Rule 8 (#4864): for every class in *src_root*, the private attribute
+    names it assigns via ``self._x = ...`` that are ALSO published by a
+    same-class ``@property def x``. Keyed by class name; whole ``src/``
+    scanned ONCE (mirrors #3670's single-index-build precedent — this is
+    shared across every test file the caller audits, not rebuilt per-file).
+
+    Class-SCOPED intersection is load-bearing, not a stylistic choice.
+    architect's own #4864-thread pitfall: ``self._chains = chains`` is
+    assigned in FIVE different classes (SpawnTracker/RouterHostAdapter/
+    ChainTimeoutGlue/InterAgentMessaging/Session), but only ``Session``
+    ALSO defines ``@property def chains``. A global (does this attr name
+    exist as a property ANYWHERE) index would wrongly flag ``_chains``
+    reads on the other four classes too — keying by class name here, and
+    requiring the caller to prove the read's object is THAT SPECIFIC class
+    (see ``_build_function_return_types`` / ``_infer_local_types`` below)
+    is what keeps the false-positive rate at the 0 architect's spec
+    requires.
+
+    Known gap (disclosed, not measured): two classes sharing a bare name
+    in different files collide in this dict (last one scanned wins) —
+    unmeasured corpus-wide, same caveat class as #4873's own disclosed
+    dynamic-``setattr`` gap.
+    """
+    index: dict[str, tuple[set[str], str]] = {}
+    for path in sorted(src_root.rglob("*.py")):
+        try:
+            source = path.read_text(encoding="utf-8")
+            tree = ast.parse(source, filename=str(path))
+        except (OSError, SyntaxError):
+            continue
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.ClassDef):
+                continue
+            private_assigned: set[str] = set()
+            property_names: set[str] = set()
+            for inner in ast.walk(node):
+                if isinstance(inner, (ast.Assign, ast.AnnAssign)):
+                    targets = (
+                        inner.targets
+                        if isinstance(inner, ast.Assign)
+                        else [inner.target]
+                    )
+                    for t in targets:
+                        if (
+                            isinstance(t, ast.Attribute)
+                            and isinstance(t.value, ast.Name)
+                            and t.value.id == "self"
+                            and t.attr.startswith("_")
+                            and not t.attr.startswith("__")
+                        ):
+                            private_assigned.add(t.attr)
+                elif isinstance(inner, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    for dec in inner.decorator_list:
+                        if isinstance(dec, ast.Name) and dec.id == "property":
+                            property_names.add(inner.name)
+            backed = {a for a in private_assigned if a[1:] in property_names}
+            if backed:
+                index[node.name] = (backed, str(path))
+    return index
+
+
+def _build_function_return_types(
+    tree: ast.Module, class_names: set[str]
+) -> dict[str, str]:
+    """Same-file function/fixture defs whose return annotation names one of
+    *class_names* — e.g. ``def _make_session(...) -> Session:``. This is
+    how the rule sees through the dominant test-corpus construction idiom
+    (a local ``_make_x`` factory, not a bare ``Session(...)`` call) without
+    ever assuming a naming convention: the evidence is the annotation, not
+    the function's name."""
+    out: dict[str, str] = {}
+    for node in tree.body:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            name = _annotation_class_name(node.returns, class_names)
+            if name is not None:
+                out[node.name] = name
+    return out
+
+
+def _infer_local_types(
+    func: ast.FunctionDef | ast.AsyncFunctionDef,
+    class_names: set[str],
+    function_return_types: dict[str, str],
+) -> dict[str, str]:
+    """Best-effort local-variable-name -> class-name map for *func*,
+    evidence-only (never inferred from a variable's own name — a param
+    called ``session`` proves nothing by itself). Accepted evidence:
+
+      - parameter annotation:        def test_x(s: Session): ...
+      - parameter name matches a same-file factory/fixture def whose
+        return annotation names a known class (covers the ``s =`` idiom
+        AND the pytest fixture-injection idiom in one pass, since both
+        are "a same-file def with a typed return, referenced by name")
+      - local annotated assignment:  s: Session = ...
+      - local assignment from a direct constructor or factory call:
+        s = Session(...)  /  s = _make_session(...)  /  s = await _make_session(...)
+    """
+    types: dict[str, str] = {}
+    all_args = list(func.args.args) + list(func.args.kwonlyargs)
+    if func.args.posonlyargs:
+        all_args = list(func.args.posonlyargs) + all_args
+    for arg in all_args:
+        name = _annotation_class_name(arg.annotation, class_names)
+        if name is not None:
+            types[arg.arg] = name
+        elif arg.arg in function_return_types:
+            types[arg.arg] = function_return_types[arg.arg]
+    for stmt in ast.walk(func):
+        if isinstance(stmt, ast.AnnAssign) and isinstance(stmt.target, ast.Name):
+            name = _annotation_class_name(stmt.annotation, class_names)
+            if name is not None:
+                types[stmt.target.id] = name
+        elif (
+            isinstance(stmt, ast.Assign)
+            and len(stmt.targets) == 1
+            and isinstance(stmt.targets[0], ast.Name)
+        ):
+            value = stmt.value
+            if isinstance(value, ast.Await):
+                value = value.value
+            if isinstance(value, ast.Call):
+                callee = value.func
+                callee_name = None
+                if isinstance(callee, ast.Name):
+                    callee_name = callee.id
+                elif isinstance(callee, ast.Attribute):
+                    callee_name = callee.attr
+                if callee_name in class_names:
+                    types[stmt.targets[0].id] = callee_name
+                elif callee_name in function_return_types:
+                    types[stmt.targets[0].id] = function_return_types[callee_name]
+    return types
+
+
+def _check_private_read_with_public_alt(
+    source: str,
+    tree: ast.Module,
+    class_index: dict[str, tuple[set[str], str]],
+) -> list[Finding]:
+    """Rule 8 (#4864): ``obj._x`` READ anywhere (not only inside an
+    ``assert`` — the whole point per the issue's own measurement: routing
+    the private read through a local var one line before the assert made
+    126 sites invisible to Rule 3's assert-scoped AST walk) where *obj* is
+    type-evident (see ``_infer_local_types``) as a class that ALSO
+    publishes ``x`` via ``@property``.
+
+    Repair-obligation, not bare detector (architect, #4864 thread): the
+    message must not stop at "use .x instead" — #4866 is the concrete
+    instance where a fail was closed by ADDING a same-named ``@property``
+    that just republished the private field, "ratif[ying] the
+    encapsulation break instead of closing it" (#4866's own diff wording).
+    So the suggestion also tells the fixer: if no public alternative
+    already answers what the test is actually asking, don't manufacture
+    one to satisfy the gate.
+
+    ``obj`` is restricted to a bare ``ast.Name`` (not ``a.b._x`` chains) —
+    a deliberately narrower net than Rule 3's, since this rule's
+    precondition is TYPE evidence on the base, not just syntactic shape;
+    disclosed gap, not claimed as covering every real violation."""
+    findings: list[Finding] = []
+    ast_lines = _split_source_lines(source)
+    class_names = set(class_index)
+    function_return_types = _build_function_return_types(tree, class_names)
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        local_types = _infer_local_types(node, class_names, function_return_types)
+        if not local_types:
+            continue
+        for inner in ast.walk(node):
+            if not isinstance(inner, ast.Attribute):
+                continue
+            # Store context (`client._x = value`) is a WRITE to private
+            # state, not the READ this rule is scoped to — a direct
+            # assignment target is #4873's territory (a different rule),
+            # not this one. A nested Load (`client._x.y = value`, where
+            # `client._x` is READ to reach `.y`) still matches: only the
+            # OUTERMOST node of a chain carries Store, per ast's own ctx
+            # assignment, so this filter affects only the direct-target
+            # case.
+            if not isinstance(inner.ctx, ast.Load):
+                continue
+            attr = inner.attr
+            if not (attr.startswith("_") and not attr.startswith("__")):
+                continue
+            base = inner.value
+            if not isinstance(base, ast.Name) or base.id == "self":
+                continue
+            class_name = local_types.get(base.id)
+            if class_name is None:
+                continue
+            backed, class_file = class_index.get(class_name, (set(), ""))
+            if attr not in backed:
+                continue
+            public_name = attr[1:]
+            line_src = (
+                ast_lines[inner.lineno - 1]
+                if inner.lineno - 1 < len(ast_lines)
+                else ""
+            )
+            findings.append(
+                Finding(
+                    rule="private-read-public-alt",
+                    level="ERROR",
+                    line=inner.lineno,
+                    message=(
+                        f"private read (.{attr}) has a public alternative "
+                        f"— {class_name}.{public_name} is a @property "
+                        f"({_rel_path(Path(class_file))}): "
+                        f"{line_src.strip()[:80]}"
+                    ),
+                    suggestion=(
+                        f"Use .{public_name} instead of .{attr}. If no "
+                        f"public alternative actually answers what this "
+                        f"test is asking, do not add a @property just to "
+                        f"silence this gate — that ratifies the "
+                        f"encapsulation break instead of closing it "
+                        f"(#4866); re-examine what the test is asking "
+                        f"instead."
+                    ),
+                    policy_ref=(
+                        "CLAUDE.md: must not depend on private state — "
+                        "use the public surface or a snapshot()-style read"
+                    ),
+                )
+            )
+    return findings
+
+
 # ---------------------------------------------------------------------------
 # File collection
 # ---------------------------------------------------------------------------
@@ -840,7 +1125,16 @@ def build_parser() -> argparse.ArgumentParser:
         help=(
             "Only check one rule: "
             "tier-docstring / format-pinning / private-state / mock / bounded-life / "
-            "snapshot / fake-attr"
+            "snapshot / fake-attr / private-read-public-alt"
+        ),
+    )
+    parser.add_argument(
+        "--src-root",
+        metavar="DIR",
+        default="src",
+        help=(
+            "Root to scan for Rule 8's class/@property index "
+            "(default: src). Only read when private-read-public-alt runs."
         ),
     )
     parser.add_argument(
@@ -900,6 +1194,15 @@ def main(argv: list[str] | None = None) -> int:
     auditor = TestAuditor(check_rules=check_rules)
     reports: list[FileReport] = []
 
+    # Rule 8 (#4864): the class/@property index is built ONCE against
+    # --src-root, shared across every test file below — same
+    # single-build-not-per-file precedent as #3670's ``_split_source_lines``.
+    # Only built when the rule is actually active: it's a whole-src-tree
+    # scan, and every other rule here is test-file-only.
+    class_property_index: dict[str, tuple[set[str], str]] = {}
+    if check_rules is None or "private-read-public-alt" in check_rules:
+        class_property_index = _build_class_property_index(Path(args.src_root))
+
     for f in files:
         report = auditor.audit_file(f)
 
@@ -933,6 +1236,24 @@ def main(argv: list[str] | None = None) -> int:
                 if fake_attr_findings:
                     synthetic = TestResult(name="<module-level>")
                     synthetic.findings.extend(fake_attr_findings)
+                    report.results.insert(0, synthetic)
+            except (OSError, SyntaxError):
+                pass
+
+        # Rule 8 (#4864): whole-file, same reason as Rule 7 — the reads
+        # this rule targets aren't confined to ``assert`` bodies.
+        if not report.parse_error and (
+            check_rules is None or "private-read-public-alt" in check_rules
+        ):
+            try:
+                source = f.read_text(encoding="utf-8")
+                tree = ast.parse(source, filename=str(f))
+                private_read_findings = _check_private_read_with_public_alt(
+                    source, tree, class_property_index
+                )
+                if private_read_findings:
+                    synthetic = TestResult(name="<module-level>")
+                    synthetic.findings.extend(private_read_findings)
                     report.results.insert(0, synthetic)
             except (OSError, SyntaxError):
                 pass

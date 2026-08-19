@@ -56,7 +56,7 @@ async def test_external_answer_narrows_next_turn_end_to_end(tmp_path):
     iv = UserIntervention(kind="ask_user", prompt="name?", run_id="r1")
     iv.future = asyncio.get_running_loop().create_future()
     task = asyncio.ensure_future(s._dispatch_intervention(iv))
-    await wait_until(lambda: bool(s._interventions.list_active()))
+    await wait_until(lambda: bool(s.interventions.list_active()))
     delivered = await s._deliver_answer_to(iv, "Mallory", external_source=True)
     await asyncio.gather(task, return_exceptions=True)
     assert delivered is True
@@ -80,7 +80,7 @@ async def test_local_answer_does_not_narrow(tmp_path):
     iv = UserIntervention(kind="ask_user", prompt="?", run_id="r1")
     iv.future = asyncio.get_running_loop().create_future()
     task = asyncio.ensure_future(s._dispatch_intervention(iv))
-    await wait_until(lambda: bool(s._interventions.list_active()))
+    await wait_until(lambda: bool(s.interventions.list_active()))
     await s._deliver_answer_to(iv, "local user input", external_source=False)
     await asyncio.gather(task, return_exceptions=True)
 

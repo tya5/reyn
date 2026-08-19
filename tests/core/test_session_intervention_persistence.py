@@ -135,7 +135,7 @@ async def test_deliver_answer_appends_intervention_resolved(tmp_path, monkeypatc
     # pre-existing ``wait_until`` polls the IN-MEMORY pending state, NOT the resolved WAL event, so
     # it is a FALSE barrier here; ``flush()`` is the bounded-by-construction one (root of the 3.12
     # flake: the read raced the append's durability).
-    await session._journal.flush()
+    await session.journal.flush()
     events = _wal_events(tmp_path)
     resolved = [e for e in events if e["kind"] == "intervention_resolved"]
     assert resolved, "intervention_resolved must be emitted after successful answer"
@@ -164,7 +164,7 @@ async def test_unknown_choice_does_not_emit_resolved(tmp_path, monkeypatch):
 
     # #2279: the ``wait_until`` above polled IN-MEMORY pending, not the WAL — so drain the worker
     # before the raw read to make ``intervention_dispatched`` durability deterministic (else racy).
-    await session._journal.flush()
+    await session.journal.flush()
     events = _wal_events(tmp_path)
     dispatched = [e for e in events if e["kind"] == "intervention_dispatched"]
     resolved = [e for e in events if e["kind"] == "intervention_resolved"]
@@ -230,13 +230,13 @@ async def test_wal_read_without_flush_races_durability_the_root(tmp_path, monkey
     monkeypatch.chdir(tmp_path)
     session = _make_session(tmp_path)
     # Fire-and-forget the exact append the flaky test asserts on.
-    session._journal._wal_append_nowait(
+    session.journal._wal_append_nowait(
         "intervention_resolved", target="alpha", intervention_id="iv-x",
     )
     # RAW read with no await / no flush → the worker has not drained → NOT durable yet (the race).
     before = [e for e in _wal_events(tmp_path) if e["kind"] == "intervention_resolved"]
     assert before == [], "read-before-flush: a fire-and-forget append is not yet durable (the race root)"
     # The flush barrier → drain → durable → deterministic read.
-    await session._journal.flush()
+    await session.journal.flush()
     after = [e for e in _wal_events(tmp_path) if e["kind"] == "intervention_resolved"]
     assert after and after[0]["intervention_id"] == "iv-x", "flush() makes the append durable"

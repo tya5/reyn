@@ -219,7 +219,7 @@ def _phase5_source_install_decl(resolver: PermissionResolver) -> PermissionDecl:
     secret.write (= #571 Phase 6) covers any isSecret env vars the
     source resolver surfaces.
     """
-    canonical_config = str(resolver._project_root / ".reyn" / "config" / "mcp.yaml")
+    canonical_config = str(resolver.project_root / ".reyn" / "config" / "mcp.yaml")
     resolver.session_approve_path(canonical_config, "mcp_install_source_test", "file.write")
     return PermissionDecl(
         file_write=[{"path": canonical_config, "scope": "just_path"}],

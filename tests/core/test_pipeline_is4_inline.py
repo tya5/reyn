@@ -151,13 +151,13 @@ def _ctx(
     PipelineRegistry. ``wired=False`` drops agent_registry/host to exercise the
     wiring-error path."""
     return ToolContext(
-        events=caller._router_host.events,
+        events=caller.router_host.events,
         permission_resolver=None,
         workspace=None,
         caller_kind="router",
         router_state=RouterCallerState(
             agent_registry=reg if wired else None,
-            host=caller._router_host if wired else None,
+            host=caller.router_host if wired else None,
         ),
         state_log=state_log,
     )

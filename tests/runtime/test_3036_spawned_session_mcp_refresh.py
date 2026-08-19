@@ -85,7 +85,7 @@ def _make_registry(tmp_path: Path) -> AgentRegistry:
 
 
 def _server_names(session: Session) -> list[str]:
-    return [s["name"] for s in session._router_host.get_mcp_servers()]
+    return [s["name"] for s in session.router_host.get_mcp_servers()]
 
 
 @pytest.mark.asyncio

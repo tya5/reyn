@@ -153,7 +153,7 @@ async def test_restore_all_constructed_session_has_complete_history(tmp_path, mo
         intervention_id="iv1", iv_dict=_iv_dict("iv1"),
     )
     await s1.journal.flush()
-    state_log1 = reg1._state_log
+    state_log1 = reg1.state_log
     assert state_log1 is not None
     await state_log1.aclose()
 
@@ -183,4 +183,4 @@ async def test_restore_all_constructed_session_has_complete_history(tmp_path, mo
         "transcript, not a partial/empty one"
     )
 
-    await reg2._state_log.aclose()
+    await reg2.state_log.aclose()

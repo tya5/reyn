@@ -185,8 +185,8 @@ async def test_hotreload_via_apply_pending_dual_write(
     _write_pipeline(tmp_path, "hello.yaml", _HELLO_V1)
     _write_dynamic_entries(tmp_path, ("hello", "pipelines/hello.yaml"))
 
-    session._hot_reloader.request_reload(source="operator")
-    summary = await session._hot_reloader.apply_pending()
+    session.hot_reloader.request_reload(source="operator")
+    summary = await session.hot_reloader.apply_pending()
 
     assert summary is not None
     assert "pipelines" in summary["applied"]
@@ -244,9 +244,9 @@ async def test_hotreload_malformed_pipeline_observable_via_warning_and_noop_appl
     session = _make_session(tmp_path)
 
     _write_pipeline(tmp_path, "hello.yaml", "pipeline: hello\nsteps: not-a-list\n")
-    session._hot_reloader.request_reload(source="operator")
+    session.hot_reloader.request_reload(source="operator")
     with caplog.at_level("WARNING", logger="reyn.runtime.session"):
-        summary = await session._hot_reloader.apply_pending()
+        summary = await session.hot_reloader.apply_pending()
 
     assert summary is not None
     assert "pipelines" not in summary["applied"]

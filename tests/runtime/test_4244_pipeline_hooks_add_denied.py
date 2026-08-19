@@ -84,7 +84,7 @@ def _bound_driver(reg: AgentRegistry, session: Session) -> PipelineExecutorDrive
         driver_agent=session.agent_name, driver_sid="main",
     )
     driver = PipelineExecutorDriver(work_order, registry=reg, state_log=reg.state_log)
-    driver.bind_session(session, session._router_host)
+    driver.bind_session(session, session.router_host)
     return driver
 
 

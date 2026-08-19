@@ -242,9 +242,9 @@ class TestFamily6bHistoryCompactionBundleByteIdentical:
             model_fn=lambda: session._resolver.resolve(session.model).model,
             events=session._audit_events,
             media_store=session._media_store,
-            router_host=session._router_host,
+            router_host=session.router_host,
             universal_wrappers_enabled=session._universal_wrappers_enabled,  # #4552 PR-3
-            non_interactive=session._non_interactive,
+            non_interactive=session.non_interactive,
             reasoning=session._reasoning,
         )
         fresh_patched_controller = fresh_history_buffer._compaction_controller

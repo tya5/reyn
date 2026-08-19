@@ -89,7 +89,7 @@ async def _run_embed_tool_via_live_path(session: Session) -> dict:
     `op_context_factory` resolution a live chat turn performs."""
     from reyn.tools.embed import _handle_embed
 
-    router_state = await build_resource_caller_state(session._router_host)
+    router_state = await build_resource_caller_state(session.router_host)
     tool_ctx = ToolContext(
         events=session._audit_events,
         permission_resolver=None,
