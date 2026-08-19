@@ -797,6 +797,82 @@ def _build_class_property_index(src_root: Path) -> dict[str, tuple[set[str], str
     return index
 
 
+def _build_class_property_return_types(src_root: Path) -> dict[tuple[str, str], str]:
+    """#4906 (false-negative ① of #4864/#4905's gate): ``(class_name,
+    public_property_name) -> the class the property's getter return
+    annotation names`` — resolves ONE LINK of a chained read
+    (``w.f._router_host``, where ``f`` is itself a ``@property`` returning
+    another tracked class, e.g. ``Widget.f -> Session``) so
+    ``_resolve_base_class`` below can walk an attribute chain instead of
+    being restricted to a bare local ``ast.Name`` base.
+
+    tui-coder's own #4905 PR body already disclosed this restriction
+    verbatim: "base object restricted to a bare `ast.Name` … narrower than
+    Rule 3's own walk" — architect reproduced it live afterward
+    (``w.f._router_host`` → 0 findings, real violation). This index is
+    the evidence source that removes the restriction: an entry only exists
+    when the getter's OWN return annotation names a tracked class — never
+    guessed from the property's name.
+
+    Never claims completeness beyond one link at a time: a chain of
+    ``a.b.c._x`` resolves iff EVERY link (``a``'s local type, ``b``'s
+    return annotation, ``c``'s return annotation) is independently
+    evidence-backed; any unresolvable link anywhere in the chain returns
+    ``None`` for the whole chain (see ``_resolve_base_class``), never a
+    partial guess.
+    """
+    class_names: set[str] = set()
+    class_defs: list[tuple[str, ast.ClassDef]] = []
+    for path in sorted(src_root.rglob("*.py")):
+        try:
+            source = path.read_text(encoding="utf-8")
+            tree = ast.parse(source, filename=str(path))
+        except (OSError, SyntaxError):
+            continue
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ClassDef):
+                class_names.add(node.name)
+                class_defs.append((node.name, node))
+
+    index: dict[tuple[str, str], str] = {}
+    for cls_name, node in class_defs:
+        for inner in ast.walk(node):
+            if not isinstance(inner, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            if not any(
+                isinstance(d, ast.Name) and d.id == "property"
+                for d in inner.decorator_list
+            ):
+                continue
+            ret_cls = _annotation_class_name(inner.returns, class_names)
+            if ret_cls is not None:
+                index[(cls_name, inner.name)] = ret_cls
+    return index
+
+
+def _resolve_base_class(
+    node: ast.expr,
+    local_types: dict[str, str],
+    property_return_types: dict[tuple[str, str], str],
+) -> str | None:
+    """#4906: the class of an expression used as an ``ast.Attribute``
+    BASE — a bare local ``ast.Name`` (resolved via ``local_types``, the
+    original #4864/#4905 scope) or a CHAIN of public-property reads, each
+    link resolved via ``property_return_types``. Recurses on ``node.value``
+    (strictly smaller each call — terminates at a ``Name`` or an
+    unresolvable node), so a chain of any length works, not just depth 1.
+    Any unresolvable link anywhere returns ``None`` for the whole
+    expression — never a guessed/partial answer."""
+    if isinstance(node, ast.Name):
+        return local_types.get(node.id)
+    if isinstance(node, ast.Attribute):
+        base_class = _resolve_base_class(node.value, local_types, property_return_types)
+        if base_class is None:
+            return None
+        return property_return_types.get((base_class, node.attr))
+    return None
+
+
 def _build_function_return_types(
     tree: ast.Module, class_names: set[str]
 ) -> dict[str, str]:
@@ -815,10 +891,65 @@ def _build_function_return_types(
     return out
 
 
+def _tuple_return_class_names(
+    node: ast.expr | None, class_names: set[str],
+) -> list[str | None] | None:
+    """#4906 (false-negative ②): the POSITIONAL class list from a
+    subscripted tuple return annotation — ``-> tuple[Session, StateLog]``
+    or ``-> Tuple[Session, StateLog]`` — one entry per element (``None``
+    where that position's own annotation doesn't resolve to a tracked
+    class), or ``None`` entirely when *node* isn't a tuple-shaped
+    subscript at all (a single-class return stays ``_annotation_class_
+    name``'s job, unchanged).
+
+    A quoted forward-ref (``-> "tuple[Session, StateLog]"``) is parsed
+    into its expression tree first — the dominant real-corpus shape (this
+    file's own return annotations are quoted throughout), not an edge
+    case."""
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        try:
+            node = ast.parse(node.value, mode="eval").body
+        except SyntaxError:
+            return None
+    if not isinstance(node, ast.Subscript):
+        return None
+    base = node.value
+    base_name = base.id if isinstance(base, ast.Name) else (
+        base.attr if isinstance(base, ast.Attribute) else None
+    )
+    if base_name not in ("tuple", "Tuple"):
+        return None
+    elts = node.slice.elts if isinstance(node.slice, ast.Tuple) else [node.slice]
+    return [_annotation_class_name(e, class_names) for e in elts]
+
+
+def _build_function_tuple_return_types(
+    tree: ast.Module, class_names: set[str],
+) -> dict[str, list[str | None]]:
+    """#4906 (false-negative ①): same-file function defs whose return
+    annotation is a tuple shape (``-> tuple[Session, StateLog]``) — the
+    evidence source ``_infer_local_types`` needs to bind ``a, b =
+    _make_pair()`` (tuple-UNPACKING assignment), which #4864/#4905's
+    original ``_infer_local_types`` could not see at all: its Assign
+    branch only handled ``len(stmt.targets) == 1 and isinstance(stmt.
+    targets[0], ast.Name)``, so an ``ast.Tuple`` target was skipped
+    entirely — tui-coder's own #4905 PR reproduced this live: ``a, b =
+    _make_pair()`` then ``a._router_host`` produced ZERO findings despite
+    ``a`` genuinely being a ``Session``."""
+    out: dict[str, list[str | None]] = {}
+    for node in tree.body:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            names = _tuple_return_class_names(node.returns, class_names)
+            if names is not None:
+                out[node.name] = names
+    return out
+
+
 def _infer_local_types(
     func: ast.FunctionDef | ast.AsyncFunctionDef,
     class_names: set[str],
     function_return_types: dict[str, str],
+    function_tuple_return_types: dict[str, list[str | None]] | None = None,
 ) -> dict[str, str]:
     """Best-effort local-variable-name -> class-name map for *func*,
     evidence-only (never inferred from a variable's own name — a param
@@ -832,8 +963,15 @@ def _infer_local_types(
       - local annotated assignment:  s: Session = ...
       - local assignment from a direct constructor or factory call:
         s = Session(...)  /  s = _make_session(...)  /  s = await _make_session(...)
+      - #4906: TUPLE-UNPACKING assignment from a factory whose return
+        annotation is itself a tuple shape: ``a, b = _make_pair()`` where
+        ``_make_pair() -> tuple[Session, StateLog]`` binds ``a -> Session``,
+        ``b -> StateLog`` positionally. A ``Starred`` element anywhere in
+        the target, or an arity mismatch between target and annotation
+        length, skips the WHOLE assignment (never a partial/guessed bind).
     """
     types: dict[str, str] = {}
+    tuple_return_types = function_tuple_return_types or {}
     all_args = list(func.args.args) + list(func.args.kwonlyargs)
     if func.args.posonlyargs:
         all_args = list(func.args.posonlyargs) + all_args
@@ -848,25 +986,38 @@ def _infer_local_types(
             name = _annotation_class_name(stmt.annotation, class_names)
             if name is not None:
                 types[stmt.target.id] = name
-        elif (
-            isinstance(stmt, ast.Assign)
-            and len(stmt.targets) == 1
-            and isinstance(stmt.targets[0], ast.Name)
-        ):
-            value = stmt.value
-            if isinstance(value, ast.Await):
-                value = value.value
-            if isinstance(value, ast.Call):
-                callee = value.func
-                callee_name = None
-                if isinstance(callee, ast.Name):
-                    callee_name = callee.id
-                elif isinstance(callee, ast.Attribute):
-                    callee_name = callee.attr
-                if callee_name in class_names:
-                    types[stmt.targets[0].id] = callee_name
-                elif callee_name in function_return_types:
-                    types[stmt.targets[0].id] = function_return_types[callee_name]
+            continue
+        if not isinstance(stmt, ast.Assign) or len(stmt.targets) != 1:
+            continue
+        target = stmt.targets[0]
+        value = stmt.value
+        if isinstance(value, ast.Await):
+            value = value.value
+        if not isinstance(value, ast.Call):
+            continue
+        callee = value.func
+        callee_name = None
+        if isinstance(callee, ast.Name):
+            callee_name = callee.id
+        elif isinstance(callee, ast.Attribute):
+            callee_name = callee.attr
+        if isinstance(target, ast.Name):
+            if callee_name in class_names:
+                types[target.id] = callee_name
+            elif callee_name in function_return_types:
+                types[target.id] = function_return_types[callee_name]
+        elif isinstance(target, (ast.Tuple, ast.List)):
+            if callee_name is None or callee_name not in tuple_return_types:
+                continue
+            positions = tuple_return_types[callee_name]
+            elts = target.elts
+            if len(elts) != len(positions) or any(
+                isinstance(e, ast.Starred) for e in elts
+            ):
+                continue  # arity mismatch or *rest — never a partial bind
+            for elt, cls in zip(elts, positions):
+                if isinstance(elt, ast.Name) and cls is not None:
+                    types[elt.id] = cls
     return types
 
 
@@ -874,6 +1025,7 @@ def _check_private_read_with_public_alt(
     source: str,
     tree: ast.Module,
     class_index: dict[str, tuple[set[str], str]],
+    property_return_types: dict[tuple[str, str], str] | None = None,
 ) -> list[Finding]:
     """Rule 8 (#4864): ``obj._x`` READ anywhere (not only inside an
     ``assert`` — the whole point per the issue's own measurement: routing
@@ -891,18 +1043,38 @@ def _check_private_read_with_public_alt(
     already answers what the test is actually asking, don't manufacture
     one to satisfy the gate.
 
-    ``obj`` is restricted to a bare ``ast.Name`` (not ``a.b._x`` chains) —
-    a deliberately narrower net than Rule 3's, since this rule's
-    precondition is TYPE evidence on the base, not just syntactic shape;
-    disclosed gap, not claimed as covering every real violation."""
+    ``obj`` may be a bare ``ast.Name`` OR a chain of public-property reads
+    (``w.f._router_host`` — #4906, false-negative ②: the original #4864/
+    #4905 restriction to a bare Name was narrower than Rule 3's own walk,
+    reproduced live by architect after tui-coder disclosed it in the #4905
+    PR body). Each link beyond the first needs its OWN evidence
+    (``property_return_types``); an unresolvable link anywhere still
+    yields no finding — the net widens, the zero-false-positive bar does
+    not move."""
     findings: list[Finding] = []
     ast_lines = _split_source_lines(source)
-    class_names = set(class_index)
+    prop_return_types = property_return_types or {}
+    # #4906: "known classes" (the set a parameter/assignment annotation
+    # must name to bind a local var) can't be JUST class_index's own keys
+    # (classes with a directly-backed private attr) — a class that only
+    # participates as an intermediate CHAIN LINK (e.g. `Widget`, which owns
+    # `.f` but never itself reads a backed private attr) would otherwise
+    # never resolve as a parameter/assignment annotation target, silently
+    # keeping the chained-access fix inert for exactly the shape it exists
+    # to catch (`w.f._router_host` needs `w: Widget` to bind first).
+    class_names = (
+        set(class_index)
+        | {cls for cls, _ in prop_return_types}
+        | set(prop_return_types.values())
+    )
     function_return_types = _build_function_return_types(tree, class_names)
+    function_tuple_return_types = _build_function_tuple_return_types(tree, class_names)
     for node in ast.walk(tree):
         if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             continue
-        local_types = _infer_local_types(node, class_names, function_return_types)
+        local_types = _infer_local_types(
+            node, class_names, function_return_types, function_tuple_return_types
+        )
         if not local_types:
             continue
         for inner in ast.walk(node):
@@ -922,9 +1094,9 @@ def _check_private_read_with_public_alt(
             if not (attr.startswith("_") and not attr.startswith("__")):
                 continue
             base = inner.value
-            if not isinstance(base, ast.Name) or base.id == "self":
+            if isinstance(base, ast.Name) and base.id == "self":
                 continue
-            class_name = local_types.get(base.id)
+            class_name = _resolve_base_class(base, local_types, prop_return_types)
             if class_name is None:
                 continue
             backed, class_file = class_index.get(class_name, (set(), ""))
@@ -1200,8 +1372,14 @@ def main(argv: list[str] | None = None) -> int:
     # Only built when the rule is actually active: it's a whole-src-tree
     # scan, and every other rule here is test-file-only.
     class_property_index: dict[str, tuple[set[str], str]] = {}
+    class_property_return_types: dict[tuple[str, str], str] = {}
     if check_rules is None or "private-read-public-alt" in check_rules:
         class_property_index = _build_class_property_index(Path(args.src_root))
+        # #4906: chained-access evidence (`w.f._router_host`) — see
+        # _build_class_property_return_types's own docstring.
+        class_property_return_types = _build_class_property_return_types(
+            Path(args.src_root)
+        )
 
     for f in files:
         report = auditor.audit_file(f)
@@ -1249,7 +1427,7 @@ def main(argv: list[str] | None = None) -> int:
                 source = f.read_text(encoding="utf-8")
                 tree = ast.parse(source, filename=str(f))
                 private_read_findings = _check_private_read_with_public_alt(
-                    source, tree, class_property_index
+                    source, tree, class_property_index, class_property_return_types
                 )
                 if private_read_findings:
                     synthetic = TestResult(name="<module-level>")

@@ -112,7 +112,7 @@ def test_handler_resolves_chain_and_emits_audit_event(tmp_path: Path):
             reason="user_discarded_skill_run",
         )
 
-        await sess_a._journal.flush()  # #2259 PR-2b: drain async WAL in-context
+        await sess_a.journal.flush()  # #2259 PR-2b: drain async WAL in-context
     asyncio.run(go())
     # Chain is gone
     assert sess_a.chains.find_chain("X-001") is None
@@ -136,7 +136,7 @@ def test_handler_is_idempotent_when_chain_already_resolved(tmp_path: Path):
             chain_id="never_registered", peer="B", reason="x",
         )
 
-        await sess_a._journal.flush()  # #2259 PR-2b: drain async WAL in-context
+        await sess_a.journal.flush()  # #2259 PR-2b: drain async WAL in-context
     asyncio.run(go())  # No exception is the assertion
 
 
