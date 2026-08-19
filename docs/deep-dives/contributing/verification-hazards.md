@@ -1504,19 +1504,28 @@ goes unchecked, because checking it was never anyone's assigned step.
   issue thread and the PR that claims to close it. A closing comment is
   itself an unverified claim about the src tree, and the src tree is one
   command away.
-- **Treat "all," "every," "total," "regardless of" as a claim that needs
-  counting, on sight** — not a stylistic intensifier. Instance 5's AST pass
-  found in one run what the report's own two cited examples never would
-  have; an absolute claim checked against only the cases already in hand is
-  not checked against the claim.
-- **Not every surface can be gated, but some can — find those first.** A
-  docstring stating a structural property (§13's own distinction: a closed
-  target is checkable, an open one is not) is exactly the kind of claim an
-  AST pass can verify mechanically, the way instance 5 was actually caught.
-  Where the claim IS machine-checkable, that is the only structural
-  remedy this class has; where it isn't (a commit message already in
-  history, a closing comment on a closed issue), the only defense is
-  checking it before it's written, because nothing checks it after.
+- **"Count every universal-quantifier claim on sight" does not survive
+  contact with the population.** A pass over `src/`'s own comments and
+  docstrings for "all"/"every"/"total"/"regardless of" returns hundreds of
+  hits — almost all of them describing what a function does at runtime
+  ("return every X in Y"), not a static correspondence between two
+  enumerable sets. A rule that costs minutes per hit, applied at that
+  scale, is not a rule anyone follows — it is this same hazard's own
+  shape one level up: a prescription written down and never checked
+  against how often it would actually fire.
+- **What's genuinely gate-able is rare, and worth finding on its own
+  terms.** The claim has to name TWO sides a machine can enumerate — a
+  declared set and an independent, derivable set to check it against
+  (§13's closed-target distinction: a Control IR op-kind union against
+  `OP_KIND_MODEL_MAP`, an event-kind string literal against every
+  `*emit*` call site — `asset_refs.py`'s `known_op_kinds`/
+  `known_event_types`, both already gated). Most universal claims aren't
+  this shape at all, and no amount of counting turns them into it. Look
+  for the two-enumerable-sets shape specifically, one instance at a time,
+  rather than triggering on the words.
+- **Where the claim isn't machine-checkable** (a commit message already in
+  history, a closing comment on a closed issue), there is no after-the-fact
+  remedy — the only defense is checking it before it's written.
 
 ## See also
 
