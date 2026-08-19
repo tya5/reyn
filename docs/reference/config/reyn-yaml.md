@@ -75,7 +75,7 @@ aren't.
 | `hooks` | list | both (`.reyn/config/hooks.yaml` side is **hot-reloaded**) | Agent-lifecycle hooks. Four action schemes: `template_push` / `exec` / `exec_capture` / `pipeline_launch`. See below. |
 | `embedding` | map | PRJ only · **restart** | RAG embedding: the master switch (`enabled`), model classes, batch sizing and concurrency, retry / backoff / timeout, tokenizer, and a cost-warning threshold. See below. |
 | `chat` | map | PRJ only · **restart** | Chat-session runtime knobs: history compaction, reasoning/"thinking" text handling, the interactive renderer (`render_mode`), TUI gutters, body neutralization, and permitted image-URL schemes. See below. |
-| `voice` | map | PRJ only · **restart** | ⚠️ Currently unavailable (no consumer). See below. |
+| `voice` | map | PRJ only · **restart** | Whisper model/language/device settings for F2 dictation in the inline CUI (revived #4187/#4249). See below. |
 | `audit_events` | map | PRJ only · **restart** | Rotation policy (size / age / cleanup period) for the P6 **audit-event** files under `.reyn/events`. Not WAL-events, not hook-events. See below. |
 | `artifacts` | map | PRJ only · **restart** | The artifact-ref table fallback's own row cap (`remote_fallback_limit`, #4601) — used by a remote client's (and a post-restart local client's) Artifacts pane. See below. |
 | `observability` | map | PRJ only · **restart** | Opt-in OpenTelemetry (OTLP) export of P6 audit-events. Off by default. See below. |
@@ -2244,13 +2244,11 @@ artifacts:
 
 ## `voice` block
 
-**⚠️ Currently unavailable.** The block still parses (no error if set), but has no consumer — it was built for the Ctrl+R Whisper binding in the old Textual TUI, which was deleted and replaced by the inline CUI (no voice-input binding). Kept for schema completeness only. See [concepts: voice](../../concepts/tools-integrations/voice.md).
-
-Voice-input (Whisper) settings, when a consumer exists. Optional — requires `pip install 'reyn[voice]'` (`sounddevice` + `faster-whisper`). The block is lazy-loaded; a missing `[voice]` extra silently disables the record key.
+Voice-input (Whisper) settings for the inline CUI's F2 dictation binding — revived (#4187/#4249) as a reimplementation against the current CUI, after the original Ctrl+R binding was deleted along with the retired Textual TUI it was built for. See [concepts: voice](../../concepts/tools-integrations/voice.md). Optional — requires `pip install 'reyn[voice]'` (`sounddevice` + `faster-whisper`). The block is lazy-loaded; a missing `[voice]` extra silently disables the record key.
 
 ```yaml
 voice:
-  enabled: true           # set false to disable Ctrl+R even if deps are installed
+  enabled: true           # set false to disable F2 dictation even if deps are installed
   model: small            # tiny | base | small | medium | large-v3
   language: ja            # ISO 639-1 code; "" or null = auto-detect
   device: cpu             # cpu | cuda
@@ -2263,7 +2261,7 @@ voice:
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `enabled` | bool | `true` | Set `false` to hard-disable Ctrl+R even when deps are installed. |
+| `enabled` | bool | `true` | Set `false` to hard-disable F2 dictation even when deps are installed. |
 | `model` | string | `small` | Whisper model size: `tiny` / `base` / `small` / `medium` / `large-v3`. |
 | `language` | string \| null | `ja` | ISO 639-1 language code. `""` or `null` enables auto-detection (less reliable for short clips). |
 | `device` | string | `cpu` | Inference device: `cpu` or `cuda`. `auto` is not supported — it picks the wrong device on some Mac setups. |

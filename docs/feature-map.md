@@ -336,7 +336,7 @@ whose turn the runtime holds no figure for renders `—`, never `0`.
 | Local client reset + rehydrate on switch | `TextualChatApp` treats the barrier as a reconnect: clears every per-session client state (retained `FlowModel`, running-tool tracking, pending-intervention tabs, sent-queue view/widget + item-meta, in-flight streamed-reply tracking) and rehydrates from the NEW session's `history.jsonl` — never from a client-side cache, which is stale-by-construction while a session is detached (the forwarder drops its frames entirely) | [AG-UI transport § The session-switch barrier](reference/runtime/agui-transport.md) |
 | Targeted hydrate seam | `ChatReadModel.conversation_history` accepts an optional `(agent, session_id)` — omitted hydrates the currently attached session (pre-N2 behavior unchanged); given, hydrates that specific session (possibly never attached in this client run) via `AgentRegistry.get_session`, no duplicated `history.jsonl` path literal | [AG-UI transport § The session-switch barrier](reference/runtime/agui-transport.md) |
 
-> **Remote parity gap (N3, open):** the AG-UI/SSE remote transport does not yet re-emit `session_attached` on the wire, so a remote client's switch-hydrate is unimplemented today (`RemoteReadModel.conversation_history` degrades to empty regardless of a targeted session — the same frame-sufficiency boundary this arc follows throughout).
+> **Remote parity landed (N3, #3310, closed via #3322, further ported off the sentinel by #4548):** the AG-UI/SSE remote transport re-emits `session_attached` on the wire on a session switch. `RemoteReadModel.conversation_history` still degrades to empty regardless of a targeted session — by design, not a gap: a remote client holds no session, and the past-turn `ChatMessage` log is deliberately never projected onto the wire (the same frame-sufficiency boundary this arc follows throughout).
 
 ---
 
@@ -445,7 +445,7 @@ Main reference: **[`reyn.yaml`](reference/config/reyn-yaml.md)**
 | `web_fetch` | SSL `verify_ssl` and `ca_bundle` override | [reyn-yaml § web_fetch](reference/config/reyn-yaml.md#web_fetch-block) |
 | `chat` | Compaction trigger / head+tail retention / section token caps | [Chat Compaction](concepts/data-retrieval/chat-compaction.md) |
 | `embedding` | Model classes / batch_size / cost_warn_threshold | [RAG concepts](concepts/data-retrieval/rag.md) |
-| `voice` ⚠️ | Whisper model / language / device config still parses, but has no consumer since the Textual TUI it was built for was deleted (replaced by the inline CUI) — currently unavailable | [Voice concepts](concepts/tools-integrations/voice.md) |
+| `voice` | Whisper model / language / device config for the inline CUI's F2 dictation binding — revived (#4187/#4249) after the original binding was deleted along with the retired Textual TUI it was built for | [Voice concepts](concepts/tools-integrations/voice.md) |
 | `events` | Rotation size/age + cleanup_period_days | [Events reference](reference/runtime/events.md) |
 | `models` | Class → LiteLLM model string with `extends` chain | [reyn-yaml § llm.models](reference/config/reyn-yaml.md#llmmodels-block) |
 | `permissions` | Project-wide default capability policy | [Permissions config](reference/config/permissions.md) |
