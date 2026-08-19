@@ -1,6 +1,8 @@
 """Tier 1/2: #3082 Family 6b (``Session._build_history_compaction_bundle``)
-wiring — permanent home for 5 invariants rescued from
-``tests/scaffold/test_family6b_history_compaction_bundle_byte_identical.py``
+wiring — permanent home for 5 invariants rescued from the scaffold file
+(retired #4862 close-out — was ``tests/scaffold/test_family6b_history_
+compaction_bundle_byte_identical.py``, deleted once every invariant it
+pinned had a permanent witness named)
 (part of #4862's family-by-family scaffold retirement, following #4868's
 own precedent for family3: a rescue is either A — add/use a public read-hook
 so an identity or effect is witnessed at the public surface, or B — keep
