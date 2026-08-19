@@ -31,7 +31,7 @@ def _noop_handler():
         calls.append((args, ctx))
         return {"status": "ok"}
 
-    handler.calls = calls  # type: ignore[attr-defined]
+    handler.calls = calls
     return handler
 
 

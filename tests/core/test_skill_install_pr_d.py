@@ -198,7 +198,7 @@ async def test_skill_install_source_threat_scan_blocks_and_removes_clone(tmp_pat
         block_severity = "block"
 
     ctx, _events = _make_ctx(tmp_path)
-    ctx.threat_scan = _FakeThreatScanConfig()  # type: ignore[attr-defined]
+    ctx.threat_scan = _FakeThreatScanConfig()
 
     def _fake_scan(content, config, *, scope="context"):
         if "EVIL_THREAT_MARKER" in content:

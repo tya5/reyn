@@ -35,22 +35,17 @@ PUBLIC_IP_B = "8.8.8.8"         # alternate public IP
 
 
 def _fake_resolve_and_validate(*ips: str):
-    """Real function (NOT a mock) that records calls and returns fixed IPs.
+    """Real function (NOT a mock) that returns fixed IPs.
 
     Returns a callable matching the ``resolve_and_validate(host, *, allow_private)``
-    signature.  The returned call log (a plain list) lets tests assert that
-    the exact IP used for the connect target came from the resolve-at-check-time
-    call, not from a separate OS resolution.
+    signature.
     """
-    calls: list[tuple[str, bool]] = []
 
     def _fn(host: str, *, allow_private: bool) -> list[str]:
-        calls.append((host, allow_private))
         if not ips:
             return []
         return list(ips)
 
-    _fn.calls = calls  # type: ignore[attr-defined]
     return _fn
 
 
