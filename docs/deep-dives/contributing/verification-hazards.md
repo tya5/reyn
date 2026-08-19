@@ -1512,7 +1512,10 @@ goes unchecked, because checking it was never anyone's assigned step.
   enumerable sets. A rule that costs minutes per hit, applied at that
   scale, is not a rule anyone follows — it is this same hazard's own
   shape one level up: a prescription written down and never checked
-  against how often it would actually fire.
+  against how often it would actually fire. **The scope that survives is
+  narrower and cheaper: the claim in the declaration you are writing right
+  now**, not a sweep of the whole tree — a diff-sized population is a few
+  minutes; `src/` is not.
 - **What's genuinely gate-able is rare, and worth finding on its own
   terms.** The claim has to name TWO sides a machine can enumerate — a
   declared set and an independent, derivable set to check it against
