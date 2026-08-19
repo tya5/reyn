@@ -1543,6 +1543,24 @@ OpenAI's own docs already state structured outputs support streaming; the
 project's own `llm.py` already has a per-model capability query
 (`supports_response_schema`, mirroring litellm's) AND a fallback path for
 models that fail it. None of this was hidden — it was two greps away.
+**The decision that came out of this may still turn out right on other
+grounds — a "conclusion true, reasoning false" instance in its own right
+(a same-night sibling pin's own axis): what failed here was specifically
+the REASON given, not necessarily the withdrawal itself.**
+
+Reading the spec settles the capability question — streaming and schema
+DO compose, providers document it — but not the whole design question. The
+switch's real caller is compaction, which uses schema output as a
+**backstop**: proposal 0062's own §2.1 states the `fallback_without_
+response_format` silent retry is BYPASSED whenever `schema` is set, so an
+unsupported model gets a typed error instead of silent degrade — the
+correct choice for most callers, but for compaction specifically, raising
+an error is compaction *failing to run*, not compaction degrading, and
+compaction exists as the backstop for a context window with nowhere else
+to go. Whether an unsupported model should raise or fall back **for this
+one caller** is a real design call the published spec cannot make for you
+— reading it closes the capability half of the question, not the policy
+half.
 
 **The discriminator that was misapplied**: "a third party's behavior is not
 ours to verify" governs *taking over the third party's own implementation*
@@ -1583,7 +1601,18 @@ claim, but an ordinary research step available the whole time.
   A capability-query function existing with a comment saying it mirrors
   the provider's own check is not itself a witness that anything calls it
   — confirm the call site, not just the declaration, before treating the
-  gap as closed.
+  gap as closed. This bullet caught its own reviewer: a review of this
+  section cited `llm.py`'s capability-query and fallback lines as
+  evidence "the mechanism exists," without separately confirming
+  compaction's own call path actually reaches them (the parameter
+  defaults `False`) — flagged as unconfirmed in the tracking issue, not
+  silently assumed.
+- **Reading the spec answers what a provider supports, not what reyn
+  should do about a caller-specific failure mode.** Settle the capability
+  question first, then ask separately whether the caller in front of you
+  (here: a backstop with nowhere else to go) changes the answer — a spec
+  that says "this works" does not say "raise here" or "degrade here" for
+  every caller alike.
 
 ## See also
 
