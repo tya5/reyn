@@ -175,21 +175,28 @@ global name match) — the same private attribute name assigned in several
 unrelated classes only trips this rule on the ONE class that also backs
 it with a `@property`.
 
-`obj` must be a bare name the AST can type — a parameter annotation, a
-local factory/fixture call, or a direct constructor call; `self._x`
-inside the class's own methods is exempt (that access is legitimate), and
-a private WRITE (`obj._x = value`) is Rule 7's territory, not this one.
+`obj` must be type-evident to the AST — a parameter annotation, a local
+factory/fixture call (including a same-file factory whose return type is
+a tuple, e.g. `a, b = _make_pair()` where `_make_pair() -> tuple[A, B]`),
+a direct constructor call, or a chain of `@property` reads each backed by
+its own return-type annotation (`w.f._x`, resolved link-by-link — any
+unresolvable link anywhere yields nothing, never a partial guess);
+`self._x` inside the class's own methods is exempt (that access is
+legitimate), and a private WRITE (`obj._x = value`) is Rule 7's
+territory, not this one.
 
-**Known gaps, disclosed, not claimed away**: `obj` is restricted to a
-bare name, not an attribute chain (`a.b._x`) — a deliberately narrower
-net than Rule 3's, since this rule's precondition is type evidence on the
-base. Two more false-negative shapes (tuple-unpack destructuring, chained
-attribute access) were found after landing and are tracked separately
-(#4906) rather than silently left undocumented. The 109 real sites found
-and fixed at landing (across 41 files) were a measured **floor at that
-moment**, not a claim of total coverage — a clean run today does not mean
-no more of this shape exists, only that the two disclosed gaps (and any
-undiscovered ones) aren't visible to it yet.
+**Known gaps, disclosed, not claimed away**: at landing, `obj` was
+restricted to a bare name (no `a.b._x` chains) and local-variable binding
+saw only single-`Name` assignment targets (no `a, b = ...` unpacking).
+Both were closed by #4911 (#4906) after being reproduced against real
+corpus code — see `_resolve_base_class` / `_build_class_property_return_
+types` (chained access) and `_build_function_tuple_return_types` /
+`_infer_local_types`'s Tuple/List-target branch (tuple-unpack) for the
+current mechanism. The 109 real sites found and fixed at landing (across
+41 files), plus the 2 more #4911 found and fixed on top, were each a
+measured **floor at that moment**, not a claim of total coverage — a
+clean run today does not mean no more of this shape exists, only that
+every gap known so far has been closed or disclosed.
 
 **Why:** The finding is a repair obligation, not a bare detector — the
 suggested fix is "use the public property," but the message also warns
