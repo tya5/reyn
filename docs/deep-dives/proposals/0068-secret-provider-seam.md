@@ -26,7 +26,7 @@ Each phase names what would make it *not* done, because "the class exists" has a
 
 ### Phase 2 — wire the dormant capability gate
 
-`ScopedSecretStore` is constructed 0 times under `src/reyn/` today and 8 times in `tests/core/test_fp0016_d_e2e_confused_deputy.py`; `OpContext.secret_store` (`context.py:273`) is a declaration with no assignment and no reader. Phase 2 connects it at the resolver so a reference outside `allowed_keys` raises `CredentialScopeError` on a real path.
+`ScopedSecretStore` is constructed 0 times under `src/reyn/` today and 27 times across three test files (`tests/security/test_fp0016_d_scoped_store.py` 15, `tests/core/test_fp0016_d_e2e_confused_deputy.py` 9, `tests/core/test_fp0016_d_opcontext_field.py` 3); `OpContext.secret_store` (`context.py:273`) is a declaration with no assignment and no reader. Phase 2 connects it at the resolver so a reference outside `allowed_keys` raises `CredentialScopeError` on a real path.
 
 **Not done if**: production still constructs it zero times; or the deny path is only reachable from tests. The falsification is direct — remove the wiring and a production-shaped denial must stop happening.
 
@@ -68,4 +68,5 @@ Operator-authored binding of a reference to a consumer, with narrowly scoped inj
 
 - The 133/60 figure is an upper bound; no line was opened, and non-secret `os.environ` reads are included.
 - `ScopedSecretStore`'s dormancy is established by construction-site and name-occurrence counts, not by running anything.
+- The test-side figure above shipped wrong ("8 times in" one file) and was corrected in ADR-0043 by #4892 without this document being updated in the same change — the two files landed together in #4891, and only one of them was fixed. It is corrected here. The count that matters to the plan is the `src/` zero; the test-side figure matters because Phase 2 has to move that surface, and one file versus three is a different job.
 - No claim here is based on executing Reyn; the author has no environment in which to exercise a credential store.
