@@ -1445,6 +1445,91 @@ rather than the claim's content.
   your plan can end with "the premise was wrong," the premise is not being
   tested.
 
+## 25. A written claim is never checked against its implementation — five same-night instances, one reviewer let three through
+
+Review checks whether a diff's *code* is correct. Nothing checks whether the
+diff's *prose about itself* — a title, a docstring, a code comment, a closing
+comment — is still true once the code around it changed. Five instances
+landed the same night (2026-08-16), five different surfaces, one shared root:
+
+1. **A test docstring**: "(measured against 0.13.1, re-verified against
+   0.14.0) regardless of the surrounding theme" — the property actually
+   depended on `ansi_blue`'s Rich `repr` happening to render as `"color(4)"`,
+   theme-dependent in fact. Written as measured, re-measured a second time
+   for a second pin bump, still false both times — re-running the same
+   narrow check twice produced two confirmations of the same wrong claim,
+   not one that caught it.
+2. **A commit message**: "add `session.audit_events` / `session.hot_reloader`
+   public accessors." A later commit in the same PR dropped `audit_events`
+   ("answered no question nothing else could" — a plain rename of already-
+   private state) and kept only `hot_reloader`. The title, never revised,
+   still claims both landed; it is now permanent in `main`'s history.
+3. **A code comment**: "there is no public route left to witness the
+   wiring." `session.subscribe_audit_events` already existed — the comment's
+   author had missed the accessor #2 above actually kept. **This is the
+   sharpest of the five**: a comment lives IN the code, so the next reader
+   learns "no public route exists" as a fact about the codebase, not as a
+   claim in a doc that might be stale — code-adjacent prose reads as more
+   authoritative than a doc saying the identical thing would.
+4. **An issue-closing comment**: "additional requirements: zero." `grep -rn
+   "<issue>" src/` turned up two call sites still waiting on that arc's next
+   stage — one command surfaced both; neither was checked before closing.
+5. **A production docstring**: "Delegation is total and explicit: every
+   method forwards" — an AST pass against the actual method list found four
+   that didn't. The claim used an absolute ("total," "every") that a single
+   grep against the two names a bug report happened to cite could not have
+   caught, and wasn't the check that was actually run.
+
+The same reviewing session passed instances 2, 3, and 4 — landed all three
+personally, in one case (3) *because of* a decision they themselves made
+one instance earlier (2) and didn't propagate to the comment describing it.
+Review reads a diff's code changes and asks whether they are correct; no
+step in that process asks whether the diff's OWN prose about itself —
+independent of whether the code is right — is still true after the diff
+that was supposed to make it true landed in its final, possibly-trimmed
+form. This is a different axis from §14 (a *completion declaration*,
+specifically, propagating unwitnessed into someone else's model) and from
+§24 (a *received question* silently deciding what gets searched): here the
+claim is self-authored, in the same diff, about that same diff — and still
+goes unchecked, because checking it was never anyone's assigned step.
+
+### The detection technique
+
+- **Diff a PR's own title and commit body against its final diff before
+  landing** — not the diff you started with, the one that's actually
+  merging. This matters most for a PR that review trimmed content out of:
+  whoever did the trimming has less reason than the original author to go
+  back and fix the title describing what used to be there.
+- **Before closing an arc, `grep -rn "<issue number>" src/`** — not only the
+  issue thread and the PR that claims to close it. A closing comment is
+  itself an unverified claim about the src tree, and the src tree is one
+  command away.
+- **"Count every universal-quantifier claim on sight" does not survive
+  contact with the population.** A pass over `src/`'s own comments and
+  docstrings for "all"/"every"/"total"/"regardless of" returns hundreds of
+  hits — almost all of them describing what a function does at runtime
+  ("return every X in Y"), not a static correspondence between two
+  enumerable sets. A rule that costs minutes per hit, applied at that
+  scale, is not a rule anyone follows — it is this same hazard's own
+  shape one level up: a prescription written down and never checked
+  against how often it would actually fire. **The scope that survives is
+  narrower and cheaper: the claim in the declaration you are writing right
+  now**, not a sweep of the whole tree — a diff-sized population is a few
+  minutes; `src/` is not.
+- **What's genuinely gate-able is rare, and worth finding on its own
+  terms.** The claim has to name TWO sides a machine can enumerate — a
+  declared set and an independent, derivable set to check it against
+  (§13's closed-target distinction: a Control IR op-kind union against
+  `OP_KIND_MODEL_MAP`, an event-kind string literal against every
+  `*emit*` call site — `asset_refs.py`'s `known_op_kinds`/
+  `known_event_types`, both already gated). Most universal claims aren't
+  this shape at all, and no amount of counting turns them into it. Look
+  for the two-enumerable-sets shape specifically, one instance at a time,
+  rather than triggering on the words.
+- **Where the claim isn't machine-checkable** (a commit message already in
+  history, a closing comment on a closed issue), there is no after-the-fact
+  remedy — the only defense is checking it before it's written.
+
 ## See also
 
 - [Testing policy](testing.md) — Tier model, Mock vs Fake, decision flow.
