@@ -247,6 +247,13 @@ TOKENS: "dict[str, str]" = {
     #: to agree on the same dark blue-gray value. Whether ``_CC_USER_BG``
     #: itself later migrates to THIS token, or its own, is #4787's call, not
     #: decided here.
+    #:
+    #: **This value carries NO WCAG contrast obligation of its own** —
+    #: ``_CC_USER_BG``'s own comment (``renderer.py``) documents a
+    #: measured 3.30 contrast ratio against ``palette.TOKENS["@dim@"]``
+    #: (#3371), but that pairing is with ``_CC_USER_BG``, not this token.
+    #: Changing ``@theme-surface@`` alone does not break that measurement;
+    #: consolidating the two constants into one WOULD need it re-verified.
     "@theme-surface@": "#1e222a",
     #: Explicit, not ``boost``-derived — see ``theme.py``'s own docstring
     #: for the rejected alternative (auto-deriving ``panel`` from
