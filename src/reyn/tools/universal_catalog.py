@@ -237,36 +237,60 @@ def is_search_available(*, embedding_enabled: bool) -> bool:
     return bool(embedding_enabled)
 
 
-def is_exec_available(*, sandbox_backend: str | None) -> bool:
-    """Return True iff the ``exec`` category should be exposed.
+def is_exec_isolated(*, sandbox_backend: str | None) -> bool:
+    """Return True iff ``exec`` runs under a real sandbox backend (isolation
+    actually applies) — False when ``sandbox_backend`` is ``None``/``"noop"``.
 
-    Per FP-0034 §D14-ext, the ``exec`` category (and the ``exec`` action
-    it contains) is only visible when a real sandbox
-    backend is configured. ``sandbox_backend`` of ``"noop"`` or None
-    keeps the category hidden so list_actions(category=["exec"])
-    returns empty and the schema enum can also drop ``"exec"``.
+    #4932 (owner ruling, 2026-08-19, reverses FP-0034 §D14-ext): this
+    predicate is DISCLOSURE-ONLY now — it composes the ``exec`` tool's
+    per-request isolation notice (``_enumerate_category``'s and
+    ``_describe_one``'s ``"exec"`` special-cases), never a VISIBILITY
+    decision. D14-ext's original shape (``is_exec_available`` — hide the
+    category entirely when noop) borrowed D14's "hide a functionally-dead
+    tool" pattern (``search_actions`` with no embedding index configured,
+    see ``is_search_available``) and misapplied it to a SECURITY-posture
+    question: ``exec`` still WORKS under ``noop``, just without OS-level
+    isolation — hiding it produced silent, unpredictable capability loss
+    (an operator who switched to ``noop`` for an unrelated reason, e.g.
+    #4932's own repro: probing Keychain reachability, lost ``exec``
+    entirely with no error, no notice) instead of a disclosed tradeoff.
+    Owner ruling (#4932, verbatim): "UX and predictability outrank
+    security; security should be opt-in [via a real sandbox backend], not
+    silently enforced by hiding a working tool." See
+    ``visible_categories`` for the visibility-side reversal.
     """
     if not sandbox_backend:
         return False
     return sandbox_backend != "noop"
 
 
-def visible_categories(
-    *,
-    sandbox_backend: str | None = None,
-) -> tuple[str, ...]:
+# #4932: the notice appended to `exec`'s description (both the
+# `_enumerate_category` short form and `_describe_one`'s full form) when
+# `is_exec_isolated` is False — the disclosure that REPLACES hiding the
+# category. Static text (not backend-name-specific): the LLM needs to know
+# isolation is absent, not which specific backend string produced that
+# state (`None` vs `"noop"` carry the same operational meaning here).
+_EXEC_NO_ISOLATION_NOTICE: Final[str] = (
+    " In THIS environment, no sandbox isolation is applied (no sandbox "
+    "backend is configured, or it is set to \"noop\") — the command runs "
+    "with the operator's own OS-level permissions, unconfined."
+)
+
+
+def visible_categories() -> tuple[str, ...]:
     """Return the categories that should be visible given the current env.
 
-    Drops ``exec`` when ``is_exec_available`` is False. Other categories
-    are always visible (search_actions visibility is a tool-level
-    decision, not a category-level one).
+    #4932 (owner ruling, 2026-08-19): ALL categories are always visible —
+    ``exec`` no longer has a category-level visibility gate (it used to
+    drop out entirely when ``sandbox_backend`` was ``"noop"``/``None``,
+    FP-0034 §D14-ext; see ``is_exec_isolated``'s own docstring for why
+    that was reversed). This function keeps its own identity (a named,
+    testable "what's visible" surface, referenced from
+    ``docs/deep-dives/research/fp-0035-permission-communication-analysis.md``)
+    even though it is now a constant — a future category-level gate has
+    a place to attach without re-inventing this function's name/shape.
     """
-    visible: list[str] = []
-    for cat in CATEGORIES:
-        if cat == "exec" and not is_exec_available(sandbox_backend=sandbox_backend):
-            continue
-        visible.append(cat)
-    return tuple(visible)
+    return CATEGORIES
 
 
 # ── 4 Universal wrapper ToolDefinitions ────────────────────────────────────
@@ -479,8 +503,11 @@ def _enumerate_category(category: str, ctx: ToolContext) -> list[dict[str, str]]
     ``ctx.router_state`` is consulted, but only ever to decide whether a FIXED
     verb is AVAILABLE this session — never to invent one:
       - ``excluded_categories`` (#1667) — the caller drops a whole category.
-      - ``sandbox_backend`` (D14-ext) — ``exec`` enumerates its single verb only
-        when a real backend is configured, and nothing otherwise.
+      - ``sandbox_backend`` — #4932 (owner ruling, 2026-08-19): no longer an
+        availability gate for ``exec`` (see ``is_exec_isolated``'s own
+        docstring for the reversal). Still consulted here, but only to
+        compose ``exec``'s isolation-disclosure text — the category itself
+        is always enumerated.
 
     The output items each carry ``action_name`` (= what
     invoke_action / describe_action expects) and ``short_description``
@@ -502,10 +529,11 @@ def _enumerate_category(category: str, ctx: ToolContext) -> list[dict[str, str]]
     (a category is *listed*), never enumeration REACHABILITY (a category's
     verbs actually come back non-empty) — so ``task`` passed that gate while
     still being invisible. Closing the class instead of the 7th instance:
-    ``knowledge``/``exec`` are the only two categories with a genuine runtime
-    availability gate (embedding / sandbox backend); every other category —
-    present or future — falls through to the unconditional static branch at
-    the bottom with nothing left to remember to wire in.
+    ``knowledge`` is the only category left with a genuine runtime
+    availability gate (embedding configured or not — #4932 removed
+    ``exec``'s own equivalent gate, see ``is_exec_isolated``); every other
+    category — present or future — falls through to the unconditional
+    static branch at the bottom with nothing left to remember to wire in.
     """
     rs = ctx.router_state
 
@@ -545,23 +573,17 @@ def _enumerate_category(category: str, ctx: ToolContext) -> list[dict[str, str]]
         return _enumerate_static_category("knowledge")
 
     # exec category — the `exec` tool (FP-0017; renamed from `sandboxed_exec`
-    # #3226 Phase 3). Visible only when a real sandbox backend is configured
-    # (D14-ext). RouterCallerState.sandbox_backend carries the backend name
-    # (None = noop).
+    # #3226 Phase 3). #4932 (owner ruling, 2026-08-19): ALWAYS enumerated,
+    # same as every other category below — no runtime availability gate any
+    # more (FP-0034 §D14-ext's "hide when noop" reversed; is_exec_isolated's
+    # own docstring has the full rationale). RouterCallerState.sandbox_backend
+    # still feeds the isolation-disclosure text (None = noop = no isolation).
     if category == "exec":
-        if rs is None:
-            return []
-        backend = getattr(rs, "sandbox_backend", None)
-        if not is_exec_available(sandbox_backend=backend):
-            return []
-        return [
-            {
-                "action_name": "exec",
-                "short_description": (
-                    "Execute a command in a sandboxed environment."
-                ),
-            }
-        ]
+        backend = getattr(rs, "sandbox_backend", None) if rs is not None else None
+        short_desc = "Execute a command in a sandboxed environment."
+        if not is_exec_isolated(sandbox_backend=backend):
+            short_desc += _EXEC_NO_ISOLATION_NOTICE
+        return [{"action_name": "exec", "short_description": short_desc}]
 
     # Every other category (file / web / memory_operation / reyn_repo /
     # multi_agent / mcp / pipeline / skill_management / pipeline_management /
@@ -976,7 +998,12 @@ def _describe_one(
     resource categories collapsed there is no such action left, so the override
     seam is gone rather than kept as an unused hook. ``ctx`` stays in the
     signature: it is what ``list_actions`` / ``catalog_entries`` already thread,
-    and removing it would churn both call sites for nothing.
+    and removing it would churn both call sites for nothing — and (#4932) it is
+    now genuinely read: ``exec``'s description gets an isolation-disclosure
+    suffix derived from ``ctx.router_state.sandbox_backend``, the SAME source
+    ``_enumerate_category``'s ``"exec"`` branch reads for its own
+    ``short_description`` suffix — one signal, two call sites, list ≡ describe
+    still holds because both derive from the same ``ctx``.
     """
     from reyn.tools.universal_dispatch import is_known_action
 
@@ -986,8 +1013,19 @@ def _describe_one(
     if target is None:
         return None
 
+    description = target.description
+    if action_name == "exec":
+        # #4932: same isolation-disclosure suffix _enumerate_category's exec
+        # branch appends to short_description — kept here too so
+        # describe_action's full description (this function, not the
+        # enumeration layer) also discloses it, not just the browse view.
+        rs = ctx.router_state
+        backend = getattr(rs, "sandbox_backend", None) if rs is not None else None
+        if not is_exec_isolated(sandbox_backend=backend):
+            description = description + _EXEC_NO_ISOLATION_NOTICE
+
     return {
-        "description": target.description,
+        "description": description,
         # #3383: a LIVE LLM-payload seam, not just a tool-result one —
         # ``catalog_entries`` below reuses this ``input_schema`` as an entry's
         # ``parameters``, and the DEFAULT ``enumerate-all`` scheme concatenates
@@ -1020,10 +1058,12 @@ def catalog_entries(ctx: ToolContext) -> list[dict[str, Any]]:
     Deterministic ``name`` sort (stable ``tools=`` ordering → replay-fixture
     stability). **Pass a ``ToolContext`` with ``router_state`` populated**: no
     category needs it to produce names any more (#3026), but it still gates
-    AVAILABILITY — ``excluded_categories`` and ``exec``'s sandbox backend — so a
-    None ``router_state`` yields a superset-shaped list that is not the "usable
-    this session" set. Note the count does NOT depend on how much the operator
-    has accumulated; that invariant is pinned in
+    AVAILABILITY via ``excluded_categories`` (#4932: ``exec``'s sandbox
+    backend no longer gates availability, only its description text — see
+    ``is_exec_isolated``) — so a None ``router_state`` yields a
+    superset-shaped list that is not the "usable this session" set. Note the
+    count does NOT depend on how much the operator has accumulated; that
+    invariant is pinned in
     ``tests/tools/test_resource_collapse_invariant_3026.py``.
     """
     from reyn.tools import get_default_registry
@@ -1303,6 +1343,6 @@ __all__ = [
     "_DESCRIBE_ACTION_DESCRIPTION",
     "_INVOKE_ACTION_DESCRIPTION",
     "is_search_available",
-    "is_exec_available",
+    "is_exec_isolated",
     "visible_categories",
 ]

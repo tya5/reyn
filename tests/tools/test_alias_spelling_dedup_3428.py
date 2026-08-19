@@ -35,6 +35,7 @@ import pytest
 
 from reyn.core.events.state_log import StateLog
 from reyn.runtime.router_loop import RouterLoop
+from reyn.tools.encoders import sanitize_identifier
 from reyn.tools.exposure import without_duplicate_names
 from reyn.tools.scheme import advertised_entries, get_scheme
 from reyn.tools.schemes._enumerate_exposure import (
@@ -337,10 +338,23 @@ async def test_the_two_enumerate_all_cells_still_show_the_same_set() -> None:
     """Tier 2: production-reaches — deduplicating did not re-split the populations
     #3381 joined.
 
-    The #3419 invariant is that ``enumerate-all``'s two cells expose the same set;
-    a dedup applied at one composition site and not the other would satisfy this
-    file's other arm while quietly restoring exactly the asymmetry #3381 was
-    about."""
+    The #3419 invariant is that ``enumerate-all``'s two cells expose the SAME
+    ACTIONS; a dedup applied at one composition site and not the other would
+    satisfy this file's other arm while quietly restoring exactly the
+    asymmetry #3381 was about.
+
+    #4932 (2026-08-19): with ``exec``'s own visibility gate retired, ``exec``
+    is now unconditionally in this comparison for the first time — surfacing
+    a PRE-EXISTING, legitimate spelling difference this test never had cause
+    to normalize before: the code-API cell (``Transport.CONTENT_FENCE``)
+    renders every name through ``sanitize_identifier`` (``reyn.tools.
+    encoders``), which suffixes ``exec`` to ``exec_`` because it collides
+    with BOTH the Python keyword and safe-mode's banned-builtin AST check
+    (that module's own docstring, #3429). Comparing the RAW ``tool_calls``
+    names against ``sanitize_identifier``-mapped names is the correct
+    "same actions" check — a literal-string comparison was never actually
+    the invariant's intent, it simply never had a keyword-colliding name to
+    expose the gap until ``exec`` became unconditionally visible."""
     session = make_session(
         agent_name="dedup-3428-parity",
         state_log=StateLog(_tmpdir() / "state.wal"),
@@ -350,8 +364,11 @@ async def test_the_two_enumerate_all_cells_still_show_the_same_set() -> None:
     calls = set(await _exposed_names(host, "enumerate-all", Transport.TOOL_CALLS, _LAYER_CTX))
     fence = set(await _exposed_names(host, "enumerate-all", Transport.CONTENT_FENCE, _LAYER_CTX))
     assert calls, "the tool_calls cell advertised nothing — nothing to compare"
-    assert calls == fence, (
-        "the two enumerate-all cells no longer show the same set: "
-        f"only in tool_calls {sorted(calls - fence)}, only in the code-API "
-        f"{sorted(fence - calls)}"
+    calls_as_identifiers = {sanitize_identifier(name) for name in calls}
+    assert calls_as_identifiers == fence, (
+        "the two enumerate-all cells no longer show the same ACTIONS (after "
+        "mapping tool_calls names through the SAME sanitize_identifier the "
+        "code-API cell itself uses): "
+        f"only in tool_calls (mapped) {sorted(calls_as_identifiers - fence)}, "
+        f"only in the code-API {sorted(fence - calls_as_identifiers)}"
     )

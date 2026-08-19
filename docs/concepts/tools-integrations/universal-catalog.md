@@ -95,9 +95,14 @@ The `mcp` category provides six verb_object actions that cover the LLM-visible s
 | `mcp_call_tool`      | Call a tool by `<server>__<tool>` id with `tool_args` |
 | `mcp_drop_server`    | Remove an installed server |
 
-`exec` is gated by `is_exec_available()` — it only appears when a real
-sandbox backend (= not `"noop"`) is configured. The rest are always
-visible.
+`exec` is always visible, on the same permission axis (`gates.router` +
+`exec: allow`) as every other category (#4932, owner ruling
+2026-08-19 — reverses the earlier `is_exec_available()` gate that hid
+`exec` entirely when no real sandbox backend was configured). When no
+real backend is configured, the tool's description discloses that
+commands run without isolation, instead of the category disappearing
+silently — see [Visibility gating](#visibility-gating-d14) below for
+the disclosure predicate.
 
 **Every category enumerates a fixed set of verbs.** A resource — a stored
 memory, an indexed corpus, an installed MCP tool, a registered pipeline — is an
@@ -264,17 +269,29 @@ obvious recovery move.
 
 ## Visibility gating (§D14)
 
-Some categories are visibility-gated by the runtime environment:
+`knowledge` (via `search_actions`) is the only category left with a
+genuine runtime VISIBILITY gate:
 
 | Predicate | Effect |
 |---|---|
 | `is_search_available(embedding_enabled)` | Whether `search_actions` appears in tools= (Phase 2) |
-| `is_exec_available(sandbox_backend)` | Whether `exec` appears in `list_actions` enumeration |
 
-The gates are pure functions; the runtime supplies the configuration
-values from `embedding.enabled` (FP-0066 §7) and the resolved
-sandbox backend. Hidden categories appear neither in the
-`list_actions` `category=` enum nor in any enumeration result.
+The gate is a pure function; the runtime supplies the configuration
+value from `embedding.enabled` (FP-0066 §7). A hidden category appears
+neither in the `list_actions` `category=` enum nor in any enumeration
+result.
+
+`exec` used to have an equivalent gate (`is_exec_available`, §D14-ext) —
+retired by #4932 (owner ruling, 2026-08-19). `exec` is now always
+visible; `is_exec_isolated(sandbox_backend)` is a DISCLOSURE-only
+predicate consumed by the tool's own description text (appends a
+plain-language "no sandbox isolation is applied" notice when no real
+backend is configured), never a visibility decision. The distinction
+that survives: `knowledge` hides a genuinely non-functional tool (no
+index to query); `exec` always works, with or without isolation, so
+hiding it was never a functional-availability gate — it was a
+security-posture question, which the owner ruled must be disclosed,
+not silently enforced by omission.
 
 ## System prompt placement (§D9)
 

@@ -10,11 +10,23 @@ primitive, collapsed to the owner-directed name); the op_runtime layer
 is UNCHANGED — only the tool/qualified name + the ``permissions.exec``
 key moved.
 
-D14-ext visibility gating: the ``exec`` category is only shown to the
-LLM when a real sandbox backend is configured (= not "noop" / not None).
-The ToolDefinition is always in the registry; the catalog enumeration
-layer (``universal_catalog._enumerate_category``) performs the gate
-check using ``RouterCallerState.sandbox_backend``.
+#4932 (owner ruling, 2026-08-19): the ``exec`` category is ALWAYS visible
+to the LLM — it is no longer hidden when no real sandbox backend is
+configured (the retired FP-0034 §D14-ext visibility gate). Switching
+``sandbox.backend`` to ``"noop"`` for an unrelated reason (#4932's own
+repro: probing Keychain reachability) used to make ``exec`` silently
+vanish from the catalog with no error and no notice — unpredictable
+capability loss the owner ruled against ("UX/predictability outrank
+security; security should be opt-in [a real backend], not silently
+enforced by hiding a working tool"). ``exec`` still WORKS under
+``"noop"``, just without OS-level isolation, so hiding it was never a
+security control — the real command still ran, or didn't, on the SAME
+permission axis (``gates.router`` + ``exec: allow``) every other
+category uses. The catalog enumeration layer
+(``universal_catalog._enumerate_category`` / ``_describe_one``) now
+DISCLOSES the isolation state in the description text instead
+(``universal_catalog.is_exec_isolated`` + ``_EXEC_NO_ISOLATION_NOTICE``)
+— never by omission.
 """
 from __future__ import annotations
 

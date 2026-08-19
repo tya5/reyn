@@ -233,13 +233,13 @@ class RouterCallerState:
     embedding_provider: Any = None
     embedding_model_class: str | None = None
 
-    # FP-0034 Phase 2: sandbox backend name for the exec category
-    # D14 visibility gate.  RouterLoop binds this from
-    # ``session._sandbox_config.backend`` so ``list_actions(category=
-    # ["exec"])`` returns ``exec`` (#3226 Phase 3 qualified name)
-    # when a real backend is configured (= not "noop" / not None).
-    # ``None`` = sandbox not configured or noop backend; exec category
-    # stays hidden.
+    # FP-0034 Phase 2: sandbox backend name, threaded from
+    # ``session._sandbox_config.backend``. #4932 (owner ruling,
+    # 2026-08-19): no longer a VISIBILITY gate — the exec category is
+    # always in ``list_actions(category=["exec"])`` regardless of this
+    # value (#3226 Phase 3 qualified name). ``None``/``"noop"`` now only
+    # decides whether exec's own description discloses "no sandbox
+    # isolation is applied" (``universal_catalog.is_exec_isolated``).
     sandbox_backend: str | None = None
 
     # #2548 PR-A: skill registry snapshot — enabled skills available at

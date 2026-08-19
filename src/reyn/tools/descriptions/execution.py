@@ -23,8 +23,10 @@ from reyn.tools.descriptions._types import ParamDescription, ToolDescription
 exec_ = ToolDescription(
     tool_name="exec",
     surfaced=(
-        "router (gates.router=allow) — FP-0034 "
-        "exec category, visibility-gated on a configured sandbox backend"
+        "router (gates.router=allow) — FP-0034 exec category, always "
+        "visible (#4932: no longer visibility-gated on a configured "
+        "sandbox backend; isolation state is disclosed in the "
+        "description text instead)"
     ),
     purpose=(
         "Execute a command in a sandboxed environment (FP-0017), with the "

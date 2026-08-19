@@ -358,17 +358,19 @@ class RouterHostAdapter:
         # tools/types.py) — i.e. the live interactive path. Without it the
         # user-facing embed is billed but recorded nowhere ($0.00), the exact
         # bug FP-0063 closes.
-        # FP-0034 Phase 2: sandbox backend name for exec D14 visibility
-        # gate. Passed from ``session._sandbox_config.backend`` so the
-        # universal catalog ``_enumerate_category("exec")`` can decide
-        # whether to expose ``exec``. Default None hides
-        # the exec category (= noop / no sandbox configured).
+        # FP-0034 Phase 2: sandbox backend name, passed from
+        # ``session._sandbox_config.backend``. #4932 (owner ruling,
+        # 2026-08-19): the universal catalog ``_enumerate_category("exec")``
+        # no longer gates VISIBILITY on this value — ``exec`` is always
+        # exposed. Default None only means the ``exec`` description
+        # discloses "no sandbox isolation is applied" (noop / no sandbox
+        # configured), never that the category disappears.
         sandbox_backend: str | None = None,
         # #187: the FS EnvironmentBackend INSTANCE (docker for in-container repos)
         # for the router OpContext Workspace. Distinct from ``sandbox_backend``
-        # (a STRING for the exec D14 gate). Without this the LIVE file-op
-        # dispatch built a host-cwd Workspace (the #187 wrong-FS defect: file
-        # ops on the reyn repo, not /testbed).
+        # (a STRING feeding exec's isolation-disclosure text, #4932). Without
+        # this the LIVE file-op dispatch built a host-cwd Workspace (the #187
+        # wrong-FS defect: file ops on the reyn repo, not /testbed).
         environment_backend: Any = None,
         # #2548 PR-A: enabled skill registry snapshot (list[SkillEntry]).
         # Session builds it via build_skill_registry(config.skills) and passes
@@ -1212,12 +1214,13 @@ class RouterHostAdapter:
 
         FP-0034 Phase 2.  Mirror of ``sandbox.backend`` from reyn.yaml
         (resolved via ``session._sandbox_config.backend``).  RouterLoop
-        forwards this into ``RouterCallerState.sandbox_backend`` so the
-        exec category D14 visibility gate in
-        ``universal_catalog._enumerate_category`` can decide whether to
-        expose ``exec``.  ``None`` and ``"noop"`` both
-        hide the exec category; any other value (``"seatbelt"`` /
-        ``"landlock"`` / ``"auto"``) makes it visible.
+        forwards this into ``RouterCallerState.sandbox_backend``, consumed
+        by ``universal_catalog._enumerate_category``'s ``exec`` branch.
+        #4932 (owner ruling, 2026-08-19): the ``exec`` category is ALWAYS
+        exposed now, regardless of this value — ``None``/``"noop"`` only
+        make the ``exec`` tool's own description disclose that no sandbox
+        isolation applies (``is_exec_isolated``); any other value
+        (``"seatbelt"`` / ``"landlock"`` / ``"auto"``) omits that notice.
         """
         return self._sandbox_backend
 

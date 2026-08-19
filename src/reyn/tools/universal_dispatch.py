@@ -157,8 +157,12 @@ _CATEGORY_ACTIONS: Final[dict[str, tuple[str, ...]]] = {
         "reyn_repo_glob",
         "reyn_repo_grep",
     ),
-    # FP-0017 sandboxed_exec, tool renamed ``exec`` in #3226 Phase 3. D14
-    # visibility gating lives in ``_enumerate_category`` (sandbox backend).
+    # FP-0017 sandboxed_exec, tool renamed ``exec`` in #3226 Phase 3.
+    # #4932 (owner ruling, 2026-08-19): the D14-ext visibility gate that
+    # used to live in ``_enumerate_category`` (sandbox backend) is
+    # retired — ``exec`` always enumerates; the same sandbox_backend
+    # value now only composes an isolation-disclosure text suffix
+    # (``is_exec_isolated``).
     "exec": ("exec",),
     # #2548 PR-C/PR-D skill directory install verbs; #2971 added ``skill_list``
     # (without it a skill outside the L1 menu had no surface naming it, so it

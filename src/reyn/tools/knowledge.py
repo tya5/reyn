@@ -54,9 +54,16 @@ pins the classification.
 ``invoke_action``) is enumerated only when ``embedding.enabled:
 true`` — ``universal_catalog._enumerate_category``'s ``"knowledge"``
 branch calls the SAME ``is_search_available`` predicate ``search_actions``
-already uses (shared helper, not a duplicated embedding-config re-check —
-mirrors how the pre-existing ``"exec"`` branch shares ``is_exec_available``
-with ``visible_categories``).
+already uses (shared helper, not a duplicated embedding-config re-check).
+#4932 (2026-08-19): this is now the ONLY category-level availability gate
+left — the ``"exec"`` branch's equivalent (``is_exec_available``, which
+this docstring used to say ``knowledge`` mirrored) was removed by owner
+ruling; ``exec`` is always enumerated, and its former gate value now only
+composes a disclosure suffix (``is_exec_isolated``), never an
+availability decision. ``knowledge``'s gate is a different SHAPE by
+design — a genuinely non-functional tool (no index) versus exec's
+merely-less-isolated one — see ``is_exec_isolated``'s own docstring for
+why that distinction is what changed.
 """
 from __future__ import annotations
 

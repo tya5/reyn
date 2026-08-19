@@ -706,12 +706,11 @@ def test_describe_action_via_registry_returns_tool_meta() -> None:
 
 
 def test_exec_enumerable_when_sandbox_configured() -> None:
-    """Tier 2: exec appears in list_actions when sandbox backend is set.
-
-    D14-ext visibility gate: when RouterCallerState.sandbox_backend is a
-    real backend name (not 'noop' / None), the exec category returns
-    exec in list_actions output.
-    """
+    """Tier 2: exec appears in list_actions with a real sandbox backend set
+    (#4932, 2026-08-19: it appears UNCONDITIONALLY now — see the
+    test_exec_discloses_* trio below for the noop/None cases the retired
+    D14-ext gate used to hide). No isolation-disclosure suffix is appended
+    here since a real backend IS configured."""
     rs = RouterCallerState(sandbox_backend="seatbelt")
     result = _run(LIST_ACTIONS.handler(
         {"category": ["exec"]}, _make_ctx(rs),
@@ -719,17 +718,17 @@ def test_exec_enumerable_when_sandbox_configured() -> None:
     qns = {it["action_name"] for it in result["items"]}
     assert "exec" in qns
     assert result["total"] == 1
-    # short_description must be a non-empty string
     for item in result["items"]:
         assert isinstance(item["short_description"], str)
         assert item["short_description"]
+        assert "no sandbox isolation" not in item["short_description"]
 
 
 def test_exec_enumerable_when_sandbox_landlock() -> None:
-    """Tier 2: exec category is visible with any real backend name.
-
-    Both 'seatbelt' and 'landlock' are real backends per §D14-ext.
-    """
+    """Tier 2: exec category enumerates with any real backend name — both
+    'seatbelt' and 'landlock' omit the isolation-disclosure suffix
+    (#4932; formerly both were "real backends per §D14-ext" for a
+    visibility gate that no longer exists)."""
     rs = RouterCallerState(sandbox_backend="landlock")
     result = _run(LIST_ACTIONS.handler(
         {"category": ["exec"]}, _make_ctx(rs),
@@ -738,44 +737,42 @@ def test_exec_enumerable_when_sandbox_landlock() -> None:
     assert result["items"][0]["action_name"] == "exec"
 
 
-def test_exec_hidden_when_sandbox_noop() -> None:
-    """Tier 2: exec category returns empty when sandbox_backend is 'noop'.
-
-    D14-ext: noop backend means no real enforcement; exec stays hidden
-    so the LLM does not attempt exec without isolation.
-    """
+def test_exec_discloses_no_isolation_when_sandbox_noop() -> None:
+    """Tier 2: #4932 (owner ruling, 2026-08-19) — exec category is NEVER
+    hidden any more when sandbox_backend is 'noop'; the retired D14-ext
+    gate used to hide it here. It stays visible with an isolation-
+    disclosure notice in its description instead."""
     rs = RouterCallerState(sandbox_backend="noop")
     result = _run(LIST_ACTIONS.handler(
         {"category": ["exec"]}, _make_ctx(rs),
     ))
-    assert result["items"] == []
-    assert result["total"] == 0
+    assert result["total"] == 1
+    assert result["items"][0]["action_name"] == "exec"
+    assert "no sandbox isolation" in result["items"][0]["short_description"]
 
 
-def test_exec_hidden_when_sandbox_backend_none() -> None:
-    """Tier 2: exec category returns empty when sandbox_backend is None.
-
-    D14-ext: None = not configured; exec stays hidden.
-    """
+def test_exec_discloses_no_isolation_when_sandbox_backend_none() -> None:
+    """Tier 2: #4932 — same as the noop case, for sandbox_backend=None
+    (not configured)."""
     rs = RouterCallerState(sandbox_backend=None)
     result = _run(LIST_ACTIONS.handler(
         {"category": ["exec"]}, _make_ctx(rs),
     ))
-    assert result["items"] == []
-    assert result["total"] == 0
+    assert result["total"] == 1
+    assert result["items"][0]["action_name"] == "exec"
+    assert "no sandbox isolation" in result["items"][0]["short_description"]
 
 
-def test_exec_hidden_when_no_router_state() -> None:
-    """Tier 2: exec category returns empty without router_state.
-
-    When ctx.router_state is None, exec category defaults to empty
-    (= cannot determine sandbox backend = treat as noop).
-    """
+def test_exec_discloses_no_isolation_when_no_router_state() -> None:
+    """Tier 2: #4932 — exec category is visible even without router_state
+    (backend can't be determined → treated as not isolated → disclosed,
+    never hidden)."""
     result = _run(LIST_ACTIONS.handler(
         {"category": ["exec"]}, _make_ctx(),
     ))
-    assert result["items"] == []
-    assert result["total"] == 0
+    assert result["total"] == 1
+    assert result["items"][0]["action_name"] == "exec"
+    assert "no sandbox isolation" in result["items"][0]["short_description"]
 
 
 def test_exec_is_the_exec_categorys_only_action() -> None:
@@ -823,27 +820,34 @@ def test_exec_describe_action_returns_exec_schema() -> None:
     assert "argv" in required
 
 
-def test_list_actions_all_categories_exec_hidden_by_default() -> None:
-    """Tier 2: list_actions() with no category filter hides exec without sandbox.
+def test_list_actions_all_categories_exec_discloses_no_isolation_by_default() -> None:
+    """Tier 2: #4932 (owner ruling, 2026-08-19) — list_actions() with no
+    category filter includes exec even without a sandbox backend; the
+    former "hidden by default" behavior is retired, disclosed instead.
 
-    The exec category should NOT appear in the default (no-sandbox)
-    enumeration because RouterCallerState has sandbox_backend=None.
+    Pre-#4932 this test asserted no ``exec__``-prefixed entry appeared —
+    a qualified-name form #3429 retired well before #4932 (the tool has
+    been named bare ``exec`` since), so that assertion bit on nothing
+    regardless of visibility. Fixed alongside the real behavior change
+    since it lived directly in this PR's blast radius: assert on the
+    CURRENT name (``exec``) and the disclosure text, not a naming
+    pattern that no longer exists anywhere in the system.
     """
     rs = RouterCallerState(sandbox_backend=None)
     result = _run(LIST_ACTIONS.handler({}, _make_ctx(rs)))
-    qns = [it["action_name"] for it in result["items"]]
-    assert not any(qn.startswith("exec__") for qn in qns), (
-        f"exec__ entries should be hidden when sandbox_backend=None; got {qns}"
+    items_by_name = {it["action_name"]: it for it in result["items"]}
+    assert "exec" in items_by_name, (
+        f"exec must be present even with sandbox_backend=None; got "
+        f"{sorted(items_by_name)}"
     )
+    assert "no sandbox isolation" in items_by_name["exec"]["short_description"]
 
 
-def test_list_actions_all_categories_exec_visible_with_sandbox() -> None:
-    """Tier 2: list_actions() with no filter includes exec when sandbox is real.
-
-    When RouterCallerState.sandbox_backend is a real backend, the exec
-    category is included in the unrestricted enumeration.
-    """
+def test_list_actions_all_categories_exec_no_disclosure_with_sandbox() -> None:
+    """Tier 2: list_actions() with no filter includes exec when sandbox is
+    real, with no isolation-disclosure suffix (nothing to disclose)."""
     rs = RouterCallerState(sandbox_backend="seatbelt")
     result = _run(LIST_ACTIONS.handler({}, _make_ctx(rs)))
-    qns = [it["action_name"] for it in result["items"]]
-    assert "exec" in qns
+    items_by_name = {it["action_name"]: it for it in result["items"]}
+    assert "exec" in items_by_name
+    assert "no sandbox isolation" not in items_by_name["exec"]["short_description"]

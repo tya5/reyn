@@ -187,9 +187,11 @@ def test_action_names_for_category_mcp() -> None:
 
 
 def test_action_names_for_category_exec_is_single_entry() -> None:
-    """Tier 2: exec is a single-entry category. D14 visibility gating (hide
-    when sandbox_backend is None/noop) happens at the enumeration layer, not
-    here."""
+    """Tier 2: exec is a single-entry category. #4932 (2026-08-19): the
+    former D14-ext visibility gate (hide when sandbox_backend is
+    None/noop) is retired — exec always enumerates now; what the
+    enumeration layer still derives from sandbox_backend is an
+    isolation-disclosure text suffix, not a hide/show decision."""
     assert action_names_for_category("exec") == ("exec",)
 
 
