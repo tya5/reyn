@@ -211,19 +211,24 @@ _PEER_REPLY_FAILED_MSG: dict[str, str] = {
 
 
 def _exec_gate_backend_name(sandbox_backend: Any, sandbox_config: Any) -> str | None:
-    """#1417: resolve the ``exec`` D14 visibility-gate backend name.
+    """#1417: resolve the ``exec`` isolation-disclosure backend name.
 
-    The ``exec`` category is gated on the ACTUAL exec backend, not the reyn.yaml
-    config string. When a sandbox backend INSTANCE is injected (e.g.
-    ``--env-backend=docker`` → ``DockerEnvironmentBackend.name == "docker"``),
-    its ``.name`` is the gate value — so ``exec`` stays discoverable even with a
-    ``sandbox.backend = noop`` config (the construction-forwarding-gap: the
-    config string is NOT the live injected instance, and the instance is what
-    actually executes via ``sandboxed_exec``). With no injected instance, fall
-    back to the config string (``auto`` / host-default behaviour unchanged).
+    #4932 (owner ruling, 2026-08-19): ``exec`` is no longer gated on the
+    ACTUAL exec backend (it is always visible) — this value now feeds the
+    ISOLATION-DISCLOSURE text instead (``universal_catalog.
+    is_exec_isolated``), so it must still be the ACTUAL backend, not the
+    reyn.yaml config string. When a sandbox backend INSTANCE is injected
+    (e.g. ``--env-backend=docker`` → ``DockerEnvironmentBackend.name ==
+    "docker"``), its ``.name`` is the value used — so the disclosure text
+    correctly reports "isolated" even with a ``sandbox.backend = noop``
+    config (the construction-forwarding-gap: the config string is NOT the
+    live injected instance, and the instance is what actually executes
+    via ``sandboxed_exec``). With no injected instance, fall back to the
+    config string (``auto`` / host-default behaviour unchanged).
 
-    A defensive ``getattr`` keeps an instance without a ``name`` from raising
-    (degrades to None → exec hidden, the safe direction).
+    A defensive ``getattr`` keeps an instance without a ``name`` from
+    raising (degrades to None → disclosed as not-isolated, the safe
+    direction — never a crash, and never silence either).
     """
     if sandbox_backend is not None:
         return getattr(sandbox_backend, "name", None)

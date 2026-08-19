@@ -622,12 +622,13 @@ class RouterLoopHost(RouterLoopCore, Protocol):
 
         FP-0034 Phase 2.  Mirror of ``sandbox.backend`` from reyn.yaml
         (resolved from ``session._sandbox_config.backend``).  RouterLoop
-        forwards this into ``RouterCallerState.sandbox_backend`` so the
-        ``exec`` category D14 visibility gate in
-        ``universal_catalog._enumerate_category`` can decide whether to
-        expose ``exec``.  ``None`` and ``"noop"`` both
-        hide the category; any other value (``"seatbelt"`` /
-        ``"landlock"`` / ``"auto"``) makes it visible.
+        forwards this into ``RouterCallerState.sandbox_backend``, consumed
+        by ``universal_catalog._enumerate_category``'s ``exec`` branch.
+        #4932 (owner ruling, 2026-08-19): the ``exec`` category is ALWAYS
+        exposed now, regardless of this value — ``None``/``"noop"`` only
+        make the ``exec`` tool's own description disclose that no sandbox
+        isolation applies (``is_exec_isolated``); any other value
+        (``"seatbelt"`` / ``"landlock"`` / ``"auto"``) omits that notice.
         """
         ...
 

@@ -817,10 +817,13 @@ already set earlier in `__init__`.
 
 ### sandbox_backend gate reads the injected instance, not the config string (#1417 / FP-0034)
 
-The exec D14 visibility gate — whether `exec`/`sandboxed_exec` appears as an
-available capability in the universal catalog — must gate on the INJECTED
-backend's real capability, not the `reyn.yaml` `sandbox.backend` config
-STRING.
+`exec`/`sandboxed_exec` is always discoverable in the universal catalog
+(#4932, owner ruling 2026-08-19 — the earlier D14-ext visibility gate
+that could hide it entirely is retired). What still must read the
+INJECTED backend's real identity, not the `reyn.yaml` `sandbox.backend`
+config STRING, is the ISOLATION-DISCLOSURE text the tool's description
+carries: it must name the backend that will actually run the command,
+not the config value that may no longer match it.
 
 `sandbox_backend=_exec_gate_backend_name(self._sandbox_backend,
 self._sandbox_config)` reads `self._sandbox_backend` — the SAME object used
@@ -831,12 +834,12 @@ expose `.name`.
 
 **The construction-forwarding-gap this closes**: without reading the
 injected instance, `sandbox.backend=noop` config plus an injected exec
-backend (e.g. `--env-backend=docker`) would HIDE exec from discovery even
-though `sandboxed_exec` is functionally available through the injected
-backend. The mismatch produces no error — the capability is simply absent
-from the catalog the LLM sees, indistinguishable from an operator who
-deliberately disabled exec. No injected instance → falls back to the config
-string (auto / host-default behaviour unchanged).
+backend (e.g. `--env-backend=docker`) would (pre-#4932) HIDE exec from
+discovery, or (post-#4932) wrongly disclose "no isolation" even though
+`sandboxed_exec` is functionally isolated through the injected backend —
+either way the mismatch is silent, indistinguishable from an operator who
+deliberately configured `noop`. No injected instance → falls back to the
+config string (auto / host-default behaviour unchanged).
 
 ### available_skills_fn reads the BASE set, not the UX-filtered copy (#3196)
 

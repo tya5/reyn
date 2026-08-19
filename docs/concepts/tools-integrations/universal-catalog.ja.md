@@ -59,9 +59,13 @@ hallucination 0/35)。
 | `rag_operation` | RAG op | `list_sources` / multi-source semantic_search / drop source |
 | `exec` | sandboxed argv 実行 | sandbox backend 下で argv 実行 |
 
-`exec` は `is_exec_available()` で gate される — 本物の sandbox backend
-(= `"noop"` 以外) が configure されている場合のみ surface に出る。 残り
-は常に visible。
+`exec` は常に visible — 他の全 category と同じ permission 軸
+（`gates.router` + `exec: allow`）で決まる（#4932、owner 裁定
+2026-08-19 — 本物の sandbox backend が configure されていない場合に
+`exec` 全体を隠していた `is_exec_available()` gate を撤回）。本物の
+backend が configure されていない場合は、category が黙って消える代わ
+りに、tool の description が「隔離なしで実行される」ことを開示する —
+開示 predicate は下の [Visibility gating](#visibility-gating-d14) 参照。
 
 **どの category も列挙する action は固定 verb 集合**。 resource (保存済み
 memory / indexed corpus / install 済 MCP tool / 登録済 pipeline) は verb の
@@ -235,16 +239,27 @@ availability を反映した action 集合から `difflib`-ranked suggestions �
 
 ## Visibility gating (§D14)
 
-一部の category は runtime 環境で visibility-gate される:
+本物の runtime VISIBILITY gate が残っているのは `knowledge`
+（`search_actions` 経由）だけ:
 
 | Predicate | 効果 |
 |---|---|
 | `is_search_available(embedding_enabled)` | `search_actions` が tools= に出るか (Phase 2) |
-| `is_exec_available(sandbox_backend)` | `exec` が `list_actions` 列挙に出るか |
 
-gate は pure function; runtime は `embedding.enabled`(FP-0066 §7)
-と resolved sandbox backend から configuration を渡す。 hidden category
-は `list_actions` の `category=` enum にも列挙結果にも現れない。
+gate は pure function; runtime は `embedding.enabled`(FP-0066 §7) から
+configuration を渡す。hidden category は `list_actions` の `category=`
+enum にも列挙結果にも現れない。
+
+`exec` にも同等の gate があった（`is_exec_available`、§D14-ext）—
+#4932（owner 裁定、2026-08-19）で撤回済み。`exec` は常に visible;
+`is_exec_isolated(sandbox_backend)` は開示専用の predicate で、tool
+自身の description text から consume される（本物の backend が
+configure されていない場合、「隔離なしで実行される」旨の平文 notice
+を追記する）— visibility の判断には二度と使わない。残る違いはこう:
+`knowledge` は本当に機能しない tool（問い合わせる index が無い）を隠す
+のに対し、`exec` は隔離の有無にかかわらず常に動く — ∴ 隠すのは
+functional-availability の gate では元々なく、security-posture の問い
+だった。owner 裁定は「黙って隠すのではなく開示する」だった。
 
 ## System prompt placement (§D9)
 

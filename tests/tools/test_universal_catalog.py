@@ -9,9 +9,11 @@ Tests for ``src/reyn/tools/universal_catalog.py`` covering:
      category, empty entry_name.
   4. 4 ToolDefinitions (LIST_ACTIONS / SEARCH_ACTIONS / DESCRIBE_ACTION /
      INVOKE_ACTION) shape — name, gates, render_for_router schema.
-  5. D14 visibility gating predicates (is_search_available /
-     is_exec_available / visible_categories) behave per §D14 /
-     §D14-ext.
+  5. D14 visibility gating predicate (is_search_available) behaves per
+     §D14; #4932 (2026-08-19, owner ruling): exec's own former gate
+     (is_exec_available / D14-ext) is retired — exec is now ALWAYS
+     enumerated, and is_exec_isolated (renamed, same value semantics)
+     only composes an isolation-disclosure text suffix.
   6. search_actions handler degrades gracefully when no router_state
      (= real impl since Phase 2 step 1; deeper invariants in
      test_universal_handlers.py).
@@ -26,7 +28,7 @@ import asyncio
 import pytest
 
 from reyn.core.events.events import EventLog
-from reyn.tools.types import ToolContext, ToolDefinition, ToolGates
+from reyn.tools.types import RouterCallerState, ToolContext, ToolDefinition, ToolGates
 from reyn.tools.universal_catalog import (
     CATEGORIES,
     DESCRIBE_ACTION,
@@ -34,7 +36,7 @@ from reyn.tools.universal_catalog import (
     LIST_ACTIONS,
     SEARCH_ACTIONS,
     _enumerate_category,
-    is_exec_available,
+    is_exec_isolated,
     is_search_available,
     visible_categories,
 )
@@ -491,32 +493,83 @@ def test_is_search_available_predicate(
         ("", False),
     ],
 )
-def test_is_exec_available_predicate(
+def test_is_exec_isolated_predicate(
     backend: str | None, expected: bool,
 ) -> None:
-    """Tier 2: exec category visibility per §D14-ext.
+    """Tier 2: #4932 — is_exec_isolated (renamed from is_exec_available,
+    same value semantics) reports whether real isolation applies.
 
-    `noop` and None/empty both mean "no real sandbox backend".
+    `noop` and None/empty both mean "no real sandbox backend" (= not
+    isolated). Since #4932 this is DISCLOSURE-only — it no longer gates
+    exec's visibility (see the visible_categories/enumerate tests below).
     """
-    assert is_exec_available(sandbox_backend=backend) is expected
+    assert is_exec_isolated(sandbox_backend=backend) is expected
 
 
-def test_visible_categories_drops_exec_when_sandbox_noop() -> None:
-    """Tier 2: visible_categories excludes 'exec' when sandbox=noop."""
-    vis = visible_categories(sandbox_backend="noop")
-    assert "exec" not in vis
+def test_visible_categories_always_includes_exec() -> None:
+    """Tier 2: #4932 (owner ruling, 2026-08-19) — visible_categories no
+    longer drops 'exec' for any sandbox_backend value; category
+    visibility follows the same permission axis every other category
+    uses (gates.router + exec: allow), never sandbox posture. Strip-
+    falsify note: this test would have failed under the pre-#4932 gate
+    for every value below except a real backend."""
+    for backend in ("seatbelt", "landlock", "noop", None, ""):
+        assert "exec" in visible_categories(), (
+            f"exec must be visible regardless of sandbox_backend "
+            f"(checked implicitly for {backend!r} — visible_categories "
+            f"no longer takes a sandbox_backend argument at all)"
+        )
 
 
-def test_visible_categories_includes_exec_when_sandbox_real() -> None:
-    """Tier 2: visible_categories includes 'exec' when real backend present."""
-    vis = visible_categories(sandbox_backend="seatbelt")
-    assert "exec" in vis
+def test_enumerate_exec_always_returns_the_action_regardless_of_backend() -> None:
+    """Tier 2: #4932 — _enumerate_category('exec', ...) returns the exec
+    action for every sandbox_backend value, including noop/None (the
+    exact cases D14-ext used to hide it for)."""
+    for backend in ("seatbelt", "noop", None):
+        ctx = ToolContext(
+            events=None,
+            permission_resolver=None,
+            workspace=None,
+            caller_kind="router",
+            router_state=RouterCallerState(sandbox_backend=backend),
+        )
+        actions = _enumerate_category("exec", ctx)
+        assert [a["action_name"] for a in actions] == ["exec"], (
+            f"exec must always enumerate, got {actions!r} for backend={backend!r}"
+        )
 
 
-def test_visible_categories_drops_exec_when_sandbox_none() -> None:
-    """Tier 2: visible_categories excludes 'exec' when sandbox unset."""
-    vis = visible_categories(sandbox_backend=None)
-    assert "exec" not in vis
+def test_enumerate_exec_discloses_no_isolation_when_noop_or_none() -> None:
+    """Tier 2: #4932 — when isolation does not apply, the short_description
+    the LLM sees names it explicitly (never silence — the replacement for
+    hiding the category)."""
+    for backend in ("noop", None):
+        ctx = ToolContext(
+            events=None,
+            permission_resolver=None,
+            workspace=None,
+            caller_kind="router",
+            router_state=RouterCallerState(sandbox_backend=backend),
+        )
+        actions = _enumerate_category("exec", ctx)
+        assert "no sandbox isolation is applied" in actions[0]["short_description"], (
+            f"expected an explicit isolation-disclosure notice for "
+            f"backend={backend!r}, got {actions[0]['short_description']!r}"
+        )
+
+
+def test_enumerate_exec_no_disclosure_when_real_backend() -> None:
+    """Tier 2: #4932 — with a real sandbox backend, no isolation-disclosure
+    suffix is appended (nothing to disclose)."""
+    ctx = ToolContext(
+        events=None,
+        permission_resolver=None,
+        workspace=None,
+        caller_kind="router",
+        router_state=RouterCallerState(sandbox_backend="seatbelt"),
+    )
+    actions = _enumerate_category("exec", ctx)
+    assert "no sandbox isolation" not in actions[0]["short_description"]
 
 
 # ── 6. search_actions Phase 2 step 1 — handler is real, not a stub ───────
