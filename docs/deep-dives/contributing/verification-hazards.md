@@ -1377,6 +1377,74 @@ checked); this one is not about a declaration of completion but about which
   The TTY-holding session was mid-dogfood and answered in minutes; the
   false route existed only because nobody spent one message.
 
+## 24. An inherited premise is not observed — "why is X true" never tests whether X is true
+
+A PR sat blocked for ten hours with no identifiable author. Its role prefix
+(`**[role]**`) is the only cross-session author signal in this repo — every
+session authenticates as the same `gh` account, so `--json author` cannot
+distinguish them. A broadcast went to fourteen sessions asking the author to
+come forward. The reviewing session had grepped the body for the prefix and
+found none — but **that is not what the broadcast said**. It said the author
+could not be identified. The premise arrived without its evidence, so there
+was nothing available to re-derive except the conclusion itself.
+
+A second session picked it up and did its own work — grepped the body itself,
+got the same empty result, then widened to a 200-PR census to find out *how
+common* the omission was, reported "60 of 200 non-compliant," and proposed a
+gate to enforce the rule. Every one of those steps was independent
+measurement. All of it was wrong: the prefix was in the body the whole time,
+571 characters in, and the pattern `[a-z-]+` had excluded the digit in
+`e2e-coder`. §3's third instance covers the regex defect. **This section is
+about the step before it.**
+
+The second session never asked *whether* the author was identifiable. The
+question it inherited — "why can't the author be identified?" — already
+asserted the answer, so opening the body was not a step in any plan it made.
+It searched for a cause, found a plausible one, and built a structural
+diagnosis on top of it. (Numbers here are as of 2026-08-16, over the 200
+most recent PRs at that time — a population is a function of when it was
+taken, and these are quoted below without a re-measurement.) The two
+sessions' errors look identical (same regex)
+but are not the same failure: the first made a measurement mistake; the
+second **adopted a conclusion as a starting condition** and then spent real
+effort downstream of it. Independent measurement is not independence when the
+question itself was handed to you.
+
+Stated as the propagation it is: **one session's wrong conclusion narrowed
+another session's search space**, and no amount of independent verification on
+the second session's side reaches that — it measured independently, but *what
+it measured* had been chosen by the first session's premise. In a repo worked
+by many sessions this is the failure mode that survives the "go measure it
+yourself" instruction, because that instruction is satisfied in full while the
+premise passes through untouched.
+
+This is distinct from §17, §20 and §21, which are all about a search the
+author constructed badly. Here the search was a *consequence*: a well-formed
+query, aimed by a premise nobody re-derived. It is the same shape as §2's
+self-sealing false prohibition — a false "you cannot X" forbids the use that
+would falsify it — except that the sealing agent is the question's grammar
+rather than the claim's content.
+
+### The detection technique
+
+- **A why-question carries a claim. Test the claim before answering the
+  question.** "Why is the author unidentifiable" costs one command to
+  falsify — print the body. Do that first, every time, when the premise
+  arrived from someone else rather than from your own observation.
+- **Mark inherited premises the way you mark inferred observations** (§23).
+  If a task arrives with a fact already stated, that fact is unobserved by
+  you until you observe it; "I measured everything downstream" is not a
+  witness for it.
+- **Send premises with their evidence.** The prescription is not only on the
+  receiving side: "the author cannot be identified" gives a reader nothing to
+  check, while "I grepped the body with `<pattern>` and got zero" hands over
+  the exact thing that turned out to be wrong. A conclusion broadcast without
+  its derivation cannot be re-derived by anyone who receives it.
+- **The tell is a plan with no step that could fail.** A search for the
+  cause of X has no branch where X turns out to be false — if nothing in
+  your plan can end with "the premise was wrong," the premise is not being
+  tested.
+
 ## See also
 
 - [Testing policy](testing.md) — Tier model, Mock vs Fake, decision flow.
