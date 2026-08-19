@@ -961,6 +961,18 @@ class Session:
         # turn's own remaining iterations, matching the existing
         # `_untrusted_latched` per-iteration latch's own "narrows, never
         # un-narrows mid-turn" discipline.
+        #
+        # #4886 (measured, kept — not removed): under the CURRENT wiring
+        # `_append_entry` for the same tool result runs synchronously right
+        # after the stamp (router_loop.py), so whenever this flag is True
+        # the plain history scan is independently also True at that same
+        # moment — this OR-term is currently redundant, never the deciding
+        # factor. Kept anyway: it is a NARROWING mechanism (safety
+        # tightens, never loosens), so removing a currently-redundant term
+        # would silently reopen the gap the moment the deferred-commit PR
+        # above actually lands — "reachable, correct, currently redundant"
+        # is not the same failure class as "unreachable," and redundant
+        # safety is not grounds for removal.
         self._in_flight_untrusted_this_turn: bool = False
         # excluded_categories (#1667) + the visibility override (#2285) are owned by
         # CapabilityVisibility, constructed below (see #3121 step3 Extract Class).
