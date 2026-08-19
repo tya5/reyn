@@ -39,6 +39,7 @@ from reyn.data.workspace.workspace import Workspace
 from reyn.runtime.hot_reload import (
     HotReloader,
     dispatch_install_reload,
+    get_active_hot_reloader,
     is_pure_addition,
     set_active_hot_reloader,
 )
@@ -258,6 +259,86 @@ async def test_operator_reload_still_runs_all_seams(tmp_path: Path) -> None:
 
     assert set(summary["applied"]) == {"skills", "pipelines"}
     assert ran == {"skills": 1, "pipelines": 1}
+
+
+# ===========================================================================
+# A2. #4862 rescue — session.hot_reloader IS wired to session's own audit
+# trail, and get_active_hot_reloader() IS this session's own reloader
+# ===========================================================================
+#
+# Replaces tests/scaffold/test_family3_hook_event_bundle_byte_identical.py's
+# test_hot_reloader_events_is_the_family_audit_events (invariant 5) and
+# test_get_active_hot_reloader_is_this_sessions_reloader (invariant 6),
+# which pinned both via private-attribute identity (a scaffold-only
+# exception). session.audit_events (a raw-property rescue) was considered
+# and dropped (#4866) — it answered no question nothing else could. But
+# `Session.subscribe_audit_events`/`unsubscribe_audit_events`
+# (session.py, "narrow public API... so UI callers subscribe without
+# reaching into `_audit_events`") were already there, missed in an
+# earlier pass of this same investigation — invariant 5 IS rescuable,
+# via subscription (an effect witness), not a property (an identity
+# witness).
+
+
+@pytest.mark.asyncio
+async def test_session_hot_reloader_reload_reaches_session_audit_subscribers(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Tier 2: a reload run through ``session.hot_reloader`` reaches a
+    callback registered via ``session.subscribe_audit_events`` — witnessed
+    via effect (real reload + a real subscriber on the session's own
+    public subscription seam), not a private ``hot_reloader.events is
+    audit_events`` identity peek. If the two were wired to DIFFERENT
+    EventLogs, this reload's event would never reach this subscriber."""
+    monkeypatch.chdir(tmp_path)
+    session = _make_session(tmp_path)
+    received: list[str] = []
+    session.subscribe_audit_events(lambda e: received.append(e.type))
+
+    await session.hot_reloader.apply_all(exclude=frozenset())
+
+    assert "config_reloaded" in received, (
+        f"a reload through session.hot_reloader must reach a subscriber "
+        f"registered via session.subscribe_audit_events; observed={received!r}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_strip_falsify_hot_reloader_audit_wiring_is_live(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Tier 2: strip-falsify — a reload run on a FRESH, independently-wired
+    ``HotReloader`` (events=a different EventLog, never this session's
+    own) must NOT reach a callback subscribed via ``session.
+    subscribe_audit_events``, proving the positive test above is
+    genuinely reading session.hot_reloader's OWN wiring, not a check
+    that would trivially pass for any reload anywhere."""
+    monkeypatch.chdir(tmp_path)
+    session = _make_session(tmp_path)
+    received: list[str] = []
+    session.subscribe_audit_events(lambda e: received.append(e.type))
+
+    poisoned = HotReloader(project_root=tmp_path, events=EventLog())
+    await poisoned.apply_all(exclude=frozenset())
+
+    assert "config_reloaded" not in received, (
+        "a reload on an INDEPENDENT HotReloader must not reach this "
+        "session's own audit subscribers — otherwise the positive test's "
+        "assertion would be vacuous"
+    )
+
+
+def test_get_active_hot_reloader_is_this_sessions_reloader(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Tier 2: ``get_active_hot_reloader()`` (the process-wide registration
+    every Session performs at construction) returns THIS session's own
+    ``hot_reloader`` — both sides now public (`get_active_hot_reloader`
+    always was; `session.hot_reloader` since #4862 step ②), so this is a
+    direct identity check, not an indirect effect."""
+    monkeypatch.chdir(tmp_path)
+    session = _make_session(tmp_path)
+    assert get_active_hot_reloader() is session.hot_reloader
 
 
 # ===========================================================================
