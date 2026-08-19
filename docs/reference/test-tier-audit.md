@@ -175,21 +175,31 @@ global name match) — the same private attribute name assigned in several
 unrelated classes only trips this rule on the ONE class that also backs
 it with a `@property`.
 
-`obj` must be a bare name the AST can type — a parameter annotation, a
-local factory/fixture call, or a direct constructor call; `self._x`
-inside the class's own methods is exempt (that access is legitimate), and
-a private WRITE (`obj._x = value`) is Rule 7's territory, not this one.
+`obj` may be a bare name the AST can type (a parameter annotation, a
+local factory/fixture call, or a direct constructor call) OR a chain of
+public-property reads (`w.f._router_host`, each link independently
+evidence-gated — #4906, closed by #4911, a false-negative disclosed in
+#4905's own PR body and reproduced live by architect before the fix).
+`self._x` inside the class's own methods is exempt (that access is
+legitimate), and a private WRITE (`obj._x = value`) is Rule 7's
+territory, not this one.
 
-**Known gaps, disclosed, not claimed away**: `obj` is restricted to a
-bare name, not an attribute chain (`a.b._x`) — a deliberately narrower
-net than Rule 3's, since this rule's precondition is type evidence on the
-base. Two more false-negative shapes (tuple-unpack destructuring, chained
-attribute access) were found after landing and are tracked separately
-(#4906) rather than silently left undocumented. The 109 real sites found
-and fixed at landing (across 41 files) were a measured **floor at that
+**A second disclosed false-negative closed the same way**: a tuple-unpack
+target (`a, b = _make_pair()`) originally carried no type evidence at all
+for `a`, silently missing reads like `a._router_host` — closed in the
+same #4911 (#4906) fix via a positional tuple-return-type index. Both
+fixes stay strictly evidence-only and class-scoped (the zero-false-
+positive bar #4864's own design set); an unresolvable link anywhere in
+either shape still yields no finding rather than a guess.
+
+**Known gap, disclosed, not claimed away**: two classes sharing a bare
+name in different files collide in the class index (the last one scanned
+wins) — unmeasured corpus-wide, the same disclosed-gap class as Rule 7's
+own dynamic-`setattr` caveat. The 109 real sites found and fixed at
+Rule 8's own landing (across 41 files) were a measured **floor at that
 moment**, not a claim of total coverage — a clean run today does not mean
-no more of this shape exists, only that the two disclosed gaps (and any
-undiscovered ones) aren't visible to it yet.
+no more of this shape exists anywhere, only that every currently-known
+shape is now covered.
 
 **Why:** The finding is a repair obligation, not a bare detector — the
 suggested fix is "use the public property," but the message also warns
