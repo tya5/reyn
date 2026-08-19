@@ -26,6 +26,15 @@ not a departure from this suite's established idiom.
 Real ``Session`` + real history + real tool registry + scripted
 ``call_llm_tools`` throughout — no ``_FakeMessage``/hand-rolled host
 stand-in (#2957 PR-A precedent, same as this file's sibling).
+
+#4886 (measured, kept — not removed): under CURRENT wiring, ① still does
+not exist, so ``_simulate_deferred_commit`` below is the ONLY way this
+file's own precondition ("history has not landed") can be constructed —
+real code paths append synchronously today, and this scenario cannot
+occur through them. Once ① lands and defers the commit for real, this
+file's own scripted flow starts exercising a genuinely reachable state
+instead of a monkeypatched stand-in for one — same test, same witness,
+different status of the thing it's watching.
 """
 from __future__ import annotations
 
