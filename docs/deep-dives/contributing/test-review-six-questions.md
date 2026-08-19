@@ -49,8 +49,8 @@ Ask each test in the diff:
    (#3859), and #3850 landed a field that was required, populated, tested,
    and read by nobody — the honest answer to "who would miss it" was
    already "nobody."
-4. **Would it stay green having never run — or having run with nothing to
-   bite on?** skip / collection error / zero collected all wear green's
+4. **The never-ran/nothing-to-bite-on question (full wording in `CLAUDE.md`).**
+   skip / collection error / zero collected all wear green's
    colour. Name what a missing optional dependency silently skips — CI has no
    `effects` extra, so #3796's file skips whole and its green says nothing
    (#2999 is the same shape with a docker-daemon skip). The same green covers
@@ -73,16 +73,10 @@ first use and the PR merged anyway: #3876's ⑤ answer was "bounded only by the
 thread scheduler, not by the test" — written down, measured at 413 MB, and let
 through as a note. The operator had to ask why. **An answer recorded is not an
 answer acted on**, which is the same gap as an audit that reads a Tier string.
-So each question has a blocking answer, not just an answer:
-
-| | blocks when the answer is |
-|---|---|
-| 1 | **none** — including a third party's, a past bug's, and reyn's own trivia |
-| 2 | yes — the same expression is on both sides |
-| 3 | **nobody**, or only a configuration this test itself constructed |
-| 4 | it would be green having never run **or over an empty collection**, and the PR does not say so |
-| 5 | **anything outside the test bounds it** — a thread, a timer, the caller's pace |
-| 6 | the declared Tier is not the one question 1 named |
+So each question has a blocking answer, not just an answer — the table is in
+`CLAUDE.md` § "Test review" (this file's own opening line already says so;
+the table itself belongs there once, not twice — #4858 found this copy had
+already drifted one word from that one).
 
 ⚠️ 4 blocks on the *silence*, not on the skip: a file that skips whole in CI is
 often correct (an optional extra), and what makes it a defect is a green nobody
@@ -109,8 +103,8 @@ it instead of whether it's green resolves this without a special case.
 lead-coder merge train refuses any PR touching `tests/` without one — the promise
 "I will open the tests next time" is exactly the shape this replaces.
 
-**When something forces you to touch a test — a dependency bump, a rebase, a CI
-failure — ask "should this exist" before "how do I make it pass again."** A
+**The "why did I have to touch this test" rule (verbatim in `CLAUDE.md`) has
+its own instance here.** A
 flowview pin bump (0.16.0 → 0.16.1, #3886) broke one test's premise ("a fresh
 session is a blank screen" — it never quite was; reyn's own welcome placeholder
 was always painted, just invisible to the older, narrower capture). The first

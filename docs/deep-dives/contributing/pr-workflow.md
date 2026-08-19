@@ -280,8 +280,8 @@ These rules then keep multi-session work coherent:
    pairs the keyword with a number gets copied faithfully by whoever
    receives it, and the trap fires on THEIR PR, not the sender's. Check
    phrasing you're about to hand off the same way you'd check your own.
-8. **A PR touching `tests/` does not self-merge until a reviewer's
-   TESTS-READ note lands on the PR.** "A lead-coder merge train refuses
+8. **The TESTS-READ rule (`CLAUDE.md`'s own rule 8) has a gap instance
+   here.** "A lead-coder merge train refuses
    any PR touching `tests/` without one" (Test review, above) describes
    what *that train's own script* does — it is not a rule that reaches a
    session merging directly. `#3916` (75 files, 31 under `tests/`) merged
