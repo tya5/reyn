@@ -153,7 +153,7 @@ def _slack_client(monkeypatch):
     app.include_router(build_router(target_agent="news_agent"))
 
     client = TestClient(app)
-    client.pushed = pushed  # type: ignore[attr-defined]
+    client.pushed = pushed
     yield client
 
 

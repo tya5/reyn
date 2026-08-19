@@ -260,7 +260,7 @@ async def test_skill_install_threat_scan_blocks_on_matching_description(tmp_path
 
     threat_config = _FakeThreatScanConfig()
     ctx = _make_ctx(tmp_path)
-    ctx.threat_scan = threat_config  # type: ignore[attr-defined]
+    ctx.threat_scan = threat_config
 
     # Monkeypatch scan_for_threats to return a blocking match for our marker.
     def _fake_scan(content, config, *, scope="context"):

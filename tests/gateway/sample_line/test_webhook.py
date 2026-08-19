@@ -128,7 +128,7 @@ def _line_client(monkeypatch):
     app.include_router(build_router(target_agent="line_agent"))
 
     client = TestClient(app)
-    client.pushed = pushed  # type: ignore[attr-defined]
+    client.pushed = pushed
     yield client
 
 

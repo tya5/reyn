@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 """Test policy compliance auditor — Reyn testing.ja.md automated linter.
 
-Detects 6 categories of Tier 4 violations and policy warnings in test files:
+Detects 7 categories of Tier 4 violations and policy warnings in test files:
   1. Missing Tier docstring (ERROR)
   2. Format pinning via len(...) < N (ERROR)
   3. Private state assertion via obj._attr (ERROR)
   4. MagicMock / AsyncMock / patch usage (ERROR)
   5. Bounded-life test outside tests/scaffold/ (WARNING)
   6. Snapshot/golden test outside tests/scaffold/ (ERROR)
+  7. Fake attribute on a real object, suppressed via type: ignore (ERROR)
 
 Usage:
     python scripts/test_tier_audit.py tests/
@@ -177,6 +178,45 @@ def _is_llm_boundary_patch(patch_src: str) -> bool:
     """Return True iff patch target string looks like an LLM boundary."""
     return bool(LLM_BOUNDARY_PATCH_RE.search(patch_src))
 
+# Rule 7 (#4873): an assignment of the shape ``obj.attr = value`` where
+# ``obj`` is a production instance and ``attr`` is NOT one it declares —
+# #3037's own named pattern, "instead of using a Fake, a real object is
+# mock-ified in place." mypy already detects this (it is what
+# ``[attr-defined]`` on an ASSIGNMENT means — the class has no such
+# attribute); the annotation is someone's own trace of having silenced
+# that detection deliberately, so this rule needs no detector of its own,
+# only a ban on the suppression. Scoped to ASSIGNMENT lines only —
+# reading an already-flagged private attribute (``for e in
+# host.events.emitted``) is a different, narrower complaint (a type
+# mypy can't see, not an attribute that doesn't exist) and stays out of
+# scope, per architect's own measurement on #4873.
+#
+# Regex, not the shell's ``grep -E`` — #4873's own investigation found
+# POSIX ERE's ``\b``/``\s`` fail SILENTLY (zero matches, no error) in
+# `git grep -E`, which is why this repo's own earlier counts on this issue
+# were wrong twice before landing. Python's ``re`` module has no such gap
+# (`\b`/`\s` are fully supported there) — the risk this comment guards
+# against is different: missing a WRITING VARIANT of the ignore comment
+# itself (no space after the colon, multiple codes in one bracket, a line
+# continuation) — the capture group below matches everything inside the
+# brackets and splits on comma, so a multi-code form
+# (``# type: ignore[attr-defined, assignment]``) is still caught; a split
+# annotation across a line continuation is NOT covered (unmeasured
+# corpus-wide, per architect's own disclosed gap — not claimed as zero).
+_TYPE_IGNORE_RE = re.compile(r"#\s*type:\s*ignore\[([^\]]*)\]")
+
+
+def _ignore_codes(line: str) -> set[str]:
+    """The set of codes inside a ``# type: ignore[...]`` comment on *line*,
+    or an empty set if the line has no such comment (including a bare
+    ``# type: ignore`` with no bracket — that form suppresses EVERYTHING,
+    which is a different, broader problem this rule does not scope to)."""
+    m = _TYPE_IGNORE_RE.search(line)
+    if not m:
+        return set()
+    return {code.strip() for code in m.group(1).split(",")}
+
+
 RULE_NAMES = {
     "tier-docstring",
     "format-pinning",
@@ -184,6 +224,7 @@ RULE_NAMES = {
     "mock",
     "bounded-life",
     "snapshot",
+    "fake-attr",
 }
 
 # ---------------------------------------------------------------------------
@@ -572,6 +613,73 @@ def _check_module_level_mock_imports(
     return findings
 
 
+def _check_fake_attr_assignments(source: str, tree: ast.Module) -> list[Finding]:
+    """Rule 7 (#4873): ``obj.attr = value  # type: ignore[attr-defined]``
+    ANYWHERE in the file — #3037's own named pattern, a real object
+    mock-ified in place instead of using a Fake. Deliberately whole-FILE,
+    not per-``test_*``-function like rules 1-6 above: the 10 real
+    violations #4873 found were mostly inside module-level HELPER functions
+    (``_noop_handler``, ``_fake_resolve_and_validate`` — a fixture a test
+    calls, not the test body itself), which a per-test-function
+    ``ast.walk(node)`` never reaches at all. A first version of this rule
+    scoped to ``test_*`` bodies only and its own "zero across 10,611 tests"
+    result was FALSE — a stale ignore comment on ``tests/tools/test_tool_
+    registry_invariants.py:34`` (inside ``_noop_handler``, called from a
+    test but not itself named ``test_*``) was re-injected to falsify this
+    rule and the scoped version missed it silently. mypy already detects
+    the underlying issue (``[attr-defined]`` on an assignment IS "this
+    class has no such attribute"); the annotation is someone's own trace of
+    having silenced that detection, so this rule needs no detector of its
+    own, only a ban on the suppression — scoped to ASSIGNMENT lines only
+    (reading an already-flagged private attribute, e.g. ``host.events.
+    emitted``, is a narrower, different complaint architect's own #4873
+    measurement put out of scope).
+
+    Known gap (architect, #4873, disclosed not claimed away): a DYNAMIC
+    ``setattr(ns, k, v)`` cannot be seen by any syntax gate — this rule
+    catches the LITERAL ``obj.attr = value`` shape only, per the regex's
+    own comment on ``_TYPE_IGNORE_RE`` above for the suppression-comment
+    side of the same caveat."""
+    findings: list[Finding] = []
+    ast_lines = _split_source_lines(source)
+    for stmt in ast.walk(tree):
+        if isinstance(stmt, ast.Assign):
+            targets = stmt.targets
+        elif isinstance(stmt, ast.AnnAssign):
+            targets = [stmt.target]
+        else:
+            continue
+        attr_targets = [t for t in targets if isinstance(t, ast.Attribute)]
+        if not attr_targets:
+            continue
+        stmt_line = (
+            ast_lines[stmt.lineno - 1] if stmt.lineno - 1 < len(ast_lines) else ""
+        )
+        if "attr-defined" not in _ignore_codes(stmt_line):
+            continue
+        first = attr_targets[0]
+        findings.append(
+            Finding(
+                rule="fake-attr",
+                level="ERROR",
+                line=stmt.lineno,
+                message=(
+                    f"fake attribute (.{first.attr}) on a real object, "
+                    f"suppressed via type: ignore[attr-defined]: "
+                    f"{stmt_line.strip()[:80]}"
+                ),
+                suggestion=(
+                    "The production class does not declare this attribute "
+                    "— use its public API, extend the class, or thread the "
+                    "value through explicitly instead of attaching it "
+                    "post-hoc (#3037)"
+                ),
+                policy_ref="testing.ja.md #3037: a real instance mock-ified in place",
+            )
+        )
+    return findings
+
+
 # ---------------------------------------------------------------------------
 # File collection
 # ---------------------------------------------------------------------------
@@ -731,7 +839,8 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="RULE",
         help=(
             "Only check one rule: "
-            "tier-docstring / format-pinning / private-state / mock / bounded-life / snapshot"
+            "tier-docstring / format-pinning / private-state / mock / bounded-life / "
+            "snapshot / fake-attr"
         ),
     )
     parser.add_argument(
@@ -806,6 +915,24 @@ def main(argv: list[str] | None = None) -> int:
                     # Attach to a synthetic result named "<module>"
                     synthetic = TestResult(name="<module-level>")
                     synthetic.findings.extend(module_findings)
+                    report.results.insert(0, synthetic)
+            except (OSError, SyntaxError):
+                pass
+
+        # Rule 7 (#4873): whole-file, not per-test-function — see
+        # _check_fake_attr_assignments's own docstring for why (helper
+        # functions like `_noop_handler` are not named `test_*`, so a
+        # per-test walk never reaches an assignment inside them).
+        if not report.parse_error and (
+            check_rules is None or "fake-attr" in check_rules
+        ):
+            try:
+                source = f.read_text(encoding="utf-8")
+                tree = ast.parse(source, filename=str(f))
+                fake_attr_findings = _check_fake_attr_assignments(source, tree)
+                if fake_attr_findings:
+                    synthetic = TestResult(name="<module-level>")
+                    synthetic.findings.extend(fake_attr_findings)
                     report.results.insert(0, synthetic)
             except (OSError, SyntaxError):
                 pass
