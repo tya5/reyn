@@ -342,6 +342,82 @@ def test_get_active_hot_reloader_is_this_sessions_reloader(
 
 
 # ===========================================================================
+# A3. #4862 rescue — hook_bus's emit_event sink reaches session's own
+# audit_events (family3 invariant 4)
+# ===========================================================================
+#
+# Replaces tests/scaffold/test_family3_hook_event_bundle_byte_identical.py's
+# test_hook_bus_emit_event_reaches_family_audit_events, which reached
+# session._hook_bus directly (no public accessor exists on Session for it)
+# to publish() past a never-drained subscriber's queue. Rescued via effect:
+# HookDispatcher.dispatch publishes onto its wired HookBus UNCONDITIONALLY,
+# before its own Sync-hook loop runs (dispatcher.py's own §3.2 docstring —
+# "regardless of whether that loop finds any registered hook for point"),
+# and session.dispatch_external_event(point, template_vars) (public, #2608
+# H5) is a thin pass-through to that same dispatch call. So the PUBLISH
+# side of this invariant is reachable without session._hook_bus at all;
+# only the SUBSCRIBE side (attaching a raw, deliberately-never-drained
+# subscriber to force the overflow) still needs it — Session publishes no
+# accessor for the bus itself, matching family6b's ①/②'s same "no public
+# route, own construction target" acceptance (docs on that file).
+
+
+@pytest.mark.asyncio
+async def test_hook_bus_emit_event_reaches_session_audit_events(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Tier 2: forcing a subscriber-queue overflow on the family hook_bus
+    (publish past a never-drained subscriber's bounded queue, via the
+    PUBLIC ``session.dispatch_external_event``) fires a metadata-only
+    ``bus_subscriber_dropped`` audit-event that reaches a callback
+    registered via ``session.subscribe_audit_events`` — proving
+    ``hook_bus``'s internal ``emit_event`` sink is wired to THIS session's
+    own audit trail, not an independent/unwired one."""
+    monkeypatch.chdir(tmp_path)
+    session = _make_session(tmp_path)
+    received: list[str] = []
+    session.subscribe_audit_events(lambda e: received.append(e.type))
+
+    # HookBus's default subscriber queue is bounded (128), so >128
+    # undrained publishes guarantees at least one drop.
+    sub = session._hook_bus.subscribe()
+    try:
+        for i in range(200):
+            await session.dispatch_external_event("turn_end", {"i": i})
+    finally:
+        sub.close()
+
+    assert "bus_subscriber_dropped" in received, (
+        f"a hook_bus subscriber-queue overflow must reach a subscriber "
+        f"registered via session.subscribe_audit_events; observed={received!r}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_strip_falsify_hook_bus_overflow_needs_a_live_subscriber(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Tier 2: strip-falsify — the SAME 200 dispatches with NO subscriber
+    ever attached to the bus must NOT fire ``bus_subscriber_dropped``,
+    proving the positive test's assertion genuinely depends on the forced
+    overflow (a never-drained subscriber's bounded queue), not something
+    that would fire on any dispatch regardless."""
+    monkeypatch.chdir(tmp_path)
+    session = _make_session(tmp_path)
+    received: list[str] = []
+    session.subscribe_audit_events(lambda e: received.append(e.type))
+
+    for i in range(200):
+        await session.dispatch_external_event("turn_end", {"i": i})
+
+    assert "bus_subscriber_dropped" not in received, (
+        "no subscriber was ever attached to hook_bus, so nothing should "
+        "overflow — otherwise the positive test's assertion would be "
+        "vacuous (firing regardless of the forced-overflow setup)"
+    )
+
+
+# ===========================================================================
 # B. is_pure_addition + dispatch_install_reload routing
 # ===========================================================================
 
