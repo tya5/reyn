@@ -25,36 +25,51 @@ async def _dispatch(name: str, args: dict) -> dict:
 
 @pytest.mark.asyncio
 async def test_cancel_event_kills_a_running_snippet_promptly() -> None:
-    """Tier 2: cancel_event.set() during a long-running snippet returns
+    """Tier 2: cancel_event, pre-set before ``run()`` is even called, returns
     status='cancelled' well before the snippet's own sleep would finish —
     the process was actually killed, not merely marked cancelled while
-    left running to completion."""
+    left running to completion.
+
+    Pre-set (mirrors ``test_subprocess_cancel_1470.py``'s own idiom, e.g.
+    ``test_noop_cancel_event_set_kills_subprocess``), not a background task
+    racing a fixed sleep against the run: the subprocess is already spawned
+    and running the snippet by the time ``run()``'s internal
+    ``asyncio.wait({comm_future, cancel_task}, ...)`` race begins
+    (``codeact_runner.py``), so the event being pre-set doesn't make this
+    vacuous — it still proves an ALREADY-RUNNING process gets killed, just
+    without a sleep-based sender racing against it.
+
+    #4847 (lead-coder review): the FLOOR duration is gone, but the CEILING
+    (``elapsed < 5.0``, below) is still a duration standing in for an
+    observation nothing public exposes — ``run()``'s cancelled-result dict
+    (``{"ok": False, "status": "cancelled", ...}``) carries no pid /
+    returncode / kill-confirmation field, so there is no non-timing seam
+    to assert on from outside the function today. Elapsed-time is a
+    disclosed proxy for that missing seam, not a hidden one — tracked as
+    #4924, not silently left (real seam: expose the killed process's
+    returncode in the result so a future version of this test can assert
+    on that instead of timing)."""
     runner = CodeActRunner()
     cancel_event = asyncio.Event()
+    cancel_event.set()  # pre-set: cancel fires as soon as the run's own race begins
     code = "import time\ntime.sleep(30)\nresult = 'never gets here'"
 
-    async def _cancel_soon() -> None:
-        await asyncio.sleep(0.3)
-        cancel_event.set()
-
-    canceller = asyncio.create_task(_cancel_soon())
     start = time.monotonic()
     out = await runner.run(
         code=code, dispatch=_dispatch, allow_unsandboxed=True,
         timeout=30.0, cancel_event=cancel_event,
     )
     elapsed = time.monotonic() - start
-    await canceller
 
     assert out["status"] == "cancelled", out
     assert out["ok"] is False, out
     # The falsifying witness: if kill_process_tree did NOT actually run,
     # the 30s sleep would have to complete (or the 30s timeout would fire)
-    # before this returns. Cancelling within 0.3s must not cost anywhere
+    # before this returns. A pre-set cancel_event must not cost anywhere
     # near that — generous margin, not pinning exact timing.
     assert elapsed < 5.0, (
-        f"took {elapsed:.1f}s after a 0.3s cancel — the subprocess was not "
-        "actually killed, only marked cancelled while left running"
+        f"took {elapsed:.1f}s with a pre-set cancel_event — the subprocess "
+        "was not actually killed, only marked cancelled while left running"
     )
 
 
