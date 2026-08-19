@@ -1,6 +1,6 @@
 # Test Tier Auditor (`scripts/test_tier_audit.py`)
 
-An AST-based linter that checks test files against the six rules in the
+An AST-based linter that checks test files against seven rules grounded in the
 testing policy (`docs/deep-dives/contributing/testing.md`). Turns the policy
 from a document people read once into a machine-checkable constraint applied
 at every PR.
@@ -14,7 +14,7 @@ contributors who had not fully absorbed the policy could ship MagicMock-based
 tests or missing Tier docstrings without either party noticing until review
 comments arrived.
 
-`test_tier_audit.py` makes the six most common violations detectable in
+`test_tier_audit.py` makes the seven most common violations detectable in
 seconds, locally and in CI, before any reviewer looks at the code.
 
 ## Setup
@@ -28,8 +28,8 @@ python scripts/test_tier_audit.py [files or dirs]
 
 ## Detection rules
 
-The linter checks six rules. Each rule has a severity and a rationale grounded
-in the testing policy.
+The linter checks seven rules. Each rule has a severity and a rationale
+grounded in the testing policy.
 
 ### Rule 1 — Missing Tier docstring (ERROR)
 
@@ -135,6 +135,34 @@ snapshot tests in the main suite.
 **Why:** Snapshot tests in the main suite lock output format permanently,
 creating maintenance burden and false failures on any output formatting change.
 They belong in `tests/scaffold/` for the same reason as bounded-life tests.
+
+### Rule 7 — Fake attribute on a real object (ERROR)
+
+An `obj.attr = value` assignment where `attr` is not an attribute the
+production class declares, suppressed with `# type: ignore[attr-defined]`
+(#4873, #3037's own named pattern — a real instance mock-ified in place
+instead of using a Fake). mypy already flags this on its own — the
+`[attr-defined]` code on an *assignment* means exactly "the class has no
+such attribute" — so this rule needs no detector of its own, only a ban
+on the suppression comment that silences it.
+
+Scoped to assignment lines only: reading an already-flagged private
+attribute elsewhere (e.g. `host.events.emitted`) is a narrower, different
+complaint (a type mypy can't see, not an attribute that doesn't exist)
+and stays out of scope. Whole-file, not per-`test_*`-function like Rules
+1–6: the real violations that motivated this rule mostly lived inside
+module-level helper functions (e.g. `_noop_handler`, a fixture a test
+calls) that a per-test-function walk never reaches.
+
+**Known gap** (disclosed, not claimed away): a dynamic `setattr(ns, k,
+v)` cannot be seen by any syntax gate — this rule only catches the
+literal `obj.attr = value` shape.
+
+**Why:** A `# type: ignore[attr-defined]` next to an attribute assignment
+is the author's own trace of having silenced a real defect deliberately —
+the production object doesn't have this attribute, and mypy already knew
+it. Use the public API, extend the class, or thread the value through
+explicitly instead of attaching it post-hoc.
 
 ## Flags
 
