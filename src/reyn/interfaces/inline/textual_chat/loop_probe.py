@@ -151,6 +151,21 @@ class LoopTripwire:
         #: that needs no prior setup — the same "visible with the shipped
         #: config" bar the once-only stall notice already clears.
         self._just_recovered = False
+        #: #4855: whether the CURRENT (still-ongoing) stall episode's onset
+        #: was itself returned to the caller — i.e. whether ``observe()``'s
+        #: ``self._fired`` gate let this specific episode's stall notice
+        #: through, as opposed to being silently swallowed by an EARLIER
+        #: episode having already consumed the session's one-shot notice.
+        #: Set True only at the exact point ``observe()`` returns a stall
+        #: magnitude; read (and reset) at the matching recovery transition.
+        #: Without this, ``_just_recovered`` fired on EVERY recovery
+        #: regardless of whether its own episode's onset was ever told to
+        #: anyone — the user-facing text is literally "recovered from the
+        #: stall reported above," and a session whose FIRST stall happened
+        #: during app-mount startup jitter (consuming ``_fired``) could
+        #: recover from every SUBSEQUENT episode with no "reported above"
+        #: to point at (#4855's root cause).
+        self._current_stall_reported = False
 
     @property
     def max_lateness_ms(self) -> float:
@@ -231,7 +246,15 @@ class LoopTripwire:
         if lateness_ms <= self._threshold_ms:
             if self._in_stall:
                 self._in_stall = False
-                self._just_recovered = True
+                # #4855: report a recovery only for the episode whose OWN
+                # onset was told to the caller — write_record stays
+                # unconditional (#4761 ①'s durable-record guarantee is
+                # untouched), but _just_recovered must not fire for an
+                # episode that was silently swallowed below because an
+                # earlier episode already consumed the one-shot notice.
+                if self._current_stall_reported:
+                    self._just_recovered = True
+                    self._current_stall_reported = False
                 write_record(
                     "tripwire_recovered", lateness_ms=round(lateness_ms, 1), **extra,
                 )
@@ -247,6 +270,7 @@ class LoopTripwire:
         if self._fired:
             return None
         self._fired = True
+        self._current_stall_reported = True
         return lateness_ms
 
 

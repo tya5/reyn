@@ -339,6 +339,51 @@ def test_recovery_is_recorded_only_once_per_episode(monkeypatch, tmp_path: Path)
     )
 
 
+def test_consume_recovered_stays_false_when_the_stalls_own_onset_was_never_reported() -> None:
+    """Tier 2: #4855's root cause, reproduced directly against the unit
+    under test (no dump file, no real/virtual clock — ``_fired`` is a
+    permanent one-shot latch and needs no time to consume: a SECOND stall
+    episode alone is enough).
+
+    Mechanism (confirmed by reading ``observe()``'s two branches):
+    ``self._fired`` silently swallows the ONSET return value for every
+    episode after the first (``if self._fired: return None`` — no notice
+    reaches the caller), but the pre-fix recovery branch set
+    ``self._just_recovered = True`` UNCONDITIONALLY on every recovery,
+    regardless of whether the episode it was "recovering from" ever had
+    its onset reported. In production this surfaces as
+    ``stall_recovered_log_line``'s literal text — "the interface recovered
+    from the stall reported above" — with no stall ever reported above,
+    exactly the CI-observed ``assert None is not None`` signature
+    (#4855's own PR-thread investigation: waiting for "recovered" then
+    asserting "unresponsive" never finds it, because episode 2's onset
+    line was never written).
+
+    A real host can reach episode 2's onset going unreported without any
+    injected delay at all: an unrelated stall during app-mount startup
+    jitter consumes ``_fired`` before the test's own intentional stall
+    ever runs — #4855's own root-cause comment traces exactly this path.
+    This test skips the mount-jitter framing and drives ``LoopTripwire``
+    directly through two consecutive episodes, which is sufficient to
+    exercise the same ``_fired``-already-True branch."""
+    tripwire = LoopTripwire(threshold_ms=250.0)
+
+    tripwire.observe(1800.0)  # episode 1: stall — onset REPORTED (fired False -> True)
+    tripwire.observe(50.0)  # episode 1: recovers
+    assert tripwire.consume_recovered() is True, (
+        "episode 1's own onset was reported, so its recovery must be too"
+    )
+
+    tripwire.observe(1700.0)  # episode 2: stall — onset SWALLOWED (fired already True)
+    tripwire.observe(40.0)  # episode 2: recovers
+    assert tripwire.consume_recovered() is False, (
+        "episode 2's own onset was never reported (fired already True, "
+        "observe() returned None) — reporting its recovery would read as "
+        "\"recovered from the stall reported above\" with nothing ever "
+        "reported above, the exact #4855 defect"
+    )
+
+
 def test_consume_recovered_needs_no_dump_env_at_all(monkeypatch) -> None:
     """Tier 2: #4797 follow-up (architect finding) — ``consume_recovered()``
     is a plain in-memory flag, reachable with ``REYN_PROF_DUMP`` unset the
@@ -389,6 +434,22 @@ async def test_recovery_notice_is_visible_without_arming_the_dump(caplog, monkey
     with caplog.at_level(logging.WARNING, logger=logger_name):
         async with app.run_test(size=(80, 24)) as pilot:
             await pilot.pause()
+            # #4855 follow-up (lead-coder's TESTS-READ, two rounds on this
+            # same PR): the App's own, session-lifetime LoopTripwire —
+            # an unrelated real stall during mount (real CI-host
+            # contention, before this line ever runs) can already have
+            # consumed its one-shot _fired latch. Post-fix, THIS test's
+            # own jump below would then have its onset silently
+            # swallowed, so its recovery is correctly NOT reported — and
+            # the "recovered" wait below hangs until CI's own
+            # --timeout=120 kills it, not a fast, readable assert.
+            # app.reset_loop_tripwire() (public — round 2 of review:
+            # directly assigning app._loop_tripwire from a test is a
+            # private WRITE a future rename would silently stop
+            # protecting, worse than a private read) gives this test's
+            # own stall/recovery pair a clean instance, deterministic
+            # regardless of what happened during mount.
+            app.reset_loop_tripwire()
             # No real delay: the tripwire's own tick reads this jump on its
             # next wake, exactly as if the loop had actually gone
             # unresponsive for stall_seconds — the ticks afterward are
@@ -451,6 +512,12 @@ async def test_recovery_notice_survives_the_real_interactive_logging_floor(
         app = TextualChatApp(transport=transport)
         async with app.run_test(size=(80, 24)) as pilot:
             await pilot.pause()
+            # #4855 follow-up — see the sibling test above's identical
+            # comment: a fresh LoopTripwire makes this test's own
+            # stall/recovery pair deterministic regardless of a real,
+            # unrelated stall during mount having already consumed the
+            # App's session-lifetime one-shot notice.
+            app.reset_loop_tripwire()
             clock.jump(stall_seconds)
             # No test-owned wait budget: wait on the file's actual content,
             # unbounded — CI's own --timeout=120 is the kill switch.
@@ -511,6 +578,13 @@ async def test_the_app_actually_shows_the_notice_when_the_loop_stalls(caplog, mo
             # — the loop appearing unable to run the watcher — with no real
             # delay.
             status_before = str(app.query_one(StatusLine).render())
+            # #4855 follow-up — same determinism fix as the sibling
+            # default-visible tests: a real, unrelated stall during mount
+            # can already have consumed the App's own tripwire's one-shot
+            # _fired latch before this line runs, leaving the
+            # "unresponsive" wait below unbounded-hanging instead of
+            # observing this test's own stall.
+            app.reset_loop_tripwire()
             clock.jump(0.4)
             # #4827 (same class, lead-coder's re-read caught what I missed):
             # a fixed range(6) was trusted as "enough pauses for the stall
@@ -573,6 +647,10 @@ async def test_a_stall_costs_no_row_of_layout(caplog, monkeypatch) -> None:
             status_before = str(app.query_one(StatusLine).render())
             merged_before = bool(app.query_one(StatusLine).parent.query(Tab))
 
+            # #4855 follow-up — same determinism fix as the sibling tests
+            # in this file: an unrelated real stall during mount can
+            # already have consumed the one-shot notice.
+            app.reset_loop_tripwire()
             clock.jump(0.4)
             # #4827 (same class as the sibling test above): wait on the
             # real condition, unbounded — if the stall never trips the
@@ -765,6 +843,14 @@ async def test_pump_heartbeat_reaches_the_default_visible_notices(
             # sibling test_keys_received_... 's comment for why (an earlier,
             # unrelated stall's "unresponsive" line is not this test's own).
             pre_jump_len = len(logfile.read_text(encoding="utf-8"))
+            # #4855 follow-up (lead-coder's TESTS-READ, same PR): slicing
+            # to pre_jump_len (above) fixed WHICH line this test reads —
+            # it does not fix whether a "recovered" line for THIS test's
+            # own stall gets written at all. A real mount-time stall can
+            # already have consumed the App's own tripwire's one-shot _fired
+            # latch before this line runs; a fresh instance makes this
+            # test's own stall/recovery pair deterministic regardless.
+            app.reset_loop_tripwire()
             clock.jump(stall_seconds)
             # #4855 (same defect, same function, 2 lines up): waiting on
             # "recovered" ANYWHERE in the file — not sliced to what THIS
@@ -909,6 +995,12 @@ async def test_keys_received_reaches_the_default_visible_stall_notice(
             # so the offset right before the jump marks where THIS test's
             # own content begins. No time is written in either direction.
             pre_jump_len = len(logfile.read_text(encoding="utf-8"))
+            # #4855 follow-up — see
+            # test_pump_heartbeat_reaches_the_default_visible_notices's
+            # identical comment: a fresh LoopTripwire makes this test's
+            # own stall/recovery pair deterministic regardless of an
+            # unrelated real stall during mount.
+            app.reset_loop_tripwire()
             clock.jump(stall_seconds)
             # #4855 (same defect, same function, 2 lines up): sliced to
             # THIS test's own content — see
@@ -1062,6 +1154,15 @@ async def test_turn_active_reaches_the_default_visible_stall_notice(
             # test_keys_received_...'s comment for why (an earlier,
             # unrelated stall's "unresponsive" line is not this test's own).
             pre_jump_len = len(logfile.read_text(encoding="utf-8"))
+            # #4855 follow-up (same determinism fix as the sibling
+            # default-visible tests, applied here too — this wait targets
+            # "unresponsive", not "recovered", but is exposed to the SAME
+            # pre-existing hazard: a real, unrelated stall during mount can
+            # already have consumed the App's own tripwire's one-shot _fired
+            # latch, silently swallowing THIS test's own onset and leaving
+            # the wait below unbounded-hanging instead of reading its own
+            # stall line).
+            app.reset_loop_tripwire()
             clock.jump(stall_seconds)
             while "unresponsive" not in logfile.read_text(encoding="utf-8")[pre_jump_len:]:
                 await pilot.pause()

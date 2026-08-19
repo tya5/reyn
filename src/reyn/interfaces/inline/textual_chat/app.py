@@ -1308,7 +1308,17 @@ class TextualChatApp(App):
         #: see :meth:`_voice_cancel_timeout_timer`).
         self._voice_timeout_timer: "Timer | None" = None
         #: Watches how late the event loop runs (#3539). Always on; see
-        #: ``loop_probe`` for why it is not opt-in.
+        #: ``loop_probe`` for why it is not opt-in. Reset via
+        #: :meth:`reset_loop_tripwire`, not a constructor parameter —
+        #: #4855 follow-up (lead-coder's own retraction, round 3): a
+        #: test needing a CLEAN tripwire is reacting to contamination
+        #: that happens DURING mount (a real, unrelated stall consuming
+        #: the one-shot notice before the test's own intentional stall
+        #: runs), which is AFTER construction — a fresh instance handed
+        #: in at construction time would be contaminated by that same
+        #: mount-time stall just the same, making a constructor seam
+        #: unreachable dead code for the actual failure mode it would
+        #: exist to fix.
         self._loop_tripwire = LoopTripwire()
         #: #4761 ②: the App's own message-pump heartbeat — incremented by
         #: :meth:`on_timer` ONLY for :attr:`_pump_heartbeat_timer`'s own
@@ -2891,6 +2901,27 @@ class TextualChatApp(App):
         if event.timer is self._pump_heartbeat_timer:
             self._pump_ticks += 1
         await super().on_timer(event)
+
+    def reset_loop_tripwire(self) -> None:
+        """Replace :attr:`_loop_tripwire` with a fresh, never-fired
+        instance — #4855 follow-up (lead-coder's TESTS-READ, #4920).
+
+        Public so a test that needs a CLEAN tripwire mid-run (its own
+        intentional stall/recovery must be deterministic regardless of
+        what a real, unrelated stall during mount already did to the
+        original instance's one-shot state) does not have to write
+        ``app._loop_tripwire = LoopTripwire()`` directly from outside the
+        class. That direct write is worse than a private READ: if
+        ``_loop_tripwire`` is ever renamed, Python does not raise — it
+        silently creates a new, never-read attribute on the instance, the
+        app keeps using the OLD (still-consumed) tripwire internally, and
+        every test using the old write-around stays green with zero
+        actual protection. Routing through this method means the SAME
+        rename that would need to touch this method's own body (both in
+        app.py) also touches every caller — a compile-time-visible
+        breakage, not a silent no-op one file away.
+        """
+        self._loop_tripwire = LoopTripwire()
 
     @property
     def pump_ticks(self) -> int:
