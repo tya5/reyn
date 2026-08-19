@@ -49,8 +49,27 @@ _EXCLUDED_DIR_PARTS = {".venv", ".venv311", "node_modules", "worktrees"}
 _MIN_OVERLAP_WORDS = 15
 
 
+# #4927: markdown decoration (backtick / `*` / `#`) is stripped BEFORE
+# tokenizing, not just whitespace/newlines — the un-fixed version
+# (`re.findall(r"\S+", text)` alone) let a decoration character glued to a
+# word boundary at a DIFFERENT line-wrap point in the two files split the
+# SAME text into a different token sequence, undercounting overlap (real
+# instance, architect: a shared pre-push command list in `CLAUDE.md` and
+# `pr-workflow.md` wrapped its backtick-fenced inline code at different
+# points, so this tool's own pre-fix measurement missed it entirely — 0
+# words where a real, current duplication exists).
+#
+# `-` is included in the strip set (matching the reproducing shape found)
+# — verified corpus-wide (not assumed) that this does not introduce any
+# NEW (CLAUDE.md, docs-file) pair that wasn't already flagged without it;
+# splitting a hyphenated compound word into two tokens did not, in this
+# corpus, produce a spurious new pair, only shifted a couple of existing
+# spans' sizes by 1-2 words (case-lowering resolving one word's casing).
+_DECORATION_RE = re.compile(r"[`*#\-]")
+
+
 def _tokenize(text: str) -> list[str]:
-    return re.findall(r"\S+", text)
+    return _DECORATION_RE.sub(" ", text.lower()).split()
 
 
 def discover_claude_md_files(root: Path) -> list[Path]:
