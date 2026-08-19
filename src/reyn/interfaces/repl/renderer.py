@@ -420,6 +420,16 @@ _CC_COOL = palette.TOKENS["@secondary@"]  # cool blue — a secondary accent (st
 # changing @dim@ there breaks this 3.30 measurement here, and re-measuring
 # only one side leaves the pairing's real number unknown. Re-measure BOTH
 # _CC_USER_BG and palette.TOKENS["@dim@"] together if either changes.
+#
+# #4840/#4787 (lead-coder, post-arc note): interfaces/palette.py's
+# TOKENS["@theme-surface@"] (REYN_THEME's `surface` role, #4875) is the
+# SAME hex, "#1e222a", but a DIFFERENT token for a DIFFERENT role — this
+# constant is the plain REPL's row-tint background, @theme-surface@ is the
+# Textual theme's generic raised-surface colour. Same value, unrelated
+# migration tracks; changing @theme-surface@ does NOT touch the 3.30
+# measurement above (that pairing is with palette.TOKENS["@dim@"] only) —
+# but if the two are ever consolidated into one token, the 3.30 measurement
+# needs re-verifying against whatever value survives.
 _CC_USER_BG = "#1e222a"
 # Failure block-tint behind a failed tool call / error row. A desaturated dark
 # coral: it reads unmistakably as "the red row" edge to edge (CC's block-tint of

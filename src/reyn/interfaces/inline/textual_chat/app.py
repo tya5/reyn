@@ -945,14 +945,28 @@ class TextualChatApp(App):
         background: transparent;
     }
     /* The placeholder must read as an invitation, not as typed text. Textual's
-       own rule is ``color: $text 40%``, which under ``ansi-dark`` resolves
-       ``$text`` to the ansi_default MARKER — and alpha compositing DROPS the
-       marker, so the 40% never applies and it painted at the terminal's full
-       default foreground (measured: ``Color('default')``, no dim). ``dim``
-       is used instead of a muted colour because it leaves the HUE to the
-       terminal, which is what a themed default is for; ``$text-muted`` hits
-       the identical trap, and a concrete grey would pin a colour the user's
-       theme is entitled to choose. */
+       own rule is ``color: $text 40%``, which under ``ansi-dark`` (reyn's
+       DEFAULT until #4875) resolved ``$text`` to the ansi_default MARKER —
+       alpha compositing DROPS that marker, so the 40% never applied and it
+       painted at the terminal's full default foreground (measured:
+       ``Color('default')``, no dim). ``dim`` was picked over a muted colour
+       for that reason: it leaves the HUE to the terminal, which is what a
+       themed default is for; ``$text-muted`` hit the identical trap under
+       ``ansi-dark``, and a concrete grey would pin a colour the user's
+       theme is entitled to choose.
+       #4840 (owner ruling): ``ansi-dark`` is no longer reyn's default —
+       under ``REYN_THEME`` (#4875), ``$text``/``$text-muted`` resolve to
+       Textual's own contrast-derived ``auto 87%``/``auto 60%`` (measured),
+       concrete values with no marker to drop, so the alpha-compositing
+       trap this comment describes no longer applies to reyn's shipped
+       default. ``dim`` is NOT re-justified by that trap here anymore —
+       it stays for OTHER reasons (an SGR attribute needs no palette
+       entry, and survives any ``ansi-*`` theme a user selects later, #3522
+       being about the CUI's own choice, not merely a workaround for one
+       theme's marker behaviour) — but whether ``$text-muted`` alone would
+       now serve just as well under reyn's own theme is a design question
+       this comment does not settle; not changed here without a fuller
+       repaint review (reported to lead-coder, #4840's own follow-up). */
     Composer > .text-area--placeholder {
         text-style: dim;
     }
@@ -1008,14 +1022,27 @@ class TextualChatApp(App):
         height: auto;
         /* #3528: ``text-style``, not ``color``. The pair this replaces was
            ``color: $text-muted`` here and ``color: $text`` on
-           ``:focus-within`` — a brightness step that has been INERT since
-           #3505 adopted ``ansi-dark``, where both variables resolve to the
-           same ``ansi_default`` marker. Measured: moving focus from the
-           composer into the menu changed exactly ONE cell on the whole
-           screen, and it was the composer's own text cursor vanishing — a
-           cue you only notice by its absence. ``dim`` survives that theme
-           (it is an SGR attribute, not a colour) and is the mechanism the
-           tabs' own active/inactive distinction already relies on. */
+           ``:focus-within`` — a brightness step that WAS INERT under
+           ``ansi-dark`` (reyn's default until #4875), where both variables
+           resolved to the same ``ansi_default`` marker. Measured at the
+           time: moving focus from the composer into the menu changed
+           exactly ONE cell on the whole screen, and it was the composer's
+           own text cursor vanishing — a cue you only notice by its
+           absence. ``dim`` survived that theme (it is an SGR attribute,
+           not a colour) and is the mechanism the tabs' own active/inactive
+           distinction already relies on.
+           #4840 (owner ruling): under ``REYN_THEME`` (#4875, reyn's
+           default since), ``$text``/``$text-muted`` resolve to Textual's
+           own ``auto 87%``/``auto 60%`` (measured) — concrete, DISTINCT
+           values, not the same marker — so a ``color:`` brightness step
+           here would no longer be inert. That does not retroactively make
+           ``dim`` the wrong choice (#3528's own reasoning — a single
+           reusable SGR mechanism the tabs' active/inactive split already
+           depends on — stands independent of the ansi_default trap), but
+           this comment's OWN cited justification for picking it (the
+           trap) no longer describes reyn's shipped default; whether a
+           colour-based step now serves as well is a design question left
+           open here (reported to lead-coder, #4840's own follow-up). */
         text-style: dim;
         padding: 0 1;
     }
