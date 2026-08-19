@@ -180,6 +180,9 @@ class _ErrorWatchingTransport(ClientTransport):
     def has_session(self) -> bool:
         return self._inner.has_session()
 
+    def attach_failed(self) -> bool:
+        return self._inner.attach_failed()
+
     def pending_intervention_head(self) -> "object | None":
         return self._inner.pending_intervention_head()
 
@@ -208,6 +211,17 @@ class _ErrorWatchingTransport(ClientTransport):
 
     async def cancel_queued(self, msg_id: str) -> bool:
         return await self._inner.cancel_queued(msg_id)
+
+    async def request_attach(self, agent_name: str) -> bool:
+        return await self._inner.request_attach(agent_name)
+
+    async def request_session_switch(self, session_id: str) -> bool:
+        return await self._inner.request_session_switch(session_id)
+
+    async def request_artifact_list(
+        self, *, agent: str
+    ) -> "tuple[list[dict], int]":
+        return await self._inner.request_artifact_list(agent=agent)
 
     async def run_slash_command(self, name: str, args: str) -> bool:
         return await self._inner.run_slash_command(name, args)

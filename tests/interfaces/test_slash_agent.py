@@ -112,6 +112,44 @@ async def test_agent_new_creates_and_requests_attach(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_agent_new_through_execute_slash_command_confirms_the_attach(tmp_path):
+    """Tier 2: #4884 — driven through the REAL public entrypoint
+    (``execute_slash_command``, what every client actually calls), not
+    ``_create_agent`` directly. Production wraps ``ctx.transport`` in
+    ``_ErrorWatchingTransport`` for the duration of the handler
+    (``dispatch.py``'s ``execute_slash_command``); the test above never
+    goes through that wrapper, which is exactly why 4 missing
+    delegations (including ``request_attach``) went undetected — a
+    genuinely successful attach still read back ``False`` through the
+    wrapper, and ``/agent new`` always replied "could not confirm the
+    attach" even though it happened."""
+    from reyn.interfaces.slash.dispatch import execute_slash_command
+
+    registry = _build_real_registry(tmp_path)
+    session = _FakeSession(registry)
+    ctx = _ctx(session)
+
+    ran = await execute_slash_command(ctx, "agent", "new gamma")
+
+    assert ran is True
+    assert registry.exists("gamma"), "agent profile must persist on disk"
+    assert ctx.transport.attach_requests == ["gamma"], (
+        "the handler must still ask the (wrapped) transport to attach"
+    )
+    texts = [m.text for m in ctx.transport.displayed]
+    assert any("attaching…" in t for t in texts), (
+        f"a genuinely successful attach (RecordingTransport.request_attach "
+        f"always returns True) must produce the confirming reply, not "
+        f"'could not confirm the attach' — the silent-failure shape #4884 "
+        f"exists to close: {texts!r}"
+    )
+    assert not any("could not confirm" in t for t in texts), (
+        f"attach was NOT actually unconfirmed here, so this wording must "
+        f"not appear: {texts!r}"
+    )
+
+
+@pytest.mark.asyncio
 async def test_agent_new_rejects_duplicate(tmp_path):
     """Tier 2: creating an existing agent surfaces a recoverable error,
     NOT a Python stack trace."""
