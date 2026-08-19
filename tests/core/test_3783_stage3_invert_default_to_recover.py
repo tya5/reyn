@@ -22,11 +22,24 @@ Three witnesses, per lead-coder's design (issue #3783 comments):
     ``router_context_overflow_unrecovered`` — the failure is not silently
     invisible in ``.reyn/events``. This is checked, not assumed: the code
     path from a compaction-side ``UnrecoveredError`` to this audit-event was
-    measured (``RouterLoopDriver._run_with_shrink``'s existing
-    ``except (_ContextOverflowError, _UnrecoveredError)`` rewrap, pre-dating
-    #3783 — #1092 PR-F2b) BEFORE writing this test, specifically to check
-    whether stage 3 needed a NEW emit site here or only needed this witness
-    to confirm the existing one already covers it.
+    measured BEFORE writing this test, specifically to check whether stage 3
+    needed a NEW emit site here or only needed this witness to confirm the
+    existing one already covers it.
+
+    #4885 (architect finding, #4381's own late-stage remainder): the type
+    this witness expects to propagate CHANGED. Originally,
+    ``RouterLoopDriver._run_with_shrink`` caught BOTH
+    ``_ContextOverflowError`` and ``_UnrecoveredError`` and re-raised both
+    as a single ``_ContextOverflowError`` — which is exactly the reported
+    defect (a misclassification: "shrinking recovered the same cause
+    repeatedly" got relabelled as "the context window is too small", the
+    literal shape #4885 fixes for real 413s). This arm's own RuntimeError
+    IS such a case — not a real overflow at all — so it now correctly
+    propagates as ``UnrecoveredError``, not ``ContextOverflowError``.
+    ``run_turn`` in ``router_loop_driver.py`` widened its own except to
+    catch BOTH types for the SAME audit event, so this arm's OWN claim
+    (the event still fires) is unaffected — only the exception TYPE this
+    test asserts on changed, to the more accurate one.
 
 Real ``retry_loop``/``CompactionEngine`` collaborators throughout arms (a)/(b)
 (only the LLM completion call is stubbed — the same one seam
@@ -301,7 +314,12 @@ async def test_compaction_side_unrecovered_error_emits_router_context_overflow_u
     seen: list = []
     session._audit_events.add_subscriber(lambda e: seen.append(e.type))
 
-    with pytest.raises(ContextOverflowError):
+    # #4885: UnrecoveredError, not ContextOverflowError — see the module
+    # docstring's arm (c) note. This arm's RuntimeError is not a real
+    # overflow; UnrecoveredError is the accurate diagnosis, and
+    # `router_context_overflow_unrecovered` still fires for it (asserted
+    # below) via `run_turn`'s own widened except, not a type-merging rewrap.
+    with pytest.raises(UnrecoveredError):
         await session._run_router_loop("trigger a turn", "chain-3783-stage3-c")
 
     assert "router_context_overflow_unrecovered" in seen
