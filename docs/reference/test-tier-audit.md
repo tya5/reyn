@@ -1,6 +1,6 @@
 # Test Tier Auditor (`scripts/test_tier_audit.py`)
 
-An AST-based linter that checks test files against seven rules grounded in the
+An AST-based linter that checks test files against eight rules grounded in the
 testing policy (`docs/deep-dives/contributing/testing.md`). Turns the policy
 from a document people read once into a machine-checkable constraint applied
 at every PR.
@@ -14,7 +14,7 @@ contributors who had not fully absorbed the policy could ship MagicMock-based
 tests or missing Tier docstrings without either party noticing until review
 comments arrived.
 
-`test_tier_audit.py` makes the seven most common violations detectable in
+`test_tier_audit.py` makes the eight most common violations detectable in
 seconds, locally and in CI, before any reviewer looks at the code.
 
 ## Setup
@@ -28,7 +28,7 @@ python scripts/test_tier_audit.py [files or dirs]
 
 ## Detection rules
 
-The linter checks seven rules. Each rule has a severity and a rationale
+The linter checks eight rules. Each rule has a severity and a rationale
 grounded in the testing policy.
 
 ### Rule 1 — Missing Tier docstring (ERROR)
@@ -163,6 +163,40 @@ is the author's own trace of having silenced a real defect deliberately —
 the production object doesn't have this attribute, and mypy already knew
 it. Use the public API, extend the class, or thread the value through
 explicitly instead of attaching it post-hoc.
+
+### Rule 8 — Private read with a same-class public alternative (ERROR)
+
+An `obj._x` **read** (#4864 — not only inside an `assert`, unlike Rule 3:
+routing a private read through a local variable one line before the
+assert made 126 real sites invisible to an assert-scoped walk) where
+`obj` is type-evident as a class that ALSO publishes `x` via a same-class
+`@property`. The index is built once per run, class-name-keyed (not a
+global name match) — the same private attribute name assigned in several
+unrelated classes only trips this rule on the ONE class that also backs
+it with a `@property`.
+
+`obj` must be a bare name the AST can type — a parameter annotation, a
+local factory/fixture call, or a direct constructor call; `self._x`
+inside the class's own methods is exempt (that access is legitimate), and
+a private WRITE (`obj._x = value`) is Rule 7's territory, not this one.
+
+**Known gaps, disclosed, not claimed away**: `obj` is restricted to a
+bare name, not an attribute chain (`a.b._x`) — a deliberately narrower
+net than Rule 3's, since this rule's precondition is type evidence on the
+base. Two more false-negative shapes (tuple-unpack destructuring, chained
+attribute access) were found after landing and are tracked separately
+(#4906) rather than silently left undocumented. The 109 real sites found
+and fixed at landing (across 41 files) were a measured **floor at that
+moment**, not a claim of total coverage — a clean run today does not mean
+no more of this shape exists, only that the two disclosed gaps (and any
+undiscovered ones) aren't visible to it yet.
+
+**Why:** The finding is a repair obligation, not a bare detector — the
+suggested fix is "use the public property," but the message also warns
+against manufacturing a same-named `@property` just to silence the gate
+without checking whether it actually answers what the test needs (#4866:
+exactly this shape once "ratified the encapsulation break instead of
+closing it").
 
 ## Flags
 
