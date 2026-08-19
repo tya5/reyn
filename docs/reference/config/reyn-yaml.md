@@ -2124,6 +2124,7 @@ chat:
     use_chars4_estimate: false        # true = len(text)//4 (latency opt-out)
     body_token_cap: 1500               # hard cap on summary body tokens (post-truncation)
     resummarize_passes: 1              # LLM re-compression passes before hard_truncate floor
+    max_schema_reprompt_attempts: 1    # bounded re-prompt budget on invalid compaction JSON
     # Section budget weights within body, normalised at runtime.
     section_weights:
       topic_arc:            5
@@ -2148,6 +2149,7 @@ chat:
 | `section_caps_spec_tokens` | int | `100` | Static overhead budget for `section_token_caps` serialisation in the compactor prompt. |
 | `body_token_cap` | int | `1500` | Hard cap on summary body tokens after post-truncation. |
 | `resummarize_passes` | int | `1` | Max LLM re-compression passes when a produced `topic_arc` overshoots its body budget, before the deterministic `hard_truncate` floor. `0` = skip re-summary (straight to the floor). |
+| `max_schema_reprompt_attempts` | int | `1` | #4883: bounded re-prompt budget when the compaction LLM's JSON response is missing/empty `new_turn_seqs` or `topic_arc` (the two fields whose emptiness can't be told apart from a dead response). Exhausting the budget raises rather than silently accepting an empty summary. `0` = raise on the first invalid response, no re-prompt. |
 | `use_chars4_estimate` | bool | `false` | When `true`, use `len(text)//4` for token estimation instead of `litellm.token_counter` (latency opt-out for large deployments). |
 
 ### `chat.compaction.section_token_caps` fields

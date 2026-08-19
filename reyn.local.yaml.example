@@ -429,6 +429,9 @@
 #     min_compact_batch: 5
 #     resummarize_passes: 1            # #271: LLM re-compression passes on topic_arc
 #                                      # overshoot before the hard_truncate floor (0 = skip)
+#     max_schema_reprompt_attempts: 1  # #4883: bounded re-prompt budget when the
+#                                      # compaction JSON response is missing/empty
+#                                      # new_turn_seqs/topic_arc (0 = raise immediately)
 #     section_token_caps:
 #       topic_arc: 200
 #       decisions: 400

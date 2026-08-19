@@ -782,6 +782,24 @@ class CompactionConfig:
     # hard_truncate floor. 1 = one judgment-based re-summary then floor; 0 =
     # skip T2 (straight to the floor, = pre-#271 behaviour).
     resummarize_passes: int = 1
+    # #4883: bounded re-prompt budget when the compaction JSON response is
+    # missing new_turn_seqs/topic_arc (a syntactically-valid but content-free
+    # response, e.g. "{}", previously accepted silently as an empty summary
+    # that covered the full input range).
+    #
+    # Default 1 (one extra attempt, not an unjustified round number):
+    # feeding the model its own invalid response + naming what was missing
+    # (_append_schema_reprompt) either fixes a transient miss (the model
+    # skipped a field despite it being asked for) or reveals a PERSISTENT
+    # failure this specific input triggers on this model — and a second
+    # IDENTICAL-shape re-prompt does not change which of those two it is;
+    # only the feedback itself (present from attempt 1 onward) can. More
+    # attempts would mostly delay the eventual raise, not raise the odds of
+    # success. Exhausting the budget raises (compaction_controller.py's
+    # existing try/except turns that into a compaction_failed event, never
+    # a silently-accepted empty summary) — operator-tunable via this field
+    # if a specific deployment's models warrant a different budget.
+    max_schema_reprompt_attempts: int = 1
     section_token_caps: CompactionSectionCaps = field(default_factory=CompactionSectionCaps)
 
 
@@ -1059,6 +1077,11 @@ def _build_chat_config(raw: object) -> ChatConfig:
         body_token_cap=int(compaction_raw.get("body_token_cap", defaults.body_token_cap)),
         resummarize_passes=int(
             compaction_raw.get("resummarize_passes", defaults.resummarize_passes)
+        ),
+        max_schema_reprompt_attempts=int(
+            compaction_raw.get(
+                "max_schema_reprompt_attempts", defaults.max_schema_reprompt_attempts
+            )
         ),
         section_token_caps=section,
     )
