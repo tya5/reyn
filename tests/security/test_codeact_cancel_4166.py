@@ -37,7 +37,18 @@ async def test_cancel_event_kills_a_running_snippet_promptly() -> None:
     ``asyncio.wait({comm_future, cancel_task}, ...)`` race begins
     (``codeact_runner.py``), so the event being pre-set doesn't make this
     vacuous — it still proves an ALREADY-RUNNING process gets killed, just
-    without a sleep-based sender racing against it."""
+    without a sleep-based sender racing against it.
+
+    #4847 (lead-coder review): the FLOOR duration is gone, but the CEILING
+    (``elapsed < 5.0``, below) is still a duration standing in for an
+    observation nothing public exposes — ``run()``'s cancelled-result dict
+    (``{"ok": False, "status": "cancelled", ...}``) carries no pid /
+    returncode / kill-confirmation field, so there is no non-timing seam
+    to assert on from outside the function today. Elapsed-time is a
+    disclosed proxy for that missing seam, not a hidden one — tracked as
+    #4924, not silently left (real seam: expose the killed process's
+    returncode in the result so a future version of this test can assert
+    on that instead of timing)."""
     runner = CodeActRunner()
     cancel_event = asyncio.Event()
     cancel_event.set()  # pre-set: cancel fires as soon as the run's own race begins
