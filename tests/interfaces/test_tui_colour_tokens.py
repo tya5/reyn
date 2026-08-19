@@ -132,22 +132,18 @@ _HEX_LITERAL_EXEMPT_DIRS = frozenset({"web"})
 #: assignment into ``palette.py``, per lead-coder's ordering: ①classify+move
 #: ②broaden THIS gate) had not finished landing when the broadened gate did,
 #: so enforcing immediately here would fail CI on sites already scheduled to
-#: move rather than on a NEW regression. This allowance is scoped to the ONE
-#: file #4787 measured (``renderer.py``, 8 constants / 66 call sites) — a NEW
-#: hex literal anywhere else still fails immediately, which is this gate's
-#: whole point. Remove entries as each constant actually moves; the file
-#: drops out entirely once all 8 do.
-_PY_HEX_LITERAL_TRACKED = {
-    # lead-coder review (#4861): no count here — a written number goes
-    # stale the moment a migration commit lands (measured: this said "8
-    # constants" after #4861 had already moved 5 of them to palette.py,
-    # and the staleness test below cannot catch a wrong COUNT — it only
-    # fires when the file stops holding ANY hex literal at all, existence
-    # not quantity). The remaining sites are whatever _python_hex_literals()
-    # finds for this file right now — read that, not this string.
-    "repl/renderer.py": "#4787 — meaning-classification done, migration to "
-                        "palette.py in progress",
-}
+#: move rather than on a NEW regression. This allowance was scoped to the
+#: ONE file #4787 measured (``renderer.py``, 8 constants / 66 call sites) —
+#: a NEW hex literal anywhere else still fails immediately, which is this
+#: gate's whole point. #4787's own final 2 (``_CC_USER_BG``/``_CC_ERR_BG``,
+#: blocked until #4840's colour direction resolved) landed last — the file
+#: now holds zero Python hex literals, so the allowance is EMPTY, not
+#: removed outright: the staleness test below (an entry naming a file that
+#: no longer has any offense) is what catches an allowance nobody remembers
+#: to delete once its last site moves — proving that mechanism here, not
+#: just trusting it, is more valuable than deleting the dict entirely and
+#: losing the coverage.
+_PY_HEX_LITERAL_TRACKED: "dict[str, str]" = {}
 
 
 def _python_hex_literals() -> "list[str]":

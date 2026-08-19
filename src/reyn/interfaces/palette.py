@@ -222,6 +222,36 @@ TOKENS: "dict[str, str]" = {
     #: segment whose foreground is not concrete" — a ``$token`` reference
     #: resolved at Textual-theme time would be invisible to both.
     "@dim@": "#6b7280",  # low-importance / ambient, as a COLOUR (was _CC_DIM)
+    #: #4787's remaining 2 (the #4840-colour-direction block is resolved —
+    #: ``src/reyn/interfaces/CLAUDE.md`` rule 2: "Meaning is reyn-specific
+    #: → any value that serves the design, full-colour included" — so the
+    #: open question was never the VALUE, only whether it goes through a
+    #: token here). Each gets its OWN key, not consolidated with
+    #: ``@theme-surface@`` (which happens to share ``_CC_USER_BG``'s exact
+    #: hex, per that token's own comment above) — the two are independent
+    #: migration tracks for different roles (this is the plain REPL's
+    #: row-tint background; ``@theme-surface@`` is the Textual theme's
+    #: generic raised-surface colour), and ``@theme-surface@``'s own
+    #: comment explicitly leaves consolidation as a future, undecided call
+    #: — not made here, so the WCAG pairing below stays exactly as
+    #: measured, not something this move needs to re-verify.
+    #:
+    #: **Carries a WCAG contrast obligation like ``@dim@`` above, but in
+    #: the OTHER direction of the same pairing** — renderer.py's own
+    #: comment on the constant this replaces documents a measured 3.30
+    #: contrast ratio (#3371) against ``palette.TOKENS["@dim@"]``. Value
+    #: unchanged (``#1e222a``), only where it is declared — the pairing is
+    #: therefore untouched, not re-verified in this PR (nothing about
+    #: either value changed). Re-measure BOTH sides together if either
+    #: value ever does.
+    "@cc-user-bg@": "#1e222a",  # row tint: user's own submitted line (was _CC_USER_BG)
+    #: Failure-row tint, paired with ``@cc-user-bg@`` above by the SAME
+    #: "row tint, fixed dark hex regardless of theme" convention
+    #: renderer.py's own comment documents (a row-tint background carries
+    #: no WCAG obligation against THIS token specifically — ``_CC_ERR``,
+    #: the foreground painted on top of it, is a separate, already-token
+    #: colour above (``@error@``) with its own contrast story).
+    "@cc-err-bg@": "#3a1c1a",  # row tint: failed tool call / error row (was _CC_ERR_BG)
     #: #4840: reyn's own default Textual theme's base tokens (``theme.py``,
     #: ``REYN_THEME``) — the genuinely NEW colour choices, not reused from
     #: any existing ``_CC_*``/``@name@`` constant (unlike
