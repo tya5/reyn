@@ -998,18 +998,35 @@ class RouterHostAdapter:
         content is returned bare (byte-identical to the pre-#3787 shape —
         the common case today, before any agent has written its own file).
         """
-        pc = (self._project_context or "").strip()
-        if pc:
+        # No .strip() on either RETURNED value: the pre-#3787 code's own
+        # return value used the raw string unmodified — stripping it would
+        # silently change what an operator's REYN.md (a real file read,
+        # routinely trailing a newline) renders in the SP, breaking the
+        # byte-identical claim this docstring makes for the single-side
+        # case. Presence (does this side have content at all?) is still
+        # checked on a STRIPPED copy — a whitespace-only agent file (e.g.
+        # a freshly-touched ``AGENTS.md`` containing just ``"\n"``) must
+        # count as "nothing configured", the same as the pre-#3787 empty
+        # shape, not grow a ``### Agent instructions`` heading with
+        # nothing under it.
+        pc = self._project_context or ""
+        pc_present = bool(pc.strip())
+        if pc_present:
             self.scan_tool_result(pc)  # detection telemetry (scan-all parity)
-        agent_pc = self._read_agent_instructions().strip()
-        if agent_pc:
+        agent_pc = self._read_agent_instructions()
+        agent_pc_present = bool(agent_pc.strip())
+        if agent_pc_present:
             self.scan_tool_result(agent_pc)  # same telemetry, agent-authored half
-        if pc and agent_pc:
+        if pc_present and agent_pc_present:
             return (
                 "### Project\n\n" + pc + "\n\n"
                 "### Agent instructions (this agent only)\n\n" + agent_pc
             )
-        return pc or agent_pc
+        if pc_present:
+            return pc
+        if agent_pc_present:
+            return agent_pc
+        return ""
 
     def _read_agent_instructions(self) -> str:
         """#3787: this agent's own ``.reyn/agents/<agent_name>/AGENTS.md`` —
