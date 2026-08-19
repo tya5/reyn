@@ -122,15 +122,28 @@ async def test_ctrl_o_is_not_reyns_only_route_shift_tab_still_reaches_the_pane()
 
 
 def _cursor_col(flow: FlowView, row: int) -> "int | None":
-    """The column of flowview's own reverse-video text-cursor glyph on content
-    row ``row`` (``None`` if the cursor is not on this row) — read from
+    """The column of flowview's own text-cursor glyph on content row ``row``
+    (``None`` if the cursor is not on this row) — read from
     :meth:`FlowView.render_line`'s PUBLIC per-segment ``style``, not any
-    private cursor-position field. The cursor renders as a ``… on color(4)``
-    segment (measured against 0.13.1, re-verified against 0.14.0) regardless
-    of the surrounding theme."""
+    private cursor-position field.
+
+    Compares against the app's OWN LIVE ``screen--selection`` component
+    style, resolved dynamically, not a literal colour string. flowview's own
+    docstring (``_view.py``, ``COMPONENT_CLASSES``) states the cursor "defers
+    to Textual's ``screen--selection``" — that component's resolved
+    background is what the cursor glyph actually paints, and #4840's owner
+    ruling (mapping ``@selection-bg@`` to reyn's own theme, #4881) changed
+    that resolved value from an ANSI-numbered colour (which Rich's ``Style``
+    repr rendered as the literal substring ``"on color(4)"``, this helper's
+    PRIOR check) to a concrete truecolor hex. A hardcoded string match
+    encoded an incidental detail of ONE specific token value, not the actual
+    invariant (the cursor renders with `.screen--selection`'s own
+    background) — comparing against the live resolved style survives any
+    future value that component resolves to, ANSI-numbered or concrete."""
+    selection_bg = flow.screen.get_component_styles("screen--selection").background
     x = 0
     for seg in flow.render_line(row):
-        if "on color(4)" in str(seg.style):
+        if seg.style is not None and seg.style.bgcolor == selection_bg.rich_color:
             return x
         x += len(seg.text)
     return None
