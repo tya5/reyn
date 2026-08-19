@@ -1,5 +1,6 @@
 """Tier 1: #4927 — ``check_claude_md_doc_overlap.py``'s tokenizer must strip
-markdown decoration before splitting on whitespace, not just whitespace.
+markdown decoration before splitting on whitespace, not just whitespace; and
+``main()`` must fail loudly, not report "0 pairs", on an empty population.
 
 The un-fixed tokenizer (``re.findall(r"\\S+", text)`` alone) let a decoration
 character (backtick / ``*`` / ``#`` / ``-``) glued to a word at a DIFFERENT
@@ -17,6 +18,13 @@ stop demonstrating the bug this test pins). If either file's wording
 changes enough that this specific span no longer exists, that is new
 information for whoever touches those files next, not a reason to weaken
 this test's own assertion.
+
+Second bug in the same PR (lead-coder's review, blocking point ①): a
+mistyped ``--root`` producing zero discovered ``CLAUDE.md`` files printed
+"Found 0 pairs ... 0 words total" and exited 0 — indistinguishable from a
+real population that genuinely has no overlap. Six-questions ④: a green
+over an EMPTY collection wears the same colour as a real green. ``main()``
+now exits 1 on an empty population instead of measuring nothing.
 """
 from __future__ import annotations
 
@@ -87,3 +95,46 @@ def test_strip_falsify_undecorated_tokenizer_misses_the_same_pair() -> None:
         f"files changed in a way that makes this strip-falsify stale; it "
         f"no longer proves the fix is load-bearing and needs a fresh pair."
     )
+
+
+def test_empty_population_fails_loudly_instead_of_reporting_zero_pairs(tmp_path, capsys) -> None:
+    """Tier 1: an empty CLAUDE.md population (wrong --root, or a repo that
+    genuinely has none) must exit non-zero, not print "Found 0 pairs, 0
+    words total" and exit 0 — that output is indistinguishable from "the
+    population is real and has zero overlap" (lead-coder #4927 blocking
+    point ①; real repro: running a copy of this script from outside the
+    repo silently reported Population: 0 / 0 words total / exit 0)."""
+    mod = _load_module()
+
+    exit_code = mod.main(["--root", str(tmp_path)])
+
+    assert exit_code != 0, (
+        "an empty population must not exit 0 — that reads as a clean "
+        "measurement instead of a broken --root or a lost population"
+    )
+    captured = capsys.readouterr()
+    assert "0 CLAUDE.md" not in captured.out, (
+        "must not print a 'Population: 0' success-shaped line at all — "
+        f"got stdout: {captured.out!r}"
+    )
+
+
+def test_strip_falsify_empty_population_check_is_load_bearing() -> None:
+    """Tier 1: strip-falsify — with the loud-failure check removed,
+    ``discover_claude_md_files`` + ``measure`` on an empty root DOES return
+    an empty result silently (0 files, 0 pairs), proving the check in the
+    test above is the thing doing the work, not something else already
+    catching it."""
+    import tempfile
+    from pathlib import Path
+
+    mod = _load_module()
+    with tempfile.TemporaryDirectory() as empty_root:
+        root = Path(empty_root)
+        claude_files = mod.discover_claude_md_files(root)
+        results = mod.measure(root)
+        assert claude_files == [] and results == [], (
+            "expected an empty root to silently produce 0 files / 0 results "
+            "at the discover/measure layer — this is exactly the silent "
+            "shape main() must refuse to report as if it were a measurement"
+        )

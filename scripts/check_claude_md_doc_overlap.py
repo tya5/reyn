@@ -119,6 +119,21 @@ def main(argv: list[str] | None = None) -> int:
     root = Path(args.root)
 
     claude_files = discover_claude_md_files(root)
+
+    # #4927 blocking point ①: an empty population (wrong --root, or a repo
+    # that genuinely lost every CLAUDE.md) must NOT print "Found 0 pairs, 0
+    # words total" and exit 0 — that output is byte-identical to "population
+    # is real and has zero overlap", so a typo'd --root reads as a clean
+    # result. This tool's only value IS the population (six-questions ④: a
+    # green over an EMPTY collection wears the same colour as a real green).
+    # Fail loudly instead of measuring nothing.
+    if not claude_files:
+        print(
+            f"error: no CLAUDE.md found under {root} — refusing to report "
+            f"'0 pairs found' as if that were a measurement. Check --root.",
+        )
+        return 1
+
     results = measure(root)
 
     print(f"Population: {len(claude_files)} CLAUDE.md file(s):")
