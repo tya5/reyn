@@ -242,6 +242,17 @@ class CodeActRunner:
         timed_out = False
         cancelled = False
         truncated = False
+        # #4924: tied to actual EXECUTION of the kill call (set only on the
+        # line immediately after `kill_process_tree(proc)` returns), never a
+        # hardcoded literal in the return dict below — a literal would be
+        # tautological with `cancelled` itself (true on every path that
+        # reaches the `if cancelled:` return, including a future regression
+        # that reaches it WITHOUT ever calling kill_process_tree at all),
+        # closing zero of the gaps #4923's disclosed elapsed-time proxy was
+        # standing in for. This variable is what makes `killed` in the
+        # return dict a real signal instead of restating `status ==
+        # "cancelled"` under a different name.
+        killed = False
         # #4166: cancel_event=None is the byte-identical original path
         # (asyncio.wait_for against the wall-clock timeout alone). When
         # provided, race BOTH the timeout and the event — mirrors
@@ -279,6 +290,7 @@ class CodeActRunner:
                     cancelled = True
                     service_task.cancel()
                     await kill_process_tree(proc)
+                    killed = True
                     stdout_b, stderr_b = b"", b""
                 elif not done:
                     timed_out = True
@@ -302,9 +314,36 @@ class CodeActRunner:
                 cleanup()
 
         if cancelled:
+            # #4924 (architect ruling): a discriminated-union-safe seam for a
+            # consumer that needs to know kill_process_tree was actually
+            # invoked for this cancellation, not just that this call
+            # returned — a real alternative to the elapsed-time proxy
+            # #4923 was left disclosing. `killed` is ALWAYS present when
+            # `status == "cancelled"` (never conditionally added only when
+            # a kill "worked") — presence must never carry information in
+            # an envelope that already has discriminators (`status`/
+            # `kind`); `status == "cancelled"` is what a consumer branches
+            # on, `killed` is data attached to that branch, not a second
+            # discriminator.
+            #
+            # `killed: bool`, not `returncode: int` — kill_process_tree()
+            # (the shared reaper _subprocess_io.py:284) has no return value
+            # today, and its own docstring is explicit that graceful
+            # (SIGTERM, reaped) vs. forced (SIGKILL after grace_seconds)
+            # produce DIFFERENT returncodes; exposing a real returncode
+            # here would need extending that SHARED helper's contract
+            # (used by every sandbox backend, not just CodeAct) — out of
+            # #4924's scope, which is "stop using a duration as this
+            # test's proxy," not "add OS-level kill-signal fidelity."
+            # `killed` reports the information this call site ALREADY has
+            # (kill_process_tree was invoked for this cancellation) rather
+            # than reaching for new information — if a real returncode
+            # signal is needed later, `killed` can be replaced by it
+            # without a second migration of THIS envelope's shape.
             return {
                 "ok": False, "status": "cancelled",
                 "kind": "Cancelled", "error": "codeact run was cancelled",
+                "killed": killed,
             }
         if timed_out:
             return {
