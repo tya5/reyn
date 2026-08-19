@@ -909,6 +909,123 @@ def compute_covers_through_seq(new_turn_seqs: list) -> int:
     return max(int(s) for s in new_turn_seqs)
 
 
+# #4883: the wire shape a compaction response must have, for providers that
+# support schema-constrained generation. Deliberately NOT routed through
+# ``core.pipeline.schema``'s ``SchemaRegistry``/``to_json_schema`` (0062's
+# path for a pipeline-authored, by-NAME-referenced schema) — this shape is
+# engine-internal and fixed, never authored in YAML or looked up by name, so
+# a plain JSON Schema dict is the more direct fit. All 6 keys are listed in
+# "required" (OpenAI strict mode has no true-optional properties — "required"
+# means the KEY must be present, not that an array/string can't be empty).
+# Presence alone is weaker than this fix needs though: an empty topic_arc or
+# empty new_turn_seqs is schema-valid (empty string/array are valid values of
+# their declared type) — :func:`_validate_chat_summary_fields` is the
+# CONTENT-emptiness check schema constraints cannot express, and stays the
+# floor for every provider, schema-constrained or not (see that function's
+# own docstring).
+_CHAT_SUMMARY_JSON_SCHEMA: dict = {
+    "type": "object",
+    "properties": {
+        "new_turn_seqs": {"type": "array", "items": {"type": "integer"}},
+        "topic_arc": {"type": "string"},
+        "decisions": {"type": "array", "items": {"type": "string"}},
+        "pending": {"type": "array", "items": {"type": "string"}},
+        "session_user_facts": {"type": "array", "items": {"type": "string"}},
+        "artifacts_referenced": {"type": "array", "items": {"type": "string"}},
+    },
+    "required": [
+        "new_turn_seqs", "topic_arc", "decisions", "pending",
+        "session_user_facts", "artifacts_referenced",
+    ],
+    "additionalProperties": False,
+}
+
+
+def _supports_structured_output(model: str) -> bool:
+    """#4883: whether ``model`` supports schema-constrained JSON generation
+    (``litellm.supports_response_schema``) — the SAME capability precheck
+    0062's ``AgentStep.schema`` path already uses and has in production
+    (``router_loop.py``'s ``configure_structured_output`` precheck),
+    including its provider-prefix strip (an operator-configured proxy alias
+    like ``"openai/gemini-2.5-flash-lite"`` must be checked as the
+    underlying gemini model, not misclassified as an unsupported literal
+    OpenAI name — mirrors ``router_loop.py``'s own ``_precheck_model``
+    derivation).
+
+    Never raises: any failure (litellm not importable/not ready yet, the
+    capability query itself erroring) degrades to ``False`` — compaction is
+    a context-window backstop (architect's #4883 framing), so an
+    unavailable capability CHECK falls back to the existing
+    ``json_object`` + post-parse-validation path, not a hard failure. This
+    differs from 0062's own precheck (which raises
+    ``StructuredOutputUnsupportedModelError`` on an explicit operator
+    request for schema-constrained output) because compaction never had a
+    schema-constrained contract to violate — it is opportunistically
+    upgrading an existing best-effort call, not fulfilling an explicit
+    per-turn request.
+    """
+    try:
+        import litellm
+    except Exception:  # noqa: BLE001 — capability probe, never the caller's failure
+        return False
+    if not hasattr(litellm, "supports_response_schema"):
+        return False
+    try:
+        from reyn.llm.llm import proxy_kwargs
+        extra = proxy_kwargs()
+        precheck_model = (
+            model.split("/", 1)[1] if extra.get("api_base") and "/" in model else model
+        )
+        return bool(litellm.supports_response_schema(precheck_model))
+    except Exception:  # noqa: BLE001 — capability probe, never the caller's failure
+        return False
+
+
+def _validate_chat_summary_fields(parsed: dict) -> "list[str]":
+    """#4883: the two load-bearing fields a compaction JSON response must
+    actually carry — empty-string errors ([] = conforming), the same
+    ``schema_validate_fn`` shape ``RouterLoop`` uses for 0062 (#2934).
+
+    ``new_turn_seqs`` decides ``covers_through_seq`` — the range this call
+    marks as no-longer-in-context. ``topic_arc`` IS the summary itself.
+    Both missing/empty means the LLM produced a syntactically-valid but
+    content-free response (e.g. ``"{}"``), which the old code accepted
+    silently as success. The remaining 4 fields (``decisions`` / ``pending``
+    / ``session_user_facts`` / ``artifacts_referenced``) are legitimately
+    often empty (a short exchange may genuinely have none) — NOT validated
+    here; only the two fields whose emptiness cannot be told apart from a
+    dead response are.
+    """
+    errors: "list[str]" = []
+    if not parsed.get("new_turn_seqs"):
+        errors.append("new_turn_seqs is missing or empty")
+    if not str(parsed.get("topic_arc") or "").strip():
+        errors.append("topic_arc is missing or empty")
+    return errors
+
+
+def _append_schema_reprompt(
+    messages: "list[dict]", raw_response: str, errors: "list[str]",
+) -> "list[dict]":
+    """#4883: feed the invalid response + what was wrong with it back to the
+    model for one bounded re-prompt attempt — the same "show the model its
+    own mistake" shape 0062's re-prompt loop uses (router_loop.py), not a
+    blind retry of the identical request."""
+    return [
+        *messages,
+        {"role": "assistant", "content": raw_response},
+        {
+            "role": "user",
+            "content": (
+                "That response is invalid: "
+                + "; ".join(errors)
+                + ". Reply again with a complete JSON object covering all "
+                "the new turns and a non-empty topic_arc."
+            ),
+        },
+    ]
+
+
 def _turn_role(t) -> "str | None":
     """The turn's wire role (``agent`` → ``assistant``), from a dict or a ChatMessage."""
     r = t.get("role") if isinstance(t, dict) else getattr(t, "role", None)
@@ -1225,12 +1342,26 @@ class CompactionEngine:
         run-loop router_model."""
         return self._model
 
-    async def _acompletion(self, messages: list[dict], *, response_format: dict | None = None):
+    async def _acompletion(
+        self,
+        messages: list[dict],
+        *,
+        response_format: dict | None = None,
+        fallback_without_response_format: bool = False,
+    ):
         """Single LLM call via the cost-observability chokepoint (#1190).
 
         Shared by ``compact`` (JSON response) and ``_resummarize_topic_arc``
         (text response). The chokepoint owns proxy_kwargs + provider-prefix
         strip + records usage (purpose="compaction") via the engine's recorder.
+
+        ``fallback_without_response_format`` (#4883): passed through to
+        ``recorded_acompletion`` — a provider that rejects ``response_format``
+        outright gets ONE retry without it, same as the existing json-mode
+        callers. Post-parse validation (:func:`_validate_chat_summary_fields`)
+        is the floor either way, so this is defense-in-depth against the
+        precheck below (:func:`_supports_structured_output`) being wrong for
+        a specific provider, not the mechanism the fix depends on.
         """
         from reyn.llm.llm import recorded_acompletion
         return await recorded_acompletion(
@@ -1244,6 +1375,7 @@ class CompactionEngine:
             recorder=self._recorder,
             agent=self._recorder_agent,
             response_format=response_format,
+            fallback_without_response_format=fallback_without_response_format,
         )
 
     async def _resummarize_topic_arc(self, topic_arc: str, body_budget: int) -> str:
@@ -1307,9 +1439,131 @@ class CompactionEngine:
             {"role": "user", "content": user_content},
         ]
 
-        response = await self._acompletion(
-            messages, response_format={"type": "json_object"}
-        )
+        # #4883: the compaction JSON has no required fields (response_format
+        # is {"type": "json_object"} — "must be JSON", not "must have these
+        # keys"). A syntactically-valid-but-structurally-empty response
+        # (e.g. "{}") previously passed through untouched: new_turn_seqs
+        # missing -> [] -> covers fell back to the FULL input range anyway
+        # (the "covered" line below), topic_arc missing -> "" -> an empty
+        # summary silently overwrote the real turns in history, with no
+        # error and no re-prompt. Both are load-bearing fields (covers_
+        # through_seq decides what's now unrecoverable via this call's own
+        # fallback; topic_arc IS the summary) so their absence/emptiness is
+        # now a validation failure, not a silently-accepted default — bounded
+        # re-prompt (same shape 0062's schema_validate_fn uses in
+        # router_loop.py), then raise if still invalid, joining the existing
+        # "raise on empty response" safety net below (compaction_
+        # controller.py's caller already wraps this in try/except and emits
+        # compaction_failed + never calls _append_history on any raise here
+        # — the ONLY change in observable behavior on failure is WHICH cases
+        # raise, not what raising does).
+        max_attempts = 1 + max(0, int(getattr(self._cfg, "max_schema_reprompt_attempts", 1)))
+        # #4883: schema-constrained generation when the model supports it
+        # (json_schema, strict) — the GENERATION-time leg; json_object is
+        # the fallback for models the capability precheck says do not (or
+        # cannot be determined to) support it. Post-parse validation below
+        # is the floor in BOTH cases (see _CHAT_SUMMARY_JSON_SCHEMA's own
+        # docstring for why schema constraints alone can't replace it).
+        #
+        # DELIBERATELY the opposite of 0062's own unsupported-model
+        # behavior — do not unify these two just because they share the
+        # same capability check (architect/lead-coder, #4883): 0062 §2.1
+        # raises StructuredOutputUnsupportedModelError with NO silent
+        # fallback because an AgentStep's caller explicitly asked for
+        # structured output — an unsupported model is THAT step's own
+        # failure, contained to one step. Compaction never had a
+        # schema-constrained contract to violate; it is an opportunistic
+        # upgrade to an existing best-effort call, and its failure mode is
+        # different in kind: raising here means the context window never
+        # opens back up, i.e. the conversation itself cannot continue —
+        # turning "summary quality isn't guaranteed" into "the session is
+        # stuck" would be strictly worse than today. So compaction degrades
+        # instead of raising on an unsupported model — the post-parse
+        # validation floor is what still catches an empty/malformed
+        # json_object response either way.
+        #
+        # The degrade decision is made HERE, before the call — not by
+        # catching a provider rejection and retrying without
+        # response_format (fallback_without_response_format stays False
+        # below, on BOTH legs). 0062's own text is explicit about why (its
+        # capability precheck exists precisely so the call never has to
+        # find out the hard way): "Do NOT catch-classify a provider
+        # rejection for this — a raw 400 can't be reliably told apart from
+        # transient/other errors." A provider rejection despite a True
+        # precheck (the capability table lagging reality) is therefore a
+        # genuine call failure, not a signal to silently retry a
+        # differently-shaped request — it propagates like any other
+        # `_acompletion` failure, caught by CompactionController's
+        # existing try/except (-> compaction_failed), which is the
+        # pre-existing safety net this fix already leans on for the
+        # exhausted-reprompt-budget case above.
+        if _supports_structured_output(self._model):
+            _response_format = {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "compaction_chat_summary",
+                    "schema": _CHAT_SUMMARY_JSON_SCHEMA,
+                    "strict": True,
+                },
+            }
+        else:
+            _response_format = {"type": "json_object"}
+        _fallback_without_rf = False
+        parsed: dict = {}
+        raw = ""
+        response = None
+        reprompt_messages = list(messages)
+        validation_errors: list[str] = []
+        for attempt in range(max_attempts):
+            response = await self._acompletion(
+                reprompt_messages,
+                response_format=_response_format,
+                fallback_without_response_format=_fallback_without_rf,
+            )
+            raw = (response.choices[0].message.content or "").strip()
+            if not raw:
+                if attempt + 1 < max_attempts:
+                    validation_errors = ["response was empty"]
+                    self._events.emit(
+                        "compaction_schema_invalid",
+                        attempt=attempt,
+                        max_attempts=max_attempts,
+                        errors=validation_errors,
+                    )
+                    reprompt_messages = _append_schema_reprompt(
+                        reprompt_messages, raw, validation_errors,
+                    )
+                    continue
+                raise ValueError("compaction LLM returned empty response")
+
+            parsed = loads_lenient(
+                raw,
+                on_raw_decode=lambda discarded_len, head: logger.warning(
+                    "compaction_json_raw_decode_recovered: discarded %d bytes of "
+                    "trailing garbage after valid JSON object. head=%r",
+                    discarded_len,
+                    head,
+                ),
+            )
+            validation_errors = _validate_chat_summary_fields(parsed)
+            if not validation_errors:
+                break
+            self._events.emit(
+                "compaction_schema_invalid",
+                attempt=attempt,
+                max_attempts=max_attempts,
+                errors=validation_errors,
+            )
+            if attempt + 1 < max_attempts:
+                reprompt_messages = _append_schema_reprompt(
+                    reprompt_messages, raw, validation_errors,
+                )
+                continue
+            raise ValueError(
+                f"compaction LLM response missing required fields after "
+                f"{max_attempts} attempt(s): {validation_errors}"
+            )
+
         # #4703 axis①: this call's own usage, for the compaction_completed
         # marker CompactionController emits below (never a resummarize-pass
         # call's usage — those are a rare, bounded-to-1-by-default backstop;
@@ -1317,7 +1571,10 @@ class CompactionEngine:
         # every resummarize pass too would need threading usage out of
         # _resummarize_topic_arc as well, a disclosed follow-up, not silent
         # scope creep). None if usage genuinely could not be read off the
-        # response — never coerced to 0.
+        # response — never coerced to 0. Reflects the FINAL (successful)
+        # attempt only — a re-prompt's own usage is not summed in, the same
+        # "primary call dominates, re-prompt passes are a disclosed gap"
+        # shape the resummarize-pass comment above already establishes.
         _usage = getattr(response, "usage", None)
         _prompt_tokens = getattr(_usage, "prompt_tokens", None)
         _completion_tokens = getattr(_usage, "completion_tokens", None)
@@ -1328,20 +1585,6 @@ class CompactionEngine:
                 self._model,
                 TokenUsage(prompt_tokens=_prompt_tokens, completion_tokens=_completion_tokens),
             )
-
-        raw = (response.choices[0].message.content or "").strip()
-        if not raw:
-            raise ValueError("compaction LLM returned empty response")
-
-        parsed: dict = loads_lenient(
-            raw,
-            on_raw_decode=lambda discarded_len, head: logger.warning(
-                "compaction_json_raw_decode_recovered: discarded %d bytes of "
-                "trailing garbage after valid JSON object. head=%r",
-                discarded_len,
-                head,
-            ),
-        )
 
         new_turn_seqs = parsed.get("new_turn_seqs") or []
         covers = compute_covers_through_seq(new_turn_seqs)

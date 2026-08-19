@@ -241,6 +241,7 @@ AUDIT_EVENT_KINDS: frozenset[str] = frozenset({
     "compaction_check",
     "compaction_completed",
     "compaction_failed",
+    "compaction_schema_invalid",
     "compaction_shrink_recovered",
     "compaction_started",
     "composer_dropped",
