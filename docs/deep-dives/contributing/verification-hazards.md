@@ -1530,6 +1530,61 @@ goes unchecked, because checking it was never anyone's assigned step.
   history, a closing comment on a closed issue), there is no after-the-fact
   remedy — the only defense is checking it before it's written.
 
+## 26. "Unverifiable" can mean "I didn't read the spec" — check §14–17 before declaring §1
+
+A design withdrew a `json_object` → `json_schema` switch with the stated
+reason "can't measure `stream` × `response_format` against a live API." The
+withdrawal read as principled caution — a correct instinct (§17's own
+family: don't test third-party behavior) applied to a question it doesn't
+answer. Owner: *"if you think not measuring makes it reasonable not to do
+it, you can never build for multiple platforms or plan ahead — the normal
+move is to READ THE PROVIDER'S SPEC."* Reading it took five minutes:
+OpenAI's own docs already state structured outputs support streaming; the
+project's own `llm.py` already has a per-model capability query
+(`supports_response_schema`, mirroring litellm's) AND a fallback path for
+models that fail it. None of this was hidden — it was two greps away.
+
+**The discriminator that was misapplied**: "a third party's behavior is not
+ours to verify" governs *taking over the third party's own implementation*
+(shadowing a provider's error-handling, guessing at behavior no spec
+documents). It says nothing about *implementing against a published
+spec* — the provider vendor already committed to that contract publicly;
+reading it is not the same claim as verifying their runtime. The same
+discriminator, quoted back at itself: "the classifier bites the
+*implementation*, not implementing to the *published spec*." Applied
+backwards, a real caution became an excuse to stop before the step that
+would have settled the question.
+
+This is adjacent to §24 (an inherited premise not observed) but not the
+same shape: §24 is about a *received question* silently deciding what gets
+searched. Here the premise was self-generated — "I can't measure this, so
+I can't know it" — and what was skipped wasn't a check on someone else's
+claim, but an ordinary research step available the whole time.
+
+### The detection technique
+
+- **Before writing "can't verify" or "unmeasurable," run the order: ①
+  published spec → ② a capability-query API already in the codebase or the
+  third party's own SDK → ③ parts already in the repo that answer a
+  piece of it → ④ only if all three come up empty, direct measurement.**
+  Stopping at ① because you assumed the answer wasn't there is not the
+  same as checking and finding it isn't.
+- **A third-party discriminator has a direction — name which side of the
+  line the current question is actually on before applying it.** "Not
+  ours to verify" protects against taking over an implementation you don't
+  own; it says nothing about implementing to a specification the owner
+  already published. Using it to justify not reading the spec runs the
+  rule backwards.
+- **Provider variance is a reason to branch, not a reason to stop.** The
+  same variance that makes "will this always work" unanswerable is exactly
+  why a capability-query API exists in the first place — the variance was
+  already designed around, not discovered as a blocker.
+- **"In the codebase" and "actually called" are different claims** (§15).
+  A capability-query function existing with a comment saying it mirrors
+  the provider's own check is not itself a witness that anything calls it
+  — confirm the call site, not just the declaration, before treating the
+  gap as closed.
+
 ## See also
 
 - [Testing policy](testing.md) — Tier model, Mock vs Fake, decision flow.
