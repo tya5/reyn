@@ -67,7 +67,7 @@ def test_end_to_end_list_mcp_servers_matches_conversation_and_llm_text(tmp_path)
     forwarder = ChatLifecycleForwarder(outbox)
     session._audit_events.add_subscriber(forwarder)
 
-    loop = RouterLoop(host=session._router_host, chain_id="c1", router_model="gpt-4o")
+    loop = RouterLoop(host=session.router_host, chain_id="c1", router_model="gpt-4o")
     catalog = {"list_mcp_servers": {"function": {"name": "list_mcp_servers", "parameters": {}}}}
     ctx = DispatchContext(
         caller_kind="router", caller_id="alice", chain_id="c1",

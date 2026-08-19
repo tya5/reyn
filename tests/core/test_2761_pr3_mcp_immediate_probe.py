@@ -114,7 +114,7 @@ def _session_ctx(session: Session, tmp: Path) -> ToolContext:
     """A ctx whose op-context factory is the session's REAL make_router_op_context (so
     ctx.hot_reloader is the session's per-session reloader). resolver=None → the
     install_local file-write gate is skipped (not under test)."""
-    return _Ctx(tmp, _RS(session._router_host.make_router_op_context))
+    return _Ctx(tmp, _RS(session.router_host.make_router_op_context))
 
 
 def _reloader_ctx(
@@ -144,7 +144,7 @@ def _servers_on_disk(tmp: Path) -> dict:
 
 
 def _roster_names(session: Session) -> list[str]:
-    return [s["name"] for s in session._router_host.get_mcp_servers()]
+    return [s["name"] for s in session.router_host.get_mcp_servers()]
 
 
 # ===========================================================================
@@ -254,10 +254,10 @@ async def test_local_install_new_reachable_is_live_same_turn(
         assert "pidsrv" in _roster_names(session), (
             "a NEW reachable server must be resolvable the same turn (immediate probe-commit)"
         )
-        snap = session._router_host.mcp_tools_cache_snapshot
+        snap = session.router_host.mcp_tools_cache_snapshot
         assert snap is not None and "pidsrv" in snap, "its tools must be live-cached same turn"
         # Immediate path — nothing left pending for the turn boundary.
-        residual = await session._hot_reloader.apply_pending()
+        residual = await session.hot_reloader.apply_pending()
         assert residual is None, "the immediate probe-commit must not ALSO defer a reload"
     finally:
         await session.aclose_mcp_connections()
@@ -314,7 +314,7 @@ async def test_local_install_same_name_overwrite_defers_and_skips_probe(
         )
 
         assert result["status"] == "ok", "an overwrite must NOT be probe-gated (re-install preserved)"
-        pending = session._hot_reloader.pending
+        pending = session.hot_reloader.pending
         assert pending is True, "an overwrite schedules the deferred turn-boundary reload"
         assert _servers_on_disk(tmp_path)["srv"]["command"] == "/nonexistent/reyn-xyz", (
             "the overwrite is written to config (clobber-update), applied at the turn boundary"

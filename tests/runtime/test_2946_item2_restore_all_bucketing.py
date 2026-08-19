@@ -120,7 +120,7 @@ async def test_restore_all_buckets_by_agent_session_and_survives_truncation(tmp_
     # re-enqueues for the user to answer, unlike a restored inbox message
     # (which can trigger a LIVE LLM turn on `ensure_running`, per
     # `test_multi_session_restore.py`'s docstring on this same hazard).
-    state_log1 = reg1._state_log
+    state_log1 = reg1.state_log
     assert state_log1 is not None
     await state_log1.append(
         "intervention_dispatched", target=AGENT,
@@ -147,7 +147,7 @@ async def test_restore_all_buckets_by_agent_session_and_survives_truncation(tmp_
         "sanity: the legacy entry must NOT leak into the spawned bucket"
     )
 
-    state_log2 = reg2._state_log
+    state_log2 = reg2.state_log
     assert state_log2 is not None
 
     # the source events (iv_main / iv_spawn / iv_legacy dispatch) are durable
@@ -208,6 +208,6 @@ async def test_restore_all_buckets_by_agent_session_and_survives_truncation(tmp_
     assert "iv_main" not in _active_iv_ids(spawned3)
     assert "iv_legacy" not in _active_iv_ids(spawned3)
 
-    reg3_state_log = reg3._state_log
+    reg3_state_log = reg3.state_log
     assert reg3_state_log is not None
     await reg3_state_log.aclose()

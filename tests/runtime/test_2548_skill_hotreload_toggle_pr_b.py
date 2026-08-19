@@ -72,7 +72,7 @@ def _write_skills(tmp_path: Path, entries: dict) -> None:
 
 def _skill_names(session: Session) -> "list[str]":
     """Read skill names via the LIVE public surface (RouterHostAdapter)."""
-    skills = session._router_host.get_available_skills()
+    skills = session.router_host.get_available_skills()
     if not skills:
         return []
     return [s.name for s in skills]

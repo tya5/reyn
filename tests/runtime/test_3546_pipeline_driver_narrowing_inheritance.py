@@ -263,14 +263,14 @@ async def _narrowed_invoker(reg: AgentRegistry) -> "tuple[Session, str]":
 
 def _tool_ctx(session: Session, reg: AgentRegistry, state_log: StateLog) -> ToolContext:
     return ToolContext(
-        events=session._router_host.events,
+        events=session.router_host.events,
         permission_resolver=None,
         workspace=None,
         caller_kind="router",
         router_state=RouterCallerState(
             pipeline_registry=session.pipeline_registry,
             agent_registry=reg,
-            host=session._router_host,
+            host=session.router_host,
         ),
         state_log=state_log,
     )

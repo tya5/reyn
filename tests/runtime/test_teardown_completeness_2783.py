@@ -90,7 +90,7 @@ async def test_shutdown_drains_state_log(tmp_path, monkeypatch):
     reg = _make_registry(tmp_path)
     reg.get_or_load("owner")
 
-    reg._state_log.append_nowait("agent_archived", entity_kind="agent", name="owner")
+    reg.state_log.append_nowait("agent_archived", entity_kind="agent", name="owner")
     await reg.shutdown()
 
     wal_path = tmp_path / "wal.jsonl"

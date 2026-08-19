@@ -57,7 +57,7 @@ async def test_await_quiescent_cancels_chain_timeout_timer_no_append(tmp_path):
 
     # The chain must be registered so the watchdog's "still pending?" check passes
     # and on_fire would actually run (otherwise the fire short-circuits).
-    await session._chains.register(
+    await session.chains.register(
         chain_id="c1", depth=0, original_text="q", sender=None,
     )
 
@@ -66,8 +66,8 @@ async def test_await_quiescent_cancels_chain_timeout_timer_no_append(tmp_path):
         await log.append("chain_timeout_fired", agent="alpha", chain_id=chain_id)
 
     # Short timeout so the watchdog WOULD fire almost immediately if not cancelled.
-    session._chains._chain_timeout_seconds = 0.05
-    await session._chains.arm_timeout("c1", on_fire=_on_fire)
+    session.chains._chain_timeout_seconds = 0.05
+    await session.chains.arm_timeout("c1", on_fire=_on_fire)
     # proposal 0067 P8 (#3978): arm_timeout() now persists arm_at via a
     # fire-and-forget WAL append (append_nowait — the worker assigns the
     # seq off-loop, not synchronously when record_chain_update() returns).
@@ -104,7 +104,7 @@ async def test_await_quiescent_cancels_intervention_dispatch_no_append(tmp_path)
     iv = UserIntervention(kind="ask_user", prompt="Q?")
     # Seed the stalled queue directly (test precedent: test_pending_intervention_268)
     # so claim re-dispatches through the real path.
-    session._interventions._stalled[iv.id] = iv
+    session.interventions._stalled[iv.id] = iv
 
     view = await session.claim_pending_intervention(iv.id, "new-channel")
     assert view is not None
@@ -166,7 +166,7 @@ async def test_await_quiescent_settles_intervention_answer_consumed_no_append(tm
     log = StateLog(tmp_path / "state.wal")
     session = _session(tmp_path, log)
 
-    session._buffered_intervention_answers["run-1"] = InterventionAnswer(text="ok")
+    session.buffered_intervention_answers["run-1"] = InterventionAnswer(text="ok")
     answer = session.consume_buffered_intervention_answer("run-1")
     assert answer is not None and answer.text == "ok"
 

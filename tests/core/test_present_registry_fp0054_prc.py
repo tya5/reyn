@@ -379,7 +379,7 @@ def _write_dynamic_template(tmp_path: Path, name: str, blueprint) -> None:
 async def test_hotreload_seam_registered(tmp_path: Path) -> None:
     """Tier 2: the Session registers the presentations seam on the HotReloader."""
     session = _make_session(tmp_path)
-    seam_names = [name for (name, _fn) in session._hot_reloader._seams]
+    seam_names = [name for (name, _fn) in session.hot_reloader._seams]
     assert "presentations" in seam_names
 
 
@@ -416,8 +416,8 @@ async def test_hotreload_via_apply_pending(
     session = _make_session(tmp_path)
     _write_dynamic_template(tmp_path, "authors", _AUTHORS_TEMPLATE)
 
-    session._hot_reloader.request_reload(source="operator")
-    summary = await session._hot_reloader.apply_pending()
+    session.hot_reloader.request_reload(source="operator")
+    summary = await session.hot_reloader.apply_pending()
 
     assert summary is not None
     assert "presentations" in summary["applied"]

@@ -201,7 +201,7 @@ def _spawn_ctx(spawner: Session, reg: AgentRegistry, state_log: StateLog) -> Too
     ``spawn_session_fn`` is the spawner's own ``RouterHostAdapter.spawn_session`` with
     ``chain_id`` pre-bound (``router_loop._spawn_session_bound_impl``). The tool handler
     and the adapter method — the site under test — are both the production objects."""
-    host = spawner._router_host
+    host = spawner.router_host
 
     async def _spawn_session_bound(
         *, request: str, mode: str, narrowing: "dict | None" = None,

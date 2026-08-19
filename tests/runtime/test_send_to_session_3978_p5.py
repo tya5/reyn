@@ -51,7 +51,7 @@ def _seed(tmp_path: Path, name: str) -> None:
 def _ctx_for(caller: Session, reg: AgentRegistry) -> ToolContext:
     """A ToolContext wired the way RouterLoop wires one for this tool
     (router_loop._send_to_session_bound_impl's exact shape)."""
-    host = caller._router_host
+    host = caller.router_host
 
     async def _send_to_session_bound(
         *, agent: str, session: str, text: str, wake: bool = False,

@@ -321,12 +321,12 @@ async def test_turn_budget_engine_rebuilt_on_model_switch(tmp_path):
     """
     session = _make_session(tmp_path, model="standard")
     session._resolver = _make_resolver()
-    before = session._router_host._turn_budget_engine
+    before = session.router_host._turn_budget_engine
 
     ctx = _ctx(session)
     await model_cmd(ctx, "strong")
 
-    after = session._router_host._turn_budget_engine
+    after = session.router_host._turn_budget_engine
     assert after is not before  # rebuilt (or explicitly re-evaluated) for the new model
 
 
@@ -405,7 +405,7 @@ async def test_turn_budget_engine_rebuild_does_not_raise_for_a_bare_model_name(t
     ctx = _ctx(session)
     await model_cmd(ctx, "terra")  # must not raise
 
-    engine = session._router_host._turn_budget_engine
+    engine = session.router_host._turn_budget_engine
     assert engine is not None, "a viable model must produce a real engine, not None"
 
 
@@ -428,5 +428,5 @@ def test_lazy_startup_turn_budget_engine_does_not_raise_for_a_bare_model_name(tm
     session._resolver = _make_resolver({"terra": {"model": "gpt-5.6-terra"}})
     session._model_override = "terra"
 
-    engine = session._router_host._ensure_turn_budget_engine()  # must not raise
+    engine = session.router_host._ensure_turn_budget_engine()  # must not raise
     assert engine is not None

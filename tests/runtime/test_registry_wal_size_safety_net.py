@@ -177,7 +177,7 @@ def test_maybe_truncate_for_size_fires_when_wal_large(tmp_path: Path):
 
     async def go():
         # Inflate WAL above the small threshold (50 KB to keep test fast)
-        await _inflate_wal(registry._state_log, target_bytes=51_200)
+        await _inflate_wal(registry.state_log, target_bytes=51_200)
         result = await registry.maybe_truncate_for_size(threshold_bytes=50_000)
         assert result is not None, (
             "WAL size > threshold must trigger truncate"
@@ -202,7 +202,7 @@ def test_maybe_truncate_for_size_bypasses_throttle(tmp_path: Path):
         await registry.truncate_wal_if_eligible()
         ts1 = registry.last_truncation_ts
         # Inflate
-        await _inflate_wal(registry._state_log, target_bytes=51_200)
+        await _inflate_wal(registry.state_log, target_bytes=51_200)
         # Size-triggered call should proceed even within throttle window
         result = await registry.maybe_truncate_for_size(threshold_bytes=50_000)
         assert result is not None
@@ -231,14 +231,14 @@ def test_size_safety_net_protects_active_skill_events(tmp_path: Path):
     _seed_skill(registry, "alpha", "run_active", last_phase_applied_seq=50)
 
     async def go():
-        await _inflate_wal(registry._state_log, target_bytes=51_200)
+        await _inflate_wal(registry.state_log, target_bytes=51_200)
         # Size-triggered truncate
         result = await registry.maybe_truncate_for_size(threshold_bytes=50_000)
         assert result is not None, "expected size-triggered truncate to run"
-        await registry._state_log.flush()  # #2259 PR-2b: truncate is fire-and-forget
+        await registry.state_log.flush()  # #2259 PR-2b: truncate is fire-and-forget
         # Floor = min(10_000, 50) + 1 = 51. Events with seq < 51 dropped,
         # seq >= 51 kept (active skill protection).
-        events = list(registry._state_log.iter_from(0))
+        events = list(registry.state_log.iter_from(0))
         kept_seqs = [e["seq"] for e in events]
         assert kept_seqs, "expected some events to be kept"
         assert min(kept_seqs) >= 51, (
@@ -247,7 +247,7 @@ def test_size_safety_net_protects_active_skill_events(tmp_path: Path):
         # And events below the floor really were dropped (= we inflated way more
         # than 50 entries, so dropping below 51 must have removed dozens). #2259 PR-2b:
         # truncate is fire-and-forget, so read the stats from last_truncate_stats post-flush.
-        stats = registry._state_log.last_truncate_stats
+        stats = registry.state_log.last_truncate_stats
         assert stats["dropped"] > 0, (
             f"expected drops below floor; stats={stats}"
         )

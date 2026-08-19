@@ -98,7 +98,7 @@ def _op_ctx(tmp_path: Path, session: "Session | None") -> OpContext:
         events=EventLog(),
         permission_decl=PermissionDecl(),
         permission_resolver=None,
-        hot_reloader=(session._hot_reloader if session is not None else None),
+        hot_reloader=(session.hot_reloader if session is not None else None),
     )
 
 
@@ -124,12 +124,12 @@ def _write_pipeline(tmp_path: Path, filename: str, *, name: str, description: st
 
 
 def _skill_names(session: Session) -> list[str]:
-    skills = session._router_host.get_available_skills()
+    skills = session.router_host.get_available_skills()
     return [s.name for s in skills] if skills else []
 
 
 def _skill_desc(session: Session, name: str) -> "str | None":
-    for s in session._router_host.get_available_skills() or []:
+    for s in session.router_host.get_available_skills() or []:
         if s.name == name:
             return s.description
     return None
@@ -137,11 +137,11 @@ def _skill_desc(session: Session, name: str) -> "str | None":
 
 def _pipeline_names(session: Session) -> tuple[str, ...]:
     """Names in the LIVE pipeline registry (the one run_pipeline resolves against)."""
-    return session._router_host.get_pipeline_registry().names()
+    return session.router_host.get_pipeline_registry().names()
 
 
 def _pipeline_desc(session: Session, name: str) -> "str | None":
-    reg = session._router_host.get_pipeline_registry()
+    reg = session.router_host.get_pipeline_registry()
     return reg.get(name).description if name in reg.names() else None
 
 
@@ -434,7 +434,7 @@ async def test_skill_install_new_name_is_live_same_turn(
     )
     # The immediate path fully handled it — nothing was left pending for the turn
     # boundary (apply_pending is a no-op → None when nothing is scheduled).
-    residual = await session._hot_reloader.apply_pending()
+    residual = await session.hot_reloader.apply_pending()
     assert residual is None, (
         "the immediate addition path must not ALSO schedule a deferred reload"
     )
@@ -475,7 +475,7 @@ async def test_skill_install_same_name_overwrite_defers_but_lands(
 
     # It lands at the next turn boundary (the deferred turn-end apply) — proving the
     # overwrite scheduled the deferred path, and clobber-update still works.
-    await session._hot_reloader.apply_pending()
+    await session.hot_reloader.apply_pending()
     assert _skill_desc(session, "greet-skill") == "v2", (
         "the clobber-update must land at the turn boundary (applies next turn)"
     )
@@ -503,7 +503,7 @@ async def test_pipeline_install_new_name_is_resolvable_same_turn(
     assert "greet.greet" in _pipeline_names(session), (
         "a NEW pipeline must be resolvable the same turn (immediate mid-turn apply)"
     )
-    residual = await session._hot_reloader.apply_pending()
+    residual = await session.hot_reloader.apply_pending()
     assert residual is None, (
         "the immediate addition path must not ALSO schedule a deferred reload"
     )
@@ -540,7 +540,7 @@ async def test_pipeline_install_same_name_overwrite_defers_but_lands(
         "a same-name overwrite must NOT be applied mid-turn (deferred)"
     )
 
-    await session._hot_reloader.apply_pending()
+    await session.hot_reloader.apply_pending()
     assert _pipeline_desc(session, "greet.greet") == "v2", (
         "the clobber-update must land at the turn boundary (applies next turn)"
     )
@@ -559,7 +559,7 @@ async def test_skill_install_no_per_session_reloader_defers(
 
     monkeypatch.chdir(tmp_path)
     session = _make_session(tmp_path)
-    set_active_hot_reloader(session._hot_reloader)
+    set_active_hot_reloader(session.hot_reloader)
     try:
         skill_dir = _write_skill(tmp_path, "solo", name="solo-skill", description="v1")
         result = await skill_install_handle(
@@ -574,7 +574,7 @@ async def test_skill_install_no_per_session_reloader_defers(
         "with no per-session reloader the install must NOT apply mid-turn"
     )
     # It fell back to the deferred path — applying at the turn boundary makes it live.
-    await session._hot_reloader.apply_pending()
+    await session.hot_reloader.apply_pending()
     assert "solo-skill" in _skill_names(session), (
         "the deferred fallback lands the install at the turn boundary"
     )

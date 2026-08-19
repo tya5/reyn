@@ -92,14 +92,14 @@ def _simulate_deferred_commit(session: Session) -> None:
     construction, so patching the instance attribute after the fact would
     not be observed by the callback the adapter already holds.
     """
-    real_cb = session._router_host._append_history_cb
+    real_cb = session.router_host._append_history_cb
 
     def _drop_untrusted_tool_result(msg: Any) -> None:
         if msg.role == "tool" and (msg.meta or {}).get("external_source"):
             return
         real_cb(msg)
 
-    session._router_host._append_history_cb = _drop_untrusted_tool_result
+    session.router_host._append_history_cb = _drop_untrusted_tool_result
 
 
 @pytest.mark.asyncio
@@ -146,7 +146,7 @@ async def test_falsify_without_the_flag_the_same_window_is_open(tmp_path, monkey
     # Neutralize ONLY the flag-setting path — RouterHostAdapter.
     # mark_untrusted_in_flight forwards to this callback; a no-op leaves the
     # gate with nothing but the (deliberately blinded) history scan.
-    session._router_host._mark_untrusted_in_flight_cb = None
+    session.router_host._mark_untrusted_in_flight_cb = None
     monkeypatch.setattr(
         "reyn.runtime.router_loop.call_llm_tools",
         _scripted_llm([

@@ -150,7 +150,7 @@ def _phase5_install_decl(resolver: PermissionResolver) -> PermissionDecl:
     the registry response). Session-approves the file path so the
     ``require_file_write`` check passes without an interactive prompt.
     """
-    canonical_config = str(resolver._project_root / ".reyn" / "config" / "mcp.yaml")
+    canonical_config = str(resolver.project_root / ".reyn" / "config" / "mcp.yaml")
     resolver.session_approve_path(canonical_config, "mcp_install_test", "file.write")
     return PermissionDecl(
         file_write=[{"path": canonical_config, "scope": "just_path"}],
@@ -342,7 +342,7 @@ def test_save_secret_blocked_when_secret_write_not_declared(tmp_path, monkeypatc
     """
     monkeypatch.setattr("shutil.which", lambda _cmd: "/usr/bin/npx")
     resolver = _make_resolver(tmp_path)
-    canonical_config = str(resolver._project_root / ".reyn" / "config" / "mcp.yaml")
+    canonical_config = str(resolver.project_root / ".reyn" / "config" / "mcp.yaml")
     resolver.session_approve_path(canonical_config, "mcp_install_test", "file.write")
     decl = PermissionDecl(
         file_write=[{"path": canonical_config, "scope": "just_path"}],

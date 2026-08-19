@@ -56,7 +56,7 @@ def test_ep3_project_context_passes_through_unfenced(tmp_path):
     only the wrapping is gone (see the byte-identical-across-turns test
     below for why the wrapping itself was the defect)."""
     s = _make_session(tmp_path, project_context=_INJECTION)
-    out = s._router_host.get_project_context()
+    out = s.router_host.get_project_context()
     assert out == _INJECTION                    # passthrough, no fence markers
     assert "EXTERNAL_UNTRUSTED" not in out
 
@@ -64,7 +64,7 @@ def test_ep3_project_context_passes_through_unfenced(tmp_path):
 def test_ep3_empty_project_context_returns_empty(tmp_path):
     """Tier 3: empty project_context stays empty (no markers) — §6 skip-render."""
     s = _make_session(tmp_path, project_context="")
-    out = s._router_host.get_project_context()
+    out = s.router_host.get_project_context()
     assert out == ""
 
 
@@ -83,8 +83,8 @@ def test_ep3_project_context_repeated_calls_match(tmp_path):
     permission gate, not a per-turn marker.
     """
     s = _make_session(tmp_path, project_context="stable project context, unchanged between turns")
-    first = s._router_host.get_project_context()
-    second = s._router_host.get_project_context()
+    first = s.router_host.get_project_context()
+    second = s.router_host.get_project_context()
     assert first == second, (
         "project_context must be byte-identical across turns when the "
         f"underlying content hasn't changed: {first!r} != {second!r}"

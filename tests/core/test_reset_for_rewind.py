@@ -43,13 +43,13 @@ async def test_reset_for_rewind_then_restore_state_zero_residue(tmp_path):
 
     # ── populate pre-rewind live state (OLD markers) ──
     session.inbox.put_nowait(("user", {"text": "OLD"}))
-    await session._chains.register(
+    await session.chains.register(
         chain_id="OLD-chain", depth=0,
         original_text="old", sender=None,
     )
-    session._buffered_intervention_answers["OLD-run"] = InterventionAnswer(text="OLD")
+    session.buffered_intervention_answers["OLD-run"] = InterventionAnswer(text="OLD")
     old_iv = UserIntervention(kind="ask_user", prompt="OLD?")
-    session._interventions._stalled[old_iv.id] = old_iv
+    session.interventions._stalled[old_iv.id] = old_iv
     await asyncio.sleep(0)
 
     # ── reset, then adopt a reconstructed snapshot carrying only NEW state ──
@@ -60,7 +60,7 @@ async def test_reset_for_rewind_then_restore_state_zero_residue(tmp_path):
     session.restore_state(new_snap)
 
     # ── public views reflect ONLY the new snapshot — zero OLD residue ──
-    chain_ids = session._chains.all_chain_ids()
+    chain_ids = session.chains.all_chain_ids()
     assert chain_ids == []                                  # OLD-chain cleared
     assert session.list_stalled_interventions() == []       # OLD iv cleared
     assert session.buffered_intervention_answers == {}       # OLD buffered cleared
@@ -143,7 +143,7 @@ async def test_reset_for_rewind_is_idempotent_on_clean_session(tmp_path):
 
     await session.reset_for_rewind()  # nothing populated — must not raise
 
-    chain_ids = session._chains.all_chain_ids()
+    chain_ids = session.chains.all_chain_ids()
     assert chain_ids == []
     assert session.list_stalled_interventions() == []
     assert session.buffered_intervention_answers == {}

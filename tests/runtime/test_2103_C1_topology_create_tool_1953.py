@@ -111,7 +111,7 @@ async def test_create_topology_accepts_subtree_members_and_routes_through_emit_s
     assert res["status"] == "created"
     assert reg.get_topology("myteam") is not None  # persisted
     # routed through the emit seam → topology_created landed in the WAL
-    events = list(reg._state_log.iter_from(0))
+    events = list(reg.state_log.iter_from(0))
     assert any(e.get("kind") == "topology_created" for e in events)
 
 
@@ -138,7 +138,7 @@ async def test_create_topology_rejects_non_subtree_member(tmp_path):
     import pytest as _pytest
     with _pytest.raises(Exception):
         reg.get_topology("grab")
-    events = list(reg._state_log.iter_from(0))
+    events = list(reg.state_log.iter_from(0))
     assert not any(
         e.get("kind") == "topology_created" and e.get("name") == "grab" for e in events
     )

@@ -47,7 +47,7 @@ def _install_server_in_config(tmp_path: Path, name: str) -> None:
 
 
 def _server_names(session: Session) -> list[str]:
-    return [s["name"] for s in session._router_host.get_mcp_servers()]
+    return [s["name"] for s in session.router_host.get_mcp_servers()]
 
 
 @pytest.mark.asyncio
