@@ -266,7 +266,9 @@ async def test_operator_reload_still_runs_all_seams(tmp_path: Path) -> None:
 # trail, and get_active_hot_reloader() IS this session's own reloader
 # ===========================================================================
 #
-# Replaces tests/scaffold/test_family3_hook_event_bundle_byte_identical.py's
+# Replaces the scaffold file's (retired #4862 close-out — was tests/
+# scaffold/test_family3_hook_event_bundle_byte_identical.py, deleted once
+# every invariant it pinned had a permanent witness named)
 # test_hot_reloader_events_is_the_family_audit_events (invariant 5) and
 # test_get_active_hot_reloader_is_this_sessions_reloader (invariant 6),
 # which pinned both via private-attribute identity (a scaffold-only
@@ -346,7 +348,9 @@ def test_get_active_hot_reloader_is_this_sessions_reloader(
 # audit_events (family3 invariant 4)
 # ===========================================================================
 #
-# Replaces tests/scaffold/test_family3_hook_event_bundle_byte_identical.py's
+# Replaces the scaffold file's (retired #4862 close-out — was tests/
+# scaffold/test_family3_hook_event_bundle_byte_identical.py, deleted once
+# every invariant it pinned had a permanent witness named)
 # test_hook_bus_emit_event_reaches_family_audit_events, which reached
 # session._hook_bus directly (no public accessor exists on Session for it)
 # to publish() past a never-drained subscriber's queue. Rescued via effect:
