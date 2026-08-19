@@ -841,6 +841,15 @@ class TextualChatApp(App):
        presenter's deliberate ROW TINTS (``_CC_USER_BG`` / ``_CC_ERR_BG``) are
        unaffected — those are content, not ground. */
     App { background: @app-background@; }
+    /* #4840: this ``transparent`` is INTENTIONAL, not a #3503-era leftover
+       nobody re-checked — verified (not assumed) after #4875 made reyn's
+       own theme the default: Screen's own resolved background now shows
+       reyn's theme colour (`REYN_THEME.background`, `#1a1d23`), not any
+       terminal value, because "transparent" composites up to `App`'s own
+       `@app-background@` above — which itself resolves through the active
+       theme (#4871), never the terminal, since #4840's ruling. Nothing to
+       change here: the chain (`Screen` transparent -> `App`'s own
+       theme-resolved ground) is exactly what #4840 intends. */
     Screen { layout: vertical; background: transparent; }
     /* #3542: the drag-selection band. Until #4840's owner ruling this asked
        the terminal for one of its sixteen ANSI slots (`ansi_blue`, dropped
@@ -941,7 +950,17 @@ class TextualChatApp(App):
         /* #3503: ``TextArea``'s own DEFAULT_CSS sets ``background: $surface``
            (measured: it painted ``#1e1e1e`` while everything around it was
            transparent), so the input box needs its own opt-out — a transparent
-           Screen alone does not reach it. */
+           Screen alone does not reach it.
+
+           #4840: this ``transparent`` is INTENTIONAL, unaffected by that
+           ruling — verified, not assumed. The reason for it was never "defer
+           to the terminal" (that was Screen's role above); it is TextArea's
+           OWN widget-level default (`$surface`) fighting the ambient
+           transparency, a Textual-internal concern that holds regardless of
+           which theme supplies `$surface`'s value — reyn's own theme
+           resolves `$surface` to a concrete `#1e222a` (`REYN_THEME.surface`)
+           just as readily as any other theme would, so the opt-out is still
+           needed for the exact reason #3503 measured. */
         background: transparent;
     }
     /* The placeholder must read as an invitation, not as typed text. Textual's
