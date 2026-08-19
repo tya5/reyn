@@ -1,6 +1,19 @@
 """#4405: an opt-in, off-by-default diagnostic that dumps the process's
-Python stack to reyn's own log if a turn blocks longer than
+Python stack to reyn's own log if a bracketed span blocks longer than
 ``REYN_STALL_TRACE`` seconds.
+
+#3671 follow-up: two independent callers arm/disarm this — a turn
+(``Session._run_turn_body``, the original #4405 use) and the TUI startup
+path (``run_textual_chat``/``TextualChatApp.on_mount``, bracketing the
+same ``tui-boot`` span ``startup_timing.py`` already names). Only one
+timer exists process-wide (:func:`arm` re-points the SAME global
+``faulthandler`` timer — see its own docstring); the startup bracket
+disarms at first frame, structurally before an interactive TUI turn can
+begin (a turn needs the composer, which needs the app already mounted),
+so the two callers never hold an ARMED timer at the same moment on that
+path. An entrypoint that never runs the TUI startup sequence at all
+(headless/dogfood turns) simply never arms the startup bracket in the
+first place — no concurrency to reason about either way.
 
 Born out of #4403's investigation: four independent, real, measured
 hypotheses for an owner-reported ~20s per-message freeze were each

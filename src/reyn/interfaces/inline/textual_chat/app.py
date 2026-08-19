@@ -2230,6 +2230,17 @@ class TextualChatApp(App):
         from reyn.runtime.startup_timing import mark_first_frame  # noqa: PLC0415
 
         mark_first_frame()
+        # #3671 follow-up: this is the REAL disarm point for the
+        # REYN_STALL_TRACE bracket run_textual_chat() armed — reached
+        # exactly here (not run_textual_chat()'s own finally, which only
+        # fires if the app never reaches first frame at all) so the
+        # diagnostic's own "stopped watching" moment matches the timing
+        # report's own "startup clock stops here" moment above, letter for
+        # letter. disarm() is a no-op when nothing is armed (its own
+        # docstring), so this costs nothing when REYN_STALL_TRACE is unset.
+        from reyn.runtime.stall_trace import disarm as _disarm_stall_trace
+
+        _disarm_stall_trace()
         self.run_worker(self._pump_frames(), name="frames", exclusive=True)
         # #3539: started alongside the frame pump rather than earlier in this
         # method — the worker manager is what makes a coroutine here actually
@@ -6047,14 +6058,42 @@ async def run_textual_chat(
     # (``tui-boot:construct``/``:compose``/``:hydrate``/``:other``,
     # startup_timing.py's ``_TUI_BOOT_NAMED_STAGES``) rather than left as
     # one opaque bracket.
+    # #3671 follow-up: ``REYN_STALL_TRACE`` (#4405) previously only bracketed
+    # ONE turn (``Session._run_turn_body``) — the SAME "tui-boot:other is
+    # 78%, unexplained" span this whole issue is chasing had no diagnostic
+    # of its own. Armed at the EXACT point ``mark_app_constructed()`` starts
+    # measuring (not a moment before/after) so this bracket and the
+    # existing 4-stage tui-boot report describe the identical span —
+    # matching them to two different definitions of "startup" would make
+    # the owner's real-machine trace uninterpretable against the timing
+    # report it's meant to explain. Disarmed in TWO places, mirroring
+    # ``Session._run_turn_body``'s own arm-then-try/finally-disarm shape:
+    # the real, intended boundary is ``on_mount()``'s own
+    # ``mark_first_frame()`` call (the same "startup clock stops here"
+    # point that function's own docstring names) — reached this file's
+    # ``finally`` below only when the app exits or raises BEFORE ever
+    # reaching first frame, a safety net so the background timer never
+    # outlives this call regardless of which path it takes.
+    # ``disarm()`` is idempotent (its own docstring), so both firing on
+    # the ordinary path is harmless.
+    from reyn.runtime.stall_trace import arm as _arm_stall_trace
+    from reyn.runtime.stall_trace import disarm as _disarm_stall_trace
+    from reyn.runtime.stall_trace import stall_trace_seconds_from_env
     from reyn.runtime.startup_timing import mark_app_constructed, stage  # noqa: PLC0415
 
-    mark_app_constructed()
-    with stage("tui-boot:construct"):
-        app = TextualChatApp(
-            transport=transport,
-            read_model=read_model,
-            agent_name=agent_name,
-            config=config,
-        )
-    await app.run_async(inline=inline)
+    _stall_seconds = stall_trace_seconds_from_env()
+    if _stall_seconds is not None:
+        _arm_stall_trace(_stall_seconds)
+    try:
+        mark_app_constructed()
+        with stage("tui-boot:construct"):
+            app = TextualChatApp(
+                transport=transport,
+                read_model=read_model,
+                agent_name=agent_name,
+                config=config,
+            )
+        await app.run_async(inline=inline)
+    finally:
+        if _stall_seconds is not None:
+            _disarm_stall_trace()
