@@ -1553,7 +1553,10 @@ reading it is not the same claim as verifying their runtime. The same
 discriminator, quoted back at itself: "the classifier bites the
 *implementation*, not implementing to the *published spec*." Applied
 backwards, a real caution became an excuse to stop before the step that
-would have settled the question.
+would have settled the question. *The decision that caution produced may
+still be right on other grounds — the defect at issue closes from the
+receiving side alone, with post-parse validation and a bounded re-prompt.
+What failed was the reason offered for it, not necessarily the call.*
 
 This is adjacent to §24 (an inherited premise not observed) but not the
 same shape: §24 is about a *received question* silently deciding what gets
@@ -1584,6 +1587,20 @@ claim, but an ordinary research step available the whole time.
   the provider's own check is not itself a witness that anything calls it
   — confirm the call site, not just the declaration, before treating the
   gap as closed.
+- **Finishing ①–③ is not the same as the question being settled.** The
+  order above answers *mechanism* questions — does the contract exist, can
+  it be queried, is there a fallback. It does not answer *policy* questions,
+  and those can be the half that actually decides the design. In this same
+  case: the spec says structured output and streaming compose, and the repo
+  has both a capability query and a fallback — but ADR-0062 rules that when
+  a schema is set the silent fallback is **bypassed** and an unsupported
+  model raises. That is right for a pipeline step whose caller wants
+  structured data, and possibly wrong for a compaction backstop, where
+  raising means the context window never gets freed. No amount of reading
+  settles "raise or degrade" — it is a decision someone has to make and
+  write down. Read the spec *and* name which questions it left open;
+  stopping at "the spec answered it" is the same shape as stopping at
+  "I can't measure it," one step later.
 
 ## See also
 
