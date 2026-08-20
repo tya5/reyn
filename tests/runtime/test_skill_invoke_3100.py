@@ -31,7 +31,7 @@ from reyn.interfaces.skill_invoke import (
     substitute_arguments,
 )
 from reyn.runtime.session_params import CapabilityScope
-from tests._support.events import collect_events
+from tests._support.events import collect_events, settle
 
 # ── Axis 3: parsing / stacking ──────────────────────────────────────────────
 
@@ -408,6 +408,7 @@ async def test_session_skill_invoke_collision_is_loud(tmp_path):
 
     # (2) a real audit-event was emitted (P6 band member) — read through the
     # session's real EventLog, not a private queue.
+    await settle(session._audit_events)
     collision_events = [e for e in collected if e.type == "skill_invoke_collision"]
     assert collision_events, "expected a skill_invoke_collision audit-event to fire"
     assert all(e.data.get("name") == "shared" for e in collision_events)

@@ -54,7 +54,13 @@ from reyn.security.permissions.permissions import PermissionResolver
 from reyn.tools import get_default_registry
 from reyn.tools.dispatch import invoke_tool
 from reyn.tools.types import RouterCallerState, ToolContext
-from tests._support.events import collect_events
+from tests._support.events import collect_events, settle
+
+
+async def _run_and_settle(coro, log):
+    result = await coro
+    await settle(log)
+    return result
 
 
 def _resolver(tmp_path: Path) -> PermissionResolver:
@@ -132,8 +138,8 @@ def test_edit_file_emits_tool_executed_event(tmp_path, monkeypatch):
         events=events, permission_resolver=_resolver(tmp_path), workspace=ws,
         caller_kind="router", router_state=RouterCallerState(),
     )
-    asyncio.run(invoke_tool(get_default_registry(), "edit_file",
-                            {"path": "c.txt", "old_string": "one", "new_string": "1"}, ctx))
+    asyncio.run(_run_and_settle(invoke_tool(get_default_registry(), "edit_file",
+                            {"path": "c.txt", "old_string": "one", "new_string": "1"}, ctx), events))
     emitted = [e for e in collected if e.type == "tool_executed" and e.data.get("op") == "edit_file"]
     assert emitted, "tool_executed must fire after the offloaded edit, not be lost"
     assert emitted[0].data["replacements"] == 1
@@ -153,8 +159,8 @@ def test_edit_file_validation_error_does_not_emit(tmp_path, monkeypatch):
         events=events, permission_resolver=_resolver(tmp_path), workspace=ws,
         caller_kind="router", router_state=RouterCallerState(),
     )
-    result = asyncio.run(invoke_tool(get_default_registry(), "edit_file",
-                                     {"path": "d.txt", "old_string": "nope", "new_string": "x"}, ctx))
+    result = asyncio.run(_run_and_settle(invoke_tool(get_default_registry(), "edit_file",
+                                     {"path": "d.txt", "old_string": "nope", "new_string": "x"}, ctx), events))
     assert result["status"] == "error"
     assert not any(e.type == "tool_executed" for e in collected)
 

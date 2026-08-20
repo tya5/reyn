@@ -47,7 +47,7 @@ from reyn.runtime.session import Session
 from reyn.runtime.session_params import CapabilityScope
 from reyn.security.permissions.permissions import PermissionDecl
 from tests._support.agent_session import make_session
-from tests._support.events import collect_events
+from tests._support.events import collect_events, settle
 from tests._support.minimal_reyn_yaml import MINIMAL_REYN_YAML
 
 # ---------------------------------------------------------------------------
@@ -223,6 +223,7 @@ async def test_apply_now_rejects_malformed_in_set_atomically(tmp_path: Path) -> 
     hr.register_seam("skills", make_seam("skills"))
 
     summary = await hr.apply_now(source="skill_install")
+    await settle(events)
 
     assert "rejected" in summary
     assert ran == {}, "no seam may run when the IN-set is rejected"
@@ -240,6 +241,7 @@ async def test_apply_now_emits_config_reloaded_with_source(tmp_path: Path) -> No
     hr.register_seam("skills", make_seam("skills"))
 
     await hr.apply_now(source="skill_install")
+    await settle(events)
 
     sources = [e.data["source"] for e in collected if e.type == "config_reloaded"]
     assert sources == ["skill_install"]
@@ -298,6 +300,7 @@ async def test_session_hot_reloader_reload_reaches_session_audit_subscribers(
     session.subscribe_audit_events(lambda e: received.append(e.type))
 
     await session.hot_reloader.apply_all(exclude=frozenset())
+    await settle(session._audit_events)
 
     assert "config_reloaded" in received, (
         f"a reload through session.hot_reloader must reach a subscriber "
@@ -322,6 +325,7 @@ async def test_strip_falsify_hot_reloader_audit_wiring_is_live(
 
     poisoned = HotReloader(project_root=tmp_path, events=EventLog())
     await poisoned.apply_all(exclude=frozenset())
+    await settle(session._audit_events)
 
     assert "config_reloaded" not in received, (
         "a reload on an INDEPENDENT HotReloader must not reach this "
@@ -390,6 +394,7 @@ async def test_hook_bus_emit_event_reaches_session_audit_events(
             await session.dispatch_external_event("turn_end", {"i": i})
     finally:
         sub.close()
+    await settle(session._audit_events)
 
     assert "bus_subscriber_dropped" in received, (
         f"a hook_bus subscriber-queue overflow must reach a subscriber "
@@ -413,6 +418,7 @@ async def test_strip_falsify_hook_bus_overflow_needs_a_live_subscriber(
 
     for i in range(200):
         await session.dispatch_external_event("turn_end", {"i": i})
+    await settle(session._audit_events)
 
     assert "bus_subscriber_dropped" not in received, (
         "no subscriber was ever attached to hook_bus, so nothing should "

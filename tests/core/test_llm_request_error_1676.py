@@ -21,7 +21,7 @@ import pytest
 
 from reyn.core.events.events import EventLog, set_llm_request_event_log
 from reyn.llm.llm import recorded_acompletion
-from tests._support.events import collect_events
+from tests._support.events import collect_events, settle
 
 
 class _FakeProviderError(Exception):
@@ -46,18 +46,26 @@ def _raising_acompletion(message="Boom", status_code=405, body=None, response_te
     return _fn
 
 
-def _call(monkeypatch, **extra_kwargs):
+async def _run_and_settle(coro, log):
+    try:
+        return await coro
+    finally:
+        await settle(log)
+
+
+def _call(monkeypatch, log=None, **extra_kwargs):
     monkeypatch.delenv("OPENAI_API_BASE", raising=False)
-    return asyncio.run(
-        recorded_acompletion(
-            model="gpt-5.4",
-            messages=[{"role": "user", "content": "hi"}],
-            purpose="main",
-            model_class=None,  # #4206 T1: not subject to the axis (pre-existing call)
-            recorder=None,
-            extra_kwargs=extra_kwargs,
-        )
+    coro = recorded_acompletion(
+        model="gpt-5.4",
+        messages=[{"role": "user", "content": "hi"}],
+        purpose="main",
+        model_class=None,  # #4206 T1: not subject to the axis (pre-existing call)
+        recorder=None,
+        extra_kwargs=extra_kwargs,
     )
+    if log is not None:
+        coro = _run_and_settle(coro, log)
+    return asyncio.run(coro)
 
 
 # ── the event fires with full detail + the exception still propagates ───────────
@@ -78,7 +86,7 @@ def test_error_event_emitted_and_reraised(monkeypatch) -> None:
     set_llm_request_event_log(log)
 
     with pytest.raises(_FakeProviderError):
-        _call(monkeypatch, temperature=0.5)
+        _call(monkeypatch, log=log, temperature=0.5)
 
     # Exactly one llm_request_error (unpack-enforcement).
     (err,) = [e for e in collected if e.type == "llm_request_error"]
@@ -106,7 +114,7 @@ def test_error_body_not_truncated(monkeypatch) -> None:
     set_llm_request_event_log(log)
 
     with pytest.raises(_FakeProviderError):
-        _call(monkeypatch)
+        _call(monkeypatch, log=log)
 
     (err,) = [e for e in collected if e.type == "llm_request_error"]
     # Exact equality proves the whole body survived (no truncation).

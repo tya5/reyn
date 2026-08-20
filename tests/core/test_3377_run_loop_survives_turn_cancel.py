@@ -38,7 +38,7 @@ import pytest
 from reyn.core.events.state_log import StateLog
 from reyn.runtime.session import Session
 from tests._support.agent_session import make_session
-from tests._support.events import collect_events
+from tests._support.events import collect_events, settle
 
 AGENT = "cancel-survival-agent"
 
@@ -228,6 +228,7 @@ async def test_cancelling_the_session_still_stops_the_loop_and_records_it(
 
         run_task.cancel()
         await asyncio.gather(run_task, return_exceptions=True)
+        await settle(session._audit_events)
 
         assert run_task.done(), "a cancel aimed at the session must stop the loop"
         assert session.halted_reason == "cancelled", (

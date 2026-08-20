@@ -1,16 +1,26 @@
 from __future__ import annotations
 
+import asyncio
 import contextvars
+import inspect
 import logging
 import secrets
 from datetime import date
 from pathlib import Path
-from typing import Callable
+from typing import Awaitable, Callable, Union
 
 from reyn.core.events.backend import EventBackend
 from reyn.schemas.models import Event
 
 logger = logging.getLogger(__name__)
+
+# #4961 C: a subscriber may be sync (the pre-existing shape — AG-UI's
+# put_nowait-based forwarder, the OTEL exporter) or async (A2A/MCP's own
+# ``ensure_future``-wrapped callbacks stay unchanged, but the dispatch
+# consumer itself can now genuinely `await` a subscriber that IS a
+# coroutine function). See `_dispatch_consumer`'s own docstring for how
+# this is detected.
+Subscriber = Callable[[Event], Union[None, Awaitable[None]]]
 
 
 # #1669: session-scoped ambient EventLog for the single LLM acompletion chokepoint.
@@ -45,13 +55,14 @@ def get_llm_request_event_log() -> "EventLog | None":
 class EventLog:
     def __init__(
         self,
-        subscribers: list[Callable[[Event], None]] | None = None,
+        subscribers: list[Subscriber] | None = None,
         *,
         agent_id: str | None = None,
         run_id: str | None = None,
         emitter: str | None = None,
         track_audit_seq: bool = True,
         backend: "EventBackend | None" = None,
+        _force_inline: bool = False,
     ) -> None:
         # #3868 PR-1: a folded derived state for `present`'s "was this ref
         # already read this session?" question (source.py's compute_ingested),
@@ -68,7 +79,7 @@ class EventLog:
         # gone — `all()`/`to_json()` (its only readers) retired in PR-2's
         # collect_events() migration first.
         self._ingested: dict[str, str] = {}
-        self._subscribers: list[Callable[[Event], None]] = list(subscribers or [])
+        self._subscribers: list[Subscriber] = list(subscribers or [])
         # FP-0016 Component E: agent_id is auto-injected into every event
         # payload when set. None preserves prior behaviour for callers
         # (= tests + emit_cli_event) that don't have a session identity.
@@ -117,10 +128,82 @@ class EventLog:
         # (no write side at all — callers that want persistence add an
         # EventStore as a plain subscriber, same as before this PR).
         self._backend = backend
+        # #4961 C (owner-ruled, architect + lead-coder design): a HANDOFF,
+        # not a buffer — no upper bound, no drop policy, no blocking put.
+        # `emit()` (sync, a hot path — every op, every tool call) can never
+        # `await`. When a running loop exists, `emit()` pushes here and the
+        # subscriber loop runs on the queue's CONSUMER side (`_dispatch_
+        # consumer`) instead of inline — this is what isolates a raising OR
+        # slow subscriber from `emit()`'s caller (an op/tool's own
+        # execution path). Real backpressure for a genuinely slow
+        # subscriber lives at THAT subscriber's own sink (a socket, a
+        # file) — never here: this queue only grows during a stretch where
+        # one task keeps emitting without ever `await`-ing anything else
+        # (cooperative scheduling hands control to the consumer the moment
+        # the producer yields); constant growth is a signal a subscriber
+        # itself is stuck, observed at THAT layer, not solved by inventing
+        # a bound on this handoff.
+        #
+        # #4966 (architect ruling, reversing an earlier "always push
+        # unconditionally" design): when NO running loop exists, `emit()`
+        # dispatches INLINE instead — see `emit()`'s own comment for why.
+        # This queue and its consumer task are simply unused in that case.
+        self._dispatch_queue: "asyncio.Queue[Event]" = asyncio.Queue()
+        self._consumer_task: "asyncio.Task[None] | None" = None
+        # #4966 (architect ruling — a DIFFERENT concern from the queue-vs-
+        # inline invariant above, not another instance of it): that
+        # invariant is about whether async delivery CAN happen (loop
+        # present/absent, consumer cancelled) — the mechanism itself can
+        # judge that. This flag is about whether anyone OWNS this
+        # EventLog well enough to ever call `drain()`/`stop_dispatch()` on
+        # it — construction-time information the mechanism cannot infer
+        # (an owner can appear later; guessing "unowned" and dispatching
+        # async anyway fails SILENTLY when the guess is wrong, the exact
+        # shape this arc kept re-finding). So this is a declaration, not
+        # an inference — and a private, single-purpose one: NOT a public
+        # constructor parameter (that would let any caller re-introduce
+        # the queue/consumer coupling #4961 C was built to remove).
+        # Bounded to exactly ONE legitimate call site, `emit_cli_event`'s
+        # own one-off, no-continuity EventLog (see its construction site)
+        # — enforced by a test that enumerates every `_force_inline=True`
+        # call site and fails if a second one ever appears, not a gate
+        # (one site is a single fact a test can pin, not a population a
+        # gate needs to sweep for).
+        #
+        # Without it: `emit_cli_event`'s throwaway EventLog never gets
+        # `drain()`/`stop_dispatch()` (nothing holds a reference after its
+        # one `emit()` call returns), so if a loop happened to be running
+        # around that call site, its spawned consumer task would be
+        # silently abandoned — and when the loop eventually tears down,
+        # asyncio reports the abandoned task as a SECOND, spurious "Task
+        # was destroyed but it is pending!" unhandled-exception context,
+        # alongside whatever real exception a caller's own diagnostics
+        # were trying to witness (found via CI:
+        # test_durable_capture_survives_prompt_toolkit_prompt_wait).
+        self._force_inline = _force_inline
 
     @property
-    def subscribers(self) -> list[Callable[[Event], None]]:
-        return self._subscribers
+    def subscribers(self) -> list[Subscriber]:
+        """A read-only SNAPSHOT of the current subscriber list.
+
+        #4966 (lead-coder finding): returns a copy, not ``self._subscribers``
+        itself — this property used to return the LIVE list, meaning
+        ``log.subscribers.append(fn)`` was a THIRD, undocumented way to
+        become a subscriber (alongside the two intended ones,
+        ``add_subscriber()`` and the ``subscribers=[...]`` constructor
+        argument), bypassing whatever bookkeeping either of those two
+        might someday need to do. Measured to have zero current callers
+        of that pattern, so closing it here breaks nothing — after this,
+        ``add_subscriber()``/the constructor argument are the ONLY two
+        ways in, making the population of "how does something become a
+        subscriber" closed by construction rather than an open set a
+        future census has to keep re-discovering.
+
+        A plain ``list(...)`` copy, not a ``tuple`` — existing callers
+        compare this against a list literal (``assert log.subscribers ==
+        [collected.append]``), and ``list == tuple`` is always ``False``
+        in Python regardless of contents."""
+        return list(self._subscribers)
 
     @property
     def ingested_path_count(self) -> int:
@@ -166,8 +249,146 @@ class EventLog:
         without reaching into private state."""
         return self._emitter
 
-    def add_subscriber(self, fn: Callable[[Event], None]) -> None:
+    def add_subscriber(self, fn: Subscriber) -> None:
         self._subscribers.append(fn)
+
+    async def drain(self) -> None:
+        """#4961 C (architect finding): wait until every event pushed to
+        the dispatch queue so far has been FULLY processed — not merely
+        "the queue is currently empty" (a bare `await asyncio.sleep(0)`
+        yields exactly once, which is only enough if at most one event
+        was pending; N pending events need N yields, so a fixed single
+        yield is a coincidental pass, not a guarantee).
+
+        This closes a REAL production gap, not just a test-determinism
+        one: an event emitted right before a process/session actually
+        exits (e.g. `session_completed`, emitted at the tail of
+        `Session.run()`'s own `finally` block) has no subscriber-visible
+        effect unless something awaits the consumer catching up before
+        the process is gone — a caller that cares about "did the LAST
+        event actually reach transports/OTEL" must await this. Session's
+        own shutdown path awaits it for exactly this reason (see
+        `Session.run()`'s own comment at its call site).
+
+        Implemented via ``asyncio.Queue.join()`` (waits until
+        ``task_done()`` has been called for every item ``put()`` so
+        far) — deterministic regardless of how many events are queued,
+        and does not depend on `_dispatch_consumer` having started yet
+        (if it hasn't — no loop was ever running — the queue is empty
+        by construction, since ``emit()`` unconditionally pushes there
+        first; ``join()`` returns immediately).
+
+        #4965 (measured, not guessed): ``Queue.join()`` alone is only
+        safe while the consumer OUTLIVES this wait. It does not — the
+        caller that calls ``drain()`` from ITS OWN shutdown path (e.g.
+        `Session.run()`'s own `finally`) can be reached by a generic,
+        uncontrolled task-cancellation sweep (`asyncio.run()`'s /
+        pytest-asyncio's own end-of-loop `_cancel_all_tasks`) that
+        cancels EVERY pending task up front, including this EventLog's
+        own `_consumer_task`, before `gather()`-ing them. The caller's
+        own coroutine absorbs its first delivered cancellation at
+        whatever earlier await it was suspended at and does not see a
+        second one on a LATER await inside the same `finally` — so by
+        the time it reaches `drain()`, the consumer may already be
+        dead, and nothing will ever call `task_done()` again:
+        `Queue.join()` would then hang forever. Confirmed directly (a
+        bounded per-task cancel probe against
+        `test_pipeline_is2_driver_session.py`'s leftover tasks) — this
+        is not a hypothetical race.
+
+        So this races the queue-join against the consumer task itself:
+        if the consumer ends (cancelled, or any other reason) before
+        the queue finishes draining, stop waiting on `join()` — it can
+        no longer complete — and report what was left undelivered
+        rather than hang OR silently pretend everything was flushed.
+        """
+        self._ensure_consumer_started()
+        consumer = self._consumer_task
+        join_future = asyncio.ensure_future(self._dispatch_queue.join())
+        if consumer is None:
+            # No running loop was ever available to start a consumer —
+            # nothing will ever pull from the queue via that path, but
+            # `_ensure_consumer_started` swallowing RuntimeError means we
+            # are not inside a running loop either, so `drain()` itself
+            # could not have been awaited here. Kept for defensive
+            # symmetry with `_ensure_consumer_started`'s own contract.
+            await join_future
+            return
+        done, _ = await asyncio.wait(
+            {join_future, consumer}, return_when=asyncio.FIRST_COMPLETED
+        )
+        if join_future in done:
+            return
+        # The consumer ended first — draining can never complete now.
+        # Stop waiting on the now-orphaned join() rather than hang.
+        join_future.cancel()
+        try:
+            await join_future
+        except asyncio.CancelledError:
+            pass
+        remaining = self._dispatch_queue.qsize()
+        if remaining:
+            logger.warning(
+                "EventLog.drain(): consumer task ended (cancelled or "
+                "otherwise) before the dispatch queue finished draining "
+                "— %d event(s) (emitter=%s) were never delivered to live "
+                "subscribers (transport/OTEL). The audit record itself is "
+                "NOT lost: emit() writes to `self._backend` (.reyn/events) "
+                "before ever queueing for dispatch, so these %d event(s) "
+                "are already durably recorded — only live delivery was "
+                "skipped.",
+                remaining, self._emitter, remaining,
+            )
+
+    async def stop_dispatch(self) -> None:
+        """#4961 C (architect ruling): the stop half of the start/stop
+        pair — whoever's code path started the consumer (via `emit()` or
+        `drain()`) also has a way to STOP it, deterministically, rather
+        than leaving an unbounded `while True` task for something ELSE
+        to eventually clean up.
+
+        Call ``drain()`` BEFORE this — draining flushes everything
+        already queued; stopping after ensures nothing new can be queued
+        without a consumer to pick it up. The pair must run in THIS
+        order (drain, then stop) and must complete before whatever owns
+        this EventLog's lifetime hands control to a generic task-
+        cancelling shutdown path (e.g. `asyncio.run()`'s / pytest-
+        asyncio's own end-of-loop `_cancel_all_tasks`) — that path is
+        outside our control and gathers EVERY still-pending task with no
+        ordering guarantee, so anything that depended on THIS consumer
+        having delivered an event first (a caller that used to observe
+        synchronous dispatch, pre-#4961 C) can hang waiting for a
+        delivery that will now never happen once the consumer is
+        cancelled out from under it. Closing explicitly, in the owner's
+        own code, before that point is the only way to avoid landing
+        there at all.
+
+        No-op if the consumer was never started (nothing to stop).
+
+        #4966 (architect finding): "stop" here is NOT "never again" — a
+        LATER `emit()`/`drain()` call on this same EventLog (e.g. a fresh
+        `asyncio.run()` reusing an instance that outlived the loop this
+        consumer was stopped on) spawns a NEW consumer task the normal
+        way (`_ensure_consumer_started`), same as if none had ever run.
+        This is not a gap in what stopping promises: the guarantee is
+        "nothing accumulates without a consumer to pick it up", not "this
+        instance never dispatches again" — a later `emit()` getting a
+        fresh consumer satisfies that guarantee just as well as the first
+        one did. Documented here because the shape reads, out of context,
+        like a task that should have stayed stopped came back — it did
+        not come back; it is a different task, started by the same
+        idempotent bootstrap every `emit()`/`drain()` call already goes
+        through.
+        """
+        if self._consumer_task is None:
+            return
+        task = self._consumer_task
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+        self._consumer_task = None
 
     def set_backend(self, backend: "EventBackend | None") -> None:
         """Swap the WRITE-side backend (#4496 PR-2) — e.g. re-pointing to a
@@ -178,7 +399,7 @@ class EventLog:
         simply dropped, no explicit "remove" step needed."""
         self._backend = backend
 
-    def remove_subscriber(self, fn: Callable[[Event], None]) -> bool:
+    def remove_subscriber(self, fn: Subscriber) -> bool:
         """Detach a previously added subscriber.
 
         Returns True iff the subscriber was found and removed. Used by
@@ -253,31 +474,243 @@ class EventLog:
                     "continuing to subscriber dispatch",
                     self._emitter, type,
                 )
-        # #4961 A: per-subscriber isolation. Before this, a raising
-        # subscriber aborted the WHOLE loop — every LATER subscriber in
-        # ``self._subscribers`` (registration order) was silently skipped,
-        # and the exception propagated all the way to `emit()`'s own
-        # caller (an op/tool's execution path). Registration order is not
-        # under this method's control, and transport forwarders (AG-UI,
-        # A2A, MCP) share this exact list with the OTEL exporter
-        # (session.py) — a raising transport could silently blind
-        # observability with no exception anywhere to notice by (#4961's
-        # own "silent" framing). Failure is logged, never swallowed —
-        # same posture ``self._backend.write`` above already takes for its
-        # own failure, and NOT a change to registration semantics
-        # (``add_subscriber`` stays synchronous — #3310 N3(a)'s barrier
-        # ordering is untouched; this is purely a dispatch-loop isolation,
-        # per-subscriber, sequential and in the SAME order as before).
+        # #4966 (architect ruling, reversing #4961 C's original "always
+        # push unconditionally" design): branch on whether a running loop
+        # exists RIGHT NOW. Loop present → hand off to the dispatch queue
+        # (unchanged #4961 C design: isolates emit()'s caller from a
+        # raising OR slow subscriber). No loop → dispatch INLINE, right
+        # here, synchronously.
+        #
+        # The original design swallowed `RuntimeError` from
+        # `asyncio.ensure_future` in a no-loop context and just queued the
+        # event, on the reasoning that "no loop ever runs" implies "no
+        # loop-dependent subscriber (transport/OTEL) was ever going to
+        # fire anyway." That reasoning is what architect found wrong: it
+        # protected "dispatch timing is predictable" (queue vs inline) by
+        # sacrificing "dispatch HAPPENING is predictable" — a no-loop
+        # caller's subscribers (however many, sync-only by construction
+        # since nothing here can await them) silently NEVER fired, not
+        # merely later. That is a correctness regression for any
+        # subscriber added in a no-loop context — not just the known CLI
+        # edge, but also every fully-synchronous test that predates
+        # #4961 C and used to observe inline, same-call dispatch.
+        #
+        # The inline branch reuses #4963's own per-subscriber isolation
+        # unchanged (try/except per subscriber, one failure never blocks
+        # the next) — the property that must hold ("delivery happens",
+        # "one failure doesn't cascade", "a subscriber's own exception
+        # never reaches emit()'s caller") holds identically in both
+        # branches. The only difference between the branches is WHEN
+        # dispatch happens, and a no-loop context has no op/tool caller to
+        # protect from a slow subscriber and no transport to hand off to
+        # asynchronously — so that difference carries no meaning there.
+        if self._force_inline:
+            self._dispatch_inline(event)
+            return event
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            self._dispatch_inline(event)
+        else:
+            # #4966 (found via CI): `_ensure_consumer_started()` must run
+            # BEFORE `put_nowait`, not after — it may need to replace
+            # `_dispatch_queue` itself with a fresh one (see that method's
+            # own docstring for why a stale consumer implies a stale
+            # queue too, both bound to the same dead loop). Putting into
+            # the OLD queue first and only then discovering it needs
+            # replacing would silently drop that event.
+            self._ensure_consumer_started()
+            self._dispatch_queue.put_nowait(event)
+        return event
+
+    def _dispatch_inline(self, event: Event) -> None:
+        """#4966: the no-running-loop half of `emit()`'s dispatch branch —
+        run the per-subscriber loop synchronously, right here, instead of
+        queueing for `_dispatch_consumer`. Mirrors #4963's per-subscriber
+        isolation exactly (a raising subscriber is logged and does not
+        stop the next one) — see `_dispatch_consumer`'s own docstring for
+        the twin implementation this must stay in sync with.
+
+        A subscriber that returns an awaitable (an async subscriber)
+        cannot be awaited here — there is no running loop to await it on.
+        Logged as a warning rather than silently dropped or raised: this
+        is a real, disclosed gap (that subscriber's async work does not
+        run for this event), not a crash and not a silent loss — every
+        no-loop subscriber observed in this codebase so far (CLI's
+        EventStore, AG-UI's put_nowait forwarder) is sync-only by
+        construction, so this path is not expected to fire in practice.
+        """
         for sub in self._subscribers:
             try:
-                sub(event)
+                result = sub(event)
+                if inspect.isawaitable(result):
+                    logger.warning(
+                        "event subscriber %r returned an awaitable but "
+                        "emit() is dispatching inline (no running event "
+                        "loop) — cannot await it here; that subscriber's "
+                        "async work will not run for this event "
+                        "(emitter=%s type=%s)",
+                        sub, self._emitter, event.type,
+                    )
             except Exception:
                 logger.exception(
                     "event subscriber failed (emitter=%s type=%s) — "
                     "continuing to the next subscriber",
-                    self._emitter, type,
+                    self._emitter, event.type,
                 )
-        return event
+
+    def _ensure_consumer_started(self) -> None:
+        """Idempotent bootstrap shared by ``emit()`` and ``drain()`` — only
+        the FIRST successful call spawns ``_dispatch_consumer``; every
+        later call sees ``_consumer_task`` already set and no-ops.
+
+        #4966: no longer swallows ``RuntimeError`` — both call sites now
+        only reach this method when a running loop is already confirmed
+        (``emit()``'s own branch checks first; ``drain()`` is itself
+        ``async def``, so a caller can only reach it from inside a
+        running loop). ``asyncio.ensure_future`` is therefore expected to
+        always succeed here; swallowing its ``RuntimeError`` used to be
+        the source of a no-loop caller's events silently never being
+        dispatched (see ``emit()``'s own comment on the branch this
+        replaced).
+
+        #4966 (found via CI, mechanism ruling — this is a DIFFERENT
+        question from ``_force_inline``'s, and answered the opposite way
+        deliberately): a caller can drive the SAME EventLog through
+        multiple, SEPARATE ``asyncio.run()`` calls (each opening and
+        closing its own loop). ``_consumer_task`` only resets to ``None``
+        inside ``stop_dispatch()`` — nothing calls that between one
+        ``asyncio.run()`` and the next, so after the first loop closes,
+        ``self._consumer_task`` still holds a reference to a task bound
+        to a now-DEAD loop. A bare ``is None`` check treats that stale
+        reference as "already running" and never spawns a fresh consumer
+        for the second loop — events emitted there queue forever with
+        nobody draining them (found via CI:
+        test_catalog_search_actions_emits_complete_on_query_failure,
+        which drives 4 separate ``asyncio.run()`` calls through one
+        EventLog).
+
+        Unlike ``_force_inline`` (a declaration, because "will an owner
+        ever appear" is unknowable at construction time — see its own
+        comment), "is the existing consumer task still alive on a live
+        loop" IS knowable by asking: ``task.done()`` is true once a task
+        has finished (including via cancellation), and a task whose own
+        loop has closed can never make further progress regardless of
+        ``done()``'s current value. Respawn whenever the existing
+        reference is stale by either measure — the mechanism can judge
+        this because it queries a fact, not because it guesses one.
+
+        A stale consumer implies a stale ``_dispatch_queue`` too:
+        ``asyncio.Queue`` binds to whichever loop first calls one of its
+        async methods (``.get()``), and raises ``RuntimeError: ... is
+        bound to a different event loop`` if a later call arrives from a
+        DIFFERENT running loop — exactly what a fresh consumer's first
+        ``await self._dispatch_queue.get()`` would hit if the queue
+        itself weren't also replaced here. Discarding whatever was
+        already queued at staleness-detection time is not new loss on
+        top of what already happened: WHEN the old consumer ended via
+        cancellation (the common shutdown path — its loop's own teardown
+        cancelling it), its own ``CancelledError`` handler already
+        flushed whatever was pending before that loop closed (the same
+        inline flush ``_dispatch_consumer``'s own docstring describes).
+        If instead it ended via an uncaught exception escaping ``get()``/
+        ``task_done()`` (outside the per-subscriber ``try/except``,
+        which only isolates a SUBSCRIBER's own failure) — a rare,
+        near-unreachable path — that flush does not run and whatever was
+        still queued IS lost at that point, before this method ever
+        runs. Either way, only LIVE subscriber notification is at risk
+        here: ``self._backend.write`` in ``emit()`` already ran, before
+        the queue push, for every one of those events — the durable
+        audit record is intact regardless of which exit path the old
+        consumer took.
+        """
+        task = self._consumer_task
+        if task is None or task.done() or task.get_loop().is_closed():
+            self._dispatch_queue = asyncio.Queue()
+            self._consumer_task = asyncio.ensure_future(self._dispatch_consumer())
+
+    async def _dispatch_consumer(self) -> None:
+        """#4961 C: runs for the lifetime of the process's event loop,
+        draining ``_dispatch_queue`` and dispatching each event to
+        ``self._subscribers`` — the subscriber loop moved OFF of `emit()`'s
+        synchronous caller and onto here.
+
+        Per-subscriber isolation (#4961 A) is preserved unchanged: a
+        raising subscriber is logged and does not stop the next one.
+        Iterates the LIVE ``self._subscribers`` list (not a snapshot) —
+        same semantics `emit()`'s own inline loop always had; a subscriber
+        added mid-drain is picked up by the loop's next iteration of
+        ``for sub in self._subscribers``, same as it always could be.
+
+        A subscriber may be sync (``Subscriber``, e.g. AG-UI's
+        ``put_nowait``-based forwarder or the OTEL exporter) or async
+        (``Callable[[Event], Awaitable[None]]``). Detected by calling it
+        and checking whether the RESULT is awaitable
+        (``inspect.isawaitable``, not ``inspect.iscoroutinefunction`` on
+        the callable itself — architect finding: the callable-level check
+        misses a ``functools.partial``, a callable object's ``__call__``,
+        or a decorator-wrapped function, all of which can report
+        non-coroutine while still returning an awaitable when called).
+
+        #4966 (architect ruling, a SECOND application of the same
+        invariant ``emit()``'s own no-loop branch already applies): the
+        dispatch queue is an optimization for when delivery CAN happen
+        asynchronously — never the CONDITION for delivery happening at
+        all. ``emit()`` already applies this when no loop exists yet (at
+        emit time); this task's own ``CancelledError`` handler applies it
+        a second time when the loop is ENDING (at dispatch time) — a
+        caller wrapped in ``asyncio.run(coro)`` closes the loop the
+        moment ``coro`` returns, and that shutdown cancels every still-
+        running task (this one included) BEFORE gathering them; without
+        this handler, whatever is still queued at that instant is lost
+        forever, not merely delayed — the same "permanent, not delayed"
+        failure class #4965 named for ``drain()`` itself, but on the
+        OPPOSITE side (this consumer dying, not ``drain()``'s own wait
+        being orphaned — the two are complementary, not overlapping,
+        fixes). On ``CancelledError``, whatever remains in the queue is
+        flushed SYNCHRONOUSLY (via ``_dispatch_inline``, reusing #4963's
+        per-subscriber isolation unchanged) before re-raising to let
+        cancellation actually propagate — this closes the "loop closes ->
+        consumer dies before draining" class identically regardless of
+        WHO cancelled (``asyncio.run()``'s own teardown, pytest-asyncio's
+        ``_cancel_all_tasks``, or this class's own ``stop_dispatch()``),
+        with no test-level ``settle()`` call needed for this specific
+        class — see #4966's PR body for the ①②③ split this closes ③ of.
+
+        Constraint: this flush path can only run subscribers SYNCHRONOUSLY
+        (no running loop survives long enough after cancellation to await
+        an async subscriber's result here) — every subscriber in this
+        codebase today is sync-only by construction (A2A/MCP's own
+        callbacks return immediately via their own ``ensure_future``), so
+        this is not a current gap, but it IS a real constraint on any
+        FUTURE async subscriber: its async work will not run for an event
+        flushed on this path. If that ever matters, this is the place to
+        revisit, not `_dispatch_inline`'s own identical constraint (kept
+        in sync with it deliberately — see that method's own docstring).
+        """
+        try:
+            while True:
+                event = await self._dispatch_queue.get()
+                try:
+                    for sub in self._subscribers:
+                        try:
+                            result = sub(event)
+                            if inspect.isawaitable(result):
+                                await result
+                        except Exception:
+                            logger.exception(
+                                "event subscriber failed (emitter=%s type=%s) — "
+                                "continuing to the next subscriber",
+                                self._emitter, event.type,
+                            )
+                finally:
+                    self._dispatch_queue.task_done()
+        except asyncio.CancelledError:
+            while not self._dispatch_queue.empty():
+                pending_event = self._dispatch_queue.get_nowait()
+                self._dispatch_inline(pending_event)
+                self._dispatch_queue.task_done()
+            raise
 
     def flush_agent_delta(self, chain_id: str) -> None:
         """#4960 — the terminal-flush half of the ``agent_delta`` durability
@@ -390,5 +823,26 @@ def emit_cli_event(kind: str, **payload) -> None:
     # legible label (not a random per-instance token — nothing needs to
     # distinguish one CLI invocation's emitter from another's, since
     # neither carries a sequence to compare).
-    event_log = EventLog(subscribers=[store], emitter="cli", track_audit_seq=False)
+    # #4966 (architect ruling, found via CI): this EventLog has no owner
+    # who will ever call `drain()`/`stop_dispatch()` on it — the function
+    # returns right after the one `emit()` call, nothing holds a
+    # reference afterward. `_force_inline=True` declares that explicitly
+    # rather than letting the mechanism GUESS it from "no loop is running"
+    # (a guess that fails silently the moment a loop DOES happen to be
+    # running around this call site, e.g. `emit_cli_event` invoked
+    # synchronously from inside an async caller). This is the ONE
+    # sanctioned call site for `_force_inline` — see `EventLog.__init__`'s
+    # own docstring for why it stays private and single-site, and the
+    # bounding test that enforces exactly that.
+    # Without it: a spawned-but-never-drained consumer task gets silently
+    # abandoned, and when the loop eventually tears down, asyncio reports
+    # it as its OWN "Task was destroyed but it is pending!" unhandled-
+    # exception context — a SECOND, spurious `asyncio_unhandled_exception`
+    # durably captured alongside whatever real exception the caller's own
+    # diagnostics were trying to witness (found via
+    # test_durable_capture_survives_prompt_toolkit_prompt_wait's own
+    # `[event] = events` unpack going from 1 to 2 elements).
+    event_log = EventLog(
+        subscribers=[store], emitter="cli", track_audit_seq=False, _force_inline=True,
+    )
     event_log.emit(kind, **payload)

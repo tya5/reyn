@@ -44,7 +44,7 @@ from reyn.user_intervention import (
 )
 from tests._async_wait import wait_until  # noqa: E402 — shared #1751 test wait helper
 from tests._support.agent_session import make_session
-from tests._support.events import collect_events
+from tests._support.events import collect_events, settle
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -1188,6 +1188,7 @@ async def test_peer_no_reply_marker_surfaced_to_user_not_absorbed(
     )
 
     # Audit event log must contain peer_reply_failed_surfaced event (P6 audit).
+    await settle(session._audit_events)
     audit_event_types = [e.type for e in audit_collected]
     assert "peer_reply_failed_surfaced" in audit_event_types, (
         f"B2-H2: expected 'peer_reply_failed_surfaced' audit event; got: {audit_event_types!r}"
@@ -1289,6 +1290,7 @@ async def test_peer_no_reply_marker_forwarded_upstream_in_pending_chain(
     )
 
     # Audit event log must contain peer_reply_failed_surfaced event (P6 audit).
+    await settle(session._audit_events)
     audit_event_types = [e.type for e in audit_collected]
     assert "peer_reply_failed_surfaced" in audit_event_types, (
         f"B2-H2 relay: expected 'peer_reply_failed_surfaced' audit event; got: {audit_event_types!r}"

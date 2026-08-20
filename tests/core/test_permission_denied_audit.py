@@ -31,7 +31,7 @@ from reyn.core.op_runtime.context import OpContext
 from reyn.data.workspace.workspace import Workspace
 from reyn.schemas.models import FileIROp
 from reyn.security.permissions.permissions import PermissionDecl, PermissionResolver
-from tests._support.events import collect_events
+from tests._support.events import collect_events, settle
 
 # ── helpers ────────────────────────────────────────────────────────────────────
 
@@ -73,6 +73,12 @@ def _read_op(path: str) -> FileIROp:
 
 def _run(coro):
     return asyncio.run(coro)
+
+
+async def _run_and_settle(coro, log):
+    result = await coro
+    await settle(log)
+    return result
 
 
 # ── Tier 2: P5 — denied write does not mutate workspace ───────────────────────
@@ -119,7 +125,7 @@ def test_permission_denied_emits_p6_event(tmp_path, monkeypatch):
     target = tmp_path / "should_not_exist.txt"
     op = _write_op(str(target))
 
-    _run(execute_op(op, ctx))
+    _run(_run_and_settle(execute_op(op, ctx), events))
 
     denial_events = [e for e in collected if e.type == "permission_denied"]
     assert denial_events, (
@@ -145,7 +151,7 @@ def test_permission_denied_event_carries_op_kind(tmp_path, monkeypatch):
     target = tmp_path / "no_write.txt"
     op = _write_op(str(target))
 
-    _run(execute_op(op, ctx))
+    _run(_run_and_settle(execute_op(op, ctx), events))
 
     denial_events = [e for e in collected if e.type == "permission_denied"]
     assert denial_events, "permission_denied event must be emitted"
@@ -182,8 +188,18 @@ def test_permission_allow_then_deny_only_first_executes(tmp_path, monkeypatch):
     denied_target = tmp_path / "op2_denied.txt"
     op2 = _write_op(str(denied_target))
 
-    result1 = _run(execute_op(op1, ctx))
-    result2 = _run(execute_op(op2, ctx))
+    # Both ops share `events`'s EventLog, whose dispatch consumer task is
+    # bound to whichever asyncio loop first started it -- run them inside
+    # the SAME `asyncio.run()` loop (rather than two separate `_run()`
+    # calls) so `settle()` below waits on a consumer task that is still
+    # alive, not one orphaned by an earlier loop's shutdown.
+    async def _op1_then_op2():
+        r1 = await execute_op(op1, ctx)
+        r2 = await execute_op(op2, ctx)
+        await settle(events)
+        return r1, r2
+
+    result1, result2 = _run(_op1_then_op2())
 
     # P5: first op wrote, second did not
     assert result1["status"] == "ok", f"first op should succeed; got {result1}"
@@ -221,7 +237,7 @@ def test_permission_denied_read_emits_p6_event(tmp_path, monkeypatch):
     # Absolute path outside CWD — denied for read.
     op = _read_op("/etc/passwd")
 
-    result = _run(execute_op(op, ctx))
+    result = _run(_run_and_settle(execute_op(op, ctx), events))
 
     assert result["status"] == "denied"
 
@@ -250,7 +266,7 @@ def test_allowed_op_emits_no_denial_event(tmp_path, monkeypatch):
     # Write inside .reyn/ — always allowed.
     op = _write_op(".reyn/allowed_file.txt")
 
-    result = _run(execute_op(op, ctx))
+    result = _run(_run_and_settle(execute_op(op, ctx), events))
 
     assert result["status"] == "ok"
 

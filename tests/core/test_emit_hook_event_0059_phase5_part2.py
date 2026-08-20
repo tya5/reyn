@@ -534,6 +534,11 @@ async def test_denied_emit_via_production_router_tool_path_is_audited():
     with pytest.raises(asyncio.QueueEmpty):
         sub.get_nowait()  # the denied emit never reached the bus
 
+    # #4961 C: dispatch moved off of `emit()`'s own synchronous caller
+    # onto a queue-consumer task — drain deterministically before reading
+    # `collected` (a bare yield would only be enough if exactly one event
+    # were pending; `drain()` is correct regardless of how many are).
+    await events.drain()
     failed_events = [e for e in collected if e["type"] == "tool_failed"]
     (only_failed,) = failed_events  # exactly one tool_failed — unpack asserts the count
     assert only_failed["error_kind"] == "permission_denied"

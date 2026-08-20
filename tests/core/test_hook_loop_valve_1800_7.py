@@ -90,6 +90,7 @@ async def test_no_hooks_valve_never_engages(tmp_path):
     await _push_user(session, "u2")
     await session.run_one_iteration()
     await session.run_one_iteration()
+    await session._audit_events.drain()
 
     assert ran == ["u1", "u2"]                     # both user turns ran
     assert _checkpoint_kinds(events) == []         # valve never tripped
@@ -107,6 +108,7 @@ async def test_hook_loop_exceeding_cap_is_suppressed(tmp_path):
         await _push_hook(session, text)
     for _ in range(3):
         await session.run_one_iteration()
+    await session._audit_events.drain()
 
     # h1, h2 ran (count 1, 2 ≤ cap); h3 (count 3 > cap) suppressed.
     assert ran == ["h1", "h2"]

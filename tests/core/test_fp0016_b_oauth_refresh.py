@@ -34,7 +34,7 @@ from reyn.security.secrets.oauth import (
     load_oauth_token,
     save_oauth_token,
 )
-from tests._support.events import collect_events
+from tests._support.events import collect_events, settle
 
 # ── helpers ────────────────────────────────────────────────────────────────
 
@@ -240,6 +240,7 @@ async def test_get_valid_token_refreshes_when_expired(oauth_store_path: Path) ->
     finally:
         await client.aclose()
     assert result == "AT_new"
+    await settle(events)
 
     # Persisted with new fields
     saved = load_oauth_token("github")
@@ -299,6 +300,7 @@ async def test_refresh_missing_access_token_raises(oauth_store_path: Path) -> No
     finally:
         await client.aclose()
 
+    await settle(events)
     failures = [e for e in collected if e.type == "token_refresh_failed"]
     assert failures, "expected at least one token_refresh_failed event"
     assert failures[0].data["key"] == "github"
@@ -327,6 +329,7 @@ async def test_refresh_400_marks_re_auth_required(oauth_store_path: Path) -> Non
     assert exc_info.value.re_auth_required is True
     assert exc_info.value.status_code == 400
 
+    await settle(events)
     failures = [e for e in collected if e.type == "token_refresh_failed"]
     assert failures[0].data["re_auth_required"] is True
 

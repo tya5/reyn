@@ -6681,6 +6681,34 @@ class Session:
                     build_hook_payload("session_end", agent_name=self.agent_name),
                 )
                 await self._put_outbox(OutboxMessage(kind="__end__", text=""))
+                # #4961 C (architect finding): `emit()`'s subscriber dispatch
+                # is now a queue-consumer task, not inline inside emit()
+                # itself — an event emitted right before this coroutine
+                # returns (`session_completed`/`chat_stopped` above, and
+                # anything the just-awaited hooks/outbox put emitted) has no
+                # guarantee of having reached any subscriber (transport,
+                # OTEL) yet UNLESS something explicitly waits for the
+                # consumer to catch up. Without this, `run()` returning could
+                # silently drop the tail of a session's own audit trail — the
+                # exact "silent" failure class #4961 exists to close.
+                # Deterministic (`Queue.join()`-based), not a bare yield —
+                # correct regardless of how many events are still queued.
+                await self._audit_events.drain()
+                # #4961 C (architect ruling): stop the consumer task
+                # explicitly too, right after drain — the owner that
+                # started it (via emit()) also closes it, in drain-then-
+                # stop order, BEFORE this coroutine returns control to
+                # whatever generic shutdown path (asyncio.run()'s own
+                # end-of-loop task-cancellation) is outside our control.
+                # Leaving the consumer running for something ELSE to
+                # eventually cancel is exactly the shape that can hang a
+                # caller who depended on synchronous dispatch pre-#4961 C
+                # (measured: a detached background task elsewhere in the
+                # codebase that never awaited/cancelled itself could hang
+                # the process's own final task-gather once its expected
+                # event delivery never arrived — closing here removes
+                # that failure mode from Session's own lifecycle).
+                await self._audit_events.stop_dispatch()
 
     async def _drain_on_shutdown(self) -> None:
         """Cancel any in-flight background work, then tear down on shutdown.
@@ -8542,6 +8570,31 @@ class Session:
         call sites.
         """
         await self._event_store.aclose()
+
+    async def aclose_audit_events(self) -> None:
+        """#4961 C teardown: close this session's ``_audit_events`` EventLog
+        before the process exits — the same class of gap #2783 named for
+        ``EventStore`` above, a 4th instance (measured: hangs pytest-
+        asyncio's own end-of-loop task-cancellation for a session torn
+        down via the registry's non-``Session.run()`` reclaim path — e.g.
+        a driver-session spawned to run a detached pipeline, discarded
+        after its terminal state lands).
+
+        Idempotent (``EventLog.drain``/``stop_dispatch`` are both no-ops
+        once nothing is queued / no consumer is running). ``Session.run()``
+        itself already does this pair in its own ``finally`` for the
+        MAIN run loop's shutdown — this method is for every OTHER path a
+        session can be torn down through (called from the registry's
+        session-teardown seams alongside ``aclose_mcp_connections``/
+        ``aclose_fs_watcher``/``aclose_event_store`` — same pattern, same
+        call sites): #4961 C moved subscriber dispatch off of ``emit()``'s
+        synchronous caller onto a queue-consumer task, so an event emitted
+        during teardown (or still queued from earlier) has no guarantee of
+        reaching any subscriber unless something drains the consumer
+        before this session's EventLog is abandoned.
+        """
+        await self._audit_events.drain()
+        await self._audit_events.stop_dispatch()
 
     # --- RouterLoop orchestration ---
 

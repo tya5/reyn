@@ -39,7 +39,7 @@ from reyn.runtime.budget.budget import BudgetTracker, CostConfig
 from reyn.runtime.services.budget_gateway import BudgetGateway
 from reyn.schemas.models import EmbedIROp
 from reyn.security.permissions.permissions import PermissionDecl
-from tests._support.events import collect_events
+from tests._support.events import collect_events, settle
 
 # A real litellm-priceable embedding model, so the recorded figure is a real
 # `litellm.model_cost` lookup rather than a fabricated rate.
@@ -170,6 +170,8 @@ async def test_real_retry_populates_attempts_and_op_emits_embed_attempts(
     )
 
     assert result.get("status") != "error", result
+
+    await settle(events)
 
     # The witness is the audit-event: the op reads `result.get("attempts")` off
     # the provider's EmbedBatchResult and emits it (the op's own return shape does

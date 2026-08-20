@@ -32,10 +32,17 @@ from reyn.data.index.coordinator import (
 from reyn.data.index.source_manifest import SourceManifest, get_source_manifest
 from reyn.data.workspace.workspace import Workspace
 from reyn.security.permissions.permissions import PermissionDecl
+from tests._support.events import settle
 
 
 def _run(coro: Any) -> Any:
     return asyncio.run(coro)
+
+
+async def _run_and_settle(coro: Any, log: Any) -> Any:
+    result = await coro
+    await settle(log)
+    return result
 
 
 def _ctx_for(provider: Any, monkeypatch: pytest.MonkeyPatch) -> OpContext:
@@ -325,7 +332,9 @@ def test_build_complete_event_carries_cost_fields_not_just_chunk_count(
     items = [{"id": "a", "text": "alpha"}, {"id": "b", "text": "beta"}]
     coord.register_builder("skill", _working_build_fn(ctx, items), kind="dynamic")
 
-    _run(coord.ensure_built("skill", await_completion=True, events=events))
+    _run(_run_and_settle(
+        coord.ensure_built("skill", await_completion=True, events=events), events,
+    ))
 
     (complete,) = [e for e in collected if e.type == "embedding_index_build_complete"]
     assert complete.data["chunk_count"] == 2

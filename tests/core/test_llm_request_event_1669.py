@@ -31,7 +31,7 @@ from reyn.core.events.events import (
     set_llm_request_event_log,
 )
 from reyn.llm.llm import _redact_llm_request_params, recorded_acompletion
-from tests._support.events import collect_events
+from tests._support.events import collect_events, settle
 
 
 @pytest.fixture(autouse=True)
@@ -49,20 +49,27 @@ async def _fake_acompletion(**_kwargs):
     return object()
 
 
-def _call(monkeypatch, **extra_kwargs):
+async def _run_and_settle(coro, log):
+    result = await coro
+    await settle(log)
+    return result
+
+
+def _call(monkeypatch, log=None, **extra_kwargs):
     monkeypatch.delenv("OPENAI_API_BASE", raising=False)  # no proxy → model unstripped
     monkeypatch.setattr(litellm, "acompletion", _fake_acompletion)
-    return asyncio.run(
-        recorded_acompletion(
-            model="gpt-5.4",
-            messages=[{"role": "user", "content": "secret message body"}],
-            purpose="main",
-            model_class=None,  # #4206 T1: not subject to the axis (pre-existing call)
-            recorder=None,
-            response_format={"type": "json_object"},
-            extra_kwargs=extra_kwargs,
-        )
+    coro = recorded_acompletion(
+        model="gpt-5.4",
+        messages=[{"role": "user", "content": "secret message body"}],
+        purpose="main",
+        model_class=None,  # #4206 T1: not subject to the axis (pre-existing call)
+        recorder=None,
+        response_format={"type": "json_object"},
+        extra_kwargs=extra_kwargs,
     )
+    if log is not None:
+        coro = _run_and_settle(coro, log)
+    return asyncio.run(coro)
 
 
 # ── the event fires + carries the non-message params ───────────────────────────
@@ -78,6 +85,7 @@ def test_event_emitted_with_non_message_params(monkeypatch) -> None:
 
     _call(
         monkeypatch,
+        log=log,
         reasoning_effort="low",
         temperature=0.7,
         extra_body={"thinking": {"budget": 1024}},
@@ -102,7 +110,7 @@ def test_event_excludes_messages(monkeypatch) -> None:
     collected = collect_events(log)
     set_llm_request_event_log(log)
 
-    _call(monkeypatch, temperature=0.1)
+    _call(monkeypatch, log=log, temperature=0.1)
 
     data = collected[0].data
     assert "messages" not in data
@@ -117,7 +125,7 @@ def test_event_tools_count_not_array(monkeypatch) -> None:
     set_llm_request_event_log(log)
 
     tools = [{"type": "function", "function": {"name": f"t{i}"}} for i in range(18)]
-    _call(monkeypatch, tools=tools, temperature=0.0)
+    _call(monkeypatch, log=log, tools=tools, temperature=0.0)
 
     data = collected[0].data
     assert data["tools_count"] == 18
@@ -130,7 +138,7 @@ def test_event_redacts_secret_fields(monkeypatch) -> None:
     collected = collect_events(log)
     set_llm_request_event_log(log)
 
-    _call(monkeypatch, api_key="sk-super-secret", authorization="Bearer tok-123")
+    _call(monkeypatch, log=log, api_key="sk-super-secret", authorization="Bearer tok-123")
 
     params = collected[0].data["params"]
     assert params["api_key"] == "***REDACTED***"

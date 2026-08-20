@@ -49,6 +49,7 @@ from reyn.core.events.state_log import StateLog
 from reyn.interfaces.transport.agui.state import RemoteQueueView
 from reyn.runtime.session import Session
 from tests._support.agent_session import make_session
+from tests._support.events import settle
 
 AGENT = "p3-cancel-agent"
 
@@ -297,6 +298,7 @@ async def test_cancel_scheduled_before_dispatch_wins_exclusively(tmp_path):
     finished = await asyncio.wait_for(iter_task, timeout=5)
     assert finished is False, "shutdown sentinel drains run_one_iteration"
 
+    await settle(session._audit_events)
     kinds = [ev.type for ev in captured]
     assert "inbox_cancel" in kinds
     assert "turn_started" not in kinds, (
@@ -330,6 +332,7 @@ async def test_dispatch_scheduled_before_cancel_wins_exclusively(tmp_path):
     cancelled = await asyncio.wait_for(cancel_task, timeout=5)
 
     assert cancelled is False, "dispatch won the race — cancel of an already-dispatched item is a no-op"
+    await settle(session._audit_events)
     kinds = [ev.type for ev in captured]
     assert "turn_started" in kinds
     assert "inbox_cancel" not in kinds, (
@@ -407,6 +410,7 @@ async def test_real_session_inbox_cancel_delta_drives_remote_queue_view(tmp_path
     session.subscribe_audit_events(lambda ev: captured.append(ev))
 
     await session.submit_user_text("alpha")
+    await settle(session._audit_events)
     submitted = next(e for e in captured if e.type == "user_submitted")
     view.apply_user_submitted(
         msg_id=submitted.data["msg_id"], chain_id=submitted.data["chain_id"],
@@ -415,6 +419,7 @@ async def test_real_session_inbox_cancel_delta_drives_remote_queue_view(tmp_path
     assert [i["text"] for i in view.queue()] == ["alpha"]
 
     await session.cancel_queued(submitted.data["msg_id"])
+    await settle(session._audit_events)
     cancel_ev = next(e for e in captured if e.type == "inbox_cancel")
     view.apply_inbox_cancel(msg_id=cancel_ev.data["msg_id"], seq=cancel_ev.data["seq"])
 

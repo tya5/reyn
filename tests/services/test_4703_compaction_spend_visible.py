@@ -30,6 +30,7 @@ import litellm
 from reyn.config import CompactionConfig
 from reyn.core.events.events import EventLog
 from reyn.services.compaction.engine import ChatSummary, CompactionEngine, HistoryChunkToCompact
+from tests._support.events import settle
 from tests.runtime.test_compaction_controller_invariants import (
     _STUB_BUDGETS,
     _history,
@@ -136,8 +137,13 @@ def test_compaction_completed_event_carries_the_usage_end_to_end(monkeypatch) ->
     )
     engine._budgets = _STUB_BUDGETS  # noqa: SLF001 — test-setup shaping, not an assertion
 
-    ctrl, collected, _ = _make_controller(history=_history(7), engine=engine)
-    asyncio.run(ctrl.force_compact_now())
+    ctrl, collected, _, events = _make_controller(history=_history(7), engine=engine)
+
+    async def _run() -> None:
+        await ctrl.force_compact_now()
+        await settle(events)
+
+    asyncio.run(_run())
 
     completed = [e for e in collected if e.type == "compaction_completed"]
     assert completed, "compaction_completed must fire"

@@ -36,7 +36,7 @@ from reyn.mcp.gateway import MCPFault, MCPGateway
 from reyn.schemas.models import MCPSubscribeResourceIROp, MCPUnsubscribeResourceIROp
 from reyn.security.permissions.permissions import PermissionDecl, PermissionResolver
 from reyn.user_intervention import InterventionAnswer, InterventionBus, UserIntervention
-from tests._support.events import collect_events
+from tests._support.events import collect_events, settle
 from tests._support.paths import REPO_ROOT
 
 _SUPPORT_DIR = REPO_ROOT / "tests" / "_support"
@@ -60,6 +60,12 @@ def _stdio_cfg(script: Path) -> dict:
 
 def _run(coro):
     return asyncio.run(coro)
+
+
+async def _run_and_settle(coro, log):
+    result = await coro
+    await settle(log)
+    return result
 
 
 async def _wait_for(predicate, *, delay: float = 0.02) -> None:
@@ -297,6 +303,7 @@ async def test_subscribe_execute_real_subscribe_and_emits_events():
     finally:
         await service.aclose()
 
+    await settle(events)
     assert result["status"] == "ok"
     assert result["uri"] == _URI
     types_seen = [e.type for e in collected]
@@ -325,6 +332,7 @@ async def test_unsubscribe_execute_real_round_trip():
     finally:
         await service.aclose()
 
+    await settle(events)
     assert result["status"] == "ok"
     types_seen = [e.type for e in collected]
     assert "mcp_resource_unsubscribed" in types_seen
@@ -341,7 +349,7 @@ def test_subscribe_handle_denies_without_permissions_mcp_declared():
     ctx.intervention_bus = _UnusedBus()
 
     op = MCPSubscribeResourceIROp(kind="mcp_subscribe_resource", server="srv", uri=_URI)
-    result = _run(execute_op(op, ctx))
+    result = _run(_run_and_settle(execute_op(op, ctx), events))
 
     assert result["status"] == "denied"
     denials = [e for e in collected if e.type == "permission_denied"]

@@ -40,6 +40,7 @@ from reyn.llm.llm import LLMToolCallResult
 from reyn.llm.pricing import TokenUsage
 from reyn.runtime.session import Session
 from tests._support.agent_session import make_session
+from tests._support.events import settle
 from tests._support.untrusted_narrowing import narrowing_on
 
 _USAGE = TokenUsage(prompt_tokens=10, completion_tokens=5)
@@ -141,6 +142,7 @@ async def test_on_engages_mid_turn_and_emits_audit_event(tmp_path, monkeypatch):
         ]),
     )
     await session._handle_inbox_text("look something up then remember it", chain_id="c1")
+    await settle(session._audit_events)
 
     (denied_msg,) = [m for m in session.history if m.tool_call_id == "tc_denied"]
     assert "tool_excluded" in str(denied_msg.content)

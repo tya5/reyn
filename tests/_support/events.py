@@ -28,6 +28,18 @@ happened BEFORE :func:`collect_events` was called are NOT retroactively
 captured (a subscriber only sees what is emitted after it is added) — this is
 the one behavior difference from ``.all()``, and it is why the call must move
 to right after construction, not stay at the assertion site.
+
+#4961 C / #4966 (architect ruling): dispatch to ``collected`` moved off
+``emit()``'s synchronous caller onto a background consumer task — a
+POLLING read (the ``lambda: any(...)`` shape above, or anything driven
+through ``_wait_for``-style retry) still works unchanged, because the
+act of polling yields between attempts and gives the consumer a chance
+to run. What breaks is a read that happens SYNCHRONOUSLY right after an
+``await`` that triggered the emit, with no yield in between — the
+consumer may not have run yet, so ``collected`` can still be missing
+the event. If a test reads ``collected`` this way, make the "I assumed
+delivery already happened" assumption explicit in the code by awaiting
+:func:`settle` on the same log immediately before the read.
 """
 from __future__ import annotations
 
@@ -44,3 +56,20 @@ def collect_events(log: Any) -> list[Any]:
     collected: list[Any] = []
     log.add_subscriber(collected.append)
     return collected
+
+
+async def settle(log: Any) -> None:
+    """#4961 C / #4966 (architect ruling): wait for *log*'s dispatch queue to
+    finish delivering everything emitted so far to its subscribers —
+    including a :func:`collect_events` list — before a synchronous read.
+
+    A thin, explicitly-named wrapper over ``EventLog.drain()``. Exists so a
+    test that reads a collected list right after an ``emit()``-triggering
+    ``await`` (no polling loop in between) can make that "delivery already
+    happened" assumption visible in the test's own code, at the exact spot
+    it depends on: ``await settle(log)`` immediately before the read. A
+    polling read (``lambda: any(e.type == "x" for e in collected)``, or
+    anything driven through a ``_wait_for``-style retry) does not need this
+    — polling yields between attempts and gives the consumer a chance to
+    run regardless."""
+    await log.drain()

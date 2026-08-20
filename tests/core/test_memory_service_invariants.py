@@ -24,7 +24,7 @@ import pytest
 from reyn.config.chat import ThreatScanConfig
 from reyn.core.events.events import EventLog
 from reyn.runtime.services.memory_service import MemoryService
-from tests._support.events import collect_events
+from tests._support.events import collect_events, settle
 
 # ---------------------------------------------------------------------------
 # Helpers — thin closure-based fakes for file callbacks
@@ -134,9 +134,11 @@ def _make_service(
     *,
     threat_scan=None,
     knowledge_sync=None,
-) -> tuple[MemoryService, list]:
+) -> tuple[MemoryService, list, EventLog]:
     """Construct a MemoryService with real EventLog and closure-based file
-    callbacks rooted at *tmp_path*."""
+    callbacks rooted at *tmp_path*. Returns the log itself alongside the
+    collected list so a caller can ``await settle(log)`` before a
+    synchronous read (#4961 C: dispatch to ``collected`` is async)."""
     events = EventLog()
     collected = collect_events(events)
     fw, fr, fd, fri = _make_callbacks(tmp_path)
@@ -150,7 +152,7 @@ def _make_service(
         threat_scan=threat_scan,
         knowledge_sync=knowledge_sync,
     )
-    return svc, collected
+    return svc, collected, events
 
 
 # ---------------------------------------------------------------------------
@@ -161,7 +163,7 @@ def _make_service(
 @pytest.mark.asyncio
 async def test_remember_then_read_body_roundtrip(tmp_path: Path) -> None:
     """Tier 2: remember + read_body round-trip — body matches, no frontmatter leaks."""
-    svc, _ = _make_service(tmp_path)
+    svc, _, _ = _make_service(tmp_path)
 
     result = await svc.remember(
         layer="agent",
@@ -191,7 +193,7 @@ async def test_remember_then_read_body_roundtrip(tmp_path: Path) -> None:
 @pytest.mark.asyncio
 async def test_forget_removes_file_and_updates_index(tmp_path: Path) -> None:
     """Tier 2: forget removes the memory file and MEMORY.md no longer references it."""
-    svc, _ = _make_service(tmp_path)
+    svc, _, _ = _make_service(tmp_path)
 
     # First remember two entries
     await svc.remember(
@@ -232,7 +234,7 @@ async def test_memory_path_and_dir_contracts(tmp_path: Path) -> None:
     "agent" — ``agent_workspace_dir.parent.parent`` (the state root both
     layers live under) — so a caller-supplied workspace root is finally
     respected for both layers, not just "agent"."""
-    svc, _ = _make_service(tmp_path)
+    svc, _, _ = _make_service(tmp_path)
 
     # shared layer — rooted under the SAME state root as agent_workspace_dir
     # (tmp_path/"agents"/"test_agent" → parent.parent → tmp_path).
@@ -270,7 +272,7 @@ async def test_poisoned_remember_is_rejected_and_nothing_is_persisted(
     goes quietly missing, so the file-absence assertion is the load-bearing
     one here, not the error shape.
     """
-    svc, events = _make_service(tmp_path, threat_scan=ThreatScanConfig())
+    svc, events, log = _make_service(tmp_path, threat_scan=ThreatScanConfig())
 
     result = await svc.remember(
         layer="agent", slug="poisoned", name="note",
@@ -284,6 +286,7 @@ async def test_poisoned_remember_is_rejected_and_nothing_is_persisted(
     assert not (Path(svc.memory_dir("agent")) / "MEMORY.md").exists()
     assert result["error"]["kind"] == "threat_blocked"
     assert result["error"]["pattern_id"]
+    await settle(log)
     assert "threat_block" in [e.type for e in events]
 
 
@@ -294,7 +297,7 @@ async def test_legit_remember_is_not_blocked_by_an_enabled_scan(
     """Tier 2: falsify side of the block — ordinary memory content persists
     with the same scan enabled, so the rejection above is the scan firing,
     not the scan being on."""
-    svc, events = _make_service(tmp_path, threat_scan=ThreatScanConfig())
+    svc, events, log = _make_service(tmp_path, threat_scan=ThreatScanConfig())
 
     result = await svc.remember(
         layer="agent", slug="ordinary", name="note",
@@ -304,6 +307,7 @@ async def test_legit_remember_is_not_blocked_by_an_enabled_scan(
 
     assert result["saved"] == "ordinary"
     assert Path(svc.memory_path("agent", "ordinary")).exists()
+    await settle(log)
     assert "threat_block" not in [e.type for e in events]
 
 
@@ -315,7 +319,7 @@ async def test_knowledge_index_follows_a_write_but_never_a_blocked_one(
     happened — a threat-blocked `remember` must not ingest the content it
     just refused to persist (which would make it searchable anyway)."""
     sync = _RecordingKnowledgeSync()
-    svc, _ = _make_service(
+    svc, _, _ = _make_service(
         tmp_path, threat_scan=ThreatScanConfig(), knowledge_sync=sync,
     )
 
@@ -342,7 +346,7 @@ async def test_forget_surfaces_a_knowledge_deindex_failure(tmp_path: Path) -> No
     swallowed: a stale embedded row for a forgotten entry stays searchable, so
     the caller must learn that the forget only half-completed."""
     sync = _RecordingKnowledgeSync(deindex_error=RuntimeError("backend down"))
-    svc, _ = _make_service(tmp_path, knowledge_sync=sync)
+    svc, _, _ = _make_service(tmp_path, knowledge_sync=sync)
 
     await svc.remember(
         layer="agent", slug="doomed", name="n", description="d", type="t", body="b",
@@ -356,7 +360,7 @@ async def test_forget_surfaces_a_knowledge_deindex_failure(tmp_path: Path) -> No
 @pytest.mark.asyncio
 async def test_events_emitted_for_remember_and_forget(tmp_path: Path) -> None:
     """Tier 2: remember emits memory_saved; forget emits memory_deleted. Read via collect_events()."""
-    svc, events = _make_service(tmp_path)
+    svc, events, log = _make_service(tmp_path)
 
     await svc.remember(
         layer="agent",
@@ -367,6 +371,7 @@ async def test_events_emitted_for_remember_and_forget(tmp_path: Path) -> None:
         body="content",
     )
 
+    await settle(log)
     emitted = [e.type for e in events]
     assert "memory_saved" in emitted
 
@@ -376,6 +381,7 @@ async def test_events_emitted_for_remember_and_forget(tmp_path: Path) -> None:
 
     await svc.forget(layer="agent", slug="evt-test")
 
+    await settle(log)
     emitted_after = [e.type for e in events]
     assert "memory_deleted" in emitted_after
 

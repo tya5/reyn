@@ -42,7 +42,7 @@ from reyn.core.offload.canonical import (
 )
 from reyn.core.pipeline.executor import Pipeline, PipelineExecutor, ToolStep
 from reyn.tools import get_default_registry
-from tests._support.events import collect_events
+from tests._support.events import collect_events, settle
 
 get_default_registry()
 
@@ -253,6 +253,7 @@ async def test_file_discriminator_miss_emits_fallback_event_end_to_end() -> None
         tool_dispatch=_dispatch, state_log=None, run_id="run-fp0056-m3", events=events,
     )
 
+    await settle(events)
     [fallback_event] = [e for e in collected if e.type == CANONICAL_FALLBACK_EVENT]
     assert fallback_event.data["source"] == "file"
     assert fallback_event.data["reason"] == "discriminator_miss"

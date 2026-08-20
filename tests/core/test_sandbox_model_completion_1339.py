@@ -137,7 +137,7 @@ async def test_handler_event_shows_enforced_policy_network(tmp_path):
     from reyn.data.workspace.workspace import Workspace
     from reyn.schemas.models import SandboxedExecIROp
     from reyn.security.permissions.permissions import PermissionDecl
-    from tests._support.events import collect_events
+    from tests._support.events import collect_events, settle
 
     events = EventLog()
     collected = collect_events(events)
@@ -151,6 +151,7 @@ async def test_handler_event_shows_enforced_policy_network(tmp_path):
     )
     op = SandboxedExecIROp(kind="sandboxed_exec", argv=["/bin/echo", "x"])
     await handle(op, ctx)
+    await settle(events)
     started = [e for e in collected if e.type == "sandboxed_exec_started"]
     (ev,) = started
     assert ev.data["network"] is False  # reflects the configured policy
@@ -214,7 +215,7 @@ async def test_minimal_synthesis_path_enforces_the_floor_not_the_op_default(
     from reyn.data.workspace.workspace import Workspace
     from reyn.tools.exec import op_context_from_tool_context
     from reyn.tools.types import ToolContext
-    from tests._support.events import collect_events
+    from tests._support.events import collect_events, settle
 
     events = EventLog()
     collected = collect_events(events)
@@ -238,6 +239,7 @@ async def test_minimal_synthesis_path_enforces_the_floor_not_the_op_default(
 
     op = SandboxedExecIROp(kind="sandboxed_exec", argv=["/bin/echo", "x"])
     await handle(op, legacy_ctx)
+    await settle(events)
     started = [e for e in collected if e.type == "sandboxed_exec_started"]
     (ev,) = started
     assert ev.data["network"] is True, (
@@ -260,7 +262,7 @@ async def test_tool_level_timeout_arg_reaches_the_op(tmp_path):
     from reyn.data.workspace.workspace import Workspace
     from reyn.tools.exec import _handle
     from reyn.tools.types import ToolContext
-    from tests._support.events import collect_events
+    from tests._support.events import collect_events, settle
 
     events = EventLog()
     collected = collect_events(events)
@@ -272,6 +274,7 @@ async def test_tool_level_timeout_arg_reaches_the_op(tmp_path):
 
     await _handle({"argv": ["/bin/echo", "x"], "timeout": 45}, tool_ctx)
 
+    await settle(events)
     (ev,) = [e for e in collected if e.type == "sandboxed_exec_started"]
     assert ev.data["timeout_seconds"] == 45, (
         "the tool-level timeout arg must reach the enforced policy via the "

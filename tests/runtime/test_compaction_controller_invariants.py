@@ -32,7 +32,13 @@ from reyn.services.compaction.engine import (
     ComputedBudgets,
     HistoryChunkToCompact,
 )
-from tests._support.events import collect_events
+from tests._support.events import collect_events, settle
+
+
+async def _run_and_settle(coro, log):
+    result = await coro
+    await settle(log)
+    return result
 
 # Synthetic budgets: head/tail each fit ~one 50-token turn ("x"*200 via chars4),
 # so a 7-turn history yields head=[t1], tail=[t7], middle=[t2..t6] = candidates.
@@ -72,8 +78,8 @@ def _make_controller(
     *,
     history: list[ChatMessage],
     engine: CompactionEngine,
-) -> tuple[CompactionController, list, list[ChatMessage]]:
-    """Return a (controller, collected, history) triple ready for testing."""
+) -> tuple[CompactionController, list, list[ChatMessage], EventLog]:
+    """Return a (controller, collected, history, events) tuple ready for testing."""
     events = EventLog()
     collected = collect_events(events)
 
@@ -108,7 +114,7 @@ def _make_controller(
         ),
         render_summary=lambda s: str(s),
     )
-    return ctrl, collected, history
+    return ctrl, collected, history, events
 
 
 def _history(n: int) -> list[ChatMessage]:
@@ -134,9 +140,9 @@ def test_force_compact_no_candidates_emits_forced_sync_no_started():
     to compact), force_compact_now emits compaction_check(outcome='forced_sync')
     with candidate_count=0 and does NOT emit compaction_started.
     """
-    ctrl, collected, _ = _make_controller(history=_history(2), engine=_AbortingEngine())
+    ctrl, collected, _, events = _make_controller(history=_history(2), engine=_AbortingEngine())
 
-    asyncio.run(ctrl.force_compact_now())
+    asyncio.run(_run_and_settle(ctrl.force_compact_now(), events))
 
     emitted = collected
     forced = [e for e in emitted if e.type == "compaction_check"
@@ -156,9 +162,9 @@ def test_force_compact_with_candidates_appends_summary():
     """Tier 2: with a compactable middle, force_compact_now runs the engine
     (compaction_started + compaction_completed) and appends a summary entry.
     """
-    ctrl, collected, hist = _make_controller(history=_history(7), engine=_SucceedingEngine())
+    ctrl, collected, hist, events = _make_controller(history=_history(7), engine=_SucceedingEngine())
 
-    asyncio.run(ctrl.force_compact_now())
+    asyncio.run(_run_and_settle(ctrl.force_compact_now(), events))
 
     emitted = collected
     assert [e for e in emitted if e.type == "compaction_started"], "expected compaction_started"
@@ -176,9 +182,9 @@ def test_force_compact_engine_failure_emits_failed():
     """Tier 2: when the engine raises mid-compaction, force_compact_now emits
     compaction_failed and returns (the try/except swallows the engine error
     rather than propagating it to the caller)."""
-    ctrl, collected, _ = _make_controller(history=_history(7), engine=_AbortingEngine())
+    ctrl, collected, _, events = _make_controller(history=_history(7), engine=_AbortingEngine())
 
-    asyncio.run(ctrl.force_compact_now())  # must not raise
+    asyncio.run(_run_and_settle(ctrl.force_compact_now(), events))  # must not raise
 
     assert [e for e in collected if e.type == "compaction_failed"], (
         "engine failure during force_compact_now must emit compaction_failed"

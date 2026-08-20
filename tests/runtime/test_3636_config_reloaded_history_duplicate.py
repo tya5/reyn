@@ -47,6 +47,7 @@ from reyn.core.events.state_log import StateLog
 from reyn.runtime.hot_reload import HotReloader, dispatch_install_reload
 from reyn.runtime.session import _STATE_CHANGE_EVENT_MAPPINGS, ChatMessage, Session
 from tests._support.agent_session import make_session
+from tests._support.events import settle
 
 
 def _make_session(tmp_path: Path, *, agent_name: str = "cfg-3636") -> Session:
@@ -113,12 +114,14 @@ def test_two_distinct_pipeline_installs_render_distinct_history(tmp_path):
     reloader = HotReloader(project_root=tmp_path, events=session._audit_events)
     pre = len(_state_changes(session))
 
-    for name in ("rag_ingest", "rag_query"):
-        asyncio.run(
-            dispatch_install_reload(
+    async def _install_both() -> None:
+        for name in ("rag_ingest", "rag_query"):
+            await dispatch_install_reload(
                 reloader, source="pipeline_install", is_addition=True, detail=name,
             )
-        )
+        await settle(session._audit_events)
+
+    asyncio.run(_install_both())
 
     # Tuple-unpack the NEW entries only: raises ValueError if there isn't
     # EXACTLY 2 — a behavioural assertion (both installs surfaced, nothing
@@ -143,12 +146,14 @@ def test_two_installs_without_detail_reproduce_the_measured_duplicate(tmp_path):
     session = _make_session(tmp_path)
     reloader = HotReloader(project_root=tmp_path, events=session._audit_events)
 
-    for _ in range(2):
-        asyncio.run(
-            dispatch_install_reload(
+    async def _install_twice() -> None:
+        for _ in range(2):
+            await dispatch_install_reload(
                 reloader, source="pipeline_install", is_addition=True,
             )
-        )
+        await settle(session._audit_events)
+
+    asyncio.run(_install_twice())
 
     changes = _state_changes(session)
     last_two = changes[-2:]

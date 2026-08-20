@@ -49,7 +49,7 @@ from reyn.user_intervention import (
     UserIntervention,
 )
 from tests._support.agent_session import make_session
-from tests._support.events import collect_events
+from tests._support.events import collect_events, settle
 
 # ── 1. UserIntervention origin_channel_id field ───────────────────────
 
@@ -308,6 +308,7 @@ def test_handle_intervention_emits_user_channel_stalled_route_event() -> None:
         await asyncio.sleep(0)
         await session.discard_pending_intervention(iv.id)
         await task
+        await settle(session._audit_events)
 
     asyncio.run(_drive())
 
@@ -380,6 +381,7 @@ def test_discard_pending_intervention_emits_audit_event_on_success() -> None:
         )
         assert ok is True
         await task
+        await settle(session._audit_events)
 
     asyncio.run(_drive())
 

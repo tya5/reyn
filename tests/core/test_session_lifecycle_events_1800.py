@@ -53,8 +53,11 @@ def _make_session(tmp_path: Path, *, agent_name: str = "test-agent") -> Session:
 def _collect_events(session: Session) -> list[dict]:
     """Subscribe a collector to the session's EventLog and return the list.
 
-    The returned list is mutated in-place as events arrive (subscriber is
-    called synchronously in emit(), so the list is always current).
+    The returned list is mutated in-place as events arrive. #4961 C:
+    dispatch moved off of ``emit()``'s own synchronous caller onto a
+    queue-consumer task — a caller must ``await session._audit_events.drain()``
+    (or otherwise yield enough for the consumer to catch up) before this
+    list can be trusted to reflect everything emitted so far.
     """
     collected: list[dict] = []
 
@@ -127,6 +130,14 @@ async def test_session_started_and_completed_emit(tmp_path: Path, monkeypatch) -
     # run() exits the while loop and falls into finally.
     session.inbox.put_nowait(("shutdown", {}))
     await session.run()
+    # #4961 C: `session_completed` is emitted right at the tail of
+    # run()'s own finally block, with no further internal await after
+    # it — `await session.run()` returning does not by itself guarantee
+    # the consumer has drained it yet. `drain()` is deterministic
+    # (unlike a bare yield, which only helps if exactly one event is
+    # pending); Session.run() itself now awaits this at its own real
+    # shutdown path too — see its own comment there.
+    await session._audit_events.drain()
 
     started = _events_of_type(collected, "session_started")
     completed = _events_of_type(collected, "session_completed")

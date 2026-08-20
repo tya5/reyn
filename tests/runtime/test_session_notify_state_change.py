@@ -25,10 +25,13 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from reyn.core.events.state_log import StateLog
 from reyn.runtime.chat_message import ChatMessage
 from reyn.runtime.session import Session
 from tests._support.agent_session import make_session
+from tests._support.events import settle
 
 
 def _make_session(tmp_path: Path, *, agent_name: str = "alpha") -> Session:
@@ -183,17 +186,24 @@ def test_state_change_entries_not_in_compactor_candidates(tmp_path):
 # ── Observability event (= sub-task 6 measurement foundation) ──────────
 
 
-def test_notify_state_change_emits_observability_event(tmp_path):
+@pytest.mark.asyncio
+async def test_notify_state_change_emits_observability_event(tmp_path):
     """Tier 2: each notify_state_change call emits a
     ``state_change_notified`` event on the session's audit_events log
     so #398 sub-task 6 measurement can count emission frequency by
     source without scraping chat history.
+
+    #4961 C: dispatch moved off of `emit()`'s own synchronous caller onto
+    a queue-consumer task — yields once (`await asyncio.sleep(0)`) after
+    the call so the consumer actually runs before asserting delivery.
     """
     session = _make_session(tmp_path)
     captured: list = []
+    await settle(session._audit_events)
     session._audit_events.add_subscriber(captured.append)
 
     session.notify_state_change("perm granted", source="permission_manager")
+    await session._audit_events.drain()
 
     state_events = [ev for ev in captured if ev.type == "state_change_notified"]
     assert state_events, "expected at least one state_change_notified event"

@@ -31,7 +31,7 @@ from reyn.core.op_runtime.mcp_install import handle as mcp_install_handle
 from reyn.schemas.models import MCPInstallIROp
 from reyn.security.permissions.permissions import PermissionDecl, PermissionResolver
 from reyn.user_intervention import InterventionAnswer, UserIntervention
-from tests._support.events import collect_events
+from tests._support.events import collect_events, settle
 
 # ---------------------------------------------------------------------------
 # Fixtures: fake server.json responses
@@ -199,6 +199,12 @@ def _patch_registry_get(server_response: dict, status: int = 200):
 
 def _run(coro):
     return asyncio.run(coro)
+
+
+async def _run_and_settle(coro, log):
+    result = await coro
+    await settle(log)
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -384,7 +390,7 @@ def test_secret_value_not_in_event(tmp_path, monkeypatch):
     )
 
     with _patch_registry_get(_SECRET_SERVER_RESPONSE):
-        _run(mcp_install_handle(op, ctx))
+        _run(_run_and_settle(mcp_install_handle(op, ctx), ctx.events))
 
     events = collected
     install_events = [e for e in events if e.type == "mcp_server_installed"]
@@ -477,7 +483,7 @@ def test_event_emitted_on_success(tmp_path, monkeypatch):
     )
 
     with _patch_registry_get(_FILESYSTEM_SERVER_RESPONSE):
-        result = _run(mcp_install_handle(op, ctx))
+        result = _run(_run_and_settle(mcp_install_handle(op, ctx), ctx.events))
 
     assert result["status"] == "ok"
 

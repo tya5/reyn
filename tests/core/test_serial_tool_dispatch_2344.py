@@ -22,7 +22,7 @@ import pytest
 from reyn.core.dispatch.dispatcher import DispatchContext, dispatch_tool
 from reyn.core.events.events import EventLog
 from reyn.runtime.router_loop import RouterLoop
-from tests._support.events import collect_events
+from tests._support.events import collect_events, settle
 from tests._support.router_loop import FakeRouterHost
 
 
@@ -157,6 +157,7 @@ async def test_audit_event_order_is_declaration_order_contiguous(tmp_path):
     Drives the real dispatch_tool → real EventLog emission (no stub)."""
     loop = _RealEventDispatchLoop(host=FakeRouterHost(), chain_id="chain-2344", max_iterations=5)
     await loop.dispatch([{"name": "write", "args": {}}, {"name": "read", "args": {}}])
+    await settle(loop.event_log)
 
     assert _tool_event_seq(loop.event_log_collected) == [
         ("tool_called", "write"), ("tool_returned", "write"),
@@ -176,6 +177,7 @@ async def test_replay_reproduces_declaration_order(tmp_path):
     prefix replays exactly the COMPLETED first call (no half-executed call straddling the cut)."""
     loop = _RealEventDispatchLoop(host=FakeRouterHost(), chain_id="chain-2344", max_iterations=5)
     await loop.dispatch([{"name": "write", "args": {}}, {"name": "read", "args": {}}])
+    await settle(loop.event_log)
 
     # replay = iterate the real EventLog in append order (P6 replay semantics for the audit log).
     log = _tool_event_seq(loop.event_log_collected)

@@ -29,6 +29,7 @@ from reyn.runtime.profile import AgentProfile
 from reyn.runtime.registry import AgentRegistry
 from reyn.runtime.session import Session
 from tests._support.agent_session import make_session
+from tests._support.events import settle
 
 
 def _make_registry(tmp_path: Path) -> AgentRegistry:
@@ -77,6 +78,7 @@ async def test_spawned_events_isolated_and_forwarder_survives_rewire(tmp_path, m
     assert a.events_dir != main.events_dir, "spawned session must have an isolated events dir"
 
     a._audit_events.emit("budget_warn", dimension="daily_tokens")
+    await settle(a._audit_events)
 
     # subscriber completeness: the forwarder survived the swap → the outbox got the marker.
     msg = a.outbox.get_nowait()

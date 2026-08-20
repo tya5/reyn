@@ -63,6 +63,7 @@ from reyn.runtime.services.snapshot_journal import SnapshotJournal
 from reyn.runtime.session import Session
 from reyn.user_intervention import InterventionChoice, UserIntervention
 from tests._support.agent_session import make_session
+from tests._support.events import settle
 
 # ---------------------------------------------------------------------------
 # Helpers — Session (Part A)
@@ -93,7 +94,11 @@ class _EventSink:
         self.events.append(event)
 
 
-def _user_submitted(sink: _EventSink):
+async def _user_submitted(session: Session, sink: _EventSink):
+    # #4961 C / #4966: emit() dispatches to subscribers off the synchronous
+    # caller — settle() before the read makes that wait explicit instead of
+    # racing the background consumer.
+    await settle(session._audit_events)
     matches = [e for e in sink.events if e.type == "user_submitted"]
     assert matches, "no user_submitted event observed"
     return matches[0]
@@ -127,7 +132,7 @@ async def test_submit_user_text_emits_user_submitted_to_every_subscriber(tmp_pat
 
     await session.submit_user_text("hello from client A")
 
-    ev_a, ev_b = _user_submitted(sink_a), _user_submitted(sink_b)
+    ev_a, ev_b = await _user_submitted(session, sink_a), await _user_submitted(session, sink_b)
     for ev in (ev_a, ev_b):
         assert ev.data.get("text") == "hello from client A"
 
@@ -165,7 +170,7 @@ async def test_submit_user_text_carries_chain_id_and_msg_id(tmp_path, monkeypatc
 
     await session.submit_user_text("track my id")
 
-    ev = _user_submitted(sink)
+    ev = await _user_submitted(session, sink)
     assert ev.data.get("chain_id")
     assert ev.data.get("msg_id")
 
@@ -184,7 +189,7 @@ async def test_submit_user_text_local_default_carries_no_attribution(tmp_path, m
 
     await session.submit_user_text("plain local turn")
 
-    ev = _user_submitted(sink)
+    ev = await _user_submitted(session, sink)
     assert ev.data.get("meta") == {}
 
 
@@ -204,7 +209,7 @@ async def test_submit_user_text_remote_attribution_reaches_the_event(tmp_path, m
         attribution={"auth_user_id": "alice", "auth_connection_id": "conn-1"},
     )
 
-    ev = _user_submitted(sink)
+    ev = await _user_submitted(session, sink)
     meta = ev.data.get("meta") or {}
     assert meta.get("auth_user_id") == "alice"
     assert meta.get("auth_connection_id") == "conn-1"
@@ -222,7 +227,7 @@ def _build_handler(
     history_items: list[dict],
     threat_scan: "ThreatScanConfig | None" = None,
     event_sink: "_EventSink | None" = None,
-) -> InterventionHandler:
+) -> "tuple[InterventionHandler, EventLog]":
     state_log = StateLog(tmp_path / "state.wal")
     event_store = EventStore(tmp_path / "events")
     subscribers = [event_store] if event_sink is None else [event_store, event_sink]
@@ -243,7 +248,7 @@ def _build_handler(
         return None  # never invoked: these tests deliver_answer_to directly
 
     registry = InterventionRegistry(on_announce=_on_announce)
-    return InterventionHandler(
+    handler = InterventionHandler(
         intervention_registry=registry,
         journal=journal,
         event_log=event_log,
@@ -251,9 +256,12 @@ def _build_handler(
         append_history=_append_history,
         threat_scan=threat_scan,
     )
+    return handler, event_log
 
 
-def _answer_echo(sink: "_EventSink"):
+async def _answer_echo(event_log: "EventLog", sink: "_EventSink"):
+    # #4961 C / #4966: same off-thread-dispatch settle as _user_submitted.
+    await settle(event_log)
     matches = [e for e in sink.events if e.type == "intervention_answer_submitted"]
     assert matches, "no intervention_answer_submitted event observed"
     return matches[0]
@@ -285,7 +293,7 @@ async def test_free_text_answer_broadcasts_answer_event(tmp_path, monkeypatch):
     outbox: list[OutboxMessage] = []
     history: list[dict] = []
     sink = _EventSink()
-    handler = _build_handler(
+    handler, event_log = _build_handler(
         tmp_path, outbox_items=outbox, history_items=history, event_sink=sink,
     )
     iv = _make_iv()
@@ -293,7 +301,7 @@ async def test_free_text_answer_broadcasts_answer_event(tmp_path, monkeypatch):
     resolved = await handler.deliver_answer_to(iv, "Tokyo")
 
     assert resolved is True
-    ev = _answer_echo(sink)
+    ev = await _answer_echo(event_log, sink)
     assert ev.data.get("text") == "Tokyo"
 
 
@@ -306,7 +314,7 @@ async def test_choice_answer_broadcasts_answer_event_with_label(tmp_path, monkey
     outbox: list[OutboxMessage] = []
     history: list[dict] = []
     sink = _EventSink()
-    handler = _build_handler(
+    handler, event_log = _build_handler(
         tmp_path, outbox_items=outbox, history_items=history, event_sink=sink,
     )
     choices = [InterventionChoice(id="yes", label="Yes", hotkey="y")]
@@ -315,7 +323,7 @@ async def test_choice_answer_broadcasts_answer_event_with_label(tmp_path, monkey
     resolved = await handler.deliver_answer_to(iv, "", choice_id_override="yes")
 
     assert resolved is True
-    ev = _answer_echo(sink)
+    ev = await _answer_echo(event_log, sink)
     assert ev.data.get("text") == "Yes"
 
 
@@ -329,7 +337,7 @@ async def test_answer_broadcast_carries_attribution(tmp_path, monkeypatch):
     outbox: list[OutboxMessage] = []
     history: list[dict] = []
     sink = _EventSink()
-    handler = _build_handler(
+    handler, event_log = _build_handler(
         tmp_path, outbox_items=outbox, history_items=history, event_sink=sink,
     )
     iv = _make_iv()
@@ -339,7 +347,7 @@ async def test_answer_broadcast_carries_attribution(tmp_path, monkeypatch):
         attribution={"auth_user_id": "bob", "auth_connection_id": "conn-2"},
     )
 
-    ev = _answer_echo(sink)
+    ev = await _answer_echo(event_log, sink)
     meta = ev.data.get("meta") or {}
     assert meta.get("auth_user_id") == "bob"
     assert meta.get("auth_connection_id") == "conn-2"
@@ -365,7 +373,7 @@ async def test_external_answer_history_is_fenced_but_broadcast_event_is_raw(tmp_
     outbox: list[OutboxMessage] = []
     history: list[dict] = []
     sink = _EventSink()
-    handler = _build_handler(
+    handler, event_log = _build_handler(
         tmp_path, outbox_items=outbox, history_items=history,
         threat_scan=ThreatScanConfig(),  # enabled + fence_enabled by default
         event_sink=sink,
@@ -385,7 +393,7 @@ async def test_external_answer_history_is_fenced_but_broadcast_event_is_raw(tmp_
 
     # Display sink: raw — a human watching the conversation sees the actual
     # answer, not a fence marker (display never reaches agent context).
-    ev = _answer_echo(sink)
+    ev = await _answer_echo(event_log, sink)
     assert ev.data.get("text") == raw_answer
     assert "EXTERNAL_UNTRUSTED" not in ev.data.get("text")
 
@@ -401,7 +409,7 @@ async def test_unresolved_unknown_choice_does_not_broadcast_answer_event(tmp_pat
     outbox: list[OutboxMessage] = []
     history: list[dict] = []
     sink = _EventSink()
-    handler = _build_handler(
+    handler, event_log = _build_handler(
         tmp_path, outbox_items=outbox, history_items=history, event_sink=sink,
     )
     choices = [InterventionChoice(id="yes", label="Yes", hotkey="y")]
@@ -429,7 +437,7 @@ async def test_resolved_answer_puts_no_outbox_user_frame(tmp_path, monkeypatch):
     outbox: list[OutboxMessage] = []
     history: list[dict] = []
     sink = _EventSink()
-    handler = _build_handler(
+    handler, event_log = _build_handler(
         tmp_path, outbox_items=outbox, history_items=history, event_sink=sink,
     )
     iv = _make_iv()
@@ -439,6 +447,6 @@ async def test_resolved_answer_puts_no_outbox_user_frame(tmp_path, monkeypatch):
     # Positive control: the answer path actually ran (history + event).
     assert resolved is True
     assert history and history[0]["text"] == "Tokyo"
-    assert _answer_echo(sink).data.get("text") == "Tokyo"
+    assert (await _answer_echo(event_log, sink)).data.get("text") == "Tokyo"
     # The thing under test: no outbox frame of ANY kind was produced.
     assert outbox == []

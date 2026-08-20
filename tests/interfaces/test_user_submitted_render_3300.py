@@ -70,6 +70,7 @@ from reyn.runtime.session import Session
 from reyn.schemas.models import Event
 from tests._async_wait import wait_until
 from tests._support.agent_session import make_session
+from tests._support.events import settle
 
 _RAW_ESC = "\x1b[31mdanger\x1b[0m"
 _EMPTY_USAGE = TokenUsage(prompt_tokens=5, completion_tokens=3)
@@ -355,6 +356,7 @@ async def test_multi_client_each_subscriber_gets_its_own_echo_no_double_render(
     session.subscribe_audit_events(sink_b)
 
     await session.submit_user_text("one submit, two clients")
+    await settle(session._audit_events)
 
     for sink in (sink_a, sink_b):
         matches = [e for e in sink.events if e.type == "user_submitted"]

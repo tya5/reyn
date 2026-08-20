@@ -40,7 +40,7 @@ from reyn.mcp.subscription_port import (
     is_modern_protocol_version,
     select_subscription_adapter,
 )
-from tests._support.events import collect_events
+from tests._support.events import collect_events, settle
 from tests._support.paths import REPO_ROOT
 
 _SUPPORT_DIR = REPO_ROOT / "tests" / "_support"
@@ -150,6 +150,7 @@ async def test_mcp_initialized_names_the_selected_adapter_class():
     try:
         await service.get("srv", _stdio_cfg(_ECHO_SERVER))
 
+        await settle(events)
         matching = [e for e in collected if e.type == "mcp_initialized"]
         (only_event,) = matching  # exactly one — the single (re)connect this test drove
         assert only_event.data.get("server") == "srv"
@@ -317,6 +318,7 @@ async def test_listen_adapter_dispatch_routes_each_event_kind_to_the_matching_ha
     await adapter._dispatch(PromptsListChanged())
     await adapter._dispatch(ResourceUpdated(uri=_URI))
 
+    await settle(events)
     types_seen = [e.type for e in collected]
     assert types_seen.count("mcp_tool_list_changed") == 1
     assert types_seen.count("mcp_prompt_list_changed") == 1
@@ -335,6 +337,7 @@ async def test_listen_adapter_dispatch_routes_each_event_kind_to_the_matching_ha
     # not a fixed count).
     before = list(collected)
     await adapter._dispatch(ResourcesListChanged())
+    await settle(events)
     assert collected == before, (
         f"ResourcesListChanged must produce no event — collected grew from "
         f"{[e.type for e in before]} to {[e.type for e in collected]}"

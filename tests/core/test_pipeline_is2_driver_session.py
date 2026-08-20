@@ -668,6 +668,10 @@ async def test_deliver_emits_task_settle_undelivered_when_reply_agent_gone(
     worker._audit_events.add_subscriber(lambda ev: captured_events.append(ev))
 
     await driver._finish(status="ok", output={"x": 1})
+    # #4961 C: emit()'s dispatch is now async (queue + consumer task), not
+    # inline — the same drain() requirement as the other 9 sites this PR
+    # already converted (see events.py's EventLog.drain() docstring).
+    await worker._audit_events.drain()
 
     matching = [ev for ev in captured_events if ev.type == "task_settle_undelivered"]
     assert matching, f"expected a task_settle_undelivered event; got: {captured_events}"
@@ -706,6 +710,8 @@ async def test_deliver_does_not_emit_task_settle_undelivered_on_successful_deliv
     worker._audit_events.add_subscriber(lambda ev: captured_events.append(ev))
 
     await driver._finish(status="ok", output={"x": 1})
+
+    await worker._audit_events.drain()
 
     run_dir = pipeline_run_dir(tmp_path / ".reyn", "delivered-audit-run")
     terminal = _result_json(run_dir)

@@ -35,7 +35,7 @@ from reyn.core.offload.canonical import (
 )
 from reyn.core.pipeline.executor import Pipeline, PipelineExecutor, ToolStep
 from reyn.tools import get_default_registry
-from tests._support.events import collect_events
+from tests._support.events import collect_events, settle
 
 get_default_registry()
 
@@ -300,6 +300,7 @@ async def test_recall_error_at_pipeline_chokepoint_renders_non_empty_no_degraded
     ctx_value = result.named_stores["r"]
     assert ctx_value["text"].strip(), "semantic_search error must reach ctx as non-empty text"
     assert "semantic_search requires" in ctx_value["text"]
+    await settle(events)
     # An error is error-classified → it does NOT masquerade as a lost success → no degraded event.
     assert not [e for e in collected if e.type == CANONICAL_DEGRADED_EVENT], (
         "an error result (non-empty, error-classified) must not trip canonical_degraded"

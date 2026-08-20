@@ -33,7 +33,7 @@ from typing import Any
 from reyn.core.events.events import EventLog
 from reyn.mcp.client import MCPClient
 from reyn.schemas.models import MCPIROp
-from tests._support.events import collect_events
+from tests._support.events import collect_events, settle
 
 
 class _StubPool:
@@ -233,7 +233,12 @@ def test_op_handler_progress_callback_emits_mcp_progress_event() -> None:
     ctx.mcp_pool = _StubPool(client)
 
     op = MCPIROp(kind="mcp", server="demo", tool="thing", args={})
-    asyncio.run(mcp_op_handler._execute(op, ctx))
+
+    async def _execute_and_settle() -> None:
+        await mcp_op_handler._execute(op, ctx)
+        await settle(events)
+
+    asyncio.run(_execute_and_settle())
 
     # At least two mcp_progress events should have been emitted with the
     # structured fields the forwarder consumes.

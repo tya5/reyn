@@ -39,6 +39,7 @@ from reyn.interfaces.repl.present_renderer import render_presentation_nodes
 from reyn.interfaces.repl.renderer import format_inline_message
 from reyn.runtime.outbox import OutboxMessage
 from reyn.security.permissions.permissions import PermissionDecl
+from tests._support.events import settle
 
 
 def _render_to_text(nodes: list[dict], *, width: int = 60) -> str:
@@ -728,5 +729,6 @@ async def test_presented_event_surface_reflects_the_wired_renderers_name() -> No
         blueprint={"component": "text", "text": {"$bind": "/v"}},
     )
     await handle(op, ctx)
+    await settle(events)
     assert captured
     assert captured[0].data["surface"] == ["inline-cui"]

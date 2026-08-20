@@ -184,7 +184,7 @@ async def test_narrowing_emits_audit_event_through_real_op_dispatch(tmp_path):
     from reyn.data.workspace.workspace import Workspace
     from reyn.schemas.models import SandboxedExecIROp
     from reyn.security.permissions.permissions import PermissionDecl
-    from tests._support.events import collect_events
+    from tests._support.events import collect_events, settle
 
     events = EventLog()
     collected = collect_events(events)
@@ -206,6 +206,7 @@ async def test_narrowing_emits_audit_event_through_real_op_dispatch(tmp_path):
     )
     op = SandboxedExecIROp(kind="sandboxed_exec", argv=["/bin/echo", "hi"])
     await handle(op, ctx)
+    await settle(events)
 
     narrowed = [e for e in collected if e.type == "sandbox_policy_narrowed"]
     assert narrowed, "expected a sandbox_policy_narrowed audit-event when a deny wins"
@@ -223,7 +224,7 @@ async def test_no_narrowing_no_audit_event(tmp_path):
     from reyn.data.workspace.workspace import Workspace
     from reyn.schemas.models import SandboxedExecIROp
     from reyn.security.permissions.permissions import PermissionDecl
-    from tests._support.events import collect_events
+    from tests._support.events import collect_events, settle
 
     events = EventLog()
     collected = collect_events(events)
@@ -240,5 +241,6 @@ async def test_no_narrowing_no_audit_event(tmp_path):
     )
     op = SandboxedExecIROp(kind="sandboxed_exec", argv=["/bin/echo", "hi"])
     await handle(op, ctx)
+    await settle(events)
 
     assert [e for e in collected if e.type == "sandbox_policy_narrowed"] == []

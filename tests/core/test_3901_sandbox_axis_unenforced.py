@@ -163,7 +163,7 @@ async def test_unenforced_axis_emits_audit_event_through_real_op_dispatch(tmp_pa
     from reyn.data.workspace.workspace import Workspace
     from reyn.schemas.models import SandboxedExecIROp
     from reyn.security.permissions.permissions import PermissionDecl
-    from tests._support.events import collect_events
+    from tests._support.events import collect_events, settle
 
     events = EventLog()
     collected = collect_events(events)
@@ -179,6 +179,7 @@ async def test_unenforced_axis_emits_audit_event_through_real_op_dispatch(tmp_pa
     op = SandboxedExecIROp(kind="sandboxed_exec", argv=["/bin/echo", "hi"])
     await handle(op, ctx)
 
+    await settle(events)
     unenforced = [e for e in collected if e.type == "sandbox_axis_unenforced"]
     assert unenforced, "expected a sandbox_axis_unenforced audit-event"
     assert unenforced[0].data["backend"] == "landlock"
@@ -259,7 +260,7 @@ async def test_enforced_axis_emits_no_unenforced_event(tmp_path):
     from reyn.data.workspace.workspace import Workspace
     from reyn.schemas.models import SandboxedExecIROp
     from reyn.security.permissions.permissions import PermissionDecl
-    from tests._support.events import collect_events
+    from tests._support.events import collect_events, settle
 
     class _SeatbeltShapedBackend(_LandlockShapedBackend):
         name = "seatbelt"
@@ -279,6 +280,7 @@ async def test_enforced_axis_emits_no_unenforced_event(tmp_path):
     op = SandboxedExecIROp(kind="sandboxed_exec", argv=["/bin/echo", "hi"])
     await handle(op, ctx)
 
+    await settle(events)
     assert [e for e in collected if e.type == "sandbox_axis_unenforced"] == []
 
 
@@ -293,7 +295,7 @@ async def test_landlock_with_no_deny_lists_emits_no_unenforced_event(tmp_path):
     from reyn.data.workspace.workspace import Workspace
     from reyn.schemas.models import SandboxedExecIROp
     from reyn.security.permissions.permissions import PermissionDecl
-    from tests._support.events import collect_events
+    from tests._support.events import collect_events, settle
 
     events = EventLog()
     collected = collect_events(events)
@@ -309,4 +311,5 @@ async def test_landlock_with_no_deny_lists_emits_no_unenforced_event(tmp_path):
     op = SandboxedExecIROp(kind="sandboxed_exec", argv=["/bin/echo", "hi"])
     await handle(op, ctx)
 
+    await settle(events)
     assert [e for e in collected if e.type == "sandbox_axis_unenforced"] == []
