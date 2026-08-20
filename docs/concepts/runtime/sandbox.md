@@ -215,9 +215,16 @@ not a claim that nothing else is missing). Seatbelt declares `SUPPORTED`
 not a gap, a structural fact (Landlock's kernel-documented model is
 restrict-only, with no "grant" operation at all, so the #4932-class
 enumeration-gap failure cannot occur there in the first place); Noop
-declares `SUPPORTED` trivially (nothing is restricted to begin with);
-Docker declares `NOT_SUPPORTED` (the concept is macOS-specific, no
-Linux/container equivalent exists).
+ALSO declares `NOT_SUPPORTED` (corrected post-#4941 review, architect +
+lead-coder: `CapabilitySupport` asks whether a backend can EXPRESS a
+capability, a mechanism question — Noop has no grant mechanism either,
+it simply never needed one because it restricts nothing; an earlier
+version of this declaration answered a DIFFERENT question, "is a
+required capability reachable under this backend" — true by
+construction, but not what the field means, and it had a real
+operator-visible consequence, see below); Docker declares
+`NOT_SUPPORTED` (the concept is macOS-specific, no Linux/container
+equivalent exists).
 
 **Declaration ≠ guarantee — the property an operator must read correctly.**
 `SUPPORTED` means "this backend HAS the mechanism," never "every named
@@ -228,9 +235,14 @@ category (`opendirectoryd`, `com.apple.SystemConfiguration`) that are
 **not yet granted** — a disclosed, open gap, not silently implied closed.
 Declaring `require_capabilities: [ipc_named_service]` therefore does two
 different things depending on WHY a backend fails a required capability:
-against Landlock/Docker/Noop-fallback (genuinely `NOT_SUPPORTED`, no
-mechanism at all) it correctly refuses per `on_unsupported`; against
-Seatbelt it never fires at all — the category-level declaration cannot
+against Landlock/Docker/Noop (all genuinely `NOT_SUPPORTED`, no
+mechanism at all) it correctly refuses per `on_unsupported` — and a
+desirable side effect of Noop's own correction above: `on_unsupported:
+error` now refuses a run that resolved to NO enforcement at all, exactly
+the predictability the owner's ruling prioritises (the earlier,
+inverted version would have refused the genuinely-enforcing Landlock
+while accepting the fully-unenforced Noop); against Seatbelt it never
+fires at all — the category-level declaration cannot
 distinguish "granted" from "declared-supported-but-this-particular-service-
 isn't," so a `dscl` failure under Seatbelt is invisible to this mechanism.
 The mechanism's real value is closing the class of "silent capability loss

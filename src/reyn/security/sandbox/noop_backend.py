@@ -88,14 +88,23 @@ class NoopBackend:
         allow_env_names=AxisEnforcement.ENFORCES,
     )
 
-    # #4935: SUPPORTED — trivially, not because Noop has a grant mechanism,
-    # but because it restricts NOTHING (enforced_axes above, all
-    # DOES_NOT_ENFORCE): there is no default it needs a named-service
-    # exception to widen. A required capability under Noop is reachable by
-    # construction, same reasoning `probe_argv`'s own Noop exemption uses
-    # for "nothing to differentiate on".
+    # #4935 (corrected, architect + lead-coder, post-merge review of #4941):
+    # NOT_SUPPORTED. `CapabilitySupport`'s own docstring defines the axis as
+    # "whether a backend can EXPRESS one named-capability class" — a
+    # mechanism question, not a reachability one. Noop has no grant
+    # mechanism at all (it restricts nothing, so it never needed one) —
+    # the FIRST version of this declaration wrongly answered a different
+    # question ("is a required capability reachable under this backend",
+    # true by construction since nothing is denied) than the one the enum
+    # actually asks. Getting this wrong here had a real, disclosed,
+    # operator-visible consequence: `require_capabilities` +
+    # `on_unsupported: error` would have REJECTED Landlock (genuinely
+    # enforcing) while ACCEPTING Noop (enforcing nothing) — inverted
+    # predictability, the opposite of what strict opt-in is for. This
+    # value now rejects Noop under that same combination, the behavior a
+    # predictability-first reading of the mechanism actually wants.
     supported_capabilities: CapabilityDeclaration = CapabilityDeclaration(
-        ipc_named_service=CapabilitySupport.SUPPORTED,
+        ipc_named_service=CapabilitySupport.NOT_SUPPORTED,
     )
 
     def available(self) -> bool:
