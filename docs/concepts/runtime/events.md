@@ -110,6 +110,45 @@ subscriber, and a raising subscriber can never stop the backend from
 having already written. See `src/reyn/core/events/backend.py`'s module
 docstring for the full mechanism.
 
+### `agent_delta` durable-write coalescing (#4960)
+
+One kind gets special treatment on the `local` backend's write side:
+`agent_delta` (one audit-event per streamed reply chunk) is NOT written
+to disk per-fragment. Live subscriber delivery is unaffected — every
+fragment still dispatches to the TUI/AG-UI exactly as before. Measured
+(2000-delta/60KB real streamed reply): unthrottled, `agent_delta` writes
+were 99.4% of that run's audit file bytes, so writing every fragment
+durably would dominate the log for the duration of any streamed reply.
+
+Three mechanisms, each covering a gap the others leave open:
+
+- **Fragment count** (`agent_delta_coalesce_fragments`, default 100) —
+  one durable record per N fragments. Governs under normal bursty
+  streaming (measured up to ~1000 fragments/s through a proxy).
+- **Interval** (`agent_delta_coalesce_interval_ms`, default 2000ms) — one
+  durable record per T milliseconds when N hasn't been reached. This is
+  the ONLY guarantee for a process-level death (SIGKILL / OOM-kill / host
+  crash) — a Python `finally` never runs in that case, so the terminal
+  flush below cannot help.
+- **Terminal flush** — when a streaming chain ends (success, a raised
+  exception, or cancellation — `RouterLoop.run()`'s own `finally`), any
+  fragments accumulated since the last durable write get one final
+  record. Covers a SHORT interruption that ends before either threshold
+  above is reached — architect's ruling identified this as the most
+  likely interruption shape, and losing it would defeat the whole reason
+  coalescing (rather than dropping `agent_delta` writes entirely) was
+  chosen: **cost accountability** — if a call dies mid-stream before its
+  `usage` record lands, the coalesced record is the only surviving
+  evidence that a partial reply (and its token cost) existed at all.
+
+A coalesced record carries `coalesced_fragment_count`; `reyn events
+replay` therefore shows fewer `agent_delta` records than fragments
+actually streamed — declared via `LocalEventBackend.declare_gaps()`
+(contract 2), never a silent loss. See `src/reyn/core/events/backend.py`'s
+module-level constants for the full measured rationale, and the
+[config reference](../../reference/config/reyn-yaml.md#audit_events-block)
+for the operator-facing knobs.
+
 ## What audit-events are NOT
 
 - **Not application logs.** A workflow author shouldn't emit free-form audit-events. The set is OS-defined.

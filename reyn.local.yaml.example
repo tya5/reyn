@@ -562,6 +562,25 @@
 # dogfood_trace have nothing to read for a discard run. "network" is not
 # yet a valid value (falls back to "local") — its on-failure semantics
 # are an open design question tracked in #4496.
+#
+# ``agent_delta_coalesce_fragments`` / ``agent_delta_coalesce_interval_ms``
+# (#4960, architect ruling C, defaults 100 / 2000): ``agent_delta`` (one
+# audit-event per streamed reply chunk) is durably written once per this
+# many fragments OR this many milliseconds, whichever comes first, per
+# streaming chain — plus one final record when a stream ends (success,
+# exception, or cancellation; ``RouterLoop.run()``'s own ``finally``).
+# Live TUI/AG-UI delivery is UNAFFECTED — every fragment still dispatches
+# to subscribers unthrottled; this only throttles the durable write.
+# Measured (2000-delta/60KB real streamed reply): unthrottled,
+# ``agent_delta`` was 99.4% of that run's audit file bytes. The fragment
+# count governs under normal bursty streaming (measured up to ~1000
+# fragments/s); the interval's PRIMARY role is a process-level death
+# (SIGKILL / OOM-kill / host crash) that the terminal flush cannot catch
+# (a Python ``finally`` never runs then) — the terminal flush itself only
+# covers a SHORT interruption (exception/cancel/normal completion) that
+# ends before either threshold above is reached. See
+# ``src/reyn/core/events/backend.py``'s own module-level constants for
+# the full rationale.
 # -----------------------------------------------------------------------------
 # audit_events:
 #   max_bytes: 10485760              # 10 MB
@@ -569,6 +588,8 @@
 #   cleanup_period_days: 30          # 0 = never auto-delete by age
 #   max_disk_usage_percent: 10       # 0 = never auto-delete by size
 #   backend: local                   # local | discard
+#   agent_delta_coalesce_fragments: 100     # durable write every N streamed chunks
+#   agent_delta_coalesce_interval_ms: 2000  # or every T ms, whichever first
 
 
 # -----------------------------------------------------------------------------

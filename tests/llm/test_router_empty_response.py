@@ -46,6 +46,12 @@ class FakeEventLog:
     def emit(self, type: str, **data) -> None:
         self.emitted.append({"type": type, **data})
 
+    def flush_agent_delta(self, chain_id: str) -> None:
+        # #4960: RouterLoop.run()'s terminal `finally` always calls this —
+        # real EventLog.flush_agent_delta never raises, so this stub is a
+        # safe no-op (no backend/coalescing here to flush).
+        pass
+
 
 class FakeRouterHost:
     """In-memory RouterLoopHost for tests."""

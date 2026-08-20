@@ -63,9 +63,52 @@ owner has resolved the open question above.
 """
 from __future__ import annotations
 
-from typing import Protocol, runtime_checkable
+import time
+from typing import Callable, Protocol, runtime_checkable
 
 from reyn.schemas.models import Event
+
+#: #4960 — architect ruling C: ``agent_delta`` (one audit-event per
+#: streamed content chunk) is NOT durably written per-fragment. Live
+#: subscriber dispatch (TUI / AG-UI) is completely unaffected — see
+#: ``EventLog.emit()``'s own ordering (backend write, then subscriber
+#: loop) — this constant only throttles what ``LocalEventBackend``
+#: persists to disk.
+#:
+#: Measured (#4960, 2000-delta / 60KB streamed reply, the SAME real
+#: transport/router/TUI path the #3570 repaint-budget precedent uses):
+#: unthrottled, ``agent_delta`` writes are 99.4% of the audit file's
+#: total bytes for that run (550,917 / 554,112 bytes), at a fixed
+#: ~275 bytes/fragment and ~28-40us of backend-write time per fragment.
+#: 100 caps that to ~1% of the unthrottled footprint (~20 durable
+#: records instead of 2000 for that run) while keeping the loss-of-
+#: recency bound small (at most 99 fragments, ~27KB of text, between
+#: any two durable checkpoints for a chain still actively streaming).
+_DEFAULT_AGENT_DELTA_COALESCE_FRAGMENTS = 100
+
+#: Measured burst rate through a proxy (#3570's own comment): up to
+#: ~1000 deltas/s, so at the fragment default above a burst is governed
+#: by the FRAGMENT count (~100ms between durable writes), never by this
+#: timer. This interval exists for the cases the fragment count cannot
+#: reach on its own:
+#:
+#:   ① (primary) a process-level death (SIGKILL / OOM-kill / host
+#:      crash) that the terminal flush below CANNOT catch — a Python
+#:      ``finally`` block never runs when the process itself is killed,
+#:      so this interval is the ONLY durable-record guarantee left for a
+#:      chain that dies mid-stream with fewer than the fragment count
+#:      accumulated (architect's #4960 ruling: this is the scenario a
+#:      short interruption is MOST likely to hit, and losing it defeats
+#:      the whole reason C was chosen over B — cost accountability for a
+#:      call whose usage record never lands).
+#:   ② (secondary) an idle-but-long-lived stream (few deltas over a long
+#:      wall-clock span) still leaves periodic evidence of progress.
+#:
+#: 2 seconds is far above the measured per-fragment cost (tens of
+#: microseconds) so it never fires under normal bursty streaming, and
+#: short enough that an operator inspecting mid-crash state is not
+#: staring at a multi-minute-old durable record.
+_DEFAULT_AGENT_DELTA_COALESCE_INTERVAL_MS = 2_000
 
 
 @runtime_checkable
@@ -93,17 +136,125 @@ class EventBackend(Protocol):
 class LocalEventBackend:
     """Writes to local disk via an `EventStore` (the default, current
     behavior — #4496 PR-2 wraps the EXISTING EventStore.write, no I/O
-    change). No gaps: replay / support-bundle / dogfood_trace all work
-    normally against this backend's output."""
+    change), EXCEPT ``agent_delta`` (#4960, architect ruling C): coalesced
+    to one durable record per ``agent_delta_coalesce_fragments`` fragments
+    OR ``agent_delta_coalesce_interval_ms`` milliseconds, whichever comes
+    first, per streaming chain (``event.data["chain_id"]``) — see the two
+    module-level constants above for the measured rationale, and
+    :meth:`flush_pending_deltas` for the terminal-flush half of the
+    guarantee (the 3 mechanisms — fragment count, interval, terminal
+    flush — cover each other's gap; see each one's own docstring for
+    which failure mode it alone covers).
 
-    def __init__(self, store: "EventStoreLike") -> None:
+    Live subscriber dispatch is completely unaffected: this coalescing
+    lives entirely inside ``write()``, called by ``EventLog.emit()``
+    BEFORE the (unthrottled) subscriber loop — every raw fragment still
+    reaches the TUI/AG-UI exactly as before #4960.
+
+    All OTHER event kinds: unchanged, no gaps — replay / support-bundle /
+    dogfood_trace work normally against this backend's output for them."""
+
+    def __init__(
+        self,
+        store: "EventStoreLike",
+        *,
+        agent_delta_coalesce_fragments: int = _DEFAULT_AGENT_DELTA_COALESCE_FRAGMENTS,
+        agent_delta_coalesce_interval_ms: int = _DEFAULT_AGENT_DELTA_COALESCE_INTERVAL_MS,
+        clock: Callable[[], float] = time.monotonic,
+    ) -> None:
         self._store = store
+        self._agent_delta_coalesce_fragments = agent_delta_coalesce_fragments
+        self._agent_delta_coalesce_interval_ms = agent_delta_coalesce_interval_ms
+        # Test seam (mirrors this repo's existing ``clock: Callable[[],
+        # float]`` idiom, e.g. TextualChatApp) — production always passes
+        # the default ``time.monotonic``; a test can inject a fake to
+        # exercise the interval branch without a real sleep (CLAUDE.md:
+        # "a test writes no duration ... the clock is an INPUT you
+        # supply, never a sleep you wait out").
+        self._clock = clock
+        # Per-chain_id coalescing state (#4960). "" buckets any
+        # agent_delta that, unexpectedly, carries no chain_id — never
+        # silently dropped, just coalesced under one shared key instead
+        # of per-chain isolation.
+        self._delta_pending_count: dict[str, int] = {}
+        self._delta_last_persisted_at: dict[str, float] = {}
+        self._delta_last_event: dict[str, Event] = {}
 
     def write(self, event: Event) -> None:
-        self._store.write(event)
+        if event.type != "agent_delta":
+            self._store.write(event)
+            return
+        chain_id = event.data.get("chain_id")
+        key = chain_id if isinstance(chain_id, str) else ""
+        now = self._clock()
+        if key not in self._delta_last_persisted_at:
+            self._delta_last_persisted_at[key] = now
+        self._delta_last_event[key] = event
+        pending = self._delta_pending_count.get(key, 0) + 1
+        elapsed_ms = (now - self._delta_last_persisted_at[key]) * 1000
+        if (
+            pending >= self._agent_delta_coalesce_fragments
+            or elapsed_ms >= self._agent_delta_coalesce_interval_ms
+        ):
+            self._persist_coalesced_delta(event, coalesced_fragment_count=pending)
+            self._delta_pending_count[key] = 0
+            self._delta_last_persisted_at[key] = now
+        else:
+            self._delta_pending_count[key] = pending
+
+    def flush_pending_deltas(self, chain_id: str) -> None:
+        """#4960 — the terminal-flush mechanism: called once a streaming
+        chain ends (success, exception, or cancellation — see
+        ``EventLog.flush_agent_delta``'s own call site in
+        ``RouterLoop.run()``'s ``finally``). Persists one final coalesced
+        record for any fragments accumulated since the last durable write,
+        so a SHORT interruption (fewer fragments than the coalesce count,
+        less wall-clock than the coalesce interval — the interruption
+        shape most likely to occur, per architect's #4960 ruling) still
+        leaves durable evidence that partial output existed.
+
+        Does NOT cover a process-level death (SIGKILL / OOM-kill / host
+        crash) — a Python ``finally`` never runs in that case; the
+        coalesce-interval mechanism in :meth:`write` is the ONLY durable-
+        record guarantee for THAT failure mode. The two mechanisms
+        deliberately cover different, non-overlapping failure classes."""
+        key = chain_id if isinstance(chain_id, str) else ""
+        pending = self._delta_pending_count.get(key, 0)
+        last_event = self._delta_last_event.get(key)
+        if pending > 0 and last_event is not None:
+            self._persist_coalesced_delta(last_event, coalesced_fragment_count=pending)
+        # Drop this chain's state — a chain_id is not reused after its
+        # stream ends, so keeping it would grow these dicts unbounded
+        # across a long-lived process handling many turns.
+        self._delta_pending_count.pop(key, None)
+        self._delta_last_persisted_at.pop(key, None)
+        self._delta_last_event.pop(key, None)
+
+    def _persist_coalesced_delta(self, event: Event, *, coalesced_fragment_count: int) -> None:
+        """Write ONE durable record standing in for *coalesced_fragment_count*
+        raw ``agent_delta`` fragments — the most recently arrived fragment's
+        own event, with the coalesced count added to ``data`` (a new field,
+        not a mutation of *event* itself — *event* is the SAME object the
+        (already-completed) subscriber dispatch loop may still be holding a
+        reference to, so a new object is written, never the original
+        mutated in place)."""
+        self._store.write(
+            event.model_copy(
+                update={"data": {**event.data, "coalesced_fragment_count": coalesced_fragment_count}},
+            )
+        )
 
     def declare_gaps(self) -> list[str]:
-        return []
+        return [
+            "agent_delta (streamed reply content, one per chunk) is not "
+            "retained per-fragment — coalesced to one durable record per "
+            f"{self._agent_delta_coalesce_fragments} fragments or "
+            f"{self._agent_delta_coalesce_interval_ms}ms, whichever comes "
+            "first, plus one final record when a stream ends (#4960). "
+            "Live TUI/AG-UI delivery is unaffected — this is a durable-"
+            "write-only gap. `reyn events replay` sees fewer agent_delta "
+            "records than fragments actually streamed.",
+        ]
 
 
 class DiscardEventBackend:
