@@ -130,21 +130,23 @@ class EventLog:
         # #4961 C (owner-ruled, architect + lead-coder design): a HANDOFF,
         # not a buffer — no upper bound, no drop policy, no blocking put.
         # `emit()` (sync, a hot path — every op, every tool call) can never
-        # `await`, so it always just pushes here unconditionally; nothing
-        # about DISPATCH depends on whether a running loop exists yet
-        # (verified directly: `asyncio.Queue().put_nowait(...)` works with
-        # no running loop at all — this is not a design guess). The
-        # subscriber loop moves to `_dispatch_consumer`, running on the
-        # queue's CONSUMER side instead of inline inside `emit()` — this is
-        # what isolates a raising OR slow subscriber from `emit()`'s
-        # caller (an op/tool's own execution path). Real backpressure for
-        # a genuinely slow subscriber lives at THAT subscriber's own sink
-        # (a socket, a file) — never here: this queue only grows during a
-        # stretch where one task keeps emitting without ever `await`-ing
-        # anything else (cooperative scheduling hands control to the
-        # consumer the moment the producer yields); constant growth is a
-        # signal a subscriber itself is stuck, observed at THAT layer, not
-        # solved by inventing a bound on this handoff.
+        # `await`. When a running loop exists, `emit()` pushes here and the
+        # subscriber loop runs on the queue's CONSUMER side (`_dispatch_
+        # consumer`) instead of inline — this is what isolates a raising OR
+        # slow subscriber from `emit()`'s caller (an op/tool's own
+        # execution path). Real backpressure for a genuinely slow
+        # subscriber lives at THAT subscriber's own sink (a socket, a
+        # file) — never here: this queue only grows during a stretch where
+        # one task keeps emitting without ever `await`-ing anything else
+        # (cooperative scheduling hands control to the consumer the moment
+        # the producer yields); constant growth is a signal a subscriber
+        # itself is stuck, observed at THAT layer, not solved by inventing
+        # a bound on this handoff.
+        #
+        # #4966 (architect ruling, reversing an earlier "always push
+        # unconditionally" design): when NO running loop exists, `emit()`
+        # dispatches INLINE instead — see `emit()`'s own comment for why.
+        # This queue and its consumer task are simply unused in that case.
         self._dispatch_queue: "asyncio.Queue[Event]" = asyncio.Queue()
         self._consumer_task: "asyncio.Task[None] | None" = None
 
@@ -406,56 +408,101 @@ class EventLog:
                     "continuing to subscriber dispatch",
                     self._emitter, type,
                 )
-        # #4961 C: hand off to the dispatch queue instead of running the
-        # subscriber loop inline — `emit()` always just pushes, unconditionally
-        # (no branch on whether a running loop exists yet; see the queue's
-        # own declaration comment above for why that is deliberate and
-        # measured, not a guess). `_dispatch_consumer` runs the actual
-        # per-subscriber loop on the queue's CONSUMER side.
-        self._dispatch_queue.put_nowait(event)
-        # Opportunistically ensure a consumer is running. Idempotent (only
-        # the FIRST successful call spawns a task; every later `emit()`
-        # sees `_consumer_task` already set and no-ops here) and confined
-        # to bootstrapping — it does not change what gets dispatched or
-        # how, only whether something is currently draining the queue.
-        # `RuntimeError` (no running loop yet, e.g. `emit_cli_event` calls
-        # made before any `asyncio.run()`) is swallowed the same way
-        # AG-UI/A2A/MCP's own `ensure_future` call sites already do:
-        # events accumulate in the queue and are drained by whichever
-        # LATER `emit()` call finally runs inside a live loop. A process
-        # that never starts a loop at all never gets a consumer — its
-        # subscribers (all of them transport/OTEL, all loop-dependent)
-        # were never going to fire anyway; `self._backend.write` above
-        # already ran, so the audit record itself is not lost, only live
-        # subscriber delivery.
-        self._ensure_consumer_started()
+        # #4966 (architect ruling, reversing #4961 C's original "always
+        # push unconditionally" design): branch on whether a running loop
+        # exists RIGHT NOW. Loop present → hand off to the dispatch queue
+        # (unchanged #4961 C design: isolates emit()'s caller from a
+        # raising OR slow subscriber). No loop → dispatch INLINE, right
+        # here, synchronously.
+        #
+        # The original design swallowed `RuntimeError` from
+        # `asyncio.ensure_future` in a no-loop context and just queued the
+        # event, on the reasoning that "no loop ever runs" implies "no
+        # loop-dependent subscriber (transport/OTEL) was ever going to
+        # fire anyway." That reasoning is what architect found wrong: it
+        # protected "dispatch timing is predictable" (queue vs inline) by
+        # sacrificing "dispatch HAPPENING is predictable" — a no-loop
+        # caller's subscribers (however many, sync-only by construction
+        # since nothing here can await them) silently NEVER fired, not
+        # merely later. That is a correctness regression for any
+        # subscriber added in a no-loop context — not just the known CLI
+        # edge, but also every fully-synchronous test that predates
+        # #4961 C and used to observe inline, same-call dispatch.
+        #
+        # The inline branch reuses #4963's own per-subscriber isolation
+        # unchanged (try/except per subscriber, one failure never blocks
+        # the next) — the property that must hold ("delivery happens",
+        # "one failure doesn't cascade", "a subscriber's own exception
+        # never reaches emit()'s caller") holds identically in both
+        # branches. The only difference between the branches is WHEN
+        # dispatch happens, and a no-loop context has no op/tool caller to
+        # protect from a slow subscriber and no transport to hand off to
+        # asynchronously — so that difference carries no meaning there.
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            self._dispatch_inline(event)
+        else:
+            self._dispatch_queue.put_nowait(event)
+            # Opportunistically ensure a consumer is running. Idempotent
+            # (only the FIRST successful call spawns a task; every later
+            # `emit()` sees `_consumer_task` already set and no-ops here).
+            self._ensure_consumer_started()
         return event
+
+    def _dispatch_inline(self, event: Event) -> None:
+        """#4966: the no-running-loop half of `emit()`'s dispatch branch —
+        run the per-subscriber loop synchronously, right here, instead of
+        queueing for `_dispatch_consumer`. Mirrors #4963's per-subscriber
+        isolation exactly (a raising subscriber is logged and does not
+        stop the next one) — see `_dispatch_consumer`'s own docstring for
+        the twin implementation this must stay in sync with.
+
+        A subscriber that returns an awaitable (an async subscriber)
+        cannot be awaited here — there is no running loop to await it on.
+        Logged as a warning rather than silently dropped or raised: this
+        is a real, disclosed gap (that subscriber's async work does not
+        run for this event), not a crash and not a silent loss — every
+        no-loop subscriber observed in this codebase so far (CLI's
+        EventStore, AG-UI's put_nowait forwarder) is sync-only by
+        construction, so this path is not expected to fire in practice.
+        """
+        for sub in self._subscribers:
+            try:
+                result = sub(event)
+                if inspect.isawaitable(result):
+                    logger.warning(
+                        "event subscriber %r returned an awaitable but "
+                        "emit() is dispatching inline (no running event "
+                        "loop) — cannot await it here; that subscriber's "
+                        "async work will not run for this event "
+                        "(emitter=%s type=%s)",
+                        sub, self._emitter, event.type,
+                    )
+            except Exception:
+                logger.exception(
+                    "event subscriber failed (emitter=%s type=%s) — "
+                    "continuing to the next subscriber",
+                    self._emitter, event.type,
+                )
 
     def _ensure_consumer_started(self) -> None:
         """Idempotent bootstrap shared by ``emit()`` and ``drain()`` — only
         the FIRST successful call spawns ``_dispatch_consumer``; every
         later call sees ``_consumer_task`` already set and no-ops.
-        ``RuntimeError`` (no running loop yet, e.g. ``emit_cli_event``
-        calls made before any ``asyncio.run()``) is swallowed the same
-        way AG-UI/A2A/MCP's own ``ensure_future`` call sites already do:
-        events accumulate in the queue and are drained once a LATER call
-        (from either method) finally runs inside a live loop. A process
-        that never starts a loop at all never gets a consumer — its
-        subscribers (all of them transport/OTEL, all loop-dependent)
-        were never going to fire anyway; ``self._backend.write`` in
-        ``emit()`` already ran by the time this is reached, so the audit
-        record itself is not lost, only live subscriber delivery.
-        ``drain()`` needs this too, not just ``emit()``: a caller could
-        reach ``drain()`` in a loop where no ``emit()`` from THIS
-        EventLog has run yet (e.g. draining right at session start),
-        and without a consumer running, ``queue.join()`` would wait
-        forever for ``task_done()`` calls nothing will ever make.
+
+        #4966: no longer swallows ``RuntimeError`` — both call sites now
+        only reach this method when a running loop is already confirmed
+        (``emit()``'s own branch checks first; ``drain()`` is itself
+        ``async def``, so a caller can only reach it from inside a
+        running loop). ``asyncio.ensure_future`` is therefore expected to
+        always succeed here; swallowing its ``RuntimeError`` used to be
+        the source of a no-loop caller's events silently never being
+        dispatched (see ``emit()``'s own comment on the branch this
+        replaced).
         """
         if self._consumer_task is None:
-            try:
-                self._consumer_task = asyncio.ensure_future(self._dispatch_consumer())
-            except RuntimeError:
-                pass
+            self._consumer_task = asyncio.ensure_future(self._dispatch_consumer())
 
     async def _dispatch_consumer(self) -> None:
         """#4961 C: runs for the lifetime of the process's event loop,
@@ -479,30 +526,66 @@ class EventLog:
         misses a ``functools.partial``, a callable object's ``__call__``,
         or a decorator-wrapped function, all of which can report
         non-coroutine while still returning an awaitable when called).
+
+        #4966 (architect ruling, a SECOND application of the same
+        invariant ``emit()``'s own no-loop branch already applies): the
+        dispatch queue is an optimization for when delivery CAN happen
+        asynchronously — never the CONDITION for delivery happening at
+        all. ``emit()`` already applies this when no loop exists yet (at
+        emit time); this task's own ``CancelledError`` handler applies it
+        a second time when the loop is ENDING (at dispatch time) — a
+        caller wrapped in ``asyncio.run(coro)`` closes the loop the
+        moment ``coro`` returns, and that shutdown cancels every still-
+        running task (this one included) BEFORE gathering them; without
+        this handler, whatever is still queued at that instant is lost
+        forever, not merely delayed — the same "permanent, not delayed"
+        failure class #4965 named for ``drain()`` itself, but on the
+        OPPOSITE side (this consumer dying, not ``drain()``'s own wait
+        being orphaned — the two are complementary, not overlapping,
+        fixes). On ``CancelledError``, whatever remains in the queue is
+        flushed SYNCHRONOUSLY (via ``_dispatch_inline``, reusing #4963's
+        per-subscriber isolation unchanged) before re-raising to let
+        cancellation actually propagate — this closes the "loop closes ->
+        consumer dies before draining" class identically regardless of
+        WHO cancelled (``asyncio.run()``'s own teardown, pytest-asyncio's
+        ``_cancel_all_tasks``, or this class's own ``stop_dispatch()``),
+        with no test-level ``settle()`` call needed for this specific
+        class — see #4966's PR body for the ①②③ split this closes ③ of.
+
+        Constraint: this flush path can only run subscribers SYNCHRONOUSLY
+        (no running loop survives long enough after cancellation to await
+        an async subscriber's result here) — every subscriber in this
+        codebase today is sync-only by construction (A2A/MCP's own
+        callbacks return immediately via their own ``ensure_future``), so
+        this is not a current gap, but it IS a real constraint on any
+        FUTURE async subscriber: its async work will not run for an event
+        flushed on this path. If that ever matters, this is the place to
+        revisit, not `_dispatch_inline`'s own identical constraint (kept
+        in sync with it deliberately — see that method's own docstring).
         """
-        while True:
-            event = await self._dispatch_queue.get()
-            try:
-                for sub in self._subscribers:
-                    try:
-                        result = sub(event)
-                        if inspect.isawaitable(result):
-                            await result
-                    except Exception:
-                        logger.exception(
-                            "event subscriber failed (emitter=%s type=%s) — "
-                            "continuing to the next subscriber",
-                            self._emitter, event.type,
-                        )
-            finally:
-                # #4961 C (architect finding): pairs with `drain()` below
-                # via ``asyncio.Queue.join()`` — without this, nothing can
-                # deterministically tell "the queue is empty" apart from
-                # "the queue is empty AND the item currently being
-                # dispatched has actually finished". In `finally` so a
-                # completely unexpected exception here still lets a
-                # waiting `drain()` proceed rather than hang forever.
+        try:
+            while True:
+                event = await self._dispatch_queue.get()
+                try:
+                    for sub in self._subscribers:
+                        try:
+                            result = sub(event)
+                            if inspect.isawaitable(result):
+                                await result
+                        except Exception:
+                            logger.exception(
+                                "event subscriber failed (emitter=%s type=%s) — "
+                                "continuing to the next subscriber",
+                                self._emitter, event.type,
+                            )
+                finally:
+                    self._dispatch_queue.task_done()
+        except asyncio.CancelledError:
+            while not self._dispatch_queue.empty():
+                pending_event = self._dispatch_queue.get_nowait()
+                self._dispatch_inline(pending_event)
                 self._dispatch_queue.task_done()
+            raise
 
     def compute_ingested(self, data_ref: str, resolved: str) -> str:
         """``ingested`` ∈ ``{none, partial, full}`` for a present ``data_ref``

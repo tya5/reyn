@@ -25,6 +25,8 @@ EventLog that bypasses the real construction path.
 """
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 
 from reyn.config import AuditEventsConfig
@@ -52,9 +54,10 @@ async def test_discard_backend_subscribers_still_receive_events() -> None:
 
     #4961 C: dispatch moved off of `emit()`'s own (synchronous) caller
     onto a queue-consumer task — `emit()` still returns synchronously, but
-    subscriber delivery is now a SEPARATE async step, so this test yields
-    once (`await asyncio.sleep(0)`) after emitting to let the consumer
-    task actually run before asserting delivery."""
+    subscriber delivery is now a SEPARATE async step, so this test awaits
+    `log.drain()` after emitting (deterministic regardless of how many
+    events are queued — see `EventLog.drain()`'s own docstring for why a
+    bare `asyncio.sleep(0)` was rejected as non-deterministic)."""
     log = EventLog(backend=DiscardEventBackend())
     received = []
     log.add_subscriber(received.append)
@@ -309,7 +312,8 @@ async def test_subscribers_are_still_dispatched_in_registration_order() -> None:
     own barrier ordering (co-vet #3310 N3(a)) depends on `add_subscriber`
     staying synchronous and subscribers firing in registration order.
 
-    #4961 C: yields once after emit — see the file's first test for why."""
+    #4961 C: awaits `log.drain()` after emit — see the file's first test
+    for why a bare yield was rejected."""
     log = EventLog()
     order: list[str] = []
     log.add_subscriber(lambda _e: order.append("first"))
@@ -320,3 +324,59 @@ async def test_subscribers_are_still_dispatched_in_registration_order() -> None:
     await log.drain()
 
     assert order == ["first", "second", "third"]
+
+
+# ── #4965/#4966: consumer cancel-flush — delivery survives cancellation ───
+
+
+@pytest.mark.asyncio
+async def test_dispatch_consumer_flushes_queued_event_on_cancellation() -> None:
+    """Tier 2: #4966 (architect ruling) — a queued-but-not-yet-dispatched
+    event is still delivered to subscribers even if the dispatch consumer
+    task is cancelled while genuinely suspended mid-loop. This closes the
+    class ``asyncio.run(coro)``'s own teardown belongs to: it cancels
+    every still-running task (this EventLog's consumer included) BEFORE
+    the wrapped coroutine's own task is considered fully done — without
+    this flush, whatever is queued at that instant is lost forever, not
+    merely delayed.
+
+    Cancellation is given directly as an INPUT (``task.cancel()`` on the
+    real consumer task), not awaited via a sleep — the six-questions
+    review's own warning against a duration the assertion depends on
+    (CLAUDE.md testing policy: "no sleep the assertion depends on, in
+    EITHER direction"). ``await events.drain()`` first (not a sleep)
+    deterministically lets the consumer process an initial event and
+    settle into its normal suspended-at-``queue.get()`` state — the
+    REALISTIC shape cancellation actually lands in production (an
+    in-flight consumer, not one that never started) — before a second
+    event is queued and the task is cancelled while genuinely waiting for
+    it.
+
+    Falsifying witness (lead-coder's six-questions #4 concern, verified
+    directly, not asserted): the SAME synthetic probe with the
+    `task.cancel()`-before-first-run shape (cancelling before the
+    consumer ever executes at all) passes on BOTH the pre-#4966 and
+    post-#4966 code — that shape does not exercise this fix and would be
+    a non-discriminating test; this test's own emit-drain-emit-cancel
+    sequence was confirmed, by running it against the pre-#4966
+    consumer (no `except asyncio.CancelledError:` flush), to fail
+    (`delivered == ['warmup']`, missing 'probe') — it does discriminate."""
+    events = EventLog()
+    delivered: list = []
+    events.add_subscriber(lambda e: delivered.append(e.type))
+
+    events.emit("warmup")
+    await events.drain()  # consumer processed 'warmup', now suspended at queue.get()
+
+    events.emit("probe")  # queued; consumer is suspended waiting for exactly this
+    task = events._consumer_task
+    assert task is not None
+
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert delivered == ["warmup", "probe"], (
+        "the event queued right before cancellation must still be "
+        f"delivered — got {delivered}"
+    )

@@ -49,7 +49,7 @@ import pytest
 
 from reyn.core.events.events import EventLog
 from reyn.mcp.connection_service import MCPConnectionService
-from tests._support.events import collect_events
+from tests._support.events import collect_events, settle
 from tests._support.paths import REPO_ROOT
 
 _SUPPORT_DIR = REPO_ROOT / "tests" / "_support"
@@ -87,6 +87,7 @@ async def test_live_connection_negotiates_exactly_2026_07_28_and_delivers_a_real
     try:
         client = await service.get("srv", _stdio_cfg(_SUBSCRIBABLE_SERVER))
 
+        await settle(events)
         init_events = [e for e in collected if e.type == "mcp_initialized"]
         (init_event,) = init_events  # exactly one — the single connect this test drove
         assert init_event.data.get("negotiated_version") == "2026-07-28", (

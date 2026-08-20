@@ -31,7 +31,7 @@ from reyn.mcp.pool import MCPClientPool
 from reyn.schemas.models import MCPGetPromptIROp
 from reyn.security.permissions.permissions import PermissionDecl, PermissionResolver
 from reyn.user_intervention import InterventionAnswer, InterventionBus, UserIntervention
-from tests._support.events import collect_events
+from tests._support.events import collect_events, settle
 from tests._support.paths import REPO_ROOT
 
 
@@ -59,6 +59,17 @@ def _stdio_cfg(script: Path) -> dict:
 
 def _run(coro):
     return asyncio.run(coro)
+
+
+async def _run_and_settle(coro, log):
+    """#4961 C / #4966: `asyncio.run()`-wrapped tests (`_run(...)` above) run
+    the coroutine to completion and close the loop before the caller reads
+    `collected` — the dispatch consumer never gets a chance to run inside
+    that closing window. Settle BEFORE the loop closes, inside the same run,
+    not after."""
+    result = await coro
+    await settle(log)
+    return result
 
 
 # ── Tier 1: MCPClient — real round-trip against a real prompts server ─────────
@@ -285,7 +296,7 @@ def test_execute_gets_real_prompt_and_emits_events(tmp_path):
             ctx.mcp_pool = pool
             return await _execute(op, ctx)
 
-    result = _run(_it())
+    result = _run(_run_and_settle(_it(), events))
     assert result["status"] == "ok"
     assert result["messages"][0]["content"]["text"] == _PROMPT_TEXT
 
@@ -308,7 +319,7 @@ def test_handle_denies_without_permissions_mcp_declared(tmp_path):
     ctx.intervention_bus = _UnusedBus()  # never consulted: denied before _approve
 
     op = MCPGetPromptIROp(kind="mcp_get_prompt", server="prompts-srv", name=_PROMPT_NAME, arguments={})
-    result = _run(execute_op(op, ctx))
+    result = _run(_run_and_settle(execute_op(op, ctx), events))
 
     assert result["status"] == "denied"
     denials = [e for e in collected if e.type == "permission_denied"]
@@ -336,7 +347,7 @@ def test_handle_allows_and_gets_when_permissions_mcp_granted(tmp_path):
             ctx.mcp_pool = pool
             return await execute_op(op, ctx)
 
-    result = _run(_it())
+    result = _run(_run_and_settle(_it(), events))
     assert result["status"] == "ok"
     assert result["messages"][0]["content"]["text"] == _PROMPT_TEXT
     assert not [e for e in collected if e.type == "permission_denied"]

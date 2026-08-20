@@ -27,7 +27,7 @@ from types import SimpleNamespace
 from reyn.core.events.events import EventLog
 from reyn.runtime.hot_reload import HotReloader
 from reyn.tools.types import ToolContext
-from tests._support.events import collect_events
+from tests._support.events import collect_events, settle
 
 
 def _ctx(project_root: Path) -> ToolContext:
@@ -90,7 +90,11 @@ def test_local_install_schedules_reload(tmp_path: Path) -> None:
     assert result["status"] == "ok", f"install failed: {result}"
     assert reloader.pending is True, "request_reload must fire — server won't appear without reload"
 
-    asyncio.run(reloader.apply_pending())
+    async def _apply_and_settle() -> None:
+        await reloader.apply_pending()
+        await settle(events)
+
+    asyncio.run(_apply_and_settle())
     # Tuple-unpack: raises ValueError if there isn't EXACTLY one — a
     # behavioural assertion (one reload, not a repeat), not a length pin.
     (reload_event,) = [e for e in collected if e.type == "config_reloaded"]

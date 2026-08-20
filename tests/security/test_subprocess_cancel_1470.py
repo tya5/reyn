@@ -251,7 +251,7 @@ async def test_sandboxed_exec_op_cancel_event_p6_p5() -> None:
     from reyn.schemas.models import SandboxedExecIROp  # noqa: PLC0415
     from reyn.security.permissions.permissions import PermissionDecl  # noqa: PLC0415
     from reyn.security.sandbox.noop_backend import NoopBackend  # noqa: PLC0415
-    from tests._support.events import collect_events  # noqa: PLC0415
+    from tests._support.events import collect_events, settle  # noqa: PLC0415
 
     events = EventLog()
     collected = collect_events(events)
@@ -281,6 +281,12 @@ async def test_sandboxed_exec_op_cancel_event_p6_p5() -> None:
     # P5: result envelope reflects interruption
     assert result["status"] == "cancelled", f"expected 'cancelled', got {result['status']!r}"
     assert result["kind"] == "sandboxed_exec"
+
+    # #4961 C / #4966: dispatch to `collected` is now async (queue +
+    # consumer task) — this read is synchronous right after the await
+    # above with no polling loop in between, so it must wait for delivery
+    # explicitly (see tests/_support/events.py's settle() docstring).
+    await settle(events)
 
     # P6: sandboxed_exec_cancelled event emitted (not sandboxed_exec_completed)
     emitted_types = [e.type for e in collected]

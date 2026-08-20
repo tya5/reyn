@@ -28,7 +28,7 @@ from reyn.security.sandbox import (
     get_default_backend,
 )
 from reyn.security.sandbox import noop_backend as _noop_module
-from tests._support.events import collect_events
+from tests._support.events import collect_events, settle
 from tests._support.sandbox_backend import FULLY_ENFORCING_AXES
 
 # ─── 1. SandboxPolicy ────────────────────────────────────────────────────────
@@ -579,6 +579,7 @@ async def test_dispatch_emits_started_and_completed():
     assert result["returncode"] == 0
     assert "hello" in result["stdout"]
 
+    await settle(events)
     event_types = [e.type for e in collected]
     assert "sandboxed_exec_started" in event_types
     assert "sandboxed_exec_completed" in event_types

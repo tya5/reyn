@@ -61,7 +61,7 @@ from reyn.config import SafetyConfig, TimeoutConfig
 from reyn.core.events.event_schema import AUDIT_EVENT_KINDS
 from reyn.core.events.state_log import StateLog
 from tests._support.agent_session import make_session
-from tests._support.events import collect_events
+from tests._support.events import collect_events, settle
 from tests._support.paths import REPO_ROOT
 
 _REPO = REPO_ROOT
@@ -199,6 +199,7 @@ async def test_probe_timeout_emits_visible_degradation_event(tmp_path: Path):
         )
         collected = collect_events(session.router_host.events)
         await _drive_first_turn(session)
+        await settle(session.router_host.events)
 
         degradations = [
             e for e in collected
@@ -236,6 +237,7 @@ async def test_probe_exception_emits_visible_degradation_event(tmp_path: Path):
         )
         collected = collect_events(session.router_host.events)
         await _drive_first_turn(session)
+        await settle(session.router_host.events)
 
         degradations = [
             e for e in collected

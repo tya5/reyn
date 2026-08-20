@@ -32,7 +32,13 @@ from reyn.runtime.session import Session
 from reyn.runtime.session_buses import AgentRequestBus
 from reyn.user_intervention import InterventionAnswer, UserIntervention
 from tests._support.agent_session import make_session
-from tests._support.events import collect_events
+from tests._support.events import collect_events, settle
+
+
+async def _run_and_settle(coro, log):
+    result = await coro
+    await settle(log)
+    return result
 
 
 def _recovery_kwargs(agent_name: str) -> dict:
@@ -116,7 +122,7 @@ def test_default_routing_emits_user_channel_event(tmp_path: Path) -> None:
     collected = collect_events(session._audit_events)
     iv = UserIntervention(kind="ask_user", prompt="Q?")
 
-    asyncio.run(session.handle_intervention(iv))
+    asyncio.run(_run_and_settle(session.handle_intervention(iv), session._audit_events))
 
     # session._audit_events is the EventLog used for chat-side events.
     events = [
@@ -164,7 +170,7 @@ def test_self_answer_branch_emits_self_answer_event() -> None:
     collected = collect_events(session._audit_events)
     iv = UserIntervention(kind="permission.shell", prompt="Run ls?")
 
-    asyncio.run(session.handle_intervention(iv))
+    asyncio.run(_run_and_settle(session.handle_intervention(iv), session._audit_events))
 
     events = [
         e for e in [e.model_dump(mode="json") for e in collected]
@@ -226,7 +232,13 @@ def test_parent_delegate_branch_emits_parent_delegate_event() -> None:
     child.set_parent(parent)
 
     iv = UserIntervention(kind="ask_user", prompt="Q?")
-    asyncio.run(child.handle_intervention(iv))
+
+    async def _drive():
+        await child.handle_intervention(iv)
+        await settle(child._audit_events)
+        await settle(parent._audit_events)
+
+    asyncio.run(_drive())
 
     child_events = [
         e for e in [e.model_dump(mode="json") for e in child_collected]
@@ -269,7 +281,7 @@ def test_self_answer_takes_precedence_over_parent_delegate() -> None:
     child.set_parent(parent)
 
     iv = UserIntervention(kind="ask_user", prompt="Q?")
-    answer = asyncio.run(child.handle_intervention(iv))
+    answer = asyncio.run(_run_and_settle(child.handle_intervention(iv), parent._audit_events))
 
     # Child self-answered, parent was never consulted.
     assert answer.text == "child-self"

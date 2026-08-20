@@ -44,7 +44,7 @@ from reyn.data.embedding.litellm_provider import (
 from reyn.data.workspace.workspace import Workspace
 from reyn.schemas.models import EmbedIROp
 from reyn.security.permissions.permissions import PermissionDecl
-from tests._support.events import collect_events
+from tests._support.events import collect_events, settle
 
 _MODEL = "openai/text-embedding-3-small"
 
@@ -271,6 +271,7 @@ async def test_cancel_event_interrupts_a_stalled_embed_op_immediately(
     )
 
     assert result["status"] == "cancelled"
+    await settle(events)
     assert "embed_cancelled" in [e.type for e in collected]
 
 
@@ -297,4 +298,5 @@ async def test_uncancelled_embed_keeps_its_normal_failure_shape(
             timeout=60.0,
         )
 
+    await settle(events)
     assert "embed_cancelled" not in [e.type for e in collected]

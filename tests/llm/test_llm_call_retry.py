@@ -54,7 +54,7 @@ from reyn.llm.llm import (
     _is_retryable_exc,
     _llm_call_with_retry,
 )
-from tests._support.events import collect_events
+from tests._support.events import collect_events, settle
 
 
 @pytest.fixture(autouse=True)
@@ -204,6 +204,7 @@ async def test_no_retry_on_success(monkeypatch):
     result = await _llm_call_with_retry(_ok, "model-x", log)
     assert result is resp
 
+    await settle(log)
     types = [e.type for e in collected]
     assert "llm_call_retry" not in types
     assert "llm_call_retry_exhausted" not in types
@@ -244,6 +245,7 @@ async def test_retry_and_succeed(monkeypatch):
     assert result is resp
     assert stub.call_count == 2
 
+    await settle(log)
     # Exactly one retry event (present) and no exhausted event (absent)
     retry_events = [e for e in collected if e.type == "llm_call_retry"]
     assert retry_events, "at least one llm_call_retry event must be emitted after a timeout"
@@ -293,6 +295,7 @@ async def test_all_retries_exhausted(monkeypatch):
 
     assert stub.call_count == _LLM_RETRY_MAX_ATTEMPTS
 
+    await settle(log)
     exhausted = [e for e in collected if e.type == "llm_call_retry_exhausted"]
     assert exhausted, "llm_call_retry_exhausted must be emitted when all retries fail"
     assert exhausted[0].data["model"] == "model-503"
@@ -335,6 +338,7 @@ async def test_4xx_no_retry(monkeypatch):
     assert stub.call_count == 1
     assert sleep_calls == []
 
+    await settle(log)
     types = [e.type for e in collected]
     assert "llm_call_retry" not in types
     assert "llm_call_retry_exhausted" not in types
@@ -383,6 +387,7 @@ async def test_httpx_errors_retried(monkeypatch):
         assert result is resp, f"{exc_cls.__name__} should be retried"
         assert stub.call_count == 2
 
+        await settle(log)
         retry_events = [e for e in collected if e.type == "llm_call_retry"]
         assert retry_events, f"{exc_cls.__name__}: expected at least one llm_call_retry event"
 
@@ -478,6 +483,7 @@ async def test_empty_choices_retried_then_succeed(monkeypatch):
     assert result is valid
     assert stub.call_count == 2
 
+    await settle(log)
     retry_events = [e for e in collected if e.type == "llm_call_retry"]
     assert retry_events, "empty choices must emit a llm_call_retry event"
     assert retry_events[0].data["error_kind"] == "EmptyLLMResponseError"
@@ -510,6 +516,7 @@ async def test_empty_choices_exhausted_raises_named_error(monkeypatch):
 
     assert stub.call_count == _LLM_RETRY_MAX_ATTEMPTS
 
+    await settle(log)
     exhausted = [e for e in collected if e.type == "llm_call_retry_exhausted"]
     assert exhausted, "persistent empty choices must emit llm_call_retry_exhausted"
     assert exhausted[0].data["error_kind"] == "EmptyLLMResponseError"

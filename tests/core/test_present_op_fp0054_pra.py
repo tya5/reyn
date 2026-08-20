@@ -27,7 +27,7 @@ from reyn.core.present import (
 from reyn.data.workspace.workspace import Workspace
 from reyn.schemas.models import PresentIROp
 from reyn.security.permissions.permissions import PermissionDecl, PermissionResolver
-from tests._support.events import collect_events
+from tests._support.events import collect_events, settle
 
 
 def _resolver(tmp_path: Path, config_permissions: dict | None = None) -> PermissionResolver:
@@ -53,6 +53,12 @@ def _ctx(tmp_path: Path, resolver: PermissionResolver) -> tuple[OpContext, Event
 
 def _run(coro):
     return asyncio.run(coro)
+
+
+async def _run_and_settle(coro, log):
+    result = await coro
+    await settle(log)
+    return result
 
 
 class _RecordingRenderer:
@@ -399,7 +405,7 @@ def test_presented_event_carries_required_fields(tmp_path):
         kind="present", data_inline={"a": 1},
         blueprint={"component": "text", "text": {"$bind": "/a"}},
     )
-    _run(handle(op, ctx))
+    _run(_run_and_settle(handle(op, ctx), events))
     ev = [e for e in collected if e.type == "presented"]
     assert ev, "present emitted no presented event"
     d = ev[-1].data
@@ -421,15 +427,28 @@ def test_ingested_is_os_computed_from_prior_read(tmp_path, monkeypatch):
         kind="present", data_ref="ref.json",
         blueprint={"component": "text", "text": {"$bind": "/a"}},
     )
-    _run(handle(op, ctx))
-    first = [e for e in collected if e.type == "presented"][-1]
-    assert first.data["ingested"] == "none"
 
-    # Simulate a prior full read of the ref, then present again → 'full'.
-    events.emit("tool_executed", op="read_file", path="ref.json")
-    _run(handle(op, ctx))
-    second = [e for e in collected if e.type == "presented"][-1]
-    assert second.data["ingested"] == "full"
+    # Both `handle()` calls share `events`'s EventLog, whose dispatch
+    # consumer task is bound to whichever asyncio loop first started it --
+    # run them inside the SAME `asyncio.run()` loop (rather than two
+    # separate `_run()` calls) so each `settle()` below waits on a
+    # consumer task that is still alive, not one orphaned by an earlier
+    # loop's shutdown.
+    async def _twice():
+        await handle(op, ctx)
+        await settle(events)
+        ingested_first = [e for e in collected if e.type == "presented"][-1].data["ingested"]
+
+        # Simulate a prior full read of the ref, then present again → 'full'.
+        events.emit("tool_executed", op="read_file", path="ref.json")
+        await handle(op, ctx)
+        await settle(events)
+        ingested_second = [e for e in collected if e.type == "presented"][-1].data["ingested"]
+        return ingested_first, ingested_second
+
+    ingested_first, ingested_second = _run(_twice())
+    assert ingested_first == "none"
+    assert ingested_second == "full"
 
 
 def test_ingested_partial_on_truncated_read(tmp_path, monkeypatch):
@@ -443,7 +462,7 @@ def test_ingested_partial_on_truncated_read(tmp_path, monkeypatch):
         kind="present", data_ref="ref.json",
         blueprint={"component": "text", "text": {"$bind": "/a"}},
     )
-    _run(handle(op, ctx))
+    _run(_run_and_settle(handle(op, ctx), events))
     ev = [e for e in collected if e.type == "presented"][-1]
     assert ev.data["ingested"] == "partial"
 
@@ -524,7 +543,7 @@ def test_event_carries_no_content_bytes(tmp_path):
         kind="present", data_inline={"a": secret_value},
         blueprint={"component": "text", "text": {"$bind": "/a"}},
     )
-    _run(handle(op, ctx))
+    _run(_run_and_settle(handle(op, ctx), events))
     ev = [e for e in collected if e.type == "presented"][-1]
     serialized = json.dumps(ev.data)
     assert secret_value not in serialized
@@ -548,7 +567,7 @@ def test_view_arg_round_trips_against_the_registry(tmp_path):
     ctx.presentation_registry = registry
     op = PresentIROp(kind="present", data_inline={"a": 1}, view="authors")
 
-    ack = _run(handle(op, ctx))
+    ack = _run(_run_and_settle(handle(op, ctx), events))
 
     assert ack["mode"] == "view"
     assert ack["ok"] is True
@@ -567,7 +586,7 @@ def test_inline_blueprint_view_field_is_a_stable_hash(tmp_path):
         kind="present", data_inline={"a": 1},
         blueprint={"component": "text", "text": {"$bind": "/a"}},
     )
-    ack = _run(handle(op, ctx))
+    ack = _run(_run_and_settle(handle(op, ctx), events))
     assert ack["mode"] == "blueprint"
     ev = [e for e in collected if e.type == "presented"][-1]
     assert ev.data["view"].startswith("blueprint:")
@@ -602,7 +621,7 @@ def test_omitting_view_and_blueprint_routes_to_default_viewer(tmp_path):
     ctx.presentation_renderer = renderer
     op = PresentIROp(kind="present", data_inline={"author": "amy", "title": "hello"})
 
-    ack = _run(handle(op, ctx))
+    ack = _run(_run_and_settle(handle(op, ctx), events))
 
     assert ack["status"] == "ok"
     assert ack["ok"] is True

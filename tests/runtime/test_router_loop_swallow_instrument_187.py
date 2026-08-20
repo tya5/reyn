@@ -21,7 +21,7 @@ from __future__ import annotations
 import pytest
 
 from tests._support.agent_session import make_session
-from tests._support.events import collect_events
+from tests._support.events import collect_events, settle
 
 
 @pytest.mark.asyncio
@@ -44,6 +44,7 @@ async def test_swallowed_router_loop_exception_emits_p6_event():
 
     # Must not propagate — the handler swallows-but-surfaces.
     await s._handle_inbox_text("hello", chain_id="c-test")
+    await settle(s._audit_events)
 
     terminated = [
         e for e in collected

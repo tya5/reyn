@@ -22,7 +22,7 @@ from reyn.data.index.backends.sqlite import SqliteIndexBackend
 from reyn.data.workspace.workspace import Workspace
 from reyn.schemas.models import IndexUpdateIROp
 from reyn.security.permissions.permissions import PermissionDecl
-from tests._support.events import collect_events
+from tests._support.events import collect_events, settle
 
 # ---------------------------------------------------------------------------
 # Fake provider
@@ -324,6 +324,7 @@ async def test_index_update_cost_warning_fires_over_threshold(
     assert result["cost_warning"] is not None
     assert result["cost_warning"]["chunk_count"] == 2
     assert result["cost_warning"]["threshold"] == 1
+    await settle(ctx.events)
     assert any(e.type == "index_update_cost_warning" for e in collected)
 
 
@@ -347,6 +348,7 @@ async def test_index_update_no_cost_warning_under_threshold(
 
     assert result.get("status") != "error", result
     assert result["cost_warning"] is None
+    await settle(ctx.events)
     assert not any(e.type == "index_update_cost_warning" for e in collected)
 
 

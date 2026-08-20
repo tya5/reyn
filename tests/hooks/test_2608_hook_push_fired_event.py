@@ -22,7 +22,7 @@ from reyn.core.events.events import EventLog
 from reyn.hooks.dispatcher import HookDispatcher
 from reyn.hooks.registry import HookRegistry
 from reyn.hooks.schema import HookDef, PushBlock
-from tests._support.events import collect_events
+from tests._support.events import collect_events, settle
 
 
 class _Recorder:
@@ -58,6 +58,7 @@ async def test_template_push_wake_true_emits_hook_push_fired():
 
     await disp.dispatch("turn_end", {})
 
+    await settle(log)
     (fired_event,) = [e for e in collected if e.type == "hook_push_fired"]
     data = fired_event.data
     assert data["hook_name"] == "my-hook"
@@ -79,6 +80,7 @@ async def test_template_push_wake_false_also_emits_hook_push_fired():
 
     await disp.dispatch("turn_start", {})
 
+    await settle(log)
     (fired_event,) = [e for e in collected if e.type == "hook_push_fired"]
     assert fired_event.data["wake"] is False
 
@@ -95,6 +97,7 @@ async def test_push_when_false_does_not_emit():
 
     await disp.dispatch("turn_end", {})
 
+    await settle(log)
     assert [e for e in collected if e.type == "hook_push_fired"] == []
 
 
@@ -131,4 +134,5 @@ async def test_shell_exec_hook_still_emits_hook_shell_executed_not_push_fired():
 
     await disp.dispatch("session_start", {})
 
+    await settle(log)
     assert [e for e in collected if e.type == "hook_push_fired"] == []

@@ -60,11 +60,17 @@ from reyn.data.index.source_manifest import get_source_manifest
 from reyn.data.workspace.workspace import Workspace
 from reyn.schemas.models import IndexDropIROp
 from reyn.security.permissions.permissions import PermissionDecl
-from tests._support.events import collect_events
+from tests._support.events import collect_events, settle
 
 
 def _run(coro: Any) -> Any:
     return asyncio.run(coro)
+
+
+async def _run_and_settle(coro: Any, log: Any) -> Any:
+    result = await coro
+    await settle(log)
+    return result
 
 
 class _FakeEmbeddingProvider:
@@ -597,7 +603,9 @@ def test_oversize_repo_file_is_skipped_and_reported(
     coordinator.register_builder(
         KNOWLEDGE_REPO_DOC_SOURCE_ID, _repo_build_fn("doc", op_ctx, "standard"), kind="static",
     )
-    _run(coordinator.ensure_built(KNOWLEDGE_REPO_DOC_SOURCE_ID, await_completion=True))
+    _run(_run_and_settle(
+        coordinator.ensure_built(KNOWLEDGE_REPO_DOC_SOURCE_ID, await_completion=True), events,
+    ))
 
     manifest = get_source_manifest(ws_root)
     entry = _run(manifest.get(KNOWLEDGE_REPO_DOC_SOURCE_ID))
@@ -639,7 +647,9 @@ def test_no_skip_event_when_nothing_is_oversize(
     coordinator.register_builder(
         KNOWLEDGE_REPO_DOC_SOURCE_ID, _repo_build_fn("doc", op_ctx, "standard"), kind="static",
     )
-    _run(coordinator.ensure_built(KNOWLEDGE_REPO_DOC_SOURCE_ID, await_completion=True))
+    _run(_run_and_settle(
+        coordinator.ensure_built(KNOWLEDGE_REPO_DOC_SOURCE_ID, await_completion=True), events,
+    ))
 
     skip_events = [e for e in collected if e.type == "repo_ingest_files_skipped"]
     assert skip_events == []

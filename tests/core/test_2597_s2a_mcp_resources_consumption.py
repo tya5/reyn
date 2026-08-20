@@ -32,7 +32,7 @@ from reyn.mcp.pool import MCPClientPool
 from reyn.schemas.models import MCPReadResourceIROp
 from reyn.security.permissions.permissions import PermissionDecl, PermissionResolver
 from reyn.user_intervention import InterventionAnswer, InterventionBus, UserIntervention
-from tests._support.events import collect_events
+from tests._support.events import collect_events, settle
 from tests._support.paths import REPO_ROOT
 
 
@@ -60,6 +60,12 @@ def _stdio_cfg(script: Path) -> dict:
 
 def _run(coro):
     return asyncio.run(coro)
+
+
+async def _run_and_settle(coro, log):
+    result = await coro
+    await settle(log)
+    return result
 
 
 # ── Tier 1: MCPClient — real round-trip against a real resources server ───────
@@ -302,7 +308,9 @@ def test_execute_reads_real_resource_and_emits_events(tmp_path):
         ctx = _make_ctx(tmp_path, events, resolver=None)
         async with MCPClientPool() as pool:
             ctx.mcp_pool = pool
-            return await _execute(op, ctx)
+            result = await _execute(op, ctx)
+        await settle(events)
+        return result
 
     result = _run(_it())
     assert result["status"] == "ok"
@@ -327,7 +335,7 @@ def test_handle_denies_without_permissions_mcp_declared(tmp_path):
     ctx.intervention_bus = _UnusedBus()  # never consulted: denied before _approve
 
     op = MCPReadResourceIROp(kind="mcp_read_resource", server="resources-srv", uri=_RESOURCE_URI)
-    result = _run(execute_op(op, ctx))
+    result = _run(_run_and_settle(execute_op(op, ctx), events))
 
     assert result["status"] == "denied"
     denials = [e for e in collected if e.type == "permission_denied"]
@@ -353,7 +361,9 @@ def test_handle_allows_and_reads_when_permissions_mcp_granted(tmp_path):
     async def _it():
         async with MCPClientPool() as pool:
             ctx.mcp_pool = pool
-            return await execute_op(op, ctx)
+            result = await execute_op(op, ctx)
+        await settle(events)
+        return result
 
     result = _run(_it())
     assert result["status"] == "ok"

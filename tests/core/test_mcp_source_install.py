@@ -189,7 +189,7 @@ from reyn.core.op_runtime.mcp_install import handle as mcp_install_handle
 from reyn.schemas.models import MCPInstallIROp
 from reyn.security.permissions.permissions import PermissionDecl, PermissionResolver
 from reyn.user_intervention import InterventionAnswer, UserIntervention
-from tests._support.events import collect_events
+from tests._support.events import collect_events, settle
 
 
 class _AutoApproveInterventionBus:
@@ -247,6 +247,12 @@ def _make_op_ctx(
 
 def _run(coro):
     return asyncio.run(coro)
+
+
+async def _run_and_settle(coro, log):
+    result = await coro
+    await settle(log)
+    return result
 
 
 def test_source_npm_skips_registry_and_installs(tmp_path, monkeypatch):
@@ -355,7 +361,7 @@ def test_source_event_includes_source_field(tmp_path, monkeypatch):
     )
 
     monkeypatch.setattr("shutil.which", lambda name: "/usr/bin/npx")
-    _run(mcp_install_handle(op, ctx))
+    _run(_run_and_settle(mcp_install_handle(op, ctx), ctx.events))
 
     events = collected
     install_events = [e for e in events if e.type == "mcp_server_installed"]

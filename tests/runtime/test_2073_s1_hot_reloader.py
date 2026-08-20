@@ -17,7 +17,7 @@ import pytest
 from reyn.config.loader import load_hot_reload_config
 from reyn.core.events.events import EventLog
 from reyn.runtime.hot_reload import HotReloader
-from tests._support.events import collect_events
+from tests._support.events import collect_events, settle
 
 # ── SAFETY: the IN-set boundary (the OUT-set is never read) ──────────────────
 
@@ -59,6 +59,7 @@ async def test_nothing_pending_is_noop(tmp_path: Path) -> None:
     hr = HotReloader(project_root=tmp_path, events=events)
     assert hr.pending is False
     assert await hr.apply_pending() is None
+    await settle(events)
     assert [e.type for e in collected] == []
 
 
@@ -75,6 +76,7 @@ async def test_request_then_apply_emits_event_and_clears(tmp_path: Path) -> None
     summary = await hr.apply_pending()
     assert summary is not None and summary["source"] == "operator"
     assert hr.pending is False
+    await settle(events)
     reloaded_sources = [
         e.data["source"] for e in collected if e.type == "config_reloaded"
     ]
@@ -94,6 +96,7 @@ async def test_idempotent_within_turn(tmp_path: Path) -> None:
     assert summary["source"] == "b"
     assert await hr.apply_pending() is None  # only one apply
     # collapsed into a single apply (one event), last source wins
+    await settle(events)
     assert [
         e.data["source"] for e in collected if e.type == "config_reloaded"
     ] == ["b"]

@@ -49,7 +49,7 @@ from reyn.core.offload.canonical import (
 )
 from reyn.core.pipeline.executor import Pipeline, PipelineExecutor, ToolStep
 from reyn.tools import get_default_registry
-from tests._support.events import collect_events
+from tests._support.events import collect_events, settle
 
 get_default_registry()
 
@@ -181,6 +181,7 @@ async def test_empty_mapper_at_call_site_emits_degraded_event_and_warns(
             tool_dispatch=_dispatch, state_log=None, run_id="run-fp0056-degraded", events=events,
         )
 
+    await settle(events)
     # Exactly one degraded event for the one empty-mapping tool step (unpack asserts the count).
     [degraded] = [e for e in collected if e.type == CANONICAL_DEGRADED_EVENT]
     assert degraded.data["source"] == _EMPTY_PRODUCER_ID
@@ -218,6 +219,7 @@ async def test_mapped_producer_with_content_does_not_emit_degraded_event() -> No
         tool_dispatch=_dispatch, state_log=None, run_id="run-fp0056-degraded-ok", events=events,
     )
 
+    await settle(events)
     assert not [e for e in collected if e.type == CANONICAL_DEGRADED_EVENT], (
         "a producer that surfaced content must not emit the canonical_degraded audit event"
     )

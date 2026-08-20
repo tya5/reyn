@@ -47,7 +47,7 @@ from reyn.runtime.session import Session
 from reyn.runtime.session_params import CapabilityScope
 from reyn.security.permissions.permissions import PermissionDecl
 from tests._support.agent_session import make_session
-from tests._support.events import collect_events
+from tests._support.events import collect_events, settle
 from tests._support.minimal_reyn_yaml import MINIMAL_REYN_YAML
 
 # ---------------------------------------------------------------------------
@@ -223,6 +223,7 @@ async def test_apply_now_rejects_malformed_in_set_atomically(tmp_path: Path) -> 
     hr.register_seam("skills", make_seam("skills"))
 
     summary = await hr.apply_now(source="skill_install")
+    await settle(events)
 
     assert "rejected" in summary
     assert ran == {}, "no seam may run when the IN-set is rejected"
@@ -240,6 +241,7 @@ async def test_apply_now_emits_config_reloaded_with_source(tmp_path: Path) -> No
     hr.register_seam("skills", make_seam("skills"))
 
     await hr.apply_now(source="skill_install")
+    await settle(events)
 
     sources = [e.data["source"] for e in collected if e.type == "config_reloaded"]
     assert sources == ["skill_install"]

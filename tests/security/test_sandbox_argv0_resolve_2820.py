@@ -314,7 +314,7 @@ async def test_handler_substitutes_resolved_argv0_without_weakening_policy(tmp_p
     from reyn.data.workspace.workspace import Workspace
     from reyn.schemas.models import SandboxedExecIROp
     from reyn.security.permissions.permissions import PermissionDecl
-    from tests._support.events import collect_events
+    from tests._support.events import collect_events, settle
 
     root, real = _pyenv_layout(tmp_path, "3.12.7")
     (tmp_path / ".python-version").write_text("3.12.7\n")
@@ -343,6 +343,7 @@ async def test_handler_substitutes_resolved_argv0_without_weakening_policy(tmp_p
     )
 
     await execute_op(op, ctx)
+    await settle(events)
 
     # the backend ran the real binary, not the shim
     assert backend.seen_argv is not None

@@ -54,7 +54,7 @@ async def test_handle_blocks_malicious_command(tmp_path: Path):
     from reyn.data.workspace.workspace import Workspace
     from reyn.schemas.models import SandboxedExecIROp
     from reyn.security.permissions.permissions import PermissionDecl
-    from tests._support.events import collect_events
+    from tests._support.events import collect_events, settle
 
     events = EventLog()
     collected = collect_events(events)
@@ -69,6 +69,7 @@ async def test_handle_blocks_malicious_command(tmp_path: Path):
     with pytest.raises(PermissionError):
         await handle(op, ctx)
 
+    await settle(events)
     assert any(e.type == "exec_threat_blocked" for e in collected)
 
 
@@ -86,7 +87,7 @@ async def test_handle_no_scan_when_disabled(tmp_path: Path):
     from reyn.data.workspace.workspace import Workspace
     from reyn.schemas.models import SandboxedExecIROp
     from reyn.security.permissions.permissions import PermissionDecl
-    from tests._support.events import collect_events
+    from tests._support.events import collect_events, settle
 
     events = EventLog()
     collected = collect_events(events)
@@ -105,4 +106,5 @@ async def test_handle_no_scan_when_disabled(tmp_path: Path):
         await handle(op, ctx)
     except PermissionError as e:
         assert "threat pattern" not in str(e)
+    await settle(events)
     assert not any(e.type == "exec_threat_blocked" for e in collected)

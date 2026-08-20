@@ -23,7 +23,7 @@ from reyn.data.index.backends.sqlite import SqliteIndexBackend
 from reyn.data.workspace.workspace import Workspace
 from reyn.schemas.models import SemanticSearchIROp
 from reyn.security.permissions.permissions import PermissionDecl
-from tests._support.events import collect_events
+from tests._support.events import collect_events, settle
 
 # ---------------------------------------------------------------------------
 # Fake provider
@@ -253,6 +253,7 @@ async def test_recall_embed_failure_falls_back(tmp_path: Path, monkeypatch: pyte
 
     assert result["chunks"] == []
     assert result["mode"] == "fallback"
+    await settle(ctx.events)
     assert any(e.type == "semantic_search_embed_failed" for e in collected)
 
 
@@ -490,4 +491,5 @@ async def test_semantic_search_query_embed_redacts_secret_at_egress(
     assert "REDACTED" in fake.received_texts[0]
     # The seam firing on the QUERY path is observable (P6 audit-event) —
     # mirrors index_update's ingestion redaction.
+    await settle(ctx.events)
     assert any(e.type == "embed_secret_redacted" for e in collected)

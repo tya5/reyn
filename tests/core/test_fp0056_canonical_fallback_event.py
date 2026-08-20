@@ -38,7 +38,7 @@ from reyn.core.offload.canonical import (
 )
 from reyn.core.pipeline.executor import Pipeline, PipelineExecutor, ToolStep
 from reyn.tools import get_default_registry
-from tests._support.events import collect_events
+from tests._support.events import collect_events, settle
 
 get_default_registry()
 
@@ -142,6 +142,7 @@ async def test_real_mapper_producer_does_not_emit_fallback_event() -> None:
         tool_dispatch=_dispatch, state_log=None, run_id="run-fp0056-f2-mapped", events=events,
     )
 
+    await settle(events)
     assert not [e for e in collected if e.type == CANONICAL_FALLBACK_EVENT], (
         "a mapped producer must not emit the fallback audit event"
     )

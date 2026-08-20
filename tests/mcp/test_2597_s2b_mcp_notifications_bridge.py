@@ -28,7 +28,7 @@ from reyn.runtime.services import (
     PutOutboxInputs,
     RouterHostAdapter,
 )
-from tests._support.events import collect_events
+from tests._support.events import collect_events, settle
 
 # #3482: RouterHostAdapter's op-context/mcp-gateway constructor params were
 # bundled into two frozen, default-free dataclasses. These module-level
@@ -211,6 +211,7 @@ async def test_progress_notification_not_double_emitted_by_bridge(tmp_path: Path
         )
         assert result["isError"] is False
 
+        await settle(events)
         matching = [e for e in collected if e.type == "mcp_progress"]
         first_step, second_step = matching  # exactly ONE event per progress step, not two
         assert first_step.data.get("server") == "srv"
@@ -525,6 +526,7 @@ async def test_tools_cache_invalidate_fault_does_not_block_event_emit(tmp_path: 
     notification = types.ToolListChangedNotification()
     await handler(notification)  # must not raise
 
+    await settle(events)
     matching = [e for e in collected if e.type == "mcp_tool_list_changed"]
     (only_event,) = matching  # exactly one — invalidate faulting must not swallow the emit
     assert only_event.data.get("server") == "srv"

@@ -50,9 +50,15 @@ from reyn.core.pipeline.parser import PipelineParseError, parse_pipeline_dsl
 from reyn.core.pipeline.schema import SchemaRegistry
 from reyn.mcp.client import MCPClient
 from reyn.schemas.models import MCPIROp
-from tests._support.events import collect_events
+from tests._support.events import collect_events, settle
 
 _PREFLIGHT_SCHEMA = {"fields": {"status": {"type": "enum", "values": ["ok"]}}}
+
+
+async def _run_and_settle(coro, log):
+    result = await coro
+    await settle(log)
+    return result
 
 
 # ── 1. the mcp op handler's own audit event carries the real text ───────────
@@ -148,7 +154,7 @@ def test_mcp_completed_event_carries_the_real_error_text_on_isError() -> None:
     ctx.mcp_pool = _StubPool(client)
 
     op = MCPIROp(kind="mcp", server="reyn_vector_store", tool="list_metadata", args={})
-    asyncio.run(mcp_op_handler._execute(op, ctx))
+    asyncio.run(_run_and_settle(mcp_op_handler._execute(op, ctx), events))
 
     completed = [e for e in collected if e.type == "mcp_completed"]
     # exactly one `mcp_completed` event: this single-unpack IS the assertion
@@ -189,7 +195,7 @@ def test_mcp_completed_event_carries_no_error_text_on_success() -> None:
     ctx.mcp_pool = _StubPool(client)
 
     op = MCPIROp(kind="mcp", server="reyn_chunker", tool="chunk", args={})
-    asyncio.run(mcp_op_handler._execute(op, ctx))
+    asyncio.run(_run_and_settle(mcp_op_handler._execute(op, ctx), events))
 
     completed = [e for e in collected if e.type == "mcp_completed"]
     (only,) = completed

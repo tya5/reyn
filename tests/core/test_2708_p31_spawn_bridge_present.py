@@ -41,7 +41,7 @@ from reyn.runtime.session import Session
 from reyn.runtime.session_api import run_pipeline_attached, start_pipeline_run
 from reyn.runtime.session_params import PresentationWiring
 from tests._support.agent_session import make_session
-from tests._support.events import collect_events
+from tests._support.events import collect_events, settle
 
 _MARKER = "REYN2708P31BRIDGEMARKER"
 
@@ -130,6 +130,7 @@ async def test_attached_present_reaches_parent_by_construction_single_delivery(
         caller_events=caller.router_host.events,
     )
     assert outcome["status"] == "ok"
+    await settle(caller.router_host.events)
 
     driver_sid = _driver_sid_from(collected)
     assert driver_sid is not None
@@ -173,6 +174,7 @@ async def test_attached_present_audit_event_bridged_to_parent_log(
         tool="run_pipeline",
         caller_events=caller.router_host.events,
     )
+    await settle(caller.router_host.events)
     driver_sid = _driver_sid_from(collected)
     assert driver_sid is not None
 

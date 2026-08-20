@@ -44,6 +44,13 @@ from reyn.runtime.budget.budget import BudgetTracker, CostConfig
 from reyn.runtime.chat_message import ChatMessage
 from reyn.runtime.session import Session
 from tests._support.agent_session import make_session
+from tests._support.events import settle
+
+
+async def _run_and_settle(coro, log):
+    result = await coro
+    await settle(log)
+    return result
 
 
 # #4883 update: new_turn_seqs is required by CompactionEngine.compact()'s
@@ -235,7 +242,7 @@ def test_a_capped_batch_makes_honest_incremental_progress_across_passes(
 
     monkeypatch.setattr(htr, "read_history_after", _tiny_batch_reader)
 
-    result1 = asyncio.run(s._compact_now_for_op())
+    result1 = asyncio.run(_run_and_settle(s._compact_now_for_op(), s._audit_events))
     assert result1["summarized_turns"] > 0, "sanity: the first pass must make real progress"
 
     first_summary = s._latest_summary()

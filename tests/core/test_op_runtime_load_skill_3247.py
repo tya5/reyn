@@ -30,11 +30,23 @@ from reyn.data.skills.registry import SkillEntry
 from reyn.data.workspace.workspace import Workspace
 from reyn.schemas.models import FileIROp, LoadSkillIROp
 from reyn.security.permissions.permissions import PermissionDecl, PermissionResolver
-from tests._support.events import collect_events
+from tests._support.events import collect_events, settle
 
 
-def _run(coro):
-    return asyncio.run(coro)
+def _run(coro, log=None):
+    """*log*, when given, is settled after *coro* completes and before
+    ``asyncio.run`` returns — #4961 C: dispatch to a ``collect_events()``
+    list is async, so a synchronous read right after this call needs the
+    dispatch queue drained first."""
+    if log is None:
+        return asyncio.run(coro)
+
+    async def _wrapped():
+        result = await coro
+        await settle(log)
+        return result
+
+    return asyncio.run(_wrapped())
 
 
 _SENTINEL_ENV_VAR = "REYN_LOAD_SKILL_GATE_TEST_SENTINEL"
@@ -101,7 +113,7 @@ def test_load_skill_does_not_expand_unregistered_skill_md(tmp_path, monkeypatch,
     ctx, events = _make_ctx(project_root)  # available_skills=None -- nothing registered
     collected = collect_events(events)
 
-    result = _run(load_skill_handle(LoadSkillIROp(kind="load_skill", path=rel_path), ctx))
+    result = _run(load_skill_handle(LoadSkillIROp(kind="load_skill", path=rel_path), ctx), events)
 
     _assert_not_expanded(result, collected, monkeypatch)
 
@@ -144,7 +156,7 @@ def test_load_skill_does_not_expand_unregistered_plugin_root(tmp_path, monkeypat
         actor="test_load_skill",
     )
 
-    result = _run(load_skill_handle(LoadSkillIROp(kind="load_skill", path=str(skill_path)), ctx))
+    result = _run(load_skill_handle(LoadSkillIROp(kind="load_skill", path=str(skill_path)), ctx), events)
 
     _assert_not_expanded(result, collected, monkeypatch)
 
@@ -166,7 +178,7 @@ def test_load_skill_expands_config_registered_skill_md(tmp_path, monkeypatch):
     ctx, events = _make_ctx(project_root, available_skills=[entry])
     collected = collect_events(events)
 
-    result = _run(load_skill_handle(LoadSkillIROp(kind="load_skill", path=rel_path), ctx))
+    result = _run(load_skill_handle(LoadSkillIROp(kind="load_skill", path=rel_path), ctx), events)
 
     assert result["status"] == "ok", result
     assert f"secret={_SENTINEL_ENV_VALUE}" in result["content"]
@@ -197,7 +209,7 @@ def test_load_skill_config_registered_skill_md_env_denied_by_default(tmp_path, m
     ctx, events = _make_ctx(project_root, available_skills=[entry], env_expand=())
     collected = collect_events(events)
 
-    result = _run(load_skill_handle(LoadSkillIROp(kind="load_skill", path=rel_path), ctx))
+    result = _run(load_skill_handle(LoadSkillIROp(kind="load_skill", path=rel_path), ctx), events)
 
     assert result["status"] == "ok", result
     assert f"secret=${{env:{_SENTINEL_ENV_VAR}}}" in result["content"]
@@ -236,7 +248,7 @@ def test_load_skill_symlink_judged_by_resolved_target_not_literal_path(tmp_path,
     ctx, events = _make_ctx(project_root, available_skills=[entry])
     collected = collect_events(events)
 
-    result = _run(load_skill_handle(LoadSkillIROp(kind="load_skill", path=rel_symlink_path), ctx))
+    result = _run(load_skill_handle(LoadSkillIROp(kind="load_skill", path=rel_symlink_path), ctx), events)
 
     assert result["status"] == "ok", result
     assert f"secret={_SENTINEL_ENV_VALUE}" in result["content"]
@@ -260,7 +272,7 @@ def test_load_skill_dotdot_path_judged_by_resolved_target(tmp_path, monkeypatch)
 
     dotdot_path = "skills/other-skill-name/../greeter/SKILL.md"
 
-    result = _run(load_skill_handle(LoadSkillIROp(kind="load_skill", path=dotdot_path), ctx))
+    result = _run(load_skill_handle(LoadSkillIROp(kind="load_skill", path=dotdot_path), ctx), events)
 
     assert result["status"] == "ok", result
     assert f"secret={_SENTINEL_ENV_VALUE}" in result["content"]
@@ -304,7 +316,7 @@ def test_load_skill_resolves_path_exactly_once_per_call(tmp_path, monkeypatch):
 
     monkeypatch.setattr(load_skill_module, "resolve_path_for_gate", _counting_resolve_path_for_gate)
 
-    result = _run(load_skill_handle(LoadSkillIROp(kind="load_skill", path=rel_path), ctx))
+    result = _run(load_skill_handle(LoadSkillIROp(kind="load_skill", path=rel_path), ctx), events)
 
     assert result["status"] == "ok", result
     assert calls == [rel_path], (
@@ -328,7 +340,7 @@ def test_load_skill_does_not_expand_non_skill_md_file(tmp_path):
     ctx, events = _make_ctx(project_root)
     collected = collect_events(events)
 
-    result = _run(load_skill_handle(LoadSkillIROp(kind="load_skill", path="notes.md"), ctx))
+    result = _run(load_skill_handle(LoadSkillIROp(kind="load_skill", path="notes.md"), ctx), events)
 
     assert result["status"] == "ok", result
     assert "Project: ${REYN_PROJECT_DIR}" in result["content"]
@@ -396,20 +408,31 @@ def test_plugin_install_bakes_plugin_root_load_skill_resolves_the_rest(tmp_path,
     install_op = PluginInstallIROp(
         kind="plugin_install", source={"kind": "local", "path": str(source)},
     )
-    install_result = _run(install_handle(install_op, install_ctx))
-    assert install_result["status"] == "installed", install_result
-
     plugin_root = plugins_root() / "loadertest"
     skill_path = plugin_root / "skills" / "greeter" / "SKILL.md"
 
-    on_disk = skill_path.read_text(encoding="utf-8")
-    assert f"root={plugin_root.resolve()}" in on_disk
-    assert "${REYN_SKILL_DIR}" in on_disk
-    assert "${REYN_PROJECT_DIR}" in on_disk
+    # Both calls share `events`'s EventLog, whose dispatch consumer task is
+    # bound to whichever asyncio loop first started it -- keep both awaits
+    # (and the settle() before the collected-events read) inside the SAME
+    # `asyncio.run()` loop instead of two separate `_run()` calls, or the
+    # second call's `settle()` would wait on a consumer task orphaned by the
+    # first loop's shutdown.
+    async def _install_then_load() -> tuple[dict, dict]:
+        install_result = await install_handle(install_op, install_ctx)
+        assert install_result["status"] == "installed", install_result
 
-    load_result = _run(load_skill_handle(
-        LoadSkillIROp(kind="load_skill", path=str(skill_path)), install_ctx,
-    ))
+        on_disk = skill_path.read_text(encoding="utf-8")
+        assert f"root={plugin_root.resolve()}" in on_disk
+        assert "${REYN_SKILL_DIR}" in on_disk
+        assert "${REYN_PROJECT_DIR}" in on_disk
+
+        load_result = await load_skill_handle(
+            LoadSkillIROp(kind="load_skill", path=str(skill_path)), install_ctx,
+        )
+        await settle(events)
+        return install_result, load_result
+
+    _install_result, load_result = _run(_install_then_load())
     assert load_result["status"] == "ok", load_result
     content = load_result["content"]
     assert f"root={plugin_root.resolve()}" in content
@@ -442,7 +465,7 @@ def test_file_read_never_expands_a_skill_md_even_when_registered(tmp_path, monke
     ctx, events = _make_ctx(project_root, available_skills=[entry])
     collected = collect_events(events)
 
-    result = _run(file_handle(FileIROp(kind="file", op="read", path=rel_path), ctx))
+    result = _run(file_handle(FileIROp(kind="file", op="read", path=rel_path), ctx), events)
 
     assert result["status"] == "ok", result
     assert f"secret=${{env:{_SENTINEL_ENV_VAR}}}" in result["content"], (

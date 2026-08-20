@@ -19,7 +19,7 @@ from reyn.core.events.state_log import StateLog
 from reyn.runtime.hot_reload import HotReloader, validate_in_set
 from reyn.runtime.session import Session
 from tests._support.agent_session import make_session
-from tests._support.events import collect_events
+from tests._support.events import collect_events, settle
 
 # ── validate-before-apply (the structural IN-set check) ─────────────────────
 
@@ -108,6 +108,7 @@ async def test_bad_in_set_is_rejected_no_seam_runs(tmp_path: Path) -> None:
 
     assert summary["rejected"]                 # the reload was rejected
     assert calls == []                         # no seam ran (rollback)
+    await settle(events)
     assert [e.type for e in collected if e.type == "config_reloaded"] == []
 
 

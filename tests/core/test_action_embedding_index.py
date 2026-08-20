@@ -35,7 +35,7 @@ from reyn.tools.action_index import (
     ActionEmbeddingIndex,
     compute_catalog_hash,
 )
-from tests._support.events import collect_events
+from tests._support.events import collect_events, settle
 
 
 @pytest.fixture(autouse=True)
@@ -119,6 +119,12 @@ class _DegenerateFakeProvider:
 
 def _run(coro: Any) -> Any:
     return asyncio.run(coro)
+
+
+async def _run_and_settle(coro: Any, log: Any) -> Any:
+    result = await coro
+    await settle(log)
+    return result
 
 
 # ── 1. is_ready() lifecycle ───────────────────────────────────────────────
@@ -473,11 +479,11 @@ def test_build_redacts_secret_in_short_description_before_embed(
     collected = collect_events(ctx.events)
     idx = ActionEmbeddingIndex()
     secret_desc = 'api_key = "abcdefghijklmnopqrstuvwxyz123456"'
-    _run(idx.build(
+    _run(_run_and_settle(idx.build(
         [{"action_name": "skill__leaky", "short_description": secret_desc}],
         ctx,
         "standard",
-    ))
+    ), ctx.events))
     ((embedded_texts, _model),) = provider.calls
     (embedded_text,) = embedded_texts
     assert "abcdefghijklmnopqrstuvwxyz123456" not in embedded_text, (

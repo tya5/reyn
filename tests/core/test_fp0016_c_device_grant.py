@@ -31,7 +31,7 @@ from reyn.security.secrets.oauth import (
     OAuthProviderConfig,
     device_grant_flow,
 )
-from tests._support.events import collect_events
+from tests._support.events import collect_events, settle
 
 # ── helpers ────────────────────────────────────────────────────────────────
 
@@ -139,6 +139,7 @@ async def test_device_grant_flow_success() -> None:
     assert user_action_calls[0]["verification_uri"] == "https://example.com/device"
 
     # P6 events
+    await settle(events)
     emitted = collected
     started = [e for e in emitted if e.type == "oauth_login_started"]
     completed = [e for e in emitted if e.type == "oauth_login_completed"]
@@ -346,6 +347,7 @@ async def test_device_grant_flow_emits_events() -> None:
     finally:
         await client.aclose()
 
+    await settle(events)
     all_events = collected
     started = next(e for e in all_events if e.type == "oauth_login_started")
     completed = next(e for e in all_events if e.type == "oauth_login_completed")
