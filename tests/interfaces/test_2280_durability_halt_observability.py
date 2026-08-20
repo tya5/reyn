@@ -59,6 +59,7 @@ from reyn.runtime.registry import AgentRegistry
 from reyn.runtime.session import DurabilityHaltError, Session
 from reyn.schemas.models import Event
 from tests._support.agent_session import make_session
+from tests._support.events import settle
 
 
 async def _inject_persistent_durability_failure(log: StateLog) -> None:
@@ -97,6 +98,7 @@ async def test_process_edge_halt_emits_session_halted_once(tmp_path) -> None:
 
         # Negative control: nothing halted-related emitted before the process
         # edge actually observes the failed health-signal.
+        await settle(session._audit_events)
         assert not any(e.type == "session_halted" for e in events)
 
         cont = await session.run_one_iteration()
@@ -105,6 +107,7 @@ async def test_process_edge_halt_emits_session_halted_once(tmp_path) -> None:
 
         # Unpacking a 1-tuple is itself the "exactly one" behavioral assertion
         # (raises ValueError on zero or more than one) — never a len(...) pin.
+        await settle(session._audit_events)
         (halted_event,) = [e for e in events if e.type == "session_halted"]
         assert halted_event.data.get("reason") == "durability_failure"
 
@@ -112,6 +115,7 @@ async def test_process_edge_halt_emits_session_halted_once(tmp_path) -> None:
         # the SAME event object, not a fresh one appended.
         cont2 = await session.run_one_iteration()
         assert cont2 is False
+        await settle(session._audit_events)
         (still_only_event,) = [e for e in events if e.type == "session_halted"]
         assert still_only_event is halted_event, "re-check re-emitted session_halted"
     finally:
@@ -141,6 +145,7 @@ async def test_accept_edge_halt_also_emits_session_halted_once(tmp_path) -> None
 
         with pytest.raises(DurabilityHaltError):
             await session._put_inbox("user", {"text": "after disk death"})
+        await settle(session._audit_events)
         (halted_event,) = [e for e in events if e.type == "session_halted"]
         assert halted_event.data.get("reason") == "durability_failure"
 
@@ -148,6 +153,7 @@ async def test_accept_edge_halt_also_emits_session_halted_once(tmp_path) -> None
         # retry) must NOT re-emit: the SAME event object, not a fresh one.
         with pytest.raises(DurabilityHaltError):
             await session._put_inbox("user", {"text": "still after disk death"})
+        await settle(session._audit_events)
         (still_only_event,) = [e for e in events if e.type == "session_halted"]
         assert still_only_event is halted_event, "second submit re-emitted session_halted"
     finally:

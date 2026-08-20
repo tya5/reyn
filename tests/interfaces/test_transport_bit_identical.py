@@ -29,6 +29,7 @@ from reyn.interfaces.repl.renderer import InlineChatRenderer
 from reyn.interfaces.repl.stream_client import run_output_loop
 from reyn.interfaces.transport.in_process import InProcessTransport
 from reyn.runtime.outbox import OutboxMessage
+from tests._support.events import settle
 
 # A fixed monotonic clock makes the working-indicator fragments a deterministic
 # function of the WaitingOn STATE (elapsed = now - since = 0), so a frag-sequence
@@ -115,6 +116,11 @@ async def _via_transport(monkeypatch) -> tuple[str, list]:
     try:
         for etype, data in _EVENTS:
             fake.audit_events.emit(etype, **data)
+        # The subscriber that turns each audit-event into a frame runs on the
+        # EventLog's background dispatch consumer (#4961 C) — wait for it to
+        # catch up before the display sub-stream's __end__ sentinel lands, or
+        # run_output_loop would see __end__ before the event frames exist.
+        await settle(fake.audit_events)
         for msg in _DISPLAY:
             fake.repl_outbox.put_nowait(msg)
         fake.repl_outbox.put_nowait(OutboxMessage(kind="__end__", text=""))

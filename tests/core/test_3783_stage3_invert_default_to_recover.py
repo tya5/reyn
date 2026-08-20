@@ -67,6 +67,7 @@ from reyn.services.compaction.engine import (
     UnrecoveredError,
     retry_loop,
 )
+from tests._support.events import settle
 from tests._support.session import make_session as _make_session
 from tests._support.session import push as _push
 
@@ -222,6 +223,7 @@ async def test_input_independent_exception_hits_the_cap_not_an_infinite_loop(tmp
             main_call=_never_overflowing_main_call(),
             max_iterations=10,
         )
+    await settle(engine._events)
 
     # It did NOT grind through all 10 max_iterations — the cap fired early
     # (same cause 3 times: _MAX_CONSECUTIVE_SAME_CAUSE_RECOVERS=2, so the
@@ -321,5 +323,6 @@ async def test_compaction_side_unrecovered_error_emits_router_context_overflow_u
     # below) via `run_turn`'s own widened except, not a type-merging rewrap.
     with pytest.raises(UnrecoveredError):
         await session._run_router_loop("trigger a turn", "chain-3783-stage3-c")
+    await settle(session._audit_events)
 
     assert "router_context_overflow_unrecovered" in seen

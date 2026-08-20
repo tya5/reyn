@@ -54,6 +54,7 @@ from reyn.data.workspace.workspace import Workspace
 from reyn.plugins.manifest import PLUGIN_MANIFEST_SCHEMA_URL
 from reyn.schemas.models import PluginInstallIROp
 from reyn.security.permissions.permissions import PermissionDecl, PermissionResolver
+from tests._support.events import settle
 
 
 def _make_valid_pipeline_dsl(path: Path, *, name: str = "hello") -> None:
@@ -150,6 +151,7 @@ async def test_a_malformed_pipeline_dsl_lands_in_skipped_not_registered(
     op = PluginInstallIROp(kind="plugin_install", source={"kind": "local", "path": str(src)})
 
     result = await install_handle(op, ctx)
+    await settle(events)
 
     assert result["status"] == "installed", result
     assert result["registered"]["pipelines"] == []
@@ -186,6 +188,7 @@ async def test_a_skill_dir_with_no_skill_md_lands_in_skipped_not_registered(
     op = PluginInstallIROp(kind="plugin_install", source={"kind": "local", "path": str(src)})
 
     result = await install_handle(op, ctx)
+    await settle(events)
 
     assert result["status"] == "installed", result
     assert result["registered"]["skills"] == []

@@ -25,6 +25,7 @@ import pytest
 from reyn.core.events.event_store import EventStore
 from reyn.core.events.events import EventLog
 from reyn.core.events.state_log import StateLog
+from tests._support.events import settle
 from tests._support.paths import REPO_ROOT
 
 SCRIPT = REPO_ROOT / "scripts" / "dogfood_trace.py"
@@ -64,6 +65,7 @@ async def test_hook_push_that_ran_is_not_flagged_inert(tmp_path: Path):
     # The run-loop actually picks the push up and runs a turn (real EventLog.emit,
     # the same call site as Session._handle_inbox_message's turn_started emit).
     log.emit("turn_started", kind="hook", chain_id=None)
+    await settle(log)  # wait for dispatch to reach the store subscriber
     await store.flush()  # ensure the write lands before the subprocess reads it
 
     out, rc = _run(["--root", str(reyn_dir), "--mode", "hook-liveness"])

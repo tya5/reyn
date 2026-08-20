@@ -49,6 +49,7 @@ from reyn.core.events.state_log import StateLog
 from reyn.interfaces.transport.agui.state import RemoteQueueView
 from reyn.runtime.session import Session
 from tests._support.agent_session import make_session
+from tests._support.events import settle
 
 AGENT = "p3-cancel-agent"
 
@@ -407,6 +408,7 @@ async def test_real_session_inbox_cancel_delta_drives_remote_queue_view(tmp_path
     session.subscribe_audit_events(lambda ev: captured.append(ev))
 
     await session.submit_user_text("alpha")
+    await settle(session._audit_events)
     submitted = next(e for e in captured if e.type == "user_submitted")
     view.apply_user_submitted(
         msg_id=submitted.data["msg_id"], chain_id=submitted.data["chain_id"],
@@ -415,6 +417,7 @@ async def test_real_session_inbox_cancel_delta_drives_remote_queue_view(tmp_path
     assert [i["text"] for i in view.queue()] == ["alpha"]
 
     await session.cancel_queued(submitted.data["msg_id"])
+    await settle(session._audit_events)
     cancel_ev = next(e for e in captured if e.type == "inbox_cancel")
     view.apply_inbox_cancel(msg_id=cancel_ev.data["msg_id"], seq=cancel_ev.data["seq"])
 

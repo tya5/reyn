@@ -42,6 +42,7 @@ from reyn.runtime.session_api import run_pipeline_attached
 from reyn.runtime.session_params import PresentationWiring
 from reyn.schemas.models import Event
 from tests._support.agent_session import make_session
+from tests._support.events import settle
 
 
 def _drain(q: asyncio.Queue) -> list[Any]:
@@ -155,6 +156,7 @@ async def test_unsubscribe_stops_further_progress_after_tool_completion(tmp_path
         "pipeline_step_started", run_id=run_id, step_index=5, step_kind="transform",
         total_steps=6,
     )
+    await settle(driver_events)
     assert len(_drain(outbox)) == 1
 
     # Simulate the dispatcher's post-invocation event (on_tool_returned) — this
@@ -169,6 +171,7 @@ async def test_unsubscribe_stops_further_progress_after_tool_completion(tmp_path
         "pipeline_step_completed", run_id=run_id, step_index=6, step_kind="transform",
         total_steps=6,
     )
+    await settle(driver_events)
     status_msgs = [m for m in _drain(outbox) if m.kind == "status"]
     assert status_msgs == []
 

@@ -28,6 +28,7 @@ from reyn.plugins.manifest import PLUGIN_MANIFEST_SCHEMA_URL
 from reyn.runtime.hot_reload import HotReloader
 from reyn.schemas.models import PluginInstallIROp
 from reyn.security.permissions.permissions import PermissionDecl, PermissionResolver
+from tests._support.events import settle
 
 
 def _make_plugin(root: Path, *, servers: dict) -> Path:
@@ -114,6 +115,7 @@ async def test_a_probe_failing_server_is_named_in_the_return_value_and_an_event_
     op = PluginInstallIROp(kind="plugin_install", source={"kind": "local", "path": str(src)})
 
     result = await install_handle(op, ctx)
+    await settle(events)
 
     assert result["status"] == "installed", result
     # Both entries name a nonexistent binary in this test (no real MCP

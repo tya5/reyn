@@ -45,6 +45,31 @@ level of derivation — a comprehension/filter/index/unpack over an already-
 tracked name) from a ``collect_events(...)`` call is tracked, and every
 LOAD of a tracked name is checked.
 
+## Why NOT search by helper-function NAME either (a second application of
+## the same lesson, found the SAME night)
+
+A CI run surfaced 40 more failures using a DIFFERENT collection mechanism
+entirely: a hand-rolled ``session.subscribe_audit_events(lst.append)`` or
+``log.add_subscriber(lambda e: lst.append(e))`` — never touching
+``collect_events()`` at all, so invisible to everything above. The
+tempting fix — search for helper functions NAMED like ``collect_events``
+or ``_EventSink`` — repeats the exact mistake: a real site used a local
+helper named ``_collect_events`` (one leading underscore different) that
+called ``add_subscriber`` directly, and would stay invisible to any
+NAME-based search forever. The only discriminator that closes the
+population BY CONSTRUCTION (lead-coder finding): there are exactly two
+ways anything becomes an ``EventLog`` subscriber — ``add_subscriber()``
+(the sole ``self._subscribers.append`` call site, ``events.py``) and the
+``EventLog(subscribers=[...])`` constructor argument. So this gate also
+tracks the list bound via ``<x>.add_subscriber(<name>.append)`` or
+``<x>.subscribe_audit_events(lambda e: <name>.append(e))`` — the two
+statically-resolvable shapes of "did this call register a subscriber",
+not "does this look like a collector." A hand-rolled Sink CLASS instance
+(``class XSink: def __call__(self, e): self.events.append(e)``) is NOT
+statically resolvable to a single tracked name this way and is a
+disclosed gap, not covered — see ``_tracked_name_from_subscriber_arg``'s
+own docstring.
+
 ## Why this gate only checks ``async def`` functions (③ closed at the
 ## mechanism level, not the test level)
 
@@ -162,6 +187,18 @@ from pathlib import Path
 _ROOT = Path(__file__).resolve().parent.parent
 _TESTS_DIR = _ROOT / "tests"
 
+# #4966 (lead-coder finding, closing the population by CONSTRUCTION rather
+# than by surface pattern — a name-based search for "helper functions that
+# look like collect_events" found real, still-broken sites using a
+# differently-named local helper on the SAME underlying mechanism, on the
+# same night). There are exactly two ways ANYTHING becomes an EventLog
+# subscriber: `add_subscriber()` (the sole `self._subscribers.append` call
+# site, events.py) and the `EventLog(subscribers=[...])` constructor
+# argument. Any call to one of these two methods is therefore a genuine
+# subscriber registration, whatever the caller chooses to name the list or
+# helper it writes into — the discriminator is "did this call
+# add_subscriber()", not "does this function's name look like a collector".
+_SUBSCRIBE_METHOD_NAMES = frozenset({"add_subscriber", "subscribe_audit_events"})
 _COLLECT_EVENTS_FUNC_NAME = "collect_events"
 _SETTLE_FUNC_NAME = "settle"
 _DRAIN_METHOD_NAME = "drain"
@@ -199,6 +236,36 @@ def _call_func_name(call: ast.Call) -> "str | None":
     caller, not here)."""
     if isinstance(call.func, ast.Name):
         return call.func.id
+    return None
+
+
+def _tracked_name_from_subscriber_arg(arg: ast.expr) -> "str | None":
+    """If *arg* — the argument passed to ``add_subscriber()``/
+    ``subscribe_audit_events()`` — is ``<name>.append`` (a bound method
+    reference) or a ``lambda`` whose body is a call to ``<name>.append(...)``,
+    return ``<name>``: the list this subscription writes into, which
+    therefore needs the same settle()-before-read treatment as a
+    ``collect_events()`` binding.
+
+    Returns ``None`` for anything else — a hand-rolled ``class XSink:
+    def __call__(self, e): self.events.append(e)`` instance, a free
+    function, a ``ChatLifecycleForwarder``-style production callable —
+    none of these are statically resolvable to a single tracked NAME by
+    this rule. This is a disclosed gap, not a claim of total coverage:
+    such sites need their own settle() call reviewed by hand; this gate
+    finds what the two closed-form shapes above cover, not everything
+    that could theoretically race."""
+    if isinstance(arg, ast.Attribute) and arg.attr == "append" and isinstance(arg.value, ast.Name):
+        return arg.value.id
+    if isinstance(arg, ast.Lambda):
+        body = arg.body
+        if (
+            isinstance(body, ast.Call)
+            and isinstance(body.func, ast.Attribute)
+            and body.func.attr == "append"
+            and isinstance(body.func.value, ast.Name)
+        ):
+            return body.func.value.id
     return None
 
 
@@ -333,6 +400,10 @@ def _check_function(func: "ast.FunctionDef | ast.AsyncFunctionDef") -> "list[tup
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
             if node.func.attr == "emit":
                 emit_lines.append(node.lineno)
+            if node.func.attr in _SUBSCRIBE_METHOD_NAMES and node.args:
+                name = _tracked_name_from_subscriber_arg(node.args[0])
+                if name is not None:
+                    tracked.add(name)
         if isinstance(node, (ast.Assign, ast.AnnAssign)) and node.value is not None:
             if (
                 isinstance(node.value, ast.Call)

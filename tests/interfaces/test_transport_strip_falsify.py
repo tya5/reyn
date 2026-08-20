@@ -21,6 +21,7 @@ from reyn.interfaces.repl.stream_client import run_output_loop
 from reyn.interfaces.transport.frames import forwarded_frame_kinds
 from reyn.interfaces.transport.in_process import InProcessTransport
 from reyn.runtime.outbox import OutboxMessage
+from tests._support.events import settle
 
 _EVENTS = [("turn_started", {}), ("tool_called", {"tool": "grep_files"}), ("turn_settled", {})]
 
@@ -71,6 +72,7 @@ async def _drive(forward_events) -> list[str]:
     try:
         for etype, data in _EVENTS:
             fake.audit_events.emit(etype, **data)
+        await settle(fake.audit_events)
         fake.repl_outbox.put_nowait(OutboxMessage(kind="__end__", text=""))
         await asyncio.wait_for(run_output_loop(transport, renderer), timeout=2.0)
     finally:

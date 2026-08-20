@@ -28,6 +28,7 @@ from reyn.interfaces.transport.agui.emitter import AgUiEmitter
 from reyn.interfaces.transport.frames import DisplayFrame, EventFrame
 from reyn.interfaces.transport.in_process import InProcessTransport
 from reyn.runtime.outbox import OutboxMessage
+from tests._support.events import settle
 
 _NOW = 10_000.0
 
@@ -108,6 +109,11 @@ async def _via_in_process(monkeypatch) -> tuple[str, list]:
     try:
         for etype, data in _EVENTS:
             fake.audit_events.emit(etype, **data)
+        # The subscriber that turns each audit-event into a frame runs on the
+        # EventLog's background dispatch consumer (#4961 C) — wait for it to
+        # catch up before the display sub-stream's __end__ sentinel lands, or
+        # run_output_loop would see __end__ before the event frames exist.
+        await settle(fake.audit_events)
         for msg in _DISPLAY:
             fake.repl_outbox.put_nowait(msg)
         fake.repl_outbox.put_nowait(OutboxMessage(kind="__end__", text=""))

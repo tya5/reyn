@@ -300,6 +300,7 @@ async def test_session_hot_reloader_reload_reaches_session_audit_subscribers(
     session.subscribe_audit_events(lambda e: received.append(e.type))
 
     await session.hot_reloader.apply_all(exclude=frozenset())
+    await settle(session._audit_events)
 
     assert "config_reloaded" in received, (
         f"a reload through session.hot_reloader must reach a subscriber "
@@ -392,6 +393,7 @@ async def test_hook_bus_emit_event_reaches_session_audit_events(
             await session.dispatch_external_event("turn_end", {"i": i})
     finally:
         sub.close()
+    await settle(session._audit_events)
 
     assert "bus_subscriber_dropped" in received, (
         f"a hook_bus subscriber-queue overflow must reach a subscriber "

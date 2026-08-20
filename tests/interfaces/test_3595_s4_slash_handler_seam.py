@@ -459,7 +459,17 @@ def test_no_slash_module_reaches_the_session_outbox() -> None:
 #: — per the gate's other half ("publishing _x as x ratifies the
 #: encapsulation break instead of closing it"), it answered no question
 #: nothing else could; it was a plain rename of already-private state.
-_PUBLIC_MEMBER_CEILING = 112
+#: Raised 112 -> 113 for #4961 C / #4966: ``aclose_audit_events`` — a NEW
+#: method, same public shape as the EXISTING ``aclose_mcp_connections``/
+#: ``aclose_event_store``/``aclose_background_tasks`` (already counted in
+#: the prior ceiling) — the same getattr-duck-typed teardown chain
+#: (``registry.py``'s ``archive_agent``/``remove_session``) gained a 4th
+#: instance for closing this session's own ``_audit_events`` EventLog
+#: (drain-then-stop) before it's dropped from the in-memory map.
+#: Genuinely unrelated to a slash handler reaching into the session (it
+#: is a registry-owned teardown call, not a read a slash command would
+#: use) — the gate's own documented carve-out for this case.
+_PUBLIC_MEMBER_CEILING = 113
 
 
 def test_session_public_surface_does_not_grow() -> None:

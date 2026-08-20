@@ -77,6 +77,7 @@ from reyn.security.permissions.permissions import PermissionDecl
 from reyn.tools.action_index import ActionEmbeddingIndex
 from reyn.tools.types import RouterCallerState, ToolContext
 from reyn.tools.universal_catalog import SEARCH_ACTIONS
+from tests._support.events import settle
 
 
 def _run(coro: Any) -> Any:
@@ -92,9 +93,12 @@ def _events_and_store(tmp_path: Path) -> tuple[EventLog, EventStore]:
     return log, store
 
 
-async def _read_back(store: EventStore) -> list[dict]:
-    """Drain the store's off-loop write queue, then read every event back
-    from disk (public API — ``iter_all()`` — not private state)."""
+async def _read_back(log: EventLog, store: EventStore) -> list[dict]:
+    """Wait for *log*'s dispatch queue to finish delivering to *store*
+    (its subscriber), drain the store's own off-loop write queue, then
+    read every event back from disk (public API — ``iter_all()`` — not
+    private state)."""
+    await settle(log)
     await store.flush()
     return [e.model_dump(mode="json") for e in store.iter_all()]
 
@@ -168,7 +172,7 @@ def test_ensure_built_emits_started_progress_complete(
         )
         assert outcome.error is None
         assert outcome.chunk_count == 2
-        return await _read_back(store)
+        return await _read_back(log, store)
 
     events = _run(_scenario())
     # Filter to the P2d build-phase events — the `embed` op's own execution
@@ -208,7 +212,7 @@ def test_ensure_built_failure_emits_build_error(
             "doc_source", await_completion=True, events=log,
         )
         assert outcome.error is not None
-        return await _read_back(store)
+        return await _read_back(log, store)
 
     events = _run(_scenario())
     kinds = [e["type"] for e in events]
@@ -341,8 +345,6 @@ def test_router_loop_search_actions_wires_search_await_and_emits_audit(
         {"action_name": "skill__alpha", "short_description": "Alpha skill"},
         {"action_name": "skill__beta", "short_description": "Beta skill"},
     ]
-    _run(idx.build(items, op_ctx, "standard"))
-    assert idx.is_ready() is True
 
     host = _StubHost(idx, provider, log, op_ctx)
     loop = _LoopForP2d(tmp_path, host)
@@ -352,6 +354,14 @@ def test_router_loop_search_actions_wires_search_await_and_emits_audit(
     coordinator = loop._get_index_coordinator()
 
     async def _scenario() -> tuple[list[str], list[dict]]:
+        # Build inside the SAME event loop as the rest of this scenario —
+        # `log`'s dispatch consumer task is bound to whichever loop first
+        # emits through it (`EventLog._ensure_consumer_started`), and
+        # `settle`/`drain` below needs that consumer still alive on THIS
+        # loop, not a prior, already-closed `asyncio.run()`'s.
+        await idx.build(items, op_ctx, "standard")
+        assert idx.is_ready() is True
+
         # Register a builder that raises if ever invoked — search_await
         # must NOT trigger a build on a source the manifest already
         # records as "clean" (steady-state no-op, per the firm's §5
@@ -366,7 +376,7 @@ def test_router_loop_search_actions_wires_search_await_and_emits_audit(
         ))
 
         names = await loop.search_actions("alpha")
-        return names, await _read_back(store)
+        return names, await _read_back(log, store)
 
     names, events = _run(_scenario())
     assert "skill__alpha" in names
@@ -396,8 +406,6 @@ def test_universal_catalog_handler_wires_search_await_and_emits_audit(
         {"action_name": "skill__alpha", "short_description": "Alpha skill"},
         {"action_name": "skill__beta", "short_description": "Beta skill"},
     ]
-    _run(idx.build(items, op_ctx, "standard"))
-    assert idx.is_ready() is True
 
     ws = Workspace(events=log, base_dir=tmp_path)
     rs = RouterCallerState(
@@ -412,8 +420,15 @@ def test_universal_catalog_handler_wires_search_await_and_emits_audit(
     )
 
     async def _scenario() -> tuple[dict, list[dict]]:
+        # Build inside the SAME event loop as the rest of this scenario —
+        # see the sibling RouterLoop test above for why (`log`'s dispatch
+        # consumer task must stay bound to THIS loop for settle/drain to
+        # observe it).
+        await idx.build(items, op_ctx, "standard")
+        assert idx.is_ready() is True
+
         result = await SEARCH_ACTIONS.handler({"query": "alpha", "limit": 5}, ctx)
-        return result, await _read_back(store)
+        return result, await _read_back(log, store)
 
     result, events = _run(_scenario())
     assert result["items"], "expected ranked results from the real query"

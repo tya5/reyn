@@ -62,6 +62,7 @@ class EventLog:
         emitter: str | None = None,
         track_audit_seq: bool = True,
         backend: "EventBackend | None" = None,
+        force_inline: bool = False,
     ) -> None:
         # #3868 PR-1: a folded derived state for `present`'s "was this ref
         # already read this session?" question (source.py's compute_ingested),
@@ -149,10 +150,43 @@ class EventLog:
         # This queue and its consumer task are simply unused in that case.
         self._dispatch_queue: "asyncio.Queue[Event]" = asyncio.Queue()
         self._consumer_task: "asyncio.Task[None] | None" = None
+        # #4966: an explicit opt-out for a one-off, no-continuity EventLog
+        # (see `emit_cli_event`'s own construction site) — dispatches
+        # INLINE unconditionally, same as the no-running-loop branch,
+        # regardless of whether a loop happens to be running around the
+        # call site. Such an instance never gets `drain()`/`stop_dispatch()`
+        # called on it (nothing holds a reference after the one `emit()`
+        # call returns), so if it took the queue branch instead, its
+        # spawned consumer task would be silently abandoned — and when the
+        # loop eventually tears down, asyncio reports the abandoned task
+        # as a SECOND, spurious "Task was destroyed but it is pending!"
+        # unhandled-exception context, alongside whatever real exception a
+        # caller's own diagnostics were trying to witness (found via CI:
+        # test_durable_capture_survives_prompt_toolkit_prompt_wait).
+        self._force_inline = force_inline
 
     @property
     def subscribers(self) -> list[Subscriber]:
-        return self._subscribers
+        """A read-only SNAPSHOT of the current subscriber list.
+
+        #4966 (lead-coder finding): returns a copy, not ``self._subscribers``
+        itself — this property used to return the LIVE list, meaning
+        ``log.subscribers.append(fn)`` was a THIRD, undocumented way to
+        become a subscriber (alongside the two intended ones,
+        ``add_subscriber()`` and the ``subscribers=[...]`` constructor
+        argument), bypassing whatever bookkeeping either of those two
+        might someday need to do. Measured to have zero current callers
+        of that pattern, so closing it here breaks nothing — after this,
+        ``add_subscriber()``/the constructor argument are the ONLY two
+        ways in, making the population of "how does something become a
+        subscriber" closed by construction rather than an open set a
+        future census has to keep re-discovering.
+
+        A plain ``list(...)`` copy, not a ``tuple`` — existing callers
+        compare this against a list literal (``assert log.subscribers ==
+        [collected.append]``), and ``list == tuple`` is always ``False``
+        in Python regardless of contents."""
+        return list(self._subscribers)
 
     @property
     def ingested_path_count(self) -> int:
@@ -438,6 +472,9 @@ class EventLog:
         # dispatch happens, and a no-loop context has no op/tool caller to
         # protect from a slow subscriber and no transport to hand off to
         # asynchronously — so that difference carries no meaning there.
+        if self._force_inline:
+            self._dispatch_inline(event)
+            return event
         try:
             asyncio.get_running_loop()
         except RuntimeError:
@@ -670,5 +707,24 @@ def emit_cli_event(kind: str, **payload) -> None:
     # legible label (not a random per-instance token — nothing needs to
     # distinguish one CLI invocation's emitter from another's, since
     # neither carries a sequence to compare).
-    event_log = EventLog(subscribers=[store], emitter="cli", track_audit_seq=False)
+    # #4966 (found via CI, a real regression this same PR introduced): a
+    # one-off CLI event has no continuity to protect (see the audit_seq
+    # comment above) — there is nothing more this EventLog will ever emit,
+    # so it never needs the async queue/consumer machinery `emit()` uses
+    # when a loop happens to be running around this call site (e.g.
+    # `emit_cli_event` invoked synchronously from inside an async caller,
+    # no `await` in between). `force_inline=True` makes THIS instance
+    # dispatch inline unconditionally, the same as if no loop were running
+    # — matching pre-#4961-C behavior for this specific call site. Without
+    # it, a spawned-but-never-drained consumer task gets silently
+    # abandoned, and when the loop eventually tears down, asyncio reports
+    # it as its OWN "Task was destroyed but it is pending!" unhandled-
+    # exception context — a SECOND, spurious `asyncio_unhandled_exception`
+    # durably captured alongside whatever real exception the caller's own
+    # diagnostics were trying to witness (found via
+    # test_durable_capture_survives_prompt_toolkit_prompt_wait's own
+    # `[event] = events` unpack going from 1 to 2 elements).
+    event_log = EventLog(
+        subscribers=[store], emitter="cli", track_audit_seq=False, force_inline=True,
+    )
     event_log.emit(kind, **payload)
