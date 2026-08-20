@@ -927,6 +927,24 @@ class ChatConfig:
     are fixed" anywhere this flag is discussed — the empty response's own
     root cause is unmeasured (#3698's anyio cancel-scope is a candidate);
     this flag only changes what happens AFTER one occurs.
+
+    ``theme`` (#4840 ③, the config-knob half — the visual/colour-direction
+    half was owner-decided separately and already shipped, #4869/#4875):
+    the Textual theme name ``TextualChatApp.on_mount`` passes to
+    ``self.theme``. ``None`` (default) keeps the shipped default, reyn's
+    own full-colour theme (``REYN_THEME``, registered name ``"reyn"``) —
+    this knob does not change what ships out of the box, only whether an
+    operator can override it. Deliberately UNRESTRICTED: any name Textual
+    (or reyn's own ``register_theme`` call) resolves is accepted, including
+    every built-in (``nord``/``dracula``/``ansi-dark``/…) — an unknown name
+    is caught where ``self.theme =`` actually runs (Textual raises there),
+    not pre-validated here, so this config layer never carries its own
+    stale copy of Textual's theme registry. Whether ``ansi-dark`` deserves
+    special-cased continued support as a "defer to the terminal" escape
+    hatch, now that reyn ships a full-colour default, is a separate,
+    still-open design question (#4840's own thread) — this knob does not
+    answer it; it just stops silently discarding whatever name an operator
+    already knows to type.
     """
     compaction: CompactionConfig = field(default_factory=CompactionConfig)
     reasoning: ReasoningConfig = field(default_factory=ReasoningConfig)
@@ -935,6 +953,7 @@ class ChatConfig:
     neutralize_body: bool = False
     image_url_schemes: "list[str]" = field(default_factory=list)
     empty_stop_retry: bool = False
+    theme: "str | None" = None
 
 
 def _build_reasoning_config(raw: object) -> ReasoningConfig:
@@ -997,12 +1016,17 @@ def _build_chat_config(raw: object) -> ChatConfig:
     # #4677: so does the empty-stop-retry knob (owner default False — see the
     # field's own docstring for the incident + the tradeoff being made).
     empty_stop_retry = bool(raw.get("empty_stop_retry", ChatConfig().empty_stop_retry))
+    # #4840 ③: so does the theme-name override (default None — see the
+    # field's own docstring; unrestricted, not validated against a known-name
+    # list here).
+    raw_theme = raw.get("theme")
+    theme = str(raw_theme) if raw_theme is not None else None
     compaction_raw = raw.get("compaction") or {}
     if not isinstance(compaction_raw, dict):
         return ChatConfig(  # type: ignore[arg-type]
             reasoning=reasoning, render_mode=render_mode, gutters=gutters,
             neutralize_body=neutralize_body, image_url_schemes=image_url_schemes,
-            empty_stop_retry=empty_stop_retry,
+            empty_stop_retry=empty_stop_retry, theme=theme,
         )
     # #1128: head_size/tail_size (step 3) + trigger_total_tokens/min_compact_batch
     # (PR-a, axis-1 removal) were removed — head/tail sizing is token-budget via
@@ -1089,6 +1113,7 @@ def _build_chat_config(raw: object) -> ChatConfig:
         compaction=compaction, reasoning=reasoning, render_mode=render_mode,  # type: ignore[arg-type]
         gutters=gutters, neutralize_body=neutralize_body,
         image_url_schemes=image_url_schemes, empty_stop_retry=empty_stop_retry,
+        theme=theme,
     )
 
 

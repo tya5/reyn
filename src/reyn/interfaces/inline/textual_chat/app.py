@@ -2196,7 +2196,15 @@ class TextualChatApp(App):
         # default theme, which keeps concrete ``$panel``/``$surface`` values
         # throughout (``REYN_THEME.panel``/``.surface``).
         self.register_theme(REYN_THEME)
-        self.theme = "reyn"
+        # #4840 ③: config-knob half only — the default (this literal,
+        # "reyn") is unchanged; ``ChatConfig.theme`` (default ``None``)
+        # only OVERRIDES it. Unrestricted on purpose (see that field's own
+        # docstring) — an unknown name raises HERE, at the exact point
+        # Textual itself resolves theme names, not from a stale allowlist
+        # this config layer would otherwise have to keep in sync with
+        # Textual's own registry.
+        _configured_theme = getattr(getattr(self._config, "chat", None), "theme", None)
+        self.theme = _configured_theme or "reyn"
         # #3469 (generalizing #3326's single-key fix): push the COMPLETE
         # palette-derived markdown theme (``renderer.CHAT_MARKDOWN_THEME_STYLES``
         # — the plain renderers' Consoles consume the same constant) onto the

@@ -74,7 +74,7 @@ aren't.
 | `sandbox` | map | PRJ only · **restart** | Backend selection (`backend`), unsupported-platform policy (`on_unsupported`), the enforcement mode (`mode`: compat / strict / custom), and the agent-level sandbox policy (`policy`). See below. |
 | `hooks` | list | both (`.reyn/config/hooks.yaml` side is **hot-reloaded**) | Agent-lifecycle hooks. Four action schemes: `template_push` / `exec` / `exec_capture` / `pipeline_launch`. See below. |
 | `embedding` | map | PRJ only · **restart** | RAG embedding: the master switch (`enabled`), model classes, batch sizing and concurrency, retry / backoff / timeout, tokenizer, and a cost-warning threshold. See below. |
-| `chat` | map | PRJ only · **restart** | Chat-session runtime knobs: history compaction, reasoning/"thinking" text handling, the interactive renderer (`render_mode`), TUI gutters, body neutralization, and permitted image-URL schemes. See below. |
+| `chat` | map | PRJ only · **restart** | Chat-session runtime knobs: history compaction, reasoning/"thinking" text handling, the interactive renderer (`render_mode`), TUI gutters, body neutralization, permitted image-URL schemes, and the TUI theme name. See below. |
 | `voice` | map | PRJ only · **restart** | Whisper model/language/device settings for F2 dictation in the inline CUI (revived #4187/#4249). See below. |
 | `audit_events` | map | PRJ only · **restart** | Rotation policy (size / age / cleanup period) for the P6 **audit-event** files under `.reyn/events`. Not WAL-events, not hook-events. See below. |
 | `artifacts` | map | PRJ only · **restart** | The artifact-ref table fallback's own row cap (`remote_fallback_limit`, #4601) — used by a remote client's (and a post-restart local client's) Artifacts pane. See below. |
@@ -568,7 +568,8 @@ Chat-session runtime knobs. `chat.compaction` controls chat-history compaction
 (ratio-based budget; see `reyn.local.yaml.example`). `chat.reasoning` controls
 model reasoning/"thinking" text handling. `chat.render_mode` selects the
 interactive chat renderer/driver. `chat.gutters` sets the TUI conversation
-pane's two gutter columns' start state.
+pane's two gutter columns' start state. `chat.theme` overrides the interactive
+TUI's Textual theme name.
 
 ```yaml
 chat:
@@ -583,6 +584,7 @@ chat:
   neutralize_body: false  # opt-in ESC/OSC strip on agent-reply/tool-result body text
   image_url_schemes: []   # opt-in scheme allowlist for present's image src fetch
   empty_stop_retry: false # opt-in resend on an empty router response
+  theme: null              # override the TUI's Textual theme name (default: reyn's own)
 ```
 
 ### `chat.render_mode`
@@ -713,6 +715,22 @@ audit event fires regardless of this setting.
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `empty_stop_retry` | bool | `false` | Resend one "resume" prompt when the router loop detects an empty `finish_reason="stop"` response. |
+
+### `chat.theme`
+
+Override the interactive TUI's Textual theme name (#4840 ③ — the
+config-knob half; the colour direction itself was decided separately and
+already shipped, #4869/#4875). Default (unset) keeps reyn's own
+full-colour theme (registered name `"reyn"`). Any name Textual resolves
+is accepted — reyn's own theme, or any of Textual's built-ins (`nord`,
+`dracula`, `gruvbox`, `catppuccin-mocha`, `textual-dark`, `ansi-dark`,
+…). Not validated at config-load time — an unknown name raises where
+Textual itself resolves the theme, not here, so this config layer never
+carries its own copy of Textual's theme registry to keep in sync.
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `theme` | str \| null | `null` | Textual theme name for the interactive TUI. `null` keeps reyn's own default (`"reyn"`). |
 
 ### `chat.reasoning` fields
 
