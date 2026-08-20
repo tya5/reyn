@@ -202,6 +202,28 @@ def test_sbpl_profile_loopback_bind_always_allowed():
     assert expected in profile_on
 
 
+def test_sbpl_profile_security_server_mach_lookup_always_allowed():
+    """Tier 2: #4932/#4933 — the `com.apple.SecurityServer` mach-lookup grant
+    is emitted regardless of policy (default-on, not gated by any
+    SandboxPolicy field — owner ruling: "if this makes `gh` work under the
+    default config, go ahead"). It is `global-name`-scoped, not a blanket
+    `(allow mach-lookup)` — real measurement (architect, #4932) found this
+    ONE service is what both `security`/Keychain and `gh auth status`
+    (which shells out to `security` for its stored token) need and nothing
+    else in the 9 candidate SBPL classes was required."""
+    expected = '(allow mach-lookup (global-name "com.apple.SecurityServer"))'
+
+    # Present under a bare-default policy...
+    assert expected in _build_sbpl_profile(SandboxPolicy())
+    # ...and under a maximally-restrictive policy (deny_subprocess + no
+    # network) — this grant is NOT gated by any policy field.
+    assert expected in _build_sbpl_profile(
+        SandboxPolicy(deny_subprocess=True, network=False)
+    )
+    # Never a blanket grant — the exact global-name form only.
+    assert "(allow mach-lookup)" not in _build_sbpl_profile(SandboxPolicy()).splitlines()
+
+
 # ─── 3. _sbpl_quote ──────────────────────────────────────────────────────────
 
 
@@ -318,6 +340,37 @@ async def test_seatbelt_allows_socketpair_sendto_but_denies_addressed_sendto_whe
     assert b"ADDRESSED_SENDTO_DENIED" in result.stdout, (
         f"addressed UDP sendto (real egress) must stay denied under network=False; "
         f"stdout={result.stdout!r} stderr={result.stderr!r}"
+    )
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="sandbox-exec is macOS-only")
+@pytest.mark.asyncio
+async def test_seatbelt_security_command_succeeds_under_default_policy():
+    """Tier 2: #4932/#4933 — `security list-keychains` (which needs the
+    `com.apple.SecurityServer` mach-lookup service this profile now always
+    grants) succeeds through the REAL SeatbeltBackend.run() path under a
+    bare-default SandboxPolicy — not a raw `sandbox-exec` invocation
+    (architect's own #4932 measurement used the latter; lead-coder's
+    review explicitly asked for reproduction through the real backend +
+    its full deny-list-included profile). `security` (not the personal
+    `gh` CLI, whose success depends on this machine's own stored OAuth
+    token) is the CI-portable witness for the underlying capability: it
+    only needs to enumerate the machine's own keychain search list, not
+    a specific credential.
+
+    Strip-falsify: this test fails (returncode != 0, "One or more
+    parameters passed to a function were not valid" — the exact error
+    architect measured before the fix) if the mach-lookup grant this PR
+    adds is removed from ``_build_sbpl_profile``."""
+    backend = SeatbeltBackend()
+    if not backend.available():
+        pytest.skip("sandbox-exec not available on this machine")
+
+    policy = SandboxPolicy(timeout_seconds=10)
+    result = await backend.run(["security", "list-keychains"], policy)
+    assert result.returncode == 0, (
+        f"security list-keychains must succeed under the default policy "
+        f"(#4932/#4933); stdout={result.stdout!r} stderr={result.stderr!r}"
     )
 
 

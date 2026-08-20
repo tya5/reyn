@@ -80,6 +80,22 @@ def _build_sbpl_profile(policy: SandboxPolicy) -> str:
         "; binary under (deny default). Without it, even /bin/echo aborts at",
         "; libc init (SIGABRT) on macOS 26+.",
         '(import "bsd.sb")',
+        "",
+        "; #4932/#4933 (owner ruling, 2026-08-19): a real command that works",
+        "; OUTSIDE the sandbox (e.g. `gh auth status`) failed silently inside it",
+        "; because nobody had enumerated `security`/`gh`'s one required",
+        "; mach-lookup service — a capability #3901's ratified posture (\"the",
+        "; sandbox no longer re-decides what the launching shell could already",
+        "; do\") already covers in INTENT but SandboxPolicy has no axis for.",
+        "; Confirmed by direct measurement (architect, #4932/#4935): the",
+        "; `security`/Keychain failure and `gh auth status`'s token-invalid",
+        "; failure share this ONE root cause; adding this single, `global-name`-",
+        "; scoped grant (not a blanket `(allow mach-lookup)`) fixes both. Owner:",
+        "; \"if this makes `gh` work under the default config, go ahead.\" On by",
+        "; default (not gated by a policy field) — a future STRICT/opt-in mode",
+        "; that wants to close this is a separate, deliberate decision (#4935),",
+        "; not something this fix pre-empts.",
+        '(allow mach-lookup (global-name "com.apple.SecurityServer"))',
     ]
 
     # process-exec* is always allowed: without it sandbox-exec cannot even
