@@ -504,6 +504,16 @@
 # only changes what happens after one is detected.
 #   empty_stop_retry: false
 
+# chat.theme: override the interactive TUI's Textual theme name (#4840 ③,
+# the config-knob half — the colour direction itself was decided
+# separately and already shipped, #4869/#4875). Default (unset) keeps
+# reyn's own full-colour theme ("reyn"). Any name Textual resolves is
+# accepted — reyn's own registered theme, or any of Textual's built-ins
+# (nord / dracula / gruvbox / catppuccin-mocha / textual-dark / ansi-dark
+# / …). Not validated here — an unknown name raises where Textual itself
+# resolves it, not at config-load time.
+#   theme: nord
+
 
 # -----------------------------------------------------------------------------
 # audit_events: audit-log rotation + automatic purge policy (#4174 T5:
