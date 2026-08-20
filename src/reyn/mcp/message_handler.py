@@ -72,12 +72,25 @@ For every message shape the real MCP protocol produces TODAY, observable behavio
 identical: the 4 acted-on notification types still trigger the same hook bodies
 (unchanged), task-status still routes to the client, and every other shape still
 produces no ``EventLog``/hook-trigger side effect. **One deliberate addition**: an
-unrecognized message shape now emits a DEBUG log line (:meth:`_log_unhandled`) instead
-of silently reaching an inherited no-op — lead-coder's P3 review condition: a closed
-match-list must not silently drop an "unknown to us" shape the same way it silently
-finishes handling a KNOWN one; the day fastmcp/MCP adds a new notification type this
-class doesn't yet act on, that day is now distinguishable in the log from an ordinary
-quiet run, rather than reading identical to one.
+unrecognized message shape now emits a log line (:meth:`_log_unhandled` /
+:meth:`_log_unknown_shape`) instead of silently reaching an inherited no-op —
+lead-coder's P3 review condition: a closed match-list must not silently drop an
+"unknown to us" shape the same way it silently finishes handling a KNOWN one; the day
+fastmcp/MCP adds a new notification type this class doesn't yet act on, that day is
+now distinguishable in the log from an ordinary quiet run, rather than reading
+identical to one.
+
+**#4812 (classifier, not just a severity bump)**: the original single DEBUG line
+covered two genuinely different populations under one severity — "a real,
+protocol-compliant ``ServerNotification`` variant reyn has no behavior for" (still
+DEBUG, :meth:`_log_unhandled`) and "a shape this handler cannot classify at all"
+(now WARNING, :meth:`_log_unknown_shape`: a future SDK-added notification variant, a
+non-conforming server, or a real transport-level ``Exception``). Every currently-known
+``ServerNotification`` union member (per the installed SDK's own
+``typing.get_args(mcp.types.ServerNotification)``) now has an explicit named ``case``
+in :meth:`__call__` — see that method's own comments for the exhaustiveness this split
+depends on, and for the (already-known, #4457-tracked) ``TaskStatusNotification`` case
+that stays unreachable on the pinned SDK without being deleted.
 """
 from __future__ import annotations
 
@@ -290,45 +303,107 @@ class ReynMCPMessageHandler:
                     # exact class of bug this handler's module docstring
                     # exists to make un-silent.
                     await self.on_progress(root)
-                case _:
+                # #4812: the remaining KNOWN-BUT-UNACTED-ON ServerNotification
+                # union members, named explicitly (not left to the wildcard
+                # below). Each is real, protocol-compliant traffic a
+                # standards-conforming server can send during entirely
+                # normal operation — reyn simply has no behavior for it, by
+                # design, same as the 5 shapes matched above. Enumerating
+                # them BY NAME is what makes the wildcard's own severity
+                # meaningful: see `_log_unknown_shape`'s docstring.
+                case mcp.types.LoggingMessageNotification():
                     self._log_unhandled(root)
+                case mcp.types.ResourceListChangedNotification():
+                    self._log_unhandled(root)
+                case mcp.types.ElicitCompleteNotification():
+                    self._log_unhandled(root)
+                case mcp.types.SubscriptionsAcknowledgedNotification():
+                    # Reachable only when NO live listen() stream is
+                    # consuming this ack for the relevant subscription (the
+                    # installed SDK's own `_on_notify` routes an
+                    # in-flight-listen ack to that stream directly instead
+                    # of here — see this handler's module docstring on
+                    # listen-honored suppression for the analogous
+                    # tools/prompts/resources gating).
+                    self._log_unhandled(root)
+                # `CancelledNotification` (also a ServerNotification member)
+                # is EXCLUDED here, not silently missing: the installed
+                # SDK's own dispatcher (`ClientSession._on_notify`)
+                # intercepts and returns before ever calling
+                # `message_handler` for it (verified live,
+                # `.venv/lib/.../mcp/client/session.py`) — it structurally
+                # cannot reach this match statement, so there is no case
+                # arm for it to fall into.
+                case _:
+                    # A genuinely UNCLASSIFIED ServerNotification shape — every
+                    # currently-known union member (per `typing.get_args
+                    # (mcp.types.ServerNotification)`, the installed SDK pin)
+                    # has its own named `case` above; reaching this arm means
+                    # the connected server sent something outside that set —
+                    # either a FUTURE mcp-SDK-added variant this match hasn't
+                    # been updated for, or a non-conforming server. #4812:
+                    # THIS is the "unexpected/never-seen message type" #4805's
+                    # own discriminator (fires only on the defect, not on
+                    # healthy paths) asks for — unlike the named cases above,
+                    # nothing legitimate is expected to land here.
+                    self._log_unknown_shape(root)
         else:
-            # A request (RequestResponder) or a transport-level Exception — reyn
-            # never acted on either (no on_request/on_ping/on_exception override
-            # existed even in the inherited version) — see module docstring.
-            self._log_unhandled(message)
+            # #4812 correction: the installed SDK's own `IncomingMessage`
+            # TypeAlias (`mcp/client/session.py`) is
+            # `ServerNotification | Exception` — NOT `ServerNotification |
+            # RequestResponder` as this branch's comment used to claim.
+            # `message_handler` never receives a request in this SDK
+            # version (sampling/roots/elicitation requests route through
+            # their OWN dedicated callbacks, not this one) — the prior
+            # "RequestResponder" wording described an API shape that does
+            # not exist on the pinned SDK. Since `isinstance(message,
+            # mcp.types.ServerNotification)` was False to reach this
+            # branch, `message` here is ALWAYS an Exception: a real
+            # transport-level fault (`ClientSession._on_stream_exception`),
+            # never "legitimate expected traffic" the way an unacted-on
+            # notification variant is — #4805's own discriminator (fires
+            # only on the defect, never on a healthy path) applies
+            # directly, unlike the notification branch above.
+            self._log_unknown_shape(message)
 
     def _log_unhandled(self, message: Any) -> None:
-        """#3698 P3 review condition: an OBSERVABLE trace for a message shape this
-        handler doesn't act on — distinguishes "processed and silent" (the 5 shapes
-        matched above) from "not one of ours, silently ignored" (everything else),
-        so a future fastmcp/MCP protocol addition landing here unnoticed is
-        distinguishable in the log from an ordinary quiet run, not identical to it.
+        """#3698 P3 review condition: an OBSERVABLE trace for a KNOWN
+        ``ServerNotification`` variant this handler doesn't act on by design
+        (the ``case`` arms in ``__call__`` that route here) — legitimate,
+        protocol-compliant traffic a standards-conforming server sends during
+        entirely normal operation. Stays at ``debug`` (#4805): raising it
+        would false-alarm on healthy traffic from a server that simply uses a
+        notification shape reyn doesn't act on, the opposite of the
+        "defect-only" property #4805's severity-raise fix depends on.
 
-        #4805: stays at ``debug``, deliberately NOT raised to ``warning`` the
-        way the other two sites in this issue's population were. Those two
-        fire ONLY on a confirmed defect condition (a stream that produced
-        chunks but no delta; a value that never got the correction it was
-        due) — this one does not have that property. Its own call sites
-        (``__call__``'s ``case _:`` branch, and the ``else`` branch for
-        every ``RequestResponder``/transport exception) fire for ANY of the
-        ``ServerNotification`` union's members this handler doesn't act on
-        (only 5 of the union's shapes are matched above) and for EVERY
-        server-initiated request — both are legitimate, protocol-compliant
-        traffic a standards-conforming MCP server can send during entirely
-        normal operation, not just malformed/unexpected input. Raising this
-        to ``warning`` would fire on healthy traffic from a server that
-        simply uses a notification/request shape reyn doesn't act on by
-        design — the opposite of the "defect-only" property #4805's
-        severity-raise fix depends on. The underlying tension (this log
-        line's own stated purpose — "make it observable" — genuinely IS
-        defeated by the production floor for the cases that are actual
-        defects, same as the other two sites) is real but needs a design
-        answer this mechanical fix doesn't have (e.g. distinguishing "an
-        unexpected/never-seen message type" from "a known, legitimate one
-        we just don't act on"), not a blanket severity bump."""
+        #4812 split this method's OLD, wider job in two: this half keeps the
+        original "known, unacted-on, not a defect" case; the genuinely
+        unclassified case (a future/unknown shape, or a transport Exception)
+        now routes to :meth:`_log_unknown_shape` instead — see that method
+        and ``__call__``'s own comments for the enumerated population this
+        split rests on."""
         logger.debug(
             "ReynMCPMessageHandler: no handler for message type %s on server %r",
+            type(message).__name__, self._server_name,
+        )
+
+    def _log_unknown_shape(self, message: Any) -> None:
+        """#4812: an OBSERVABLE, ``warning``-level trace for a message this
+        handler cannot classify as a known, legitimate shape — the population
+        __call__ routes here is EITHER a ``ServerNotification`` outside every
+        named ``case`` in the match statement above (a future SDK-added
+        variant, or a non-conforming server — see the match's own ``case _:``
+        comment for the exhaustiveness argument this rests on) OR a real
+        transport-level ``Exception`` (the ``else`` branch — never "expected
+        traffic" the way a known-but-unacted-on notification is).
+
+        This is the design #4812 itself asked for (quoting the issue): "a way
+        to split the two populations ... so only the [actual anomaly] could
+        reasonably raise severity without false-alarming on normal MCP
+        servers." Distinct from :meth:`_log_unhandled` (stays at ``debug`` —
+        that method's own docstring covers the KNOWN, non-anomalous half)."""
+        logger.warning(
+            "ReynMCPMessageHandler: unclassified message type %s on server %r",
             type(message).__name__, self._server_name,
         )
 

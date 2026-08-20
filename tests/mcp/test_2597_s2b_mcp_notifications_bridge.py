@@ -354,12 +354,17 @@ async def test_unrecognized_notification_is_logged_not_silently_dropped(caplog) 
 
 @pytest.mark.asyncio
 async def test_a_non_notification_message_is_also_logged_not_silently_dropped(caplog) -> None:
-    """Tier 1: same condition as above, for the OTHER branch of __call__ — a
-    non-ServerNotification message (a request or a transport-level Exception,
-    per ``mcp.types``' own ``Message`` union) also reaches _log_unhandled
-    rather than nothing, since reyn has never acted on either shape (no
-    on_request/on_ping/on_exception override existed even in the inherited
-    version)."""
+    """Tier 1: same OBSERVABLE-not-silent condition as above, for the OTHER
+    branch of __call__. #4812 (classifier split): the installed SDK's own
+    ``IncomingMessage`` TypeAlias is ``ServerNotification | Exception`` — no
+    request ever reaches this branch on the pinned SDK (sampling/roots/
+    elicitation requests route through their own dedicated callbacks) — so
+    this branch's ONLY population is a real transport-level Exception, which
+    is never "expected, healthy" traffic the way an unacted-on notification
+    variant is. It therefore now routes to ``_log_unknown_shape`` at
+    ``warning``, not ``_log_unhandled`` at ``debug`` — see
+    ``test_unrecognized_notification_is_logged_not_silently_dropped`` above
+    for the sibling KNOWN-variant case that stays at ``debug``."""
     import logging
 
     handler = ReynMCPMessageHandler(lambda *a, **k: None, "srv")
@@ -368,7 +373,115 @@ async def test_a_non_notification_message_is_also_logged_not_silently_dropped(ca
     with caplog.at_level(logging.DEBUG, logger="reyn.mcp.message_handler"):
         await handler(RuntimeError("not a ServerNotification"))
 
-    assert any("no handler for message type" in r.message for r in caplog.records)
+    matches = [r for r in caplog.records if "unclassified message type" in r.message]
+    assert matches, f"expected an observable unclassified-message log line; got: {[r.message for r in caplog.records]}"
+    assert matches[0].levelname == "WARNING", (
+        f"a transport-level Exception is never expected/healthy traffic — "
+        f"#4805's own discriminator applies directly; got {matches[0].levelname}"
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "notification",
+    [
+        pytest.param(
+            types.LoggingMessageNotification(
+                params=types.LoggingMessageNotificationParams(level="info", data="x"),
+            ),
+            id="LoggingMessageNotification",
+        ),
+        pytest.param(
+            types.ElicitCompleteNotification(
+                params=types.ElicitCompleteNotificationParams(elicitationId="e1"),
+            ),
+            id="ElicitCompleteNotification",
+        ),
+        pytest.param(
+            types.SubscriptionsAcknowledgedNotification(
+                params=types.SubscriptionsAcknowledgedNotificationParams(
+                    notifications=types.SubscriptionFilter(),
+                ),
+            ),
+            id="SubscriptionsAcknowledgedNotification",
+        ),
+    ],
+)
+async def test_other_known_notification_variants_stay_at_debug(caplog, notification) -> None:
+    """Tier 1: #4812 — the OTHER 3 real ``ServerNotification`` union members
+    this handler has never acted on (beyond ``ResourceListChangedNotification``,
+    already pinned above) are each now named explicitly in ``__call__``'s
+    ``match`` — and all 3 stay at ``debug`` via ``_log_unhandled``, same as
+    before #4812, because they are legitimate protocol traffic, not an
+    anomaly. This is the "known, not acted on" half of #4812's classifier;
+    the sibling test above pins the "genuinely unclassified" half."""
+    import logging
+
+    handler = ReynMCPMessageHandler(lambda *a, **k: None, "srv")
+    handler.bind_client(_FakeClient())
+
+    with caplog.at_level(logging.DEBUG, logger="reyn.mcp.message_handler"):
+        await handler(notification)
+
+    matches = [r for r in caplog.records if "no handler for message type" in r.message]
+    assert matches, (
+        f"expected the KNOWN-variant debug log for {type(notification).__name__}; "
+        f"got: {[r.message for r in caplog.records]}"
+    )
+    assert matches[0].levelname == "DEBUG", (
+        f"a known, legitimate-but-unacted-on notification must stay at debug "
+        f"(#4805's own discriminator); got {matches[0].levelname}"
+    )
+
+
+def test_every_current_servernotification_member_has_a_named_case_or_is_disclosed() -> None:
+    """Tier 1: #4812 — population-completeness pin. Enumerates the INSTALLED
+    SDK's own ``mcp.types.ServerNotification`` union (via ``typing.get_args``,
+    not a hand-copied list this repo could forget to update) and asserts
+    every member is one of:
+      - one of the 5 ACTED-ON shapes (unchanged since before #4812), or
+      - one of the 4 KNOWN-but-unacted-on shapes #4812 just named explicitly
+        (debug, ``_log_unhandled``), or
+      - ``CancelledNotification`` — the ONE member structurally excluded
+        because the installed SDK's own dispatcher intercepts and never
+        surfaces it to ``message_handler`` at all (verified live against
+        ``mcp/client/session.py``'s ``_on_notify`` — see ``__call__``'s own
+        comment).
+
+    If a future ``mcp`` SDK bump adds a 10th member, THIS test fails —
+    forcing whoever bumps the pin to look at it and decide whether it's
+    acted-on, known-but-silent, or should reach ``_log_unknown_shape``'s
+    warning — rather than it silently falling through to the wildcard with
+    nobody having looked at it. This is the population-side half of the
+    classifier #4812 asked for; the routing-side half is pinned by the
+    handler tests above."""
+    import typing
+
+    acted_on = {
+        "ToolListChangedNotification",
+        "PromptListChangedNotification",
+        "ResourceUpdatedNotification",
+        "ProgressNotification",
+    }
+    known_but_unacted_on = {
+        "LoggingMessageNotification",
+        "ResourceListChangedNotification",
+        "ElicitCompleteNotification",
+        "SubscriptionsAcknowledgedNotification",
+    }
+    structurally_excluded = {"CancelledNotification"}
+
+    accounted_for = acted_on | known_but_unacted_on | structurally_excluded
+    actual_members = {cls.__name__ for cls in typing.get_args(types.ServerNotification)}
+
+    assert actual_members == accounted_for, (
+        f"mcp.types.ServerNotification's membership changed — a member is "
+        f"either new (not yet classified: "
+        f"{actual_members - accounted_for}) or was removed (stale in this "
+        f"test's own bookkeeping: {accounted_for - actual_members}). "
+        f"Either way, #4812's classifier needs a human to look at this "
+        f"before it's silently correct or silently wrong."
+    )
 
 
 # ── (d) synchronous handler body — sink faults never escape __call__ ──────────────
