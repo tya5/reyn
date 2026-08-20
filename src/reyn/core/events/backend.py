@@ -17,31 +17,42 @@ so a subscriber can detect a gap — is NOT a backend responsibility. It is
 already implemented in `EventLog.emit()` itself (#4496 PR-1): `audit_seq`
 is stamped on every event regardless of backend, including `discard`
 (measured: `emit()` does agent_id/run_id stamp -> emitter+audit_seq stamp
--> subscriber dispatch -> return; no file I/O happens inside `emit()` at
-all — see `EventLog.emit`'s own docstring). A backend that skipped seq
-under its own logic would be reimplementing (and could diverge from) a
-guarantee `emit()` already provides for free — so backends never touch it.
+-> hand off for subscriber dispatch -> return; no file I/O happens inside
+`emit()` at all — see `EventLog.emit`'s own docstring). Stamping always
+precedes hand-off, in either dispatch branch #4966 introduced (queued to
+a background consumer when a running loop exists, inline when it doesn't)
+— #4966 changed WHEN dispatch happens relative to `emit()` returning, not
+this stamp-before-dispatch ordering. A backend that skipped seq under its
+own logic would be reimplementing (and could diverge from) a guarantee
+`emit()` already provides for free — so backends never touch it.
 
 ## Not a subscriber (the structural guarantee this module exists for)
 
 `EventLog.emit()` calls `self._backend.write(event)` directly — wrapped in
-try/except — BEFORE it loops over `self._subscribers` (#4496 PR-2). This
-is deliberate, not incidental:
+try/except — BEFORE handing the event off for subscriber dispatch (#4496
+PR-2). This is deliberate, not incidental:
 
-    - the subscriber loop (`for sub in self._subscribers: sub(event)`) now
-      HAS per-subscriber try/except (#4961 A — this used to be a real gap:
-      a raising subscriber aborted the loop and every LATER subscriber in
-      the list was silently skipped, `events.py`, measured). That fix
-      isolates one subscriber's failure from the NEXT ones, but it does
-      NOT make position in `self._subscribers` a safe place for the
-      backend: inserting a backend as JUST ANOTHER subscriber would still
-      make it position-dependent (registered early enough to run before
-      whatever fills the list — including a future backend that changes
-      registration order) instead of unconditional — the exact "discard
-      silences the UI" failure mode the owner's #4496 ruling forbids
-      ("emit は抽象に対して必ず行う、Backend 側で破棄するだけ") demands
-      the backend write happen NO MATTER what's registered or in what
-      order, not merely "isolated from subscribers that happen to raise".
+    - the subscriber dispatch loop (`for sub in self._subscribers:
+      sub(event)`) HAS per-subscriber try/except (#4961 A — this used to
+      be a real gap: a raising subscriber aborted the loop and every
+      LATER subscriber in the list was silently skipped, `events.py`,
+      measured). #4966 split this single loop into two call sites that
+      must stay in sync — `_dispatch_inline` (no running loop, runs
+      synchronously inside `emit()`) and `_dispatch_consumer` (running
+      loop present, runs later on the background consumer task) — both
+      preserve the same per-subscriber isolation, just at different call
+      sites and different times relative to `emit()` returning. That
+      isolation isolates one subscriber's failure from the NEXT ones, but
+      it does NOT make position in `self._subscribers` a safe place for
+      the backend: inserting a backend as JUST ANOTHER subscriber would
+      still make it position-dependent (registered early enough to run
+      before whatever fills the list — including a future backend that
+      changes registration order) instead of unconditional — the exact
+      "discard silences the UI" failure mode the owner's #4496 ruling
+      forbids ("emit は抽象に対して必ず行う、Backend 側で破棄するだけ")
+      demands the backend write happen NO MATTER what's registered or in
+      what order, not merely "isolated from subscribers that happen to
+      raise".
     - calling the backend FIRST, outside the subscriber loop, with its own
       try/except, gets both halves of prohibition ③ (backend failure must
       not reach subscribers, and vice versa) from ORDERING alone: the
