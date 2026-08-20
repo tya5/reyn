@@ -459,6 +459,20 @@ class RouterHistoryBuffer:
                 return m
         return None
 
+    def _compaction_watermark(self, history: "list | None" = None) -> int:
+        """#4954(2): the latest summary's ``covers_through_seq`` (0 if none
+        yet) — seqs at or below this are considered compacted out of the
+        LLM-facing projection. Consumes ``Session._compaction_watermark``'s
+        own concept (``session.py:7042-7052``) via THIS class's own
+        ``_latest_summary`` rather than re-deriving a second "what counts
+        as compacted" notion — same ``(latest.meta or {}).get(
+        "covers_through_seq", 0)`` read, same branch/rewind safety (both
+        route through ``history``, which callers here already resolve via
+        ``self._history_fn()`` — ``Session._active_branch_history``, fresh
+        per call)."""
+        latest = self._latest_summary(history)
+        return int((latest.meta or {}).get("covers_through_seq", 0)) if latest is not None else 0
+
     def _serialise_turn(self, m: Any) -> dict:
         """Serialise one ChatMessage into a litellm-compatible wire dict.
 
@@ -621,27 +635,60 @@ class RouterHistoryBuffer:
     def build_history(self) -> list[dict]:
         """Slice history into OpenAI-style messages for RouterLoop.
 
-        #1128 step 3 (Fork B — window-utilization-first): the elide point now
-        coincides with ``effective_trigger`` (the existing pre-frame compaction
-        trigger) instead of the old turn-count head_size/tail_size.
+        #4954(2): PERMANENT compaction. A turn at or below the compaction
+        watermark (``seq <= self._compaction_watermark(history)``) is
+        excluded from this projection UNCONDITIONALLY, before any
+        budget/elide reasoning runs — owner's own framing: "compaction
+        結果は永続的に会話を圧縮する" (compaction results permanently
+        compact the conversation), and "history.jsonl に残すことと llm
+        見せる会話は分けて考えて" (durable history and what the LLM sees
+        are two separate things). Before this, a covered turn's fate
+        depended entirely on whether ``total <= effective_trigger`` this
+        call — a conversation that is byte-heavy but token-light (e.g.
+        materialised images, which cost a FIXED token estimate regardless
+        of actual size — ``_IMAGE_FIXED_TOKEN_COST``) could stay under
+        ``effective_trigger`` forever, so its covered turns were resent
+        raw on EVERY turn, permanently duplicating whatever the summary
+        already represents and defeating the point of having compacted at
+        all (#4954's own real-machine symptom). The watermark itself is
+        NEVER re-derived here — it is read via ``self._compaction_watermark``,
+        the same concept ``Session._compaction_watermark`` (session.py)
+        already owns, not a second "what counts as compacted" notion.
+        ``history.jsonl`` itself is untouched by this — a covered turn is
+        excluded from THIS PROJECTION only, still fully readable via
+        ``extend_history_backward``.
 
-        - If total token estimate <= effective_trigger: return ALL turns raw
-          (no elide, no duplication).  The LLM sees the full conversation up
-          to the compaction trigger.
-        - Else: elide the middle — head (trim_head) + optional summary bridge
-          + tail (trim_tail).  The pre-frame guard
-          ``maybe_force_compact`` has already compacted the middle
-          before this runs, so the elide point is structurally aligned.
+        The latest summary is ALWAYS part of the projection once the
+        watermark is positive (never gated on which branch below fires —
+        an elide-only bridge would make a covered range's summary
+        disappear the instant the (now watermark-shrunk) conversation fits
+        the budget again, silently losing the represented content instead
+        of just not re-sending its raw form).
 
-        Overlap guard: if trim_head and trim_tail collectively cover all turns
-        (the chat is small relative to budgets but total > trigger — unlikely
-        but possible with large single turns), deduplication by identity
-        ensures no turn appears twice.
+        #1128 step 3 (Fork B — window-utilization-first), applied AFTER the
+        watermark filter above: the elide point coincides with
+        ``effective_trigger`` (the existing pre-frame compaction trigger)
+        instead of the old turn-count head_size/tail_size.
+
+        - If total token estimate (of the ALREADY watermark-filtered turns)
+          <= effective_trigger: return them all raw (no further elide, no
+          duplication) — plus the summary bridge, if any.
+        - Else: elide the middle of the (already watermark-filtered) turns
+          — head (trim_head) + tail (trim_tail) — plus the summary bridge,
+          if any. The pre-frame guard ``maybe_force_compact`` has already
+          compacted the middle before this runs, so the elide point is
+          structurally aligned.
+
+        Overlap guard: if trim_head and trim_tail collectively cover all
+        turns (the chat is small relative to budgets but total > trigger —
+        unlikely but possible with large single turns), deduplication by
+        identity ensures no turn appears twice.
 
         Returns [{role: 'user'|'assistant', content: str}, ...] ordered
         chronologically. The system prompt is prepended by RouterLoop itself.
-        Only user/agent conversational turns are included; ``summary``
-        remains Reyn-internal and is filtered out.
+        Only user/agent conversational turns are included; the raw
+        ``summary`` role itself remains Reyn-internal and is filtered out
+        (its content rides the synthetic bridge turn instead).
         """
         from reyn.services.compaction.engine import trim_head, trim_tail
 
@@ -654,6 +701,31 @@ class RouterHistoryBuffer:
             m for m in history
             if m.role in ("user", "assistant", "tool", "agent")
         ]
+
+        # #4954(2): permanent compaction — filter BEFORE any budget/elide
+        # reasoning below (both the `total` this method computes for its
+        # own elide decision, and the trim/elide steps that decision
+        # gates), so a covered turn never contributes to either. Position
+        # matters, two ways: (a) filtering AFTER `total`'s computation
+        # would let `total` count content this method is about to not
+        # send, running the elide yes/no decision against a payload that
+        # was never real; (b) filtering happens ONCE, right here, on
+        # `turns` — BEFORE `wire_turns` is built from it below — so the
+        # two stay positionally paired (architect review: filtering either
+        # list independently, or at two different points, would let them
+        # drift silently out of correspondence).
+        #
+        # Cost note for `_incremental_elide_total` (#4403) below: when a
+        # NEW compaction advances `watermark`, `turns` shrinks relative to
+        # the previous call — the cache's structural validity check
+        # (length + boundary seq) correctly detects this as it would a
+        # rewind, and falls back to a full O(n) recompute for that one
+        # call (its own docstring: "a wrong invalidation guess costs CPU,
+        # never correctness") — bounded to once per compaction, not a
+        # per-turn regression.
+        watermark = self._compaction_watermark(history)
+        if watermark > 0:
+            turns = [m for m in turns if m.seq > watermark]
 
         effective_trigger, head_budget, tail_budget = self._resolve_budgets()
         use_chars4 = getattr(self._compaction, "use_chars4_estimate", False)
@@ -726,15 +798,28 @@ class RouterHistoryBuffer:
             )
 
         if total <= effective_trigger:
-            # Window-utilization: full raw conversation fits — no elide.
+            # Window-utilization: the (already watermark-filtered) turns
+            # fit raw — no further elide.
             selected = wire_turns
         else:
-            # Elide the middle: head + optional summary bridge + tail.
+            # Elide the middle: head + tail (summary bridge, if any, is
+            # attached below — unconditionally, not gated on this branch).
             head = trim_head(wire_turns, head_budget, self._model, use_chars4=use_chars4)
             tail = trim_tail(wire_turns, tail_budget, self._model, use_chars4=use_chars4)
             # Overlap guard: dedupe by identity so no turn appears twice.
             head_ids = {id(t) for t in head}
             tail_deduped = [t for t in tail if id(t) not in head_ids]
+            selected = head + tail_deduped
+
+        # #4954(2): the summary bridge is now attached HERE, unconditionally
+        # once `watermark > 0` — not only on the elide branch above. Before
+        # this fix the bridge only appeared when trim/elide fired; the
+        # instant the (now watermark-shrunk) conversation fit the budget
+        # again, the summary silently vanished from the projection even
+        # though it still represents real, permanently-excluded content —
+        # the "elide-only decoration" this PR's own issue explicitly
+        # forbids reintroducing.
+        if watermark > 0:
             summary = self._latest_summary(history)
             if summary:
                 summary_text = (
@@ -747,9 +832,7 @@ class RouterHistoryBuffer:
                     content=f"[summary of earlier conversation]\n{summary_text}",
                     ts=summary.ts,
                 )
-                selected = head + [self._serialise_turn(bridge_msg)] + tail_deduped
-            else:
-                selected = head + tail_deduped
+                selected = [self._serialise_turn(bridge_msg)] + selected
 
         # ``selected`` is already the wire-dict shape (serialised above) —
         # no second serialise pass needed.
