@@ -534,7 +534,7 @@ def test_retry_loop_raises_unrecovered_when_all_at_min() -> None:
     async def _always_overflow(**kwargs):
         raise ContextOverflowError("always overflow")
 
-    with pytest.raises(UnrecoveredError):
+    with pytest.raises(UnrecoveredError) as excinfo:
         asyncio.run(retry_loop(
             SP="sp",
             head=head,
@@ -549,6 +549,10 @@ def test_retry_loop_raises_unrecovered_when_all_at_min() -> None:
             main_call=_always_overflow,
             max_iterations=8,
         ))
+    # #4954 (b): a plain overflow (no status_code) — the "all shrink paths
+    # exhausted" raise site's saw_byte_limit is reachable-and-False here,
+    # not merely unreached.
+    assert excinfo.value.saw_byte_limit is False
 
 
 def test_retry_loop_max_iterations_raises_unrecovered() -> None:
@@ -761,6 +765,10 @@ def test_retry_loop_same_cause_cap_raises_before_shrink_paths_exhausted() -> Non
         ))
 
     assert "consecutive times" in str(excinfo.value)
+    # #4954 (b): the cap's own guard (`and not _last_recover_is_byte_limit`)
+    # is what makes this raise reachable at all — saw_byte_limit is False
+    # here by construction, not by an unreached default.
+    assert excinfo.value.saw_byte_limit is False
     recovered = [e for e in events if e.type == "compaction_shrink_recovered"]
     # Cap is > 2, so exactly 3 consecutive same-cause recovers happen before
     # the 3rd one raises — the loop must not have run all 8 iterations.
@@ -931,6 +939,10 @@ def test_413_recovery_does_not_claim_exceeds_t_max() -> None:
     message = str(excinfo.value)
     assert "413" in message
     assert "exceeds T_max" not in message
+    # #4954 (b): the T_max binary-search floor is one of the 3 sites whose
+    # OWN branch is byte-limit-gated (`elif _last_recover_is_byte_limit:`)
+    # — saw_byte_limit must be True here, not merely mentioned in prose.
+    assert excinfo.value.saw_byte_limit is True
 
 
 def test_413_recovery_emits_t_max_override_in_the_audit_event() -> None:
@@ -1068,6 +1080,12 @@ def test_max_iterations_exhaustion_names_413_when_last_cause_was_byte_limit() ->
     message = str(excinfo.value)
     assert "max_iterations" in message
     assert "413" in message
+    # #4954 (b): "last observed cause" semantics — this raise site's own
+    # branch does NOT determine the cause (it fires after the loop's
+    # `for` completes regardless of what the last iteration's cause was),
+    # so saw_byte_limit here reflects `_last_recover_is_byte_limit` at
+    # loop-exit time, which this fixture's always-413 main_call makes True.
+    assert excinfo.value.saw_byte_limit is True
 
 
 def _make_payload_threshold_main_call(
@@ -1363,6 +1381,10 @@ def test_4947_stage1_mid_split_terminates_instead_of_reproducing_old_state() -> 
     assert "mid cannot be split any further" in message
     assert "consecutive times" not in message
     assert "max_iterations" not in message
+    # #4954 (b): the mid-split floor's byte-limit arm is one of the 3
+    # sites whose OWN branch is byte-limit-gated — saw_byte_limit must be
+    # True here.
+    assert excinfo.value.saw_byte_limit is True
 
     recovered = [e for e in events if e.type == "compaction_shrink_recovered"]
     # The OLD cycle recovered on EVERY one of the 20 iterations (compact

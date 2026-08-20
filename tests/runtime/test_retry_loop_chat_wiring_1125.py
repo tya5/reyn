@@ -371,3 +371,119 @@ def test_max_shrink_iterations_config_value_bounds_the_real_driver_call(
     # the signature default (8) appearing here instead would mean the
     # wiring silently regressed back to always-8.
     assert "max_iterations=3" in str(excinfo.value)
+
+
+# ── #4954 (b): a byte-limit exhaustion triggers a real compaction ────────────
+
+
+def test_byte_limit_exhaustion_triggers_a_real_compaction(tmp_path, monkeypatch) -> None:
+    """Tier 1: architect-ruled (b) — when `_run_with_shrink` exhausts with
+    `UnrecoveredError(saw_byte_limit=True)`, the driver's except block
+    triggers `CompactionController.force_compact_now()` (the SAME
+    durable-watermark path the pre-frame guard already uses — not
+    retry_loop's own non-continuous `covers`). This turn still fails
+    (`UnrecoveredError` still propagates) — the trigger only helps the
+    NEXT turn.
+
+    Real effect observed, not a mock call-count: `force_compact_now`
+    emits a real `compaction_check` audit-event on the controller's own
+    EventLog — subscribed to directly, the same public observable an
+    operator's own event tooling would see.
+    """
+    from reyn.services.compaction.engine import UnrecoveredError
+
+    class _FakeStatusError(Exception):
+        def __init__(self, message: str, *, status_code: int) -> None:
+            super().__init__(message)
+            self.status_code = status_code
+
+    cfg = CompactionConfig(
+        body_token_cap=1500,
+        use_chars4_estimate=True,
+        section_caps_spec_tokens=0,
+        max_shrink_iterations=3,
+    )
+    state_log = StateLog(tmp_path / ".reyn" / "state" / "wal.jsonl")
+    bt = BudgetTracker(CostConfig())
+    session = make_session(
+        agent_name="default",
+        agent_role="",
+        output_language="en",
+        budget_tracker=bt,
+        state_log=state_log,
+        compaction_config=cfg,
+        snapshot_path=tmp_path / ".reyn" / "agents" / "default" / "state" / "snapshot.json",
+    )
+    _push(session, "user", "hi")
+
+    events: list = []
+    session._compaction_controller._events.add_subscriber(lambda e: events.append(e))
+
+    class _AlwaysOverflowLoop:
+        async def run(self, *, user_text: str, history: list) -> None:
+            raise _FakeStatusError("request too large", status_code=413)
+
+    with pytest.raises(UnrecoveredError) as excinfo:
+        asyncio.run(
+            session._loop_driver._run_with_shrink(_AlwaysOverflowLoop(), "hi again")
+        )
+
+    assert excinfo.value.saw_byte_limit is True
+    checks = [e for e in events if e.type == "compaction_check"]
+    assert checks, (
+        "expected force_compact_now to emit compaction_check on a "
+        "byte-limit exhaustion — none observed"
+    )
+
+
+def test_non_byte_limit_exhaustion_does_not_trigger_compaction(
+    tmp_path, monkeypatch,
+) -> None:
+    """Tier 1: falsification pair — a NON-byte-limit exhaustion
+    (`saw_byte_limit=False`) must NOT trigger `force_compact_now`.
+    #4885's own token-overflow pre-trigger already handles that axis; a
+    non-byte-limit failure reaching here means the pre-trigger's estimate
+    was wrong, which the adaptive learner fixes, not a second compaction
+    trigger here (architect ruling ④)."""
+    from reyn.services.compaction.engine import UnrecoveredError
+
+    cfg = CompactionConfig(
+        body_token_cap=1500,
+        use_chars4_estimate=True,
+        section_caps_spec_tokens=0,
+        max_shrink_iterations=3,
+    )
+    state_log = StateLog(tmp_path / ".reyn" / "state" / "wal.jsonl")
+    bt = BudgetTracker(CostConfig())
+    session = make_session(
+        agent_name="default",
+        agent_role="",
+        output_language="en",
+        budget_tracker=bt,
+        state_log=state_log,
+        compaction_config=cfg,
+        snapshot_path=tmp_path / ".reyn" / "agents" / "default" / "state" / "snapshot.json",
+    )
+    _push(session, "user", "hi")
+
+    events: list = []
+    session._compaction_controller._events.add_subscriber(lambda e: events.append(e))
+
+    class _AlwaysNonByteOverflowLoop:
+        async def run(self, *, user_text: str, history: list) -> None:
+            # No status_code — a plain context-length overflow, not a 413.
+            raise RuntimeError("context_length_exceeded: too many tokens")
+
+    with pytest.raises(UnrecoveredError) as excinfo:
+        asyncio.run(
+            session._loop_driver._run_with_shrink(
+                _AlwaysNonByteOverflowLoop(), "hi again",
+            )
+        )
+
+    assert excinfo.value.saw_byte_limit is False
+    checks = [e for e in events if e.type == "compaction_check"]
+    assert not checks, (
+        f"force_compact_now must not fire on a non-byte-limit exhaustion; "
+        f"observed: {[e.data for e in checks]!r}"
+    )

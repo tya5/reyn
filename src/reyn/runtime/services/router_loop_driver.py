@@ -245,11 +245,17 @@ class RouterLoopDriver:
             ContextOverflowError as _ContextOverflowError,
         )
         from reyn.services.compaction.engine import (
+            UnrecoveredError as _UnrecoveredError,
+        )
+        from reyn.services.compaction.engine import (
             is_context_overflow_error as _is_context_overflow_error,
         )
-        # `UnrecoveredError` is not imported here — it is no longer caught
-        # in this function (#4885: propagates unwrapped, see the comment
-        # below); `run_turn`'s own scope imports it for its widened except.
+        # #4954 (b): `UnrecoveredError` IS caught here now, but only to
+        # read `.saw_byte_limit` and trigger a real compaction as a side
+        # effect (see the except block below) — it is always re-raised
+        # unchanged, so it still propagates unwrapped to `run_turn`'s own
+        # widened except exactly as #4885 established. This is not a
+        # reversion of that fix.
 
         history = self._history_buffer.build_history()
         try:
@@ -304,27 +310,68 @@ class RouterLoopDriver:
             # widened to catch both (same audit event, same `repr(exc)`
             # field — which now correctly names `UnrecoveredError` instead
             # of always `ContextOverflowError`, no new event kind needed).
-            _shim = await _retry_loop(
-                SP=self._history_buffer.build_system_prompt(),
-                head=_head,
-                summary=_summary_dict,
-                raw_middle=_raw_middle,
-                tail=_tail,
-                new_msg=_new_msg,
-                cfg=self._compaction,
-                model=self._effective_router_model_class(),
-                engine=engine,
-                learner=self._token_learner,
-                main_call=_router_main_call,
-                max_iterations=self._compaction.max_shrink_iterations,
-                # #4957: operator-tunable escape valve (chat.compaction.
-                # max_shrink_iterations) — was previously always the
-                # signature default (8) here, with no way to raise it.
-                # Distinct from this class's own `_router_max_iterations`
-                # (RouterLoop's tool-call loop bound, unrelated) —
-                # `self._compaction` is retry_loop's OWN config, not
-                # this driver's.
-            )
+            try:
+                _shim = await _retry_loop(
+                    SP=self._history_buffer.build_system_prompt(),
+                    head=_head,
+                    summary=_summary_dict,
+                    raw_middle=_raw_middle,
+                    tail=_tail,
+                    new_msg=_new_msg,
+                    cfg=self._compaction,
+                    model=self._effective_router_model_class(),
+                    engine=engine,
+                    learner=self._token_learner,
+                    main_call=_router_main_call,
+                    max_iterations=self._compaction.max_shrink_iterations,
+                    # #4957: operator-tunable escape valve (chat.compaction.
+                    # max_shrink_iterations) — was previously always the
+                    # signature default (8) here, with no way to raise it.
+                    # Distinct from this class's own `_router_max_iterations`
+                    # (RouterLoop's tool-call loop bound, unrelated) —
+                    # `self._compaction` is retry_loop's OWN config, not
+                    # this driver's.
+                )
+            except _UnrecoveredError as _unrecovered:
+                # #4954 (b), architect-ruled: on a BYTE-limit exhaustion
+                # (an HTTP 413 that recurred all the way to retry_loop's
+                # own terminal condition), trigger a REAL compaction here
+                # — in the driver's except block, not inside retry_loop
+                # itself (retry_loop stays a pure TRANSPORT operation;
+                # compaction is the SEMANTIC operation that actually
+                # retires history entries, Session's own docstring:
+                # "the only operation meant to retire an entry"). Routed
+                # through `force_compact_now` — the SAME durable-watermark
+                # path `ContextBudgetAdvisor`'s pre-frame guard already
+                # uses (`_durable_active_history_after`-backed,
+                # continuous from the last real `covers_through_seq`) —
+                # deliberately NOT `retry_loop`'s own compaction result:
+                # its `covers` can cover only `raw_middle` while skipping
+                # `head` entirely, which is not continuous from the
+                # previous watermark and would silently mark the OLDEST
+                # unsummarized part of history "covered" without ever
+                # summarizing it (exactly owner's own real-machine shape).
+                #
+                # This turn still fails — re-raised below unchanged. What
+                # this buys is the NEXT turn: a real compaction now
+                # advances the watermark, so a persistent 413 becomes "one
+                # turn fails, not every turn" once paired with #4958 (the
+                # projection that reads the advanced watermark back). No
+                # new infinite-loop guard needed — force_compact_now
+                # already returns immediately on `self._compacting` (a
+                # concurrent pass) or zero candidates (nothing left to
+                # compact = terminal), and this except fires at most once
+                # per turn.
+                #
+                # #4885's own token-overflow pre-trigger already covers
+                # non-byte-limit overflow before it would ever reach here
+                # — a token overflow that STILL reaches this point means
+                # the pre-trigger's own estimate was wrong, which the
+                # existing adaptive learner (not a second compaction
+                # trigger here) is the correct fix for.
+                if _unrecovered.saw_byte_limit:
+                    await self._compaction_controller.force_compact_now()
+                raise
             return _shim.usage
 
     # ── Main turn entry point ─────────────────────────────────────────────────
