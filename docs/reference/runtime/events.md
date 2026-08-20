@@ -117,6 +117,7 @@ mcp_install_cancelled
 mcp_install_probe_failed
 mcp_install_threat_blocked
 mcp_install_threat_match
+mcp_media_denied
 mcp_progress
 mcp_prompt_get
 mcp_prompt_get_cancelled
@@ -381,6 +382,7 @@ Each Control IR op kind emits its own event:
 | `read_file`, `write_file`, `edit_file`, `delete_file`, `glob_files`, `grep`, `regenerate_index` | `file` op variants — all via `tool_executed` with `op=<sub_op>` |
 | `sandboxed_exec_started`, `sandboxed_exec_completed` | `sandboxed_exec` op — `started`: `argv`, `argv0_resolved`, `backend`; `completed`: `argv`, `argv0_resolved`, `backend`, `returncode`, `denial_class`. `argv0_resolved` (#2820) is the absolute path actually executed: a version-manager shim (`~/.pyenv/shims/python3`) is resolved to its real binary by reading the manager's on-disk layout (part A — filesystem-only, no subprocess) so the sandbox runs the real binary directly instead of the shim, whose launch-`fork()` would die under `(deny process-fork)`; equals the plain PATH resolution for a non-shim command, or the unchanged `argv[0]` when resolution is unavailable (fail-open). `denial_class` is `"fork_denied"` when the sandbox blocked `fork()` at a PATH launcher/shim (pyenv/asdf/mise/npx/uvx) under `(deny process-fork)`, else `null` — an environment/config condition, not a tool failure |
 | `mcp_called`, `mcp_completed`, `mcp_failed`, `mcp_cancelled` | MCP tool ops — `mcp_cancelled` (#2813) fires instead of `mcp_completed`/`mcp_failed` when a Ctrl-C `cancel_event` interrupts an in-flight call before it completes |
+| `mcp_media_denied` | #4946 — an MCP tool response carried an image whose byte size the multi-modal gate (`require_media_load`, same shared gate as `file_read_media_denied`/`web_fetch_media_denied`) rejected under `multimodal.on_oversize=deny` (or an `ask` prompt the operator declined). Gated PER IMAGE, not per call — an MCP tool can return several images in one response, and one oversized image is dropped (replaced with a text denial note) without discarding the rest of the result. `server`, `tool`, `size_bytes`, `mime_type` |
 | `mcp_server_installed` | `mcp_install` op — `name`, key names only (no values) |
 | `mcp_install_cancelled`, `mcp_prompt_get_cancelled`, `mcp_resource_read_cancelled`, `mcp_resource_subscribe_cancelled`, `mcp_resource_unsubscribe_cancelled` | #2813 — a Ctrl-C `cancel_event` interrupted the corresponding op (install probe / get-prompt / read-resource / subscribe / unsubscribe) before it completed; the op returns `status:"cancelled"` and nothing is committed |
 | `plugin_install_started`, `plugin_install_copied`, `plugin_install_registered`, `plugin_install_completed` | `plugin_install` op's own main-flow milestones — `started`: `name`, `source_kind`; `copied`: `name`, `plugin_root`; `registered`: `name`, `registered` (the per-capability-kind registration result); `completed`: `name` |

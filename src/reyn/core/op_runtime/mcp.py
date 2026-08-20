@@ -124,11 +124,40 @@ async def _execute(op: MCPIROp, ctx: OpContext) -> dict:
     # blocks as flat files under ``.reyn/media/`` and emit path-ref blocks
     # instead of inline base64. Non-image media blocks (= resource, etc.)
     # pass through unchanged for now (= future #385 scope expansion).
+    #
+    # #4946: apply the SAME multi-modal size gate (``require_media_load``)
+    # web_fetch (web.py) / read_file (file.py) / user `/image` (image.py)
+    # already apply before persisting any image bytes — MCP was the one
+    # producer named in the gate's own docstring that never actually
+    # called it (measured, #4944's Angle 3 byproduct: 0 call sites). An
+    # MCP tool response is UNTRUSTED input reaching this exact same
+    # ingest boundary; skipping the gate here left it as a second,
+    # unguarded entry point alongside the missing-aggregate-byte-check
+    # #4944 found — this closes the per-item one.
+    #
+    # Gated PER IMAGE, not per op-call: unlike the other 3 producers
+    # (always exactly one image), one MCP tool call can return several.
+    # Rejecting the WHOLE result (including any text and every other,
+    # correctly-sized image) for one oversized image among many would be
+    # a strictly worse outcome than the other 3 producers' single-image
+    # case ever has to consider — so an oversized image is dropped
+    # individually (replaced with a denial note, the same "surface the
+    # loss, never hide it" shape ``router_loop.py``'s own
+    # ``_overflow_ref_text``/tail-preview machinery already uses for a
+    # DIFFERENT over-budget reason), while the rest of the result
+    # (text + correctly-sized images) still reaches the caller.
     media_blocks: list[dict] = []
+    # #4946: a denied image is dropped from `media_blocks` (that list's own
+    # consumer, router_loop.py's `_build_media_followup_message`, filters
+    # to `type == "image"` ONLY — a text block placed there would be
+    # silently discarded, the exact "model sees one fewer image with no
+    # sign anything was lost" shape lead-coder's review flagged). Fold the
+    # denial into `text` (== `out["content"]`, the ONE field guaranteed to
+    # reach the model) instead, appended after the join below.
+    denial_notes: list[str] = []
     for idx, item in enumerate(raw_media_blocks, start=1):
         if (
-            ctx.media_store is not None
-            and isinstance(item, dict)
+            isinstance(item, dict)
             and item.get("type") == "image"
             and isinstance(item.get("data"), str)
         ):
@@ -140,6 +169,32 @@ async def _execute(op: MCPIROp, ctx: OpContext) -> dict:
                 media_blocks.append(item)
                 continue
             mime = item.get("mimeType") or item.get("mime_type") or "image/png"
+            if ctx.permission_resolver is not None and ctx.multimodal_config is not None:
+                if ctx.intervention_bus is None:
+                    raise RuntimeError(
+                        "mcp op requires intervention_bus when loading "
+                        "binary media (multimodal gate)"
+                    )
+                try:
+                    await ctx.permission_resolver.require_media_load(
+                        size_bytes=len(raw_bytes),
+                        source=f"mcp {op.server}.{op.tool}",
+                        mime_type=mime,
+                        max_bytes=ctx.multimodal_config.max_bytes,
+                        on_oversize=ctx.multimodal_config.on_oversize,
+                        bus=ctx.intervention_bus,
+                    )
+                except PermissionError as exc:
+                    ctx.events.emit(
+                        "mcp_media_denied",
+                        server=op.server, tool=op.tool,
+                        size_bytes=len(raw_bytes), mime_type=mime,
+                    )
+                    denial_notes.append(f"[image {idx}: {exc}]")
+                    continue
+            if ctx.media_store is None:
+                media_blocks.append(item)
+                continue
             media_blocks.append(ctx.media_store.save_image(
                 raw_bytes, mime_type=mime,
                 chain_id=ctx.run_id or "",
@@ -148,6 +203,8 @@ async def _execute(op: MCPIROp, ctx: OpContext) -> dict:
             ))
         else:
             media_blocks.append(item)
+    if denial_notes:
+        text = "\n".join([text, *denial_notes]) if text else "\n".join(denial_notes)
 
     is_error = bool(result.get("isError"))
     # #3070: an errored tool call previously logged ONLY the boolean — the tool's
