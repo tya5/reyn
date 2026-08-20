@@ -69,7 +69,7 @@ def test_declaration_has_no_default_for_the_field() -> None:
     [
         pytest.param(SeatbeltBackend, CapabilitySupport.SUPPORTED, id="seatbelt"),
         pytest.param(LandlockBackend, CapabilitySupport.NOT_SUPPORTED, id="landlock"),
-        pytest.param(NoopBackend, CapabilitySupport.SUPPORTED, id="noop"),
+        pytest.param(NoopBackend, CapabilitySupport.NOT_SUPPORTED, id="noop"),
         pytest.param(DockerEnvironmentBackend, CapabilitySupport.NOT_SUPPORTED, id="docker"),
     ],
 )
@@ -79,9 +79,23 @@ def test_every_shipped_backend_declares_ipc_named_service(backend_cls, expected)
     shape as #4039's own per-backend enforced_axes checks) — Seatbelt
     SUPPORTED (proven by #4937's own grant working through the real
     backend), Landlock NOT_SUPPORTED (architect's kernel-doc research:
-    restrict-only, no grant operation exists), Noop SUPPORTED (nothing is
-    restricted in the first place), Docker NOT_SUPPORTED (macOS-only
-    concept, no Linux/container equivalent)."""
+    restrict-only, no grant operation exists), Docker NOT_SUPPORTED
+    (macOS-only concept, no Linux/container equivalent).
+
+    Noop NOT_SUPPORTED (corrected, architect + lead-coder post-merge
+    review of #4941 — a real defect this test's own FIRST version pinned
+    the WRONG value for): ``CapabilitySupport`` asks whether a backend can
+    EXPRESS a named-capability class, a mechanism question — Noop has no
+    grant mechanism, full stop, it simply never needed one because it
+    restricts nothing. The original SUPPORTED answered a DIFFERENT
+    question ("is a required capability reachable under this backend",
+    trivially true by construction) that is not what the field means, and
+    it had a disclosed, real operator-visible consequence:
+    ``require_capabilities`` + ``on_unsupported: error`` used to REJECT
+    the genuinely-enforcing Landlock while ACCEPTING the fully-unenforced
+    Noop — inverted predictability. See
+    ``test_error_now_rejects_unenforced_noop_not_enforced_landlock``
+    below for that exact scenario, fixed."""
     assert backend_cls.supported_capabilities.ipc_named_service is expected
 
 
@@ -189,6 +203,21 @@ def test_apply_required_capabilities_ignore_is_silent(caplog) -> None:
     with caplog.at_level(logging.DEBUG, logger="reyn.security.sandbox"):
         _apply_required_capabilities(LandlockBackend(), ["ipc_named_service"], "ignore")
     assert not caplog.records
+
+
+def test_error_now_rejects_unenforced_noop_not_enforced_landlock() -> None:
+    """Tier 1: #4935 — the exact predictability-inversion scenario architect
+    found (post-merge review of #4941), now fixed. Before this correction:
+    ``require_capabilities: [ipc_named_service]`` + ``on_unsupported:
+    error`` REJECTED Landlock (genuinely enforcing every other axis) while
+    ACCEPTING Noop (enforcing nothing) — backwards from what a strict
+    opt-in refusal is supposed to protect against. Both backends now
+    declare NOT_SUPPORTED for the SAME reason (no grant mechanism exists),
+    so ``error`` rejects both uniformly — no capability-declaration axis
+    treats the unenforced backend as the SAFER one to accept."""
+    for backend in (NoopBackend(), LandlockBackend()):
+        with pytest.raises(RuntimeError, match="ipc_named_service"):
+            _apply_required_capabilities(backend, ["ipc_named_service"], "error")
 
 
 # ─── 6. Strip-falsify witness for the empty-default no-op guarantee ───────
