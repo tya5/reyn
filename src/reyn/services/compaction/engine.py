@@ -996,23 +996,28 @@ async def _supports_structured_output(model: str) -> bool:
 
 
 def _validate_chat_summary_fields(parsed: dict) -> "list[str]":
-    """#4883: the two load-bearing fields a compaction JSON response must
+    """#4883: the load-bearing field a compaction JSON response must
     actually carry — empty-string errors ([] = conforming), the same
     ``schema_validate_fn`` shape ``RouterLoop`` uses for 0062 (#2934).
 
-    ``new_turn_seqs`` decides ``covers_through_seq`` — the range this call
-    marks as no-longer-in-context. ``topic_arc`` IS the summary itself.
-    Both missing/empty means the LLM produced a syntactically-valid but
-    content-free response (e.g. ``"{}"``), which the old code accepted
-    silently as success. The remaining 4 fields (``decisions`` / ``pending``
-    / ``session_user_facts`` / ``artifacts_referenced``) are legitimately
-    often empty (a short exchange may genuinely have none) — NOT validated
-    here; only the two fields whose emptiness cannot be told apart from a
-    dead response are.
+    ``topic_arc`` IS the summary itself; missing/empty means the LLM
+    produced a syntactically-valid but content-free response (e.g.
+    ``"{}"``), which the old code accepted silently as success. The
+    remaining 4 fields (``decisions`` / ``pending`` / ``session_user_facts``
+    / ``artifacts_referenced``) are legitimately often empty (a short
+    exchange may genuinely have none) — NOT validated here; only the field
+    whose emptiness cannot be told apart from a dead response is.
+
+    #4951-A: ``new_turn_seqs`` no longer gates validity here — the LLM's
+    echo is no longer READ at all (``covers_through_seq`` is now derived
+    unconditionally from ``compact()``'s own input, see the call site's
+    #4951-A comment), so an empty/missing echo can no longer produce a
+    wrong ``covers`` value the way it used to (the old fallback only
+    caught an empty echo, never a non-empty-but-wrong one). Re-prompting
+    the LLM over a field reyn never reads would spend a bounded re-prompt
+    budget diagnosing a non-problem.
     """
     errors: "list[str]" = []
-    if not parsed.get("new_turn_seqs"):
-        errors.append("new_turn_seqs is missing or empty")
     if not str(parsed.get("topic_arc") or "").strip():
         errors.append("topic_arc is missing or empty")
     return errors
@@ -1600,14 +1605,29 @@ class CompactionEngine:
                 TokenUsage(prompt_tokens=_prompt_tokens, completion_tokens=_completion_tokens),
             )
 
-        new_turn_seqs = parsed.get("new_turn_seqs") or []
-        covers = compute_covers_through_seq(new_turn_seqs)
-        if covers == 0 and input_chunk.new_turns:
-            # Fallback: take max seq from the input turns directly.
-            covers = max(
-                (int(t.get("seq", 0)) for t in input_chunk.new_turns if isinstance(t, dict)),
-                default=0,
-            )
+        # #4951-A: derive unconditionally from the INPUT reyn itself built
+        # and passed to compact() — never from the LLM's ``new_turn_seqs``
+        # echo. This is the fallback that used to fire only when the echo
+        # was empty, promoted to the sole path (owner: "compaction は圧縮
+        # 対象メッセージしか送らないはずなのでいらないと思うんだけど？" —
+        # confirmed correct, #4951). The LLM's echo could only ever match
+        # this value or be wrong (the prompt forbids sorting/filtering/
+        # computing the max, so a model that ignores some turns still
+        # echoes every seq) — there was no case where trusting the echo
+        # over reyn's own input was more correct, only cases where it
+        # silently wasn't (a non-empty-but-wrong echo used to pass through
+        # unchecked; the old fallback only caught an EMPTY echo). Leaving
+        # the ``new_turn_seqs`` KEY in the schema/prompt is #4951-B
+        # (whether removing the enumeration itself changes summary quality
+        # is unmeasured — architect: listing every seq may double as
+        # working-attention scaffolding for the model); this PR only stops
+        # READING the echo, at zero behavior cost (the schema still asks
+        # for it, still accepts an empty answer, nothing downstream reads
+        # ``ChatSummaryRaw.new_turn_seqs`` — ``ChatSummary.to_dict()``
+        # never included it).
+        covers = compute_covers_through_seq(
+            [t.get("seq", 0) for t in input_chunk.new_turns if isinstance(t, dict)]
+        )
 
         # #271 — 3-tier topic_arc bounding (replaces the lone Axis-9 blind cut):
         #   T1 fit         — within budget → no LLM, unchanged (common case).
