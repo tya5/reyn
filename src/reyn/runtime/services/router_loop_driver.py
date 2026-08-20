@@ -316,6 +316,14 @@ class RouterLoopDriver:
                 engine=engine,
                 learner=self._token_learner,
                 main_call=_router_main_call,
+                max_iterations=self._compaction.max_shrink_iterations,
+                # #4957: operator-tunable escape valve (chat.compaction.
+                # max_shrink_iterations) — was previously always the
+                # signature default (8) here, with no way to raise it.
+                # Distinct from this class's own `_router_max_iterations`
+                # (RouterLoop's tool-call loop bound, unrelated) —
+                # `self._compaction` is retry_loop's OWN config, not
+                # this driver's.
             )
             return _shim.usage
 

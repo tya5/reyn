@@ -2359,15 +2359,25 @@ async def retry_loop(
     # generic message below said nothing about WHY nothing converged;
     # this branch reports the actual last-known cause instead of leaving
     # an operator to re-derive "413" from event-log archaeology.
+    # #4957: name the config key an operator can actually change here — not
+    # just the bare number this call happened to be given. This is an
+    # ESCAPE VALVE message, not a diagnosis: raising the cap only delays
+    # exhaustion if the underlying cause never resolves (a persistent
+    # 413/5xx/rate-limit keeps failing regardless of how many attempts are
+    # allowed) — it does not mean the cap itself was the wrong size.
     if _last_recover_is_byte_limit:
         raise UnrecoveredError(
-            f"retry_loop exceeded max_iterations={max_iterations} without "
-            "convergence — the last recovered cause was an HTTP 413 "
-            "(a request-BODY-BYTE limit), which this ladder's token-only "
-            "shrink steps cannot resolve on their own."
+            f"retry_loop exceeded max_iterations={max_iterations} "
+            "(chat.compaction.max_shrink_iterations) without convergence — "
+            "the last recovered cause was an HTTP 413 (a request-BODY-BYTE "
+            "limit), which this ladder's token-only shrink steps cannot "
+            "resolve on their own. Raising this config value is an escape "
+            "valve, not a cure: if the same 413 recurs every turn, it will "
+            "only delay exhaustion, not prevent it."
         )
     raise UnrecoveredError(
-        f"retry_loop exceeded max_iterations={max_iterations} without convergence"
+        f"retry_loop exceeded max_iterations={max_iterations} "
+        "(chat.compaction.max_shrink_iterations) without convergence"
     )
 
 

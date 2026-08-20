@@ -432,6 +432,12 @@
 #     max_schema_reprompt_attempts: 1  # #4883: bounded re-prompt budget when the
 #                                      # compaction JSON response is missing/empty
 #                                      # new_turn_seqs/topic_arc (0 = raise immediately)
+#     max_shrink_iterations: 8         # #4957: retry_loop's own safety cap — an
+#                                      # ESCAPE VALVE for a slow-to-converge overflow
+#                                      # recovery, not a cure. Raising it only delays
+#                                      # exhaustion if the underlying cause (a
+#                                      # persistent 413/5xx/rate-limit) never
+#                                      # resolves; it does not fix that cause.
 #     section_token_caps:
 #       topic_arc: 200
 #       decisions: 400
