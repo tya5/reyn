@@ -699,6 +699,25 @@ def test_retry_loop_same_cause_cap_raises_before_shrink_paths_exhausted() -> Non
     ``max_iterations`` exhaustion, whose message does not mention
     "consecutive times" — confirming the cap, not incidental exhaustion, is
     what this test observes.
+
+    #4947 ③ (CI red on #4950, review): this fixture's ``tail`` is
+    deliberately large enough that stage 2 (Phase 1, unrelated to ③, moves
+    tail content into ``raw_middle`` when ``raw_middle`` is empty) fires
+    partway through the SAME chain of recovers this test is building —
+    ③'s mid-split then attempts to ``compact()`` that refilled content.
+    Before ③'s cap-reset-on-success fix, an intervening ``compact()``
+    success here would have silently reset the counter (a real bug, fixed
+    separately — see ``test_4947_stage1_success_resets_same_cause_streak``).
+    For THIS test to still isolate the same-cause cap (not ③'s own
+    behavior), the engine's ``compact()`` here raises the SAME cause type
+    ``main_call`` does (``ContextOverflowError``, not the class's default
+    ``CompactionOverflowError``) — so refilled content recurring the same
+    unfixable cause keeps incrementing the SAME streak instead of
+    resetting it via cause-alternation (the pre-existing, untouched
+    "different cause resets the counter" behavior) or via ③'s success
+    reset. This is a fixture adjustment, not a relaxation: the cap still
+    must fire on 3 consecutive recovers of one cause, now including any
+    compact()-side recovers of that identical cause.
     """
     from reyn.services.compaction.engine import ComputedBudgets
 
@@ -710,7 +729,12 @@ def test_retry_loop_same_cause_cap_raises_before_shrink_paths_exhausted() -> Non
         section_caps={"topic_arc": 50, "decisions": 200, "pending": 150,
                       "session_user_facts": 50, "artifacts_referenced": 175},
     )
-    engine = _OverflowingEngine(fail_compact=False)
+
+    class _SameCauseOnCompactEngine(_OverflowingEngine):
+        async def compact(self, input_chunk):
+            raise ContextOverflowError("compact also overflows, same cause")
+
+    engine = _SameCauseOnCompactEngine(fail_compact=False)
     engine.budgets = budgets
     events: list = []
     engine._events.add_subscriber(lambda e: events.append(e))
@@ -1266,8 +1290,10 @@ class _Always413CompactEngine(_OverflowingEngine):
         )
         self._events = EventLog()
         self._T_comp_SP = 100
+        self.compact_calls = 0
 
     async def compact(self, input_chunk):
+        self.compact_calls += 1
         raise _FakeStatusError("compact 413", status_code=413)
 
 
@@ -1327,10 +1353,14 @@ def test_4947_stage1_mid_split_terminates_instead_of_reproducing_old_state() -> 
         ))
 
     message = str(excinfo.value)
-    assert "413" in message
-    # Distinguishes this raise site from the OTHER two UnrecoveredError
-    # messages this module can produce (the same-cause cap, and generic
-    # max_iterations exhaustion) — this one names neither.
+    # Names the intended production bound explicitly (six questions Q5,
+    # reyn-reviewer review on #4950): this module has 3 distinct
+    # UnrecoveredError sites — the same-cause cap ("consecutive times"),
+    # max_iterations exhaustion ("max_iterations"), and the mid-split
+    # floor this test targets ("mid cannot be split any further"). All
+    # three are asserted so a future change firing the WRONG one is
+    # unambiguous about which bound actually stopped the loop.
+    assert "mid cannot be split any further" in message
     assert "consecutive times" not in message
     assert "max_iterations" not in message
 
@@ -1344,6 +1374,100 @@ def test_4947_stage1_mid_split_terminates_instead_of_reproducing_old_state() -> 
     assert len(recovered) < _max_iterations, (
         f"expected the floor to raise before exhausting max_iterations, "
         f"got {len(recovered)} recovers: {[e.data for e in recovered]!r}"
+    )
+    # The mid-split floor is a DIFFERENT bound than `max_iterations` or
+    # the recovered-event count above — reyn-reviewer Q5: assert the
+    # production observable that bound actually owns (compact() call
+    # count), independent of the caller-provided max_iterations. The
+    # floor triggers once the offered slice halves down to 1 turn from
+    # an 8-turn raw_middle: 8, 4, 2, 1 — exactly 4 compact() calls, a
+    # property of the halving arithmetic on this fixture's own input
+    # size, not of max_iterations (set to a generous 20 here specifically
+    # so it cannot be the thing that stopped the loop).
+    assert engine.compact_calls == 4, (
+        f"expected exactly 4 compact() calls (8→4→2→1 halving to the "
+        f"floor) — got {engine.compact_calls}, meaning some OTHER bound "
+        f"(not the mid-split floor) determined how long the loop ran"
+    )
+
+
+def test_4947_stage1_success_resets_same_cause_streak() -> None:
+    """Tier 2: #4947 ③ (architect-ruled, CI red on #4950) — a compact()
+    SUCCESS resets the same-cause cap's consecutive-recover counter, so
+    fail / fail / SUCCEED / fail / fail does NOT trip the cap (which fires
+    only above ``_MAX_CONSECUTIVE_SAME_CAUSE_RECOVERS`` == 2 consecutive
+    recovers of the SAME cause). Without the reset, the counter would
+    carry from the first fail/fail pair through the intervening success
+    and combine with the second fail/fail pair to read 3+ — exactly the
+    shape that produced #4950's own CI red (a DIFFERENT, coincidental
+    test witnessed the same gap; this is the intentional, direct witness
+    architect asked for).
+
+    Falsification (performed during review): removing the
+    ``_consecutive_same_cause = 0`` / ``_last_recover_cause = None`` reset
+    on compact() success makes this test raise ``UnrecoveredError`` with
+    "consecutive times" in the message instead of returning normally.
+    """
+    cfg = _make_cfg()
+
+    class _ScriptedCauseEngine(_OverflowingEngine):
+        """Follows an explicit fail/succeed script by call index, past-end
+        calls default to succeeding — keeps this test's cause-recurrence
+        pattern independent of the attempt-size halving arithmetic."""
+
+        def __init__(self, script: list[bool]) -> None:
+            super().__init__(fail_compact=False)
+            self._script = script
+            self._idx = 0
+
+        async def compact(self, input_chunk):
+            should_fail = self._script[self._idx] if self._idx < len(self._script) else False
+            self._idx += 1
+            if should_fail:
+                raise ValueError("same cause every time")
+            from reyn.services.compaction.engine import ChatSummary
+            return ChatSummary(
+                topic_arc="stub",
+                covers_through_seq=max(
+                    (t.get("seq", 0) for t in input_chunk.new_turns if isinstance(t, dict)),
+                    default=0,
+                ),
+            )
+
+    # fail, fail, SUCCEED, fail, fail — then default-succeed to convergence.
+    engine = _ScriptedCauseEngine([True, True, False, True, True])
+    events: list = []
+    engine._events.add_subscriber(lambda e: events.append(e))
+    learner = TokenMultiplierLearner(storage_path=Path(tempfile.mkdtemp()) / "m.json")
+
+    head: list[dict] = []
+    tail: list[dict] = []
+    raw_middle = _turns(["m"] * 8)
+    new_msg = {"role": "user", "content": "q", "seq": 99}
+
+    async def _succeeds(**kwargs):
+        from types import SimpleNamespace
+        return SimpleNamespace(usage=SimpleNamespace(prompt_tokens=10), choices=[])
+
+    result = asyncio.run(retry_loop(
+        SP="sp", head=head, summary=None, raw_middle=raw_middle,
+        tail=tail, new_msg=new_msg, cfg=cfg, model="test-model",
+        engine=engine,  # type: ignore[arg-type]
+        learner=learner,
+        main_call=_succeeds,
+        max_iterations=10,
+    ))
+
+    assert result is not None
+    recovered = [e for e in events if e.type == "compaction_shrink_recovered"]
+    assert recovered, "setup: no recoveries observed — script did not exercise a failure"
+    # The cap fires above _MAX_CONSECUTIVE_SAME_CAUSE_RECOVERS (2) — every
+    # observed consecutive count must stay at or below it, proving the
+    # reset broke the fail/fail + fail/fail combination into two separate
+    # streaks of 2, never one streak of 4.
+    assert all(e.data["consecutive"] <= 2 for e in recovered), (
+        f"same-cause streak was not reset by the intervening success: "
+        f"{[e.data for e in recovered]!r}"
     )
 
 
@@ -1395,18 +1519,79 @@ def test_4947_stage1_mid_split_reaches_success_after_temporary_compact_failure()
     assert only_summary["covers_through_seq"] == raw_middle[-1]["seq"]
 
 
-def test_4947_stage1_floor_names_the_actual_cause_when_not_byte_limit() -> None:
-    """Tier 2: #4947 ③ — the mid=1-turn floor names the ACTUAL cause when
-    it is NOT a byte limit, mirroring the same-cause cap's own message
-    shape rather than silently reusing the 413 wording for an unrelated
-    failure."""
+def test_4947_stage1_floor_defers_instead_of_raising_when_not_byte_limit() -> None:
+    """Tier 2: #4947 ③ (architect review on #4950) — the mid=1-turn floor
+    raises ONLY for a byte limit. A non-byte-limit compact() failure (a
+    transient 5xx, a rate limit, a truncated JSON response) at this floor
+    defers instead — moves the one failing turn into ``tail`` (the OLD
+    stage-1 direction, narrowed to a single turn) and lets ``main_call``
+    proceed, mirroring #3783 stage 3's own reasoning ("EVERY compact()-
+    call exception now recovers by default — shrinking the input is a
+    general remedy"): compaction success is not a precondition for
+    ``main_call``. This does not reopen #4947's own cycle — a non-byte-
+    limit cause is NOT exempt from the same-cause cap above, so a
+    genuinely stuck one is still caught there, independent of this floor.
+    """
     cfg = _make_cfg()
 
-    class _AlwaysCompactionErrorEngine(_OverflowingEngine):
-        async def compact(self, input_chunk):
-            raise ValueError("not a byte-limit failure")
+    class _CompactFailsOnceThenNoMoreCallsEngine(_OverflowingEngine):
+        """Fails ONCE (ValueError, not a byte limit) then asserts if
+        called again — the deferred turn must reach ``main_call`` without
+        another compact() attempt in the SAME retry_loop call."""
 
-    engine = _AlwaysCompactionErrorEngine(fail_compact=False)
+        def __init__(self) -> None:
+            super().__init__(fail_compact=False)
+            self._called = False
+
+        async def compact(self, input_chunk):
+            if not self._called:
+                self._called = True
+                raise ValueError("not a byte-limit failure")
+            raise AssertionError("compact() must not be retried after the defer")
+
+    engine = _CompactFailsOnceThenNoMoreCallsEngine()
+    learner = TokenMultiplierLearner(storage_path=Path(tempfile.mkdtemp()) / "m.json")
+
+    head: list[dict] = []
+    tail: list[dict] = []
+    raw_middle = _turns(["m"])  # already a single turn — floor on iteration 0
+    new_msg = {"role": "user", "content": "q", "seq": 99}
+
+    seen_tails: list = []
+
+    async def _succeeds(**kwargs):
+        seen_tails.append(kwargs.get("tail"))
+        from types import SimpleNamespace
+        return SimpleNamespace(usage=SimpleNamespace(prompt_tokens=10), choices=[])
+
+    result = asyncio.run(retry_loop(
+        SP="sp", head=head, summary=None, raw_middle=raw_middle,
+        tail=tail, new_msg=new_msg, cfg=cfg, model="test-model",
+        engine=engine,  # type: ignore[arg-type]
+        learner=learner,
+        main_call=_succeeds,
+        max_iterations=8,
+    ))
+
+    assert result is not None
+    # main_call WAS reached (no raise) — with the deferred turn visible in
+    # tail, not silently dropped.
+    [only_tail] = seen_tails
+    assert only_tail == raw_middle + tail
+
+
+def test_4947_stage1_floor_names_413_when_it_is_a_byte_limit() -> None:
+    """Tier 2: #4947 ③ — the mid=1-turn floor DOES raise, naming the byte
+    limit, when the recurring cause IS one — moving that single turn into
+    ``tail`` would fatten the exact request ``main_call`` is about to
+    retry, worsening rather than resolving a 413."""
+    cfg = _make_cfg()
+
+    class _AlwaysByteLimitEngine(_OverflowingEngine):
+        async def compact(self, input_chunk):
+            raise _FakeStatusError("compact 413", status_code=413)
+
+    engine = _AlwaysByteLimitEngine(fail_compact=False)
     learner = TokenMultiplierLearner(storage_path=Path(tempfile.mkdtemp()) / "m.json")
 
     head: list[dict] = []
@@ -1428,9 +1613,5 @@ def test_4947_stage1_floor_names_the_actual_cause_when_not_byte_limit() -> None:
         ))
 
     message = str(excinfo.value)
-    assert "413" not in message
-    # ``_cause`` names the WRAPPED exception's type (#3783 stage 3 — see
-    # its comment at the wrap site), not the wrapper's own
-    # ``CompactionOverflowError`` name.
-    assert "ValueError" in message
+    assert "413" in message
     assert "single raw_middle turn alone" in message

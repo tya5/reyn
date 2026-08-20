@@ -32,8 +32,12 @@ Key design decisions:
 - PR-N6: ``ContextOverflowError`` / ``CompactionOverflowError`` / ``UnrecoveredError``
   provide fail-fast semantics for the retry_loop (chat axis = fail-fast, unlike
   planner step axis / phase axis which are best-effort).
-- PR-N6: ``retry_loop`` shrinks head/tail/raw_middle monotonically per iteration
-  until the prompt fits or mathematical impossibility is reached.
+- PR-N6: ``retry_loop`` shrinks ``(head, tail)`` token count monotonically per
+  iteration (``raw_middle`` is not monotonic on its own — see the function's
+  own "Bounded termination proof" docstring) until the prompt fits or a
+  structured ``UnrecoveredError`` is raised — a stops-with-a-defined-error
+  guarantee, not a fits-eventually one; a transient failure (5xx, rate limit)
+  can raise too, not only genuine unshrinkable overflow (#4947).
 
 Drop priority when over budget:
   1. body  — compaction summarises naturally
@@ -1625,6 +1629,12 @@ class CompactionEngine:
         # for it, still accepts an empty answer, nothing downstream reads
         # ``ChatSummaryRaw.new_turn_seqs`` — ``ChatSummary.to_dict()``
         # never included it).
+        #
+        # #4947 ③ note: this also supersedes ③'s own earlier clamp-based
+        # fix for the same exposure (an over-claiming echo covering a
+        # partial-slice remainder it was never offered) — with the echo
+        # never read at all, there is nothing left to clamp; #4956/#4951-A
+        # closes the exposure at its root instead of bounding its output.
         covers = compute_covers_through_seq(
             [t.get("seq", 0) for t in input_chunk.new_turns if isinstance(t, dict)]
         )
@@ -1763,6 +1773,16 @@ def estimate_wire_bytes(
 # earlier check than `max_iterations` — it fires on the SAME cause repeating,
 # not on iteration count alone, so a turn that alternates between two
 # different real overflow causes is not penalised.
+#
+# #4947 ③ (architect-ruled, CI red on #4950): the counted quantity is
+# consecutive same-cause recovers SINCE LAST PROGRESS, not since the start
+# of the call — a ``compact()`` SUCCESS (including a partial one) resets
+# both this counter and the recorded cause, at that one success site only
+# (never on the OTHER escalation branches, which only MOVE content between
+# head/tail/raw_middle rather than permanently reducing it — a cause
+# recurring across a pure move is still evidence nothing is being fixed).
+# Without the reset, a genuinely-shrinking cause (#3783 stage 3 arm (a)'s
+# own motivating case) can trip this cap even while making real progress.
 _MAX_CONSECUTIVE_SAME_CAUSE_RECOVERS = 2
 
 
@@ -1815,6 +1835,11 @@ async def retry_loop(
       here (#4947 found one specific repro where it was NOT the limiting
       factor — the mid-split floor raised first — but that is a single
       data point, not a frequency claim).
+    - Scope: this proof covers ``retry_loop`` and its one current
+      production call site (``router_loop_driver.py``'s reactive
+      bounded-shrink call). ``retry_loop`` is also re-exported from
+      ``reyn.services.compaction`` (``__init__.py``), so it is a public
+      API surface even with a single caller today.
     - #3783 stage 2: a SAME-cause recover cap (``_MAX_CONSECUTIVE_SAME_CAUSE_
       RECOVERS``, currently 2) raises ``UnrecoveredError`` earlier than
       ``max_iterations`` when the identical exception type keeps recovering
@@ -1968,10 +1993,40 @@ async def retry_loop(
                     summary = chat_summary.to_dict()
                     # Only the ATTEMPTED slice is compacted — a smaller
                     # remainder (if any) stays in raw_middle for a later
-                    # iteration, attempted in full (reset to None) since
-                    # this success is no evidence the remainder would fail.
+                    # iteration. ``_compact_attempt_len`` is deliberately
+                    # NOT reset to None (full remainder) here: a slice
+                    # size discovered by halving down to what just worked
+                    # is a reasonable size to try again on the remainder
+                    # (measured: resetting to full every success made a
+                    # uniformly-hard-to-compact input re-discover the same
+                    # halving from scratch every round, taking ~11
+                    # iterations for a fixture the OLD move-to-tail
+                    # direction converged in 3 — #4950 review). Any slice
+                    # that turns out too large for the new, smaller
+                    # raw_middle just clips naturally at the slice above;
+                    # no explicit clamping needed.
                     raw_middle = raw_middle[_attempt_len:]
-                    _compact_attempt_len = None
+                    # #4947 ③ (CI red on #4950, architect-ruled): reset the
+                    # same-cause streak here, and ONLY here — not on any
+                    # other escalation branch. The cap's own words below
+                    # ("evidence shrinking cannot fix THAT cause" / "without
+                    # shrinking ever changing anything") are already false
+                    # the moment ONE slice compacts: this is the one branch
+                    # where work is PERMANENTLY reduced (the compacted
+                    # turns are gone from raw_middle for good, absorbed
+                    # into ``summary``) — every OTHER escalation branch
+                    # (Phase 1/2, the T_max-override halving) only MOVES
+                    # content between head/tail/raw_middle, so the same-
+                    # cause streak staying armed there is still correct: a
+                    # cause recurring across a pure move is still evidence
+                    # nothing is being fixed. A broader "reset on any
+                    # progress" trigger would defeat the cap entirely
+                    # (something changes on every escalation branch, every
+                    # iteration). Both fields reset together — resetting
+                    # only one leaves the other's next failure starting
+                    # from "recover #2" instead of "#1".
+                    _last_recover_cause = None
+                    _consecutive_same_cause = 0
                     if raw_middle:
                         # #4947 ③: ``main_call`` never receives ``raw_middle``
                         # directly (only ``summary``/``head``/``tail``/
@@ -2176,7 +2231,26 @@ async def retry_loop(
             if _current_attempt <= 1:
                 # Floor: even a single turn offered alone still fails —
                 # halving further cannot produce a smaller nonzero slice.
-                # #4947 ②'s message-naming convention applies here too.
+                #
+                # #4947 ③ (architect review on #4950): raising here is
+                # correct ONLY for a byte limit. #3783 stage 3's own
+                # reasoning ("EVERY compact()-call exception now recovers
+                # by default — shrinking the input is a general remedy")
+                # still applies to a NON-byte-limit failure (a transient
+                # 5xx, a rate limit, a truncated JSON response) — this
+                # split direction IS that shrinking; there is nothing
+                # inconsistent about falling back to the OLD defer-to-tail
+                # behavior for a single turn that keeps failing for a
+                # reason unrelated to size. Compaction success is not a
+                # precondition for ``main_call`` — deferring this one
+                # turn and letting ``main_call`` run is a legitimate
+                # outcome. This does NOT reopen #4947's own cycle: that
+                # cycle was only reachable because a byte-limit cause is
+                # EXEMPT from the same-cause cap above — a non-byte-limit
+                # cause is NOT exempt, so ``_MAX_CONSECUTIVE_SAME_CAUSE_
+                # RECOVERS`` already catches a genuinely stuck non-byte
+                # cause on its own, with an accurate message, independent
+                # of this floor (predates this arc).
                 if _last_recover_is_byte_limit:
                     raise UnrecoveredError(
                         "retry_loop: HTTP 413 (a request-BODY-BYTE limit) "
@@ -2185,12 +2259,19 @@ async def retry_loop(
                         "not a token-shrink problem, shrinking it further "
                         "is not possible."
                     )
-                raise UnrecoveredError(
-                    f"retry_loop: cause {_cause!r} recurred compacting a "
-                    "single raw_middle turn alone — mid cannot be split "
-                    "any further."
-                )
-            _compact_attempt_len = max(_current_attempt // 2, 1)
+                # Defer: move ONLY the one turn that was just attempted
+                # (not the rest of raw_middle, which may still hold more
+                # — the attempt size shrank to 1, not raw_middle itself)
+                # into tail, the OLD stage-1 direction narrowed to this
+                # one turn — a non-byte-limit compact() failure is not
+                # evidence main_call itself would also fail. Any
+                # remaining raw_middle stays for a later iteration,
+                # attempted in full (reset to None) next time.
+                tail = raw_middle[:1] + tail
+                raw_middle = raw_middle[1:]
+                _compact_attempt_len = None
+            else:
+                _compact_attempt_len = max(_current_attempt // 2, 1)
         elif _estimate_tokens_list(tail, model, use_chars4=use_chars4) > tail_min_tokens:
             # Phase 1: trim tail half → raw_middle.
             chunk = max(len(tail) // 2, 1)

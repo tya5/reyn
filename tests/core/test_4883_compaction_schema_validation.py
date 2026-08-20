@@ -367,3 +367,60 @@ def test_provider_rejection_of_json_schema_is_not_caught_and_retried(monkeypatch
 
     with pytest.raises(ValueError, match="provider rejected response_format"):
         asyncio.run(engine.compact(_chunk()))
+
+
+# ---------------------------------------------------------------------------
+# (g) #4947 ③: covers_through_seq across MULTIPLE partial-slice compact()
+#     calls (③'s own mid-split shape) must not leave a gap. The single-call
+#     "an over-claiming echo cannot corrupt covers_through_seq" scenario
+#     this section originally also covered is now #4951-A/#4956's own
+#     domain — the echo is no longer read at all (see
+#     tests/core/test_4951_local_covers_derivation.py's
+#     test_covers_ignores_a_wrong_higher_echo, which subsumes it) — so
+#     that duplicate test was removed here rather than kept alongside it.
+# ---------------------------------------------------------------------------
+
+
+def test_partial_slices_eventually_cover_every_turn_with_no_gap(monkeypatch) -> None:
+    """Tier 2: #4947 ③ — compacting a conversation across MULTIPLE partial
+    slices (as ③'s retry_loop mid-split does on a compact() failure/retry)
+    must not leave a gap: each call's ``covers_through_seq`` reflects
+    exactly that call's own input, and the sequence of calls together
+    covers every real turn with no seq skipped.
+    """
+    engine, _collected = _engine()
+    seen_inputs: list = []
+
+    async def _honest_echo(**kwargs):
+        # This fake doesn't need to parse the rendered prompt — the test
+        # driver below queues each chunk right before calling compact(),
+        # so the next queued chunk IS the one this call was given.
+        chunk = seen_inputs.pop(0)
+        seqs = [t["seq"] for t in chunk.new_turns]
+        return _resp(json.dumps({
+            "new_turn_seqs": seqs,
+            "topic_arc": f"covers {seqs}",
+            "decisions": [], "pending": [],
+            "session_user_facts": [], "artifacts_referenced": [],
+        }))
+
+    monkeypatch.setattr("litellm.acompletion", _honest_echo)
+
+    slices = [
+        HistoryChunkToCompact(
+            previous_summary=None,
+            new_turns=[{"role": "user", "text": "t", "seq": s}],
+            section_token_caps={},
+        )
+        for s in (1, 2, 3)
+    ]
+    covered: list[int] = []
+    for chunk in slices:
+        seen_inputs.append(chunk)
+        summary = asyncio.run(engine.compact(chunk))
+        covered.append(summary.covers_through_seq)
+
+    assert covered == [1, 2, 3], (
+        f"expected each slice's own seq covered with no gap/duplication; "
+        f"got {covered!r}"
+    )

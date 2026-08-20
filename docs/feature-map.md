@@ -251,12 +251,12 @@ User-facing point-in-time rewind with branching. Phase 1 and Phase 2 (2a/2c/2d) 
 | Feature | Description | Documentation |
 |---------|-------------|---------------|
 | Head+tail+body budget | Keeps the most-recent turns (tail) and earliest context (head) within per-component token budgets; turns between them are replaced by an LLM-generated summary | [Chat Compaction](concepts/data-retrieval/chat-compaction.md) |
-| Overflow retry loop | When the compacted context still exceeds the model limit, budgets for head / tail / summary shrink monotonically per iteration until the prompt fits; fails fast with a structured error when no further reduction is possible | [Chat Compaction](concepts/data-retrieval/chat-compaction.md) |
+| Overflow retry loop | When the compacted context still exceeds the model limit, head/tail token count shrinks monotonically per iteration; fails fast with a structured error rather than looping forever or silently dropping content — not a guarantee the prompt ultimately fits | [Chat Compaction](concepts/data-retrieval/chat-compaction.md) |
 | Adaptive token estimation | Learns a per-model token-count multiplier over time, reducing estimation drift across sessions | [Chat Compaction](concepts/data-retrieval/chat-compaction.md) |
 | Multimodal token estimation | Estimates tokens for text and image content; image parts use a fixed per-part cost | [Chat Compaction](concepts/data-retrieval/chat-compaction.md) |
 | Compaction lock | Async mutex prevents concurrent turn appends from racing with an in-flight compaction call | [Chat Compaction](concepts/data-retrieval/chat-compaction.md) |
 
-> **Differentiation vs general agents:** instead of naive truncation or an unbounded growing memory, Reyn budgets context as head + tail + LLM summary with a monotonic overflow-shrink retry, adaptive per-model token estimation, and multimodal estimation — predictable context management under a hard model limit.
+> **Differentiation vs general agents:** instead of naive truncation or an unbounded growing memory, Reyn budgets context as head + tail + LLM summary with a structured-failure overflow-shrink retry (always stops with a defined error instead of looping or silently dropping content), adaptive per-model token estimation, and multimodal estimation — predictable context management under a hard model limit.
 
 #### Router system prompt
 
