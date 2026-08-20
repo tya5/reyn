@@ -2229,6 +2229,8 @@ audit_events:
   cleanup_period_days: 30          # auto-delete files older than 30 days (default)
   max_disk_usage_percent: 10       # auto-delete oldest files past 10% of free space (default)
   backend: local                   # where events are written (default)
+  agent_delta_coalesce_fragments: 100    # durable write every N streamed chunks (default)
+  agent_delta_coalesce_interval_ms: 2000 # or every T ms, whichever first (default)
 ```
 
 | Field | Type | Default | Description |
@@ -2238,6 +2240,8 @@ audit_events:
 | `cleanup_period_days` | int | `30` | Automatic-purge age axis (#4479) — files whose filename date is older than this many days are deleted. `0` disables this axis. |
 | `max_disk_usage_percent` | float | `10` | Automatic-purge size axis (#4479) — once the events directory's own total size exceeds this percent of the filesystem's current FREE space, oldest files are deleted until back under. `0` disables this axis. |
 | `backend` | string | `local` | **#4496 — where audit-events are WRITTEN.** `local` (default) preserves current behavior — events land under `.reyn/events` exactly as before this field existed. `discard` (sink-null) writes nothing to disk; subscriber delivery (the TUI/AG-UI forwarders, hooks, OTEL) and the per-emitter `audit_seq` continuity (#4496 PR-1) are UNCHANGED either way — see [Concepts: events](../../concepts/runtime/events.md#write-side-backend-4496) for the structural guarantee. **`discard` means `reyn events replay` / support-bundle / dogfood_trace have nothing to read for this run — in particular, support-bundle is the tool operators use to report bugs, so this trades that away.** `network` is not yet a valid value (an unrecognized string, `network` included, falls back to `local`) — its on-failure semantics are an open design question tracked in #4496. |
+| `agent_delta_coalesce_fragments` | int | `100` | **#4960 — architect ruling C.** `agent_delta` (one audit-event per streamed reply chunk) is durably written once per this many fragments (or `agent_delta_coalesce_interval_ms`, whichever comes first), per streaming chain, plus one final record when a stream ends. Live TUI/AG-UI delivery is UNAFFECTED (every fragment still dispatches to subscribers unthrottled) — this only throttles what reaches `.reyn/events`. Measured (2000-delta/60KB real streamed reply): unthrottled, `agent_delta` was 99.4% of that run's audit file bytes. A non-positive or non-numeric value falls back to the default. |
+| `agent_delta_coalesce_interval_ms` | int | `2000` | **#4960 — the same coalescing window's time axis**, in milliseconds. Primarily protects against a process-level death (SIGKILL / OOM-kill / host crash) that the terminal-flush-on-stream-end mechanism cannot catch (a Python `finally` never runs then) — secondarily gives periodic evidence for an idle-but-long-lived stream. A non-positive or non-numeric value falls back to the default. |
 
 Setting both `max_bytes` and `max_age_seconds` to `0` disables rotation entirely. `backend: discard` makes both rotation fields moot (nothing is ever written to rotate).
 

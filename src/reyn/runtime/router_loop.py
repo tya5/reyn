@@ -1572,7 +1572,21 @@ class RouterLoop:
         if not history or history[-1].get("role") != "user":
             messages.append({"role": "user", "content": user_text})
 
-        return await self.run_loop(messages, tools, _univ_enabled)
+        # #4960: guarantee a final durable record for any agent_delta
+        # fragments the write-side coalescer (LocalEventBackend, #4960
+        # architect ruling C) has accumulated but not yet persisted for
+        # THIS chain — on success, a raised exception, OR cancellation
+        # (``finally`` runs for all three). ``run_loop`` is the only
+        # caller of the ``on_content_delta=self._emit_agent_delta`` wiring
+        # in this class, so wrapping this one call covers every real
+        # agent_delta emission path. Never covers a process-level death
+        # (SIGKILL / OOM-kill / host crash) — see ``flush_agent_delta``'s
+        # own docstring for why the coalesce-interval mechanism, not this
+        # one, is what covers that failure mode.
+        try:
+            return await self.run_loop(messages, tools, _univ_enabled)
+        finally:
+            self.host.events.flush_agent_delta(self.chain_id)
 
     async def run_loop(
         self,

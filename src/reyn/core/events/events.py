@@ -279,6 +279,34 @@ class EventLog:
                 )
         return event
 
+    def flush_agent_delta(self, chain_id: str) -> None:
+        """#4960 — the terminal-flush half of the ``agent_delta`` durability
+        guarantee: call once a streaming chain ends (success, exception, or
+        cancellation — see ``RouterLoop.run()``'s own ``finally``), so any
+        fragments coalesced-but-not-yet-persisted for *chain_id* get one
+        final durable record instead of silently vanishing.
+
+        A passthrough to the backend, not a new mechanism of its own — only
+        ``LocalEventBackend`` implements ``flush_pending_deltas`` (the
+        coalescing is entirely a write-side, backend-specific concept, see
+        ``backend.py``'s own docstring); any OTHER backend (``discard``, or
+        a future one) silently no-ops here, matching how every other
+        backend-specific behavior in this module degrades. Never raises —
+        same "log, don't propagate" posture ``emit()`` already gives the
+        backend's own ``write()`` failures."""
+        flush_fn = getattr(self._backend, "flush_pending_deltas", None)
+        if flush_fn is None:
+            return
+        try:
+            flush_fn(chain_id)
+        except Exception:
+            logger.exception(
+                "event backend flush_pending_deltas failed (emitter=%s "
+                "chain_id=%s) — pending agent_delta fragments for this "
+                "chain may be lost",
+                self._emitter, chain_id,
+            )
+
     def compute_ingested(self, data_ref: str, resolved: str) -> str:
         """``ingested`` ∈ ``{none, partial, full}`` for a present ``data_ref``
         (#3868 PR-1) — an O(1) lookup into the state :meth:`emit` folds

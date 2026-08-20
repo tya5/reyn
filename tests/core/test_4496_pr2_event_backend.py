@@ -28,6 +28,7 @@ from __future__ import annotations
 from reyn.config import AuditEventsConfig
 from reyn.core.events.backend import DiscardEventBackend, LocalEventBackend
 from reyn.core.events.events import EventLog
+from reyn.schemas.models import Event
 from tests._support.agent_session import make_session
 
 
@@ -66,15 +67,37 @@ def test_discard_backend_declares_its_gap() -> None:
     assert all(isinstance(g, str) and g for g in gaps)
 
 
-def test_local_backend_declares_no_gaps() -> None:
-    """Tier 2: contract 2, accept-side — local retains everything, so its
-    gap list is empty (not "no answer", an explicit empty declaration)."""
+def test_local_backend_declares_no_gaps_for_non_delta_kinds() -> None:
+    """Tier 2: contract 2, accept-side — every OTHER event kind is retained
+    unchanged (#4960's coalescing is agent_delta-specific), witnessed
+    directly by writing a non-agent_delta event and reading it back from
+    the real store, not by an empty declare_gaps() list (#4960 correctly
+    added one real gap — see test_local_backend_declares_the_4960_agent_
+    delta_gap below for that gap's own witness)."""
+    written = []
+
+    class _RecordingStore:
+        def write(self, event) -> None:
+            written.append(event)
+
+    backend = LocalEventBackend(_RecordingStore())
+    backend.write(Event(type="tool_executed", data={"op": "read"}))
+    assert len(written) >= 1 and written[0].type == "tool_executed"
+
+
+def test_local_backend_declares_the_4960_agent_delta_gap() -> None:
+    """Tier 1: #4960 — contract 2 requires this backend to NAME what it no
+    longer retains per-fragment now that agent_delta is coalesced;
+    declare_gaps() returning [] here would be the exact "declared no gaps
+    while actually having one" defect contract 2 exists to prevent."""
     class _StubStore:
         def write(self, _event) -> None:
             pass
 
     backend = LocalEventBackend(_StubStore())
-    assert backend.declare_gaps() == []
+    gaps = backend.declare_gaps()
+    assert gaps, "expected a declared gap for agent_delta coalescing (#4960)"
+    assert any("agent_delta" in g for g in gaps)
 
 
 # ── 2. discard preserves audit_seq continuity ──────────────────────────────

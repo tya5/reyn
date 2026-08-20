@@ -4139,7 +4139,11 @@ class Session:
         mode #4496 forbids)."""
         if self._events_config.backend == "discard":
             return DiscardEventBackend()
-        return LocalEventBackend(event_store)
+        return LocalEventBackend(
+            event_store,
+            agent_delta_coalesce_fragments=self._events_config.agent_delta_coalesce_fragments,
+            agent_delta_coalesce_interval_ms=self._events_config.agent_delta_coalesce_interval_ms,
+        )
 
     # ── #3082 Family 1: audit-event spine builder. See session-construction.md. ──
 

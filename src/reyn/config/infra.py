@@ -530,6 +530,17 @@ class AuditEventsConfig:
     # pluggable registry a literal type can't enumerate; this field's
     # domain is closed, so it belongs on the Literal side of that split.
     backend: Literal["local", "discard"] = "local"
+    # #4960 (architect ruling C): ``agent_delta`` (one audit-event per
+    # streamed content chunk) is coalesced to one durable write-side
+    # record per this many fragments, or `agent_delta_coalesce_interval_
+    # ms` milliseconds, whichever comes first — plus one final record on
+    # stream end. See `LocalEventBackend`'s own module-level constants
+    # (`core/events/backend.py`) for the measured rationale (2000-delta
+    # real-run benchmark) these defaults are derived from. Live TUI/AG-UI
+    # delivery is completely unaffected — this only throttles what
+    # reaches disk.
+    agent_delta_coalesce_fragments: int = 100
+    agent_delta_coalesce_interval_ms: int = 2_000
 
 
 @dataclass
@@ -1417,12 +1428,36 @@ def _build_audit_events_config(raw: object) -> AuditEventsConfig:
     backend_val = raw.get("backend", defaults.backend)
     if backend_val not in ("local", "discard"):
         backend_val = defaults.backend
+    # #4960: same "malformed/non-positive falls back to the measured
+    # default" discipline as every other numeric field in this parser —
+    # an operator typo must not silently produce "coalesce every 0
+    # fragments" (== effectively unthrottled again, defeating the point).
+    coalesce_fragments = raw.get(
+        "agent_delta_coalesce_fragments", defaults.agent_delta_coalesce_fragments,
+    )
+    try:
+        coalesce_fragments_val = int(coalesce_fragments)
+        if coalesce_fragments_val <= 0:
+            coalesce_fragments_val = defaults.agent_delta_coalesce_fragments
+    except (TypeError, ValueError):
+        coalesce_fragments_val = defaults.agent_delta_coalesce_fragments
+    coalesce_interval_ms = raw.get(
+        "agent_delta_coalesce_interval_ms", defaults.agent_delta_coalesce_interval_ms,
+    )
+    try:
+        coalesce_interval_ms_val = int(coalesce_interval_ms)
+        if coalesce_interval_ms_val <= 0:
+            coalesce_interval_ms_val = defaults.agent_delta_coalesce_interval_ms
+    except (TypeError, ValueError):
+        coalesce_interval_ms_val = defaults.agent_delta_coalesce_interval_ms
     return AuditEventsConfig(
         max_bytes=int(raw.get("max_bytes", defaults.max_bytes)),
         max_age_seconds=int(raw.get("max_age_seconds", defaults.max_age_seconds)),
         cleanup_period_days=cleanup_val,
         max_disk_usage_percent=disk_percent_val,
         backend=backend_val,
+        agent_delta_coalesce_fragments=coalesce_fragments_val,
+        agent_delta_coalesce_interval_ms=coalesce_interval_ms_val,
     )
 
 
