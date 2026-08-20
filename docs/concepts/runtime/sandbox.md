@@ -183,6 +183,71 @@ closer to comparable than before this generalisation — though the warning
 still only fires for axes you actually SET; the per-backend tables above
 remain the authoritative "what does my backend enforce" reference.
 
+### Named-service capability declaration (#4935) — a SEPARATE registry from the axis contract
+
+`AxisEnforcementDeclaration` above answers "does this backend restrict
+`SandboxPolicy` field X" — a closed, 7-field domain every backend must
+resolve for every run. #4932/#4933/#4935 surfaced a DIFFERENT, real
+production failure with no axis to attach to: `gh auth status` and
+`security list-keychains` both failed under Seatbelt's default policy
+because nobody had enumerated the ONE narrow Mach-lookup service
+(`com.apple.SecurityServer`) they need — a capability the launching shell
+already had, that fell through to the sandbox's narrower default with **no
+error anywhere**. The command just looked broken. This is the SAME shape
+`AxisEnforcementDeclaration` closed for axes (a backend enforcing something
+nobody measured), but for a class of capability that has no enumerable
+"axis" at all — there is no bounded set of possible named-service requests
+the way there is a bounded set of `SandboxPolicy` fields, so widening the
+axis vocabulary to cover it would have been the wrong shape (a `dataclass`
+field per capability the operator might ever need is not a closed domain).
+
+`reyn.security.sandbox.capability.CapabilityDeclaration` is the separate,
+narrower registry this became: one boolean per backend, per NAMED
+CAPABILITY CLASS (not per specific service) — "does this backend have SOME
+mechanism to grant a named service", never "does it currently grant every
+service anyone might need." **The registry has exactly one member today,
+`ipc_named_service`** — deliberately not widened past what production
+evidence supports (an empty registry slot is a currently-unmeasured gap,
+not a claim that nothing else is missing). Seatbelt declares `SUPPORTED`
+(SBPL can express a `global-name`-scoped `mach-lookup` grant, proven by
+`com.apple.SecurityServer`'s own grant working through the real
+`SeatbeltBackend.run()` path, #4937); Landlock declares `NOT_SUPPORTED` —
+not a gap, a structural fact (Landlock's kernel-documented model is
+restrict-only, with no "grant" operation at all, so the #4932-class
+enumeration-gap failure cannot occur there in the first place); Noop
+declares `SUPPORTED` trivially (nothing is restricted to begin with);
+Docker declares `NOT_SUPPORTED` (the concept is macOS-specific, no
+Linux/container equivalent exists).
+
+**Declaration ≠ guarantee — the property an operator must read correctly.**
+`SUPPORTED` means "this backend HAS the mechanism," never "every named
+service you might need is already granted." Only ONE service
+(`com.apple.SecurityServer`) is actually granted today; `gh` needs it and
+now works. `dscl` and `scutil` need OTHER named services under this SAME
+category (`opendirectoryd`, `com.apple.SystemConfiguration`) that are
+**not yet granted** — a disclosed, open gap, not silently implied closed.
+Declaring `require_capabilities: [ipc_named_service]` therefore does two
+different things depending on WHY a backend fails a required capability:
+against Landlock/Docker/Noop-fallback (genuinely `NOT_SUPPORTED`, no
+mechanism at all) it correctly refuses per `on_unsupported`; against
+Seatbelt it never fires at all — the category-level declaration cannot
+distinguish "granted" from "declared-supported-but-this-particular-service-
+isn't," so a `dscl` failure under Seatbelt is invisible to this mechanism.
+The mechanism's real value is closing the class of "silent capability loss
+with no error" for backends with no path at all, plus making `reyn doctor`
+show what each backend can and cannot express — not a guarantee that every
+named service an operator's command needs is already wired.
+
+**No CI-runnable witness for the Seatbelt `SUPPORTED` claim.** Unlike D4's
+axis-declaration bridge above, CI runs on `ubuntu-latest` exclusively (0
+macOS runners) — there is no standing gate that re-verifies Seatbelt's SBPL
+profile still actually grants `com.apple.SecurityServer` on every push.
+The claim was verified exactly once, by a human, on a real Mac, through the
+real `SeatbeltBackend.run()` path (not a raw `sandbox-exec` probe, which
+would miss deny-list interactions a real profile can trigger). A future
+silent regression in the SBPL profile generator would not be caught by
+CI — only a local run on macOS would catch it.
+
 ## `reyn.yaml` configuration
 
 ```yaml
