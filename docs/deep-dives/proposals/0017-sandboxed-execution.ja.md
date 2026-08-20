@@ -224,6 +224,8 @@ class SandboxBackend(Protocol):
     def apply(self, policy: SandboxPolicy) -> None: ...
 ```
 
+> ⚠️ **この `SandboxCapability` は実装されませんでした**（`src/reyn/sandbox/` 自体、下の Landing notes が示すとおり現存しません）。**同じ語で別のもの**が #4935 で新設されています — `src/reyn/security/sandbox/capability.py` の `CapabilitySupport`（named-service 単位の申告、"grant" 概念）。混同を避けるため、この提案文書自体は経緯の記録として残し、この 1 行だけ添えます。
+
 **`sandboxed_exec` op**: `SandboxPolicy` を必須とする新しい Control IR op。
 OS は適切なバックエンドを選択し、`backend.apply(policy)` を呼び出したあと、
 制限された環境内でサブプロセスを起動する。
