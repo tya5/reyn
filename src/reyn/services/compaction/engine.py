@@ -2042,6 +2042,21 @@ async def retry_loop(
                 "SP + head_min + summary + tail_min + new_msg exceeds T_max"
             )
 
+    # #4947 ②: name the byte limit when it was the LAST recovered cause —
+    # a compact()-origin 413 is currently exempt from the same-cause cap
+    # above (see the #4885 comment on that skip) and from every shrink
+    # step in this ladder (all token-measured; a byte limit says nothing
+    # about them), so it can ride every iteration to here unchanged. The
+    # generic message below said nothing about WHY nothing converged;
+    # this branch reports the actual last-known cause instead of leaving
+    # an operator to re-derive "413" from event-log archaeology.
+    if _last_recover_is_byte_limit:
+        raise UnrecoveredError(
+            f"retry_loop exceeded max_iterations={max_iterations} without "
+            "convergence — the last recovered cause was an HTTP 413 "
+            "(a request-BODY-BYTE limit), which this ladder's token-only "
+            "shrink steps cannot resolve on their own."
+        )
     raise UnrecoveredError(
         f"retry_loop exceeded max_iterations={max_iterations} without convergence"
     )
