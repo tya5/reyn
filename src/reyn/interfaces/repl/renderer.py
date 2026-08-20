@@ -355,10 +355,12 @@ class RichChatRenderer(ChatRenderer):
 # to signal STATE — error (red), needs-action (amber), done (green), ambient/low
 # (dim) — so a coloured glyph always means "something to notice".
 _CC_TEXT = "default"    # terminal default fg — normal text + markers (no forced colour)
-# #4787: moved alone, not with _CC_USER_BG/_CC_ERR_BG below (still blocked
-# on #4840's colour direction) — safe independently because the VALUE is
-# unchanged, only where it's declared; the WCAG-measured contrast pairing
-# against those two backgrounds (#3371, unmoved) is therefore untouched.
+# #4787: moved alone at first, not with _CC_USER_BG/_CC_ERR_BG below (both
+# blocked at the time on #4840's colour direction, since resolved — both
+# now moved too, see their own comments below) — safe independently
+# because the VALUE is unchanged, only where it's declared; the
+# WCAG-measured contrast pairing against those two backgrounds (#3371) is
+# therefore untouched by any of the three moves.
 _CC_DIM = palette.TOKENS["@dim@"]  # low-importance / ambient, as a COLOUR (see _CC_AMBIENT)
 # The same "low-importance" role expressed as an ATTRIBUTE rather than a colour
 # (#3536). ``dim`` emits SGR 2 and forces no colour, so the terminal's own theme
@@ -430,7 +432,15 @@ _CC_COOL = palette.TOKENS["@secondary@"]  # cool blue — a secondary accent (st
 # measurement above (that pairing is with palette.TOKENS["@dim@"] only) —
 # but if the two are ever consolidated into one token, the 3.30 measurement
 # needs re-verifying against whatever value survives.
-_CC_USER_BG = "#1e222a"
+#
+# #4787 (final 2, no longer blocked — #4840's colour direction is resolved,
+# src/reyn/interfaces/CLAUDE.md rule 2): the VALUE is unchanged
+# ("#1e222a"), only where it is declared — moved to interfaces/palette.py
+# as its OWN token key (TOKENS["@cc-user-bg@"]), NOT consolidated with
+# "@theme-surface@" (same hex, different role — see that token's own
+# comment). The 3.30 measurement against palette.TOKENS["@dim@"] above is
+# therefore untouched, not re-verified here.
+_CC_USER_BG = palette.TOKENS["@cc-user-bg@"]
 # Failure block-tint behind a failed tool call / error row. A desaturated dark
 # coral: it reads unmistakably as "the red row" edge to edge (CC's block-tint of
 # a failed tool) while _CC_ERR text on top of it stays high-contrast. #3367:
@@ -438,7 +448,11 @@ _CC_USER_BG = "#1e222a"
 # its own foreground — so the text was painted in its background colour and the
 # row rendered as a solid illegible coral band, exactly when the user most needs
 # to read why something failed.
-_CC_ERR_BG = "#3a1c1a"
+#
+# #4787 (final 2): same move as _CC_USER_BG above — value unchanged
+# ("#3a1c1a"), now declared in interfaces/palette.py
+# (TOKENS["@cc-err-bg@"]).
+_CC_ERR_BG = palette.TOKENS["@cc-err-bg@"]
 
 # #3469: the COMPLETE rich-markdown style family, derived from the palette
 # above — the single place LLM-output markdown styling is decided. rich's own
