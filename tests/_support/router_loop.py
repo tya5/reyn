@@ -26,9 +26,20 @@ class FakeEventLog:
 
     def __init__(self) -> None:
         self.emitted: list[dict] = []
+        # #4960: RouterLoop.run()'s terminal `finally` calls
+        # `host.events.flush_agent_delta(chain_id)` on every path (success,
+        # exception, cancel) — real EventLog.flush_agent_delta never raises
+        # even when the backend doesn't implement flushing, so this stub
+        # matches that contract (records the call for tests that want to
+        # assert on it; a no-op is otherwise correct here since this stub
+        # has no backend/coalescing to flush).
+        self.flush_agent_delta_calls: list[str] = []
 
     def emit(self, type: str, **data) -> None:
         self.emitted.append({"type": type, **data})
+
+    def flush_agent_delta(self, chain_id: str) -> None:
+        self.flush_agent_delta_calls.append(chain_id)
 
 
 # ---------------------------------------------------------------------------
