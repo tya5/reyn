@@ -765,6 +765,27 @@ def _print_sandbox_posture(config: object) -> None:
             f"at this step, #2983, so this name IS the enforcement witness)",
         )
 
+    # #4935: capability disclosure — no new mechanism, this section (C-5)
+    # already exists (#4364); it just gains a column. Declaration only
+    # (`resolved.supported_capabilities`, never probed), same D-1 rule
+    # every other doctor line follows. See `reyn.security.sandbox.
+    # capability`'s own module docstring for the CI-witness gap this line
+    # carries for Seatbelt specifically (no macOS CI runner can re-verify
+    # this claim — a human on a real Mac is the only witness).
+    declared_capabilities = list(getattr(sandbox_config, "require_capabilities", []) or [])
+    supported = resolved.supported_capabilities.as_dict()
+    if declared_capabilities:
+        for name in declared_capabilities:
+            support = supported.get(name)
+            mark = "✓" if support is not None and support.value == "supported" else "✗"
+            print(f"  required capability: {name!r} — {mark} {support}")
+    else:
+        print(
+            "  required capabilities: none declared (sandbox.require_capabilities "
+            "is empty) — this backend's own support: "
+            + ", ".join(f"{k}={v.value}" for k, v in supported.items()),
+        )
+
 
 def _print_mcp_negotiation(config: object, project_root: Path) -> None:
     """#4364 C-3(b): for each declared MCP server, the negotiated protocol

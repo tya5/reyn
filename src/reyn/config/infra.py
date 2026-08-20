@@ -1118,6 +1118,23 @@ class SandboxConfig:
     on_unsupported: str = "warn"
     mode: str = DEFAULT_SANDBOX_MODE
     policy: dict | None = None
+    # #4935: opt-in capability requirement (D1 companion to `enforced_axes`
+    # — see `reyn.security.sandbox.capability`'s own module docstring for
+    # the design). Default EMPTY: declaring nothing here changes nothing —
+    # no run is stopped by this field unless the operator explicitly names
+    # a capability they need. Each name must be one
+    # `reyn.security.sandbox.capability.SANDBOX_CAPABILITY_NAMES` already
+    # knows (today: just `"ipc_named_service"`) — an unknown name raises
+    # here rather than silently resolving to "not required" (same
+    # unknown-key-raises discipline `backend`/`on_unsupported`/`mode`
+    # already apply below). When the RESOLVED backend declares a required
+    # capability NOT_SUPPORTED, `on_unsupported` (the SAME 3-way knob
+    # already used for "no backend available" — never a new vocabulary,
+    # per owner's "don't make the operator learn a second mental model")
+    # governs the response — see
+    # `reyn.security.sandbox.policy.unsupported_required_capabilities`
+    # for the resolution-time consumer.
+    require_capabilities: "list[str]" = field(default_factory=list)
 
     def __post_init__(self) -> None:
         if self.backend not in _SANDBOX_BACKENDS:
@@ -1133,6 +1150,15 @@ class SandboxConfig:
         if self.mode not in _SANDBOX_MODES:
             raise ValueError(
                 f"sandbox.mode {self.mode!r} is not one of {sorted(_SANDBOX_MODES)}"
+            )
+        from reyn.security.sandbox.capability import SANDBOX_CAPABILITY_NAMES
+
+        unknown_capabilities = set(self.require_capabilities) - SANDBOX_CAPABILITY_NAMES
+        if unknown_capabilities:
+            raise ValueError(
+                f"sandbox.require_capabilities contains unknown name(s) "
+                f"{sorted(unknown_capabilities)} — known: "
+                f"{sorted(SANDBOX_CAPABILITY_NAMES)}"
             )
         # #4174 T0 (owner ruling — "no hard-fail anywhere, don't
         # special-case sandbox.policy"): this used to also fail-fast on an
@@ -1165,9 +1191,21 @@ def _build_sandbox_config(raw: object) -> SandboxConfig:
     # #1326: optional agent-level policy. Absent → None (SandboxLayer stays ⊤).
     policy_raw = raw.get("policy")
     policy = dict(policy_raw) if isinstance(policy_raw, dict) else None
+    # #4935: opt-in capability requirement. Absent/empty → [] (no run
+    # affected) — see SandboxConfig's own field docstring.
+    require_capabilities_raw = raw.get("require_capabilities")
+    require_capabilities = (
+        [str(c) for c in require_capabilities_raw]
+        if isinstance(require_capabilities_raw, list)
+        else list(defaults.require_capabilities)
+    )
     # Validation delegated to __post_init__ — raises ValueError with clear message.
     return SandboxConfig(
-        backend=backend, on_unsupported=on_unsupported, mode=mode, policy=policy
+        backend=backend,
+        on_unsupported=on_unsupported,
+        mode=mode,
+        policy=policy,
+        require_capabilities=require_capabilities,
     )
 
 
