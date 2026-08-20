@@ -883,10 +883,44 @@ class UnrecoveredError(Exception):
     ----------
     reason:
         Human-readable description of the terminal condition.
+    saw_byte_limit:
+        #4954 (b), architect finding: whether an HTTP 413 (a
+        request-BODY-BYTE limit) was observed during this call's shrink
+        attempts — a real structured field, not something a caller
+        should re-derive by string-matching ``reason`` (message wording
+        is not a stable API; #4948/#4957 named the byte limit in prose
+        for a HUMAN operator, not for a caller to parse).
+
+        Deliberately named ``saw_byte_limit``, not ``is_byte_limit`` (or
+        anything implying "this raise's own root cause"): at some raise
+        sites (the same-cause cap, the generic "all shrink paths
+        exhausted", max_iterations exhaustion) the branch taken does
+        NOT itself determine the cause — the value here is the LAST
+        recovered cause observed before this raise, which is correct
+        for those sites but is a genuinely different claim from "this
+        specific raise IS a byte-limit raise" (true only at the 3 sites
+        where the branch itself is byte-limit-gated: the mid-split
+        floor's byte-limit arm, the T_max binary-search floor, and the
+        max_iterations byte-limit branch). A name like ``is_byte_limit``
+        invites a future reader to assume the stronger claim at every
+        site — the exact "same spelling, different meaning" trap this
+        session hit repeatedly elsewhere tonight.
+
+        "Last observed", not "sticky" (was a byte limit EVER seen this
+        call, even if a later non-byte cause is what actually
+        terminated it) — architect ruling: sufficient for the one
+        measured symptom (owner's real machine always terminates ON the
+        413, never past it to a different cause), and a "seen at all"
+        version would require deliberately widening scope with no
+        measured need for it yet. A caller that needs to react to a
+        byte-limit exhaustion (#4954 (b): triggering a real compaction
+        so the NEXT turn doesn't repeat the same overflow) reads this
+        attribute.
     """
 
-    def __init__(self, reason: str) -> None:
+    def __init__(self, reason: str, *, saw_byte_limit: bool = False) -> None:
         self.reason = reason
+        self.saw_byte_limit = saw_byte_limit
         super().__init__(reason)
 
 
@@ -2192,6 +2226,12 @@ async def retry_loop(
                 _consecutive_same_cause > _MAX_CONSECUTIVE_SAME_CAUSE_RECOVERS
                 and not _last_recover_is_byte_limit
             ):
+                # #4954 (b): ``saw_byte_limit`` defaults to False here, and
+                # this site is REACHABLE — its own guard clause
+                # (``and not _last_recover_is_byte_limit``) is what makes
+                # False the only value this raise can ever carry, not an
+                # unreachable branch where the default happens not to
+                # matter.
                 raise UnrecoveredError(
                     f"retry_loop: cause {_cause!r} recovered "
                     f"{_consecutive_same_cause} consecutive times (limit "
@@ -2257,7 +2297,8 @@ async def retry_loop(
                         "recurred compacting a single raw_middle turn "
                         "alone — mid cannot be split any further; this is "
                         "not a token-shrink problem, shrinking it further "
-                        "is not possible."
+                        "is not possible.",
+                        saw_byte_limit=True,
                     )
                 # Defer: move ONLY the one turn that was just attempted
                 # (not the rest of raw_middle, which may still hold more
@@ -2313,7 +2354,8 @@ async def retry_loop(
                     "BYTE limit, not a token-count one — shrinking the "
                     "token-count representation further cannot resolve it "
                     "(most likely: the newest message alone exceeds the "
-                    "upstream byte limit)."
+                    "upstream byte limit).",
+                    saw_byte_limit=True,
                 )
             _t_max_override = _candidate
             bg = compute_budgets(
@@ -2346,6 +2388,12 @@ async def retry_loop(
             # 413 (same content, same call) halves the ceiling again on its
             # own next pass through this branch, continuing the search.
         else:
+            # #4954 (b): ``saw_byte_limit`` defaults to False here, and
+            # this ``else`` is REACHABLE — the ``elif _last_recover_is_
+            # byte_limit:`` branch above it already claims the True case,
+            # so False is the only value execution can reach this point
+            # carrying, not an unreachable branch where the default
+            # happens not to matter.
             raise UnrecoveredError(
                 "retry_loop: all shrink paths exhausted — "
                 "SP + head_min + summary + tail_min + new_msg exceeds T_max"
@@ -2373,7 +2421,8 @@ async def retry_loop(
             "limit), which this ladder's token-only shrink steps cannot "
             "resolve on their own. Raising this config value is an escape "
             "valve, not a cure: if the same 413 recurs every turn, it will "
-            "only delay exhaustion, not prevent it."
+            "only delay exhaustion, not prevent it.",
+            saw_byte_limit=True,
         )
     raise UnrecoveredError(
         f"retry_loop exceeded max_iterations={max_iterations} "
