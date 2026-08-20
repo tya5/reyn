@@ -1115,9 +1115,11 @@ def test_413_recovery_succeeds_once_binary_search_lowers_t_max_enough() -> None:
     size genuinely changes across calls (falsifies the byte-identical bug
     above), starts above ``THRESHOLD_TOKENS``, ends at-or-below it, and the
     ``t_max_override`` sequence in the audit trail is non-None and
-    strictly decreasing once binary search starts — i.e. success occurred
-    AFTER, and only after, both the ceiling was actually lowered AND the
-    payload was actually shrunk to fit under it.
+    non-increasing once binary search starts (never strictly-decreasing —
+    see the assertion's own comment: a repeated value across consecutive
+    recoveries is documented, expected search progress, not a stall) — i.e.
+    success occurred AFTER, and only after, both the ceiling was actually
+    lowered AND the payload was actually shrunk to fit under it.
 
     ``max_iterations=40``, same as the 3 existing tests and for the same
     reason (headroom past the halving count, never tuned to it — six-
@@ -1187,9 +1189,10 @@ def test_413_recovery_succeeds_once_binary_search_lowers_t_max_enough() -> None:
     # The FIRST recovery legitimately carries no override yet (matches
     # test_413_recovery_emits_t_max_override_in_the_audit_event's own
     # documented behavior) — every recovery AFTER it must carry one, and
-    # that sequence must strictly decrease (real halving progression, not a
-    # static/repeated value) — this is the "search actually worked" witness
-    # the issue asked for, not just "main_call returned eventually".
+    # that sequence must never increase (real halving progression, never a
+    # rising value; a REPEATED value is allowed — see the non-increasing
+    # assertion's own comment below) — this is the "search actually worked"
+    # witness the issue asked for, not just "main_call returned eventually".
     assert overrides[0] is None, (
         f"expected the FIRST recovery to carry no override yet (the real "
         f"T_max path); got {overrides!r} — if this legitimately changed, "
@@ -1204,7 +1207,22 @@ def test_413_recovery_succeeds_once_binary_search_lowers_t_max_enough() -> None:
         f"every recovery after the first must carry a non-None "
         f"t_max_override once binary search starts halving; got {overrides!r}"
     )
-    assert later_overrides == sorted(later_overrides, reverse=True) and len(set(later_overrides)) == len(later_overrides), (
-        f"t_max_override must strictly decrease across recoveries after the "
-        f"first (real binary-search halving progression); got {overrides!r}"
+    # Non-increasing, NOT strictly-decreasing (architect's post-merge
+    # finding on this test's first version): the same-cause-cap SKIP
+    # comment for a byte-limit cause (engine.py, just above
+    # ``_MAX_CONSECUTIVE_SAME_CAUSE_RECOVERS``) documents that "one
+    # iteration lowers the ceiling, a later one actually shrinks content
+    # down to it, and the 413 keeps recurring in between" is the EXPECTED
+    # shape of active binary-search progress — i.e. the SAME
+    # ``t_max_override`` value is allowed to appear on consecutive
+    # recoveries by design, not just a strictly-lower one each time. This
+    # fixture's own head/tail sizes happen to make every recovery lower the
+    # ceiling immediately, but asserting no-duplicates would pin THAT
+    # fixture property as if it were retry_loop's contract (six-questions
+    # Q2) — a correct future implementation change could legitimately
+    # produce a repeat value and turn this red for no real regression.
+    assert later_overrides == sorted(later_overrides, reverse=True), (
+        f"t_max_override must never INCREASE across recoveries after the "
+        f"first (the binary search only ever halves the ceiling, never "
+        f"raises it); got {overrides!r}"
     )
