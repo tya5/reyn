@@ -1226,3 +1226,19 @@ def test_413_recovery_succeeds_once_binary_search_lowers_t_max_enough() -> None:
         f"first (the binary search only ever halves the ceiling, never "
         f"raises it); got {overrides!r}"
     )
+    # Architect's follow-up (non-blocking, on the merged version of this
+    # test): non-increasing alone is true even of a CONSTANT sequence —
+    # weakening away "strictly decreasing" also weakened away "the ceiling
+    # was actually lowered at all". Restore that witness at the ENDPOINTS
+    # only (first vs last), which #4885's own contract (still-413 -> halve)
+    # guarantees over a run this long, while still permitting the
+    # documented mid-search repeats the assertion above already allows. A
+    # single-element ``later_overrides`` compares its one value to ITSELF
+    # here (``x < x`` is always False) and correctly fails this assertion
+    # too — no separate length precondition needed.
+    assert later_overrides[-1] < later_overrides[0], (
+        f"the ceiling must have been strictly lower by the LAST recovery "
+        f"than the FIRST overridden one — real, overall search progress, "
+        f"not merely non-increasing (which a constant sequence would also "
+        f"satisfy); got {overrides!r}"
+    )
