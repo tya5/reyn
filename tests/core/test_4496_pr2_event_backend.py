@@ -466,3 +466,44 @@ def test_force_inline_has_exactly_one_call_site_in_src() -> None:
         "with the same justification, rather than letting the count "
         "silently grow."
     )
+
+
+# ── #4966: a stale consumer/queue across separate asyncio.run() calls ────
+
+
+def test_second_asyncio_run_through_the_same_eventlog_still_delivers() -> None:
+    """Tier 2: found via CI (test_catalog_search_actions_emits_complete_on_
+    query_failure, which drives 4 separate ``asyncio.run()`` calls through
+    one ``EventLog``) — driving the SAME EventLog through two SEPARATE
+    ``asyncio.run()`` calls (each opening and closing its own loop) must
+    still deliver events emitted in the second call.
+
+    Falsifying witness (architect/lead-coder's own six-questions concern):
+    ``_ensure_consumer_started``'s old ``if self._consumer_task is None``
+    check treats a task bound to the FIRST (now-dead) loop as "already
+    running" — no fresh consumer is spawned for the second loop, so the
+    second call's events queue forever with nobody draining them. This
+    is not a test-authoring gap (this test drives no `emit()`-then-read
+    race a `settle()` could fix) — it is architect-ruled mechanism
+    territory: `_ensure_consumer_started` now asks `task.done()` /
+    `task.get_loop().is_closed()`, a fact, not a guess."""
+    log = EventLog()
+    delivered: list = []
+    log.add_subscriber(lambda e: delivered.append(e.type))
+
+    async def _first_run() -> None:
+        log.emit("first")
+        await log.drain()
+
+    asyncio.run(_first_run())
+    assert delivered == ["first"]
+
+    async def _second_run() -> None:
+        log.emit("second")
+        await log.drain()
+
+    asyncio.run(_second_run())
+    assert delivered == ["first", "second"], (
+        "the second asyncio.run()'s own event must still be delivered — "
+        f"got {delivered}"
+    )

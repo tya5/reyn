@@ -364,6 +364,21 @@ class EventLog:
         there at all.
 
         No-op if the consumer was never started (nothing to stop).
+
+        #4966 (architect finding): "stop" here is NOT "never again" — a
+        LATER `emit()`/`drain()` call on this same EventLog (e.g. a fresh
+        `asyncio.run()` reusing an instance that outlived the loop this
+        consumer was stopped on) spawns a NEW consumer task the normal
+        way (`_ensure_consumer_started`), same as if none had ever run.
+        This is not a gap in what stopping promises: the guarantee is
+        "nothing accumulates without a consumer to pick it up", not "this
+        instance never dispatches again" — a later `emit()` getting a
+        fresh consumer satisfies that guarantee just as well as the first
+        one did. Documented here because the shape reads, out of context,
+        like a task that should have stayed stopped came back — it did
+        not come back; it is a different task, started by the same
+        idempotent bootstrap every `emit()`/`drain()` call already goes
+        through.
         """
         if self._consumer_task is None:
             return
@@ -497,11 +512,15 @@ class EventLog:
         except RuntimeError:
             self._dispatch_inline(event)
         else:
-            self._dispatch_queue.put_nowait(event)
-            # Opportunistically ensure a consumer is running. Idempotent
-            # (only the FIRST successful call spawns a task; every later
-            # `emit()` sees `_consumer_task` already set and no-ops here).
+            # #4966 (found via CI): `_ensure_consumer_started()` must run
+            # BEFORE `put_nowait`, not after — it may need to replace
+            # `_dispatch_queue` itself with a fresh one (see that method's
+            # own docstring for why a stale consumer implies a stale
+            # queue too, both bound to the same dead loop). Putting into
+            # the OLD queue first and only then discovering it needs
+            # replacing would silently drop that event.
             self._ensure_consumer_started()
+            self._dispatch_queue.put_nowait(event)
         return event
 
     def _dispatch_inline(self, event: Event) -> None:
@@ -554,8 +573,50 @@ class EventLog:
         the source of a no-loop caller's events silently never being
         dispatched (see ``emit()``'s own comment on the branch this
         replaced).
+
+        #4966 (found via CI, mechanism ruling — this is a DIFFERENT
+        question from ``_force_inline``'s, and answered the opposite way
+        deliberately): a caller can drive the SAME EventLog through
+        multiple, SEPARATE ``asyncio.run()`` calls (each opening and
+        closing its own loop). ``_consumer_task`` only resets to ``None``
+        inside ``stop_dispatch()`` — nothing calls that between one
+        ``asyncio.run()`` and the next, so after the first loop closes,
+        ``self._consumer_task`` still holds a reference to a task bound
+        to a now-DEAD loop. A bare ``is None`` check treats that stale
+        reference as "already running" and never spawns a fresh consumer
+        for the second loop — events emitted there queue forever with
+        nobody draining them (found via CI:
+        test_catalog_search_actions_emits_complete_on_query_failure,
+        which drives 4 separate ``asyncio.run()`` calls through one
+        EventLog).
+
+        Unlike ``_force_inline`` (a declaration, because "will an owner
+        ever appear" is unknowable at construction time — see its own
+        comment), "is the existing consumer task still alive on a live
+        loop" IS knowable by asking: ``task.done()`` is true once a task
+        has finished (including via cancellation), and a task whose own
+        loop has closed can never make further progress regardless of
+        ``done()``'s current value. Respawn whenever the existing
+        reference is stale by either measure — the mechanism can judge
+        this because it queries a fact, not because it guesses one.
+
+        A stale consumer implies a stale ``_dispatch_queue`` too:
+        ``asyncio.Queue`` binds to whichever loop first calls one of its
+        async methods (``.get()``), and raises ``RuntimeError: ... is
+        bound to a different event loop`` if a later call arrives from a
+        DIFFERENT running loop — exactly what a fresh consumer's first
+        ``await self._dispatch_queue.get()`` would hit if the queue
+        itself weren't also replaced here. Whatever was already queued at
+        staleness-detection time does not need preserving: the OLD
+        consumer's own ``CancelledError`` handler already flushed
+        whatever was pending when ITS loop tore down (the same inline
+        flush ``_dispatch_consumer``'s own docstring describes) — nothing
+        durable is lost by starting the new loop's dispatcher with an
+        empty queue.
         """
-        if self._consumer_task is None:
+        task = self._consumer_task
+        if task is None or task.done() or task.get_loop().is_closed():
+            self._dispatch_queue = asyncio.Queue()
             self._consumer_task = asyncio.ensure_future(self._dispatch_consumer())
 
     async def _dispatch_consumer(self) -> None:

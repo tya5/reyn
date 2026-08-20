@@ -52,6 +52,7 @@ from reyn.security.permissions.permissions import PermissionDecl
 from reyn.tools.action_index import ActionEmbeddingIndex
 from reyn.tools.types import RouterCallerState, ToolContext
 from reyn.tools.universal_catalog import SEARCH_ACTIONS
+from tests._support.events import settle
 
 
 def _run(coro: Any) -> Any:
@@ -67,7 +68,11 @@ def _events_and_store(tmp_path: Path) -> tuple[EventLog, EventStore]:
     return log, store
 
 
-async def _read_back(store: EventStore) -> list[dict]:
+async def _read_back(log: EventLog, store: EventStore) -> list[dict]:
+    # #4966: `store` is a SUBSCRIBER of `log` — dispatch to it is
+    # asynchronous whenever a loop is running (#4961 C), so `store.flush()`
+    # alone can race the still-in-flight delivery. Settle first.
+    await settle(log)
     await store.flush()
     return [e.model_dump(mode="json") for e in store.iter_all()]
 
@@ -145,7 +150,7 @@ def test_catalog_search_actions_emits_complete_on_query_failure(
     async def _scenario() -> list[dict]:
         with pytest.raises(RuntimeError, match="embed op failed"):
             await SEARCH_ACTIONS.handler({"query": "alpha", "limit": 5}, ctx)
-        return await _read_back(store)
+        return await _read_back(log, store)
 
     events = _run(_scenario())
     kinds = [e["type"] for e in events if e["type"].startswith("semantic_search_")]
