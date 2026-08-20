@@ -636,9 +636,11 @@ class RouterHistoryBuffer:
         """Slice history into OpenAI-style messages for RouterLoop.
 
         #4954(2): PERMANENT compaction. A turn at or below the compaction
-        watermark (``seq <= self._compaction_watermark(history)``) is
-        excluded from this projection UNCONDITIONALLY, before any
-        budget/elide reasoning runs — owner's own framing: "compaction
+        watermark (``0 < seq <= self._compaction_watermark(history)`` —
+        ``seq == 0`` is the #3704 "no coordinate assigned" sentinel, not
+        the oldest turn, and is NEVER excluded; see the filter's own
+        comment below) is excluded from this projection UNCONDITIONALLY,
+        before any budget/elide reasoning runs — owner's own framing: "compaction
         結果は永続的に会話を圧縮する" (compaction results permanently
         compact the conversation), and "history.jsonl に残すことと llm
         見せる会話は分けて考えて" (durable history and what the LLM sees
@@ -725,7 +727,34 @@ class RouterHistoryBuffer:
         # per-turn regression.
         watermark = self._compaction_watermark(history)
         if watermark > 0:
-            turns = [m for m in turns if m.seq > watermark]
+            # #4954(2) TESTS-READ finding (lead-coder): ``seq == 0`` is the
+            # #3704 sentinel for "no coordinate assigned" (pre-#3704 legacy
+            # history), NOT "oldest turn" — ``chat_message.py``'s own
+            # field comment. A bare ``m.seq > watermark`` treats that
+            # sentinel as older than everything, permanently dropping
+            # every legacy turn the instant ANY watermark exists. Worse:
+            # such a turn was NEVER a compaction candidate either
+            # (``compaction_controller.py``'s own candidate filter is
+            # ``t.seq > prev_cover``, always false at seq=0) — so it was
+            # never summarised, and this exclusion would be the only place
+            # that ever stopped sending it: silent, permanent content
+            # loss. ⚠️ Reachability is UNMEASURED (whether any session
+            # with real #3704-pre-fix legacy history still exists is
+            # environment-dependent) — closed anyway because the damage
+            # shape (silent, permanent loss) costs more than this one
+            # condition does; do not read this comment as "confirmed
+            # reachable" (#4941's declaration≠guarantee caution).
+            #
+            # NOT a new predicate: ``m.seq == 0 or m.seq > watermark`` is
+            # the EXACT expression ``Session``'s own #4468 security-latch
+            # scan already uses (session.py:3074, same
+            # ``self._compaction_watermark()`` value) — sharing the VALUE
+            # without sharing how it's READ is exactly how this drifted.
+            # ⚪ This predicate now exists in 2 places (session.py:3074,
+            # here); if a 3rd appears, that is the point to factor it into
+            # one shared function (architect, non-blocking) rather than
+            # copying a 3rd time.
+            turns = [m for m in turns if m.seq == 0 or m.seq > watermark]
 
         effective_trigger, head_budget, tail_budget = self._resolve_budgets()
         use_chars4 = getattr(self._compaction, "use_chars4_estimate", False)

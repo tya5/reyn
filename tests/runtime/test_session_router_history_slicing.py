@@ -134,6 +134,52 @@ def test_watermark_zero_never_filters_or_bridges(tmp_path, monkeypatch):
     )
 
 
+def test_seq_zero_sentinel_turn_is_never_excluded_by_a_watermark(tmp_path, monkeypatch):
+    """Tier 2: #4954(2) TESTS-READ finding (lead-coder) — ``seq == 0`` is
+    the #3704 "no coordinate assigned" sentinel (pre-#3704 legacy history),
+    NOT "the oldest turn". A bare ``m.seq > watermark`` would treat it as
+    older than everything and drop it the instant ANY watermark exists —
+    and such a turn was never a compaction candidate either
+    (``compaction_controller.py``'s own filter is ``t.seq > prev_cover``,
+    always false at seq=0), so it was never summarised: dropping it here
+    would be silent, PERMANENT content loss with no other place that ever
+    stops sending it. The fix (``m.seq == 0 or m.seq > watermark``) must
+    keep such a turn in the projection regardless of the watermark's
+    value — matching the exact predicate ``Session``'s own #4468
+    security-latch scan already uses (session.py, same
+    ``_compaction_watermark()`` value)."""
+    session = _make_session(tmp_path, t_max=1_000_000, monkeypatch=monkeypatch)
+    session.history.append(ChatMessage(
+        role="summary", content="summary of the first exchange", ts=_now(),
+        meta={"structured": {"topic_arc": "test"}, "covers_through_seq": 5},
+    ))
+    # A legacy, pre-#3704 turn — seq defaults to 0 (never explicitly set).
+    session.history.append(ChatMessage(
+        role="user", content="legacy-turn-no-coordinate", ts=_now(),
+    ))
+    for i, text in enumerate(["covered-1", "covered-2"]):
+        session.history.append(ChatMessage(
+            role="user" if i % 2 == 0 else "assistant",
+            content=text, ts=_now(), seq=i + 1,
+        ))
+    session.history.append(ChatMessage(
+        role="assistant", content="uncovered-3", ts=_now(), seq=10,
+    ))
+
+    msgs = session._history_buffer.build_history()
+    contents = [m["content"] for m in msgs]
+
+    assert "legacy-turn-no-coordinate" in contents, (
+        f"a seq==0 (no-coordinate-assigned) turn must never be excluded by "
+        f"any watermark value — it was never a compaction candidate, so "
+        f"excluding it here is silent permanent loss; got {contents!r}"
+    )
+    assert "covered-1" not in contents and "covered-2" not in contents, (
+        "real covered turns (seq 1, 2 <= watermark 5) must still be excluded"
+    )
+    assert "uncovered-3" in contents
+
+
 def test_watermark_follows_whichever_history_the_producer_returns(tmp_path, monkeypatch):
     """Tier 2: #4954(2) — the watermark reflects whichever ``history`` list
     ``self._history_fn()`` returns THIS call, not a value cached from a

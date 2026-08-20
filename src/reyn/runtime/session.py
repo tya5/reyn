@@ -3071,6 +3071,13 @@ class Session:
         if threat_scan is None or not threat_scan.narrowing_engaged():
             return None
         watermark = self._compaction_watermark()
+        # #4954(2): this exact predicate (seq==0 is the #3704 "no
+        # coordinate" sentinel, never excluded) is duplicated in
+        # RouterHistoryBuffer.build_history() (router_history_buffer.py) —
+        # a lead-coder TESTS-READ finding there caught a divergence where
+        # the copy initially forgot the seq==0 case. If a 3rd copy
+        # appears, that is the point to factor this into one shared
+        # predicate function instead.
         active = (m for m in self.history if m.seq == 0 or m.seq > watermark)
         # #4381 PR-2 stage ③: history scan OR the in-flight latch — the
         # latch covers a same-turn tool result whose history entry has not
