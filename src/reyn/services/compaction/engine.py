@@ -1670,6 +1670,71 @@ def _estimate_tokens_list(
     )
 
 
+# #4944 ①: the byte-axis counterpart of estimate_tokens_for_turn/
+# _estimate_tokens_list above. A request-BODY-BYTE limit (an HTTP 413 from a
+# proxy such as nginx, #4885/#4944) says nothing about TOKENS — the token
+# estimators above cannot answer "how many bytes will this turn put on the
+# wire", and building a second one is deliberately narrow in scope, not a
+# competing accounting system: it measures the SAME boundary the token
+# estimators already commit to (router_history_buffer.py's
+# ``_serialise_turn`` docstring, #2957 PR-B — "this method's output is the
+# CANONICAL quantity ... Do not reintroduce a second 'what does the
+# provider see' quantity"). ``head``/``tail``/``new_msg`` passed into
+# retry_loop are already ``_serialise_turn`` output (via
+# ``decompose_history_for_retry``), so measuring THEIR wire-JSON byte size
+# is measuring the same canonical quantity on the byte axis, not a second
+# one.
+def estimate_turn_bytes(turn: dict) -> int:
+    """Estimate the wire-JSON byte size of one already-serialised turn dict.
+
+    ``json.dumps(..., ensure_ascii=False).encode("utf-8")`` mirrors the
+    shape litellm's own request serialisation takes (a UTF-8 JSON message
+    list) closely enough to size the byte axis — it does not need to be
+    litellm's EXACT byte-for-byte wire form (provider-specific wrapping is
+    a separate, unmeasurable layer — see ``estimate_wire_bytes``'s own
+    docstring for how that is handled, not chased here)."""
+    return len(json.dumps(turn, ensure_ascii=False).encode("utf-8"))
+
+
+def _estimate_bytes_list(turns: list[dict]) -> int:
+    """Estimate total wire bytes for a list of already-serialised turn dicts."""
+    return sum(estimate_turn_bytes(t) for t in turns)
+
+
+def estimate_wire_bytes(
+    *,
+    SP: str,
+    head: list[dict],
+    summary: dict | None,
+    tail: list[dict],
+    new_msg: dict,
+) -> int:
+    """Estimate the total request-body byte size retry_loop's own payload
+    would put on the wire — the byte-axis sibling of the token ``estimate``
+    already computed in retry_loop's success path (same 5 components: SP,
+    head, summary, tail, new_msg).
+
+    KNOWN under-measurement (disclosed, not chased): this is ``history
+    bytes + SP bytes`` — it does NOT include the tools-schema bytes (not
+    threaded into retry_loop today) or whatever wrapper litellm/the
+    provider add per-request. Architect's #4944① ruling: this under-count
+    is deliberately absorbed by #4944②'s learned-from-413 ceiling rather
+    than chased here with a provider-specific correction — the same
+    "widen the floor, not the estimate" shape retry_loop's own token floor
+    already uses (``SP + head_min + summary + tail_min + new_msg``, this
+    function's byte-axis mirror)."""
+    history_bytes = (
+        _estimate_bytes_list(head)
+        + (
+            len(json.dumps(summary, ensure_ascii=False).encode("utf-8"))
+            if summary else 0
+        )
+        + _estimate_bytes_list(tail)
+        + estimate_turn_bytes(new_msg)
+    )
+    return history_bytes + len(SP.encode("utf-8"))
+
+
 # #3783 stage 2: same-cause consecutive-recover cap. Stage 3 will flip the
 # default classification so more exception types recover-by-default instead
 # of raising fatally; without this cap, a cause that shrinking can never fix
@@ -1891,6 +1956,21 @@ async def retry_loop(
                     estimate_tokens=estimate,
                     actual_tokens=actual,
                 )
+
+            # #4944①: measure-and-emit only (not yet consumed for any
+            # decision — #4944②/③) — see estimate_wire_bytes's own
+            # docstring and this event's entry in docs/reference/runtime/
+            # events.md for what "wire_bytes" does and does not include.
+            # A real HTTP 413 (a request-BODY-BYTE limit) is diagnosable
+            # from this trail from day one: the last successful wire_bytes
+            # value bounds where the proxy's limit must sit, without
+            # waiting on #4944②/③'s learned-ceiling machinery to land.
+            engine._events.emit(
+                "compaction_wire_bytes_measured",
+                wire_bytes=estimate_wire_bytes(
+                    SP=SP, head=head, summary=summary, tail=tail, new_msg=new_msg,
+                ),
+            )
 
             return response
 

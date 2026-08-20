@@ -244,6 +244,7 @@ AUDIT_EVENT_KINDS: frozenset[str] = frozenset({
     "compaction_schema_invalid",
     "compaction_shrink_recovered",
     "compaction_started",
+    "compaction_wire_bytes_measured",
     "composer_dropped",
     "composer_fired",
     "config_reload_rejected",
