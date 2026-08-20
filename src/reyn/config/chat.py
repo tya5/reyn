@@ -800,7 +800,30 @@ class CompactionConfig:
     # a silently-accepted empty summary) — operator-tunable via this field
     # if a specific deployment's models warrant a different budget.
     max_schema_reprompt_attempts: int = 1
+    # #4957 (owner: "max iterations は config ノブにしておいた方が良いね") —
+    # retry_loop's own `max_iterations` safety cap, previously a signature
+    # default only (8) with no operator-facing knob: router_loop_driver.py
+    # never passed it, so production always ran at 8 with no way to raise
+    # it. Owner's own real machine hits an HTTP 413 EVERY turn (#4954);
+    # #4947 ③'s mid-split floor means a persistent 413 now fails fast
+    # rather than cycling, but a persistent NON-byte-limit failure (a
+    # flaky provider, a rate limit) can still exhaust this cap before the
+    # conversation would have otherwise converged. This is an ESCAPE
+    # VALVE, not a cure: raising it just delays exhaustion if the
+    # underlying cause never resolves (#4954's own persistent-compaction
+    # fix, once landed, reduces how many shrink steps are needed per turn
+    # in the first place — this knob does not substitute for that).
+    max_shrink_iterations: int = 8
     section_token_caps: CompactionSectionCaps = field(default_factory=CompactionSectionCaps)
+
+    def __post_init__(self) -> None:
+        if self.max_shrink_iterations < 1:
+            raise ValueError(
+                "chat.compaction.max_shrink_iterations must be >= 1 (0 would "
+                "never run the shrink loop at all, immediately raising on "
+                "the first overflow); got "
+                f"{self.max_shrink_iterations!r}"
+            )
 
 
 @dataclass
@@ -1106,6 +1129,9 @@ def _build_chat_config(raw: object) -> ChatConfig:
             compaction_raw.get(
                 "max_schema_reprompt_attempts", defaults.max_schema_reprompt_attempts
             )
+        ),
+        max_shrink_iterations=int(
+            compaction_raw.get("max_shrink_iterations", defaults.max_shrink_iterations)
         ),
         section_token_caps=section,
     )
