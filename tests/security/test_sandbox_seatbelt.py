@@ -207,10 +207,11 @@ def test_sbpl_profile_security_server_mach_lookup_always_allowed():
     is emitted regardless of policy (default-on, not gated by any
     SandboxPolicy field — owner ruling: "if this makes `gh` work under the
     default config, go ahead"). It is `global-name`-scoped, not a blanket
-    `(allow mach-lookup)` — real measurement (architect, #4932) found this
-    ONE service is what both `security`/Keychain and `gh auth status`
-    (which shells out to `security` for its stored token) need and nothing
-    else in the 9 candidate SBPL classes was required."""
+    `(allow mach-lookup)` — real measurement (architect, #4932, on raw
+    `sandbox-exec` — a 9-candidate-SBPL-class elimination, not re-derived
+    against the real backend here) found this ONE service is what both
+    `security`/Keychain and `gh auth status` (which shells out to
+    `security` for its stored token) need and nothing else was required."""
     expected = '(allow mach-lookup (global-name "com.apple.SecurityServer"))'
 
     # Present under a bare-default policy...
@@ -354,9 +355,16 @@ async def test_seatbelt_security_command_succeeds_under_default_policy():
     review explicitly asked for reproduction through the real backend +
     its full deny-list-included profile). `security` (not the personal
     `gh` CLI, whose success depends on this machine's own stored OAuth
-    token) is the CI-portable witness for the underlying capability: it
-    only needs to enumerate the machine's own keychain search list, not
-    a specific credential.
+    token) needs no machine-specific credential — just the ability to
+    enumerate this machine's own keychain search list.
+
+    ⚠️ This does NOT mean CI verifies the live capability (architect's
+    post-merge correction, #4932): every workflow in `.github/workflows/`
+    runs on `ubuntu-latest`, so this darwin-only test is skipped 100% of
+    the time in CI, always. What CI actually protects is the sibling
+    deterministic test above (the grant literal is in the generated
+    profile) — this live test's own witness is a one-time measurement
+    by whoever runs it locally on a real Mac, not a standing CI guard.
 
     Strip-falsify: this test fails (returncode != 0, "One or more
     parameters passed to a function were not valid" — the exact error
