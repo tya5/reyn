@@ -1670,6 +1670,71 @@ def _estimate_tokens_list(
     )
 
 
+# #4944 ①: the byte-axis counterpart of estimate_tokens_for_turn/
+# _estimate_tokens_list above. A request-BODY-BYTE limit (an HTTP 413 from a
+# proxy such as nginx, #4885/#4944) says nothing about TOKENS — the token
+# estimators above cannot answer "how many bytes will this turn put on the
+# wire", and building a second one is deliberately narrow in scope, not a
+# competing accounting system: it measures the SAME boundary the token
+# estimators already commit to (router_history_buffer.py's
+# ``_serialise_turn`` docstring, #2957 PR-B — "this method's output is the
+# CANONICAL quantity ... Do not reintroduce a second 'what does the
+# provider see' quantity"). ``head``/``tail``/``new_msg`` passed into
+# retry_loop are already ``_serialise_turn`` output (via
+# ``decompose_history_for_retry``), so measuring THEIR wire-JSON byte size
+# is measuring the same canonical quantity on the byte axis, not a second
+# one.
+def estimate_turn_bytes(turn: dict) -> int:
+    """Estimate the wire-JSON byte size of one already-serialised turn dict.
+
+    ``json.dumps(..., ensure_ascii=False).encode("utf-8")`` mirrors the
+    shape litellm's own request serialisation takes (a UTF-8 JSON message
+    list) closely enough to size the byte axis — it does not need to be
+    litellm's EXACT byte-for-byte wire form (provider-specific wrapping is
+    a separate, unmeasurable layer — see ``estimate_wire_bytes``'s own
+    docstring for how that is handled, not chased here)."""
+    return len(json.dumps(turn, ensure_ascii=False).encode("utf-8"))
+
+
+def _estimate_bytes_list(turns: list[dict]) -> int:
+    """Estimate total wire bytes for a list of already-serialised turn dicts."""
+    return sum(estimate_turn_bytes(t) for t in turns)
+
+
+def estimate_wire_bytes(
+    *,
+    SP: str,
+    head: list[dict],
+    summary: dict | None,
+    tail: list[dict],
+    new_msg: dict,
+) -> int:
+    """Estimate the total request-body byte size retry_loop's own payload
+    would put on the wire — the byte-axis sibling of the token ``estimate``
+    already computed in retry_loop's success path (same 5 components: SP,
+    head, summary, tail, new_msg).
+
+    KNOWN under-measurement (disclosed, not chased): this is ``history
+    bytes + SP bytes`` — it does NOT include the tools-schema bytes (not
+    threaded into retry_loop today) or whatever wrapper litellm/the
+    provider add per-request. Architect's #4944① ruling: this under-count
+    is deliberately absorbed by #4944②'s learned-from-413 ceiling rather
+    than chased here with a provider-specific correction — the same
+    "widen the floor, not the estimate" shape retry_loop's own token floor
+    already uses (``SP + head_min + summary + tail_min + new_msg``, this
+    function's byte-axis mirror)."""
+    history_bytes = (
+        _estimate_bytes_list(head)
+        + (
+            len(json.dumps(summary, ensure_ascii=False).encode("utf-8"))
+            if summary else 0
+        )
+        + _estimate_bytes_list(tail)
+        + estimate_turn_bytes(new_msg)
+    )
+    return history_bytes + len(SP.encode("utf-8"))
+
+
 # #3783 stage 2: same-cause consecutive-recover cap. Stage 3 will flip the
 # default classification so more exception types recover-by-default instead
 # of raising fatally; without this cap, a cause that shrinking can never fix
@@ -1823,6 +1888,13 @@ async def retry_loop(
     _new_msg_tokens_floor = estimate_tokens_for_turn(new_msg, model, use_chars4=use_chars4)
 
     for _iteration in range(max_iterations):
+        # #4944①: tracks whether THIS iteration reached main_call — a
+        # compact() call that overflows raises from a DIFFERENT payload
+        # (raw_middle + section_caps, not head/summary/tail/new_msg) that
+        # this function does not measure. Guards the failure-side
+        # wire_bytes emission below so it never mislabels "nothing
+        # resembling this was sent" as a rejected byte count.
+        _this_iteration_called_main_call = False
         try:
             if raw_middle:
                 # Compact raw_middle into the running summary.
@@ -1856,6 +1928,7 @@ async def retry_loop(
                     # not a per-exception-type allowlist at this site.
                     raise CompactionOverflowError(str(exc)) from exc
 
+            _this_iteration_called_main_call = True
             response = await main_call(
                 SP=SP,
                 head=head,
@@ -1892,6 +1965,26 @@ async def retry_loop(
                     actual_tokens=actual,
                 )
 
+            # #4944①: measure-and-emit only (not yet consumed for any
+            # decision — #4944②/③) — see estimate_wire_bytes's own
+            # docstring and this event's entry in docs/reference/runtime/
+            # events.md for what "wire_bytes" does and does not include.
+            # ``accepted=True``: this size was SENT and SUCCEEDED, so the
+            # real limit is >= this value (a lower bound). Paired with the
+            # ``accepted=False`` emission below (lead-coder's TESTS-READ
+            # finding on this PR's first version: a turn whose EVERY
+            # attempt 413s — owner's own real-machine shape — would emit
+            # this event zero times without that pairing, leaving no
+            # diagnostic trail at all for exactly the case #4944 exists to
+            # diagnose).
+            engine._events.emit(
+                "compaction_wire_bytes_measured",
+                wire_bytes=estimate_wire_bytes(
+                    SP=SP, head=head, summary=summary, tail=tail, new_msg=new_msg,
+                ),
+                accepted=True,
+            )
+
             return response
 
         except (CompactionOverflowError, ContextOverflowError) as _overflow_exc:
@@ -1925,6 +2018,23 @@ async def retry_loop(
             _last_recover_is_byte_limit = (
                 getattr(_overflow_exc.__cause__, "status_code", None) == 413
             )
+            if _last_recover_is_byte_limit and _this_iteration_called_main_call:
+                # #4944①: the size that WAS SENT and got REJECTED — the
+                # real limit is < this value (an upper bound), the pair to
+                # the ``accepted=True`` emission above. ``head``/``tail``/
+                # ``summary``/``new_msg`` still hold exactly what this
+                # failed attempt sent — the shrink-escalation ladder below
+                # has not run yet this iteration. Guarded on
+                # ``_this_iteration_called_main_call``: a compact()-origin
+                # 413 raised from a DIFFERENT, unmeasured payload (see the
+                # flag's own comment above the loop).
+                engine._events.emit(
+                    "compaction_wire_bytes_measured",
+                    wire_bytes=estimate_wire_bytes(
+                        SP=SP, head=head, summary=summary, tail=tail, new_msg=new_msg,
+                    ),
+                    accepted=False,
+                )
             engine._events.emit(
                 "compaction_shrink_recovered",
                 cause=_cause,
