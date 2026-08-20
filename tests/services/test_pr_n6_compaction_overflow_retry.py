@@ -991,3 +991,55 @@ def test_413_recovery_same_cause_cap_does_not_cut_off_the_binary_search() -> Non
     assert "consecutive times" not in message, (
         f"the same-cause cap fired instead of the binary-search floor: {message!r}"
     )
+
+
+def test_max_iterations_exhaustion_names_413_when_last_cause_was_byte_limit() -> None:
+    """Tier 2: #4947 ② — when retry_loop exhausts max_iterations, the
+    generic "without convergence" message must name the byte limit if the
+    LAST recovered cause was one, instead of leaving an operator to
+    re-derive "413" from the event log. #4947's own repro is a
+    compact()-origin 413 riding the same-cause cap's existing exemption
+    (unconditional on ``_last_recover_is_byte_limit``, unchanged here —
+    whether that exemption's PREDICATE should instead key on binary-search
+    progress is ①, still under architect review) all the way to
+    max_iterations; this test exercises only the message this PR actually
+    changes, via a main_call-origin 413 (the predicate ② reads from is
+    origin-agnostic — same field, same message, either origin), and a
+    ``max_iterations`` small enough that the byte-limit binary-search floor
+    (already covered, named 413, by ``test_413_recovery_does_not_claim_exceeds_t_max``)
+    is never reached.
+
+    Falsification (performed during review): with the new branch removed,
+    this test goes RED — the generic message contains no "413".
+    """
+    cfg = _make_cfg()
+    engine = _OverflowingEngine(fail_compact=False)
+    learner = TokenMultiplierLearner(storage_path=Path(tempfile.mkdtemp()) / "m.json")
+
+    # Large enough that 3 iterations of tail-halving never reaches
+    # tail_min_tokens (1500) or the SP+new_msg floor — this test wants
+    # max_iterations exhaustion, not the binary-search floor raise the
+    # other #4885 tests already cover.
+    head = _turns(["h" * 4000] * 20)
+    tail = _turns(["t" * 4000] * 20)
+    raw_middle: list[dict] = []
+    new_msg = {"role": "user", "content": "q", "seq": 99}
+
+    async def _always_413(**kwargs):
+        raise ContextOverflowError("simulated 413") from _FakeStatusError(
+            "Request Entity Too Large", status_code=413,
+        )
+
+    with pytest.raises(UnrecoveredError) as excinfo:
+        asyncio.run(retry_loop(
+            SP="sp", head=head, summary=None, raw_middle=raw_middle,
+            tail=tail, new_msg=new_msg, cfg=cfg, model="test-model",
+            engine=engine,  # type: ignore[arg-type]
+            learner=learner,
+            main_call=_always_413,
+            max_iterations=3,
+        ))
+
+    message = str(excinfo.value)
+    assert "max_iterations" in message
+    assert "413" in message
