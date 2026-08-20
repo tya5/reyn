@@ -248,14 +248,12 @@ def test_retry_loop_success_emits_compaction_wire_bytes_measured() -> None:
     )
 
 
-def test_retry_loop_never_emits_compaction_wire_bytes_measured_before_success() -> None:
-    """Tier 2: #4944① — an overflow that never succeeds emits ZERO
-    ``compaction_wire_bytes_measured`` events. The event names the byte
-    size of a request that WAS actually sent successfully — emitting it on
-    a failed attempt would mislabel a rejected size as an accepted one,
-    corrupting exactly the diagnostic trail this event exists to provide
-    (#4944①'s stated purpose: bounding where a real 413's limit sits from
-    the last KNOWN-successful byte count)."""
+def test_retry_loop_never_emits_compaction_wire_bytes_measured_for_a_non_byte_overflow() -> None:
+    """Tier 2: #4944① — a plain (non-413) overflow that never succeeds
+    emits ZERO ``compaction_wire_bytes_measured`` events. This event exists
+    to bound a request-BODY-BYTE limit specifically; a token-only overflow
+    (no ``status_code == 413`` cause) says nothing about that limit, so
+    emitting here would be a diagnostic false lead, not a true bound."""
     from reyn.services.compaction.engine import ContextOverflowError, UnrecoveredError
 
     cfg = CompactionConfig(
@@ -297,4 +295,115 @@ def test_retry_loop_never_emits_compaction_wire_bytes_measured_before_success() 
     assert measured == [], (
         f"a run that never succeeded must emit zero compaction_wire_bytes_"
         f"measured events; got {[e.data for e in measured]!r}"
+    )
+
+
+def test_retry_loop_success_event_carries_accepted_true() -> None:
+    """Tier 2: #4944① — the success-side emission carries ``accepted=True``
+    (the size that WAS sent and succeeded — a lower bound on the real
+    limit), distinguishing it from the failure-side emission below."""
+    cfg = CompactionConfig(
+        component_weights={
+            "head": 10, "body": 5, "tail": 15, "new_msg": 10, "compaction_batch": 60,
+        },
+        section_weights={
+            "topic_arc": 5, "decisions": 40, "pending": 25,
+            "session_user_facts": 10, "artifacts_referenced": 35,
+        },
+        section_caps_spec_tokens=100,
+        use_chars4_estimate=True,
+    )
+    engine = _MinimalCompactionEngine()
+    learner = TokenMultiplierLearner(storage_path=Path(tempfile.mkdtemp()) / "m.json")
+
+    async def _success_call(**kwargs):
+        from types import SimpleNamespace
+        return SimpleNamespace(usage=SimpleNamespace(prompt_tokens=800), choices=[])
+
+    seen: list = []
+    engine._events.add_subscriber(lambda e: seen.append(e))
+
+    asyncio.run(retry_loop(
+        SP="sp", head=[{"role": "user", "content": "h", "seq": 1}], summary=None,
+        raw_middle=[], tail=[{"role": "user", "content": "t", "seq": 2}],
+        new_msg={"role": "user", "content": "q", "seq": 3},
+        cfg=cfg, model="test-model",
+        engine=engine,  # type: ignore[arg-type]
+        learner=learner, main_call=_success_call, max_iterations=8,
+    ))
+
+    measured = [e for e in seen if e.type == "compaction_wire_bytes_measured"]
+    assert measured, "expected at least one compaction_wire_bytes_measured event on success"
+    assert all(e.data.get("accepted") is True for e in measured), (
+        f"every success-path emission must carry accepted=True; got "
+        f"{[e.data.get('accepted') for e in measured]!r}"
+    )
+
+
+def test_retry_loop_that_only_413s_still_emits_wire_bytes_with_accepted_false() -> None:
+    """Tier 2: #4944① — lead-coder's TESTS-READ finding on this PR's first
+    version, now fixed: a turn whose EVERY attempt gets a real HTTP 413
+    (owner's own real-machine shape, never reaching success) used to emit
+    ZERO ``compaction_wire_bytes_measured`` events — no diagnostic trail at
+    all for exactly the case #4944 exists to diagnose. It must now emit
+    one ``accepted=False`` event per recovered 413 iteration, each
+    carrying the byte size that WAS SENT and REJECTED (an upper bound on
+    the real limit)."""
+    from reyn.services.compaction.engine import UnrecoveredError
+
+    class _FakeStatusError(Exception):
+        def __init__(self, message: str, *, status_code: int) -> None:
+            super().__init__(message)
+            self.status_code = status_code
+
+    cfg = CompactionConfig(
+        component_weights={
+            "head": 10, "body": 5, "tail": 15, "new_msg": 10, "compaction_batch": 60,
+        },
+        section_weights={
+            "topic_arc": 5, "decisions": 40, "pending": 25,
+            "session_user_facts": 10, "artifacts_referenced": 35,
+        },
+        section_caps_spec_tokens=100,
+        use_chars4_estimate=True,
+    )
+    engine = _MinimalCompactionEngine()
+    learner = TokenMultiplierLearner(storage_path=Path(tempfile.mkdtemp()) / "m.json")
+
+    head = [{"role": "user", "content": "h", "seq": 1}]
+    tail = [{"role": "user", "content": "t", "seq": 2}]
+    new_msg = {"role": "user", "content": "q", "seq": 3}
+
+    async def _always_413(**kwargs):
+        from reyn.services.compaction.engine import ContextOverflowError
+        raise ContextOverflowError("simulated 413") from _FakeStatusError(
+            "Request Entity Too Large", status_code=413,
+        )
+
+    seen: list = []
+    engine._events.add_subscriber(lambda e: seen.append(e))
+
+    try:
+        asyncio.run(retry_loop(
+            SP="sp", head=head, summary=None, raw_middle=[], tail=tail,
+            new_msg=new_msg, cfg=cfg, model="test-model",
+            engine=engine,  # type: ignore[arg-type]
+            learner=learner, main_call=_always_413, max_iterations=40,
+        ))
+    except UnrecoveredError:
+        pass
+
+    measured = [e for e in seen if e.type == "compaction_wire_bytes_measured"]
+    assert measured, (
+        "a run whose every attempt 413s must still emit at least one "
+        "compaction_wire_bytes_measured event — this is the exact gap "
+        "the fix closes"
+    )
+    assert all(e.data.get("accepted") is False for e in measured), (
+        f"every emission on a run that never succeeded must carry "
+        f"accepted=False; got {[e.data.get('accepted') for e in measured]!r}"
+    )
+    assert all(e.data.get("wire_bytes", 0) > 0 for e in measured), (
+        f"the rejected size must be a real positive measurement, not a "
+        f"placeholder; got {[e.data.get('wire_bytes') for e in measured]!r}"
     )

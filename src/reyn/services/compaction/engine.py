@@ -1888,6 +1888,13 @@ async def retry_loop(
     _new_msg_tokens_floor = estimate_tokens_for_turn(new_msg, model, use_chars4=use_chars4)
 
     for _iteration in range(max_iterations):
+        # #4944①: tracks whether THIS iteration reached main_call — a
+        # compact() call that overflows raises from a DIFFERENT payload
+        # (raw_middle + section_caps, not head/summary/tail/new_msg) that
+        # this function does not measure. Guards the failure-side
+        # wire_bytes emission below so it never mislabels "nothing
+        # resembling this was sent" as a rejected byte count.
+        _this_iteration_called_main_call = False
         try:
             if raw_middle:
                 # Compact raw_middle into the running summary.
@@ -1921,6 +1928,7 @@ async def retry_loop(
                     # not a per-exception-type allowlist at this site.
                     raise CompactionOverflowError(str(exc)) from exc
 
+            _this_iteration_called_main_call = True
             response = await main_call(
                 SP=SP,
                 head=head,
@@ -1961,15 +1969,20 @@ async def retry_loop(
             # decision — #4944②/③) — see estimate_wire_bytes's own
             # docstring and this event's entry in docs/reference/runtime/
             # events.md for what "wire_bytes" does and does not include.
-            # A real HTTP 413 (a request-BODY-BYTE limit) is diagnosable
-            # from this trail from day one: the last successful wire_bytes
-            # value bounds where the proxy's limit must sit, without
-            # waiting on #4944②/③'s learned-ceiling machinery to land.
+            # ``accepted=True``: this size was SENT and SUCCEEDED, so the
+            # real limit is >= this value (a lower bound). Paired with the
+            # ``accepted=False`` emission below (lead-coder's TESTS-READ
+            # finding on this PR's first version: a turn whose EVERY
+            # attempt 413s — owner's own real-machine shape — would emit
+            # this event zero times without that pairing, leaving no
+            # diagnostic trail at all for exactly the case #4944 exists to
+            # diagnose).
             engine._events.emit(
                 "compaction_wire_bytes_measured",
                 wire_bytes=estimate_wire_bytes(
                     SP=SP, head=head, summary=summary, tail=tail, new_msg=new_msg,
                 ),
+                accepted=True,
             )
 
             return response
@@ -2005,6 +2018,23 @@ async def retry_loop(
             _last_recover_is_byte_limit = (
                 getattr(_overflow_exc.__cause__, "status_code", None) == 413
             )
+            if _last_recover_is_byte_limit and _this_iteration_called_main_call:
+                # #4944①: the size that WAS SENT and got REJECTED — the
+                # real limit is < this value (an upper bound), the pair to
+                # the ``accepted=True`` emission above. ``head``/``tail``/
+                # ``summary``/``new_msg`` still hold exactly what this
+                # failed attempt sent — the shrink-escalation ladder below
+                # has not run yet this iteration. Guarded on
+                # ``_this_iteration_called_main_call``: a compact()-origin
+                # 413 raised from a DIFFERENT, unmeasured payload (see the
+                # flag's own comment above the loop).
+                engine._events.emit(
+                    "compaction_wire_bytes_measured",
+                    wire_bytes=estimate_wire_bytes(
+                        SP=SP, head=head, summary=summary, tail=tail, new_msg=new_msg,
+                    ),
+                    accepted=False,
+                )
             engine._events.emit(
                 "compaction_shrink_recovered",
                 cause=_cause,
