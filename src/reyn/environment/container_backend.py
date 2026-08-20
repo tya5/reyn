@@ -50,6 +50,7 @@ from reyn.security.sandbox.backend import (
     SandboxResult,
     WrappedCommand,
 )
+from reyn.security.sandbox.capability import CapabilityDeclaration, CapabilitySupport
 from reyn.security.sandbox.policy import POST_KILL_DRAIN_GRACE_SECONDS, SandboxPolicy
 
 # Sync runner: execute argv (optionally stdin), return SandboxResult. Injected so
@@ -377,6 +378,18 @@ class DockerEnvironmentBackend:
         deny_subprocess=AxisEnforcement.DOES_NOT_ENFORCE,
         env_deny_names=AxisEnforcement.DOES_NOT_ENFORCE,
         allow_env_names=AxisEnforcement.DOES_NOT_ENFORCE,
+    )
+
+    # #4935: NOT_SUPPORTED — the named-service capability class this
+    # declares (`ipc_named_service`) is a macOS Mach-IPC concept
+    # (`com.apple.SecurityServer` and siblings, see `capability.py`'s own
+    # module docstring); Docker containers run on Linux, where no
+    # equivalent named-service ACL mechanism exists for this backend to
+    # express, granted or not. Same "the question does not apply" shape as
+    # Landlock's own declaration, for a different underlying reason
+    # (container namespace isolation, not an SBPL-style rule language).
+    supported_capabilities: CapabilityDeclaration = CapabilityDeclaration(
+        ipc_named_service=CapabilitySupport.NOT_SUPPORTED,
     )
 
     def __init__(

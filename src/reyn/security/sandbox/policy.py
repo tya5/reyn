@@ -451,6 +451,37 @@ def unenforced_axes(backend: "SandboxBackend", policy: SandboxPolicy) -> list[st
     return axes
 
 
+def unsupported_required_capabilities(
+    backend: "SandboxBackend", require_capabilities: "list[str]",
+) -> list[str]:
+    """Return the capability names *required* (``sandbox.require_capabilities``)
+    but NOT supported by *backend* — #4935, the opt-in companion to
+    :func:`unenforced_axes` above, same shape (pure function of the
+    declaration + what was actually asked for, no I/O).
+
+    Reads ``backend.supported_capabilities`` (a
+    :class:`~.capability.CapabilityDeclaration`, D1: the backend's own
+    declaration, never probed here — see that module's own docstring for
+    the full design and the CI-witness gap this declaration carries for
+    Seatbelt specifically). An empty return means every REQUIRED capability
+    is supported by the resolved backend — it says nothing about
+    capabilities the operator did not require (mirrors
+    :func:`unenforced_axes`'s own "not the complement of the declaration"
+    caveat).
+
+    The caller (:func:`~reyn.security.sandbox.get_default_backend`) applies
+    ``sandbox.on_unsupported`` — the SAME 3-way knob "no backend available"
+    already uses — to a non-empty return; this function only measures, it
+    never raises/warns/logs itself (D1 boundary: declare, don't act)."""
+    declared = backend.supported_capabilities.as_dict()
+    from .capability import CapabilitySupport  # noqa: PLC0415 — avoid a module-level cycle
+
+    return [
+        name for name in require_capabilities
+        if declared.get(name) is CapabilitySupport.NOT_SUPPORTED
+    ]
+
+
 #: #3823: per-backend prose explaining WHY an axis is unenforced there — the
 #: same 2-value classification (enforced/unenforced) architect and lead-coder
 #: settled on (owner: "reyn が allow_env_names を書けると公開している以上,

@@ -1078,6 +1078,14 @@
 #                   WINNING over op-declared fields, so a skill or the LLM
 #                   cannot widen it. Omitted (default) = no agent-level
 #                   restriction.
+#   require_capabilities: #4935, opt-in only, empty (default) = no run
+#                   affected. Named-service capability classes the
+#                   resolved backend must support — today only
+#                   "ipc_named_service" (Seatbelt's com.apple.
+#                   SecurityServer grant, #4937). An unknown name raises.
+#                   A resolved backend that doesn't support a required
+#                   capability triggers on_unsupported (same 3-way knob
+#                   above, not a new vocabulary).
 # -----------------------------------------------------------------------------
 # sandbox:
 #   backend: auto
@@ -1091,6 +1099,7 @@
 #     allow_write_paths: ["{{workspace}}", "/tmp"]
 #     deny_env_names: []
 #     timeout_seconds: 600
+#   require_capabilities: []
 
 
 # -----------------------------------------------------------------------------

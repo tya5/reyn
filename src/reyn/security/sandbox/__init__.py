@@ -80,37 +80,96 @@ def get_default_backend(config: "SandboxConfig | None" = None) -> SandboxBackend
     if config is None:
         backend_name = "auto"
         on_unsupported = "warn"
+        require_capabilities: "list[str]" = []
     else:
         backend_name = config.backend
         on_unsupported = config.on_unsupported
+        require_capabilities = config.require_capabilities
 
     if backend_name == "auto":
         # #1660: pass on_unsupported so the auto path applies it when no platform
         # backend is available (previously a SILENT NoopBackend fallback — the
         # selection-time silence + the broken fail-closed knob bug). The supported-
         # platform selection (Seatbelt/Landlock available) is unaffected.
-        return _auto_select(SeatbeltBackend, LandlockBackend, on_unsupported)
+        resolved = _auto_select(SeatbeltBackend, LandlockBackend, on_unsupported)
 
     # Explicit backend requested — construct and check availability.
-    if backend_name == "noop":
-        return NoopBackend()
+    elif backend_name == "noop":
+        resolved = NoopBackend()
 
-    if backend_name == "seatbelt":
-        return _resolve_explicit(
+    elif backend_name == "seatbelt":
+        resolved = _resolve_explicit(
             cls=SeatbeltBackend,
             name="seatbelt",
             on_unsupported=on_unsupported,
         )
 
-    if backend_name == "landlock":
-        return _resolve_explicit(
+    elif backend_name == "landlock":
+        resolved = _resolve_explicit(
             cls=LandlockBackend,
             name="landlock",
             on_unsupported=on_unsupported,
         )
 
-    # Should not be reached — SandboxConfig.__post_init__ rejects other values.
-    return NoopBackend()
+    else:
+        # Should not be reached — SandboxConfig.__post_init__ rejects other values.
+        resolved = NoopBackend()
+
+    # #4935: opt-in capability check, applied to whichever backend the
+    # branches above resolved (auto/explicit/noop-fallback all funnel
+    # through here) — ONE check site, not one per branch, so a future 5th
+    # backend_name value gets this for free. Empty require_capabilities
+    # (the default) means this is a guaranteed no-op: no run is affected
+    # unless the operator explicitly named a capability. See
+    # `policy.unsupported_required_capabilities`'s own docstring for what
+    # is and is not measured here, and `_apply_required_capabilities`
+    # below for the on_unsupported application.
+    if require_capabilities:
+        _apply_required_capabilities(resolved, require_capabilities, on_unsupported)
+    return resolved
+
+
+def _apply_required_capabilities(
+    backend: SandboxBackend, require_capabilities: "list[str]", on_unsupported: str,
+) -> None:
+    """#4935: apply ``sandbox.on_unsupported`` to any capability *backend*
+    was required to support (``sandbox.require_capabilities``) but does
+    not. The SAME 3-way knob "no backend available" already uses (owner
+    ruling relayed through architect: "don't make the operator learn a
+    second mental model") — no new vocabulary:
+    - ``error``  → RAISE (fail-closed: refuse to run with a declared-but-
+      unsupported capability requirement).
+    - ``warn``   → LOUD log + continue with the resolved backend anyway
+      (default; matches ``_noop_with_policy``'s own default).
+    - ``ignore`` → silent continue.
+
+    Called AFTER backend resolution (never influences WHICH backend gets
+    picked — #4935's scope is disclosure + opt-in refusal, not a new
+    selection axis) so a capability gap is reported against the backend
+    that actually resolved, not a hypothetical alternative.
+    """
+    from .policy import unsupported_required_capabilities
+
+    missing = unsupported_required_capabilities(backend, require_capabilities)
+    if not missing:
+        return
+    detail = (
+        f"backend {backend.name!r} does not support required "
+        f"capabilit{'y' if len(missing) == 1 else 'ies'}: {missing}"
+    )
+    if on_unsupported == "error":
+        raise RuntimeError(
+            f"sandbox.require_capabilities: {detail} and sandbox.on_unsupported="
+            "'error' → refusing to run. Use a backend that supports the required "
+            "capability, or set sandbox.on_unsupported to 'warn' / 'ignore'."
+        )
+    if on_unsupported == "warn":
+        _logger.warning(
+            "Sandbox: %s — the run will continue, but this capability requirement "
+            "is not met. Set sandbox.on_unsupported: error to refuse instead.",
+            detail,
+        )
+    # "ignore" — no log, no raise; the backend is used as resolved.
 
 
 def _noop_with_policy(on_unsupported: str, detail: str) -> SandboxBackend:

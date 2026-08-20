@@ -111,6 +111,36 @@ def test_declared_policy_with_no_write_scope_keys_says_so(project, capsys):
     assert "neither allow_write_paths nor deny_write_paths appears" in out
 
 
+# ── #4935 — capability disclosure, added to this SAME C-5 section ─────────
+
+
+def test_no_required_capabilities_shows_the_resolved_backends_own_support(project, capsys):
+    """Tier 2: #4935 — with sandbox.require_capabilities left at its
+    default (empty), doctor discloses what the RESOLVED backend itself
+    supports (declaration only, never a probe — D-1) rather than printing
+    nothing about capabilities at all."""
+    run(Namespace(project_root=str(project)))
+    out = capsys.readouterr().out
+    assert "required capabilities: none declared" in out
+    assert "ipc_named_service=" in out
+
+
+def test_a_declared_required_capability_is_shown_with_its_support_mark(project, capsys):
+    """Tier 2: #4935 — a real, known capability name in
+    sandbox.require_capabilities produces one line per name, showing
+    whether the RESOLVED backend supports it — never a probe, the
+    resolved backend's own class-level declaration."""
+    _write_yaml(
+        project / "reyn.yaml",
+        MINIMAL_REYN_YAML + "\nsandbox:\n  require_capabilities: ['ipc_named_service']\n",
+    )
+    run(Namespace(project_root=str(project)))
+    out = capsys.readouterr().out
+    cap_line = next(line for line in out.splitlines() if "required capability:" in line)
+    assert "'ipc_named_service'" in cap_line
+    assert "CapabilitySupport" in cap_line
+
+
 def test_doctor_never_writes_anything_while_reporting_sandbox_posture(project, capsys):
     """Tier 2: D-2 falsify — resolving a real backend must not itself
     perform (or leave evidence of) a write doctor didn't declare it was

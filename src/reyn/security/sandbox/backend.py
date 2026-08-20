@@ -15,6 +15,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Protocol, runtime_checkable
 
+from .capability import CapabilityDeclaration
 from .policy import SandboxPolicy
 
 
@@ -161,6 +162,17 @@ class SandboxBackend(Protocol):
     #: ``enforcement_self_test`` (CLAUDE.md hard rule: that gate's blast
     #: radius stays narrow, deny-leg only, write+spawn only).
     enforced_axes: AxisEnforcementDeclaration
+
+    #: #4935 (D1, mirrors ``enforced_axes`` above exactly): this backend's
+    #: declared support for each registered NAMED-service capability class —
+    #: no default anywhere (:class:`~.capability.CapabilityDeclaration` has
+    #: none), so a backend that forgets a capability fails to construct at
+    #: module import time, same discipline as ``enforced_axes``. Read by
+    #: :func:`~reyn.security.sandbox.policy.unsupported_required_capabilities`
+    #: (production, declaration-only, never probed) — see
+    #: ``reyn.security.sandbox.capability``'s own module docstring for the
+    #: full design and the CI-witness gap this declaration carries.
+    supported_capabilities: CapabilityDeclaration
 
     def available(self) -> bool:
         """Return True if this backend's enforcement mechanism is PRESENT on the

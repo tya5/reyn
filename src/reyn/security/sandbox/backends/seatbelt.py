@@ -37,6 +37,7 @@ from reyn.security.sandbox.backend import (
     SandboxResult,
     WrappedCommand,
 )
+from reyn.security.sandbox.capability import CapabilityDeclaration, CapabilitySupport
 from reyn.security.sandbox.policy import (
     POST_KILL_DRAIN_GRACE_SECONDS,
     SandboxPolicy,
@@ -327,6 +328,19 @@ class SeatbeltBackend:
         deny_subprocess=AxisEnforcement.ENFORCES,
         env_deny_names=AxisEnforcement.ENFORCES,
         allow_env_names=AxisEnforcement.ENFORCES,
+    )
+
+    # #4935: SBPL can express a named-service mach-lookup grant (SUPPORTED)
+    # — proven, not assumed, by #4937's own `com.apple.SecurityServer` grant
+    # in `_build_sbpl_profile` above actually working through this backend's
+    # real `run()` path. See `capability.py`'s own module docstring for the
+    # scope of this claim (ONE proven service name, 2 more known-needed but
+    # not yet granted — this declaration is "the mechanism exists", not
+    # "every named service anyone might need already works") and for the
+    # CI-witness gap (this claim has no CI-runnable check — 0 macOS
+    # runners — verified once here, by a human, on a real Mac).
+    supported_capabilities: CapabilityDeclaration = CapabilityDeclaration(
+        ipc_named_service=CapabilitySupport.SUPPORTED,
     )
 
     def available(self) -> bool:

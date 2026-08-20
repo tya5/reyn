@@ -42,6 +42,7 @@ from ..backend import (
     SandboxResult,
     WrappedCommand,
 )
+from ..capability import CapabilityDeclaration, CapabilitySupport
 from ..policy import (
     POST_KILL_DRAIN_GRACE_SECONDS,
     SandboxPolicy,
@@ -291,6 +292,21 @@ class LandlockBackend:
         deny_subprocess=AxisEnforcement.ENFORCES,
         env_deny_names=AxisEnforcement.ENFORCES,
         allow_env_names=AxisEnforcement.ENFORCES,
+    )
+
+    # #4935: NOT_SUPPORTED — not a gap, a research finding (architect,
+    # docs.kernel.org Landlock userspace-api, 2026-08-20). Landlock is
+    # RESTRICT-ONLY: "access rights that are not specifically listed here
+    # are not going to be denied by this ruleset when it is enacted"
+    # (verbatim). There is no "grant a named service" operation in
+    # Landlock's model at all — the #4932-class failure (an enumeration
+    # gap silently reading as denial) cannot occur here structurally,
+    # because nothing Landlock does not enumerate is ever denied in the
+    # first place. See `capability.py`'s own module docstring for the full
+    # argument (D2 still applies: no speculative 3rd value for "the
+    # question doesn't apply").
+    supported_capabilities: CapabilityDeclaration = CapabilityDeclaration(
+        ipc_named_service=CapabilitySupport.NOT_SUPPORTED,
     )
 
     def __init__(self) -> None:

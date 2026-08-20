@@ -23,6 +23,7 @@ from .backend import (
     SandboxResult,
     WrappedCommand,
 )
+from .capability import CapabilityDeclaration, CapabilitySupport
 from .policy import POST_KILL_DRAIN_GRACE_SECONDS, SandboxPolicy, resolve_passthrough_env
 
 _logger = logging.getLogger(__name__)
@@ -85,6 +86,16 @@ class NoopBackend:
         deny_subprocess=AxisEnforcement.DOES_NOT_ENFORCE,
         env_deny_names=AxisEnforcement.ENFORCES,
         allow_env_names=AxisEnforcement.ENFORCES,
+    )
+
+    # #4935: SUPPORTED — trivially, not because Noop has a grant mechanism,
+    # but because it restricts NOTHING (enforced_axes above, all
+    # DOES_NOT_ENFORCE): there is no default it needs a named-service
+    # exception to widen. A required capability under Noop is reachable by
+    # construction, same reasoning `probe_argv`'s own Noop exemption uses
+    # for "nothing to differentiate on".
+    supported_capabilities: CapabilityDeclaration = CapabilityDeclaration(
+        ipc_named_service=CapabilitySupport.SUPPORTED,
     )
 
     def available(self) -> bool:
