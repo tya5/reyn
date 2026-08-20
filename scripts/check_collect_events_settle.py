@@ -81,13 +81,31 @@ inner coroutine is still normally executing and hasn't returned yet.
 ## What counts as "safe to read after" (a yield point)
 
 - ``await settle(...)`` / ``await <x>.drain()`` — the explicit fix.
-- ``await asyncio.sleep(...)`` — a real yield; used by a small number of
-  hand-rolled polling loops (``while cond: await asyncio.sleep(N)``) that
-  predate ``settle()`` and are equally safe (polling yields control
-  repeatedly, giving the consumer a chance to run, same as ``_wait_for``).
-- ``await <call whose name contains "wait">(...)`` — covers the
-  ``_wait_for``/``wait_until``/``_poll``-style polling helpers already in
-  use across the suite, without hardcoding every helper's exact name.
+- ``await asyncio.sleep(...)`` SPECIFICALLY — a real yield; used by a
+  small number of hand-rolled polling loops (``while cond: await
+  asyncio.sleep(N)``) that predate ``settle()`` and are equally safe
+  (polling yields control repeatedly, giving the consumer a chance to
+  run, same as ``_wait_for``). Matched by attribute name AND receiver
+  (``asyncio.sleep``, not any object's own ``.sleep()`` method) — a
+  receiver-less attribute match would be too permissive.
+- ``await <name>(...)`` where *name* is in the CLOSED
+  ``_POLLING_HELPER_NAMES`` set (``_wait_for``, ``_wait_for_event``,
+  ``_wait_for_file``, ``_wait_for_calls``, ``_wait_until``,
+  ``wait_until``, ``_poll``) — the polling helpers actually in use across
+  this suite, enumerated explicitly. NOT a substring match on "wait":
+  lead-coder measured directly that ``"wait" in name.lower()`` — an
+  earlier draft of this gate — silently accepted every bare-name async
+  helper whose name merely contains "await" as a substring (``"await"``
+  itself contains ``"wait"`` starting at its second character —
+  ``_await_reply``, ``_await_scheduled_source_build``, and more all
+  matched, none of them polling helpers), and would separately have
+  accepted ``<x>.wait()`` (e.g. ``asyncio.Event.wait()``) had it ever hit
+  the Name-callee branch — ``Event.wait()`` does NOT reliably yield
+  (CPython returns immediately, without ever yielding, if the event is
+  already set). A wrong ACCEPT here is exactly the silent-pass class this
+  gate exists to close, so the set is closed, not fuzzy-matched
+  (mirrors ``bounding.py``'s ``BOUNDING_KEYS``/``UnknownBoundingKeyError``
+  shape) — an unrecognized await name is never treated as a yield point.
 - A tracked-name LOAD that occurs inside a ``lambda`` is exempt outright,
   regardless of yield points in the enclosing function — a lambda body is
   always a PREDICATE passed to some caller (invariably one of the above
@@ -149,6 +167,30 @@ _SETTLE_FUNC_NAME = "settle"
 _DRAIN_METHOD_NAME = "drain"
 _SLEEP_METHOD_NAME = "sleep"
 
+# lead-coder finding (measured, not guessed): a fuzzy `"wait" in name`
+# substring check is broken two ways — (1) "await" itself CONTAINS "wait"
+# as a substring, so it silently accepted every bare-name async helper
+# whose name happens to start with "await" (`_await_reply`,
+# `_await_scheduled_source_build`, ...), none of which are polling
+# helpers; (2) it would also accept `<x>.wait()` (e.g.
+# `asyncio.Event.wait()`) if such a call ever matched the Name-callee
+# branch, and `Event.wait()` does NOT reliably yield — CPython's own
+# implementation returns immediately, without ever yielding, if the
+# event is already set. A wrong ACCEPT here is exactly the silent-pass
+# class this gate exists to close, so the accepted set is CLOSED
+# (mirrors `bounding.py`'s `BOUNDING_KEYS`/`UnknownBoundingKeyError`
+# shape) — an unrecognized await is never treated as a yield point.
+# `Event.wait` is deliberately NOT in this set.
+_POLLING_HELPER_NAMES = frozenset({
+    "_wait_for",
+    "_wait_for_event",
+    "_wait_for_file",
+    "_wait_for_calls",
+    "_wait_until",
+    "wait_until",
+    "_poll",
+})
+
 
 def _call_func_name(call: ast.Call) -> "str | None":
     """The plain name of a call's callee, if it's a bare ``Name`` — e.g.
@@ -162,20 +204,27 @@ def _call_func_name(call: ast.Call) -> "str | None":
 
 def _is_yield_point(node: ast.Await) -> bool:
     """True if awaiting *node* is safe to read a tracked name after —
-    settle()/drain(), asyncio.sleep(), or a *wait*-named polling helper.
-    See the module docstring's "What counts as a yield point" section."""
+    settle()/drain(), ``asyncio.sleep(...)`` specifically (not any
+    object's own ``.sleep()`` method), or a name in the CLOSED
+    ``_POLLING_HELPER_NAMES`` set. See the module docstring's "What
+    counts as a yield point" section and ``_POLLING_HELPER_NAMES``'s own
+    comment for why this is a closed enumeration, not a substring match."""
     call = node.value
     if not isinstance(call, ast.Call):
         return False
     name = _call_func_name(call)
     if name == _SETTLE_FUNC_NAME:
         return True
-    if name is not None and "wait" in name.lower():
+    if name is not None and name in _POLLING_HELPER_NAMES:
         return True
     if isinstance(call.func, ast.Attribute):
         if call.func.attr == _DRAIN_METHOD_NAME:
             return True
-        if call.func.attr == _SLEEP_METHOD_NAME:
+        if (
+            call.func.attr == _SLEEP_METHOD_NAME
+            and isinstance(call.func.value, ast.Name)
+            and call.func.value.id == "asyncio"
+        ):
             return True
     return False
 
