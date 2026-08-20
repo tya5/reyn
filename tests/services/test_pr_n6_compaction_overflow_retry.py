@@ -1043,3 +1043,122 @@ def test_max_iterations_exhaustion_names_413_when_last_cause_was_byte_limit() ->
     message = str(excinfo.value)
     assert "max_iterations" in message
     assert "413" in message
+
+
+def _make_413_then_succeeds_main_call(overflow_count: int) -> object:
+    """Return a main_call that raises a status_code=413 ContextOverflowError
+    (mirrors the 3 tests above's ``_always_413`` shape exactly, via the same
+    ``_FakeStatusError`` helper) the first *overflow_count* times, then
+    succeeds — the ACCEPTING counterpart #4885's existing tests never
+    exercise (all 3 use ``_always_413``, witnessing only how retry_loop
+    gives up, never how it recovers). Modeled on ``_make_shrink_call_count_
+    main_call`` above (per the issue's own instruction to reuse an existing
+    helper's shape before writing a new one from scratch), adapted to carry
+    a real 413 cause instead of a plain ``ContextOverflowError``."""
+    attempt = [0]
+
+    async def _main_call(**kwargs):
+        attempt[0] += 1
+        if attempt[0] <= overflow_count:
+            raise ContextOverflowError("simulated 413") from _FakeStatusError(
+                "Request Entity Too Large", status_code=413,
+            )
+        from types import SimpleNamespace
+        return SimpleNamespace(usage=SimpleNamespace(prompt_tokens=1000), choices=[])
+
+    return _main_call
+
+
+def test_413_recovery_succeeds_once_binary_search_lowers_t_max_enough() -> None:
+    """Tier 2: #4944 — the ACCEPTING side of #4885's byte-limit recovery,
+    which none of the 3 tests above witness (all 3 use ``_always_413`` —
+    they only prove HOW retry_loop gives up, never that a real 413 the
+    binary search can actually resolve leads to success). Without this
+    test, a change to the ``_serialise_turn``-side byte check #4944 itself
+    is about could land broken (or be reverted) and every existing 413
+    test would stay exactly as green as before — none of them can tell a
+    correctly-recovering path from a permanently-broken one, since none
+    ever reaches success.
+
+    Same minimal head/tail/raw_middle=[] setup the 3 existing 413 tests
+    use (empty raw_middle + tiny head/tail already at-or-below their token
+    minimums), so every 413 immediately enters the binary-search-halving
+    branch from iteration 1 (never the token-shrink branches) — the SAME
+    reachability property those 3 tests rely on, just walked to success
+    instead of the floor.
+
+    Per the issue's explicit instruction: success is NOT witnessed by
+    main_call's return value alone ("called" is not "used") — the search
+    ACTUALLY working is witnessed by the ``compaction_shrink_recovered``
+    audit trail carrying ``overflow_count`` non-None ``t_max_override``
+    values that strictly decrease (real halving progression, the same
+    monotonic-decrease property ``test_retry_loop_shrinks_tail_on_overflow``
+    already pins for the token-shrink path), immediately followed by
+    ``retry_loop`` returning without raising — i.e. success occurred AFTER,
+    and only after, the ceiling was actually lowered by that exact amount.
+
+    ``max_iterations=40``, same as the 3 existing tests and for the same
+    reason (headroom past the halving count, never tuned to it — six-
+    questions Q2, no algorithm-level pin)."""
+    cfg = _make_cfg()
+    engine = _OverflowingEngine(fail_compact=False)
+    learner = TokenMultiplierLearner(storage_path=Path(tempfile.mkdtemp()) / "m.json")
+
+    head = [{"role": "user", "content": "h", "seq": 1}]
+    tail = [{"role": "user", "content": "t", "seq": 2}]
+    raw_middle: list[dict] = []
+    new_msg = {"role": "user", "content": "q", "seq": 3}
+
+    # 6, not 2: the FIRST recovery event never carries an override yet (real
+    # T_max — see test_413_recovery_emits_t_max_override_in_the_audit_event
+    # above, "The FIRST recovery has no override yet"); a small overflow_
+    # count would leave only 0-1 overridden events, too few to show a real
+    # decreasing SEQUENCE rather than a single incidental value. 6 gives 5
+    # overridden events to check strict monotonic decrease against — margin
+    # above the minimum needed (2), not tuned to the exact halving count
+    # (six-questions Q2).
+    overflow_count = 6
+    main_call = _make_413_then_succeeds_main_call(overflow_count)
+
+    seen: list = []
+    engine._events.add_subscriber(lambda e: seen.append(e))
+
+    # The pass-line: retry_loop must return WITHOUT raising — this is the
+    # side none of the 3 existing 413 tests ever reach.
+    result = asyncio.run(retry_loop(
+        SP="sp", head=head, summary=None, raw_middle=raw_middle,
+        tail=tail, new_msg=new_msg, cfg=cfg, model="test-model",
+        engine=engine,  # type: ignore[arg-type]
+        learner=learner,
+        main_call=main_call,
+        max_iterations=40,
+    ))
+    assert result is not None, "retry_loop returned falsy on the success path"
+
+    recovered = [e for e in seen if e.type == "compaction_shrink_recovered"]
+    assert len(recovered) == overflow_count, (
+        f"expected exactly {overflow_count} recovery events (one per "
+        f"simulated 413 before success), got {len(recovered)}: "
+        f"{[e.data for e in recovered]!r}"
+    )
+    overrides = [e.data.get("t_max_override") for e in recovered]
+    # The FIRST recovery legitimately carries no override yet (matches
+    # test_413_recovery_emits_t_max_override_in_the_audit_event's own
+    # documented behavior) — every recovery AFTER it must carry one, and
+    # that sequence must strictly decrease (real halving progression, not a
+    # static/repeated value) — this is the "search actually worked" witness
+    # the issue asked for, not just "main_call returned eventually".
+    assert overrides[0] is None, (
+        f"expected the FIRST recovery to carry no override yet (the real "
+        f"T_max path); got {overrides!r} — if this legitimately changed, "
+        f"the sibling test above needs the same update, not just this one"
+    )
+    later_overrides = overrides[1:]
+    assert all(o is not None for o in later_overrides), (
+        f"every recovery after the first must carry a non-None "
+        f"t_max_override once binary search starts halving; got {overrides!r}"
+    )
+    assert later_overrides == sorted(later_overrides, reverse=True) and len(set(later_overrides)) == len(later_overrides), (
+        f"t_max_override must strictly decrease across recoveries after the "
+        f"first (real binary-search halving progression); got {overrides!r}"
+    )
