@@ -43,6 +43,7 @@ from reyn.services.compaction.engine import (
     ContextOverflowError,
     HistoryChunkToCompact,
     UnrecoveredError,
+    _estimate_tokens_list,
     assert_static_bounds,
     compute_budgets,
     retry_loop,
@@ -1043,3 +1044,167 @@ def test_max_iterations_exhaustion_names_413_when_last_cause_was_byte_limit() ->
     message = str(excinfo.value)
     assert "max_iterations" in message
     assert "413" in message
+
+
+def _make_payload_threshold_main_call(
+    model: str, use_chars4: bool, threshold_tokens: int, payload_sizes: list[int],
+) -> object:
+    """Return a main_call whose success/failure is decided by the ACTUAL
+    estimated token size of the payload it is CALLED WITH (``head`` +
+    ``tail``, the two pieces this test's byte-limit binary search actually
+    trims — ``summary``/``new_msg`` stay at their fixed floor size the whole
+    run, see the test docstring), never by a call counter. ``threshold_tokens``
+    is an INPUT this test itself chooses (not a pinned algorithm constant,
+    six-questions Q2) — success fires only once the search has genuinely
+    shrunk the payload below it. Every call's measured size is appended to
+    *payload_sizes* so the test can assert the size actually changed across
+    calls, not just that main_call was invoked a certain number of times
+    ("called" is not "used")."""
+
+    async def _main_call(**kwargs):
+        head_tokens = _estimate_tokens_list(kwargs["head"], model, use_chars4=use_chars4)
+        tail_tokens = _estimate_tokens_list(kwargs["tail"], model, use_chars4=use_chars4)
+        size = head_tokens + tail_tokens
+        payload_sizes.append(size)
+        if size > threshold_tokens:
+            raise ContextOverflowError("simulated 413") from _FakeStatusError(
+                "Request Entity Too Large", status_code=413,
+            )
+        from types import SimpleNamespace
+        return SimpleNamespace(usage=SimpleNamespace(prompt_tokens=1000), choices=[])
+
+    return _main_call
+
+
+def test_413_recovery_succeeds_once_binary_search_lowers_t_max_enough() -> None:
+    """Tier 2: #4944 — the ACCEPTING side of #4885's byte-limit recovery,
+    which none of the 3 tests above witness (all 3 use ``_always_413`` —
+    they only prove HOW retry_loop gives up, never that a real 413 the
+    binary search can actually resolve leads to success). Without this
+    test, a change to the ``_serialise_turn``-side byte check #4944 itself
+    is about could land broken (or be reverted) and every existing 413
+    test would stay exactly as green as before — none of them can tell a
+    correctly-recovering path from a permanently-broken one, since none
+    ever reaches success.
+
+    Corrected per lead-coder's TESTS-READ finding on this test's first
+    version: a minimal, already-at-floor head/tail (the shape the 3 tests
+    above use) lets every simulated 413 enter the byte-limit branch, but
+    leaves NOTHING for the halving to actually trim — every ``main_call``
+    invocation received a byte-IDENTICAL payload, and a counter (not the
+    lowered ceiling) was the only thing deciding success. Two changes fix
+    that:
+
+    1. ``head``/``tail`` are sized ABOVE their token floor (900/1400
+       tokens respectively, chosen empirically against this test's own
+       fixed cfg/model so the very first 413 still enters the byte-limit
+       branch immediately — 900 < the stub ``head_budget`` of 1000, 1400 <
+       the stub ``tail_budget`` of 1500 — while being large enough that
+       later halvings' recomputed, real ``compute_budgets`` minimums drop
+       below them and genuinely trim ``tail`` then ``head``).
+    2. ``main_call``'s success/failure is decided by the ACTUAL estimated
+       token size of the ``head``+``tail`` it was called with, compared
+       against ``THRESHOLD_TOKENS`` — an input THIS TEST provides, never a
+       pinned algorithm constant (six-questions Q2) — so success is
+       witnessed as "the request actually got smaller, therefore it
+       succeeded", not "the fake counter reached N".
+
+    The assertions below check the full causal chain empirically observed
+    for this exact setup (verified via a standalone repro against the real
+    ``retry_loop`` before being transcribed here): the payload's estimated
+    size genuinely changes across calls (falsifies the byte-identical bug
+    above), starts above ``THRESHOLD_TOKENS``, ends at-or-below it, and the
+    ``t_max_override`` sequence in the audit trail is non-None and
+    strictly decreasing once binary search starts — i.e. success occurred
+    AFTER, and only after, both the ceiling was actually lowered AND the
+    payload was actually shrunk to fit under it.
+
+    ``max_iterations=40``, same as the 3 existing tests and for the same
+    reason (headroom past the halving count, never tuned to it — six-
+    questions Q2, no algorithm-level pin)."""
+    cfg = _make_cfg()
+    engine = _OverflowingEngine(fail_compact=False)
+    learner = TokenMultiplierLearner(storage_path=Path(tempfile.mkdtemp()) / "m.json")
+    model = "test-model"
+    use_chars4 = cfg.use_chars4_estimate
+
+    head = _turns(["h" * (4 * 900)])
+    tail = _turns(["t" * (4 * 1400)])
+    raw_middle: list[dict] = []
+    new_msg = {"role": "user", "content": "q", "seq": 3}
+
+    # A test-provided input, not a pinned algorithm constant (six-questions
+    # Q2): below the FIRST call's payload size (900 + 1400 = 2300 tokens,
+    # so the search must genuinely make progress before succeeding) and
+    # below the size reached once tail alone has been trimmed away (900
+    # tokens), so head must ALSO shrink before success — exercising both
+    # trim paths, not just one.
+    THRESHOLD_TOKENS = 850
+    payload_sizes: list[int] = []
+    main_call = _make_payload_threshold_main_call(
+        model, use_chars4, THRESHOLD_TOKENS, payload_sizes,
+    )
+
+    seen: list = []
+    engine._events.add_subscriber(lambda e: seen.append(e))
+
+    # The pass-line: retry_loop must return WITHOUT raising — this is the
+    # side none of the 3 existing 413 tests ever reach.
+    result = asyncio.run(retry_loop(
+        SP="sp", head=head, summary=None, raw_middle=raw_middle,
+        tail=tail, new_msg=new_msg, cfg=cfg, model=model,
+        engine=engine,  # type: ignore[arg-type]
+        learner=learner,
+        main_call=main_call,
+        max_iterations=40,
+    ))
+    assert result is not None, "retry_loop returned falsy on the success path"
+
+    # The direct fix for the TESTS-READ finding: the payload main_call saw
+    # must NOT be byte-identical across calls — it must have genuinely
+    # shrunk. A test that only checks payload_sizes[-1] would pass even for
+    # the old counter-driven bug (whose single, unchanging payload happened
+    # to be small); requiring a size CHANGE, plus the first call being
+    # above threshold and the last at-or-below it, rules that out.
+    assert len(set(payload_sizes)) > 1, (
+        f"main_call received a byte-identical payload on every call — the "
+        f"binary search never actually trimmed anything, and success "
+        f"cannot have been caused by a genuinely-shrunk request: "
+        f"{payload_sizes!r}"
+    )
+    assert payload_sizes[0] > THRESHOLD_TOKENS, (
+        f"expected the FIRST call to still be over threshold (else success "
+        f"is trivial and never exercises the search at all): {payload_sizes!r}"
+    )
+    assert payload_sizes[-1] <= THRESHOLD_TOKENS, (
+        f"expected the LAST (successful) call's payload to be at-or-below "
+        f"threshold — that is what makes it the success call: {payload_sizes!r}"
+    )
+
+    recovered = [e for e in seen if e.type == "compaction_shrink_recovered"]
+    assert recovered, "expected at least one compaction_shrink_recovered event before success"
+    overrides = [e.data.get("t_max_override") for e in recovered]
+    # The FIRST recovery legitimately carries no override yet (matches
+    # test_413_recovery_emits_t_max_override_in_the_audit_event's own
+    # documented behavior) — every recovery AFTER it must carry one, and
+    # that sequence must strictly decrease (real halving progression, not a
+    # static/repeated value) — this is the "search actually worked" witness
+    # the issue asked for, not just "main_call returned eventually".
+    assert overrides[0] is None, (
+        f"expected the FIRST recovery to carry no override yet (the real "
+        f"T_max path); got {overrides!r} — if this legitimately changed, "
+        f"the sibling test above needs the same update, not just this one"
+    )
+    later_overrides = overrides[1:]
+    assert later_overrides, (
+        f"expected at least one recovery after the first, carrying a real "
+        f"t_max_override — got only the first, unoverridden one: {overrides!r}"
+    )
+    assert all(o is not None for o in later_overrides), (
+        f"every recovery after the first must carry a non-None "
+        f"t_max_override once binary search starts halving; got {overrides!r}"
+    )
+    assert later_overrides == sorted(later_overrides, reverse=True) and len(set(later_overrides)) == len(later_overrides), (
+        f"t_max_override must strictly decrease across recoveries after the "
+        f"first (real binary-search halving progression); got {overrides!r}"
+    )
