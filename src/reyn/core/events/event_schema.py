@@ -296,6 +296,7 @@ AUDIT_EVENT_KINDS: frozenset[str] = frozenset({
     "mcp_install_probe_failed",
     "mcp_install_threat_blocked",
     "mcp_install_threat_match",
+    "mcp_media_denied",
     "mcp_progress",
     "mcp_prompt_get",
     "mcp_prompt_get_cancelled",
