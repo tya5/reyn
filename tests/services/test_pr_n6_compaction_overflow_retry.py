@@ -1242,3 +1242,195 @@ def test_413_recovery_succeeds_once_binary_search_lowers_t_max_enough() -> None:
         f"not merely non-increasing (which a constant sequence would also "
         f"satisfy); got {overrides!r}"
     )
+
+
+# ---------------------------------------------------------------------------
+# #4947 ③: stage 1 splits raw_middle instead of fattening tail
+# ---------------------------------------------------------------------------
+
+
+class _Always413CompactEngine(_OverflowingEngine):
+    """compact() ALWAYS raises an HTTP-413-caused CompactionOverflowError —
+    used to witness the #4947 real-world cycle: a compaction call that can
+    never succeed, no matter how small the offered slice gets (down to the
+    floor of 1 turn)."""
+
+    def __init__(self, *, head_budget: int, tail_budget: int) -> None:
+        from reyn.services.compaction.engine import ComputedBudgets
+        self.budgets = ComputedBudgets(
+            main_pool=100_000, head_budget=head_budget, body_budget=500,
+            tail_budget=tail_budget, new_msg_budget=10,
+            B_M=90_000, main_M_room=99_000, effective_trigger=90_000,
+            section_caps={"topic_arc": 50, "decisions": 200, "pending": 150,
+                          "session_user_facts": 50, "artifacts_referenced": 175},
+        )
+        self._events = EventLog()
+        self._T_comp_SP = 100
+
+    async def compact(self, input_chunk):
+        raise _FakeStatusError("compact 413", status_code=413)
+
+
+def test_4947_stage1_mid_split_terminates_instead_of_reproducing_old_state() -> None:
+    """Tier 2: #4947 ③ — a compact()-origin 413 that recurs no matter how
+    small the offered slice gets must terminate at the mid=1-turn floor
+    (named 413), NOT cycle back to the state it started from.
+
+    #4947's own measurement (this test's exact shape: compact() always
+    413, main_call always 413, head=8/mid=8/tail=8 real turns) found the
+    OLD "move half of raw_middle into tail" direction reproduced the
+    IDENTICAL state every 5 iterations — head=8/tail=16 recurring forever
+    (never converging, never raising the accurate floor message, running
+    to raw max_iterations with a generic message). head/tail are sized
+    ABOVE their (tiny, deliberately small) minimums here — the existing
+    413 tests all use a single-turn head/tail, which reaches the T_max-
+    override branch on iteration 0 and never exercises stage 1 at all;
+    that blind spot is exactly what let the old cycle go unnoticed
+    (architect's own review condition on #4947, verbatim: must include a
+    shape where head/tail start above their minimum).
+
+    Falsification (performed during review): reverting the shrink-
+    escalation branch to the old "move half of raw_middle into tail" line
+    makes this test hang (unbounded iterations) or, if max_iterations is
+    capped, makes the assertion on ``"413" in message`` still pass by
+    accident (the old max_iterations-exhaustion message is generic) — the
+    real falsifier is the recovered-event COUNT bound below, which the old
+    code blows through (it never stops recovering within a bounded few
+    events; this test's own max_iterations=20 was chosen to match the
+    exact #4947 repro that cycled through all 20 under the old code).
+    """
+    cfg = _make_cfg()
+    engine = _Always413CompactEngine(head_budget=10, tail_budget=10)
+    events: list = []
+    engine._events.add_subscriber(lambda e: events.append(e))
+    learner = TokenMultiplierLearner(storage_path=Path(tempfile.mkdtemp()) / "m.json")
+
+    head = _turns(["h" * 20] * 8)
+    tail = _turns(["t" * 20] * 8)
+    raw_middle = _turns(["m" * 20] * 8)
+    new_msg = {"role": "user", "content": "q", "seq": 999}
+
+    async def _always_413(**kwargs):
+        raise ContextOverflowError("main_call 413") from _FakeStatusError(
+            "Request Entity Too Large", status_code=413,
+        )
+
+    _max_iterations = 20
+    with pytest.raises(UnrecoveredError) as excinfo:
+        asyncio.run(retry_loop(
+            SP="sp", head=head, summary=None, raw_middle=raw_middle,
+            tail=tail, new_msg=new_msg, cfg=cfg, model="test-model",
+            engine=engine,  # type: ignore[arg-type]
+            learner=learner,
+            main_call=_always_413,
+            max_iterations=_max_iterations,
+        ))
+
+    message = str(excinfo.value)
+    assert "413" in message
+    # Distinguishes this raise site from the OTHER two UnrecoveredError
+    # messages this module can produce (the same-cause cap, and generic
+    # max_iterations exhaustion) — this one names neither.
+    assert "consecutive times" not in message
+    assert "max_iterations" not in message
+
+    recovered = [e for e in events if e.type == "compaction_shrink_recovered"]
+    # The OLD cycle recovered on EVERY one of the 20 iterations (compact
+    # mid=8,4,2,1, then main_call, repeating the identical state forever)
+    # and never raised this floor message at all. The NEW floor raises
+    # partway through the FIRST splitting period — well before the loop
+    # would have spent its full ``_max_iterations`` budget recovering,
+    # without pinning the exact count it takes (six questions Q2).
+    assert len(recovered) < _max_iterations, (
+        f"expected the floor to raise before exhausting max_iterations, "
+        f"got {len(recovered)} recovers: {[e.data for e in recovered]!r}"
+    )
+
+
+def test_4947_stage1_mid_split_reaches_success_after_temporary_compact_failure() -> None:
+    """Tier 2: #4947 ③ — a compact() that fails once then recovers must
+    still reach a REAL success end-to-end via the split-and-retry
+    mechanism, with the summary reflecting ALL of raw_middle (not just the
+    first successfully-attempted slice) — main_call never receives
+    raw_middle directly, so a remainder left uncompacted would be silently
+    dropped from what the LLM sees rather than raising or shrinking
+    visibly.
+    """
+    cfg = _make_cfg()
+    engine = _CompactFailsOnceEngine()
+    learner = TokenMultiplierLearner(storage_path=Path(tempfile.mkdtemp()) / "m.json")
+
+    head: list[dict] = []
+    tail: list[dict] = []
+    raw_middle = _turns(["m"] * 4)
+    new_msg = {"role": "user", "content": "q", "seq": 99}
+
+    seen_summaries: list = []
+
+    async def _succeeds(**kwargs):
+        from types import SimpleNamespace
+        seen_summaries.append(kwargs.get("summary"))
+        return SimpleNamespace(usage=SimpleNamespace(prompt_tokens=10), choices=[])
+
+    result = asyncio.run(retry_loop(
+        SP="sp", head=head, summary=None, raw_middle=raw_middle,
+        tail=tail, new_msg=new_msg, cfg=cfg, model="test-model",
+        engine=engine,  # type: ignore[arg-type]
+        learner=learner,
+        main_call=_succeeds,
+        max_iterations=8,
+    ))
+
+    assert result is not None
+    # main_call was only ever invoked once raw_middle was FULLY compacted
+    # — never mid-remainder (the exact bug: a partial success falling
+    # through to main_call with a summary that silently omits content).
+    # Unpacking to exactly one element raises otherwise — a real failure
+    # mode this test would otherwise need a bare len() check to catch.
+    [only_summary] = seen_summaries
+    assert only_summary is not None
+    # covers_through_seq on the real ChatSummary stub reflects the LAST
+    # turn compacted — the final (highest) seq in raw_middle, not the seq
+    # at the END of only the first successfully-attempted half.
+    assert only_summary["covers_through_seq"] == raw_middle[-1]["seq"]
+
+
+def test_4947_stage1_floor_names_the_actual_cause_when_not_byte_limit() -> None:
+    """Tier 2: #4947 ③ — the mid=1-turn floor names the ACTUAL cause when
+    it is NOT a byte limit, mirroring the same-cause cap's own message
+    shape rather than silently reusing the 413 wording for an unrelated
+    failure."""
+    cfg = _make_cfg()
+
+    class _AlwaysCompactionErrorEngine(_OverflowingEngine):
+        async def compact(self, input_chunk):
+            raise ValueError("not a byte-limit failure")
+
+    engine = _AlwaysCompactionErrorEngine(fail_compact=False)
+    learner = TokenMultiplierLearner(storage_path=Path(tempfile.mkdtemp()) / "m.json")
+
+    head: list[dict] = []
+    tail: list[dict] = []
+    raw_middle = _turns(["m"])  # already a single turn — floor on iteration 0
+    new_msg = {"role": "user", "content": "q", "seq": 99}
+
+    async def _unreachable(**kwargs):
+        raise AssertionError("main_call must not be reached — mid never empties")
+
+    with pytest.raises(UnrecoveredError) as excinfo:
+        asyncio.run(retry_loop(
+            SP="sp", head=head, summary=None, raw_middle=raw_middle,
+            tail=tail, new_msg=new_msg, cfg=cfg, model="test-model",
+            engine=engine,  # type: ignore[arg-type]
+            learner=learner,
+            main_call=_unreachable,
+            max_iterations=8,
+        ))
+
+    message = str(excinfo.value)
+    assert "413" not in message
+    # ``_cause`` names the WRAPPED exception's type (#3783 stage 3 — see
+    # its comment at the wrap site), not the wrapper's own
+    # ``CompactionOverflowError`` name.
+    assert "ValueError" in message
+    assert "single raw_middle turn alone" in message

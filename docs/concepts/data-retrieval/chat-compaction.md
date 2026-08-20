@@ -51,13 +51,18 @@ See [`control-ir.md`](../../reference/runtime/control-ir.md) for the op contract
 ### 3. `retry_loop` overflow backstop
 
 When the pre-frame guard's token estimate under-counts and the router raises a
-context-length error, `retry_loop` takes over. It shrinks head, tail, and the
-raw middle monotonically toward their minimum budgets — terminating by
-construction, because each iteration reduces some shrinkable budget — until the
-prompt fits. When all budgets reach their floor, it raises a structured
-`UnrecoveredError` rather than continuing over-budget. A safety cap bounds the
-iteration count but is rarely the limiting factor. This is the dead-end-free
-guarantee: the conversation cannot overflow into an unrecoverable state.
+context-length error, `retry_loop` takes over. The decreasing measure is
+`head`/`tail` token count, not the raw middle in isolation — the raw middle can
+grow (content moves in from `head`/`tail` when those are still above their
+minimum) and is compacted separately, split into smaller slices on repeated
+failure down to a one-turn floor. `head`/`tail` never grow, so this measure
+terminates: once both are at or below their minimum budgets and the raw middle
+cannot be split any smaller, `retry_loop` raises a structured `UnrecoveredError`
+rather than continuing over-budget or silently dropping content. A safety cap
+also bounds the iteration count independently of this. This is a
+structured-failure guarantee, not a success guarantee: `retry_loop` always
+stops with a well-defined error instead of looping forever or silently losing
+content — it does not promise the request ultimately fits.
 
 ## What the compaction produces
 
