@@ -478,14 +478,24 @@ def test_second_asyncio_run_through_the_same_eventlog_still_delivers() -> None:
     ``asyncio.run()`` calls (each opening and closing its own loop) must
     still deliver events emitted in the second call.
 
-    Falsifying witness (architect/lead-coder's own six-questions concern):
+    Falsifying witness (architect/lead-coder's own six-questions concern,
+    e2e-coder's own TESTS-READ finding): reverting the fix to
     ``_ensure_consumer_started``'s old ``if self._consumer_task is None``
-    check treats a task bound to the FIRST (now-dead) loop as "already
-    running" — no fresh consumer is spawned for the second loop, so the
-    second call's events queue forever with nobody draining them. This
-    is not a test-authoring gap (this test drives no `emit()`-then-read
-    race a `settle()` could fix) — it is architect-ruled mechanism
-    territory: `_ensure_consumer_started` now asks `task.done()` /
+    check DOES turn this red — the mechanism this test targets is real —
+    but the observed failure mode is NOT "the second call's events queue
+    forever with nobody draining them". ``_dispatch_queue`` is ALSO
+    loop-bound (``asyncio.Queue`` binds to whichever loop first calls one
+    of its async methods), so with the old check treating the FIRST
+    (now-dead) loop's task as "already running", no fresh consumer is
+    even attempted for the second loop — but `drain()`'s own
+    `_ensure_consumer_started()` call still runs and still touches the
+    STALE queue via its own internals, raising ``RuntimeError: Event
+    loop is closed`` synchronously rather than hanging or silently
+    dropping. Measured directly (reverted the fix, ran this test): that
+    is the actual traceback, not a silent no-op. This is not a
+    test-authoring gap (this test drives no `emit()`-then-read race a
+    `settle()` could fix) — it is architect-ruled mechanism territory:
+    `_ensure_consumer_started` now asks `task.done()` /
     `task.get_loop().is_closed()`, a fact, not a guess."""
     log = EventLog()
     delivered: list = []
