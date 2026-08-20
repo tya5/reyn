@@ -13,15 +13,21 @@ How Reyn keeps long chat sessions from overflowing the context window.
 When context fills, the middle of the history is folded into a rolling
 structured summary. Three zones are fed to the LLM:
 
-- **Head** — earliest turns (raw, never compacted; preserves the original task context)
+- **Head** — earliest UNCOVERED turns (raw; preserves the original task context)
 - **Body** — rolling summary produced by the compaction engine
 - **Tail** — most-recent turns (raw, kept for recency)
 
 Head and tail sizes are **token-budgeted** — derived from `component_weights`
 against the model's actual context window, not a fixed turn count. Chat fills
-the window raw first; compaction fires only once the history exceeds the
-effective trigger, which is window-relative (derived from the same budgets, not
-an absolute token count).
+the window raw first (up to the effective trigger); compaction FIRES only
+once the history exceeds it, but its effect is **permanent** once it does
+(#4954): every turn at or below the resulting `covers_through_seq`
+watermark is excluded from every subsequent LLM-facing projection —
+never resent raw, regardless of whether a LATER turn's token total drops
+back under the trigger. `history.jsonl` itself is untouched by this — a
+covered turn is excluded from the projection only, still fully readable
+via `extend_history_backward`; only what the LLM SEES permanently
+shrinks.
 
 The `CompactionEngine` is an OS-internal Python helper that makes a direct
 LLM call to produce the summary. It is not a stdlib workflow.

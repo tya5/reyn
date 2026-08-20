@@ -53,10 +53,17 @@ def _buffer(history: list, model: str):
 
 
 def _conversation(n: int, filler: int = 8) -> list:
+    # #4954(2): explicit ascending seq (not the ChatMessage default of 0)
+    # — build_history now filters on ``seq > watermark``, so a fixture
+    # feeding a non-zero covers_through_seq needs real, distinct seqs to
+    # filter against.
     out: list = []
+    seq = 1
     for i in range(n):
-        out.append(ChatMessage(role="user", content=f"q{i} " + "word " * filler))
-        out.append(ChatMessage(role="assistant", content=f"a{i} " + "word " * filler))
+        out.append(ChatMessage(role="user", content=f"q{i} " + "word " * filler, seq=seq))
+        seq += 1
+        out.append(ChatMessage(role="assistant", content=f"a{i} " + "word " * filler, seq=seq))
+        seq += 1
     return out
 
 
@@ -78,9 +85,19 @@ def test_build_history_materialises_the_producer_once_without_elide():
 def test_build_history_materialises_the_producer_once_on_the_elide_path():
     """Tier 2: the elide path (history over the trigger, summary bridge inserted)
     also costs exactly one producer call — this branch consults the summary a
-    SECOND time, and used to re-derive the whole view for it."""
+    SECOND time, and used to re-derive the whole view for it.
+
+    #4954(2): the summary's ``covers_through_seq`` must be a real, small,
+    non-zero value (covers the first exchange only) — a zero value means
+    "nothing covered", under which the bridge is correctly absent, and the
+    conversation's turns need explicit ascending seqs (``_conversation``'s
+    #4954(2) update) for that filter to have anything real to compare
+    against."""
     history = _conversation(200, filler=60)
-    history.insert(0, ChatMessage(role="summary", content="earlier conversation"))
+    history.insert(0, ChatMessage(
+        role="summary", content="earlier conversation",
+        meta={"covers_through_seq": 2},
+    ))
     # gpt-4's 8K window against a large conversation → over the trigger → elide.
     buf, calls = _buffer(history, "openai/gpt-4")
 
