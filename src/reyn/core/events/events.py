@@ -606,13 +606,23 @@ class EventLog:
         bound to a different event loop`` if a later call arrives from a
         DIFFERENT running loop — exactly what a fresh consumer's first
         ``await self._dispatch_queue.get()`` would hit if the queue
-        itself weren't also replaced here. Whatever was already queued at
-        staleness-detection time does not need preserving: the OLD
-        consumer's own ``CancelledError`` handler already flushed
-        whatever was pending when ITS loop tore down (the same inline
-        flush ``_dispatch_consumer``'s own docstring describes) — nothing
-        durable is lost by starting the new loop's dispatcher with an
-        empty queue.
+        itself weren't also replaced here. Discarding whatever was
+        already queued at staleness-detection time is not new loss on
+        top of what already happened: WHEN the old consumer ended via
+        cancellation (the common shutdown path — its loop's own teardown
+        cancelling it), its own ``CancelledError`` handler already
+        flushed whatever was pending before that loop closed (the same
+        inline flush ``_dispatch_consumer``'s own docstring describes).
+        If instead it ended via an uncaught exception escaping ``get()``/
+        ``task_done()`` (outside the per-subscriber ``try/except``,
+        which only isolates a SUBSCRIBER's own failure) — a rare,
+        near-unreachable path — that flush does not run and whatever was
+        still queued IS lost at that point, before this method ever
+        runs. Either way, only LIVE subscriber notification is at risk
+        here: ``self._backend.write`` in ``emit()`` already ran, before
+        the queue push, for every one of those events — the durable
+        audit record is intact regardless of which exit path the old
+        consumer took.
         """
         task = self._consumer_task
         if task is None or task.done() or task.get_loop().is_closed():
