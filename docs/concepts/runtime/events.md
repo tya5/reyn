@@ -89,10 +89,10 @@ Stable shape makes the log machine-readable without a custom parser per consumer
 
 Where an audit-event lands on disk (or doesn't) is a separate axis from
 whether it fires and reaches subscribers. `EventLog.emit()` always: stamps
-`agent_id`/`run_id`/`emitter`/`audit_seq`, dispatches to every subscriber
-(console reporters, the TUI/AG-UI forwarders, hooks, OTEL), and returns —
-regardless of the write-side backend `reyn.yaml`'s `audit_events.backend`
-selects (see [config reference](../../reference/config/reyn-yaml.md#audit_events-block)):
+`agent_id`/`run_id`/`emitter`/`audit_seq`, hands the event off for
+subscriber delivery, and returns — regardless of the write-side backend
+`reyn.yaml`'s `audit_events.backend` selects (see [config
+reference](../../reference/config/reyn-yaml.md#audit_events-block)):
 
 - **`local`** (default) — writes to `.reyn/events`, unchanged from before
   this abstraction existed.
@@ -102,13 +102,25 @@ selects (see [config reference](../../reference/config/reyn-yaml.md#audit_events
   read for a `discard` run — this is a real trade-off (support-bundle in
   particular is the tool operators use to report bugs), not a free lunch.
 
-The backend is called from inside `emit()`, before the subscriber loop
-runs, wrapped in its own try/except — never inserted as just another
+The backend is called from inside `emit()`, before subscriber dispatch,
+wrapped in its own try/except — never inserted as just another
 subscriber. That ordering is what guarantees a backend failure (or a
 future network backend's connection error) can never silence a
 subscriber, and a raising subscriber can never stop the backend from
 having already written. See `src/reyn/core/events/backend.py`'s module
 docstring for the full mechanism.
+
+**Dispatch timing is NOT uniform (#4966).** `emit()` branches on whether a
+running event loop exists at call time: with one, the event is queued and
+a background consumer task delivers it to every subscriber — `emit()` can
+return BEFORE that delivery happens, not after. Without one (no running
+loop — e.g. a synchronous CLI path), dispatch runs inline, synchronously,
+before `emit()` returns. Both branches share the same per-subscriber
+try/except isolation (#4963) — one subscriber's failure never blocks the
+next, in either branch — but "emit() returned" is a delivery guarantee
+only in the no-loop case. A caller that needs delivery to have actually
+happened before proceeding awaits `EventLog.drain()` explicitly (see its
+own docstring for the queue/consumer race it resolves).
 
 ### `agent_delta` durable-write coalescing (#4960)
 
