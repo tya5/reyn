@@ -25,8 +25,6 @@ EventLog that bypasses the real construction path.
 """
 from __future__ import annotations
 
-import pytest
-
 from reyn.config import AuditEventsConfig
 from reyn.core.events.backend import DiscardEventBackend, LocalEventBackend
 from reyn.core.events.events import EventLog
@@ -100,9 +98,12 @@ def test_a_raising_backend_does_not_stop_subscriber_delivery() -> None:
     """Tier 2: witness ③ / falsify ④ — a backend that raises on write()
     must not prevent subscribers from receiving the event. This is the
     test that goes RED if a future edit ever makes the backend "just
-    another subscriber" with no isolating try/except (see backend.py's
-    module docstring for the measured mechanism: the current subscriber
-    loop has none, so a raising list entry aborts every later one)."""
+    another subscriber" — inserted somewhere in ``self._subscribers``
+    instead of called separately, BEFORE that loop, with its own
+    try/except (see backend.py's module docstring: #4961 A gave the
+    subscriber loop its own per-subscriber isolation too, but that does
+    NOT make position in the list a safe substitute for the backend's
+    unconditional, order-independent guarantee)."""
     log = EventLog(backend=_RaisingBackend())
     received = []
     log.add_subscriber(received.append)
@@ -131,13 +132,14 @@ def test_a_raising_subscriber_does_not_stop_the_backend_from_having_written() ->
     log = EventLog(backend=_RecordingBackend())
     log.add_subscriber(_raising_subscriber)
 
-    # The subscriber loop itself has no isolating try/except (a pre-existing,
-    # separately-flagged fact — see backend.py's module docstring), so the
-    # raise propagates out of emit(). What matters here is that the
-    # backend, called BEFORE the subscriber loop, has already written by
-    # the time that happens.
-    with pytest.raises(RuntimeError, match="subscriber failed"):
-        log.emit("tool_executed", op="read")
+    # #4961 A: the subscriber loop now isolates each subscriber's own
+    # failure (previously it did not, and the raise propagated all the
+    # way out of emit() — this test used to assert exactly that
+    # propagation; #4961 A closed it, so this test's OWN premise changed).
+    # What still matters here, unaffected by #4961 A: the backend, called
+    # BEFORE the subscriber loop, has already written regardless of
+    # whether a later subscriber raises OR that raise is now caught.
+    log.emit("tool_executed", op="read")
 
     assert written and written[0].type == "tool_executed"
 
@@ -229,3 +231,58 @@ def test_session_with_discard_backend_still_delivers_to_real_subscribers(
 
     assert received == [emitted]
     assert emitted.data.get("foo") == "bar"
+
+
+# ── 5. #4961 A — per-subscriber isolation in the dispatch loop ───────────
+
+
+def test_a_raising_subscriber_does_not_skip_a_later_subscriber(caplog) -> None:
+    """Tier 1: #4961 A — the actual gap this fix closes. Before it, a
+    raising subscriber aborted the ENTIRE dispatch loop, silently
+    skipping every subscriber registered AFTER it (registration order is
+    not under the caller's control at the emit() call site — e.g. the
+    OTEL exporter could sit after a raising transport forwarder). The
+    witness is the LATER subscriber's own received list — "no exception
+    escaped" is NOT sufficient (that would also be true of a loop that
+    quietly skipped it), so this asserts actual delivery. Also witnesses
+    lead-coder's second acceptance condition in the same test: the
+    failure is LOGGED, not silently swallowed (#4961's own framing is
+    "silent" — closing delivery while going quiet would trade one
+    unobservable gap for another)."""
+    import logging
+
+    log = EventLog()
+    later_received = []
+
+    def _raising_subscriber(_event) -> None:
+        raise RuntimeError("earlier subscriber failed")
+
+    log.add_subscriber(_raising_subscriber)
+    log.add_subscriber(later_received.append)
+
+    with caplog.at_level(logging.ERROR, logger="reyn.core.events.events"):
+        emitted = log.emit("tool_executed", op="read")
+
+    assert later_received == [emitted], (
+        "the subscriber registered AFTER the raising one must still "
+        "receive the event — this is #4961 A's own gap, closed"
+    )
+    assert any(
+        "event subscriber failed" in r.getMessage() for r in caplog.records
+    ), "a raising subscriber's failure must be logged, not silently discarded"
+
+
+def test_subscribers_are_still_dispatched_in_registration_order() -> None:
+    """Tier 1: #4961 A's other acceptance condition (lead-coder) —
+    per-subscriber isolation must not reorder dispatch. agui/endpoint.py's
+    own barrier ordering (co-vet #3310 N3(a)) depends on `add_subscriber`
+    staying synchronous and subscribers firing in registration order."""
+    log = EventLog()
+    order: list[str] = []
+    log.add_subscriber(lambda _e: order.append("first"))
+    log.add_subscriber(lambda _e: order.append("second"))
+    log.add_subscriber(lambda _e: order.append("third"))
+
+    log.emit("tool_executed", op="read")
+
+    assert order == ["first", "second", "third"]

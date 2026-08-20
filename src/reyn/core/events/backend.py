@@ -28,16 +28,20 @@ guarantee `emit()` already provides for free — so backends never touch it.
 try/except — BEFORE it loops over `self._subscribers` (#4496 PR-2). This
 is deliberate, not incidental:
 
-    - the subscriber loop (`for sub in self._subscribers: sub(event)`) has
-      no per-subscriber try/except (`events.py`, measured) — a raising
-      subscriber aborts the loop and every LATER subscriber in the list is
-      silently skipped. Inserting a backend as JUST ANOTHER subscriber
-      would inherit this hazard: a raising backend (e.g. a future network
-      backend hitting a connection error) would abort delivery to every
-      subscriber registered after it — including the CUI/AG-UI forwarders
-      session.py wires — the exact "discard silences the UI" failure mode
-      the owner's #4496 ruling forbids ("emit は抽象に対して必ず行う、
-      Backend 側で破棄するだけ").
+    - the subscriber loop (`for sub in self._subscribers: sub(event)`) now
+      HAS per-subscriber try/except (#4961 A — this used to be a real gap:
+      a raising subscriber aborted the loop and every LATER subscriber in
+      the list was silently skipped, `events.py`, measured). That fix
+      isolates one subscriber's failure from the NEXT ones, but it does
+      NOT make position in `self._subscribers` a safe place for the
+      backend: inserting a backend as JUST ANOTHER subscriber would still
+      make it position-dependent (registered early enough to run before
+      whatever fills the list — including a future backend that changes
+      registration order) instead of unconditional — the exact "discard
+      silences the UI" failure mode the owner's #4496 ruling forbids
+      ("emit は抽象に対して必ず行う、Backend 側で破棄するだけ") demands
+      the backend write happen NO MATTER what's registered or in what
+      order, not merely "isolated from subscribers that happen to raise".
     - calling the backend FIRST, outside the subscriber loop, with its own
       try/except, gets both halves of prohibition ③ (backend failure must
       not reach subscribers, and vice versa) from ORDERING alone: the

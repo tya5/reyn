@@ -253,8 +253,30 @@ class EventLog:
                     "continuing to subscriber dispatch",
                     self._emitter, type,
                 )
+        # #4961 A: per-subscriber isolation. Before this, a raising
+        # subscriber aborted the WHOLE loop — every LATER subscriber in
+        # ``self._subscribers`` (registration order) was silently skipped,
+        # and the exception propagated all the way to `emit()`'s own
+        # caller (an op/tool's execution path). Registration order is not
+        # under this method's control, and transport forwarders (AG-UI,
+        # A2A, MCP) share this exact list with the OTEL exporter
+        # (session.py) — a raising transport could silently blind
+        # observability with no exception anywhere to notice by (#4961's
+        # own "silent" framing). Failure is logged, never swallowed —
+        # same posture ``self._backend.write`` above already takes for its
+        # own failure, and NOT a change to registration semantics
+        # (``add_subscriber`` stays synchronous — #3310 N3(a)'s barrier
+        # ordering is untouched; this is purely a dispatch-loop isolation,
+        # per-subscriber, sequential and in the SAME order as before).
         for sub in self._subscribers:
-            sub(event)
+            try:
+                sub(event)
+            except Exception:
+                logger.exception(
+                    "event subscriber failed (emitter=%s type=%s) — "
+                    "continuing to the next subscriber",
+                    self._emitter, type,
+                )
         return event
 
     def compute_ingested(self, data_ref: str, resolved: str) -> str:
