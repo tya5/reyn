@@ -298,6 +298,7 @@ async def test_cancel_scheduled_before_dispatch_wins_exclusively(tmp_path):
     finished = await asyncio.wait_for(iter_task, timeout=5)
     assert finished is False, "shutdown sentinel drains run_one_iteration"
 
+    await settle(session._audit_events)
     kinds = [ev.type for ev in captured]
     assert "inbox_cancel" in kinds
     assert "turn_started" not in kinds, (
@@ -331,6 +332,7 @@ async def test_dispatch_scheduled_before_cancel_wins_exclusively(tmp_path):
     cancelled = await asyncio.wait_for(cancel_task, timeout=5)
 
     assert cancelled is False, "dispatch won the race — cancel of an already-dispatched item is a no-op"
+    await settle(session._audit_events)
     kinds = [ev.type for ev in captured]
     assert "turn_started" in kinds
     assert "inbox_cancel" not in kinds, (

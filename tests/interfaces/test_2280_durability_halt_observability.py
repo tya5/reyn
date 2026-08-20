@@ -91,6 +91,7 @@ async def test_process_edge_halt_emits_session_halted_once(tmp_path) -> None:
     log = StateLog(tmp_path / "wal.jsonl", worker=worker)
     session = make_session(agent_name="alpha", state_log=log)
     events: list[Event] = []
+    await settle(session._audit_events)
     session.subscribe_audit_events(events.append)
     try:
         assert session.halted_reason is None
@@ -139,6 +140,7 @@ async def test_accept_edge_halt_also_emits_session_halted_once(tmp_path) -> None
     log = StateLog(tmp_path / "wal.jsonl", worker=worker)
     session = make_session(agent_name="alpha", state_log=log)
     events: list[Event] = []
+    await settle(session._audit_events)
     session.subscribe_audit_events(events.append)
     try:
         await _inject_persistent_durability_failure(log)

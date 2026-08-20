@@ -149,6 +149,7 @@ async def test_unsubscribe_stops_further_progress_after_tool_completion(tmp_path
 
     driver_session = reg.get_session("worker", driver_sid)
     driver_events = driver_session.router_host.events
+    await settle(driver_events)
 
     # Still bridged immediately after the run (unsubscribe only fires on
     # tool_returned/tool_failed, which we haven't simulated yet).

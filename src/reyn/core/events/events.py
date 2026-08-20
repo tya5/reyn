@@ -62,7 +62,7 @@ class EventLog:
         emitter: str | None = None,
         track_audit_seq: bool = True,
         backend: "EventBackend | None" = None,
-        force_inline: bool = False,
+        _force_inline: bool = False,
     ) -> None:
         # #3868 PR-1: a folded derived state for `present`'s "was this ref
         # already read this session?" question (source.py's compute_ingested),
@@ -150,20 +150,37 @@ class EventLog:
         # This queue and its consumer task are simply unused in that case.
         self._dispatch_queue: "asyncio.Queue[Event]" = asyncio.Queue()
         self._consumer_task: "asyncio.Task[None] | None" = None
-        # #4966: an explicit opt-out for a one-off, no-continuity EventLog
-        # (see `emit_cli_event`'s own construction site) — dispatches
-        # INLINE unconditionally, same as the no-running-loop branch,
-        # regardless of whether a loop happens to be running around the
-        # call site. Such an instance never gets `drain()`/`stop_dispatch()`
-        # called on it (nothing holds a reference after the one `emit()`
-        # call returns), so if it took the queue branch instead, its
-        # spawned consumer task would be silently abandoned — and when the
-        # loop eventually tears down, asyncio reports the abandoned task
-        # as a SECOND, spurious "Task was destroyed but it is pending!"
-        # unhandled-exception context, alongside whatever real exception a
-        # caller's own diagnostics were trying to witness (found via CI:
+        # #4966 (architect ruling — a DIFFERENT concern from the queue-vs-
+        # inline invariant above, not another instance of it): that
+        # invariant is about whether async delivery CAN happen (loop
+        # present/absent, consumer cancelled) — the mechanism itself can
+        # judge that. This flag is about whether anyone OWNS this
+        # EventLog well enough to ever call `drain()`/`stop_dispatch()` on
+        # it — construction-time information the mechanism cannot infer
+        # (an owner can appear later; guessing "unowned" and dispatching
+        # async anyway fails SILENTLY when the guess is wrong, the exact
+        # shape this arc kept re-finding). So this is a declaration, not
+        # an inference — and a private, single-purpose one: NOT a public
+        # constructor parameter (that would let any caller re-introduce
+        # the queue/consumer coupling #4961 C was built to remove).
+        # Bounded to exactly ONE legitimate call site, `emit_cli_event`'s
+        # own one-off, no-continuity EventLog (see its construction site)
+        # — enforced by a test that enumerates every `_force_inline=True`
+        # call site and fails if a second one ever appears, not a gate
+        # (one site is a single fact a test can pin, not a population a
+        # gate needs to sweep for).
+        #
+        # Without it: `emit_cli_event`'s throwaway EventLog never gets
+        # `drain()`/`stop_dispatch()` (nothing holds a reference after its
+        # one `emit()` call returns), so if a loop happened to be running
+        # around that call site, its spawned consumer task would be
+        # silently abandoned — and when the loop eventually tears down,
+        # asyncio reports the abandoned task as a SECOND, spurious "Task
+        # was destroyed but it is pending!" unhandled-exception context,
+        # alongside whatever real exception a caller's own diagnostics
+        # were trying to witness (found via CI:
         # test_durable_capture_survives_prompt_toolkit_prompt_wait).
-        self._force_inline = force_inline
+        self._force_inline = _force_inline
 
     @property
     def subscribers(self) -> list[Subscriber]:
@@ -735,16 +752,18 @@ def emit_cli_event(kind: str, **payload) -> None:
     # legible label (not a random per-instance token — nothing needs to
     # distinguish one CLI invocation's emitter from another's, since
     # neither carries a sequence to compare).
-    # #4966 (found via CI, a real regression this same PR introduced): a
-    # one-off CLI event has no continuity to protect (see the audit_seq
-    # comment above) — there is nothing more this EventLog will ever emit,
-    # so it never needs the async queue/consumer machinery `emit()` uses
-    # when a loop happens to be running around this call site (e.g.
-    # `emit_cli_event` invoked synchronously from inside an async caller,
-    # no `await` in between). `force_inline=True` makes THIS instance
-    # dispatch inline unconditionally, the same as if no loop were running
-    # — matching pre-#4961-C behavior for this specific call site. Without
-    # it, a spawned-but-never-drained consumer task gets silently
+    # #4966 (architect ruling, found via CI): this EventLog has no owner
+    # who will ever call `drain()`/`stop_dispatch()` on it — the function
+    # returns right after the one `emit()` call, nothing holds a
+    # reference afterward. `_force_inline=True` declares that explicitly
+    # rather than letting the mechanism GUESS it from "no loop is running"
+    # (a guess that fails silently the moment a loop DOES happen to be
+    # running around this call site, e.g. `emit_cli_event` invoked
+    # synchronously from inside an async caller). This is the ONE
+    # sanctioned call site for `_force_inline` — see `EventLog.__init__`'s
+    # own docstring for why it stays private and single-site, and the
+    # bounding test that enforces exactly that.
+    # Without it: a spawned-but-never-drained consumer task gets silently
     # abandoned, and when the loop eventually tears down, asyncio reports
     # it as its OWN "Task was destroyed but it is pending!" unhandled-
     # exception context — a SECOND, spurious `asyncio_unhandled_exception`
@@ -753,6 +772,6 @@ def emit_cli_event(kind: str, **payload) -> None:
     # test_durable_capture_survives_prompt_toolkit_prompt_wait's own
     # `[event] = events` unpack going from 1 to 2 elements).
     event_log = EventLog(
-        subscribers=[store], emitter="cli", track_audit_seq=False, force_inline=True,
+        subscribers=[store], emitter="cli", track_audit_seq=False, _force_inline=True,
     )
     event_log.emit(kind, **payload)

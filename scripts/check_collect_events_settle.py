@@ -254,7 +254,13 @@ def _tracked_name_from_subscriber_arg(arg: ast.expr) -> "str | None":
     this rule. This is a disclosed gap, not a claim of total coverage:
     such sites need their own settle() call reviewed by hand; this gate
     finds what the two closed-form shapes above cover, not everything
-    that could theoretically race."""
+    that could theoretically race.
+
+    The bare ``<name>.append`` shape's own ``<name>`` Load is exempted
+    from pass 3's flagging by the caller (see ``registration_arg_ids`` in
+    ``_check_function``) — REGISTERING a subscriber is not itself a read
+    that can race anything (nothing has been emitted yet at that point in
+    the function); only a LATER read of the tracked list can race."""
     if isinstance(arg, ast.Attribute) and arg.attr == "append" and isinstance(arg.value, ast.Name):
         return arg.value.id
     if isinstance(arg, ast.Lambda):
@@ -383,6 +389,7 @@ def _check_function(func: "ast.FunctionDef | ast.AsyncFunctionDef") -> "list[tup
     tracked: set[str] = set()
     yield_lines: list[int] = []
     emit_lines: list[int] = []
+    registration_arg_ids: set[int] = set()
     flagged: list[tuple[int, str]] = []
 
     # Pass 1: collect every yield-point line, every `.emit(...)` call line,
@@ -404,6 +411,16 @@ def _check_function(func: "ast.FunctionDef | ast.AsyncFunctionDef") -> "list[tup
                 name = _tracked_name_from_subscriber_arg(node.args[0])
                 if name is not None:
                     tracked.add(name)
+                    # The registration argument itself (`<name>.append`,
+                    # a bare bound-method reference — NOT the lambda-
+                    # wrapped form) contains a Load of `<name>` that
+                    # would otherwise be flagged as an unsafe "read" by
+                    # pass 3: nothing has been emitted yet at the point
+                    # of REGISTERING a subscriber, so there is nothing
+                    # for it to race. Exempt this exact node by identity.
+                    arg = node.args[0]
+                    if isinstance(arg, ast.Attribute) and isinstance(arg.value, ast.Name):
+                        registration_arg_ids.add(id(arg.value))
         if isinstance(node, (ast.Assign, ast.AnnAssign)) and node.value is not None:
             if (
                 isinstance(node.value, ast.Call)
@@ -459,6 +476,8 @@ def _check_function(func: "ast.FunctionDef | ast.AsyncFunctionDef") -> "list[tup
         if _is_inside_lambda(node, func):
             continue
         if _is_while_poll_condition(node, func):
+            continue
+        if id(node) in registration_arg_ids:
             continue
         if emit_lines and node.lineno < min(emit_lines):
             # Only exempt when we have POSITIVE evidence of a later

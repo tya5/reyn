@@ -325,6 +325,7 @@ async def test_strip_falsify_hot_reloader_audit_wiring_is_live(
 
     poisoned = HotReloader(project_root=tmp_path, events=EventLog())
     await poisoned.apply_all(exclude=frozenset())
+    await settle(session._audit_events)
 
     assert "config_reloaded" not in received, (
         "a reload on an INDEPENDENT HotReloader must not reach this "
@@ -417,6 +418,7 @@ async def test_strip_falsify_hook_bus_overflow_needs_a_live_subscriber(
 
     for i in range(200):
         await session.dispatch_external_event("turn_end", {"i": i})
+    await settle(session._audit_events)
 
     assert "bus_subscriber_dropped" not in received, (
         "no subscriber was ever attached to hook_bus, so nothing should "

@@ -100,7 +100,7 @@ async def test_a_probe_failing_server_is_named_in_the_return_value_and_an_event_
 
     events = EventLog()
     calls: list = []
-    events.add_subscriber(calls.append)
+    events.add_subscriber(lambda e: calls.append(e))
 
     src = _make_plugin(tmp_path / "src" / "skipviz", servers={
         "good": {"command": "/definitely/not/a/real/binary-4580-good", "args": []},

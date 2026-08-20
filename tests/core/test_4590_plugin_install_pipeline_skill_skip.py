@@ -146,7 +146,7 @@ async def test_a_malformed_pipeline_dsl_lands_in_skipped_not_registered(
     _make_malformed_pipeline_dsl(src / "pipelines" / "broken.yaml")
     events = EventLog()
     calls: list = []
-    events.add_subscriber(calls.append)
+    events.add_subscriber(lambda e: calls.append(e))
     ctx = _ctx(tmp_path, events)
     op = PluginInstallIROp(kind="plugin_install", source={"kind": "local", "path": str(src)})
 
@@ -183,7 +183,7 @@ async def test_a_skill_dir_with_no_skill_md_lands_in_skipped_not_registered(
     (src / "skills" / "empty_skill").mkdir(parents=True)
     events = EventLog()
     calls: list = []
-    events.add_subscriber(calls.append)
+    events.add_subscriber(lambda e: calls.append(e))
     ctx = _ctx(tmp_path, events)
     op = PluginInstallIROp(kind="plugin_install", source={"kind": "local", "path": str(src)})
 
@@ -219,7 +219,7 @@ async def test_one_good_one_bad_pipeline_partitions_correctly(
 
     events = EventLog()
     calls: list = []
-    events.add_subscriber(calls.append)
+    events.add_subscriber(lambda e: calls.append(e))
     ctx = _ctx(tmp_path, events)
     op = PluginInstallIROp(kind="plugin_install", source={"kind": "local", "path": str(src)})
 
@@ -252,11 +252,12 @@ async def test_a_working_skill_still_registers_normally(
 
     events = EventLog()
     calls: list = []
-    events.add_subscriber(calls.append)
+    events.add_subscriber(lambda e: calls.append(e))
     ctx = _ctx(tmp_path, events)
     op = PluginInstallIROp(kind="plugin_install", source={"kind": "local", "path": str(src)})
 
     result = await install_handle(op, ctx)
+    await settle(events)
 
     assert result["status"] == "installed", result
     assert [r["status"] for r in result["registered"]["skills"]] == ["installed"]

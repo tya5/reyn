@@ -403,3 +403,66 @@ async def test_dispatch_consumer_flushes_queued_event_on_cancellation() -> None:
         "the event queued right before cancellation must still be "
         f"delivered — got {delivered}"
     )
+
+
+# ── #4966 (architect ruling): `_force_inline` bounded to ONE call site ───
+
+
+def test_force_inline_has_exactly_one_call_site_in_src() -> None:
+    """Tier 2: the bounding subject for ``EventLog.__init__``'s private
+    ``_force_inline`` parameter — architect's ruling on why a TEST (not a
+    gate) is the right shape here.
+
+    ``_force_inline`` declares "no owner will ever call drain()/
+    stop_dispatch() on this EventLog" at construction time — information
+    the mechanism itself cannot infer (an owner can attach later; a
+    mechanism that GUESSES "unowned" from "no loop is running right now"
+    fails SILENTLY the moment that guess is wrong, the exact shape this
+    arc kept re-finding). A declaration is honest; keeping it private
+    (``_force_inline``, not a public constructor parameter) and pinned to
+    ONE legitimate call site (``emit_cli_event``'s own one-off,
+    no-continuity EventLog) is what keeps it from becoming a general
+    escape hatch that re-opens the queue/consumer coupling #4961 C
+    removed. This is a single enumerable FACT ("how many call sites pass
+    it"), not an open population a static gate would need to sweep for —
+    hence a test, not a gate (architect's own distinction).
+
+    Real collaborator: parses the actual `src/reyn/core/events/events.py``
+    source text (AST, not a regex/substring match — a comment merely
+    MENTIONING ``_force_inline=True`` in prose must not count as a call
+    site), not a mock of it.
+    """
+    import ast
+
+    from tests._support.paths import REPO_ROOT
+
+    src = REPO_ROOT / "src" / "reyn" / "core" / "events" / "events.py"
+    tree = ast.parse(src.read_text(encoding="utf-8"))
+    call_sites = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.keyword)
+        and node.arg == "_force_inline"
+        and isinstance(node.value, ast.Constant)
+        and node.value.value is True
+    ]
+    assert call_sites, (
+        "expected the ONE known `_force_inline=True` call site "
+        "(emit_cli_event's own one-off EventLog) — found none. Either "
+        "emit_cli_event's construction site was edited to drop the flag, "
+        "or this test's own detection broke."
+    )
+    extra_sites = call_sites[1:]
+    assert not extra_sites, (
+        "expected exactly ONE `_force_inline=True` call site "
+        f"(emit_cli_event's own one-off EventLog); found "
+        f"{len(extra_sites)} more, at lines "
+        f"{[n.lineno for n in extra_sites]}. `_force_inline` declares "
+        "'no owner will ever drain this EventLog' — a construction-time "
+        "fact the mechanism cannot infer safely (see EventLog.__init__'s "
+        "own docstring). If you have a genuine second one-off, "
+        "no-continuity EventLog with no owner, that is a real, separate "
+        "instance of this same fact — update this bound deliberately, "
+        "with the same justification, rather than letting the count "
+        "silently grow."
+    )

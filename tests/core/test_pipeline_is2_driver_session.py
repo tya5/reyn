@@ -711,6 +711,8 @@ async def test_deliver_does_not_emit_task_settle_undelivered_on_successful_deliv
 
     await driver._finish(status="ok", output={"x": 1})
 
+    await worker._audit_events.drain()
+
     run_dir = pipeline_run_dir(tmp_path / ".reyn", "delivered-audit-run")
     terminal = _result_json(run_dir)
     assert terminal["delivered"] is True  # sanity: this run's delivery actually succeeded

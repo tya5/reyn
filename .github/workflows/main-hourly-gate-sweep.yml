@@ -12,7 +12,15 @@ name: main hourly gate sweep
 # the 5 existing per-PR workflows (owner: keep this in ONE new file, don't
 # touch them).
 #
-# Deliberately only 5 of #4257's original scan — one other candidate,
+# #4965/#4966 adds a 6th, collect-events-settle
+# (collect-events-settle-gate.yml) — same reasoning, and its own
+# `pull_request` trigger is additionally PATH-scoped (tests/**,
+# src/reyn/core/events/**), so the composition gap this workflow closes is
+# even easier to hit for it: two independently-green PRs that each touch
+# only ONE of those two paths never trigger the per-PR gate at all for the
+# OTHER path's half of the violation.
+#
+# Deliberately only 5+1 of #4257's original scan — one other candidate,
 # tests-dir-names-gate, invokes its script with a diff/merge-base argument
 # (`--base origin/<PR base ref>` / a merge-base comparison) that has no
 # meaning against `main` alone: there is no "PR" here to diff against, and
@@ -58,14 +66,14 @@ jobs:
         with:
           python-version: "3.11"
 
-      # All 5 are stdlib-only (ast / pathlib / sys) — no pip install needed,
+      # All 6 are stdlib-only (ast / pathlib / sys) — no pip install needed,
       # same as their per-PR counterparts. Any non-zero exit fails its own
       # step (default `run:` behaviour), which reddens the job overall — a
       # single red gate is enough, #4257's own test-plan requirement ("a
       # red gate you can't fail is a gate that says nothing"). Each step
       # still carries `if: ${{ !cancelled() }}` so a step 1 failure does
-      # NOT skip steps 2-5 (the default without it) — this runs once an
-      # hour, so knowing all 5 outcomes from one run matters more here than
+      # NOT skip steps 2-6 (the default without it) — this runs once an
+      # hour, so knowing all 6 outcomes from one run matters more here than
       # in a per-PR gate: without it, only the first failure is visible and
       # recovery has to wait a full cycle to learn about the rest.
       - name: bare-tests-import-reference
@@ -87,3 +95,7 @@ jobs:
       - name: flat-tests-ratchet
         if: ${{ !cancelled() }}
         run: python scripts/flat_tests_ratchet.py
+
+      - name: collect-events-settle
+        if: ${{ !cancelled() }}
+        run: python scripts/check_collect_events_settle.py

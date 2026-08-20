@@ -1,0 +1,46 @@
+name: collect-events-settle gate
+
+# #4965/#4966: reject any collect_events()-derived (or
+# add_subscriber()/subscribe_audit_events()-derived) list read without a
+# settle()/drain()/polling-yield earlier in the same async function.
+# Since #4961 C, EventLog.emit() dispatches to subscribers on a background
+# consumer task whenever a running event loop exists — a synchronous read
+# right after the triggering await can race that consumer and see a
+# stale/incomplete list. Most real instances of this assert ABSENCE
+# (`assert not any(...)`), which a missed delivery satisfies exactly as
+# well as a genuine absence — invisible to CI running the suite, so it
+# needs a static gate, not just running the tests and waiting for red. See
+# scripts/check_collect_events_settle.py's module docstring for the full
+# design rationale (#4965/#4966).
+#
+# No diff/base-ref needed — a whole-tree scan against a baseline of zero,
+# same shape as bare-tests-import-reference-gate.yml. A shallow checkout
+# is enough.
+on:
+  pull_request:
+    paths:
+      - "tests/**"
+      - "src/reyn/core/events/**"
+
+permissions:
+  contents: read
+
+jobs:
+  collect-events-settle:
+    name: collect-events-settle gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      # scripts/check_collect_events_settle.py is stdlib-only (ast /
+      # pathlib / sys). No pip install needed.
+      - name: Check no collect_events()-derived list is read without settle()
+        run: |
+          python scripts/check_collect_events_settle.py

@@ -73,6 +73,7 @@ from reyn.runtime.session_params import PresentationWiring
 from reyn.tools.pipeline_verbs import _make_tool_dispatch
 from reyn.tools.types import ToolContext
 from tests._support.agent_session import make_session
+from tests._support.events import settle
 
 
 class _ScriptedAgentReply:
@@ -631,7 +632,7 @@ async def test_attached_run_emits_bridge_marker_on_callers_own_eventlog(
     reg = _agent_registry(tmp_path, state_log, None)
     caller = reg.get_or_load("worker")  # (worker, main) = the reply/caller address
     caller_events: list = []
-    caller.router_host.events.add_subscriber(caller_events.append)
+    caller.router_host.events.add_subscriber(lambda e: caller_events.append(e))
 
     outcome = await run_pipeline_attached(
         reg,
@@ -645,6 +646,7 @@ async def test_attached_run_emits_bridge_marker_on_callers_own_eventlog(
         caller_events=caller.router_host.events,
     )
     assert outcome["status"] == "ok"
+    await settle(caller.router_host.events)
 
     markers = [e for e in caller_events if e.type == "pipeline_run_attached"]
     (marker,) = markers  # exactly one — unpack fails RED if 0 or >1 landed
@@ -697,7 +699,7 @@ async def test_async_launch_does_not_emit_bridge_marker(
     reg = _agent_registry(tmp_path, state_log, scripted)
     caller = reg.get_or_load("worker")
     caller_events: list = []
-    caller.router_host.events.add_subscriber(caller_events.append)
+    caller.router_host.events.add_subscriber(lambda e: caller_events.append(e))
 
     rid = await start_pipeline_run(
         reg,
