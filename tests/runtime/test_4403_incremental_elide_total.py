@@ -27,6 +27,8 @@ Real ``RouterHistoryBuffer`` + real ``ChatMessage`` throughout — no fakes.
 """
 from __future__ import annotations
 
+import pytest
+
 from reyn.config import CompactionConfig
 from reyn.core.events.events import EventLog
 from reyn.runtime.chat_message import ChatMessage
@@ -56,7 +58,13 @@ def _make_buf(history: list[ChatMessage], events: EventLog) -> RouterHistoryBuff
     )
 
 
-def _latest_elide_total(events: EventLog, collected: list) -> int:
+async def _latest_elide_total(events: EventLog, collected: list) -> int:
+    """#4961 C: dispatch moved off of ``emit()``'s synchronous caller onto
+    a queue-consumer task — yields once (``await asyncio.sleep(0)``) so
+    the consumer has actually run and ``collected`` reflects every emit
+    that happened before this call, in order (FIFO queue), before reading
+    it."""
+    await events.drain()
     matches = [e for e in collected if e.type == "elide_evaluated"]
     assert matches, "build_history() must have emitted elide_evaluated"
     return matches[-1].data["total"]
@@ -68,7 +76,8 @@ def _subscribed(events: EventLog) -> list:
     return collected
 
 
-def test_incremental_total_matches_a_from_scratch_recompute_after_growth() -> None:
+@pytest.mark.asyncio
+async def test_incremental_total_matches_a_from_scratch_recompute_after_growth() -> None:
     """Tier 2: append new turns (the common case — a real conversation
     extending), call build_history() again — the incrementally-derived
     total must equal what a FRESH buffer (no cache) computes from scratch
@@ -81,18 +90,19 @@ def test_incremental_total_matches_a_from_scratch_recompute_after_growth() -> No
 
     history.extend(_turns(30, start=51))  # grow — mutates the SAME list history_fn reads
     buf.build_history()  # second call: must extend incrementally
-    incremental_total = _latest_elide_total(events, collected)
+    incremental_total = await _latest_elide_total(events, collected)
 
     fresh_events = EventLog()
     fresh_collected = _subscribed(fresh_events)
     fresh_buf = _make_buf(list(history), fresh_events)  # independent buffer, no cache
     fresh_buf.build_history()
-    canonical_total = _latest_elide_total(fresh_events, fresh_collected)
+    canonical_total = await _latest_elide_total(fresh_events, fresh_collected)
 
     assert incremental_total == canonical_total
 
 
-def test_incremental_total_recomputes_correctly_after_a_shrink() -> None:
+@pytest.mark.asyncio
+async def test_incremental_total_recomputes_correctly_after_a_shrink() -> None:
     """Tier 2: #4387's own concern for this history_fn — a rewind can make
     the ``turns`` list SHORTER than what was cached. The cache must detect
     this and recompute from scratch, not silently keep serving a total
@@ -105,18 +115,19 @@ def test_incremental_total_recomputes_correctly_after_a_shrink() -> None:
 
     history[:] = _turns(10)  # shrink — simulates a rewind cutting most turns
     buf.build_history()
-    incremental_total = _latest_elide_total(events, collected)
+    incremental_total = await _latest_elide_total(events, collected)
 
     fresh_events = EventLog()
     fresh_collected = _subscribed(fresh_events)
     fresh_buf = _make_buf(list(history), fresh_events)
     fresh_buf.build_history()
-    canonical_total = _latest_elide_total(fresh_events, fresh_collected)
+    canonical_total = await _latest_elide_total(fresh_events, fresh_collected)
 
     assert incremental_total == canonical_total
 
 
-def test_incremental_total_recomputes_when_the_prefix_reorders_at_the_same_length() -> None:
+@pytest.mark.asyncio
+async def test_incremental_total_recomputes_when_the_prefix_reorders_at_the_same_length() -> None:
     """Tier 2: #4387's harder rewind case — a branch-switch can produce a
     SAME-LENGTH but DIFFERENT list (the boundary seq no longer matches what
     was cached). Length alone cannot catch this; the seq check must."""
@@ -131,13 +142,13 @@ def test_incremental_total_recomputes_when_the_prefix_reorders_at_the_same_lengt
     # different turn 20 from another branch is now active).
     history[:] = _turns(19) + [ChatMessage(role="user", content="alt turn 20", seq=999)]
     buf.build_history()
-    incremental_total = _latest_elide_total(events, collected)
+    incremental_total = await _latest_elide_total(events, collected)
 
     fresh_events = EventLog()
     fresh_collected = _subscribed(fresh_events)
     fresh_buf = _make_buf(list(history), fresh_events)
     fresh_buf.build_history()
-    canonical_total = _latest_elide_total(fresh_events, fresh_collected)
+    canonical_total = await _latest_elide_total(fresh_events, fresh_collected)
 
     assert incremental_total == canonical_total
 

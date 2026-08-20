@@ -1034,6 +1034,11 @@ class AgentRegistry:
             aclose_event_store = getattr(session, "aclose_event_store", None)
             if callable(aclose_event_store):
                 await aclose_event_store()
+            # #4961 C: same teardown-completeness gap as EventStore above —
+            # a 4th instance (see Session.aclose_audit_events's own docstring).
+            aclose_audit_events = getattr(session, "aclose_audit_events", None)
+            if callable(aclose_audit_events):
+                await aclose_audit_events()
         cascade_changes, vanished_sids = self.remove(name, purge=purge)
         if self._state_log is not None:
             await self._state_log.append(
@@ -2236,6 +2241,20 @@ class AgentRegistry:
             aclose_event_store = getattr(session, "aclose_event_store", None)
             if callable(aclose_event_store):
                 await aclose_event_store()
+            # #4961 C: same teardown-completeness gap as EventStore above —
+            # a 4th instance (see Session.aclose_audit_events's own
+            # docstring). This is the site that actually matters for a
+            # driver-session spawned to run a detached async pipeline and
+            # reclaimed here after its terminal state lands — `run()`'s
+            # own `finally` (which now also drains+stops _audit_events)
+            # is subject to the EXACT race the comment above already
+            # names for FsWatcher/EventStore: this function never awaits
+            # the cancelled run() task, so closing here (not relying on
+            # that finally to have already fired) is required, not
+            # redundant.
+            aclose_audit_events = getattr(session, "aclose_audit_events", None)
+            if callable(aclose_audit_events):
+                await aclose_audit_events()
             # #4215 ②: cancel this session's own hook-bus->parent bridge
             # task, if it is one (bridged children only —
             # session_api._spawn_pipeline_driver_session's attached path;

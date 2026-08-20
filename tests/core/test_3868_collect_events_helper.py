@@ -5,16 +5,24 @@ Real ``EventLog`` throughout (no mocks) — the helper is a thin wrapper over
 """
 from __future__ import annotations
 
+import pytest
+
 from reyn.core.events.events import EventLog
 from tests._support.events import collect_events
 
 
-def test_collect_events_captures_emits_after_the_call() -> None:
+@pytest.mark.asyncio
+async def test_collect_events_captures_emits_after_the_call() -> None:
     """Tier 2: an event emitted AFTER collect_events() is called appears in
-    the returned list."""
+    the returned list.
+
+    #4961 C: dispatch moved off of `emit()`'s own synchronous caller onto
+    a queue-consumer task — yields once (`await asyncio.sleep(0)`) after
+    emitting so the consumer actually runs before asserting delivery."""
     log = EventLog()
     collected = collect_events(log)
     log.emit("tool_executed", op="read_file", path="/tmp/x")
+    await log.drain()
     assert [e.type for e in collected] == ["tool_executed"]
 
 
@@ -30,27 +38,35 @@ def test_collect_events_does_not_retroactively_capture_prior_emits() -> None:
     assert collected == []
 
 
-def test_collect_events_list_is_live_across_repeated_reference() -> None:
+@pytest.mark.asyncio
+async def test_collect_events_list_is_live_across_repeated_reference() -> None:
     """Tier 2: the returned list keeps growing as the log emits — a polling
     pattern (``any(... for e in collected)`` called repeatedly, matching the
     real-world wait-until-condition shape many existing tests use) sees each
-    new emit without calling collect_events() again."""
+    new emit without calling collect_events() again.
+
+    #4961 C: yields once after emit — see the file's first test for why."""
     log = EventLog()
     collected = collect_events(log)
     assert not any(e.type == "config_reloaded" for e in collected)
     log.emit("config_reloaded", source="test")
+    await log.drain()
     assert any(e.type == "config_reloaded" for e in collected)
 
 
-def test_collect_events_captures_multiple_emits_in_order() -> None:
+@pytest.mark.asyncio
+async def test_collect_events_captures_multiple_emits_in_order() -> None:
     """Tier 2: multiple emits are collected in emission order — matching
     ``.all()``'s own ordering guarantee, so a mechanical replacement
-    preserves any order-dependent assertion."""
+    preserves any order-dependent assertion.
+
+    #4961 C: yields once after emit — see the file's first test for why."""
     log = EventLog()
     collected = collect_events(log)
     log.emit("a")
     log.emit("b")
     log.emit("c")
+    await log.drain()
     assert [e.type for e in collected] == ["a", "b", "c"]
 
 

@@ -25,6 +25,8 @@ EventLog that bypasses the real construction path.
 """
 from __future__ import annotations
 
+import pytest
+
 from reyn.config import AuditEventsConfig
 from reyn.core.events.backend import DiscardEventBackend, LocalEventBackend
 from reyn.core.events.events import EventLog
@@ -42,16 +44,24 @@ class _RaisingBackend:
 # ── 1. discard preserves subscriber delivery ──────────────────────────────
 
 
-def test_discard_backend_subscribers_still_receive_events() -> None:
+@pytest.mark.asyncio
+async def test_discard_backend_subscribers_still_receive_events() -> None:
     """Tier 2: witness ① — with backend=discard, a subscriber still gets
     every emitted event. The witness is the subscriber's own received list,
-    not "emit returned an Event"."""
+    not "emit returned an Event".
+
+    #4961 C: dispatch moved off of `emit()`'s own (synchronous) caller
+    onto a queue-consumer task — `emit()` still returns synchronously, but
+    subscriber delivery is now a SEPARATE async step, so this test yields
+    once (`await asyncio.sleep(0)`) after emitting to let the consumer
+    task actually run before asserting delivery."""
     log = EventLog(backend=DiscardEventBackend())
     received = []
     log.add_subscriber(received.append)
 
     e1 = log.emit("tool_executed", op="read")
     e2 = log.emit("tool_executed", op="read")
+    await log.drain()
 
     assert received == [e1, e2]
 
@@ -94,7 +104,8 @@ def test_discard_backend_audit_seq_still_monotonic() -> None:
 # ── 3. backend failure isolation (prohibition ③, both directions) ────────
 
 
-def test_a_raising_backend_does_not_stop_subscriber_delivery() -> None:
+@pytest.mark.asyncio
+async def test_a_raising_backend_does_not_stop_subscriber_delivery() -> None:
     """Tier 2: witness ③ / falsify ④ — a backend that raises on write()
     must not prevent subscribers from receiving the event. This is the
     test that goes RED if a future edit ever makes the backend "just
@@ -103,12 +114,15 @@ def test_a_raising_backend_does_not_stop_subscriber_delivery() -> None:
     try/except (see backend.py's module docstring: #4961 A gave the
     subscriber loop its own per-subscriber isolation too, but that does
     NOT make position in the list a safe substitute for the backend's
-    unconditional, order-independent guarantee)."""
+    unconditional, order-independent guarantee).
+
+    #4961 C: yields once after emit — see the sibling test above for why."""
     log = EventLog(backend=_RaisingBackend())
     received = []
     log.add_subscriber(received.append)
 
     emitted = log.emit("tool_executed", op="read")
+    await log.drain()
 
     assert received == [emitted]
 
@@ -155,10 +169,13 @@ def test_backend_property_reflects_the_active_backend() -> None:
     assert log.backend is backend
 
 
-def test_set_backend_swaps_without_touching_subscribers() -> None:
+@pytest.mark.asyncio
+async def test_set_backend_swaps_without_touching_subscribers() -> None:
     """Tier 2: `set_backend` (used by `Session.set_events_dir`'s live
     re-key) replaces the backend only — every subscriber registered before
-    the swap keeps receiving events after it."""
+    the swap keeps receiving events after it.
+
+    #4961 C: yields once after emit — see the file's first test for why."""
     log = EventLog(backend=DiscardEventBackend())
     received = []
     log.add_subscriber(received.append)
@@ -166,18 +183,23 @@ def test_set_backend_swaps_without_touching_subscribers() -> None:
     before_swap = log.emit("tool_executed", op="read")
     log.set_backend(DiscardEventBackend())
     after_swap = log.emit("tool_executed", op="read")
+    await log.drain()
 
     assert received == [before_swap, after_swap]
 
 
-def test_no_backend_omits_write_side_entirely() -> None:
+@pytest.mark.asyncio
+async def test_no_backend_omits_write_side_entirely() -> None:
     """Tier 2: accept-side — None (the pre-PR-2 default) means no write
     side at all; emit + subscriber dispatch behave exactly as before this
-    PR existed."""
+    PR existed.
+
+    #4961 C: yields once after emit — see the file's first test for why."""
     log = EventLog()  # backend=None, the default
     received = []
     log.add_subscriber(received.append)
     emitted = log.emit("tool_executed", op="read")
+    await log.drain()
     assert received == [emitted]
     assert log.backend is None
 
@@ -200,7 +222,8 @@ def test_audit_events_config_backend_accepts_discard() -> None:
 # ── 6. Session-level, real production path (not a hand-built EventLog) ────
 
 
-def test_session_with_discard_backend_still_delivers_to_real_subscribers(
+@pytest.mark.asyncio
+async def test_session_with_discard_backend_still_delivers_to_real_subscribers(
     tmp_path,
 ) -> None:
     """Tier 2: the real production-path witness — driven through
@@ -228,6 +251,7 @@ def test_session_with_discard_backend_still_delivers_to_real_subscribers(
     received = []
     session.subscribe_audit_events(received.append)
     emitted = session._audit_events.emit("test_event", foo="bar")
+    await session._audit_events.drain()  # #4961 C: see the file's first test
 
     assert received == [emitted]
     assert emitted.data.get("foo") == "bar"
@@ -236,7 +260,8 @@ def test_session_with_discard_backend_still_delivers_to_real_subscribers(
 # ── 5. #4961 A — per-subscriber isolation in the dispatch loop ───────────
 
 
-def test_a_raising_subscriber_does_not_skip_a_later_subscriber(caplog) -> None:
+@pytest.mark.asyncio
+async def test_a_raising_subscriber_does_not_skip_a_later_subscriber(caplog) -> None:
     """Tier 1: #4961 A — the actual gap this fix closes. Before it, a
     raising subscriber aborted the ENTIRE dispatch loop, silently
     skipping every subscriber registered AFTER it (registration order is
@@ -248,7 +273,11 @@ def test_a_raising_subscriber_does_not_skip_a_later_subscriber(caplog) -> None:
     lead-coder's second acceptance condition in the same test: the
     failure is LOGGED, not silently swallowed (#4961's own framing is
     "silent" — closing delivery while going quiet would trade one
-    unobservable gap for another)."""
+    unobservable gap for another).
+
+    #4961 C: dispatch moved to a queue-consumer task — yields once after
+    emit (see the file's first test) so the consumer actually runs before
+    the assertions."""
     import logging
 
     log = EventLog()
@@ -262,6 +291,7 @@ def test_a_raising_subscriber_does_not_skip_a_later_subscriber(caplog) -> None:
 
     with caplog.at_level(logging.ERROR, logger="reyn.core.events.events"):
         emitted = log.emit("tool_executed", op="read")
+        await log.drain()
 
     assert later_received == [emitted], (
         "the subscriber registered AFTER the raising one must still "
@@ -272,11 +302,14 @@ def test_a_raising_subscriber_does_not_skip_a_later_subscriber(caplog) -> None:
     ), "a raising subscriber's failure must be logged, not silently discarded"
 
 
-def test_subscribers_are_still_dispatched_in_registration_order() -> None:
+@pytest.mark.asyncio
+async def test_subscribers_are_still_dispatched_in_registration_order() -> None:
     """Tier 1: #4961 A's other acceptance condition (lead-coder) —
     per-subscriber isolation must not reorder dispatch. agui/endpoint.py's
     own barrier ordering (co-vet #3310 N3(a)) depends on `add_subscriber`
-    staying synchronous and subscribers firing in registration order."""
+    staying synchronous and subscribers firing in registration order.
+
+    #4961 C: yields once after emit — see the file's first test for why."""
     log = EventLog()
     order: list[str] = []
     log.add_subscriber(lambda _e: order.append("first"))
@@ -284,5 +317,6 @@ def test_subscribers_are_still_dispatched_in_registration_order() -> None:
     log.add_subscriber(lambda _e: order.append("third"))
 
     log.emit("tool_executed", op="read")
+    await log.drain()
 
     assert order == ["first", "second", "third"]

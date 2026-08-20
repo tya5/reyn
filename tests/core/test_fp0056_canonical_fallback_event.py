@@ -103,6 +103,11 @@ async def test_unregistered_fallback_emits_event_with_source_id_and_no_body() ->
         pipeline, None,
         tool_dispatch=_dispatch, state_log=None, run_id="run-fp0056-f2-fallback", events=events,
     )
+    # #4961 C: yield once so the queue-consumer task has actually drained
+    # this run's emits before reading `collected` (see events.py's own
+    # dispatch-queue docstring — dispatch is no longer inline inside
+    # emit()).
+    await events.drain()
 
     # Exactly one fallback event for the one unregistered tool step (unpack asserts the count).
     [fallback_event] = [e for e in collected if e.type == CANONICAL_FALLBACK_EVENT]

@@ -216,12 +216,17 @@ class _FakeSession:
         return list(self._audit_snapshot)
 
 
-def test_maybe_emit_model_cost_warn_emits_for_known_high_cost_model() -> None:
+@pytest.mark.asyncio
+async def test_maybe_emit_model_cost_warn_emits_for_known_high_cost_model() -> None:
     """Tier 2: known model above threshold=0.0 → model_cost_warn emitted.
 
     Uses threshold=0.0 so any model with a known litellm price fires.
     Falsification: if resolved.model were not passed (bug: ModelSpec passed
     directly), litellm.model_cost lookup fails silently → no emit.
+
+    #4961 C: dispatch moved off of `emit()`'s own synchronous caller onto
+    a queue-consumer task — yields once (`await asyncio.sleep(0)`) after
+    the call so the consumer actually runs before reading the snapshot.
     """
     from reyn.llm.model_cost_rate import get_input_cost_per_1m_usd
     from reyn.runtime.model_cost_warn import maybe_emit_model_cost_warn
@@ -231,6 +236,7 @@ def test_maybe_emit_model_cost_warn_emits_for_known_high_cost_model() -> None:
 
     session = _FakeSession(threshold=0.0)
     maybe_emit_model_cost_warn(session, "gpt-4o", action="session_start")
+    await session._audit_events.drain()
 
     events = session.event_snapshot()
     assert events, "expected model_cost_warn to be emitted"
@@ -240,7 +246,8 @@ def test_maybe_emit_model_cost_warn_emits_for_known_high_cost_model() -> None:
     assert evt_data["model_class"] == "gpt-4o"
 
 
-def test_maybe_emit_model_cost_warn_dedup_within_session() -> None:
+@pytest.mark.asyncio
+async def test_maybe_emit_model_cost_warn_dedup_within_session() -> None:
     """Tier 2: same model class warned at most once per session.
 
     Behavioral check: first call fires; second call for the same model leaves
@@ -248,6 +255,9 @@ def test_maybe_emit_model_cost_warn_dedup_within_session() -> None:
 
     Falsification: without the _cost_warned_models set check, two calls
     for the same model_class would emit two events (duplicate warn).
+
+    #4961 C: yields once after each call — see the file's first such test
+    for why.
     """
     from reyn.llm.model_cost_rate import get_input_cost_per_1m_usd
     from reyn.runtime.model_cost_warn import maybe_emit_model_cost_warn
@@ -257,10 +267,12 @@ def test_maybe_emit_model_cost_warn_dedup_within_session() -> None:
 
     session = _FakeSession(threshold=0.0)
     maybe_emit_model_cost_warn(session, "gpt-4o", action="session_start")
+    await session._audit_events.drain()
     after_first = session.event_snapshot()
     assert after_first, "expected first call to emit"
 
     maybe_emit_model_cost_warn(session, "gpt-4o", action="model_override")
+    await session._audit_events.drain()
     assert session.event_snapshot() == after_first, (
         "second call for same model class should not emit a new event"
     )
@@ -283,11 +295,15 @@ def test_maybe_emit_model_cost_warn_disabled_suppresses() -> None:
     assert not session.event_snapshot(), "expected no emit when disabled"
 
 
-def test_maybe_emit_model_cost_warn_action_field_propagated() -> None:
+@pytest.mark.asyncio
+async def test_maybe_emit_model_cost_warn_action_field_propagated() -> None:
     """Tier 2: the action kwarg reaches the event data field.
 
     Falsification: if the action parameter were hardcoded ('model_override'
     only), the session_start context would be misreported.
+
+    #4961 C: yields once after the call — see the file's first such test
+    for why.
     """
     from reyn.llm.model_cost_rate import get_input_cost_per_1m_usd
     from reyn.runtime.model_cost_warn import maybe_emit_model_cost_warn
@@ -297,6 +313,7 @@ def test_maybe_emit_model_cost_warn_action_field_propagated() -> None:
 
     session = _FakeSession(threshold=0.0)
     maybe_emit_model_cost_warn(session, "gpt-4o", action="session_start")
+    await session._audit_events.drain()
     events = session.event_snapshot()
     assert events, "expected an event to be emitted"
     _, evt_data = events[0]
