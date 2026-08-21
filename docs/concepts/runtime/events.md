@@ -194,6 +194,45 @@ text, always — this flag governs the durable write only) and
 `history.jsonl` (the completed reply's own persistence is a separate
 mechanism entirely, untouched by this).
 
+### User input's own content is a THIRD, separate opt-in (#4666 item ③)
+
+The two knobs above both govern the AGENT's own output. A user's own
+typed/chosen text gets a third, independent knob:
+`audit_events.user_input_include_text` (default `false`) — covering the
+6 kinds where a user's own words reach an audit-event: `user_submitted`,
+`user_message_received`, `intervention_answer_submitted`,
+`user_answered_intervention`, `user_intervention_received`,
+`router_retry_exhausted` (an AST census across the whole tree, lead-
+coder, #4666 — an earlier pass found 3 and undercounted). See the
+[events reference](../../reference/runtime/events.md#user-interaction)
+for the exact field dropped per kind.
+
+No coalescing involved here — unlike `agent_delta`, each of these 6
+kinds is written individually; the knob only decides whether that one
+write keeps its content field or drops it. Off (the default): every
+other field on the kind (`chain_id`/`intervention_id`/`msg_id`/`seq`/
+etc.) is still recorded, so "a submission/answer happened" remains
+provable without the words themselves. `LocalEventBackend.declare_gaps()`
+names this gap dynamically, same discipline as the two knobs above.
+
+**⚠️ Default-behavior change (2026-08-21, #4666):** before this field
+existed, these 6 kinds' content was always durably recorded,
+unconditionally.
+
+**Unchanged either way:** live subscriber delivery (TUI/AG-UI/peer
+broadcast — every one of these kinds reaches its subscribers before this
+backend-level knob is ever consulted) and `history.jsonl`.
+
+**⚠️ Known gap this knob does NOT close:** `ask_user`'s question/answer
+also reach the audit log unconditionally via `tool_called.args`/
+`tool_returned.result` (`dispatch_tool`, a wholly separate emit path —
+those carry a tool's own payload, not one of the 6 kinds above). Closing
+that needs a per-tool "this field is conversation content" declaration
+the dispatcher can consult (an architect ruling in progress, #4666) —
+turning this knob on or off has no effect on that path either way. Do
+not read the 6-kind list above as exhaustive coverage of "user input
+reaches the audit log".
+
 ## What audit-events are NOT
 
 - **Not application logs.** A workflow author shouldn't emit free-form audit-events. The set is OS-defined.
