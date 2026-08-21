@@ -44,6 +44,7 @@ from pathlib import Path
 from typing import AsyncIterator
 
 import pytest
+from textual_flowview import FlowView
 
 from reyn.interfaces.inline.textual_chat.chrome import Composer, status_line_text
 from reyn.interfaces.repl.read_model import LOCAL_CHAT_READ_CAPABILITIES, ChatReadModel
@@ -259,7 +260,15 @@ async def test_submit_blocked_while_unattached_preserves_typed_text():
         assert composer.text == "hello, are you there", (
             "typed text must survive a blocked submission (decision 4B)"
         )
-        assert any("connecting" in m.text.lower() for m in transport.displayed), (
+        # #5001: this notice is a client-authored one about THIS client's
+        # own composer state — it now appends directly via `_ingest_frame`
+        # rather than `transport.put_display` (a remote client's
+        # `AgUiTransport.put_display` is a correct no-op; routing this
+        # notice through it silently dropped it there). Assert on the
+        # FlowView the operator actually sees, not the transport's own
+        # `displayed` list, which this notice no longer reaches.
+        rows = [e.item.text or "" for e in app.query_one(FlowView).entries]
+        assert any("connecting" in t.lower() for t in rows), (
             "operator must be told WHY nothing happened"
         )
 
@@ -284,7 +293,9 @@ async def test_submit_blocked_message_distinguishes_failed_from_connecting():
 
         assert transport.submitted == []
         assert composer.text == "still there?"
-        assert any("fail" in m.text.lower() for m in transport.displayed)
+        # #5001: same rerouting as above — see that test's own comment.
+        rows = [e.item.text or "" for e in app.query_one(FlowView).entries]
+        assert any("fail" in t.lower() for t in rows)
 
 
 @pytest.mark.asyncio

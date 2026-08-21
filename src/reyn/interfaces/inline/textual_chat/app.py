@@ -6102,14 +6102,31 @@ class TextualChatApp(App):
         """#3671 P3: tell the operator WHY their Enter did nothing, matching
         the header's connecting/failed distinction (owner ruling: a genuine
         failure must never be papered over as an indefinite "still loading")
-        rather than silently dropping the keystroke."""
+        rather than silently dropping the keystroke.
+
+        #5001: appends directly via :meth:`_ingest_frame`, NOT ``self.
+        _transport.put_display(...)``. This is a client-authored notice
+        ABOUT this client's own composer state — it was never something the
+        server's outbox needed to carry, and routing it through the
+        transport seam meant ``AgUiTransport.put_display``'s no-op (a
+        CORRECT no-op — a remote client cannot inject into the server's
+        outbox) silently dropped this specific sentence on a remote client,
+        while the header's own connecting/failed STATE (read straight off
+        ``has_session()``/``attach_failed()``, independent of this method)
+        kept rendering — which is exactly why the gap went unnoticed: the
+        state looked fine. ``_ingest_frame`` is the SAME local-model append
+        both an in-process AND a remote client already use elsewhere for
+        purely client-side notices, so this now takes one path regardless
+        of transport, matching what ``AgUiTransport.put_display``'s own
+        docstring already claims for "client-authored echoes" — which
+        wasn't true for this call site until now."""
         if self._transport.attach_failed():
             text = "attach failed (see log) — your message was kept; retry once resolved"
         else:
             text = "still connecting — your message will send once ready"
         from reyn.runtime.outbox import OutboxMessage  # noqa: PLC0415
         try:
-            self._transport.put_display(OutboxMessage(kind="status", text=text))
+            self._ingest_frame(OutboxMessage(kind="status", text=text))
         except Exception:
             pass
 
@@ -6145,7 +6162,16 @@ class TextualChatApp(App):
         highlighted row to cancel) — rather than losing it. That is the
         invariant #3300 protects, and slash leaving the queue does not touch
         it. Errors are contained and surfaced as an error frame the pump
-        renders — a silent input drop is the worst failure for a chat box."""
+        renders — a silent input drop is the worst failure for a chat box.
+
+        #5001: this error notice appends via :meth:`_ingest_frame`, not
+        ``self._transport.put_display(...)`` — see
+        :meth:`_notify_blocked_on_attach`'s own docstring for why (same
+        fix, same reasoning: a client-authored notice about THIS client's
+        own submit attempt, never something the server's outbox needed to
+        carry, so routing it through the transport seam meant a remote
+        client silently lost it to ``AgUiTransport.put_display``'s
+        no-op)."""
         try:
             from reyn.interfaces.slash.dispatch import maybe_dispatch_slash
             if await maybe_dispatch_slash(self._transport, text):
@@ -6156,7 +6182,7 @@ class TextualChatApp(App):
             from reyn.runtime.outbox import OutboxMessage
             detail = f"{type(exc).__name__}: {exc}"
             try:
-                self._transport.put_display(
+                self._ingest_frame(
                     OutboxMessage(
                         kind="error", text=f"input could not be submitted: {detail}"
                     )
