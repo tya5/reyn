@@ -81,6 +81,8 @@ def pytest_configure(config: pytest.Config) -> None:
     """
     import reyn
 
+    _disclose_in_process_reyn_path()
+
     env_identity = _load_env_identity()
     finding = env_identity.check_in_process_tree(
         Path(reyn.__file__), Path(config.rootpath)
@@ -91,3 +93,33 @@ def pytest_configure(config: pytest.Config) -> None:
         f"env-identity (in-process, #3233):\n{finding.render()}",
         returncode=1,
     )
+
+
+def _disclose_in_process_reyn_path() -> None:
+    """Disclose, never gate: write the in-process ``reyn.__file__``
+    resolution directly to stderr — measured to survive ``-q`` (a
+    ``pytest_report_header`` return value does NOT: pytest suppresses its
+    own header section under ``-q``, confirmed by running this exact
+    check both ways before choosing this hook). Never fails/skips/warns.
+
+    #5028's real finding: `pytest_configure`'s check above already catches
+    the case where in-process resolution is WRONG (#3233) — but a test
+    that spawns a SUBPROCESS (`sys.executable -c ...`) re-resolves `reyn`
+    independently, outside that check's reach, and when the subprocess
+    reads a different checkout the failure looks like an ordinary test
+    failure with no signal that environment, not the diff, is the
+    suspect. Six PRs cited this exact class of failure as "known
+    pre-existing" without anyone reading the traceback closely enough to
+    notice a foreign path in it (#5028).
+
+    A pin/gate was considered and explicitly rejected (architect, #5028):
+    the original harm is that the divergence is INVISIBLE, not that it is
+    POSSIBLE — a gate would need an exclusion list for tests that
+    deliberately exercise a missing/foreign `reyn` (#5010's own dead-end
+    shape: a pass-condition with no valid action for a test whose whole
+    point IS to hit the missing case). Visibility first; whether teeth
+    are still needed after that is a separate, later question.
+    """
+    import reyn
+
+    print(f"in-process reyn resolves to: {Path(reyn.__file__).resolve()}", file=sys.stderr)
