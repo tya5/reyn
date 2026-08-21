@@ -33,7 +33,7 @@ import pytest
 
 from reyn.interfaces.inline.textual_chat import TextualChatApp
 from reyn.interfaces.inline.textual_chat.app import run_textual_chat
-from reyn.interfaces.repl.read_model import ChatReadModel
+from reyn.interfaces.repl.read_model import LOCAL_CHAT_READ_CAPABILITIES, ChatReadModel
 from reyn.runtime import stall_trace
 from reyn.runtime.chat_message import ChatMessage
 from tests._support.textual_chat_test_helpers import QueueTransport
@@ -44,6 +44,14 @@ class _CountingReadModel(ChatReadModel):
     ``test_textual_chat_phase5_3273.py``'s own ``_HistoryReadModel``) that
     additionally counts ``conversation_history`` calls — the observable
     this file's tests need (whether ``on_mount`` reads for itself)."""
+
+    @property
+    def capabilities(self):
+        # #4996: a test double simulating a fully-capable (local-shaped)
+        # read model — every accessor above is a REAL, non-degraded
+        # implementation for this test's own purposes, not a stand-in for
+        # RemoteReadModel's frame-sufficiency boundary.
+        return LOCAL_CHAT_READ_CAPABILITIES
 
     def __init__(self, messages: "list[ChatMessage]") -> None:
         self.messages = list(messages)

@@ -70,7 +70,7 @@ from reyn.interfaces.inline.textual_chat.completion import (
     CompletionPopup,
     compute_completion,
 )
-from reyn.interfaces.repl.read_model import ChatReadModel
+from reyn.interfaces.repl.read_model import LOCAL_CHAT_READ_CAPABILITIES, ChatReadModel
 from reyn.interfaces.slash import REGISTRY
 from reyn.interfaces.transport.client_transport import ClientTransport
 from reyn.interfaces.transport.frames import EventFrame
@@ -141,6 +141,14 @@ class SessionReadModel(ChatReadModel):
     ``test_3338``'s ``_MutableSnapshotReadModel``) whose
     :meth:`completion_session` returns a REAL ``Session`` — the seam the app
     resolves both completion sources through."""
+
+    @property
+    def capabilities(self):
+        # #4996: a test double simulating a fully-capable (local-shaped)
+        # read model — every accessor above is a REAL, non-degraded
+        # implementation for this test's own purposes, not a stand-in for
+        # RemoteReadModel's frame-sufficiency boundary.
+        return LOCAL_CHAT_READ_CAPABILITIES
 
     def __init__(self, session=None) -> None:
         self._session = session

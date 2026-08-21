@@ -86,7 +86,11 @@ from reyn.interfaces.inline.textual_chat.gutter import (
     _cell_pad_left,
 )
 from reyn.interfaces.inline.textual_chat.restore import project_restored_frames
-from reyn.interfaces.repl.read_model import ChatReadModel, project_remote_snapshot
+from reyn.interfaces.repl.read_model import (
+    LOCAL_CHAT_READ_CAPABILITIES,
+    ChatReadModel,
+    project_remote_snapshot,
+)
 from reyn.interfaces.repl.status import _snapshot
 from reyn.interfaces.transport.client_transport import ClientTransport
 from reyn.interfaces.transport.frames import DisplayFrame
@@ -664,6 +668,14 @@ class _TurnUsageReadModel(ChatReadModel):
     ``status.py``'s ``_snapshot()`` publishes as ``turn_usage_fn`` in
     production. Nothing about the lookup is simulated; only the surrounding
     session/registry is skipped."""
+
+    @property
+    def capabilities(self):
+        # #4996: a test double simulating a fully-capable (local-shaped)
+        # read model — every accessor above is a REAL, non-degraded
+        # implementation for this test's own purposes, not a stand-in for
+        # RemoteReadModel's frame-sufficiency boundary.
+        return LOCAL_CHAT_READ_CAPABILITIES
 
     def __init__(self, tracker: BudgetTracker) -> None:
         self._tracker = tracker

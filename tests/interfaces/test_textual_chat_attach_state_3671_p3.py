@@ -46,7 +46,7 @@ from typing import AsyncIterator
 import pytest
 
 from reyn.interfaces.inline.textual_chat.chrome import Composer, status_line_text
-from reyn.interfaces.repl.read_model import ChatReadModel
+from reyn.interfaces.repl.read_model import LOCAL_CHAT_READ_CAPABILITIES, ChatReadModel
 from reyn.interfaces.transport.client_transport import ClientTransport
 from reyn.interfaces.transport.frames import DisplayFrame
 from reyn.runtime.outbox import OutboxMessage
@@ -201,6 +201,14 @@ class _AttachStateTransport(ClientTransport):
 class _NoneReadModel(ChatReadModel):
     """Mirrors what `RegistryReadModel.snapshot()` genuinely returns
     pre-attach — `None` (see `status._snapshot`)."""
+
+    @property
+    def capabilities(self):
+        # #4996: a test double simulating a fully-capable (local-shaped)
+        # read model — every accessor above is a REAL, non-degraded
+        # implementation for this test's own purposes, not a stand-in for
+        # RemoteReadModel's frame-sufficiency boundary.
+        return LOCAL_CHAT_READ_CAPABILITIES
 
     def snapshot(self, config=None):
         return None
