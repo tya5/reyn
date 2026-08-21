@@ -1,0 +1,87 @@
+name: "Detect #4986 recurrence"
+
+# #4997① — status:awaiting-recurrence on #4986 had zero detectors (owner
+# finding): nobody could notice the teardown-hang recurring. This workflow
+# is the invocation point scripts/detect_4986_teardown_hang.py itself was
+# deliberately left without (architect ruling on #4999): pure detection
+# logic in the script, this file decides WHEN it runs.
+#
+# Trigger: workflow_run on "CI" (test.yml's own `name: CI`), fired when
+# that workflow completes — architect explicitly rejected a cron/schedule
+# alternative: cron satisfies "gets called" but not "arrives before a
+# re-run" — this detector's whole notification depends on reaching a human
+# BEFORE they re-run the job and destroy the only copy of the hung log
+# (the exact incident that motivated #4997's common requirement). An
+# hourly cron could arrive up to an hour late; workflow_run fires within
+# the SAME event as the failure itself.
+#
+# workflow_dispatch (with a run_id input) is added alongside for two
+# reasons architect named, not just convenience:
+#   1. workflow_run only ever runs the DEFAULT BRANCH's copy of this
+#      workflow — this PR's own branch never triggers it no matter what
+#      the file says, so without workflow_dispatch this workflow could not
+#      be tested against a real run before merge at all.
+#   2. A silent no-detection run looks IDENTICAL to a broken workflow that
+#      never ran — workflow_dispatch lets a human replay a known-positive
+#      run (e.g. 32459227086, the real #4986 signature this script's own
+#      test fixture is drawn from) on demand to confirm the workflow
+#      itself is alive, independent of waiting for a fresh failure.
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: "A CI run ID to check (for manual verification against a known run, e.g. a real #4986 recurrence)."
+        required: true
+
+permissions:
+  actions: read
+  issues: write
+  contents: read
+
+jobs:
+  detect:
+    name: "detect #4986 teardown-hang signature"
+    # workflow_run: only act on a FAILED CI run — a green run cannot carry
+    # the #4986 signature (the hang, by definition, causes pytest-timeout
+    # to fail the job). workflow_dispatch always runs (a human explicitly
+    # asked to check a specific run).
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'failure'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      - name: Resolve the run ID to check
+        id: resolve
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "run_id=${{ github.event.inputs.run_id }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "run_id=${{ github.event.workflow_run.id }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: "Run the #4986 signature detector"
+        id: detect
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set +e
+          python scripts/detect_4986_teardown_hang.py --run-id "${{ steps.resolve.outputs.run_id }}" > detection_output.txt 2>&1
+          echo "exit_code=$?" >> "$GITHUB_OUTPUT"
+          cat detection_output.txt
+
+      - name: "Post the notification to #4986"
+        if: steps.detect.outputs.exit_code == '1'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh issue comment 4986 --body "$(cat detection_output.txt)"
