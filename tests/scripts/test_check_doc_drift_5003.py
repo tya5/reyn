@@ -292,6 +292,23 @@ def test_pure_is_silent_when_no_doc_names_the_identifier():
     assert findings == []
 
 
+def test_exit_code_is_1_on_a_finding():
+    """Tier 1: the blocking-gate contract (#5010 promotion, architect
+    ruling) — a required CI check reads the process exit code, so THIS
+    is the line that actually gates a merge. 0 (warn-only) would let a
+    real drift instance land silently again, #5003's founding problem."""
+    exit_code = m._print_findings_and_exit_code(
+        [m.Finding(identifier="foo_bar_baz", doc_path="docs/x.md")], "test-source",
+    )
+    assert exit_code == 1
+
+
+def test_exit_code_is_0_when_clean():
+    """Tier 1: no findings → exit 0, the merge is not blocked."""
+    exit_code = m._print_findings_and_exit_code([], "test-source")
+    assert exit_code == 0
+
+
 def test_pure_only_flags_the_untouched_doc_among_several():
     """Tier 1: an identifier named in two docs, one touched one not — only
     the untouched one is flagged."""

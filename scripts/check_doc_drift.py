@@ -70,7 +70,7 @@ file" exist in this module, and calibration (#5010) is why both do:
   no post-image; unparseable content) — every fallback is printed to
   stderr, never silently taken.
 
-## Calibration status (#5010) — after the round-2 (precise) rewrite
+## Blocking (promoted #5010, architect ruling 2026-08-21)
 
 A backward scan of ~400 merged PRs found 9 real candidates (PRs where
 this discriminator's "touched the doc?" branch actually ran). Hand-
@@ -78,11 +78,41 @@ inspection: 3 CONFIRMED TRUE POSITIVES (`_action_retrieval`, PRs
 #4572/#4567/#4563 — PR #4582's own title: "sweep stale
 action_retrieval.universal_wrappers_enabled refs #4572's own fix scope
 missed", direct evidence a human had to notice and fix what this gate
-would have flagged), 0 false positives after the round-2 rewrite (was
-7/9 with the line-heuristic-only round 1). Still **warn-only**
-(`main` always returns 0) — architect's explicit ruling that "9 is
-enough" or not is a SEPARATE decision from "0 FP among 9", not made
-here. See #5010 for the full writeup and promotion decision.
+would have flagged), 0 false positives after the round-2 (tokenizer)
+rewrite (was 7/9 with the line-heuristic-only round 1).
+
+**"0 FP among 9" is NOT why this is blocking** — with only 9 trials,
+0/9 barely bounds the true rate at all (roughly "under ~30%", a loose
+statistical read, not a safety argument). The promotion rests on three
+STRUCTURAL points instead, none of them a count:
+
+1. **The false-positive CLASS was eliminated, not merely unobserved.**
+   Both real FP classes found in calibration (`#`-comment prose,
+   docstring prose) tokenize as impossible-to-confuse with a NAME token
+   once the extractor reads real pre-image file content instead of
+   guessing from diff-line text — see `find_removed_identifiers_precise`.
+   The disclosed line-heuristic limitation (a `#`/quote inside a string
+   literal) disappears the same way, for the same reason.
+2. **The fallback speaks up.** Every time the precise path can't run
+   for a file (no pre/post image; unparseable content), it prints to
+   stderr and falls back to the weaker line heuristic FOR THAT FILE
+   ONLY — never silently. Verified against two real triggers
+   (#4560/#4454, both files deleted entirely by their PR), with a test
+   that asserts the fallback message itself, not just the result.
+3. **The decisive point: the PASSING action is always the correct
+   action.** This gate's pass condition is "touch the doc file in the
+   SAME PR" — even in a false-positive world, the only thing an author
+   does in response is open that doc and confirm it's still accurate.
+   There is no dead end a false positive can walk someone into. Staying
+   warn-only despite that would return to #5003's own founding problem
+   ("the prescription exists, but firing depends on someone's memory").
+
+**Revert condition** (required — a promotion with no way back is a
+one-way door): if a genuine false positive is found in production use,
+`.github/workflows/check-doc-drift.yml`'s job reverts to warn-only
+(annotation, `main()`'s exit code ignored) until the new FP class is
+closed the same structural way as the first two — never by loosening
+`_MIN_IDENTIFIER_LENGTH` or adding another marker-guessing heuristic.
 """
 from __future__ import annotations
 
@@ -616,6 +646,29 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _print_findings_and_exit_code(findings: "list[Finding]", source: str) -> int:
+    """The blocking-gate contract, pulled out as its own small pure-ish
+    function so the exit code — the actual thing a required CI check
+    reads — is directly testable without needing real PR/repo access
+    (see tests/scripts/test_check_doc_drift_5003.py's `test_main_*`
+    cases). 0 clean, 1 on any finding — see module docstring,
+    "Blocking" (promoted #5010)."""
+    if not findings:
+        print(f"OK — no doc-drift findings ({source}).")
+        return 0
+
+    print(f"FAIL — doc-drift findings ({source}):\n")
+    for f in findings:
+        print(f"  {f.identifier!r} removed from src/, still named in {f.doc_path} (untouched by this PR)")
+    print(
+        f"\nTotal: {len(findings)} finding(s). Fix: touch the doc file listed above in "
+        "THIS PR (a removal note, or an update) — that is the correct action whether "
+        "this is a real drift or a coincidental identifier match; see the module "
+        "docstring's 'Blocking' section for why.",
+    )
+    return 1
+
+
 def main(argv: "list[str] | None" = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -634,16 +687,7 @@ def main(argv: "list[str] | None" = None) -> int:
         source = args.fixture
 
     findings = check_doc_drift(diff_text, pr_number=pr_number)
-
-    if not findings:
-        print(f"OK — no doc-drift findings ({source}).")
-        return 0
-
-    print(f"WARN — doc-drift findings ({source}), NOT YET BLOCKING (see module docstring):\n")
-    for f in findings:
-        print(f"  {f.identifier!r} removed from src/, still named in {f.doc_path} (untouched by this PR)")
-    print(f"\nTotal: {len(findings)} finding(s).")
-    return 0  # warn-only — see module docstring "Not yet blocking"
+    return _print_findings_and_exit_code(findings, source)
 
 
 if __name__ == "__main__":

@@ -3,27 +3,42 @@ name: Doc-drift check
 # #5003: flag a PR that removes an identifier from src/ without touching
 # any docs/ file that still names it. See
 # scripts/check_doc_drift.py's module docstring for the discriminator
-# (asks the PR, not the doc) and the two structural exclusions.
+# (asks the PR, not the doc) and the structural exclusions.
 #
-# WARN-ONLY (architect condition, #5003 / #5010). Calibration history:
-#   - PR #5007's 15-PR sample: 0 findings, but only 1/15 had a
-#     gone-from-src identifier at all, and it was not doc-named — the
-#     "touched the doc?" branch never actually ran. FP rate: unmeasured.
-#   - #5010 round 1: a ~400-PR backward scan found 9 real candidates
-#     (the branch DID run). 2 true positives, 7 false positives —
-#     mostly docstring-prose words the line-heuristic extraction
-#     couldn't distinguish from real code.
-#   - #5010 round 2 (this file's current shape): rewrote extraction to
-#     read real pre/post file content (`git show`) and tokenize it
-#     (scripts/check_doc_drift.py's `find_removed_identifiers_precise`)
-#     instead of guessing from diff-line text. Re-run on the same 9
-#     candidates: 3 true positives (a 3rd surfaced), 0 false positives.
-# "0 FP among N=9" is the architect's stated promotion bar — met. Still
-# warn-only: whether N=9 is ENOUGH is a separate decision the architect
-# has explicitly not made yet — see #5010 for the ruling when it lands.
-# This job therefore never fails the run — a finding is surfaced as a
-# workflow ANNOTATION only (`::warning::`), visible on the PR without
-# gating it.
+# BLOCKING (promoted #5010, architect ruling 2026-08-21). Calibration
+# history — full account in scripts/check_doc_drift.py's module
+# docstring, "Blocking" section:
+#   - PR #5007's 15-PR sample: 0 findings, but the "touched the doc?"
+#     branch never actually ran (no doc-named gone-from-src candidate).
+#   - #5010 round 1 (line-heuristic extraction): a ~400-PR backward
+#     scan found 9 real candidates. 2 true positives, 7 false
+#     positives — mostly docstring-prose words a diff-line-text-only
+#     heuristic couldn't distinguish from real code.
+#   - #5010 round 2 (this file's current shape): extraction rewritten
+#     to read real pre/post file content (`git show`) and tokenize it
+#     (find_removed_identifiers_precise) instead of guessing from
+#     diff-line text. Re-run on the same 9 candidates: 3 true positives
+#     (a 3rd surfaced), 0 false positives.
+#
+# Promotion does NOT rest on "0/9" as a statistic (9 trials barely
+# bounds a rate at all) — it rests on three structural points: (1) the
+# false-positive CLASS was eliminated, not merely unobserved — a NAME
+# token structurally cannot come from inside a STRING/COMMENT token,
+# (2) every fallback to the weaker line heuristic prints to stderr,
+# never silent, verified against two real triggers, (3) the PASSING
+# action (touch the doc file in the same PR) is always the correct
+# action even in a false-positive world — no dead end a false positive
+# can walk an author into. See the module docstring for the full
+# argument.
+#
+# REVERT CONDITION (required for a promotion to not be one-way): if a
+# genuine false positive is found in production use, change the final
+# step back to `set +e` / always `exit 0` / `::warning::` annotations
+# (the shape this file had before #5010's promotion — see git history)
+# until the new false-positive class is closed the same STRUCTURAL way
+# as the first two (never by loosening _MIN_IDENTIFIER_LENGTH or adding
+# another marker-guessing heuristic — that regresses past what this
+# promotion earned).
 #
 # Trigger scoped to `paths: ["src/**"]` — the discriminator only ever
 # considers identifiers removed from src/, so a PR that never touches
@@ -41,18 +56,18 @@ permissions:
 
 jobs:
   doc-drift:
-    name: doc-drift check (warn-only)
+    name: doc-drift check
     runs-on: ubuntu-latest
     timeout-minutes: 5
 
     steps:
-      # fetch-depth: 0 (full history) — #5010 round 2's precise
-      # extraction path reads real pre/post file content via
-      # `git show <sha>:<path>`, which needs the base ref's commit
-      # present locally; the default shallow (depth 1) checkout would
-      # only have the PR's own tip commit and make every file fall back
-      # to the line heuristic (logged, not silent, but pointless to pay
-      # for every run when a full checkout avoids it).
+      # fetch-depth: 0 (full history) — the precise extraction path
+      # reads real pre/post file content via `git show <sha>:<path>`,
+      # which needs the base ref's commit present locally; the default
+      # shallow (depth 1) checkout would only have the PR's own tip
+      # commit and make every file fall back to the line heuristic
+      # (logged, not silent, but pointless to pay for every run when a
+      # full checkout avoids it).
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
@@ -71,10 +86,11 @@ jobs:
         run: |
           set +e
           python scripts/check_doc_drift.py --pr "${{ github.event.pull_request.number }}" > doc_drift_output.txt 2>&1
+          exit_code=$?
           cat doc_drift_output.txt
-          if grep -q "^WARN" doc_drift_output.txt; then
+          if [ "$exit_code" -ne 0 ]; then
             while IFS= read -r line; do
-              echo "::warning::${line}"
+              echo "::error::${line}"
             done < <(grep "^  '" doc_drift_output.txt)
           fi
-          exit 0
+          exit "$exit_code"
