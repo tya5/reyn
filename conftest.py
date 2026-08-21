@@ -112,6 +112,15 @@ def _disclose_in_process_reyn_path() -> None:
     pre-existing" without anyone reading the traceback closely enough to
     notice a foreign path in it (#5028).
 
+    This line does NOT detect that class of failure by itself — the
+    in-process path it prints is always correct here (guarded by the
+    #3233 check above); a spawned subprocess's own resolution is never
+    read or compared against it. It is a comparison BASELINE: a human
+    reading a subprocess's traceback next to this line can see, at a
+    glance, whether the two disagree, the way the six PRs' own tracebacks
+    already carried the answer (a foreign `sandbox_2` path) that nobody
+    had this line to compare it against.
+
     A pin/gate was considered and explicitly rejected (architect, #5028):
     the original harm is that the divergence is INVISIBLE, not that it is
     POSSIBLE — a gate would need an exclusion list for tests that
