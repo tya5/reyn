@@ -47,7 +47,6 @@ from reyn.services.compaction.engine import (
     _IMAGE_FIXED_TOKEN_COST,
     estimate_tokens_for_any_turn,
 )
-from tests._support.events import collect_events
 
 _MODEL = "gpt-3.5-turbo"
 
@@ -56,8 +55,9 @@ def _make_pair(history: list[ChatMessage], *, media_store=None, use_chars4: bool
     """Real RouterHistoryBuffer + real ContextBudgetAdvisor wired exactly as
     production wires them (ContextBudgetAdvisor.history_fn = build_history —
     see that class's own module docstring). Returns (buf, advisor, events) —
-    the shared EventLog is exposed so a caller can observe build_history's
-    own internal ``elide_evaluated`` audit-event (see
+    the shared EventLog is exposed for parity with other tests in this
+    module; the elide-side total itself is read via ``buf.elide_
+    total_and_trigger()`` (see
     ``test_elide_total_advisor_and_reference_three_way_agree`` below)."""
     cfg = CompactionConfig(use_chars4_estimate=use_chars4)
     events = EventLog()
@@ -294,11 +294,15 @@ def test_elide_total_advisor_and_reference_three_way_agree():
     the class of case #2957 PR-B's "measure the canonical wire quantity"
     design decision is FOR.
 
-    ``build_history`` emits its internal total as a public P6 audit-event
-    (``elide_evaluated`` — see that method) precisely so this
-    is observable without touching private state (CLAUDE.md: no private-
-    state assertions). This test asserts the 3-way agreement: elide's own
-    emitted total == advisor's measurement == the canonical reference.
+    ``build_history``'s own internal total is readable via the public
+    ``elide_total_and_trigger()`` method (#4977: promoted from a
+    private-only computation whose only external observation point used
+    to be a since-retired audit-event — an audit-event is operator/
+    replay vocabulary, not a test seam; see that method's own docstring)
+    — CLAUDE.md: no private-state assertions, and this is the real
+    public surface, not a private-field read. This test asserts the
+    3-way agreement: elide's own total == advisor's measurement == the
+    canonical reference.
 
     ★ DO NOT "clean up" this fixture to an ordinary resolvable image. An
     unresolvable path-ref is the ONLY content shape this witness has found
@@ -330,8 +334,7 @@ def test_elide_total_advisor_and_reference_three_way_agree():
             seq=1,
         ),
     ]
-    buf, advisor, events = _make_pair(history, media_store=None)
-    collected = collect_events(events)
+    buf, advisor, _events = _make_pair(history, media_store=None)
 
     wire = buf.build_history()
     assert wire[0]["content"] == [{"type": "text", "text": "look"}], (
@@ -340,13 +343,7 @@ def test_elide_total_advisor_and_reference_three_way_agree():
         "ChatMessage's content"
     )
 
-    elide_events = [e for e in collected if e.type == "elide_evaluated"]
-    assert elide_events, (
-        "build_history must emit its internal elide-threshold total as a "
-        "public audit-event — without this, elide's own accounting is "
-        "unobservable from outside private state"
-    )
-    elide_total = elide_events[-1].data["total"]
+    elide_total, _effective_trigger = buf.elide_total_and_trigger()
 
     advisor_tokens = advisor._incremental_history_tokens()
     reference = _canonical_reference_tokens(wire, use_chars4=True)
