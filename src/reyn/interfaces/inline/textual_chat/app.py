@@ -1216,12 +1216,29 @@ class TextualChatApp(App):
         config=None,
         clock: "Callable[[], float]" = time.monotonic,
         presenter: "ReynPresenter | None" = None,
+        initial_history_messages: "list | None" = None,
     ) -> None:
         super().__init__()
         self._transport = transport
         self._read_model = read_model
         self._agent_name = agent_name
         self._config = config
+        # #4983: the CURRENTLY-ATTACHED session's conversation history,
+        # read BEFORE this App was constructed (the caller — normally
+        # ``run_textual_chat``'s own pre-``run_async`` step — reads it off
+        # the event loop, e.g. via ``asyncio.to_thread``) so ``on_mount``
+        # never has to make its own synchronous disk read to hydrate the
+        # first frame. ``None`` means "no pre-fetched history was given" —
+        # a real caller that just has nothing to restore passes ``[]``,
+        # not ``None`` (``ChatReadModel.conversation_history`` never
+        # returns ``None`` on success) — so ``on_mount`` can tell "read
+        # for me already" apart from "read it yourself" and fall back to
+        # the old synchronous :meth:`_hydrate_from_history` call for any
+        # caller (most existing tests included) that constructs this App
+        # directly without threading this parameter through. See
+        # :meth:`on_mount`'s own docstring for the full mount-vs-session-
+        # switch split this parameter exists for.
+        self._initial_history_messages = initial_history_messages
         # App-side monotonic clock for the RUNNING-tool elapsed timer: tool frames
         # carry no RUNNING-start timestamp (ADR finding D2), so elapsed is computed
         # from when the started frame arrived here. Injectable so a test drives the
@@ -2225,7 +2242,18 @@ class TextualChatApp(App):
         from reyn.runtime.startup_timing import stage  # noqa: PLC0415
 
         with stage("tui-boot:hydrate"):
-            self._hydrate_from_history()
+            # #4983: prefer the history this App was CONSTRUCTED with (the
+            # caller already read it OFF the event loop — see
+            # ``__init__``'s own ``initial_history_messages`` docstring) —
+            # step ② only, no new disk read here. ``None`` (nothing was
+            # pre-fetched — most existing construction sites, tests
+            # included) falls back to the old synchronous do-both call,
+            # unchanged: this method must still hydrate correctly for a
+            # caller that never opted into the split.
+            if self._initial_history_messages is not None:
+                self._apply_hydrated_messages(self._initial_history_messages)
+            else:
+                self._hydrate_from_history()
         # The running-blink gutter animates off FlowView's NATIVE animation clock
         # (``animation_fps`` wired in :meth:`compose`), not an app-side timer — so
         # there is nothing to start/pause here. The blink is ADDITIVE: a frozen
@@ -2285,24 +2313,52 @@ class TextualChatApp(App):
         self.query_one("#drawer", ContentSwitcher).display = False
         self.query_one(Composer).focus()
 
-    def _hydrate_from_history(
+    def _read_conversation_history(
         self, *, agent: "str | None" = None, session_id: "str | None" = None
-    ) -> None:
-        """Restore-on-restart (#3273 Phase 5) AND session-switch reset+rehydrate
-        (#3310 N2): project a persisted conversation log into the retained
-        model so the pane shows that session's PREVIOUS conversation instead
-        of whatever was left over from before.
+    ) -> "list | None":
+        """#4983 step ① — the actual disk read (``history.jsonl`` via
+        :meth:`~reyn.interfaces.repl.read_model.ChatReadModel.
+        conversation_history`), split out of :meth:`_hydrate_from_history`
+        so a caller can choose HOW this specific step runs without also
+        touching step ② (:meth:`_apply_hydrated_messages`, pure in-memory
+        projection). Deliberately still a PLAIN synchronous method, not
+        ``async def`` — architect ruling (#4983): the two call sites need
+        DIFFERENT answers for "run this off the event loop or not" (mount
+        reads before the loop's own ``run_async`` even starts; a live
+        session-switch would need ``asyncio.to_thread``), and forcing one
+        ``async`` shape onto both would make the axis that actually
+        differs between them (WHEN/HOW step ① runs) invisible at the call
+        site. Each caller decides that for itself — this method only does
+        the read.
 
-        Two call shapes:
+        Returns ``None`` on `self._read_model` being unset OR the read
+        raising (already logged here) — the caller's :meth:`_apply_
+        hydrated_messages` treats ``None`` as "nothing to hydrate", same
+        behavior as the pre-split method's own early-return did."""
+        if self._read_model is None:
+            return None
+        try:
+            if agent is not None or session_id is not None:
+                return self._read_model.conversation_history(
+                    agent=agent, session_id=session_id
+                )
+            return self._read_model.conversation_history()
+        except Exception:
+            logger.exception("textual chat: conversation-history read failed")
+            return None
 
-        - No args (:meth:`on_mount`'s original Phase-5 call): hydrates the
-          CURRENTLY ATTACHED session, byte-identical to pre-N2 behavior.
-        - ``agent``/``session_id`` given (:meth:`_handle_session_attached_event`,
-          called AFTER :meth:`self.conversation`'s ``clear()``): hydrates that
-          SPECIFIC (possibly never-before-attached-in-this-client-run) session
-          instead — the same read-model seam
-          (:meth:`~reyn.interfaces.repl.read_model.ChatReadModel.conversation_history`
-          — ``history.jsonl``, NOT the P6 audit-event log), just targeted.
+    def _apply_hydrated_messages(self, messages: "list | None") -> None:
+        """#4983 step ② — project *messages* (already read by :meth:`_read_
+        conversation_history`, step ①) into the retained model so the pane
+        shows that session's PREVIOUS conversation instead of whatever was
+        left over from before. Pure in-memory work — deliberately left ON
+        the event loop at both call sites (architect ruling, #4983): this
+        is cheap (projection + a batched ``FlowView.extend``, no I/O), and
+        splitting it further would buy nothing while adding a second
+        cross-thread handoff for no reason.
+
+        A no-op when *messages* is ``None`` (step ① found nothing to read,
+        or failed — already logged there).
 
         Appends each projected frame to ``self.conversation``
         (:func:`.restore.project_restored_frames`). Every restored entry is
@@ -2323,17 +2379,7 @@ class TextualChatApp(App):
         either way, and the pane starts/stays blank (remote switch-rehydrate is
         #3310 N3's job). Fully guarded — a restore failure must never stop the
         app from mounting/resetting and pumping live frames."""
-        if self._read_model is None:
-            return
-        try:
-            if agent is not None or session_id is not None:
-                messages = self._read_model.conversation_history(
-                    agent=agent, session_id=session_id
-                )
-            else:
-                messages = self._read_model.conversation_history()
-        except Exception:
-            logger.exception("textual chat: conversation-history read failed")
+        if messages is None:
             return
         try:
             frames = project_restored_frames(messages)
@@ -2382,6 +2428,40 @@ class TextualChatApp(App):
         for msg in frames:
             if msg.kind == "agent":
                 self._recent_replies.appendleft(msg.text)
+
+    def _hydrate_from_history(
+        self, *, agent: "str | None" = None, session_id: "str | None" = None
+    ) -> None:
+        """Restore-on-restart (#3273 Phase 5) AND session-switch reset+rehydrate
+        (#3310 N2): the SYNCHRONOUS do-both convenience — runs step ①
+        (:meth:`_read_conversation_history`) then step ② (:meth:`_apply_
+        hydrated_messages`) back to back, on whatever thread/task calls
+        this. #4983: mount (:meth:`on_mount`) no longer calls this when a
+        pre-fetched history is available (see that method's own docstring
+        for why it reads BEFORE the app is even constructed instead) —
+        this wrapper remains for :meth:`_handle_session_attached_event`
+        (the live session-switch rehydrate, #3310 N2), which #4983
+        deliberately did NOT touch: that call site's own event-loop-block
+        question is a separate, still-open UX question (does the
+        conversation pane briefly go blank on switch, in exchange for the
+        TUI no longer freezing?) requiring its own owner-facing ruling —
+        see #4983's own issue thread. Do not read "mount is fixed" as
+        "this method is fixed" — it is the SAME synchronous shape it
+        always was, on this call path.
+
+        Two call shapes:
+
+        - No args: hydrates the CURRENTLY ATTACHED session, byte-identical
+          to pre-N2/pre-#4983 behavior.
+        - ``agent``/``session_id`` given (:meth:`_handle_session_attached_event`,
+          called AFTER :meth:`self.conversation`'s ``clear()``): hydrates that
+          SPECIFIC (possibly never-before-attached-in-this-client-run) session
+          instead — the same read-model seam
+          (:meth:`~reyn.interfaces.repl.read_model.ChatReadModel.conversation_history`
+          — ``history.jsonl``, NOT the P6 audit-event log), just targeted."""
+        self._apply_hydrated_messages(
+            self._read_conversation_history(agent=agent, session_id=session_id)
+        )
 
     def _extend_older_frames_from_disk(self) -> bool:
         """#4387 Phase B ② (remaining consumers): when ``self._older_frames``
@@ -6084,10 +6164,50 @@ async def run_textual_chat(
     # outlives this call regardless of which path it takes.
     # ``disarm()`` is idempotent (its own docstring), so both firing on
     # the ordinary path is harmless.
+    import asyncio  # noqa: PLC0415
+
     from reyn.runtime.stall_trace import arm as _arm_stall_trace
     from reyn.runtime.stall_trace import disarm as _disarm_stall_trace
     from reyn.runtime.stall_trace import stall_trace_seconds_from_env
     from reyn.runtime.startup_timing import mark_app_constructed, stage  # noqa: PLC0415
+
+    # #4983 (architect design (c)): read the CURRENTLY-ATTACHED session's
+    # history OFF the event loop, BEFORE the App (and its own event loop)
+    # even exist — closes the measured defect (``on_mount`` used to make
+    # this exact read synchronously, ON the loop, via
+    # ``TextualChatApp._hydrate_from_history``) WITHOUT changing what the
+    # first frame shows: the read still completes before ``run_async``
+    # starts, so first paint has the same populated pane it always did.
+    # ``None`` when there is no read model at all (a caller with nothing
+    # to restore) — ``TextualChatApp.__init__``'s own ``initial_history_
+    # messages`` docstring explains why that must stay ``None``, not
+    # ``[]``, in that case (``on_mount`` needs to tell "nothing to read"
+    # apart from "read it yourself").
+    #
+    # Deliberately does NOT touch the session-switch rehydrate path
+    # (``TextualChatApp._handle_session_attached_event``, live, mid-
+    # session) — that call site still makes the SAME synchronous read it
+    # always did. Its own event-loop-block question is a separate,
+    # still-open UX question (a live switch would trade "TUI freezes
+    # briefly" for "the pane goes blank for a beat, then refills") that
+    # needs its own owner-facing ruling before it changes — see #4983's
+    # own issue thread. Do not read this fix as covering that path too.
+    _initial_history_messages = None
+    if read_model is not None:
+        try:
+            _initial_history_messages = await asyncio.to_thread(
+                read_model.conversation_history
+            )
+        except Exception:
+            # Fully guarded, same discipline as the pre-#4983 synchronous
+            # read this replaces (``TextualChatApp._read_conversation_
+            # history``'s own docstring) — a restore failure must never
+            # stop the app from mounting; ``None`` here makes ``on_mount``
+            # fall back to its own (also-guarded) synchronous retry rather
+            # than silently mounting with an empty pane no one decided on.
+            logger.exception(
+                "textual chat: pre-fetching conversation history failed"
+            )
 
     _stall_seconds = stall_trace_seconds_from_env()
     if _stall_seconds is not None:
@@ -6100,6 +6220,7 @@ async def run_textual_chat(
                 read_model=read_model,
                 agent_name=agent_name,
                 config=config,
+                initial_history_messages=_initial_history_messages,
             )
         await app.run_async(inline=inline)
     finally:
