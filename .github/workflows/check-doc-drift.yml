@@ -5,40 +5,32 @@ name: Doc-drift check
 # scripts/check_doc_drift.py's module docstring for the discriminator
 # (asks the PR, not the doc) and the structural exclusions.
 #
-# BLOCKING (promoted #5010, architect ruling 2026-08-21). Calibration
-# history — full account in scripts/check_doc_drift.py's module
-# docstring, "Blocking" section:
-#   - PR #5007's 15-PR sample: 0 findings, but the "touched the doc?"
-#     branch never actually ran (no doc-named gone-from-src candidate).
-#   - #5010 round 1 (line-heuristic extraction): a ~400-PR backward
-#     scan found 9 real candidates. 2 true positives, 7 false
-#     positives — mostly docstring-prose words a diff-line-text-only
-#     heuristic couldn't distinguish from real code.
-#   - #5010 round 2 (this file's current shape): extraction rewritten
-#     to read real pre/post file content (`git show`) and tokenize it
-#     (find_removed_identifiers_precise) instead of guessing from
-#     diff-line text. Re-run on the same 9 candidates: 3 true positives
-#     (a 3rd surfaced), 0 false positives.
+# WARN-ONLY (architect ruling 2026-08-21, REVERTING the same day's
+# earlier promotion — #5010). Full account in
+# scripts/check_doc_drift.py's module docstring, "Blocking" section
+# (kept, corrected in place — do not re-derive from PR history alone).
 #
-# Promotion does NOT rest on "0/9" as a statistic (9 trials barely
-# bounds a rate at all) — it rests on three structural points: (1) the
-# false-positive CLASS was eliminated, not merely unobserved — a NAME
-# token structurally cannot come from inside a STRING/COMMENT token,
-# (2) every fallback to the weaker line heuristic prints to stderr,
-# never silent, verified against two real triggers, (3) the PASSING
-# action (touch the doc file in the same PR) is always the correct
-# action even in a false-positive world — no dead end a false positive
-# can walk an author into. See the module docstring for the full
-# argument.
-#
-# REVERT CONDITION (required for a promotion to not be one-way): if a
-# genuine false positive is found in production use, change the final
-# step back to `set +e` / always `exit 0` / `::warning::` annotations
-# (the shape this file had before #5010's promotion — see git history)
-# until the new false-positive class is closed the same STRUCTURAL way
-# as the first two (never by loosening _MIN_IDENTIFIER_LENGTH or adding
-# another marker-guessing heuristic — that regresses past what this
-# promotion earned).
+# The promotion's decisive point ("the passing action is always
+# correct — no dead end") was falsified within hours: one of the 3
+# "true positives" in the #5010 calibration set (`_action_retrieval`,
+# PR #4572/#4567/#4563) turned out to be a FALSE POSITIVE on
+# independent re-measurement — `docs/reference/runtime/session-
+# construction.md` is CURRENTLY ACCURATE (correctly phrased as a
+# historical rename note; #5016, closed). The doc WAS stale right
+# after #4572 merged, but a LATER PR (#4582) already fixed it into
+# permanently-correct historical prose — a case the discriminator
+# structurally cannot see, because it only asks "did THIS removing PR
+# touch the doc", never "has ANY later PR already fixed it since". A
+# PR merged today that happens to remove another already-historical
+# `_action_retrieval`-shaped identifier gets flagged with NO valid
+# fix — touching the doc again would mean writing something false,
+# since it is already correct. That is the dead end promotion assumed
+# could not exist. Corrected calibration count: **1 FP / 9** in this
+# family (was reported as 0/9) — the naive "staged, multi-PR removal"
+# case is a DIFFERENT false-positive class than the two (comment
+# prose, docstring prose) round 2 actually closed; re-promotion needs
+# its own structural discriminator for THIS class, not another metric
+# push. See #5010 for the corrected record and re-promotion status.
 #
 # Trigger scoped to `paths: ["src/**"]` — the discriminator only ever
 # considers identifiers removed from src/, so a PR that never touches
@@ -56,7 +48,7 @@ permissions:
 
 jobs:
   doc-drift:
-    name: doc-drift check
+    name: doc-drift check (warn-only)
     runs-on: ubuntu-latest
     timeout-minutes: 5
 
@@ -90,7 +82,7 @@ jobs:
           cat doc_drift_output.txt
           if [ "$exit_code" -ne 0 ]; then
             while IFS= read -r line; do
-              echo "::error::${line}"
+              echo "::warning::${line}"
             done < <(grep "^  '" doc_drift_output.txt)
           fi
-          exit "$exit_code"
+          exit 0
