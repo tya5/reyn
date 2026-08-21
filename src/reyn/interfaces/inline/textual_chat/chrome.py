@@ -1149,10 +1149,21 @@ def _ctx_bar(used: int, window: int, *, cells: int = 24) -> str:
     return "▓" * filled + "░" * (cells - filled)
 
 
-def _cache_hit_line(label: str, cached: int, prompt: int, *, note: str = "") -> str:
+def _cache_hit_line(
+    label: str, cached: int, prompt: int, *, note: str = "", reported: bool = True,
+) -> str:
     """One ``cache X% hit (a / b prompt tokens)`` line, label padded to the same
     9-char column every other cost/ctx line uses (it was misaligned when the label
-    itself carried the qualifier, e.g. ``"cache (cumulative)"``)."""
+    itself carried the qualifier, e.g. ``"cache (cumulative)"``).
+
+    ``reported`` (#5009, ``snap["cache_usage_reported"]``): a REMOTE client's
+    ``cached``/``prompt`` are always ``0`` (cache-hit accounting is
+    session-local, never on the AG-UI wire) — indistinguishable on their own
+    from a genuine 0% hit rate. ``False`` here renders an explicit "not
+    reported" line instead of computing a percentage off zeros, so this
+    reads as "unavailable", never as a fabricated real 0%."""
+    if not reported:
+        return f"{label:<9}not reported on this connection"
     pct = round(100 * cached / prompt) if prompt > 0 else 0
     tail = f", {note}" if note else ""
     return f"{label:<9}{pct}% hit ({cached:,} / {prompt:,} prompt tokens{tail})"
@@ -1374,7 +1385,10 @@ def cost_pane_lines(snap: "dict | None") -> list[str]:
     rows = [
         *_cost_breakdown_table(snap),
         f"tokens   prompt {p:,} · completion {c:,} · total {agent_tokens:,}",
-        _cache_hit_line("cache", cached, p, note="cumulative"),
+        _cache_hit_line(
+            "cache", cached, p, note="cumulative",
+            reported=snap.get("cache_usage_reported", False),
+        ),
     ]
     # #3695: the status row can only afford a mark; this pane has room to say
     # what the mark means and how much of the total is unaccounted for. Absent
@@ -1441,7 +1455,10 @@ def ctx_pane_lines(snap: "dict | None") -> list[str]:
         # Label column widened to match its neighbours — it was four spaces
         # where every other label is seven, so the one line about the cache
         # started in a different place from the five around it.
-        _cache_hit_line(f"{'cache':<{_CTX_LABEL_W}}", recent_cached, recent_prompt),
+        _cache_hit_line(
+            f"{'cache':<{_CTX_LABEL_W}}", recent_cached, recent_prompt,
+            reported=snap.get("cache_usage_reported", False),
+        ),
         f"compaction   {comp_est:,} / {comp_trigger:,} tokens est.  ({comp_pct}% to trigger)",
     ]
 

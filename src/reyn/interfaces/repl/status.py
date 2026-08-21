@@ -351,6 +351,20 @@ def _session_pipelines(session) -> list[dict]:
         return []
 
 
+def _cache_usage_reported_key() -> "dict[str, bool]":
+    """LOCAL's own `{"cache_usage_reported": True}` — a thin wrapper around
+    ``read_model.py``'s ``cache_usage_reported_snapshot_key`` (#5009) that
+    carries the LAZY import (see the call site's own comment for why: this
+    module is imported BY ``read_model.py``'s own top level, so the reverse
+    reference must not be)."""
+    from reyn.interfaces.repl.read_model import (  # noqa: PLC0415
+        LOCAL_CHAT_READ_CAPABILITIES,
+        cache_usage_reported_snapshot_key,
+    )
+
+    return cache_usage_reported_snapshot_key(LOCAL_CHAT_READ_CAPABILITIES)
+
+
 def _snapshot(registry, config=None):
     """Read live status values off the attached session via sync accessors."""
     s = registry.attached_session()
@@ -467,6 +481,15 @@ def _snapshot(registry, config=None):
         "ctx_source": ctx_source,
         "session_cached_tokens": u.cached_tokens,
         "ctx_recent_usage": (recent.prompt_tokens, recent.cached_tokens),
+        # #5009: LOCAL genuinely measures both cache figures above (the
+        # `u`/`recent` reads are real Session state). Derived from
+        # LOCAL_CHAT_READ_CAPABILITIES via cache_usage_reported_snapshot_key,
+        # never hand-typed here directly — see that helper's own docstring
+        # for why (two producers hand-typing the same bit independently is
+        # one more way to silently diverge). Local import: read_model.py
+        # imports `_snapshot` from this module at its own top level, so the
+        # reverse import must stay lazy to avoid a cycle.
+        **_cache_usage_reported_key(),
         "ctx_compaction_status_fn": ctx_compaction_status_fn,
         "cron_jobs": _extract_cron_jobs(config) if config is not None else [],
         "mcp_servers": _extract_mcp_servers(config) if config is not None else [],

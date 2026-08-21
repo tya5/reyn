@@ -80,18 +80,48 @@ class ChatReadModelCapabilities:
     of underlying state (the wire-frame-sufficiency boundary those methods'
     own docstrings already document).
 
+    ``cache_usage_reported`` (#5009, architect co-vet) is the one field
+    NOT named after a :class:`ChatReadModel` method — it covers two
+    ``snapshot()`` dict KEYS instead (``session_cached_tokens`` /
+    ``ctx_recent_usage``), which carry the identical undeclared-``0``
+    conflation this class exists to close, just one level down (inside
+    the dict a supported METHOD returns, rather than the method itself).
+    First tried as a hand-typed literal directly in the two ``snapshot()``
+    producers (``status.py`` / ``project_remote_snapshot``) — measured to
+    be the WRONG container: a hand-typed literal can be forgotten
+    silently, with no construction-time failure to catch it, exactly the
+    defect this class exists to prevent. Declaring it HERE instead means
+    a producer that forgets it fails to construct, like every other
+    field — see :func:`project_remote_snapshot` and ``status.py``'s
+    ``_snapshot()`` for how each producer reads its own value from here
+    rather than typing the literal a second time.
+
     **Witness① scope, stated honestly (lead-coder/architect co-vet on
     #4996):** this dataclass's "forgets a field fails to construct"
     guarantee covers exactly ONE failure mode — a NEW
-    :class:`ChatReadModel` implementation that omits one of these 6 already-
-    declared fields. It is NOT a 1:1 gate over every :class:`ChatReadModel`
-    method: ``snapshot()`` and ``history_path()`` work identically on a
-    remote client and correctly have NO field here — a mechanical "one field
-    per abstract method" mapping would be a false invariant, not a stronger
-    one. If a 7th degradable method is ever added to :class:`ChatReadModel`,
-    THIS dataclass will not fail to construct until a human also adds a
-    field for it here; that step is not, and cannot be, machine-enforced by
-    this class alone.
+    :class:`ChatReadModel` implementation that omits one of these
+    already-declared fields. It is NOT a 1:1 gate over every
+    :class:`ChatReadModel` method: ``snapshot()`` and ``history_path()``
+    work identically on a remote client and correctly have NO field
+    here — a mechanical "one field per abstract method" mapping would be
+    a false invariant, not a stronger one. If a further degradable
+    method or snapshot key is ever added, THIS dataclass will not fail
+    to construct until a human also adds a field for it here; that step
+    is not, and cannot be, machine-enforced by this class alone.
+
+    **A DIFFERENT gap this class does NOT close** (#5009's own
+    falsified first attempt, kept here as the record): a *snapshot dict*
+    that is genuinely ``None``/``{}`` (no read yet — e.g. before mount's
+    first frame) and a *snapshot dict missing a declared key* both
+    normalize to the same empty shape at a naive consumer that does
+    ``snap = snap or {}`` before indexing — bare-indexing the resulting
+    dict cannot tell "nothing to show yet" from "an implementation
+    forgot to populate this key from its own declaration". This
+    dataclass closes the SECOND gap (a producer that forgets to consult
+    its own declaration now fails to construct); the FIRST is a
+    consumer-side concern the reading pane itself must still handle
+    (``snap.get(key, False)`` — false, never true, is the safe direction
+    when there is nothing to consult at all).
 
     **A declaration is an assertion, not an observation** (architect
     co-vet, #5000 — the same limitation ``AxisEnforcementDeclaration``
@@ -110,6 +140,21 @@ class ChatReadModelCapabilities:
     has_command_ui_region: bool
     conversation_history: bool
     load_older_conversation_history: bool
+    cache_usage_reported: bool
+
+
+def cache_usage_reported_snapshot_key(
+    capabilities: ChatReadModelCapabilities,
+) -> "dict[str, bool]":
+    """The ``snapshot()`` dict fragment for :attr:`ChatReadModelCapabilities.
+    cache_usage_reported` — the ONE source both ``snapshot()`` producers
+    (``status.py``'s ``_snapshot()`` and :func:`project_remote_snapshot`)
+    merge in, instead of each hand-typing the literal a second time (#5009,
+    architect co-vet: two producers hand-typing the same bit independently
+    is exactly one more way to silently diverge — one helper, called from
+    both, is the #4996-family fix: derive from the SSoT, don't duplicate
+    the literal)."""
+    return {"cache_usage_reported": capabilities.cache_usage_reported}
 
 
 #: :class:`RegistryReadModel` is local — every degradable read reflects real,
@@ -122,6 +167,7 @@ LOCAL_CHAT_READ_CAPABILITIES = ChatReadModelCapabilities(
     has_command_ui_region=True,
     conversation_history=True,
     load_older_conversation_history=True,
+    cache_usage_reported=True,
 )
 
 #: :class:`RemoteReadModel` — the frame-sufficiency boundary each of these 6
@@ -135,6 +181,7 @@ REMOTE_CHAT_READ_CAPABILITIES = ChatReadModelCapabilities(
     has_command_ui_region=False,
     conversation_history=False,
     load_older_conversation_history=False,
+    cache_usage_reported=False,
 )
 
 
@@ -450,6 +497,25 @@ def project_remote_snapshot(values: "dict | None") -> dict:
         "usage": (0, 0, v.get("agent_tokens", 0)),
         "session_cached_tokens": 0,
         "ctx_recent_usage": (0, 0),
+        # #5009: `0` above is the correct graceful-degrade VALUE for both cache
+        # figures (neither is projected onto the AG-UI wire — cache-hit
+        # accounting is session-local, like the other keys in this block) —
+        # the missing DECLARATION half lives on REMOTE_CHAT_READ_CAPABILITIES
+        # itself (derived here via cache_usage_reported_snapshot_key, never
+        # hand-typed a second time — architect co-vet: two producers
+        # hand-typing the same bit independently is one more way to
+        # silently diverge). Consulted by `chrome.py`'s `_cache_hit_line`
+        # so BOTH panes reading these 2 keys (Cost pane's cumulative line,
+        # Ctx pane's recent-call line) render a "not reported" line instead
+        # of a fabricated "0% hit (0 / 0)" — the same wording that would
+        # come from a real, empty session.
+        #
+        # Scope, explicit (architect, #5009): this is NOT the owner's actual
+        # "cache stuck at 0%" observation — that was measured on a LOCAL
+        # session (owner-confirmed) and is a separate, still-unresolved
+        # symptom this key does not touch. This key only makes the REMOTE
+        # "0 could mean unsupported" case honestly say so.
+        **cache_usage_reported_snapshot_key(REMOTE_CHAT_READ_CAPABILITIES),
         "ctx_source": "remote",
         "ctx_compaction_status_fn": None,
         # #3283 ④: the keyed per-turn cost/token lookup is a SESSION-local read
