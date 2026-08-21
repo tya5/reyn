@@ -3,10 +3,9 @@ OFF, its OWN config knob (``audit_events.completed_response_include_text``)
 — deliberately NOT tied to ①'s ``agent_delta_include_text`` (owner ruling:
 each content opt-in gets its own toggle).
 
-Two events are gated by this ONE knob (architect ruling: "②と③は1つの
-やり取りの両端" — the model's question and the user's answer are two
-ends of one exchange and must share a knob, or a half-recorded exchange
-survives):
+Two events are gated by this ONE knob because both carry the SAME
+content type — text the MODEL directed at the user (owner ruling: one
+knob per content type):
 
   - ``agent_response_committed`` (new kind) — emitted unconditionally from
     ``Session._put_outbox`` filtered on ``msg.kind == "agent"``.
@@ -18,12 +17,16 @@ Both fire unconditionally either way; the opt-in only decides whether
 DURABLE record — same shape as ①. Live subscriber dispatch is unaffected
 regardless of this flag.
 
-Scope: this is #4666's item ② only. Item ③ (user input / the eventual
-``user_intervention_received.answer`` opt-in) is separate, later work and
-is NOT touched here. The tool-path leak (``tool_called.args`` /
-``tool_returned.result`` duplicating the same content) is explicitly OUT
-of ②'s scope — see ``docs/reference/runtime/events.md``'s own
-``agent_response_committed`` row.
+Scope: this is #4666's item ② only. Item ③ (``user_intervention_received
+.answer`` and 5 other user-input kinds, landed separately as #4970) is a
+DIFFERENT content type — text the USER directed at the model — and is
+gated by its own, separate knob (``user_input_include_text``), not this
+one; toggling ② without ③ (or vice versa) durably records one side of an
+exchange but not the other, a deliberate per-operator choice, not a
+defect. The tool-path leak (``tool_called.args`` / ``tool_returned
+.result`` duplicating the same content) is explicitly OUT of ②'s scope —
+see ``docs/reference/runtime/events.md``'s own ``agent_response_committed``
+row.
 
 Real ``LocalEventBackend`` + a real ``Session`` (via ``tests._support.
 agent_session.make_session``) throughout — no ``unittest.mock``.

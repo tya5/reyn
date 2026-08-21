@@ -217,12 +217,18 @@ kinds:
   was said", not "why"). Excludes cancellation (no result is ever
   appended for a cancelled turn) and canned/synthetic non-model text.
 - `user_intervention_requested`'s `question`/`suggestions`/`options` — the
-  model's own `ask_user` question. Architect's ruling: "②と③は1つの
-  やり取りの両端" — the question and its eventual answer (`user_
-  intervention_received.answer`, gated by item ③'s OWN knob, see below)
-  are two ends of ONE exchange, so redacting only one side would leave a
-  half-recorded conversation in `.reyn/events`; this event is covered by
-  ②'s knob, not ③'s.
+  model's own `ask_user` question. Covered by ②, not ③, because the
+  question is text the MODEL directed at the user — same content type as
+  the rest of ②'s scope (owner ruling: one knob per CONTENT TYPE). The
+  answer (`user_intervention_received.answer`, item ③'s own row) is a
+  DIFFERENT content type — text the USER directed at the model — so it
+  is necessarily gated by ③'s own, separate knob, not this one.
+  (Architect's own earlier framing here — "②と③ share one knob, since
+  they're two ends of one exchange" — was corrected: the owner's ruling
+  is one knob per content type, and question/answer are two different
+  types by construction, so they were always going to be two different
+  knobs. The conclusion, question ∈ ②, was right for a different reason
+  than the one first given.)
 
 Both events fire unconditionally, same shape as ①: off (the default),
 `LocalEventBackend.write()` drops only the free-text field(s) —
@@ -230,7 +236,11 @@ Both events fire unconditionally, same shape as ①: off (the default),
 committed" / "a question was asked" remains provable without content.
 `declare_gaps()` names this gap dynamically, same discipline as ①'s own.
 Unchanged either way: live TUI/AG-UI delivery and any opt-in OTEL
-subscriber.
+subscriber. **Toggling ② without ③ (or vice versa) is a deliberate
+per-operator choice, not an accident** — e.g. ② on / ③ off durably
+records the model's questions but not the user's answers to them; that
+asymmetry is the intended shape of "one knob per content type", not a
+half-recorded exchange to be fixed.
 
 **⚠️ ② does not close every conversation-content leak.** The owner's
 "conversation body" ruling is a property of CONTENT, not of which event

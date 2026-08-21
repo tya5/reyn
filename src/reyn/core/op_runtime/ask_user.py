@@ -49,13 +49,15 @@ async def handle(op: AskUserIROp, ctx: OpContext) -> dict:
         run_id=None,  # set by chat session if it tracks runs; CLI ignores
     )
 
-    # #4666②: `question`/`suggestions`/`options` are the model→user half of
-    # ②'s opt-in scope (architect: "②と③は1つのやり取りの両端" — the
-    # model's question and the user's answer share ONE knob, or a
-    # half-answered exchange survives the record). Emitted unconditionally
-    # HERE, same as before this issue — the redaction (dropping those 3
-    # free-text fields from the DURABLE record while `audit_events.
-    # completed_response_include_text` is off) happens at
+    # #4666②: `question`/`suggestions`/`options` are in ②'s opt-in scope
+    # (not ③'s) because this text is the MODEL's own — text the model
+    # directed at the user, the same content type ②'s other kind
+    # (`agent_response_committed`) covers (owner ruling: one knob per
+    # content TYPE). The user's ANSWER to this question is a DIFFERENT
+    # content type and lands on ③'s own, separate knob instead. Emitted
+    # unconditionally HERE, same as before this issue — the redaction
+    # (dropping those 3 free-text fields from the DURABLE record while
+    # `audit_events.completed_response_include_text` is off) happens at
     # `LocalEventBackend.write()`, not at this call site (mirrors
     # `agent_response_committed`'s own emit in `Session._put_outbox`; see
     # that method's docstring for the full ②/③ boundary and the tool-path
