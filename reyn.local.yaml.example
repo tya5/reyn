@@ -596,6 +596,27 @@
 # existed, ``text`` was always durably recorded, unconditionally — set
 # this to ``true`` if your workflow depends on that.
 #
+# ``completed_response_include_text`` (#4666②, owner ruling, default
+# false): a SEPARATE knob from ``agent_delta_include_text`` above AND
+# ``user_input_include_text`` below (same verbatim owner instruction: one
+# toggle must never cover more than one content opt-in) — gates the
+# completed model→user text instead of the streaming fragments:
+# ``agent_response_committed`` (new kind — the terminal reply,
+# force-close/wrap-up text, tool_calls-round accompanying text) and
+# ``user_intervention_requested``'s ``question``/``suggestions``/
+# ``options`` (the model's ``ask_user`` question — architect ruling:
+# "②と③は1つのやり取りの両端", the question and its answer share ONE
+# knob or a half-answered exchange survives the record). Both events
+# fire unconditionally; off (default), ``LocalEventBackend.write()``
+# drops only the free-text field(s) — ``chain_id``/``intervention_id``
+# are always kept. Live TUI/AG-UI delivery and any opt-in OTEL
+# subscriber are UNAFFECTED either way. Does NOT close every
+# conversation-content leak — the same text can duplicate into
+# ``tool_called.args``/``tool_returned.result`` for tool-mediated
+# exchanges; that gap is closed by a separate follow-up PR, not this
+# field. See ``docs/reference/runtime/events.md`` for the full
+# commit-point census.
+#
 # ``user_input_include_text`` (#4666 item ③, default false): a THIRD,
 # separate knob — the two above govern the AGENT's own output, this one
 # governs a USER's own typed/chosen text. Covers 6 kinds (AST census —
@@ -625,6 +646,7 @@
 #   agent_delta_coalesce_fragments: 100     # durable write every N streamed chunks
 #   agent_delta_coalesce_interval_ms: 2000  # or every T ms, whichever first
 #   agent_delta_include_text: false         # keep the reply's own content in the durable record?
+#   completed_response_include_text: false  # keep the completed reply / ask_user question in the durable record?
 #   user_input_include_text: false          # keep the user's own words in the durable record?
 
 

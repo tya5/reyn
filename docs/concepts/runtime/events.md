@@ -194,6 +194,50 @@ text, always — this flag governs the durable write only) and
 `history.jsonl` (the completed reply's own persistence is a separate
 mechanism entirely, untouched by this).
 
+### The completed model→user text is ANOTHER, separate opt-in (#4666②)
+
+`agent_delta_include_text` above gates the STREAMED fragments' content.
+The COMPLETED text — what the user actually saw once a turn resolved —
+is a different question with its own knob: `audit_events.
+completed_response_include_text` (default `false`, owner ruling, same
+"one toggle must never cover both" instruction as ①). It gates TWO
+kinds:
+
+- `agent_response_committed` (new kind) — emitted from `Session.
+  _put_outbox`, the single measured choke point every model→user text
+  commit funnels through: the terminal reply (organic or its
+  `response_format` variant), mid-loop budget force-close, max_iterations
+  wrap-up, `session.py`'s own router_cap wrap-up, and the tool_calls-round
+  accompanying text (`persist=False`, not written to history, but the
+  user sees it — still in scope per architect's ruling that ② asks "what
+  was said", not "why"). Excludes cancellation (no result is ever
+  appended for a cancelled turn) and canned/synthetic non-model text.
+- `user_intervention_requested`'s `question`/`suggestions`/`options` — the
+  model's own `ask_user` question. Architect's ruling: "②と③は1つの
+  やり取りの両端" — the question and its eventual answer (`user_
+  intervention_received.answer`, gated by item ③'s OWN knob, see below)
+  are two ends of ONE exchange, so redacting only one side would leave a
+  half-recorded conversation in `.reyn/events`; this event is covered by
+  ②'s knob, not ③'s.
+
+Both events fire unconditionally, same shape as ①: off (the default),
+`LocalEventBackend.write()` drops only the free-text field(s) —
+`chain_id` / `intervention_id` are always kept, so "a response was
+committed" / "a question was asked" remains provable without content.
+`declare_gaps()` names this gap dynamically, same discipline as ①'s own.
+Unchanged either way: live TUI/AG-UI delivery and any opt-in OTEL
+subscriber.
+
+**⚠️ ② does not close every conversation-content leak.** The owner's
+"conversation body" ruling is a property of CONTENT, not of which event
+`kind` carries it — the SAME string (e.g. `ask_user`'s question/answer)
+can also duplicate into `tool_called.args` / `tool_returned.result` for
+tool-mediated exchanges, entirely outside the three owner-ruled knobs'
+reach. That gap is closed by a separate follow-up PR (a tool-side
+declaration + dispatcher gating mechanism, architect ruling), not by ②
+— turning ② off does not mean no conversation content leaves
+`.reyn/events`.
+
 ### User input's own content is a THIRD, separate opt-in (#4666 item ③)
 
 The two knobs above both govern the AGENT's own output. A user's own

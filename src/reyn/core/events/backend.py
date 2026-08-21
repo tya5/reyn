@@ -195,11 +195,27 @@ class LocalEventBackend:
     BEFORE the (unthrottled) subscriber loop — every raw fragment still
     reaches the TUI/AG-UI exactly as before #4960.
 
-    #4666: the coalesced durable record's ``text`` field (the streamed
+    #4666①: the coalesced durable record's ``text`` field (the streamed
     reply content itself) is ALSO opt-in — off by default
     (``agent_delta_include_text``), its OWN knob, deliberately not tied
     to the coalescing above (owner ruling: each opt-in gets its own
     config, never a single toggle covering both).
+
+    #4666②: same drop-the-free-text-field-only shape, applied to TWO more
+    kinds that are NOT coalesced (one record per occurrence, unlike
+    ``agent_delta``'s per-fragment volume — no throttling need):
+    ``agent_response_committed`` (``Session._put_outbox``'s own emit,
+    filtered on ``msg.kind == "agent"`` — the completed model→user text)
+    drops ``text``; ``user_intervention_requested`` (``ask_user.py``, the
+    model's own question) drops ``question``/``suggestions``/``options``.
+    Both gated by the SAME ``completed_response_include_text`` knob
+    (architect ruling: "②と③は1つのやり取りの両端" — the model's
+    question and the terminal reply share one knob, or a half-recorded
+    exchange survives in the durable log). ``chain_id``/``intervention_
+    id`` and every other field are kept either way, so "a response was
+    committed" / "a question was asked" remains provable from the durable
+    record alone with the flag off — same reasoning as ``agent_delta``'s
+    own drop above.
 
     #4666 item ③: a SEPARATE opt-in (``user_input_include_text``, also
     off by default) covers 6 kinds carrying a user's own typed/chosen
@@ -208,7 +224,9 @@ class LocalEventBackend:
     ``user_intervention_received``, ``router_retry_exhausted`` — see
     ``_USER_INPUT_CONTENT_FIELDS`` for the exact field dropped per kind).
     No coalescing here — every event of these kinds is still written
-    individually, just with its one content field redacted when off.
+    individually, just with its one content field redacted when off. No
+    overlap with ②'s two kinds above — a kind belongs to at most one of
+    these opt-ins.
 
     All OTHER event kinds: unchanged, no gaps — replay / support-bundle /
     dogfood_trace work normally against this backend's output for them."""
@@ -220,6 +238,7 @@ class LocalEventBackend:
         agent_delta_coalesce_fragments: int = _DEFAULT_AGENT_DELTA_COALESCE_FRAGMENTS,
         agent_delta_coalesce_interval_ms: int = _DEFAULT_AGENT_DELTA_COALESCE_INTERVAL_MS,
         agent_delta_include_text: bool = False,
+        completed_response_include_text: bool = False,
         user_input_include_text: bool = False,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
@@ -239,8 +258,16 @@ class LocalEventBackend:
         # runs, then EventLog's subscriber loop, both from the SAME raw
         # `event` this flag never touches).
         self._agent_delta_include_text = agent_delta_include_text
-        # #4666 item ③ (owner ruling, its OWN knob — separate from ①
-        # above): whether the durable record for any of the 6 user-input
+        # #4666②: same shape as `_agent_delta_include_text` immediately
+        # above, gating `agent_response_committed`'s `text` and
+        # `user_intervention_requested`'s `question`/`suggestions`/
+        # `options` — see this class's own docstring for the full
+        # rationale and the config field's own docstring
+        # (`AuditEventsConfig.completed_response_include_text`) for the
+        # owner ruling this mirrors.
+        self._completed_response_include_text = completed_response_include_text
+        # #4666 item ③ (owner ruling, its OWN knob — separate from ① AND
+        # ② above): whether the durable record for any of the 6 user-input
         # kinds in `_USER_INPUT_CONTENT_FIELDS` keeps that kind's content
         # field. Default False, same OTel-convention rationale as ①. Live
         # subscriber delivery is UNAFFECTED — this flag is consulted only
@@ -262,7 +289,25 @@ class LocalEventBackend:
         self._delta_last_persisted_at: dict[str, float] = {}
         self._delta_last_event: dict[str, Event] = {}
 
+    #4666②: the free-text field name(s) to drop per kind while
+    # `completed_response_include_text` is off — no coalescing (each kind
+    # here is one record per occurrence, not per-fragment volume like
+    # `agent_delta`), so `write()` drops and writes straight through
+    # rather than routing through the coalescing state below.
+    _COMPLETED_RESPONSE_TEXT_FIELDS: "dict[str, tuple[str, ...]]" = {
+        "agent_response_committed": ("text",),
+        "user_intervention_requested": ("question", "suggestions", "options"),
+    }
+
     def write(self, event: Event) -> None:
+        if event.type in self._COMPLETED_RESPONSE_TEXT_FIELDS:
+            if self._completed_response_include_text:
+                self._store.write(event)
+            else:
+                fields = self._COMPLETED_RESPONSE_TEXT_FIELDS[event.type]
+                data = {k: v for k, v in event.data.items() if k not in fields}
+                self._store.write(event.model_copy(update={"data": data}))
+            return
         if event.type != "agent_delta":
             content_field = _USER_INPUT_CONTENT_FIELDS.get(event.type)
             if content_field is not None and not self._user_input_include_text:
@@ -385,7 +430,35 @@ class LocalEventBackend:
                 "unaffected — every subscriber still receives the full "
                 "text for every fragment; this gap is durable-write-only.",
             )
-        # #4666 item ③ — same conditional-not-static discipline as ①
+        # #4666②: same "declared vs never-existed" discipline as ①'s gap
+        # above, for the kinds `_COMPLETED_RESPONSE_TEXT_FIELDS` names.
+        # DERIVED from that mapping (lead-coder review, same requirement
+        # as ③'s own gap below, #4970) — a hand-listed string here would
+        # silently under-declare if a 3rd kind/field were ever added to
+        # the mapping without a matching edit to this string: drop the
+        # field, but not name it. Deriving makes that skew structurally
+        # impossible instead of merely detectable.
+        if not self._completed_response_include_text:
+            kind_field_pairs = ", ".join(
+                f"{kind}.{'/'.join(fields)}"
+                for kind, fields in sorted(self._COMPLETED_RESPONSE_TEXT_FIELDS.items())
+            )
+            gaps.append(
+                "The free-text field(s) on each of these kinds "
+                f"({kind_field_pairs}) — the completed model-to-user "
+                "reply, and the model's own ask_user question — are not "
+                "retained in the durable record — dropped by config "
+                "(audit_events.completed_response_include_text=False, "
+                "the default, #4666②), not a #4960 side effect and not "
+                "the same knob as ①'s own streamed-fragment text opt-in "
+                "above. Every other field (chain_id / intervention_id / "
+                "round metadata) is still recorded, so 'a response was "
+                "committed' / 'a question was asked' remains provable "
+                "without either one's own content. Live TUI/AG-UI "
+                "delivery, and any opt-in OTEL subscriber, are "
+                "unaffected — this gap is durable-write-only.",
+            )
+        # #4666 item ③ — same conditional-not-static discipline as ①/②
         # above, for the user-input kinds in `_USER_INPUT_CONTENT_FIELDS`.
         # DERIVED from that mapping (lead-coder review, PR #4970), not
         # hand-listed: a 7th kind added to the mapping without a matching

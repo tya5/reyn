@@ -556,11 +556,28 @@ class AuditEventsConfig:
     # accountability for a call whose usage record never lands) survives
     # `text` being dropped.
     agent_delta_include_text: bool = False
+    # #4666②: the completed model→user text — the terminal reply, any
+    # force-close/wrap-up text, tool_calls-round accompanying text (all via
+    # `agent_response_committed`), and the `ask_user` question (via the
+    # pre-existing `user_intervention_requested`, see that emit site's own
+    # comment) — is opt-in, default off, its OWN knob (owner ruling, same
+    # verbatim instruction as `agent_delta_include_text` above: "別々の
+    # config ノブにして", one toggle must never cover both). Same shape as
+    # `agent_delta_include_text`: the event(s) fire unconditionally either
+    # way (their existence, and every other field, is unconditional
+    # audit-trail evidence — "a response was committed" / "a question was
+    # asked" survives this flag being off) — `LocalEventBackend.write()`
+    # drops ONLY the free-text field(s) (`text` / `question`+`suggestions`
+    # +`options`) from the DURABLE record while this is off. Live
+    # TUI/AG-UI subscriber delivery, and any opt-in OTEL subscriber, are
+    # UNAFFECTED by this flag — same disclosure as `agent_delta_include_
+    # text`'s own comment: this only throttles what reaches disk.
+    completed_response_include_text: bool = False
     # #4666 item ③ (owner ruling): "user input" gets its OWN opt-in too —
-    # deliberately separate from `agent_delta_include_text` above and from
-    # the still-in-design "completed conversation" opt-in (owner: each
-    # content opt-in gets its own knob, never a shared toggle). Covers 6
-    # audit-event kinds carrying a user's own typed/chosen text — see
+    # deliberately separate from `agent_delta_include_text` AND
+    # `completed_response_include_text` above (owner: each content opt-in
+    # gets its own knob, never a shared toggle). Covers 6 audit-event
+    # kinds carrying a user's own typed/chosen text — see
     # `LocalEventBackend`'s `_USER_INPUT_CONTENT_FIELDS` (core/events/
     # backend.py) for the exact kind -> field mapping and the AST census
     # behind the count. Default off, same metadata-only-by-default
@@ -1490,6 +1507,13 @@ def _build_audit_events_config(raw: object) -> AuditEventsConfig:
         # field in this module's parsers already uses.
         agent_delta_include_text=bool(
             raw.get("agent_delta_include_text", defaults.agent_delta_include_text)
+        ),
+        # #4666②: same convention.
+        completed_response_include_text=bool(
+            raw.get(
+                "completed_response_include_text",
+                defaults.completed_response_include_text,
+            )
         ),
         # #4666 item ③: same convention, separate knob.
         user_input_include_text=bool(
