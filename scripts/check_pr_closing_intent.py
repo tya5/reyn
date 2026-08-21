@@ -8,7 +8,8 @@ still open) actually resolved for #N. This script detects contradictions —
 it never infers intent beyond what the body's declaring phrases literally
 say.
 
-Four checks, all facets of the same invariant:
+Five checks, all facets of the same invariant except check 5 (see its own
+entry below for why it is deliberately NOT an intent-comparison check):
 
   1. **false negative** — body declares closing intent (``Closes #N`` /
      ``Fixes #N`` / ``Resolves #N``, in any casing, even inside backticks)
@@ -55,6 +56,24 @@ Four checks, all facets of the same invariant:
      before merge) know whether a human will hand-edit it away. That is by
      design, not a gap: the check's job is to catch the state that CAN leak
      a close, not to certify that a human removed it.
+  5. **negated closing keyword** (#4992, real incident 2026-08-21) — a
+     closing keyword with a negation word in the narrow window immediately
+     before it (e.g. "does not close #N", "will never fix #N"), in the PR
+     body OR a commit message. UNCONDITIONAL — fires regardless of
+     ``closingIssuesReferences``, never comparing declared intent against
+     the parser's actual behavior the way checks 1-4 do. Real incidents
+     #4834 and #4986 were BOTH auto-closed by exactly this shape ("it does
+     not claim to close #4834 either" / "Does not claim to fix #4986") —
+     GitHub's parser does not read the negation, only the keyword+#N
+     substring, so the author's "not" never protected anything. Checks 1/2
+     were SILENT on both: the parser's own reading ("there is a
+     declaration to close #N") matched what checks 1/2 already expect from
+     an honored ``Closes``-shaped declaration, so neither found a
+     mismatch to report — negation doesn't just fail to protect, it
+     manufactures the *appearance* of a consistent, correctly-declared
+     close. See ``find_negated_closing_declarations``'s own docstring and
+     the ``_NEGATION_TERMS_EN``/``_NEGATION_TERMS_JA`` comment for the full vocabulary and the
+     backtick escape hatch.
 
 Declaring-phrase vocabulary — three forms, all checked against the parser:
 
@@ -289,6 +308,75 @@ _NONCLOSING_RE = re.compile(
     re.IGNORECASE,
 )
 
+# ---------------------------------------------------------------------------
+# Check 5 vocabulary (#4992, architect ruling, real incident #4834/#4986,
+# 2026-08-21): negating a closing keyword does NOT protect against it —
+# GitHub's own parser matches the bare keyword+#N substring and does not
+# read the surrounding negation. "it does not claim to close #4834 either"
+# and "Does not claim to fix #4986" both auto-closed their issue on merge,
+# same-timestamp with the PR, reason=COMPLETED, no human involved.
+#
+# Deliberately a SYNTACTIC check, not an intent check: a negated closing
+# keyword is ALWAYS wrong, independent of whether GitHub's parser agrees —
+# GitHub closes regardless of the author's negation, so there is no
+# "intent matched, no problem" case for this shape to fall into. This is
+# check 5's whole reason for existing separately from checks 1-3, which DO
+# compare declared intent against closingIssuesReferences: those checks
+# would have been silent here (the parser's own reading — "declares
+# closing intent for #4834" — MATCHES what the parser did; check 1 asks
+# "declared but not resolved" and check 2 asks "declared non-closing but
+# resolved", and this body's negation sentence reads to _CLOSING_RE as a
+# closing declaration, which the parser then genuinely honored — no
+# mismatch for checks 1/2 to catch). Architect's own words: 否定は保護で
+# ないどころか、正しさの見た目を作った ── gate も GitHub も同じく「#4834
+# を閉じる宣言が在る」と読み、check 1（宣言≠実際）が「矛盾なし」で沈黙
+# した。(negation isn't just non-protective — it manufactures the
+# APPEARANCE of correctness: both the gate and GitHub read "there is a
+# declaration to close #4834" identically, so check 1's own "declared ≠
+# actual" logic found no mismatch and stayed silent.)
+#
+# Window is deliberately NARROW (architect: "窓は狭く") — only the last
+# few words immediately before the keyword are checked, not the whole
+# body. A negation word far earlier in an unrelated sentence must not
+# false-positive on an unrelated later closing keyword elsewhere in the
+# body.
+_NEGATION_WINDOW_WORDS = 6
+
+# #4992 review (reviewer finding via lead-coder): the original vocabulary
+# was matched via bare substring containment (`term in window`), which is
+# wrong on its own terms — "not" is a substring of "notable", "note", and
+# "annotate", so a genuine, correct declaration like "Note: closes #N"
+# would have been WRONGLY flagged. English terms are matched on WORD
+# boundaries instead (see `_NEGATION_PATTERN` below); Japanese terms stay
+# substring-matched deliberately (they attach directly to a verb stem with
+# no preceding space in real usage — "〜ない" — so a \b-anchored regex
+# would not isolate them the way it does ASCII words).
+#
+# "cannot" is listed SEPARATELY from "not", not merged into it, precisely
+# because word-boundary matching is now correct: \bnot\b does NOT match
+# inside the single compound word "cannot" (no boundary between "can" and
+# "not" there), even though it DOES match the "not" in "does not"/"did
+# not" (both have a real space, hence a real word boundary, before
+# "not"). Losing "cannot" coverage by switching to \b matching without
+# adding it back explicitly would have silently narrowed the vocabulary
+# architect specified.
+_NEGATION_TERMS_EN = ("not", "cannot", "never", "without", "no longer")
+_NEGATION_TERMS_JA = ("ない", "ません", "せず")
+_NEGATION_PATTERN = re.compile(
+    "|".join(rf"\b{re.escape(term)}\b" for term in _NEGATION_TERMS_EN),
+    re.IGNORECASE,
+)
+
+
+def _window_has_negation(window: str) -> bool:
+    """True if *window* (the last few words before a closing keyword,
+    lowercased) contains a negation term — English terms on word
+    boundaries (see :data:`_NEGATION_PATTERN`'s own comment for why
+    ``cannot`` needs its own entry), Japanese terms by substring."""
+    if _NEGATION_PATTERN.search(window):
+        return True
+    return any(term in window for term in _NEGATION_TERMS_JA)
+
 # Mention-only declaration (the third declaration type):
 #     <!-- closing-check: discussing #2620 #2972 -->
 # An HTML comment, so it is invisible in the rendered PR body but visible,
@@ -326,7 +414,21 @@ _ISSUE_NUM_RE = re.compile(r"#(\d+)")
 # Fenced code — a ``` block, then an inline `span`. Used only to build the
 # GitHub-side reading below.
 _FENCED_BLOCK_RE = re.compile(r"```.*?```", re.DOTALL)
-_INLINE_CODE_RE = re.compile(r"`[^`\n]*`")
+# #4992 review (lead-coder, real measurement): a single-backtick span CAN
+# contain a line ending — CommonMark/GFM's own spec ("line endings are
+# converted to spaces" within a code span) — so a sentence a PR author
+# wraps across two source lines while backtick-fencing it (an ordinary
+# markdown-authoring habit, and exactly what a long negated-keyword
+# sentence following check 5's own "wrap it in backticks" advice tends to
+# produce) is STILL one fenced span to GitHub's real renderer/parser, not
+# two unfenced fragments. The previous `[^`\n]*` pattern excluded
+# newlines and so treated a two-line-wrapped span as unfenced — a real,
+# measured false positive on this PR's own body (PR #4993:
+# closingIssuesReferences confirmed empty for the wrapped issue numbers,
+# i.e. GitHub genuinely did not parse them as closing references, but
+# this gate's OWN check 5 still flagged them). ``re.DOTALL`` non-greedy so
+# `.` matches a newline too, without needing to special-case it.
+_INLINE_CODE_RE = re.compile(r"`[^`]*?`", re.DOTALL)
 
 
 def _body_as_author_declared(text: str) -> str:
@@ -419,6 +521,39 @@ def find_discussing_declarations(body: str) -> set[int]:
     out: set[int] = set()
     for marker in _DISCUSSING_MARKER_RE.finditer(body):
         out.update(int(n) for n in _ISSUE_NUM_RE.findall(marker.group(1)))
+    return out
+
+
+def find_negated_closing_declarations(body: str) -> set[int]:
+    """Return issue numbers whose closing-keyword declaration is negated
+    (#4992, architect ruling) — e.g. "does not claim to close #4834",
+    "will never fix #4986". Always wrong: GitHub's parser does not read
+    the negation, only the keyword+#N substring, so a negated closing
+    keyword closes the issue exactly as if the negation were absent. See
+    this module's ``_NEGATION_TERMS_EN``/``_NEGATION_TERMS_JA`` comment for the real incident and
+    why this is a syntactic check, not an intent-matching one.
+
+    Reads the body as GITHUB parses it (fenced spans honored/removed,
+    :func:`_body_as_github_parses`) — a negated keyword wrapped in
+    backticks poses no real auto-close risk (GitHub does not parse inside
+    backticks either), so it is not flagged; that fencing is this check's
+    own sanctioned escape hatch when the literal phrase must appear at
+    all (see the error message below).
+
+    Uses :data:`_CLOSING_RE` (the broad, GitHub-matching keyword set —
+    bare and past-tense forms included), not the narrower
+    ``_CANONICAL_CLOSING_RE`` — GitHub's real parser honors "close"/
+    "closed"/"fix"/"fixed" etc. exactly as it honors "Closes", and both
+    real incidents used the bare/past-tense form ("close" / "fix"), not
+    the canonical declaring form.
+    """
+    text = _body_as_github_parses(body)
+    out: set[int] = set()
+    for m in _CLOSING_RE.finditer(text):
+        preceding_words = text[:m.start()].split()[-_NEGATION_WINDOW_WORDS:]
+        window = " ".join(preceding_words).lower()
+        if _window_has_negation(window):
+            out.add(int(m.group(1)))
     return out
 
 
@@ -600,6 +735,54 @@ def check_contradictions(
                 ),
             )
         )
+
+    # Check 5 (negated closing keyword, #4992): a closing keyword with a
+    # negation word in the narrow window immediately before it — see this
+    # module's ``_NEGATION_TERMS_EN``/``_NEGATION_TERMS_JA`` comment and ``find_negated_closing_
+    # declarations``'s own docstring for the real incident (#4834/#4986)
+    # and why this fires unconditionally, never comparing against
+    # ``closing_refs``. Also checked in the PR body's own commit messages
+    # (same #3187-shaped leak class check 4 exists for — a negated keyword
+    # in a commit message rides into the default squash-merge body exactly
+    # like an unnegated one does).
+    for n in sorted(find_negated_closing_declarations(body)):
+        findings.append(
+            Finding(
+                check=5,
+                issue=n,
+                message=(
+                    f"the body contains a NEGATED closing keyword for #{n} "
+                    "(e.g. 'does not close', 'never fixes') — GitHub's "
+                    "parser does not read the negation, only the "
+                    f"keyword+#{n} substring, so this WILL close #{n} on "
+                    "merge exactly as if the negation were absent (real "
+                    "incident: #4834 and #4986 both auto-closed this way, "
+                    "same timestamp as the merge, reason=COMPLETED, no "
+                    f"human involved). Rewrite without the verb: '#{n} "
+                    f"stays open' or '#{n} is out of scope' — or omit the "
+                    "issue number entirely if the reader doesn't need to "
+                    "follow it. If the literal phrase must appear, wrap it "
+                    f"in backticks (`` `closes #{n}` `` — GitHub does not "
+                    "parse inside backticks)."
+                ),
+            )
+        )
+    for msg in commit_messages or []:
+        for n in sorted(find_negated_closing_declarations(msg)):
+            findings.append(
+                Finding(
+                    check=5,
+                    issue=n,
+                    message=(
+                        f"a commit message on this PR contains a NEGATED "
+                        f"closing keyword for #{n} — same defect as above, "
+                        "carried into the default squash-merge commit body "
+                        f"(the #3187/check-4 leak class) even if the PR "
+                        "body itself is clean. Rewrite without the verb, "
+                        "or wrap in backticks."
+                    ),
+                )
+            )
 
     return findings
 

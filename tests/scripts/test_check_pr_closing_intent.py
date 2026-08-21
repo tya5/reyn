@@ -471,3 +471,242 @@ def test_check4_silent_when_no_commit_messages_supplied():
     """
     findings = m.check_contradictions("part of #1909", closing_refs=[])
     assert findings == []
+
+
+# ---------------------------------------------------------------------------
+# Check 5 (#4992): negated closing keyword — real incident 2026-08-21,
+# #4834 and #4986 both auto-closed despite an explicit negation sentence.
+# Deliberately UNCONDITIONAL: fires whether or not closing_refs agrees,
+# because GitHub's own parser ignores the negation regardless.
+# ---------------------------------------------------------------------------
+
+
+def test_check5_fires_on_the_real_4834_incident_sentence():
+    """Tier 1: the exact sentence that auto-closed #4834 on merge —
+    "it does not claim to close #4834 either" (PR #4985's own body), with
+    the REAL closing_refs value (GitHub's parser genuinely resolved
+    #4834, which is WHY it auto-closed). Checks 1/2 are correctly SILENT
+    here — this is architect's own finding reproduced precisely: the
+    parser's own reading matches what check 1 already expects from an
+    honored declaration, so only check 5 (the syntactic check) catches
+    the defect."""
+    findings = m.check_contradictions(
+        "it does not claim to close #4834 either", closing_refs=[4834],
+    )
+    assert _checks(findings) == [(5, 4834)]
+
+
+def test_check5_fires_on_the_real_4986_incident_sentence():
+    """Tier 1: the exact sentence that auto-closed #4986 on merge —
+    "Does not claim to fix #4986" (PR #4989's own body), same real
+    closing_refs value as the 4834 case above."""
+    findings = m.check_contradictions("Does not claim to fix #4986", closing_refs=[4986])
+    assert _checks(findings) == [(5, 4986)]
+
+
+def test_check5_fires_unconditionally_even_when_the_parser_disagrees_with_the_negation():
+    """Tier 1: check 5 does NOT compare against closing_refs — it must
+    still fire even in the case where GitHub's parser happened NOT to
+    resolve the reference (closing_refs=[], the opposite of the real
+    #4834/#4986 incidents' own closing_refs value, which the sibling test
+    ``test_check5_fires_on_the_real_4834_incident_sentence`` already
+    covers), because the negated phrasing itself is the defect,
+    independent of what the parser did this time. (#4992 review: an
+    earlier revision of this test's docstring described THIS disagreeing
+    case while its fixture actually used the agreeing one, ``closing_refs=
+    [4834]`` — name, docstring, and fixture now agree with each other.)
+    Check 1 legitimately fires alongside check 5 here — this fixture's
+    empty ``closing_refs`` means the parser did NOT resolve #4834, which
+    is exactly check 1's own "declared but not resolved" question,
+    answered independently and correctly; it does not make check 5's own
+    finding conditional on it."""
+    findings = m.check_contradictions(
+        "it does not claim to close #4834 either", closing_refs=[],
+    )
+    assert _checks(findings) == [(1, 4834), (5, 4834)]
+
+
+def test_check5_fires_on_a_commit_message_negation_too():
+    """Tier 1: the #3187-shaped leak class applies to check 5 too — a
+    negated closing keyword sitting only in a commit message still rides
+    into the default squash-merge body. Check 4 legitimately fires
+    alongside it here too (the body declares no closing intent for #4834
+    at all, while the commit message DOES read as a closing declaration
+    to ``find_closing_declarations`` — the same _CLOSING_RE match check 5
+    itself keys off) — both findings are independently correct
+    descriptions of the same underlying leak, from different angles."""
+    findings = m.check_contradictions(
+        "part of #4834",
+        closing_refs=[],
+        commit_messages=["fix: does not close #4834, just adjusts logging"],
+    )
+    assert _checks(findings) == [(4, 4834), (5, 4834)]
+
+
+def test_check5_does_not_fire_on_stays_open_phrasing():
+    """Tier 1: accept side — architect's suggested rewrite ("#N stays
+    open") carries no closing keyword at all, so it must not false-positive."""
+    findings = m.check_contradictions("#4834 stays open", closing_refs=[])
+    assert findings == []
+
+
+def test_check5_does_not_fire_on_note_colon_closes_word_boundary():
+    """Tier 1: accept side — reviewer finding (#4992 review): the
+    original implementation matched negation terms via bare substring
+    containment, so "not" (a substring of "notable"/"note"/"annotate")
+    wrongly flagged a genuine, correctly-formed declaration like
+    "Note: closes #4834". Fixed to word-boundary matching for the
+    English vocabulary (``_NEGATION_PATTERN``) — this is the false-
+    positive-side witness pinning that fix; ``cannot``/``does not`` (the
+    real cases the vocabulary must still catch, see the next test) are
+    NOT substrings of "notable"/"note"/"annotate" either way, so nothing
+    about this fix narrows real coverage."""
+    findings = m.check_contradictions("Note: closes #4834", closing_refs=[4834])
+    assert findings == []
+
+
+def test_check5_still_fires_on_cannot_a_single_compound_word():
+    """Tier 1: reject side, companion to the word-boundary fix above —
+    "cannot" is a single compound word with no space before "not", so a
+    naive ``\\bnot\\b`` regex would NOT match inside it (unlike "does
+    not"/"did not", which have a real word boundary). Listed as its own
+    explicit vocabulary entry for exactly this reason; this test pins
+    that the fix didn't accidentally drop it while fixing the
+    "notable"/"note" false positive above. Check 1 legitimately fires
+    alongside check 5 here too, for the same reason as the sibling test
+    above (empty ``closing_refs`` = the parser genuinely did not resolve
+    it)."""
+    findings = m.check_contradictions("cannot fix #4834", closing_refs=[])
+    assert _checks(findings) == [(1, 4834), (5, 4834)]
+
+
+def test_check5_does_not_fire_on_backtick_fenced_negation():
+    """Tier 1: accept side — the sanctioned escape hatch when the literal
+    phrase must appear: GitHub does not parse inside backticks, so a
+    fenced negated keyword poses no real auto-close risk and must not be
+    flagged BY CHECK 5. Tested directly against the finder function
+    rather than the full ``check_contradictions`` pipeline: check 1's own
+    PRE-EXISTING, unrelated behavior (deliberately stricter than GitHub —
+    it treats even a backtick-fenced ``Closes #N`` as a declaration worth
+    flagging when unresolved, module docstring's "Backtick defusal"
+    section) would also legitimately fire here regardless of check 5,
+    which would make a whole-pipeline ``findings == []`` assertion an
+    accidental claim about check 1, not the claim this test is actually
+    making about check 5."""
+    assert m.find_negated_closing_declarations(
+        "if you must write it: `does not close #4834`"
+    ) == set()
+
+
+def test_check5_does_not_fire_on_a_backtick_span_wrapped_across_two_lines():
+    """Tier 1: accept side, real regression found reviewing THIS PR's own
+    body (#4993) — lead-coder measured GitHub's real
+    ``closingIssuesReferences`` as empty for a backtick-fenced negated
+    sentence the author had hard-wrapped across two source lines (an
+    ordinary markdown-authoring habit, and exactly what following check
+    5's own "wrap it in backticks" advice on a long sentence tends to
+    produce), yet an earlier revision of this gate still flagged it.
+    CommonMark/GFM's own spec: a single-backtick code span CAN contain a
+    line ending (normalized to a space), so a two-line-wrapped fence is
+    still ONE fenced span to GitHub's real parser, not two unfenced
+    fragments — ``_INLINE_CODE_RE`` must recognize it as such."""
+    body = (
+        "the incident text, quoted for context: `it does not claim to\n"
+        "close #4834 either`"
+    )
+    assert m.find_negated_closing_declarations(body) == set()
+
+
+def test_check5_does_not_fire_without_an_issue_number_nearby():
+    """Tier 1: accept side — architect's other suggested rewrite: omit the
+    issue number entirely when the reader doesn't need to follow it."""
+    findings = m.check_contradictions(
+        "this PR does not fix the other symptom", closing_refs=[],
+    )
+    assert findings == []
+
+
+def test_check5_does_not_fire_on_an_unrelated_negation_far_from_the_keyword():
+    """Tier 1: the narrow window must not false-positive when a negation
+    word appears earlier in an unrelated sentence, well outside the small
+    window immediately before the closing keyword."""
+    findings = m.check_contradictions(
+        "This is not a comprehensive fix for every edge case out there, "
+        "but it stands on its own. Closes #4834.",
+        closing_refs=[4834],
+    )
+    assert findings == []
+
+
+# ---------------------------------------------------------------------------
+# Boundary-fixing witnesses (#4986, architect ruling on the #4992 review
+# thread) — three cases pinning EXACTLY where the CommonMark-compliant
+# `_INLINE_CODE_RE` fix (multi-line spans now recognized as fenced) starts
+# and stops applying. Architect's own framing: what was forbidden is
+# loosening detection of a genuinely risky BARE phrase ("GitHub won't
+# close this particular way, so let it through") — the CommonMark fix is
+# the opposite, making the escape hatch (a real fence) work correctly,
+# not making detection of unfenced risk any looser. Check 1 is a
+# DIFFERENT question (declared vs actual) and is untouched by any of
+# this — case ① below pins that check 1 still fires on a real,
+# previously-observed shape where only the NUMBER (not the verb) sits in
+# backticks, so the keyword itself is unfenced and still risky.
+# ---------------------------------------------------------------------------
+
+
+def test_boundary_1_check1_still_fires_when_only_the_number_is_fenced():
+    """Tier 1: RED, must STAY red — the real PR #4994 shape ("the
+    same-shaped fix `#4985` applied at mount"): only the ISSUE NUMBER is
+    backtick-wrapped, not the verb next to it. This is NOT the CommonMark
+    multi-line-span fix's concern — it is a SINGLE-TOKEN fence, always
+    correctly recognized regardless of the newline change — and check 1
+    is a different question entirely (declared vs actual), never touched
+    by this PR. Without this witness, a future change to check 1 or the
+    fence reader could silently start treating "keyword outside, number
+    inside backticks" as safe, and nothing would catch it."""
+    findings = m.check_contradictions(
+        "the same-shaped fix `#4985` applied at mount", closing_refs=[],
+    )
+    assert _checks(findings) == [(1, 4985)]
+
+
+def test_boundary_2_check5_still_fires_on_the_real_unfenced_negation():
+    """Tier 1: RED, must STAY red — the real #4834 incident sentence,
+    completely unfenced. Restated explicitly here (alongside the
+    equivalent ``test_check5_fires_on_the_real_4834_incident_sentence``
+    above) as one of the three boundary witnesses architect named by
+    number, so the boundary is pinned by a test with THIS name, not only
+    inferred from an existing one with a different name."""
+    findings = m.check_contradictions(
+        "it does not claim to close #4834 either", closing_refs=[4834],
+    )
+    assert _checks(findings) == [(5, 4834)]
+
+
+def test_boundary_3_a_genuine_closes_inside_a_multiline_fence_stays_green():
+    """Tier 1: GREEN — a REAL (non-negated) ``Closes #N`` declaration
+    sitting inside a backtick span the author hard-wrapped across two
+    source lines must still be read as FENCED by
+    :func:`find_canonical_closing_declarations` (check 2/3's own use-vs-
+    mention reading, built on the same ``_body_as_github_parses`` this
+    PR's fix changed) — i.e. it must NOT count as a canonical
+    declaration, exactly as a single-line-fenced one already doesn't
+    (``test_canonical_closing_finder_rejects_keyword_shaped_prose``'s own
+    sibling case). This is check 1's OWN territory it is NOT: check 1
+    deliberately treats even a fenced ``Closes #N`` as "declared" by
+    design (module docstring's "Backtick defusal" section — stricter
+    than GitHub on purpose) and correctly still fires on this body
+    regardless of fencing or line-wrapping; that is pre-existing,
+    unrelated behavior this PR does not touch, so it is asserted
+    separately as its own fact here rather than folded into a
+    whole-pipeline ``findings == []`` (which would incorrectly imply
+    check 1 goes silent — it does not, and should not)."""
+    body = (
+        "the fixed reference reads: `Closes\n"
+        "#4834` in the original draft"
+    )
+    assert m.find_canonical_closing_declarations(body) == set()
+    # check 1 (a DIFFERENT question — declared vs actual) correctly still
+    # fires here, unaffected by fencing by its own long-standing design:
+    findings = m.check_contradictions(body, closing_refs=[])
+    assert _checks(findings) == [(1, 4834)]
