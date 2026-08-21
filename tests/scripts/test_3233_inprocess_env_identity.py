@@ -1,18 +1,22 @@
-"""Tier 1: `check_in_process_tree` contract, and a wiring witness for the root
-`conftest.py` guard it feeds (#3233).
+"""Tier 1: `check_in_process_tree` contract, and wiring witnesses for the root
+`conftest.py` guard it feeds (#3233) plus the disclosure line beside it
+(#5028).
 
-Two tests, deliberately different shapes, per the architect's #3233 gap note:
-a Tier-1 contract test on the pure function alone stays green even if someone
-deletes the `pytest_configure` call that wires it into pytest startup — the
-function would still return correct findings, just never asked. The second
-test below spawns a REAL `pytest --collect-only` subprocess with a decoy
-`PYTHONPATH` so a `reyn` OUTSIDE this checkout resolves first, and asserts on
-the subprocess's actual exit code and stderr — the only way to falsify "the
-guard is wired, not just present as dead code".
+Deliberately different shapes, per the architect's #3233 gap note: a Tier-1
+contract test on the pure function alone stays green even if someone deletes
+the `pytest_configure` call that wires it into pytest startup — the function
+would still return correct findings, just never asked. The wiring tests below
+spawn a REAL `pytest --collect-only` subprocess and assert on its actual exit
+code and stderr — the only way to falsify "the guard/disclosure is wired, not
+just present as dead code".
 
-Neither test moves the real `reyn.__file__`: the contract test passes synthetic
-paths to the pure function directly, and the wiring test manufactures a decoy
-package in a `tmp_path` rather than touching this checkout's own `src/reyn`.
+Neither the contract test nor the #3233 wiring test moves the real
+`reyn.__file__`: the contract test passes synthetic paths to the pure
+function directly, and the #3233 wiring test manufactures a decoy package in
+a `tmp_path` rather than touching this checkout's own `src/reyn`. The #5028
+disclosure wiring test below is the one exception — it reads the REAL
+in-process path, because the property under test IS that the real path gets
+printed, not a synthetic one.
 """
 from __future__ import annotations
 
@@ -131,3 +135,44 @@ def test_a_decoy_reyn_cached_before_pytest_starts_makes_startup_exit_nonzero(
     assert "env-identity (in-process, #3233)" in combined
     assert "PYTHONPATH" in combined
     assert str(decoy_reyn / "__init__.py") in combined
+
+
+def test_a_normal_collect_prints_the_in_process_reyn_path() -> None:
+    """Tier 2: the #5028 disclosure line is actually wired into
+    `pytest_configure`, not just present as dead code.
+
+    Same wiring-witness shape as the #3233 test above, on a real
+    `pytest --collect-only` subprocess — a call to
+    `_disclose_in_process_reyn_path` could be deleted from
+    `pytest_configure` and a pure unit test of that function alone would
+    stay green; only a real pytest startup can falsify "it's wired".
+    Uses the REAL in-process `reyn.__file__` (this test file's own
+    interpreter's) deliberately — the property under test is that the
+    disclosure prints the actual resolution, not a decoy.
+
+    Collect target scoped to THIS file only, not a bare repo-wide
+    collect (lead-coder measurement, #5033 review): `pytest_configure`
+    fires before collection even starts, so what gets collected is
+    irrelevant to what's under test — a full-repo collect measured
+    66.8s (56% of CI's 120s per-test kill switch) for zero added
+    coverage; scoped to one file, 11.0s. This is removing unnecessary
+    work from the test, not adding a timeout to it.
+
+    FALSIFY: without this call, #5028's own finding recurs — a
+    subprocess-spawning test's contamination has no baseline path to be
+    compared against, and six PRs already cited that exact failure class
+    as "known pre-existing" without noticing.
+    """
+    import reyn
+
+    # #4397: no timeout= — CI's own per-test pytest-timeout is the kill switch.
+    proc = subprocess.run(
+        [sys.executable, "-m", "pytest", "--collect-only", "-q", str(__file__)],
+        cwd=_REPO_ROOT,
+        capture_output=True,
+        text=True,
+    )
+
+    assert f"in-process reyn resolves to: {Path(reyn.__file__).resolve()}" in proc.stderr, (
+        f"stdout={proc.stdout!r} stderr={proc.stderr!r}"
+    )
