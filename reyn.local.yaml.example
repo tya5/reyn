@@ -430,8 +430,10 @@
 #     resummarize_passes: 1            # #271: LLM re-compression passes on topic_arc
 #                                      # overshoot before the hard_truncate floor (0 = skip)
 #     max_schema_reprompt_attempts: 1  # #4883: bounded re-prompt budget when the
-#                                      # compaction JSON response is missing/empty
-#                                      # new_turn_seqs/topic_arc (0 = raise immediately)
+#                                      # compaction JSON response has an empty/missing
+#                                      # topic_arc (0 = raise immediately). #4951-B:
+#                                      # new_turn_seqs no longer gates this — the key
+#                                      # was removed from the schema/prompt entirely.
 #     max_shrink_iterations: 8         # #4957: retry_loop's own safety cap — an
 #                                      # ESCAPE VALVE for a slow-to-converge overflow
 #                                      # recovery, not a cure. Raising it only delays

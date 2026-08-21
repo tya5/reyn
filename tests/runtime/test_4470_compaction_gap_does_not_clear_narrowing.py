@@ -78,17 +78,19 @@ from tests._support.agent_session import make_session
 from tests._support.untrusted_narrowing import narrowing_on
 
 
-# #4883 update: new_turn_seqs is NO LONGER cosmetic — CompactionEngine.compact()
-# now validates it is present (post-parse floor, see engine.py's
-# _validate_chat_summary_fields), so a scripted response omitting it would be
-# rejected as an invalid response and exhaust the re-prompt budget instead of
-# reaching the controller's own candidates[-1].seq fallback at all. Derived
+# #4951-B: new_turn_seqs is NOT part of CompactionEngine.compact()'s
+# schema/validation at all anymore (the key was removed — see engine.py's
+# _CHAT_SUMMARY_JSON_SCHEMA and _validate_chat_summary_fields, which only
+# ever validated topic_arc, never this field). This helper still includes
+# it in the scripted response body purely as harmless inert fixture data
+# (parsed.get() ignores unrecognized keys) — covers_through_seq is derived
 # dynamically from the REAL candidate turns each call was actually asked to
-# summarize (parsed out of the engine's own user-prompt content) rather than
-# a hardcoded list — a hardcoded value would let the summary's own claim
-# diverge from the real candidates, which is exactly the property #4470
-# exists to protect (covers_through_seq must reflect only what was
-# genuinely examined).
+# summarize (parsed out of the engine's own user-prompt content, via
+# compute_covers_through_seq on compact()'s own input), never read back
+# from this response at all, rather than a hardcoded list — a hardcoded
+# value would let the summary's own claim diverge from the real
+# candidates, which is exactly the property #4470 exists to protect
+# (covers_through_seq must reflect only what was genuinely examined).
 def _summary_json_for_messages(messages: list) -> str:
     user_content = json.loads(messages[1]["content"])
     seqs = [t["seq"] for t in user_content.get("new_turns", []) if "seq" in t]

@@ -431,9 +431,17 @@ class HistoryChunkToCompact:
 
 @dataclass
 class ChatSummaryRaw:
-    """LLM output before deterministic seq derivation."""
+    """LLM output before deterministic seq derivation.
+
+    #4951-B: ``new_turn_seqs`` (the LLM's echo of every input turn's
+    ``seq``) is REMOVED from this dataclass — 0 consumers (measured):
+    this class is never constructed anywhere in the tree (``compact()``
+    builds ``ChatSummary`` directly from the parsed response dict, never
+    through this type), and ``ChatSummary.to_dict()`` never included the
+    field even before this removal (see the #4951-A comment at this
+    module's ``compact()`` call site). Nothing downstream loses a value
+    it was reading."""
     topic_arc: str
-    new_turn_seqs: list[int]
     decisions: list[str] = field(default_factory=list)
     pending: list[str] = field(default_factory=list)
     session_user_facts: list[str] = field(default_factory=list)
@@ -953,19 +961,33 @@ def compute_covers_through_seq(new_turn_seqs: list) -> int:
 # ``core.pipeline.schema``'s ``SchemaRegistry``/``to_json_schema`` (0062's
 # path for a pipeline-authored, by-NAME-referenced schema) — this shape is
 # engine-internal and fixed, never authored in YAML or looked up by name, so
-# a plain JSON Schema dict is the more direct fit. All 6 keys are listed in
+# a plain JSON Schema dict is the more direct fit. All 5 keys are listed in
 # "required" (OpenAI strict mode has no true-optional properties — "required"
 # means the KEY must be present, not that an array/string can't be empty).
-# Presence alone is weaker than this fix needs though: an empty topic_arc or
-# empty new_turn_seqs is schema-valid (empty string/array are valid values of
-# their declared type) — :func:`_validate_chat_summary_fields` is the
-# CONTENT-emptiness check schema constraints cannot express, and stays the
-# floor for every provider, schema-constrained or not (see that function's
-# own docstring).
+# Presence alone is weaker than this fix needs though: an empty topic_arc
+# is schema-valid (an empty string is a valid value of its declared type) —
+# :func:`_validate_chat_summary_fields` is the CONTENT-emptiness check
+# schema constraints cannot express, and stays the floor for every
+# provider, schema-constrained or not (see that function's own docstring).
+#
+# #4951-B: ``new_turn_seqs`` — the key that used to instruct the LLM to
+# echo VERBATIM every input turn's ``seq`` — is REMOVED from this schema
+# (and the system prompt, ``reyn.prompt.compaction``). #4951-A had already
+# stopped READING the echo (``covers_through_seq`` is derived unconditionally
+# from ``compact()``'s own input, never the LLM's output — see that call
+# site's own #4951-A comment); this closes the other half — reyn no longer
+# ASKS for it either. Owner ruling (#4951): the LLM path's information gain
+# is zero by construction (the prompt forbade sorting/filtering/computing
+# the max, so a model that ignored some turns still echoed every seq — the
+# echo could only ever match reyn's own derivation or be wrong, never more
+# correct), which is established by reading the prompt's own constraint,
+# not by measurement — "測定は反例にしかならん" (a measurement can only
+# ever supply a counterexample, never prove the omission harmless; if a
+# real quality regression is observed post-landing, THAT is the
+# counterexample and the basis for reverting, not its current absence).
 _CHAT_SUMMARY_JSON_SCHEMA: dict = {
     "type": "object",
     "properties": {
-        "new_turn_seqs": {"type": "array", "items": {"type": "integer"}},
         "topic_arc": {"type": "string"},
         "decisions": {"type": "array", "items": {"type": "string"}},
         "pending": {"type": "array", "items": {"type": "string"}},
@@ -973,7 +995,7 @@ _CHAT_SUMMARY_JSON_SCHEMA: dict = {
         "artifacts_referenced": {"type": "array", "items": {"type": "string"}},
     },
     "required": [
-        "new_turn_seqs", "topic_arc", "decisions", "pending",
+        "topic_arc", "decisions", "pending",
         "session_user_facts", "artifacts_referenced",
     ],
     "additionalProperties": False,
@@ -1499,21 +1521,27 @@ class CompactionEngine:
         # #4883: the compaction JSON has no required fields (response_format
         # is {"type": "json_object"} — "must be JSON", not "must have these
         # keys"). A syntactically-valid-but-structurally-empty response
-        # (e.g. "{}") previously passed through untouched: new_turn_seqs
-        # missing -> [] -> covers fell back to the FULL input range anyway
-        # (the "covered" line below), topic_arc missing -> "" -> an empty
-        # summary silently overwrote the real turns in history, with no
-        # error and no re-prompt. Both are load-bearing fields (covers_
-        # through_seq decides what's now unrecoverable via this call's own
-        # fallback; topic_arc IS the summary) so their absence/emptiness is
-        # now a validation failure, not a silently-accepted default — bounded
-        # re-prompt (same shape 0062's schema_validate_fn uses in
-        # router_loop.py), then raise if still invalid, joining the existing
-        # "raise on empty response" safety net below (compaction_
-        # controller.py's caller already wraps this in try/except and emits
+        # (e.g. "{}") previously passed through untouched: topic_arc
+        # missing -> "" -> an empty summary silently overwrote the real
+        # turns in history, with no error and no re-prompt. topic_arc IS
+        # the summary, so its absence/emptiness is now a validation
+        # failure, not a silently-accepted default — bounded re-prompt
+        # (same shape 0062's schema_validate_fn uses in router_loop.py),
+        # then raise if still invalid, joining the existing "raise on
+        # empty response" safety net below (compaction_controller.py's
+        # caller already wraps this in try/except and emits
         # compaction_failed + never calls _append_history on any raise here
         # — the ONLY change in observable behavior on failure is WHICH cases
         # raise, not what raising does).
+        #
+        # #4951-B: this used to also name new_turn_seqs as a second
+        # load-bearing field validated here ("covers_through_seq decides
+        # what's now unrecoverable via this call's own fallback"). No
+        # longer true — new_turn_seqs is not in the schema at all now
+        # (removed, see _CHAT_SUMMARY_JSON_SCHEMA's own comment), so there
+        # is nothing to validate: covers_through_seq is derived
+        # unconditionally from compact()'s own input below, never from
+        # this response.
         max_attempts = 1 + max(0, int(getattr(self._cfg, "max_schema_reprompt_attempts", 1)))
         # #4883: schema-constrained generation when the model supports it
         # (json_schema, strict) — the GENERATION-time leg; json_object is
@@ -1644,25 +1672,30 @@ class CompactionEngine:
             )
 
         # #4951-A: derive unconditionally from the INPUT reyn itself built
-        # and passed to compact() — never from the LLM's ``new_turn_seqs``
-        # echo. This is the fallback that used to fire only when the echo
+        # and passed to compact() — never from the LLM's output. This is
+        # the fallback that used to fire only when the (now-removed) echo
         # was empty, promoted to the sole path (owner: "compaction は圧縮
         # 対象メッセージしか送らないはずなのでいらないと思うんだけど？" —
         # confirmed correct, #4951). The LLM's echo could only ever match
-        # this value or be wrong (the prompt forbids sorting/filtering/
-        # computing the max, so a model that ignores some turns still
-        # echoes every seq) — there was no case where trusting the echo
+        # this value or be wrong (the prompt forbade sorting/filtering/
+        # computing the max, so a model that ignored some turns still
+        # echoed every seq) — there was no case where trusting the echo
         # over reyn's own input was more correct, only cases where it
         # silently wasn't (a non-empty-but-wrong echo used to pass through
-        # unchecked; the old fallback only caught an EMPTY echo). Leaving
-        # the ``new_turn_seqs`` KEY in the schema/prompt is #4951-B
-        # (whether removing the enumeration itself changes summary quality
-        # is unmeasured — architect: listing every seq may double as
-        # working-attention scaffolding for the model); this PR only stops
-        # READING the echo, at zero behavior cost (the schema still asks
-        # for it, still accepts an empty answer, nothing downstream reads
-        # ``ChatSummaryRaw.new_turn_seqs`` — ``ChatSummary.to_dict()``
-        # never included it).
+        # unchecked; the old fallback only caught an EMPTY echo).
+        #
+        # #4951-B: the ``new_turn_seqs`` KEY itself is now REMOVED from
+        # both the schema (``_CHAT_SUMMARY_JSON_SCHEMA``) and the system
+        # prompt (``reyn.prompt.compaction``) — reyn no longer asks the LLM
+        # to echo it at all (A had already stopped reading the echo; this
+        # closes the other half). Owner ruling: the LLM path's information
+        # gain is zero by construction (established by reading the
+        # prompt's own constraint above, not by measurement — "測定は反例
+        # にしかならん", a measurement can only ever supply a
+        # counterexample). ``ChatSummaryRaw.new_turn_seqs`` is likewise
+        # removed (0 consumers — this dataclass is never constructed
+        # anywhere in the tree; ``ChatSummary.to_dict()`` never included
+        # the field even before this removal).
         #
         # #4947 ③ note: this also supersedes ③'s own earlier clamp-based
         # fix for the same exposure (an over-claiming echo covering a
