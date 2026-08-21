@@ -63,7 +63,37 @@ with how you count cannot be an acceptance gate. Demotions (a comment that
 looks safe to move) are named explicitly, one at a time, never swept by a
 size rule.
 
-## 3. The test for Class C (one question, answerable by inspection)
+## 3. The `★` marker in source comments
+
+The `★` is an editorial attention marker used in source comments. It is not
+Python syntax, a runtime annotation, or a machine-readable severity level.
+Its purpose is to tell a future reader that the surrounding claim deserves
+careful reading because it records a decision, a measured boundary, a known
+failure mode, or an explicit scope limit.
+
+Use it in either of these forms:
+
+- **Line-leading marker:** put `★` at the start of the comment text when the
+  whole line carries the attention signal, for example `# ★ the event is
+  client-authored` or a doc-comment equivalent.
+- **Inline marker:** put `★` immediately before the particular sentence or
+  clause that needs attention when the rest of the comment is ordinary
+  explanation, for example `# the value is ★bounded by the caller`.
+
+Place the marker next to the claim it qualifies. Do not use it as decoration,
+as a substitute for explaining what breaks, or as a promise that a claim has
+been independently measured. A marker does not change the comment's Class A,
+B, C, or K-inline classification; classify the content first, then choose the
+marker placement that keeps the claim's scope visible.
+
+Existing source comments use both line-leading and inline forms. This is a
+descriptive convention, not a migration target: do not rewrite existing
+comments merely to normalize marker placement. When adding or editing a
+comment, preserve the surrounding comment's form unless the new claim has a
+clearer local placement. If the claim is historical or measured, state the
+source and confidence separately; `★` alone is not evidence.
+
+## 4. The test for Class C (one question, answerable by inspection)
 
 > **Does this line assert something about a SECOND location? Does another
 > symbol's / file's / field's correctness depend on what this line says?**
