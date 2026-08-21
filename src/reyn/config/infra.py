@@ -541,6 +541,21 @@ class AuditEventsConfig:
     # reaches disk.
     agent_delta_coalesce_fragments: int = 100
     agent_delta_coalesce_interval_ms: int = 2_000
+    # #4666 (owner ruling): the streamed reply's own CONTENT
+    # (`agent_delta`'s `text` field) is opt-in, default off, its OWN
+    # knob — deliberately NOT unified with any other content opt-in
+    # (owner: "agent_delta は opt-in。完成の会話も opt-in。別々の config
+    # ノブにして" — one toggle must never cover both). Mirrors the
+    # OpenTelemetry GenAI semantic convention this issue follows: "every
+    # attribute that can hold prompt or output content is Opt-In ...
+    # default is metadata-only" (routinely-PII rationale). Coalescing
+    # itself (#4960, the fields ABOVE this one) is untouched by this flag
+    # — only the `text` field within an already-coalesced record is
+    # conditional; `chain_id`/`round_index`/`coalesced_fragment_count`
+    # are always kept, so #4960's own reason for existing (cost
+    # accountability for a call whose usage record never lands) survives
+    # `text` being dropped.
+    agent_delta_include_text: bool = False
 
 
 @dataclass
@@ -1458,6 +1473,11 @@ def _build_audit_events_config(raw: object) -> AuditEventsConfig:
         backend=backend_val,
         agent_delta_coalesce_fragments=coalesce_fragments_val,
         agent_delta_coalesce_interval_ms=coalesce_interval_ms_val,
+        # #4666: same `bool(raw.get(...))` convention every other boolean
+        # field in this module's parsers already uses.
+        agent_delta_include_text=bool(
+            raw.get("agent_delta_include_text", defaults.agent_delta_include_text)
+        ),
     )
 
 
