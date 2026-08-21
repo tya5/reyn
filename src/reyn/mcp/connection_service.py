@@ -762,7 +762,24 @@ class MCPConnectionService:
             try:
                 await task
             except asyncio.CancelledError:
-                pass
+                # #4988: `await task` raises CancelledError either as that
+                # task's own outcome (the `.cancel()` loop just above —
+                # what this except exists to absorb) or as an independent,
+                # external cancellation of THIS coroutine's own task
+                # landing at the same await. `pass`-ing unconditionally
+                # used to treat both the same, letting `aclose()` continue
+                # (and return normally) even when its own caller was being
+                # cancelled. Same discriminator as session.py's #3377
+                # precedent (`_driver.cancelling() > 0`). Every task in
+                # `background_tasks` already had `.cancel()` called on it
+                # in the loop above, so re-raising here (stopping short of
+                # awaiting the rest) does not leave any of them un-asked-
+                # to-cancel — only un-joined, the same trade-off structured
+                # concurrency already accepts when a caller's own task is
+                # cancelled mid-cleanup elsewhere in this codebase.
+                _current = asyncio.current_task()
+                if _current is not None and _current.cancelling() > 0:
+                    raise
 
         # #3698 PR-2: close every subscription adapter's own background
         # delivery machinery (a ListenSubscriptionAdapter's consumer task)

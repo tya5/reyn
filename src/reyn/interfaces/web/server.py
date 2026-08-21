@@ -281,7 +281,21 @@ async def _lifespan(app: FastAPI):
         sweep_task.cancel()
         try:
             await sweep_task
-        except (asyncio.CancelledError, Exception):  # noqa: BLE001 — defensive shutdown
+        except asyncio.CancelledError:
+            # #4988: `await sweep_task` raises CancelledError either as
+            # that task's own outcome (this block's own `.cancel()` two
+            # lines up — what this except exists to absorb) or as an
+            # independent, external cancellation of THIS coroutine's own
+            # task landing at the same await. Catching it unconditionally
+            # (formerly folded into the broad `Exception` tuple below)
+            # used to treat both the same, letting shutdown continue as
+            # if it had completed even when its own caller was being
+            # cancelled. Same discriminator as session.py's #3377
+            # precedent (`_driver.cancelling() > 0`).
+            _current = asyncio.current_task()
+            if _current is not None and _current.cancelling() > 0:
+                raise
+        except Exception:  # noqa: BLE001 — defensive shutdown
             pass
 
     sched = getattr(app.state, "cron_scheduler", None)

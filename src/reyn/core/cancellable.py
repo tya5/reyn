@@ -110,7 +110,23 @@ async def race_cancellable(
             try:
                 await watcher
             except asyncio.CancelledError:
-                pass
+                # #4988: `await watcher` raises CancelledError either as (a)
+                # `watcher`'s own outcome (this method's `watcher.cancel()`
+                # two lines up — the case this except exists to absorb), or
+                # (b) `host_task` (the CURRENT task, running this very
+                # `finally`) being independently, externally cancelled AGAIN
+                # while suspended at this specific await. `pass`-ing
+                # unconditionally used to treat both the same, silently
+                # completing this function instead of letting (b) propagate.
+                # Same discriminator as this module's own `except
+                # asyncio.CancelledError:` a few lines up (`host_task.
+                # cancelling()` vs `baseline_cancelling`) and as session.py's
+                # #3377 precedent: `> baseline_cancelling` means a
+                # cancellation request against `host_task` is still
+                # outstanding beyond what this function already accounted
+                # for, so it must be re-raised rather than absorbed here.
+                if host_task.cancelling() > baseline_cancelling:
+                    raise
         elif fired and not already_uncancelled:
             # The watcher fired but coro did NOT raise CancelledError (it returned
             # normally, or raised a different exception, before our cancel() was
