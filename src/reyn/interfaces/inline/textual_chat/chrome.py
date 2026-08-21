@@ -1457,6 +1457,7 @@ def ctx_pane_lines(snap: "dict | None") -> list[str]:
         # started in a different place from the five around it.
         _cache_hit_line(
             f"{'cache':<{_CTX_LABEL_W}}", recent_cached, recent_prompt,
+            note="last call",
             reported=snap.get("cache_usage_reported", False),
         ),
         f"compaction   {comp_est:,} / {comp_trigger:,} tokens est.  ({comp_pct}% to trigger)",
