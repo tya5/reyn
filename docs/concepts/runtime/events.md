@@ -161,6 +161,39 @@ module-level constants for the full measured rationale, and the
 [config reference](../../reference/config/reyn-yaml.md#audit_events-block)
 for the operator-facing knobs.
 
+### `agent_delta`'s own content is a SEPARATE opt-in (#4666)
+
+Coalescing (above) decides how OFTEN a durable record is written.
+Whether that record carries the reply's own CONTENT — the `text` field —
+is a different question, with its own knob:
+`audit_events.agent_delta_include_text` (default `false`). Deliberately
+NOT unified with the coalescing knobs (owner ruling: each content opt-in
+gets its own toggle) — mirrors OpenTelemetry's GenAI convention that
+"every attribute that can hold prompt or output content is opt-in,
+default metadata-only" (the routinely-PII rationale).
+
+Off (the default): the durable record still carries `chain_id` /
+`round_index` / `coalesced_fragment_count` / `audit_seq` — enough to
+prove "a partial reply of N fragments existed" (#4960's own reason for
+coalescing at all: cost accountability for a call whose `usage` record
+never lands) — but not the reply's own text. `LocalEventBackend.
+declare_gaps()` names this gap ONLY while the flag is off, never
+statically (contract 2's "declared vs never-existed" distinction, per
+architect's own #4960 ruling): reading a durable log written while the
+flag was on must never be told the text was "never retained" when it
+was, and vice versa.
+
+**⚠️ Default-behavior change (2026-08-21, #4666, owner ruling):** before
+this config field existed, `agent_delta`'s reply content was ALWAYS
+durably written, with no opt-in or opt-out. If your workflow depends on
+`.reyn/events` carrying streamed-reply text, set
+`agent_delta_include_text: true`.
+
+**Unchanged either way:** live TUI/AG-UI delivery (every fragment, full
+text, always — this flag governs the durable write only) and
+`history.jsonl` (the completed reply's own persistence is a separate
+mechanism entirely, untouched by this).
+
 ## What audit-events are NOT
 
 - **Not application logs.** A workflow author shouldn't emit free-form audit-events. The set is OS-defined.

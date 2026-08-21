@@ -162,6 +162,12 @@ class LocalEventBackend:
     BEFORE the (unthrottled) subscriber loop — every raw fragment still
     reaches the TUI/AG-UI exactly as before #4960.
 
+    #4666: the coalesced durable record's ``text`` field (the streamed
+    reply content itself) is ALSO opt-in — off by default
+    (``agent_delta_include_text``), its OWN knob, deliberately not tied
+    to the coalescing above (owner ruling: each opt-in gets its own
+    config, never a single toggle covering both).
+
     All OTHER event kinds: unchanged, no gaps — replay / support-bundle /
     dogfood_trace work normally against this backend's output for them."""
 
@@ -171,11 +177,25 @@ class LocalEventBackend:
         *,
         agent_delta_coalesce_fragments: int = _DEFAULT_AGENT_DELTA_COALESCE_FRAGMENTS,
         agent_delta_coalesce_interval_ms: int = _DEFAULT_AGENT_DELTA_COALESCE_INTERVAL_MS,
+        agent_delta_include_text: bool = False,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self._store = store
         self._agent_delta_coalesce_fragments = agent_delta_coalesce_fragments
         self._agent_delta_coalesce_interval_ms = agent_delta_coalesce_interval_ms
+        # #4666 (owner ruling, opt-in, its OWN knob — separate from any
+        # future "completed conversation" opt-in, deliberately not unified
+        # under one toggle): whether the coalesced durable record keeps
+        # `text` (the streamed reply content itself). Default False — the
+        # OTel GenAI convention #4666 follows ("every attribute that can
+        # hold prompt/output content is opt-in, default metadata-only").
+        # Live TUI/AG-UI delivery is UNAFFECTED either way — this backend
+        # only decides what reaches DISK; every raw fragment (`text`
+        # included) still dispatches to subscribers regardless of this
+        # flag (see `write()`'s own module-level ordering: backend.write
+        # runs, then EventLog's subscriber loop, both from the SAME raw
+        # `event` this flag never touches).
+        self._agent_delta_include_text = agent_delta_include_text
         # Test seam (mirrors this repo's existing ``clock: Callable[[],
         # float]`` idiom, e.g. TextualChatApp) — production always passes
         # the default ``time.monotonic``; a test can inject a fake to
@@ -248,15 +268,25 @@ class LocalEventBackend:
         not a mutation of *event* itself — *event* is the SAME object the
         (already-completed) subscriber dispatch loop may still be holding a
         reference to, so a new object is written, never the original
-        mutated in place)."""
-        self._store.write(
-            event.model_copy(
-                update={"data": {**event.data, "coalesced_fragment_count": coalesced_fragment_count}},
-            )
-        )
+        mutated in place).
+
+        #4666: when ``agent_delta_include_text`` is off (the default),
+        ``text`` (the streamed reply content itself) is dropped from the
+        durable record — everything else (``chain_id``/``round_index``/
+        ``coalesced_fragment_count``/``audit_seq``) is kept. #4960's own
+        reason for existing survives this drop unchanged: "a partial
+        reply of N fragments existed" is provable from those fields alone,
+        with no dependency on the reply's own content — dropping the
+        WHOLE event here (rather than just this one field) would reopen
+        the exact gap #4960 closed (cost accountability for a call whose
+        usage record never lands)."""
+        data = {**event.data, "coalesced_fragment_count": coalesced_fragment_count}
+        if not self._agent_delta_include_text:
+            data.pop("text", None)
+        self._store.write(event.model_copy(update={"data": data}))
 
     def declare_gaps(self) -> list[str]:
-        return [
+        gaps = [
             "agent_delta (streamed reply content, one per chunk) is not "
             "retained per-fragment — coalesced to one durable record per "
             f"{self._agent_delta_coalesce_fragments} fragments or "
@@ -266,6 +296,27 @@ class LocalEventBackend:
             "write-only gap. `reyn events replay` sees fewer agent_delta "
             "records than fragments actually streamed.",
         ]
+        # #4666 (architect ruling on #4960: "declared" vs "never existed"
+        # must stay distinguishable) — this gap is CONDITIONAL, not
+        # static: it only applies while `agent_delta_include_text` is
+        # off. A reader of a durable log written while this flag was ON
+        # must not be told "the text was never retained" when it was —
+        # and a reader of a log written while OFF must not read the
+        # #4960-only gap above and conclude the reply's content was kept.
+        if not self._agent_delta_include_text:
+            gaps.append(
+                "agent_delta's `text` field (the streamed reply content "
+                "itself) is not retained in the durable coalesced record "
+                "— dropped by config (audit_events.agent_delta_include_"
+                "text=False, the default, #4666), not a #4960 side "
+                "effect. `chain_id`/`round_index`/`coalesced_fragment_"
+                "count`/`audit_seq` are still recorded, so 'a partial "
+                "reply of N fragments existed' remains provable without "
+                "the reply's own content. Live TUI/AG-UI delivery is "
+                "unaffected — every subscriber still receives the full "
+                "text for every fragment; this gap is durable-write-only.",
+            )
+        return gaps
 
 
 class DiscardEventBackend:
