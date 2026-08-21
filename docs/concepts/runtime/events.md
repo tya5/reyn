@@ -128,9 +128,13 @@ One kind gets special treatment on the `local` backend's write side:
 `agent_delta` (one audit-event per streamed reply chunk) is NOT written
 to disk per-fragment. Live subscriber delivery is unaffected — every
 fragment still dispatches to the TUI/AG-UI exactly as before. Measured
-(2000-delta/60KB real streamed reply): unthrottled, `agent_delta` writes
-were 99.4% of that run's audit file bytes, so writing every fragment
-durably would dominate the log for the duration of any streamed reply.
+(2000-delta/60KB real streamed reply, `agent_delta_include_text=true`):
+unthrottled, `agent_delta` writes were 99.4% of that run's audit file
+bytes, so writing every fragment durably would dominate the log for the
+duration of any streamed reply. That figure assumes `text` is being
+written — with #4666's default (`agent_delta_include_text=false`, see
+below), a coalesced record's bytes are smaller and this percentage does
+not apply as measured.
 
 Three mechanisms, each covering a gap the others leave open:
 
