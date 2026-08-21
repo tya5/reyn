@@ -1387,7 +1387,7 @@ def cost_pane_lines(snap: "dict | None") -> list[str]:
         f"tokens   prompt {p:,} · completion {c:,} · total {agent_tokens:,}",
         _cache_hit_line(
             "cache", cached, p, note="cumulative",
-            reported=snap.get("cache_usage_reported", True),
+            reported=snap.get("cache_usage_reported", False),
         ),
     ]
     # #3695: the status row can only afford a mark; this pane has room to say
@@ -1457,7 +1457,7 @@ def ctx_pane_lines(snap: "dict | None") -> list[str]:
         # started in a different place from the five around it.
         _cache_hit_line(
             f"{'cache':<{_CTX_LABEL_W}}", recent_cached, recent_prompt,
-            reported=snap.get("cache_usage_reported", True),
+            reported=snap.get("cache_usage_reported", False),
         ),
         f"compaction   {comp_est:,} / {comp_trigger:,} tokens est.  ({comp_pct}% to trigger)",
     ]

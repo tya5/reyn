@@ -112,14 +112,14 @@ class QueueTransport(ClientTransport):
 
 
 def test_capabilities_dataclass_rejects_a_missing_field():
-    """Tier 1: omitting any one of the 6 required fields fails to
+    """Tier 1: omitting any one of the required fields fails to
     CONSTRUCT — a ``TypeError``, not a silently-defaulted ``False``. Mirrors
     ``AxisEnforcementDeclaration``'s own witness verbatim.
 
     Positive control (architect co-vet on #5000): without it, this test
     alone would ALSO go green after a field is renamed or deleted — an
     unknown ``kwarg`` raises the identical ``TypeError``, same red, wrong
-    reason. Constructing with all 6 fields present, right here, is what
+    reason. Constructing with every field present, right here, is what
     lets this test claim the ``TypeError`` above is caused by the MISSING
     field specifically, not by some other construction failure."""
     ChatReadModelCapabilities(
@@ -129,6 +129,7 @@ def test_capabilities_dataclass_rejects_a_missing_field():
         has_command_ui_region=True,
         conversation_history=True,
         load_older_conversation_history=True,
+        cache_usage_reported=True,
     )
     with pytest.raises(TypeError):
         ChatReadModelCapabilities(  # type: ignore[call-arg]
@@ -137,13 +138,14 @@ def test_capabilities_dataclass_rejects_a_missing_field():
             pending_command_ui=True,
             has_command_ui_region=True,
             conversation_history=True,
-            # load_older_conversation_history omitted
+            load_older_conversation_history=True,
+            # cache_usage_reported omitted
         )
 
 
-def test_capabilities_dataclass_has_exactly_the_6_declared_fields():
-    """Tier 1: pins the declared vocabulary itself — the 6 names #4996's
-    own issue enumerated, no more, no fewer. A regression here is a
+def test_capabilities_dataclass_has_exactly_the_declared_fields():
+    """Tier 1: pins the declared vocabulary itself — the field names #4996
+    and #5009 enumerated, no more, no fewer. A regression here is a
     silent widening/narrowing of what's declared, not a missing-field bug
     (that's the test above).
 
@@ -152,7 +154,11 @@ def test_capabilities_dataclass_has_exactly_the_6_declared_fields():
     transcription of the field list and would need editing in the SAME PR
     as any real rename anyway (CLAUDE.md's 6-questions, #2: "is it the
     implementation, transcribed?"). Kept as an explicit, readable pin of
-    the vocabulary itself, not as a second guard."""
+    the vocabulary itself, not as a second guard.
+
+    ``cache_usage_reported`` (#5009) is the one field NOT named after a
+    ``ChatReadModel`` method — see the class's own docstring for why it
+    lives here anyway."""
     names = {f.name for f in fields(ChatReadModelCapabilities)}
     assert names == {
         "completion_session",
@@ -161,6 +167,7 @@ def test_capabilities_dataclass_has_exactly_the_6_declared_fields():
         "has_command_ui_region",
         "conversation_history",
         "load_older_conversation_history",
+        "cache_usage_reported",
     }
 
 
