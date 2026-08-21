@@ -243,21 +243,35 @@ print("ISOLATION_OK")
 '''
 
 
-def test_plain_path_survives_flowview_absence() -> None:
+def test_plain_path_survives_flowview_absence(out_of_process_reyn) -> None:
     """Tier 2c: with ``textual`` / ``textual_flowview`` unimportable from a clean
     interpreter, the plain / non-TTY path imports and runs green — the flowview
     import is lazy and TTY-only. Runs the strip in a subprocess (see the module
     comment for why in-process would be a false witness) and asserts it reaches
-    the ``ISOLATION_OK`` sentinel."""
+    the ``ISOLATION_OK`` sentinel.
+
+    ``out_of_process_reyn`` (#5028): a subprocess gets no benefit from pytest's
+    own ``pythonpath = ["src"]`` — it re-resolves ``reyn`` from whatever the
+    venv's own editable install (or, in a git worktree, the ambient shell's)
+    points at, which can be a DIFFERENT checkout's ``src`` entirely. Pinning
+    the in-process-derived root as ``PYTHONPATH`` makes the subprocess read the
+    SAME ``reyn`` this test imported, rather than trusting the ambient
+    environment to agree. This does not widen what the subprocess can import —
+    its own ``sys.meta_path`` blocker (above) still blocks ``textual``/
+    ``textual_flowview`` regardless of ``PYTHONPATH``, since that block is a
+    finder installed by the script itself, not a path-visibility question."""
+    import os
     import subprocess
     import sys
 
+    env = {**os.environ, "PYTHONPATH": out_of_process_reyn}
     # #4397: no timeout= — CI's own per-test pytest-timeout is the kill switch.
     proc = subprocess.run(
         [sys.executable, "-c", _ISOLATION_SUBPROCESS],
         cwd=str(_REPO_ROOT),
         capture_output=True,
         text=True,
+        env=env,
     )
     assert proc.returncode == 0, f"stdout={proc.stdout}\nstderr={proc.stderr}"
     assert "ISOLATION_OK" in proc.stdout, f"stdout={proc.stdout}\nstderr={proc.stderr}"
