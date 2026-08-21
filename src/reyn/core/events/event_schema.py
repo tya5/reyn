@@ -217,6 +217,7 @@ AUDIT_EVENT_KINDS: frozenset[str] = frozenset({
     "agent_message_refused",
     "agent_message_sent",
     "agent_request_received",
+    "agent_response_committed",
     "agent_response_received",
     "asyncio_unhandled_exception",
     "body_summary_hard_truncated",

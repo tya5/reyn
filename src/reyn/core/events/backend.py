@@ -162,11 +162,27 @@ class LocalEventBackend:
     BEFORE the (unthrottled) subscriber loop — every raw fragment still
     reaches the TUI/AG-UI exactly as before #4960.
 
-    #4666: the coalesced durable record's ``text`` field (the streamed
+    #4666①: the coalesced durable record's ``text`` field (the streamed
     reply content itself) is ALSO opt-in — off by default
     (``agent_delta_include_text``), its OWN knob, deliberately not tied
     to the coalescing above (owner ruling: each opt-in gets its own
     config, never a single toggle covering both).
+
+    #4666②: same drop-the-free-text-field-only shape, applied to TWO more
+    kinds that are NOT coalesced (one record per occurrence, unlike
+    ``agent_delta``'s per-fragment volume — no throttling need):
+    ``agent_response_committed`` (``Session._put_outbox``'s own emit,
+    filtered on ``msg.kind == "agent"`` — the completed model→user text)
+    drops ``text``; ``user_intervention_requested`` (``ask_user.py``, the
+    model's own question) drops ``question``/``suggestions``/``options``.
+    Both gated by the SAME ``completed_response_include_text`` knob
+    (architect ruling: "②と③は1つのやり取りの両端" — the model's
+    question and the terminal reply share one knob, or a half-recorded
+    exchange survives in the durable log). ``chain_id``/``intervention_
+    id`` and every other field are kept either way, so "a response was
+    committed" / "a question was asked" remains provable from the durable
+    record alone with the flag off — same reasoning as ``agent_delta``'s
+    own drop above.
 
     All OTHER event kinds: unchanged, no gaps — replay / support-bundle /
     dogfood_trace work normally against this backend's output for them."""
@@ -178,6 +194,7 @@ class LocalEventBackend:
         agent_delta_coalesce_fragments: int = _DEFAULT_AGENT_DELTA_COALESCE_FRAGMENTS,
         agent_delta_coalesce_interval_ms: int = _DEFAULT_AGENT_DELTA_COALESCE_INTERVAL_MS,
         agent_delta_include_text: bool = False,
+        completed_response_include_text: bool = False,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self._store = store
@@ -196,6 +213,14 @@ class LocalEventBackend:
         # runs, then EventLog's subscriber loop, both from the SAME raw
         # `event` this flag never touches).
         self._agent_delta_include_text = agent_delta_include_text
+        # #4666②: same shape as `_agent_delta_include_text` immediately
+        # above, gating `agent_response_committed`'s `text` and
+        # `user_intervention_requested`'s `question`/`suggestions`/
+        # `options` — see this class's own docstring for the full
+        # rationale and the config field's own docstring
+        # (`AuditEventsConfig.completed_response_include_text`) for the
+        # owner ruling this mirrors.
+        self._completed_response_include_text = completed_response_include_text
         # Test seam (mirrors this repo's existing ``clock: Callable[[],
         # float]`` idiom, e.g. TextualChatApp) — production always passes
         # the default ``time.monotonic``; a test can inject a fake to
@@ -211,7 +236,25 @@ class LocalEventBackend:
         self._delta_last_persisted_at: dict[str, float] = {}
         self._delta_last_event: dict[str, Event] = {}
 
+    #4666②: the free-text field name(s) to drop per kind while
+    # `completed_response_include_text` is off — no coalescing (each kind
+    # here is one record per occurrence, not per-fragment volume like
+    # `agent_delta`), so `write()` drops and writes straight through
+    # rather than routing through the coalescing state below.
+    _COMPLETED_RESPONSE_TEXT_FIELDS: "dict[str, tuple[str, ...]]" = {
+        "agent_response_committed": ("text",),
+        "user_intervention_requested": ("question", "suggestions", "options"),
+    }
+
     def write(self, event: Event) -> None:
+        if event.type in self._COMPLETED_RESPONSE_TEXT_FIELDS:
+            if self._completed_response_include_text:
+                self._store.write(event)
+            else:
+                fields = self._COMPLETED_RESPONSE_TEXT_FIELDS[event.type]
+                data = {k: v for k, v in event.data.items() if k not in fields}
+                self._store.write(event.model_copy(update={"data": data}))
+            return
         if event.type != "agent_delta":
             self._store.write(event)
             return
@@ -315,6 +358,25 @@ class LocalEventBackend:
                 "the reply's own content. Live TUI/AG-UI delivery is "
                 "unaffected — every subscriber still receives the full "
                 "text for every fragment; this gap is durable-write-only.",
+            )
+        # #4666②: same "declared vs never-existed" discipline as ①'s gap
+        # above, for the two kinds `_COMPLETED_RESPONSE_TEXT_FIELDS` names.
+        if not self._completed_response_include_text:
+            gaps.append(
+                "agent_response_committed's `text` field (the completed "
+                "model-to-user reply) and user_intervention_requested's "
+                "`question`/`suggestions`/`options` fields (the model's "
+                "ask_user question) are not retained in the durable "
+                "record — dropped by config (audit_events.completed_"
+                "response_include_text=False, the default, #4666②), not "
+                "a #4960 side effect and not the same knob as ①'s own "
+                "streamed-fragment text opt-in above. Every other field "
+                "(chain_id / intervention_id / round metadata) is still "
+                "recorded, so 'a response was committed' / 'a question "
+                "was asked' remains provable without either one's own "
+                "content. Live TUI/AG-UI delivery, and any opt-in OTEL "
+                "subscriber, are unaffected — this gap is durable-write-"
+                "only.",
             )
         return gaps
 

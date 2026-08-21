@@ -49,6 +49,17 @@ async def handle(op: AskUserIROp, ctx: OpContext) -> dict:
         run_id=None,  # set by chat session if it tracks runs; CLI ignores
     )
 
+    # #4666②: `question`/`suggestions`/`options` are the model→user half of
+    # ②'s opt-in scope (architect: "②と③は1つのやり取りの両端" — the
+    # model's question and the user's answer share ONE knob, or a
+    # half-answered exchange survives the record). Emitted unconditionally
+    # HERE, same as before this issue — the redaction (dropping those 3
+    # free-text fields from the DURABLE record while `audit_events.
+    # completed_response_include_text` is off) happens at
+    # `LocalEventBackend.write()`, not at this call site (mirrors
+    # `agent_response_committed`'s own emit in `Session._put_outbox`; see
+    # that method's docstring for the full ②/③ boundary and the tool-path
+    # leak this does NOT close).
     ctx.events.emit(
         "user_intervention_requested",
         run_id=ctx.run_id,

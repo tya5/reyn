@@ -4144,6 +4144,7 @@ class Session:
             agent_delta_coalesce_fragments=self._events_config.agent_delta_coalesce_fragments,
             agent_delta_coalesce_interval_ms=self._events_config.agent_delta_coalesce_interval_ms,
             agent_delta_include_text=self._events_config.agent_delta_include_text,
+            completed_response_include_text=self._events_config.completed_response_include_text,
         )
 
     # ── #3082 Family 1: audit-event spine builder. See session-construction.md. ──
@@ -6997,7 +6998,79 @@ class Session:
             returns ``False`` or raises, the message falls through to
             the normal queue path (= defensive: a failed external
             dispatch surfaces to TUI rather than silently disappearing).
+
+        #4666②: this method is the measured single choke point every
+        model→user text commit funnels through (terminal reply, its
+        ``response_format`` variant, mid-loop budget force-close,
+        max_iterations wrap-up, and ``session.py``'s own router_cap
+        wrap-up — 5 call sites, all reassigning/reusing THIS method
+        rather than writing to the outbox independently — see PR #4666②'s
+        own issue comment for the site-by-site census). Emitting
+        ``agent_response_committed`` HERE, filtered on ``msg.kind ==
+        "agent"``, covers all 5 without an emit at each — and,
+        architect's ruling, also the tool_calls-round accompanying text
+        (``persist=False`` — not written to history, but still reaches
+        the user, so still in scope; see ``router_loop.py``'s own
+        tool_calls-round site) and rewind/replay, as long as those keep
+        going through this same funnel — a call site added later needs
+        NO new emit to be covered, only a NEW commit path that bypasses
+        ``_put_outbox`` entirely would leak (a structurally-guaranteed
+        absence, not merely an unconfirmed one, per the "choke point over
+        enumeration" ruling).
+
+        The emit HERE is unconditional — ``audit_events.
+        completed_response_include_text`` (default off) is NOT read at
+        this call site. Mirrors ①'s own established shape
+        (``agent_delta_include_text``): the opt-in gates a FIELD on the
+        DURABLE record, not the event's existence — ``LocalEventBackend
+        .write()`` drops ``text`` before persisting while the flag is
+        off (see that method + its own ``declare_gaps()`` entry), same
+        as it already does for ``agent_delta``. Every subscriber
+        (TUI/AG-UI forwarders, the opt-in OTEL exporter) still receives
+        the full event regardless of this flag — same as ``agent_delta``
+        today — only what reaches `.reyn/events` on disk is gated.
+
+        Deliberately excluded: cancellation (``notify_turn_cancelled`` /
+        router_loop's cooperative-cancel receiver) never reaches here —
+        "the cancelled turn's result is never appended" (their own
+        docstrings) means no ``kind="agent"`` message exists to commit;
+        and canned/synthetic non-model text (``_EMPTY_RESPONSE_MSG`` /
+        ``_ROUTER_RETRY_EXHAUSTED_MSG`` and similar) — architect's
+        ruling is that ②'s question is "what was said", not "why", so
+        this does NOT try to tell organic from forced text apart (no
+        classifier exists for it, and none is added here) — but a canned
+        message is not text the MODEL generated at all, which is a
+        different axis this filter also does not need to know: it is
+        excluded structurally, by simply never being routed through
+        ``put_outbox`` with model-generated content in the first place.
+
+        `ask_user`'s own question (``op_runtime/ask_user.py``, emit kind
+        ``user_intervention_requested``) is ALSO in ②'s scope (architect:
+        "②と③は1つのやり取りの両端" — the model's question and the
+        user's answer must live behind the SAME knob or a half-answered
+        exchange survives in the record) but does not reach here — it
+        never enters the outbox at all (``ctx.intervention_bus.request``
+        is a separate protocol path). That is an intentional 2nd emit
+        point, not a gap this method's own choke-point coverage claims to
+        close — see that emit call's own site for its half of ②.
+
+        Known, NOT-yet-closed leak outside ②'s reach entirely (lead-coder
+        measurement, #4666): the SAME text this method commits can ALSO
+        reach `.reyn/events` a second time via `tool_called.args` /
+        `tool_returned.result` for tool-mediated exchanges (`ask_user`'s
+        question/answer duplicate verbatim into those fields too) — the
+        owner's "conversation body" ruling covers CONTENT, not the
+        carrying event ``kind``, so turning ② off does not redact that
+        copy. Closed by a SEPARATE follow-up PR (tool-side declaration +
+        dispatcher gating, architect ruling), not by ② — do not read ②
+        turned off as "no conversation content leaves `.reyn/events`".
         """
+        if msg.kind == "agent":
+            self._audit_events.emit(
+                "agent_response_committed",
+                text=msg.text,
+                chain_id=msg.meta.get("chain_id"),
+            )
         # PR-D2: default reply_to from last captured inbox reply_to.
         if msg.reply_to is None and self._inbox_arbiter.last_reply_to is not None:
             from dataclasses import replace
