@@ -10,27 +10,27 @@ name: Doc-drift check
 # scripts/check_doc_drift.py's module docstring, "Blocking" section
 # (kept, corrected in place — do not re-derive from PR history alone).
 #
-# The promotion's decisive point ("the passing action is always
-# correct — no dead end") was falsified within hours: one of the 3
-# "true positives" in the #5010 calibration set (`_action_retrieval`,
-# PR #4572/#4567/#4563) turned out to be a FALSE POSITIVE on
-# independent re-measurement — `docs/reference/runtime/session-
-# construction.md` is CURRENTLY ACCURATE (correctly phrased as a
-# historical rename note; #5016, closed). The doc WAS stale right
-# after #4572 merged, but a LATER PR (#4582) already fixed it into
-# permanently-correct historical prose — a case the discriminator
-# structurally cannot see, because it only asks "did THIS removing PR
-# touch the doc", never "has ANY later PR already fixed it since". A
-# PR merged today that happens to remove another already-historical
-# `_action_retrieval`-shaped identifier gets flagged with NO valid
-# fix — touching the doc again would mean writing something false,
-# since it is already correct. That is the dead end promotion assumed
-# could not exist. Corrected calibration count: **1 FP / 9** in this
-# family (was reported as 0/9) — the naive "staged, multi-PR removal"
-# case is a DIFFERENT false-positive class than the two (comment
-# prose, docstring prose) round 2 actually closed; re-promotion needs
-# its own structural discriminator for THIS class, not another metric
-# push. See #5010 for the corrected record and re-promotion status.
+# The promotion's structural premise was falsified within hours — NOT
+# its TP/FP count (see scripts/check_doc_drift.py's module docstring
+# for the full, corrected account, including a RETRACTED "0 TP" claim
+# an earlier revision of this file made without doing the verification
+# it asserted). `docs/reference/runtime/session-construction.md` is
+# CURRENTLY ACCURATE (a correctly-phrased historical rename note;
+# #5016, closed). PR #4572 — independently re-verified against its own
+# merge commit — genuinely removed `_action_retrieval` from src/
+# without touching this doc, and the doc's text at that exact point was
+# present-tense, describing then-live behavior: a real, confirmed true
+# positive at the time. It only became accurate LATER, when PR #4582 (a
+# separate, later PR) fixed it. The discriminator structurally cannot
+# see that a later PR already fixed a doc some earlier PR should have
+# — it only asks "did THIS removing PR touch the doc", re-evaluated
+# against TODAY's doc content on every run. Re-running `--pr 4572`
+# TODAY still fires, even though flagging it back then was correct,
+# because today's doc is already accurate and touching it again would
+# mean writing something false. That dead end — not any specific FP
+# count — is why this reverted. Re-promotion needs its own structural
+# discriminator for this class, not another metric push. See #5010
+# for the corrected record and re-promotion status.
 #
 # Trigger scoped to `paths: ["src/**"]` — the discriminator only ever
 # considers identifiers removed from src/, so a PR that never touches
