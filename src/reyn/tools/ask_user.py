@@ -83,7 +83,20 @@ async def _handle(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
     return await handle(op=op, ctx=None)
 
 
+from reyn.core.dispatch.content_declarations import declare_content_fields  # noqa: E402
 from reyn.core.offload.canonical import ask_user_to_canonical  # noqa: E402
+
+# #4666 item ③b: this tool's args/result carry the SAME question/answer
+# text that also reaches the audit log via the dedicated
+# user_intervention_requested/received kinds (each already governed by
+# ①②③'s own knobs at the LocalEventBackend write side). Without this
+# declaration, dispatch_tool's generic tool_called/tool_returned events
+# would carry that text unconditionally regardless of those knobs — the
+# gap #4970's review found. `question` is content the MODEL directed at
+# the user (②'s class); `answer` is content the USER typed back (③'s
+# class) — see `reyn.core.dispatch.content_declarations` for the full
+# rationale and the known bound weakness.
+declare_content_fields("ask_user", {"question": "assistant", "answer": "user"})
 
 ASK_USER = ToolDefinition(
     canonical=ask_user_to_canonical,

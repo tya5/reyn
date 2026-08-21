@@ -620,11 +620,13 @@
 # ``LocalEventBackend.write()`` drops only the free-text field(s) —
 # ``chain_id``/``intervention_id`` are always kept. Live TUI/AG-UI
 # delivery and any opt-in OTEL subscriber are UNAFFECTED either way.
-# Does NOT close every conversation-content leak — the same text can
-# duplicate into ``tool_called.args``/``tool_returned.result`` for
-# tool-mediated exchanges; that gap is closed by a separate follow-up
-# PR, not this field. See ``docs/reference/runtime/events.md`` for the
-# full commit-point census.
+# This field ALSO governs ``ask_user``'s ``question`` on
+# ``tool_called.args`` (#4666 item ③b, a per-tool content-field
+# declaration the dispatcher consults — closes the dispatcher-level
+# leak a PR review found; see ``user_input_include_text`` below for
+# the matching ``answer`` half). See
+# ``docs/reference/runtime/events.md`` for the full commit-point
+# census.
 #
 # ``user_input_include_text`` (#4666 item ③, default false): a THIRD,
 # separate knob — the two above govern the AGENT's own output, this one
@@ -641,10 +643,20 @@
 # delivery and ``history.jsonl`` are UNAFFECTED either way.
 # ⚠️ Default-behavior change, 2026-08-21: before this field existed,
 # these 6 kinds' content was always durably recorded, unconditionally.
-# ⚠️ Known gap this flag does NOT close: ``ask_user``'s question/answer
-# also reach the audit log unconditionally via ``tool_called.args``/
-# ``tool_returned.result`` (a separate emit path) — tracked separately
-# under #4666.
+# This field ALSO governs ``ask_user``'s ``answer`` on
+# ``tool_returned.result`` (#4666 item ③b: a per-tool "this field is
+# conversation content" declaration, ``reyn.core.dispatch.
+# content_declarations`` — closes the dispatcher-level leak where
+# ``ask_user``'s question/answer reached the audit log via the generic
+# ``tool_called``/``tool_returned`` kinds unconditionally, bypassing ②③
+# entirely). Scope, measured, not extended by guess: only ``ask_user``
+# declares any field today; ``mcp_called.args`` was measured and
+# excluded (an MCP tool's args are model-decided call parameters, the
+# same class as any other tool's args, not a dedicated question/answer
+# channel like ``ask_user``'s). A tool that shows the user free text and
+# forgets to declare it leaks that text silently — see
+# ``src/reyn/core/dispatch/content_declarations.py``'s own module
+# docstring for the full disclosure.
 # -----------------------------------------------------------------------------
 # audit_events:
 #   max_bytes: 10485760              # 10 MB

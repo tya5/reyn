@@ -592,6 +592,19 @@ class RouterLoopHost(RouterLoopCore, Protocol):
         preserves the prior tools= shape."""
         ...
 
+    def get_completed_response_include_text(self) -> bool:
+        """#4666 item ③b — mirrors ``audit_events.completed_response_
+        include_text`` (②). ``_dispatch_resolved`` reads this to build
+        DispatchContext so dispatch_tool can apply ②'s knob to any
+        declared tool field whose content class is "assistant"."""
+        ...
+
+    def get_user_input_include_text(self) -> bool:
+        """#4666 item ③b — mirrors ``audit_events.user_input_include_
+        text`` (③). Same role as :meth:`get_completed_response_include_
+        text` above, for content-class "user" fields."""
+        ...
+
     def get_action_embedding_index(self) -> Any:
         """Return the session-scoped ActionEmbeddingIndex, or None.
 
@@ -3098,6 +3111,18 @@ class RouterLoop:
             if self._dispatch_catalog is not None
             else self._catalog
         )
+        # #4666 item ③b: same getattr-fallback pattern as
+        # get_universal_wrappers_enabled in run() above — a narrow host
+        # (test FakeRouterHost) that doesn't implement these defaults to
+        # off (= the prior, pre-#4666 unredacted behavior for a declared
+        # tool's fields, which is only ask_user today and every existing
+        # test fixture already predates this mechanism).
+        _completed_getter = getattr(
+            self.host, "get_completed_response_include_text", None,
+        )
+        _user_input_getter = getattr(
+            self.host, "get_user_input_include_text", None,
+        )
         dctx = DispatchContext(
             caller_kind="router",
             caller_id=self.host.agent_name,
@@ -3105,6 +3130,12 @@ class RouterLoop:
             tool_catalog=catalog,
             events=self.host.events,
             call_id=call_id,
+            completed_response_include_text=(
+                bool(_completed_getter()) if _completed_getter else False
+            ),
+            user_input_include_text=(
+                bool(_user_input_getter()) if _user_input_getter else False
+            ),
         )
 
         result = await dispatch_tool(

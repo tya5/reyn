@@ -340,6 +340,14 @@ class RouterHostAdapter:
         # caller must now say what it means), rather than defaulting to
         # either value and leaving a forgetful caller undetectable.
         universal_wrappers_enabled: bool,
+        # #4666 item ③b: mirrors audit_events.completed_response_include_
+        # text (②) / .user_input_include_text (③) — threaded through so
+        # dispatch_tool's DispatchContext can apply the SAME knobs a
+        # declared tool's fields are governed by (content-declarations.py).
+        # Default False matches both config fields' own defaults — no
+        # #4159-style mismatch risk (both sides agree already).
+        completed_response_include_text: bool = False,
+        user_input_include_text: bool = False,
         # FP-0034 Phase 2 step 1: ActionEmbeddingIndex + EmbeddingProvider
         # for search_actions.  When all three are set (= operator set
         # ``embedding.enabled: true`` (FP-0066 §7) AND Session built a
@@ -589,6 +597,9 @@ class RouterHostAdapter:
         self._mark_task_pending_cb = mark_task_pending
         # FP-0034 PR-3b-iii
         self._universal_wrappers_enabled = universal_wrappers_enabled
+        # #4666 item ③b.
+        self._completed_response_include_text = completed_response_include_text
+        self._user_input_include_text = user_input_include_text
         # B25-S5-1
         self._eager_embedding_build = eager_embedding_build
         # FP-0034 Phase 2 step 1
@@ -1166,6 +1177,20 @@ class RouterHostAdapter:
         False preserves the prior tools= shape.
         """
         return self._universal_wrappers_enabled
+
+    def get_completed_response_include_text(self) -> bool:
+        """#4666 item ③b — mirrors ``audit_events.completed_response_
+        include_text`` (②). RouterLoop reads this when building
+        DispatchContext so dispatch_tool can apply ②'s knob to any
+        declared tool field whose content class is "assistant" (see
+        ``reyn.core.dispatch.content_declarations``)."""
+        return self._completed_response_include_text
+
+    def get_user_input_include_text(self) -> bool:
+        """#4666 item ③b — mirrors ``audit_events.user_input_include_
+        text`` (③). Same role as :meth:`get_completed_response_include_
+        text` above, for content-class "user" fields."""
+        return self._user_input_include_text
 
     def get_action_embedding_index(self) -> Any:
         """Return the ActionEmbeddingIndex instance, or None.
