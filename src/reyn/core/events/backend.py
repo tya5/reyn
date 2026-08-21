@@ -209,13 +209,20 @@ class LocalEventBackend:
     drops ``text``; ``user_intervention_requested`` (``ask_user.py``, the
     model's own question) drops ``question``/``suggestions``/``options``.
     Both gated by the SAME ``completed_response_include_text`` knob
-    (architect ruling: "②と③は1つのやり取りの両端" — the model's
-    question and the terminal reply share one knob, or a half-recorded
-    exchange survives in the durable log). ``chain_id``/``intervention_
-    id`` and every other field are kept either way, so "a response was
-    committed" / "a question was asked" remains provable from the durable
-    record alone with the flag off — same reasoning as ``agent_delta``'s
-    own drop above.
+    because both carry the SAME content type — text the MODEL directed
+    at the user (owner ruling: one knob per content type). The
+    `ask_user` ANSWER (``user_intervention_received``, item ③'s own
+    kind) is a DIFFERENT content type — text the USER directed at the
+    model — so it is necessarily gated by item ③'s own, separate knob
+    instead. (An earlier framing here read this as "② and ③ must share
+    one knob, since question+answer are two ends of one exchange" —
+    corrected: the owner's rule is one knob per content TYPE, and
+    question/answer are two different types by construction, so they
+    were always going to land on two different knobs.)
+    ``chain_id``/``intervention_id`` and every other field are kept
+    either way, so "a response was committed" / "a question was asked"
+    remains provable from the durable record alone with the flag off —
+    same reasoning as ``agent_delta``'s own drop above.
 
     #4666 item ③: a SEPARATE opt-in (``user_input_include_text``, also
     off by default) covers 6 kinds carrying a user's own typed/chosen

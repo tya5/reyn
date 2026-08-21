@@ -7046,14 +7046,17 @@ class Session:
         ``put_outbox`` with model-generated content in the first place.
 
         `ask_user`'s own question (``op_runtime/ask_user.py``, emit kind
-        ``user_intervention_requested``) is ALSO in ②'s scope (architect:
-        "②と③は1つのやり取りの両端" — the model's question and the
-        user's answer must live behind the SAME knob or a half-answered
-        exchange survives in the record) but does not reach here — it
-        never enters the outbox at all (``ctx.intervention_bus.request``
-        is a separate protocol path). That is an intentional 2nd emit
-        point, not a gap this method's own choke-point coverage claims to
-        close — see that emit call's own site for its half of ②.
+        ``user_intervention_requested``) is ALSO in ②'s scope — it is
+        text the MODEL directed at the user, the same content type this
+        method's own ``agent_response_committed`` covers (owner ruling:
+        one knob per content TYPE, not one knob per exchange) — but does
+        not reach here — it never enters the outbox at all
+        (``ctx.intervention_bus.request`` is a separate protocol path).
+        The user's ANSWER to that question is a DIFFERENT content type
+        and is gated by item ③'s own, separate knob instead, not this
+        one. That is an intentional 2nd emit point for ②, not a gap this
+        method's own choke-point coverage claims to close — see that
+        emit call's own site for its half of ②.
 
         Known, NOT-yet-closed leak outside ②'s reach entirely (lead-coder
         measurement, #4666): the SAME text this method commits can ALSO

@@ -604,18 +604,23 @@
 # ``agent_response_committed`` (new kind — the terminal reply,
 # force-close/wrap-up text, tool_calls-round accompanying text) and
 # ``user_intervention_requested``'s ``question``/``suggestions``/
-# ``options`` (the model's ``ask_user`` question — architect ruling:
-# "②と③は1つのやり取りの両端", the question and its answer share ONE
-# knob or a half-answered exchange survives the record). Both events
-# fire unconditionally; off (default), ``LocalEventBackend.write()``
-# drops only the free-text field(s) — ``chain_id``/``intervention_id``
-# are always kept. Live TUI/AG-UI delivery and any opt-in OTEL
-# subscriber are UNAFFECTED either way. Does NOT close every
-# conversation-content leak — the same text can duplicate into
-# ``tool_called.args``/``tool_returned.result`` for tool-mediated
-# exchanges; that gap is closed by a separate follow-up PR, not this
-# field. See ``docs/reference/runtime/events.md`` for the full
-# commit-point census.
+# ``options`` (the model's ``ask_user`` question — covered here because
+# it is text the MODEL directed at the user, the same content type
+# ``agent_response_committed`` covers; owner ruling: one knob per
+# content TYPE). ``user_intervention_received``'s ``answer`` (the
+# user's reply to that question) is a DIFFERENT content type and is
+# necessarily gated by ``user_input_include_text`` below instead, not
+# this field — toggling one without the other durably records one side
+# of the exchange but not the other, a deliberate per-operator choice,
+# not a defect. Both events fire unconditionally; off (default),
+# ``LocalEventBackend.write()`` drops only the free-text field(s) —
+# ``chain_id``/``intervention_id`` are always kept. Live TUI/AG-UI
+# delivery and any opt-in OTEL subscriber are UNAFFECTED either way.
+# Does NOT close every conversation-content leak — the same text can
+# duplicate into ``tool_called.args``/``tool_returned.result`` for
+# tool-mediated exchanges; that gap is closed by a separate follow-up
+# PR, not this field. See ``docs/reference/runtime/events.md`` for the
+# full commit-point census.
 #
 # ``user_input_include_text`` (#4666 item ③, default false): a THIRD,
 # separate knob — the two above govern the AGENT's own output, this one
