@@ -76,28 +76,41 @@ A backward scan of ~400 merged PRs found 9 real candidates (PRs where
 this discriminator's "touched the doc?" branch actually ran). Hand-
 inspection first read 3 as TRUE POSITIVES (`_action_retrieval`, PRs
 #4572/#4567/#4563) and 0 as false positives, and the gate was promoted
-to blocking on that basis. **Corrected within hours, on independent
-re-measurement**: `docs/reference/runtime/session-construction.md` is
-CURRENTLY ACCURATE — correctly phrased as a historical rename note
-(`renamed from _action_retrieval`, `the now-deleted action_retrieval:
-block`, `retired ... on/off gate`; #5016, closed). The doc WAS stale
-right after PR #4572 merged, but PR #4582 (a LATER, separate PR)
-already fixed it permanently. **Corrected calibration count: 1 FP / 9**
-in this identifier's family, not 0/9.
+to blocking on that basis.
 
-**Why this falsified the promotion, not just the count.** The
-discriminator only asks "did THIS removing PR touch the doc" — it has
-no way to see that some OTHER, later PR already fixed the doc since.
-A staged, multi-PR removal (rename recorded in one PR, deletion
-completed in a second, doc genuinely fixed in a third) breaks the
-"whoever writes a removal record touches the doc in the SAME PR" premise
-the whole discriminator design rests on (see this docstring's opening
-section) — the premise was written as a description of THIS repo's
-practice, and it does not hold for a staged removal. The promotion's
-decisive point — "the passing action (touch the doc) is always
-correct, no dead end" — is FALSE for this case: the doc is already
-accurate, so touching it again means writing something false. That is
-the dead end the promotion assumed could not exist.
+**#4572 is a CONFIRMED true positive** — verified independently, twice,
+against the actual merge commit (`46a8bf1c3`): `_action_retrieval` had
+10 occurrences in `src/` at the commit immediately before the merge,
+0 immediately after (confirming #4572 fully removed it); the merge
+commit's own diffstat shows 0 changes to
+`docs/reference/runtime/session-construction.md` (confirming it was
+never touched); and the doc's text AT THAT POINT read, present tense,
+"`_action_retrieval` ... DRIVES whether the universal catalog wrappers
+appear ... Default constructs an off-flag `ActionRetrievalConfig` so
+existing chat behaviour IS preserved" — describing then-current
+behavior, not history. The doc only became accurate LATER, when PR
+#4582 (a separate, later PR) fixed it into the historical-rename-note
+form it has today. **#4567 and #4563 are UNMEASURED** — the same
+verification (occurrence count at `<merge>^` vs `<merge>`, diffstat,
+and the doc's own tense at that point) has not been run against either
+of their individual merge commits; an earlier revision of this
+docstring asserted "0 TP, all 3 the same false positive" without
+having done that verification — that claim is retracted here, not
+repeated.
+
+**Why the promotion was still correctly reverted — not because of the
+TP/FP count.** The structural problem stands regardless of how many of
+the 3 are eventually confirmed TP: the discriminator only asks "did
+THIS removing PR touch the doc" — it cannot see that some OTHER, later
+PR (#4582) already fixed the doc since. Re-running `--pr 4572` TODAY
+still fires, even though #4572 was genuinely correct to flag AT THE
+TIME — because the check re-evaluates against the CURRENT doc content
+on every run, and today's doc is accurate, so touching it again in
+response would mean writing something false. That is a real dead end a
+future, different PR (one that also removes an `_action_retrieval`-
+shaped identifier no longer present anywhere) could walk into, even
+though #4572 itself was never a case where the gate had nothing valid
+to ask for.
 
 **Structural, not statistical, in both directions**: promotion rested
 on eliminating false-positive CLASSES (comment prose, docstring prose —
