@@ -82,8 +82,10 @@ CURRENTLY ACCURATE — correctly phrased as a historical rename note
 (`renamed from _action_retrieval`, `the now-deleted action_retrieval:
 block`, `retired ... on/off gate`; #5016, closed). The doc WAS stale
 right after PR #4572 merged, but PR #4582 (a LATER, separate PR)
-already fixed it permanently. **Corrected calibration count: 1 FP / 9**
-in this identifier's family, not 0/9.
+already fixed it permanently. All 3 originally-counted true positives
+(#4572, #4567, #4563 — each individually re-checked today) are this
+SAME false positive cited three times, not three independent findings.
+**Corrected calibration count: 3 FP / 9, 0 TP remaining**, not 3 TP / 0 FP.
 
 **Why this falsified the promotion, not just the count.** The
 discriminator only asks "did THIS removing PR touch the doc" — it has

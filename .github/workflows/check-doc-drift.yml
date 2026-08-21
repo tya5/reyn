@@ -11,13 +11,14 @@ name: Doc-drift check
 # (kept, corrected in place — do not re-derive from PR history alone).
 #
 # The promotion's decisive point ("the passing action is always
-# correct — no dead end") was falsified within hours: one of the 3
-# "true positives" in the #5010 calibration set (`_action_retrieval`,
-# PR #4572/#4567/#4563) turned out to be a FALSE POSITIVE on
-# independent re-measurement — `docs/reference/runtime/session-
-# construction.md` is CURRENTLY ACCURATE (correctly phrased as a
-# historical rename note; #5016, closed). The doc WAS stale right
-# after #4572 merged, but a LATER PR (#4582) already fixed it into
+# correct — no dead end") was falsified within hours: all 3 "true
+# positives" in the #5010 calibration set — PR #4572, PR #4567, PR
+# #4563, each individually re-checked today — turned out to be the
+# SAME FALSE POSITIVE cited three times, on independent
+# re-measurement. `docs/reference/runtime/session-construction.md` is
+# CURRENTLY ACCURATE (correctly phrased as a historical rename note;
+# #5016, closed). The doc WAS stale right after PR #4572 merged (the
+# actual removal), but a LATER PR (#4582) already fixed it into
 # permanently-correct historical prose — a case the discriminator
 # structurally cannot see, because it only asks "did THIS removing PR
 # touch the doc", never "has ANY later PR already fixed it since". A
@@ -25,11 +26,12 @@ name: Doc-drift check
 # `_action_retrieval`-shaped identifier gets flagged with NO valid
 # fix — touching the doc again would mean writing something false,
 # since it is already correct. That is the dead end promotion assumed
-# could not exist. Corrected calibration count: **1 FP / 9** in this
-# family (was reported as 0/9) — the naive "staged, multi-PR removal"
-# case is a DIFFERENT false-positive class than the two (comment
-# prose, docstring prose) round 2 actually closed; re-promotion needs
-# its own structural discriminator for THIS class, not another metric
+# could not exist. Corrected calibration count: **3 FP / 9, 0 TP
+# remaining** (was reported as 3 TP / 0 FP) — the naive "staged,
+# multi-PR removal" case is a DIFFERENT false-positive class than the
+# two (comment prose, docstring prose) round 2 actually closed;
+# re-promotion needs its own structural discriminator for THIS class,
+# not another metric
 # push. See #5010 for the corrected record and re-promotion status.
 #
 # Trigger scoped to `paths: ["src/**"]` — the discriminator only ever
