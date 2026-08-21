@@ -63,7 +63,45 @@ with how you count cannot be an acceptance gate. Demotions (a comment that
 looks safe to move) are named explicitly, one at a time, never swept by a
 size rule.
 
-## 3. The test for Class C (one question, answerable by inspection)
+## 3. The `★` marker in source comments
+
+The `★` is an editorial attention marker used in source comments. It is not
+Python syntax, a runtime annotation, or a machine-readable severity level.
+Its purpose is to tell a future reader that the surrounding claim deserves
+careful reading because it records a decision, a measured boundary, a known
+failure mode, or an explicit scope limit.
+
+Use it in either of these forms:
+
+- **Line-leading marker:** put `★` at the start of the comment text when the
+  whole line carries the attention signal, for example `# ★ the event is
+  client-authored` or a doc-comment equivalent.
+- **Inline marker:** put `★` immediately before the particular sentence or
+  clause that needs attention when the rest of the comment is ordinary
+  explanation, for example `# the value is ★bounded by the caller`.
+
+Place the marker next to the claim it qualifies. Do not use it as decoration,
+as a substitute for explaining what breaks, or as a promise that a claim has
+been independently measured. A marker does not change the comment's Class A,
+B, C, or K-inline classification; classify the content first, then choose the
+marker placement that keeps the claim's scope visible.
+
+A full pass over `src/` found `★` in 44 files: 101 lines containing the
+marker and 105 marker occurrences. The counts differ because 4 lines contain
+more than one marker. For a reproducible shape count, this section uses
+"line-leading" when the first non-comment character of the comment text is
+`★`; all other occurrences are "inline". That pass classified 78 lines as
+line-leading and 23 as inline. These are descriptive measurements, not a
+migration target.
+
+Existing source comments use both line-leading and inline forms. This is a
+descriptive convention, not a migration target: do not rewrite existing
+comments merely to normalize marker placement. When adding or editing a
+comment, preserve the surrounding comment's form unless the new claim has a
+clearer local placement. If the claim is historical or measured, state the
+source and confidence separately; `★` alone is not evidence.
+
+## 4. The test for Class C (one question, answerable by inspection)
 
 > **Does this line assert something about a SECOND location? Does another
 > symbol's / file's / field's correctness depend on what this line says?**
@@ -94,7 +132,7 @@ condition that would make it non-zero, which the detection question above
 lets you do. Never write "class C is empty" — write "class C is 0 *in this
 file*, and here is what a positive instance would look like."
 
-## 4. The shape of a residue (the load-bearing section)
+## 5. The shape of a residue (the load-bearing section)
 
 **Write what BREAKS, never "do not change this."**
 
@@ -114,7 +152,7 @@ The strongest instance from #3404: *"Sink closure resolves
 break was **silent**, not merely possible — which is exactly what stops the
 next person from "fixing" it back to eager capture.
 
-## 5. Conditions for moving a comment to a doc
+## 6. Conditions for moving a comment to a doc
 
 A comment may move to a doc only if BOTH hold:
 
@@ -149,7 +187,7 @@ away from the punctuation a gate keys on. (Swept for this specific risk on
 `\bMCPGateway\s*\(` — a future sweep can start from that count rather than
 re-deriving it.)
 
-## 6. Do not set a numeric target
+## 7. Do not set a numeric target
 
 **Never set "reduce N lines" as a goal.** A line-count target creates
 pressure to misclassify a Class C or K-inline comment as movable just to hit
@@ -163,7 +201,7 @@ negative finding — "most of what looked like bloat wasn't" — would not have
 surfaced under a numeric target, because a target rewards moving things,
 not correctly leaving them alone.
 
-## 7. A "never do this in the future" comment owns its own update
+## 8. A "never do this in the future" comment owns its own update
 
 A comment of the form *"do not make this change until X"* takes on an
 obligation: when X actually happens, THAT change must update the comment
@@ -176,7 +214,7 @@ drive-by."* #3401 (the PR that WAS #3371 landing) raised the value to `3.0`
 **and rewrote that same comment in the same commit** to describe the new
 value's own margin — the prohibition did not outlive its own trigger.
 
-## 8. Rejected arguments (record these, or the same ground gets re-litigated)
+## 9. Rejected arguments (record these, or the same ground gets re-litigated)
 
 The #3082 discussion converged by eliminating arguments, not by starting
 from a blank page. Recording only the conclusion would let a future
@@ -201,12 +239,12 @@ scratch:
   degrade too, and faster, by the same #2884 measurement. This is the
   "inline resists drift better than docs" argument returning under a
   different name (caught mid-thread as exactly that re-introduction). The
-  actual answer to degradation is already in §4: don't try to PREVENT it,
+  actual answer to degradation is already in §5: don't try to PREVENT it,
   make it DETECTABLE (a falsifiable "X breaks" claim goes stale visibly;
   "do not change this" does not).
 - ❌ **"Keep important comments inline."** Not decidable as stated —
   importance depends on which question the reader currently holds, which
-  this document cannot know in advance. Replaced entirely by §3's
+  this document cannot know in advance. Replaced entirely by §4's
   mechanical test: relational, or not.
 
 ---
