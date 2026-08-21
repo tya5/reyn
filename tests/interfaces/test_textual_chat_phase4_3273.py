@@ -42,7 +42,7 @@ from reyn.interfaces.inline.textual_chat.chrome import (
     pane_payload,
     status_line_text,
 )
-from reyn.interfaces.repl.read_model import ChatReadModel
+from reyn.interfaces.repl.read_model import LOCAL_CHAT_READ_CAPABILITIES, ChatReadModel
 from reyn.interfaces.slash import REGISTRY, SlashCommand, SlashRegistry
 from reyn.interfaces.transport.client_transport import ClientTransport
 from reyn.interfaces.transport.frames import DisplayFrame
@@ -205,6 +205,14 @@ class _SnapshotReadModel(ChatReadModel):
     """A real :class:`ChatReadModel` seam impl (like ``RegistryReadModel`` /
     ``RemoteReadModel``) returning a fixed real-shaped snapshot — the app reads
     model/agent/cost/ctx off this same seam the plain status bar uses."""
+
+    @property
+    def capabilities(self):
+        # #4996: a test double simulating a fully-capable (local-shaped)
+        # read model — every accessor above is a REAL, non-degraded
+        # implementation for this test's own purposes, not a stand-in for
+        # RemoteReadModel's frame-sufficiency boundary.
+        return LOCAL_CHAT_READ_CAPABILITIES
 
     def __init__(self, snap: "dict | None") -> None:
         self._snap = snap

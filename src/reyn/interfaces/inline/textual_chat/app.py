@@ -212,6 +212,15 @@ def empty_state_hint() -> "object":
 #: (so a single page-in absorbs several screens of scrolling before the next).
 _HYDRATE_PAGE_FRAMES = 200
 
+#: #4996 witness② marker — appended in :meth:`TextualChatApp.
+#: _apply_hydrated_messages` when a read model DECLARES it can never
+#: produce conversation history (:attr:`~reyn.interfaces.repl.read_model.
+#: ChatReadModelCapabilities.conversation_history` is ``False``) and this
+#: particular read came back empty. Distinguishes that case from a
+#: genuinely new, capable session with nothing to restore yet, which stays
+#: silent exactly as it always has.
+HISTORY_UNAVAILABLE_MARKER = "conversation history isn't available on this connection"
+
 
 def _apply_restored_state(msg: "OutboxMessage", entry: "Entry[OutboxMessage]") -> None:
     """The restored-frame state transition, shared by initial hydration and
@@ -2382,11 +2391,39 @@ class TextualChatApp(App):
         resolve correctly rather than replaying as RUNNING: the completion
         already landed in ``history.jsonl`` before this read, so it projects
         straight to its settled state. A REMOTE read model returns an empty log
-        (frame-sufficiency: past turns are not on the wire) → this is a no-op
-        either way, and the pane starts/stays blank (remote switch-rehydrate is
-        #3310 N3's job). Fully guarded — a restore failure must never stop the
-        app from mounting/resetting and pumping live frames."""
+        (frame-sufficiency: past turns are not on the wire) — this is still a
+        no-op for PROJECTION (there is nothing to project), but #4996's own
+        witness② lives right here: an empty ``messages`` list is ambiguous on
+        its own (a genuinely NEW session and "this read model can never
+        produce history" both return ``[]``), so
+        :attr:`~reyn.interfaces.repl.read_model.ChatReadModel.capabilities`
+        is consulted to tell them apart — see the ``not messages`` branch
+        below. Fully guarded — a restore failure must never stop the app
+        from mounting/resetting and pumping live frames."""
         if messages is None:
+            return
+        if not messages:
+            # #4996: without the declared capability, a remote client whose
+            # conversation history is never on the wire (frame-sufficiency)
+            # looks IDENTICAL to a genuinely new local session — both leave
+            # this pane silently blank. That conflation is #4996's own
+            # motivating case (the owner-reviewed one, most likely to read
+            # as "my history is gone" rather than "this connection can't
+            # show it"). A capability-declared-unsupported empty read gets
+            # ONE explicit marker row instead; a genuinely empty capable
+            # read (the common, correct "new session" case) stays exactly
+            # as silent as before this issue.
+            caps = getattr(self._read_model, "capabilities", None)
+            if caps is not None and not caps.conversation_history:
+                from reyn.runtime.outbox import OutboxMessage  # noqa: PLC0415
+
+                self._append_frame(
+                    OutboxMessage(
+                        kind="system",
+                        text=HISTORY_UNAVAILABLE_MARKER,
+                        meta={"history_unavailable": True},
+                    )
+                )
             return
         try:
             frames = project_restored_frames(messages)

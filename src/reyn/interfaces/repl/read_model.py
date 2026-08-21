@@ -40,6 +40,7 @@ value.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -50,6 +51,83 @@ if TYPE_CHECKING:
     from reyn.runtime.chat_message import ChatMessage
 
 
+@dataclass(frozen=True)
+class ChatReadModelCapabilities:
+    """A :class:`ChatReadModel` implementation's declared support for its own
+    degradable reads (#4996, architect design, owner-directed: "capability
+    declaration → issue → leader").
+
+    ``None``/``[]``/``0``/``False`` are the CORRECT graceful-degrade answer
+    for every read below when a caller genuinely has nothing to show — this
+    declaration does not change any of those return values. What it fixes is
+    the caller's side: a bare ``None`` is used identically for "nothing to
+    show right now" and "this client can never show this", and the two read
+    as the same thing to the TUI. This is the DECLARATION half of making
+    that distinction askable, exactly the same discipline
+    :class:`~reyn.security.sandbox.backend.AxisEnforcementDeclaration` and
+    :mod:`~reyn.core.dispatch.content_declarations` already use — a 3rd
+    example, not a new concept.
+
+    Every field is REQUIRED, no defaults anywhere — mirrors
+    ``AxisEnforcementDeclaration``'s own discipline verbatim: a NEW
+    :class:`ChatReadModel` implementation that forgets a field fails to
+    CONSTRUCT its declaration, a ``TypeError`` at the module's own
+    construction site, not a silent "unsupported" nobody chose.
+
+    One field per degradable read, named identically to the method it
+    describes. ``True`` = this implementation can genuinely produce a
+    non-degraded answer; ``False`` = every call always degrades, regardless
+    of underlying state (the wire-frame-sufficiency boundary those methods'
+    own docstrings already document).
+
+    **Witness① scope, stated honestly (lead-coder/architect co-vet on
+    #4996):** this dataclass's "forgets a field fails to construct"
+    guarantee covers exactly ONE failure mode — a NEW
+    :class:`ChatReadModel` implementation that omits one of these 6 already-
+    declared fields. It is NOT a 1:1 gate over every :class:`ChatReadModel`
+    method: ``snapshot()`` and ``history_path()`` work identically on a
+    remote client and correctly have NO field here — a mechanical "one field
+    per abstract method" mapping would be a false invariant, not a stronger
+    one. If a 7th degradable method is ever added to :class:`ChatReadModel`,
+    THIS dataclass will not fail to construct until a human also adds a
+    field for it here; that step is not, and cannot be, machine-enforced by
+    this class alone.
+    """
+
+    completion_session: bool
+    intervention_head: bool
+    pending_command_ui: bool
+    has_command_ui_region: bool
+    conversation_history: bool
+    load_older_conversation_history: bool
+
+
+#: :class:`RegistryReadModel` is local — every degradable read reflects real,
+#: current state; ``None``/``[]``/``0`` from it always means "genuinely
+#: nothing", never "unsupported here".
+LOCAL_CHAT_READ_CAPABILITIES = ChatReadModelCapabilities(
+    completion_session=True,
+    intervention_head=True,
+    pending_command_ui=True,
+    has_command_ui_region=True,
+    conversation_history=True,
+    load_older_conversation_history=True,
+)
+
+#: :class:`RemoteReadModel` — the frame-sufficiency boundary each of these 6
+#: methods' own docstrings already document (session-local state the AG-UI
+#: wire does not project): every one of them always degrades, independent of
+#: server-side state. See the module docstring's "Frame-sufficiency" section.
+REMOTE_CHAT_READ_CAPABILITIES = ChatReadModelCapabilities(
+    completion_session=False,
+    intervention_head=False,
+    pending_command_ui=False,
+    has_command_ui_region=False,
+    conversation_history=False,
+    load_older_conversation_history=False,
+)
+
+
 class ChatReadModel(ABC):
     """The inline CUI's sole READ seam: status snapshot + region + history.
 
@@ -58,6 +136,15 @@ class ChatReadModel(ABC):
     Protocol) so a partial implementation fails at construction, not first use —
     the same completeness-by-construction discipline ``ClientTransport`` uses.
     """
+
+    @property
+    @abstractmethod
+    def capabilities(self) -> ChatReadModelCapabilities:
+        """This implementation's :class:`ChatReadModelCapabilities` — see
+        that class's own docstring (#4996). Abstract for the same reason
+        every OTHER accessor here is: a new implementation that forgets to
+        declare fails to construct, rather than silently reading every
+        capability as unsupported."""
 
     @abstractmethod
     def snapshot(self, config=None) -> "dict | None":
@@ -203,6 +290,10 @@ class RegistryReadModel(ChatReadModel):
         #: is never ``None`` again for the rest of this read-model's life, so a
         #: later agent switch never makes this stale value observably wrong.
         self._agent_name = agent_name
+
+    @property
+    def capabilities(self) -> ChatReadModelCapabilities:
+        return LOCAL_CHAT_READ_CAPABILITIES
 
     def snapshot(self, config=None):
         return _snapshot(self._registry, config)
@@ -412,6 +503,10 @@ class RemoteReadModel(ChatReadModel):
     def __init__(self, transport: "ClientTransport") -> None:
         self._transport = transport
 
+    @property
+    def capabilities(self) -> ChatReadModelCapabilities:
+        return REMOTE_CHAT_READ_CAPABILITIES
+
     def snapshot(self, config=None):
         # ``transport.status`` is the RemoteStatusView the AgUiTransport updates as
         # it decodes STATE_* frames; read it live each render tick.
@@ -476,6 +571,9 @@ class RemoteReadModel(ChatReadModel):
 
 __all__ = [
     "ChatReadModel",
+    "ChatReadModelCapabilities",
+    "LOCAL_CHAT_READ_CAPABILITIES",
+    "REMOTE_CHAT_READ_CAPABILITIES",
     "RegistryReadModel",
     "RemoteReadModel",
     "project_remote_snapshot",

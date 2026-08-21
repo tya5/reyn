@@ -58,7 +58,7 @@ from textual_flowview import FlowView
 
 from reyn.interfaces.inline.textual_chat import TextualChatApp
 from reyn.interfaces.inline.textual_chat.rewind_picker import RewindPicker
-from reyn.interfaces.repl.read_model import ChatReadModel
+from reyn.interfaces.repl.read_model import LOCAL_CHAT_READ_CAPABILITIES, ChatReadModel
 from reyn.interfaces.transport.client_transport import ClientTransport
 from reyn.interfaces.transport.frames import DisplayFrame
 from reyn.runtime.chat_message import ChatMessage
@@ -71,6 +71,14 @@ class _PickerReadModel(ChatReadModel):
     """A real :class:`ChatReadModel` seam impl (the shape ``RegistryReadModel``
     has) that hosts a command-UI region and serves one pending request plus an
     optional persisted history — exactly the two reads the app makes here."""
+
+    @property
+    def capabilities(self):
+        # #4996: a test double simulating a fully-capable (local-shaped)
+        # read model — every accessor above is a REAL, non-degraded
+        # implementation for this test's own purposes, not a stand-in for
+        # RemoteReadModel's frame-sufficiency boundary.
+        return LOCAL_CHAT_READ_CAPABILITIES
 
     def __init__(
         self,

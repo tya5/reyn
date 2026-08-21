@@ -63,7 +63,7 @@ from reyn.interfaces.inline.textual_chat.chrome import (
     pane_payload,
     status_line_text,
 )
-from reyn.interfaces.repl.read_model import ChatReadModel
+from reyn.interfaces.repl.read_model import LOCAL_CHAT_READ_CAPABILITIES, ChatReadModel
 from reyn.interfaces.repl.status import _snapshot
 from reyn.interfaces.transport.client_transport import ClientTransport
 from reyn.interfaces.transport.frames import EventFrame
@@ -695,6 +695,14 @@ class _MutableSnapshotReadModel(ChatReadModel):
     frames — standing in for a live session whose cost/ctx move as a turn runs,
     without needing a real LLM call. The dict itself is produced by the real
     ``_snapshot()``."""
+
+    @property
+    def capabilities(self):
+        # #4996: a test double simulating a fully-capable (local-shaped)
+        # read model — every accessor above is a REAL, non-degraded
+        # implementation for this test's own purposes, not a stand-in for
+        # RemoteReadModel's frame-sufficiency boundary.
+        return LOCAL_CHAT_READ_CAPABILITIES
 
     def __init__(self, snap: dict) -> None:
         self.snap = snap

@@ -56,7 +56,7 @@ from textual_flowview import FlowView
 
 from reyn.interfaces.inline.textual_chat import TextualChatApp
 from reyn.interfaces.inline.textual_chat.sent_queue import ROW_TEXT_COLUMN, SentQueue
-from reyn.interfaces.repl.read_model import ChatReadModel
+from reyn.interfaces.repl.read_model import LOCAL_CHAT_READ_CAPABILITIES, ChatReadModel
 from reyn.interfaces.transport.agui.state import RemoteQueueView
 from reyn.interfaces.transport.client_transport import ClientTransport
 from reyn.interfaces.transport.frames import EventFrame
@@ -138,6 +138,14 @@ class _SnapshotSeededReadModel(ChatReadModel):
     remote transport. Every other accessor degrades to the same graceful
     empty/None ``RemoteReadModel`` uses — this read-model's only job is the
     ``queue``/``turn_active``/``queue_seq`` snapshot shape."""
+
+    @property
+    def capabilities(self):
+        # #4996: a test double simulating a fully-capable (local-shaped)
+        # read model — every accessor above is a REAL, non-degraded
+        # implementation for this test's own purposes, not a stand-in for
+        # RemoteReadModel's frame-sufficiency boundary.
+        return LOCAL_CHAT_READ_CAPABILITIES
 
     def __init__(self, queue_item: dict) -> None:
         self._queue_item = queue_item

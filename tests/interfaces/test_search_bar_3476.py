@@ -31,7 +31,7 @@ from reyn.interfaces.inline.textual_chat.app import _HYDRATE_PAGE_FRAMES
 from reyn.interfaces.inline.textual_chat.chrome import Composer
 from reyn.interfaces.inline.textual_chat.restore import project_restored_frames
 from reyn.interfaces.inline.textual_chat.search_bar import SearchBar
-from reyn.interfaces.repl.read_model import ChatReadModel
+from reyn.interfaces.repl.read_model import LOCAL_CHAT_READ_CAPABILITIES, ChatReadModel
 from reyn.interfaces.transport.client_transport import ClientTransport
 from reyn.interfaces.transport.frames import DisplayFrame
 from reyn.runtime.chat_message import ChatMessage
@@ -79,6 +79,14 @@ class _Transport(ClientTransport):
 
 class _HistoryReadModel(ChatReadModel):
     """A real :class:`ChatReadModel` seam impl (the phase-5 suite's shape)."""
+
+    @property
+    def capabilities(self):
+        # #4996: a test double simulating a fully-capable (local-shaped)
+        # read model — every accessor above is a REAL, non-degraded
+        # implementation for this test's own purposes, not a stand-in for
+        # RemoteReadModel's frame-sufficiency boundary.
+        return LOCAL_CHAT_READ_CAPABILITIES
 
     def __init__(self, messages: "list[ChatMessage]") -> None:
         self._messages = messages

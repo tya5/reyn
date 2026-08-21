@@ -176,7 +176,7 @@ assert "textual" not in sys.modules, "textual imported at module load"
 
 # (2) functional: a real non-TTY plain run completes without touching flowview.
 from reyn.interfaces.repl.client_driver import run_chat_client  # noqa: E402
-from reyn.interfaces.repl.read_model import ChatReadModel  # noqa: E402
+from reyn.interfaces.repl.read_model import ChatReadModel, LOCAL_CHAT_READ_CAPABILITIES  # noqa: E402
 from reyn.interfaces.repl.renderer import ChatRenderer  # noqa: E402
 from reyn.interfaces.transport.client_transport import ClientTransport  # noqa: E402
 from reyn.interfaces.transport.frames import DisplayFrame  # noqa: E402
@@ -203,6 +203,14 @@ class T(ClientTransport):
 
 
 class RM(ChatReadModel):
+
+    @property
+    def capabilities(self):
+        # #4996: a test double simulating a fully-capable (local-shaped)
+        # read model — every accessor above is a REAL, non-degraded
+        # implementation for this test's own purposes, not a stand-in for
+        # RemoteReadModel's frame-sufficiency boundary.
+        return LOCAL_CHAT_READ_CAPABILITIES
     def snapshot(self, config=None): return None
     def intervention_head(self): return None
     def pending_command_ui(self): return None
