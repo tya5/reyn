@@ -86,6 +86,14 @@ been independently measured. A marker does not change the comment's Class A,
 B, C, or K-inline classification; classify the content first, then choose the
 marker placement that keeps the claim's scope visible.
 
+A full pass over `src/` found `★` in 44 files: 101 lines containing the
+marker and 105 marker occurrences. The counts differ because 4 lines contain
+more than one marker. For a reproducible shape count, this section uses
+"line-leading" when the first non-comment character of the comment text is
+`★`; all other occurrences are "inline". That pass classified 78 lines as
+line-leading and 23 as inline. These are descriptive measurements, not a
+migration target.
+
 Existing source comments use both line-leading and inline forms. This is a
 descriptive convention, not a migration target: do not rewrite existing
 comments merely to normalize marker placement. When adding or editing a
