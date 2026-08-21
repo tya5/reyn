@@ -75,9 +75,20 @@ _ROOT = Path(__file__).resolve().parent.parent
 # Directory prefixes (relative to repo root) exempt from drift-flagging:
 # a name preserved here on purpose is the documented PRODUCT of this
 # directory, not drift. See module docstring, exclusion 1.
+#
+# docs/deep-dives/proposals/ added after #5010 calibration (PR #4454):
+# every proposal in this directory carries its own **Status** field
+# (README.md: "cut, landed" / etc.) — the directory's own README states
+# the split explicitly: decisions/ records "why chosen", proposals/
+# records "what should be implemented", and both are point-in-time
+# design records, not living reference docs that track current src/
+# identifier names. #4454's `_force_close_wrap_up` false-fire (named in
+# two `Status: cut, landed`-flagged proposals neither touched by the PR
+# that removed it) is the real incident this exclusion closes.
 _HISTORY_CLASS_DOC_PREFIXES = (
     "docs/deep-dives/decisions/",
     "docs/deep-dives/journal/",
+    "docs/deep-dives/proposals/",
 )
 
 # The one tunable knob (architect ruling, #5003) — see module docstring,
@@ -158,22 +169,76 @@ def find_touched_files(diff_text: str) -> "set[str]":
     return {fd.path for fd in _iter_file_diffs(diff_text)}
 
 
-def _strip_python_comment(line: str) -> str:
-    """Drop everything from the first ``#`` onward, for ``.py`` source
-    lines only — a syntactic rule (Python's own comment marker), not a
-    semantic read of what the comment says. Real incident (#5003
-    calibration, PR #4981): a prose word ("scaffolding") inside a REMOVED
-    comment line was extracted as if it were a removed code identifier,
-    then matched against docs/ using its ordinary-English sense — a false
-    positive that had nothing to do with a removed src/ symbol. Disclosed
-    limitation: a ``#`` inside a string literal is also stripped past
-    (e.g. ``"a # b"``) — accepted because the alternative (a full Python
-    tokenizer) is a much larger surface for a diff-line heuristic, and an
-    inline ``#`` inside a string literal removed alongside real code is
-    rare enough not to have shown up in the #5003 calibration sample.
+_TRIPLE_QUOTES = ('"""', "'''")
+
+
+def _strip_comments_and_docstrings(lines: "tuple[str, ...]") -> "list[str]":
+    """Best-effort, line-oriented removal of ``#``-comment text AND
+    triple-quoted docstring bodies from a sequence of ``.py`` source
+    lines — a syntactic rule (Python's own comment/string-literal
+    markers), not a semantic read of what the text says.
+
+    Real incidents this closes (#5010 calibration, backward scan past
+    PR #5007's own 15-PR sample): a `#`-comment prose word
+    ("scaffolding", PR #4981, fixed in #5007) and SIX docstring-prose
+    words ("Operational" PR #4563, "affordances" PR #4560, "resumption"
+    PR #4545, "surprised" PR #4504, "normalises" PR #4459, "Compares"
+    PR #4458) were each extracted as if they were removed code
+    identifiers and matched against docs/ using their ordinary-English
+    sense — false positives with nothing to do with a removed src/
+    symbol. The original ``#``-only stripper (PR #5007) caught the first
+    class but not the second; this closes both with one state machine.
+
+    Disclosed limitations (same shape as the original's): a ``#`` or
+    triple-quote marker inside a single/double-quoted string literal is
+    not distinguished from a real marker; and this operates only on the
+    given (possibly non-contiguous — a diff hunk may omit context lines)
+    line sequence, so a docstring opened on a line NOT included here
+    (e.g. an unchanged line the hunk didn't carry) is not recognized as
+    already-open when this sequence starts. A full Python tokenizer
+    would close both gaps but needs the complete pre/post file content,
+    not just a diff's changed-line text — a larger surface than this
+    diff-line-only module takes on elsewhere; accepted as a known gap,
+    not silently assumed away.
     """
-    idx = line.find("#")
-    return line if idx == -1 else line[:idx]
+    out: "list[str]" = []
+    in_docstring = False
+    quote = ""
+    for raw in lines:
+        line = raw
+        if in_docstring:
+            idx = line.find(quote)
+            if idx == -1:
+                out.append("")
+                continue
+            line = line[idx + 3:]
+            in_docstring = False
+        piece = ""
+        while True:
+            hash_idx = line.find("#")
+            markers = [(hash_idx, "#")] if hash_idx != -1 else []
+            for q in _TRIPLE_QUOTES:
+                q_idx = line.find(q)
+                if q_idx != -1:
+                    markers.append((q_idx, q))
+            if not markers:
+                piece += line
+                break
+            idx, marker = min(markers, key=lambda pair: pair[0])
+            if marker == "#":
+                piece += line[:idx]
+                break
+            prefix = line[:idx]
+            rest = line[idx + 3:]
+            close_idx = rest.find(marker)
+            if close_idx == -1:
+                piece += prefix
+                in_docstring = True
+                quote = marker
+                break
+            line = prefix + rest[close_idx + 3:]
+        out.append(piece)
+    return out
 
 
 def find_removed_identifiers(diff_text: str, *, src_prefix: str = "src/") -> "set[str]":
@@ -181,21 +246,19 @@ def find_removed_identifiers(diff_text: str, *, src_prefix: str = "src/") -> "se
     removed (``-``) line of a ``src/``-prefixed file, salient (see
     :func:`is_salient_identifier`), and NOT also present on any added
     (``+``) line of the SAME file in this diff (a token that moved within
-    the same file's diff was not removed, just relocated). Comment text is
-    stripped first for ``.py`` files (see :func:`_strip_python_comment`) —
-    a comment's prose is not a code identifier."""
+    the same file's diff was not removed, just relocated). ``#``-comment
+    and docstring text is stripped first for ``.py`` files (see
+    :func:`_strip_comments_and_docstrings`) — prose is not a code
+    identifier."""
     removed_ids: "set[str]" = set()
     for fd in _iter_file_diffs(diff_text):
         if not fd.path.startswith(src_prefix):
             continue
         is_py = fd.path.endswith(".py")
-        strip = _strip_python_comment if is_py else (lambda line: line)
-        removed_tokens = {
-            tok for line in fd.removed_lines for tok in _IDENTIFIER_RE.findall(strip(line))
-        }
-        added_tokens = {
-            tok for line in fd.added_lines for tok in _IDENTIFIER_RE.findall(strip(line))
-        }
+        removed_lines = _strip_comments_and_docstrings(fd.removed_lines) if is_py else list(fd.removed_lines)
+        added_lines = _strip_comments_and_docstrings(fd.added_lines) if is_py else list(fd.added_lines)
+        removed_tokens = {tok for line in removed_lines for tok in _IDENTIFIER_RE.findall(line)}
+        added_tokens = {tok for line in added_lines for tok in _IDENTIFIER_RE.findall(line)}
         for tok in removed_tokens - added_tokens:
             if is_salient_identifier(tok):
                 removed_ids.add(tok)

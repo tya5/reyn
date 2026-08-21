@@ -86,8 +86,17 @@ def test_history_class_doc_excludes_journal_dir():
     assert m.is_history_class_doc("docs/deep-dives/journal/2026-01-01-foo.md") is True
 
 
+def test_history_class_doc_excludes_proposals_dir():
+    """Tier 1: real incident (#5010 calibration, PR #4454) — a REAL
+    removed identifier (`_force_close_wrap_up`) was still named in two
+    `docs/deep-dives/proposals/` docs, both carrying their own `Status:
+    cut, landed` field (the directory's own README: proposals are
+    point-in-time design records, same rationale as decisions/)."""
+    assert m.is_history_class_doc("docs/deep-dives/proposals/0045-foo.md") is True
+
+
 def test_history_class_doc_does_not_exclude_ordinary_docs():
-    """Tier 1: a doc outside both exempt directories is not excluded."""
+    """Tier 1: a doc outside all three exempt directories is not excluded."""
     assert m.is_history_class_doc("docs/reference/config/reyn-yaml.md") is False
 
 
@@ -166,6 +175,42 @@ diff --git a/src/reyn/core/x.py b/src/reyn/core/x.py
     ids = m.find_removed_identifiers(diff)
     assert "maybe_compact_messages" in ids
     assert "scaffolding" not in ids
+
+
+def test_find_removed_identifiers_ignores_words_inside_a_removed_docstring():
+    """Tier 1: real incident (#5010 calibration, PR #4459) — a prose word
+    ("normalises") inside a removed multi-line DOCSTRING (not a
+    `#`-comment) must not be extracted as a removed identifier. The
+    original `#`-only stripper (#5007) did not catch this class."""
+    diff = """\
+diff --git a/src/reyn/mcp/adapter.py b/src/reyn/mcp/adapter.py
+--- a/src/reyn/mcp/adapter.py
++++ b/src/reyn/mcp/adapter.py
+@@ -1,5 +1,1 @@
+-    \"\"\"Handler bodies are written against the 2.0
+-    shape (dict-style ``.get(...)``, snake_case), so :class:`_CtxAdapter`
+-    normalises a 1.x pydantic ``Meta`` into a plain dict with the SAME
+-    snake_case keys at adaptation time.
+-    \"\"\"
+"""
+    ids = m.find_removed_identifiers(diff)
+    assert "normalises" not in ids
+    assert "_CtxAdapter" not in ids
+
+
+def test_find_removed_identifiers_still_finds_code_inside_a_docstring_boundary_line():
+    """Tier 1: the docstring stripper only drops TEXT inside the
+    triple-quote span — real code on the opening/closing line itself
+    (before the opening `\"\"\"` or after the closing one) still counts."""
+    diff = """\
+diff --git a/src/reyn/mcp/adapter.py b/src/reyn/mcp/adapter.py
+--- a/src/reyn/mcp/adapter.py
++++ b/src/reyn/mcp/adapter.py
+@@ -1,2 +1,1 @@
+-    maybe_compact_messages(state)  \"\"\"trailing docstring-shaped text\"\"\"
+"""
+    ids = m.find_removed_identifiers(diff)
+    assert "maybe_compact_messages" in ids
 
 
 def test_find_removed_identifiers_excludes_non_salient_short_word():
