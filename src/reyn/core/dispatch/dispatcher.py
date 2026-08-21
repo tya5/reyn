@@ -17,6 +17,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable, Literal
 
+from reyn.core.dispatch.content_declarations import get_content_fields
+
 
 class UnknownToolError(Exception):
     """Raised when a name is not in the caller's tool catalog."""
@@ -51,6 +53,18 @@ class DispatchContext:
             reader reconstructs identically, is one of four faces, and one
             skipped face goes unnoticed — not an invariant to key UI structure
             on).
+        completed_response_include_text: #4666 item ③b — mirrors
+            ``audit_events.completed_response_include_text`` (②). Governs
+            any declared tool field whose content class is "assistant"
+            (`reyn.core.dispatch.content_declarations`) — e.g.
+            ``ask_user``'s ``question``. Default False matches ②'s own
+            config default; every existing construction of this
+            dataclass (tests included) is unaffected until it opts in.
+        user_input_include_text: #4666 item ③b — mirrors
+            ``audit_events.user_input_include_text`` (③). Governs any
+            declared tool field whose content class is "user" — e.g.
+            ``ask_user``'s ``answer``. Same default-False rationale as
+            above.
     """
 
     caller_kind: Literal["router"]
@@ -59,6 +73,8 @@ class DispatchContext:
     tool_catalog: dict[str, dict]
     events: Any  # has .emit(type: str, **data) -> None
     call_id: str | None = None
+    completed_response_include_text: bool = False
+    user_input_include_text: bool = False
 
 
 async def dispatch_tool(
@@ -146,6 +162,10 @@ async def dispatch_tool(
         except InvalidArgsError as e:
             return _error(ctx, name, "invalid_args", str(e))
 
+    # args_hash is a fingerprint over the FULL, unredacted args — #4666
+    # item ③b never touches it (it coexists with args as a correlation
+    # key, never a value substitute for it — see _redact_content_fields'
+    # own docstring for why redaction must not perturb it).
     args_hash = _compute_args_hash(args)
 
     # 3. Pre-event: record the tool call.
@@ -156,7 +176,7 @@ async def dispatch_tool(
         tool=name,
         chain_id=ctx.chain_id,
         call_id=ctx.call_id,
-        args=args,
+        args=_redact_content_fields(name, args, ctx),
         args_hash=args_hash,
     )
 
@@ -217,7 +237,9 @@ async def dispatch_tool(
             return {"status": "error",
                     "error": {"kind": _err_kind, "message": _err_message}}
 
-    # 5. Post-event: record the result.
+    # 5. Post-event: record the result. `result` itself (the return value
+    # dispatch_tool hands back to the caller/LLM) is NEVER redacted —
+    # only the copy that reaches the audit-event.
     ctx.events.emit(
         "tool_returned",
         caller_kind=ctx.caller_kind,
@@ -226,9 +248,38 @@ async def dispatch_tool(
         chain_id=ctx.chain_id,
         call_id=ctx.call_id,
         args_hash=args_hash,
-        result=result,
+        result=_redact_content_fields(name, result, ctx),
     )
     return {"status": "ok", "data": result}
+
+
+def _redact_content_fields(name: str, payload: Any, ctx: DispatchContext) -> Any:
+    """#4666 item ③b: drop any field *name* declared as conversation
+    content (`reyn.core.dispatch.content_declarations`) whose governing
+    knob is currently off, from a COPY of *payload* — never mutates
+    *payload* itself (the same object the caller returns to the LLM, or
+    reuses across ``tool_called``'s ``args`` and the invoker call).
+
+    A tool with no declaration (the overwhelming majority — see the
+    registry's own module docstring for the current, single exception)
+    is a no-op: `get_content_fields` returns ``{}``, the loop below never
+    runs, and *payload* is returned completely unchanged (not even
+    shallow-copied) — this function costs nothing for every tool that
+    never opted into the mechanism."""
+    declared = get_content_fields(name)
+    if not declared or not isinstance(payload, dict):
+        return payload
+    redacted = dict(payload)
+    for field, content_class in declared.items():
+        if field not in redacted:
+            continue
+        include = (
+            ctx.completed_response_include_text if content_class == "assistant"
+            else ctx.user_input_include_text
+        )
+        if not include:
+            redacted.pop(field, None)
+    return redacted
 
 
 def _handler_declared_error(result: dict) -> "tuple[str, str] | None":

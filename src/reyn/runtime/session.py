@@ -4851,6 +4851,9 @@ class Session:
             # Proposal 0067 P1' (#3978)
             mark_task_pending=lambda: setattr(self, "current_task", CurrentTask()),
             universal_wrappers_enabled=self._universal_wrappers_enabled,  # #4552 PR-3
+            # #4666 item ③b.
+            completed_response_include_text=self._events_config.completed_response_include_text,
+            user_input_include_text=self._events_config.user_input_include_text,
             action_embedding_index=self._action_embedding_index,
             embedding_provider=self._embedding_provider,
             embedding_model_class=self._embedding_model_class,
