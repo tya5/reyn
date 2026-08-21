@@ -461,12 +461,32 @@ See also: [Concepts: secret handling](../../concepts/runtime/secret-handling.md)
 
 ## User interaction
 
-| Kind | When |
-|------|------|
-| `user_message_received` | A new user turn enters the runtime. Carries `chain_id` (the uuid minted by `submit_user_text` and propagated through any agent-to-agent messages this turn produces) |
-| `user_intervention_received` | An `ask_user` op got its answer |
-| `chat_started`, `chat_stopped` | Chat session lifecycle |
-| `turn_cancelled` | A user turn was cancelled mid-router-loop (e.g. `/cancel` or a new submission supersedes the running turn). Payload: `chain_id`. |
+**#4666 item ③ — the content field on 6 kinds below is its OWN opt-in**
+(`audit_events.user_input_include_text`, default `false`, separate from
+①'s `agent_delta_include_text`): off, the durable record drops that
+kind's one content field (named per row below) but keeps everything
+else; on, restores it. `LocalEventBackend.declare_gaps()` names this gap
+only while off. **⚠️ Default-behavior change, 2026-08-21 (#4666):**
+before this field existed, these kinds' content was always durably
+recorded, unconditionally. **Unchanged either way:** live subscriber
+delivery (TUI/AG-UI/peer broadcast — every one of these kinds is
+delivered live before this backend-level knob is consulted) and
+`history.jsonl`. ⚠️ **Known gap NOT closed by this knob:** `ask_user`'s
+question/answer also reach the audit log unconditionally via
+`tool_called.args`/`tool_returned.result` (`dispatch_tool`, a separate
+emit path this knob does not touch) — do not read the rows below as
+exhaustive coverage of "user input reaches the audit log".
+
+| Kind | When | Key payload |
+|------|------|-------------|
+| `user_submitted` | A user typed a message and it entered the inbox (`submit_user_text`). | `text` (#4666 ③ opt-in, see above), `chain_id`, `msg_id`, `seq`, `meta` |
+| `user_message_received` | A new user turn enters the runtime. Carries `chain_id` (the uuid minted by `submit_user_text` and propagated through any agent-to-agent messages this turn produces). | `text` (#4666 ③ opt-in, see above), `chain_id`, `media_block_count` |
+| `user_intervention_received` | An `ask_user` op got its answer. | `answer` (#4666 ③ opt-in, see above), `run_id`, `actor`, `intervention_id`, `refused` |
+| `intervention_answer_submitted` | An intervention answer was broadcast to every connected surface (TUI free-text / choice / A2A peer / AG-UI HITL share this one funnel). | `text` (#4666 ③ opt-in, see above; the matched choice's label, or the raw free-text answer), `intervention_id`, `meta` |
+| `user_answered_intervention` | An intervention was answered, recorded alongside the history append. | `answer_text` (#4666 ③ opt-in, see above), `intervention_id`, `kind`, `run_id`, `actor`, `choice_id` |
+| `router_retry_exhausted` | The per-turn router-invocation cap (`check_and_increment_router_cap`) was exceeded. | `user_message` (#4666 ③ opt-in, see above; truncated to 200 chars at the emit site regardless of this flag), `count`, `cap`, `last_reason` |
+| `chat_started`, `chat_stopped` | Chat session lifecycle | — |
+| `turn_cancelled` | A user turn was cancelled mid-router-loop (e.g. `/cancel` or a new submission supersedes the running turn). | `chain_id` |
 
 ## Session and turn lifecycle
 

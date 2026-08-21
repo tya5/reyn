@@ -556,6 +556,19 @@ class AuditEventsConfig:
     # accountability for a call whose usage record never lands) survives
     # `text` being dropped.
     agent_delta_include_text: bool = False
+    # #4666 item ③ (owner ruling): "user input" gets its OWN opt-in too —
+    # deliberately separate from `agent_delta_include_text` above and from
+    # the still-in-design "completed conversation" opt-in (owner: each
+    # content opt-in gets its own knob, never a shared toggle). Covers 6
+    # audit-event kinds carrying a user's own typed/chosen text — see
+    # `LocalEventBackend`'s `_USER_INPUT_CONTENT_FIELDS` (core/events/
+    # backend.py) for the exact kind -> field mapping and the AST census
+    # behind the count. Default off, same metadata-only-by-default
+    # rationale as `agent_delta_include_text`. ⚠️ Known gap this flag does
+    # NOT close: ask_user's question/answer also reach the audit log via
+    # `tool_called.args`/`tool_returned.result` (a separate emit path) —
+    # see the same docstring.
+    user_input_include_text: bool = False
 
 
 @dataclass
@@ -1477,6 +1490,10 @@ def _build_audit_events_config(raw: object) -> AuditEventsConfig:
         # field in this module's parsers already uses.
         agent_delta_include_text=bool(
             raw.get("agent_delta_include_text", defaults.agent_delta_include_text)
+        ),
+        # #4666 item ③: same convention, separate knob.
+        user_input_include_text=bool(
+            raw.get("user_input_include_text", defaults.user_input_include_text)
         ),
     )
 
