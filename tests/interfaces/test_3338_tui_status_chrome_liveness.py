@@ -662,10 +662,13 @@ def test_hook_rows_carry_the_flipping_hook_slash() -> None:
     flipping the current state — the same operability contract as the visibility
     categories. The item shape is ``_session_hook_items``'s documented
     ``{name, scope, on}`` projection."""
-    snap = {"hook_items": [
-        {"name": "pre_tool_guard", "scope": "project", "on": True},
-        {"name": "post_turn_notify", "scope": "", "on": False},
-    ]}
+    snap = {
+        "hook_items": [
+            {"name": "pre_tool_guard", "scope": "project", "on": True},
+            {"name": "post_turn_notify", "scope": "", "on": False},
+        ],
+        "hooks_reported": True,
+    }
     rows = pane_payload("hook", snapshot=snap)
     cmds = pane_commands("hook", snap)
     assert any("pre_tool_guard" in r and "project" in r for r in rows), rows
@@ -677,6 +680,7 @@ def test_pipe_and_cron_panes_surface_their_entries() -> None:
     (neither has an on/off toggle mechanism, so they carry no command)."""
     snap = {
         "pipelines": [{"name": "nightly", "description": "the nightly pass"}],
+        "pipelines_reported": True,
         "cron_jobs": [{"name": "sweep", "schedule": "0 3 * * *", "enabled": True}],
         "cron_jobs_reported": True,
     }

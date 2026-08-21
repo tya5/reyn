@@ -971,7 +971,16 @@ def _mcp_pane_entries(snap: dict) -> "list[tuple[str, str]]":
 def _hook_pane_entries(snap: dict) -> "list[tuple[str, str]]":
     """``(row, slash)`` for the hook-applicability toggles — session-backed
     ``hook_items`` (each row's slash flips it via ``/hook on|off <name>``), else the
-    config-derived hook labels as a read-only listing."""
+    config-derived hook labels as a read-only listing.
+
+    #5034: gated by ``hooks_reported`` — a remote connection's ``hook_items``/
+    ``hooks`` are both unconditionally ``[]`` (never on the wire), and the old
+    unconditional ``["(none)"]`` fallback was byte-identical to a genuine local
+    zero-hooks config. Same shape ``cron_jobs_reported`` (#5027) already closed
+    for the Cron pane; missed by #5009's original hand-enumerated key list,
+    found via #5034's mechanical re-derivation."""
+    if not snap.get("hooks_reported", False):
+        return [DrawerRow(label="not reported on this connection").as_entry()]
     items = snap.get("hook_items") or []
     if items:
         return [
@@ -991,8 +1000,16 @@ def _hook_pane_entries(snap: dict) -> "list[tuple[str, str]]":
 
 def pipe_pane_lines(snap: "dict | None") -> list[str]:
     """The registered pipelines (``PipelineRegistry.entries()`` via the snapshot's
-    ``pipelines``). Read-only: pipelines have no on/off toggle mechanism."""
+    ``pipelines``). Read-only: pipelines have no on/off toggle mechanism.
+
+    #5034: gated by ``pipelines_reported`` — same fabrication shape as
+    ``hooks_reported`` above; a remote connection's ``pipelines`` is
+    unconditionally ``[]`` (never on the wire), and the old unconditional
+    ``["(none)"]`` fallback was byte-identical to a genuine local empty
+    pipeline registry."""
     snap = snap or {}
+    if not snap.get("pipelines_reported", False):
+        return ["not reported on this connection"]
     pipelines = snap.get("pipelines") or []
     return [
         f"{p['name']}  {p['description']}" if p.get("description") else f"{p['name']}"

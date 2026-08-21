@@ -149,6 +149,22 @@ class ChatReadModelCapabilities:
     correct question is always the fabrication one; "indistinguishable
     from empty" is one way a value fabricates, not the definition of
     fabrication.
+
+    ``hooks_reported``/``pipelines_reported`` (#5034): found while working
+    #5025's own thread, in the same file. #5009's original 9-key list was
+    HAND-enumerated by architect and missed both — confirmed on #5034 by
+    mechanically AST-walking :func:`project_remote_snapshot`'s own return
+    dict for every literal (non-wire-sourced) entry, rather than trusting
+    the earlier hand count a second time. ``hooks``/``hook_items`` (one
+    pane, `_hook_pane_entries`) and ``pipelines`` (`pipe_pane_lines`) both
+    degrade to a bare ``["(none)"]`` on remote — byte-identical to a
+    genuinely empty local hook/pipeline config, the same fabrication
+    ``cron_jobs_reported`` already closed for the Cron pane. The
+    mechanical sweep also cleared 6 more literal keys as NOT fabricating
+    (``skills``, ``visibility_items``, ``mcp_subscriptions``,
+    ``unknown_config_key_count``, ``unknown_config_keys``, ``ctx_source``)
+    — see #5034's own issue thread for the per-key reasoning; not
+    declared here because there is nothing to gate.
     """
 
     completion_session: bool
@@ -161,6 +177,8 @@ class ChatReadModelCapabilities:
     cron_jobs_reported: bool
     usage_breakdown_reported: bool
     ctx_compaction_reported: bool
+    hooks_reported: bool
+    pipelines_reported: bool
 
 
 def reported_snapshot_keys(
@@ -209,6 +227,8 @@ LOCAL_CHAT_READ_CAPABILITIES = ChatReadModelCapabilities(
     cron_jobs_reported=True,
     usage_breakdown_reported=True,
     ctx_compaction_reported=True,
+    hooks_reported=True,
+    pipelines_reported=True,
 )
 
 #: :class:`RemoteReadModel` — the frame-sufficiency boundary each of these 6
@@ -226,6 +246,8 @@ REMOTE_CHAT_READ_CAPABILITIES = ChatReadModelCapabilities(
     cron_jobs_reported=False,
     usage_breakdown_reported=False,
     ctx_compaction_reported=False,
+    hooks_reported=False,
+    pipelines_reported=False,
 )
 
 
@@ -594,12 +616,19 @@ def project_remote_snapshot(values: "dict | None") -> dict:
         # byte-identical to a genuinely empty LOCAL cron config.
         "cron_jobs": [],
         "mcp_servers": [],
+        # `[]` below is correct (hook config is not on the wire); gated by
+        # ``hooks_reported`` above so `_hook_pane_entries` renders "not
+        # reported" instead of its own `["(none)"]` fallback (#5034 — same
+        # fabrication ``cron_jobs_reported`` already closed for the Cron
+        # pane, missed by #5009's original hand-enumerated key list).
         "hooks": [],
         "skills": [],
         # #3378: None (not []) — a remote frame carries no visibility seam at all, and
         # the renderer must say "not wired" rather than "(none)" (which would claim
         # "nothing is narrowed", a statement this frame cannot support).
         "visibility_items": None,
+        # gated by ``hooks_reported`` alongside ``hooks`` above — one pane,
+        # one field (#5034).
         "hook_items": [],
         # #4686: session-local read (MCPConnectionService is process-local,
         # not projected onto the wire) → [] for remote, same "empty" shape
@@ -609,6 +638,10 @@ def project_remote_snapshot(values: "dict | None") -> dict:
         # this list as "nothing to add", not "not wired", since the base
         # row itself already came from ``visibility_items``).
         "mcp_subscriptions": [],
+        # `[]` below is correct (pipeline registry is not on the wire);
+        # gated by ``pipelines_reported`` above so `pipe_pane_lines`
+        # renders "not reported" instead of its own `["(none)"]` fallback
+        # (#5034 — same fabrication shape as ``hooks_reported`` above).
         "pipelines": [],
         # #3300 P2b: the server-authoritative sent-queue state IS on the wire
         # (state.py's ``_WIRE_KEYS`` / ``project_status``, folded in by P2a) —
