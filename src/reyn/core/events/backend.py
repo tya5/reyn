@@ -431,23 +431,32 @@ class LocalEventBackend:
                 "text for every fragment; this gap is durable-write-only.",
             )
         # #4666②: same "declared vs never-existed" discipline as ①'s gap
-        # above, for the two kinds `_COMPLETED_RESPONSE_TEXT_FIELDS` names.
+        # above, for the kinds `_COMPLETED_RESPONSE_TEXT_FIELDS` names.
+        # DERIVED from that mapping (lead-coder review, same requirement
+        # as ③'s own gap below, #4970) — a hand-listed string here would
+        # silently under-declare if a 3rd kind/field were ever added to
+        # the mapping without a matching edit to this string: drop the
+        # field, but not name it. Deriving makes that skew structurally
+        # impossible instead of merely detectable.
         if not self._completed_response_include_text:
+            kind_field_pairs = ", ".join(
+                f"{kind}.{'/'.join(fields)}"
+                for kind, fields in sorted(self._COMPLETED_RESPONSE_TEXT_FIELDS.items())
+            )
             gaps.append(
-                "agent_response_committed's `text` field (the completed "
-                "model-to-user reply) and user_intervention_requested's "
-                "`question`/`suggestions`/`options` fields (the model's "
-                "ask_user question) are not retained in the durable "
-                "record — dropped by config (audit_events.completed_"
-                "response_include_text=False, the default, #4666②), not "
-                "a #4960 side effect and not the same knob as ①'s own "
-                "streamed-fragment text opt-in above. Every other field "
-                "(chain_id / intervention_id / round metadata) is still "
-                "recorded, so 'a response was committed' / 'a question "
-                "was asked' remains provable without either one's own "
-                "content. Live TUI/AG-UI delivery, and any opt-in OTEL "
-                "subscriber, are unaffected — this gap is durable-write-"
-                "only.",
+                "The free-text field(s) on each of these kinds "
+                f"({kind_field_pairs}) — the completed model-to-user "
+                "reply, and the model's own ask_user question — are not "
+                "retained in the durable record — dropped by config "
+                "(audit_events.completed_response_include_text=False, "
+                "the default, #4666②), not a #4960 side effect and not "
+                "the same knob as ①'s own streamed-fragment text opt-in "
+                "above. Every other field (chain_id / intervention_id / "
+                "round metadata) is still recorded, so 'a response was "
+                "committed' / 'a question was asked' remains provable "
+                "without either one's own content. Live TUI/AG-UI "
+                "delivery, and any opt-in OTEL subscriber, are "
+                "unaffected — this gap is durable-write-only.",
             )
         # #4666 item ③ — same conditional-not-static discipline as ①/②
         # above, for the user-input kinds in `_USER_INPUT_CONTENT_FIELDS`.
