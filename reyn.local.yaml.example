@@ -571,9 +571,13 @@
 # exception, or cancellation; ``RouterLoop.run()``'s own ``finally``).
 # Live TUI/AG-UI delivery is UNAFFECTED — every fragment still dispatches
 # to subscribers unthrottled; this only throttles the durable write.
-# Measured (2000-delta/60KB real streamed reply): unthrottled,
-# ``agent_delta`` was 99.4% of that run's audit file bytes. The fragment
-# count governs under normal bursty streaming (measured up to ~1000
+# Measured (2000-delta/60KB real streamed reply,
+# ``agent_delta_include_text=true``): unthrottled, ``agent_delta`` was
+# 99.4% of that run's audit file bytes — this figure assumes ``text`` is
+# being written; with ``agent_delta_include_text``'s default (``false``,
+# below), a coalesced record's bytes are smaller and this percentage
+# does not apply as measured. The fragment count governs under normal
+# bursty streaming (measured up to ~1000
 # fragments/s); the interval's PRIMARY role is a process-level death
 # (SIGKILL / OOM-kill / host crash) that the terminal flush cannot catch
 # (a Python ``finally`` never runs then) — the terminal flush itself only
