@@ -31,10 +31,7 @@ from reyn.runtime.router_tools import (
     build_tools,
     get_dispatch_kind,
 )
-from reyn.services.compaction.engine import (
-    _IMAGE_FIXED_TOKEN_COST,
-    is_context_overflow_error,
-)
+from reyn.services.compaction.engine import _IMAGE_FIXED_TOKEN_COST
 from reyn.services.turn_budget import wrap_up_system_prompt
 
 if TYPE_CHECKING:
@@ -1802,16 +1799,7 @@ class RouterLoop:
             else:
                 from reyn.llm.model_resolver import ModelSpec
                 resolved_spec = ModelSpec(model=resolved_model, kwargs={})
-            # #1092 PR-C-4b: per-turn in-loop message-history compaction. A phase
-            # host implements ``maybe_compact_messages`` to proactively bound the
-            # converged op-loop's growing native tool-message history (json-mode
-            # parity). Chat hosts don't implement it (getattr → None) → no-op, so
-            # the chat loop is byte-identical.
-            _compact_fn = getattr(self.host, "maybe_compact_messages", None)
-            if _compact_fn is not None:
-                messages = await _compact_fn(messages, model=resolved_model)
-            # #1092 PR-C: layer-1 force-close trigger — checked AFTER compaction
-            # (so it sees the shrunk content). A host implements
+            # #1092 PR-C: layer-1 force-close trigger. A host implements
             # ``should_force_close`` to decide, from the current accumulated turn
             # content, whether the CUMULATIVE budget is reached; if so this turn is
             # force-closed (a clean wrap-up finish) instead of risking overflow.
@@ -2884,49 +2872,21 @@ class RouterLoop:
         resolved_model: str,
         reason: "str | None" = None,
     ) -> "LLMToolCallResult":
-        """#1092 PR-B layer-2 (PHASE axis): the force-close call, made robust to
-        its OWN overflow via overflow → host shrink → retry, monotonic to the
-        floor (§5 layer-2 retry-guarantee).
+        """#1092 PR-B: the force-close call. An overflow raised by the call
+        itself is never retried in-loop here — it propagates to the caller
+        (the session's existing outer ``retry_loop``, the proven
+        head/middle/tail shrink).
 
-        Axis split (B′, lead-coder confirmed): the CHAT axis does NOT use this —
-        a chat force-close overflow propagates to the session's existing outer
-        ``retry_loop`` (the proven head/middle/tail shrink), so the shrink hook
-        is phase-host-only and ``getattr``-guarded; when absent (chat host) the
-        overflow is re-raised to that outer loop. The PHASE host drives
-        ``run_loop`` directly with no such wrapper, so it shrinks in-loop here via
-        ``maybe_compact_messages`` (the SAME hook json-mode parity uses).
-
-        Monotonic termination: each shrink that changes the messages strictly
-        reduces them; when the host can shrink no further it returns the
-        messages unchanged (identity) = the FLOOR, which RAISES (floor-abort).
-        This used to be a placeholder — "PR-D"/"PR-E", a planned
-        consolidate+hand-off that would replace the raise — but #4381 PR-4
-        (owner ruling: "２の force close 廃止して spill にしよう") undid that
-        plan permanently: the floor-abort is the real terminal now, not a
-        pre-handoff stopgap. The #4381 family (tool-result spill) is what
-        keeps an oversized single result from reaching this floor at all.
+        #4978: this used to also try an in-loop shrink-and-retry via a
+        ``maybe_compact_messages`` host hook (the layer-2 PHASE-axis path,
+        #1092 PR-B). Removed — 0 production hosts ever implemented that
+        hook (measured; the only implementation was a test Fake), so the
+        shrink branch was permanently dead code: every real host took the
+        immediate re-raise path this function now takes unconditionally.
         """
-        shrink = getattr(self.host, "maybe_compact_messages", None)
-        cur = messages
-        while True:
-            try:
-                return await self._force_close_call(
-                    cur, resolved_model=resolved_model, reason=reason,
-                )
-            except Exception as exc:  # noqa: BLE001
-                if not is_context_overflow_error(exc):
-                    raise
-                if shrink is None:
-                    # Chat host: no in-loop shrink — propagate to the outer
-                    # session retry_loop (B′ axis-inherited path).
-                    raise
-                shrunk = await shrink(cur, model=resolved_model)
-                if shrunk is cur or shrunk == cur:
-                    # Floor: the host can shrink no further — genuine
-                    # terminal, re-raise (floor-abort). #4381 PR-4: no
-                    # handoff-and-retry replaces this anymore.
-                    raise
-                cur = shrunk
+        return await self._force_close_call(
+            messages, resolved_model=resolved_model, reason=reason,
+        )
 
     async def _execute_tool(self, tc: dict, *, call_id: "str | None" = None) -> dict:
         """Dispatch one tool call via dispatch_tool (cross-cutting concerns).
