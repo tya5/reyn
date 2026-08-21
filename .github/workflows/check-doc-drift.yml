@@ -1,0 +1,68 @@
+name: Doc-drift check
+
+# #5003: flag a PR that removes an identifier from src/ without touching
+# any docs/ file that still names it. See
+# scripts/check_doc_drift.py's module docstring for the discriminator
+# (asks the PR, not the doc) and the two structural exclusions.
+#
+# WARN-ONLY (architect condition, #5003 / PR #5007): a dry-run against
+# the 15 most-recently-merged PRs at review time found 0 findings, but
+# only 1/15 had a gone-from-src identifier at all (#4980's `_compact_fn`)
+# and that one is not named in any docs/ file — so the discriminator's
+# "touched the doc?" branch was never actually exercised by that sample.
+# The false-positive rate is therefore STILL UNMEASURED, not "measured
+# and clean". The one real firing during development (PR #4981) WAS a
+# true false positive (a word inside a removed Python comment), since
+# fixed — see PR #5007's body for the full account. This job therefore
+# never fails the run — a finding is surfaced as a workflow ANNOTATION
+# only (`::warning::`), visible on the PR without gating it. Flip to a
+# required check only once a calibration pass produces a concrete count:
+# N PRs where a gone-from-src identifier IS named in some docs/ file
+# (i.e. the "touched the doc?" branch actually ran), with 0 false
+# positives among them — not "a larger sample" in the abstract, which no
+# one could ever satisfy.
+#
+# Trigger scoped to `paths: ["src/**"]` — the discriminator only ever
+# considers identifiers removed from src/, so a PR that never touches
+# src/ cannot produce a finding; running the job anyway would just be a
+# nonzero-cost no-op every time.
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+    paths:
+      - "src/**"
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  doc-drift:
+    name: doc-drift check (warn-only)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      # scripts/check_doc_drift.py is stdlib-only (argparse / re /
+      # subprocess, `git`/`gh` as external tools). No pip install needed.
+      - name: Check for src/ identifiers removed without a docs/ touch
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set +e
+          python scripts/check_doc_drift.py --pr "${{ github.event.pull_request.number }}" > doc_drift_output.txt 2>&1
+          cat doc_drift_output.txt
+          if grep -q "^WARN" doc_drift_output.txt; then
+            while IFS= read -r line; do
+              echo "::warning::${line}"
+            done < <(grep "^  '" doc_drift_output.txt)
+          fi
+          exit 0
