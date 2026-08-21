@@ -161,7 +161,21 @@ class _BoundedEventBridge:
             try:
                 await self._drain_task
             except asyncio.CancelledError:
-                pass
+                # #4988: `await self._drain_task` raises CancelledError
+                # either as the drain task's own outcome (this method's own
+                # `.cancel()` two lines up — what this except exists to
+                # absorb) or as an independent, external cancellation of
+                # THIS coroutine's own task landing at the same await.
+                # `pass`-ing unconditionally used to treat both the same,
+                # letting `aclose()` return normally even when its own
+                # caller was being cancelled. Same discriminator as
+                # session.py's #3377 precedent (`_driver.cancelling() > 0`).
+                # Shared by every subclass that inherits this `aclose()`
+                # (McpIngressAdapter / FsIngressAdapter — see this class's
+                # own docstring), so one fix covers both.
+                _current = asyncio.current_task()
+                if _current is not None and _current.cancelling() > 0:
+                    raise
         self._drain_task = None
 
 

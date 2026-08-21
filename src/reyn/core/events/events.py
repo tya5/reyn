@@ -325,7 +325,33 @@ class EventLog:
         try:
             await join_future
         except asyncio.CancelledError:
-            pass
+            # #4986: `await join_future` raises CancelledError for TWO
+            # possible reasons, indistinguishable by the exception alone —
+            # (a) `join_future.cancel()` two lines up, its own outcome,
+            # exactly what this except exists to absorb; (b) THIS
+            # coroutine's OWN task was independently, externally cancelled
+            # (e.g. pytest-asyncio's/`asyncio.run()`'s end-of-loop
+            # `_cancel_all_tasks`, which cancels every task in
+            # `asyncio.all_tasks()` — including whatever task is running
+            # `drain()` right now — with no ordering guarantee relative to
+            # this await). Swallowing unconditionally used to treat both
+            # the same: (b) would silently continue past this method
+            # (logging a "some events undelivered" warning, then
+            # RETURNING NORMALLY) instead of propagating — the exact
+            # cancel-swallow session.py's own #3377 precedent
+            # (`_driver.cancelling() > 0`) already exists to prevent, not
+            # applied here. `Task.cancelling()` (Python 3.11+, this repo's
+            # own floor — pyproject.toml `requires-python = ">=3.11"`)
+            # answers which case this is: >0 means a cancellation request
+            # against THIS task is still outstanding (case (b)) and must
+            # be re-raised so the caller's own teardown/shutdown actually
+            # happens instead of appearing to complete; 0 means this
+            # task's own cancel count nets to zero, so the CancelledError
+            # just seen can only have come from `join_future` itself
+            # (case (a)) and is safe to absorb, unchanged from before.
+            _current = asyncio.current_task()
+            if _current is not None and _current.cancelling() > 0:
+                raise
         remaining = self._dispatch_queue.qsize()
         if remaining:
             logger.warning(
@@ -387,7 +413,23 @@ class EventLog:
         try:
             await task
         except asyncio.CancelledError:
-            pass
+            # #4986: same ambiguity as `drain()`'s own identical shape a
+            # few lines up this file (see that except block's own
+            # docstring-length comment for the full reasoning) —
+            # `await task` raising CancelledError here could be `task`'s
+            # own cancellation outcome (this method's own `task.cancel()`
+            # two lines up) OR THIS coroutine's own task being
+            # independently, externally cancelled at the same await. The
+            # unconditional `pass` this replaces could not tell them
+            # apart, so an external cancel landing here used to be
+            # silently absorbed — `self._consumer_task = None` would run
+            # and this method would return normally, instead of the
+            # caller's own cancellation actually propagating. Checked the
+            # same way session.py's own #3377 precedent
+            # (`_driver.cancelling() > 0`) already does.
+            _current = asyncio.current_task()
+            if _current is not None and _current.cancelling() > 0:
+                raise
         self._consumer_task = None
 
     def set_backend(self, backend: "EventBackend | None") -> None:

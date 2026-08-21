@@ -234,4 +234,15 @@ class DurabilityWorker:
             try:
                 await self._drainer
             except asyncio.CancelledError:
-                pass
+                # #4988: `await self._drainer` raises CancelledError either
+                # as the drainer task's own outcome (this method's own
+                # `.cancel()` two lines up — what this except exists to
+                # absorb) or as an independent, external cancellation of
+                # THIS coroutine's own task landing at the same await.
+                # `pass`-ing unconditionally used to treat both the same,
+                # letting `aclose()` return normally even when its own
+                # caller was being cancelled. Same discriminator as
+                # session.py's #3377 precedent (`_driver.cancelling() > 0`).
+                _current = asyncio.current_task()
+                if _current is not None and _current.cancelling() > 0:
+                    raise

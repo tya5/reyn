@@ -349,7 +349,22 @@ class ListenSubscriptionAdapter:
             self._task.cancel()
             try:
                 await self._task
-            except (asyncio.CancelledError, SubscriptionLost):
+            except asyncio.CancelledError:
+                # #4988: `await self._task` raises CancelledError either
+                # as that task's own outcome (this block's own `.cancel()`
+                # two lines up — what this except exists to absorb) or as
+                # an independent, external cancellation of THIS
+                # coroutine's own task landing at the same await.
+                # Catching it unconditionally (formerly folded into the
+                # `SubscriptionLost` tuple below) used to treat both the
+                # same, letting `close()` continue as if it had completed
+                # even when its own caller was being cancelled. Same
+                # discriminator as session.py's #3377 precedent
+                # (`_driver.cancelling() > 0`).
+                _current = asyncio.current_task()
+                if _current is not None and _current.cancelling() > 0:
+                    raise
+            except SubscriptionLost:
                 pass
             self._task = None
         if self._cm is not None:
