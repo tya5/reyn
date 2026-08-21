@@ -121,22 +121,19 @@ async def test_force_close_drops_extra_system_turns() -> None:
     assert systems == [{"role": "system", "content": wrap_up_system_prompt()}]
 
 
-# ── layer-2 phase shrink-retry (#1092 PR-B 2/2) ──────────────────────────────
-
-
-class _ShrinkHost(FakeRouterHost):
-    """FakeRouterHost + a phase-style maybe_compact_messages that drops the
-    oldest tool message each call, and returns the messages UNCHANGED once there
-    are no tool messages left (= the floor)."""
-
-    async def maybe_compact_messages(
-        self, messages: list[dict], *, model: str
-    ) -> list[dict]:
-        tool_idxs = [i for i, m in enumerate(messages) if m.get("role") == "tool"]
-        if not tool_idxs:
-            return messages  # floor — nothing left to shrink
-        drop = tool_idxs[0]
-        return [m for i, m in enumerate(messages) if i != drop]
+# ── layer-2 force-close retry (#1092 PR-B 2/2) ───────────────────────────────
+#
+# #4978: the shrink-and-retry branch these tests used to exercise
+# (`maybe_compact_messages`, a "PHASE host" getattr-optional hook) is
+# removed — 0 production hosts ever implemented it (the only
+# implementation was this file's own `_ShrinkHost` test double, now
+# deleted along with it). `_force_close_call_with_retry` no longer
+# branches on host capability at all: EVERY host now takes the
+# immediate re-raise path the tests below were already covering for
+# the "no shrink hook" case — that behavior survives unchanged; the
+# shrink-recovery and floor-abort tests that only exercised the dead
+# branch do not (removed, not adapted — see #4978's own PR body for
+# the per-assert accounting this section's tests underwent).
 
 
 class _OverflowThenFinishLLM:
@@ -170,41 +167,13 @@ def _msgs_with_tools(n: int) -> list[dict]:
 
 
 @pytest.mark.asyncio
-async def test_phase_shrink_retry_recovers_after_overflow() -> None:
-    """Tier 2: a phase force-close call that overflows once is recovered by one
-    host shrink + retry, returning the finish — the layer-2 guarantee in action."""
-    llm = _OverflowThenFinishLLM(overflow_count=1, result=_finish("HANDOFF"))
-    loop = _retry_loop(_ShrinkHost(), llm)
-    result = await loop._force_close_call_with_retry(
-        _msgs_with_tools(3), resolved_model="gpt-4o-mini"
-    )
-    assert result.content == "HANDOFF"
-    assert llm.call_count == 2  # initial overflow + one successful retry
-
-
-@pytest.mark.asyncio
-async def test_phase_shrink_retry_floor_aborts() -> None:
-    """Tier 2: when the call keeps overflowing, the host shrinks monotonically to
-    the floor (no tool messages → identity); at the floor the overflow re-raises
-    (floor-abort, pre-PR-D). Bounded by construction — the shrink strictly
-    reduces each step, so the loop cannot spin."""
-    llm = _OverflowThenFinishLLM(overflow_count=99, result=_finish())
-    loop = _retry_loop(_ShrinkHost(), llm)
-    with pytest.raises(RuntimeError):
-        await loop._force_close_call_with_retry(
-            _msgs_with_tools(2), resolved_model="gpt-4o-mini"
-        )
-    # 2 tool messages → 2 successful shrinks + the floor attempt = 3 LLM calls.
-    assert llm.call_count == 3
-
-
-@pytest.mark.asyncio
-async def test_chat_host_without_shrink_reraises_overflow() -> None:
-    """Tier 2: (B′ axis split) a host with NO maybe_compact_messages (= chat)
-    re-raises the overflow immediately — it propagates to the session's outer
-    retry_loop, NOT an in-loop shrink. No retry here."""
+async def test_force_close_retry_reraises_overflow_immediately() -> None:
+    """Tier 2: a force-close call that overflows re-raises immediately —
+    it propagates to the session's outer retry_loop, no in-loop retry
+    (#4978: this is now the ONLY behavior, not one side of a host-capability
+    axis — see this section's own header comment)."""
     llm = _OverflowThenFinishLLM(overflow_count=1, result=_finish())
-    loop = _retry_loop(FakeRouterHost(), llm)  # no maybe_compact_messages
+    loop = _retry_loop(FakeRouterHost(), llm)
     with pytest.raises(RuntimeError):
         await loop._force_close_call_with_retry(
             _msgs_with_tools(2), resolved_model="gpt-4o-mini"
@@ -213,9 +182,9 @@ async def test_chat_host_without_shrink_reraises_overflow() -> None:
 
 
 @pytest.mark.asyncio
-async def test_non_overflow_error_is_not_retried() -> None:
-    """Tier 2: a non-overflow exception is re-raised immediately — the shrink
-    path is ONLY for context-overflow, never a blanket retry."""
+async def test_non_overflow_error_is_also_reraised_immediately() -> None:
+    """Tier 2: a non-overflow exception is re-raised immediately too — same
+    single-call, no-retry behavior regardless of the exception's shape."""
     class _BoomLLM:
         def __init__(self) -> None:
             self.calls = 0
@@ -225,9 +194,9 @@ async def test_non_overflow_error_is_not_retried() -> None:
             raise ValueError("unrelated boom")
 
     llm = _BoomLLM()
-    loop = _retry_loop(_ShrinkHost(), llm)
+    loop = _retry_loop(FakeRouterHost(), llm)
     with pytest.raises(ValueError):
         await loop._force_close_call_with_retry(
             _msgs_with_tools(3), resolved_model="gpt-4o-mini"
         )
-    assert llm.calls == 1  # no shrink, no retry
+    assert llm.calls == 1  # no retry
