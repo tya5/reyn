@@ -150,6 +150,14 @@ def test_a_normal_collect_prints_the_in_process_reyn_path() -> None:
     interpreter's) deliberately — the property under test is that the
     disclosure prints the actual resolution, not a decoy.
 
+    Collect target scoped to THIS file only, not a bare repo-wide
+    collect (lead-coder measurement, #5033 review): `pytest_configure`
+    fires before collection even starts, so what gets collected is
+    irrelevant to what's under test — a full-repo collect measured
+    66.8s (56% of CI's 120s per-test kill switch) for zero added
+    coverage; scoped to one file, 11.0s. This is removing unnecessary
+    work from the test, not adding a timeout to it.
+
     FALSIFY: without this call, #5028's own finding recurs — a
     subprocess-spawning test's contamination has no baseline path to be
     compared against, and six PRs already cited that exact failure class
@@ -159,7 +167,7 @@ def test_a_normal_collect_prints_the_in_process_reyn_path() -> None:
 
     # #4397: no timeout= — CI's own per-test pytest-timeout is the kill switch.
     proc = subprocess.run(
-        [sys.executable, "-m", "pytest", "--collect-only", "-q"],
+        [sys.executable, "-m", "pytest", "--collect-only", "-q", str(__file__)],
         cwd=_REPO_ROOT,
         capture_output=True,
         text=True,
