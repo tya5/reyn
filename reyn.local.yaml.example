@@ -597,9 +597,10 @@
 # this to ``true`` if your workflow depends on that.
 #
 # ``completed_response_include_text`` (#4666②, owner ruling, default
-# false): a SEPARATE knob from ``agent_delta_include_text`` above (same
-# verbatim owner instruction: one toggle must never cover both) — gates
-# the completed model→user text instead of the streaming fragments:
+# false): a SEPARATE knob from ``agent_delta_include_text`` above AND
+# ``user_input_include_text`` below (same verbatim owner instruction: one
+# toggle must never cover more than one content opt-in) — gates the
+# completed model→user text instead of the streaming fragments:
 # ``agent_response_committed`` (new kind — the terminal reply,
 # force-close/wrap-up text, tool_calls-round accompanying text) and
 # ``user_intervention_requested``'s ``question``/``suggestions``/
@@ -615,6 +616,26 @@
 # exchanges; that gap is closed by a separate follow-up PR, not this
 # field. See ``docs/reference/runtime/events.md`` for the full
 # commit-point census.
+#
+# ``user_input_include_text`` (#4666 item ③, default false): a THIRD,
+# separate knob — the two above govern the AGENT's own output, this one
+# governs a USER's own typed/chosen text. Covers 6 kinds (AST census —
+# an earlier pass found 3 and undercounted): ``user_submitted`` /
+# ``user_message_received`` (``text``), ``intervention_answer_submitted``
+# (``text``), ``user_answered_intervention`` (``answer_text``),
+# ``user_intervention_received`` (``answer``), ``router_retry_exhausted``
+# (``user_message``, already truncated to 200 chars at the emit site
+# regardless of this flag). No coalescing here — each event is still
+# written individually; off drops only that one content field, every
+# other field on the kind (``chain_id``/``intervention_id``/``msg_id``/
+# etc.) still records that a submission/answer happened. Live subscriber
+# delivery and ``history.jsonl`` are UNAFFECTED either way.
+# ⚠️ Default-behavior change, 2026-08-21: before this field existed,
+# these 6 kinds' content was always durably recorded, unconditionally.
+# ⚠️ Known gap this flag does NOT close: ``ask_user``'s question/answer
+# also reach the audit log unconditionally via ``tool_called.args``/
+# ``tool_returned.result`` (a separate emit path) — tracked separately
+# under #4666.
 # -----------------------------------------------------------------------------
 # audit_events:
 #   max_bytes: 10485760              # 10 MB
@@ -626,6 +647,7 @@
 #   agent_delta_coalesce_interval_ms: 2000  # or every T ms, whichever first
 #   agent_delta_include_text: false         # keep the reply's own content in the durable record?
 #   completed_response_include_text: false  # keep the completed reply / ask_user question in the durable record?
+#   user_input_include_text: false          # keep the user's own words in the durable record?
 
 
 # -----------------------------------------------------------------------------

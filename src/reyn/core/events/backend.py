@@ -121,6 +121,39 @@ _DEFAULT_AGENT_DELTA_COALESCE_FRAGMENTS = 100
 #: staring at a multi-minute-old durable record.
 _DEFAULT_AGENT_DELTA_COALESCE_INTERVAL_MS = 2_000
 
+#: #4666 item ③ (owner ruling: user input is opt-in, its OWN knob —
+#: separate from ① ``agent_delta_include_text`` and the still-in-design
+#: ② "completed conversation" knob). The content-bearing field on every
+#: emit site where a user's OWN typed/chosen text reaches an audit-event,
+#: per an AST census across the whole tree (lead-coder, #4666, confirmed
+#: 6 — an earlier pass found 3 and undercounted):
+#:
+#:   user_submitted                 -> text            (session.py)
+#:   user_message_received          -> text            (session.py)
+#:   intervention_answer_submitted  -> text             (intervention_handler.py)
+#:   user_answered_intervention     -> answer_text      (intervention_handler.py)
+#:   user_intervention_received     -> answer           (ask_user.py)
+#:   router_retry_exhausted         -> user_message      (budget_gateway.py, truncated to 200 chars at the emit site already)
+#:
+#: ⚠️ Known gap, deliberately NOT closed by this knob (architect + lead-
+#: coder, #4666): ``ask_user``'s question/answer ALSO reach the audit log
+#: unconditionally via ``tool_called.args["question"]`` /
+#: ``tool_returned.result["answer"]`` (``dispatch_tool``, a different emit
+#: path this knob does not touch — those carry a tool's own payload, not
+#: one of the 6 kinds above). Closing that needs a per-tool "this field is
+#: conversation content" declaration the dispatcher can consult (architect
+#: ruling in progress) — turning this knob ON/OFF does not affect that
+#: path either way. Do not read the 6-kind list above as exhaustive
+#: coverage of "user input reaches the audit log".
+_USER_INPUT_CONTENT_FIELDS: dict[str, str] = {
+    "user_submitted": "text",
+    "user_message_received": "text",
+    "intervention_answer_submitted": "text",
+    "user_answered_intervention": "answer_text",
+    "user_intervention_received": "answer",
+    "router_retry_exhausted": "user_message",
+}
+
 
 @runtime_checkable
 class EventBackend(Protocol):
@@ -184,6 +217,17 @@ class LocalEventBackend:
     record alone with the flag off — same reasoning as ``agent_delta``'s
     own drop above.
 
+    #4666 item ③: a SEPARATE opt-in (``user_input_include_text``, also
+    off by default) covers 6 kinds carrying a user's own typed/chosen
+    text (``user_submitted``, ``user_message_received``,
+    ``intervention_answer_submitted``, ``user_answered_intervention``,
+    ``user_intervention_received``, ``router_retry_exhausted`` — see
+    ``_USER_INPUT_CONTENT_FIELDS`` for the exact field dropped per kind).
+    No coalescing here — every event of these kinds is still written
+    individually, just with its one content field redacted when off. No
+    overlap with ②'s two kinds above — a kind belongs to at most one of
+    these opt-ins.
+
     All OTHER event kinds: unchanged, no gaps — replay / support-bundle /
     dogfood_trace work normally against this backend's output for them."""
 
@@ -195,6 +239,7 @@ class LocalEventBackend:
         agent_delta_coalesce_interval_ms: int = _DEFAULT_AGENT_DELTA_COALESCE_INTERVAL_MS,
         agent_delta_include_text: bool = False,
         completed_response_include_text: bool = False,
+        user_input_include_text: bool = False,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self._store = store
@@ -221,6 +266,14 @@ class LocalEventBackend:
         # (`AuditEventsConfig.completed_response_include_text`) for the
         # owner ruling this mirrors.
         self._completed_response_include_text = completed_response_include_text
+        # #4666 item ③ (owner ruling, its OWN knob — separate from ① AND
+        # ② above): whether the durable record for any of the 6 user-input
+        # kinds in `_USER_INPUT_CONTENT_FIELDS` keeps that kind's content
+        # field. Default False, same OTel-convention rationale as ①. Live
+        # subscriber delivery is UNAFFECTED — this flag is consulted only
+        # inside `write()`, after `EventLog.emit()` has already handed the
+        # raw event off for subscriber dispatch.
+        self._user_input_include_text = user_input_include_text
         # Test seam (mirrors this repo's existing ``clock: Callable[[],
         # float]`` idiom, e.g. TextualChatApp) — production always passes
         # the default ``time.monotonic``; a test can inject a fake to
@@ -256,6 +309,10 @@ class LocalEventBackend:
                 self._store.write(event.model_copy(update={"data": data}))
             return
         if event.type != "agent_delta":
+            content_field = _USER_INPUT_CONTENT_FIELDS.get(event.type)
+            if content_field is not None and not self._user_input_include_text:
+                self._persist_redacted_user_input(event, content_field)
+                return
             self._store.write(event)
             return
         chain_id = event.data.get("chain_id")
@@ -328,6 +385,20 @@ class LocalEventBackend:
             data.pop("text", None)
         self._store.write(event.model_copy(update={"data": data}))
 
+    def _persist_redacted_user_input(self, event: Event, content_field: str) -> None:
+        """#4666 item ③: write *event* with *content_field* dropped from
+        ``data`` — a NEW object (``model_copy``), never a mutation of
+        *event* itself, for the same reason :meth:`_persist_coalesced_delta`
+        never mutates its own argument: *event* is the same object the
+        (already-completed) subscriber dispatch loop may still hold a
+        reference to. Every other field on the kind (``chain_id``/
+        ``intervention_id``/``msg_id``/``seq``/etc.) survives untouched —
+        only the one content-bearing field named in
+        ``_USER_INPUT_CONTENT_FIELDS`` for this kind is dropped."""
+        data = {**event.data}
+        data.pop(content_field, None)
+        self._store.write(event.model_copy(update={"data": data}))
+
     def declare_gaps(self) -> list[str]:
         gaps = [
             "agent_delta (streamed reply content, one per chunk) is not "
@@ -377,6 +448,33 @@ class LocalEventBackend:
                 "content. Live TUI/AG-UI delivery, and any opt-in OTEL "
                 "subscriber, are unaffected — this gap is durable-write-"
                 "only.",
+            )
+        # #4666 item ③ — same conditional-not-static discipline as ①/②
+        # above, for the user-input kinds in `_USER_INPUT_CONTENT_FIELDS`.
+        # DERIVED from that mapping (lead-coder review, PR #4970), not
+        # hand-listed: a 7th kind added to the mapping without a matching
+        # edit here would otherwise silently under-declare (drop the
+        # field, but not name it) — deriving makes that skew structurally
+        # impossible instead of merely detectable.
+        if not self._user_input_include_text:
+            kind_field_pairs = ", ".join(
+                f"{kind}.{field}"
+                for kind, field in sorted(_USER_INPUT_CONTENT_FIELDS.items())
+            )
+            gaps.append(
+                "The content-bearing field on each of these kinds "
+                f"({kind_field_pairs}) is not retained in the durable "
+                "record — dropped by config "
+                "(audit_events.user_input_include_text=False, the default, "
+                "#4666 item 3). Every other field on these kinds "
+                "(chain_id/intervention_id/msg_id/seq/audit_seq/etc.) is "
+                "still recorded. Live subscriber delivery (TUI/AG-UI/peer "
+                "broadcast) is unaffected — this gap is durable-write-only. "
+                "Known gap NOT closed by this flag either way: ask_user's "
+                "question/answer also reach the audit log via "
+                "tool_called.args/tool_returned.result (a different emit "
+                "path, see this module's _USER_INPUT_CONTENT_FIELDS "
+                "docstring).",
             )
         return gaps
 

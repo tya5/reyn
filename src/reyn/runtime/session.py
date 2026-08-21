@@ -4145,6 +4145,7 @@ class Session:
             agent_delta_coalesce_interval_ms=self._events_config.agent_delta_coalesce_interval_ms,
             agent_delta_include_text=self._events_config.agent_delta_include_text,
             completed_response_include_text=self._events_config.completed_response_include_text,
+            user_input_include_text=self._events_config.user_input_include_text,
         )
 
     # ── #3082 Family 1: audit-event spine builder. See session-construction.md. ──
