@@ -300,10 +300,15 @@ def test_structured_output_used_when_model_supports_it(monkeypatch) -> None:
 
     rf = captured.get("response_format")
     assert rf is not None and rf.get("type") == "json_schema"
+    # #4951-B: new_turn_seqs removed from the schema entirely (the LLM is
+    # no longer asked to echo it) — this IS the discriminating assert for
+    # that removal: reintroducing the key to _CHAT_SUMMARY_JSON_SCHEMA's
+    # "required" list would redden this line.
     assert rf["json_schema"]["schema"]["required"] == [
-        "new_turn_seqs", "topic_arc", "decisions", "pending",
+        "topic_arc", "decisions", "pending",
         "session_user_facts", "artifacts_referenced",
     ]
+    assert "new_turn_seqs" not in rf["json_schema"]["schema"]["properties"]
 
 
 def test_json_object_used_when_model_does_not_support_structured_output(monkeypatch) -> None:
@@ -367,6 +372,27 @@ def test_provider_rejection_of_json_schema_is_not_caught_and_retried(monkeypatch
 
     with pytest.raises(ValueError, match="provider rejected response_format"):
         asyncio.run(engine.compact(_chunk()))
+
+
+# ---------------------------------------------------------------------------
+# (f) #4951-B: new_turn_seqs is removed from the SYSTEM PROMPT too, not just
+#     the schema (a) above — reyn no longer asks the LLM to echo the key at
+#     all.
+# ---------------------------------------------------------------------------
+
+
+def test_system_prompt_no_longer_asks_for_new_turn_seqs() -> None:
+    """Tier 1: #4951-B — the compaction system prompt no longer instructs
+    the LLM to echo new_turn_seqs. Positive control (verified in this PR,
+    not left as a claim): reintroducing the ``new_turn_seqs`` line to
+    ``COMPACTION_SYSTEM_PROMPT`` (`reyn.prompt.compaction`) reddens this
+    exact assert. The schema-side witness above
+    (`test_structured_output_used_when_model_supports_it`) is the sibling
+    check for the other half of this same removal (the schema, not the
+    prompt text)."""
+    from reyn.services.compaction.engine import _COMPACTION_SYSTEM_PROMPT
+
+    assert "new_turn_seqs" not in _COMPACTION_SYSTEM_PROMPT
 
 
 # ---------------------------------------------------------------------------

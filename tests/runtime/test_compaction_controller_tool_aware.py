@@ -118,7 +118,9 @@ def test_compaction_system_prompt_mentions_tool_calls() -> None:
     """
     from reyn.services.compaction.engine import _COMPACTION_SYSTEM_PROMPT
 
-    assert "new_turn_seqs" in _COMPACTION_SYSTEM_PROMPT, (
-        "prompt must mention new_turn_seqs so LLM copies the verbatim seq list"
-    )
+    # #4951-B: this test's own name/docstring is about tool-derived items ->
+    # artifacts_referenced — the new_turn_seqs assert that used to sit here
+    # was unrelated to that (and is now doubly wrong: the key it named is
+    # intentionally removed from the prompt). See test_4883_compaction_
+    # schema_validation.py for schema-required-keys coverage instead.
     assert "artifacts_referenced" in _COMPACTION_SYSTEM_PROMPT

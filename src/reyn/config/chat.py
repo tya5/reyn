@@ -783,9 +783,10 @@ class CompactionConfig:
     # skip T2 (straight to the floor, = pre-#271 behaviour).
     resummarize_passes: int = 1
     # #4883: bounded re-prompt budget when the compaction JSON response is
-    # missing new_turn_seqs/topic_arc (a syntactically-valid but content-free
-    # response, e.g. "{}", previously accepted silently as an empty summary
-    # that covered the full input range).
+    # missing topic_arc (a syntactically-valid but content-free response,
+    # e.g. "{}", previously accepted silently as an empty summary). #4951-B:
+    # new_turn_seqs is no longer part of this — the key was removed from
+    # the schema/prompt entirely, so there is nothing to be missing.
     #
     # Default 1 (one extra attempt, not an unjustified round number):
     # feeding the model its own invalid response + naming what was missing

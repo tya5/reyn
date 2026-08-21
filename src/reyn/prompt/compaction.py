@@ -36,7 +36,6 @@ Produce a JSON object with these keys:
   pending           — array of open items (questions, tasks, follow-ups). Remove resolved items.
   session_user_facts — array of user attributes learned this session, not yet in memory. Drop oldest if over cap.
   artifacts_referenced — array of files/PRs/commits/issues in scope. Drop ones no longer relevant.
-  new_turn_seqs     — VERBATIM list of every `seq` value from input new_turns, in order. Do NOT sort, filter, or compute the max.
 
 Retention rules:
 - Never drop architectural decisions or items labelled as final.

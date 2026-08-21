@@ -53,13 +53,16 @@ async def _run_and_settle(coro, log):
     return result
 
 
-# #4883 update: new_turn_seqs is required by CompactionEngine.compact()'s
-# post-parse validation floor now (see engine.py's
-# _validate_chat_summary_fields) — a scripted response omitting it is
-# rejected as invalid and exhausts the re-prompt budget rather than reaching
-# the controller. Derived per-call from the REAL candidate turns the engine
-# was actually asked to summarize (parsed out of its own user-prompt
-# content), never a static value — this file's whole point is that
+# #4951-B: new_turn_seqs is NOT part of CompactionEngine.compact()'s
+# schema/validation at all anymore (the key was removed — see engine.py's
+# _CHAT_SUMMARY_JSON_SCHEMA and _validate_chat_summary_fields, which only
+# ever validated topic_arc, never this field). This helper still includes
+# it in the scripted response body purely as harmless inert fixture data
+# (parsed.get() ignores unrecognized keys) — covers_through_seq is derived
+# per-call from the REAL candidate turns the engine was actually asked to
+# summarize (parsed out of its own user-prompt content, via
+# compute_covers_through_seq on compact()'s own input), never read back
+# from this response at all. This file's whole point is that
 # covers_through_seq must reflect only the ACTIVE-branch turns genuinely
 # examined, never an abandoned-branch turn or a hardcoded claim.
 def _summary_json_for_messages(messages: list) -> str:
