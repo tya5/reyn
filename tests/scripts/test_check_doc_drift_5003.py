@@ -23,6 +23,8 @@ from __future__ import annotations
 import importlib.util
 import subprocess
 import sys
+import tempfile
+from pathlib import Path
 
 from tests._support.paths import REPO_ROOT
 
@@ -86,8 +88,17 @@ def test_history_class_doc_excludes_journal_dir():
     assert m.is_history_class_doc("docs/deep-dives/journal/2026-01-01-foo.md") is True
 
 
+def test_history_class_doc_excludes_proposals_dir():
+    """Tier 1: real incident (#5010 calibration, PR #4454) — a REAL
+    removed identifier (`_force_close_wrap_up`) was still named in two
+    `docs/deep-dives/proposals/` docs, both carrying their own `Status:
+    cut, landed` field (the directory's own README: proposals are
+    point-in-time design records, same rationale as decisions/)."""
+    assert m.is_history_class_doc("docs/deep-dives/proposals/0045-foo.md") is True
+
+
 def test_history_class_doc_does_not_exclude_ordinary_docs():
-    """Tier 1: a doc outside both exempt directories is not excluded."""
+    """Tier 1: a doc outside all three exempt directories is not excluded."""
     assert m.is_history_class_doc("docs/reference/config/reyn-yaml.md") is False
 
 
@@ -168,6 +179,42 @@ diff --git a/src/reyn/core/x.py b/src/reyn/core/x.py
     assert "scaffolding" not in ids
 
 
+def test_find_removed_identifiers_ignores_words_inside_a_removed_docstring():
+    """Tier 1: real incident (#5010 calibration, PR #4459) — a prose word
+    ("normalises") inside a removed multi-line DOCSTRING (not a
+    `#`-comment) must not be extracted as a removed identifier. The
+    original `#`-only stripper (#5007) did not catch this class."""
+    diff = """\
+diff --git a/src/reyn/mcp/adapter.py b/src/reyn/mcp/adapter.py
+--- a/src/reyn/mcp/adapter.py
++++ b/src/reyn/mcp/adapter.py
+@@ -1,5 +1,1 @@
+-    \"\"\"Handler bodies are written against the 2.0
+-    shape (dict-style ``.get(...)``, snake_case), so :class:`_CtxAdapter`
+-    normalises a 1.x pydantic ``Meta`` into a plain dict with the SAME
+-    snake_case keys at adaptation time.
+-    \"\"\"
+"""
+    ids = m.find_removed_identifiers(diff)
+    assert "normalises" not in ids
+    assert "_CtxAdapter" not in ids
+
+
+def test_find_removed_identifiers_still_finds_code_inside_a_docstring_boundary_line():
+    """Tier 1: the docstring stripper only drops TEXT inside the
+    triple-quote span — real code on the opening/closing line itself
+    (before the opening `\"\"\"` or after the closing one) still counts."""
+    diff = """\
+diff --git a/src/reyn/mcp/adapter.py b/src/reyn/mcp/adapter.py
+--- a/src/reyn/mcp/adapter.py
++++ b/src/reyn/mcp/adapter.py
+@@ -1,2 +1,1 @@
+-    maybe_compact_messages(state)  \"\"\"trailing docstring-shaped text\"\"\"
+"""
+    ids = m.find_removed_identifiers(diff)
+    assert "maybe_compact_messages" in ids
+
+
 def test_find_removed_identifiers_excludes_non_salient_short_word():
     """Tier 1: a removed bare short word ("run") never enters the
     candidate set at all — filtered at the salience floor, not later."""
@@ -245,6 +292,23 @@ def test_pure_is_silent_when_no_doc_names_the_identifier():
     assert findings == []
 
 
+def test_exit_code_is_1_on_a_finding():
+    """Tier 1: the blocking-gate contract (#5010 promotion, architect
+    ruling) — a required CI check reads the process exit code, so THIS
+    is the line that actually gates a merge. 0 (warn-only) would let a
+    real drift instance land silently again, #5003's founding problem."""
+    exit_code = m._print_findings_and_exit_code(
+        [m.Finding(identifier="foo_bar_baz", doc_path="docs/x.md")], "test-source",
+    )
+    assert exit_code == 1
+
+
+def test_exit_code_is_0_when_clean():
+    """Tier 1: no findings → exit 0, the merge is not blocked."""
+    exit_code = m._print_findings_and_exit_code([], "test-source")
+    assert exit_code == 0
+
+
 def test_pure_only_flags_the_untouched_doc_among_several():
     """Tier 1: an identifier named in two docs, one touched one not — only
     the untouched one is flagged."""
@@ -302,3 +366,157 @@ def test_find_doc_files_containing_excludes_history_class_dir(tmp_path):
     subprocess.run(["git", "commit", "-q", "-m", "init"], cwd=repo, check=True)
     found = m.find_doc_files_containing("maybe_compact_messages", repo)
     assert found == {"docs/reference/pipeline.md"}
+
+
+# ---------------------------------------------------------------------------
+# _name_tokens_by_line — pure, tokenizer-backed identifier extraction
+# (#5010 round 2, architect ruling)
+# ---------------------------------------------------------------------------
+
+
+def test_name_tokens_by_line_finds_real_code_names():
+    """Tier 1: a NAME token (def/assignment) is captured with its line."""
+    source = "def foo_bar_baz():\n    x = 1\n"
+    tokens = m._name_tokens_by_line(source)
+    assert 1 in tokens["foo_bar_baz"]
+    assert 2 in tokens["x"]
+
+
+def test_name_tokens_by_line_ignores_docstring_prose():
+    """Tier 1: the central #5010-round-2 fix — a word inside a triple-
+    quoted docstring is NEVER a NAME token, unlike the line-heuristic
+    path which could only approximate this with marker-toggling."""
+    source = '"""This word normalises the input."""\n'
+    tokens = m._name_tokens_by_line(source)
+    assert "normalises" not in tokens
+
+
+def test_name_tokens_by_line_ignores_comment_prose():
+    """Tier 1: a `#`-comment word is never a NAME token either."""
+    source = "x = 1  # scaffolding note\n"
+    tokens = m._name_tokens_by_line(source)
+    assert "scaffolding" not in tokens
+    assert 1 in tokens["x"]
+
+
+def test_name_tokens_by_line_ignores_keywords():
+    """Tier 1: `def`/`return`/`None` are Python keywords, never real
+    removed/added identifiers — excluded even though they tokenize as
+    NAME-shaped."""
+    source = "def foo():\n    return None\n"
+    tokens = m._name_tokens_by_line(source)
+    assert "def" not in tokens
+    assert "return" not in tokens
+    assert "None" not in tokens  # a keyword since Python 3
+
+
+def test_name_tokens_by_line_returns_empty_on_invalid_python():
+    """Tier 1: unparseable content is a disclosed no-signal case, not a
+    crash — the caller falls back to the line heuristic."""
+    tokens = m._name_tokens_by_line("def (:::\n")
+    assert tokens == {}
+
+
+# ---------------------------------------------------------------------------
+# find_removed_identifiers_precise — the precise, git-show + tokenize path
+# (#5010 round 2). Real temp git repo with 2 commits (pre/post), exercising
+# the actual mechanism this PR adds, not a mocked stand-in.
+# ---------------------------------------------------------------------------
+
+
+def _commit_file(repo, rel_path, content, message):
+    path = repo / rel_path
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(content)
+    subprocess.run(["git", "add", "-A"], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "-q", "-m", message], cwd=repo, check=True)
+    return subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=repo, capture_output=True, text=True, check=True,
+    ).stdout.strip()
+
+
+def test_find_removed_identifiers_precise_resolves_the_docstring_boundary_case():
+    """Tier 1: the REAL regression this round fixes — a docstring word
+    ("normalises") whose OPENING `\"\"\"` sits on a line the diff hunk
+    didn't carry (so the line-heuristic path, operating on diff text
+    alone, cannot see it's inside a docstring) is correctly excluded by
+    the precise path, because it reads the real pre-image file and
+    tokenizes it directly — no hunk-boundary blind spot is possible."""
+
+    with tempfile.TemporaryDirectory() as tmp:
+        repo = Path(tmp)
+        _init_repo(repo)
+        pre_sha = _commit_file(
+            repo, "src/reyn/mcp/adapter.py",
+            '"""Docstring intro paragraph that stays.\n\n'
+            'Handler bodies are written against 2.0, so _CtxAdapter\n'
+            'normalises the input at adaptation time.\n"""\n'
+            'def real_fn():\n    pass\n',
+            "pre",
+        )
+        post_sha = _commit_file(
+            repo, "src/reyn/mcp/adapter.py",
+            '"""Docstring intro paragraph that stays.\n"""\n'
+            'def real_fn():\n    pass\n',
+            "post",
+        )
+        diff = subprocess.run(
+            ["git", "diff", pre_sha, post_sha], cwd=repo, capture_output=True, text=True, check=True,
+        ).stdout
+        gone = m.find_removed_identifiers_precise(diff, repo, pre_sha, post_sha)
+        assert "normalises" not in gone
+        assert "_CtxAdapter" not in gone
+
+
+def test_find_removed_identifiers_precise_still_finds_a_real_removed_function():
+    """Tier 1: a genuinely removed function definition IS found by the
+    precise path (not just "everything gets excluded")."""
+
+    with tempfile.TemporaryDirectory() as tmp:
+        repo = Path(tmp)
+        _init_repo(repo)
+        pre_sha = _commit_file(
+            repo, "src/reyn/core/x.py",
+            "def action_retrieval_helper():\n    pass\n\n\ndef stays():\n    pass\n",
+            "pre",
+        )
+        post_sha = _commit_file(
+            repo, "src/reyn/core/x.py",
+            "def stays():\n    pass\n",
+            "post",
+        )
+        diff = subprocess.run(
+            ["git", "diff", pre_sha, post_sha], cwd=repo, capture_output=True, text=True, check=True,
+        ).stdout
+        gone = m.find_removed_identifiers_precise(diff, repo, pre_sha, post_sha)
+        assert "action_retrieval_helper" in gone
+
+
+def test_find_removed_identifiers_precise_falls_back_and_logs_when_file_deleted(capsys):
+    """Tier 1: real incident (#5010 round 2, PR #4560/#4454) — a file
+    deleted entirely by the diff has no post-image; the precise path
+    must fall back to the line heuristic for that file AND print a
+    fallback warning (never silently drop to a weaker path)."""
+
+    with tempfile.TemporaryDirectory() as tmp:
+        repo = Path(tmp)
+        _init_repo(repo)
+        pre_sha = _commit_file(
+            repo, "src/reyn/tools/gone_file.py",
+            "def deleted_entirely_marker_fn():\n    pass\n",
+            "pre",
+        )
+        (repo / "src/reyn/tools/gone_file.py").unlink()
+        subprocess.run(["git", "add", "-A"], cwd=repo, check=True)
+        subprocess.run(["git", "commit", "-q", "-m", "delete file"], cwd=repo, check=True)
+        post_sha = subprocess.run(
+            ["git", "rev-parse", "HEAD"], cwd=repo, capture_output=True, text=True, check=True,
+        ).stdout.strip()
+        diff = subprocess.run(
+            ["git", "diff", pre_sha, post_sha], cwd=repo, capture_output=True, text=True, check=True,
+        ).stdout
+        gone = m.find_removed_identifiers_precise(diff, repo, pre_sha, post_sha)
+        assert "deleted_entirely_marker_fn" in gone  # fallback path still finds it
+        captured = capsys.readouterr()
+        assert "falling back to line heuristic" in captured.err
+        assert "gone_file.py" in captured.err
