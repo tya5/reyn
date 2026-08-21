@@ -5,22 +5,25 @@ name: Doc-drift check
 # scripts/check_doc_drift.py's module docstring for the discriminator
 # (asks the PR, not the doc) and the two structural exclusions.
 #
-# WARN-ONLY (architect condition, #5003 / PR #5007): a dry-run against
-# the 15 most-recently-merged PRs at review time found 0 findings, but
-# only 1/15 had a gone-from-src identifier at all (#4980's `_compact_fn`)
-# and that one is not named in any docs/ file — so the discriminator's
-# "touched the doc?" branch was never actually exercised by that sample.
-# The false-positive rate is therefore STILL UNMEASURED, not "measured
-# and clean". The one real firing during development (PR #4981) WAS a
-# true false positive (a word inside a removed Python comment), since
-# fixed — see PR #5007's body for the full account. This job therefore
-# never fails the run — a finding is surfaced as a workflow ANNOTATION
-# only (`::warning::`), visible on the PR without gating it. Flip to a
-# required check only once a calibration pass produces a concrete count:
-# N PRs where a gone-from-src identifier IS named in some docs/ file
-# (i.e. the "touched the doc?" branch actually ran), with 0 false
-# positives among them — not "a larger sample" in the abstract, which no
-# one could ever satisfy.
+# WARN-ONLY (architect condition, #5003 / #5010). Calibration history:
+#   - PR #5007's 15-PR sample: 0 findings, but only 1/15 had a
+#     gone-from-src identifier at all, and it was not doc-named — the
+#     "touched the doc?" branch never actually ran. FP rate: unmeasured.
+#   - #5010 round 1: a ~400-PR backward scan found 9 real candidates
+#     (the branch DID run). 2 true positives, 7 false positives —
+#     mostly docstring-prose words the line-heuristic extraction
+#     couldn't distinguish from real code.
+#   - #5010 round 2 (this file's current shape): rewrote extraction to
+#     read real pre/post file content (`git show`) and tokenize it
+#     (scripts/check_doc_drift.py's `find_removed_identifiers_precise`)
+#     instead of guessing from diff-line text. Re-run on the same 9
+#     candidates: 3 true positives (a 3rd surfaced), 0 false positives.
+# "0 FP among N=9" is the architect's stated promotion bar — met. Still
+# warn-only: whether N=9 is ENOUGH is a separate decision the architect
+# has explicitly not made yet — see #5010 for the ruling when it lands.
+# This job therefore never fails the run — a finding is surfaced as a
+# workflow ANNOTATION only (`::warning::`), visible on the PR without
+# gating it.
 #
 # Trigger scoped to `paths: ["src/**"]` — the discriminator only ever
 # considers identifiers removed from src/, so a PR that never touches
@@ -43,7 +46,16 @@ jobs:
     timeout-minutes: 5
 
     steps:
+      # fetch-depth: 0 (full history) — #5010 round 2's precise
+      # extraction path reads real pre/post file content via
+      # `git show <sha>:<path>`, which needs the base ref's commit
+      # present locally; the default shallow (depth 1) checkout would
+      # only have the PR's own tip commit and make every file fall back
+      # to the line heuristic (logged, not silent, but pointless to pay
+      # for every run when a full checkout avoids it).
       - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
 
       - name: Set up Python
         uses: actions/setup-python@v6

@@ -23,6 +23,8 @@ from __future__ import annotations
 import importlib.util
 import subprocess
 import sys
+import tempfile
+from pathlib import Path
 
 from tests._support.paths import REPO_ROOT
 
@@ -347,3 +349,157 @@ def test_find_doc_files_containing_excludes_history_class_dir(tmp_path):
     subprocess.run(["git", "commit", "-q", "-m", "init"], cwd=repo, check=True)
     found = m.find_doc_files_containing("maybe_compact_messages", repo)
     assert found == {"docs/reference/pipeline.md"}
+
+
+# ---------------------------------------------------------------------------
+# _name_tokens_by_line — pure, tokenizer-backed identifier extraction
+# (#5010 round 2, architect ruling)
+# ---------------------------------------------------------------------------
+
+
+def test_name_tokens_by_line_finds_real_code_names():
+    """Tier 1: a NAME token (def/assignment) is captured with its line."""
+    source = "def foo_bar_baz():\n    x = 1\n"
+    tokens = m._name_tokens_by_line(source)
+    assert 1 in tokens["foo_bar_baz"]
+    assert 2 in tokens["x"]
+
+
+def test_name_tokens_by_line_ignores_docstring_prose():
+    """Tier 1: the central #5010-round-2 fix — a word inside a triple-
+    quoted docstring is NEVER a NAME token, unlike the line-heuristic
+    path which could only approximate this with marker-toggling."""
+    source = '"""This word normalises the input."""\n'
+    tokens = m._name_tokens_by_line(source)
+    assert "normalises" not in tokens
+
+
+def test_name_tokens_by_line_ignores_comment_prose():
+    """Tier 1: a `#`-comment word is never a NAME token either."""
+    source = "x = 1  # scaffolding note\n"
+    tokens = m._name_tokens_by_line(source)
+    assert "scaffolding" not in tokens
+    assert 1 in tokens["x"]
+
+
+def test_name_tokens_by_line_ignores_keywords():
+    """Tier 1: `def`/`return`/`None` are Python keywords, never real
+    removed/added identifiers — excluded even though they tokenize as
+    NAME-shaped."""
+    source = "def foo():\n    return None\n"
+    tokens = m._name_tokens_by_line(source)
+    assert "def" not in tokens
+    assert "return" not in tokens
+    assert "None" not in tokens  # a keyword since Python 3
+
+
+def test_name_tokens_by_line_returns_empty_on_invalid_python():
+    """Tier 1: unparseable content is a disclosed no-signal case, not a
+    crash — the caller falls back to the line heuristic."""
+    tokens = m._name_tokens_by_line("def (:::\n")
+    assert tokens == {}
+
+
+# ---------------------------------------------------------------------------
+# find_removed_identifiers_precise — the precise, git-show + tokenize path
+# (#5010 round 2). Real temp git repo with 2 commits (pre/post), exercising
+# the actual mechanism this PR adds, not a mocked stand-in.
+# ---------------------------------------------------------------------------
+
+
+def _commit_file(repo, rel_path, content, message):
+    path = repo / rel_path
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(content)
+    subprocess.run(["git", "add", "-A"], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "-q", "-m", message], cwd=repo, check=True)
+    return subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=repo, capture_output=True, text=True, check=True,
+    ).stdout.strip()
+
+
+def test_find_removed_identifiers_precise_resolves_the_docstring_boundary_case():
+    """Tier 1: the REAL regression this round fixes — a docstring word
+    ("normalises") whose OPENING `\"\"\"` sits on a line the diff hunk
+    didn't carry (so the line-heuristic path, operating on diff text
+    alone, cannot see it's inside a docstring) is correctly excluded by
+    the precise path, because it reads the real pre-image file and
+    tokenizes it directly — no hunk-boundary blind spot is possible."""
+
+    with tempfile.TemporaryDirectory() as tmp:
+        repo = Path(tmp)
+        _init_repo(repo)
+        pre_sha = _commit_file(
+            repo, "src/reyn/mcp/adapter.py",
+            '"""Docstring intro paragraph that stays.\n\n'
+            'Handler bodies are written against 2.0, so _CtxAdapter\n'
+            'normalises the input at adaptation time.\n"""\n'
+            'def real_fn():\n    pass\n',
+            "pre",
+        )
+        post_sha = _commit_file(
+            repo, "src/reyn/mcp/adapter.py",
+            '"""Docstring intro paragraph that stays.\n"""\n'
+            'def real_fn():\n    pass\n',
+            "post",
+        )
+        diff = subprocess.run(
+            ["git", "diff", pre_sha, post_sha], cwd=repo, capture_output=True, text=True, check=True,
+        ).stdout
+        gone = m.find_removed_identifiers_precise(diff, repo, pre_sha, post_sha)
+        assert "normalises" not in gone
+        assert "_CtxAdapter" not in gone
+
+
+def test_find_removed_identifiers_precise_still_finds_a_real_removed_function():
+    """Tier 1: a genuinely removed function definition IS found by the
+    precise path (not just "everything gets excluded")."""
+
+    with tempfile.TemporaryDirectory() as tmp:
+        repo = Path(tmp)
+        _init_repo(repo)
+        pre_sha = _commit_file(
+            repo, "src/reyn/core/x.py",
+            "def action_retrieval_helper():\n    pass\n\n\ndef stays():\n    pass\n",
+            "pre",
+        )
+        post_sha = _commit_file(
+            repo, "src/reyn/core/x.py",
+            "def stays():\n    pass\n",
+            "post",
+        )
+        diff = subprocess.run(
+            ["git", "diff", pre_sha, post_sha], cwd=repo, capture_output=True, text=True, check=True,
+        ).stdout
+        gone = m.find_removed_identifiers_precise(diff, repo, pre_sha, post_sha)
+        assert "action_retrieval_helper" in gone
+
+
+def test_find_removed_identifiers_precise_falls_back_and_logs_when_file_deleted(capsys):
+    """Tier 1: real incident (#5010 round 2, PR #4560/#4454) — a file
+    deleted entirely by the diff has no post-image; the precise path
+    must fall back to the line heuristic for that file AND print a
+    fallback warning (never silently drop to a weaker path)."""
+
+    with tempfile.TemporaryDirectory() as tmp:
+        repo = Path(tmp)
+        _init_repo(repo)
+        pre_sha = _commit_file(
+            repo, "src/reyn/tools/gone_file.py",
+            "def deleted_entirely_marker_fn():\n    pass\n",
+            "pre",
+        )
+        (repo / "src/reyn/tools/gone_file.py").unlink()
+        subprocess.run(["git", "add", "-A"], cwd=repo, check=True)
+        subprocess.run(["git", "commit", "-q", "-m", "delete file"], cwd=repo, check=True)
+        post_sha = subprocess.run(
+            ["git", "rev-parse", "HEAD"], cwd=repo, capture_output=True, text=True, check=True,
+        ).stdout.strip()
+        diff = subprocess.run(
+            ["git", "diff", pre_sha, post_sha], cwd=repo, capture_output=True, text=True, check=True,
+        ).stdout
+        gone = m.find_removed_identifiers_precise(diff, repo, pre_sha, post_sha)
+        assert "deleted_entirely_marker_fn" in gone  # fallback path still finds it
+        captured = capsys.readouterr()
+        assert "falling back to line heuristic" in captured.err
+        assert "gone_file.py" in captured.err
