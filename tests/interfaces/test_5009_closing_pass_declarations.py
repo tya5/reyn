@@ -59,10 +59,8 @@ from reyn.interfaces.inline.textual_chat.chrome import (
 from reyn.interfaces.repl.read_model import (
     LOCAL_CHAT_READ_CAPABILITIES,
     REMOTE_CHAT_READ_CAPABILITIES,
-    cron_jobs_reported_snapshot_key,
-    ctx_compaction_reported_snapshot_key,
     project_remote_snapshot,
-    usage_breakdown_reported_snapshot_key,
+    reported_snapshot_keys,
 )
 
 
@@ -76,20 +74,21 @@ def test_capabilities_declare_the_3_closing_pass_keys():
     assert REMOTE_CHAT_READ_CAPABILITIES.ctx_compaction_reported is False
 
 
-def test_the_3_helpers_derive_from_the_capabilities_they_are_given():
-    """Tier 1: pins each helper's own pure projection, same shape as
-    `cache_usage_reported_snapshot_key` — see that function's own
-    docstring, in read_model.py, for why a helper rather than a
-    hand-typed literal in each producer."""
-    assert cron_jobs_reported_snapshot_key(LOCAL_CHAT_READ_CAPABILITIES) == {
-        "cron_jobs_reported": True,
-    }
-    assert usage_breakdown_reported_snapshot_key(REMOTE_CHAT_READ_CAPABILITIES) == {
-        "usage_breakdown_reported": False,
-    }
-    assert ctx_compaction_reported_snapshot_key(LOCAL_CHAT_READ_CAPABILITIES) == {
-        "ctx_compaction_reported": True,
-    }
+def test_the_shared_helper_derives_all_3_from_the_capabilities_given():
+    """Tier 1: pins `reported_snapshot_keys`'s own pure projection for
+    these 3 fields specifically — see that function's own docstring, in
+    read_model.py, for why ONE generic helper (not 4 near-identical
+    single-field ones, the shape this PR replaced) is what both
+    producers derive every `*_reported` key from."""
+    local_keys = reported_snapshot_keys(LOCAL_CHAT_READ_CAPABILITIES)
+    assert local_keys["cron_jobs_reported"] is True
+    assert local_keys["usage_breakdown_reported"] is True
+    assert local_keys["ctx_compaction_reported"] is True
+
+    remote_keys = reported_snapshot_keys(REMOTE_CHAT_READ_CAPABILITIES)
+    assert remote_keys["cron_jobs_reported"] is False
+    assert remote_keys["usage_breakdown_reported"] is False
+    assert remote_keys["ctx_compaction_reported"] is False
 
 
 def test_remote_snapshot_declares_all_3_unreported():
