@@ -254,7 +254,6 @@ AUDIT_EVENT_KINDS: frozenset[str] = frozenset({
     "control_ir_skipped",
     "cron_fired",
     "direct_alias_call_salvaged",
-    "elide_evaluated",
     "embed_attempts",
     "embed_cancelled",
     "embed_secret_redacted",

@@ -630,6 +630,92 @@ class RouterHistoryBuffer:
         self._cached_elide_use_chars4 = use_chars4
         return total
 
+    def _elide_candidate_turns(self, history: list) -> "tuple[list, int]":
+        """Return ``(turns, watermark)`` — the turns considered for the
+        #1128/#4954(2) elide-threshold decision: role-filtered (E-full
+        #383 — user/assistant/tool/agent only, ``summary`` stays
+        Reyn-internal), then PERMANENTLY watermark-filtered (#4954(2) — a
+        compacted turn never re-enters this projection, regardless of
+        whether the elide branch fires). *watermark* is also returned
+        (not just consumed here) because :meth:`build_history` needs the
+        SAME value again afterward, to decide whether to attach the
+        summary bridge — returning it avoids a second
+        ``_compaction_watermark`` call computing the identical value the
+        filter above already derived.
+
+        Factored out of ``build_history`` (#4977) so it and
+        :meth:`elide_total_and_trigger` share ONE implementation of this
+        filter instead of two copies that could drift apart — the same
+        concern the watermark predicate's own comment below already
+        flags for a 3rd copy appearing anywhere in the codebase; this
+        keeps THIS file at one, not two."""
+        turns = [
+            m for m in history
+            if m.role in ("user", "assistant", "tool", "agent")
+        ]
+        # #4954(2) TESTS-READ finding (lead-coder): ``seq == 0`` is the
+        # #3704 sentinel for "no coordinate assigned" (pre-#3704 legacy
+        # history), NOT "oldest turn" — ``chat_message.py``'s own field
+        # comment. A bare ``m.seq > watermark`` treats that sentinel as
+        # older than everything, permanently dropping every legacy turn
+        # the instant ANY watermark exists. Worse: such a turn was NEVER
+        # a compaction candidate either (``compaction_controller.py``'s
+        # own candidate filter is ``t.seq > prev_cover``, always false at
+        # seq=0) — so it was never summarised, and this exclusion would
+        # be the only place that ever stopped sending it: silent,
+        # permanent content loss. ⚠️ Reachability is UNMEASURED (whether
+        # any session with real #3704-pre-fix legacy history still
+        # exists is environment-dependent) — closed anyway because the
+        # damage shape (silent, permanent loss) costs more than this one
+        # condition does; do not read this comment as "confirmed
+        # reachable" (#4941's declaration≠guarantee caution).
+        #
+        # NOT a new predicate: ``m.seq == 0 or m.seq > watermark`` is the
+        # EXACT expression ``Session``'s own #4468 security-latch scan
+        # already uses (session.py:3074, same
+        # ``self._compaction_watermark()`` value) — sharing the VALUE
+        # without sharing how it's READ is exactly how this drifted.
+        # ⚪ This predicate now exists in 2 places (session.py:3074, and
+        # this method — #4977 collapsed the 2 copies THIS FILE used to
+        # carry down to 1); if a 3rd appears anywhere, that is the point
+        # to factor it into one shared function (architect, non-blocking)
+        # rather than copying a 3rd time.
+        watermark = self._compaction_watermark(history)
+        if watermark > 0:
+            turns = [m for m in turns if m.seq == 0 or m.seq > watermark]
+        return turns, watermark
+
+    def elide_total_and_trigger(self) -> "tuple[int, int]":
+        """Return ``(total, effective_trigger)`` — #4403's own incremental
+        elide-check computation, the SAME one :meth:`build_history` uses
+        for its elide/no-elide decision.
+
+        #4977 (owner + architect ruling): promoted from a private-only
+        computation whose only external observation point used to be the
+        (now-retired) ``elide_evaluated`` audit-event. Root cause named
+        by architect: an audit-event is operator/replay vocabulary, not
+        a test seam — using one to make private state observable to
+        tests was itself the mistake, not a missing opt-in on it. A
+        ``snapshot()``-style container holding "the last computed value"
+        was considered and rejected (architect: a second place to hold
+        the same fact, which can go stale relative to the first) —
+        instead, the computation itself becomes a normal public method.
+
+        Goes through the SAME pieces :meth:`build_history` itself calls —
+        :meth:`_elide_candidate_turns` for the turns filter, then
+        :meth:`_incremental_elide_total` (the #4403 incremental cache) —
+        not a parallel or bypassing recomputation. A caller (production
+        or a test) exercising this method exercises the exact cache path
+        production relies on; a test could not tell this method's answer
+        apart from what ``build_history`` itself just decided."""
+        history = self._history_fn()
+        turns, _watermark = self._elide_candidate_turns(history)
+        effective_trigger, _head_budget, _tail_budget = self._resolve_budgets()
+        use_chars4 = getattr(self._compaction, "use_chars4_estimate", False)
+        wire_turns = [self._serialise_turn(m) for m in turns]
+        total = self._incremental_elide_total(turns, wire_turns, use_chars4=use_chars4)
+        return total, effective_trigger
+
     # ── Public API ────────────────────────────────────────────────────────────
 
     def build_history(self) -> list[dict]:
@@ -695,15 +781,6 @@ class RouterHistoryBuffer:
         from reyn.services.compaction.engine import trim_head, trim_tail
 
         history = self._history_fn()
-        # E-full (#383): include tool-turn entries (= assistant w/ tool_calls,
-        # tool responses) in the slice. The wire-shape builder below
-        # forwards them as-is to the LLM. ``summary`` remains
-        # Reyn-internal and filtered out.
-        turns = [
-            m for m in history
-            if m.role in ("user", "assistant", "tool", "agent")
-        ]
-
         # #4954(2): permanent compaction — filter BEFORE any budget/elide
         # reasoning below (both the `total` this method computes for its
         # own elide decision, and the trim/elide steps that decision
@@ -711,11 +788,12 @@ class RouterHistoryBuffer:
         # matters, two ways: (a) filtering AFTER `total`'s computation
         # would let `total` count content this method is about to not
         # send, running the elide yes/no decision against a payload that
-        # was never real; (b) filtering happens ONCE, right here, on
-        # `turns` — BEFORE `wire_turns` is built from it below — so the
-        # two stay positionally paired (architect review: filtering either
-        # list independently, or at two different points, would let them
-        # drift silently out of correspondence).
+        # was never real; (b) filtering happens ONCE — inside
+        # ``_elide_candidate_turns`` — BEFORE `wire_turns` is built from
+        # it below — so the two stay positionally paired (architect
+        # review: filtering either list independently, or at two
+        # different points, would let them drift silently out of
+        # correspondence).
         #
         # Cost note for `_incremental_elide_total` (#4403) below: when a
         # NEW compaction advances `watermark`, `turns` shrinks relative to
@@ -725,36 +803,7 @@ class RouterHistoryBuffer:
         # call (its own docstring: "a wrong invalidation guess costs CPU,
         # never correctness") — bounded to once per compaction, not a
         # per-turn regression.
-        watermark = self._compaction_watermark(history)
-        if watermark > 0:
-            # #4954(2) TESTS-READ finding (lead-coder): ``seq == 0`` is the
-            # #3704 sentinel for "no coordinate assigned" (pre-#3704 legacy
-            # history), NOT "oldest turn" — ``chat_message.py``'s own
-            # field comment. A bare ``m.seq > watermark`` treats that
-            # sentinel as older than everything, permanently dropping
-            # every legacy turn the instant ANY watermark exists. Worse:
-            # such a turn was NEVER a compaction candidate either
-            # (``compaction_controller.py``'s own candidate filter is
-            # ``t.seq > prev_cover``, always false at seq=0) — so it was
-            # never summarised, and this exclusion would be the only place
-            # that ever stopped sending it: silent, permanent content
-            # loss. ⚠️ Reachability is UNMEASURED (whether any session
-            # with real #3704-pre-fix legacy history still exists is
-            # environment-dependent) — closed anyway because the damage
-            # shape (silent, permanent loss) costs more than this one
-            # condition does; do not read this comment as "confirmed
-            # reachable" (#4941's declaration≠guarantee caution).
-            #
-            # NOT a new predicate: ``m.seq == 0 or m.seq > watermark`` is
-            # the EXACT expression ``Session``'s own #4468 security-latch
-            # scan already uses (session.py:3074, same
-            # ``self._compaction_watermark()`` value) — sharing the VALUE
-            # without sharing how it's READ is exactly how this drifted.
-            # ⚪ This predicate now exists in 2 places (session.py:3074,
-            # here); if a 3rd appears, that is the point to factor it into
-            # one shared function (architect, non-blocking) rather than
-            # copying a 3rd time.
-            turns = [m for m in turns if m.seq == 0 or m.seq > watermark]
+        turns, watermark = self._elide_candidate_turns(history)
 
         effective_trigger, head_budget, tail_budget = self._resolve_budgets()
         use_chars4 = getattr(self._compaction, "use_chars4_estimate", False)
@@ -807,24 +856,21 @@ class RouterHistoryBuffer:
         # miss, not a tuning problem. See _incremental_elide_total's own
         # docstring for the invalidation contract.
         total = self._incremental_elide_total(turns, wire_turns, use_chars4=use_chars4)
-        # #2957 PR-B (co-vet follow-up): emit the elide side's own internal
-        # total as a public P6 audit-event — the ONLY way a test (or an
-        # operator inspecting `reyn events`) can observe what THIS method
-        # actually counted, as opposed to re-deriving a reference number
-        # from its returned wire dicts (which cannot detect a regression in
-        # THIS computation itself). None-safe: many test/estimation-path
-        # callers construct this buffer with events=None. ``total`` /
-        # ``effective_trigger`` are the elide/no-elide decision's own inputs
-        # — no conversation content — matching the 0059 §5 audit-payload
-        # discipline. See the ``elide_evaluated`` witness in
-        # ``tests/runtime/test_2957_prb_elide_advisor_token_unification.py`` for why
-        # exercising this requires an UNRESOLVABLE path-ref image fixture,
-        # not an ordinary inline one.
-        if self._events is not None:
-            self._events.emit(
-                "elide_evaluated",
-                total=total, effective_trigger=effective_trigger,
-            )
+        # #4977: this method's own internal `total`/`effective_trigger` used
+        # to also be emitted here as a public P6 audit-event
+        # (`elide_evaluated`) so a test (or an operator inspecting `reyn
+        # events`) could observe what THIS method actually counted, as
+        # opposed to re-deriving a reference number from its returned wire
+        # dicts (which cannot detect a regression in THIS computation
+        # itself). Retired (owner + architect ruling): the payload was
+        # never an operation record — an internal estimate/threshold pair
+        # with zero transport consumers — and using an audit-event as a
+        # test observation seam was itself the mistake (CLAUDE.md: an
+        # absence with neither a public surface nor a `snapshot()`-style
+        # read IS the finding, not something to paper over with a new
+        # audit-event kind). See :meth:`elide_total_and_trigger` — the
+        # SAME computation, now a normal public method a test calls
+        # directly instead of observing indirectly through the audit log.
 
         if total <= effective_trigger:
             # Window-utilization: the (already watermark-filtered) turns
