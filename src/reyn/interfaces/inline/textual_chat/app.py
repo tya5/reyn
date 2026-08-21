@@ -1404,6 +1404,13 @@ class TextualChatApp(App):
         # early seed is harmless there.
         self._queue_view = RemoteQueueView()
         self._queue_seeded = False
+        # #4983 (architect co-vet on #4994): a monotonic switch generation.
+        # ``_handle_session_attached_event`` claims one at entry and, after
+        # its off-thread history read returns, applies the result only if
+        # this is still the LATEST claimed generation — a newer switch that
+        # started (and possibly finished) while this one's read was still
+        # in flight off-thread must win. See that method's own docstring.
+        self._session_switch_generation = 0
         # A queued item's ``meta`` (ADR-0039 attribution) — ``apply_user_submitted``
         # deliberately stores only msg_id/chain_id/text on
         # ``RemoteQueueView.items`` (P2a's delta contract, reused unmodified,
@@ -5044,8 +5051,26 @@ class TextualChatApp(App):
 
         Runs the reset UNGUARDED (a `try`/`except` around clearing plain
         dicts/lists would only hide a real bug) but the follow-on hydrate
-        call is internally guarded, same as the mount-time call."""
+        call is internally guarded, same as the mount-time call.
+
+        #4983 supersede guard (architect co-vet on #4994, self-flagged as
+        "my own design's residue" — the shape was handed over, the fact
+        that an ``await`` in between lets the TARGET change was not): step
+        ①'s off-thread read has no ordering guarantee against a LATER
+        switch that starts while it is still in flight — switch A begins
+        its (slow) read, switch B arrives and finishes first, THEN A's
+        read returns; applying it unconditionally would silently overwrite
+        B's just-hydrated conversation with A's stale one. Guarded with a
+        monotonic :attr:`_session_switch_generation`, claimed at entry:
+        step ②'s apply only happens if this call still holds the latest
+        generation when the read comes back. Otherwise it is exactly what
+        :meth:`_handle_user_submitted_event`'s own docstring already calls
+        "a stale/already-superseded delta" — "a no-op", same words, not a
+        new concept."""
         import asyncio  # noqa: PLC0415
+
+        self._session_switch_generation += 1
+        my_switch_generation = self._session_switch_generation
 
         data = event.data or {}
         agent = data.get("agent")
@@ -5119,6 +5144,13 @@ class TextualChatApp(App):
         messages = await asyncio.to_thread(
             self._read_conversation_history, agent=agent, session_id=session_id,
         )
+        # #4983 supersede guard — see this method's own docstring. A LATER
+        # switch may have claimed a newer generation (and already applied
+        # its own hydrate) while the read above was still in flight; this
+        # read is then a stale/already-superseded delta, so applying it now
+        # is a no-op, not an overwrite.
+        if self._session_switch_generation != my_switch_generation:
+            return
         self._apply_hydrated_messages(messages)
 
     def _handle_user_submitted_event(self, event) -> None:

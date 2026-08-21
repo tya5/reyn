@@ -106,6 +106,7 @@ def _registry(tmp_path: Path) -> AgentRegistry:
     reg = AgentRegistry(project_root=tmp_path, session_factory=factory)
     reg.create("alpha")
     reg.create("beta")
+    reg.create("gamma")
     return reg
 
 
@@ -204,5 +205,108 @@ async def test_session_switch_still_hydrates_the_new_sessions_history(
                 if e.item.kind != "system"
             ]
             assert rows == [("user", "turn while away")]
+    finally:
+        pass
+
+
+@pytest.mark.asyncio
+async def test_session_switch_supersede_guard_lets_the_later_switch_win(
+    tmp_path, monkeypatch,
+) -> None:
+    """Tier 2: #4983 supersede guard (architect co-vet on #4994, self-
+    flagged as their own design's residue).
+
+    Moving step ①'s read off the event loop opens a window an ``await``
+    didn't have before: switch A's read can still be in flight when switch
+    B arrives, and if B finishes first, A returning later must NOT
+    overwrite B's already-applied hydrate. Witness ① from the co-vet:
+    2 switches in a row, the FIRST one's read held open — final display
+    is the SECOND switch's history; reverting the guard (always applying)
+    turns this red because A's stale read lands last.
+
+    No duration anywhere (CLAUDE.md floor/ceiling rule): ordering is
+    forced with a ``threading.Event`` gate — a controllable seam the test
+    releases explicitly — never a sleep. Calls
+    ``_handle_session_attached_event`` directly (real method, real app,
+    real registry/session — no mock) rather than through the transport
+    frame pump, because ``_pump_frames``'s ``async for`` only ever awaits
+    one frame's handler to completion before requesting the next: the
+    pump itself cannot interleave two ``session_attached`` frames, so
+    exercising the guard's own contract needs to invoke the coroutine the
+    way a second concurrent caller would.
+
+    Witness ② (a single switch still hydrates normally, so an "always
+    discard" implementation cannot pass vacuously) is
+    ``test_session_switch_still_hydrates_the_new_sessions_history`` above
+    — both are required together per the co-vet note."""
+    monkeypatch.chdir(tmp_path)
+    reg = _registry(tmp_path)
+    try:
+        from reyn.runtime.chat_message import ChatMessage
+
+        await reg.attach("beta")
+        reg.get_session("beta")._append_history(
+            ChatMessage(role="user", content="beta's own turn"),
+        )
+        await reg.attach("gamma")
+        reg.get_session("gamma")._append_history(
+            ChatMessage(role="user", content="gamma's own turn"),
+        )
+        await reg.attach("alpha")
+
+        transport = QueueTransport()
+        app = TextualChatApp(
+            transport=transport, read_model=RegistryReadModel(reg), agent_name="alpha",
+        )
+        async with app.run_test(size=(100, 30)) as pilot:
+            await _settle(pilot)
+
+            loop = asyncio.get_running_loop()
+            release_beta_read = threading.Event()
+            beta_read_started = asyncio.Event()
+            real_read = app._read_conversation_history
+
+            def _gated_read(*, agent=None, session_id=None):
+                if agent == "beta":
+                    loop.call_soon_threadsafe(beta_read_started.set)
+                    release_beta_read.wait()
+                return real_read(agent=agent, session_id=session_id)
+
+            monkeypatch.setattr(app, "_read_conversation_history", _gated_read)
+
+            await reg.attach("beta")
+            beta_task = asyncio.create_task(
+                app._handle_session_attached_event(
+                    Event(
+                        type="session_attached",
+                        data={"agent": "beta", "session_id": _DEFAULT_SID},
+                    )
+                )
+            )
+            await beta_read_started.wait()  # beta's read is now held open
+
+            # gamma's switch starts AFTER beta's and, being ungated, finishes
+            # (including its own apply) BEFORE beta's held-open read returns.
+            await reg.attach("gamma")
+            await app._handle_session_attached_event(
+                Event(
+                    type="session_attached",
+                    data={"agent": "gamma", "session_id": _DEFAULT_SID},
+                )
+            )
+
+            release_beta_read.set()
+            await beta_task
+            await _settle(pilot)
+
+            rows = [
+                (e.item.kind, e.item.text)
+                for e in app.query_one(FlowView).entries
+                if e.item.kind != "system"
+            ]
+            assert rows == [("user", "gamma's own turn")], (
+                "the LATER switch (gamma) must win — beta's stale, "
+                "later-arriving read must be a no-op, not an overwrite"
+            )
     finally:
         pass
