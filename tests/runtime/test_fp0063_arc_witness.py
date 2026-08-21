@@ -189,6 +189,7 @@ verified while developing this test):
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import subprocess
@@ -968,23 +969,100 @@ async def test_llm_driven_install_ingest_query_arc_reaches_the_ingested_chunk(
         )
         replay_query.install()
         try:
-            final_text = await _drive_one_turn(
+            # #4827②: run turn 2 as a background task and sample the arc's
+            # child pids WHILE it is still executing, instead of after
+            # ``_drive_one_turn`` returns. architect's 3rd-branch finding
+            # (issue #4827②, after the (A)/(B) split proved insufficient):
+            # the driver session that holds the MCP connections is
+            # deliberately marked ephemeral right after terminal
+            # (``pipeline_executor_driver.py``'s own comment: "after
+            # terminal, the driver marks its session ephemeral so the
+            # standard post-turn vanish teardown ... reclaims it") and
+            # reaped ASYNCHRONOUSLY from there — sampling AFTER
+            # ``_drive_one_turn`` returns (the old position) races that
+            # reap, win-or-lose depending on scheduler luck (measured
+            # ~1/26 CI failure rate). Sampling DURING execution is
+            # structurally race-free: the driver session is provably
+            # still alive (it is what is actively running the turn), so
+            # there is nothing to race — not "wait less", a different
+            # WINDOW entirely. No new WAIT the assert depends on: the
+            # loop below still exits the instant the task itself
+            # completes — never blocks longer than turn 2 was already
+            # going to take, and never delays the assert past when it
+            # would already fire. The 50ms poll interval between ticks
+            # is a CADENCE, not a floor the assert's correctness depends
+            # on (CLAUDE.md's distinction) — each ``pgrep`` call is a
+            # real, blocking subprocess invocation, so polling with NO
+            # interval (``asyncio.sleep(0)``) starves turn 2's own async
+            # work of scheduling time entirely (measured: doubled this
+            # test's wall time, from ~58s to ~120s) and can even observe
+            # ``pgrep``'s own transient child process as a false-positive
+            # "arc child" — the interval exists to let turn 2 actually
+            # run, not to make the assert wait longer.
+            #
+            # Truth condition is UNCHANGED from the original (same
+            # ``_child_pids(os.getpid()) - _baseline_children`` diff,
+            # same downstream asserts) — only WHEN it samples moves.
+            # Positive control: moving this capture back to after
+            # ``await turn2_task`` (the original position) must
+            # reintroduce the exact race this PR fixes.
+            #
+            # UNION across every poll, not the first hit: the arc spawns
+            # more than one real server (chunker + vector-store), and
+            # they need not appear at the same poll tick — stopping at
+            # the FIRST non-empty diff risks locking onto an early,
+            # unrelated, short-lived child instead (measured: a transient
+            # subprocess elsewhere in setup was caught this way once and
+            # was already dead by the very next assert, before
+            # registry.shutdown() ever ran). Accumulating every pid ever
+            # observed while the task is still in flight keeps the same
+            # "captured while provably alive" property without depending
+            # on which single tick happens to see the real servers.
+            #
+            # #4827②, 2nd-round finding: the driver session holding the
+            # MCP connections is an INNER session `run_pipeline` spawns
+            # mid-turn-2 (`pipeline_executor_driver.py`), not turn 2's own
+            # outer session — its own reap can fire (and complete) BEFORE
+            # turn 2's overall final reply, i.e. WHILE this loop is still
+            # running. So aliveness must be checked in the SAME tick as
+            # discovery, with NO await between the two — any intervening
+            # yield (even just awaiting the rest of turn 2, as an earlier
+            # revision of this fix did) reopens the exact same race one
+            # step later. `_dead_at_capture` records a pid that was
+            # ALREADY dead the instant we saw it (impossible under a
+            # correct arc — would mean this witness observed a corpse,
+            # not a real running server); `_arc_children` only ever
+            # accumulates pids confirmed alive at their own discovery
+            # moment.
+            turn2_task = asyncio.ensure_future(_drive_one_turn(
                 registry,
                 "Ingest the docs/ corpus into rag.sqlite, then query it for 'what is reyn'.",
                 timeout=60.0,
-            )
+            ))
+            _arc_children: "set[int]" = set()
+            _dead_at_capture: "set[int]" = set()
+            while not turn2_task.done():
+                _new = _child_pids(os.getpid()) - _baseline_children - _arc_children
+                for _pid in _new:
+                    if _pid_is_alive(_pid):  # checked THIS tick -- no await since discovery
+                        _arc_children.add(_pid)
+                    else:
+                        _dead_at_capture.add(_pid)
+                await asyncio.sleep(0.05)
+            final_text = await turn2_task
         finally:
             replay_query.restore()
             if generate:
                 replay_query.flush()
         assert final_text, "turn 2 (ingest/query) must reach a final assistant turn"
 
-        # #4759 structural witness, part 1: capture the arc's real MCP server
-        # subprocess(es) while still confirmed alive, BEFORE registry.shutdown()
-        # runs (below, in the finally). An empty set here would mean this
-        # witness has nothing to observe -- fail loudly rather than let part 2
-        # vacuously pass.
-        _arc_children = _child_pids(os.getpid()) - _baseline_children
+        # #4759 structural witness, part 1: the arc's real MCP server
+        # subprocess(es) were captured above WHILE turn 2 was still running
+        # (#4827②), confirmed alive in the SAME tick as discovery -- see
+        # the capture loop's own comment for why aliveness cannot be
+        # re-checked later without reopening the same race one step down.
+        # An empty set here would mean this witness has nothing to
+        # observe -- fail loudly rather than let part 2 vacuously pass.
         # #4827②: this assert's failure message is enriched (NOT its truth
         # condition — no wait/sync/new gate added; lead-coder's explicit
         # instruction after two independently-refuted hypotheses on my own
@@ -1007,13 +1085,15 @@ async def test_llm_driven_install_ingest_query_arc_reaches_the_ingested_chunk(
             "subprocess(es) to be running as direct children of this process "
             "at this point in the arc -- found none, so the #4759 structural "
             "witness below would vacuously pass. "
-            f"os.getpid()={os.getpid()!r} baseline_children={_baseline_children!r}. "
+            f"os.getpid()={os.getpid()!r} baseline_children={_baseline_children!r} "
+            f"dead_at_capture={_dead_at_capture!r}. "
             "Full OS process table at the moment of failure:\n"
             f"{_ps_snapshot_or_reason()}"
         )
-        assert all(_pid_is_alive(pid) for pid in _arc_children), (
-            f"one or more of the arc's own captured child pids {_arc_children} "
-            "were already dead before registry.shutdown() ran"
+        assert not _dead_at_capture, (
+            f"pid(s) {_dead_at_capture} appeared as a NEW child of this process "
+            "but were already dead the instant they were observed -- this "
+            "witness never saw them as a genuinely running server at all"
         )
 
         from reyn.builtin.plugins.rag.scripts.vector_store_server import SqliteVecStore
