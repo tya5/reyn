@@ -92,6 +92,16 @@ class ChatReadModelCapabilities:
     THIS dataclass will not fail to construct until a human also adds a
     field for it here; that step is not, and cannot be, machine-enforced by
     this class alone.
+
+    **A declaration is an assertion, not an observation** (architect
+    co-vet, #5000 — the same limitation ``AxisEnforcementDeclaration``
+    already carries, not new here): nothing checks that
+    :class:`RegistryReadModel` returning ``LOCAL_CHAT_READ_CAPABILITIES``
+    stays TRUE of its actual accessors. If a future edit made
+    ``completion_session()`` start returning ``None`` under some new local
+    condition without updating this declaration, the declared/actual gap
+    this class exists to prevent would reopen silently, on the LOCAL side
+    this time. Follow-up, not a defect in this class.
     """
 
     completion_session: bool

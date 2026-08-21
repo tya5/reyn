@@ -114,7 +114,22 @@ class QueueTransport(ClientTransport):
 def test_capabilities_dataclass_rejects_a_missing_field():
     """Tier 1: omitting any one of the 6 required fields fails to
     CONSTRUCT — a ``TypeError``, not a silently-defaulted ``False``. Mirrors
-    ``AxisEnforcementDeclaration``'s own witness verbatim."""
+    ``AxisEnforcementDeclaration``'s own witness verbatim.
+
+    Positive control (architect co-vet on #5000): without it, this test
+    alone would ALSO go green after a field is renamed or deleted — an
+    unknown ``kwarg`` raises the identical ``TypeError``, same red, wrong
+    reason. Constructing with all 6 fields present, right here, is what
+    lets this test claim the ``TypeError`` above is caused by the MISSING
+    field specifically, not by some other construction failure."""
+    ChatReadModelCapabilities(
+        completion_session=True,
+        intervention_head=True,
+        pending_command_ui=True,
+        has_command_ui_region=True,
+        conversation_history=True,
+        load_older_conversation_history=True,
+    )
     with pytest.raises(TypeError):
         ChatReadModelCapabilities(  # type: ignore[call-arg]
             completion_session=True,
@@ -130,7 +145,14 @@ def test_capabilities_dataclass_has_exactly_the_6_declared_fields():
     """Tier 1: pins the declared vocabulary itself — the 6 names #4996's
     own issue enumerated, no more, no fewer. A regression here is a
     silent widening/narrowing of what's declared, not a missing-field bug
-    (that's the test above)."""
+    (that's the test above).
+
+    Not load-bearing for witness① (the positive control added to the test
+    above already makes that claim on its own) — this one is a plain
+    transcription of the field list and would need editing in the SAME PR
+    as any real rename anyway (CLAUDE.md's 6-questions, #2: "is it the
+    implementation, transcribed?"). Kept as an explicit, readable pin of
+    the vocabulary itself, not as a second guard."""
     names = {f.name for f in fields(ChatReadModelCapabilities)}
     assert names == {
         "completion_session",

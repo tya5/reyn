@@ -219,6 +219,10 @@ _HYDRATE_PAGE_FRAMES = 200
 #: particular read came back empty. Distinguishes that case from a
 #: genuinely new, capable session with nothing to restore yet, which stays
 #: silent exactly as it always has.
+#:
+#: PROVISIONAL wording (#5000): making this distinction visible at all is
+#: the owner's own direction; this exact phrasing is the author's and is
+#: freely revisable — not a design decision to defend.
 HISTORY_UNAVAILABLE_MARKER = "conversation history isn't available on this connection"
 
 
