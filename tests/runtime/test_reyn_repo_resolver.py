@@ -119,10 +119,18 @@ def test_safe_resolve_inside_missing_path_errors():
     ``test_safe_resolve_inside_rejects_non_declared_top_level`` below
     (a bare non-declared top-level segment like ``no-such-file.xyz`` is
     refused for a DIFFERENT reason — not in the declared set at all).
+
+    #5013: the message must also name a permitted alternative (this
+    tool's own reachable scope), not just say "no" — asserted on the
+    exact wording, not just "an error occurred" (lead-coder's own
+    witness standard, #5011).
     """
     root = resolve_reyn_root()
-    with pytest.raises(ValueError, match="does not exist"):
+    with pytest.raises(ValueError, match="does not exist") as excinfo:
         safe_resolve_inside(root, "docs/no-such-file.xyz")
+    message = str(excinfo.value)
+    assert "This tool reads only THIS checkout" in message
+    assert "README.md" in message and "src" in message  # the reachable set, named
 
 
 def test_safe_resolve_inside_rejects_non_declared_top_level():

@@ -239,7 +239,10 @@ def safe_resolve_inside(root: Path, rel_path: str) -> Path:
     if not candidate.exists():
         raise ValueError(
             f"reyn_repo: path {rel_path!r} does not exist in the Reyn "
-            "repository."
+            "repository. This tool reads only THIS checkout, under "
+            f"{REACHABLE_TOP_LEVEL_ENTRIES} (proposal 0061 §3.3) — a path "
+            "that exists in a different checkout/worktree is out of this "
+            "tool's read scope, not a Reyn-repo file at all."
         )
     return candidate
 
