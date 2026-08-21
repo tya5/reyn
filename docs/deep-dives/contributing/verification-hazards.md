@@ -1614,6 +1614,97 @@ claim, but an ordinary research step available the whole time.
   that says "this works" does not say "raise here" or "degrade here" for
   every caller alike.
 
+## 27. "The record reads correctly now" is not "the record was correct when the referent changed" — a claim's TIME POINT is part of its referent
+
+One night, three sessions independently made the same conflation:
+reading a doc's CURRENT text as evidence for whether that doc was
+accurate at the moment a PAST PR changed the thing it describes.
+
+- **architect** (broker message, 2026-08-21): wrote "2 件は実際の
+  drift" (two of the findings were real drift) without having measured
+  either one — an unmeasured claim about a past state, stated as if
+  observed.
+- **lead-coder**, PR #5014's body (the doc-drift gate's promotion PR):
+  read `docs/reference/runtime/session-construction.md` as it stands
+  today, found it accurate, and wrote that as though it settled whether
+  the identifier's REMOVING PR (#4572) had correctly triggered the gate.
+- **lead-coder**, issue #5016's closing comment: the same conflation,
+  independently, closing a "stale doc" ticket on the strength of the
+  doc's current text alone.
+- **lead-coder**, a personal memory pin: the same conflation carried
+  into a written memory note, which would have propagated the error
+  into a future session's starting context had it not been caught.
+- **e2e-coder**, PR #5021's first draft: wrote "3 FP / 9, 0 TP
+  remaining" — reading the SAME doc's current, accurate text as proof
+  that all three PRs citing `_action_retrieval` (#4572, #4567, #4563)
+  had been false positives. Caught only by an independent
+  re-verification against the actual historical commit — not by
+  re-reading the same reasoning more carefully; see the detection
+  technique below.
+
+All five readings converged on the same doc
+(`docs/reference/runtime/session-construction.md`) and the same
+identifier (`_action_retrieval`, #5010/#4572). The doc IS accurate
+today. It was NOT accurate at the moment PR #4572 merged — PR #4582, a
+later, separate PR, is what fixed it. Measured directly against
+PR #4572's own merge commit (`46a8bf1c3`): `_action_retrieval` had 10
+occurrences in `src/` at the parent commit, 0 at the merge commit
+itself (confirming #4572 removed it); the merge's own diffstat shows 0
+changes to the doc (confirming #4572 never touched it); and the doc's
+text AT THAT COMMIT read, present tense, "`_action_retrieval` ...
+DRIVES whether the universal catalog wrappers appear ... existing chat
+behaviour IS preserved" — describing then-live behavior, not history.
+#4572 was a correct, real true positive when it fired. Reading today's
+doc and concluding otherwise inverts the verdict.
+
+**The general form, not specific to doc-drift**: any check whose
+subject can change AFTER the event being judged — a doc that gets
+fixed later, a flag that gets flipped later, a config that gets
+migrated later — has two distinct time points: *when the event
+happened* and *when the check is being read*. "Is X true" is silently
+ambiguous between them unless the time point is stated. A doc-drift
+gate is one instance of this shape (it re-evaluates against the
+CURRENT doc, on every run, regardless of when the removing PR merged
+— by design, since a live check has to read live state), but nothing
+about the trap is specific to docs: any gate or claim that looks
+backward at a past event through a subject that keeps changing shares
+it.
+
+### The detection technique
+
+- **A claim about a past event's correctness names its time point, or
+  it is ambiguous.** "The doc is accurate" and "the doc was accurate
+  when PR #N merged" are different claims about different objects
+  (today's file vs. that commit's file) even though they share a path.
+  State which one before writing either.
+- **The tense discriminator has two faces, and diagnosis needs the
+  first while treatment needs the second.** Present tense at the
+  historical commit ("DRIVES", "IS preserved") names a description
+  that was LIVE then — a real defect to flag. Removal-record language
+  ("renamed from", "now-deleted", "previously", "retired") names a doc
+  that already knows the thing is gone — nothing to fix. #5016 was
+  settled on exactly this second face: today's doc reads "renamed
+  from `_action_retrieval`" and "the now-deleted `action_retrieval:`
+  block", which is what closed it as already-correct. Reading only the
+  first face diagnoses a stale doc; reading the second is what tells
+  you whether there is still something to DO about it.
+- **To verify the past one, read the past state directly — not the
+  present one.** `git show <merge-commit>^:<path>` (the file as it was
+  immediately BEFORE the event) is one command. Reading today's
+  checked-out file, however careful the reading, is a different
+  measurement of a different object.
+- **Re-reading your own reasoning does not surface a time-point
+  conflation — the error lives in which object was read, not in how
+  carefully the reasoning was done afterward.** Independent
+  re-verification against the historical commit is what caught the
+  fifth instance above; re-reading the same draft again would not
+  have, because the draft's own logic was internally consistent given
+  its (wrong) premise.
+- **A gate's own re-evaluation behavior is not itself the bug.**
+  Re-checking against current state on every run is correct for a live
+  check. The trap is in how a HUMAN OR AGENT reads that re-evaluation's
+  result as a verdict on a past event, not in the gate's design.
+
 ## See also
 
 - [Testing policy](testing.md) — Tier model, Mock vs Fake, decision flow.
