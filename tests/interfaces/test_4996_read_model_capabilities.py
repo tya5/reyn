@@ -133,6 +133,8 @@ def test_capabilities_dataclass_rejects_a_missing_field():
         cron_jobs_reported=True,
         usage_breakdown_reported=True,
         ctx_compaction_reported=True,
+        hooks_reported=True,
+        pipelines_reported=True,
     )
     with pytest.raises(TypeError):
         ChatReadModelCapabilities(  # type: ignore[call-arg]
@@ -145,7 +147,9 @@ def test_capabilities_dataclass_rejects_a_missing_field():
             cache_usage_reported=True,
             cron_jobs_reported=True,
             usage_breakdown_reported=True,
-            # ctx_compaction_reported omitted
+            ctx_compaction_reported=True,
+            # pipelines_reported omitted (hooks_reported present)
+            hooks_reported=True,
         )
 
 
@@ -163,9 +167,10 @@ def test_capabilities_dataclass_has_exactly_the_declared_fields():
     the vocabulary itself, not as a second guard.
 
     ``cache_usage_reported`` / ``cron_jobs_reported`` /
-    ``usage_breakdown_reported`` / ``ctx_compaction_reported`` (#5009) are
-    the 4 fields NOT named after a ``ChatReadModel`` method — see the
-    class's own docstring for why they live here anyway."""
+    ``usage_breakdown_reported`` / ``ctx_compaction_reported`` (#5009) /
+    ``hooks_reported`` / ``pipelines_reported`` (#5034) are the 6 fields
+    NOT named after a ``ChatReadModel`` method — see the class's own
+    docstring for why they live here anyway."""
     names = {f.name for f in fields(ChatReadModelCapabilities)}
     assert names == {
         "completion_session",
@@ -178,6 +183,8 @@ def test_capabilities_dataclass_has_exactly_the_declared_fields():
         "cron_jobs_reported",
         "usage_breakdown_reported",
         "ctx_compaction_reported",
+        "hooks_reported",
+        "pipelines_reported",
     }
 
 
