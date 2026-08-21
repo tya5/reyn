@@ -386,14 +386,20 @@ class LocalEventBackend:
                 "text for every fragment; this gap is durable-write-only.",
             )
         # #4666 item ③ — same conditional-not-static discipline as ①
-        # above, for the 6 user-input kinds in `_USER_INPUT_CONTENT_FIELDS`.
+        # above, for the user-input kinds in `_USER_INPUT_CONTENT_FIELDS`.
+        # DERIVED from that mapping (lead-coder review, PR #4970), not
+        # hand-listed: a 7th kind added to the mapping without a matching
+        # edit here would otherwise silently under-declare (drop the
+        # field, but not name it) — deriving makes that skew structurally
+        # impossible instead of merely detectable.
         if not self._user_input_include_text:
+            kind_field_pairs = ", ".join(
+                f"{kind}.{field}"
+                for kind, field in sorted(_USER_INPUT_CONTENT_FIELDS.items())
+            )
             gaps.append(
-                "The content-bearing field on user_submitted / "
-                "user_message_received / intervention_answer_submitted / "
-                "user_answered_intervention / user_intervention_received / "
-                "router_retry_exhausted (text/answer_text/answer/"
-                "user_message, per kind) is not retained in the durable "
+                "The content-bearing field on each of these kinds "
+                f"({kind_field_pairs}) is not retained in the durable "
                 "record — dropped by config "
                 "(audit_events.user_input_include_text=False, the default, "
                 "#4666 item 3). Every other field on these kinds "

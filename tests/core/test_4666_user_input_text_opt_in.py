@@ -29,7 +29,7 @@ from __future__ import annotations
 
 import pytest
 
-from reyn.core.events.backend import LocalEventBackend
+from reyn.core.events.backend import _USER_INPUT_CONTENT_FIELDS, LocalEventBackend
 from reyn.schemas.models import Event
 
 # (kind, content_field, other_field_name, other_field_value)
@@ -151,14 +151,25 @@ def test_a_kind_outside_the_six_is_never_touched() -> None:
 
 def test_declare_gaps_names_the_content_drop_when_off() -> None:
     """Tier 1: #4666 ③ — with the default (off), declare_gaps() must
-    explicitly name that these 6 kinds' content fields are dropped by
+    explicitly name that these kinds' content fields are dropped by
     CONFIG, distinct from ①'s agent_delta gap — a reader must be able to
-    tell "declared and dropped" apart from "never existed"."""
+    tell "declared and dropped" apart from "never existed".
+
+    Checks EVERY kind in `_USER_INPUT_CONTENT_FIELDS`, not just one
+    representative — declare_gaps() derives its disclosure string from
+    that same mapping (PR #4970 review), so a kind present in the
+    mapping but absent from the disclosure would mean drop-without-
+    declare, the exact skew contract 2 forbids."""
     backend = LocalEventBackend(_RecordingStore())
     gaps = backend.declare_gaps()
-    assert any(
-        "user_input_include_text" in g and "user_submitted" in g for g in gaps
-    ), f"expected a gap explicitly naming the config-driven content drop; got {gaps!r}"
+    disclosure = next(
+        (g for g in gaps if "user_input_include_text" in g), None,
+    )
+    assert disclosure is not None, f"expected a gap naming the content drop; got {gaps!r}"
+    assert all(kind in disclosure for kind in _USER_INPUT_CONTENT_FIELDS), (
+        f"expected every kind in _USER_INPUT_CONTENT_FIELDS to be named "
+        f"in the disclosure; got {disclosure!r}"
+    )
 
 
 def test_declare_gaps_does_not_claim_the_content_gap_when_on() -> None:
