@@ -1677,6 +1677,17 @@ it.
   when PR #N merged" are different claims about different objects
   (today's file vs. that commit's file) even though they share a path.
   State which one before writing either.
+- **The tense discriminator has two faces, and diagnosis needs the
+  first while treatment needs the second.** Present tense at the
+  historical commit ("DRIVES", "IS preserved") names a description
+  that was LIVE then — a real defect to flag. Removal-record language
+  ("renamed from", "now-deleted", "previously", "retired") names a doc
+  that already knows the thing is gone — nothing to fix. #5016 was
+  settled on exactly this second face: today's doc reads "renamed
+  from `_action_retrieval`" and "the now-deleted `action_retrieval:`
+  block", which is what closed it as already-correct. Reading only the
+  first face diagnoses a stale doc; reading the second is what tells
+  you whether there is still something to DO about it.
 - **To verify the past one, read the past state directly — not the
   present one.** `git show <merge-commit>^:<path>` (the file as it was
   immediately BEFORE the event) is one command. Reading today's
