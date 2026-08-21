@@ -159,12 +159,17 @@ def test_ctx_pane_shows_not_reported_instead_of_a_fabricated_zero_percent():
 
 
 def test_ctx_pane_still_shows_a_real_percentage_when_reported():
-    """Tier 2: accept-side for the Ctx pane."""
+    """Tier 2: accept-side for the Ctx pane. `ctx_compaction_reported` is
+    also set True here — this test is only about the cache line, so the
+    (independently-declared, #5009 closing pass) compaction line must
+    not fall back to its own "not reported" and get caught by the
+    blanket assertion below."""
     snap = {
         "ctx_window": 200000,
         "ctx_used": 48120,
         "ctx_recent_usage": (48120, 14900),
         "cache_usage_reported": True,
+        "ctx_compaction_reported": True,
     }
     blob = "\n".join(ctx_pane_lines(snap))
     assert "31% hit" in blob, blob

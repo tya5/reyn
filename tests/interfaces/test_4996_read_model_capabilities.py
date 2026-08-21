@@ -130,6 +130,9 @@ def test_capabilities_dataclass_rejects_a_missing_field():
         conversation_history=True,
         load_older_conversation_history=True,
         cache_usage_reported=True,
+        cron_jobs_reported=True,
+        usage_breakdown_reported=True,
+        ctx_compaction_reported=True,
     )
     with pytest.raises(TypeError):
         ChatReadModelCapabilities(  # type: ignore[call-arg]
@@ -139,7 +142,10 @@ def test_capabilities_dataclass_rejects_a_missing_field():
             has_command_ui_region=True,
             conversation_history=True,
             load_older_conversation_history=True,
-            # cache_usage_reported omitted
+            cache_usage_reported=True,
+            cron_jobs_reported=True,
+            usage_breakdown_reported=True,
+            # ctx_compaction_reported omitted
         )
 
 
@@ -156,9 +162,10 @@ def test_capabilities_dataclass_has_exactly_the_declared_fields():
     implementation, transcribed?"). Kept as an explicit, readable pin of
     the vocabulary itself, not as a second guard.
 
-    ``cache_usage_reported`` (#5009) is the one field NOT named after a
-    ``ChatReadModel`` method — see the class's own docstring for why it
-    lives here anyway."""
+    ``cache_usage_reported`` / ``cron_jobs_reported`` /
+    ``usage_breakdown_reported`` / ``ctx_compaction_reported`` (#5009) are
+    the 4 fields NOT named after a ``ChatReadModel`` method — see the
+    class's own docstring for why they live here anyway."""
     names = {f.name for f in fields(ChatReadModelCapabilities)}
     assert names == {
         "completion_session",
@@ -168,6 +175,9 @@ def test_capabilities_dataclass_has_exactly_the_declared_fields():
         "conversation_history",
         "load_older_conversation_history",
         "cache_usage_reported",
+        "cron_jobs_reported",
+        "usage_breakdown_reported",
+        "ctx_compaction_reported",
     }
 
 

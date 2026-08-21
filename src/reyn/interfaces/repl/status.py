@@ -365,6 +365,42 @@ def _cache_usage_reported_key() -> "dict[str, bool]":
     return cache_usage_reported_snapshot_key(LOCAL_CHAT_READ_CAPABILITIES)
 
 
+def _cron_jobs_reported_key() -> "dict[str, bool]":
+    """LOCAL's own `{"cron_jobs_reported": True}` — same lazy-import shape
+    as :func:`_cache_usage_reported_key` above, extended in #5009's
+    closing pass."""
+    from reyn.interfaces.repl.read_model import (  # noqa: PLC0415
+        LOCAL_CHAT_READ_CAPABILITIES,
+        cron_jobs_reported_snapshot_key,
+    )
+
+    return cron_jobs_reported_snapshot_key(LOCAL_CHAT_READ_CAPABILITIES)
+
+
+def _usage_breakdown_reported_key() -> "dict[str, bool]":
+    """LOCAL's own `{"usage_breakdown_reported": True}` — same lazy-import
+    shape as :func:`_cache_usage_reported_key` above, extended in #5009's
+    closing pass."""
+    from reyn.interfaces.repl.read_model import (  # noqa: PLC0415
+        LOCAL_CHAT_READ_CAPABILITIES,
+        usage_breakdown_reported_snapshot_key,
+    )
+
+    return usage_breakdown_reported_snapshot_key(LOCAL_CHAT_READ_CAPABILITIES)
+
+
+def _ctx_compaction_reported_key() -> "dict[str, bool]":
+    """LOCAL's own `{"ctx_compaction_reported": True}` — same lazy-import
+    shape as :func:`_cache_usage_reported_key` above, extended in #5009's
+    closing pass."""
+    from reyn.interfaces.repl.read_model import (  # noqa: PLC0415
+        LOCAL_CHAT_READ_CAPABILITIES,
+        ctx_compaction_reported_snapshot_key,
+    )
+
+    return ctx_compaction_reported_snapshot_key(LOCAL_CHAT_READ_CAPABILITIES)
+
+
 def _snapshot(registry, config=None):
     """Read live status values off the attached session via sync accessors."""
     s = registry.attached_session()
@@ -438,6 +474,9 @@ def _snapshot(registry, config=None):
         "attached_name": registry.attached_name,
         "session_tree": registry.session_tree(),
         "usage": (u.prompt_tokens, u.completion_tokens, u.total_tokens),
+        # #5009 closing pass: LOCAL genuinely measures the prompt/completion
+        # SPLIT above (real Session state, u.prompt_tokens/u.completion_tokens).
+        **_usage_breakdown_reported_key(),
         "cost_usd": s.total_cost_usd,
         "cost_total": cost_total,
         "cost_agent": cost_agent,
@@ -491,7 +530,19 @@ def _snapshot(registry, config=None):
         # reverse import must stay lazy to avoid a cycle.
         **_cache_usage_reported_key(),
         "ctx_compaction_status_fn": ctx_compaction_status_fn,
+        # #5009 closing pass: LOCAL genuinely measures compaction status
+        # (the bound method above is real ``Session.context_window_status``).
+        **_ctx_compaction_reported_key(),
         "cron_jobs": _extract_cron_jobs(config) if config is not None else [],
+        # #5009 closing pass: LOCAL genuinely measures cron config (via
+        # ``_extract_cron_jobs`` above) whenever a ``config`` is given —
+        # declared True unconditionally: an unattached/no-config caller
+        # already gets `[]` for `cron_jobs` itself (same graceful-degrade
+        # value either way), and this is LOCAL's capability declaration,
+        # not a per-call state — the LOCAL implementation is always
+        # CAPABLE of reporting cron config, whether or not one happens to
+        # be loaded on THIS particular call.
+        **_cron_jobs_reported_key(),
         "mcp_servers": _extract_mcp_servers(config) if config is not None else [],
         "hooks": _extract_hooks(config) if config is not None else [],
         "skills": _extract_skills(config) if config is not None else [],

@@ -132,6 +132,22 @@ class ChatReadModelCapabilities:
     condition without updating this declaration, the declared/actual gap
     this class exists to prevent would reopen silently, on the LOCAL side
     this time. Follow-up, not a defect in this class.
+
+    **The real criterion, corrected** (#5009 closing pass — ``cron_jobs_
+    reported`` / ``usage_breakdown_reported`` / ``ctx_compaction_
+    reported``): the FIRST measuring stick tried for "does a key need a
+    field here" was "is the degrade value indistinguishable from a
+    genuinely empty local state" — a useful PROXY, but not the actual
+    rule. #4996's own words already said the real one: "never a
+    fabricated turn", "never a fabricated count". ``ctx_compaction_
+    reported`` is the falsifying case: remote's degraded compaction line
+    reads "0% to trigger" — a real local session essentially never has a
+    genuine zero-trigger state, so the OLD proxy would have said "no
+    conflation, skip it" — but "0%" fabricates reassurance regardless of
+    whether a real empty state could produce the same string. The
+    correct question is always the fabrication one; "indistinguishable
+    from empty" is one way a value fabricates, not the definition of
+    fabrication.
     """
 
     completion_session: bool
@@ -141,6 +157,9 @@ class ChatReadModelCapabilities:
     conversation_history: bool
     load_older_conversation_history: bool
     cache_usage_reported: bool
+    cron_jobs_reported: bool
+    usage_breakdown_reported: bool
+    ctx_compaction_reported: bool
 
 
 def cache_usage_reported_snapshot_key(
@@ -157,6 +176,51 @@ def cache_usage_reported_snapshot_key(
     return {"cache_usage_reported": capabilities.cache_usage_reported}
 
 
+def cron_jobs_reported_snapshot_key(
+    capabilities: ChatReadModelCapabilities,
+) -> "dict[str, bool]":
+    """The ``snapshot()`` dict fragment for :attr:`ChatReadModelCapabilities.
+    cron_jobs_reported` (#5009 closing pass). Same shape as
+    :func:`cache_usage_reported_snapshot_key` — see that function's own
+    docstring for why a helper, not a hand-typed literal, in each
+    producer. Measured (per-key, before declaring): remote's
+    ``cron_jobs: []`` renders the Cron pane's own ``["(none)"]`` fallback,
+    byte-identical to a genuinely empty LOCAL cron config — the same
+    conflation ``cache_usage_reported`` closes, one key over."""
+    return {"cron_jobs_reported": capabilities.cron_jobs_reported}
+
+
+def usage_breakdown_reported_snapshot_key(
+    capabilities: ChatReadModelCapabilities,
+) -> "dict[str, bool]":
+    """The ``snapshot()`` dict fragment for :attr:`ChatReadModelCapabilities.
+    usage_breakdown_reported` (#5009 closing pass, architect's corrected
+    criterion — not "indistinguishable from empty" but the ``#4996``
+    principle stated directly: "never a fabricated ... count"). Measured:
+    remote's ``usage`` degrades to ``(0, 0, real_agent_tokens)`` — the
+    Cost pane renders ``prompt 0 · completion 0 · total X`` with X real
+    and nonzero, an inconsistent breakdown (``0 + 0 != X``) the pane
+    itself never flags. Governs the prompt/completion SPLIT only; the
+    total is real wire data on both implementations and is unaffected."""
+    return {"usage_breakdown_reported": capabilities.usage_breakdown_reported}
+
+
+def ctx_compaction_reported_snapshot_key(
+    capabilities: ChatReadModelCapabilities,
+) -> "dict[str, bool]":
+    """The ``snapshot()`` dict fragment for :attr:`ChatReadModelCapabilities.
+    ctx_compaction_reported` (#5009 closing pass). Measured: remote's
+    ``ctx_compaction_status_fn: None`` renders the Ctx pane's compaction
+    line as ``0 / 0 tokens est. (0% to trigger)`` — not indistinguishable
+    from a genuine local zero-trigger session (which essentially never
+    happens once a model is resolved), but a FABRICATED reassurance —
+    "0% to trigger" reads as "plenty of headroom" when nothing was
+    actually measured. Architect's corrected criterion for this class of
+    field: a fabricated-looking number is disqualifying even when it
+    can't be confused with a real empty state."""
+    return {"ctx_compaction_reported": capabilities.ctx_compaction_reported}
+
+
 #: :class:`RegistryReadModel` is local — every degradable read reflects real,
 #: current state; ``None``/``[]``/``0`` from it always means "genuinely
 #: nothing", never "unsupported here".
@@ -168,6 +232,9 @@ LOCAL_CHAT_READ_CAPABILITIES = ChatReadModelCapabilities(
     conversation_history=True,
     load_older_conversation_history=True,
     cache_usage_reported=True,
+    cron_jobs_reported=True,
+    usage_breakdown_reported=True,
+    ctx_compaction_reported=True,
 )
 
 #: :class:`RemoteReadModel` — the frame-sufficiency boundary each of these 6
@@ -182,6 +249,9 @@ REMOTE_CHAT_READ_CAPABILITIES = ChatReadModelCapabilities(
     conversation_history=False,
     load_older_conversation_history=False,
     cache_usage_reported=False,
+    cron_jobs_reported=False,
+    usage_breakdown_reported=False,
+    ctx_compaction_reported=False,
 )
 
 
@@ -495,6 +565,13 @@ def project_remote_snapshot(values: "dict | None") -> dict:
         "agent_names": [],
         "session_tree": [],
         "usage": (0, 0, v.get("agent_tokens", 0)),
+        # #5009 closing pass: the prompt/completion SPLIT above is `0`/`0`
+        # while the total is real wire data — an inconsistent breakdown
+        # (`0 + 0 != total`) the Cost pane never flags on its own.
+        # Declared so it renders "—" for the split instead of a
+        # fabricated `0`; the total stays untouched (already real on
+        # both implementations).
+        **usage_breakdown_reported_snapshot_key(REMOTE_CHAT_READ_CAPABILITIES),
         "session_cached_tokens": 0,
         "ctx_recent_usage": (0, 0),
         # #5009: `0` above is the correct graceful-degrade VALUE for both cache
@@ -518,12 +595,25 @@ def project_remote_snapshot(values: "dict | None") -> dict:
         **cache_usage_reported_snapshot_key(REMOTE_CHAT_READ_CAPABILITIES),
         "ctx_source": "remote",
         "ctx_compaction_status_fn": None,
+        # #5009 closing pass: `None` above is correct (no compaction-status
+        # source on the wire) — declared here so `chrome.py`'s Ctx pane
+        # renders "not reported" instead of the fabricated-looking
+        # "0 / 0 tokens est. (0% to trigger)" a naive `status_fn is None`
+        # fallback produces (a real local session essentially never has a
+        # genuine zero-trigger state, so "0%" here reads as false
+        # reassurance, not as an honest empty state).
+        **ctx_compaction_reported_snapshot_key(REMOTE_CHAT_READ_CAPABILITIES),
         # #3283 ④: the keyed per-turn cost/token lookup is a SESSION-local read
         # (the tracker's per-turn buckets are process-local, in-memory, and not
         # projected onto the AG-UI wire) → None for remote, and the right
         # gutter renders "—" rather than a fabricated figure. Same
         # frame-sufficiency boundary as ``conversation_history`` above.
         "turn_usage_fn": None,
+        # #5009 closing pass: `[]` above is correct (cron config is not on
+        # the wire) — declared here so the Cron pane renders "not
+        # reported" instead of its own `["(none)"]` fallback, which is
+        # byte-identical to a genuinely empty LOCAL cron config.
+        **cron_jobs_reported_snapshot_key(REMOTE_CHAT_READ_CAPABILITIES),
         "cron_jobs": [],
         "mcp_servers": [],
         "hooks": [],

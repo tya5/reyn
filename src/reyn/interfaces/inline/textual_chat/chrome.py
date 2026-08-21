@@ -985,8 +985,18 @@ def pipe_pane_lines(snap: "dict | None") -> list[str]:
 def cron_pane_lines(snap: "dict | None") -> list[str]:
     """The configured cron jobs (``config.cron.jobs`` via the snapshot's
     ``cron_jobs``), each with its enabled state and schedule. Read-only: a cron
-    job's enabled flag is config-declared, not session-togglable."""
+    job's enabled flag is config-declared, not session-togglable.
+
+    #5009 closing pass: ``cron_jobs_reported`` (``snap.get(..., False)`` —
+    ``False`` is the safe direction, matching every other #5009 field;
+    unreachable for any real, complete read model, since both producers
+    always populate it — see :class:`~reyn.interfaces.repl.read_model.
+    ChatReadModelCapabilities`'s own docstring) gates the ``["(none)"]``
+    fallback: a remote client's own ``cron_jobs: []`` used to render
+    byte-identical to a genuinely empty LOCAL cron config."""
     snap = snap or {}
+    if not snap.get("cron_jobs_reported", False):
+        return ["not reported on this connection"]
     jobs = snap.get("cron_jobs") or []
     return [
         f"[{'on' if j.get('enabled') else 'off'}] {j['name']}  {j['schedule']}"
@@ -1382,9 +1392,22 @@ def cost_pane_lines(snap: "dict | None") -> list[str]:
     p, c, _t = snap.get("usage", (0, 0, 0))
     agent_tokens = snap.get("agent_tokens", _t)
     cached = snap.get("session_cached_tokens", 0)
+    # #5009 closing pass: the total above is real wire data on every
+    # implementation, but the prompt/completion SPLIT is `0`/`0` on a
+    # remote client — an inconsistent breakdown (`0 + 0 != total`) this
+    # pane never flagged on its own. `usage_breakdown_reported` (safe
+    # default `False`, unreachable for any real, complete read model —
+    # see `ChatReadModelCapabilities`'s own docstring) gates the split
+    # only; the total keeps rendering unconditionally.
+    usage_breakdown_reported = snap.get("usage_breakdown_reported", False)
+    prompt_completion = (
+        f"prompt {p:,} · completion {c:,}"
+        if usage_breakdown_reported
+        else "prompt — · completion —"
+    )
     rows = [
         *_cost_breakdown_table(snap),
-        f"tokens   prompt {p:,} · completion {c:,} · total {agent_tokens:,}",
+        f"tokens   {prompt_completion} · total {agent_tokens:,}",
         _cache_hit_line(
             "cache", cached, p, note="cumulative",
             reported=snap.get("cache_usage_reported", False),
@@ -1460,7 +1483,20 @@ def ctx_pane_lines(snap: "dict | None") -> list[str]:
             note="last call",
             reported=snap.get("cache_usage_reported", False),
         ),
-        f"compaction   {comp_est:,} / {comp_trigger:,} tokens est.  ({comp_pct}% to trigger)",
+        # #5009 closing pass: `status_fn is None` degrades ``comp_trigger``
+        # to `0`, and "0% to trigger" is a FABRICATED reassurance — a real
+        # local session essentially never has a genuine zero-trigger
+        # state, so this isn't "indistinguishable from empty" (#4996's
+        # own proxy criterion), it's a number that looks like real
+        # headroom when nothing was measured (the corrected criterion —
+        # see `ChatReadModelCapabilities`'s own docstring). Gated the
+        # same safe-default way as every other #5009 field.
+        (
+            f"compaction   {comp_est:,} / {comp_trigger:,} tokens est."
+            f"  ({comp_pct}% to trigger)"
+            if snap.get("ctx_compaction_reported", False)
+            else "compaction   not reported on this connection"
+        ),
     ]
 
 
