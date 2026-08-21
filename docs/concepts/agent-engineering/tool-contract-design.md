@@ -43,6 +43,10 @@ Two properties fall out of "every op has a schema":
 - **Reject early.** Malformed output triggers a validation error before any side effect runs.
 - **Replay safely.** A saved event log can be re-rendered without re-invoking the LLM, because every op was validated at write-time.
 
+## Denial messages name a permitted alternative
+
+A tool that returns a refusal should name at least one thing that IS allowed — a different path, a different scope, where to find the right argument shape — not just say "no" and stop (#5013). "No" alone leaves the caller re-guessing at the boundary instead of acting on it.
+
 ## See also
 
 - [Reference: control-ir](../../reference/runtime/control-ir.md)
