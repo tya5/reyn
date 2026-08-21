@@ -6119,7 +6119,19 @@ class TextualChatApp(App):
         purely client-side notices, so this now takes one path regardless
         of transport, matching what ``AgUiTransport.put_display``'s own
         docstring already claims for "client-authored echoes" — which
-        wasn't true for this call site until now."""
+        wasn't true for this call site until now.
+
+        ★Ordering trade, stated on purpose (architect co-vet on #5004): the
+        OLD ``put_display`` path queued this notice on ``repl_outbox``,
+        landing "in FIFO order with the session's own output" (that
+        method's own docstring, verbatim). Appending via ``_ingest_frame``
+        is IMMEDIATE — it can now land ahead of any session output already
+        sitting in that outbox at the moment Enter was blocked. Deliberate:
+        this notice is about THIS client's own composer state right now,
+        not a delta from the session, so immediate is the right answer,
+        not a regression to paper over — but it IS a real position change,
+        named here so a future ordering-bug hunt doesn't rule this call
+        site out."""
         if self._transport.attach_failed():
             text = "attach failed (see log) — your message was kept; retry once resolved"
         else:
