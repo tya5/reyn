@@ -23,15 +23,21 @@ def _init_repo(tmp_path: Path) -> Path:
 
 
 def test_git_position_reports_branch_and_head_for_a_real_commit(tmp_path: Path) -> None:
-    """Tier 1: a real repo with one commit on a named branch reports both."""
+    """Tier 1: a real repo with one commit on a named branch reports both.
+
+    The expected SHA is read directly off `.git/refs/heads/main` (a raw
+    filesystem read, no `git` subprocess) rather than via a second
+    `git rev-parse HEAD` call — lead-coder catch, #5012-A review: asserting
+    against a second invocation of the SAME command under test is blind to
+    "both sides wrong the same way" (CLAUDE.md test-review §2). Reading the
+    ref file independently derives the expected value a genuinely different
+    way."""
     repo = _init_repo(tmp_path)
     (repo / "f.txt").write_text("x")
     subprocess.run(["git", "add", "-A"], cwd=repo, check=True)
     subprocess.run(["git", "commit", "-q", "-m", "init"], cwd=repo, check=True)
 
-    real_head = subprocess.run(
-        ["git", "rev-parse", "HEAD"], cwd=repo, capture_output=True, text=True, check=True,
-    ).stdout.strip()
+    real_head = (repo / ".git" / "refs" / "heads" / "main").read_text().strip()
 
     position = git_position(repo)
 
@@ -58,9 +64,9 @@ def test_git_position_reports_none_branch_on_detached_head(tmp_path: Path) -> No
     (repo / "f.txt").write_text("x")
     subprocess.run(["git", "add", "-A"], cwd=repo, check=True)
     subprocess.run(["git", "commit", "-q", "-m", "init"], cwd=repo, check=True)
-    head_sha = subprocess.run(
-        ["git", "rev-parse", "HEAD"], cwd=repo, capture_output=True, text=True, check=True,
-    ).stdout.strip()
+    # Read the ref file directly (no `git rev-parse`) — same independence
+    # reasoning as the real-commit test above.
+    head_sha = (repo / ".git" / "refs" / "heads" / "main").read_text().strip()
     subprocess.run(["git", "checkout", "-q", head_sha], cwd=repo, check=True)
 
     position = git_position(repo)
