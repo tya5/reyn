@@ -70,49 +70,54 @@ file" exist in this module, and calibration (#5010) is why both do:
   no post-image; unparseable content) — every fallback is printed to
   stderr, never silently taken.
 
-## Blocking (promoted #5010, architect ruling 2026-08-21)
+## Not blocking — promoted then REVERTED same day (#5010, 2026-08-21)
 
 A backward scan of ~400 merged PRs found 9 real candidates (PRs where
 this discriminator's "touched the doc?" branch actually ran). Hand-
-inspection: 3 CONFIRMED TRUE POSITIVES (`_action_retrieval`, PRs
-#4572/#4567/#4563 — PR #4582's own title: "sweep stale
-action_retrieval.universal_wrappers_enabled refs #4572's own fix scope
-missed", direct evidence a human had to notice and fix what this gate
-would have flagged), 0 false positives after the round-2 (tokenizer)
-rewrite (was 7/9 with the line-heuristic-only round 1).
+inspection first read 3 as TRUE POSITIVES (`_action_retrieval`, PRs
+#4572/#4567/#4563) and 0 as false positives, and the gate was promoted
+to blocking on that basis. **Corrected within hours, on independent
+re-measurement**: `docs/reference/runtime/session-construction.md` is
+CURRENTLY ACCURATE — correctly phrased as a historical rename note
+(`renamed from _action_retrieval`, `the now-deleted action_retrieval:
+block`, `retired ... on/off gate`; #5016, closed). The doc WAS stale
+right after PR #4572 merged, but PR #4582 (a LATER, separate PR)
+already fixed it permanently. **Corrected calibration count: 1 FP / 9**
+in this identifier's family, not 0/9.
 
-**"0 FP among 9" is NOT why this is blocking** — with only 9 trials,
-0/9 barely bounds the true rate at all (roughly "under ~30%", a loose
-statistical read, not a safety argument). The promotion rests on three
-STRUCTURAL points instead, none of them a count:
+**Why this falsified the promotion, not just the count.** The
+discriminator only asks "did THIS removing PR touch the doc" — it has
+no way to see that some OTHER, later PR already fixed the doc since.
+A staged, multi-PR removal (rename recorded in one PR, deletion
+completed in a second, doc genuinely fixed in a third) breaks the
+"whoever writes a removal record touches the doc in the SAME PR" premise
+the whole discriminator design rests on (see this docstring's opening
+section) — the premise was written as a description of THIS repo's
+practice, and it does not hold for a staged removal. The promotion's
+decisive point — "the passing action (touch the doc) is always
+correct, no dead end" — is FALSE for this case: the doc is already
+accurate, so touching it again means writing something false. That is
+the dead end the promotion assumed could not exist.
 
-1. **The false-positive CLASS was eliminated, not merely unobserved.**
-   Both real FP classes found in calibration (`#`-comment prose,
-   docstring prose) tokenize as impossible-to-confuse with a NAME token
-   once the extractor reads real pre-image file content instead of
-   guessing from diff-line text — see `find_removed_identifiers_precise`.
-   The disclosed line-heuristic limitation (a `#`/quote inside a string
-   literal) disappears the same way, for the same reason.
-2. **The fallback speaks up.** Every time the precise path can't run
-   for a file (no pre/post image; unparseable content), it prints to
-   stderr and falls back to the weaker line heuristic FOR THAT FILE
-   ONLY — never silently. Verified against two real triggers
-   (#4560/#4454, both files deleted entirely by their PR), with a test
-   that asserts the fallback message itself, not just the result.
-3. **The decisive point: the PASSING action is always the correct
-   action.** This gate's pass condition is "touch the doc file in the
-   SAME PR" — even in a false-positive world, the only thing an author
-   does in response is open that doc and confirm it's still accurate.
-   There is no dead end a false positive can walk someone into. Staying
-   warn-only despite that would return to #5003's own founding problem
-   ("the prescription exists, but firing depends on someone's memory").
+**Structural, not statistical, in both directions**: promotion rested
+on eliminating false-positive CLASSES (comment prose, docstring prose —
+both genuinely closed by the tokenizer rewrite, kept, still correct),
+and reversion rests on finding a THIRD class the tokenizer rewrite does
+not touch (a doc that is accurate today about an identifier removed in
+a PAST, different PR). Re-promotion needs its own structural
+discriminator for this class — e.g. some way to tell "records a past
+rename/removal" apart from "still describes current behavior" without
+reading the doc's own natural language (the very judgment #5003's
+original design rejected as unmakeable) — not another push on N. If no
+such discriminator is found, staying warn-only permanently is a valid,
+final answer (architect: "それも答え").
 
-**Revert condition** (required — a promotion with no way back is a
-one-way door): if a genuine false positive is found in production use,
-`.github/workflows/check-doc-drift.yml`'s job reverts to warn-only
-(annotation, `main()`'s exit code ignored) until the new FP class is
-closed the same structural way as the first two — never by loosening
-`_MIN_IDENTIFIER_LENGTH` or adding another marker-guessing heuristic.
+**What's still kept, unchanged, still correct**: the tokenizer-backed
+extraction (`find_removed_identifiers_precise`), its stderr-logged
+fallback, `_print_findings_and_exit_code` (still returns 1 on a
+finding — useful for a human running `--pr N` by hand; only the CI
+workflow ignores it now), and every existing test. None of that was
+what broke.
 """
 from __future__ import annotations
 
