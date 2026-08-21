@@ -1404,6 +1404,13 @@ class TextualChatApp(App):
         # early seed is harmless there.
         self._queue_view = RemoteQueueView()
         self._queue_seeded = False
+        # #4983 (architect co-vet on #4994): a monotonic switch generation.
+        # ``_handle_session_attached_event`` claims one at entry and, after
+        # its off-thread history read returns, applies the result only if
+        # this is still the LATEST claimed generation — a newer switch that
+        # started (and possibly finished) while this one's read was still
+        # in flight off-thread must win. See that method's own docstring.
+        self._session_switch_generation = 0
         # A queued item's ``meta`` (ADR-0039 attribution) — ``apply_user_submitted``
         # deliberately stores only msg_id/chain_id/text on
         # ``RemoteQueueView.items`` (P2a's delta contract, reused unmodified,
@@ -4918,9 +4925,25 @@ class TextualChatApp(App):
                 # a late-joining client).
                 self._queue_item_meta[msg_id] = dict(item.get("meta") or {})
 
-    def _handle_session_attached_event(self, event) -> None:
+    async def _handle_session_attached_event(self, event) -> None:
         """The session-switch reset barrier (#3310 N2, consuming N1's
         ``session_attached`` ``EventFrame``, ``{agent, session_id}``).
+
+        #4983 (owner ruling, 2026-08-21: "セッション切り替えの見た目許容" —
+        a brief blank-then-refill on switch is accepted; NOT "history
+        never arrives" or "order changes"): ``async def``, not ``def``,
+        so the NEW session's ``conversation_history()`` disk read
+        (:meth:`_read_conversation_history`, step ①) can run OFF the
+        event loop via ``asyncio.to_thread`` — see this method's own
+        tail for where. Deliberately does NOT make :meth:`_hydrate_from_
+        history` itself async (architect ruling, #4983: that would push
+        the SAME "off-thread or not" axis onto BOTH call sites — mount
+        (:meth:`on_mount`, #4985) does NOT want to ``await`` here, this
+        one does) — the split is by WORK (I/O vs UI), not by function:
+        :meth:`_read_conversation_history` (I/O) runs off-thread ONLY at
+        this call site; :meth:`_apply_hydrated_messages` (projection +
+        apply, pure in-memory) stays on the loop exactly as it always
+        has, at both call sites.
 
         ★Design thesis (architect deep-dive, issue #3310 §1): a cached
         FlowView cannot be the source of truth after a switch — while THIS
@@ -5028,7 +5051,27 @@ class TextualChatApp(App):
 
         Runs the reset UNGUARDED (a `try`/`except` around clearing plain
         dicts/lists would only hide a real bug) but the follow-on hydrate
-        call is internally guarded, same as the mount-time call."""
+        call is internally guarded, same as the mount-time call.
+
+        #4983 supersede guard (architect co-vet on #4994, self-flagged as
+        "my own design's residue" — the shape was handed over, the fact
+        that an ``await`` in between lets the TARGET change was not): step
+        ①'s off-thread read has no ordering guarantee against a LATER
+        switch that starts while it is still in flight — switch A begins
+        its (slow) read, switch B arrives and finishes first, THEN A's
+        read returns; applying it unconditionally would silently overwrite
+        B's just-hydrated conversation with A's stale one. Guarded with a
+        monotonic :attr:`_session_switch_generation`, claimed at entry:
+        step ②'s apply only happens if this call still holds the latest
+        generation when the read comes back. Otherwise it is exactly what
+        :meth:`_handle_user_submitted_event`'s own docstring already calls
+        "a stale/already-superseded delta" — "a no-op", same words, not a
+        new concept."""
+        import asyncio  # noqa: PLC0415
+
+        self._session_switch_generation += 1
+        my_switch_generation = self._session_switch_generation
+
         data = event.data or {}
         agent = data.get("agent")
         session_id = data.get("session_id")
@@ -5091,7 +5134,24 @@ class TextualChatApp(App):
         except Exception:
             logger.exception("textual chat: switch queue-view reseed failed")
         self._queue_seeded = True
-        self._hydrate_from_history(agent=agent, session_id=session_id)
+        # #4983: step ① (the disk read) runs OFF the event loop — the
+        # measured defect this issue exists for (a synchronous
+        # `conversation_history()` call blocking the TUI's own event
+        # loop, here on every session switch, not just at mount) —
+        # step ② (projection + apply) stays on the loop, unchanged. See
+        # this method's own docstring for why `_hydrate_from_history`
+        # itself is not what's called here.
+        messages = await asyncio.to_thread(
+            self._read_conversation_history, agent=agent, session_id=session_id,
+        )
+        # #4983 supersede guard — see this method's own docstring. A LATER
+        # switch may have claimed a newer generation (and already applied
+        # its own hydrate) while the read above was still in flight; this
+        # read is then a stale/already-superseded delta, so applying it now
+        # is a no-op, not an overwrite.
+        if self._session_switch_generation != my_switch_generation:
+            return
+        self._apply_hydrated_messages(messages)
 
     def _handle_user_submitted_event(self, event) -> None:
         """MATERIALIZE exit (#3300 P2b, sent-queue exit contract §6a): a
@@ -5790,7 +5850,7 @@ class TextualChatApp(App):
                     etype = getattr(frame.event, "type", None)
                     if etype == "session_attached":
                         try:
-                            self._handle_session_attached_event(frame.event)
+                            await self._handle_session_attached_event(frame.event)
                         except Exception:
                             logger.exception(
                                 "textual chat: session_attached reset+hydrate failed"
