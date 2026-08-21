@@ -99,3 +99,7 @@ jobs:
       - name: collect-events-settle
         if: ${{ !cancelled() }}
         run: python scripts/check_collect_events_settle.py
+
+      - name: cancel-swallow
+        if: ${{ !cancelled() }}
+        run: python scripts/check_cancel_swallow.py

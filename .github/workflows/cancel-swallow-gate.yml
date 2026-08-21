@@ -1,0 +1,44 @@
+name: cancel-swallow gate
+
+# #4986/#4988: reject any "cancel a task/future this code owns, await it,
+# catch the resulting CancelledError unconditionally" site with no
+# Task.cancelling() check. `await some_task` raises CancelledError for two
+# indistinguishable reasons — that task's own cancellation outcome (the
+# intended target) or the CURRENT coroutine's own task being
+# independently, externally cancelled at the same await — and an
+# unconditional swallow absorbs both, letting a genuine external
+# cancellation (e.g. a shutdown sweep, asyncio.run()'s / pytest-asyncio's
+# own end-of-loop _cancel_all_tasks) appear to have completed when it did
+# not. See scripts/check_cancel_swallow.py's module docstring for the full
+# design rationale (#4986/#4988).
+#
+# No diff/base-ref needed — a whole-tree scan against a baseline of zero,
+# same shape as collect-events-settle-gate.yml. A shallow checkout is
+# enough.
+on:
+  pull_request:
+    paths:
+      - "src/reyn/**"
+
+permissions:
+  contents: read
+
+jobs:
+  cancel-swallow:
+    name: cancel-swallow gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      # scripts/check_cancel_swallow.py is stdlib-only (ast / pathlib /
+      # sys). No pip install needed.
+      - name: Check no cancel-then-await-then-swallow site is missing a cancelling() check
+        run: |
+          python scripts/check_cancel_swallow.py
