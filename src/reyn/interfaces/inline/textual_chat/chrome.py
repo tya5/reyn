@@ -679,12 +679,30 @@ def _model_pane_entries(
     That string never equals any class name, so the ``· active`` marker
     silently appeared nowhere. Prepended here as its own informational row
     (empty command = inert, the same convention read-only panes use) rather
-    than left unmarked."""
+    than left unmarked.
+
+    #5025: the prepended row's own wording, ``"(current model, not in the
+    class list below)"``, is deliberately WEAKER than an earlier
+    ``"(current, not a configured class)"``. ``classes`` is the snapshot's
+    ``model_classes`` — on a remote connection that key is unconditionally
+    ``[]`` (never reported over the wire, #5009's own conflation, this time
+    on a VALUE the caller passes in rather than a declared key), so the old
+    wording asserted "nothing is configured" when the true state is simply
+    unknown here. The new wording is true in BOTH cases it actually covers
+    — genuine local #3324 passthrough (nothing below really is configured)
+    and remote (the list below is empty because it is never populated,
+    configured or not) — without claiming to tell them apart, which this
+    function cannot do from ``classes`` alone. PROVISIONAL, same footing as
+    #5011's own ``note="last call"``: the exact string is the author's,
+    freely revisable by the owner without touching this function's logic.
+    """
     entries = [
         (f"{c}  · active" if c == active else c, f"/model {c}") for c in classes
     ]
     if active is not None and active not in classes:
-        entries.insert(0, (f"(current, not a configured class)  {active}", ""))
+        entries.insert(
+            0, (f"(current model, not in the class list below)  {active}", "")
+        )
     return entries
 
 
