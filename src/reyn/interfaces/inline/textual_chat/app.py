@@ -6121,7 +6121,7 @@ class TextualChatApp(App):
         docstring already claims for "client-authored echoes" — which
         wasn't true for this call site until now.
 
-        ★Ordering trade, stated on purpose (architect co-vet on #5004): the
+        Ordering trade, stated on purpose (architect co-vet on #5004): the
         OLD ``put_display`` path queued this notice on ``repl_outbox``,
         landing "in FIFO order with the session's own output" (that
         method's own docstring, verbatim). Appending via ``_ingest_frame``
