@@ -428,6 +428,31 @@ _FENCED_BLOCK_RE = re.compile(r"```.*?```", re.DOTALL)
 # i.e. GitHub genuinely did not parse them as closing references, but
 # this gate's OWN check 5 still flagged them). ``re.DOTALL`` non-greedy so
 # `.` matches a newline too, without needing to special-case it.
+#
+# #4992 post-merge review (architect): the discriminator this fix rests
+# on is the OBSERVATION above (GitHub genuinely did not parse the wrapped
+# span as closing), not "because CommonMark says so" — a spec citation
+# alone would NOT have been accepted as sufficient grounds for widening a
+# gate whose whole job is stopping risky bare phrasing; what makes this
+# an acceptable widening is that it only recognizes spans GitHub itself
+# already treats as safe, never loosens detection of anything GitHub
+# would actually act on. Disclosed explicitly, per the same discipline
+# this repo's own pre-conclusion checklist requires: that observation is
+# n=1 (this PR's own body, one wrapped span) — supported by CommonMark's
+# spec as the reason to expect it generalizes, but not independently
+# re-measured against a second real body.
+#
+# Also flagged (not a defect, a scope note): `_body_as_github_parses`
+# feeds check 2's own use-vs-mention reading too
+# (`find_canonical_closing_declarations`), so this same widening — a
+# span that spans a line break is now recognized as fenced — applies
+# there as well, not only to check 5. This is the CORRECT, intended
+# consequence of the two checks sharing one "what does GitHub actually
+# see as fenced" primitive, not an accidental side effect: check 2 asks
+# "did the author canonically declare a close GitHub will act on", and a
+# multi-line-fenced `Closes #N` is exactly as GitHub-inert as a
+# single-line-fenced one, so it must be excluded from check 2's
+# corroboration the same way.
 _INLINE_CODE_RE = re.compile(r"`[^`]*?`", re.DOTALL)
 
 
