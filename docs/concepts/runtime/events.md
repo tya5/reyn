@@ -242,15 +242,22 @@ records the model's questions but not the user's answers to them; that
 asymmetry is the intended shape of "one knob per content type", not a
 half-recorded exchange to be fixed.
 
-**⚠️ ② does not close every conversation-content leak.** The owner's
-"conversation body" ruling is a property of CONTENT, not of which event
-`kind` carries it — the SAME string (e.g. `ask_user`'s question/answer)
-can also duplicate into `tool_called.args` / `tool_returned.result` for
-tool-mediated exchanges, entirely outside the three owner-ruled knobs'
-reach. That gap is closed by a separate follow-up PR (a tool-side
-declaration + dispatcher gating mechanism, architect ruling), not by ②
-— turning ② off does not mean no conversation content leaves
-`.reyn/events`.
+**⚠️ ② closes the `ask_user` dispatcher-level leak, but not every
+conversation-content leak in general.** The owner's "conversation body"
+ruling is a property of CONTENT, not of which event `kind` carries it —
+the SAME string (e.g. `ask_user`'s question) used to duplicate into
+`tool_called.args` for the generic `dispatch_tool` path, entirely outside
+the three owner-ruled knobs' reach. #4666 item ③b closed that specific
+leak: a per-tool declaration (`reyn.core.dispatch.content_declarations`)
+lets a tool mark one of its own fields as `"assistant"`-directed content,
+consulted by `dispatch_tool` and redacted under the SAME ② knob. **Scope,
+measured, not extended by guess:** only `ask_user` declares any field
+today (`question` → `"assistant"`); `mcp_called.args` was measured and
+excluded (an MCP tool's args are model-decided call parameters, not a
+dedicated question/answer channel). A tool that shows the user free text
+and forgets to declare it still leaks that text silently through this
+path — the declaration bound only catches the declared set GROWING,
+never catches a tool that should have declared and didn't.
 
 ### User input's own content is a THIRD, separate opt-in (#4666 item ③)
 
@@ -281,15 +288,21 @@ unconditionally.
 broadcast — every one of these kinds reaches its subscribers before this
 backend-level knob is ever consulted) and `history.jsonl`.
 
-**⚠️ Known gap this knob does NOT close:** `ask_user`'s question/answer
-also reach the audit log unconditionally via `tool_called.args`/
-`tool_returned.result` (`dispatch_tool`, a wholly separate emit path —
-those carry a tool's own payload, not one of the 6 kinds above). Closing
-that needs a per-tool "this field is conversation content" declaration
-the dispatcher can consult (an architect ruling in progress, #4666) —
-turning this knob on or off has no effect on that path either way. Do
+**⚠️ `ask_user`'s dispatcher-level leak is now closed too (#4666 item
+③b).** `ask_user`'s answer used to also reach the audit log
+unconditionally via `tool_returned.result["answer"]` (`dispatch_tool`, a
+wholly separate emit path from the 6 kinds above) — outside this knob's
+reach entirely. A per-tool declaration
+(`reyn.core.dispatch.content_declarations`) now lets `ask_user` mark
+`answer` as `"user"`-directed content, consulted by `dispatch_tool` and
+redacted under this SAME knob. **Scope, measured, not extended by
+guess:** only `ask_user` declares any field today; a tool that shows the
+user free text and forgets to declare it still leaks that text silently
+through this path — the declaration bound only catches the declared set
+GROWING, never catches a tool that should have declared and didn't. Do
 not read the 6-kind list above as exhaustive coverage of "user input
-reaches the audit log".
+reaches the audit log" — a future undeclared tool is a real gap this
+knob cannot see.
 
 ## What audit-events are NOT
 
