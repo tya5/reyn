@@ -450,6 +450,24 @@ def project_remote_snapshot(values: "dict | None") -> dict:
         "usage": (0, 0, v.get("agent_tokens", 0)),
         "session_cached_tokens": 0,
         "ctx_recent_usage": (0, 0),
+        # #5009: `0` above is the correct graceful-degrade VALUE for both cache
+        # figures (neither is projected onto the AG-UI wire — cache-hit
+        # accounting is session-local, like the other keys in this block) —
+        # this key is the missing DECLARATION half: `0` is indistinguishable
+        # from a genuine 0% cache-hit rate on its own (#4996's own conflation,
+        # re-opened on the KEY axis rather than the METHOD axis #4996 covered
+        # — architect's own design gap, not a new bug class). Consulted by
+        # `chrome.py`'s `_cache_hit_line` so BOTH panes reading these 2 keys
+        # (Cost pane's cumulative line, Ctx pane's recent-call line) render a
+        # "not reported" line instead of a fabricated "0% hit (0 / 0)" — the
+        # same wording that would come from a real, empty session.
+        #
+        # Scope, explicit (architect, #5009): this is NOT the owner's actual
+        # "cache stuck at 0%" observation — that was measured on a LOCAL
+        # session (owner-confirmed) and is a separate, still-unresolved
+        # symptom this key does not touch. This key only makes the REMOTE
+        # "0 could mean unsupported" case honestly say so.
+        "cache_usage_reported": False,
         "ctx_source": "remote",
         "ctx_compaction_status_fn": None,
         # #3283 ④: the keyed per-turn cost/token lookup is a SESSION-local read

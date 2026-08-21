@@ -467,6 +467,11 @@ def _snapshot(registry, config=None):
         "ctx_source": ctx_source,
         "session_cached_tokens": u.cached_tokens,
         "ctx_recent_usage": (recent.prompt_tokens, recent.cached_tokens),
+        # #5009: LOCAL genuinely measures both cache figures above (the
+        # `u`/`recent` reads are real Session state) — see
+        # ``project_remote_snapshot``'s own comment for the key this pairs
+        # with on the remote side.
+        "cache_usage_reported": True,
         "ctx_compaction_status_fn": ctx_compaction_status_fn,
         "cron_jobs": _extract_cron_jobs(config) if config is not None else [],
         "mcp_servers": _extract_mcp_servers(config) if config is not None else [],
