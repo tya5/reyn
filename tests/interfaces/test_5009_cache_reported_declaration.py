@@ -37,13 +37,15 @@ attempts before settling — both measured, not guessed):
    frozen, all fields required, no defaults — a producer that forgets
    the field fails to CONSTRUCT, at import time, not at render time).
    Each `snapshot()` producer derives its own key from ITS OWN
-   capabilities constant via `cache_usage_reported_snapshot_key(...)` —
-   never hand-typed a second time, so the two producers cannot silently
-   diverge from each other. The pane's own `snap.get(key, False)`
-   default is now correct and UNREACHABLE for any real, complete read
-   model: it fires only for the genuine `None`/`{}` pre-attach case,
-   where `False` (never claim reporting with nothing to consult) is the
-   right answer.
+   capabilities constant via `reported_snapshot_keys(...)` (originally
+   `cache_usage_reported_snapshot_key`, generalized in #5009's closing
+   pass once 3 more fields needed the identical helper shape — see that
+   function's own docstring) — never hand-typed a second time, so the
+   two producers cannot silently diverge from each other. The pane's
+   own `snap.get(key, False)` default is now correct and UNREACHABLE
+   for any real, complete read model: it fires only for the genuine
+   `None`/`{}` pre-attach case, where `False` (never claim reporting
+   with nothing to consult) is the right answer.
 
 Explicit scope (architect): only these 2 keys folded into
 `ChatReadModelCapabilities`. The other 9 session-local
@@ -72,8 +74,8 @@ from reyn.interfaces.inline.textual_chat.chrome import cost_pane_lines, ctx_pane
 from reyn.interfaces.repl.read_model import (
     LOCAL_CHAT_READ_CAPABILITIES,
     REMOTE_CHAT_READ_CAPABILITIES,
-    cache_usage_reported_snapshot_key,
     project_remote_snapshot,
+    reported_snapshot_keys,
 )
 
 
@@ -85,17 +87,15 @@ def test_capabilities_declare_cache_usage_reported():
 
 
 def test_the_snapshot_key_helper_derives_from_the_capabilities_it_is_given():
-    """Tier 1: `cache_usage_reported_snapshot_key` is a pure projection —
-    it returns exactly `{"cache_usage_reported": capabilities.
-    cache_usage_reported}`, nothing hand-typed alongside it. Both real
-    producers call this (see the tests below), so this pins the ONE
-    function they both depend on."""
-    assert cache_usage_reported_snapshot_key(LOCAL_CHAT_READ_CAPABILITIES) == {
-        "cache_usage_reported": True,
-    }
-    assert cache_usage_reported_snapshot_key(REMOTE_CHAT_READ_CAPABILITIES) == {
-        "cache_usage_reported": False,
-    }
+    """Tier 1: `reported_snapshot_keys` is a pure projection over EVERY
+    field of the capabilities it's given (generalized in #5009's closing
+    pass from the original single-field `cache_usage_reported_snapshot_
+    key` — see that function's own docstring) — its `cache_usage_
+    reported` entry always matches the source it was given, nothing
+    hand-typed alongside it. Both real producers call this (see the
+    tests below), so this pins the ONE function they both depend on."""
+    assert reported_snapshot_keys(LOCAL_CHAT_READ_CAPABILITIES)["cache_usage_reported"] is True
+    assert reported_snapshot_keys(REMOTE_CHAT_READ_CAPABILITIES)["cache_usage_reported"] is False
 
 
 def test_remote_snapshot_declares_cache_usage_unreported():
@@ -159,12 +159,17 @@ def test_ctx_pane_shows_not_reported_instead_of_a_fabricated_zero_percent():
 
 
 def test_ctx_pane_still_shows_a_real_percentage_when_reported():
-    """Tier 2: accept-side for the Ctx pane."""
+    """Tier 2: accept-side for the Ctx pane. `ctx_compaction_reported` is
+    also set True here — this test is only about the cache line, so the
+    (independently-declared, #5009 closing pass) compaction line must
+    not fall back to its own "not reported" and get caught by the
+    blanket assertion below."""
     snap = {
         "ctx_window": 200000,
         "ctx_used": 48120,
         "ctx_recent_usage": (48120, 14900),
         "cache_usage_reported": True,
+        "ctx_compaction_reported": True,
     }
     blob = "\n".join(ctx_pane_lines(snap))
     assert "31% hit" in blob, blob

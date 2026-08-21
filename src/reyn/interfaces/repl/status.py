@@ -351,18 +351,20 @@ def _session_pipelines(session) -> list[dict]:
         return []
 
 
-def _cache_usage_reported_key() -> "dict[str, bool]":
-    """LOCAL's own `{"cache_usage_reported": True}` — a thin wrapper around
-    ``read_model.py``'s ``cache_usage_reported_snapshot_key`` (#5009) that
-    carries the LAZY import (see the call site's own comment for why: this
-    module is imported BY ``read_model.py``'s own top level, so the reverse
-    reference must not be)."""
+def _reported_snapshot_keys() -> "dict[str, bool]":
+    """LOCAL's own full ``ChatReadModelCapabilities`` projection — a thin
+    wrapper around ``read_model.py``'s ``reported_snapshot_keys`` (#5009)
+    that carries the LAZY import (this module is imported BY
+    ``read_model.py``'s own top level, so the reverse reference must not
+    be). Generalized (#5009 closing pass) from 4 near-identical
+    single-field wrappers to the ONE generic projection — see
+    ``reported_snapshot_keys``'s own docstring for why."""
     from reyn.interfaces.repl.read_model import (  # noqa: PLC0415
         LOCAL_CHAT_READ_CAPABILITIES,
-        cache_usage_reported_snapshot_key,
+        reported_snapshot_keys,
     )
 
-    return cache_usage_reported_snapshot_key(LOCAL_CHAT_READ_CAPABILITIES)
+    return reported_snapshot_keys(LOCAL_CHAT_READ_CAPABILITIES)
 
 
 def _snapshot(registry, config=None):
@@ -431,12 +433,22 @@ def _snapshot(registry, config=None):
     # in ONE place (``BudgetTracker.turn_usage`` returns None, not 0).
     turn_usage_fn = s.turn_usage
     return {
+        # #5009 / #5009 closing pass: every ``*_reported`` declaration is
+        # projected in ONE call, from ONE source
+        # (``LOCAL_CHAT_READ_CAPABILITIES``) — see ``reported_snapshot_
+        # keys``'s own docstring (read_model.py) for why a single
+        # generic projection replaced 4 near-identical hand-typed
+        # call sites.
+        **_reported_snapshot_keys(),
         "model": s.model,
         "model_active_class": s.active_model_class(),
         "model_classes": list(s.known_model_classes()),
         "agent_names": list(registry.loaded_names()),
         "attached_name": registry.attached_name,
         "session_tree": registry.session_tree(),
+        # LOCAL genuinely measures the prompt/completion SPLIT below
+        # (real Session state, u.prompt_tokens/u.completion_tokens) —
+        # gated by ``usage_breakdown_reported`` above.
         "usage": (u.prompt_tokens, u.completion_tokens, u.total_tokens),
         "cost_usd": s.total_cost_usd,
         "cost_total": cost_total,
@@ -479,18 +491,24 @@ def _snapshot(registry, config=None):
         "ctx_used": ctx_used,
         "ctx_window": ctx_window,
         "ctx_source": ctx_source,
+        # LOCAL genuinely measures both cache figures below (the
+        # `u`/`recent` reads are real Session state) — gated by
+        # ``cache_usage_reported`` above.
         "session_cached_tokens": u.cached_tokens,
         "ctx_recent_usage": (recent.prompt_tokens, recent.cached_tokens),
-        # #5009: LOCAL genuinely measures both cache figures above (the
-        # `u`/`recent` reads are real Session state). Derived from
-        # LOCAL_CHAT_READ_CAPABILITIES via cache_usage_reported_snapshot_key,
-        # never hand-typed here directly — see that helper's own docstring
-        # for why (two producers hand-typing the same bit independently is
-        # one more way to silently diverge). Local import: read_model.py
-        # imports `_snapshot` from this module at its own top level, so the
-        # reverse import must stay lazy to avoid a cycle.
-        **_cache_usage_reported_key(),
+        # LOCAL genuinely measures compaction status below (the bound
+        # method is real ``Session.context_window_status``) — gated by
+        # ``ctx_compaction_reported`` above.
         "ctx_compaction_status_fn": ctx_compaction_status_fn,
+        # LOCAL genuinely measures cron config below (via
+        # ``_extract_cron_jobs``) whenever a ``config`` is given — gated
+        # by ``cron_jobs_reported`` above, declared True unconditionally:
+        # an unattached/no-config caller already gets `[]` for
+        # `cron_jobs` itself (same graceful-degrade value either way),
+        # and this is LOCAL's capability declaration, not a per-call
+        # state — the LOCAL implementation is always CAPABLE of
+        # reporting cron config, whether or not one happens to be
+        # loaded on THIS particular call.
         "cron_jobs": _extract_cron_jobs(config) if config is not None else [],
         "mcp_servers": _extract_mcp_servers(config) if config is not None else [],
         "hooks": _extract_hooks(config) if config is not None else [],

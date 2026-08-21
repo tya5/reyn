@@ -69,6 +69,8 @@ _SNAP = {
     "ctx_window": 200000,
     "ctx_source": "model",
     "ctx_recent_usage": (90000, 40000),
+    "cache_usage_reported": True,
+    "usage_breakdown_reported": True,
 }
 
 

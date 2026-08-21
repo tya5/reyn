@@ -41,6 +41,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+from dataclasses import fields as dataclass_fields
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -132,6 +133,22 @@ class ChatReadModelCapabilities:
     condition without updating this declaration, the declared/actual gap
     this class exists to prevent would reopen silently, on the LOCAL side
     this time. Follow-up, not a defect in this class.
+
+    **The real criterion, corrected** (#5009 closing pass — ``cron_jobs_
+    reported`` / ``usage_breakdown_reported`` / ``ctx_compaction_
+    reported``): the FIRST measuring stick tried for "does a key need a
+    field here" was "is the degrade value indistinguishable from a
+    genuinely empty local state" — a useful PROXY, but not the actual
+    rule. #4996's own words already said the real one: "never a
+    fabricated turn", "never a fabricated count". ``ctx_compaction_
+    reported`` is the falsifying case: remote's degraded compaction line
+    reads "0% to trigger" — a real local session essentially never has a
+    genuine zero-trigger state, so the OLD proxy would have said "no
+    conflation, skip it" — but "0%" fabricates reassurance regardless of
+    whether a real empty state could produce the same string. The
+    correct question is always the fabrication one; "indistinguishable
+    from empty" is one way a value fabricates, not the definition of
+    fabrication.
     """
 
     completion_session: bool
@@ -141,20 +158,41 @@ class ChatReadModelCapabilities:
     conversation_history: bool
     load_older_conversation_history: bool
     cache_usage_reported: bool
+    cron_jobs_reported: bool
+    usage_breakdown_reported: bool
+    ctx_compaction_reported: bool
 
 
-def cache_usage_reported_snapshot_key(
+def reported_snapshot_keys(
     capabilities: ChatReadModelCapabilities,
 ) -> "dict[str, bool]":
-    """The ``snapshot()`` dict fragment for :attr:`ChatReadModelCapabilities.
-    cache_usage_reported` — the ONE source both ``snapshot()`` producers
+    """The FULL ``snapshot()`` dict fragment for *every* field of
+    *capabilities* — the ONE source both ``snapshot()`` producers
     (``status.py``'s ``_snapshot()`` and :func:`project_remote_snapshot`)
-    merge in, instead of each hand-typing the literal a second time (#5009,
-    architect co-vet: two producers hand-typing the same bit independently
-    is exactly one more way to silently diverge — one helper, called from
-    both, is the #4996-family fix: derive from the SSoT, don't duplicate
-    the literal)."""
-    return {"cache_usage_reported": capabilities.cache_usage_reported}
+    merge in, instead of each hand-typing a literal a second time (#5009).
+
+    Generalized (#5009 closing pass, architect co-vet) from 4 near-
+    identical single-field helpers — ``cache_usage_reported_snapshot_
+    key``, ``cron_jobs_reported_snapshot_key``,
+    ``usage_breakdown_reported_snapshot_key``,
+    ``ctx_compaction_reported_snapshot_key`` — each a literal copy of the
+    same one-line ``return {"<name>": capabilities.<name>}`` shape.
+    Measured: 4 helpers meant 4 producer-side call sites too, and the
+    NEXT declared field would add a 5th of each — the exact "forgot to
+    wire one side" risk this whole design exists to close, just moved
+    from the VALUE to the WIRING. One generic projection over every
+    dataclass field removes the wiring step entirely: declaring a field
+    HERE is now the only step a future key needs; no producer edit, no
+    new helper.
+
+    Deliberately projects EVERY field, not only the ``*_reported`` ones
+    — the METHOD-axis fields from #4996 (``completion_session`` etc.)
+    ride along too, harmlessly (no pane reads them off the snapshot
+    dict; ``ChatReadModel.capabilities`` remains their real consumer).
+    Simpler than filtering by name pattern, and the field NAME already
+    doubles as the snapshot key by construction — the two can no more
+    drift apart than a dataclass field can rename itself."""
+    return {f.name: getattr(capabilities, f.name) for f in dataclass_fields(capabilities)}
 
 
 #: :class:`RegistryReadModel` is local — every degradable read reflects real,
@@ -168,6 +206,9 @@ LOCAL_CHAT_READ_CAPABILITIES = ChatReadModelCapabilities(
     conversation_history=True,
     load_older_conversation_history=True,
     cache_usage_reported=True,
+    cron_jobs_reported=True,
+    usage_breakdown_reported=True,
+    ctx_compaction_reported=True,
 )
 
 #: :class:`RemoteReadModel` — the frame-sufficiency boundary each of these 6
@@ -182,6 +223,9 @@ REMOTE_CHAT_READ_CAPABILITIES = ChatReadModelCapabilities(
     conversation_history=False,
     load_older_conversation_history=False,
     cache_usage_reported=False,
+    cron_jobs_reported=False,
+    usage_breakdown_reported=False,
+    ctx_compaction_reported=False,
 )
 
 
@@ -490,33 +534,53 @@ def project_remote_snapshot(values: "dict | None") -> dict:
         "ctx_used": v.get("ctx_used", 0),
         "ctx_window": v.get("ctx_window", 0),
         # -- session-local keys (NOT on the wire) → graceful empty/zero --
+        #
+        # #5009 / #5009 closing pass: every ``*_reported`` declaration
+        # (whether the VALUE next to it here can be trusted, or is a
+        # graceful degrade with no reader-visible way to tell) is
+        # projected in ONE call, from ONE source
+        # (``REMOTE_CHAT_READ_CAPABILITIES``) — never hand-typed per key.
+        # A hand-typed literal per key was tried and measured wrong (a
+        # producer that forgets one key can silently claim "I report"
+        # while returning a fabricated value); one generic projection
+        # over ``ChatReadModelCapabilities``'s own fields (see
+        # :func:`reported_snapshot_keys`) removes the "forgot to wire
+        # this key" failure mode structurally — a new field declared on
+        # that dataclass reaches every producer for free, no call-site
+        # edit required.
+        **reported_snapshot_keys(REMOTE_CHAT_READ_CAPABILITIES),
         "model_active_class": None,
         "model_classes": [],
         "agent_names": [],
         "session_tree": [],
+        # The prompt/completion SPLIT below is `0`/`0` while the total is
+        # real wire data — an inconsistent breakdown (`0 + 0 != total`)
+        # the Cost pane never flags on its own; gated by
+        # ``usage_breakdown_reported`` above.
         "usage": (0, 0, v.get("agent_tokens", 0)),
-        "session_cached_tokens": 0,
-        "ctx_recent_usage": (0, 0),
-        # #5009: `0` above is the correct graceful-degrade VALUE for both cache
-        # figures (neither is projected onto the AG-UI wire — cache-hit
-        # accounting is session-local, like the other keys in this block) —
-        # the missing DECLARATION half lives on REMOTE_CHAT_READ_CAPABILITIES
-        # itself (derived here via cache_usage_reported_snapshot_key, never
-        # hand-typed a second time — architect co-vet: two producers
-        # hand-typing the same bit independently is one more way to
-        # silently diverge). Consulted by `chrome.py`'s `_cache_hit_line`
-        # so BOTH panes reading these 2 keys (Cost pane's cumulative line,
-        # Ctx pane's recent-call line) render a "not reported" line instead
-        # of a fabricated "0% hit (0 / 0)" — the same wording that would
-        # come from a real, empty session.
+        # `0`/`(0, 0)` below are the correct graceful-degrade VALUES for
+        # both cache figures (neither is projected onto the AG-UI wire —
+        # cache-hit accounting is session-local); gated by
+        # ``cache_usage_reported`` above, consulted by `chrome.py`'s
+        # `_cache_hit_line` so BOTH panes reading these 2 keys (Cost
+        # pane's cumulative line, Ctx pane's recent-call line) render a
+        # "not reported" line instead of a fabricated "0% hit (0 / 0)".
         #
         # Scope, explicit (architect, #5009): this is NOT the owner's actual
         # "cache stuck at 0%" observation — that was measured on a LOCAL
         # session (owner-confirmed) and is a separate, still-unresolved
         # symptom this key does not touch. This key only makes the REMOTE
         # "0 could mean unsupported" case honestly say so.
-        **cache_usage_reported_snapshot_key(REMOTE_CHAT_READ_CAPABILITIES),
+        "session_cached_tokens": 0,
+        "ctx_recent_usage": (0, 0),
         "ctx_source": "remote",
+        # `None` below is correct (no compaction-status source on the
+        # wire); gated by ``ctx_compaction_reported`` above so the Ctx
+        # pane renders "not reported" instead of the fabricated-looking
+        # "0 / 0 tokens est. (0% to trigger)" a naive ``status_fn is
+        # None`` fallback produces (a real local session essentially
+        # never has a genuine zero-trigger state, so "0%" here reads as
+        # false reassurance, not as an honest empty state).
         "ctx_compaction_status_fn": None,
         # #3283 ④: the keyed per-turn cost/token lookup is a SESSION-local read
         # (the tracker's per-turn buckets are process-local, in-memory, and not
@@ -524,6 +588,10 @@ def project_remote_snapshot(values: "dict | None") -> dict:
         # gutter renders "—" rather than a fabricated figure. Same
         # frame-sufficiency boundary as ``conversation_history`` above.
         "turn_usage_fn": None,
+        # `[]` below is correct (cron config is not on the wire); gated
+        # by ``cron_jobs_reported`` above so the Cron pane renders "not
+        # reported" instead of its own `["(none)"]` fallback, which is
+        # byte-identical to a genuinely empty LOCAL cron config.
         "cron_jobs": [],
         "mcp_servers": [],
         "hooks": [],

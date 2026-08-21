@@ -678,6 +678,7 @@ def test_pipe_and_cron_panes_surface_their_entries() -> None:
     snap = {
         "pipelines": [{"name": "nightly", "description": "the nightly pass"}],
         "cron_jobs": [{"name": "sweep", "schedule": "0 3 * * *", "enabled": True}],
+        "cron_jobs_reported": True,
     }
     assert any("nightly" in r for r in pane_payload("pipe", snapshot=snap))
     pipe_rows = " ".join(pane_payload("pipe", snapshot=snap))
