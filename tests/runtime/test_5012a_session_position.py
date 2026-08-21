@@ -3,6 +3,7 @@
 """
 from __future__ import annotations
 
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -13,6 +14,23 @@ from reyn.runtime.session_position import (
     git_position,
     venv_position,
 )
+
+_COMMIT_SUMMARY_SHA_RE = re.compile(r"\[\S+ (?:\(root-commit\) )?([0-9a-f]+)\]")
+
+
+def _commit_and_get_short_sha(repo: Path, *, message: str = "init") -> str:
+    """Commit and return the short SHA `git commit`'s own summary line
+    reports — a stable, documented CLI output contract, not an internal
+    storage-format read (lead-coder catch, #5012-A review round 2:
+    `.git/refs/heads/<branch>` stops existing once refs are packed via
+    `git gc`/`git pack-refs`, so reading that file directly ties a test to
+    an implementation detail that can silently stop holding)."""
+    result = subprocess.run(
+        ["git", "commit", "-m", message], cwd=repo, capture_output=True, text=True, check=True,
+    )
+    match = _COMMIT_SUMMARY_SHA_RE.search(result.stdout)
+    assert match, f"could not parse a short SHA out of: {result.stdout!r}"
+    return match.group(1)
 
 
 def _init_repo(tmp_path: Path) -> Path:
@@ -25,24 +43,23 @@ def _init_repo(tmp_path: Path) -> Path:
 def test_git_position_reports_branch_and_head_for_a_real_commit(tmp_path: Path) -> None:
     """Tier 1: a real repo with one commit on a named branch reports both.
 
-    The expected SHA is read directly off `.git/refs/heads/main` (a raw
-    filesystem read, no `git` subprocess) rather than via a second
-    `git rev-parse HEAD` call — lead-coder catch, #5012-A review: asserting
-    against a second invocation of the SAME command under test is blind to
-    "both sides wrong the same way" (CLAUDE.md test-review §2). Reading the
-    ref file independently derives the expected value a genuinely different
-    way."""
+    The expected SHA comes from `git commit`'s OWN summary-line output
+    (`_commit_and_get_short_sha`) — a stable, documented CLI contract —
+    rather than a second `git rev-parse HEAD` call (blind to "both sides
+    wrong the same way", CLAUDE.md test-review §2) or a direct read of
+    `.git/refs/heads/main` (lead-coder catch, round 2: that file stops
+    existing once refs are packed via `git gc`/`git pack-refs` — an
+    internal storage-format assumption, not a stable contract)."""
     repo = _init_repo(tmp_path)
     (repo / "f.txt").write_text("x")
     subprocess.run(["git", "add", "-A"], cwd=repo, check=True)
-    subprocess.run(["git", "commit", "-q", "-m", "init"], cwd=repo, check=True)
-
-    real_head = (repo / ".git" / "refs" / "heads" / "main").read_text().strip()
+    short_sha = _commit_and_get_short_sha(repo)
 
     position = git_position(repo)
 
     assert position["branch"] == "main"
-    assert position["head"] == real_head
+    assert position["head"] is not None
+    assert position["head"].startswith(short_sha)
 
 
 def test_git_position_reports_none_for_a_repo_with_no_commits(tmp_path: Path) -> None:
@@ -63,16 +80,16 @@ def test_git_position_reports_none_branch_on_detached_head(tmp_path: Path) -> No
     repo = _init_repo(tmp_path)
     (repo / "f.txt").write_text("x")
     subprocess.run(["git", "add", "-A"], cwd=repo, check=True)
-    subprocess.run(["git", "commit", "-q", "-m", "init"], cwd=repo, check=True)
-    # Read the ref file directly (no `git rev-parse`) — same independence
-    # reasoning as the real-commit test above.
-    head_sha = (repo / ".git" / "refs" / "heads" / "main").read_text().strip()
-    subprocess.run(["git", "checkout", "-q", head_sha], cwd=repo, check=True)
+    short_sha = _commit_and_get_short_sha(repo)
+    # `git checkout` accepts an unambiguous short SHA directly — same
+    # independent-source reasoning as the real-commit test above.
+    subprocess.run(["git", "checkout", "-q", short_sha], cwd=repo, check=True)
 
     position = git_position(repo)
 
     assert position["branch"] is None
-    assert position["head"] == head_sha
+    assert position["head"] is not None
+    assert position["head"].startswith(short_sha)
 
 
 def test_git_position_reports_none_for_a_non_git_directory(tmp_path: Path) -> None:
