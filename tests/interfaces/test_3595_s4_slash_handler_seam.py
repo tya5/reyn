@@ -481,7 +481,19 @@ def test_no_slash_module_reaches_the_session_outbox() -> None:
 #: gate's own documented carve-out) — no write capability, no state
 #: mutation, and the consumer is an LLM-callable tool's OpContext supplier,
 #: not `ClientTransport`.
-_PUBLIC_MEMBER_CEILING = 115
+#: Raised 115 -> 116 for #5079/#4995: ``extend_history_backward_async`` — a
+#: NEW method, the async sibling of the EXISTING (already-counted)
+#: ``extend_history_backward``. Public rather than private per architect
+#: ruling (issuecomment-5378398588): its consumer is
+#: ``ThreadedTransportProxy``'s ``read_model_extend_history_fn`` closure,
+#: which lives OUTSIDE `Session` on the worker thread's own boundary — a
+#: cross-object call, not a slash handler reaching into its own session's
+#: private state. Genuinely unrelated to the gate's failure mode (it does
+#: not exist to let a slash handler bypass an operation; it exists because
+#: #4995's cross-thread marshal needs a coroutine it can hand to
+#: ``run_coroutine_threadsafe``, and a private method cannot be that
+#: closure's target from outside the class).
+_PUBLIC_MEMBER_CEILING = 116
 
 
 def test_session_public_surface_does_not_grow() -> None:
