@@ -28,6 +28,7 @@ footgun where a client kills the server).
 """
 from __future__ import annotations
 
+import asyncio
 from typing import AsyncIterator, Awaitable, Callable
 
 from reyn.interfaces.transport.agui.protocol import (
@@ -65,6 +66,12 @@ class AgUiTransport(ClientTransport):
         # TOOL_CALL_RESULT toolCallId, P3/R1). Set when the server emits the
         # intervention frontend-tool; cleared when it resolves (answered / DENY).
         self._pending_intervention_id: "str | None" = None
+        # #5050 ③: set once the FIRST STATE_SNAPSHOT (always the first thing
+        # the reconnect protocol sends — ``AgUiEmitter.stream``'s own
+        # ordering) has been decoded into ``self._status`` — see
+        # :meth:`state_ready`'s own docstring (on the base class) for why
+        # this is a separate axis from :meth:`frames`.
+        self._state_ready_event = asyncio.Event()
 
     # -- lifecycle ----------------------------------------------------------
 
@@ -72,6 +79,9 @@ class AgUiTransport(ClientTransport):
         # The SSE line source is created and owned by the caller (the httpx
         # connect happens before construction); nothing to wire up here.
         return None
+
+    async def state_ready(self) -> None:
+        await self._state_ready_event.wait()
 
     def close(self) -> None:
         self._connected = False
@@ -113,6 +123,12 @@ class AgUiTransport(ClientTransport):
                     self._status.apply_snapshot(decoded.snapshot)
                 if decoded.delta is not None:
                     self._status.apply_delta(decoded.delta)
+                # #5050 ③: either kind of STATE_* update means the status
+                # side-channel now reflects at least one genuine server
+                # update — see :meth:`state_ready`'s own docstring for why
+                # this is set here, independent of whether this block also
+                # yields any display Frame.
+                self._state_ready_event.set()
             elif isinstance(decoded, MessagesSnapshot):
                 out.extend(self._reguard_frame(f) for f in decoded.frames)
             elif isinstance(decoded, InterventionTool):

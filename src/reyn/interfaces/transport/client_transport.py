@@ -280,6 +280,38 @@ class ClientTransport(ABC):
         the default ``([], 0)`` preserves their behavior unchanged."""
         return [], 0
 
+    async def state_ready(self) -> None:
+        """Return once this transport's own STATUS/state-read side-channel
+        (whatever ``ChatReadModel.snapshot()``/``intervention_head()``/etc.
+        read) reflects at least one genuine update — DELIBERATELY a
+        SEPARATE axis from :meth:`frames` (#5050 ③, architect ruling): a
+        caller that wants to consult a status-derived read (e.g.
+        ``intervention_head()`` at mount, to present a pending intervention
+        this client never saw the live announce for) must not gate that on
+        "has a display FRAME arrived", because state changes are announced
+        to the wire only as a side effect of a frame in the current
+        protocol (#4996's own docstring: "a STATE_DELTA after each frame
+        when projected status changes") — a session with genuinely nothing
+        else happening (measured, #5050's own finding: a fresh AG-UI
+        connect carrying only STATE_SNAPSHOT + no further activity yields
+        ZERO frames from :meth:`frames`, ever) would make a frame-gated
+        wait hang forever, not merely late.
+
+        The default here (return immediately) is correct for any
+        transport whose status-read is ALREADY fresh the instant it is
+        asked — every implementation with no separate wire round-trip
+        (``InProcessTransport`` reads the live registry directly; any
+        narrow-purpose ``ClientTransport`` test stub that never overrode
+        this). ``AgUiTransport`` is the one implementation with a genuine
+        "not yet" window (before its first STATE_SNAPSHOT has been
+        decoded) and overrides this to actually wait.
+
+        NOT merged into :meth:`frames` on purpose — mixing "produce
+        display frames" with "has status state landed" would be the
+        exact "two axes fused into one seam" shape #5041 ① already named
+        as a hazard elsewhere tonight."""
+        return None
+
     def reyn_state_root(self) -> "Path | None":
         """The attached session's project `.reyn` root, or None (#3721).
 
