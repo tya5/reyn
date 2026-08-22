@@ -85,7 +85,8 @@ async def test_local_answer_has_no_wire_attribution(tmp_path, monkeypatch) -> No
     task = asyncio.ensure_future(session._dispatch_intervention(iv))
     await wait_until(lambda: bool(session.interventions.list_active()))
 
-    await session.answer_oldest_intervention_text("ok")
+    # #5057: answer_oldest_intervention_text retired -- deliver BY ID (R1).
+    await session.answer_intervention_by_id(iv.id, "ok")
     await asyncio.wait_for(task, timeout=2.0)
 
     assert captured

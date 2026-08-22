@@ -266,13 +266,20 @@ class InProcessTransport(ClientTransport):
         s = self._attached()
         if s is None:
             return False
-        if intervention_id is not None:
-            # #3299 P2 (R1): deliver BY ID through the existing id-aware
-            # session funnel — never the head, which a second queued
-            # intervention could have displaced since the caller's copy was
-            # displayed (the multi-pending mis-delivery this closes).
-            return bool(await s.answer_intervention_by_id(intervention_id, text))
-        return bool(await s.answer_oldest_intervention_text(text))
+        # #3299 P2 (R1) / #5057 (the oldest-fallback closed): deliver BY ID
+        # through the existing id-aware session funnel — never the head,
+        # which a second queued intervention could have displaced since the
+        # caller's copy was displayed (the multi-pending mis-delivery this
+        # closes). Every real caller passes a genuine id now (#5047 axis A
+        # requires one at `OutboxMessage` construction; the plain `--cui`
+        # client's own remaining id-less call site was fixed in the SAME PR,
+        # `stream_client.py`'s `_pending_head_id`) — an absent id is a
+        # non-conforming caller, and answers False (fail-closed, never
+        # "guess the oldest") rather than the removed `answer_oldest_
+        # intervention_text` fallback.
+        if intervention_id is None:
+            return False
+        return bool(await s.answer_intervention_by_id(intervention_id, text))
 
     async def answer_intervention_choice(
         self, choice_id: str, *, intervention_id: "str | None" = None
@@ -280,13 +287,15 @@ class InProcessTransport(ClientTransport):
         s = self._attached()
         if s is None:
             return False
-        if intervention_id is not None:
-            return bool(
-                await s.answer_intervention_by_id(
-                    intervention_id, "", choice_id_override=choice_id
-                )
+        # #5057: see answer_intervention_text's own comment — the same
+        # fail-closed-on-no-id contract, the oldest-fallback removed.
+        if intervention_id is None:
+            return False
+        return bool(
+            await s.answer_intervention_by_id(
+                intervention_id, "", choice_id_override=choice_id
             )
-        return bool(await s.answer_oldest_intervention_choice(choice_id))
+        )
 
     def put_display(self, msg: "OutboxMessage") -> None:
         # Client-authored display (user echo, /copy result, resolved-answer

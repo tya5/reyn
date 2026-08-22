@@ -7464,31 +7464,14 @@ class Session:
         """Thin wrapper → InterventionHandler.maybe_answer."""
         return await self._intervention_handler.maybe_answer(text)
 
-    async def answer_oldest_intervention_choice(self, choice_id: str) -> bool:
-        """Deliver a chosen choice id to the oldest pending intervention.
-
-        The inline region selector calls this when the user picks a choice: the
-        id is authoritative (bypasses text/hotkey ``match_choice``), reusing the
-        same ``choice_id_override`` path A2A peer answers use. Returns False when
-        nothing is pending. A public UI seam for closed-set typed-input.
-        """
-        iv = self._interventions.head()
-        if iv is None:
-            return False
-        return await self._deliver_answer_to(iv, "", choice_id_override=choice_id)
-
-    async def answer_oldest_intervention_text(self, text: str) -> bool:
-        """Deliver a free-text answer to the oldest pending intervention.
-
-        The inline CUI calls this when the user submits text via the normal
-        input bar while an ask_user intervention is pending. Uses match_choice
-        so hotkeys (``"1"`` → first option) and option names resolve correctly.
-        Returns False when nothing is pending.
-        """
-        iv = self._interventions.head()
-        if iv is None:
-            return False
-        return await self._deliver_answer_to(iv, text)
+    # #5057: `answer_oldest_intervention_choice`/`_text` (deliver to
+    # `self._interventions.head()`, "the oldest pending") are RETIRED — the
+    # multi-pending head-of-queue race #3299 P2's `answer_intervention_by_id`
+    # (R1) closed for every OTHER caller. Their last caller,
+    # `stream_client.py`'s plain `--cui` answer path, now captures the head's
+    # own id at check time and delivers BY ID through `answer_intervention_
+    # by_id` below, same as every other surface (architect's own trace,
+    # #5057 issuecomment-5378442342 / lead-coder's relay).
 
     async def _deliver_answer_to(
         self,

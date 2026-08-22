@@ -134,7 +134,10 @@ async def test_attached_driver_budget_exceed_prompt_reaches_originator_operator(
         "instead of its live listener."
     )
 
-    consumed = await originator.answer_oldest_intervention_choice(YES)
+    # #5057: answer_oldest_intervention_choice retired -- deliver BY ID (R1).
+    head = originator.interventions.head()
+    assert head is not None
+    consumed = await originator.answer_intervention_by_id(head.id, "", choice_id_override=YES)
     assert consumed is True
     allow_continue = await asyncio.wait_for(gate, timeout=5.0)
     assert allow_continue is True, (

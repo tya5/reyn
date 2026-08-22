@@ -104,22 +104,25 @@ class SessionBoundTransport(ClientTransport):
     async def answer_intervention_text(
         self, text: str, *, intervention_id: "str | None" = None
     ) -> bool:
-        if intervention_id is not None:
-            return bool(
-                await self._session.answer_intervention_by_id(intervention_id, text)
-            )
-        return bool(await self._session.answer_oldest_intervention_text(text))
+        # #5057: the oldest-fallback closed — see InProcessTransport's own
+        # mirror of this method for the full rationale. Fail-closed on no
+        # id, never "guess the oldest".
+        if intervention_id is None:
+            return False
+        return bool(
+            await self._session.answer_intervention_by_id(intervention_id, text)
+        )
 
     async def answer_intervention_choice(
         self, choice_id: str, *, intervention_id: "str | None" = None
     ) -> bool:
-        if intervention_id is not None:
-            return bool(
-                await self._session.answer_intervention_by_id(
-                    intervention_id, "", choice_id_override=choice_id
-                )
+        if intervention_id is None:
+            return False
+        return bool(
+            await self._session.answer_intervention_by_id(
+                intervention_id, "", choice_id_override=choice_id
             )
-        return bool(await self._session.answer_oldest_intervention_choice(choice_id))
+        )
 
     def put_display(self, msg: "OutboxMessage") -> None:
         self._display_sink(msg)
