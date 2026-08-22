@@ -52,18 +52,31 @@ async def test_rewind_across_name_reuse_does_not_resurrect_orphan(tmp_path):
     the orphan under a purged+reused parent name. child was spawned under parent@identity-1;
     parent is purged + the name reused (identity-2). After _materialize_rewind rebuilds the
     lineage, child's edge (frozen at identity-1) reads STALE vs the reused name → it is NOT
-    in the reused parent's subtree. RED if the rebuild keyed on name instead of identity."""
+    in the reused parent's subtree. RED if the rebuild keyed on name instead of identity.
+
+    #5084: the frozen identity is now the parent AGENT DIRECTORY's own
+    ``(ino, birthtime)`` (``AgentRegistry.agent_directory_identity``), re-stat'd fresh
+    at comparison time — not a WAL seq. So "identity-2" here is a REAL
+    directory rmtree + recreate (a genuinely different inode), not a second
+    hand-authored WAL number; ``is_spawn_descendant`` always reads the LIVE
+    filesystem, never the WAL's own bookkeeping."""
     _seed(tmp_path, "parent")
     _seed(tmp_path, "child")
     reg = _registry(tmp_path)
     log = reg.state_log
-    # parent@identity-1, child spawned ⊆ parent (edge frozen at parent's create_seq s1).
-    s1 = await log.append("agent_created", entity_kind="agent", name="parent", sid="",
+    # parent@identity-1 — the real directory identity at spawn time.
+    parent_identity_1 = reg.agent_directory_identity("parent")
+    await log.append("agent_created", entity_kind="agent", name="parent", sid="",
                           parent=None, parent_seq=None, profile={"name": "parent", "role": ""})
     await log.append("agent_created", entity_kind="agent", name="child", sid="",
-                     parent="parent", parent_seq=s1, profile={"name": "child", "role": ""})
-    # parent purged, then the NAME reused → a new identity (s_reuse).
+                     parent="parent", parent_seq=list(parent_identity_1),
+                     profile={"name": "child", "role": ""})
+    # parent purged (a real rmtree) then the NAME reused (a real recreate) →
+    # a genuinely NEW directory identity (identity-2).
     await log.append("agent_purged", entity_kind="agent", name="parent", sid="")
+    import shutil
+    shutil.rmtree(tmp_path / ".reyn" / "agents" / "parent")
+    _seed(tmp_path, "parent")
     await log.append("agent_created", entity_kind="agent", name="parent", sid="",
                      parent=None, parent_seq=None, profile={"name": "parent", "role": ""})
 
@@ -88,10 +101,12 @@ async def test_rewind_without_reuse_preserves_subtree_membership(tmp_path):
     _seed(tmp_path, "child")
     reg = _registry(tmp_path)
     log = reg.state_log
-    s1 = await log.append("agent_created", entity_kind="agent", name="parent", sid="",
+    parent_identity = reg.agent_directory_identity("parent")
+    await log.append("agent_created", entity_kind="agent", name="parent", sid="",
                           parent=None, parent_seq=None, profile={"name": "parent", "role": ""})
     await log.append("agent_created", entity_kind="agent", name="child", sid="",
-                     parent="parent", parent_seq=s1, profile={"name": "child", "role": ""})
+                     parent="parent", parent_seq=list(parent_identity),
+                     profile={"name": "child", "role": ""})
 
     await reg._materialize_rewind(reconstruct_seq=log.current_seq,
                                   workspace_at_or_below=log.current_seq)
