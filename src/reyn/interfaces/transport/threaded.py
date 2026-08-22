@@ -51,6 +51,18 @@ on its own). Wiring THIS class in as ``TextualChatApp``'s / ``run_repl``'s
 default local transport is left to a follow-up (#5048) — this PR's
 deliverable is the mechanism itself, with real witnesses, not the
 production cutover.
+
+**As of 2026-08-22, this class has NO production call site** —
+:class:`ThreadedTransportProxy` is constructed only from
+``tests/interfaces/test_4995_threaded_transport_proxy.py``.
+``TextualChatApp``/``run_repl`` still construct ``InProcessTransport``
+directly; wiring this proxy in is #5048's own deliverable, not this
+one's. Read this line here, not only in the PR body or the test
+module's own docstring — a PR body is history nobody re-reads once
+merged, and a test docstring is read only by whoever opens the test;
+this is the one place a future reader of THIS file's own code will
+actually see the gap (the same "declared but nobody reads it" shape
+named 3 times tonight, e.g. #5033's own disclosure-line finding).
 """
 from __future__ import annotations
 
