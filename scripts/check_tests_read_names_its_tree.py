@@ -36,10 +36,22 @@ four-section reviewer write-up: six-questions answers, scope, limits) — only
 the one-line claim moved. Comments are still fetched here, but only to give a
 precise diagnostic when a claim landed in the wrong place (see ``evaluate``).
 
-Deliberately NOT closed: an author can edit the body to swap in a newer SHA
-with no new review behind it. That is outside a text predicate, and
-pretending otherwise would be the "a checklist item answered yes every time"
-shape CLAUDE.md already warns about.
+Deliberately NOT closed, and broader than "an author can edit the body to
+swap in a newer SHA with no new review behind it": moving the claim line from
+a comment to the body moved it onto the side rule 8 exists to check. A
+comment has an author distinct from the PR's; this gate could at least infer
+"someone other than the author wrote this" from that (weak, but a signal).
+The PR body has no such distinction — the PR's own author writes and edits it
+freely. So this gate establishes only that A CLAIM NAMES THIS TREE, never
+that a reviewer made the claim; that authorship signal is not weakened by
+this move, it is GONE. This is this repo's own named shape: a discriminator a
+trust decision reads must not come from the side being classified. Rule 8's
+actual review requirement rests on a human reading the PR before merging, not
+on this check — a green here is not evidence that review happened, only that
+some text in the body names a commit of this PR. Attempting to verify
+authorship with a text predicate is out of reach here and would produce
+exactly the "a checklist item answered yes every time" shape CLAUDE.md
+already warns about.
 
 stdlib-only (argparse / json / re / subprocess), mirroring
 ``scripts/check_pr_closing_intent.py`` so CI runs it dep-free.
@@ -125,7 +137,15 @@ def evaluate(pr: dict) -> "tuple[int, list[str]]":
     diagnostic when a claim landed there instead), ``commits`` (oldest
     first, each ``{'oid':, '_tests_paths':}``) and ``headRefOid``. Pure —
     the live and fixture paths both build this shape first, so the decision
-    is testable without GitHub."""
+    is testable without GitHub.
+
+    What a green return means, precisely: A CLAIM IN THE BODY NAMES A FRESH
+    COMMIT OF THIS PR. It does NOT mean a reviewer made that claim — the PR
+    body is written and edited by the PR's own author, with no distinct
+    authorship signal this function (or any text predicate) can read. Rule
+    8's actual review requirement is enforced by a human reading the PR
+    before merging, not by this check; treat a green here as "the tree is
+    named", never as "the tree was reviewed"."""
     touched_tests = [p for p in pr.get("files", []) if p.startswith("tests/")]
     if not touched_tests:
         return 0, ["OK — this PR does not touch tests/; rule 8 does not apply."]
