@@ -110,6 +110,11 @@ _EXPECTED_DISPATCH: "frozenset[str]" = frozenset({
     # invoke_action, same requirement #3429 states above for the 23 catalog
     # actions.
     "emit_hook_event", "hooks_add",
+    # #5012-A PR #5038: describe_session gained a router-dispatched
+    # ToolDefinition (read-only session introspection: write scope / own
+    # position / auth status) so chat + pipeline reach the new
+    # describe_session op handler.
+    "describe_session",
 })
 
 _AG = [{"name": "a1", "description": "d"}]

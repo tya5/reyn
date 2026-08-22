@@ -209,6 +209,11 @@ _NOT_EXTERNAL = {
     "render_template",
     # — control / orchestration —
     "compact",
+    # describe_session: OS-internal introspection (write scope declared by
+    # the operator's own reyn.yaml, git/venv/toolchain facts, auth status
+    # against reyn's own token store) — never external network/store/disk
+    # content (#5012-A).
+    "describe_session",
     # invoke_action: generic dispatcher — trust resolved by the EFFECTIVE inner
     # name at dispatch() (the dispatch-tag), not by this wrapper.
     "invoke_action",

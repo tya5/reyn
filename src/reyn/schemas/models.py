@@ -663,6 +663,32 @@ class EmitHookEventIROp(BaseModel):
     payload: dict = Field(default_factory=dict)
 
 
+class DescribeSessionIROp(BaseModel):
+    """Report this session's own position and capability facts (#5012-A).
+
+    Read-only introspection op — no side effect, no permission gate
+    (``gates.router="allow"``, matching ``list_actions``/``search_actions``).
+    Field population is closed to the issue's own literal enumeration
+    (architect ruling, ``gh issue view 5012``, 2026-08-21) — three fields,
+    never grown ad hoc:
+
+    1. write scope, as DECLARED by ``sandbox.policy`` (never resolved/
+       effective — see ``session_write_scope.describe_write_scope``'s own
+       docstring for why resolving one here is out of scope);
+    2. own position — repo path, git branch/HEAD, venv path, and toolchain
+       capability (ruff/pytest/mkdocs) — see ``session_position.
+       describe_session_position``;
+    3. auth status for reyn's OWN OAuth-managed providers only (never a
+       third-party CLI's own auth, never a token/scope) — see
+       ``session_auth_status.describe_auth_status``'s own docstring for the
+       permanent scope-narrowing rationale.
+
+    No domain-specific fields, no free-text; carries nothing the model
+    supplies (P7/P8: pure introspection, not a channel for outbound data)."""
+
+    kind: Literal["describe_session"]
+
+
 # ---------------------------------------------------------------------------
 # RAG-extensible OS (ADR-0033) — embed / index_* / recall ops + ChunkMetadata
 # ---------------------------------------------------------------------------
@@ -958,6 +984,10 @@ OP_KIND_MODEL_MAP: dict[str, type[BaseModel]] = {
     # docstring for the structural session-binding + kind-whitelist security
     # discipline enforced by the handler (op_runtime/emit_hook_event.py).
     "emit_hook_event": EmitHookEventIROp,
+    # #5012-A: read-only session introspection (write scope / own position /
+    # auth status) — see DescribeSessionIROp's own docstring for the closed
+    # 3-field population.
+    "describe_session": DescribeSessionIROp,
 }
 
 # Frozenset of op kinds — DSL linter, contextual gate.
@@ -992,6 +1022,7 @@ if TYPE_CHECKING:
             PipelineInstallIROp,
             PresentationInstallIROp,
             EmitHookEventIROp,
+            DescribeSessionIROp,
         ],
         Field(discriminator="kind"),
     ]

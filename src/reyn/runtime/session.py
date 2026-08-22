@@ -33,6 +33,7 @@ from pathlib import Path
 
 from reyn.config import (  # noqa: F401
     AuditEventsConfig,
+    AuthConfig,
     CostWarnConfig,
     EmbeddingConfig,
     HistoryResidentConfig,
@@ -850,6 +851,10 @@ class Session:
         # #4381 PR-5: the resource-bound per-result inline cap (file.py read op +
         # load_skill.py). None → context_builder's own model-independent default.
         read_cap_config: "ReadCapConfig | None" = None,
+        # #5012-A: reyn.yaml auth.* → the describe_session op's auth-status
+        # field. Plain value, same shape as web_fetch_config/read_cap_config —
+        # not a per-turn supplier.
+        auth_config: "AuthConfig | None" = None,
         # #4387 Phase B ③: the resource-bound cap on self.history's resident
         # footprint (bytes). None → HistoryResidentConfig's own default (256 MiB).
         history_resident_config: "HistoryResidentConfig | None" = None,
@@ -995,6 +1000,9 @@ class Session:
         # resource/budget invariant check, and into OpContext.read_cap_config
         # for file.py's/load_skill.py's own read op (via RouterOpContextSource).
         self._read_cap_config = read_cap_config
+        # #5012-A: stored so RouterOpContextSource can thread it into
+        # OpContext.auth_config for the describe_session op's auth-status field.
+        self._auth_config = auth_config
         # #4387 Phase B ③: bounds self.history's resident footprint —
         # consulted by _append_history's eviction hook (below).
         self._history_resident_config = history_resident_config or HistoryResidentConfig()
@@ -2384,6 +2392,51 @@ class Session:
         reaching into the private ``_hook_driven_turns`` field.
         """
         return self._hook_driven_turns
+
+    def _effective_hook_driven_turns_cap(self) -> "int | None":
+        """The SSoT for the hook-driven-turns loop-valve cap (#2884): config
+        ``max_hook_driven_turns`` plus any session-local extension granted by
+        a prior checkpoint decision, or ``None`` if the valve enforces no cap
+        at all (``max_hook_driven_turns <= 0``).
+
+        `_stamp_execution_context`'s enforcement branch and
+        `remaining_hook_driven_turns` (#5012-A) both call this rather than
+        each computing the formula themselves — lead-coder catch, #5012-A
+        review: two independently-maintained copies of the same formula is
+        exactly the SSoT gap #5015 named ("derive from SSoT, don't duplicate
+        a literal"). If this formula ever changes, there is one place to
+        change it, not two to remember to keep in sync."""
+        base_cap = self._safety.loop.max_hook_driven_turns
+        if base_cap <= 0:
+            return None
+        return base_cap + int(self._safety_extensions.get("hook_driven_turns", 0.0))
+
+    @property
+    def remaining_hook_driven_turns(self) -> "int | None":
+        """How many more hook-driven turns this session may still take before
+        the loop-valve cap (#2884) fires, or ``None`` if uncapped (#5012-A).
+
+        Reads `_effective_hook_driven_turns_cap` (the SAME computation
+        `_stamp_execution_context` enforces against, not a mirrored copy —
+        see that method's own docstring) minus turns already spent."""
+        cap = self._effective_hook_driven_turns_cap()
+        if cap is None:
+            return None
+        return max(0, cap - self._hook_driven_turns)
+
+    @property
+    def max_hook_driven_turns(self) -> "int | None":
+        """The effective hook-driven-turns cap itself (config
+        ``max_hook_driven_turns`` plus any session-local extension), or
+        ``None`` if the valve enforces no cap at all — the SAME value
+        :attr:`remaining_hook_driven_turns` is computed against, exposed as
+        its own public read (#5012-A PR #5038: `describe_session`'s
+        write-out needs BOTH figures, per issue #5012's own literal field ②
+        — "残り turn ＋ max_hook_driven_turns"). Reads
+        `_effective_hook_driven_turns_cap` (the SAME SSoT computation
+        `remaining_hook_driven_turns` and `_stamp_execution_context`'s
+        enforcement branch already share), not a third independent copy."""
+        return self._effective_hook_driven_turns_cap()
 
     def _is_turn_cancel_requested(self) -> bool:
         """Forwarding → RouterLoopDriver.is_cancel_requested (PR-3)."""
@@ -4681,6 +4734,20 @@ class Session:
                 self._sandbox_config.policy if self._sandbox_config is not None
                 else None
             ),
+            # #5012-A: live, same reload-ability as sandbox_policy_fn above —
+            # the RAW SandboxConfig (declared, never resolved) for
+            # describe_session's write-scope field, via OpContext.sandbox_config.
+            sandbox_config_fn=lambda: self._sandbox_config,
+            # #5012-A PR #5038 (lead-coder block, issuecomment-5376729625):
+            # live — the SAME pair describe_session's field ② needs
+            # (issue #5012's own literal wording), read fresh every build()
+            # call via the public properties (SSoT-shared with the
+            # enforcement site, see _effective_hook_driven_turns_cap's own
+            # docstring) rather than duplicating the formula here.
+            hook_driven_turns_budget_fn=lambda: {
+                "remaining_hook_driven_turns": self.remaining_hook_driven_turns,
+                "max_hook_driven_turns": self.max_hook_driven_turns,
+            },
             # FP-0016: this agent's identity → the MCP client's X-Reyn-Agent-Id.
             agent_id=self._agent.agent_id,
             # #4574: the live agent's NAME — a DIFFERENT string from agent_id
@@ -4702,6 +4769,7 @@ class Session:
             multimodal_config=self._multimodal_config,
             web_fetch_config=self._web_fetch_config,  # #4274
             read_cap_config=self._read_cap_config,  # #4381 PR-5
+            auth_config=self._auth_config,  # #5012-A
             media_store_fn=lambda: self._media_store,  # #383/#2409
             compact_now=self._compact_now_for_op,  # #272/#1128
             threat_scan=self._safety.threat_scan,  # FP-0050/#1822
@@ -6246,26 +6314,25 @@ class Session:
             self._hook_driven_turns += 1
             await self._journal.record_hook_driven_turns(count=self._hook_driven_turns)
             _base_cap = self._safety.loop.max_hook_driven_turns
-            if _base_cap > 0:
-                _cap = _base_cap + int(self._safety_extensions.get("hook_driven_turns", 0.0))
-                if self._hook_driven_turns > _cap:
-                    decision = await self._handle_chat_limit_checkpoint(
-                        kind="hook_driven_turns",
-                        prompt=(
-                            f"Hook self-continuation reached the cap of {_cap} "
-                            f"consecutive hook-driven turns. Allow more?"
-                        ),
-                        detail=f"count={self._hook_driven_turns} cap={_cap}",
-                        extension_amount=float(_base_cap),
-                    )
-                    if not decision.allow_continue:
-                        # Bound reached + not extended → suppress this hook turn.
-                        # The chain stops here; the session survives (idle).
-                        return True
-                    # allow_continue: the checkpoint accumulated the extension into
-                    # self._safety_extensions["hook_driven_turns"], raising the
-                    # effective cap so this + subsequent turns proceed until the
-                    # new bound (no re-prompt every turn).
+            _cap = self._effective_hook_driven_turns_cap()
+            if _cap is not None and self._hook_driven_turns > _cap:
+                decision = await self._handle_chat_limit_checkpoint(
+                    kind="hook_driven_turns",
+                    prompt=(
+                        f"Hook self-continuation reached the cap of {_cap} "
+                        f"consecutive hook-driven turns. Allow more?"
+                    ),
+                    detail=f"count={self._hook_driven_turns} cap={_cap}",
+                    extension_amount=float(_base_cap),
+                )
+                if not decision.allow_continue:
+                    # Bound reached + not extended → suppress this hook turn.
+                    # The chain stops here; the session survives (idle).
+                    return True
+                # allow_continue: the checkpoint accumulated the extension into
+                # self._safety_extensions["hook_driven_turns"], raising the
+                # effective cap so this + subsequent turns proceed until the
+                # new bound (no re-prompt every turn).
         # FP-0041 (#489) PR-A: surface a sender change as a state_change
         # entry — removing this call collapses multi-consumer attribution
         # into one undifferentiated feed (authoring-guide.md#sender-attribution-as-state_change-fp-0041-489).

@@ -109,6 +109,9 @@ from . import ask_user as _ask_user  # noqa: F401, E402
 # #272/#1128: voluntary LLM-initiated compaction op.
 from . import compact as _compact  # noqa: F401, E402
 
+# #5012-A: read-only session introspection (write scope / own position / auth status).
+from . import describe_session as _describe_session  # noqa: F401, E402
+
 # ADR-0033: RAG-extensible OS — index_* / semantic_search ops.
 # #1303 Stage I: embed + index_write run-ops deleted (folded into
 # reyn.api.safe.embed_index; semantic_search embeds provider-direct,

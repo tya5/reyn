@@ -54,6 +54,17 @@ def build_router_op_context(
     environment_backend: Any,  # FS seam backend instance (#1200 PR-F1)
     sandbox_backend: Any,  # exec seam backend instance (#1200 PR-F2)
     sandbox_policy: Any,  # raw policy → resolve_sandbox_policy here (#1339)
+    # #5012-A: the RAW SandboxConfig object (declared, never resolved — a
+    # DIFFERENT value from `sandbox_policy` above, which is already narrowed
+    # to `.policy` for `default_sandbox_policy`'s resolution). Populates
+    # `OpContext.sandbox_config` on the chat-router path — previously never
+    # set there at all (only `tools/exec.py`'s narrower sandboxed_exec path
+    # populated it, via a post-construction `dataclasses.replace`); needed so
+    # `describe_session`'s write-scope field reports what the operator
+    # DECLARED rather than the workspace-floor-injected resolved value
+    # (architect ruling, #5012-A: a context-free tool cannot know that
+    # floor, so it must not fabricate it).
+    sandbox_config: Any = None,
     # ── fields the single supplier resolves per call ───────────────────────
     agent_id: str | None,  # FP-0016 identity → the MCP client's X-Reyn-Agent-Id header
     agent_name: str | None = None,  # #4574: the live agent's NAME — see OpContext.agent_name's own docstring for why this is a DIFFERENT value from agent_id above
@@ -63,6 +74,12 @@ def build_router_op_context(
     multimodal_config: Any = None,  # #364
     web_fetch_config: Any = None,  # #4274: reyn.yaml web_fetch.* → the web_fetch op's SSL/SSRF/size gates
     read_cap_config: Any = None,  # #4381 PR-5: reyn.yaml read_cap.* → file.py's/load_skill.py's read op cap
+    auth_config: Any = None,  # #5012-A: reyn.yaml auth.* → the describe_session op's auth-status field
+    # #5012-A PR #5038: LIVE {remaining_hook_driven_turns, max_hook_driven_turns}
+    # dict — turn count changes every turn, unlike auth_config/sandbox_config
+    # above, so this arrives already-resolved from the caller's live supplier
+    # rather than being resolved here.
+    hook_driven_turns_budget: Any = None,
     media_store: Any = None,  # #383
     compact_now: Any = None,  # #272/#1128
     run_id: str | None = None,  # chat router is outside run scope (#FP-0021)
@@ -164,8 +181,11 @@ def build_router_op_context(
         multimodal_config=multimodal_config,
         web_fetch_config=web_fetch_config,  # #4274
         read_cap_config=read_cap_config,  # #4381 PR-5
+        auth_config=auth_config,  # #5012-A
+        hook_driven_turns_budget=hook_driven_turns_budget,  # #5012-A PR #5038
         media_store=media_store,
         compact_now=compact_now,
+        sandbox_config=sandbox_config,  # #5012-A
         sandbox_backend=sandbox_backend,
         # #1339: resolve the operator-or-default sandbox policy (was None → the
         # op_runtime handler fell back to LLM-set op fields = sandbox-escape gap).
@@ -240,6 +260,14 @@ class RouterOpContextSource:
         environment_backend: Any,
         sandbox_backend: Any,
         sandbox_policy_fn: Any,
+        # #5012-A: live — same reload-ability reason as sandbox_policy_fn
+        # above (a reload can replace ``self._sandbox_config``); supplies the
+        # RAW SandboxConfig object (declared, never resolved) so
+        # describe_session's write-scope field can read it via
+        # ``OpContext.sandbox_config``, distinct from ``sandbox_policy_fn``'s
+        # already-narrowed ``.policy`` value used only for
+        # ``default_sandbox_policy``'s resolution.
+        sandbox_config_fn: Any = None,
         agent_id: Any,
         agent_name: Any,  # #4574: the live agent's NAME — see OpContext.agent_name's own docstring
         intervention_bus_factory: Any,
@@ -248,6 +276,10 @@ class RouterOpContextSource:
         multimodal_config: Any,
         web_fetch_config: Any,  # #4274: reyn.yaml web_fetch.* — plain value, same shape as multimodal_config
         read_cap_config: Any = None,  # #4381 PR-5: reyn.yaml read_cap.* — plain value, same shape as web_fetch_config
+        auth_config: Any = None,  # #5012-A: reyn.yaml auth.* — plain value, same shape as read_cap_config
+        # #5012-A PR #5038: live — the SAME reason ephemeral_fn/attended_fn
+        # below are `_fn`s, not values: the turn budget changes every turn.
+        hook_driven_turns_budget_fn: Any = None,
         media_store_fn: Any,
         compact_now: Any,
         threat_scan: Any,
@@ -274,6 +306,7 @@ class RouterOpContextSource:
         self._environment_backend = environment_backend
         self._sandbox_backend = sandbox_backend
         self._sandbox_policy_fn = sandbox_policy_fn
+        self._sandbox_config_fn = sandbox_config_fn
         self._agent_id = agent_id
         self._agent_name = agent_name
         self._intervention_bus_factory = intervention_bus_factory
@@ -282,6 +315,8 @@ class RouterOpContextSource:
         self._multimodal_config = multimodal_config
         self._web_fetch_config = web_fetch_config
         self._read_cap_config = read_cap_config
+        self._auth_config = auth_config
+        self._hook_driven_turns_budget_fn = hook_driven_turns_budget_fn
         self._media_store_fn = media_store_fn
         self._compact_now = compact_now
         self._threat_scan = threat_scan
@@ -341,6 +376,7 @@ class RouterOpContextSource:
             environment_backend=self._environment_backend,
             sandbox_backend=self._sandbox_backend,
             sandbox_policy=self._resolve(self._sandbox_policy_fn),
+            sandbox_config=self._resolve(self._sandbox_config_fn),  # #5012-A
             agent_id=self._agent_id,
             agent_name=self._agent_name,
             intervention_bus=self._resolve(self._intervention_bus_factory),
@@ -349,6 +385,8 @@ class RouterOpContextSource:
             multimodal_config=self._multimodal_config,
             web_fetch_config=self._web_fetch_config,  # #4274
             read_cap_config=self._read_cap_config,  # #4381 PR-5
+            auth_config=self._auth_config,  # #5012-A
+            hook_driven_turns_budget=self._resolve(self._hook_driven_turns_budget_fn),  # #5012-A PR #5038
             media_store=self._resolve(self._media_store_fn),
             compact_now=self._compact_now,
             cancel_event=self._cancel_event,

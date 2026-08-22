@@ -50,6 +50,7 @@ def get_default_registry() -> ToolRegistry:
         CRON_REGISTER,
         CRON_UNREGISTER,
     )
+    from reyn.tools.describe_session import DESCRIBE_SESSION
     from reyn.tools.embed import EMBED
     from reyn.tools.emit_hook_event import EMIT_HOOK_EVENT
     from reyn.tools.exec import EXEC
@@ -155,6 +156,8 @@ def get_default_registry() -> ToolRegistry:
     # external MCP vector-DB via pipeline — reyn hosts no user RAG store).
     registry.register(EMBED)
     registry.register(COMPACT)
+    # #5012-A: read-only session introspection (write scope / own position / auth status).
+    registry.register(DESCRIBE_SESSION)
     # #2692 (part of the #2688 sweep): present + render_template invocation surface.
     # One registration each opens BOTH chat (build_tools + gates.router="allow") and
     # pipeline (bare-name lookup) from the single unified registry — the op handlers
