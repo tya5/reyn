@@ -271,7 +271,12 @@ def test_intervention_message_sets_waiting_for_you():
     from reyn.runtime.outbox import OutboxMessage
     r = InlineChatRenderer()
     r.on_audit_event(_evt("turn_started"))
-    r.message(OutboxMessage(kind="intervention", text="Continue?"))
+    r.message(
+        OutboxMessage(
+            kind="intervention", text="Continue?",
+            meta={"intervention_id": "iv-pr3a"},  # #5047 axis A
+        )
+    )
     text = "".join(t for _, t in r.working_frags(time.monotonic()))
     assert "Waiting for you" in text
 
@@ -282,7 +287,12 @@ def test_user_answered_intervention_resets_to_thinking():
     from reyn.runtime.outbox import OutboxMessage
     r = InlineChatRenderer()
     r.on_audit_event(_evt("turn_started"))
-    r.message(OutboxMessage(kind="intervention", text="Continue?"))
+    r.message(
+        OutboxMessage(
+            kind="intervention", text="Continue?",
+            meta={"intervention_id": "iv-pr3a"},  # #5047 axis A
+        )
+    )
     r.on_audit_event(_evt("user_answered_intervention"))
     text = "".join(t for _, t in r.working_frags(time.monotonic()))
     assert "Thinking" in text

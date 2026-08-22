@@ -338,7 +338,10 @@ async def test_make_interceptor_skips_non_dispatchable_kinds():
     )
     rt = ExternalRef(transport="slack", destination={})
     for kind in ("status", "trace", "__end__", "intervention", "error"):
-        msg = OutboxMessage(kind=kind, text="x", reply_to=rt)
+        # #5047 axis A: "intervention" additionally requires a genuine
+        # meta["intervention_id"] at construction time.
+        meta = {"intervention_id": "iv-x"} if kind == "intervention" else {}
+        msg = OutboxMessage(kind=kind, text="x", meta=meta, reply_to=rt)
         assert (await interceptor(msg)) is False, f"kind={kind} unexpectedly handled"
 
 

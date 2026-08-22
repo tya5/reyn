@@ -162,8 +162,14 @@ def _render(msg: OutboxMessage) -> str:
 def _signature(msg: OutboxMessage) -> "tuple[str, str]":
     """The comparable shape of one entry: its kind plus what it actually
     renders as. Compared LIVE-vs-RESTORE only — never against a literal, so
-    this pins no formatting of its own."""
-    if msg.kind == "intervention":
+    this pins no formatting of its own.
+
+    #5057 axis B: a live-answered entry folds to ``kind=
+    "intervention_resolved"``, the SAME sibling kind restore's projection
+    builds directly — both go through the ONE presenter function
+    (``ReynPresenter._present_intervention_pending``, dispatched for either
+    kind), so both must be rendered here too, not just "intervention"."""
+    if msg.kind in ("intervention", "intervention_resolved"):
         return (msg.kind, _render(msg))
     return (msg.kind, msg.text)
 
@@ -204,7 +210,9 @@ async def test_answered_intervention_is_one_entry_pending_and_after() -> None:
 
         # ── after answering ──
         answered = _flow_items(app)
-        assert [m.kind for m in answered] == ["intervention"], (
+        # #5057 axis B: the fold also swaps kind to "intervention_resolved"
+        # (still the SAME entry object, settled in place — never a second row).
+        assert [m.kind for m in answered] == ["intervention_resolved"], (
             "answering must settle the SAME entry, never append a second row; "
             f"got {[m.kind for m in answered]}"
         )
@@ -320,7 +328,8 @@ async def test_live_and_restore_produce_the_same_entry_sequence(tmp_path: Path) 
     )
     # Non-vacuity: both sides must actually SHOW the answered Q→A — two empty
     # sequences would otherwise compare equal.
-    assert [kind for kind, _ in live] == ["intervention"], (
+    # #5057 axis B: both sides settle to the resolved sibling kind.
+    assert [kind for kind, _ in live] == ["intervention_resolved"], (
         f"expected exactly the answered Q→A entry on both sides, got {live!r}"
     )
     assert "Delete the branch?" in live[0][1] and "Yes" in live[0][1]

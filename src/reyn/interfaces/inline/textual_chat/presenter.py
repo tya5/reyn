@@ -862,16 +862,27 @@ class ReynPresenter:
         populates + focuses it), so the flow entry itself never renders chips
         or an input.
 
-        Pending (no ``_answer_label`` meta yet): the neutralized prompt head
-        plus a dim ``⋯ respond in the panel below`` hint — the "◆ needs you"
-        amber gutter (kind-driven) already marks the row. Resolved
-        (``_answer_label`` set by the app once the panel delivers an answer,
-        OR by the restore projection reading a persisted answer straight off
-        history — #3299 P4): the head plus a green ``✓ answered: <label>``
-        line (basic — the placeholder→resolved in-place churn-zero polish is
-        P2, not built here). ``_answer_label`` is neutralized at THIS call
-        site — the SAME leaf-neutralization discipline ``_intervention_head``
-        already applies to ``prompt``/``detail`` (#2770) — because a matched
+        Pending (``item.kind == "intervention"``): the neutralized prompt
+        head plus a dim ``⋯ respond in the panel below`` hint — the "◆ needs
+        you" amber gutter (kind-driven) already marks the row. Resolved
+        (``item.kind == "intervention_resolved"`` — #5057 axis B: either the
+        app folded a LIVE entry to this kind once the panel delivered an
+        answer, or the restore projection built it straight off a persisted
+        answer, #3299 P4): the head plus a green ``✓ answered: <label>`` line
+        (basic — the placeholder→resolved in-place churn-zero polish is P2,
+        not built here). Before axis B this branched on ``_answer_label``
+        meta PRESENCE rather than kind — folded into the same "intervention"
+        kind either way; a truthiness check on the label's VALUE was the
+        #5056 defect (an empty-string answer read as still-pending), and
+        even the presence check was one of 3 independently-written
+        `_answer_label` reads architect+lead-coder found scattered across
+        this file/gutter.py/the (since-removed) panel-registration guard —
+        axis B's whole point is that dispatching on the sibling KIND removes
+        the need for any of them to inspect meta to answer "is this
+        resolved". The label TEXT itself still comes from meta (kind alone
+        doesn't carry the string), neutralized at THIS call site — the SAME
+        leaf-neutralization discipline ``_intervention_head`` already
+        applies to ``prompt``/``detail`` (#2770) — because a matched
         CLOSED-SET choice's label is model-supplied / untrusted the same way
         the prompt is; a RESTORED answer arrives RAW (persisted RAW by design
         — neutralize only at display boundaries, never at write time), and
@@ -884,8 +895,8 @@ class ReynPresenter:
         meta = item.meta or {}
         head = _intervention_head(item)
         head_h = self._measure(head, width)
-        answer = meta.get("_answer_label")
-        if answer is not None:
+        if item.kind == "intervention_resolved":
+            answer = meta.get("_answer_label", "")
             resolved = Text.assemble(
                 ("  ✓ answered: ", _CC_DIM),
                 (_neutralized_label(str(answer)), f"bold {_CC_DONE}"),
@@ -920,7 +931,12 @@ class ReynPresenter:
         # pre-0.21.0 body, which always operated on the item.
         item = entry.item
         meta = item.meta or {}
-        if item.kind == "intervention":
+        # #5057 axis B: "intervention" (still pending, or a live entry just
+        # folded to resolved in place) and "intervention_resolved" (restore's
+        # always-answered projection) both render through the SAME function —
+        # the sibling kind carries the resolved/pending distinction now, see
+        # that function's own docstring for what changed inside it.
+        if item.kind in ("intervention", "intervention_resolved"):
             return self._present_intervention_pending(item, width)
         if item.kind == "tool_call_started" and meta.get(_RUNNING_SINCE_KEY) is not None:
             return self._present_running_tool(item, width)

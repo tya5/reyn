@@ -127,12 +127,28 @@ def test_every_display_kind_round_trips_over_the_wire() -> None:
         # kind set, which over-reports phantom strings (e.g. ``nodes``) that are
         # not producer kinds — the codec must round-trip any kind, so bypass the
         # producer vocabulary gate on the test input.
-        frame = DisplayFrame(OutboxMessage.from_wire(kind=kind, text="body", meta={"k": "v"}))
+        #
+        # #5047/#5057 axis A (wire side): ``from_wire`` deliberately demotes
+        # a KNOWN intervention-family kind with no genuine
+        # ``intervention_id`` to ``"system"`` (never fail-close on
+        # untrusted wire data) — that demotion is the SUBJECT of a
+        # dedicated test elsewhere
+        # (``test_5047_replayed_answered_intervention_not_pending.py``'s
+        # own ``test_wire_decoded_idless_intervention_frame_is_demoted_
+        # never_pending``, added on PR #5082's docs-maintainer/lead-coder
+        # TESTS-READ block — this round-trip test's OWN kind set always
+        # supplies an id, so it would never have caught the demotion going
+        # missing), not a round-trip bug THIS test should flag. Give
+        # "intervention" the identity it structurally requires so THIS
+        # test still proves the round-trip for a well-formed intervention
+        # frame, same as every other kind.
+        meta = {"k": "v", "intervention_id": "iv-x"} if kind == "intervention" else {"k": "v"}
+        frame = DisplayFrame(OutboxMessage.from_wire(kind=kind, text="body", meta=meta))
         decoded = _roundtrip(frame)
         assert isinstance(decoded, DisplayFrame), f"{kind!r} did not decode to a DisplayFrame"
         assert decoded.message.kind == kind, f"{kind!r} kind mangled → {decoded.message.kind!r}"
         assert decoded.message.text == "body"
-        assert decoded.message.meta == {"k": "v"}
+        assert decoded.message.meta == meta
 
 
 def test_every_forwarded_audit_event_round_trips_over_the_wire() -> None:

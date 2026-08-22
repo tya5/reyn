@@ -226,9 +226,16 @@ def _third_choice_intervention() -> OutboxMessage:
     )
 
 
+#: #5057 axis B: a resolved LIVE entry is folded to "intervention_resolved"
+#: in place (the SAME entry object — churn-zero, #3299 P2 §4), never back to
+#: plain "intervention". These two helpers look up "the intervention flow
+#: entry/entries" both before AND after resolving, so both kinds count.
+_IV_KINDS = ("intervention", "intervention_resolved")
+
+
 def _iv_entry(app: TextualChatApp):
     entries = [
-        e for e in app.query_one(FlowView).entries if e.item.kind == "intervention"
+        e for e in app.query_one(FlowView).entries if e.item.kind in _IV_KINDS
     ]
     assert len(entries) == 1, f"expected one intervention entry, got {len(entries)}"
     return entries[0]
@@ -239,7 +246,7 @@ def _iv_entries(app: TextualChatApp):
     return {
         e.item.meta.get("intervention_id"): e
         for e in app.query_one(FlowView).entries
-        if e.item.kind == "intervention"
+        if e.item.kind in _IV_KINDS
     }
 
 
@@ -1210,10 +1217,10 @@ async def test_resolve_updates_the_same_entry_no_new_entry_appended() -> None:
         await pilot.pause()
 
         before = {
-            id(e) for e in app.query_one(FlowView).entries if e.item.kind == "intervention"
+            id(e) for e in app.query_one(FlowView).entries if e.item.kind in _IV_KINDS
         }
         entry_before = next(
-            e for e in app.query_one(FlowView).entries if e.item.kind == "intervention"
+            e for e in app.query_one(FlowView).entries if e.item.kind in _IV_KINDS
         )
 
         await pilot.press("enter")  # blind Enter answers the pre-highlighted "Yes"
@@ -1221,7 +1228,7 @@ async def test_resolve_updates_the_same_entry_no_new_entry_appended() -> None:
         await pilot.pause()
 
         after = {
-            id(e) for e in app.query_one(FlowView).entries if e.item.kind == "intervention"
+            id(e) for e in app.query_one(FlowView).entries if e.item.kind in _IV_KINDS
         }
         assert after == before, (
             "resolving changed the SET of intervention flow-entry objects — "

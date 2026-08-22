@@ -318,8 +318,18 @@ async def run_output_loop(
             # swallowed for a picker that never arrives.
             if renderer.uses_app_input() and command_ui_region:
                 continue
-            # persistent kind (not transient "status") so the list stays readable
-            msg = OutboxMessage(kind="intervention", text=msg.text)
+            # persistent kind (not transient "status") so the list stays
+            # readable. #5047 (axis A): was "intervention" purely for this
+            # persistence property, not because a rewind list IS a
+            # question — OutboxMessage.__post_init__ now requires a genuine
+            # meta["intervention_id"] for that family, which this frame
+            # never had. "system" is the SAME "persistent info row" kind
+            # OutboxMessage.from_wire demotes an identity-less wire
+            # intervention frame to — giving rewind its OWN distinct kind
+            # (axis C) is a separate, later step; this keeps the existing
+            # persistent-render behavior without claiming an identity this
+            # frame never had.
+            msg = OutboxMessage(kind="system", text=msg.text)
         # On a real terminal: wrap in run_in_terminal so the prompt is cleared
         # before output and redrawn after — required for ANSI/Rich to render
         # cleanly without corrupting the prompt.

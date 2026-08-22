@@ -106,7 +106,7 @@ class ChatRenderer:
     def message(self, msg: OutboxMessage) -> None:
         """Render one outbox item.
 
-        msg.kind ∈ {"agent","status","error","intervention","trace"}
+        msg.kind ∈ {"agent","status","error","intervention","intervention_resolved","trace"}
         msg.meta carries provenance (actor, run_id, run_id_short, ...)
         """
 
@@ -150,6 +150,11 @@ class ConsoleChatRenderer(ChatRenderer):
         "status": "[…]",
         "error": "[error]",
         "intervention": "[ask]",
+        # #5057 axis B: an already-answered intervention (restore's backlog
+        # projection, or a live one folded in place once answered) is a
+        # DIFFERENT kind from "intervention" now — give it its own prefix
+        # rather than falling through to `_PREFIX.get(kind, "")`'s silent "".
+        "intervention_resolved": "[answered]",
         "trace": "[trace]",
     }
 

@@ -4139,7 +4139,17 @@ class TextualChatApp(App):
         if resolved is not None:
             entry, _iv_id = resolved
             meta = entry.item.meta or {}
-            entry.set_item(replace(entry.item, meta={**meta, "_answer_label": answer_label}))
+            # #5057 axis B: the fold also swaps kind to "intervention_resolved"
+            # (not just meta) — kind alone is now the resolved/pending
+            # discriminator presenter.py/gutter.py read, not `_answer_label`
+            # presence.
+            entry.set_item(
+                replace(
+                    entry.item,
+                    kind="intervention_resolved",
+                    meta={**meta, "_answer_label": answer_label},
+                )
+            )
             entry.set_state(EntryState.DEFAULT)
         if self._pending_ivs:
             # Other tabs are still pending — the panel (and whichever tab was
@@ -4331,9 +4341,18 @@ class TextualChatApp(App):
             except Exception:
                 logger.exception("textual chat: command-UI clear failed")
             return
-        # persistent kind (not transient "status") so the list stays readable —
-        # the same choice the plain client's fallback leg makes.
-        self._ingest_frame(replace(msg, kind="intervention"))
+        # persistent kind (not transient "status") so the list stays
+        # readable — the same choice the plain client's fallback leg
+        # makes. #5047 (axis A): was "intervention" purely for this
+        # persistence property, not because a rewind list IS a question
+        # — OutboxMessage.__post_init__ now requires a genuine
+        # meta["intervention_id"] for that family, which this frame never
+        # had. "system" is the SAME "persistent info row" kind
+        # OutboxMessage.from_wire demotes an identity-less wire
+        # intervention frame to (stream_client.py's own fallback leg uses
+        # it too) — giving rewind its OWN distinct kind (axis C) is a
+        # separate, later step.
+        self._ingest_frame(replace(msg, kind="system"))
 
     async def on_rewind_picker_point_selected(
         self, event: "RewindPicker.PointSelected"
@@ -4626,47 +4645,48 @@ class TextualChatApp(App):
         self._register_call_parent(entry, kind, meta)
         if kind == "presentation":
             self._begin_image_resolutions(entry, msg)
-        # #5047/#5057: a fake-pending ``kind="intervention"`` frame reaches
-        # here from more than one producer, and registering it as PENDING
-        # (the old unconditional branch below) put a phantom entry into
-        # ``self._pending_ivs`` — harmless-looking (the presenter can still
-        # draw it correctly, or it can be answered), but a genuine answer
-        # ``answer_oldest_intervention_text``/``_choice`` delivers to the
-        # registry's OLDEST pending: without a real ``intervention_id`` on
-        # THIS entry, an answer meant for it falls through to that
-        # oldest-pending fallback and can misdeliver to a completely
-        # unrelated, actually-pending entry.
-        #
-        # #5047's own instance was a REPLAYED (backlog) intervention —
-        # ``restore.py``'s ``project_restored_frames`` projects an
-        # already-answered history entry into this SAME ``kind="intervention"``
-        # shape so it renders through the presenter's RESOLVED branch. #5057
-        # found TWO MORE producers with the identical shape (no
-        # ``intervention_id``, not restored either): ``stream_client.py``'s
-        # and this class's own ``/rewind`` text-list fallback, which reuse
-        # ``kind="intervention"`` purely for its PERSISTENT-render property
-        # (never un-answered "waiting" state to begin with). The original
-        # #5047 fix keyed on ``RESTORED_META_KEY`` — a marker naming ONE
-        # producer, not the property that actually matters, so it missed
-        # these two by construction (a fix keyed on "which producer wrote
-        # this" always misses the NEXT producer; #5057 is that miss
-        # happening).
-        #
-        # ``intervention_id`` presence is the real discriminator: it is the
-        # SAME value that decides, downstream, whether an answer can be
-        # routed ``answer_intervention_by_id`` (safe) or falls to
-        # ``answer_oldest_*`` (misdeliverable) — see
-        # ``ClientTransport.answer_intervention_text``/``_choice``'s own
-        # docstrings. ``announce`` (``intervention_handler.py``, the ONLY
-        # producer of a genuinely still-pending intervention) is also the
-        # ONLY one that sets it (``_iv_meta``, unconditionally). Discards:
-        # a future producer that legitimately needs pending-registration
-        # WITHOUT a real answerable id would silently fail this check too —
-        # none is known to exist today (only ``announce`` needs
-        # registration), but a new one must set ``intervention_id`` to a
-        # real, answerable id to pass, not merely omit the restored/rewind
-        # markers this replaces.
-        if kind == "intervention" and (msg.meta or {}).get("intervention_id"):
+        # #5047/#5057 (structural fix, architect's confirmed design —
+        # axis A + axis B, same PR): registration is now `kind ==
+        # "intervention"` alone, no meta inspected here at all. This used
+        # to be a `meta.get("intervention_id")` presence check (#5060,
+        # itself a fix for #5056's own narrower `RESTORED_META_KEY` check)
+        # guarding against a fake-pending frame from a producer with no
+        # real identity — restore.py's replayed (backlog) intervention, and
+        # #5057's own two further finds (stream_client.py's and this
+        # class's own /rewind text-list fallback, both reusing
+        # `kind="intervention"` purely for its PERSISTENT-render
+        # property). All 3 are fixed at their own construction sites
+        # instead, via TWO complementary axes: axis A
+        # (`OutboxMessage.__post_init__` requires a genuine
+        # `meta["intervention_id"]` for the whole intervention family at
+        # CONSTRUCTION time; `OutboxMessage.from_wire` demotes an
+        # identity-less wire frame to `kind="system"` before it ever
+        # reaches here) closes the two rewind-fallback producers (they
+        # never had an id, so they now build `kind="system"` directly).
+        # Axis A alone does NOT close restore.py's replayed-answered
+        # producer, though — that one DOES carry a real id (`deliver_
+        # answer_to` stamps it), so axis A would let it back in as a
+        # fake-pending "intervention" frame (measured independently by
+        # architect from the ingest side and by tui-coder from the panel
+        # side — `InterventionPanel.add_pending` has no resolved/pending
+        # awareness at all — while implementing this fix; #5057
+        # issuecomment-5378183009). Axis B closes THAT gap: an
+        # already-resolved frame builds `kind="intervention_resolved"`
+        # (restore.py's projection, and the two live-answer fold sites,
+        # :meth:`_resolve_intervention` / :meth:`_handle_intervention_
+        # answer_event`) — a DIFFERENT kind, so it never reaches this
+        # branch at all, registering nothing. A `kind == "intervention"`
+        # frame reaching this branch is, by construction (axis A) AND by
+        # never being the resolved shape (axis B), never able to be a
+        # fake pending entry. The 3 former producers of the fake-
+        # pending shape (restore.py, stream_client.py, this app's own
+        # rewind fallback) were fixed at their own construction sites
+        # instead: restore.py always builds `kind="intervention_resolved"`
+        # (its projection is ALWAYS an already-answered entry — an
+        # unanswered intervention has no history trace at all); the two
+        # rewind producers now build `kind="system"` directly, never
+        # "intervention" at all.
+        if kind == "intervention":
             self._present_intervention(msg, entry)
         else:
             self._apply_lifecycle_state(msg, entry)
@@ -5614,7 +5634,15 @@ class TextualChatApp(App):
         entry = self._announced_intervention_entry(iv_id) if iv_id else None
         if entry is not None:
             meta = entry.item.meta or {}
-            entry.set_item(replace(entry.item, meta={**meta, "_answer_label": raw_text}))
+            # #5057 axis B: same fold as _resolve_intervention — kind swaps
+            # to "intervention_resolved" too, not just meta.
+            entry.set_item(
+                replace(
+                    entry.item,
+                    kind="intervention_resolved",
+                    meta={**meta, "_answer_label": raw_text},
+                )
+            )
             return
         meta = dict(data.get("meta") or {})
         self._ingest_frame(

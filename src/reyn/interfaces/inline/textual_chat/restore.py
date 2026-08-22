@@ -77,16 +77,20 @@ CLOSED-SET answer's own ``ChatMessage.content`` is an empty string; see
 ``INTERVENTION_ANSWER_META_KEY``, :mod:`reyn.runtime.chat_message`). One
 history entry is already fully self-contained — this projection just reads
 it, with no join/correlation step and therefore no GUESSED-key risk (the
-#3287 / #3299 P2 defect class this arc hit twice before). It projects
-straight into the SAME ``kind="intervention"`` shape a LIVE resolved entry
-uses (``meta["prompt"]`` / ``meta["detail"]`` for the head,
+#3287 / #3299 P2 defect class this arc hit twice before). It projects into
+``kind="intervention_resolved"`` (#5057 axis B — the sibling kind a LIVE
+entry is folded to once answered, :meth:`TextualChatApp._resolve_intervention` /
+:meth:`TextualChatApp._handle_intervention_answer_event`), carrying
+``meta["prompt"]`` / ``meta["detail"]`` for the head and
 ``meta["_answer_label"]`` for the "✓ answered: ..." line —
-``ReynPresenter._present_intervention_pending``'s RESOLVED branch, no
-presenter change needed), so a restored Q→A reads through the EXACT SAME
-render path — and hits the EXACT SAME neutralization boundary (the prompt /
-detail / a matched choice's label are all model-derived / untrusted; that
-presenter call site is where they get neutralized, never here) — a live
-resolved entry does. P5's out-of-order answering is safe by construction:
+``ReynPresenter._present_intervention_pending`` renders both kinds through
+the ONE function (:meth:`ReynPresenter.present` dispatches ``intervention``
+and ``intervention_resolved`` to the same call), so a restored Q→A reads
+through the EXACT SAME render path — and hits the EXACT SAME neutralization
+boundary (the prompt / detail / a matched choice's label are all
+model-derived / untrusted; that presenter call site is where they get
+neutralized, never here) — a live resolved entry does. P5's out-of-order
+answering is safe by construction:
 each answer record carries its OWN question, so answering interventions in
 any order restores each with its correct pairing. An intervention that was
 NEVER answered leaves no history trace at all (``announce`` never appends)
@@ -302,15 +306,35 @@ def project_restored_frames(
                 # history trace at all (``announce`` never appends to
                 # history) — nothing to project, which is the specified
                 # behavior, not an omission.
+                #
+                # #5057 (axis B — architect's confirmed design): this
+                # projection is ALWAYS an already-answered entry (an
+                # unanswered intervention has no history trace at all, per
+                # the docstring above), so it builds ``kind=
+                # "intervention_resolved"`` — the sibling kind axis B adds
+                # specifically so a resolved frame IS structurally distinct
+                # from a genuinely pending one, rather than relying on
+                # ``_ingest_frame`` (or anything downstream) to inspect
+                # ``meta`` to tell them apart. ``intervention_resolved`` is
+                # NOT in ``outbox._INTERVENTION_FAMILY_KINDS`` — axis A's
+                # identity requirement does not apply here (a resolved
+                # frame is never answered again, so it needs no
+                # correlation anchor), which is what lets this branch stay
+                # ONE shape instead of the id-present/id-absent split axis
+                # A alone forced (#5047's own history: a record from
+                # BEFORE ``deliver_answer_to`` started stamping
+                # ``intervention_id`` carries none, and that must render
+                # exactly the same as one that does).
                 frames.append(
                     OutboxMessage(
-                        kind="intervention",
+                        kind="intervention_resolved",
                         text=str(prompt),
                         meta={
                             RESTORED_META_KEY: True,
                             "prompt": prompt,
                             "detail": meta.get(INTERVENTION_DETAIL_META_KEY),
                             "_answer_label": meta.get(INTERVENTION_ANSWER_META_KEY, ""),
+                            "intervention_id": meta.get("intervention_id"),
                         },
                     )
                 )

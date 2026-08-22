@@ -188,6 +188,13 @@ def _scenarios() -> "list[tuple[str, OutboxMessage]]":
             meta[RUNNING_SINCE_KEY] = 0.0
         if answered:
             meta["_answer_label"] = "yes"
+        if kind == "intervention":
+            # #5047 axis A: OutboxMessage.__post_init__ requires a genuine
+            # meta["intervention_id"] for this kind at construction time —
+            # every OTHER kind in DISPLAY_KINDS (including the sibling
+            # "intervention_resolved") constructs from the payload above
+            # alone.
+            meta["intervention_id"] = "iv-contrast-scenario"
         label = (
             f"kind={kind} settled={settle_kind} "
             f"failed_result={result is _FAILING_RESULT} "
