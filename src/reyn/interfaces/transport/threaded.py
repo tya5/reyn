@@ -306,6 +306,19 @@ class ThreadedTransportProxy(ClientTransport):
             "answer_intervention_choice", choice_id, intervention_id=intervention_id,
         )
 
+    async def state_ready(self) -> None:
+        # #5050 ③ follow-up (lead-coder, issuecomment-5377682724 — the
+        # 3rd lying-ready site found across the 3 production wrappers
+        # this axis had to be threaded through): the base default (return
+        # immediately) would be WRONG here specifically because the inner
+        # transport's ``state_ready()`` awaits an ``asyncio.Event`` that
+        # lives on the WORKER loop, not the caller's — falling through to
+        # the base default skips the only place that Event is ever
+        # actually waited on. ``_call_on_worker`` (not a bespoke bridge)
+        # marshals the coroutine onto the worker loop exactly like every
+        # other delegated async method above.
+        await self._call_on_worker("state_ready")
+
     async def cancel_inflight(self) -> str:
         return await self._call_on_worker("cancel_inflight")
 

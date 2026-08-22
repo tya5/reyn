@@ -28,6 +28,7 @@ footgun where a client kills the server).
 """
 from __future__ import annotations
 
+import asyncio
 from typing import AsyncIterator, Awaitable, Callable
 
 from reyn.interfaces.transport.agui.protocol import (
@@ -41,7 +42,7 @@ from reyn.interfaces.transport.agui.protocol import (
 from reyn.interfaces.transport.agui.state import RemoteStatusView, reguard_nodes
 from reyn.interfaces.transport.client_transport import ClientTransport
 from reyn.interfaces.transport.drain import suspend_between_frames
-from reyn.interfaces.transport.frames import DisplayFrame, Frame
+from reyn.interfaces.transport.frames import DisplayFrame, EventFrame, Frame
 
 
 class AgUiTransport(ClientTransport):
@@ -65,6 +66,12 @@ class AgUiTransport(ClientTransport):
         # TOOL_CALL_RESULT toolCallId, P3/R1). Set when the server emits the
         # intervention frontend-tool; cleared when it resolves (answered / DENY).
         self._pending_intervention_id: "str | None" = None
+        # #5050 ③: set once the FIRST STATE_SNAPSHOT (always the first thing
+        # the reconnect protocol sends — ``AgUiEmitter.stream``'s own
+        # ordering) has been decoded into ``self._status`` — see
+        # :meth:`state_ready`'s own docstring (on the base class) for why
+        # this is a separate axis from :meth:`frames`.
+        self._state_ready_event = asyncio.Event()
 
     # -- lifecycle ----------------------------------------------------------
 
@@ -72,6 +79,9 @@ class AgUiTransport(ClientTransport):
         # The SSE line source is created and owned by the caller (the httpx
         # connect happens before construction); nothing to wire up here.
         return None
+
+    async def state_ready(self) -> None:
+        await self._state_ready_event.wait()
 
     def close(self) -> None:
         self._connected = False
@@ -113,6 +123,12 @@ class AgUiTransport(ClientTransport):
                     self._status.apply_snapshot(decoded.snapshot)
                 if decoded.delta is not None:
                     self._status.apply_delta(decoded.delta)
+                # #5050 ③: either kind of STATE_* update means the status
+                # side-channel now reflects at least one genuine server
+                # update — see :meth:`state_ready`'s own docstring for why
+                # this is set here, independent of whether this block also
+                # yields any display Frame.
+                self._state_ready_event.set()
             elif isinstance(decoded, MessagesSnapshot):
                 out.extend(self._reguard_frame(f) for f in decoded.frames)
             elif isinstance(decoded, InterventionTool):
@@ -125,6 +141,44 @@ class AgUiTransport(ClientTransport):
                 if decoded.intervention_id == self._pending_intervention_id:
                     self._pending_intervention_id = None
             else:  # a Frame
+                # #5050 ③ (architect co-vet, issuecomment-5377613210 — a
+                # correction of this PR's OWN first draft): a
+                # ``session_attached`` EventFrame starts a NEW episode —
+                # ``AgUiEmitter``'s reconnect-protocol barrier
+                # (``emitter.py``'s own module docstring: the STATE_SNAPSHOT
+                # re-fire happens STRICTLY AFTER the ``session_attached``
+                # frame is forwarded, never before) means ``self._status``
+                # still reflects the OLD session's state at the instant this
+                # frame is decoded. Clearing the Event here — rather than
+                # leaving the FIRST session's one-shot ``set()`` standing
+                # forever — makes a SECOND ``await state_ready()`` after a
+                # switch correctly wait for THIS episode's own fresh
+                # snapshot instead of resolving immediately on stale data
+                # (the "lying-ready" shape architect's original ruling
+                # named, now applied per-episode instead of once ever).
+                # ``_session_switch_generation`` is unrelated and unchanged
+                # (architect: do not invent a second generation mechanism)
+                # — this Event answers "has THIS episode's state landed",
+                # the generation answers "is this still the latest switch".
+                # ★unconditional clear, conditional re-set (architect
+                # non-block, issuecomment-5377689986): the NEXT set() is
+                # NOT guaranteed by this client alone — it depends on the
+                # SERVER actually re-firing a snapshot, which
+                # ``emitter.py:184``'s own guard only does when a
+                # ``backlog_provider`` was wired (``if etype ==
+                # "session_attached" and self._backlog_provider is not
+                # None``). Production always reaches this: ``endpoint.py``'s
+                # own AG-UI route always constructs the emitter WITH one
+                # (search that file for where it is passed). A caller
+                # against a THIRD-PARTY AG-UI server, or a test emitter
+                # built without one, would leave this Event cleared
+                # forever — ``state_ready()`` never returning is the
+                # visible symptom, not a silent wrong answer.
+                if (
+                    isinstance(decoded, EventFrame)
+                    and getattr(decoded.event, "type", None) == "session_attached"
+                ):
+                    self._state_ready_event.clear()
                 out.append(self._reguard_frame(decoded))
         return out
 

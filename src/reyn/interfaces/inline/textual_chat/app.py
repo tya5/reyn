@@ -2298,6 +2298,17 @@ class TextualChatApp(App):
 
         _disarm_stall_trace()
         self.run_worker(self._pump_frames(), name="frames", exclusive=True)
+        # #5050 ③: a SEPARATE worker, not sequenced inside ``_pump_frames``
+        # itself — that loop can run forever (a live connection) or never
+        # yield a single frame at all (the exact scenario this exists
+        # for), so "after the frame loop" is not a usable sequencing
+        # point. Concurrency with the frame pump is safe: this worker's
+        # own ``_await_iv_panel_composed`` wait is a real, unbounded
+        # condition-wait, not a timing assumption about interleaving.
+        self.run_worker(
+            self._present_hydrated_intervention_head_if_pending(),
+            name="hydrated-iv-head", exclusive=False,
+        )
         # #3539: started alongside the frame pump rather than earlier in this
         # method — the worker manager is what makes a coroutine here actually
         # run, and a call placed before the pump's own is silently never
@@ -3939,6 +3950,165 @@ class TextualChatApp(App):
         choices = meta.get("choices")
         self._iv_panel.add_pending(key, prompt=prompt, detail=detail, choices=choices)
 
+    async def _await_iv_panel_composed(self) -> None:
+        """Cooperative, UNBOUNDED wait (``asyncio.sleep(0)`` — a yield,
+        not a duration; CLAUDE.md's accepted "wait on a real condition
+        unboundedly" shape) for :attr:`_iv_panel`'s nested
+        ``TabbedContent`` to finish composing its internal ``#tabs-list``
+        ``Horizontal``.
+
+        #5050 ③, measured: Textual mounts a STATIC compose tree
+        (``InterventionPanel`` → ``TabbedContent`` → ``ContentTabs`` →
+        this ``Horizontal``) over SEVERAL event-loop turns after the
+        ancestor itself becomes ``is_attached`` — calling
+        ``InterventionPanel.add_pending`` (which does
+        ``TabbedContent.add_pane`` → ``ContentTabs.add_tab`` →
+        ``Horizontal#tabs-list.mount(...)``) before that settles raises a
+        real ``MountError`` (``Widget.mount``'s own ``is_attached`` guard
+        — see ``textual/widget.py``). The EXISTING live-frame path
+        (:meth:`_ingest_frame` → :meth:`_present_intervention`) never hit
+        this because frame arrival is naturally preceded by enough real
+        ``await`` points (SSE reads/decodes) for mounting to have long
+        settled by the time a frame's body runs; THIS path can run as
+        early as the very first event-loop turn after ``on_mount``,
+        before any of those awaits have happened — so it needs its own
+        explicit wait rather than borrowing the frame path's incidental
+        one."""
+        import asyncio  # noqa: PLC0415
+
+        while True:
+            try:
+                tabs_list = self._iv_panel.query_one("#tabs-list")
+            except Exception:
+                tabs_list = None
+            if tabs_list is not None and tabs_list.is_attached:
+                return
+            await asyncio.sleep(0)
+
+    async def _present_hydrated_intervention_head_if_pending(
+        self, *, switch_generation: "int | None" = None,
+    ) -> None:
+        """#5050 ③: present a genuinely PENDING intervention this client
+        never received the live announce for — reads ``ChatReadModel.
+        intervention_head()`` (declared #4996, wired for remote by #5053)
+        and, if non-None, routes it through the SAME ``_ingest_frame`` →
+        ``_present_intervention`` path a live announce frame already
+        uses, rather than a second display mechanism.
+
+        ONE shared entry point, called from BOTH :meth:`on_mount`
+        (``switch_generation=None``) and
+        :meth:`_handle_session_switch_event` (``switch_generation=`` the
+        generation THAT call claimed at its own entry) — placed next to
+        that method's own :meth:`_seed_queue_view` eager-reseed call,
+        same rationale verbatim: deferring to the generic first-frame
+        gate would need a frame AFTER this barrier to ever fire, and a
+        session with an already-pending intervention but no OTHER
+        activity would never get one.
+
+        ``switch_generation=None`` (the mount case) awaits
+        ``self._transport.state_ready()`` first — a SEPARATE axis from
+        the frame stream (see that method's own docstring on
+        ``ClientTransport`` for why frame arrival cannot be the gate: a
+        session with genuinely nothing else happening yields ZERO frames
+        from ``AgUiTransport.frames()``, ever, confirmed by direct
+        reproduction, not guessed).
+
+        ``switch_generation=<int>`` (the switch case) ALSO awaits
+        ``state_ready()`` — corrected mid-review (architect co-vet,
+        issuecomment-5377613210) from this PR's OWN first draft, which
+        skipped the re-await on the theory that any STATE_* update in the
+        SAME reconnect burst was "already applied by the time this call
+        reads". Measured backwards: ``AgUiEmitter``'s reconnect-protocol
+        barrier forwards the ``session_attached`` frame STRICTLY BEFORE
+        its STATE_SNAPSHOT re-fire (``emitter.py``'s own module
+        docstring — "the barrier ordering is the whole point"), so
+        ``transport.status`` still reflects the OLD session at the
+        instant this method's caller runs; skipping the re-await either
+        misdelivers the OLD session's own pending head onto the NEW
+        session's view (wrong id), or reads ``None`` and never presents
+        the NEW session's real pending intervention — the exact defect
+        witness ③ exists to catch.
+
+        What actually fixes "lying-ready" (architect's own correction of
+        their own earlier ruling: "stop re-awaiting a one-shot Event" was
+        never the same as "stop awaiting entirely") is that
+        ``AgUiTransport`` now clears ``state_ready()``'s Event the moment
+        it decodes a ``session_attached`` frame (see that decode site's
+        own comment) — so each switch starts a fresh, awaitable episode
+        instead of resolving instantly off the FIRST session's stale
+        ``set()``. ``_session_switch_generation`` answers a DIFFERENT
+        question ("is this still the latest switch") and is unrelated —
+        no second generation mechanism was introduced for this."""
+        await self._transport.state_ready()
+        if (
+            switch_generation is not None
+            and self._session_switch_generation != switch_generation
+        ):
+            return
+        if self._read_model is None:
+            return
+        head = self._read_model.intervention_head()
+        if head is None:
+            return
+        await self._await_iv_panel_composed()
+        if (
+            switch_generation is not None
+            and self._session_switch_generation != switch_generation
+        ):
+            return
+        self._present_hydrated_intervention_head(head)
+
+    def _present_hydrated_intervention_head(self, head: object) -> None:
+        """#5050 ③: normalize an already-fetched ``intervention_head()``
+        result and route it through the SAME ``_ingest_frame`` →
+        ``_present_intervention`` path a live announce frame already
+        uses.
+
+        ``intervention_head()`` returns two different SHAPES depending on
+        implementation (measured, #5053's own record): LOCAL
+        (``RegistryReadModel``) returns the real ``UserIntervention``
+        OBJECT (attribute access — ``.id``/``.prompt``/``.detail``/
+        ``.choices``, each choice a real ``InterventionChoice`` with
+        ``.id``/``.label``/``.hotkey``); REMOTE (``RemoteReadModel``)
+        returns the JSON-safe WIRE projection — a plain dict (``head["id"]``
+        etc.), choices as a list of plain dicts. Decided HERE, before
+        writing any consumer: normalize BOTH into the one dict shape
+        ``_present_intervention`` already expects (it only ever reads
+        ``msg.meta`` — a plain dict, regardless of transport) — one
+        normalization boundary, not two call sites that could drift.
+
+        Called only from :meth:`_present_hydrated_intervention_head_if_
+        pending`, which already established ``head is not None`` and
+        that the panel is safe to mutate — never races a live announce
+        for the SAME intervention: there is only one announce, ever, and
+        if this call sees a pending head here, that means the announce
+        already happened before this client's own state became ready."""
+        from reyn.runtime.outbox import OutboxMessage  # noqa: PLC0415
+        if isinstance(head, dict):
+            iv_id = head.get("id")
+            prompt = head.get("prompt") or ""
+            detail = head.get("detail")
+            choices = head.get("choices")
+        else:
+            iv_id = head.id
+            prompt = head.prompt
+            detail = head.detail or None
+            choices = [
+                {"id": c.id, "label": c.label, "hotkey": c.hotkey}
+                for c in (head.choices or [])
+            ] or None
+        msg = OutboxMessage(
+            kind="intervention",
+            text=str(prompt),
+            meta={
+                "intervention_id": iv_id,
+                "prompt": prompt,
+                "detail": detail,
+                "choices": choices,
+            },
+        )
+        self._ingest_frame(msg)
+
     def _resolve_intervention(self, key: object, answer_label: str) -> None:
         """Settle intervention ``key``'s flow entry + tab once an answer has
         been delivered through the transport funnel (#3308 — replaces P2's
@@ -5215,6 +5385,23 @@ class TextualChatApp(App):
         except Exception:
             logger.exception("textual chat: switch queue-view reseed failed")
         self._queue_seeded = True
+        # #5050 ③: SAME reasoning — a switch to an agent that already has
+        # a pending intervention gets no live announce (restore.py: an
+        # unanswered intervention leaves no history trace, and
+        # ``_apply_hydrated_messages`` below only ever replays history),
+        # so nothing else on this path would ever present it. Fired as a
+        # separate worker (never blocks the off-thread history read just
+        # below); gated on THIS call's own claimed generation, re-checked
+        # after ``state_ready()`` (which re-awaits per-episode for a
+        # switch too — see that method's own docstring for the ordering
+        # bug this corrects) and again after its panel-mount wait, so a
+        # LATER switch that supersedes this one at any point is a no-op.
+        self.run_worker(
+            self._present_hydrated_intervention_head_if_pending(
+                switch_generation=my_switch_generation,
+            ),
+            name="hydrated-iv-head-switch", exclusive=False,
+        )
         # #4983: step ① (the disk read) runs OFF the event loop — the
         # measured defect this issue exists for (a synchronous
         # `conversation_history()` call blocking the TUI's own event
