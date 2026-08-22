@@ -161,8 +161,23 @@ class ClientTransport(ABC):
 
     @abstractmethod
     def put_display(self, msg: "OutboxMessage") -> None:
-        """Inject a client-authored display message (user echo, /copy result, …)
-        into the display stream, in order with the session's own output."""
+        """Show a client-authored display message (user echo, /copy result,
+        a slash reply, …) **on this client's own face** — never a promise
+        of injecting into the session's transcript/outbox, which not every
+        implementation can reach (#5107, lead-coder correction of this
+        docstring's own prior wording: "in order with the session's own
+        output" claimed a stronger guarantee — ALL surfaces, transcript-
+        order — than a remote transport can structurally satisfy, which is
+        what made a no-op look like the "honest" answer for one; the
+        contract was asking for something unsatisfiable, not the
+        implementation being lazily wrong).
+
+        ``InProcessTransport``/``SessionBoundTransport`` happen to satisfy
+        this by routing into the session's own outbox (every OTHER
+        attached surface sees it too, in FIFO order) — that is a property
+        of THEIR implementation, not a requirement THIS contract states.
+        ``AgUiTransport`` satisfies it by rendering locally only, on the
+        one face this client itself is."""
 
     @abstractmethod
     async def cancel_inflight(self) -> str:

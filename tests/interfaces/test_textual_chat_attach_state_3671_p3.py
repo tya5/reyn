@@ -262,9 +262,11 @@ async def test_submit_blocked_while_unattached_preserves_typed_text():
         )
         # #5001: this notice is a client-authored one about THIS client's
         # own composer state — it now appends directly via `_ingest_frame`
-        # rather than `transport.put_display` (a remote client's
-        # `AgUiTransport.put_display` is a correct no-op; routing this
-        # notice through it silently dropped it there). Assert on the
+        # rather than `transport.put_display` (at the time of this fix, a
+        # remote client's `AgUiTransport.put_display` was an unconditional
+        # no-op; routing this notice through it silently dropped it there
+        # — fixed since, #5107, but this call site's own bypass stands on
+        # separate merits, see app.py's own docstring). Assert on the
         # FlowView the operator actually sees, not the transport's own
         # `displayed` list, which this notice no longer reaches.
         rows = [e.item.text or "" for e in app.query_one(FlowView).entries]
