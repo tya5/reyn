@@ -585,5 +585,12 @@ async def test_extend_history_backward_async_apply_is_a_no_op_when_history_moved
             "front of it"
         )
     finally:
+        # Same reasoning as the sibling witness above: release the gate
+        # FIRST. Even though read_gate.set() sits before every assert
+        # here, _parse_history_line(...) / session.history.insert(...)
+        # can themselves raise before reaching it -- an unreleased gate
+        # is the same process-hang failure mode (architect finding,
+        # issuecomment-5378577064).
+        read_gate.set()
         history_tail_reader.read_history_before = real_read
         await proxy.shutdown()
