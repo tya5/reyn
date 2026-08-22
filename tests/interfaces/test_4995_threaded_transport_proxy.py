@@ -223,14 +223,26 @@ async def test_accept_side_frames_and_sync_reads_flow_through_the_proxy():
     from reyn.interfaces.transport.frames import DisplayFrame
     from reyn.runtime.outbox import OutboxMessage
 
+    # #4995 CI finding (lead-coder): the pre-first-frame assertion below
+    # previously raced the worker thread's own pump — nothing held the
+    # first frame back, so whether the caller reached the assertion before
+    # or after `_pump_frames` refreshed the snapshot slot was a coin flip
+    # (green locally only because the caller happened to win on a fast
+    # machine). Gated the same way witness② already gates the worker
+    # thread — a real `threading.Event` the test controls — so the
+    # pre-frame phase this test's own docstring claims is now genuinely
+    # constructed, not merely hoped for. No sleep/timeout/attempts.
+    release_first_frame = threading.Event()
+
     class _FramingTransport(_RecordingTransport):
-        """Yields exactly one real frame (constructed at ``__init__`` time,
-        no cross-thread test injection needed — the worker thread's own
-        pump loop is what drains this and delivers it), then hangs on an
+        """Yields exactly one real frame, held back until the test releases
+        ``release_first_frame`` — constructing the pre-frame phase this
+        test actually asserts on, not racing it — then hangs on an
         unresolved real ``asyncio.Event`` forever (unbounded wait, not a
         duration) since this test needs no second frame."""
 
         async def frames(self):
+            await asyncio.to_thread(release_first_frame.wait)
             yield DisplayFrame(OutboxMessage(kind="status", text="hello from core"))
             await self._never.wait()
 
@@ -241,10 +253,14 @@ async def test_accept_side_frames_and_sync_reads_flow_through_the_proxy():
     proxy.start()
     try:
         # Pre-first-frame: the pre-attach contract (None), same shape
-        # #5009's own cost/ctx panes already rely on.
+        # #5009's own cost/ctx panes already rely on. Genuinely pre-frame
+        # now — the worker cannot have pumped anything yet, since
+        # `_FramingTransport.frames()` is still blocked on
+        # `release_first_frame` above.
         assert proxy.has_session() is False
         assert proxy.read_model_snapshot() is None
 
+        release_first_frame.set()
         frame = await proxy.frames().__anext__()
         assert frame.message.text == "hello from core"
 
