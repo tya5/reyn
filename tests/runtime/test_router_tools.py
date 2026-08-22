@@ -48,6 +48,10 @@ EXPECTED_TOOL_NAMES = [
     # single registration).
     "present",
     "render_template",
+    # describe_session (#5012-A) — always exposed, unconditional (like
+    # present/render_template above): no natural gating condition, cheap
+    # read-only introspection relevant on any turn.
+    "describe_session",
     # compact (#272/#1128) is NOT in the baseline — it is visibility-gated
     # (compact_visible) and only appears when the window is filling, paired
     # with the context-size signal (see test_compact_visible_gates_tool).

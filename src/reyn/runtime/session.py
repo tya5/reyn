@@ -33,6 +33,7 @@ from pathlib import Path
 
 from reyn.config import (  # noqa: F401
     AuditEventsConfig,
+    AuthConfig,
     CostWarnConfig,
     EmbeddingConfig,
     HistoryResidentConfig,
@@ -850,6 +851,10 @@ class Session:
         # #4381 PR-5: the resource-bound per-result inline cap (file.py read op +
         # load_skill.py). None → context_builder's own model-independent default.
         read_cap_config: "ReadCapConfig | None" = None,
+        # #5012-A: reyn.yaml auth.* → the describe_session op's auth-status
+        # field. Plain value, same shape as web_fetch_config/read_cap_config —
+        # not a per-turn supplier.
+        auth_config: "AuthConfig | None" = None,
         # #4387 Phase B ③: the resource-bound cap on self.history's resident
         # footprint (bytes). None → HistoryResidentConfig's own default (256 MiB).
         history_resident_config: "HistoryResidentConfig | None" = None,
@@ -995,6 +1000,9 @@ class Session:
         # resource/budget invariant check, and into OpContext.read_cap_config
         # for file.py's/load_skill.py's own read op (via RouterOpContextSource).
         self._read_cap_config = read_cap_config
+        # #5012-A: stored so RouterOpContextSource can thread it into
+        # OpContext.auth_config for the describe_session op's auth-status field.
+        self._auth_config = auth_config
         # #4387 Phase B ③: bounds self.history's resident footprint —
         # consulted by _append_history's eviction hook (below).
         self._history_resident_config = history_resident_config or HistoryResidentConfig()
@@ -4712,6 +4720,10 @@ class Session:
                 self._sandbox_config.policy if self._sandbox_config is not None
                 else None
             ),
+            # #5012-A: live, same reload-ability as sandbox_policy_fn above —
+            # the RAW SandboxConfig (declared, never resolved) for
+            # describe_session's write-scope field, via OpContext.sandbox_config.
+            sandbox_config_fn=lambda: self._sandbox_config,
             # FP-0016: this agent's identity → the MCP client's X-Reyn-Agent-Id.
             agent_id=self._agent.agent_id,
             # #4574: the live agent's NAME — a DIFFERENT string from agent_id
@@ -4733,6 +4745,7 @@ class Session:
             multimodal_config=self._multimodal_config,
             web_fetch_config=self._web_fetch_config,  # #4274
             read_cap_config=self._read_cap_config,  # #4381 PR-5
+            auth_config=self._auth_config,  # #5012-A
             media_store_fn=lambda: self._media_store,  # #383/#2409
             compact_now=self._compact_now_for_op,  # #272/#1128
             threat_scan=self._safety.threat_scan,  # FP-0050/#1822

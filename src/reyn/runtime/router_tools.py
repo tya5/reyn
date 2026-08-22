@@ -683,6 +683,22 @@ def build_tools(
             dispatch_kind=_render_template_def.dispatch_kind,
         ))
 
+    # ── #5012-A: describe_session (own write scope / position / auth status) ──
+    # Unconditional (like present/render_template above): no natural gating
+    # condition — cheap, read-only, relevant on any turn (e.g. before a write
+    # the model wants to know whether a path is in scope). Registering the
+    # ToolDefinition also opens the pipeline surface (bare-name lookup);
+    # this block is what surfaces it to the default enumerate-all chat LLM.
+    _describe_session_def = _registry.lookup("describe_session")
+    if _describe_session_def is not None and _describe_session_def.gates.router == "allow":
+        _describe_session_rendered = _describe_session_def.render_for_router()
+        specs.append(ToolSpec(
+            name=_describe_session_rendered["function"]["name"],
+            description=_describe_session_rendered["function"]["description"],
+            parameters=_describe_session_rendered["function"]["parameters"],
+            dispatch_kind=_describe_session_def.dispatch_kind,
+        ))
+
     # ── D. MCP tools (permission-gated) ──────────────────────────────────────
     #
     # FP-0024 Component D: threshold-based switch.

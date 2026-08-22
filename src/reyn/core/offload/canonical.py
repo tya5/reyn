@@ -911,6 +911,32 @@ def compact_to_canonical(result: dict) -> CanonicalToolResult:
     return CanonicalToolResult(text=" ".join(parts), attachments=[], source_ref=None, meta={})
 
 
+def describe_session_to_canonical(result: dict) -> CanonicalToolResult:
+    """``describe_session`` op/tool result → canonical (#5012-A).
+
+    The whole result dict IS the right LLM view (write_scope / position /
+    auth_status — no single natural-language summary loses less than it
+    keeps), same reasoning ``STRUCTURED_PASSTHROUGH`` documents for the
+    admin/install family — but that sentinel is reserved for exactly the
+    admin/install 6 (owner decision #1,
+    ``test_structured_passthrough_membership_is_exactly_the_admin_6``), so
+    describe_session gets its own small mapper instead: a JSON rendering of
+    the 3 fields as ``text``, rather than a lossy prose summary."""
+    return CanonicalToolResult(
+        text=json.dumps(
+            {
+                "write_scope": result.get("write_scope"),
+                "position": result.get("position"),
+                "auth_status": result.get("auth_status"),
+            },
+            indent=2,
+        ),
+        attachments=[],
+        source_ref=None,
+        meta={},
+    )
+
+
 def present_to_canonical(result: dict) -> CanonicalToolResult:
     """``present`` op/tool result → canonical (FP-0054 / FP-0056). ``present`` is fire-and-continue: it
     routes the bulk data to the user surface itself and returns a compact ACK. That ack is an

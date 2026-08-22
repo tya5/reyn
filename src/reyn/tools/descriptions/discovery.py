@@ -278,6 +278,32 @@ search_knowledge = ToolDescription(
     ),
 )
 
+describe_session = ToolDescription(
+    tool_name="describe_session",
+    surfaced="router (gates.router=allow)",
+    purpose=(
+        "Let the model check its own write scope / repo position / auth "
+        "status instead of guessing or asking the user (#5012-A)."
+    ),
+    text=(
+        "Report this session's own position: (1) write scope as DECLARED by "
+        "the sandbox policy (never a resolved/effective scope — a permission "
+        "check may still deny a specific path), (2) repo path, git branch/HEAD, "
+        "venv path, and ruff/pytest/mkdocs availability, and (3) auth status "
+        "for reyn's own OAuth-managed providers only (authenticated: true/false "
+        "+ a reason — never a token or scope; a third-party CLI's own auth, "
+        "e.g. `gh auth status`, is out of scope — run that CLI directly for "
+        "its own auth state). No arguments."
+    ),
+    ja=(
+        "このセッション自身の位置情報を報告する: (1) sandbox policy が宣言する"
+        "書き込みスコープ（解決済みスコープではない — 個別パスの許可判定は別）、"
+        "(2) リポジトリパス・gitブランチ/HEAD・venvパス・ruff/pytest/mkdocsの"
+        "有無、(3) reyn自身がOAuth管理するプロバイダの認証状態のみ（token/"
+        "scopeは含まない。サードパーティCLI自身の認証は対象外）。引数なし。"
+    ),
+)
+
 ALL: dict[str, ToolDescription] = {
     "embed": embed,
     "web_fetch": web_fetch,
@@ -287,6 +313,7 @@ ALL: dict[str, ToolDescription] = {
     "search_actions": search_actions,
     "search_knowledge": search_knowledge,
     "describe_action": describe_action,
+    "describe_session": describe_session,
 }
 
 

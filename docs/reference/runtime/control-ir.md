@@ -42,6 +42,7 @@ Control IR is the list of side-effect operations the LLM may emit. The OS dispat
 | `index_update` | Incremental/delta-reconcile ingestion into a source's index (add/update/remove/skip; FP-0057 Phase 2a) | none (default-allow; own-write; embedding API cost) |
 | `compact` | Voluntarily compact the conversation history (advisory) | none (LLM cost; the mandatory `retry_loop` backstop is independent) |
 | `emit_hook_event` | Emit an LLM-authored `llm:<session_id>:<event_name>` hook-event onto the caller's OWN session `HookBus` (Hook-Event Redesign Phase 5 part 2) | none (structural session-binding + a static kind whitelist gate the autonomy boundary — see dedicated section below) |
+| `describe_session` | Report this session's own position: write scope as DECLARED by the sandbox policy, repo/git/venv/toolchain facts, and auth status for reyn's own OAuth-managed providers (#5012-A) | none (read-only introspection) |
 
 ## Common envelope
 
@@ -1571,6 +1572,68 @@ tracks a NEW risk dimension this phase's producer surfaces: a WAL-replay-driven
 re-emit (an `emit_hook_event` op re-executed during crash-recovery WAL replay)
 is a distinct hazard from the counter's own in-memory reset, and is
 out-of-scope here too.
+
+---
+
+## `describe_session`
+
+Read-only session introspection (#5012-A). No arguments, no side effect, no
+permission gate (`gates.router="allow"`, mirrors `list_actions`/
+`search_actions` — always advertised, unconditional).
+
+Field population is closed to 3 fields (architect ruling, `gh issue view
+5012`, 2026-08-21 — never grown ad hoc):
+
+1. **`write_scope`** — what `sandbox.policy` DECLARES, never the resolved/
+   effective scope (a context-free tool cannot know the caller-supplied
+   `write_paths` floor `resolve_sandbox_policy()` needs — same reasoning
+   `doctor.py`'s C-5 check documents, #4364). Three-way discriminator:
+   `{"declared": false}` (no `sandbox.policy` block at all — this repo's own
+   live default) / `{"declared": true, "allow_write_paths": null,
+   "deny_write_paths": null}` (block present, no write-scope keys) /
+   `{"declared": true, "allow_write_paths": [...], "deny_write_paths":
+   [...]}` (the block's own declared values, verbatim).
+2. **`position`** — `{repo_root, branch, head, python_executable, venv_path,
+   capability: {ruff, pytest, mkdocs}}`. `branch`/`head` are `null` for a
+   non-git directory or before the first commit; `branch` is `null` (not the
+   literal `"HEAD"`) in a detached-HEAD state.
+3. **`auth_status`** — one entry per provider declared in `auth.providers`
+   (reyn.yaml), each `{authenticated: bool, reason: str}` — NEVER a token,
+   refresh token, client secret, or scope. Scoped PERMANENTLY to reyn's own
+   `reyn auth` OAuth device-grant flow — a third-party CLI's own auth (`gh
+   auth status`, `aws`, `gcloud`) is out of scope by the owner's "does
+   reyn's code grow when the tool's own case count grows" rule; an agent
+   that needs it can run that CLI directly via `sandboxed_exec`.
+
+```json
+{"kind": "describe_session"}
+```
+
+Result:
+
+```json
+{
+  "kind": "describe_session",
+  "status": "ok",
+  "write_scope": {"declared": false},
+  "position": {
+    "repo_root": "/path/to/repo", "branch": "main", "head": "abc1234...",
+    "python_executable": "/path/to/.venv/bin/python",
+    "venv_path": "/path/to/.venv",
+    "capability": {"ruff": true, "pytest": true, "mkdocs": true}
+  },
+  "auth_status": {}
+}
+```
+
+Implementation: `reyn.runtime.session_write_scope.describe_write_scope`,
+`reyn.runtime.session_position.describe_session_position`,
+`reyn.runtime.session_auth_status.describe_auth_status`, assembled by
+`reyn.core.op_runtime.describe_session`. `OpContext.sandbox_config` /
+`OpContext.auth_config` are narrow config-derived projections (same shape
+as `OpContext.threat_scan`), threaded through
+`build_router_op_context`/`RouterOpContextSource` from `Session`'s own
+`_sandbox_config`/`_auth_config`.
 
 ---
 

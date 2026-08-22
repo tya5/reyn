@@ -16,6 +16,7 @@ if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Sequence
 
     from reyn.config import MultimodalConfig, ReadCapConfig, SandboxConfig, WebFetchConfig
+    from reyn.config.infra import AuthConfig
     from reyn.core.events.events import EventLog
     from reyn.core.events.state_log import StateLog
     from reyn.core.op_runtime.render_template import RenderTemplateBounds
@@ -217,6 +218,15 @@ class OpContext:
     # When None, sandboxed_exec falls back to platform auto-detection
     # (= same as no-config-loaded behavior).
     sandbox_config: "SandboxConfig | None" = None
+
+    # #5012-A: declarative OAuth provider config for the describe_session op's
+    # auth-status field. Callers that have a ReynConfig available should pass
+    # config.auth here — same narrow-projection shape as sandbox_config above
+    # (architect ruling, #5012 issue thread: OpContext carries a projection of
+    # the relevant config slice, never the whole ReynConfig). None (direct/
+    # test construction, or a non-chat OpContext) → describe_session reports
+    # every provider as declared=False rather than raising.
+    auth_config: "AuthConfig | None" = None
 
     # FP-0050/#1822 S5 (EP4): content-threat scan config. When enabled, the
     # sandboxed_exec command (argv) is exec-scope scanned before exec — a
