@@ -40,11 +40,20 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          # The check reads each PR commit's touched paths via `git show`, and
-          # refuses (loudly) rather than reporting a result computed from
-          # commits it could not read. A shallow checkout does not have them,
-          # so that refusal would fire on every PR — a false red, which is as
-          # bad as the false green this gate exists to remove.
+          # An `issue_comment` event checks out the DEFAULT BRANCH, not the PR
+          # — measured on this gate's own first days (#5123/#5125/#5127 all
+          # went red on `issue_comment` runs whose headSha was main's). The
+          # check reads each PR commit's touched paths via `git show`, so a
+          # main checkout cannot resolve them and the loud refusal fires: a
+          # red for the wrong reason, which is the same defect class as the
+          # false green this gate exists to remove. Name the PR's head
+          # explicitly; for `pull_request` events the default is already right.
+          ref: >-
+            ${{ github.event_name == 'issue_comment'
+                && format('refs/pull/{0}/head', github.event.issue.number)
+                || '' }}
+          # The refusal above also fires on a shallow checkout, which has the
+          # commits' tips but not their history.
           fetch-depth: 0
 
       - name: Set up Python
