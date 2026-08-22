@@ -33,6 +33,9 @@ class AgentSummary(BaseModel):
 class CreateAgentRequest(BaseModel):
     name: str
     role: str = ""
+    # #5080: restrict-only, ⊆ the project workspace (registry.create's own
+    # validation) — a request outside it is a 422, never silently clamped.
+    base_dir: str | None = None
 
 
 class AgentDetail(AgentSummary):
@@ -70,7 +73,9 @@ async def create_agent(
 ) -> AgentDetail:
     """Create a new agent with the given name and optional role."""
     try:
-        profile = await registry.create_agent(body.name, role=body.role or "")  # #2103 S2b: emit agent_created
+        profile = await registry.create_agent(
+            body.name, role=body.role or "", base_dir=body.base_dir,
+        )  # #2103 S2b: emit agent_created
     except FileExistsError:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,

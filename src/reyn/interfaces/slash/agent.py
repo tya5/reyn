@@ -65,16 +65,27 @@ async def _create_agent(ctx: "SlashContext", name: str) -> None:
     unconfirmed remote ack; in-process's is a definitive local failure), so
     the reply on ``False`` says "could not confirm", never "failed" — the
     wording that would be true for one transport and wrong for the other.
+
+    #5080: an optional SECOND whitespace-separated token is the new
+    agent's ``base_dir`` override — ``/agent new <name> [base_dir]``, the
+    same simple positional shape this command already uses for ``name``
+    (no ``--flag`` syntax anywhere else in this file, so none introduced
+    here). Validated ⊆ the project workspace by ``registry.create`` itself
+    (the ONE seam); a rejection surfaces through the SAME ``ValueError``
+    handling as an invalid name below.
     """
-    name = name.strip()
+    parts = name.strip().split(maxsplit=1)
+    name = parts[0] if parts else ""
+    base_dir = parts[1] if len(parts) > 1 else None
     if not name:
-        await reply_error(ctx, "Usage: /agent new <name>")
+        await reply_error(ctx, "Usage: /agent new <name> [base_dir]")
         return
     if ctx.session._registry is None:
         await reply_error(ctx, _NO_REGISTRY)
         return
     try:
-        await ctx.session._registry.create_agent(name)  # #2103 S2b: emit agent_created
+        # #2103 S2b: emit agent_created
+        await ctx.session._registry.create_agent(name, base_dir=base_dir)
     except FileExistsError:
         await reply_error(
             ctx,
@@ -82,8 +93,9 @@ async def _create_agent(ctx: "SlashContext", name: str) -> None:
         )
         return
     except ValueError as exc:
-        # _validate_agent_name raises with the rule embedded — surface
-        # verbatim so the user sees exactly what's wrong with the name.
+        # _validate_agent_name / the #5080 base_dir bound-check both raise
+        # with the rule embedded — surface verbatim so the user sees
+        # exactly what's wrong with the name.
         await reply_error(ctx, str(exc))
         return
     attached = await ctx.transport.request_attach(name)

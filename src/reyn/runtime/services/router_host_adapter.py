@@ -1767,7 +1767,9 @@ class RouterHostAdapter:
             extension_amount=extension_amount, run_id=run_id,
         )
 
-    async def spawn_agent(self, *, name: str, role: str) -> dict:
+    async def spawn_agent(
+        self, *, name: str, role: str, base_dir: "str | None" = None,
+    ) -> dict:
         """#2103 B-tool: create a new AGENT under THIS agent (the spawner = parent).
 
         Routes through ``registry.create_agent(parent=<spawner>)`` — the ONE create
@@ -1776,7 +1778,20 @@ class RouterHostAdapter:
         carried on ``agent_created`` for rewind-reconstruction. By B-core, the new
         agent's effective capability is then capped at ⊆ the spawner by construction
         (resolved_profile_for composes the spawner's live resolved as a conjunct).
-        Narrowing the child below the spawner is via ``create_topology`` (C)."""
+        Narrowing the child below the spawner is via ``create_topology`` (C).
+
+        #5080: ``base_dir`` (optional) — the new agent's OWN ``base_dir`` override
+        (``Session._workspace_base_dir``'s agent layer). Validated ⊆ the PROJECT
+        workspace by ``registry.create`` itself (the ONE seam, not re-checked
+        here) — a DIFFERENT bound than ``spawn_session``'s own ``base_dir``
+        argument (⊆ the spawner's own effective base_dir): an agent-spawn with
+        nothing given falls back to the project base_dir, not the spawner's own
+        (owner's own resolution rule, issue #5080) — capability is capped ⊆
+        spawner by the lineage above, but ``base_dir`` is a SEPARATE axis with
+        its own, wider floor. A rejected path surfaces through the SAME
+        ``ValueError`` -> ``spawn_rejected`` handling below as the lineage
+        guard — no new error kind, per architect's "don't invent a new
+        mechanism" ruling on this issue."""
         if self._registry is None:
             raise RuntimeError(
                 "spawn_agent requires a registry (multi-agent host) — unavailable in "
@@ -1844,7 +1859,9 @@ class RouterHostAdapter:
                         ),
                     }
         try:
-            await self._registry.create_agent(name, role=role, parent=parent)
+            await self._registry.create_agent(
+                name, role=role, parent=parent, base_dir=base_dir,
+            )
         except FileExistsError:
             return {"status": "error", "kind": "agent_exists",
                     "error": f"agent {name!r} already exists."}

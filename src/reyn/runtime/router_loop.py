@@ -4195,8 +4195,12 @@ class RouterLoop:
         if hasattr(self.host, "spawn_agent") and callable(
             getattr(self.host, "spawn_agent", None)
         ):
-            async def _spawn_agent_bound_impl(*, name: str, role: str = "") -> dict:
-                return await self.host.spawn_agent(name=name, role=role)
+            async def _spawn_agent_bound_impl(
+                *, name: str, role: str = "", base_dir: "str | None" = None,
+            ) -> dict:
+                return await self.host.spawn_agent(
+                    name=name, role=role, base_dir=base_dir,
+                )
             _spawn_agent_bound = _spawn_agent_bound_impl
 
         # Proposal 0067 P5 (#3978): send_to_session binding (mirror

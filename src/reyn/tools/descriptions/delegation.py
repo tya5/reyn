@@ -187,6 +187,22 @@ PARAMS: dict[str, dict[str, ParamDescription]] = {
             text="The new agent's role/purpose (free text).",
             ja="新しいエージェントの役割・目的（自由記述）。",
         ),
+        "base_dir": ParamDescription(
+            text=(
+                "Optional working-directory override for the new agent "
+                "(restrict-only — must resolve inside the PROJECT workspace; a "
+                "path outside it is rejected, not clamped). Relative paths "
+                "resolve against the project workspace. Omit to inherit the "
+                "project's own base_dir (the default)."
+            ),
+            ja=(
+                "任意の、新しいエージェントの作業ディレクトリの上書き"
+                "（restrict-only——プロジェクトのワークスペース配下に解決される"
+                "必要があり、範囲外のパスは拒否される。clamp はされない）。"
+                "相対パスはプロジェクトのワークスペースを基準に解決される。"
+                "省略するとプロジェクト自身の base_dir を継承する（既定）。"
+            ),
+        ),
     },
     "spawn_session": {
         "request": ParamDescription(

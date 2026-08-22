@@ -697,13 +697,70 @@ class AgentRegistry:
     def exists(self, name: str) -> bool:
         return (self._dir / name / PROFILE_FILENAME).is_file()
 
-    def create(self, name: str, *, role: str = "") -> AgentProfile:
+    def create(
+        self, name: str, *, role: str = "", base_dir: "str | Path | None" = None,
+    ) -> AgentProfile:
+        """#5080: ``base_dir`` (optional) is #4206's axis ① (capability,
+        restrict-only) applied to a "file zone" the agent layer had none
+        of before — NOT a new kind of override. It rides the SAME read
+        path #4200 already gave ``Session._workspace_base_dir`` for the
+        agent layer (``.reyn/capability_profiles/<name>.yaml``'s
+        ``base_dir:`` key — see that property's own docstring: "sits IN
+        FRONT OF the Agent's own value"); #4200 anticipated the read,
+        nothing wrote to it until now. Validated ⊆ the project workspace
+        root here, the ONE seam every creation surface (CLI / web / slash
+        / the ``spawn_agent`` LLM tool) routes through, so the check
+        applies uniformly rather than being replicated per surface — the
+        SAME "restrict-only, reject rather than clamp, name the boundary"
+        shape ``spawn_session``'s own ``base_dir`` argument already uses
+        (``router_host_adapter.py``'s ``spawn_session``), but bounded by
+        the WORKSPACE ROOT here, not a spawner's own effective
+        ``base_dir`` — owner's own resolution rule (issue #5080): an
+        agent-spawn with nothing given defaults to the PROJECT base_dir,
+        not the spawner's."""
         _validate_agent_name(name)
         if self.exists(name):
             raise FileExistsError(f"agent {name!r} already exists")
+        resolved_base_dir: "Path | None" = None
+        if base_dir is not None:
+            candidate = Path(base_dir)
+            if not candidate.is_absolute():
+                candidate = self._project_root / candidate
+            candidate = candidate.resolve()
+            workspace_resolved = self._project_root.resolve()
+            if (
+                candidate != workspace_resolved
+                and workspace_resolved not in candidate.parents
+            ):
+                raise ValueError(
+                    f"requested base_dir {str(candidate)!r} resolves outside "
+                    f"the project workspace {str(workspace_resolved)!r} — "
+                    "restrict-only: an agent's base_dir must fall under the "
+                    "project workspace."
+                )
+            resolved_base_dir = candidate
         profile = AgentProfile.new(name, role=role)
         profile.save(self._dir / name)
+        if resolved_base_dir is not None:
+            self._write_agent_base_dir_override(name, resolved_base_dir)
         return profile
+
+    def _write_agent_base_dir_override(self, name: str, base_dir: Path) -> None:
+        """#5080: write the agent-layer ``base_dir:`` override
+        ``Session._workspace_base_dir`` reads from
+        ``.reyn/capability_profiles/<name>.yaml`` — the single writer of
+        THIS key at this path (mirrors ``_persist_session_narrowing``'s
+        own "single writer of that file" shape for the session-layer
+        sibling). Only ``create`` calls this, and only for a genuinely new
+        agent (``exists(name)`` already raised above if not), so a blind
+        write — not a read-merge-write — is correct: there is nothing
+        else in this file yet to preserve."""
+        import yaml
+        path = self._capability_profile_dir / f"{name}.yaml"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            yaml.safe_dump({"base_dir": str(base_dir)}), encoding="utf-8",
+        )
 
     def _record_spawn_lineage(self, child: str, parent: str) -> None:
         """#2103 B: OS-set the spawn lineage ``child → parent``, set-once + immutable.
@@ -883,7 +940,8 @@ class AgentRegistry:
         return self._max_pipeline_spawns
 
     async def create_agent(
-        self, name: str, *, role: str = "", parent: "str | None" = None
+        self, name: str, *, role: str = "", parent: "str | None" = None,
+        base_dir: "str | None" = None,
     ) -> AgentProfile:
         """#2103 S2b: the action-layer CREATE seam — create the profile (sync) +
         emit ``agent_created`` so rewind can track / reconstruct / drop the agent
@@ -900,7 +958,7 @@ class AgentRegistry:
         escalation-on-rewind — so the carry+restore is a security linchpin (the emit
         AND the reconstruction-restore are both verified, the registered-but-unemitted
         → resurrection hazard class)."""
-        profile = self.create(name, role=role)
+        profile = self.create(name, role=role, base_dir=base_dir)
         if parent is not None:
             self._record_spawn_lineage(name, parent)
         # #2103 C2b: the parent's identity FROZEN at this spawn (the same value the edge
