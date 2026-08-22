@@ -155,7 +155,7 @@ def test_agent_layer_base_dir_absolute_path_unchanged(tmp_path: Path) -> None:
 
 
 def test_agent_layer_base_dir_bare_relative_is_rejected_not_silently_cwd_relative(
-    tmp_path: Path, monkeypatch,
+    tmp_path: Path, monkeypatch, caplog,
 ) -> None:
     """Tier 2: witness ③ (the one architect flagged as easy to get wrong) —
     a BARE relative ``base_dir: agent-default`` (no token, not absolute) in
@@ -175,7 +175,16 @@ def test_agent_layer_base_dir_bare_relative_is_rejected_not_silently_cwd_relativ
     locally: the bare relative value then resolves against whatever the
     test process's cwd happens to be, which in a per-test isolated run
     can even coincide with ``project_root`` and silently "pass" for the
-    wrong reason (the exact hazard this witness is written against)."""
+    wrong reason (the exact hazard this witness is written against).
+
+    lead-coder's own TESTS-READ finding on #5086: asserting only the
+    FALLBACK value doesn't distinguish "rejected for being a bare
+    relative path" from ANY other early-return that happens to produce
+    the same fallback — a caplog assertion on the specific warning this
+    rejection logs closes that gap (not the whole message — CLAUDE.md's
+    own "never pin algorithm-level behaviour" — just the fragment that
+    distinguishes THIS reason from the sibling ⊆workspace/missing-file
+    rejections)."""
     project_root = tmp_path / "project"
     agent_default_dir = project_root / "agent-default"
     agent_default_dir.mkdir(parents=True)
@@ -195,7 +204,9 @@ def test_agent_layer_base_dir_bare_relative_is_rejected_not_silently_cwd_relativ
         project_root / ".reyn" / "agents" / "alpha" / "profile.yaml", "agent-default",
     )
 
-    resolved = _resolved_op_context_base_dir(session)
+    import logging
+    with caplog.at_level(logging.WARNING):
+        resolved = _resolved_op_context_base_dir(session)
     assert resolved != agent_default_dir, (
         f"a bare relative base_dir must never resolve, even though "
         f"{agent_default_dir!r} genuinely exists on disk -- got {resolved!r}"
@@ -203,6 +214,12 @@ def test_agent_layer_base_dir_bare_relative_is_rejected_not_silently_cwd_relativ
     assert resolved == fallback_dir, (
         f"expected fall-through to the Agent object's own base_dir "
         f"{fallback_dir!r}, got {resolved!r}"
+    )
+    assert any(
+        "must be either an absolute path or" in r.message for r in caplog.records
+    ), (
+        "expected the bare-relative-specific rejection warning, not just a "
+        f"fallback value; got log records: {[r.message for r in caplog.records]!r}"
     )
 
 

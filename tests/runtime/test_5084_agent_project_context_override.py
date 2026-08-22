@@ -112,14 +112,22 @@ async def test_default_agent_still_gets_the_project_wide_file(tmp_path: Path, mo
 
 @pytest.mark.asyncio
 async def test_project_context_path_outside_workspace_is_rejected(
-    tmp_path: Path, monkeypatch,
+    tmp_path: Path, monkeypatch, caplog,
 ) -> None:
     """Tier 2: strip-falsifier for the ⊆workspace bound — a
     ``project_context_path`` pointing OUTSIDE the project workspace is
     never used; the session falls back to the project-wide file.
 
     Strip-falsifier: removing the ``within_workspace`` check in
-    ``resolve_agent_project_context`` turns this red — verified locally."""
+    ``resolve_agent_project_context`` turns this red — verified locally.
+
+    lead-coder's own TESTS-READ finding on #5086: the fallback VALUE
+    alone doesn't distinguish "rejected for being out of the workspace"
+    from any other early-return producing the identical fallback — a
+    caplog assertion on the specific warning closes that gap (a
+    fragment, not the whole message — never pin algorithm-level
+    behaviour), and it is mutually exclusive with the sibling
+    not-absolute/missing-file warnings this same function can log."""
     project_root = tmp_path / "project"
     _write_reyn_yaml(project_root)
     (project_root / "AGENTS.md").write_text("project-wide instructions", encoding="utf-8")
@@ -139,10 +147,18 @@ async def test_project_context_path_outside_workspace_is_rejected(
             project_context_path=str(outside_file),
         ).save(registry.agent_workspace_dir("coder1"))
 
-        session = registry.get_or_load("coder1")
+        import logging
+        with caplog.at_level(logging.WARNING):
+            session = registry.get_or_load("coder1")
         assert session.router_host.get_project_context() == "project-wide instructions", (
             f"an out-of-workspace project_context_path must not be used; "
             f"got {session.router_host.get_project_context()!r}"
+        )
+        assert any(
+            "resolves outside the project workspace" in r.message for r in caplog.records
+        ), (
+            "expected the ⊆workspace-specific rejection warning, not just a "
+            f"fallback value; got log records: {[r.message for r in caplog.records]!r}"
         )
     finally:
         await registry.shutdown()
