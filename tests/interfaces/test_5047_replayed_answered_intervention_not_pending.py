@@ -73,6 +73,7 @@ import asyncio
 from typing import AsyncIterator
 
 import pytest
+from textual_flowview import FlowView
 
 from reyn.interfaces.inline.textual_chat import TextualChatApp
 from reyn.interfaces.inline.textual_chat.intervention_panel import InterventionPanel
@@ -253,6 +254,78 @@ async def test_replayed_answered_intervention_with_no_id_still_excluded():
         panel = app.query_one(InterventionPanel)
         assert panel.display is False
         assert panel.has_pending() is False
+
+
+@pytest.mark.asyncio
+async def test_wire_decoded_idless_intervention_frame_is_demoted_never_pending():
+    """Tier 2: witness ④ — axis A's WIRE-side defense (block on PR #5082,
+    docs-maintainer TESTS-READ + lead-coder: "the wire-side demotion has no
+    witness anywhere in this diff" — `test_agui_mapping_completeness.py`'s
+    own comment pointed at a test that does not cover this, and
+    `test_outbox_vocabulary.py` only covers the UNRELATED ignore-unknown
+    path).
+
+    ``in-process`` construction is guarded by ``OutboxMessage.__post_init__``
+    (axis A) — but a REMOTE reconnect-backlog frame is UNTRUSTED wire data
+    (``agui/protocol.py:decode_event``'s ``"messages"``/``"display"``
+    branches, both routed through ``OutboxMessage.from_wire``, which cannot
+    fail-close) — the EXACT path #5047's own real-environment bug rode
+    through. This test decodes a wire event shaped exactly like a remote
+    server's reconnect-backlog entry for a KNOWN intervention-family kind
+    with NO ``intervention_id`` (a malicious or simply out-of-date peer),
+    through the REAL ``decode_event`` entry point (not calling
+    ``from_wire`` directly), and proves BOTH halves of the "never
+    fail-close, never register as pending" contract: the frame is DRAWN
+    (never silently dropped — "no exception was raised" is not the claim
+    here), AND the panel never opens for it.
+
+    Strip-falsifier: removing the demotion clause in
+    ``OutboxMessage.from_wire`` (verified locally) turns this red twice
+    over — the frame's kind reverts to the raw wire value ``"intervention"``
+    (no longer demoted) and ``panel.has_pending()`` becomes ``True``
+    (registers as a fake-pending entry with no real id, #5047's own
+    original bug, reintroduced via the wire path this test drives)."""
+    from reyn.interfaces.transport.agui.protocol import decode_event
+
+    decoded = decode_event(
+        "CUSTOM",
+        {
+            "_reyn": {
+                "frame": "display",
+                "kind": "intervention",
+                "text": "Allow fetching from 'evil.example'?",
+                "meta": {},  # no intervention_id -- the untrusted-peer shape
+            },
+        },
+    )
+    assert decoded is not None, "a known intervention-family kind must decode, not ignore-unknown"
+    wire_msg = decoded.message
+    # The demotion itself: a KNOWN kind with no identity is never allowed to
+    # reach the app as "intervention" — draws as ordinary chrome instead.
+    assert wire_msg.kind == "system", (
+        f"expected the wire decode to demote an id-less 'intervention' frame "
+        f"to 'system'; got kind={wire_msg.kind!r}"
+    )
+
+    transport = _ReplayTransport([wire_msg])
+    app = TextualChatApp(transport=transport)
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        await pilot.pause()
+
+        # Drawn, not dropped: the frame reached the flow at all.
+        flow_kinds = [e.item.kind for e in app.query_one(FlowView).entries]
+        assert "system" in flow_kinds, (
+            f"the demoted frame was never rendered at all — expected it to "
+            f"draw as ordinary chrome, got flow kinds={flow_kinds!r}"
+        )
+
+        panel = app.query_one(InterventionPanel)
+        assert panel.has_pending() is False, (
+            "a wire-decoded, id-less intervention-family frame registered as "
+            "pending — the exact remote path #5047's own bug rode through"
+        )
 
 
 def test_gutter_reads_the_resolved_kind_as_resolved_not_pending():
