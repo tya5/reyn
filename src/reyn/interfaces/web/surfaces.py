@@ -223,10 +223,12 @@ def _mount_a2a(app: FastAPI, config: "ReynConfig | None") -> APIRouter | None:
 def _mount_mcp(app: FastAPI, config: "ReynConfig | None") -> APIRouter | None:
     """MCP-over-SSE surface — OFF by default (broad machine-integration port).
 
-    The message-mount append is best-effort (defensive: the mcp SDK ships
-    transitively via the core ``fastmcp`` dependency, so ``ImportError`` here
-    indicates a broken install, not a normal absent-extra path) — a failure
-    there does not prevent the GET /mcp/sse router from mounting.
+    The message-mount append is best-effort (defensive: the mcp SDK is
+    itself a DIRECT core dependency (``pyproject.toml``'s ``mcp>=2.0,<3.0``
+    — #4412; ``fastmcp`` was dropped from core AND every extra entirely,
+    #4302, and never carried mcp), so ``ImportError`` here indicates a
+    broken install, not a normal absent-extra path) — a failure there does
+    not prevent the GET /mcp/sse router from mounting.
     """
     from reyn.interfaces.web.routers import mcp as _mcp_router
     try:
@@ -234,7 +236,7 @@ def _mount_mcp(app: FastAPI, config: "ReynConfig | None") -> APIRouter | None:
     except ImportError:  # pragma: no cover — mcp SDK unexpectedly missing
         logger.info(
             "mcp SDK not importable; /mcp/messages POST endpoint disabled. "
-            "The mcp SDK ships with the core `fastmcp` dependency — reinstall reyn "
+            "mcp is a core dependency — reinstall reyn "
             "(e.g. pip install -e .) to enable MCP-over-SSE."
         )
     return _mcp_router.router
