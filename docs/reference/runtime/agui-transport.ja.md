@@ -45,6 +45,13 @@ Reyn のチャットクライアントはストリームを消費する UI で�
 - `POST /agui/chat/{agent}/seize` — active-driver トークンを取得する(「Active driver and
   seize」参照)。
 
+`POST /agui/chat/{agent}` と `POST /agui/chat/{agent}/seize`(#5129)の `{agent}`
+は**fallback であり宛先ではない**: 両ルートとも、実際のターゲットはこの接続自身の
+`connection_id`(現在アタッチしているエージェント)から解決される — `{agent}` が参照
+されるのは、その接続に紐づくアタッチ記録がまだ無い場合のみ。したがって `--connect`
+した client 自身のクロスエージェント `/attach` は、client が POST 先の URL を変更
+しなくても、その次の `submit`/`seize` をリダイレクトする。
+
 client が server をシャットダウンすることは決してできない — shutdown メッセージは存在せず、
 client の `/quit` はローカルな切断にすぎない。server が唯一の writer である。
 
