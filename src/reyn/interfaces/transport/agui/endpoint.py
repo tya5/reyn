@@ -102,9 +102,43 @@ class _ConnectionRetargetHub:
 
     def __init__(self) -> None:
         self._listeners: "dict[str, list[Callable[[str, str], None]]]" = {}
+        # #5129: THE per-connection "what agent is this connection on right
+        # now" fact, addressable by a request that isn't the SSE stream
+        # itself (a POST, correlated only by connection_id — the same
+        # constraint that motivated this hub in the first place, #5116's own
+        # docstring). Seeded in :meth:`subscribe` (the connection's own URL
+        # agent, so a connection that never attaches still resolves) and
+        # kept current in :meth:`notify` (the same call that already tells
+        # this hub's listeners a retarget happened) — one write path each,
+        # not a second copy of the fact ``_SessionFrameSource.current_agent_
+        # name`` already owns for the SSE-stream reader itself.
+        self._current_agent: "dict[str, str]" = {}
 
-    def subscribe(self, connection_id: str, callback: "Callable[[str, str], None]") -> None:
+    def subscribe(
+        self, connection_id: str, callback: "Callable[[str, str], None]", agent_name: str,
+    ) -> None:
+        """*agent_name* seeds :meth:`current_agent` to THIS connection's own
+        URL agent — required so a connection that never sends
+        ``attach_request`` still resolves correctly (an empty/missing seed
+        would read as "unknown", and #5129's ``agui_submit`` fallback would
+        then fall back to ITS OWN URL param anyway — but future callers of
+        :meth:`current_agent` should not have to know that; the seed makes
+        the value simply always correct from the moment of subscribe). A
+        reconnect calls :meth:`subscribe` again (a fresh SSE GET), correctly
+        re-seeding to that connect's own URL agent.
+
+        No default (lead-coder co-vet, PR #5132 review): an optional
+        ``agent_name=""`` let a caller subscribe WITHOUT seeding, and
+        ``current_agent``'s ``None`` would then carry two meanings — "never
+        seen" and "subscribed, not seeded" — the second silently falling
+        back to the URL again, #5129's own symptom, with no red anywhere
+        (the #4996/#5093-family shape CLAUDE.md names: one value standing in
+        for two facts). This hub has exactly one caller
+        (:meth:`_SessionFrameSource.listen_for_retarget`); making the
+        parameter required closes the second meaning by construction rather
+        than by convention."""
         self._listeners.setdefault(connection_id, []).append(callback)
+        self._current_agent[connection_id] = agent_name
 
     def unsubscribe(self, connection_id: str, callback: "Callable[[str, str], None]") -> None:
         listeners = self._listeners.get(connection_id)
@@ -113,13 +147,36 @@ class _ConnectionRetargetHub:
         listeners.remove(callback)
         if not listeners:
             del self._listeners[connection_id]
+            # #5129: same lifetime as the listener entry it was seeded
+            # alongside — an unbounded dict keyed by connection_id was
+            # already #5119's own finding about this hub; this fact does
+            # not get a longer life than the subscription that seeded it.
+            self._current_agent.pop(connection_id, None)
 
     def notify(self, connection_id: str, agent_name: str, sid: str) -> None:
         """Fired synchronously (mirrors ``registry._announce_session_
         attached``'s own no-await critical section) — a listener must not
         block or await; its job is to hand the payload to a side-channel a
         consumer task drains, the SAME idiom ``add_attach_listener``'s own
-        docstring states."""
+        docstring states.
+
+        Only records into :attr:`_current_agent` when ``connection_id`` has
+        a live subscription (architect/lead-coder co-vet, PR #5132 review):
+        the ``attach_request`` POST is a DIFFERENT request than the SSE
+        stream, correlated only by a CLIENT-SUPPLIED ``connection_id`` — a
+        client can POST ``attach_request`` repeatedly having never opened
+        (or after having closed) the matching SSE stream, and nothing here
+        requires it not to (a delayed attach after the SSE dropped is a
+        genuine, non-malicious case, not just a hostile one). Recording
+        unconditionally would create an entry :meth:`unsubscribe` — the
+        only removal path, gated on the listener list becoming empty — can
+        never reach, since no listener was ever added for that id: an
+        unbounded dict keyed by a value the client fully controls. Guarding
+        here means an entry only ever exists for a connection this hub
+        ALSO tracks a listener for, so it shares that entry's exact
+        lifetime — never longer."""
+        if connection_id in self._listeners:
+            self._current_agent[connection_id] = agent_name
         for callback in list(self._listeners.get(connection_id, ())):
             callback(agent_name, sid)
 
@@ -132,6 +189,16 @@ class _ConnectionRetargetHub:
         on private state — this method is the public surface that
         absence would otherwise BE the finding)."""
         return bool(self._listeners.get(connection_id))
+
+    def current_agent(self, connection_id: str) -> "str | None":
+        """#5129: the public read ``agui_submit`` (a DIFFERENT HTTP request
+        than the SSE stream that seeded/updates this) needs to resolve "what
+        agent is this connection ACTUALLY on", instead of trusting its own
+        URL path param — the fix for the 8th holder #5129 names. ``None``
+        for a connection this hub has never seen (no SSE stream ever
+        subscribed under this id) — the caller's own fallback is the URL,
+        never a guess made here."""
+        return self._current_agent.get(connection_id)
 
 
 _CONNECTION_RETARGET_HUB = _ConnectionRetargetHub()
@@ -147,6 +214,14 @@ def connection_retarget_has_subscribers(connection_id: str) -> bool:
     it, so the hub instance being module-private was itself the gap — not
     just :attr:`_ConnectionRetargetHub._listeners`)."""
     return _CONNECTION_RETARGET_HUB.has_subscribers(connection_id)
+
+
+def connection_current_agent(connection_id: str) -> "str | None":
+    """#5129: the module-level public surface ``agui_submit`` (and any test
+    of it) needs to resolve a connection's REAL current agent — mirrors
+    :func:`connection_retarget_has_subscribers`'s own reason for existing at
+    module level rather than requiring a private-global reach-in."""
+    return _CONNECTION_RETARGET_HUB.current_agent(connection_id)
 
 
 def _auth_context(request: Request) -> "AuthContext | None":
@@ -403,7 +478,9 @@ class _SessionFrameSource:
         session-switch only). Called once, right after construction, by
         the route handler that already knows this connection's id."""
         self._connection_id = connection_id
-        _CONNECTION_RETARGET_HUB.subscribe(connection_id, self._on_retarget_announced)
+        _CONNECTION_RETARGET_HUB.subscribe(
+            connection_id, self._on_retarget_announced, self._agent_name,
+        )
 
     def _on_retarget_announced(self, agent_name: str, sid: str) -> None:
         """Hub callback (#5116) — synchronous, no ``await``: mirrors
@@ -814,6 +891,13 @@ async def agui_seize(request: Request, agent_name: str):
     identity = authenticate_request(request, auth, connection_id=connection_id)
     if not identity.authenticated:
         return JSONResponse({"error": "authentication required"}, status_code=401)
+    # #5129 (architect, scope widened issuecomment-5382969115): this POST is,
+    # same as agui_submit, a DIFFERENT HTTP request than the SSE stream it
+    # seizes driver authority ON BEHALF OF — resolve from the connection,
+    # never the URL's own path param, or a post-attach seize grabs the
+    # ORIGINAL agent's surface instead of the one this connection is
+    # actually attached to now.
+    agent_name = connection_current_agent(connection_id) or agent_name
     manager = surface_registry().get(agent_name)
     if manager is None or not manager.seize(connection_id, identity.user_id, monotonic()):
         return JSONResponse({"seized": False, "error": "seize refused"}, status_code=409)
@@ -843,6 +927,23 @@ async def agui_submit(request: Request, agent_name: str):
     identity = authenticate_request(request, auth, connection_id=connection_id)
     if not identity.authenticated:
         return JSONResponse({"error": "authentication required"}, status_code=401)
+
+    # #5129: this POST is a DIFFERENT HTTP request than this connection's SSE
+    # stream, correlated only by ``connection_id`` — the URL's own
+    # ``agent_name`` is the agent this connection FIRST connected to and
+    # never updates after that (the client's own long-lived SSE URL), while
+    # ``_SessionFrameSource`` (the SSE stream's per-connection owner, #5116)
+    # is the one thing a cross-agent ``/attach`` actually re-points. Every
+    # decision below this line — the two heartbeat touches, ``exists``,
+    # ``ensure_running``, the TOOL_CALL_RESULT delegation, and the 3
+    # client-names-an-operation branches further down — reads THIS resolved
+    # value, never the raw path param again, so a stale attach cannot leave
+    # one of them still addressing the connection's original agent (the
+    # "sends but doesn't render" symptom a partial fix would reproduce in a
+    # different shape). Falls back to the URL when the hub has never seen
+    # this connection_id (no SSE stream subscribed under it — a POST that
+    # outraces its own connect, or a test driving this endpoint directly).
+    agent_name = connection_current_agent(connection_id) or agent_name
 
     try:
         payload = await request.json()
