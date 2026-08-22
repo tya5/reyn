@@ -126,7 +126,17 @@ def _session_locus(args: str) -> "Locus":
     yet") — remainder filed: #5099. → ``session``.
 
     Unknown/empty sub falls through to ``session`` too (the existing
-    ``reg`` derivation produces the usage error either way)."""
+    ``reg`` derivation produces the usage error either way).
+
+    ⚠️ Not a structural check (architect co-vet, issuecomment-5379756281):
+    an unregistered sub silently defaults to ``session`` rather than
+    failing to construct — a new sub that genuinely needs ``connection``
+    must be added to this branch by hand. The default lands on the
+    higher-capability side (a usage error, not a crash on
+    ``session=None``), so this is non-blocking, but it is not the closed
+    per-execution-unit registry #5096 ② otherwise achieves; closing that
+    gap needs sub-command registration, out of this PR's scope —
+    remainder noted alongside #5099."""
     sub = args.strip().split(maxsplit=1)[0].lower() if args.strip() else ""
     return "connection" if sub == "switch" else "session"
 
