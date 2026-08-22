@@ -487,6 +487,15 @@ class ClientTransportStub(ClientTransport):
     auto-forwarded NEW method would cross unmarshaled — trading "silently
     not delegated" for "silently delegated somewhere dangerous". Falling
     at construction, not at first (mis)use, is the point.
+
+    ⚠️ **Not the same finding as :class:`DelegatingClientTransport` below**
+    (#5117, class B) — that class is EXPLICIT forwarding (every method
+    written out, no ``__getattr__`` magic), for the narrower "a query
+    (:meth:`ClientTransport.state_ready`) has one honest default; a
+    command (:meth:`ClientTransport.clear_pending_command_ui`) does not"
+    distinction #5117 draws. This class's own rejected option ④ is about
+    a DIFFERENT hazard (marshaling), not about whether explicit-forward
+    is ever the right base — see that class's own docstring.
     """
 
     def attach_failed(self) -> bool:
@@ -518,6 +527,135 @@ class ClientTransportStub(ClientTransport):
 
     def reyn_state_root(self) -> "Path | None":
         return None
+
+
+class DelegatingClientTransport(ClientTransport):
+    """A base for a wrapper that HOLDS another :class:`ClientTransport` and
+    forwards to it — every method's default is "call the inner transport's
+    same-named method", not silence and not a fixed value. A subclass
+    overrides ONLY the methods it wants to intercept; everything else
+    reaches ``self._inner`` even if the subclass never mentions it.
+
+    #5117 (architect ruling, class B): ``ClientTransportStub``'s 9
+    convenience defaults answer with a FIXED value (``False``, ``[]``,
+    ``None``, …) — correct for a self-contained ``tests/`` fixture that
+    genuinely has nothing behind it, wrong for a wrapper that DOES have an
+    inner transport, because the fixed value is a claim the wrapper cannot
+    actually back. The two methods that motivated this split are the two
+    axes architect separated:
+
+    - :meth:`ClientTransport.state_ready` (a QUERY — "is your state
+      current") has one honest answer for a class with no inner transport
+      of its own (return immediately — ``ClientTransportStub``'s existing
+      default). A DELEGATING wrapper has no state of its own to be ready
+      about; the honest answer is whatever the inner transport says.
+    - :meth:`ClientTransport.clear_pending_command_ui` (a COMMAND — "do
+      this") has NO honest default that isn't "ask the layer that might
+      actually hold one" — a no-op default asserts "there is nothing to
+      clear here", a claim only the transport that OWNS the command-UI
+      state can make. A wrapper that no-ops it is speaking for a layer it
+      does not know the state of.
+
+    Both fixed defaults look equally harmless (#5117's own framing) but
+    for a delegating wrapper specifically, forwarding is the only answer
+    that is right regardless of what the inner transport is or does —
+    "forget to override" then costs nothing, rather than costing a
+    plausible-looking wrong answer (``ClientTransportStub``'s own hazard,
+    which stays correct for its actual audience: self-contained fixtures
+    with no inner transport to forward to).
+
+    Explicit forwarding, not ``__getattr__`` (see ``ClientTransportStub``'s
+    own docstring for why ``__getattr__`` auto-forwarding was rejected
+    there — a DIFFERENT hazard, marshaling, that does not apply here since
+    this class makes no thread-crossing claim): each method is written out
+    so ``ABCMeta`` sees a concrete implementation and a subclass overriding
+    one method still gets the other 18 for free, correctly, with no magic
+    attribute lookup to reason about.
+
+    NOT a home for ``ThreadedTransportProxy`` — that wrapper's job is
+    marshaling calls across a thread boundary, a per-method concern this
+    class's blind forwarding does not perform; it stays on the pure
+    ``ClientTransport`` contract, explicit about all 19 methods, unchanged
+    by this class's existence. A future wrapper whose job genuinely IS
+    plain forwarding (e.g. ``_ErrorWatchingTransport``, which today
+    hand-forwards all 19 to intercept only ``put_display``/``start``) is
+    this class's intended audience — migrating it is not part of this PR
+    (narrower scope: land the base, prove it with a zero-override
+    subclass)."""
+
+    def __init__(self, inner: "ClientTransport") -> None:
+        self._inner = inner
+
+    def start(self) -> None:
+        self._inner.start()
+
+    def close(self) -> None:
+        self._inner.close()
+
+    def frames(self) -> "AsyncIterator[Frame]":
+        return self._inner.frames()
+
+    async def submit_user_text(self, text: str) -> str:
+        return await self._inner.submit_user_text(text)
+
+    async def answer_intervention_text(
+        self, text: str, *, intervention_id: "str | None" = None
+    ) -> bool:
+        return await self._inner.answer_intervention_text(
+            text, intervention_id=intervention_id
+        )
+
+    async def answer_intervention_choice(
+        self, choice_id: str, *, intervention_id: "str | None" = None
+    ) -> bool:
+        return await self._inner.answer_intervention_choice(
+            choice_id, intervention_id=intervention_id
+        )
+
+    def has_session(self) -> bool:
+        return self._inner.has_session()
+
+    def attach_failed(self) -> bool:
+        return self._inner.attach_failed()
+
+    def pending_intervention_head(self) -> "object | None":
+        return self._inner.pending_intervention_head()
+
+    def put_display(self, msg: "OutboxMessage") -> None:
+        self._inner.put_display(msg)
+
+    async def cancel_inflight(self) -> str:
+        return await self._inner.cancel_inflight()
+
+    async def run_slash_command(self, name: str, args: str) -> bool:
+        return await self._inner.run_slash_command(name, args)
+
+    async def cancel_queued(self, msg_id: str) -> bool:
+        return await self._inner.cancel_queued(msg_id)
+
+    async def request_attach(self, agent_name: str) -> bool:
+        return await self._inner.request_attach(agent_name)
+
+    async def request_session_switch(self, session_id: str) -> bool:
+        return await self._inner.request_session_switch(session_id)
+
+    async def request_artifact_list(self, *, agent: str) -> "tuple[list[dict], int]":
+        return await self._inner.request_artifact_list(agent=agent)
+
+    async def request_session_list(self) -> "list[dict]":
+        return await self._inner.request_session_list()
+
+    async def state_ready(self) -> None:
+        await self._inner.state_ready()
+
+    async def clear_pending_command_ui(self) -> None:
+        await self._inner.clear_pending_command_ui()
+
+    def reyn_state_root(self) -> "Path | None":
+        return self._inner.reyn_state_root()
+
+    async def shutdown(self) -> None:
+        await self._inner.shutdown()
 
 
 def pending_head_id(head: object, *, caller: str) -> "str | None":
@@ -570,4 +708,7 @@ def pending_head_id(head: object, *, caller: str) -> "str | None":
     return None
 
 
-__all__ = ["ClientTransport", "ClientTransportStub", "pending_head_id"]
+__all__ = [
+    "ClientTransport", "ClientTransportStub", "DelegatingClientTransport",
+    "pending_head_id",
+]
