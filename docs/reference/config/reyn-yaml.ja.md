@@ -80,7 +80,7 @@ reload）、`reyn.yaml` 側に書いた同じキーは他と同じく再起動�
 | `external_transports` | マップ | PRJ のみ・**再起動** | チャット向け受信トランスポート → MCP ツールルーティング（Slack / LINE / Discord など）。以下参照。 |
 | `multimodal` | マップ | PRJ のみ・**再起動** | バイナリメディア（画像・音声）のサイズ上限、超過時の挙動、アーティファクト保存先、およびそれらを配信する `base_url`。以下参照。 |
 | `permissions` | マップ | PRJ のみ・**再起動** | デフォルトの Permission ポリシー。以下参照。 |
-| `project_context_path` | 文字列 | PRJ のみ・**再起動** | すべての Phase システムプロンプトに注入する Markdown ファイル。未設定（デフォルト）: cross-tool 標準を auto-resolve — `AGENTS.md` があればそれ、なければ `REYN.md`（legacy fallback）。明示パスで 1 ファイルに固定、`""` で無効化。下記の注記参照。 |
+| `project_context_path` | 文字列 | PRJ のみ・**再起動** | すべての Phase システムプロンプトに注入する Markdown ファイル。未設定（デフォルト）: cross-tool 標準を auto-resolve — `AGENTS.md` があればそれ、なければ `REYN.md`（legacy fallback）。明示パスで 1 ファイルに固定、`""` で無効化。**#5084: エージェント自身の `.reyn/agents/<name>/profile.yaml` にも `project_context_path` を設定でき、その 1 エージェントに限り本キー（プロジェクト全体のデフォルト）を上書き（マージではなく置換）する** — 別ファイル・別メカニズムだが、こちらも再起動のみ反映。下記の注記参照。 |
 | `llm` | マップ | PRJ のみ・**再起動** | LLM 層の設定: モデル選択（`llm.model` デフォルトクラス、`llm.models` クラス → LiteLLM 文字列マップ、`llm.model_class_by_purpose` 用途別上書き、`llm.api_base` プロキシ URL、`llm.prompt_cache_enabled`）に加え、ルーティング（#1829）とリトライ（#1835）。以下参照。#4174 T3: `model` / `models` / `model_class_by_purpose` / `api_base` / `prompt_cache_enabled` は同名のトップレベルキーからここへ移動しました（形は同じ、ネストが変わっただけ）。 |
 | `delegation` | マップ | PRJ のみ・**再起動** | エージェント間委任のポリシー（#2081）。 |
 | `cost_warn` | マップ | PRJ のみ・**再起動** | 高コストモデルのゲート（#1830 / FP-0052）: 選択前に警告し、名前に反して**ブロックもできます**（`cost_warn.block_on_high_cost`）。以下参照。 |
