@@ -239,13 +239,15 @@ def test_no_multi_layer_row_has_a_bare_single_token_reload_cell():
     `Reload` cell to a bare `restart` (the exact 2 real rows this test
     caught, pre-fix) turns this red — verified locally."""
     table = _table_text()
-    for key in _all_row_keys(table):
-        declared_in = _declared_in_cell(table, key)
-        if "·" not in declared_in:
-            continue  # single-layer row — nothing for this gate to check
+    multi_layer_rows = [
+        key for key in _all_row_keys(table) if "·" in _declared_in_cell(table, key)
+    ]
+    assert multi_layer_rows, "expected at least one multi-layer row for this test to bite"
+    for key in multi_layer_rows:
         reload_cell = _reload_cell(table, key)
         assert not _BARE_TOKEN.match(reload_cell), (
-            f"`{key}` is multi-layer (`Declared in` = {declared_in!r}) but "
+            f"`{key}` is multi-layer (`Declared in` = "
+            f"{_declared_in_cell(table, key)!r}) but "
             f"its `Reload` cell is a bare, unqualified token: {reload_cell!r} "
             f"— a multi-layer row's reload behaviour can differ BY layer; "
             f"a bare token asserts one value for all of them without saying so"
