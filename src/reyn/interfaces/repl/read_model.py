@@ -260,6 +260,19 @@ class ChatReadModelCapabilities:
     ctx_compaction_reported: bool
     hooks_reported: bool
     pipelines_reported: bool
+    # #5094: 3 more snapshot-key groups found the SAME way #5034 found
+    # ``hooks_reported``/``pipelines_reported`` — a hand-typed `[]`/`None`
+    # literal in ``project_remote_snapshot`` with no field here to
+    # distinguish "genuinely empty" from "this producer can't report it".
+    # Unlike the earlier 2, these were ALREADY WRONG on `main` (a real,
+    # owner-measured blank remote agent tab), not merely undeclared —
+    # ``agent_roster_reported``/``model_catalog_reported``/
+    # ``attached_name_reported`` are declared here at the SAME time the
+    # underlying wire gap is fixed, so there is no window where the
+    # declaration exists but the value is still fabricated.
+    agent_roster_reported: bool  # covers `agent_names` + `session_tree` together
+    model_catalog_reported: bool  # covers `model_classes` + `model_active_class` together
+    attached_name_reported: bool
 
 
 def reported_snapshot_keys(
@@ -310,15 +323,22 @@ LOCAL_CHAT_READ_CAPABILITIES = ChatReadModelCapabilities(
     ctx_compaction_reported=True,
     hooks_reported=True,
     pipelines_reported=True,
+    agent_roster_reported=True,
+    model_catalog_reported=True,
+    attached_name_reported=True,
 )
 
 #: :class:`RemoteReadModel` — the frame-sufficiency boundary each of these
 #: methods' own docstrings already document (session-local state the AG-UI
 #: wire does not project): every one of them always degrades, independent of
-#: server-side state — with ONE exception, ``intervention_head`` (#5050):
+#: server-side state — with exceptions: ``intervention_head`` (#5050):
 #: STATE_SNAPSHOT/STATE_DELTA now carry ``pending_intervention_head``, so
 #: this one genuinely reflects live server-side state rather than always
-#: degrading. See the module docstring's "Frame-sufficiency" section.
+#: degrading; and ``agent_roster_reported``/``model_catalog_reported``/
+#: ``attached_name_reported`` (#5094, the same fix): those 5 snapshot keys
+#: now ride the SAME wire channel, so a remote agent tab / model-class
+#: picker reflects the server's real roster instead of an unconditional
+#: empty list. See the module docstring's "Frame-sufficiency" section.
 REMOTE_CHAT_READ_CAPABILITIES = ChatReadModelCapabilities(
     completion_source=False,
     intervention_head=True,
@@ -332,6 +352,9 @@ REMOTE_CHAT_READ_CAPABILITIES = ChatReadModelCapabilities(
     ctx_compaction_reported=False,
     hooks_reported=False,
     pipelines_reported=False,
+    agent_roster_reported=True,
+    model_catalog_reported=True,
+    attached_name_reported=True,
 )
 
 
@@ -654,6 +677,21 @@ def project_remote_snapshot(values: "dict | None") -> dict:
         # -- MAIN bar (frame-available via STATE_*) --
         "model": v.get("model") or "—",
         "attached_name": v.get("attached_name"),
+        # #5094: real wire data (agui/state.py's own _WIRE_KEYS carries
+        # these 4) — previously a hand-typed `[]`/`None` literal here
+        # UNCONDITIONALLY emptied a remote client's agent tab and
+        # model-class picker regardless of how many agents/model classes
+        # the server actually had (owner live-blocked on this, #5041).
+        # `agent_names`/`session_tree` are literally what
+        # RegistryReadModel's own `agent_names`/`session_tree` methods
+        # supply locally (`registry.loaded_names()`/`registry.
+        # session_tree()`); `model_active_class`/`model_classes` mirror
+        # `Session.active_model_class()`/`known_model_classes()` the
+        # same way `model` above already does.
+        "model_active_class": v.get("model_active_class"),
+        "model_classes": v.get("model_classes", []),
+        "agent_names": v.get("agent_names", []),
+        "session_tree": v.get("session_tree", []),
         "cost_agent": v.get("cost_agent", 0.0),
         "cost_total": v.get("cost_total", 0.0),
         "cost_usd": v.get("cost_agent", 0.0),
@@ -676,10 +714,6 @@ def project_remote_snapshot(values: "dict | None") -> dict:
         # that dataclass reaches every producer for free, no call-site
         # edit required.
         **reported_snapshot_keys(REMOTE_CHAT_READ_CAPABILITIES),
-        "model_active_class": None,
-        "model_classes": [],
-        "agent_names": [],
-        "session_tree": [],
         # The prompt/completion SPLIT below is `0`/`0` while the total is
         # real wire data — an inconsistent breakdown (`0 + 0 != total`)
         # the Cost pane never flags on its own; gated by

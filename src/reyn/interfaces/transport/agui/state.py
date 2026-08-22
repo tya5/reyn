@@ -39,6 +39,19 @@ from reyn.core.present.guard import get_neutralizer
 _WIRE_KEYS = (
     "attached_name",
     "model",
+    # #5094: the agent roster + the model-class picker's own catalog — all
+    # 4 were already computed server-side (``status._snapshot``'s own
+    # ``registry.loaded_names()``/``registry.session_tree()``/
+    # ``Session.active_model_class()``/``Session.known_model_classes()``)
+    # but never forwarded past this filter, so a remote client's agent tab
+    # and model-class picker were unconditionally empty regardless of how
+    # many agents/sessions or model classes the server actually had (owner
+    # live-blocked on this, #5041/#5094). Real per-connection values, same
+    # as every other key here — not a graceful-degrade placeholder.
+    "agent_names",
+    "session_tree",
+    "model_active_class",
+    "model_classes",
     "cost_agent",
     "cost_total",
     "agent_tokens",
@@ -82,6 +95,11 @@ def project_status(snapshot: "dict | None", *, waiting_on: "str | None" = None) 
     out = {
         "attached_name": snap.get("attached_name"),
         "model": snap.get("model"),
+        # #5094: see _WIRE_KEYS above.
+        "agent_names": snap.get("agent_names", []),
+        "session_tree": snap.get("session_tree", []),
+        "model_active_class": snap.get("model_active_class"),
+        "model_classes": snap.get("model_classes", []),
         "cost_agent": snap.get("cost_agent", 0.0),
         "cost_total": snap.get("cost_total", 0.0),
         "agent_tokens": snap.get("agent_tokens", 0),
