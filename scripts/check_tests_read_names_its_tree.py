@@ -23,50 +23,47 @@ the note any good" — nothing here reads the note's content. It is only:
 3. a ``tests/``-touching PR carries at least one note (none -> red) — rule 8
    itself, which nothing has been checking mechanically.
 
-#5138: the note's CLAIM line lives in a PR **comment**, and only its FIRST
-LINE is ever read (see ``_NOTE_MARKER`` / ``evaluate``). That comment's line 1
-must carry the marker AND the head SHA together, e.g.
+The note's CLAIM line lives in a PR **comment**, and only its FIRST LINE is
+ever read (see ``_NOTE_MARKER`` / ``evaluate``). That comment's line 1 must
+carry the marker AND the head SHA together, e.g.
 ``**[e2e-coder]** — TESTS-READ (B: independent) (head 9cc100605)``. The
 GROUNDS behind the claim (six-questions answers, scope, limits) live from
 line 2 onward and are never read.
 
-This shape had two earlier revisions, both measured wrong:
+The claim is deliberately NOT read from anywhere in a comment (any line, not
+just the first): a document that merely *discusses* TESTS-READ — with an
+unrelated SHA-shaped token appearing nearby — would pass a whole-body search,
+because `find_note_shas` cannot distinguish a claim from a mention. Requiring
+the marker and the SHA to be co-located on the comment's OWN FIRST LINE
+excludes that: a document *about* TESTS-READ, rather than *stating* a
+TESTS-READ claim, does not put the marker there. This removes self-reference
+SYNTACTICALLY, not statistically — it is not that a marker-plus-SHA elsewhere
+in a multi-line comment is merely less likely to be read as a claim, it is
+structurally excluded, because ``evaluate`` never hands anything past a
+comment's first line to either the marker regex or the SHA search.
 
-- **Rev 1 (this file's own #5039 history):** the claim's home was ANY line of
-  ANY comment. `find_note_shas` read a whole comment body, so prose that
-  merely *discussed* TESTS-READ — with an unrelated SHA-shaped token nearby —
-  could pass.
-- **Rev 2 (#5138, briefly): the claim moved into the PR BODY.** A
-  ``pull_request: edited`` event carries the PR's own head sha, so a body
-  edit's check run lands where it needs to (an ``issue_comment`` run carries
-  the DEFAULT BRANCH's sha instead — measured 4/4, #5127/#5128/#5132/#5136
-  stayed red until a human re-ran the workflow by hand). But the PR body is
-  one document serving many purposes at once (description, Test plan,
-  reviewer blocking points, bootstrap notes) — measured on the PR that
-  introduced this exact revision (#5144): the body discussed TESTS-READ in
-  prose *and* a real commit SHA of the PR appeared elsewhere in that same
-  prose (a fixing-commit reference in a checked-off blocking point), and the
-  gate went green with no reviewer note at all. A comment is one document,
-  one purpose, and this predicate now additionally requires the marker and
-  the SHA to be co-located on that comment's OWN FIRST LINE — a document that
-  is *about* TESTS-READ, rather than *stating* a TESTS-READ claim, does not
-  put the marker there. This removes self-reference SYNTACTICALLY, not
-  statistically: it is not that a marker-plus-SHA elsewhere in a multi-line
-  comment is merely less likely to be read as a claim — it is structurally
-  excluded, because ``evaluate`` never looks past a comment's first line.
+The claim is also deliberately NOT read from the PR **body**. A body is one
+document serving many purposes at once — description, Test plan, reviewer
+blocking points, bootstrap notes — and a whole-body search cannot tell
+"stating a claim" from "describing this gate": measured, a PR body that
+discusses TESTS-READ in prose and separately quotes a real commit SHA of the
+PR (e.g. a fixing-commit reference in a checked-off blocking point) goes
+green with no reviewer note at all. A comment is one document with one
+purpose, which is what makes the first-line restriction meaningful there in
+a way it would not be for a body.
 
 Reporting: a check run attaches to the sha its *triggering event* carries,
 and ``issue_comment`` (fired when a comment is posted — the event that has to
 re-run this gate, since ``pull_request`` does not fire on a new comment)
-carries the default branch's sha, not the PR's. So the CI workflow does not
-rely on a check run at all; it posts a GitHub commit **status** to the PR's
-own head sha, resolved once via ``gh pr view`` regardless of which event
-triggered the run. One reporting channel, not two (architect's first
-objection to this shape, on an earlier round: a check run and a commit
-status both encoding "did this pass" is the exact class this repo spent an
-evening closing). The workflow posts `pending` before running this script and
-`success`/`failure` after — not decoration: it is what keeps a job that dies
-mid-run from going silent (architect's second objection: a job forced to
+carries the default branch's sha, not the PR's — measured 4/4,
+#5127/#5128/#5132/#5136 stayed red until a human re-ran the workflow by hand.
+So the CI workflow does not rely on a check run at all; it posts a GitHub
+commit **status** to the PR's own head sha, resolved once via ``gh pr view``
+regardless of which event triggered the run. One reporting channel, not two
+(a check run and a commit status both encoding "did this pass" is the exact
+class this repo spent an evening closing). The workflow posts `pending`
+before running this script and `success`/`failure` after — not decoration:
+it is what keeps a job that dies mid-run from going silent (a job forced to
 always exit 0 so it never reds is a gate that fires and says nothing). See
 ``check-tests-read-names-its-tree.yml`` for the three-step shape that
 provides this; it is not something a pure Python predicate can exercise, and

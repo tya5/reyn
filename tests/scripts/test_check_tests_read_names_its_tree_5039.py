@@ -8,9 +8,9 @@ EXISTING; nothing looks at which tree the note is a claim about). The four
 2026-08-22 instances the script's own docstring lists are the population this
 was written against — the reject-side cases below are those instances' shape.
 
-#5138 (second round, architect comment 5383200442): the claim line stays a PR
-COMMENT, but only that comment's FIRST LINE is ever read — the marker and the
-head SHA must be co-located there. The tests below cover the architect's four
+The claim line is a PR COMMENT, and only that comment's FIRST LINE is ever
+read — the marker and the head SHA must be co-located there (architect,
+#5138 comment 5383200442). The tests below cover the architect's four
 acceptance cases:
 
 ① no claim line anywhere → red (`test_no_claim_line_at_all_is_rejected`).
