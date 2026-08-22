@@ -54,6 +54,8 @@ from reyn.interfaces.transport.client_transport import ClientTransport
 from reyn.interfaces.transport.frames import DisplayFrame
 from reyn.runtime.outbox import OutboxMessage
 
+_GUTTER_WIDTH = 2
+
 
 class _ReplayTransport(ClientTransport):
     """A real, minimal ``ClientTransport`` that replays a fixed frame list —
@@ -197,26 +199,46 @@ def test_gutter_reads_an_empty_answer_label_as_resolved_not_pending():
     investigation, same emptiness-vs-absence trap). A restored intervention
     with an empty ``_answer_label`` must get the RESOLVED (dim, not the
     amber "needs you") gutter glyph, not the PENDING one — reverting
-    ``_gutter_glyph_color``'s check back to ``not (msg.meta or {}).get(
+    ``ReynGutter``'s "intervention" branch back to ``not (msg.meta or {}).get(
     "_answer_label")`` (falsy-VALUE) turns this red: an empty string is
-    falsy, so it would render as still-PENDING."""
-    from reyn.interfaces.inline.textual_chat.gutter import _gutter_glyph_color
+    falsy, so it would render as still-PENDING.
 
-    resolved_empty = OutboxMessage(
-        kind="intervention", text="…", meta={"_answer_label": ""},
+    Uses the PUBLIC ``ReynGutter.decorate`` surface over a real
+    ``FlowModel``/``Entry`` pair (``textual_flowview`` — no mount needed,
+    ``FlowModel`` is a plain, UI-less collection) rather than importing the
+    private ``_gutter_glyph_color`` helper directly (lead-coder's TESTS-READY
+    finding on the first draft — CLAUDE.md's own testing policy: use the
+    public surface, and its absence is itself a finding when there is
+    none — here there IS one, ``decorate``, already exercised by
+    ``test_textual_chat_intervention_panel_3299.py``'s own
+    ``test_resolved_intervention_gutter_is_not_the_needs_you_amber``)."""
+    from textual_flowview import FlowModel
+
+    from reyn.interfaces.inline.textual_chat.gutter import ReynGutter
+
+    gutter = ReynGutter()
+    model: "FlowModel[OutboxMessage]" = FlowModel()
+
+    resolved_empty = model.append(
+        OutboxMessage(kind="intervention", text="…", meta={"_answer_label": ""}),
     )
-    pending = OutboxMessage(kind="intervention", text="…", meta={})
+    pending = model.append(
+        OutboxMessage(kind="intervention", text="…", meta={}),
+    )
 
-    glyph_resolved, color_resolved = _gutter_glyph_color(resolved_empty)
-    glyph_pending, color_pending = _gutter_glyph_color(pending)
+    rendered_resolved = gutter.decorate(resolved_empty, width=_GUTTER_WIDTH, height=1)
+    rendered_pending = gutter.decorate(pending, width=_GUTTER_WIDTH, height=1)
 
-    assert glyph_resolved != glyph_pending or color_resolved != color_pending, (
+    assert (
+        rendered_resolved.plain != rendered_pending.plain
+        or rendered_resolved.style != rendered_pending.style
+    ), (
         f"an empty-label resolved intervention must render distinctly from "
-        f"a genuinely pending one; both got ({glyph_resolved!r}, "
-        f"{color_resolved!r})"
+        f"a genuinely pending one; both got "
+        f"({rendered_resolved.plain!r}, {rendered_resolved.style!r})"
     )
-    assert glyph_pending == "⋯", pending
-    assert glyph_resolved != "⋯", (
+    assert "⋯" in rendered_pending.plain, rendered_pending.plain
+    assert "⋯" not in rendered_resolved.plain, (
         "empty _answer_label read as pending — the emptiness-vs-absence "
         "trap this test exists to catch"
     )
