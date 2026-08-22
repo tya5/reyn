@@ -116,6 +116,82 @@ def test_two_agents_each_subscribe_their_own_broker_inbox_with_no_derivation(
     assert hook_b.matcher == {"server": "broker", "uri": "broker://inbox/coder-brown"}
 
 
+async def _drain_texts(session: Session) -> set:
+    """#5091 witness (lead-coder's own point): the property under test here
+    is DELIVERY, not registration — the test above already proves each
+    session's hook REGISTRY resolves to its own matcher config statically;
+    this proves an actual dispatched event reaches the RIGHT session's own
+    inbox and not the other's. Mirrors ``test_2073_per_agent_hooks.py``'s
+    own helper of the same name/shape (the public inbox is the observation
+    point both modules use)."""
+    texts = set()
+    while not session.inbox.empty():
+        _kind, payload = session.inbox.get_nowait()
+        texts.add(payload.get("text"))
+    return texts
+
+
+@pytest.mark.asyncio
+async def test_a_resource_update_reaches_only_the_matching_agents_own_session(
+    tmp_path: Path,
+):
+    """Tier 2: #5091's own acceptance point (lead-coder, not architect's
+    static-registration witness above) — "hooks が読まれた" is not the
+    claim; "別々の inbox に別々に届く" is. Drives the REAL
+    ``Session._hook_dispatcher.dispatch("mcp_resource_updated", ...)`` —
+    the production entry point ``McpIngressAdapter``/``MCPConnectionService``
+    ultimately call (see ``dispatcher.py``'s own ``dispatch`` docstring) —
+    against BOTH sessions for coder-smith's own uri, then the symmetric
+    case for coder-brown's: each fires ONLY its own agent's hook, never
+    the other's. No mocks — 2 real ``Session``s, the real dispatcher, the
+    real matcher (``reyn.hooks.matcher.matches`` via ``event_pattern``)."""
+    session_a = _make_session(tmp_path, "coder-smith")
+    session_b = _make_session(tmp_path, "coder-brown")
+    _write_broker_inbox_hook(session_a, own_identity="coder-smith")
+    _write_broker_inbox_hook(session_b, own_identity="coder-brown")
+    # #2073 S2b's own reapply seam (``replace_registry``, docstring above):
+    # each dispatcher's registry was built at Session construction, BEFORE
+    # the hooks.yaml above existed — re-read it now, the same call
+    # production makes at the turn boundary, so the dispatcher below
+    # actually sees what was just written.
+    session_a._hook_dispatcher.replace_registry(session_a._build_hook_registry())
+    session_b._hook_dispatcher.replace_registry(session_b._build_hook_registry())
+
+    def _mcp_event(uri: str, agent_name: str) -> dict:
+        return {
+            "point": "mcp_resource_updated", "server": "broker",
+            "uri": uri, "agent_name": agent_name, "resync": False,
+        }
+
+    smith_uri = "broker://inbox/coder-smith"
+    await session_a._hook_dispatcher.dispatch(
+        "mcp_resource_updated", _mcp_event(smith_uri, "coder-smith"),
+    )
+    await session_b._hook_dispatcher.dispatch(
+        "mcp_resource_updated", _mcp_event(smith_uri, "coder-smith"),
+    )
+    assert await _drain_texts(session_a) == {"new broker message"}, (
+        "coder-smith's own inbox uri must fire coder-smith's hook"
+    )
+    assert await _drain_texts(session_b) == set(), (
+        "coder-smith's uri must NOT fire coder-brown's hook — cross-delivery"
+    )
+
+    brown_uri = "broker://inbox/coder-brown"
+    await session_a._hook_dispatcher.dispatch(
+        "mcp_resource_updated", _mcp_event(brown_uri, "coder-brown"),
+    )
+    await session_b._hook_dispatcher.dispatch(
+        "mcp_resource_updated", _mcp_event(brown_uri, "coder-brown"),
+    )
+    assert await _drain_texts(session_a) == set(), (
+        "coder-brown's uri must NOT fire coder-smith's hook — cross-delivery"
+    )
+    assert await _drain_texts(session_b) == {"new broker message"}, (
+        "coder-brown's own inbox uri must fire coder-brown's hook"
+    )
+
+
 def test_no_hooks_yaml_means_no_broker_subscription(tmp_path: Path):
     """Tier 2: regression guard — an agent with no per-session `hooks.yaml`
     at all (every agent that isn't opting into broker participation,
