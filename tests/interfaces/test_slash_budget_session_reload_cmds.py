@@ -18,17 +18,21 @@ from tests._support.slash import slash_ctx
 # ── shared stub ────────────────────────────────────────────────────────────
 
 
-def _ctx(session, *, switch_result: bool = True):
+def _ctx(session, *, switch_result: bool = True, session_list_result=None):
     """The context the production dispatch hands a slash handler.
 
     The transport IS this test's display recorder — ``reply()`` writes
     through the client seam now, so the list the assertions read is the
     one the transport fills.
 
-    ``switch_result`` (#5096 ②): what ``request_session_switch`` reports
-    back — see ``RecordingTransport``'s own docstring.
+    ``switch_result`` (#5096 ②) / ``session_list_result`` (#5099): what
+    ``request_session_switch`` / ``request_session_list`` report back —
+    see ``RecordingTransport``'s own docstring.
     """
-    return slash_ctx(session, recorder=session._outbox, switch_result=switch_result)
+    return slash_ctx(
+        session, recorder=session._outbox, switch_result=switch_result,
+        session_list_result=session_list_result,
+    )
 
 
 class _FakeSession:
@@ -276,20 +280,30 @@ async def test_session_switch_known_sid_requests_switch() -> None:
 
 @pytest.mark.asyncio
 async def test_session_list_no_sessions_replies_note() -> None:
-    """Tier 2: /session list with no loaded sessions → informational note."""
-    reg = _FakeRegistry(session_ids=[])
-    session = _FakeSession(registry=reg)
-    await session_cmd(_ctx(session), "list")  # type: ignore[arg-type]
+    """Tier 2: #5099 -- /session list with an empty request_session_list()
+    result → informational note. #5099: `list` is `connection` locus
+    (#5096 ②'s own remainder) — the roster comes from
+    `ctx.transport.request_session_list()`, never `ctx.session._registry`
+    (which a real handler never even builds for this sub in production)."""
+    session = _FakeSession(registry=_FakeRegistry())  # registry unread by "list"
+    await session_cmd(_ctx(session, session_list_result=[]), "list")  # type: ignore[arg-type]
     assert session.reply_text()
     assert not session.error_text()
 
 
 @pytest.mark.asyncio
 async def test_session_list_marks_focused_with_star() -> None:
-    """Tier 2: /session list marks the currently focused session with '*'."""
-    reg = _FakeRegistry(session_ids=["main", "s2"], attached_sid="s2")
-    session = _FakeSession(registry=reg)
-    await session_cmd(_ctx(session), "list")  # type: ignore[arg-type]
+    """Tier 2: #5099 -- /session list marks the currently focused session with
+    '*' — sourced from the transport's request_session_list(), not the
+    registry (see test_session_list_no_sessions_replies_note's own note)."""
+    session = _FakeSession(registry=_FakeRegistry())
+    ctx = _ctx(
+        session,
+        session_list_result=[
+            {"sid": "main", "attached": False}, {"sid": "s2", "attached": True},
+        ],
+    )
+    await session_cmd(ctx, "list")  # type: ignore[arg-type]
     text = session.reply_text()
     assert "* s2" in text
     assert "main" in text

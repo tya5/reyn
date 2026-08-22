@@ -1,14 +1,18 @@
 """Tier 2: #1726 FP-0043 Stage 4a — the `/session` REPL command (public surface).
 
-`/session new|switch <sid>|list` drives per-agent multi-session in the REPL. The
-handler reads the public registry surface (attached_name / spawn_session /
-get_session / session_ids / attached_sid) and asks the transport to
-`request_session_switch` for `switch` (#4534 PR-2b — a typed request, not the
-retired `__session_switch_request__` display-channel sentinel). These tests
-exercise the command flow + the graceful-error paths via a stub registry + an
-outbox-capturing fake session — the same pattern as test_slash_agent.
-Byte-identical when unused (a session that never runs `/session` stays
-single-"main").
+`/session new|switch <sid>|list` drives per-agent multi-session in the REPL.
+`new` reads the public registry surface directly (attached_name /
+spawn_session / per_session_narrowing) via `ctx.session`. `switch` and `list`
+are `connection` locus (#5096 ②/#5099) — NEITHER touches `ctx.session` (which
+is `None` for them in production); both ask the transport instead:
+`request_session_switch` (#4534 PR-2b — a typed request, not the retired
+`__session_switch_request__` display-channel sentinel) and
+`request_session_list` (#5099 — the same shape, closing `_session_locus`'s own
+prior remainder). These tests exercise the command flow + the graceful-error
+paths via a stub registry (`new`'s own reads) + a `RecordingTransport` (the
+`switch`/`list` typed-op results) + an outbox-capturing fake session — the same
+pattern as test_slash_agent. Byte-identical when unused (a session that never
+runs `/session` stays single-"main").
 """
 from __future__ import annotations
 
@@ -20,17 +24,21 @@ from reyn.runtime.outbox import OutboxMessage
 from tests._support.slash import slash_ctx
 
 
-def _ctx(session, *, switch_result: bool = True):
+def _ctx(session, *, switch_result: bool = True, session_list_result=None):
     """The context the production dispatch hands a slash handler.
 
     The transport IS this test's display recorder — ``reply()`` writes
     through the client seam now (#3595 S4), so the list these assertions
     read is the one the transport fills.
 
-    ``switch_result`` (#5096 ②): what ``request_session_switch`` reports
-    back — see ``RecordingTransport``'s own docstring.
+    ``switch_result`` (#5096 ②) / ``session_list_result`` (#5099): what
+    ``request_session_switch`` / ``request_session_list`` report back —
+    see ``RecordingTransport``'s own docstring.
     """
-    return slash_ctx(session, recorder=session.outbox_calls, switch_result=switch_result)
+    return slash_ctx(
+        session, recorder=session.outbox_calls, switch_result=switch_result,
+        session_list_result=session_list_result,
+    )
 
 
 class _StubRegistry:
@@ -152,10 +160,56 @@ async def test_session_switch_unknown_is_graceful():
 
 @pytest.mark.asyncio
 async def test_session_list_marks_focused():
-    """Tier 2: #1726 — `/session list` lists the agent's sessions with a focus marker."""
-    reg = _StubRegistry(sids=("main", "s1"), focused="s1")
-    s = _FakeSession(reg)
-    await session_cmd(_ctx(s), "list")
+    """Tier 2: #1726/#5099 — `/session list` lists the agent's sessions with a
+    focus marker. #5099: `list` is now `connection` locus (#5096 ②'s own
+    remainder) — the roster comes from `ctx.transport.request_session_list()`,
+    not `ctx.session._registry` (a real handler never even builds `ctx.session`
+    for this sub in production, see `_session_locus`'s own docstring), so this
+    test supplies the roster via the transport, mirroring `switch`'s own
+    `switch_result` pattern rather than the (now-unread-by-`list`) stub
+    registry."""
+    s = _FakeSession(_StubRegistry())  # ctx.session is never touched for "list"
+    ctx = _ctx(
+        s,
+        session_list_result=[
+            {"sid": "main", "attached": False},
+            {"sid": "s1", "attached": True},
+        ],
+    )
+    await session_cmd(ctx, "list")
+    assert ctx.transport.session_list_requests == 1
     body = s.reply_text()
     assert "main" in body and "s1" in body
     assert "* s1" in body, "the focused session is marked"
+
+
+@pytest.mark.asyncio
+async def test_session_list_empty_says_so():
+    """Tier 2: #5099 — an empty `request_session_list()` result (nothing
+    loaded, or this transport not answering the query) replies plainly
+    rather than fabricating a roster."""
+    s = _FakeSession(_StubRegistry())
+    await session_cmd(_ctx(s), "list")
+    assert "no sessions loaded" in s.reply_text()
+
+
+@pytest.mark.asyncio
+async def test_session_switch_unknown_names_accepted_sids_when_listable():
+    """Tier 2: #5099 — restores the pre-#5096 richer guidance: when the
+    roster IS answerable (non-empty), an unknown sid's error names every
+    accepted sid, entirely client-side, before ever calling
+    request_session_switch (never reaching the fallback bool-only path)."""
+    s = _FakeSession(_StubRegistry())
+    ctx = _ctx(
+        s,
+        session_list_result=[
+            {"sid": "main", "attached": True}, {"sid": "s1", "attached": False},
+        ],
+    )
+    await session_cmd(ctx, "switch nope")
+    assert ctx.transport.session_switch_requests == [], (
+        "pre-validation must short-circuit before the switch op is even called"
+    )
+    err = s.reply_text()
+    assert "nope" in err
+    assert "main" in err and "s1" in err, "accepted sids named in the error"

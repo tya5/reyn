@@ -272,6 +272,18 @@ class InProcessTransport(ClientTransport):
             project_root, agent, limit=config.artifacts.remote_fallback_limit,
         )
 
+    async def request_session_list(self) -> "list[dict]":
+        # #5099: local execution side — reads the registry directly (no
+        # wire hop), the same ``session_ids``/``attached_sid`` pair
+        # ``/session list``'s own handler used to read before #5096 ②
+        # moved this command to connection locus.
+        s = self._attached()
+        if s is None:
+            return []
+        sids = self._registry.session_ids(s.agent_name)
+        focused = self._registry.attached_sid
+        return [{"sid": sid, "attached": sid == focused} for sid in sids]
+
     async def answer_intervention_text(
         self, text: str, *, intervention_id: "str | None" = None
     ) -> bool:

@@ -391,6 +391,17 @@ class AgUiTransport(ClientTransport):
             total if isinstance(total, int) else 0,
         )
 
+    async def request_session_list(self) -> "list[dict]":
+        # #5099: POST a typed request; the server reads its OWN copy of
+        # the registry (scoped to THIS connection's own agent_name, baked
+        # into the endpoint URL at connect time — same reasoning
+        # ``request_artifact_list`` gives for reading the server's live
+        # copy rather than trusting a stale wire view) and answers with
+        # the current session list.
+        result = await self._send({"type": "session_list_request"})
+        sessions = (result or {}).get("sessions")
+        return sessions if isinstance(sessions, list) else []
+
     async def answer_intervention_text(
         self, text: str, *, intervention_id: "str | None" = None
     ) -> bool:

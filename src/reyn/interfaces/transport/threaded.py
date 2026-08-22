@@ -437,6 +437,9 @@ class ThreadedTransportProxy(ClientTransport):
     ) -> "tuple[list[dict], int]":
         return await self._call_on_worker("request_artifact_list", agent=agent)
 
+    async def request_session_list(self) -> "list[dict]":
+        return await self._call_on_worker("request_session_list")
+
     async def _cancel_pump_on_worker(self) -> None:
         """Runs ON THE WORKER LOOP (via ``run_coroutine_threadsafe``) so
         cancelling the pump task is properly awaited before this proxy asks

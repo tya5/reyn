@@ -808,6 +808,21 @@ async def agui_submit(request: Request, agent_name: str):
             project_root, agent_name, limit=config.artifacts.remote_fallback_limit,
         )
         return JSONResponse({"status": "ok", "entries": entries, "total": total})
+    elif ptype == "session_list_request":
+        # #5099: mirrors attach_request/session_switch_request/
+        # artifact_list_request above — client names an operation, server
+        # executes it against ITS OWN state (never a client-supplied
+        # roster). Scoped to THIS connection's own *agent_name* (baked into
+        # the endpoint URL at connect time), same as
+        # ``artifact_list_request``'s own project_root derivation above.
+        # Reads the SAME ``session_ids``/``attached_sid`` pair
+        # ``InProcessTransport.request_session_list`` reads locally — one
+        # source of truth, two transports.
+        sessions = [
+            {"sid": sid, "attached": sid == registry.attached_sid}
+            for sid in registry.session_ids(agent_name)
+        ]
+        return JSONResponse({"status": "ok", "sessions": sessions})
     return JSONResponse({"status": "ok"})
 
 

@@ -255,6 +255,9 @@ class _ErrorWatchingTransport(ClientTransport):
     ) -> "tuple[list[dict], int]":
         return await self._inner.request_artifact_list(agent=agent)
 
+    async def request_session_list(self) -> "list[dict]":
+        return await self._inner.request_session_list()
+
     async def run_slash_command(self, name: str, args: str) -> bool:
         return await self._inner.run_slash_command(name, args)
 
