@@ -22,21 +22,52 @@ llm:
 
 ## トップレベルキー
 
-**「書く面 / 再読込」列の読み方。** ほとんどのキーは `reyn.yaml` /
-`reyn.local.yaml`（＝ **PRJ スコープ**）にしか書けず、`load_config` が
-**起動時に一度だけ**読みます — 実行中に編集しても、**再起動するまで効きません**。
+**3 つの書く面/再読込 列の読み方**（#4206、1 つの「書く面 / 再読込」列が★同時に
+3 つのことを言っていた状態から分割 — architect 裁定、issuecomment-5379310759:
+その列へ 4 つ目の値を足そうとすると、「両方」が「2 ファイル」なのか「2 層」なのか
+曖昧になった — #5086/#5088 の読み替えが割れた実際の原因）:
 
-例外はランタイム可変なレジストリ群で、これらは `.reyn/config/<名前>.yaml` にも
-書けます。**`.reyn/config/` 側に書いた分だけがターン境界で読み直され**（= hot
-reload）、`reyn.yaml` 側に書いた同じキーは他と同じく再起動待ちです。
-**ファイル分割そのものが write-gate の境界**であるため（#2073）、hot reload の
-ローダは `reyn.yaml` を構造的に読みません — 「hot reload される設定」を増やしたい
-場合は、`reyn.yaml` に書き足すのではなく `.reyn/config/` 側へ置きます。
+- **Declared in** — どの★層★が値を持てるか: `project`（`reyn.yaml` /
+  `reyn.local.yaml` / `~/.reyn/config.yaml` のみ — 既定、注記の無い行はすべて
+  これ）、`project · agent`（エージェント自身の `.reyn/agents/<名前>/
+  profile.yaml` にも設定可）、`project · agent · session`（セッション自身の
+  `<session-state-dir>/config.yaml` にも設定可）、または `agent` 単独
+  （そもそも project 層に値が存在しないキー — `broker_identity` が該当、
+  #5084 ③-a）。**CI で導出/検査される唯一の列**（下記参照）— ②③が
+  「スライスで偽にならない」からではありません（★偽になり得るし実際なった
+  — 下記 ⑤ が `Reload` の実測インスタンス）。「この呼び出しが live
+  re-read かどうか」は★呼び出し site 自身の性質であり、`_HOT_RELOAD_FILES`
+  のようなファイル単位のレジストリからは答えられません — ②③には★導出元
+  となる機械的な出所が無いため手書きのままであり、この分割の後も★人間が
+  次のズレを見つけることに変わりはありません。
+- **Reload** — `restart`（`load_config` 時に一度だけ読む）または
+  `restart / hot`（`.reyn/config/` 側の書き込みはターン境界で読み直される。
+  `reyn.yaml` 側の同じキーは引き続き再起動待ち）。
+- **File** — このキーの値を実際に持ち得る **project 層** のファイル:
+  `reyn.yaml` のみ、または `reyn.yaml` + 特定の `.reyn/config/<名前>.yaml`
+  レジストリ。エージェント/セッション層のファイルは別の軸（下記の注記参照）
+  であり、この列には数えません — project 層の write-gate 境界だけを表す列
+  です（#2073:「ファイル分割そのものが write-gate の境界」）。
 
-**どのキーがこの例外に入るかの一次の出所は `src/reyn/config/loader.py` の
-`_HOT_RELOAD_FILES`** です。下の表の各行はそこから引いていますが、**個数や
+`restart / hot` の背景は、ランタイム可変なレジストリ群が `.reyn/config/<名前>
+.yaml` にも書ける、という例外です。**`.reyn/config/` 側に書いた分だけが
+ターン境界で読み直され**（= hot reload）、`reyn.yaml` 側に書いた同じキーは
+他と同じく再起動待ちです。hot reload のローダは `reyn.yaml` を構造的に
+読みません — 「hot reload される設定」を増やしたい場合は、`reyn.yaml` に
+書き足すのではなく `.reyn/config/` 側へ置きます。
+
+**どのキーが `restart / hot` になるかの一次の出所は `src/reyn/config/loader.py`
+の `_HOT_RELOAD_FILES`** です。下の表の各行はそこから引いていますが、**個数や
 名前の一覧をここから読み取らず、`_HOT_RELOAD_FILES` を読んでください** — 追加
 されてもこの散文は自動追随しません。
+
+**`Declared in` 自身の一次ソース**: `src/reyn/runtime/preferences.py` の
+`PREFERENCE_KEYS`（③ preference 軸、#4206）と、`AgentProfile` の明示的な
+agent 層専用フィールド（`project_context_path`、#5086／`broker_identity`、
+#5085）— `tests/repo/test_config_reference_declared_in_4206.py` がこの表の
+`Declared in` セルを CI でそれらと突き合わせます（[`events.md` 自身の
+doc↔code gate](../runtime/events.md) と同じ形）。あるキーが agent/session
+書き込み能力を得たのに本表が追随していなければ → 赤。
 
 ⚠️ **例外の例外**: `composers` は `hooks` と同じ 4 層の結合（`reyn.yaml` ∪
 `.reyn/config/hooks.yaml` ∪ エージェントごと ∪ セッションごと）で読まれますが、
@@ -59,39 +90,106 @@ reload）、`reyn.yaml` 側に書いた同じキーは他と同じく再起動�
 `cost_warn` と `embedding.cost_warn_threshold`）は EN 版の
 [`cost_warn` block](reyn-yaml.md#cost_warn-block) 節を参照してください。
 
-| キー | 型 | 書く面 / 再読込 | 説明 |
-|-----|------|-----|-------------|
-| `output_language` | 文字列 | PRJ のみ・**再起動** | デフォルトの出力言語コード（例: `en`、`ja`）。`--output-language` でオーバーライド。 |
-| `safety` | マップ | PRJ のみ・**再起動** | ランタイムの上限**と content 層の防御**: ループ検出上限、タイムアウト、上限超過時ポリシー、非信頼コンテンツの threat scan + fence（`safety.threat_scan`、FP-0050）、LLM spawn ツリーの上限（`safety.spawn`、DoS ガード）。以下参照。 |
-| `cost` | マップ | PRJ のみ・**再起動** | バジェット上限とレート制限（エージェントごと、日次、月次）。以下参照。 |
-| `web_fetch` | マップ | PRJ のみ・**再起動** | `web_fetch` ツールと MCP レジストリ呼び出しの SSL 設定。以下参照。 |
-| `gateway` | マップ | PRJ のみ・**再起動** | `reyn web` ゲートウェイ自身の設定: 認証モデル、WebSocket 受信フレーム上限、マウントするサーフェス。旧 `web:` キー（`web_fetch` と同居していた）から分割。以下参照。 |
-| `sandbox` | マップ | PRJ のみ・**再起動** | バックエンド選択（`backend`）、非対応プラットフォームポリシー（`on_unsupported`）、強制モード（`mode`: compat / strict / custom）、agent-level サンドボックスポリシー（`policy`）。以下参照。 |
-| `embedding` | マップ | PRJ のみ・**再起動** | RAG 埋め込み: マスタースイッチ（`enabled`）、モデルクラス、バッチサイズと並列度、リトライ / バックオフ / タイムアウト、トークナイザ、コスト警告閾値。以下参照。 |
-| `chat` | マップ | PRJ のみ・**再起動** | チャットセッションのランタイム設定: 履歴の圧縮、reasoning（"thinking"）テキストの扱い、対話レンダラ（`render_mode`）、TUI の gutter、body の neutralize、許可する画像 URL スキーム。以下参照。 |
-| `voice` | マップ | PRJ のみ・**再起動** | inline CUI の F2 ディクテーション用の Whisper モデル/言語/デバイス設定(#4187/#4249 で復活)。以下参照。 |
-| `audit_events` | マップ | PRJ のみ・**再起動** | `.reyn/events` 配下の P6 **audit-event** ファイルのローテーション（サイズ / 経過時間 / 掃除周期）。WAL-event でも hook-event でもありません。以下参照。 |
-| `observability` | マップ | PRJ のみ・**再起動** | P6 監査イベントの OpenTelemetry (OTLP) エクスポート（オプトイン）。デフォルトは無効。以下参照。 |
-| `tool_use` | マップ | PRJ のみ・**再起動** | chat レイヤーの tool-use scheme x transport セレクタ（`scheme`、`transport`）。以下参照。 |
-| `mcp` | マップ | 両方（`.reyn/config/mcp.yaml` 側は **hot reload**） | MCP サーバー定義。以下参照。 |
-| `agent_id` | 文字列 | PRJ のみ・**再起動** | エージェントの**識別子**— P6 監査証跡と送信 HTTP ヘッダーに刻まれます。**エージェントの定義・設定はしません**（エージェント定義は `.reyn/agents/<名前>/`）。以下参照。 |
-| `auth` | マップ | PRJ のみ・**再起動** | `reyn auth login` 用の OAuth プロバイダー設定。以下参照。 |
-| `cron` | マップ | 両方（`.reyn/config/cron.yaml` 側は **hot reload**） | スケジュール付きスキル実行。以下参照。 |
-| `external_transports` | マップ | PRJ のみ・**再起動** | チャット向け受信トランスポート → MCP ツールルーティング（Slack / LINE / Discord など）。以下参照。 |
-| `multimodal` | マップ | PRJ のみ・**再起動** | バイナリメディア（画像・音声）のサイズ上限、超過時の挙動、アーティファクト保存先、およびそれらを配信する `base_url`。以下参照。 |
-| `permissions` | マップ | PRJ のみ・**再起動** | デフォルトの Permission ポリシー。以下参照。 |
-| `project_context_path` | 文字列 | PRJ のみ・**再起動** | すべての Phase システムプロンプトに注入する Markdown ファイル。未設定（デフォルト）: cross-tool 標準を auto-resolve — `AGENTS.md` があればそれ、なければ `REYN.md`（legacy fallback）。明示パスで 1 ファイルに固定、`""` で無効化。**#5084: エージェント自身の `.reyn/agents/<name>/profile.yaml` にも `project_context_path` を設定でき、その 1 エージェントに限り本キー（プロジェクト全体のデフォルト）を上書き（マージではなく置換）する** — 別ファイル・別メカニズムだが、こちらも再起動のみ反映。下記の注記参照。 |
-| `llm` | マップ | PRJ のみ・**再起動** | LLM 層の設定: モデル選択（`llm.model` デフォルトクラス、`llm.models` クラス → LiteLLM 文字列マップ、`llm.model_class_by_purpose` 用途別上書き、`llm.api_base` プロキシ URL、`llm.prompt_cache_enabled`）に加え、ルーティング（#1829）とリトライ（#1835）。以下参照。#4174 T3: `model` / `models` / `model_class_by_purpose` / `api_base` / `prompt_cache_enabled` は同名のトップレベルキーからここへ移動しました（形は同じ、ネストが変わっただけ）。 |
-| `delegation` | マップ | PRJ のみ・**再起動** | エージェント間委任のポリシー（#2081）。 |
-| `cost_warn` | マップ | PRJ のみ・**再起動** | 高コストモデルのゲート（#1830 / FP-0052）: 選択前に警告し、名前に反して**ブロックもできます**（`cost_warn.block_on_high_cost`）。以下参照。 |
-| `offload` | マップ | PRJ のみ・**再起動** | tool 結果のサイズゲートの opt-in スイッチ。 |
-| `render_template` | マップ | PRJ のみ・**再起動** | `render_template` op の出力上限（FP-0055 / #2679）。 |
-| `fs_watch` | マップ | PRJ のみ・**再起動** | オペレータが宣言するファイル監視パス（#2608 H4）。 |
-| `hooks` | リスト | 両方（`.reyn/config/hooks.yaml` 側は **hot reload**） | hook 定義。アクションは 4 種: `template_push` / `exec` / `exec_capture` / `pipeline_launch`。空（既定）→ HookDispatcher は no-op。以下参照。 |
-| `composers` | リスト | 両方（ただし **hot reload されない**・再起動） | composer 定義。空（既定）→ `start_composers` は呼ばれません。 |
-| `skills` | マップ | 両方（`.reyn/config/skills.yaml` 側は **hot reload**） | skill 宣言。設定層をまたいで名前でマージ（明示エントリが衝突時に勝つ）。 |
-| `pipelines` | マップ | 両方（`.reyn/config/pipelines.yaml` 側は **hot reload**） | pipeline 宣言。`skills` と同じ union-merge。 |
-| `presentations` | マップ | 両方（`.reyn/config/presentations.yaml` 側は **hot reload**） | presentation テンプレート宣言。`skills` / `pipelines` と同じ union-merge。 |
+<!-- BEGIN config-declared-in -->
+| キー | 型 | Declared in | Reload | File | 説明 |
+|-----|------|-----|-----|-----|-------------|
+| `output_language` | 文字列 | project · agent · session¹ | restart⁵ | `reyn.yaml` | デフォルトの出力言語コード（例: `en`、`ja`）。`--output-language` でオーバーライド。 |
+| `safety` | マップ | project | restart | `reyn.yaml` | ランタイムの上限**と content 層の防御**: ループ検出上限、タイムアウト、上限超過時ポリシー、非信頼コンテンツの threat scan + fence（`safety.threat_scan`、FP-0050）、LLM spawn ツリーの上限（`safety.spawn`、DoS ガード）。以下参照。 |
+| `cost` | マップ | project · agent · session¹ | restart⁵ | `reyn.yaml` | バジェット上限とレート制限（エージェントごと、日次、月次）。以下参照。 |
+| `web_fetch` | マップ | project | restart | `reyn.yaml` | `web_fetch` ツールと MCP レジストリ呼び出しの SSL 設定。以下参照。 |
+| `gateway` | マップ | project | restart | `reyn.yaml` | `reyn web` ゲートウェイ自身の設定: 認証モデル、WebSocket 受信フレーム上限、マウントするサーフェス。旧 `web:` キー（`web_fetch` と同居していた）から分割。以下参照。 |
+| `sandbox` | マップ | project | restart | `reyn.yaml` | バックエンド選択（`backend`）、非対応プラットフォームポリシー（`on_unsupported`）、強制モード（`mode`: compat / strict / custom）、agent-level サンドボックスポリシー（`policy`）。以下参照。 |
+| `embedding` | マップ | project | restart | `reyn.yaml` | RAG 埋め込み: マスタースイッチ（`enabled`）、モデルクラス、バッチサイズと並列度、リトライ / バックオフ / タイムアウト、トークナイザ、コスト警告閾値。以下参照。 |
+| `chat` | マップ | project · agent · session¹ | restart⁵ | `reyn.yaml` | チャットセッションのランタイム設定: 履歴の圧縮、reasoning（"thinking"）テキストの扱い、対話レンダラ（`render_mode`）、TUI の gutter、body の neutralize、許可する画像 URL スキーム。以下参照。**¹ の上書きを持つのは `chat.reasoning.display` のみ**（ブロック全体ではなく 1 leaf — EN 版の [`chat.reasoning` fields](reyn-yaml.md#chatreasoning-fields) 参照）。他の `chat.*` キーはすべて `project` のみ。 |
+| `voice` | マップ | project | restart | `reyn.yaml` | inline CUI の F2 ディクテーション用の Whisper モデル/言語/デバイス設定(#4187/#4249 で復活)。以下参照。 |
+| `audit_events` | マップ | project | restart | `reyn.yaml` | `.reyn/events` 配下の P6 **audit-event** ファイルのローテーション（サイズ / 経過時間 / 掃除周期）。WAL-event でも hook-event でもありません。以下参照。 |
+| `observability` | マップ | project | restart | `reyn.yaml` | P6 監査イベントの OpenTelemetry (OTLP) エクスポート（オプトイン）。デフォルトは無効。以下参照。 |
+| `tool_use` | マップ | project | restart | `reyn.yaml` | chat レイヤーの tool-use scheme x transport セレクタ（`scheme`、`transport`）。以下参照。 |
+| `mcp` | マップ | project | restart / hot | `reyn.yaml` + `.reyn/config/mcp.yaml` | MCP サーバー定義。以下参照。 |
+| `agent_id` | 文字列 | project | restart | `reyn.yaml` | エージェントの**識別子**— P6 監査証跡と送信 HTTP ヘッダーに刻まれます。**エージェントの定義・設定はしません**（エージェント定義は `.reyn/agents/<名前>/`）。以下参照。 |
+| `auth` | マップ | project | restart | `reyn.yaml` | `reyn auth login` 用の OAuth プロバイダー設定。以下参照。 |
+| `cron` | マップ | project | restart / hot | `reyn.yaml` + `.reyn/config/cron.yaml` | スケジュール付きスキル実行。以下参照。 |
+| `external_transports` | マップ | project | restart | `reyn.yaml` | チャット向け受信トランスポート → MCP ツールルーティング（Slack / LINE / Discord など）。以下参照。 |
+| `multimodal` | マップ | project | restart | `reyn.yaml` | バイナリメディア（画像・音声）のサイズ上限、超過時の挙動、アーティファクト保存先、およびそれらを配信する `base_url`。以下参照。 |
+| `permissions` | マップ | project · agent · session² | restart⁷ | `reyn.yaml` | デフォルトの Permission ポリシー。以下参照。 |
+| `project_context_path` | 文字列 | project · agent³ | restart⁶ | `reyn.yaml` | すべての Phase システムプロンプトに注入する Markdown ファイル。未設定（デフォルト）: cross-tool 標準を auto-resolve — `AGENTS.md` があればそれ、なければ `REYN.md`（legacy fallback）。明示パスで 1 ファイルに固定、`""` で無効化。**#5084: エージェント自身の `.reyn/agents/<name>/profile.yaml` にも `project_context_path` を設定でき、その 1 エージェントに限り本キー（プロジェクト全体のデフォルト）を上書き（マージではなく置換）する** — 別ファイル・別メカニズム。下記の注記参照。 |
+| `llm` | マップ | project | restart | `reyn.yaml` | LLM 層の設定: モデル選択（`llm.model` デフォルトクラス、`llm.models` クラス → LiteLLM 文字列マップ、`llm.model_class_by_purpose` 用途別上書き、`llm.api_base` プロキシ URL、`llm.prompt_cache_enabled`）に加え、ルーティング（#1829）とリトライ（#1835）。以下参照。#4174 T3: `model` / `models` / `model_class_by_purpose` / `api_base` / `prompt_cache_enabled` は同名のトップレベルキーからここへ移動しました（形は同じ、ネストが変わっただけ）。 |
+| `delegation` | マップ | project | restart | `reyn.yaml` | エージェント間委任のポリシー（#2081）。 |
+| `cost_warn` | マップ | project | restart | `reyn.yaml` | 高コストモデルのゲート（#1830 / FP-0052）: 選択前に警告し、名前に反して**ブロックもできます**（`cost_warn.block_on_high_cost`）。以下参照。 |
+| `offload` | マップ | project | restart | `reyn.yaml` | tool 結果のサイズゲートの opt-in スイッチ。 |
+| `render_template` | マップ | project | restart | `reyn.yaml` | `render_template` op の出力上限（FP-0055 / #2679）。 |
+| `fs_watch` | マップ | project | restart | `reyn.yaml` | オペレータが宣言するファイル監視パス（#2608 H4）。 |
+| `hooks` | リスト | project · agent · session² | restart / hot | `reyn.yaml` + `.reyn/config/hooks.yaml`² | hook 定義。アクションは 4 種: `template_push` / `exec` / `exec_capture` / `pipeline_launch`。空（既定）→ HookDispatcher は no-op。以下参照。 |
+| `composers` | リスト | project · agent · session² | restart⁴ | `reyn.yaml`⁴ | composer 定義。空（既定）→ `start_composers` は呼ばれません。 |
+| `skills` | マップ | project | restart / hot | `reyn.yaml` + `.reyn/config/skills.yaml` | skill 宣言。設定層をまたいで名前でマージ（明示エントリが衝突時に勝つ）。 |
+| `pipelines` | マップ | project | restart / hot | `reyn.yaml` + `.reyn/config/pipelines.yaml` | pipeline 宣言。`skills` と同じ union-merge。 |
+| `presentations` | マップ | project | restart / hot | `reyn.yaml` + `.reyn/config/presentations.yaml` | presentation テンプレート宣言。`skills` / `pipelines` と同じ union-merge。 |
+<!-- END config-declared-in -->
+
+¹ **`Declared in` が `project` を超える行、CI で検査** — ③ preference 軸
+（#4206）: `output_language`・`chat.reasoning.display`・7 個の
+`cost.*.warn_ratio` leaf は `PREFERENCE_KEYS`（`src/reyn/runtime/
+preferences.py`）— エージェント自身の `profile.yaml` **と** セッション自身の
+`config.yaml` の両方で自由に上書き可。`cost` 自身の行は（`chat` のように
+「project」+ 脚注ではなく）ブロック単位で `project · agent · session` と
+する — `warn_ratio` leaf が `cost` の 6 つの budget-cap サブブロック全てに
+またがるため。
+
+² `hooks` / `composers` / `permissions` は本表より上ですでに、それぞれの
+レイヤード COMBINE を通じて agent+session で書けると開示済（¹ とは別の
+メカニズム — [permission-model](../../concepts/runtime/permission-model.md)
+参照）— 新情報ではなく、列ができた今それを反映しただけです。`hooks` の
+`File` 列は他行と同じく project 層のみ（agent/session 層の hook ファイルは
+`.reyn/agents/<名前>/hooks.yaml` / `<session-state-dir>/hooks.yaml` という
+3 つ目/4 つ目のファイルで、「project 層の write-gate 境界だけを表す」という
+本列の規則により数えません）。
+
+³ #5086。¹ の `PREFERENCE_KEYS` と違い、このキーにセッション層の上書きは
+存在しません — エージェント自身の `profile.yaml` はプロジェクト全体のファイルを
+その 1 エージェントに限り置換するだけで、セッション層がさらに合成する対象が
+ありません。
+
+⁴ **今回のパスでは未確認** — 分割前の文面は `composers` に `.reyn/config/`
+側の書き込み面があると主張していました（「両方（ただし hot reload
+されない）」）が、`_HOT_RELOAD_FILES`（`src/reyn/config/loader.py`）に
+`composers.yaml` は無く、`Session._build_composer_defs` 自身の「runtime」層は
+`in_set.get("composers")` を読みますが、その `in_set` の唯一の生成元である
+`load_hot_reload_config` にはそれを埋める経路がありません。今回のパスで
+検証できなかった主張を繰り返すより保守的に（`reyn.yaml` のみ）しておき、
+どちらとも決めずに旗を立てています — 未解決の問いは EN 版のこの表の PR 参照。
+
+⁵ **`Reload` が `restart` なのは project 層に限る**（lead-coder 自身の
+#5090 review finding — issuecomment-5379469534）— ¹ と同じ行
+（`output_language`・`chat.reasoning.display`・7 個の
+`cost.*.warn_ratio` leaf）は agent/session 層では LIVE re-read
+（`Session.output_language` / `_resolve_session_preference`、逐語
+「Live re-read on every access」/「Live re-read on every call (never
+cached)」）— 本列の冒頭が説明する `_HOT_RELOAD_FILES` のファイル単位の
+hot reload とは★別のメカニズムで、構造的にそこからは見えません
+（property access ごとの re-read であり、ファイルの re-read ではない）。
+この脚注は ¹ と★同じ `PREFERENCE_KEYS` 集合を指すため、将来 ① の gate が
+これらの行のどれかで落ちれば、この脚注の主張も一緒に付いてきます —
+2 つが★別々に漂うことはありません。
+
+⁶ **`Reload` も agent 層では裸の `restart` ではありません** — ¹（毎呼び出し
+の live property re-read）とも `_HOT_RELOAD_FILES`（ターン境界ごとの
+ファイル re-read）とも★別のメカニズムです — `project_context_path` の
+agent 層上書きは★エージェントごとに★1 度だけ、セッション構築時に解決
+されます（`registry_bootstrap.resolve_agent_project_context`、`chat.py`
+自身の `_session_factory` closure から `AgentRegistry` 経由で呼ばれる）。
+新しいセッションは★project 層の再起動なしに現在の `profile.yaml` を
+拾いますが、★既に走っているセッションは自身の次の構築（次の
+`--connect`／再アタッチ）までは `profile.yaml` の編集に気づきません —
+本列の他の 2 つの意味（project 層・プロセス全体の「restart」／ファイル
+単位・セッション途中の「hot」）のどちらでもありません。
+
+⁷ **`Reload` も agent/session 層では裸の `restart` ではありません** —
+`permissions` の agent/session 層narrowing（`tool_allow`/`tool_deny`/
+`mcp_allow`/`mcp_deny` 等、`capability_visibility.py` 経由で合成）は
+`reapply_visibility_override`（#2285、逐語「the change is live next
+turn」）を通じて LIVE に再適用されます — セッション設定が hot-reload
+境界で読み直されるたび — 実質的には ¹ の live-reread 系列に近いですが、
+`PREFERENCE_KEYS` ではなく別の capability 合成メカニズムを経由します。
 
 > **プロジェクトコンテキストファイル（`project_context_path`）。** 未設定のとき
 > Reyn は `AGENTS.md` を読みます — Claude Code・Codex・opencode 等も読む cross-tool
