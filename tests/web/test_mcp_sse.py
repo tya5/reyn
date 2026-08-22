@@ -35,7 +35,13 @@ if str(_WORKTREE_SRC) not in sys.path:
 # Skip the whole module if optional deps are missing.
 pytest.importorskip("fastapi", reason="fastapi not installed (core dependency since #5051 -- stale environment)")
 pytest.importorskip("httpx", reason="httpx not installed (needed by TestClient)")
-pytest.importorskip("mcp", reason="mcp not installed ([mcp] extra missing)")
+# #5058 (group C): this file never imports the mcp SDK — both tests exercise
+# /mcp/messages purely over HTTP via TestClient, checking the mount's own 4xx
+# handling. _mount_mcp (surfaces.py) already catches an mcp ImportError
+# defensively at app-build time (mcp ships transitively via the core
+# `fastmcp` dependency, so that path is a broken-install signal, not a normal
+# absent-extra one) — this test file was skipping for a reason unrelated to
+# what it actually tests.
 
 
 # ---------------------------------------------------------------------------
