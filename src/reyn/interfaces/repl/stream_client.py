@@ -62,7 +62,16 @@ def _pending_head_id(head: object) -> "str | None":
     a behavior change for either), but the id this function returns feeds
     straight into ``answer_intervention_by_id`` — a caller passing a
     genuinely wrong shape deserves "no pending intervention recognized"
-    (falls through to a normal turn), never a corrupted delivery target."""
+    (falls through to a normal turn), never a corrupted delivery target.
+    The fall-through read as "correct" is really only guaranteed today
+    because NEITHER production transport can trigger it (a resolved-
+    elsewhere intervention is the one case this repo's own #2690 fix
+    already made this exact fall-through mean); a hypothetical future
+    third shape arriving alongside a genuinely still-pending intervention
+    would fall through the SAME way but for a different reason — silence
+    over a broken destination, not "already answered". Still the right
+    choice (never deliver to a destination this function couldn't
+    verify), named here so a future reader isn't left to rediscover it."""
     if isinstance(head, str):
         return head
     iv_id = getattr(head, "id", None)
