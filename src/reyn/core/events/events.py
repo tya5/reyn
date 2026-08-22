@@ -830,52 +830,85 @@ def _find_reyn_dir(start: Path) -> Path | None:
         current = parent
 
 
-def emit_cli_event(kind: str, **payload) -> None:
-    """Emit a one-off P6 event from a CLI context (no active session).
+def emit_direct_event(
+    kind: str,
+    *,
+    surface: str,
+    reyn_root: Path,
+    track_audit_seq: bool = True,
+    **payload,
+) -> None:
+    """Emit a one-off P6 audit event from a context with no live ``Session``
+    (#5065: generalizes the #4496 CLI-only seam below — a REST/web mutation
+    has the same "no Session to call ``emit_audit_event`` through" shape a
+    CLI command does; ``.reyn/events`` is a workspace-plane concern
+    (band: workspace-SSoT), and ``Session`` is a convenience layered on top
+    of it, not its owner).
 
-    Routes to ``.reyn/events/direct/cli/<YYYY-MM-DD>.jsonl``. Locates the
-    ``.reyn/`` dir by walking up from ``Path.cwd()``. If no ``.reyn/``
-    directory is found, logs a warning and returns silently — the caller's
-    operation is the primary action; audit-emit failure must not propagate.
+    Routes to ``<reyn_root>/events/direct/<surface>/<YYYY-MM-DD>.jsonl``.
+    ``reyn_root`` (the ``.reyn/`` dir itself) is supplied by the caller —
+    this function does no cwd-based discovery of its own. A long-lived
+    server process's cwd is not reliably its project root (the same
+    cwd-anchor hazard ``permissions.py`` already fixed once, #2415); a
+    caller that has a resolved project root (e.g. a FastAPI route's
+    ``get_project_root`` dependency) must pass it through explicitly
+    rather than let this function re-derive it from ``Path.cwd()``.
+
+    ``track_audit_seq`` defaults to ``True`` (a series assumption) — pass
+    ``False`` only for a genuinely one-shot-per-process caller. #4496's
+    "omit audit_seq, a single event isn't a series a gap can be detected
+    in" ruling was scoped to that one-shot CLI shape specifically; it does
+    not generalize to a long-lived surface (e.g. a web server) that emits
+    many events from the same process — those DO form a series.
 
     The file is appended to (P6 append-only contract). Dir creation is
-    idempotent (``mkdir(parents=True, exist_ok=True)``).
+    idempotent (``mkdir(parents=True, exist_ok=True)``). If ``reyn_root``
+    does not exist, logs a warning and returns silently — the caller's
+    operation is the primary action; audit-emit failure must not
+    propagate. This makes the guarantee best-effort, not just here but at
+    the underlying ``EventStore.write`` too (its own per-subscriber
+    isolation logs and swallows rather than raises) — a caller's primary
+    write can succeed while its audit record silently does not; there is
+    no separate signal distinguishing that case from "nothing happened."
+
+    ``surface`` is stamped into the emitted event's own payload (a
+    ``"surface"`` field, deterministic — a caller-supplied ``surface`` key
+    in ``**payload`` is overwritten, never merged), not just used for the
+    ``EventLog``'s ``emitter`` label — the latter is not treated as a
+    per-kind schema field by the census/vocabulary tooling, so a kind that
+    declares ``surface`` as required (e.g. #5065's
+    ``permission_approval_revoked``) needs it as real payload data.
     """
     from reyn.core.events.event_store import EventStore
 
-    reyn_dir = _find_reyn_dir(Path.cwd())
-    if reyn_dir is None:
+    reyn_root = Path(reyn_root)
+    if not reyn_root.is_dir():
         logger.warning(
-            "emit_cli_event: no .reyn/ directory found from %s; "
-            "skipping P6 audit emit for event %r",
-            Path.cwd(),
+            "emit_direct_event: %s does not exist; skipping P6 audit emit "
+            "for event %r",
+            reyn_root,
             kind,
         )
         return
 
-    cli_dir = reyn_dir / "events" / "direct" / "cli"
+    event_dir = reyn_root / "events" / "direct" / surface
     today = date.today().isoformat()  # YYYY-MM-DD
-    # Use a date-named suffix so each day's CLI events land in one predictable file.
+    # Use a date-named suffix so each day's events land in one predictable file.
     # max_bytes=0 / max_age_seconds=0 disables rotation — the suffix IS the date.
-    store = EventStore(cli_dir, max_bytes=0, max_age_seconds=0, suffix=f"_{today}")
-    # #4496 PR-1: a one-off CLI event has no continuity to protect — a
-    # single event from a single process is not a series a gap can be
-    # detected in, so audit_seq is omitted entirely (architect's ruling)
-    # rather than always stamping a meaningless `1`. `emitter="cli"` is a
-    # legible label (not a random per-instance token — nothing needs to
-    # distinguish one CLI invocation's emitter from another's, since
-    # neither carries a sequence to compare).
+    store = EventStore(event_dir, max_bytes=0, max_age_seconds=0, suffix=f"_{today}")
     # #4966 (architect ruling, found via CI): this EventLog has no owner
     # who will ever call `drain()`/`stop_dispatch()` on it — the function
     # returns right after the one `emit()` call, nothing holds a
     # reference afterward. `_force_inline=True` declares that explicitly
     # rather than letting the mechanism GUESS it from "no loop is running"
     # (a guess that fails silently the moment a loop DOES happen to be
-    # running around this call site, e.g. `emit_cli_event` invoked
+    # running around this call site, e.g. this function invoked
     # synchronously from inside an async caller). This is the ONE
     # sanctioned call site for `_force_inline` — see `EventLog.__init__`'s
     # own docstring for why it stays private and single-site, and the
-    # bounding test that enforces exactly that.
+    # bounding test that enforces exactly that (every direct-event caller
+    # below routes through THIS one construction, not a construction of
+    # its own).
     # Without it: a spawned-but-never-drained consumer task gets silently
     # abandoned, and when the loop eventually tears down, asyncio reports
     # it as its OWN "Task was destroyed but it is pending!" unhandled-
@@ -885,6 +918,39 @@ def emit_cli_event(kind: str, **payload) -> None:
     # test_durable_capture_survives_prompt_toolkit_prompt_wait's own
     # `[event] = events` unpack going from 1 to 2 elements).
     event_log = EventLog(
-        subscribers=[store], emitter="cli", track_audit_seq=False, _force_inline=True,
+        subscribers=[store], emitter=surface, track_audit_seq=track_audit_seq,
+        _force_inline=True,
     )
-    event_log.emit(kind, **payload)
+    # Stamp `surface` into the payload itself too (not just the EventLog's
+    # own `emitter` label, which the census/schema tooling does not treat
+    # as a per-kind field) -- deterministic, not caller-wins, so a stray
+    # caller-supplied `surface` key can never silently diverge from the
+    # directory this event actually landed under.
+    event_log.emit(kind, **{**payload, "surface": surface})
+
+
+def emit_cli_event(kind: str, **payload) -> None:
+    """Emit a one-off P6 event from a CLI context (no active session).
+
+    Thin wrapper over :func:`emit_direct_event`: ``surface="cli"``,
+    ``reyn_root`` located by walking up from ``Path.cwd()`` (a CLI process's
+    cwd IS a reasonable project-root anchor, unlike a long-lived server's —
+    see that function's own docstring), ``track_audit_seq=False`` (#4496
+    PR-1: a one-off CLI event has no continuity to protect — a single event
+    from a single process is not a series a gap can be detected in, so
+    audit_seq is omitted entirely, architect's ruling, rather than always
+    stamping a meaningless ``1``). If no ``.reyn/`` directory is found,
+    logs a warning and returns silently (see :func:`emit_direct_event`).
+    """
+    reyn_dir = _find_reyn_dir(Path.cwd())
+    if reyn_dir is None:
+        logger.warning(
+            "emit_cli_event: no .reyn/ directory found from %s; "
+            "skipping P6 audit emit for event %r",
+            Path.cwd(),
+            kind,
+        )
+        return
+    emit_direct_event(
+        kind, surface="cli", reyn_root=reyn_dir, track_audit_seq=False, **payload,
+    )

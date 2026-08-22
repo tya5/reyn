@@ -210,8 +210,17 @@ To change config, call the dedicated op (which writes the `.yaml` as a **new con
 - hooks → `hooks_add`
 - index sources → the index ops
 
-`approvals.yaml` (top-level *persist*) is likewise write-gated — it is written only via the
-permission-approval flow (`_persist`), never a raw `file.write`. `memory/`, `cache/`, and
+`approvals.yaml` (top-level *persist*) is likewise write-gated for its primary writer — the
+security-side permission-approval flow (`_persist`) never does a raw `file.write`. The
+`/api/permissions` REST router's own management operations (`revoke_permission` /
+`clear_permissions`, `interfaces/web/routers/permissions.py`) are a SECOND, direct writer
+(`_save`, a raw `path.write_text`) — write-gating does not apply to `approvals.yaml` the way
+it applies to `config/`/`state/` (there is no dedicated-op enforcement mechanism for a
+top-level *persist* file), so this second writer is legitimate, not a violation. What it must
+not do is write silently: each REST route above emits its own audit-event
+(`permission_approval_revoked` / `permission_approvals_cleared`, #5065) alongside the raw
+write, so `approvals.yaml`'s permission-shape changes stay observable through
+`.reyn/events` regardless of which of the two writers made them. `memory/`, `cache/`, and
 other non-recovery-core `.reyn/` paths are ordinary writable zones.
 
 ## Where does a new subsystem put its data?
