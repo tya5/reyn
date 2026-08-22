@@ -219,7 +219,16 @@ async def test_accept_side_frames_and_sync_reads_flow_through_the_proxy():
     (``has_session`` etc., read from the single snapshot slot, refreshed
     alongside each frame — see ``threaded.py``'s own module docstring) work
     end-to-end with a real inner transport that actually produces frames
-    and reports a real session."""
+    and reports a real session.
+
+    Strip-falsified for real (architect + lead-coder, post-CI): once the
+    pre-frame phase is genuinely gated by a real ``threading.Event`` (not
+    raced), a strip of the MECHANISM must go red DETERMINISTICALLY, not
+    merely "not reproduced locally" — reverting ``has_session()`` to read
+    ``self._inner.has_session()`` directly (bypassing the single-slot
+    snapshot) turned this red immediately (``assert True is False``),
+    every time, confirming the assertion genuinely depends on the slot
+    mechanism rather than on timing. Restored before this commit."""
     from reyn.interfaces.transport.frames import DisplayFrame
     from reyn.runtime.outbox import OutboxMessage
 
@@ -252,15 +261,26 @@ async def test_accept_side_frames_and_sync_reads_flow_through_the_proxy():
     )
     proxy.start()
     try:
-        # Pre-first-frame: the pre-attach contract (None), same shape
-        # #5009's own cost/ctx panes already rely on. Genuinely pre-frame
-        # now — the worker cannot have pumped anything yet, since
-        # `_FramingTransport.frames()` is still blocked on
-        # `release_first_frame` above.
-        assert proxy.has_session() is False
-        assert proxy.read_model_snapshot() is None
+        try:
+            # Pre-first-frame: the pre-attach contract (None), same shape
+            # #5009's own cost/ctx panes already rely on. Genuinely
+            # pre-frame now — the worker cannot have pumped anything yet,
+            # since `_FramingTransport.frames()` is still blocked on
+            # `release_first_frame` above.
+            assert proxy.has_session() is False
+            assert proxy.read_model_snapshot() is None
+        finally:
+            # Release regardless of the assertions' own outcome — the
+            # generator's `await asyncio.to_thread(release_first_frame.
+            # wait)` runs in a NON-daemon threadpool-executor thread; an
+            # assertion failure here that left this Event unset would
+            # leak that thread forever, and CPython's own atexit hook for
+            # the default thread pool then hangs the WHOLE interpreter at
+            # process exit waiting for it to join — turning a normal
+            # AssertionError into what looks like a hang (found while
+            # investigating a requested strip-falsify, not guessed).
+            release_first_frame.set()
 
-        release_first_frame.set()
         frame = await proxy.frames().__anext__()
         assert frame.message.text == "hello from core"
 
