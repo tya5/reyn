@@ -109,7 +109,7 @@ async def test_remote_read_model_projects_wire_status() -> None:
 
 @pytest.mark.asyncio
 async def test_remote_read_model_projects_pending_intervention_head() -> None:
-    """Tier 2: #5050 -- when STATE_SNAPSHOT carries a pending intervention
+    """Tier 1: #5050 -- when STATE_SNAPSHOT carries a pending intervention
     head (choices included), ``RemoteReadModel.intervention_head()`` returns
     it — instead of the unconditional None it returned before #5050 (the
     #4996-family lying-None: "unsupported" and "nothing pending now" rode
@@ -165,7 +165,7 @@ async def test_remote_read_model_projects_pending_intervention_head() -> None:
 
 @pytest.mark.asyncio
 async def test_remote_read_model_intervention_head_is_none_not_unsupported() -> None:
-    """Tier 2: #5050 reverse direction -- a REAL STATE_SNAPSHOT that carries
+    """Tier 1: #5050 reverse direction -- a REAL STATE_SNAPSHOT that carries
     ``pending_intervention_head: None`` (nothing pending right now, but the
     server genuinely reported on the question) still reads back as None
     through ``RemoteReadModel.intervention_head()`` — the correct value,
