@@ -5613,12 +5613,19 @@ class Session:
           at boot, the restart-only OUT-set, never re-read on a reload);
         - **runtime** — the global ``.reyn/hooks.yaml`` (from the IN-set);
         - **per-agent** — ``.reyn/agents/<name>/hooks.yaml`` (read directly here, same
-          IN-set grain but scoped per agent);
-        - **derived** — #5084 ③-b: the 2 broker-participation hooks synthesized from
-          this agent's own ``profile.yaml`` ``broker_identity`` (absent, the default,
-          derives none — see :func:`reyn.runtime.broker_hooks.derive_broker_hooks`'s
-          own docstring for the exact shape and why this lives in the SAME PR/layer
-          as ④'s cwd/env threading, not a separate mechanism).
+          IN-set grain but scoped per agent).
+
+        #5091: an EARLIER revision of this method also derived 2 broker-
+        participation hooks from a dedicated ``AgentProfile.broker_identity``
+        field (#5084 ③-b) — removed. Owner ruling: "broker" is an external
+        MCP server, not a reyn-runtime concept, and the derivation solved a
+        problem the ALREADY-EXISTING per-session hooks layer (below) already
+        solves for free — an agent that wants to subscribe its own broker
+        inbox just writes ``<per-session state dir>/hooks.yaml`` directly
+        (visible ONLY to that one session, so a literal, hand-written
+        ``uri: broker://inbox/<name>`` needs no templating). No mechanism
+        was lost; #5091's own witness demonstrates the identical behaviour
+        with zero code, using this layer alone.
 
         Rebuilding from scratch each call means a removed hook (runtime or per-agent)
         simply isn't in the new registry — removal handled by construction.
@@ -5644,7 +5651,6 @@ class Session:
         runtime_list = list(runtime) if isinstance(runtime, list) else []
         per_agent_list = self._read_per_agent_hooks()
         per_session_list = self._read_per_session_hooks()  # #2285: the 4th, most-specific layer
-        derived_list = self._derive_broker_hooks()  # #5084 ③-b: broker-participation hooks
         combined = list(self._startup_hooks_raw)
         composed_schemas = getattr(self, "_composed_schemas", None)
         registry = load_hooks(combined, composed_schemas)  # trusted startup must load — else fail loud
@@ -5652,7 +5658,6 @@ class Session:
             ("runtime", runtime_list),
             ("per-agent", per_agent_list),
             ("per-session", per_session_list),  # #2285: session-defined hooks (try-add like untrusted)
-            ("derived", derived_list),  # #5084 ③-b: derived from broker_identity, try-add like untrusted
         ):
             if not layer:
                 continue
@@ -5665,29 +5670,6 @@ class Session:
                     "the valid hook layers: %s", label, exc,
                 )
         return registry
-
-    def _derive_broker_hooks(self) -> list:
-        """#5084 ③-b: this agent's own ``profile.yaml`` ``broker_identity``,
-        turned into the 2 hook defs :func:`reyn.runtime.broker_hooks.
-        derive_broker_hooks` synthesizes — ``[]`` when absent/missing/
-        malformed, same "live re-read, {}/[] on any read failure" contract
-        as :meth:`_agent_profile_preferences` one level up (an operator
-        hand-editing ``broker_identity`` takes effect on the next hook-
-        registry rebuild, not just the next process start)."""
-        from reyn.runtime.broker_hooks import derive_broker_hooks
-        from reyn.runtime.profile import AgentProfile
-
-        try:
-            identity = AgentProfile.load(self.workspace_dir).broker_identity
-        except FileNotFoundError:
-            return []  # no profile.yaml on disk — same non-error posture as preferences
-        except ValueError as e:
-            logger.warning(
-                "#5084: skipping unreadable agent profile at %s for broker-hook "
-                "derivation: %s", self.workspace_dir, e,
-            )
-            return []
-        return derive_broker_hooks(identity)
 
     def _read_per_agent_hooks(self) -> list:
         """Read the per-agent runtime hooks layer for the COMBINE (#2073 per-agent

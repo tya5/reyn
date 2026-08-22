@@ -102,7 +102,7 @@ Each agent owns `.reyn/agents/<name>/`:
 
 | Path | Purpose |
 |------|---------|
-| `profile.yaml` | name / role / created_at / allowed_mcp / preferences / bounding / base_dir / broker_identity |
+| `profile.yaml` | name / role / created_at / allowed_mcp / preferences / bounding / base_dir / project_context_path |
 | `history.jsonl` | append-only conversation + agent message log |
 | `events.jsonl` | runtime event audit log |
 | `memory/MEMORY.md` + body files | agent-scoped memory layer |
