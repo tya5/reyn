@@ -1064,6 +1064,96 @@ async def agui_submit(request: Request, agent_name: str):
         if target and registry.exists(target):
             target_session = await registry.attach(target)
             attached = True
+
+            # #5133 (architect ruling): this connection's SurfaceManager
+            # registration is a SEPARATE holder from the hub notify below —
+            # #5129 fixed WHICH agent name `agui_submit`/`agui_seize` ask,
+            # but neither of them registers this connection as a surface of
+            # the TARGET's own manager, so `/seize` 409s and a HITL answer's
+            # `is_active_driver` check reads the wrong (empty, or someone
+            # else's) surface set. No new semantics: a cross-agent /attach
+            # IS this connection's SurfaceManager attach(target) +
+            # detach(old), the same two primitives connect/disconnect
+            # already use (mirrors #5118's own "one mechanism, two
+            # producers, not two mechanisms" — reusing agui_events'/gen's
+            # own attach/detach side effects here rather than inventing a
+            # third "migrated" state).
+            #
+            # Order: ARRIVAL before DEPARTURE (architect, citing #3310 N3's
+            # own "the announce is enqueued BEFORE _bind" barrier) — the
+            # reverse would leave a window where this connection belongs to
+            # NO manager, and anything arriving in that window (a seize, an
+            # answer) has no surface to resolve against. Every statement
+            # from `new_manager.attach` below through `old_manager.detach`
+            # further down runs without an `await` — a single-threaded
+            # event loop gives nothing else a chance to run in between, so
+            # this connection is never observably attached to both
+            # managers at once either.
+            #
+            # (a) driver token: NEVER carried across. `SurfaceManager.
+            # attach` already encodes the right default (first surface on
+            # an otherwise-empty manager takes the token; an existing
+            # holder keeps it) — calling it unchanged on the target IS the
+            # "arrival competes normally, never seizes" rule, not a special
+            # case for it. `detach` on the old manager releases the token
+            # if this connection held it (a departure, same as a genuine
+            # disconnect) — regaining control post-attach is `/seize`,
+            # exactly the existing path, client-decided, never automatic.
+            new_manager = _surface_manager(target, auth)
+            now = monotonic()
+            new_first = not new_manager.has_surfaces()
+            new_manager.attach(connection_id, identity.user_id, now)
+            if new_first:
+                target_session.register_intervention_listener(AGUI_OPERATOR_CHANNEL)
+            target_session.emit_audit_event(
+                "client_attached",
+                auth_user_id=identity.user_id,
+                auth_connection_id=connection_id,
+                auth_tier=identity.tier.value,
+            )
+            _ensure_fail_close_driver(target, new_manager, registry)
+
+            # (b)/(c): the OLD agent's manager treats this exactly like an
+            # ordinary disconnect — no "special because it's a migration"
+            # branch (architect: that would give the same end state two
+            # arrival paths, only one of which gets fixed by a future
+            # change). `agent_name` here is still #5129's OWN resolution
+            # (the connection's agent BEFORE this attach), captured before
+            # `target` shadows it below.
+            # lead-coder co-vet (issuecomment-5383186154): the prior draft
+            # `await`ed `registry.ensure_running(agent_name)` here — an
+            # exception/cancellation crossing that await between arrival
+            # (above) and this detach would leave this connection
+            # registered in BOTH managers FOREVER (detach never runs), so
+            # the old manager keeps counting a surface that already left;
+            # if it was the last real one, grace never arms — fail-close
+            # silently fails OPEN. `registry.get_session` (sync,
+            # non-loading, `None` if not currently running) removes that
+            # window entirely — no await between attach and detach means
+            # no suspension point for a cancellation to land in. (This
+            # request's own earlier, UNRELATED `session = await registry.
+            # ensure_running(agent_name)` — shared by every non-heartbeat/
+            # non-answer ptype, attach_request included — already booted
+            # the old agent by the time execution reaches here regardless;
+            # this change is about not adding a SECOND boot + a new crash
+            # window on top of that, not about whether the old agent ends
+            # up running.) `old_manager.detach`/`_ensure_fail_close_driver`
+            # never needed a session at all.
+            old_manager = surface_registry().get(agent_name)
+            if old_manager is not None and old_manager is not new_manager:
+                old_manager.detach(connection_id, now)
+                old_session = registry.get_session(agent_name)
+                if not old_manager.has_surfaces():
+                    if old_session is not None:
+                        old_session.unregister_intervention_listener(AGUI_OPERATOR_CHANNEL)
+                    _ensure_fail_close_driver(agent_name, old_manager, registry)
+                if old_session is not None:
+                    old_session.emit_audit_event(
+                        "client_detached",
+                        auth_user_id=identity.user_id,
+                        auth_connection_id=connection_id,
+                    )
+
             # #5116 (architect co-vet, issuecomment-5380501066): this POST
             # is a DIFFERENT HTTP request than the SSE stream it needs to
             # retarget — correlated only by ``connection_id`` (the

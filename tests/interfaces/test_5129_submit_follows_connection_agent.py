@@ -54,7 +54,16 @@ _CONNECTION_ID = "conn-5129-test"
 _OTHER_CONNECTION_ID = "conn-5129-untouched"
 
 
-def _two_agent_registry(tmp_path, monkeypatch):
+def _two_agent_registry(tmp_path, monkeypatch, origin_name: str, target_name: str):
+    """*origin_name*/*target_name* are per-TEST-unique (#5133's own
+    discipline, `test_5133_surface_migrates_on_cross_agent_attach.py`):
+    since #5133, a cross-agent ``attach_request`` touches the process-
+    global ``surface_registry()`` singleton (keyed by agent name) for BOTH
+    names — a literal "default"/"coder-smith" shared across this file's OWN
+    multiple test functions left driver-token/surface-count state from one
+    test bleeding into the next (measured: `test_answer_after_cross_agent_
+    attach_resolves_against_the_target_session` started 409ing once #5133
+    landed, purely from test run order, not from anything this PR broke)."""
     monkeypatch.chdir(tmp_path)
     state_log = StateLog(tmp_path / "state.wal")
     (tmp_path / "reyn.yaml").write_text(MINIMAL_REYN_YAML, encoding="utf-8")
@@ -71,7 +80,8 @@ def _two_agent_registry(tmp_path, monkeypatch):
         project_root=tmp_path, session_factory=_factory, state_log=state_log,
     )
     holder["reg"] = reg
-    reg.create("coder-smith")
+    reg.create(origin_name)
+    reg.create(target_name)
     return reg
 
 
@@ -111,37 +121,38 @@ async def test_submit_after_cross_agent_attach_reaches_the_target_not_the_url_ag
     """Tier 2: #5129 witness — a ``user_message`` POSTed to the connection's
     ORIGINAL URL, after a real cross-agent ``attach_request`` on that same
     connection_id, must produce a ``user_submitted`` audit-event on the
-    TARGET session — and NONE on the original ``default`` session (a
+    TARGET session — and NONE on the original agent's session (a
     one-sided check would pass on "arrives everywhere")."""
-    reg = _two_agent_registry(tmp_path, monkeypatch)
-    default_session = await reg.attach("default")
+    origin, target = "5129-t1-origin", "5129-t1-target"
+    reg = _two_agent_registry(tmp_path, monkeypatch, origin, target)
+    origin_session = await reg.attach(origin)
     app = _build_app(reg, monkeypatch)
 
-    default_events = _collect_events(default_session)
+    origin_events = _collect_events(origin_session)
 
-    # The already-open stream: bound to "default", listening for a
+    # The already-open stream: bound to the origin agent, listening for a
     # cross-agent retarget under ITS OWN connection id — same server-side
     # state a --connect client's SSE GET leaves behind.
-    source = _SessionFrameSource(default_session, registry=reg, agent_name="default")
+    source = _SessionFrameSource(origin_session, registry=reg, agent_name=origin)
     source.listen_for_retarget(_CONNECTION_ID)
     source.start()
 
     try:
         resp = await _post(
-            app, f"/agui/chat/default?connection_id={_CONNECTION_ID}&token=s3cret",
-            {"type": "attach_request", "agent_name": "coder-smith"},
+            app, f"/agui/chat/{origin}?connection_id={_CONNECTION_ID}&token=s3cret",
+            {"type": "attach_request", "agent_name": target},
         )
         assert resp.json().get("attached") is True
 
-        target_session = reg.get_session("coder-smith", "main")
+        target_session = reg.get_session(target, "main")
         target_events = _collect_events(target_session)
 
-        # The client's own SSE URL never changes — it keeps POSTing to
-        # "default", exactly the owner's own live setup (attach switches,
-        # the connect URL does not).
+        # The client's own SSE URL never changes — it keeps POSTing to the
+        # ORIGIN agent's URL, exactly the owner's own live setup (attach
+        # switches, the connect URL does not).
         submit_resp = await _post(
-            app, f"/agui/chat/default?connection_id={_CONNECTION_ID}&token=s3cret",
-            {"type": "user_message", "text": "hello coder-smith"},
+            app, f"/agui/chat/{origin}?connection_id={_CONNECTION_ID}&token=s3cret",
+            {"type": "user_message", "text": "hello target"},
         )
         assert submit_resp.status_code == 200
         assert submit_resp.json().get("status") == "ok"
@@ -151,16 +162,16 @@ async def test_submit_after_cross_agent_attach_reaches_the_target_not_the_url_ag
         source.close()
 
     target_submits = [e for e in target_events if getattr(e, "type", "") == "user_submitted"]
-    default_submits = [e for e in default_events if getattr(e, "type", "") == "user_submitted"]
+    origin_submits = [e for e in origin_events if getattr(e, "type", "") == "user_submitted"]
 
     assert target_submits, (
         "the target agent's own session never saw the submit -- input is "
         "still reaching the connection's ORIGINAL agent after attach"
     )
-    assert target_submits[0].data.get("text") == "hello coder-smith"
-    assert not default_submits, (
+    assert target_submits[0].data.get("text") == "hello target"
+    assert not origin_submits, (
         f"the ORIGINAL agent's session ALSO saw a user_submitted event "
-        f"({default_submits!r}) -- the submit is landing in two places, "
+        f"({origin_submits!r}) -- the submit is landing in two places, "
         f"not exclusively at the attached target"
     )
 
@@ -175,27 +186,28 @@ async def test_a_connection_that_never_attached_still_submits_to_its_own_url_age
     Pins the ``subscribe``-time seed: without it this connection would read
     as "unknown" and depend entirely on the URL fallback happening to be
     right, rather than the hub genuinely tracking it from the start."""
-    reg = _two_agent_registry(tmp_path, monkeypatch)
-    default_session = await reg.attach("default")
+    origin, target = "5129-t2-origin", "5129-t2-target"
+    reg = _two_agent_registry(tmp_path, monkeypatch, origin, target)
+    origin_session = await reg.attach(origin)
     app = _build_app(reg, monkeypatch)
-    default_events = _collect_events(default_session)
+    origin_events = _collect_events(origin_session)
 
-    source = _SessionFrameSource(default_session, registry=reg, agent_name="default")
+    source = _SessionFrameSource(origin_session, registry=reg, agent_name=origin)
     source.listen_for_retarget(_OTHER_CONNECTION_ID)
     source.start()
 
     try:
         resp = await _post(
-            app, f"/agui/chat/default?connection_id={_OTHER_CONNECTION_ID}&token=s3cret",
-            {"type": "user_message", "text": "still default"},
+            app, f"/agui/chat/{origin}?connection_id={_OTHER_CONNECTION_ID}&token=s3cret",
+            {"type": "user_message", "text": "still origin"},
         )
         assert resp.status_code == 200
         await asyncio.sleep(0)
     finally:
         source.close()
 
-    default_submits = [e for e in default_events if getattr(e, "type", "") == "user_submitted"]
-    assert default_submits and default_submits[0].data.get("text") == "still default"
+    origin_submits = [e for e in origin_events if getattr(e, "type", "") == "user_submitted"]
+    assert origin_submits and origin_submits[0].data.get("text") == "still origin"
 
 
 @pytest.mark.asyncio
@@ -209,34 +221,41 @@ async def test_answer_after_cross_agent_attach_resolves_against_the_target_sessi
     first test), a HITL answer POSTed to the connection's original URL after
     a cross-agent attach must resolve against the TARGET session's own
     pending intervention — the #5050/#5064 regression surface architect
-    named."""
-    reg = _two_agent_registry(tmp_path, monkeypatch)
-    default_session = await reg.attach("default")
+    named. This connection is the TARGET's only surface (a fresh, unique
+    agent pair for this test, #5133's own discipline) so it genuinely takes
+    the driver token on arrival (`SurfaceManager.attach`'s existing
+    first-surface rule) — the scenario architect flagged as the ONE #5129
+    itself can claim; the "another connection already holds the target's
+    driver" scenario is `test_5133_surface_migrates_on_cross_agent_attach.
+    py`'s own acceptance ① (seize, not an automatic answer)."""
+    origin, target = "5129-t3-origin", "5129-t3-target"
+    reg = _two_agent_registry(tmp_path, monkeypatch, origin, target)
+    origin_session = await reg.attach(origin)
     app = _build_app(reg, monkeypatch)
 
-    target_session = await reg.ensure_running("coder-smith")
+    target_session = await reg.ensure_running(target)
     target_session.register_intervention_listener("tui")
     iv = UserIntervention(kind="ask_user", prompt="proceed?", run_id="r1")
     iv.future = asyncio.get_running_loop().create_future()
     iv_task = asyncio.ensure_future(target_session._dispatch_intervention(iv))
     await wait_until(lambda: bool(target_session.interventions.list_active()))
 
-    source = _SessionFrameSource(default_session, registry=reg, agent_name="default")
+    source = _SessionFrameSource(origin_session, registry=reg, agent_name=origin)
     source.listen_for_retarget(_CONNECTION_ID)
     source.start()
 
     try:
         resp = await _post(
-            app, f"/agui/chat/default?connection_id={_CONNECTION_ID}&token=s3cret",
-            {"type": "attach_request", "agent_name": "coder-smith"},
+            app, f"/agui/chat/{origin}?connection_id={_CONNECTION_ID}&token=s3cret",
+            {"type": "attach_request", "agent_name": target},
         )
         assert resp.json().get("attached") is True
 
-        # Still POSTed to the connection's ORIGINAL URL ("default"), and
-        # naming the pending intervention's real id — exactly what a real
-        # remote client's answer_intervention_text round-trip sends.
+        # Still POSTed to the connection's ORIGINAL URL, and naming the
+        # pending intervention's real id — exactly what a real remote
+        # client's answer_intervention_text round-trip sends.
         answer_resp = await _post(
-            app, f"/agui/chat/default?connection_id={_CONNECTION_ID}&token=s3cret",
+            app, f"/agui/chat/{origin}?connection_id={_CONNECTION_ID}&token=s3cret",
             {"type": "TOOL_CALL_RESULT", "toolCallId": iv.id, "text": "yes, proceed"},
         )
         assert answer_resp.json().get("answered") is True, answer_resp.json()
@@ -262,8 +281,9 @@ async def test_attach_request_for_a_connection_with_no_open_sse_stream_leaves_no
     unbounded dict keyed by a value the client fully controls. Sent 3 times
     (not once) to pin "does not accumulate", not just "doesn't fail once".
     """
-    reg = _two_agent_registry(tmp_path, monkeypatch)
-    await reg.attach("default")
+    origin, target = "5129-t4-origin", "5129-t4-target"
+    reg = _two_agent_registry(tmp_path, monkeypatch, origin, target)
+    await reg.attach(origin)
     app = _build_app(reg, monkeypatch)
     orphan_connection_id = "conn-5129-no-sse-ever"
 
@@ -277,8 +297,8 @@ async def test_attach_request_for_a_connection_with_no_open_sse_stream_leaves_no
     for _ in range(3):
         resp = await _post(
             app,
-            f"/agui/chat/default?connection_id={orphan_connection_id}&token=s3cret",
-            {"type": "attach_request", "agent_name": "coder-smith"},
+            f"/agui/chat/{origin}?connection_id={orphan_connection_id}&token=s3cret",
+            {"type": "attach_request", "agent_name": target},
         )
         assert resp.json().get("attached") is True  # the attach itself still succeeds
 
