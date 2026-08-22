@@ -1083,14 +1083,12 @@ async def agui_submit(request: Request, agent_name: str):
             # own "the announce is enqueued BEFORE _bind" barrier) — the
             # reverse would leave a window where this connection belongs to
             # NO manager, and anything arriving in that window (a seize, an
-            # answer) has no surface to resolve against. This ordering's
-            # own consequence (architect co-vet): between `new_manager.
-            # attach` below and `old_manager.detach` further down, this
-            # connection briefly belongs to BOTH managers (the `await
-            # registry.ensure_running` in between yields the event loop).
-            # A concurrent HITL answer landing in that window is rejected
-            # by delivery-time re-authorization, not misdelivered — the
-            # safe default, not a bug.
+            # answer) has no surface to resolve against. Every statement
+            # from `new_manager.attach` below through `old_manager.detach`
+            # further down runs without an `await` — a single-threaded
+            # event loop gives nothing else a chance to run in between, so
+            # this connection is never observably attached to both
+            # managers at once either.
             #
             # (a) driver token: NEVER carried across. `SurfaceManager.
             # attach` already encodes the right default (first surface on
