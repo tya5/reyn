@@ -22,22 +22,52 @@ llm:
 
 ## Top-level keys
 
-**How to read the "Written on / reload" column.** Most keys can only be written
-in `reyn.yaml` / `reyn.local.yaml` (= **PRJ scope**), which `load_config` reads
-**once at startup** — editing them mid-run has no effect **until a restart**.
+**How to read the 3 write/reload columns** (#4206, split from a single
+`Written on / reload` column that used to say 3 different things at once —
+architect ruling, issuecomment-5379310759: adding a 4th value to THAT
+column made "both" ambiguous between "2 files" and "2 layers", the actual
+cause of #5086/#5088 misreading each other):
 
-The exception is the runtime-mutable registries, which may also be written in
-`.reyn/config/<name>.yaml`. **Only what is written on that side is re-read at the
-turn boundary** (= hot reload); the same key written in `reyn.yaml` waits for a
-restart like everything else. **The file split *is* the write-gate boundary**
-(#2073), so the hot-reload loader structurally never opens `reyn.yaml` — to make
-a setting hot-reloadable, put it under `.reyn/config/` rather than adding to
+- **Declared in** — which LAYER(s) may hold a value for this key: `project`
+  (`reyn.yaml`/`reyn.local.yaml`/`~/.reyn/config.yaml` only — the default,
+  every row not called out otherwise), `project · agent` (an agent's own
+  `.reyn/agents/<name>/profile.yaml` may also set it), `project · agent ·
+  session` (a session's own `<session-state-dir>/config.yaml` may set it
+  too), or `agent` alone (no project-wide value exists for this key at
+  all — `broker_identity` is the one case, #5084 ③-a). **This is the ONE
+  column derived/checked in CI** (see below) — ② and ③ don't go stale
+  per-slice the way ① does, so they stay hand-maintained.
+- **Reload** — `restart` (read once at `load_config` time) or `restart /
+  hot` (the `.reyn/config/`-side write is re-read at the next turn
+  boundary; the `reyn.yaml`-side write still needs a restart, same key).
+- **File** — which file(s) on the **project** layer actually carry a value
+  for this key: `reyn.yaml` alone, or `reyn.yaml` + a specific
+  `.reyn/config/<name>.yaml` runtime registry. Agent/session-layer files
+  are a DIFFERENT axis (see the note below the table) and are not
+  enumerated here — this column is the project-layer write-gate boundary
+  only (#2073: "the file split *is* the write-gate boundary").
+
+The exception behind `restart / hot` is the runtime-mutable registries,
+which may also be written in `.reyn/config/<name>.yaml`. **Only what is
+written on that side is re-read at the turn boundary** (= hot reload); the
+same key written in `reyn.yaml` waits for a restart like everything else.
+The hot-reload loader structurally never opens `reyn.yaml` — to make a
+setting hot-reloadable, put it under `.reyn/config/` rather than adding to
 `reyn.yaml`.
 
-**`_HOT_RELOAD_FILES` in `src/reyn/config/loader.py` is the source of which keys
-are in that exception.** The rows below are derived from it, but **do not read a
-count or a name list out of this prose** — it does not follow the registry when
-one is added.
+**`_HOT_RELOAD_FILES` in `src/reyn/config/loader.py` is the source of which
+keys get `restart / hot`.** The rows below are derived from it, but **do
+not read a count or a name list out of this prose** — it does not follow
+the registry when one is added.
+
+**`Declared in`'s own source of truth**: `PREFERENCE_KEYS` in
+`src/reyn/runtime/preferences.py` (the ③ preference axis, #4206) plus the
+explicit agent-layer-only fields on `AgentProfile`
+(`project_context_path`, #5086; `broker_identity`, #5085) —
+`tests/repo/test_config_reference_declared_in_4206.py` checks this
+table's `Declared in` cells against them in CI, mirroring
+[`events.md`'s own doc↔code gate](../runtime/events.md). A key gaining
+agent/session write capability without this table catching up → red.
 
 ⚠️ **One exception to the exception**: `composers` is read from the same 4-layer
 combine as `hooks` (`reyn.yaml` ∪ `.reyn/config/hooks.yaml` ∪ per-agent ∪
@@ -64,41 +94,77 @@ who reads the value and from how many call sites, not what it's called. See the
 this down: `cost_warn` and `embedding.cost_warn_threshold` sound related and
 aren't.
 
-| Key | Type | Written on / reload | Description |
-|-----|------|-----|-------------|
-| `output_language` | string | PRJ only · **restart** | Default output language code (e.g. `en`, `ja`). Override with `--output-language`. |
-| `safety` | map | PRJ only · **restart** | Runtime bounds **and content-layer defenses**: loop-detection caps, timeouts, on-limit policy, the untrusted-content threat scan + fence (`safety.threat_scan`, FP-0050), and operator bounds on the LLM spawn tree (`safety.spawn`, a DoS guard). See below. |
-| `cost` | map | PRJ only · **restart** | Budget caps and rate limits (per-agent, daily, monthly). See below. |
-| `web_fetch` | map | PRJ only · **restart** | The `web_fetch` tool + MCP registry calls: SSL settings. See below. |
-| `gateway` | map | PRJ only · **restart** | The `reyn web` gateway's own settings: auth model, WebSocket inbound-frame ceiling, and which surfaces are mounted. Split from the old `web:` key, which conflated this with `web_fetch` above. See below. |
-| `sandbox` | map | PRJ only · **restart** | Backend selection (`backend`), unsupported-platform policy (`on_unsupported`), the enforcement mode (`mode`: compat / strict / custom), and the agent-level sandbox policy (`policy`). See below. |
-| `hooks` | list | both (`.reyn/config/hooks.yaml` side is **hot-reloaded**) | Agent-lifecycle hooks. Four action schemes: `template_push` / `exec` / `exec_capture` / `pipeline_launch`. See below. |
-| `embedding` | map | PRJ only · **restart** | RAG embedding: the master switch (`enabled`), model classes, batch sizing and concurrency, retry / backoff / timeout, tokenizer, and a cost-warning threshold. See below. |
-| `chat` | map | PRJ only · **restart** | Chat-session runtime knobs: history compaction, reasoning/"thinking" text handling, the interactive renderer (`render_mode`), TUI gutters, body neutralization, permitted image-URL schemes, and the TUI theme name. See below. |
-| `voice` | map | PRJ only · **restart** | Whisper model/language/device settings for F2 dictation in the inline CUI (revived #4187/#4249). See below. |
-| `audit_events` | map | PRJ only · **restart** | Rotation policy (size / age / cleanup period) for the P6 **audit-event** files under `.reyn/events`. Not WAL-events, not hook-events. See below. |
-| `artifacts` | map | PRJ only · **restart** | The artifact-ref table fallback's own row cap (`remote_fallback_limit`, #4601) — used by a remote client's (and a post-restart local client's) Artifacts pane. See below. |
-| `observability` | map | PRJ only · **restart** | Opt-in OpenTelemetry (OTLP) export of P6 audit-events. Off by default. See below. |
-| `tool_use` | map | PRJ only · **restart** | Chat-layer tool-use scheme x transport selector (`scheme`, `transport`). See below. |
-| `mcp` | map | both (`.reyn/config/mcp.yaml` side is **hot-reloaded**) | MCP server definitions. See below. |
-| `agent_id` | string | PRJ only · **restart** | Agent **identity** — stamped on the P6 audit trail and the outgoing HTTP header. Does **not** define or configure agents; agent definitions live in `.reyn/agents/<name>/`. See below. |
-| `auth` | map | PRJ only · **restart** | OAuth provider configurations for `reyn auth login`. See below. |
-| `cron` | map | both (`.reyn/config/cron.yaml` side is **hot-reloaded**) | Scheduled skill executions. See below. |
-| `external_transports` | map | PRJ only · **restart** | Inbound transport → MCP tool routing for chat (Slack / LINE / Discord etc.). See below. |
-| `multimodal` | map | PRJ only · **restart** | Binary media (image/audio) size cap, on-oversize behaviour, artefact storage paths, and the `base_url` those artefacts are served under. See below. |
-| `permissions` | map | PRJ only · **restart** | Default permission policy. See below. |
-| `project_context_path` | string | PRJ only · **restart** | Markdown file injected into every phase system prompt. Unset (default): auto-resolves the cross-tool standard — `AGENTS.md` if present, else `REYN.md` (legacy fallback). Set an explicit path to pin one file; set `""` to disable. **#5084: an agent's own `.reyn/agents/<name>/profile.yaml` may set `project_context_path` too, REPLACING (not merging with) this project-wide value for that one agent** — a separate file/mechanism from this `reyn.yaml` key, still restart-only. See note below. |
-| `llm` | map | PRJ only · **restart** | LLM-layer config: model selection (`llm.model` default class, `llm.models` class → LiteLLM string map, `llm.model_class_by_purpose` per-purpose override, `llm.api_base` proxy URL, `llm.prompt_cache_enabled`), plus routing (#1829) and retry (#1835). See below. |
-| `delegation` | map | PRJ only · **restart** | Cross-agent delegation policy (#2081). |
-| `cost_warn` | map | PRJ only · **restart** | High-cost-model gate (#1830 / FP-0052): warns before an expensive model is selected — and, despite the name, **can block it** (`cost_warn.block_on_high_cost`). See below. |
-| `offload` | map | PRJ only · **restart** | Opt-in switch for the tool-result size gates. |
-| `render_template` | map | PRJ only · **restart** | Operator-tunable output bounds for the `render_template` op (FP-0055 / #2679). |
-| `fs_watch` | map | PRJ only · **restart** | Operator-declared filesystem watch paths (#2608 H4). |
-| `composers` | list | both (but **not** hot-reloaded · **restart**) | Composer definitions. Empty (default) → `start_composers` is never called. |
-| `skills` | map | both (`.reyn/config/skills.yaml` side is **hot-reloaded**) | Skill declarations. Merged across config tiers by name (an explicit entry wins a collision). |
-| `pipelines` | map | both (`.reyn/config/pipelines.yaml` side is **hot-reloaded**) | Pipeline declarations. Same union-merge shape as `skills`. |
-| `presentations` | map | both (`.reyn/config/presentations.yaml` side is **hot-reloaded**) | Presentation-template declarations. Same union-merge shape as `skills` / `pipelines`. |
-| `tui` | map | PRJ only · **restart** | Operator-tunable inline-TUI presentation thresholds — today just the status bar's context-usage-percent warn threshold. See below. |
+<!-- BEGIN config-declared-in -->
+| Key | Type | Declared in | Reload | File | Description |
+|-----|------|-----|-----|-----|-------------|
+| `output_language` | string | project · agent · session¹ | restart | `reyn.yaml` | Default output language code (e.g. `en`, `ja`). Override with `--output-language`. |
+| `safety` | map | project | restart | `reyn.yaml` | Runtime bounds **and content-layer defenses**: loop-detection caps, timeouts, on-limit policy, the untrusted-content threat scan + fence (`safety.threat_scan`, FP-0050), and operator bounds on the LLM spawn tree (`safety.spawn`, a DoS guard). See below. |
+| `cost` | map | project · agent · session¹ | restart | `reyn.yaml` | Budget caps and rate limits (per-agent, daily, monthly). See below. |
+| `web_fetch` | map | project | restart | `reyn.yaml` | The `web_fetch` tool + MCP registry calls: SSL settings. See below. |
+| `gateway` | map | project | restart | `reyn.yaml` | The `reyn web` gateway's own settings: auth model, WebSocket inbound-frame ceiling, and which surfaces are mounted. Split from the old `web:` key, which conflated this with `web_fetch` above. See below. |
+| `sandbox` | map | project | restart | `reyn.yaml` | Backend selection (`backend`), unsupported-platform policy (`on_unsupported`), the enforcement mode (`mode`: compat / strict / custom), and the agent-level sandbox policy (`policy`). See below. |
+| `hooks` | list | project · agent · session² | restart / hot | `reyn.yaml` + `.reyn/config/hooks.yaml`² | Agent-lifecycle hooks. Four action schemes: `template_push` / `exec` / `exec_capture` / `pipeline_launch`. See below. |
+| `embedding` | map | project | restart | `reyn.yaml` | RAG embedding: the master switch (`enabled`), model classes, batch sizing and concurrency, retry / backoff / timeout, tokenizer, and a cost-warning threshold. See below. |
+| `chat` | map | project · agent · session¹ | restart | `reyn.yaml` | Chat-session runtime knobs: history compaction, reasoning/"thinking" text handling, the interactive renderer (`render_mode`), TUI gutters, body neutralization, permitted image-URL schemes, and the TUI theme name. See below. **Only `chat.reasoning.display` carries the ¹ override** (a single leaf, not the whole block — see [`chat.reasoning` fields](#chatreasoning-fields)); every other `chat.*` key stays `project`-only. |
+| `voice` | map | project | restart | `reyn.yaml` | Whisper model/language/device settings for F2 dictation in the inline CUI (revived #4187/#4249). See below. |
+| `audit_events` | map | project | restart | `reyn.yaml` | Rotation policy (size / age / cleanup period) for the P6 **audit-event** files under `.reyn/events`. Not WAL-events, not hook-events. See below. |
+| `artifacts` | map | project | restart | `reyn.yaml` | The artifact-ref table fallback's own row cap (`remote_fallback_limit`, #4601) — used by a remote client's (and a post-restart local client's) Artifacts pane. See below. |
+| `observability` | map | project | restart | `reyn.yaml` | Opt-in OpenTelemetry (OTLP) export of P6 audit-events. Off by default. See below. |
+| `tool_use` | map | project | restart | `reyn.yaml` | Chat-layer tool-use scheme x transport selector (`scheme`, `transport`). See below. |
+| `mcp` | map | project | restart / hot | `reyn.yaml` + `.reyn/config/mcp.yaml` | MCP server definitions. See below. |
+| `agent_id` | string | project | restart | `reyn.yaml` | Agent **identity** — stamped on the P6 audit trail and the outgoing HTTP header. Does **not** define or configure agents; agent definitions live in `.reyn/agents/<name>/`. See below. |
+| `auth` | map | project | restart | `reyn.yaml` | OAuth provider configurations for `reyn auth login`. See below. |
+| `cron` | map | project | restart / hot | `reyn.yaml` + `.reyn/config/cron.yaml` | Scheduled skill executions. See below. |
+| `external_transports` | map | project | restart | `reyn.yaml` | Inbound transport → MCP tool routing for chat (Slack / LINE / Discord etc.). See below. |
+| `multimodal` | map | project | restart | `reyn.yaml` | Binary media (image/audio) size cap, on-oversize behaviour, artefact storage paths, and the `base_url` those artefacts are served under. See below. |
+| `permissions` | map | project · agent · session² | restart | `reyn.yaml` | Default permission policy. See below. |
+| `project_context_path` | string | project · agent³ | restart | `reyn.yaml` | Markdown file injected into every phase system prompt. Unset (default): auto-resolves the cross-tool standard — `AGENTS.md` if present, else `REYN.md` (legacy fallback). Set an explicit path to pin one file; set `""` to disable. **#5084: an agent's own `.reyn/agents/<name>/profile.yaml` may set `project_context_path` too, REPLACING (not merging with) this project-wide value for that one agent** — a separate file/mechanism from this `reyn.yaml` key, still restart-only. See note below. |
+| `llm` | map | project | restart | `reyn.yaml` | LLM-layer config: model selection (`llm.model` default class, `llm.models` class → LiteLLM string map, `llm.model_class_by_purpose` per-purpose override, `llm.api_base` proxy URL, `llm.prompt_cache_enabled`), plus routing (#1829) and retry (#1835). See below. |
+| `delegation` | map | project | restart | `reyn.yaml` | Cross-agent delegation policy (#2081). |
+| `cost_warn` | map | project | restart | `reyn.yaml` | High-cost-model gate (#1830 / FP-0052): warns before an expensive model is selected — and, despite the name, **can block it** (`cost_warn.block_on_high_cost`). See below. |
+| `offload` | map | project | restart | `reyn.yaml` | Opt-in switch for the tool-result size gates. |
+| `render_template` | map | project | restart | `reyn.yaml` | Operator-tunable output bounds for the `render_template` op (FP-0055 / #2679). |
+| `fs_watch` | map | project | restart | `reyn.yaml` | Operator-declared filesystem watch paths (#2608 H4). |
+| `composers` | list | project · agent · session² | restart⁴ | `reyn.yaml`⁴ | Composer definitions. Empty (default) → `start_composers` is never called. |
+| `skills` | map | project | restart / hot | `reyn.yaml` + `.reyn/config/skills.yaml` | Skill declarations. Merged across config tiers by name (an explicit entry wins a collision). |
+| `pipelines` | map | project | restart / hot | `reyn.yaml` + `.reyn/config/pipelines.yaml` | Pipeline declarations. Same union-merge shape as `skills`. |
+| `presentations` | map | project | restart / hot | `reyn.yaml` + `.reyn/config/presentations.yaml` | Presentation-template declarations. Same union-merge shape as `skills` / `pipelines`. |
+| `tui` | map | project | restart | `reyn.yaml` | Operator-tunable inline-TUI presentation thresholds — today just the status bar's context-usage-percent warn threshold. See below. |
+<!-- END config-declared-in -->
+
+¹ **`Declared in` beyond `project`, checked in CI** — the ③ preference axis
+(#4206): `output_language`, `chat.reasoning.display`, and the 7
+`cost.*.warn_ratio` leaves are `PREFERENCE_KEYS` (`src/reyn/runtime/
+preferences.py`) — freely overridable in an agent's own `profile.yaml`
+**and** a session's own `config.yaml`. `cost`'s OWN row stays `project ·
+agent · session` at the block level (rather than "project" + a footnote
+like `chat`) because the `warn_ratio` leaves span all 6 of `cost`'s
+budget-cap sub-blocks, not one single nested field.
+
+² `hooks`/`composers`/`permissions` are already disclosed above the table
+as agent+session-writable via their own layered COMBINE (a DIFFERENT
+mechanism from the ③ preference axis ¹ uses — see [permission-model
+](../../concepts/runtime/permission-model.md)) — not new information, just
+reflected into this column now that it exists on its own. `hooks`'s own
+`File` column stays project-layer-only, same scoping as every other row
+(agent/session hook files live under `.reyn/agents/<name>/hooks.yaml` /
+`<session-state-dir>/hooks.yaml` — a 3rd/4th file this column does not
+enumerate, per the "project-layer write-gate boundary only" rule above).
+
+³ #5086. No session-layer override exists for this key (unlike ¹'s
+`PREFERENCE_KEYS` set) — an agent's own `profile.yaml` REPLACES the
+project-wide file for that one agent; there is nothing for a session
+layer to further compose with.
+
+⁴ **Unconfirmed during this pass** — the pre-split text asserted a
+`.reyn/config/`-side write surface for `composers` ("both (but not
+hot-reloaded)"), but `_HOT_RELOAD_FILES` (`src/reyn/config/loader.py`)
+does not list a `composers.yaml`, and `Session._build_composer_defs`'s own
+"runtime" layer reads `in_set.get("composers")` — which `load_hot_reload_
+config` (the ONLY producer of that `in_set`) has no path to populate. Kept
+conservative (`reyn.yaml` only) rather than repeating a claim this pass
+could not verify; flagged rather than silently resolved either way — see
+this table's own PR for the open question.
 
 > **Project context file (`project_context_path`).** Left unset, Reyn reads
 > `AGENTS.md` — the cross-tool convention that Claude Code, Codex, opencode and
