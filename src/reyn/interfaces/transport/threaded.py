@@ -80,7 +80,7 @@ import threading
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, AsyncIterator, Callable, Coroutine
 
-from reyn.interfaces.transport.client_transport import ClientTransport
+from reyn.interfaces.transport.client_transport import ClientTransport, pending_head_id
 from reyn.interfaces.transport.drain import suspend_between_frames
 
 if TYPE_CHECKING:
@@ -112,7 +112,7 @@ class _ThreadedSnapshot:
 
     has_session: bool
     attach_failed: bool
-    pending_intervention_head: "Any | None"
+    pending_intervention_head: "str | None"
     reyn_state_root: "Path | None"
     read_model_snapshot: "dict | None"
 
@@ -254,7 +254,10 @@ class ThreadedTransportProxy(ClientTransport):
             self._latest = _ThreadedSnapshot(
                 has_session=self._inner.has_session(),
                 attach_failed=self._inner.attach_failed(),
-                pending_intervention_head=self._inner.pending_intervention_head(),
+                pending_intervention_head=pending_head_id(
+                    self._inner.pending_intervention_head(),
+                    caller="ThreadedTransportProxy",
+                ),
                 reyn_state_root=self._inner.reyn_state_root(),
                 read_model_snapshot=(
                     self._read_model_snapshot_fn()
@@ -298,7 +301,7 @@ class ThreadedTransportProxy(ClientTransport):
     def attach_failed(self) -> bool:
         return self._latest.attach_failed
 
-    def pending_intervention_head(self) -> "object | None":
+    def pending_intervention_head(self) -> "str | None":
         return self._latest.pending_intervention_head
 
     def reyn_state_root(self) -> "Path | None":

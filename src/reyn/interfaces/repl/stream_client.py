@@ -28,7 +28,7 @@ from prompt_toolkit.application.current import get_app_or_none
 from prompt_toolkit.patch_stdout import patch_stdout
 
 from reyn.interfaces.slash.dispatch import maybe_dispatch_slash
-from reyn.interfaces.transport.client_transport import ClientTransport
+from reyn.interfaces.transport.client_transport import ClientTransport, pending_head_id
 from reyn.interfaces.transport.frames import FrameTag
 from reyn.runtime.outbox import OutboxMessage
 
@@ -44,48 +44,18 @@ def _simple_status(text: str) -> OutboxMessage:
 
 
 def _pending_head_id(head: object) -> "str | None":
-    """Extract the id from :meth:`ClientTransport.pending_intervention_head`'s
-    two established return shapes (#5057): a real ``UserIntervention``
-    (``InProcessTransport``/``SessionBoundTransport`` — #5047 axis A
-    guarantees its ``.id`` is a genuine identity, not merely "the oldest"),
-    or a bare id string (``AgUiTransport``'s own ``_pending_intervention_id``).
-
-    An unrecognized third shape returns ``None`` (logged) rather than
-    silently coercing it into SOME string via ``str(...)`` — architect's own
-    review finding on this PR (#5057): a naive ``getattr(head, "id", head)``
-    would happily turn e.g. a dict-shaped value (a genuinely similar-looking
-    but DIFFERENT contract lives nearby, ``RemoteReadModel.intervention_
-    head()``'s own dict projection) into a garbage id string via ``str()``
-    — the exact #4996-family "failure that looks like success" this repo's
-    own vocabulary names. Never reached by the two production transports
-    today (this IS a strict narrowing of a check that never fires yet, not
-    a behavior change for either), but the id this function returns feeds
-    straight into ``answer_intervention_by_id`` — a caller passing a
-    genuinely wrong shape deserves "no pending intervention recognized"
-    (falls through to a normal turn), never a corrupted delivery target.
-    The fall-through read as "correct" is really only guaranteed today
-    because NEITHER production transport can trigger it (a resolved-
-    elsewhere intervention is the one case this repo's own #2690 fix
-    already made this exact fall-through mean); a hypothetical future
-    third shape arriving alongside a genuinely still-pending intervention
-    would fall through the SAME way but for a different reason — silence
-    over a broken destination, not "already answered". Still the right
-    choice (never deliver to a destination this function couldn't
-    verify), named here so a future reader isn't left to rediscover it."""
-    if isinstance(head, str):
-        return head
-    iv_id = getattr(head, "id", None)
-    if isinstance(iv_id, str) and iv_id:
-        return iv_id
-    if head is not None:
-        logger.warning(
-            "#5057: pending_intervention_head() returned an unrecognized "
-            "shape (%s) -- neither a bare id string nor an object with a "
-            "genuine string .id. Treating as no pending intervention "
-            "rather than deriving a garbage id from it.",
-            type(head).__name__,
-        )
-    return None
+    """Thin call-site wrapper over the SHARED narrowing,
+    :func:`reyn.interfaces.transport.client_transport.pending_head_id` —
+    #5089's own lead-coder review finding (#5043's discriminator: "2 or
+    more copies — ask whether it can be deleted"): this module's own
+    hand-written copy used to live here (added for #5057, the original of
+    the two), until a SECOND, independently-written copy for
+    :mod:`reyn.interfaces.transport.threaded` silently dropped this one's
+    loud-failure half. See the shared function's own docstring for the
+    full narrowing rationale (two established return shapes, why a naive
+    ``getattr(head, "id", head)`` is unsafe, the #4996/#5047 family this
+    guards against) — kept there now, not duplicated here."""
+    return pending_head_id(head, caller="stream_client")
 
 
 async def run_input_loop(
