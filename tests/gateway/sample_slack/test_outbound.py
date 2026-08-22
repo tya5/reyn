@@ -16,8 +16,6 @@ import json
 import sys
 import types
 
-import pytest
-
 from reyn.gateway.sample_slack import register_tools
 from reyn.gateway.sample_slack.webhook import build_send_tool
 
@@ -144,7 +142,10 @@ def test_build_server_lists_and_dispatches_extra_tool(tmp_path):
     hand-rolled equivalent of the removed
     ``mcp.shared.memory.create_connected_server_and_client_session``)
     rather than the SDK helper this test used before the bump."""
-    pytest.importorskip("mcp")
+    # #5058: mcp is a core dependency (mcp>=2.0,<3.0, #4412) -- an
+    # importorskip here was a silent skip on a broken install, not a
+    # normal absent-extra path (architect ruling, gh issue view 5058:
+    # "the correct behavior is red"). Removed.
     from reyn.core.events.state_log import StateLog
     from reyn.mcp.extra_tool import ExtraTool
     from reyn.mcp.server import build_server

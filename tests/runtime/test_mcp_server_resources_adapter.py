@@ -26,8 +26,10 @@ from pathlib import Path
 
 import pytest
 
-pytest.importorskip("mcp", reason="MCP SDK not installed")
-
+# #5058: mcp is a core dependency (mcp>=2.0,<3.0, #4412) -- an importorskip
+# here was a silent skip on a broken install, not a normal absent-extra
+# path (architect ruling, gh issue view 5058: "the correct behavior is
+# red"). Removed; a genuinely broken install now fails loud instead.
 from reyn.core.events.state_log import StateLog
 from reyn.data.workspace.media_store import MediaStore, MediaStoreConfig
 from reyn.mcp.server import build_server

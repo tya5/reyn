@@ -25,8 +25,6 @@ from __future__ import annotations
 import ast
 import asyncio
 
-import pytest
-
 from reyn.core.events.events import EventLog
 from reyn.core.events.progress_lifecycle import (
     PROGRESS_LIFECYCLE_EVENTS,
@@ -157,7 +155,10 @@ def test_both_bridges_forward_the_shared_declaration() -> None:
     the two protocols cannot drift apart. Give either bridge a private copy →
     this still passes on equality but RED on identity, which is the point: the
     copy is what allowed #3357's two dead kinds to sit in both files."""
-    pytest.importorskip("mcp", reason="MCP SDK not installed")
+    # #5058: mcp is a core dependency (mcp>=2.0,<3.0, #4412) -- an
+    # importorskip here was a silent skip on a broken install, not a
+    # normal absent-extra path (architect ruling, gh issue view 5058:
+    # "the correct behavior is red"). Removed.
     from reyn.interfaces.web.routers.a2a import _A2AProgressBridge
     from reyn.mcp.server import _MCPProgressBridge
 
@@ -171,7 +172,10 @@ def test_mcp_initialize_advertises_the_forwarded_kinds() -> None:
     forwards — derived from the constant, not restated. Hardcode the list back →
     RED as soon as the forwarded set changes (the claim/reality gate #271 M3
     asked for, previously a source-text pin that instead FROZE the dead kinds)."""
-    pytest.importorskip("mcp", reason="MCP SDK not installed")
+    # #5058: mcp is a core dependency (mcp>=2.0,<3.0, #4412) -- an
+    # importorskip here was a silent skip on a broken install, not a
+    # normal absent-extra path (architect ruling, gh issue view 5058:
+    # "the correct behavior is red"). Removed.
     from mcp.server import Server
 
     from reyn.mcp.server import build_init_options

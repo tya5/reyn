@@ -43,11 +43,13 @@ from typing import Any
 
 import pytest
 
-pytest.importorskip("mcp", reason="mcp not installed")
-
-from reyn.core.events.events import EventLog  # noqa: E402
-from reyn.mcp.server import _MCPProgressBridge  # noqa: E402
-from reyn.schemas.models import Event  # noqa: E402
+# #5058: mcp is a core dependency (mcp>=2.0,<3.0, #4412) -- an importorskip
+# here was a silent skip on a broken install, not a normal absent-extra
+# path (architect ruling, gh issue view 5058: "the correct behavior is
+# red"). Removed; a genuinely broken install now fails loud instead.
+from reyn.core.events.events import EventLog
+from reyn.mcp.server import _MCPProgressBridge
+from reyn.schemas.models import Event
 
 
 class _FakeSession:

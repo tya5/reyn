@@ -34,11 +34,12 @@ import asyncio
 import inspect
 import json
 
-import pytest
-
 from tests._support.paths import REPO_ROOT
 
-pytest.importorskip("mcp", reason="MCP SDK not installed")
+# #5058: mcp is a core dependency (mcp>=2.0,<3.0, #4412) -- an importorskip
+# here was a silent skip on a broken install, not a normal absent-extra
+# path (architect ruling, gh issue view 5058: "the correct behavior is
+# red"). Removed; a genuinely broken install now fails loud instead.
 
 
 # ── 1. _MCPInterventionBus α observer shape ──────────────────────────
