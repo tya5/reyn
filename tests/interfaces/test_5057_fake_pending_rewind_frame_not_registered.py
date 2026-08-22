@@ -110,16 +110,38 @@ def _rewind_list_frame() -> OutboxMessage:
 async def test_rewind_list_fallback_does_not_open_the_pending_panel():
     """Tier 2: strip-falsifier. A `__rewind_list__` sentinel (no structured
     command-UI request pending, forcing the text fallback) must never open
-    the intervention panel — reverting the `intervention_id`-presence guard
-    in `app.py` back to a `RESTORED_META_KEY`-only check (#5047's original
-    form) turns this red: the rewind-list frame carries neither marker, so
-    it registers as pending again."""
+    the intervention panel — reverting the guard in `app.py`'s
+    `_ingest_frame` to unconditional (`if kind == "intervention":`, no
+    `intervention_id` check at all) turns this RED: the rewind-list frame
+    then registers as pending (confirmed by actually running the strip,
+    not asserted from reading the diff).
+
+    architect's non-block finding (PR #5060 TESTS-READ,
+    issuecomment-5377534130): the 2 assertions below are both negative
+    (panel stays closed) — `_ingest_frame`'s own `except Exception:
+    logger.exception` swallows a processing exception silently, so an
+    exception midway would ALSO leave the panel closed and pass these
+    2 asserts for the WRONG reason (six-questions Q4). Closed with a
+    POSITIVE assertion: the rewind list's own text must actually have
+    reached the conversation flow (proving the frame was processed at
+    all, not silently dropped)."""
     transport = _ReplayTransport([_rewind_list_frame()])
     app = TextualChatApp(transport=transport)
 
     async with app.run_test(size=(100, 30)) as pilot:
         await pilot.pause()
         await pilot.pause()
+
+        from textual_flowview import FlowView
+
+        flow = app.query_one(FlowView)
+        rendered_texts = [e.item.text for e in flow.entries]
+        assert any("Rewind points" in t for t in rendered_texts), (
+            "the rewind-list frame must actually land in the conversation "
+            "(proves _ingest_frame processed it, rather than an exception "
+            "being silently swallowed and coincidentally also leaving the "
+            f"panel closed) — got entries: {rendered_texts!r}"
+        )
 
         panel = app.query_one(InterventionPanel)
         assert panel.display is False, (
