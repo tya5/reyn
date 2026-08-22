@@ -310,8 +310,17 @@ class ClientTransport(ABC):
         """#5099: the ATTACHED/connected agent's own sessions — ``[{"sid",
         "attached"}, ...]``, same per-session entry shape
         :meth:`~reyn.runtime.registry.AgentRegistry.session_tree` already
-        uses — or ``[]`` when nothing is attached (or this transport does
-        not support the query).
+        uses — or ``[]`` when nothing is attached.
+
+        Unlike some other typed ops on this seam, ``[]`` here has exactly
+        ONE meaning, not two conflated into one value: this method is
+        ``@abstractmethod`` with no default body anywhere (#5076), so there
+        is no "this transport does not support the query" case left to
+        fold in — every ``ClientTransport`` subclass fails to CONSTRUCT if
+        it forgets to implement this. An earlier revision of this
+        docstring (and of a test's own docstring) carried that stale
+        parenthetical anyway, copied from a phrasing that fit a different
+        method; caught by architect co-vet (issuecomment-5379990811).
 
         Closes ``_session_locus``'s own remainder (``interfaces/slash/
         session.py``, #5096 ②): ``/session list`` was declared ``session``

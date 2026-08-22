@@ -163,12 +163,15 @@ async def session_cmd(ctx: "SlashContext", args: str) -> None:
         # "could not confirm the switch" (names the bad sid AND every
         # accepted one), closer to the pre-#5096 server-side existence
         # check's own guidance than that interim message was. Only fires
-        # when the list itself came back non-empty: an EMPTY result is
-        # ambiguous (genuinely no sessions loaded vs. this transport not
-        # answering the query at all), so falling through to
+        # when the list itself came back non-empty: an EMPTY result has
+        # exactly one meaning now (request_session_list is @abstractmethod,
+        # #5076 -- no transport is left able to decline the query, architect
+        # co-vet issuecomment-5379990811) -- nothing is currently attached/
+        # loaded to list. There is nothing useful to enumerate in that case
+        # (no accepted sids to name), so falling through to
         # request_session_switch and reading ITS answer is the honest
-        # degrade rather than asserting "no such session" off a query that
-        # may never have run.
+        # degrade rather than asserting "no such session" with an empty
+        # accepted-list that would just read as a bug.
         sids = [entry["sid"] for entry in await ctx.transport.request_session_list()]
         if sids and rest not in sids:
             await reply_error(

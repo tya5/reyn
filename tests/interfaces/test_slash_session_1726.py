@@ -186,8 +186,10 @@ async def test_session_list_marks_focused():
 @pytest.mark.asyncio
 async def test_session_list_empty_says_so():
     """Tier 2: #5099 — an empty `request_session_list()` result (nothing
-    loaded, or this transport not answering the query) replies plainly
-    rather than fabricating a roster."""
+    loaded — the ONLY meaning an empty result can carry now that the
+    method is `@abstractmethod` with no "unsupported transport" case left,
+    architect co-vet issuecomment-5379990811) replies plainly rather than
+    fabricating a roster."""
     s = _FakeSession(_StubRegistry())
     await session_cmd(_ctx(s), "list")
     assert "no sessions loaded" in s.reply_text()
