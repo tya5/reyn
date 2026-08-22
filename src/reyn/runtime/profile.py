@@ -25,6 +25,17 @@ DIFFERENT, disjoint key vocabulary (`BOUNDING_KEYS`, currently `{"model"}`
 only). Kept as a separate field/key rather than folded into `preferences`
 because the two axes' composition functions differ — see
 `reyn.runtime.bounding`'s module docstring for the full reasoning.
+
+#5084 ③ added a `broker_identity` field here (a flat, non-axis column) —
+REMOVED by #5091 (owner ruling: "broker" is an external MCP server, not a
+reyn-runtime concept; per-agent identity for it is already `AgentProfile.
+name`, and the participation this field drove — a hook subscribing that
+agent's own inbox — is already expressible with the EXISTING per-session
+hooks layer, #2285, no dedicated field needed). If a future integration
+seems to need a similar "identity for external system X" field, that
+itself is the #5091 discriminator firing again (owner's own test: "would
+another integration need the same code?") — the answer is a hand-written
+hook in that agent's own hooks file, not a new column here.
 """
 from __future__ import annotations
 
@@ -74,20 +85,6 @@ class AgentProfile:
     # to the project's own base_dir, same convention as `allowed_mcp`'s
     # None).
     base_dir: "str | None" = None
-    # #5084 ③ (owner-directed, issue #5084): a FLAT identity column, the
-    # SAME shape as `name`/`role` above -- not a layered override axis
-    # like `preferences`/`bounding`/`base_dir`. Architect ruling
-    # (issuecomment-5378399712 on #5084): the project layer has no such
-    # value to override ("N agents, no single broker id" -- there is
-    # nothing for a project-wide default to mean), so this is not a
-    # ③-preference/②-bounding/①-capability axis at all, just a plain
-    # per-agent field. `None` (absent) means "this agent does not
-    # participate in broker coordination" -- owner's own words: "the
-    # default agent stays an admin-only agent; it doesn't need to join
-    # development." No special-case branch anywhere reads this as
-    # anything other than absent -- an agent created without it simply
-    # has no identity, the same as one that never set `role`.
-    broker_identity: "str | None" = None
     # #5084 (#4206's own axis ①, applied to a SECOND file zone): an
     # agent-layer override of WHICH file is read as this agent's project
     # context (REYN.md/AGENTS.md, the model-facing system-prompt text) —
@@ -111,7 +108,6 @@ class AgentProfile:
     def new(
         cls, name: str, role: str = "", *,
         base_dir: "str | None" = None,
-        broker_identity: "str | None" = None,
         project_context_path: "str | None" = None,
     ) -> "AgentProfile":
         return cls(
@@ -119,7 +115,6 @@ class AgentProfile:
             role=role,
             created_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
             base_dir=base_dir,
-            broker_identity=broker_identity,
             project_context_path=project_context_path,
         )
 
@@ -158,8 +153,6 @@ class AgentProfile:
         validate_bounding(bounding, source=f"agent {name!r} profile.yaml")
         raw_base_dir = data.get("base_dir")
         base_dir = str(raw_base_dir) if raw_base_dir else None
-        raw_broker_identity = data.get("broker_identity")
-        broker_identity = str(raw_broker_identity) if raw_broker_identity else None
         raw_project_context_path = data.get("project_context_path")
         project_context_path = (
             str(raw_project_context_path) if raw_project_context_path else None
@@ -172,7 +165,6 @@ class AgentProfile:
             preferences=preferences,
             bounding=bounding,
             base_dir=base_dir,
-            broker_identity=broker_identity,
             project_context_path=project_context_path,
         )
 
@@ -195,8 +187,6 @@ class AgentProfile:
             payload["bounding"] = dict(self.bounding)
         if self.base_dir is not None:
             payload["base_dir"] = self.base_dir
-        if self.broker_identity is not None:
-            payload["broker_identity"] = self.broker_identity
         if self.project_context_path is not None:
             payload["project_context_path"] = self.project_context_path
         path.write_text(
