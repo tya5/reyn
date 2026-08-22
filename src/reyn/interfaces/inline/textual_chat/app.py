@@ -4013,28 +4013,38 @@ class TextualChatApp(App):
         from ``AgUiTransport.frames()``, ever, confirmed by direct
         reproduction, not guessed).
 
-        ``switch_generation=<int>`` (the switch case) does NOT re-await
-        ``state_ready()`` — architect ruling: the SAME ``AgUiTransport``
-        instance persists across a switch (only the attached agent
-        changes server-side), so its one-shot ``state_ready()`` Event,
-        already set by the FIRST session's own initial snapshot, would
-        resolve immediately on a later switch WITHOUT reflecting whether
-        the NEW session's own state has actually landed — the same
-        #4996-family "lying-ready" shape. This is safe because
-        :meth:`_handle_session_switch_event` only runs in response to a
-        ``session_attached`` event FRAME :meth:`_pump_frames` has
-        already processed — any STATE_* update delivered in the SAME
-        reconnect burst has therefore already been applied to
-        ``transport.status.values`` by the time this call reads
-        ``intervention_head()``. What DOES matter for the switch case is
-        the EXISTING ``_session_switch_generation`` supersede guard
-        (:meth:`_handle_session_switch_event`'s own docstring) — a LATER
-        switch may have already superseded this one while this call was
-        waiting on the panel-mount below; re-checked immediately before
-        presenting, not just at entry. No new generation mechanism is
-        introduced here (architect: do not invent a second one)."""
-        if switch_generation is None:
-            await self._transport.state_ready()
+        ``switch_generation=<int>`` (the switch case) ALSO awaits
+        ``state_ready()`` — corrected mid-review (architect co-vet,
+        issuecomment-5377613210) from this PR's OWN first draft, which
+        skipped the re-await on the theory that any STATE_* update in the
+        SAME reconnect burst was "already applied by the time this call
+        reads". Measured backwards: ``AgUiEmitter``'s reconnect-protocol
+        barrier forwards the ``session_attached`` frame STRICTLY BEFORE
+        its STATE_SNAPSHOT re-fire (``emitter.py``'s own module
+        docstring — "the barrier ordering is the whole point"), so
+        ``transport.status`` still reflects the OLD session at the
+        instant this method's caller runs; skipping the re-await either
+        misdelivers the OLD session's own pending head onto the NEW
+        session's view (wrong id), or reads ``None`` and never presents
+        the NEW session's real pending intervention — the exact defect
+        witness ③ exists to catch.
+
+        What actually fixes "lying-ready" (architect's own correction of
+        their own earlier ruling: "stop re-awaiting a one-shot Event" was
+        never the same as "stop awaiting entirely") is that
+        ``AgUiTransport`` now clears ``state_ready()``'s Event the moment
+        it decodes a ``session_attached`` frame (see that decode site's
+        own comment) — so each switch starts a fresh, awaitable episode
+        instead of resolving instantly off the FIRST session's stale
+        ``set()``. ``_session_switch_generation`` answers a DIFFERENT
+        question ("is this still the latest switch") and is unrelated —
+        no second generation mechanism was introduced for this."""
+        await self._transport.state_ready()
+        if (
+            switch_generation is not None
+            and self._session_switch_generation != switch_generation
+        ):
+            return
         if self._read_model is None:
             return
         head = self._read_model.intervention_head()
@@ -5382,10 +5392,10 @@ class TextualChatApp(App):
         # so nothing else on this path would ever present it. Fired as a
         # separate worker (never blocks the off-thread history read just
         # below); gated on THIS call's own claimed generation, re-checked
-        # after its panel-mount wait, so a LATER switch that supersedes
-        # this one before it gets to present is a no-op here too — see
-        # :meth:`_present_hydrated_intervention_head_if_pending`'s own
-        # docstring for why ``state_ready()`` is not re-awaited here.
+        # after ``state_ready()`` (which re-awaits per-episode for a
+        # switch too — see that method's own docstring for the ordering
+        # bug this corrects) and again after its panel-mount wait, so a
+        # LATER switch that supersedes this one at any point is a no-op.
         self.run_worker(
             self._present_hydrated_intervention_head_if_pending(
                 switch_generation=my_switch_generation,

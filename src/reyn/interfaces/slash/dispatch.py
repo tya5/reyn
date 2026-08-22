@@ -171,6 +171,17 @@ class _ErrorWatchingTransport(ClientTransport):
     def start(self) -> None:
         self._inner.start()
 
+    async def state_ready(self) -> None:
+        # #5050 ③ follow-up (CI-caught, test_error_watching_transport_
+        # total_delegation_4884.py): without this override, this wrapper
+        # falls back to ``ClientTransport``'s own base default (return
+        # immediately) instead of the WRAPPED transport's real readiness
+        # — a slash handler asking "has state landed" would get told
+        # "yes" instantly regardless of the inner transport's actual
+        # state, the same lying-ready shape architect's switch-case
+        # finding named, just a second delegation site it rides through.
+        await self._inner.state_ready()
+
     def close(self) -> None:
         self._inner.close()
 

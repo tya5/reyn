@@ -42,7 +42,7 @@ from reyn.interfaces.transport.agui.protocol import (
 from reyn.interfaces.transport.agui.state import RemoteStatusView, reguard_nodes
 from reyn.interfaces.transport.client_transport import ClientTransport
 from reyn.interfaces.transport.drain import suspend_between_frames
-from reyn.interfaces.transport.frames import DisplayFrame, Frame
+from reyn.interfaces.transport.frames import DisplayFrame, EventFrame, Frame
 
 
 class AgUiTransport(ClientTransport):
@@ -141,6 +141,30 @@ class AgUiTransport(ClientTransport):
                 if decoded.intervention_id == self._pending_intervention_id:
                     self._pending_intervention_id = None
             else:  # a Frame
+                # #5050 ③ (architect co-vet, issuecomment-5377613210 — a
+                # correction of this PR's OWN first draft): a
+                # ``session_attached`` EventFrame starts a NEW episode —
+                # ``AgUiEmitter``'s reconnect-protocol barrier
+                # (``emitter.py``'s own module docstring: the STATE_SNAPSHOT
+                # re-fire happens STRICTLY AFTER the ``session_attached``
+                # frame is forwarded, never before) means ``self._status``
+                # still reflects the OLD session's state at the instant this
+                # frame is decoded. Clearing the Event here — rather than
+                # leaving the FIRST session's one-shot ``set()`` standing
+                # forever — makes a SECOND ``await state_ready()`` after a
+                # switch correctly wait for THIS episode's own fresh
+                # snapshot instead of resolving immediately on stale data
+                # (the "lying-ready" shape architect's original ruling
+                # named, now applied per-episode instead of once ever).
+                # ``_session_switch_generation`` is unrelated and unchanged
+                # (architect: do not invent a second generation mechanism)
+                # — this Event answers "has THIS episode's state landed",
+                # the generation answers "is this still the latest switch".
+                if (
+                    isinstance(decoded, EventFrame)
+                    and getattr(decoded.event, "type", None) == "session_attached"
+                ):
+                    self._state_ready_event.clear()
                 out.append(self._reguard_frame(decoded))
         return out
 

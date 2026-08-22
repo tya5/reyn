@@ -65,6 +65,12 @@ from reyn.interfaces.inline.textual_chat.intervention_panel import InterventionP
 from reyn.interfaces.repl.read_model import RemoteReadModel
 from reyn.interfaces.transport.agui.client import AgUiTransport
 from reyn.interfaces.transport.agui.emitter import AgUiEmitter
+from reyn.interfaces.transport.agui.protocol import (
+    encode_frame,
+    encode_state_snapshot,
+    to_sse,
+)
+from reyn.interfaces.transport.frames import EventFrame
 from reyn.runtime.profile import AgentProfile
 from reyn.runtime.registry import _DEFAULT_SID, AgentRegistry
 from reyn.runtime.session import DEFAULT_CHAT_CHANNEL_ID, Session
@@ -90,9 +96,22 @@ async def _sse_lines_then_hang(text: str):
     finite generator here would tear the WHOLE APP down via that
     ``finally`` before witness ②'s own hydrated-intervention-head worker
     ever gets a chance to run — not a mount race, a test artifact that
-    doesn't match the real bug shape."""
+    doesn't match the real bug shape.
+
+    A real ``asyncio.sleep(0)`` BETWEEN every yielded line (not merely
+    after the whole block) — without it, ``_pump_frames``'s own worker
+    (scheduled first in ``on_mount``) decodes the entire single-block SSE
+    text with NO intervening real suspension, so it reaches ``_state_
+    ready_event.set()`` before the hydrated-intervention-head worker
+    (scheduled second) ever gets a first turn — making ``state_ready()``'s
+    own await a no-op in THIS construction and any strip of it silently
+    pass (measured: 3/3 stripped runs passed regardless). The per-line
+    yield gives the second worker a genuine, non-hypothetical chance to
+    read ``intervention_head()`` before the block finishes decoding,
+    which is what makes the strip-falsifier below actually load-bearing."""
     for line in text.split("\n"):
         yield line
+        await asyncio.sleep(0)
     await asyncio.Event().wait()
 
 
@@ -103,6 +122,15 @@ async def _never_yields():
     control sentinel the emitter never forwards — see its own docstring)."""
     if False:  # noqa: SIM103 — the idiomatic empty-async-generator shape
         yield
+
+
+async def _wait_until(pilot, condition) -> None:
+    """Poll ``pilot.pause()`` unboundedly until ``condition()`` is true —
+    CLAUDE.md's Ceiling rule (no ``range(N)`` wrapping a wait; wait on the
+    condition unboundedly, CI's own ``--timeout`` is the kill switch), not
+    a fixed pause count that could pass on luck or silently under-wait."""
+    while not condition():
+        await pilot.pause()
 
 
 _AGENT = "test-agent"
@@ -152,10 +180,19 @@ def _make_session_with_resolver(
 
 @pytest.mark.asyncio
 async def test_remote_always_choice_persists_to_approvals_yaml(tmp_path, monkeypatch):
-    """Tier 2: witness ① — a remote client selecting [A]lways for a real
-    permission intervention actually persists the grant to
-    ``.reyn/approvals.yaml`` — the layer-crossing witness (architect):
-    rendering without the answer landing would pass a narrower test."""
+    """Tier 2: witness ① — the COMBINED witness lead-coder's own #5050③
+    block found missing (no single test looked at the whole SET owner
+    required): a construction where ``transport.frames()`` yields ZERO
+    frames (the exact reconnect-after-the-fact scenario ② also covers)
+    where (a) the real ``InterventionPanel`` appears — not the Composer's
+    free-text input, (b) its choice set matches local's (``[A]lways``
+    selectable), and (c) selecting it actually persists a grant to
+    ``.reyn/approvals.yaml`` — the layer-crossing half (architect):
+    rendering without the answer landing would pass a narrower test.
+
+    No ceiling anywhere below (CLAUDE.md Ceiling rule): every wait is on
+    a real condition (:func:`_wait_until`, or a bare ``await`` on a
+    coroutine/queue this test's own setup guarantees resolves)."""
     monkeypatch.chdir(tmp_path)
     session, perm, registry = _make_session_with_resolver(tmp_path)
     decl = PermissionDecl(http_get=[{"host": "*"}])
@@ -170,7 +207,7 @@ async def test_remote_always_choice_persists_to_approvals_yaml(tmp_path, monkeyp
             session._make_router_intervention_bus(), actor="chat_router",
         )
     )
-    announce_msg = await asyncio.wait_for(session.outbox.get(), timeout=2.0)
+    announce_msg = await session.outbox.get()
     assert announce_msg.kind == "intervention"
     assert announce_msg.meta.get("choices")
     assert announce_msg.meta.get("intervention_id"), (
@@ -186,7 +223,8 @@ async def test_remote_always_choice_persists_to_approvals_yaml(tmp_path, monkeyp
     # already raised (#5050③'s own scenario) — the announce frame is not
     # replayed to a fresh connect (#5047's own finding: an unanswered
     # intervention has no history trace); only STATE_SNAPSHOT carries it
-    # (#5053). No DisplayFrame at all in this stream.
+    # (#5053). No DisplayFrame at all in this stream — the SAME
+    # frame-free construction as witness ②.
     emitter = AgUiEmitter(_never_yields(), session_snapshot)
 
     sse = "".join([chunk async for chunk in emitter.stream()])
@@ -204,26 +242,34 @@ async def test_remote_always_choice_persists_to_approvals_yaml(tmp_path, monkeyp
     app = TextualChatApp(transport=transport, read_model=RemoteReadModel(transport))
 
     async with app.run_test(size=(100, 30)) as pilot:
-        await pilot.pause()
-        await pilot.pause()
-        await pilot.pause()
-
         panel = app.query_one(InterventionPanel)
-        assert panel.display is True, "the pending intervention never got presented"
+        await _wait_until(pilot, lambda: panel.display is True)
         assert panel.has_pending() is True
+        # ★owner-required local parity (issuecomment-5377475482): the real
+        # choice set (a RadioSet), NOT the Composer's free-text Input.
+        radio_set = panel.query_one("RadioSet")
+        assert radio_set, (
+            "the hydrated intervention rendered as a free-text prompt, "
+            "not the local-parity choice set"
+        )
+        # The panel's own auto-focus (``on_tabbed_content_tab_activated``)
+        # is deferred via ``call_after_refresh`` — ``panel.display`` becomes
+        # True a full refresh cycle BEFORE focus actually lands on the
+        # RadioSet. Waiting on the REAL condition (has_focus), not an
+        # arbitrary extra pause, avoids pressing keys before Textual is
+        # ready to route them to this widget.
+        await _wait_until(pilot, lambda: radio_set.has_focus)
 
         # generic_yn_choices() order: [y]es, [A]lways, [n]o, [N]ever — the
         # panel pre-highlights the first option (#3299 P2 owner decision),
         # so ONE "down" reaches [A]lways.
         await pilot.press("down")
         await pilot.press("enter")
-        await pilot.pause()
-        await pilot.pause()
+        approvals_path = tmp_path / ".reyn" / "approvals.yaml"
+        await _wait_until(pilot, lambda: approvals_path.exists())
 
-    await asyncio.wait_for(require_task, timeout=2.0)
+    await require_task
 
-    approvals_path = tmp_path / ".reyn" / "approvals.yaml"
-    assert approvals_path.exists(), "always was never persisted to approvals.yaml"
     saved = yaml.safe_load(approvals_path.read_text(encoding="utf-8")) or {}
     assert saved.get("chat_router/http.get/news.ycombinator.com") is True, saved
 
@@ -274,14 +320,8 @@ async def test_remote_pending_intervention_presents_even_when_no_frame_ever_arri
     app = TextualChatApp(transport=transport, read_model=RemoteReadModel(transport))
 
     async with app.run_test(size=(100, 30)) as pilot:
-        for _ in range(10):
-            await pilot.pause()
-
         panel = app.query_one(InterventionPanel)
-        assert panel.display is True, (
-            "a pending intervention behind a frame-less STATE_SNAPSHOT "
-            "reconnect was never presented"
-        )
+        await _wait_until(pilot, lambda: panel.display is True)
         assert panel.has_pending() is True
         # ★owner-required local parity (issuecomment-5377475482): the real
         # choice set (a RadioSet), NOT the Composer's free-text Input —
@@ -303,6 +343,47 @@ async def test_remote_pending_intervention_presents_even_when_no_frame_ever_arri
         )
 
 
+async def _sse_burst_then_switch_then_hang(
+    initial_sse: str, switch_sse: str, release: "asyncio.Event",
+):
+    """Yield ``initial_sse``'s lines, then BLOCK (a real, unbounded
+    ``asyncio.Event().wait()`` — nothing this test's own setup resolves
+    until the test itself calls ``release.set()``) until ``release`` is
+    set, then yield ``switch_sse``'s lines, then hang forever (matching
+    :func:`_sse_lines_then_hang`'s own rationale: a real connection never
+    exhausts ``frames()`` this way).
+
+    #5050③ co-vet correction (architect, issuecomment-5377613210): the
+    FIRST draft of witness ③ simulated the switch by calling
+    ``transport.status.apply_snapshot(...)`` directly, BEFORE invoking
+    ``_handle_session_attached_event`` — backwards. ``AgUiEmitter``'s own
+    reconnect-protocol barrier (``emitter.py``'s module docstring: "the
+    re-fire happens strictly AFTER the ``session_attached`` frame is
+    forwarded — never before") means production has the switched-to
+    session's STATE_SNAPSHOT arrive AFTER the ``session_attached`` frame,
+    not before. This generator reproduces that real ordering: ``switch_
+    sse`` below is built as a session_attached EventFrame followed by the
+    NEW session's own STATE_SNAPSHOT, and the app's REAL ``_pump_frames``
+    loop (not a hand-invoked handler call) decodes both in that order —
+    so the fix under test (``AgUiTransport`` clearing ``state_ready()``'s
+    Event on ``session_attached`` decode, setting it again on the NEXT
+    STATE_SNAPSHOT) is exercised exactly as production hits it.
+
+    A real ``asyncio.sleep(0)`` between every yielded line — same
+    reasoning as :func:`_sse_lines_then_hang`'s own docstring: without a
+    genuine per-line suspension, a worker scheduled after ``_pump_frames``
+    never gets a real chance to observe an in-between state, silently
+    weakening any strip-falsifier that depends on that window existing."""
+    for line in initial_sse.split("\n"):
+        yield line
+        await asyncio.sleep(0)
+    await release.wait()
+    for line in switch_sse.split("\n"):
+        yield line
+        await asyncio.sleep(0)
+    await asyncio.Event().wait()
+
+
 @pytest.mark.asyncio
 async def test_remote_switch_to_agent_with_pending_intervention_presents_it(
     tmp_path, monkeypatch,
@@ -314,23 +395,17 @@ async def test_remote_switch_to_agent_with_pending_intervention_presents_it(
     unanswered intervention leaves no history trace (#5047's own finding,
     ``restore.py``), so nothing on that path would ever present it without
     this PR's shared ``_present_hydrated_intervention_head_if_pending``
-    call, gated on the SAME ``_session_switch_generation`` supersede guard
-    ``_handle_session_attached_event`` already uses (architect ruling: no
-    new generation mechanism) rather than re-awaiting ``state_ready()``
-    (the SAME ``AgUiTransport`` persists across a switch — its one-shot
-    Event, already set by the FIRST session's snapshot, would resolve
-    immediately and lie about the NEW session's own readiness).
+    call.
 
-    Drives the real ``_handle_session_attached_event`` handler directly
-    with a real ``Event`` (matching ``test_4983_session_switch_off_thread
-    .py``'s own established idiom for testing this handler in isolation)
-    — the connection's initial STATE_SNAPSHOT carries no pending
-    intervention; the switch's own (simulated) reconnect burst updates
-    ``transport.status`` with the NEW session's pending intervention
-    BEFORE the handler runs, matching production ordering (the handler
-    only runs in response to a ``session_attached`` frame the SAME
-    ``_pump_frames`` loop has already processed, by which point any
-    co-delivered STATE_* update is already applied).
+    Drives the switch through the REAL ``_pump_frames`` pipeline — a real
+    ``session_attached`` ``EventFrame`` followed by the NEW session's own
+    STATE_SNAPSHOT, encoded and decoded through the actual wire codec
+    (``encode_frame``/``encode_state_snapshot``/``to_sse``), in PRODUCTION
+    ORDER (session_attached strictly before the fresh snapshot — see
+    :func:`_sse_burst_then_switch_then_hang`'s own docstring for the
+    ordering bug this corrects over this PR's first draft) — never a
+    hand-invoked ``_handle_session_attached_event`` call, so the handler
+    fires exactly when and how production fires it.
 
     Strip-falsifier: commenting out this PR's ``run_worker(self.
     _present_hydrated_intervention_head_if_pending(switch_generation=...))``
@@ -340,53 +415,46 @@ async def test_remote_switch_to_agent_with_pending_intervention_presents_it(
 
     initial_state = {"attached_name": "agent-a", "model": "opus"}
     emitter = AgUiEmitter(_never_yields(), lambda: dict(initial_state))
-    sse = "".join([chunk async for chunk in emitter.stream()])
-    assert "STATE_SNAPSHOT" in sse
+    initial_sse = "".join([chunk async for chunk in emitter.stream()])
+    assert "STATE_SNAPSHOT" in initial_sse
+
+    agent_b_state = {
+        "attached_name": "agent-b", "model": "opus",
+        "pending_intervention_head": {
+            "id": "iv-agent-b",
+            "prompt": "Allow fetching from 'switched.example.com'?",
+            "detail": None,
+            "choices": [
+                {"id": "yes", "label": "[y]es", "hotkey": "y"},
+                {"id": "always", "label": "[A]lways", "hotkey": "A"},
+                {"id": "no", "label": "[n]o", "hotkey": "n"},
+                {"id": "never", "label": "[N]ever", "hotkey": "N"},
+            ],
+        },
+    }
+    # The real wire encoding, PRODUCTION ORDER: session_attached EventFrame
+    # first, agent-b's own fresh STATE_SNAPSHOT strictly after (matches
+    # ``_SessionFrameSource``/``AgUiEmitter``'s real reconnect barrier).
+    switch_sse = to_sse(
+        encode_frame(
+            EventFrame(Event(type="session_attached", data={"agent": "agent-b", "session_id": None}))
+        )
+    ) + to_sse(encode_state_snapshot(agent_b_state))
+
+    release = asyncio.Event()
 
     async def _noop_send(_payload):
         return None
 
-    transport = AgUiTransport(_sse_lines_then_hang(sse), _noop_send)
+    transport = AgUiTransport(
+        _sse_burst_then_switch_then_hang(initial_sse, switch_sse, release), _noop_send,
+    )
     app = TextualChatApp(transport=transport, read_model=RemoteReadModel(transport))
 
     async with app.run_test(size=(100, 30)) as pilot:
-        for _ in range(10):
-            await pilot.pause()
-
         panel = app.query_one(InterventionPanel)
-        assert panel.display is False, (
-            "sanity: agent-a's own snapshot carries no pending intervention"
-        )
-
-        # Simulate the switch's own reconnect burst: agent-b's fresh
-        # STATE_SNAPSHOT (carrying its pending intervention) landing on
-        # this SAME transport instance BEFORE the session_attached handler
-        # runs — matching production ordering (see this test's own
-        # docstring).
-        transport.status.apply_snapshot({
-            "attached_name": "agent-b", "model": "opus",
-            "pending_intervention_head": {
-                "id": "iv-agent-b",
-                "prompt": "Allow fetching from 'switched.example.com'?",
-                "detail": None,
-                "choices": [
-                    {"id": "yes", "label": "[y]es", "hotkey": "y"},
-                    {"id": "always", "label": "[A]lways", "hotkey": "A"},
-                    {"id": "no", "label": "[n]o", "hotkey": "n"},
-                    {"id": "never", "label": "[N]ever", "hotkey": "N"},
-                ],
-            },
-        })
-
-        await app._handle_session_attached_event(
-            Event(type="session_attached", data={"agent": "agent-b", "session_id": None})
-        )
-        for _ in range(10):
-            await pilot.pause()
-
-        assert panel.display is True, (
-            "a switch to an agent with a pending intervention was never presented"
-        )
+        release.set()
+        await _wait_until(pilot, lambda: panel.display is True)
         assert panel.has_pending() is True
         # ★owner-required local parity: the real InterventionPanel's choice
         # set (a RadioSet), not the Composer's free-text Input — owner's own
