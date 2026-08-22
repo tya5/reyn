@@ -15,9 +15,13 @@ gate: a session with genuinely nothing else happening yields ZERO frames
 from ``AgUiTransport.frames()``, ever, confirmed by direct reproduction
 before this fix, not guessed) and ``_handle_session_attached_event`` (a
 session switch to an agent that already has a pending intervention —
-gated on the EXISTING ``_session_switch_generation`` supersede guard
-instead, never re-awaiting ``state_ready()``; see that method's own
-docstring for why).
+gated on the EXISTING ``_session_switch_generation`` supersede guard,
+AND re-awaiting ``state_ready()`` too — corrected mid-review, architect
+co-vet issuecomment-5377613210, from this PR's own first draft, which
+skipped that re-await on the mistaken theory that a switch's state was
+"already applied" by the time the handler runs; see that method's own
+docstring for the real ordering and why the fix is per-episode
+``state_ready()`` clearing, not "await nothing").
 
 Owner escalated the accept criterion mid-implementation twice
 (issuecomment-5377475482, -5377481917): "iv 選択肢については local と同じ

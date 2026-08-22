@@ -160,6 +160,20 @@ class AgUiTransport(ClientTransport):
                 # (architect: do not invent a second generation mechanism)
                 # — this Event answers "has THIS episode's state landed",
                 # the generation answers "is this still the latest switch".
+                # ★unconditional clear, conditional re-set (architect
+                # non-block, issuecomment-5377689986): the NEXT set() is
+                # NOT guaranteed by this client alone — it depends on the
+                # SERVER actually re-firing a snapshot, which
+                # ``emitter.py:184``'s own guard only does when a
+                # ``backlog_provider`` was wired (``if etype ==
+                # "session_attached" and self._backlog_provider is not
+                # None``). Production always reaches this: ``endpoint.py``'s
+                # own AG-UI route always constructs the emitter WITH one
+                # (search that file for where it is passed). A caller
+                # against a THIRD-PARTY AG-UI server, or a test emitter
+                # built without one, would leave this Event cleared
+                # forever — ``state_ready()`` never returning is the
+                # visible symptom, not a silent wrong answer.
                 if (
                     isinstance(decoded, EventFrame)
                     and getattr(decoded.event, "type", None) == "session_attached"
