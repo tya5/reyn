@@ -288,3 +288,79 @@ async def test_accept_side_frames_and_sync_reads_flow_through_the_proxy():
         assert proxy.read_model_snapshot() == {"model": "test-model"}
     finally:
         await proxy.shutdown()
+
+
+# ── #5044: extend_history_backward's own cross-thread pull call ──────────
+#
+# read_model_snapshot above is a PUSH: the worker refreshes it unconditionally
+# alongside every frame, read-only, never touching disk. #5044's own issue
+# body: RegistryReadModel.load_older_conversation_history() genuinely
+# MUTATES Session.history and performs disk I/O — not satisfiable by that
+# push design, so it needs its own PULL-style cross-thread call instead
+# (extend_history_backward), on demand, returning the real post-mutation
+# count. These two tests are that call's own witness — mirroring witness①
+# above (a different code path: a caller-supplied closure marshalled via
+# `run_coroutine_threadsafe`, not one of `_inner`'s own async methods,
+# so #4995's own thread-identity claim needs re-proving for THIS path) —
+# and the "nothing supplied" default, which #5044's issue body requires be
+# 0 (never fabricated), mirroring ChatReadModel.load_older_conversation_
+# history's own remote-impl convention.
+
+
+@pytest.mark.asyncio
+async def test_extend_history_backward_runs_the_closure_on_the_worker_thread():
+    """Tier 2: structural witness, same shape as witness①. The supplied
+    ``read_model_extend_history_fn`` must execute on the WORKER thread, not
+    the caller's — the whole point of routing it through this proxy rather
+    than calling a registry-bound closure directly from the caller thread
+    (which would touch the worker-owned registry from a foreign thread).
+
+    Strip-falsifier: calling ``fn`` directly from ``extend_history_backward``
+    without the ``run_coroutine_threadsafe`` marshal (i.e. on the caller's
+    own thread) makes ``call_idents == [threading.get_ident()]`` — the
+    caller's own identity, not the worker's — turning this red."""
+    caller_ident = threading.get_ident()
+    call_idents: "list[int]" = []
+
+    def _extend(agent: "str | None", session_id: "str | None") -> int:
+        call_idents.append(threading.get_ident())
+        assert agent == "researcher"
+        assert session_id == "abc"
+        return 7
+
+    inner = _RecordingTransport()
+    proxy = ThreadedTransportProxy(
+        lambda: inner, read_model_extend_history_fn=_extend,
+    )
+    proxy.start()
+    try:
+        result = await proxy.extend_history_backward(
+            agent="researcher", session_id="abc",
+        )
+        assert result == 7
+        assert call_idents == [proxy.worker_thread_ident]
+        assert proxy.worker_thread_ident != caller_ident, (
+            "the closure's own recorded thread identity must differ from "
+            "the caller's — the same thread-boundary claim witness① makes "
+            "for submit_user_text, re-proven here for a DIFFERENT code path"
+        )
+    finally:
+        await proxy.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_extend_history_backward_returns_zero_when_nothing_was_supplied():
+    """Tier 2: no ``read_model_extend_history_fn`` given at construction ->
+    ``0``, never a fabricated count — #5044's own issue body states this
+    convention explicitly, mirroring ``ChatReadModel.
+    load_older_conversation_history``'s own remote-impl contract (a remote
+    client has nothing to extend into either, and answers 0, never a made
+    up value)."""
+    inner = _RecordingTransport()
+    proxy = ThreadedTransportProxy(lambda: inner)
+    proxy.start()
+    try:
+        result = await proxy.extend_history_backward(agent="researcher")
+        assert result == 0
+    finally:
+        await proxy.shutdown()
