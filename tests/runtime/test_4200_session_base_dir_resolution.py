@@ -57,7 +57,9 @@ def test_session_layer_override_wins_over_the_agent_default(tmp_path: Path) -> N
     _read_per_session_hooks already reads (#2285), now carrying a base_dir
     key too."""
     project_root = tmp_path / "project"
-    override_dir = tmp_path / "session-override"
+    # #5081 (3rd round): must resolve INSIDE project_root -- both override
+    # layers are now bounded to a subset of the project workspace.
+    override_dir = project_root / "session-override"
     override_dir.mkdir(parents=True)
     session = make_session(
         agent_name="alpha", workspace_state_dir=project_root / ".reyn",
@@ -173,7 +175,10 @@ async def test_a_spawned_childs_op_context_resolves_the_childs_own_override_not_
     state_log = StateLog(project_root / ".reyn" / "wal.jsonl")
     parent_base_dir = tmp_path / "parent-base-dir"
     parent_base_dir.mkdir(parents=True)
-    child_override_dir = tmp_path / "child-base-dir-override"
+    # #5081 (3rd round): the CHILD's session-layer override must resolve
+    # INSIDE project_root now (the parent's own Agent-object value above
+    # is the unbounded final fallback, untouched by this bound).
+    child_override_dir = project_root / "child-base-dir-override"
     child_override_dir.mkdir(parents=True)
 
     holder: dict = {}

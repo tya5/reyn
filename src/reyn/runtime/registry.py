@@ -709,7 +709,7 @@ class AgentRegistry:
         name, a free string a topology's ``profiles: {member: profile_
         name}`` binding writes with no uniqueness constraint against agent
         names — ``profiles: {alice: alice}`` (an agent bound to a
-        same-named narrowing template) is idiomatic, not exceptional, so
+        same-named narrowing template) is a real, unconstrained possibility (lead-coder's own measurement: no same-name binding appears in this repo's current examples, but the frequency claim isn't what makes this a real collision -- the absent uniqueness constraint is), so
         writing base_dir there would silently collide with an unrelated
         narrowing template. Validated ⊆ the project workspace root here,
         the ONE seam every creation surface (CLI / web / slash / the

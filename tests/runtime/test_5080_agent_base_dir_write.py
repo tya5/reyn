@@ -14,7 +14,7 @@ Store: THIS agent's own ``profile.yaml`` (``.reyn/agents/<name>/``) — NOT
 #5081): that directory's ``<X>`` is keyed by PROFILE name, a free string a
 topology's ``profiles: {member: profile_name}`` binding writes with no
 uniqueness constraint against agent names (``profiles: {alice: alice}`` is
-idiomatic, not exceptional) — writing base_dir there would silently
+a real, unconstrained possibility -- no uniqueness constraint rules it out) -- writing base_dir there would silently
 collide with an unrelated narrowing template bound to a same-named
 profile. ``profile.yaml`` is keyed by AGENT identity, so the collision is
 structurally impossible, not merely mitigated.
@@ -135,7 +135,9 @@ async def test_session_layer_override_still_wins_over_the_new_agent_default(
     default #5080 just made writable."""
     project_root = tmp_path / "project"
     agent_default_dir = project_root / "agent-default"
-    session_override_dir = tmp_path / "session-override"
+    # #5081 (3rd round): must resolve INSIDE project_root -- the session
+    # layer is now bounded too.
+    session_override_dir = project_root / "session-override"
     session_override_dir.mkdir(parents=True)
 
     reg = AgentRegistry(project_root=project_root, session_factory=_no_factory)
@@ -241,6 +243,59 @@ async def test_a_directly_tampered_profile_pointing_outside_is_not_used(
     )
 
 
+# ── witness ⑦ — protect-at-USE for the SESSION layer too (architect BLOCK, 3rd) ─
+
+
+@pytest.mark.asyncio
+async def test_a_directly_tampered_session_config_pointing_outside_is_not_used(
+    tmp_path: Path,
+) -> None:
+    """Tier 2: architect's BLOCK on PR #5081 (3rd round) — the 1st round's
+    protect-at-use fix only bounded the AGENT-layer read. The SESSION-
+    layer read (``<session_state_dir>/config.yaml``, which resolves to
+    ``.reyn/agents/<name>/state/config.yaml`` — still inside ``.reyn``,
+    the agent's own default write zone) is read FIRST and was left
+    unbounded, so an attacker never needs to touch the agent layer at
+    all: writing directly to the session-layer file reaches an unbounded
+    value before the 1st round's own defense is ever consulted.
+    Architect's own generalization: "the discriminator isn't the layer,
+    it's whether the value is inside .reyn and gets used."
+
+    This test hand-writes the SESSION-layer config.yaml exactly the way
+    an agent's own file-write op would (bypassing ``spawn_session``'s
+    own LLM-tool-level check, ``router_host_adapter.py``, completely) and
+    proves the out-of-bounds value is NOT used.
+
+    Strip-falsifier: reverting the session-layer branch to unconditional
+    (as PR #5081's 2nd-round version did) turns this red — the tampered
+    path would be used, without ever reaching the agent-layer defense."""
+    project_root = tmp_path / "project"
+    outside_dir = tmp_path / "outside-the-workspace"
+    fallback_dir = project_root / "agent-object-fallback"
+
+    session = make_session(
+        agent_name="alpha", workspace_state_dir=project_root / ".reyn",
+        workspace_base_dir=fallback_dir,
+        snapshot_path=(
+            project_root / ".reyn" / "agents" / "alpha" / "state" / "snapshot.json"
+        ),
+    )
+    session_cfg = Path(session._snapshot_path).parent / "config.yaml"
+    session_cfg.parent.mkdir(parents=True, exist_ok=True)
+    session_cfg.write_text(f"name: s\nbase_dir: {outside_dir}\n", encoding="utf-8")
+
+    resolved = _resolved_op_context_base_dir(session)
+    assert resolved != outside_dir.resolve(), (
+        f"a directly-tampered session config.yaml pointing outside the "
+        f"workspace ({outside_dir!r}) was USED — the session-layer read "
+        f"was left unbounded, reachable before the agent-layer defense"
+    )
+    assert resolved == fallback_dir, (
+        f"expected fall-through to the Agent object's own base_dir "
+        f"{fallback_dir!r}, got {resolved!r}"
+    )
+
+
 # ── witness ⑥ — the store move doesn't disturb topology narrowing (2nd BLOCK) ─
 
 
@@ -256,7 +311,8 @@ async def test_base_dir_creation_does_not_disturb_a_same_named_topology_profile(
     member)``; only ``_validate_agent_name``/``_validate_topology_name``
     validate names, never profile-name uniqueness) — ``profiles: {alpha:
     alpha}`` (an agent bound to a same-named narrowing template) is
-    idiomatic, not exceptional. Creating agent "alpha" with a base_dir
+    a real, unconstrained possibility -- nothing in topology.py rules
+    it out. Creating agent "alpha" with a base_dir
     would have silently overwritten profile "alpha"'s own narrowing
     template. This test binds a topology member to a capability_profile
     NAMED THE SAME as the agent being created, creates that agent WITH
