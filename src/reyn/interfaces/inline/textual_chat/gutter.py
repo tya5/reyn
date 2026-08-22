@@ -225,7 +225,18 @@ def _gutter_glyph_color(msg: "OutboxMessage") -> "tuple[str, str]":
         # left to distinguish the two, so both legs are special-cased here
         # rather than falling through to ``_KIND_LINE["intervention"]``'s
         # amber ("needs you") colour:
-        if not (msg.meta or {}).get("_answer_label"):
+        # #5047: presence of the KEY, not truthiness of its VALUE — a
+        # restored (backlog-replayed) intervention's ``_answer_label`` can
+        # itself be the empty string (``restore.py``'s own ``meta.get(
+        # INTERVENTION_ANSWER_META_KEY, "")``), and a falsy check on the
+        # value would render that restored, already-answered entry as
+        # still-PENDING (dim ⋯) — the same emptiness-vs-absence conflation
+        # app.py's own ``_present_intervention`` guard was measured to have
+        # (lead-coder, mid-#5047-implementation). A genuine LIVE pending
+        # intervention never carries this key at all until answered
+        # (``_resolve_intervention`` is what first sets it), so presence
+        # alone is both necessary and sufficient here.
+        if "_answer_label" not in (msg.meta or {}):
             # PENDING: a dim "awaiting" marker instead of the kind's normal
             # amber glyph.
             return "⋯", _CC_DIM
