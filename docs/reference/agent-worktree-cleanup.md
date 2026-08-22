@@ -311,11 +311,20 @@ checkout, a shared library tree, anything a venv might be installed against):
    grep -rn "<tree-name>" docs/ scripts/ *.md *.yaml *.yml 2>/dev/null
    ```
 2. **Install state** — an editable install is a reference to the tree, and
-   it survives every git-state check above:
+   it survives every git-state check above. `~/**/...` only recurses under
+   zsh (bash needs `globstar` set, which most shells don't have) — reads as
+   a silent, confident 0 hits under plain bash, exactly the false-safety
+   reading this whole section exists to prevent. Scan `.venv` dirs first,
+   then look inside each — measured 0.34s against a real multi-project
+   workspace, vs. 20s+ unfinished for a single `find ~ -path
+   "*/site-packages/*..."` sweep:
    ```bash
-   grep -rl "editable.*true\|\"url\".*<tree-path>" \
-     ~/**/.venv/lib/*/site-packages/*.dist-info/direct_url.json 2>/dev/null
-   find ~/**/.venv -name "*.pth" -exec grep -l "<tree-path>" {} \; 2>/dev/null
+   find "$WORKSPACE_ROOT" -maxdepth 5 -type d -name ".venv" 2>/dev/null | while read -r v; do
+     ls "$v"/lib/*/site-packages/*.dist-info/direct_url.json 2>/dev/null
+   done | xargs grep -l "<tree-name>" 2>/dev/null
+   find "$WORKSPACE_ROOT" -maxdepth 5 -type d -name ".venv" 2>/dev/null | while read -r v; do
+     find "$v" -name "*.pth" -exec grep -l "<tree-path>" {} \; 2>/dev/null
+   done
    pip freeze 2>/dev/null | grep -e "<tree-name>"
    ```
 3. **Process cwd** — a process can hold the tree open without a lock file or
