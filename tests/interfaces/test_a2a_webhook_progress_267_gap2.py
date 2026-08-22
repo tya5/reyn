@@ -38,7 +38,7 @@ import asyncio
 
 import pytest
 
-pytest.importorskip("fastapi", reason="fastapi not installed ([web] extra missing)")
+pytest.importorskip("fastapi", reason="fastapi not installed (core dependency since #5051 -- stale environment)")
 
 from reyn.core.events.events import EventLog  # noqa: E402
 from tests._support.paths import REPO_ROOT

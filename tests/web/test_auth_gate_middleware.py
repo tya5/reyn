@@ -34,7 +34,7 @@ if str(_WORKTREE_SRC) not in sys.path:
 
 import pytest
 
-fastapi = pytest.importorskip("fastapi", reason="fastapi not installed ([web] extra missing)")
+fastapi = pytest.importorskip("fastapi", reason="fastapi not installed (core dependency since #5051 -- stale environment)")
 httpx = pytest.importorskip("httpx", reason="httpx not installed (needed by TestClient)")
 
 from fastapi.testclient import TestClient  # noqa: E402

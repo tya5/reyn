@@ -37,8 +37,9 @@ from tests._support.paths import REPO_ROOT
 
 
 def _maybe_skip_if_router_unavailable() -> None:
-    """Skip when ``reyn.interfaces.web.routers.a2a`` can't import (= optional
-    fastapi extra missing). CI has it; local dev may not.
+    """Skip when ``reyn.interfaces.web.routers.a2a`` can't import — fastapi is
+    a core dependency (#5051); this only fires on a stale environment
+    installed before that change.
     """
     try:
         import reyn.interfaces.web.routers.a2a  # noqa: F401
