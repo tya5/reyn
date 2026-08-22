@@ -35,17 +35,23 @@ researcher  2026-05-01 12:55  deep technical research, prefers primary sources
 writer      2026-04-30 18:20  concise long-form prose
 ```
 
-## `reyn agent new <name> [--role TEXT]`
+## `reyn agent new <name> [--role TEXT] [--base-dir PATH] [--project-context-path PATH]`
 
 `.reyn/agents/<name>/` 配下に新しい agent を作成します。ディレクトリは `profile.yaml` でプロビジョニングされます。`history.jsonl`、`events.jsonl`、`memory/`、`runs/` は最初のアクティビティ時に作成されます。
 
 ```bash
 reyn agent new researcher --role "deep technical research, prefers primary sources"
+reyn agent new worker --base-dir repos/worker
+reyn agent new coder1 --project-context-path coder1-context.md
 ```
 
 `<name>` は agent 名の正規表現に一致する必要があります: `[a-z0-9]` で始まる `[a-z0-9_-]` の 1〜32 文字。
 
-`--role` テキストは agent の LLM システムプロンプトに注入されます。短く具体的に書いてください。作成後に `allowed_mcp` や他のプロファイルフィールドを設定するには、`profile.yaml` を直接編集してください。profile-yaml リファレンス を参照してください。
+`--role` テキストは agent の LLM システムプロンプトに注入されます。短く具体的に書いてください。`allowed_mcp`・`preferences`・`bounding` には CLI からの宣言手段がまだ無いため、作成後に `profile.yaml` を直接編集してください。profile-yaml リファレンス を参照してください。
+
+`--base-dir`（#5080）は、この agent 自身の作業ディレクトリ override を設定します — restrict-only、プロジェクトワークスペース内に解決される必要があり（相対パスはそれを基準に解決）、範囲外は clamp されず拒否されます。省略時は、agent はプロジェクト自身の base_dir にフォールバックします。session-spawn 自身の `base_dir`（`spawn_session` の LLM 向け引数）は、両方が設定された場合この agent レベルの既定より優先されます。
+
+`--project-context-path`（#5111、`--base-dir` と同じ restrict-only 形状）は、この agent 自身の `REYN.md`/`AGENTS.md` override を設定し、この agent のセッションについてプロジェクト全体のファイルを置き換えます。省略時は、agent はプロジェクト全体のファイルにフォールスルーします。
 
 ## `reyn agent show <name>`
 
