@@ -12,12 +12,16 @@ The defect this closes (architect, #4206's own issue thread): PR #5086 shipped
 reviewer's own re-reading, not by any gate. `output_language` (#4206 slice 1,
 commit 7edb831bf) shipped the SAME gap and has never been caught at all.
 
-Scope, explicit (architect's own scoping — issuecomment-5379310759, relayed):
-only the **`Declared in`** column is derived/checked here. `Reload`/`File`
-don't go stale the same way — a slice that adds an agent-layer override never
-falsifies which FILE the project-layer value lives in or whether it hot-
-reloads, so hand-maintaining those two is fine; `Declared in` is the one
-column a #4206-family PR can silently leave behind.
+Scope, explicit (architect's own scoping — issuecomment-5379310759, relayed;
+corrected same-night after `Reload` itself was caught stale for the exact
+rows this file already checks — issuecomment-5379469534/5379489719): only
+the **`Declared in`** column is derived/checked here — NOT because
+`Reload`/`File` can't go stale (they can and did: `output_language`'s own
+`Reload` cell was wrong until this same PR fixed it), but because "does
+this call site re-read live?" is a property of the call site itself, with
+no file-based registry (`_HOT_RELOAD_FILES`) to mechanically derive it
+from. `Declared in` is the one column this repo currently has a source of
+truth for.
 
 Source of truth: `PREFERENCE_KEYS` (`src/reyn/runtime/preferences.py`, the ③
 preference axis) plus the 2 explicit agent-layer-only `AgentProfile` fields

@@ -35,8 +35,14 @@ cause of #5086/#5088 misreading each other):
   session` (a session's own `<session-state-dir>/config.yaml` may set it
   too), or `agent` alone (no project-wide value exists for this key at
   all — `broker_identity` is the one case, #5084 ③-a). **This is the ONE
-  column derived/checked in CI** (see below) — ② and ③ don't go stale
-  per-slice the way ① does, so they stay hand-maintained.
+  column derived/checked in CI** (see below) — NOT because ② and ③ can't
+  go stale (they can and do: ⁵ below is a real, measured instance for
+  `Reload`), but because "does this call site re-read live?" is a
+  property of THE CALL SITE, not something a file-based registry like
+  `_HOT_RELOAD_FILES` can answer — there is no mechanical source to
+  derive ②/③ FROM, so they stay hand-maintained and this doc's own
+  correctness there rests on a human catching the next drift, same as
+  before this split.
 - **Reload** — `restart` (read once at `load_config` time) or `restart /
   hot` (the `.reyn/config/`-side write is re-read at the next turn
   boundary; the `reyn.yaml`-side write still needs a restart, same key).
