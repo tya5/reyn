@@ -23,9 +23,23 @@ the note any good" — nothing here reads the note's content. It is only:
 3. a ``tests/``-touching PR carries at least one note (none -> red) — rule 8
    itself, which nothing has been checking mechanically.
 
-Deliberately NOT closed: an author can edit an old comment to swap in a newer
-SHA. That is outside a text predicate, and pretending otherwise would be the
-"a checklist item answered yes every time" shape CLAUDE.md already warns about.
+The note's CLAIM line (e.g. ``TESTS-READ (B) (head abc1234)``) lives in the PR
+**body**, not a comment. #5138: GitHub attaches a check run to the sha the
+triggering event carries, and an ``issue_comment`` event (fired when a
+comment is posted) carries the DEFAULT BRANCH's sha, not the PR's head — a run
+it starts can never land on the PR's own check rollup. Measured: 4 of 4 PRs
+whose note arrived as a comment (#5127, #5128, #5132, #5136) stayed red until
+a human re-ran the workflow by hand. A ``pull_request: edited`` event — which
+fires when the PR body changes — carries the PR's own head, so the check lands
+where it needs to. Comments remain the place for the note's GROUNDS (the
+four-section reviewer write-up: six-questions answers, scope, limits) — only
+the one-line claim moved. Comments are still fetched here, but only to give a
+precise diagnostic when a claim landed in the wrong place (see ``evaluate``).
+
+Deliberately NOT closed: an author can edit the body to swap in a newer SHA
+with no new review behind it. That is outside a text predicate, and
+pretending otherwise would be the "a checklist item answered yes every time"
+shape CLAUDE.md already warns about.
 
 stdlib-only (argparse / json / re / subprocess), mirroring
 ``scripts/check_pr_closing_intent.py`` so CI runs it dep-free.
@@ -38,10 +52,14 @@ import re
 import subprocess
 import sys
 
-#: A TESTS-READ note is recognised by this marker appearing in a PR comment.
-#: Matched case-insensitively and tolerating the ``TESTS-READY`` typo that
-#: several sessions produce, because the gate must not turn a typo into
-#: "no note landed" (that would fail the PR for the wrong reason).
+#: A TESTS-READ note's CLAIM line is recognised by this marker appearing in
+#: the PR **body** (#5138 — a check run lands on the sha the triggering event
+#: carries, and only ``pull_request: edited``, which fires on a body edit,
+#: carries the PR's own head; an ``issue_comment`` run carries the default
+#: branch's sha and its result can never reach the PR). Matched
+#: case-insensitively and tolerating the ``TESTS-READY`` typo that several
+#: sessions produce, because the gate must not turn a typo into "no note
+#: landed" (that would fail the PR for the wrong reason).
 _NOTE_MARKER = re.compile(r"TESTS-READ(?:Y)?", re.IGNORECASE)
 
 #: A 7-40 char hex run, the shape `git rev-parse` prints. Bounded on both sides
@@ -57,8 +75,8 @@ _SHA_FALSE_FRIENDS = frozenset({
 })
 
 
-def find_note_shas(comment_body: str, known_oids: "list[str]") -> "list[str]":
-    """The SHA-shaped tokens in *comment_body* that are actually commits of
+def find_note_shas(note_body: str, known_oids: "list[str]") -> "list[str]":
+    """The SHA-shaped tokens in *note_body* that are actually commits of
     this PR (prefix-matched against *known_oids*).
 
     Membership is the whole point, not a nicety: a bare hex pattern also
@@ -69,7 +87,7 @@ def find_note_shas(comment_body: str, known_oids: "list[str]") -> "list[str]":
     failed. A token that is not one of this PR's commits is not a claim about
     this PR's tree, so it is not a SHA for this gate's purposes."""
     out: "list[str]" = []
-    for cand in _SHA.findall(comment_body):
+    for cand in _SHA.findall(note_body):
         if cand.lower() in _SHA_FALSE_FRIENDS:
             continue
         if any(oid.startswith(cand) or cand.startswith(oid) for oid in known_oids if oid):
@@ -77,7 +95,7 @@ def find_note_shas(comment_body: str, known_oids: "list[str]") -> "list[str]":
     return out
 
 
-def tests_commits_after(sha: str, head: str, commits: "list[dict]") -> "list[dict]":
+def tests_commits_after(sha: str, commits: "list[dict]") -> "list[dict]":
     """The commits in *commits* that come strictly after *sha* and touch
     ``tests/``.
 
@@ -100,20 +118,38 @@ def tests_commits_after(sha: str, head: str, commits: "list[dict]") -> "list[dic
 def evaluate(pr: dict) -> "tuple[int, list[str]]":
     """``(exit_code, lines)`` for one PR payload.
 
-    *pr* carries ``files`` (list of path strings), ``comments`` (list of
-    ``{'body':}``), ``commits`` (oldest first, each ``{'oid':, '_tests_paths':}``)
-    and ``headRefOid``. Pure — the live and fixture paths both build this
-    shape first, so the decision is testable without GitHub."""
+    *pr* carries ``files`` (list of path strings), ``body`` (str — the PR
+    description, where the note's CLAIM line lives, #5138), ``comments``
+    (list of ``{'body':}`` — where the note's GROUNDS, the reviewer's
+    write-up, still lives, and read here only to produce a precise
+    diagnostic when a claim landed there instead), ``commits`` (oldest
+    first, each ``{'oid':, '_tests_paths':}``) and ``headRefOid``. Pure —
+    the live and fixture paths both build this shape first, so the decision
+    is testable without GitHub."""
     touched_tests = [p for p in pr.get("files", []) if p.startswith("tests/")]
     if not touched_tests:
         return 0, ["OK — this PR does not touch tests/; rule 8 does not apply."]
 
-    notes = [c for c in pr.get("comments", []) if _NOTE_MARKER.search(c.get("body", ""))]
+    body = pr.get("body", "") or ""
+    notes = [{"body": body}] if _NOTE_MARKER.search(body) else []
     if not notes:
+        comment_notes = [
+            c for c in pr.get("comments", []) if _NOTE_MARKER.search(c.get("body", ""))
+        ]
+        if comment_notes:
+            return 1, [
+                "RED — a TESTS-READ note landed in a comment, not the PR body.",
+                "  The claim line belongs in the body (e.g. `TESTS-READ (B) (head",
+                "  abc1234)`); the write-up behind it can stay a comment. Reason:",
+                "  a check run lands on the sha the triggering event carries, and",
+                "  only an event that carries THIS PR's head (a body edit) can put",
+                "  the result on this PR — a comment-triggered run's result lands",
+                "  on the default branch instead and never reaches this PR.",
+            ]
         return 1, [
             "RED — this PR touches tests/ but carries no TESTS-READ note.",
             "  House rule 8: a PR touching tests/ does not self-merge until a",
-            "  reviewer's TESTS-READ note lands on it.",
+            "  reviewer's TESTS-READ note lands on the PR body.",
             f"  tests/ files touched: {len(touched_tests)}",
         ]
 
@@ -131,14 +167,13 @@ def evaluate(pr: dict) -> "tuple[int, list[str]]":
     # whenever the PR has any, so including it separately buys nothing and
     # costs exactly this hole.
     oids = [c.get("oid", "") for c in commits]
-    head = pr.get("headRefOid", "")
     lines: "list[str]" = []
     for note in notes:
         shas = find_note_shas(note.get("body", ""), oids)
         if not shas:
             continue
         for sha in shas:
-            later = tests_commits_after(sha, head, commits)
+            later = tests_commits_after(sha, commits)
             if not later:
                 return 0, [
                     f"OK — a TESTS-READ note names {sha}, and no commit has",
@@ -158,7 +193,7 @@ def evaluate(pr: dict) -> "tuple[int, list[str]]":
     stale: "list[str]" = []
     for note in notes:
         for sha in find_note_shas(note.get("body", ""), oids):
-            for c in tests_commits_after(sha, head, commits):
+            for c in tests_commits_after(sha, commits):
                 stale.append(f"  {c.get('oid', '')[:9]} {c.get('messageHeadline', '')[:60]}")
     return 1, [
         "RED — every TESTS-READ note reads a tree that tests/ has moved past.",
@@ -213,7 +248,7 @@ def fetch_pr(number: int) -> dict:
     ).stdout.strip()
     raw = subprocess.run(
         ["gh", "pr", "view", str(number), "--json",
-         "files,comments,commits,headRefOid"],
+         "body,files,comments,commits,headRefOid"],
         capture_output=True, text=True, check=True,
     ).stdout
     data = json.loads(raw)
@@ -229,6 +264,7 @@ def fetch_pr(number: int) -> dict:
         for c in data.get("commits", [])
     ]
     return {
+        "body": data.get("body", ""),
         "files": [f.get("path", "") for f in data.get("files", [])],
         "comments": data.get("comments", []),
         "commits": commits,
@@ -248,7 +284,9 @@ def build_parser() -> argparse.ArgumentParser:
     group.add_argument(
         "--fixture", metavar="PATH",
         help=(
-            "JSON file with keys 'files' (paths), 'comments' ([{'body':}]), "
+            "JSON file with keys 'body' (the PR description, where the "
+            "note's claim line lives), 'files' (paths), 'comments' "
+            "([{'body':}], read only for the wrong-place diagnostic), "
             "'commits' (oldest first, [{'oid':, 'messageHeadline':, "
             "'_tests_paths':}]) and 'headRefOid'. Lets this run offline."
         ),

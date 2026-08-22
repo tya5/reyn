@@ -8,6 +8,16 @@ EXISTING; nothing looks at which tree the note is a claim about). The four
 2026-08-22 instances the script's own docstring lists are the population this
 was written against — the reject-side cases below are those instances' shape.
 
+#5138 moved the note's CLAIM line from a PR comment to the PR body (a check
+run lands on the sha its triggering event carries, and only a body edit
+carries the PR's own head — a comment-triggered run's result can never reach
+the PR; measured 4/4). The tests below cover the architect's four acceptance
+cases for that move: ① a note in the body naming this PR's head passes, ② a
+note that landed only in a comment is rejected with a message naming the body
+as where the claim belongs, ③ no note anywhere is rejected with the existing
+rule-8 message, ④ a body note naming a sha that later tests/-touching commits
+moved past is rejected and lists those commits.
+
 Payloads are built inline rather than fetched: `evaluate` is pure by design so
 the decision is testable without GitHub, and the fixtures here are the only
 callers that need to exist.
@@ -27,8 +37,11 @@ assert _SPEC.loader is not None
 _SPEC.loader.exec_module(_MOD)
 
 
-def _pr(*, files, comments, commits, head="ffffffff"):
-    return {"files": files, "comments": comments, "commits": commits, "headRefOid": head}
+def _pr(*, files, body="", comments=(), commits, head="ffffffff"):
+    return {
+        "files": files, "body": body, "comments": list(comments),
+        "commits": commits, "headRefOid": head,
+    }
 
 
 def _commit(oid, headline="", tests=()):
@@ -38,10 +51,11 @@ def _commit(oid, headline="", tests=()):
 # ── reject side ─────────────────────────────────────────────────────────────
 
 def test_note_without_a_sha_is_rejected():
-    """Tier 1: the #5096 shape — a note landed, but nothing in it says which tree."""
+    """Tier 1: the #5096 shape — a note landed in the body, but nothing in it
+    says which tree."""
     code, lines = _MOD.evaluate(_pr(
         files=["tests/scripts/test_check_doc_drift_5003.py"],
-        comments=[{"body": "**[docs-maintainer]** — TESTS-READ (B: independent). Passing."}],
+        body="**[docs-maintainer]** — TESTS-READ (B: independent). Passing.",
         commits=[_commit("aaaaaaaa", "test: add", ("tests/scripts/test_check_doc_drift_5003.py",))],
     ))
     assert code == 1
@@ -51,10 +65,10 @@ def test_note_without_a_sha_is_rejected():
 def test_note_whose_sha_predates_a_later_tests_commit_is_rejected():
     """Tier 1: the #5090 / #5095 shape — the note is real and names its head, and then
     `tests/` moved. The failure names the commits so the ask is a differential
-    top-up, not a re-read."""
+    top-up, not a re-read. (Architect's acceptance ④.)"""
     code, lines = _MOD.evaluate(_pr(
         files=["tests/scripts/test_check_doc_drift_5003.py"],
-        comments=[{"body": "TESTS-READ (B: independent) (head `a7c44eef6`)."}],
+        body="TESTS-READ (B: independent) (head `a7c44eef6`).",
         commits=[
             _commit("a7c44eef6", "docs: split the column"),
             _commit("9ef30f95b", "test(#4206): CI-gate the Reload column too", ("tests/repo/test_config_reference_declared_in_4206.py",)),
@@ -67,7 +81,8 @@ def test_note_whose_sha_predates_a_later_tests_commit_is_rejected():
 
 
 def test_tests_touching_pr_with_no_note_at_all_is_rejected():
-    """Tier 1: rule 8 itself — nothing has been checking it mechanically."""
+    """Tier 1: rule 8 itself — nothing has been checking it mechanically.
+    (Architect's acceptance ③.)"""
     code, lines = _MOD.evaluate(_pr(
         files=["tests/scripts/test_check_doc_drift_5003.py"],
         comments=[{"body": "LGTM"}],
@@ -77,14 +92,30 @@ def test_tests_touching_pr_with_no_note_at_all_is_rejected():
     assert "no TESTS-READ note" in "\n".join(lines)
 
 
+def test_note_only_in_a_comment_is_rejected_naming_the_body():
+    """Tier 1: #5138's own defect shape — a note posted as a comment (not the
+    body) is rejected, and the message names the body as where the claim
+    belongs, distinct from "no note anywhere". (Architect's acceptance ②.)"""
+    code, lines = _MOD.evaluate(_pr(
+        files=["tests/scripts/test_check_doc_drift_5003.py"],
+        comments=[{"body": "TESTS-READ (B) (head `bbbbbbbb`)"}],
+        commits=[_commit("bbbbbbbb", "test: add", ("tests/scripts/test_check_doc_drift_5003.py",))],
+    ))
+    assert code == 1
+    joined = "\n".join(lines)
+    assert "not the PR body" in joined
+    assert "belongs in the body" in joined
+
+
 # ── accept side ─────────────────────────────────────────────────────────────
 
 def test_note_naming_the_last_tests_commit_passes():
-    """Tier 1: the accept side — a note that names the newest tests/ commit is
-    a claim about the tree that is about to merge."""
+    """Tier 1: the accept side — a note in the body that names the newest
+    tests/ commit is a claim about the tree that is about to merge.
+    (Architect's acceptance ①.)"""
     code, _ = _MOD.evaluate(_pr(
         files=["tests/scripts/test_check_doc_drift_5003.py"],
-        comments=[{"body": "TESTS-READ (B) (head `bbbbbbbb`)"}],
+        body="TESTS-READ (B) (head `bbbbbbbb`)",
         commits=[
             _commit("aaaaaaaa", "test: add", ("tests/scripts/test_check_doc_drift_5003.py",)),
             _commit("bbbbbbbb", "test: fix", ("tests/scripts/test_check_doc_drift_5003.py",)),
@@ -99,7 +130,7 @@ def test_commits_after_the_note_that_do_not_touch_tests_pass():
     the note is a claim about `tests/`, so only `tests/` moving falsifies it."""
     code, _ = _MOD.evaluate(_pr(
         files=["tests/scripts/test_check_doc_drift_5003.py"],
-        comments=[{"body": "TESTS-READ (B) (head `aaaaaaaa`)"}],
+        body="TESTS-READ (B) (head `aaaaaaaa`)",
         commits=[
             _commit("aaaaaaaa", "test: add", ("tests/scripts/test_check_doc_drift_5003.py",)),
             _commit("cccccccc", "docs: reword"),
@@ -112,7 +143,7 @@ def test_pr_not_touching_tests_is_out_of_scope():
     """Tier 1: rule 8 binds only PRs that touch tests/ — a src- or docs-only PR
     must not be asked for a note it does not owe."""
     code, lines = _MOD.evaluate(_pr(
-        files=["src/reyn/foo.py"], comments=[], commits=[_commit("aaaaaaaa", "fix")],
+        files=["src/reyn/foo.py"], commits=[_commit("aaaaaaaa", "fix")],
     ))
     assert code == 0
     assert "does not touch tests/" in "\n".join(lines)
@@ -139,16 +170,22 @@ def test_an_issue_comment_id_is_not_read_as_a_sha():
     assert _MOD.find_note_shas("see issuecomment-5379476813", oids) == []
     code, lines = _MOD.evaluate(_pr(
         files=["tests/scripts/test_check_doc_drift_5003.py"],
-        comments=[{"body": "TESTS-READ (B) — details in issuecomment-5379476813"}],
+        body="TESTS-READ (B) — details in issuecomment-5379476813",
         commits=[
             _commit("a7c44eef6", "docs: split"),
             _commit("9ef30f95b", "test: gate the column", ("tests/repo/test_config_reference_declared_in_4206.py",)),
         ],
     ))
     assert code == 1, "a note citing only a comment id names no tree"
+    assert "names a commit of" in "\n".join(lines), (
+        "the rejection is for naming no commit, not for a missing note"
+    )
 
 
-def _runner(returncode: int, stdout: str = "", stderr: str = "", seen: "list | None" = None):
+def _runner(
+    returncode: int, stdout: str = "", stderr: str = "",
+    seen: "list | None" = None, kwargs_seen: "list | None" = None,
+):
     """A minimal stand-in for `subprocess.run`'s result, injected through
     `commit_touched_paths`'s own `run` seam. Not a mock of a cheaply
     constructible collaborator — the real one is an authenticated network
@@ -159,12 +196,19 @@ def _runner(returncode: int, stdout: str = "", stderr: str = "", seen: "list | N
     which left the seam's ONE mistakable part — the endpoint path and the
     ``--jq`` that shapes the reply — outside every test (architect, #5128 B):
     a `commit_touched_paths` that asked for the wrong URL would have passed
-    both cases below."""
+    both cases below.
+
+    *kwargs_seen* collects the keyword arguments the caller passed (e.g.
+    ``capture_output=``, ``text=``) — recorded, not silently swallowed, so a
+    caller that started passing `check=True` or a different `text=` would be
+    visible to a test rather than invisible to every test using this seam."""
     import subprocess as _sp
 
     def _run(cmd, **kwargs):
         if seen is not None:
             seen.append(list(cmd))
+        if kwargs_seen is not None:
+            kwargs_seen.append(dict(kwargs))
         return _sp.CompletedProcess(cmd, returncode, stdout=stdout, stderr=stderr)
 
     return _run
@@ -175,8 +219,10 @@ def test_the_seam_asks_github_for_that_commits_file_names() -> None:
     running the suite unless a test looks at it. Endpoint and `--jq` together
     decide whether the reply is a list of file names at all."""
     seen: list = []
+    kwargs_seen: list = []
     _MOD.commit_touched_paths(
-        "abc1234", "tya5/reyn", run=_runner(0, stdout="[]", seen=seen),
+        "abc1234", "tya5/reyn",
+        run=_runner(0, stdout="[]", seen=seen, kwargs_seen=kwargs_seen),
     )
     # `seen[0]` raises if the seam was never called at all, so the shape
     # assertions below cannot pass vacuously.
@@ -188,6 +234,12 @@ def test_the_seam_asks_github_for_that_commits_file_names() -> None:
     assert "[.files[].filename]" in argv, (
         f"asks for file NAMES — without this jq the reply is objects, not paths; got {argv!r}"
     )
+    # capture_output/text together decide whether stdout comes back as a
+    # decoded string this function can json.loads — a caller that dropped
+    # either would still issue the right argv and still break at runtime.
+    kwargs = kwargs_seen[0]
+    assert kwargs.get("capture_output") is True, f"needs captured stdout/stderr; got {kwargs!r}"
+    assert kwargs.get("text") is True, f"needs str, not bytes, output; got {kwargs!r}"
 
 
 def test_an_unreadable_commit_stops_the_run() -> None:
@@ -225,7 +277,7 @@ def test_a_note_quoting_the_head_with_no_commits_does_not_pass():
     read, which is the shape this gate exists to reject."""
     code, lines = _MOD.evaluate(_pr(
         files=["tests/scripts/test_check_doc_drift_5003.py"],
-        comments=[{"body": "TESTS-READ (B) (head `deadbee1`)"}],
+        body="TESTS-READ (B) (head `deadbee1`)",
         commits=[],
         head="deadbee1",
     ))
@@ -237,3 +289,18 @@ def test_the_head_alone_is_not_membership():
     """Tier 1: the same gap at the predicate level — a SHA that is only the
     head, with no commit carrying it, is not a commit of this PR."""
     assert _MOD.find_note_shas("head `deadbee1`", []) == []
+
+
+def test_tests_commits_after_takes_no_head_argument():
+    """Tier 1: `tests_commits_after` decides membership from *sha* against
+    *commits* alone — a `head` parameter that the decision never consulted
+    would claim to participate without doing so (the shape a signature
+    should not carry). Its 2-argument form is the contract."""
+    later = _MOD.tests_commits_after(
+        "aaaaaaaa",
+        [
+            _commit("aaaaaaaa", "test: add"),
+            _commit("bbbbbbbb", "test: more", ("tests/scripts/test_check_doc_drift_5003.py",)),
+        ],
+    )
+    assert [c["oid"] for c in later] == ["bbbbbbbb"]

@@ -300,18 +300,30 @@ These rules then keep multi-session work coherent:
 
    **Partially closed since (#5120, 2026-08-22):**
    `scripts/check_tests_read_names_its_tree.py`, wired as its own
-   `pull_request`/`issue_comment` CI workflow (repo-wide, not one train's
-   own script), now fails a `tests/`-touching PR that carries no
-   TESTS-READ note naming one of the PR's own commits, or whose only note
-   names a commit `tests/` has since moved past. This closes the
-   "never wired to that path at all" half — every PR now gets a CI check,
-   not just the ones a particular merge train happens to gate. It does
-   NOT close the "empty TESTS-READ satisfies it" half this section
-   illustrates: the gate reads only whether a note names a fresh commit,
-   never what the note SAYS — `**[X]** — TESTS-READ (B) (head \`abc1234\`)`
-   with no actual review content still passes. Only a human reading the
-   PR can still tell a real TESTS-READ from an empty one carrying the
-   right shape.
+   `pull_request` CI workflow (repo-wide, not one train's own script), now
+   fails a `tests/`-touching PR that carries no TESTS-READ note naming one
+   of the PR's own commits, or whose only note names a commit `tests/` has
+   since moved past. This closes the "never wired to that path at all"
+   half — every PR now gets a CI check, not just the ones a particular
+   merge train happens to gate. It does NOT close the "empty TESTS-READ
+   satisfies it" half this section illustrates: the gate reads only
+   whether a note names a fresh commit, never what the note SAYS —
+   `**[X]** — TESTS-READ (B) (head \`abc1234\`)` with no actual review
+   content still passes. Only a human reading the PR can still tell a real
+   TESTS-READ from an empty one carrying the right shape.
+
+   **The note's claim line moved to the PR body since (#5138,
+   2026-08-23):** the workflow's first cut also listened on
+   `issue_comment` so a posted note re-ran the gate, but a check run
+   attaches to the sha its triggering event carries, and `issue_comment`
+   carries the DEFAULT BRANCH's sha, not the PR's — such a run's result
+   could never land on the PR's own check rollup. Measured 4/4 (#5127,
+   #5128, #5132, #5136) stayed red until a human re-ran the workflow by
+   hand. The claim line (`TESTS-READ (B) (head \`abc1234\`)`) now has to
+   land in the PR **body** — `pull_request: edited` fires on a body edit
+   and carries the PR's own head, so the check lands where it needs to.
+   The reviewer's write-up behind the claim (six-questions answers, scope,
+   limits) still belongs in a comment; only the one-line claim relocated.
 
 ## Bundling and the owner's veto unit
 

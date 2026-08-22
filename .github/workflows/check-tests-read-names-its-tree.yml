@@ -13,16 +13,20 @@ name: TESTS-READ names its tree
 # `edited` is not a default pull_request event type. `synchronize` re-runs it
 # against the updated commit set, which is the whole point: a note that was
 # current becomes stale the moment tests/ moves.
+#
+# #5138: the note's CLAIM line lives in the PR BODY, not a comment, and this
+# workflow does NOT listen on `issue_comment` (it used to). GitHub attaches a
+# check run to the sha the triggering event carries; an `issue_comment` event
+# (fired by a posted comment) carries the DEFAULT BRANCH's sha, not the PR's
+# head, so a run it starts can never land on the PR's own check rollup —
+# measured, 4 of 4 PRs whose note arrived as a comment (#5127, #5128, #5132,
+# #5136) stayed red until a human re-ran the workflow by hand. `edited` fires
+# on a body edit and carries the PR's own head, which is what makes this work:
+# a reviewer who posts the claim line in the body gets a check that actually
+# reaches their PR.
 on:
   pull_request:
     types: [opened, edited, synchronize, reopened]
-  # The SUBJECT of this check is a PR comment, and `pull_request` does not
-  # fire when one is posted — measured on this workflow's own first PR
-  # (#5120): the reviewer's note landed, the check stayed red, and nothing
-  # would have re-run it short of another push. A gate that reads comments
-  # has to listen for them.
-  issue_comment:
-    types: [created, edited]
 
 permissions:
   contents: read
@@ -31,9 +35,6 @@ permissions:
 jobs:
   tests-read-names-its-tree:
     name: TESTS-READ note names the tree it read
-    # `issue_comment` fires for plain issues too; only pull requests have a
-    # `pull_request` key on the issue payload.
-    if: github.event_name == 'pull_request' || github.event.issue.pull_request
     runs-on: ubuntu-latest
     timeout-minutes: 5
 
@@ -62,7 +63,5 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          # `pull_request` events carry the number on .pull_request; an
-          # `issue_comment` on a PR carries it on .issue.
           python scripts/check_tests_read_names_its_tree.py \
-            --pr "${{ github.event.pull_request.number || github.event.issue.number }}"
+            --pr "${{ github.event.pull_request.number }}"
