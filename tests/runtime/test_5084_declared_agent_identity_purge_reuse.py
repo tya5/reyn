@@ -14,20 +14,18 @@ identity). Measured: both consumers stayed on the OLD (narrower) parent's
 answer after the parent was purged and re-declared with a wider/absent
 topology binding.
 
-Fix (architect ruling, issuecomment-5380583991 -> issuecomment-5380627931,
-2 corrections along the way — see ``AgentRegistry._profile_identity``'s own
-docstring for the full design history): freeze/compare the parent AGENT
-DIRECTORY's own ``(ino, st_birthtime)``, re-stat'd fresh at comparison time
-— not an in-memory counter, not the profile FILE's own stat (that broke a
-pre-existing test: a live role-edit legitimately re-saves ``profile.yaml``
-and must NOT count as a new identity — see
+Fix (architect ruling — see ``AgentRegistry.agent_directory_identity``'s own
+docstring for the full reasoning): freeze/compare the parent AGENT
+DIRECTORY's own ``(ino, st_birthtime)``, re-stat'd fresh at comparison
+time. A content-only edit (e.g. a live role edit, ``/agent edit role``)
+never changes the directory's own identity — only ``rmtree`` + recreate
+does — so a routine, legitimate edit does not count as a new identity (see
 ``test_2103_B_agent_spawn_lineage_cap_1953.py::test_b_narrow_parent_after_
-spawn_recaps_live``, which stays green through this fix, witness ⑤'). A
-directory's own inode CAN be reused after ``rmtree`` (unlike the earlier
-file-stat design's "safe forgery direction" argument, this is a real
-detection gap on ino collision) — ``AgentRegistry.remove(purge=True)``
-ACTIVELY invalidates any spawn-lineage edge naming the purged agent as
-parent (stamping an impossible sentinel) as the backstop for that.
+spawn_recaps_live``, witness ⑤', which stays green through this fix). A
+directory's own inode CAN be reused after ``rmtree``, so
+``AgentRegistry.remove(purge=True)`` ACTIVELY invalidates any spawn-lineage
+edge naming the purged agent as parent (stamping an impossible sentinel,
+``INVALIDATED_SPAWN_PARENT_IDENTITY``) as the backstop for that.
 
 Real ``AgentRegistry`` + on-disk topology/profile YAML (no mocks).
 """
@@ -96,20 +94,19 @@ async def test_purge_then_redeclare_via_api_rejects_stale_child_cap(tmp_path: Pa
     assert reg.is_spawn_descendant("child_a", "parent_a")
 
     reg.remove("parent_a", purge=True)
+    # #5084 witness: the ACTIVE-invalidation mechanism itself, via the
+    # PUBLIC read `frozen_spawn_parent_identity` — checked BEFORE the
+    # re-declare below, so this specifically pins "remove(purge=True)
+    # invalidates immediately" rather than "the re-declare happened to get
+    # a different stat" (the latter is what the end-to-end assertions
+    # further down would also pass under, even without this mechanism).
+    assert reg.frozen_spawn_parent_identity("child_a") == (
+        AgentRegistry.INVALIDATED_SPAWN_PARENT_IDENTITY
+    ), (
+        "remove(purge=True) must actively invalidate the edge immediately, "
+        "not rely solely on a later stat happening to differ"
+    )
     _declare_unrestricted(tmp_path, name="parent_a")  # same name, different identity
-    # ⚠️ Disclosed gap (test-review six-questions #4/#5): this end-to-end
-    # result does NOT independently distinguish "remove()'s active
-    # invalidation caught it" from "the re-declare merely happened to get a
-    # different (ino, birthtime), which the comparison-time stat alone would
-    # already have caught" — a real re-declare gets a genuinely different
-    # identity essentially always, so the active-invalidation mechanism
-    # itself (the backstop for the rare ino-reuse case) has no PUBLIC-API
-    # way to be exercised in isolation without forcing an actual inode
-    # collision, which is not portably reproducible in a test. Asserting on
-    # `_spawn_lineage` directly (a private attribute) to pin the mechanism
-    # was tried and correctly rejected by this repo's own no-private-state
-    # test policy — the mechanism's own code comment (registry.py's
-    # `remove`) is where that reasoning lives instead.
 
     after, _ = reg.resolved_profile_for("child_a")
     # FAIL CLOSED: must NOT silently inherit the new (unrestricted) parent's
@@ -172,7 +169,7 @@ async def test_strip_falsifier_reverting_to_the_profile_file_stat_breaks_live_re
     edit does not even change the FILE's own ``(ino, st_birthtime)``
     either, and a role-edit-only repro can't distinguish "stat the file"
     from "stat the directory" (confirmed by hand: reverting
-    ``_profile_identity`` to the file path and re-running JUST a role-edit
+    ``agent_directory_identity`` to the file path and re-running JUST a role-edit
     scenario leaves it green — not a real discriminator for THAT specific
     repro, which is why this test does not use one). The REAL reason to
     prefer the directory is forward-looking robustness: if ``save()`` is
@@ -187,7 +184,7 @@ async def test_strip_falsifier_reverting_to_the_profile_file_stat_breaks_live_re
     AgentProfile.new("parent_c").save(agent_dir)
     reg = _registry(tmp_path)
 
-    dir_identity_before = reg._profile_identity("parent_c")
+    dir_identity_before = reg.agent_directory_identity("parent_c")
     assert dir_identity_before is not None
     profile_path = agent_dir / "profile.yaml"
     file_ino_before = profile_path.stat().st_ino
@@ -205,7 +202,7 @@ async def test_strip_falsifier_reverting_to_the_profile_file_stat_breaks_live_re
         "sanity: the simulated atomic replace must actually mint a new file inode "
         "for this test to demonstrate anything"
     )
-    dir_identity_after = reg._profile_identity("parent_c")
+    dir_identity_after = reg.agent_directory_identity("parent_c")
     assert dir_identity_after == dir_identity_before, (
         "the agent DIRECTORY's own identity must survive an atomic replace of "
         "just profile.yaml — this is exactly what a file-stat design would get "

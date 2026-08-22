@@ -327,7 +327,7 @@ class AgentRegistry:
         # composes with #2161's absent-parent existence-check).
         #
         # #5084 (architect ruling, issuecomment-5380583991): the identity is now the
-        # parent profile.yaml's own ``(ino, ctime_ns)`` (``_profile_identity``), stat'd
+        # parent AGENT DIRECTORY's own ``(ino, st_birthtime)`` (``agent_directory_identity``), stat'd
         # fresh at spawn AND at every comparison — NOT the #2259 PR-2b in-memory
         # monotonic counter this used to be. That counter is populated ONLY by
         # create_agent, so a DECLARED (never-created) parent always read None — "no
@@ -343,7 +343,8 @@ class AgentRegistry:
         # last create_agent'd (role ①, "who was minted and in what WAL order" — used
         # for the truncation-surviving identity generation's own create_seq field).
         # #5084: this is NO LONGER what staleness comparison reads (role ②, "is this
-        # the same parent as before" moved to _profile_identity's filesystem stat —
+        # the same parent as before" moved to agent_directory_identity's filesystem stat (the
+        # directory, not profile.yaml -- see that method's own docstring) —
         # see _spawn_lineage's own comment above for why) — a declared-only agent has
         # no entry here at all, and that is fine now.
         self._agent_create_seq: "dict[str, int]" = {}
@@ -812,11 +813,14 @@ class AgentRegistry:
     #: ``stat()`` (inode numbers are non-negative) — the sentinel
     #: :meth:`remove` stamps onto an edge it actively invalidates at purge
     #: time, guaranteed to never equal a later re-stat regardless of ino
-    #: reuse (see :meth:`_profile_identity`'s own docstring for why active
-    #: invalidation is needed on top of the comparison-time stat).
-    _INVALIDATED_IDENTITY: "tuple[int, float | None]" = (-1, None)
+    #: reuse (see :meth:`agent_directory_identity`'s own docstring for why
+    #: active invalidation is needed on top of the comparison-time stat).
+    #: Public: a test/observer comparing against :meth:`frozen_spawn_
+    #: parent_identity`'s own return needs a real value to compare to,
+    #: not private state.
+    INVALIDATED_SPAWN_PARENT_IDENTITY: "tuple[int, float | None]" = (-1, None)
 
-    def _profile_identity(self, name: str) -> "tuple[int, float | None] | None":
+    def agent_directory_identity(self, name: str) -> "tuple[int, float | None] | None":
         """#5084: ``name``'s DURABLE identity — ``(st_ino, st_birthtime)`` of
         its AGENT DIRECTORY (``self._dir / name``, NOT ``profile.yaml``
         itself) — ``None`` when the directory is absent. ``st_birthtime`` is
@@ -829,65 +833,71 @@ class AgentRegistry:
         Replaces ``_agent_create_seq.get(name)`` as the value the ⊆-parent
         cap (``resolved_profile_for``) and the C1 forge-guard
         (``is_spawn_descendant``) freeze at spawn and compare at query time.
-        Two design corrections along the way (both architect co-vet, both
-        real regressions found empirically, not guessed):
 
-        1. **Not ``profile.created_at``** (issuecomment-5380583991,
-           retracting an earlier ruling) — an agent can write its own
-           ``profile.yaml`` (``_DEFAULT_WRITE_ZONES=(".reyn",)``), so
-           anything read FROM its content is forgeable, including a
-           self-declared ``created_at`` — a forger could re-declare with
-           the OLD timestamp and defeat detection entirely.
-        2. **Not the profile FILE's own stat** (issuecomment-5380627931,
-           retracting THIS docstring's own first revision) — ``ctime``
-           bumps on ANY write, including a legitimate content edit that
-           changes nothing about IDENTITY: ``/agent edit role`` (``slash/
-           agent.py``) re-``save()``s an existing agent's ``profile.yaml``,
-           and this session's own pre-existing test
-           (``test_2103_B_agent_spawn_lineage_cap_1953.py::test_b_narrow_
-           parent_after_spawn_recaps_live``) broke under the file-stat
-           version: narrowing a LIVE parent's topology binding (a routine,
-           legitimate operation, #2103 B's whole point — the cap is LIVE,
-           re-resolved every time, never a frozen snapshot) bumped the
-           profile file's ctime and made the child's edge read falsely
-           STALE, breaking the live re-cap. The DIRECTORY's own identity
-           (``self._dir / name``, not the file inside it) does not change
-           on a profile-content edit — only on rmtree + recreate (a
-           genuinely NEW directory, new inode) — so it distinguishes "the
-           same agent got edited" from "a different agent now has this
-           name" the way the earlier file-stat version could not.
+        **Why the DIRECTORY, not ``profile.yaml``'s own content or stat**:
+        an agent can write its own ``profile.yaml``
+        (``_DEFAULT_WRITE_ZONES=(".reyn",)``), so anything read FROM its
+        content (e.g. ``created_at``) is forgeable — a forger could
+        re-declare with an old timestamp and defeat detection entirely.
+        The FILE's own stat is not safe either: any content edit (e.g.
+        ``/agent edit role``, ``slash/agent.py``, re-``save()``ing an
+        existing agent's ``profile.yaml``) bumps its ``ctime``, which
+        would make a routine, legitimate edit read as a NEW identity —
+        breaking the ⊆-parent cap's own LIVE-re-resolution guarantee
+        (#2103 B: the parent's topology binding can be narrowed live, and
+        the child must re-cap to it, not go stale because an unrelated
+        field changed). The DIRECTORY's own identity does not change on a
+        profile-content edit — only on ``rmtree`` + recreate (a genuinely
+        NEW directory, new inode) — so it distinguishes "the same agent
+        got edited" from "a different agent now has this name".
 
         **Why the filesystem's own metadata at all, not counted-in-
         memory**: ``_agent_create_seq`` is populated ONLY by
         ``create_agent`` — a DECLARED agent (a hand-written/config-applied
         ``profile.yaml``, never routed through that method) never gets an
         entry, so the frozen ``spawn_parent_seq`` for a child spawned ⊆ a
-        declared parent was always ``None`` — "no signal, honour the
-        link" (the ORIGINAL, correct behaviour for a parent's first-ever
-        appearance) — but a LATER purge + same-name re-declare of that
-        parent produced a DIFFERENT identity with the SAME (missing)
-        signal, so nothing ever caught the reuse. Measured, live, no
-        rewind needed (tui-coder): both ``resolved_profile_for``'s ⊆-cap
-        AND ``is_spawn_descendant``'s forge-guard stayed on the OLD
-        (narrower) parent's answer after a purge + re-declare with a
-        WIDER (or no) topology binding.
+        declared parent is always ``None`` — "no signal, honour the link"
+        (the correct behaviour for a parent's first-ever appearance, but
+        also the answer after a purge + same-name re-declare produces a
+        genuinely DIFFERENT identity, since neither event changes what is
+        tracked in memory). Reading the directory's own durable stat
+        instead means EVERY existing declared agent has a real, comparable
+        identity regardless of how it was created.
 
         A directory's own ``ino`` CAN be reused by the OS after ``rmtree``
-        (unlike the earlier file-stat design's forgery-direction argument,
-        this is a genuine detection gap, not a forgeable-content one) —
-        which is why :meth:`remove`'s own ``purge=True`` path ACTIVELY
+        — which is why :meth:`remove`'s own ``purge=True`` path ACTIVELY
         invalidates edges pointing at the removed name (stamping
-        :data:`_INVALIDATED_IDENTITY`) rather than relying purely on a
-        later ino collision never happening; this comparison-time stat is
-        the primary mechanism (covers offline edits + a manual
-        out-of-band ``rmtree``, no entry point needed) and the active
-        invalidation is the backstop for the one thing a stat alone cannot
-        rule out."""
+        :data:`INVALIDATED_SPAWN_PARENT_IDENTITY`) rather than relying
+        purely on a later ino collision never happening; this comparison-
+        time stat is the primary mechanism (covers offline edits + a
+        manual out-of-band ``rmtree``, no entry point needed) and the
+        active invalidation is the backstop for the one thing a stat alone
+        cannot rule out.
+
+        See :meth:`frozen_spawn_parent_identity` for the PUBLIC read of
+        what a specific child's edge currently holds (vs. this method,
+        which reads a name's CURRENT identity)."""
         try:
             st = (self._dir / name).stat()
         except OSError:
             return None
         return (st.st_ino, getattr(st, "st_birthtime", None))
+
+    def frozen_spawn_parent_identity(self, child: str) -> "tuple[int, float | None] | None":
+        """#5084: the PUBLIC read of what ``child``'s spawn-lineage edge
+        currently holds as its frozen parent identity — ``None`` if
+        ``child`` has no spawn edge at all. Exposed so a test/observer can
+        confirm identity-tracking behaviour (a value frozen at spawn, or
+        actively invalidated by :meth:`remove`'s ``purge=True`` path —
+        compare against :data:`INVALIDATED_SPAWN_PARENT_IDENTITY`) without
+        reading ``_spawn_lineage`` directly.
+
+        This answers "what value is currently frozen", not "is the child
+        capped" — the canonical fail-closed interpretation of that value
+        is :meth:`resolved_profile_for`/:meth:`is_spawn_descendant`, not
+        this raw read."""
+        edge = self._spawn_lineage.get(child)
+        return edge[1] if edge is not None else None
 
     def _record_spawn_lineage(self, child: str, parent: str) -> None:
         """#2103 B: OS-set the spawn lineage ``child → parent``, set-once + immutable.
@@ -899,8 +909,8 @@ class AgentRegistry:
         (rewind-reconstruction may replay the same edge).
 
         #2103 C2b: the edge stores ``(parent_name, parent_identity)`` — the parent's
-        identity FROZEN at spawn time (#5084: ``_profile_identity(parent)`` — the
-        parent profile.yaml's own ``(ino, ctime_ns)``, never ``None`` for an
+        identity FROZEN at spawn time (#5084: ``agent_directory_identity(parent)`` — the
+        parent AGENT DIRECTORY's own ``(ino, st_birthtime)``, never ``None`` for an
         EXISTING parent regardless of whether it was ``create_agent``'d or merely
         declared — see that method's own docstring for the full "why"). None only
         when the parent's profile is itself absent at spawn time (should not
@@ -928,7 +938,7 @@ class AgentRegistry:
             seen.add(cursor)
             _edge = self._spawn_lineage.get(cursor)
             cursor = _edge[0] if _edge is not None else None
-        self._spawn_lineage[child] = (parent, self._profile_identity(parent))
+        self._spawn_lineage[child] = (parent, self.agent_directory_identity(parent))
 
     def is_spawn_descendant(self, agent: str, ancestor: str) -> bool:
         """#2103 C1: True iff ``agent`` is ``ancestor`` itself OR a transitive spawn-
@@ -945,7 +955,7 @@ class AgentRegistry:
 
         #2103 C2b (#2166): a STALE edge — its parent name was purged + REUSED, so the
         frozen parent identity no longer matches the CURRENT parent's identity (#5084:
-        ``_profile_identity(pname)`` — that profile.yaml's own ``(ino, ctime_ns)``, re-
+        ``agent_directory_identity(pname)`` — that agent DIRECTORY's own ``(ino, st_birthtime)``, re-
         stat'd fresh here, not an in-memory counter) — is a dangling link to a GONE
         identity, NOT a real ancestry. The walk stops at it (returns False), so a name-
         reused agent is rejected as a forged ancestor (the C1 forge-guard bypass tui
@@ -953,7 +963,7 @@ class AgentRegistry:
         no staleness signal at all, #5084, so this bypass was reachable without any WAL
         truncation). ``pseq is None`` only when the parent's profile was itself absent
         at spawn time (a defensive fallback, not a documented case since #5084 — see
-        ``_profile_identity``'s own docstring)."""
+        ``agent_directory_identity``'s own docstring)."""
         if agent == ancestor:
             return True
         cursor: str = agent
@@ -963,7 +973,7 @@ class AgentRegistry:
             if edge is None:
                 return False
             pname, pseq = edge
-            if pseq is not None and self._profile_identity(pname) != pseq:
+            if pseq is not None and self.agent_directory_identity(pname) != pseq:
                 return False  # stale (name-reused parent) → dangling, not a real link
             if pname == ancestor:
                 return True
@@ -990,7 +1000,7 @@ class AgentRegistry:
             if edge is None:
                 return depth
             pname, pseq = edge
-            if pseq is not None and self._profile_identity(pname) != pseq:
+            if pseq is not None and self.agent_directory_identity(pname) != pseq:
                 return depth  # stale edge → chain broken
             if pname in seen:
                 return depth
@@ -1003,7 +1013,7 @@ class AgentRegistry:
         parent NAME matches AND whose frozen identity matches ``parent``'s current
         identity (a stale name-reuse edge from an orphan of a PRIOR same-named parent is
         excluded; an untracked-parent edge is counted by name)."""
-        pid = self._profile_identity(parent)
+        pid = self.agent_directory_identity(parent)
         n = 0
         for _child, (pname, pseq) in self._spawn_lineage.items():
             if pname == parent and (pseq is None or pseq == pid):
@@ -1102,8 +1112,8 @@ class AgentRegistry:
         if parent is not None:
             self._record_spawn_lineage(name, parent)
         # #2103 C2b: the parent's identity FROZEN at this spawn — read back from the
-        # edge _record_spawn_lineage just stored (#5084: _profile_identity(parent),
-        # the parent profile.yaml's own (ino, ctime_ns) — NOT re-stat'd here, same
+        # edge _record_spawn_lineage just stored (#5084: agent_directory_identity(parent),
+        # the parent AGENT DIRECTORY's own (ino, st_birthtime) — NOT re-stat'd here, same
         # value the edge holds) — carried on agent_created so a rewind reconstructs
         # the edge with the parent-identity-AT-SPAWN (not the latest), so a rewind
         # across a purge+name-reuse does not resurrect this child under the reused
@@ -1203,7 +1213,7 @@ class AgentRegistry:
             # the identity is gone.
             for _child, (_pname, _pseq) in list(self._spawn_lineage.items()):
                 if _pname == name:
-                    self._spawn_lineage[_child] = (_pname, self._INVALIDATED_IDENTITY)
+                    self._spawn_lineage[_child] = (_pname, self.INVALIDATED_SPAWN_PARENT_IDENTITY)
             # PR12: a hard-deleted agent would leave dangling topology references,
             # so drop it from every topology (a team losing its leader / an
             # emptied topology is removed entirely). #2103 MUST-1: return the
@@ -2091,8 +2101,9 @@ class AgentRegistry:
           ``agent_created`` (the payload re-materialises the profile on a
           forward-checkout-past-drop; ``parent`` (#2103 B) rebuilds the spawn lineage
           as-of-cut so a re-materialised child regains its ⊆-parent cap — else
-          escalation-on-rewind; ``parent_seq`` (#2103 C2b, #5084: now ``(ino,
-          ctime_ns)``, not an in-memory counter) is the parent's identity
+          escalation-on-rewind; ``parent_seq`` (#2103 C2b, #5084: now the parent
+          AGENT DIRECTORY's own ``(ino, st_birthtime)``, not an in-memory
+          counter) is the parent's identity
           AT-SPAWN, so the rebuilt edge reads STALE if the parent name was later
           purged+reused → no resurrection of the child under the reused parent).
         - archived: name → latest ``agent_archived`` seq (the as-of-cut hide hinge).
@@ -2116,7 +2127,7 @@ class AgentRegistry:
                 _parent_seq = entry.get("parent_seq")  # #2103 C2b: parent identity-at-spawn
                 # #5084: WAL/JSON round-trips a tuple as a 2-element list —
                 # normalise back to a tuple so equality against a freshly
-                # stat'd (ino, ctime_ns) pair compares correctly (a list
+                # stat'd (ino, st_birthtime) pair compares correctly (a list
                 # would never equal a tuple).
                 _parent_seq_tuple = (
                     tuple(_parent_seq)
@@ -2312,7 +2323,8 @@ class AgentRegistry:
         """#2259 PR-1b: per-agent identity + frozen lineage as-of-cut from the truncation-
         surviving generations — the latest generation ≤ cut per agent. Returns
         ``{name: (create_seq, spawn_parent, spawn_parent_seq)}`` (#5084: ``spawn_parent_
-        seq`` is now ``(ino, ctime_ns)``, not an in-memory counter). The rewind rebuild
+        seq`` is now the agent DIRECTORY's own ``(ino, st_birthtime)``, not an in-memory
+        counter). The rewind rebuild
         prefers this (survives truncation) over the `agent_created` WAL scan.
 
         #2405: ``≤ cut`` here is INTENTIONAL — unlike topology/config (which change
@@ -4489,8 +4501,8 @@ class AgentRegistry:
         if edge is not None:
             parent, parent_seq = edge
             # #2103 C2b (#2166): the stored edge froze the parent's identity at spawn —
-            # #5084: _profile_identity(parent), the parent profile.yaml's own (ino,
-            # ctime_ns), re-stat'd here. If the parent name was purged + REUSED, the
+            # #5084: agent_directory_identity(parent), the parent AGENT DIRECTORY's own
+            # (ino, st_birthtime), re-stat'd here. If the parent name was purged + REUSED, the
             # current identity differs → the edge is STALE (it points to a GONE
             # identity, not the live same-named agent). Treat exactly like an absent
             # parent: FAIL CLOSED. (``parent_seq is None`` only when the parent's
@@ -4499,7 +4511,7 @@ class AgentRegistry:
             # below governs that, Q2 — no false-positive.)
             stale = (
                 parent_seq is not None
-                and self._profile_identity(parent) != parent_seq
+                and self.agent_directory_identity(parent) != parent_seq
             )
             if stale or not (self._dir / parent).is_dir():
                 # #2161 (absent parent) + #2166 (name-reused → stale identity): the capping

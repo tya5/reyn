@@ -55,7 +55,7 @@ async def test_rewind_across_name_reuse_does_not_resurrect_orphan(tmp_path):
     in the reused parent's subtree. RED if the rebuild keyed on name instead of identity.
 
     #5084: the frozen identity is now the parent AGENT DIRECTORY's own
-    ``(ino, birthtime)`` (``AgentRegistry._profile_identity``), re-stat'd fresh
+    ``(ino, birthtime)`` (``AgentRegistry.agent_directory_identity``), re-stat'd fresh
     at comparison time — not a WAL seq. So "identity-2" here is a REAL
     directory rmtree + recreate (a genuinely different inode), not a second
     hand-authored WAL number; ``is_spawn_descendant`` always reads the LIVE
@@ -65,7 +65,7 @@ async def test_rewind_across_name_reuse_does_not_resurrect_orphan(tmp_path):
     reg = _registry(tmp_path)
     log = reg.state_log
     # parent@identity-1 — the real directory identity at spawn time.
-    parent_identity_1 = reg._profile_identity("parent")
+    parent_identity_1 = reg.agent_directory_identity("parent")
     await log.append("agent_created", entity_kind="agent", name="parent", sid="",
                           parent=None, parent_seq=None, profile={"name": "parent", "role": ""})
     await log.append("agent_created", entity_kind="agent", name="child", sid="",
@@ -101,7 +101,7 @@ async def test_rewind_without_reuse_preserves_subtree_membership(tmp_path):
     _seed(tmp_path, "child")
     reg = _registry(tmp_path)
     log = reg.state_log
-    parent_identity = reg._profile_identity("parent")
+    parent_identity = reg.agent_directory_identity("parent")
     await log.append("agent_created", entity_kind="agent", name="parent", sid="",
                           parent=None, parent_seq=None, profile={"name": "parent", "role": ""})
     await log.append("agent_created", entity_kind="agent", name="child", sid="",
