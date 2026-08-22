@@ -270,6 +270,10 @@ async def test_attach_request_for_a_connection_with_no_open_sse_stream_leaves_no
     assert connection_current_agent(orphan_connection_id) is None
     assert connection_retarget_has_subscribers(orphan_connection_id) is False
 
+    # Repeats the POST 3x (not a wait-bound loop -- no await inside this
+    # loop blocks on anything the count is standing in for; each iteration
+    # is an independent, already-complete request, so CLAUDE.md's "no
+    # range(N) wrapping a wait" does not apply here).
     for _ in range(3):
         resp = await _post(
             app,
