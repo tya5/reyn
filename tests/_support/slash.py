@@ -41,7 +41,11 @@ if TYPE_CHECKING:
 class RecordingTransport(ClientTransportStub):
     """A real client transport that keeps what was displayed."""
 
-    def __init__(self, session: Any = None, *, attach_result: bool = True) -> None:
+    def __init__(
+        self, session: Any = None, *,
+        attach_result: bool = True,
+        switch_result: bool = True,
+    ) -> None:
         self._session = session
         self.displayed: "list[OutboxMessage]" = []
         # #4534 PR-2: what request_attach/request_session_switch were CALLED
@@ -61,6 +65,13 @@ class RecordingTransport(ClientTransportStub):
         # indistinguishable at THIS layer -- the server's typed-op handler
         # owns that distinction) needs a way to make this fake say False.
         self._attach_result = attach_result
+        # #5096 ②: same shape as _attach_result -- the switch sub of
+        # /session (locus="connection") no longer pre-validates the sid
+        # against a session's registry either, so a test exercising the
+        # False path (unknown sid, only distinguishable server-side, see
+        # session.py's own switch-branch docstring) needs a way to make
+        # this fake say False.
+        self._switch_result = switch_result
 
     # -- the seam under test ------------------------------------------------
 
@@ -73,7 +84,7 @@ class RecordingTransport(ClientTransportStub):
 
     async def request_session_switch(self, session_id: str) -> bool:
         self.session_switch_requests.append(session_id)
-        return True
+        return self._switch_result
 
     # -- readers a test asserts through -------------------------------------
 
@@ -165,6 +176,7 @@ def slash_ctx(
     session: Any = None, *,
     recorder: "list[OutboxMessage] | None" = None,
     attach_result: bool = True,
+    switch_result: bool = True,
 ) -> SlashContext:
     """The context a slash handler is handed, with a recording transport.
 
@@ -178,10 +190,11 @@ def slash_ctx(
     made are the ones still being made. Pass the SAME list each call — a handler
     driven twice (a two-step confirm) must accumulate, not restart.
 
-    ``attach_result`` (#5096 ②): what the transport's ``request_attach``
-    reports back — see ``RecordingTransport``'s own docstring.
+    ``attach_result`` / ``switch_result`` (#5096 ②): what the transport's
+    ``request_attach`` / ``request_session_switch`` report back — see
+    ``RecordingTransport``'s own docstring.
     """
-    transport = RecordingTransport(session, attach_result=attach_result)
+    transport = RecordingTransport(session, attach_result=attach_result, switch_result=switch_result)
     if recorder is not None:
         transport.displayed = recorder
     return SlashContext(transport=transport, session=session)

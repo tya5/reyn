@@ -162,6 +162,23 @@ async def session_cmd(ctx: "SlashContext", args: str) -> None:
         # request_session_switch's own typed-op handler (endpoint.py's
         # session_switch_request arm catches KeyError from
         # registry.attach_session -- equivalent coverage, one seam).
+        #
+        # ⚠️ Known degradation (lead-coder ruling, #5096 issuecomment-
+        # 5379839120): the pre-#5096 switch branch built RICHER guidance
+        # than this can today -- it read the registry directly to name
+        # WHY a sid was rejected (partial-prefix not supported, full
+        # name/ID required, the accepted forms). request_session_switch's
+        # typed op returns only a bool, no reason, so that guidance is
+        # gone until #5099 (request_session_list) ships: with a
+        # connection-locus-safe way to READ the registry's sid list, this
+        # branch can rebuild "no such session 'x'; sessions are: ..."
+        # itself, entirely client-side, before ever calling
+        # request_session_switch. Explicitly NOT fixed by widening
+        # request_session_switch's own return type tonight -- lead-coder:
+        # a bool-only typed op is the #4996/#5093 family shape, and
+        # shipping a NEW instance of it the same night two PRs closed
+        # that family doesn't hold up; the contract change is also wider
+        # than owner's live-blocked PR should carry right now.
         if not rest:
             await reply_error(ctx, _USAGE)
             return
@@ -169,15 +186,17 @@ async def session_cmd(ctx: "SlashContext", args: str) -> None:
         # seam (request_session_switch -> registry.attach_session), not the
         # retired __session_switch_request__ display-channel sentinel — see
         # ClientTransport.request_session_switch's own docstring for why.
-        # The reply is ordered AFTER the call and reads its return
-        # (lead-coder review, #4534 remainder): False is ambiguous by
-        # transport (AG-UI's is "unknown"; in-process's is definitive), so
-        # the reply on False says "could not confirm", never "failed".
+        # The reply is ordered AFTER the call and reads its return. False
+        # IS still routed as an error (not a system note, unlike /attach's
+        # own "could not confirm"): unlike /attach, the sid the USER TYPED
+        # is available here without touching ctx.session (it's `rest`,
+        # client-side input), so the error can still NAME the bad sid even
+        # though it cannot yet explain WHY (that's the degradation above).
         switched = await ctx.transport.request_session_switch(rest)
         if switched:
             await reply(ctx, f"switching to session {rest!r}")
         else:
-            await reply(ctx, f"could not confirm the switch to session {rest!r}")
+            await reply_error(ctx, f"could not confirm the switch to session {rest!r}")
         return
 
     reg = ctx.session._registry

@@ -18,14 +18,17 @@ from tests._support.slash import slash_ctx
 # ── shared stub ────────────────────────────────────────────────────────────
 
 
-def _ctx(session):
+def _ctx(session, *, switch_result: bool = True):
     """The context the production dispatch hands a slash handler.
 
     The transport IS this test's display recorder — ``reply()`` writes
     through the client seam now, so the list the assertions read is the
     one the transport fills.
+
+    ``switch_result`` (#5096 ②): what ``request_session_switch`` reports
+    back — see ``RecordingTransport``'s own docstring.
     """
-    return slash_ctx(session, recorder=session._outbox)
+    return slash_ctx(session, recorder=session._outbox, switch_result=switch_result)
 
 
 class _FakeSession:
@@ -248,11 +251,15 @@ async def test_session_switch_no_sid_replies_usage() -> None:
 
 @pytest.mark.asyncio
 async def test_session_switch_unknown_sid_replies_error() -> None:
-    """Tier 2: /session switch to unknown sid → error."""
+    """Tier 2: #5096 ② -- /session switch to an unknown sid still replies
+    an error naming the sid (see session.py's own switch-branch docstring
+    for the known, ruled-on degradation: WHY is deferred to #5099, but the
+    error kind and the user-typed sid both survive)."""
     reg = _FakeRegistry(get_session_result=None)
     session = _FakeSession(registry=reg)
-    await session_cmd(_ctx(session), "switch missing")  # type: ignore[arg-type]
+    await session_cmd(_ctx(session, switch_result=False), "switch missing")  # type: ignore[arg-type]
     assert session.error_text()
+    assert "missing" in session.error_text()
 
 
 @pytest.mark.asyncio
