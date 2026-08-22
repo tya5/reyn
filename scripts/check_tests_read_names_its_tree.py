@@ -170,7 +170,7 @@ def evaluate(pr: dict) -> "tuple[int, list[str]]":
     ]
 
 
-def commit_touched_paths(oid: str, repo: str) -> "list[str]":
+def commit_touched_paths(oid: str, repo: str, run=subprocess.run) -> "list[str]":
     """The paths *oid* touched, read from GitHub rather than a checkout.
 
     Deliberately NOT ``git show``: reading the tree would force this workflow
@@ -184,8 +184,15 @@ def commit_touched_paths(oid: str, repo: str) -> "list[str]":
 
     Raises ``SystemExit`` rather than returning empty on an API failure: an
     empty list reads as "touched no tests", a green computed from a commit
-    this check could not read, which is the shape it exists to reject."""
-    result = subprocess.run(
+    this check could not read, which is the shape it exists to reject.
+
+    *run* is a seam, not a mock hook: an authenticated network call is not a
+    "cheaply constructible real instance", so the suite injects a small runner
+    here rather than reaching a live API. Measured why that matters — with the
+    real one, the reject-side test passed in CI because `gh` had no token, not
+    because the commit was bogus: green for the wrong reason, in the test for
+    the very behaviour this function exists to provide."""
+    result = run(
         ["gh", "api", f"repos/{repo}/commits/{oid}", "--jq", "[.files[].filename]"],
         capture_output=True, text=True,
     )
