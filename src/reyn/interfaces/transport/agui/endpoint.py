@@ -123,8 +123,30 @@ class _ConnectionRetargetHub:
         for callback in list(self._listeners.get(connection_id, ())):
             callback(agent_name, sid)
 
+    def has_subscribers(self, connection_id: str) -> bool:
+        """#5119: the public read this class's own leak witness needs —
+        mirrors :meth:`SurfaceManager.has_surfaces`'s naming. Without
+        this, a test checking "did this connection's subscription leak"
+        would have no way to ask except reaching into :attr:`_listeners`
+        directly (CLAUDE.md's own testing policy: a test must not depend
+        on private state — this method is the public surface that
+        absence would otherwise BE the finding)."""
+        return bool(self._listeners.get(connection_id))
+
 
 _CONNECTION_RETARGET_HUB = _ConnectionRetargetHub()
+
+
+def connection_retarget_has_subscribers(connection_id: str) -> bool:
+    """#5119: the module-level public surface a test needs to ask "did this
+    connection's ``/attach`` retarget subscription leak" — without this, the
+    only way to ask is reaching into the module-private
+    :data:`_CONNECTION_RETARGET_HUB` global itself (single-underscore
+    module attribute; ``test_tier_audit.py``'s AST walk flags ANY attribute
+    access rooted at a private name, including a public method called on
+    it, so the hub instance being module-private was itself the gap — not
+    just :attr:`_ConnectionRetargetHub._listeners`)."""
+    return _CONNECTION_RETARGET_HUB.has_subscribers(connection_id)
 
 
 def _auth_context(request: Request) -> "AuthContext | None":
@@ -645,51 +667,72 @@ async def agui_events(request: Request, agent_name: str):
     _ensure_fail_close_driver(agent_name, manager, registry)
 
     source = _SessionFrameSource(session, registry=registry, agent_name=agent_name)
-    source.listen_for_retarget(connection_id)  # #5116: cross-agent /attach
-    source.start()
+    # #5119 (architect co-vet on #5118, issuecomment-5380501066, item ④):
+    # everything from here through the ``AgUiEmitter`` construction below
+    # runs BEFORE ``gen()``'s own ``try``/``finally`` (which is where
+    # ``source.close()`` normally lives) ever starts — Starlette does not
+    # begin pulling from ``gen()`` until AFTER this function returns. An
+    # exception raised anywhere in this window (``listen_for_retarget``'s
+    # own hub subscription, ``source.start()``'s background task, either
+    # backlog fetch, ``AgUiEmitter`` construction) used to leave
+    # ``source`` un-closed forever — no ``finally`` was ever reached to
+    # call it. For the registry-keyed listener
+    # (``registry.add_attach_listener``) this is bounded by agent count;
+    # for :data:`_CONNECTION_RETARGET_HUB` (#5116, keyed by
+    # ``connection_id``) it is NOT — a fresh key every connection, no
+    # natural ceiling. Wrapping this whole window in its own try/except
+    # closes the CLASS of hole (every exception site in this span), not
+    # just the one call ``listen_for_retarget`` that happened to be named
+    # in the finding.
+    try:
+        source.listen_for_retarget(connection_id)  # #5116: cross-agent /attach
+        source.start()
 
-    def _status_provider():
-        # #5094: read status off THIS connection's own resolved session
-        # rather than ``_snapshot(registry)``, which reads the registry's
-        # single GLOBAL attached-pointer — deliberately never set for an
-        # AG-UI connection (``ensure_running``'s own #3793-stage-2 docstring)
-        # — and so returned ``None`` wholesale on every first connect,
-        # regardless of what #5097/#5104 already fixed inside that dict. See
-        # ``_snapshot_for_session``'s own docstring for the full reasoning.
-        #
-        # #5116: reads ``source.current_session()`` FRESH on every call,
-        # never the ``session`` local captured above — that capture is
-        # frozen at connect time (this closure's own "derived state"
-        # antipattern, owner's framing) and never updates after a
-        # cross-agent ``/attach`` re-points ``source`` to a different
-        # session. ``source`` is the SINGLE per-connection owner of
-        # "which agent, which session" now (see its own class docstring);
-        # this is its one status-facing read path.
-        return _snapshot_for_session(registry, source.current_session())
+        def _status_provider():
+            # #5094: read status off THIS connection's own resolved session
+            # rather than ``_snapshot(registry)``, which reads the registry's
+            # single GLOBAL attached-pointer — deliberately never set for an
+            # AG-UI connection (``ensure_running``'s own #3793-stage-2 docstring)
+            # — and so returned ``None`` wholesale on every first connect,
+            # regardless of what #5097/#5104 already fixed inside that dict. See
+            # ``_snapshot_for_session``'s own docstring for the full reasoning.
+            #
+            # #5116: reads ``source.current_session()`` FRESH on every call,
+            # never the ``session`` local captured above — that capture is
+            # frozen at connect time (this closure's own "derived state"
+            # antipattern, owner's framing) and never updates after a
+            # cross-agent ``/attach`` re-points ``source`` to a different
+            # session. ``source`` is the SINGLE per-connection owner of
+            # "which agent, which session" now (see its own class docstring);
+            # this is its one status-facing read path.
+            return _snapshot_for_session(registry, source.current_session())
 
-    def _backlog_provider(name: str, sid: str) -> "list[Frame]":
-        return session_backlog_frames(registry, name, sid)
+        def _backlog_provider(name: str, sid: str) -> "list[Frame]":
+            return session_backlog_frames(registry, name, sid)
 
-    # #3328: the INITIAL connect's `MESSAGES_SNAPSHOT` was silently empty —
-    # `backlog_provider` (above) is only ever CALLED off a mid-stream
-    # `session_attached` sentinel (#3310 N3's switch re-fire); a first-time
-    # connect never triggers that sentinel, so `AgUiEmitter._backlog`
-    # defaulted to `[]` and a `--connect` to an agent with existing
-    # conversation history (produced locally, or by an earlier remote
-    # session, before this connection attached) rendered NO scrollback at
-    # all — contradicting this endpoint's own doc
-    # (`agui-transport.md` "## Reconnect": "On connect (or reconnect) the
-    # server replays... MESSAGES_SNAPSHOT... so a reconnecting client
-    # rebuilds its scrollback"). `attach(agent_name)` always focuses
-    # `_DEFAULT_SID` (registry.py's `attach`), so the initial backlog is that
-    # session's own history through the SAME projection the switch re-fire
-    # and the local restore-on-restart path both use — one SSoT, populated
-    # at both call sites now instead of only the second.
-    emitter = AgUiEmitter(
-        source.frames(), _status_provider,
-        backlog=session_backlog_frames(registry, agent_name, _DEFAULT_SID),
-        backlog_provider=_backlog_provider,
-    )
+        # #3328: the INITIAL connect's `MESSAGES_SNAPSHOT` was silently empty —
+        # `backlog_provider` (above) is only ever CALLED off a mid-stream
+        # `session_attached` sentinel (#3310 N3's switch re-fire); a first-time
+        # connect never triggers that sentinel, so `AgUiEmitter._backlog`
+        # defaulted to `[]` and a `--connect` to an agent with existing
+        # conversation history (produced locally, or by an earlier remote
+        # session, before this connection attached) rendered NO scrollback at
+        # all — contradicting this endpoint's own doc
+        # (`agui-transport.md` "## Reconnect": "On connect (or reconnect) the
+        # server replays... MESSAGES_SNAPSHOT... so a reconnecting client
+        # rebuilds its scrollback"). `attach(agent_name)` always focuses
+        # `_DEFAULT_SID` (registry.py's `attach`), so the initial backlog is that
+        # session's own history through the SAME projection the switch re-fire
+        # and the local restore-on-restart path both use — one SSoT, populated
+        # at both call sites now instead of only the second.
+        emitter = AgUiEmitter(
+            source.frames(), _status_provider,
+            backlog=session_backlog_frames(registry, agent_name, _DEFAULT_SID),
+            backlog_provider=_backlog_provider,
+        )
+    except Exception:
+        source.close()
+        raise
 
     async def gen():
         try:
