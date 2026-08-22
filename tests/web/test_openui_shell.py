@@ -24,9 +24,13 @@ if str(_WORKTREE_SRC) not in sys.path:
     sys.path.insert(0, str(_WORKTREE_SRC))
 
 # ---------------------------------------------------------------------------
-# Guard: skip all tests if fastapi / httpx (TestClient dep) not installed.
+# Guard: skip all tests if httpx (TestClient dep) not installed --
+# fastapi itself is no longer skip-guarded, see the #5058 comment below.
 # ---------------------------------------------------------------------------
-fastapi = pytest.importorskip("fastapi", reason="fastapi not installed (core dependency since #5051 -- stale environment)")
+# #5058: fastapi is a core dependency (#5051) -- an importorskip here
+# was a silent skip on a broken install, not a normal absent-extra path
+# (architect ruling, gh issue view 5058, generalized from the mcp class
+# to any core dep: "the correct behavior is red"). Removed.
 httpx = pytest.importorskip("httpx", reason="httpx not installed (needed by TestClient)")
 
 

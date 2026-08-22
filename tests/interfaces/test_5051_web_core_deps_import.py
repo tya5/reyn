@@ -3,16 +3,16 @@
 reyn's own packaging contract, not an OS invariant: ``fastapi`` / ``starlette``
 / ``uvicorn`` / ``websockets`` moved from the (now-empty back-compat)
 ``[web]`` extra into ``[project].dependencies`` (#5051, `pyproject.toml`).
-17 test files across ``tests/web``/``tests/interfaces`` guard their own
-FastAPI-backed fixtures with ``pytest.importorskip("fastapi", ...)`` — a
-DELIBERATE decision, kept unchanged by #5051 (a #5058 follow-up owns
-whether that stays ``importorskip`` or becomes a hard import), so a broken
-install (one of these 4 genuinely missing, which after #5051 means a stale
-environment rather than a normal configuration) silently skips all 17
-rather than failing loud (CLAUDE.md's own six-questions Q4: "passes green
-having never run"). This ONE test is the loud voice: if any of the 4 is
-missing, THIS test fails hard (no importorskip), while the other 16 stay
-harmlessly skipped.
+
+17 test files across ``tests/web``/``tests/interfaces`` used to guard their
+own FastAPI-backed fixtures with ``pytest.importorskip("fastapi", ...)`` —
+kept unchanged by #5051 itself, then removed by the #5058 follow-up this
+docstring named as owning the question (architect ruling, generalized from
+the same-shaped `mcp` case: a core dep's absence is a broken install, not a
+normal absent-extra path, so the correct behavior is a loud failure, not a
+silent skip). All 17 now hard-import ``fastapi`` — this test is no longer
+the lone loud voice for a silently-skipped population; it now just adds a
+fast, standalone Tier-1 check that does not require booting the web app.
 
 Deliberately NOT derived from ``pyproject.toml``'s dependency list: a
 package name does not always equal its import name (``uvicorn[standard]``
@@ -30,9 +30,7 @@ def test_web_core_deps_import_cleanly():
     """Tier 1: fastapi/starlette/uvicorn/websockets (the 4 packages #5051
     moved off the [web] extra into core) all import without raising, in
     THIS interpreter -- a broken/stale install (one genuinely missing or
-    incompatible) fails this test loud, rather than silently skipping (the
-    fate of the 17 importorskip-guarded files this test exists to give a
-    voice to)."""
+    incompatible) fails this test loud, rather than silently skipping."""
     import fastapi  # noqa: F401
     import starlette  # noqa: F401
     import uvicorn  # noqa: F401

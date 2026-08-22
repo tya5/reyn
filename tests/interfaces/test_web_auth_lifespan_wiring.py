@@ -15,13 +15,14 @@ from pathlib import Path
 
 import pytest
 
-from tests._support.minimal_reyn_yaml import MINIMAL_REYN_YAML
-
-pytest.importorskip("fastapi", reason="fastapi not installed (core dependency since #5051 -- stale environment)")
-
+# #5058: fastapi is a core dependency (#5051) -- an importorskip here
+# was a silent skip on a broken install, not a normal absent-extra path
+# (architect ruling, gh issue view 5058, generalized from the mcp class
+# to any core dep: "the correct behavior is red"). Removed.
 from fastapi import FastAPI  # noqa: E402
 
 from reyn.interfaces.web.auth import TOKEN_ENV_VAR, AuthContext  # noqa: E402
+from tests._support.minimal_reyn_yaml import MINIMAL_REYN_YAML
 
 
 def _write_reyn_yaml(directory: Path, content: str) -> None:
