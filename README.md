@@ -71,7 +71,7 @@ The trade-off is explicit: **predictability and auditability over maximum autono
 **Requirements:** Python 3.11+, a [LiteLLM](https://github.com/BerriAI/litellm)-compatible model endpoint.
 
 ```bash
-pip install -e .               # local install; web UI: pip install -e ".[web]"
+pip install -e .               # local install (web UI is a core dependency, #5051)
 export OPENAI_API_KEY=sk-...   # or the key for your LiteLLM proxy
 reyn init                      # creates reyn.yaml + .reyn/config.yaml
 reyn chat

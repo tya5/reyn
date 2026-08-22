@@ -33,7 +33,7 @@ if str(_WORKTREE_SRC) not in sys.path:
     sys.path.insert(0, str(_WORKTREE_SRC))
 
 # Skip the whole module if optional deps are missing.
-pytest.importorskip("fastapi", reason="fastapi not installed ([web] extra missing)")
+pytest.importorskip("fastapi", reason="fastapi not installed (core dependency since #5051 -- stale environment)")
 pytest.importorskip("httpx", reason="httpx not installed (needed by TestClient)")
 
 

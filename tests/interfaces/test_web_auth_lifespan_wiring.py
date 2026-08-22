@@ -17,7 +17,7 @@ import pytest
 
 from tests._support.minimal_reyn_yaml import MINIMAL_REYN_YAML
 
-pytest.importorskip("fastapi", reason="fastapi not installed ([web] extra missing)")
+pytest.importorskip("fastapi", reason="fastapi not installed (core dependency since #5051 -- stale environment)")
 
 from fastapi import FastAPI  # noqa: E402
 

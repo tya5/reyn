@@ -27,7 +27,7 @@ from tests._support.minimal_reyn_yaml import MINIMAL_REYN_YAML
 
 # Skip entire module if fastapi / httpx are not installed (same guard as
 # the other web tests).
-pytest.importorskip("fastapi", reason="fastapi not installed ([web] extra missing)")
+pytest.importorskip("fastapi", reason="fastapi not installed (core dependency since #5051 -- stale environment)")
 
 
 # ---------------------------------------------------------------------------

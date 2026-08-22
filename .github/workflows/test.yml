@@ -56,7 +56,10 @@ jobs:
         #     MCP client path runs on the `mcp` SDK directly (core dependency,
         #     `mcp>=1.24,<2.0`), not `fastmcp`. Kept in this list only so a stale
         #     `[mcp]` reference here doesn't start erroring.
-        #   web  — fastapi + uvicorn + websockets, used by tests/web/
+        #   web  — #5051: now a no-op back-compat alias (empty extra); fastapi +
+        #     starlette + uvicorn + websockets (used by tests/web/) are core
+        #     dependencies. Kept in this list only so a stale `[web]` reference
+        #     here doesn't start erroring.
         #   fs-watch — `watchdog` (#2608 H4), used by tests/runtime/test_2608_h4_fs_watcher.py
         #   observability — opentelemetry SDK, used by tests/observability/
         #   builtin-rag — sqlite-vec + apsw + chonkie (FP-0063 P2), used by

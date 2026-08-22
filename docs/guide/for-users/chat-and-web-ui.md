@@ -58,9 +58,10 @@ On the default loopback bind (`127.0.0.1`), reyn generates a launch token and pr
 ### Connect
 
 ```bash
-pip install reyn[web]   # once, for the httpx client dependency
 reyn chat --connect http://<host>:8080 --token <secret> [agent_name]
 ```
+
+`--connect`'s AG-UI client dependencies are core (#5051) — no separate install step.
 
 - `agent_name` is optional and picks which agent on the server you attach to (same as local `reyn chat <agent_name>`).
 - `--token` can be omitted if `REYN_WEB_AUTH_TOKEN` is already set in your environment.

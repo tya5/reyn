@@ -3,8 +3,7 @@
 FastAPI + AG-UI SSE ゲートウェイ (reyn.interfaces.web.server) を uvicorn で起動します。
 フロントエンドを http://localhost:<port> から利用できます。
 
-このコマンドは reyn の `[web]` オプション依存を必要とします:
-    python -m pip install -e '.[web]'
+#5051: fastapi/starlette/uvicorn/websockets はコア依存です — 別途インストール不要。
 """
 from __future__ import annotations
 
@@ -18,10 +17,7 @@ def register(sub) -> None:
     p = sub.add_parser(
         "web",
         help="Web UI ゲートウェイサーバを起動する",
-        description=(
-            "FastAPI + AG-UI SSE ゲートウェイを uvicorn で起動します。\n"
-            "インストール: python -m pip install -e '.[web]'"
-        ),
+        description="FastAPI + AG-UI SSE ゲートウェイを uvicorn で起動します。",
     )
     p.add_argument(
         "--host",
@@ -184,18 +180,22 @@ def _apply_cli_scoped_overrides(args: argparse.Namespace) -> None:
 
 
 def run(args: argparse.Namespace) -> None:
-    from reyn.interfaces.install_guard import missing_dep_message
+    # #5051: uvicorn/fastapi are now CORE dependencies (moved off the
+    # `[web]` extra) — missing_core_dep_message, not missing_dep_message,
+    # since a `-e '.[web]'` recommendation is now wrong (empty extra,
+    # installs nothing) and re-pins the editable install pointer besides.
+    from reyn.interfaces.install_guard import missing_core_dep_message
 
     try:
         import uvicorn
     except ImportError as e:
-        print(missing_dep_message(e, "uvicorn", "web"), file=sys.stderr)
+        print(missing_core_dep_message(e, "uvicorn", "[standard]>=0.27"), file=sys.stderr)
         sys.exit(1)
 
     try:
         import fastapi  # noqa: F401
     except ImportError as e:
-        print(missing_dep_message(e, "fastapi", "web"), file=sys.stderr)
+        print(missing_core_dep_message(e, "fastapi", ">=0.110,<0.137"), file=sys.stderr)
         sys.exit(1)
 
     # --default-design flag: propagate via env so web_config router can read it.

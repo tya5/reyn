@@ -29,11 +29,9 @@ reyn web [OPTIONS]
 
 ## Requirements
 
-```bash
-pip install "reyn[web]"
-```
-
-Exits 1 with an install hint if FastAPI or Uvicorn is missing.
+FastAPI/Uvicorn/Starlette/websockets are core dependencies (#5051) — no
+separate install step. Exits 1 with an install hint if one is missing
+anyway (a stale environment installed before #5051).
 
 ## Endpoints
 

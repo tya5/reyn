@@ -287,6 +287,22 @@ dependencies = [
     # all, matching flowview's own `examples/image.py` — "you don't need an
     # image library to put images in the feed").
     "pillow>=11.0",
+    # #5051: owner-directed move from the `[web]` extra to a REGULAR
+    # dependency (2026-08-22, `gh issue view 5051`). AG-UI is one of the two
+    # `ClientTransport` implementations (`InProcessTransport` /
+    # `AgUiTransport`) `reyn web`/`--connect` need — half the shipped
+    # transport design not working with the config as-shipped is exactly
+    # CLAUDE.md's second question ("is this visible with the shipped
+    # config?"). Measured lightweight (#5041 ⑦): 4 packages against 17 core
+    # deps, unlike `[voice]` (faster-whisper)/`[builtin-rag]` (sqlite-vec /
+    # apsw / chonkie)/`[sandbox-linux]` (landlock/pyseccomp, platform-gated),
+    # which correctly stay optional. Pins below are unchanged from the
+    # former `[web]` extra — see that block's own comment for the
+    # fastapi/starlette upper-bound rationale (#1621).
+    "fastapi>=0.110,<0.137",
+    "starlette>=1.0,<1.3",
+    "uvicorn[standard]>=0.27",
+    "websockets>=12",
 ]
 
 [project.urls]
@@ -322,19 +338,15 @@ docs = [
     "mkdocs-material>=9.5",
     "mkdocs-static-i18n>=1.2",
 ]
-web = [
-    # #1621: upper-bounds pin (owner steer) — CI's unpinned resolve pulled
-    # fastapi 0.137 + starlette 1.3.1, whose ``_IncludedRouter`` in ``app.routes``
-    # breaks the flat route-introspection the web tests assert on. Pin below 1.3
-    # (the introducing release; local 1.0.0 + the highest <1.3 are working) and
-    # cap fastapi <0.137 (the release that floors starlette to 1.3) so CI is
-    # reproducible. starlette pinned directly (it is a transitive of fastapi).
-    # forward-migration to the new route model is a separate optional follow-up.
-    "fastapi>=0.110,<0.137",
-    "starlette>=1.0,<1.3",
-    "uvicorn[standard]>=0.27",
-    "websockets>=12",
-]
+# `web` is now a no-op back-compat alias, same shape as `mcp` below: #5051
+# moved its 4 packages (fastapi/starlette/uvicorn/websockets, with the
+# #1621 upper-bound pins now living on the `dependencies` entries above)
+# into the REGULAR dependency set — `reyn web`/`--connect` is half of the
+# shipped `ClientTransport` design, not an optional add-on. Kept as an
+# empty extra so an existing `pip install -e ".[web]"` invocation (CI,
+# user docs, `reyn[web]`) keeps resolving instead of erroring on an
+# unknown extra.
+web = []
 # `mcp` is now a no-op back-compat alias: the MCP client path runs on the `mcp`
 # SDK directly (core `dependencies` above, `mcp>=2.0,<3.0` — #4412 bumped this
 # off the prior `>=1.24,<2.0` floor; the MCP client is always constructed by
