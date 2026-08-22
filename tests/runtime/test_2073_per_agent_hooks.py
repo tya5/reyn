@@ -180,3 +180,96 @@ async def test_bad_runtime_keeps_startup_and_per_agent(tmp_path: Path, monkeypat
     await session._hook_dispatcher.dispatch("turn_end", {})
     texts = await _drain_texts(session)
     assert texts == {"startup", "agent"}  # the good per-agent sibling is NOT dropped
+
+
+# ── the per-SESSION layer (#2285, the 4th/most-specific) — #5100 ───────────
+#
+# #5100 (docs-maintainer, filed off #5095's own TESTS-READ B): startup/
+# runtime/per-agent all have a malformed-layer resilience test above; the
+# per-session layer (`._read_per_session_hooks`, `<snapshot-dir>/hooks.yaml`)
+# had none, even though #5091/#5095 promoted it to the SOLE mechanism an
+# agent uses to participate in broker (a bad hooks.yaml there now means a
+# silent non-participation, not just a lost convenience override).
+
+
+@pytest.mark.asyncio
+async def test_bad_per_session_keeps_startup_and_runtime_and_per_agent(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    """Tier 2: same independent-degrade population as the 2 tests above, for
+    the 4th (per-session) layer — a malformed per-session ``hooks.yaml`` is
+    dropped while startup ∪ runtime ∪ per-agent are kept, and boot does not
+    crash. Same malformed shape (a hook with no scheme) as every sibling
+    test in this file, for population parity."""
+    monkeypatch.chdir(tmp_path)
+    _write_runtime(tmp_path, "runtime")
+    _write_per_agent(tmp_path, "agent")
+    # malformed per-session: a hook with no scheme → load_hooks raises. #2285:
+    # the per-session dir is `Path(session._snapshot_path).parent` —
+    # `_make_session` above points snapshot_path at `tmp_path / "snap.json"`,
+    # so the per-session hooks.yaml sits directly at `tmp_path` (no nested
+    # dir, unlike `.reyn/config` or `.reyn/agents/<name>`).
+    (tmp_path / "hooks.yaml").write_text("hooks:\n  - on: turn_end\n", encoding="utf-8")
+
+    session = _make_session(tmp_path, hooks_config=_STARTUP)  # must NOT raise
+    await session._hook_dispatcher.dispatch("turn_end", {})
+    texts = await _drain_texts(session)
+    assert texts == {"startup", "runtime", "agent"}  # the good siblings are NOT dropped
+
+
+@pytest.mark.asyncio
+async def test_bad_per_session_shape_error_is_warned(
+    tmp_path: Path, monkeypatch, caplog,
+) -> None:
+    """Tier 2: #5100 finding ② (lead-coder's own question: does the warning
+    actually fire for this layer?) — YES, for a SHAPE-malformed hook (no
+    scheme, the SAME malformed input every sibling test in this file uses):
+    ``_read_per_session_hooks`` only try/excepts the YAML *parse* step, so a
+    syntactically-valid-but-shape-invalid hook list passes through to
+    ``_build_hook_registry``'s own per-layer ``try: load_hooks(...) except
+    HookConfigError: logger.warning(...)`` — the SAME warning path runtime/
+    per-agent already exercise. Positive control for the NEXT test."""
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "hooks.yaml").write_text("hooks:\n  - on: turn_end\n", encoding="utf-8")
+
+    session = _make_session(tmp_path)  # no startup hooks — isolates this layer
+    with caplog.at_level("WARNING"):
+        session._build_hook_registry()
+    assert any(
+        "malformed per-session hooks layer" in r.message for r in caplog.records
+    ), "a shape-malformed per-session layer must warn, like its 3 siblings do"
+
+
+@pytest.mark.asyncio
+async def test_bad_per_session_yaml_syntax_error_is_silent_no_warning(
+    tmp_path: Path, monkeypatch, caplog,
+) -> None:
+    """Tier 2: #5100's actual finding — a genuine YAML SYNTAX error (not a
+    shape error) at the per-session layer degrades SILENTLY, unlike the
+    shape-malformed case the previous test confirms IS warned.
+    ``_read_per_session_hooks`` itself catches the ``yaml.safe_load``
+    failure and returns ``[]`` (docstring: "malformed → treat as absent")
+    BEFORE ``_build_hook_registry`` ever sees a non-empty layer to try/warn
+    over — so the shared warn-on-drop path this file's other malformed-
+    layer tests rely on is never reached for THIS sub-case. Functionally
+    correct (no crash, no bad hooks fire) but NOT distinguishable from "no
+    hooks.yaml was ever written" — the #5100 gap: an operator's typo'd
+    per-session file (the sole broker-participation mechanism, #5091) now
+    fails with zero signal anywhere."""
+    monkeypatch.chdir(tmp_path)
+    # a genuine YAML syntax error, not merely a missing scheme
+    (tmp_path / "hooks.yaml").write_text(
+        "hooks:\n  - on: turn_end\n  template_push: [unclosed\n", encoding="utf-8",
+    )
+
+    session = _make_session(tmp_path)  # no startup hooks — isolates this layer
+    with caplog.at_level("WARNING"):
+        registry = session._build_hook_registry()
+    assert registry.hooks_for("turn_end") == []  # correct functional degrade
+    assert caplog.records == [], (
+        "a YAML SYNTAX error at the per-session layer currently produces NO "
+        "warning anywhere (unlike a shape error, see the previous test) — "
+        "this is the #5100 gap, not a false claim; if this starts failing "
+        "because a warning was added, that is the fix landing, update this "
+        "test to assert the new warning text instead of deleting it"
+    )
