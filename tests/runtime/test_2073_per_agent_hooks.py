@@ -228,16 +228,24 @@ async def test_bad_per_session_shape_error_is_warned(
     syntactically-valid-but-shape-invalid hook list passes through to
     ``_build_hook_registry``'s own per-layer ``try: load_hooks(...) except
     HookConfigError: logger.warning(...)`` — the SAME warning path runtime/
-    per-agent already exercise. Positive control for the NEXT test."""
+    per-agent already exercise. Positive control for the NEXT test.
+
+    Construction itself (``Session.__init__``) already calls
+    ``_build_hook_registry`` once at boot — that IS the call under test
+    here (tui-coder review, issuecomment-5379991693): an earlier revision
+    also called ``_build_hook_registry()`` a second time inside
+    ``caplog.at_level``, which was redundant (``caplog`` accumulates
+    across the whole test; the boot-time warning was already recorded) —
+    removing that second call still passes, because boot already warned.
+    Asserting on construction directly names what is actually exercised."""
     monkeypatch.chdir(tmp_path)
     (tmp_path / "hooks.yaml").write_text("hooks:\n  - on: turn_end\n", encoding="utf-8")
 
-    session = _make_session(tmp_path)  # no startup hooks — isolates this layer
     with caplog.at_level("WARNING"):
-        session._build_hook_registry()
+        _make_session(tmp_path)  # no startup hooks — isolates this layer; warns at boot
     assert any(
         "malformed per-session hooks layer" in r.message for r in caplog.records
-    ), "a shape-malformed per-session layer must warn, like its 3 siblings do"
+    ), "a shape-malformed per-session layer must warn at boot, like its 3 siblings do"
 
 
 @pytest.mark.asyncio
