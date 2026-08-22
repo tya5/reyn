@@ -39,6 +39,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import uuid
+from typing import Callable
 
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, StreamingResponse
@@ -80,6 +81,50 @@ AGUI_OPERATOR_CHANNEL = DEFAULT_CHAT_CHANNEL_ID
 
 # Per-agent fail-close driver tasks (module-global; single-writer server).
 _DRIVERS: "dict[str, asyncio.Task]" = {}
+
+
+class _ConnectionRetargetHub:
+    """#5116: cross-agent ``/attach`` notification, keyed by ``connection_id``.
+
+    ``registry.add_attach_listener`` (agent-keyed) answers "who is watching
+    agent X's session focus" — correct for a session-switch WITHIN the
+    agent a connection already watches, structurally unable to answer "tell
+    connection C it should now watch a DIFFERENT agent" (nobody is ever
+    listening under the target's own key, since no connection is open to
+    that URL). This hub answers the second question, the ``attach_request``
+    POST handler (a DIFFERENT HTTP request than the SSE stream it targets,
+    correlated only by ``connection_id``) is the one caller with both the
+    connection id AND the resolved attach target, so it is the one caller
+    of :meth:`notify`. Module-global (single-writer server, mirrors
+    ``_DRIVERS`` above) — one hub for the whole process, not one per
+    connection (a connection does not know its own id exists as a
+    notification key until it subscribes)."""
+
+    def __init__(self) -> None:
+        self._listeners: "dict[str, list[Callable[[str, str], None]]]" = {}
+
+    def subscribe(self, connection_id: str, callback: "Callable[[str, str], None]") -> None:
+        self._listeners.setdefault(connection_id, []).append(callback)
+
+    def unsubscribe(self, connection_id: str, callback: "Callable[[str, str], None]") -> None:
+        listeners = self._listeners.get(connection_id)
+        if not listeners or callback not in listeners:
+            return
+        listeners.remove(callback)
+        if not listeners:
+            del self._listeners[connection_id]
+
+    def notify(self, connection_id: str, agent_name: str, sid: str) -> None:
+        """Fired synchronously (mirrors ``registry._announce_session_
+        attached``'s own no-await critical section) — a listener must not
+        block or await; its job is to hand the payload to a side-channel a
+        consumer task drains, the SAME idiom ``add_attach_listener``'s own
+        docstring states."""
+        for callback in list(self._listeners.get(connection_id, ())):
+            callback(agent_name, sid)
+
+
+_CONNECTION_RETARGET_HUB = _ConnectionRetargetHub()
 
 
 def _auth_context(request: Request) -> "AuthContext | None":
@@ -262,7 +307,35 @@ class _SessionFrameSource:
     previously-delivered frame or message ids consulted before forwarding.
     A future change that needs to track "have I already sent X" to this
     connection is out of scope for this mechanism; do not bolt it on here —
-    it would reintroduce exactly the state class this design avoided."""
+    it would reintroduce exactly the state class this design avoided.
+
+    ★#5116 (architect ruling: "lifting state up" / "unidirectional" / "no
+    derived state" — the react vocabulary the owner asked for). This
+    instance is now THE single per-connection owner of "which agent, which
+    session" — :attr:`_agent_name`/:attr:`_session` are the ONE copy;
+    :meth:`current_agent_name`/:meth:`current_session` are the ONE read
+    path (``_status_provider`` calls these fresh each time now, never
+    closes over a session variable frozen at connect time — the "derived
+    state" antipattern the owner named). The announce this class emits
+    NAMES WHATEVER IT WAS JUST TOLD TO BECOME (never ``self._agent_name``
+    read-then-written-back — see :meth:`_drain_one_session`'s own comment
+    at the fix site) — unidirectional: told, not self-referencing.
+
+    **What #5116 actually closes**: :meth:`add_attach_listener` is keyed
+    by AGENT NAME — correct for "a session-switch within the SAME agent
+    this connection is already watching" (the mechanism above), but
+    structurally unable to notify a connection about attaching to a
+    DIFFERENT agent (nobody is ever listening under the NEW agent's own
+    key, because no connection is open to ITS url). A connection's own
+    cross-agent ``/attach`` is therefore signalled through a SEPARATE,
+    connection-id-keyed channel (:data:`_CONNECTION_RETARGET_HUB`, module
+    level below) — the ``attach_request`` handler (a DIFFERENT HTTP
+    request than this SSE stream, correlated only by ``connection_id``)
+    notifies it directly. Both channels feed the SAME
+    :attr:`_switch_signal` queue and the SAME re-point/announce code in
+    :meth:`_drain_one_session` — one mechanism, two ways to trigger it,
+    not two mechanisms (#5116's own "stop duplicating" ruling, applied
+    here rather than inventing a parallel re-point implementation)."""
 
     def __init__(self, session, *, registry=None, agent_name: str = "") -> None:
         self._registry = registry
@@ -273,15 +346,50 @@ class _SessionFrameSource:
         self._sub = None
         self._session = None
         self._events = None
-        # #4534 PR-2b: the switch-follow signal — registry.add_attach_listener
-        # feeds this from its own synchronous critical section;
-        # _drain_one_session dual-waits it alongside sub.get().
-        self._switch_signal: "asyncio.Queue[str]" = asyncio.Queue()
+        # #4534 PR-2b (widened #5116): the switch-follow signal — now
+        # carries (agent_name, sid) rather than a bare sid, so the SAME
+        # queue/dual-wait/re-point code in _drain_one_session serves BOTH
+        # a same-agent session-switch (agent_name == self._agent_name,
+        # registry.add_attach_listener feeds it) AND a cross-agent
+        # /attach (agent_name == the NEW target, _CONNECTION_RETARGET_HUB
+        # feeds it) — one mechanism, two producers, not two mechanisms.
+        self._switch_signal: "asyncio.Queue[tuple[str, str]]" = asyncio.Queue()
         self._listening_for = ""
+        self._connection_id = ""
         self._bind(session)
         if self._registry is not None and self._agent_name:
             self._registry.add_attach_listener(self._agent_name, self._on_attach_announced)
             self._listening_for = self._agent_name
+
+    def current_agent_name(self) -> str:
+        """#5116: the ONE read path for "which agent is this connection
+        looking at right now" — ``_status_provider`` calls this fresh on
+        every status read instead of closing over a name frozen at
+        connect time (the "derived state" antipattern, owner's own
+        framing)."""
+        return self._agent_name
+
+    def current_session(self):
+        """#5116: the ONE read path for "which session is this connection
+        looking at right now" — see :meth:`current_agent_name`."""
+        return self._session
+
+    def listen_for_retarget(self, connection_id: str) -> None:
+        """#5116: subscribe this source to :data:`_CONNECTION_RETARGET_HUB`
+        under ``connection_id`` — the cross-agent counterpart to
+        ``registry.add_attach_listener`` above (agent-keyed, same-agent
+        session-switch only). Called once, right after construction, by
+        the route handler that already knows this connection's id."""
+        self._connection_id = connection_id
+        _CONNECTION_RETARGET_HUB.subscribe(connection_id, self._on_retarget_announced)
+
+    def _on_retarget_announced(self, agent_name: str, sid: str) -> None:
+        """Hub callback (#5116) — synchronous, no ``await``: mirrors
+        :meth:`_on_attach_announced`'s own idiom, feeding the SAME queue
+        with an explicit ``agent_name`` (the cross-agent case cannot
+        assume ``self._agent_name`` — that is precisely the value being
+        replaced)."""
+        self._switch_signal.put_nowait((agent_name, sid))
 
     def _bind(self, session) -> None:
         """Point this source at ``session``'s own audit-event stream (the
@@ -307,9 +415,12 @@ class _SessionFrameSource:
 
     def _on_attach_announced(self, sid: str) -> None:
         """Registry callback (#4534 PR-2b) — synchronous, no ``await``: hand
-        the sid to :attr:`_switch_signal` and return, mirroring
-        :meth:`_on_audit_event`'s own idiom."""
-        self._switch_signal.put_nowait(sid)
+        ``(self._agent_name, sid)`` to :attr:`_switch_signal` and return,
+        mirroring :meth:`_on_audit_event`'s own idiom. Same-agent only (the
+        registry keys this listener by ``self._agent_name`` itself, #5116's
+        own finding) — the cross-agent counterpart is
+        :meth:`_on_retarget_announced`."""
+        self._switch_signal.put_nowait((self._agent_name, sid))
 
     def start(self) -> None:
         self._drain_task = asyncio.create_task(self._drain_outbox())
@@ -318,19 +429,25 @@ class _SessionFrameSource:
         self._unbind(self._session)
         if self._registry is not None and self._listening_for:
             self._registry.remove_attach_listener(self._listening_for, self._on_attach_announced)
+        if self._connection_id:
+            _CONNECTION_RETARGET_HUB.unsubscribe(self._connection_id, self._on_retarget_announced)
         if self._sub is not None:
             self._sub.close()
         if self._drain_task is not None:
             self._drain_task.cancel()
 
-    def _resolve_switch_target(self, sid: str):
+    def _resolve_switch_target(self, agent_name: str, sid: str):
         """The target session for a switch-follow signal, or ``None`` when
         this source is registry-less (no switch-follow), the sid names no
-        loaded session, or the sid is already the current one (a no-op
-        switch)."""
+        loaded session, or the target is already the current one (a no-op
+        switch/retarget). #5116: ``agent_name`` is now an explicit
+        parameter (the signal's own payload) rather than always
+        ``self._agent_name`` — a cross-agent retarget names a DIFFERENT
+        agent than this source is currently bound to; a same-agent
+        session-switch happens to pass the same name it already had."""
         if self._registry is None or not sid:
             return None
-        target = self._registry.get_session(self._agent_name, sid)
+        target = self._registry.get_session(agent_name, sid)
         if target is None or target is self._session:
             return None
         return target
@@ -389,16 +506,45 @@ class _SessionFrameSource:
                     {get_task, switch_task}, return_when=asyncio.FIRST_COMPLETED,
                 )
                 if switch_task in done:
-                    sid = switch_task.result()
+                    signal_agent_name, sid = switch_task.result()
                     switch_task = None
-                    target = self._resolve_switch_target(sid)
+                    target = self._resolve_switch_target(signal_agent_name, sid)
                     if target is not None:
                         if get_task is not None and not get_task.done():
                             get_task.cancel()
                         get_task = None
+                        old_agent_name = self._agent_name
                         old_session = self._session
                         self._unbind(old_session)
                         sub.close()
+                        # #5116: THIS is the fix site. self._agent_name is
+                        # updated to the signal's own target BEFORE the
+                        # announce is built — "told, not self-referencing"
+                        # (architect's "unidirectional" ruling). The
+                        # pre-#5116 bug: this line did not exist, so a
+                        # cross-agent retarget's announce below still read
+                        # self._agent_name == the OLD (connection-opening)
+                        # agent, teaching the client to re-hydrate as the
+                        # wrong agent even though the session object itself
+                        # (``target``) was already correctly resolved.
+                        self._agent_name = signal_agent_name
+                        # Same-agent-switch-follow re-registration: if the
+                        # agent changed, this connection must now listen
+                        # for FUTURE same-agent switches under the NEW key
+                        # (the OLD key's listener would fire on the wrong
+                        # agent's switches from here on).
+                        if (
+                            self._registry is not None
+                            and old_agent_name != signal_agent_name
+                            and self._listening_for
+                        ):
+                            self._registry.remove_attach_listener(
+                                self._listening_for, self._on_attach_announced,
+                            )
+                            self._registry.add_attach_listener(
+                                signal_agent_name, self._on_attach_announced,
+                            )
+                            self._listening_for = signal_agent_name
                         # ★Barrier ordering (co-vet #3310 N3 (a)): the announce
                         # is enqueued BEFORE ``_bind(target)`` makes the new
                         # session's audit-event subscriber live. ``_bind`` calls
@@ -414,9 +560,11 @@ class _SessionFrameSource:
                         # (the SAME barrier property N1 built for
                         # ``AgentRegistry.attach``/``attach_session``, applied
                         # here to the ORDER of two synchronous calls rather than
-                        # a flip + a queue put). The announce payload depends
-                        # only on ``self._agent_name``/``sid``, never on
-                        # ``_bind``'s result, so reordering is free.
+                        # a flip + a queue put). The announce payload now reads
+                        # ``self._agent_name`` AFTER the update two lines above
+                        # — #5116: this is the ONE place the connection's own
+                        # "which agent" fact is written, and every other reader
+                        # (announce, status, frame source) derives from it.
                         self._q.put_nowait(
                             EventFrame(
                                 Event(
@@ -427,7 +575,7 @@ class _SessionFrameSource:
                         )
                         self._bind(target)
                         return True
-                    continue  # unresolved / no-op sid: drop silently, keep draining
+                    continue  # unresolved / no-op signal: drop silently, keep draining
                 if get_task in done:
                     msg = get_task.result()
                     get_task = None
@@ -497,18 +645,27 @@ async def agui_events(request: Request, agent_name: str):
     _ensure_fail_close_driver(agent_name, manager, registry)
 
     source = _SessionFrameSource(session, registry=registry, agent_name=agent_name)
+    source.listen_for_retarget(connection_id)  # #5116: cross-agent /attach
     source.start()
 
     def _status_provider():
-        # #5094: read status off THIS connection's own already-resolved
-        # ``session`` (bound above via ``registry.ensure_running(agent_name)``)
+        # #5094: read status off THIS connection's own resolved session
         # rather than ``_snapshot(registry)``, which reads the registry's
         # single GLOBAL attached-pointer — deliberately never set for an
         # AG-UI connection (``ensure_running``'s own #3793-stage-2 docstring)
         # — and so returned ``None`` wholesale on every first connect,
         # regardless of what #5097/#5104 already fixed inside that dict. See
         # ``_snapshot_for_session``'s own docstring for the full reasoning.
-        return _snapshot_for_session(registry, session)
+        #
+        # #5116: reads ``source.current_session()`` FRESH on every call,
+        # never the ``session`` local captured above — that capture is
+        # frozen at connect time (this closure's own "derived state"
+        # antipattern, owner's framing) and never updates after a
+        # cross-agent ``/attach`` re-points ``source`` to a different
+        # session. ``source`` is the SINGLE per-connection owner of
+        # "which agent, which session" now (see its own class docstring);
+        # this is its one status-facing read path.
+        return _snapshot_for_session(registry, source.current_session())
 
     def _backlog_provider(name: str, sid: str) -> "list[Frame]":
         return session_backlog_frames(registry, name, sid)
@@ -761,8 +918,37 @@ async def agui_submit(request: Request, agent_name: str):
         target = str(payload.get("agent_name", "")).strip()
         attached = False
         if target and registry.exists(target):
-            await registry.attach(target)
+            target_session = await registry.attach(target)
             attached = True
+            # #5116 (architect co-vet, issuecomment-5380501066): this POST
+            # is a DIFFERENT HTTP request than the SSE stream it needs to
+            # retarget — correlated only by ``connection_id`` (the
+            # caller's OWN connection, already resolved above).
+            # ``registry.attach`` moved the GLOBAL pointer (a separate
+            # fact, #3793 stage 2); this notifies THIS connection's own
+            # per-connection owner (``_SessionFrameSource``) that ITS OWN
+            # "which agent, which session" fact changed too — the fix for
+            # the cross-agent case ``registry.add_attach_listener`` cannot
+            # reach (see ``_ConnectionRetargetHub``'s own docstring).
+            #
+            # ``target_session.session_id`` — NOT a re-typed ``_DEFAULT_
+            # SID`` literal (this PR's own first revision did exactly
+            # that, and it was the SAME "same fact typed twice" class
+            # #5116 exists to close: today `attach()` always focuses
+            # `_DEFAULT_SID`, so the two literals happened to agree, but
+            # nothing enforced it — a future change to attach()'s own
+            # focus logic would silently desync them). Reading it off the
+            # session `attach()` itself just returned is the single
+            # source of truth, not a second guess at what attach() did.
+            # `registry.attached_sid()`/`registry.attached_name` are
+            # NEVER the right read here either — those are the GLOBAL,
+            # single-connection-focus fact #3793 stage 2 deliberately
+            # keeps separate from any one AG-UI connection's own state,
+            # and reading it would race a DIFFERENT connection's own
+            # concurrent attach.
+            _CONNECTION_RETARGET_HUB.notify(
+                connection_id, target, target_session.session_id,
+            )
         return JSONResponse({"status": "ok", "attached": attached})
     elif ptype == "session_switch_request":
         # #4534 PR-1: mirrors attach_request above. The
