@@ -36,13 +36,13 @@ from textual_flowview import FlowView
 from reyn.interfaces.inline.textual_chat import Composer, TextualChatApp
 from reyn.interfaces.inline.textual_chat.activity_row import ActivityRow
 from reyn.interfaces.inline.textual_chat.search_bar import SearchBar
-from reyn.interfaces.transport.client_transport import ClientTransport
+from reyn.interfaces.transport.client_transport import ClientTransportStub
 from reyn.interfaces.transport.frames import EventFrame
 from reyn.runtime.outbox import OutboxMessage
 from reyn.schemas.models import Event
 
 
-class _Transport(ClientTransport):
+class _Transport(ClientTransportStub):
     def __init__(self) -> None:
         self._queue: "asyncio.Queue[object]" = asyncio.Queue()
 

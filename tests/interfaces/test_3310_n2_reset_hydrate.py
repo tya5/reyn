@@ -65,7 +65,7 @@ from reyn.interfaces.inline.textual_chat import TextualChatApp
 from reyn.interfaces.inline.textual_chat.intervention_panel import InterventionPanel
 from reyn.interfaces.inline.textual_chat.sent_queue import SentQueue
 from reyn.interfaces.repl.read_model import RegistryReadModel
-from reyn.interfaces.transport.client_transport import ClientTransport
+from reyn.interfaces.transport.client_transport import ClientTransportStub
 from reyn.interfaces.transport.frames import DisplayFrame, EventFrame
 from reyn.runtime.chat_message import ChatMessage
 from reyn.runtime.outbox import OutboxMessage
@@ -77,7 +77,7 @@ from tests._support.agent_session import make_session
 # ── real seam: a queue-backed ClientTransport a test drives frame-by-frame ──
 
 
-class QueueTransport(ClientTransport):
+class QueueTransport(ClientTransportStub):
     """A real, minimal :class:`ClientTransport` whose ``frames()`` drains an
     ``asyncio.Queue`` a test pushes onto — so a test can interleave pushing a
     frame with mutating the (real) registry/session state in between, exactly

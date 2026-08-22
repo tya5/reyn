@@ -26,7 +26,7 @@ from typing import AsyncIterator
 
 import pytest
 
-from reyn.interfaces.transport.client_transport import ClientTransport
+from reyn.interfaces.transport.client_transport import ClientTransportStub
 from reyn.interfaces.transport.frames import DisplayFrame
 from reyn.runtime.outbox import OutboxMessage
 from tests._support.paths import REPO_ROOT
@@ -34,7 +34,7 @@ from tests._support.paths import REPO_ROOT
 _REPO_ROOT = REPO_ROOT
 
 
-class ScriptedTransport(ClientTransport):
+class ScriptedTransport(ClientTransportStub):
     """A real, minimal :class:`ClientTransport`. ``end=False`` keeps the stream
     open so the app under test stays mounted for focus/style inspection."""
 

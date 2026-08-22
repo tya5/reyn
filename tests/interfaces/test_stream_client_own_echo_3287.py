@@ -68,7 +68,7 @@ from typing import AsyncIterator
 import pytest
 
 from reyn.interfaces.repl.stream_client import route_input_line, run_output_loop
-from reyn.interfaces.transport.client_transport import ClientTransport
+from reyn.interfaces.transport.client_transport import ClientTransportStub
 from reyn.interfaces.transport.frames import EventFrame
 from reyn.runtime.outbox import OutboxMessage
 from reyn.schemas.models import Event
@@ -101,7 +101,7 @@ async def _wait_until(predicate) -> None:
         await asyncio.sleep(0.01)
 
 
-class _QueueTransport(ClientTransport):
+class _QueueTransport(ClientTransportStub):
     """A real, minimal ClientTransport: yields queued frames; ``submit_user_text``
     returns a caller-scripted msg_id (mirroring the production contract —
     #3287 — of returning the server-assigned correlation id), and records

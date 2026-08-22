@@ -17,6 +17,7 @@ from reyn.interfaces.slash import SlashContext, reply, reply_error, slash
 @slash(
     "reload",
     summary="Hot-reload runtime config (.reyn/*.yaml) at the next turn boundary",
+    locus="session",
     usage="/reload",
     see_also=("docs/concepts/runtime/permission-model.md",),
 )

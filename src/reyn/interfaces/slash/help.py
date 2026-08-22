@@ -73,6 +73,7 @@ def _render_command_focus(name: str) -> str:
 @slash(
     "help",
     summary="Slash command help — list all, or focus on one",
+    locus="client",
     usage="/help [<cmd>]",
 )
 async def help_cmd(ctx: "SlashContext", args: str) -> None:

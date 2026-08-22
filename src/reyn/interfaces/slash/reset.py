@@ -26,6 +26,7 @@ from reyn.interfaces.slash import SlashContext, reply, reply_error, slash
 @slash(
     "reset",
     summary="Reset in-flight run state (snapshots + WAL; audit logs preserved)",
+    locus="session",
     usage="/reset confirm",
     see_also=("docs/guide/crash-recovery-and-resume.md",),
 )

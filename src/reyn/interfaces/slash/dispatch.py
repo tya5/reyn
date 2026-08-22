@@ -125,7 +125,8 @@ async def maybe_dispatch_slash(
     parts = body.split(maxsplit=1)
     name = parts[0]
     args = parts[1] if len(parts) > 1 else ""
-    if REGISTRY.get(name) is None:
+    cmd = REGISTRY.get(name)
+    if cmd is None:
         # Suggest the 3 closest matches rather than dumping the full catalog:
         # the full list used to truncate mid-name, hiding the actionable
         # suggestions. ``kind="error"`` so the TUI renders an inline error — a
@@ -135,7 +136,24 @@ async def maybe_dispatch_slash(
         _display(transport, "error", f"unknown command /{name}; try: {known}")
         return True
 
-    ran = await transport.run_slash_command(name, args)
+    # #5096 ②, architect ruling (issuecomment-5379623427/5379638878/
+    # 5379657592): locus decides WHERE the SlashContext is built, not HOW
+    # to dispatch. "session" locus is unchanged (forward to wherever the
+    # session actually is). "client"/"connection" locus commands need
+    # NEITHER a real session NOR a forward — this layer builds the
+    # SlashContext itself, right here, with the CLIENT's own transport and
+    # session=None, and executes immediately. This is the fix for the
+    # owner-reported "attach coder-smith failed" over --connect: /attach
+    # used to forward to generic server-side slash dispatch, landing on
+    # SessionBoundTransport (send-side only, structurally unable to
+    # answer "attach a different agent") instead of ever reaching
+    # AgUiTransport's own correctly-implemented request_attach.
+    locus = cmd.locus(args) if callable(cmd.locus) else cmd.locus
+    if locus == "session":
+        ran = await transport.run_slash_command(name, args)
+    else:
+        ctx = SlashContext(transport=transport, session=None)
+        ran = await execute_slash_command(ctx, name, args)
     if not ran:
         _display(
             transport, "error",

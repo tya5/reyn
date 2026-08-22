@@ -34,7 +34,7 @@ from textual_flowview import FlowView
 from reyn.interfaces.inline.textual_chat import TextualChatApp
 from reyn.interfaces.inline.textual_chat.restore import RESUME_DIVIDER, project_restored_frames
 from reyn.interfaces.repl.read_model import RegistryReadModel
-from reyn.interfaces.transport.client_transport import ClientTransport
+from reyn.interfaces.transport.client_transport import ClientTransportStub
 from reyn.interfaces.transport.frames import DisplayFrame
 from reyn.runtime.chat_message import ChatMessage
 from reyn.runtime.outbox import OutboxMessage
@@ -44,7 +44,7 @@ from reyn.runtime.session import Session
 from tests._support.agent_session import make_session
 
 
-class _Transport(ClientTransport):
+class _Transport(ClientTransportStub):
     """A real, minimal :class:`ClientTransport` — no live frames needed for
     a restore/paging/search test (mirrors the #3476 suites' own shape)."""
 

@@ -4,7 +4,7 @@ from __future__ import annotations
 from reyn.interfaces.slash import SlashContext, reply, reply_error, slash
 
 
-@slash("list", summary="List pending interventions")
+@slash("list", summary="List pending interventions", locus="session")
 async def list_cmd(ctx: "SlashContext", args: str) -> None:
     """``/list`` — show pending interventions."""
     lines: list[str] = ["running tasks: (none)"]
@@ -55,6 +55,7 @@ def _intervention_id_completer(
 @slash(
     "answer",
     summary="Answer a pending intervention",
+    locus="session",
     usage="/answer <id-prefix> <text>",
     completer=_intervention_id_completer,
 )

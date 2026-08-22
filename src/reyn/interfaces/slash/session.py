@@ -23,7 +23,7 @@ routing for non-REPL transports (web / A2A) is Stage 4b.
 """
 from __future__ import annotations
 
-from reyn.interfaces.slash import SlashContext, reply, reply_error, slash
+from reyn.interfaces.slash import Locus, SlashContext, reply, reply_error, slash
 from reyn.runtime.spawn_routing import ReviewedNA
 from reyn.security.permissions.capability_profile import compose_narrowing_mappings
 
@@ -99,14 +99,106 @@ def _inherited_restriction_lines(reg, name: str, sid: str) -> "list[str]":
     return lines
 
 
+def _session_locus(args: str) -> "Locus":
+    """#5096 ②: ``/session``'s 3 sub-commands need different loci in ONE
+    registration (architect ruling: locus attaches to the EXECUTION UNIT,
+    not the registration name) — a ``LocusFn`` instead of a bare ``Locus``.
+
+    ``switch`` — answerable with ONLY ``ctx.transport.request_session_
+    switch``, a registry/connection-level typed op; never reads
+    ``ctx.session`` (see the handler body below, restructured to check
+    ``sub == "switch"`` BEFORE any ``ctx.session`` access — a "connection"
+    verdict here that the handler still touched ``ctx.session`` for would
+    crash on ``session=None``, not merely mis-declare). → ``connection``.
+
+    ``new`` — reads ``ctx.session.agent_name``/``ctx.session.session_id``,
+    the CALLING session's own identity (not just "which agent is
+    attached" — the registry alone cannot answer "which specific session
+    is asking", needed for #2103-S1a narrowing inheritance). → ``session``.
+
+    ``list`` — measured (architect co-vet, issuecomment-5379657592):
+    theoretically answerable via the registry alone (``reg.session_ids``/
+    ``reg.attached_sid``, no session-specific value), but NO typed op
+    exists today to reach the registry from ``connection`` locus for this
+    read (unlike ``switch``'s ``request_session_switch``) — inventing one
+    is out of THIS PR's scope. Declared ``session`` as the honest
+    interim (not "requires session", "no connection-locus path exists
+    yet") — remainder filed: #5099. → ``session``.
+
+    Unknown/empty sub falls through to ``session`` too (the existing
+    ``reg`` derivation produces the usage error either way).
+
+    ⚠️ Not a structural check (architect co-vet, issuecomment-5379756281):
+    an unregistered sub silently defaults to ``session`` rather than
+    failing to construct — a new sub that genuinely needs ``connection``
+    must be added to this branch by hand. The default lands on the
+    higher-capability side (a usage error, not a crash on
+    ``session=None``), so this is non-blocking, but it is not the closed
+    per-execution-unit registry #5096 ② otherwise achieves; closing that
+    gap needs sub-command registration, out of this PR's scope —
+    remainder noted alongside #5099."""
+    sub = args.strip().split(maxsplit=1)[0].lower() if args.strip() else ""
+    return "connection" if sub == "switch" else "session"
+
+
 @slash(
     "session",
     summary="Open / switch / list conversation sessions for the attached agent",
+    locus=_session_locus,
     usage="/session new | /session switch <sid> | /session list",
     see_also=("docs/concepts/multi-agent/multi-agent.md",),
 )
 async def session_cmd(ctx: "SlashContext", args: str) -> None:
     """``/session <new|switch <sid>|list>`` — per-agent multi-session control."""
+    parts = args.strip().split(maxsplit=1)
+    sub = parts[0].lower() if parts else ""
+    rest = parts[1].strip() if len(parts) > 1 else ""
+
+    if sub == "switch":
+        # #5096 ②: connection locus (see _session_locus above) -- MUST NOT
+        # read ctx.session, which is None here. The pre-#5096 existence
+        # pre-check (reg.get_session(name, rest) is None) is dropped along
+        # with it; the SAME validation now happens server-side inside
+        # request_session_switch's own typed-op handler (endpoint.py's
+        # session_switch_request arm catches KeyError from
+        # registry.attach_session -- equivalent coverage, one seam).
+        #
+        # ⚠️ Known degradation (lead-coder ruling, #5096 issuecomment-
+        # 5379839120): the pre-#5096 switch branch built RICHER guidance
+        # than this can today -- it read the registry directly to name
+        # WHY a sid was rejected (partial-prefix not supported, full
+        # name/ID required, the accepted forms). request_session_switch's
+        # typed op returns only a bool, no reason, so that guidance is
+        # gone until #5099 (request_session_list) ships: with a
+        # connection-locus-safe way to READ the registry's sid list, this
+        # branch can rebuild "no such session 'x'; sessions are: ..."
+        # itself, entirely client-side, before ever calling
+        # request_session_switch. Explicitly NOT fixed by widening
+        # request_session_switch's own return type tonight -- lead-coder:
+        # a bool-only typed op is the #4996/#5093 family shape, and
+        # shipping a NEW instance of it the same night two PRs closed
+        # that family doesn't hold up; the contract change is also wider
+        # than owner's live-blocked PR should carry right now.
+        if not rest:
+            await reply_error(ctx, _USAGE)
+            return
+        # #4534 PR-2b: the actual focus flip goes through the named-operation
+        # seam (request_session_switch -> registry.attach_session), not the
+        # retired __session_switch_request__ display-channel sentinel — see
+        # ClientTransport.request_session_switch's own docstring for why.
+        # The reply is ordered AFTER the call and reads its return. False
+        # IS still routed as an error (not a system note, unlike /attach's
+        # own "could not confirm"): unlike /attach, the sid the USER TYPED
+        # is available here without touching ctx.session (it's `rest`,
+        # client-side input), so the error can still NAME the bad sid even
+        # though it cannot yet explain WHY (that's the degradation above).
+        switched = await ctx.transport.request_session_switch(rest)
+        if switched:
+            await reply(ctx, f"switching to session {rest!r}")
+        else:
+            await reply_error(ctx, f"could not confirm the switch to session {rest!r}")
+        return
+
     reg = ctx.session._registry
     if reg is None:
         await reply_error(ctx, "/session needs a multi-agent registry session")
@@ -115,10 +207,6 @@ async def session_cmd(ctx: "SlashContext", args: str) -> None:
     if name is None:
         await reply_error(ctx, "no agent attached")
         return
-
-    parts = args.strip().split(maxsplit=1)
-    sub = parts[0].lower() if parts else ""
-    rest = parts[1].strip() if len(parts) > 1 else ""
 
     if sub == "new":
         # #3562: the child is born under the ATTACHED agent, and the layer that decides
@@ -167,33 +255,6 @@ async def session_cmd(ctx: "SlashContext", args: str) -> None:
         if inherited:
             lines.extend(_inherited_restriction_lines(reg, name, sid))
         await reply(ctx, "\n".join(lines))
-        return
-
-    if sub == "switch":
-        if not rest:
-            await reply_error(ctx, _USAGE)
-            return
-        if reg.get_session(name, rest) is None:
-            await reply_error(
-                ctx,
-                f"no session {rest!r} for {name!r}"
-                " — use the session name (e.g. 'main') or full session ID;"
-                " partial prefixes are not supported. Try /session list.",
-            )
-            return
-        # #4534 PR-2b: the actual focus flip goes through the named-operation
-        # seam (request_session_switch -> registry.attach_session), not the
-        # retired __session_switch_request__ display-channel sentinel — see
-        # ClientTransport.request_session_switch's own docstring for why.
-        # The reply is ordered AFTER the call and reads its return
-        # (lead-coder review, #4534 remainder): False is ambiguous by
-        # transport (AG-UI's is "unknown"; in-process's is definitive), so
-        # the reply on False says "could not confirm", never "failed".
-        switched = await ctx.transport.request_session_switch(rest)
-        if switched:
-            await reply(ctx, f"switching to session {rest!r}")
-        else:
-            await reply(ctx, f"could not confirm the switch to session {rest!r}")
         return
 
     if sub == "list":

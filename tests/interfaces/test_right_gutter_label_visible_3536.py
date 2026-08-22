@@ -30,12 +30,12 @@ from textual_flowview import FlowModel
 
 from reyn.interfaces.inline.textual_chat.presenter import ReynPresenter
 from reyn.interfaces.repl.renderer import _CC_AMBIENT, _CC_DIM
-from reyn.interfaces.transport.client_transport import ClientTransport
+from reyn.interfaces.transport.client_transport import ClientTransportStub
 from reyn.interfaces.transport.frames import DisplayFrame
 from reyn.runtime.outbox import OutboxMessage
 
 
-class _Transport(ClientTransport):
+class _Transport(ClientTransportStub):
     def start(self) -> None:  # pragma: no cover - trivial
         pass
 

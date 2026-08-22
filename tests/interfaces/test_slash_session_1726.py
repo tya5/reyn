@@ -20,14 +20,17 @@ from reyn.runtime.outbox import OutboxMessage
 from tests._support.slash import slash_ctx
 
 
-def _ctx(session):
+def _ctx(session, *, switch_result: bool = True):
     """The context the production dispatch hands a slash handler.
 
     The transport IS this test's display recorder — ``reply()`` writes
     through the client seam now (#3595 S4), so the list these assertions
     read is the one the transport fills.
+
+    ``switch_result`` (#5096 ②): what ``request_session_switch`` reports
+    back — see ``RecordingTransport``'s own docstring.
     """
-    return slash_ctx(session, recorder=session.outbox_calls)
+    return slash_ctx(session, recorder=session.outbox_calls, switch_result=switch_result)
 
 
 class _StubRegistry:
@@ -122,18 +125,29 @@ async def test_session_switch_known_requests_switch():
 
 @pytest.mark.asyncio
 async def test_session_switch_unknown_is_graceful():
-    """Tier 2: #1726 — `/session switch <unknown>` replies a decision-enabling error
-    (names the bad sid, explains full-ID/name requirement, no prefix support) and
-    posts NO sentinel (no crash)."""
+    """Tier 2: #1726/#5096 ② — `/session switch <unknown>` still replies a
+    NAMED error (the sid the user typed, and an error kind — never a
+    system note) and posts NO sentinel (no crash).
+
+    ⚠️ Known degradation (lead-coder ruling, #5096 issuecomment-
+    5379839120, documented in full at session_cmd's own "switch" branch):
+    the pre-#5096 branch validated directly against the registry and could
+    explain WHY a sid was rejected (partial-prefix unsupported, full
+    name/ID required) — locus="connection" (#5096 ②) forbids reading
+    ctx.session, so that reasoning is gone until #5099's
+    request_session_list ships a connection-locus-safe way to read the
+    sid list back. What survives, deliberately, per lead-coder's ruling:
+    the reply is still error-kind, and the sid the user themselves typed
+    (client-side input, never read FROM the registry) still appears in
+    it — a real regression would be losing either of those, not losing
+    the WHY."""
     reg = _StubRegistry(sids=("main",))
     s = _FakeSession(reg)
-    await session_cmd(_ctx(s), "switch nope")
+    await session_cmd(_ctx(s, switch_result=False), "switch nope")
     assert not [m for m in s.outbox_calls if m.kind == "__session_switch_request__"]
     err = s.reply_text()
     assert "nope" in err, "user-facing error names the bad sid"
     assert any(m.kind == "error" for m in s.outbox_calls), "replied as an error"
-    assert "partial" in err.lower(), "tells user partial prefix is not supported"
-    assert "session name" in err.lower() or "full" in err.lower(), "guides toward name/full-ID"
 
 
 @pytest.mark.asyncio

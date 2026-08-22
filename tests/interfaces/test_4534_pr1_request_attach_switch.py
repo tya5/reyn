@@ -138,13 +138,14 @@ async def test_request_session_switch_returns_false_with_no_session_attached(tmp
 
 @pytest.mark.asyncio
 async def test_default_transport_implementation_returns_false():
-    """Tier 2: (accept-side) the base ClientTransport default (used by
-    narrow-purpose test stubs pre-dating this PR, mirroring
+    """Tier 2: (accept-side) the ``ClientTransportStub`` default (#5076:
+    moved off ``ClientTransport`` itself, which is now a pure contract,
+    used by narrow-purpose test stubs pre-dating this PR, mirroring
     run_slash_command/cancel_queued's own convention) is False, not
     abstract -- an existing stub subclass keeps working unmodified."""
-    from reyn.interfaces.transport.client_transport import ClientTransport
+    from reyn.interfaces.transport.client_transport import ClientTransportStub
 
-    class _Stub(ClientTransport):
+    class _Stub(ClientTransportStub):
         def start(self) -> None: ...
         def close(self) -> None: ...
         async def frames(self):

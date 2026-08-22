@@ -13,7 +13,7 @@ _TRACKER_DISABLED = (
 )
 
 
-@slash("cost", summary="Quick token + USD cost summary for this agent")
+@slash("cost", summary="Quick token + USD cost summary for this agent", locus="session")
 async def cost_cmd(ctx: "SlashContext", args: str) -> None:
     """``/cost`` — one-line token + USD spend for the attached agent."""
     line = ctx.session._budget.cost_line()
@@ -26,6 +26,7 @@ async def cost_cmd(ctx: "SlashContext", args: str) -> None:
 @slash(
     "budget",
     summary="Full budget breakdown",
+    locus="session",
     usage="/budget [reset]",
     see_also=("docs/reference/config/budget.md",),
 )

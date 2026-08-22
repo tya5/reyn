@@ -47,7 +47,7 @@ from reyn.interfaces.inline.textual_chat.presenter import (
     _tool_head,
 )
 from reyn.interfaces.repl.renderer import _SPINNER
-from reyn.interfaces.transport.client_transport import ClientTransport
+from reyn.interfaces.transport.client_transport import ClientTransportStub
 from reyn.interfaces.transport.frames import DisplayFrame
 from reyn.runtime.outbox import OutboxMessage
 
@@ -91,7 +91,7 @@ def _render(renderable, width: int = 80) -> str:
     return cap.get()
 
 
-class ScriptedTransport(ClientTransport):
+class ScriptedTransport(ClientTransportStub):
     """A real, minimal :class:`ClientTransport` replaying a fixed frame list.
 
     ``end=False`` keeps the stream open after the script so the app under test
@@ -141,7 +141,7 @@ class ScriptedTransport(ClientTransport):
         pass
 
 
-class QueueTransport(ClientTransport):
+class QueueTransport(ClientTransportStub):
     """A real :class:`ClientTransport` fed one frame at a time from a queue, so a
     test can push a ``started`` frame, inspect the RUNNING row, THEN push the
     completion and inspect the settle — with the stream staying open in between."""

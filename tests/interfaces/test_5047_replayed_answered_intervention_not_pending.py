@@ -78,14 +78,14 @@ from textual_flowview import FlowView
 from reyn.interfaces.inline.textual_chat import TextualChatApp
 from reyn.interfaces.inline.textual_chat.intervention_panel import InterventionPanel
 from reyn.interfaces.inline.textual_chat.restore import RESTORED_META_KEY
-from reyn.interfaces.transport.client_transport import ClientTransport
+from reyn.interfaces.transport.client_transport import ClientTransportStub
 from reyn.interfaces.transport.frames import DisplayFrame
 from reyn.runtime.outbox import OutboxMessage
 
 _GUTTER_WIDTH = 2
 
 
-class _ReplayTransport(ClientTransport):
+class _ReplayTransport(ClientTransportStub):
     """A real, minimal ``ClientTransport`` that replays a fixed frame list —
     mirrors ``test_textual_chat_intervention_panel_3299.py``'s own
     ``RecordingTransport`` shape, not imported from it (that class lives in

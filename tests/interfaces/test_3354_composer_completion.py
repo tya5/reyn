@@ -76,7 +76,7 @@ from reyn.interfaces.repl.read_model import (
     completion_source_snapshot_from_session,
 )
 from reyn.interfaces.slash import REGISTRY
-from reyn.interfaces.transport.client_transport import ClientTransport
+from reyn.interfaces.transport.client_transport import ClientTransportStub
 from reyn.interfaces.transport.frames import EventFrame
 from reyn.schemas.models import Event
 from tests._support.agent_session import make_session
@@ -84,7 +84,7 @@ from tests._support.agent_session import make_session
 # ── real collaborators ───────────────────────────────────────────────────────
 
 
-class RecordingTransport(ClientTransport):
+class RecordingTransport(ClientTransportStub):
     """A real, minimal :class:`ClientTransport` (same shape as
     ``test_3327_keyboard_reachability_to_panel.RecordingTransport``): stays open
     on a live queue so a test can push a ``user_submitted`` event to populate the

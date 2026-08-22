@@ -61,7 +61,7 @@ from textual_flowview import EntryState, FlowView
 
 from reyn.interfaces.inline.textual_chat import Composer, TextualChatApp
 from reyn.interfaces.inline.textual_chat.intervention_panel import InterventionPanel
-from reyn.interfaces.transport.client_transport import ClientTransport
+from reyn.interfaces.transport.client_transport import ClientTransportStub
 from reyn.interfaces.transport.frames import DisplayFrame
 from reyn.intervention_choices import file_access_choices, generic_yn_choices
 from reyn.runtime.outbox import OutboxMessage
@@ -69,7 +69,7 @@ from reyn.runtime.outbox import OutboxMessage
 _GUTTER_WIDTH = 2
 
 
-class RecordingTransport(ClientTransport):
+class RecordingTransport(ClientTransportStub):
     """A real, minimal :class:`ClientTransport` that replays a fixed frame list
     and RECORDS which answer seam each user action reached.
 

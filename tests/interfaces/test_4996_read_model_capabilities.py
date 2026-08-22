@@ -50,7 +50,7 @@ from reyn.interfaces.repl.read_model import (
     RegistryReadModel,
     RemoteReadModel,
 )
-from reyn.interfaces.transport.client_transport import ClientTransport
+from reyn.interfaces.transport.client_transport import ClientTransportStub
 from reyn.interfaces.transport.frames import DisplayFrame
 from reyn.runtime.outbox import OutboxMessage
 from reyn.runtime.profile import AgentProfile
@@ -59,7 +59,7 @@ from reyn.runtime.session import Session
 from tests._support.agent_session import make_session
 
 
-class QueueTransport(ClientTransport):
+class QueueTransport(ClientTransportStub):
     """A real, minimal :class:`ClientTransport` whose ``frames()`` drains
     an ``asyncio.Queue`` the test pushes onto (mirrors ``test_4983_
     session_switch_off_thread.py``'s own helper of the same name/shape).

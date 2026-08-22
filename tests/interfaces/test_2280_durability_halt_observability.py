@@ -51,7 +51,7 @@ from reyn.core.events.durability_worker import DurabilityWorker
 from reyn.core.events.state_log import StateLog
 from reyn.interfaces.repl.renderer import ConsoleChatRenderer, InlineChatRenderer
 from reyn.interfaces.repl.status import _snapshot
-from reyn.interfaces.transport.client_transport import ClientTransport
+from reyn.interfaces.transport.client_transport import ClientTransportStub
 from reyn.interfaces.transport.frames import EventFrame, Frame
 from reyn.runtime.outbox import OutboxMessage
 from reyn.runtime.profile import AgentProfile
@@ -276,7 +276,7 @@ def test_inline_renderer_bottom_toolbar_surfaces_halt() -> None:
 # ── Gate 4: reachable-for-purpose — a real TextualChatApp's StatusLine ────────
 
 
-class _QueueTransport(ClientTransport):
+class _QueueTransport(ClientTransportStub):
     """A real, minimal :class:`ClientTransport` backed by an ``asyncio.Queue``
     so a test can push a frame WHILE the app's frame-pump worker is already
     running (mid-session), rather than only pre-seeding frames before mount —

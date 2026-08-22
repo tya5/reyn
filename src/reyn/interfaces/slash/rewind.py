@@ -21,6 +21,7 @@ from reyn.runtime.outbox import OutboxMessage
 @slash(
     "rewind",
     summary="Time-travel to an earlier checkpoint (no arg = pick from a menu)",
+    locus="session",
     usage="/rewind [seq]",
 )
 async def rewind_cmd(ctx: "SlashContext", args: str) -> None:

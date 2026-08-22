@@ -29,7 +29,7 @@ from typing import TYPE_CHECKING, Any, AsyncIterator
 
 from reyn.interfaces.slash import SlashContext
 from reyn.interfaces.slash.dispatch import execute_slash_command
-from reyn.interfaces.transport.client_transport import ClientTransport
+from reyn.interfaces.transport.client_transport import ClientTransportStub
 from reyn.interfaces.transport.in_process import InProcessTransport
 from reyn.runtime.session import DEFAULT_CHAT_CHANNEL_ID
 
@@ -38,10 +38,14 @@ if TYPE_CHECKING:
     from reyn.runtime.outbox import OutboxMessage
 
 
-class RecordingTransport(ClientTransport):
+class RecordingTransport(ClientTransportStub):
     """A real client transport that keeps what was displayed."""
 
-    def __init__(self, session: Any = None) -> None:
+    def __init__(
+        self, session: Any = None, *,
+        attach_result: bool = True,
+        switch_result: bool = True,
+    ) -> None:
         self._session = session
         self.displayed: "list[OutboxMessage]" = []
         # #4534 PR-2: what request_attach/request_session_switch were CALLED
@@ -54,6 +58,20 @@ class RecordingTransport(ClientTransport):
         # fake.
         self.attach_requests: "list[str]" = []
         self.session_switch_requests: "list[str]" = []
+        # #5096 ②: attach_cmd (locus="connection") no longer pre-validates
+        # against a session's registry -- its reply is driven entirely by
+        # request_attach's own return, so a test exercising the False path
+        # (unknown target / no registry / already attached, all now
+        # indistinguishable at THIS layer -- the server's typed-op handler
+        # owns that distinction) needs a way to make this fake say False.
+        self._attach_result = attach_result
+        # #5096 ②: same shape as _attach_result -- the switch sub of
+        # /session (locus="connection") no longer pre-validates the sid
+        # against a session's registry either, so a test exercising the
+        # False path (unknown sid, only distinguishable server-side, see
+        # session.py's own switch-branch docstring) needs a way to make
+        # this fake say False.
+        self._switch_result = switch_result
 
     # -- the seam under test ------------------------------------------------
 
@@ -62,11 +80,11 @@ class RecordingTransport(ClientTransport):
 
     async def request_attach(self, agent_name: str) -> bool:
         self.attach_requests.append(agent_name)
-        return True
+        return self._attach_result
 
     async def request_session_switch(self, session_id: str) -> bool:
         self.session_switch_requests.append(session_id)
-        return True
+        return self._switch_result
 
     # -- readers a test asserts through -------------------------------------
 
@@ -155,7 +173,10 @@ class RecordingTransport(ClientTransport):
 
 
 def slash_ctx(
-    session: Any = None, *, recorder: "list[OutboxMessage] | None" = None
+    session: Any = None, *,
+    recorder: "list[OutboxMessage] | None" = None,
+    attach_result: bool = True,
+    switch_result: bool = True,
 ) -> SlashContext:
     """The context a slash handler is handed, with a recording transport.
 
@@ -168,8 +189,12 @@ def slash_ctx(
     session's existing readers keep answering and the assertions a test already
     made are the ones still being made. Pass the SAME list each call — a handler
     driven twice (a two-step confirm) must accumulate, not restart.
+
+    ``attach_result`` / ``switch_result`` (#5096 ②): what the transport's
+    ``request_attach`` / ``request_session_switch`` report back — see
+    ``RecordingTransport``'s own docstring.
     """
-    transport = RecordingTransport(session)
+    transport = RecordingTransport(session, attach_result=attach_result, switch_result=switch_result)
     if recorder is not None:
         transport.displayed = recorder
     return SlashContext(transport=transport, session=session)

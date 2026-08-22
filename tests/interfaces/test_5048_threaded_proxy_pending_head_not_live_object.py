@@ -33,7 +33,7 @@ from typing import TYPE_CHECKING, AsyncIterator
 
 import pytest
 
-from reyn.interfaces.transport.client_transport import ClientTransport
+from reyn.interfaces.transport.client_transport import ClientTransportStub
 from reyn.interfaces.transport.threaded import ThreadedTransportProxy
 
 if TYPE_CHECKING:
@@ -56,7 +56,7 @@ class _FakeIntervention:
         self.future = future
 
 
-class _InterveningTransport(ClientTransport):
+class _InterveningTransport(ClientTransportStub):
     """A minimal, real ``ClientTransport`` whose ``pending_intervention_
     head()`` returns a live ``_FakeIntervention`` — mirroring ``InProcess
     Transport``'s own real behaviour (``s.interventions.head()`` returned

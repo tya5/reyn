@@ -52,7 +52,7 @@ from reyn.interfaces.repl.renderer import (
     InlineChatRenderer,
     intervention_answer_display_message,
 )
-from reyn.interfaces.transport.client_transport import ClientTransport
+from reyn.interfaces.transport.client_transport import ClientTransportStub
 from reyn.interfaces.transport.frames import EventFrame
 from reyn.runtime.outbox import OutboxMessage
 from reyn.schemas.models import Event
@@ -60,7 +60,7 @@ from reyn.schemas.models import Event
 _RAW_ESC_OSC = "\x1b[31mRED\x1b]0;pwn\x07"
 
 
-class QueueTransport(ClientTransport):
+class QueueTransport(ClientTransportStub):
     """A real, minimal :class:`ClientTransport` fed one frame at a time
     (identical harness to ``test_3300_p2b_sentqueue_render.py``'s
     ``QueueTransport`` — kept local rather than shared to avoid a

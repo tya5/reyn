@@ -118,6 +118,7 @@ def _resolve_iv_id(
         "List / discard / claim stalled cross-channel ops "
         "(subcommands: list | discard <id> | claim <id>)"
     ),
+    locus="session",
     usage="/pending [list|discard <id>|claim <id>]",
 )
 async def pending_cmd(ctx: "SlashContext", args: str) -> None:

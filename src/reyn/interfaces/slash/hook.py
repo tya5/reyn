@@ -12,6 +12,7 @@ from reyn.interfaces.slash import SlashContext, reply, reply_error, slash
 @slash(
     "hook",
     summary="Enable/disable a hook for this session",
+    locus="session",
     usage="/hook on|off <name>",
 )
 async def hook_cmd(ctx: "SlashContext", args: str) -> None:

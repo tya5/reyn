@@ -21,6 +21,7 @@ from reyn.interfaces.slash import SlashContext, reply, reply_error, slash
 @slash(
     "compact",
     summary="Compact the conversation history now to free up context window",
+    locus="session",
     usage="/compact",
     see_also=("docs/reference/runtime/control-ir.md",),
 )

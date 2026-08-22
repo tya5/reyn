@@ -36,6 +36,7 @@ _NO_REGISTRY = (
         "Agent lifecycle: new <name> / edit role <text> "
         "(rm via `reyn agent rm`)"
     ),
+    locus="session",
     usage="/agent new <name> | /agent edit role <text>",
 )
 async def agent_cmd(ctx: "SlashContext", args: str) -> None:

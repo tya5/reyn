@@ -102,12 +102,13 @@ async def test_returns_empty_with_no_session_attached(tmp_path):
 
 @pytest.mark.asyncio
 async def test_default_transport_implementation_returns_empty():
-    """Tier 2: (accept-side) the base ClientTransport default — a narrow
-    test stub pre-dating this method keeps working unmodified, same
-    convention as ``request_attach``'s own default."""
-    from reyn.interfaces.transport.client_transport import ClientTransport
+    """Tier 2: (accept-side) the ``ClientTransportStub`` default (#5076:
+    moved off ``ClientTransport`` itself, which is now a pure contract) —
+    a narrow test stub pre-dating this method keeps working unmodified,
+    same convention as ``request_attach``'s own default."""
+    from reyn.interfaces.transport.client_transport import ClientTransportStub
 
-    class _Stub(ClientTransport):
+    class _Stub(ClientTransportStub):
         def start(self) -> None: ...
         def close(self) -> None: ...
         async def frames(self):

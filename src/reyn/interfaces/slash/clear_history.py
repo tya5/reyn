@@ -46,6 +46,7 @@ def _format_currently_line(session: "object") -> str:
     summary=(
         "Clear conversation history (= events, run state, profile preserved)"
     ),
+    locus="session",
     usage="/clear-history confirm",
 )
 async def clear_history_cmd(ctx: "SlashContext", args: str) -> None:

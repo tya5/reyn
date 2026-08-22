@@ -66,12 +66,12 @@ from textual.widgets import Input, OptionList, RadioSet
 from reyn.interfaces.inline.textual_chat import Composer, MenuBar, TextualChatApp
 from reyn.interfaces.inline.textual_chat.intervention_panel import InterventionPanel
 from reyn.interfaces.inline.textual_chat.sent_queue import SentQueue
-from reyn.interfaces.transport.client_transport import ClientTransport
+from reyn.interfaces.transport.client_transport import ClientTransportStub
 from reyn.interfaces.transport.frames import DisplayFrame
 from reyn.runtime.outbox import OutboxMessage
 
 
-class _Transport(ClientTransport):
+class _Transport(ClientTransportStub):
     """A real, minimal :class:`ClientTransport`. ``end=False`` keeps the
     stream open so the app under test stays mounted for focus inspection."""
 

@@ -33,12 +33,12 @@ from textual_flowview import FlowView
 from reyn.interfaces.inline.textual_chat import TextualChatApp
 from reyn.interfaces.inline.textual_chat.chrome import Composer
 from reyn.interfaces.inline.textual_chat.gutter import _MARK_RAIL
-from reyn.interfaces.transport.client_transport import ClientTransport
+from reyn.interfaces.transport.client_transport import ClientTransportStub
 from reyn.interfaces.transport.frames import DisplayFrame
 from reyn.runtime.outbox import OutboxMessage
 
 
-class _Transport(ClientTransport):
+class _Transport(ClientTransportStub):
     def __init__(self) -> None:
         self.submitted: list[str] = []
 

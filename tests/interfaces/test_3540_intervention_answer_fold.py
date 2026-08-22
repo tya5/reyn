@@ -51,7 +51,7 @@ from reyn.core.events.state_log import StateLog
 from reyn.interfaces.inline.textual_chat import TextualChatApp
 from reyn.interfaces.inline.textual_chat.presenter import ReynPresenter
 from reyn.interfaces.inline.textual_chat.restore import project_restored_frames
-from reyn.interfaces.transport.client_transport import ClientTransport
+from reyn.interfaces.transport.client_transport import ClientTransportStub
 from reyn.interfaces.transport.frames import DisplayFrame, EventFrame
 from reyn.runtime.chat_message import ChatMessage
 from reyn.runtime.outbox import OutboxMessage
@@ -64,7 +64,7 @@ from reyn.user_intervention import InterventionChoice, UserIntervention
 _RAW_ESC_OSC = "\x1b[31mRED\x1b]0;pwn\x07"
 
 
-class QueueTransport(ClientTransport):
+class QueueTransport(ClientTransportStub):
     """A real, minimal :class:`ClientTransport` fed one frame at a time —
     display frames AND event frames, so one test can drive the announce and
     the answer through the SAME stream the app really reads."""

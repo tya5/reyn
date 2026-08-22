@@ -32,7 +32,7 @@ def test_slash_command_defaults_see_also_to_empty_tuple() -> None:
     async def _h(s: object, a: str) -> None:
         pass
 
-    cmd = SlashCommand(name="xtest_no_see_also", summary="test", handler=_h)
+    cmd = SlashCommand(name="xtest_no_see_also", summary="test", handler=_h, locus="client")
     assert cmd.see_also == ()
     assert isinstance(cmd.see_also, tuple)
 
@@ -44,6 +44,7 @@ def test_slash_decorator_stores_see_also_on_registered_command() -> None:
     @slash(
         "xtest_see_also_reg",
         summary="decorator see_also test",
+        locus="client",
         see_also=("docs/concepts/multi-agent/plan-mode.md", "docs/concepts/data-retrieval/memory.md"),
     )
     async def _xtest_cmd(session: object, args: str) -> None:
@@ -66,6 +67,7 @@ def test_render_command_focus_includes_see_also_line_when_non_empty() -> None:
         name="xtest_see_also_render",
         summary="render see_also test",
         handler=_h,
+        locus="client",
         see_also=("docs/concepts/multi-agent/plan-mode.md",),
     ))
     panel = _render_command_focus("xtest_see_also_render")
@@ -85,6 +87,7 @@ def test_render_command_focus_omits_see_also_line_when_empty() -> None:
         name="xtest_no_see_also_render",
         summary="omit see_also when empty",
         handler=_h,
+        locus="client",
         # see_also intentionally not set → defaults to ()
     ))
     panel = _render_command_focus("xtest_no_see_also_render")

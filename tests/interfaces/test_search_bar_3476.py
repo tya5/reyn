@@ -32,13 +32,13 @@ from reyn.interfaces.inline.textual_chat.chrome import Composer
 from reyn.interfaces.inline.textual_chat.restore import project_restored_frames
 from reyn.interfaces.inline.textual_chat.search_bar import SearchBar
 from reyn.interfaces.repl.read_model import LOCAL_CHAT_READ_CAPABILITIES, ChatReadModel
-from reyn.interfaces.transport.client_transport import ClientTransport
+from reyn.interfaces.transport.client_transport import ClientTransportStub
 from reyn.interfaces.transport.frames import DisplayFrame
 from reyn.runtime.chat_message import ChatMessage
 from reyn.runtime.outbox import OutboxMessage
 
 
-class _Transport(ClientTransport):
+class _Transport(ClientTransportStub):
     def __init__(self) -> None:
         self.submitted: list[str] = []
 

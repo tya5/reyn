@@ -25,12 +25,12 @@ from reyn.interfaces.inline.textual_chat.gutter import (
     _MARK_RAIL,
     RIGHT_GUTTER_WIDTH,
 )
-from reyn.interfaces.transport.client_transport import ClientTransport
+from reyn.interfaces.transport.client_transport import ClientTransportStub
 from reyn.interfaces.transport.frames import DisplayFrame
 from reyn.runtime.outbox import OutboxMessage
 
 
-class _Transport(ClientTransport):
+class _Transport(ClientTransportStub):
     def start(self) -> None:  # pragma: no cover - trivial
         pass
 

@@ -36,7 +36,7 @@ from textual_flowview import FlowView
 from reyn.core.events.events import Event
 from reyn.interfaces.inline.textual_chat import TextualChatApp
 from reyn.interfaces.repl.read_model import RegistryReadModel
-from reyn.interfaces.transport.client_transport import ClientTransport
+from reyn.interfaces.transport.client_transport import ClientTransportStub
 from reyn.interfaces.transport.frames import DisplayFrame, EventFrame
 from reyn.runtime.outbox import OutboxMessage
 from reyn.runtime.profile import AgentProfile
@@ -45,7 +45,7 @@ from reyn.runtime.session import Session
 from tests._support.agent_session import make_session
 
 
-class QueueTransport(ClientTransport):
+class QueueTransport(ClientTransportStub):
     """A real, minimal :class:`ClientTransport` whose ``frames()`` drains
     an ``asyncio.Queue`` the test pushes onto (mirrors ``test_3310_n2_
     reset_hydrate.py``'s own helper of the same name/shape)."""
