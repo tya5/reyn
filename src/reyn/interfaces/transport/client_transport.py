@@ -34,8 +34,11 @@ a method whose contract is "produce frames".
 """
 from __future__ import annotations
 
+import logging
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, AsyncIterator
+
+_logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -136,7 +139,17 @@ class ClientTransport(ABC):
 
     @abstractmethod
     def pending_intervention_head(self) -> "object | None":
-        """The oldest pending intervention handle, or None — client routing input."""
+        """The oldest pending intervention handle, or None — client routing input.
+
+        Two established return shapes across today's implementations
+        (#5057): a real ``UserIntervention`` (``InProcessTransport``/
+        ``SessionBoundTransport``) or a bare id string
+        (``AgUiTransport``'s own ``_pending_intervention_id`` — a remote
+        connection has no live object to hand back). A caller that only
+        needs the id (every consumer today does) should narrow through
+        :func:`pending_head_id` below rather than re-deriving this
+        narrowing at each call site — see its own docstring for why a
+        second, independently-written copy is a real hazard, not tidiness."""
 
     @abstractmethod
     def put_display(self, msg: "OutboxMessage") -> None:
@@ -368,4 +381,54 @@ class ClientTransport(ABC):
         """Tear the session (and its registry) down — the /quit / EOF seam."""
 
 
-__all__ = ["ClientTransport"]
+def pending_head_id(head: object, *, caller: str) -> "str | None":
+    """Narrow :meth:`ClientTransport.pending_intervention_head`'s two
+    established return shapes (#5057) down to a bare id string: a real
+    ``UserIntervention`` (``InProcessTransport``/``SessionBoundTransport`` —
+    #5047 axis A guarantees its ``.id`` is a genuine identity, not merely
+    "the oldest"), or a bare id string already (``AgUiTransport``'s own
+    ``_pending_intervention_id``).
+
+    THE single copy of this narrowing (lead-coder's #5089 review finding,
+    #5043's own discriminator: "2 or more copies — ask whether it can be
+    deleted"): a second, independently-written copy of the SAME narrowing
+    silently DROPPED its sibling's loud-failure half (:mod:`reyn.
+    interfaces.repl.stream_client`'s original ``_pending_head_id`` warned
+    on an unrecognized shape before returning ``None``; a fresh copy
+    written for :mod:`reyn.interfaces.transport.threaded` returned ``None``
+    silently) — the exact #4996/#5047 family: a silent ``None`` here reads
+    to a caller as "no pending intervention", not "I couldn't tell", and
+    ``ThreadedTransportProxy``'s own snapshot slot is exactly the kind of
+    place a caller (the TUI thread) has no way to distinguish the two.
+
+    ``caller`` names the call site in the warning (e.g. ``"stream_client"``,
+    ``"ThreadedTransportProxy"``) so a future third call site's warning is
+    distinguishable in logs — never reached by the two production
+    transports today (this is a strict narrowing of a check that never
+    fires yet, not a behavior change for either), but the id this function
+    returns can feed straight into ``answer_intervention_by_id``: a caller
+    passing a genuinely wrong shape deserves "no pending intervention
+    recognized" (falls through to a normal turn), never a corrupted
+    delivery target — never a naive ``getattr(head, "id", head)`` either,
+    which would happily turn e.g. a dict-shaped value (a genuinely
+    similar-looking but DIFFERENT contract lives nearby, ``RemoteReadModel.
+    intervention_head()``'s own dict projection) into a garbage id string
+    via ``str(...)``."""
+    if head is None:
+        return None
+    if isinstance(head, str):
+        return head
+    iv_id = getattr(head, "id", None)
+    if isinstance(iv_id, str) and iv_id:
+        return iv_id
+    _logger.warning(
+        "%s: pending_intervention_head() returned an unrecognized shape "
+        "(%s) -- neither a bare id string nor an object with a genuine "
+        "string .id. Treating as no pending intervention rather than "
+        "deriving a garbage id from it.",
+        caller, type(head).__name__,
+    )
+    return None
+
+
+__all__ = ["ClientTransport", "pending_head_id"]

@@ -10,9 +10,10 @@ asyncio.Future`` bound to the WORKER loop. Before this fix,
 own ``_ThreadedSnapshot`` slot, contradicting ``threaded.py``'s own module
 docstring ("nothing on the caller (TUI) thread ever reads their live,
 mutable attributes directly" / "every value ... is refreshed into ONE
-overwriting slot"). No consumer reads more than ``.id`` today (``stream_
-client.py``'s own ``_pending_head_id``), so the leak was latent, not the
-"value not the owned object" contract #5044 already ruled on for this
+overwriting slot"). No consumer reads more than ``.id`` today (the shared
+:func:`reyn.interfaces.transport.client_transport.pending_head_id`), so
+the leak was latent, not the "value not the owned object" contract #5044
+already ruled on for this
 same class family — this is what makes it the right shape to fix BEFORE
 #5048's cutover promotes this class to the TUI's default transport and
 gains consumers that might reach for ``.prompt``/``.choices``/``.future``.
@@ -61,7 +62,7 @@ class _InterveningTransport(ClientTransport):
     Transport``'s own real behaviour (``s.interventions.head()`` returned
     verbatim), not a made-up shape."""
 
-    def __init__(self, head: "_FakeIntervention | None") -> None:
+    def __init__(self, head: object) -> None:
         self._head = head
         self._never = asyncio.Event()
 
@@ -115,7 +116,7 @@ async def test_pending_intervention_head_never_crosses_the_live_object():
 
     Strip-falsifier: reverting ``_pump_frames`` to
     ``pending_intervention_head=self._inner.pending_intervention_head()``
-    (dropping the ``_pending_head_id`` narrowing) makes
+    (dropping the ``pending_head_id`` narrowing) makes
     ``proxy.pending_intervention_head()`` return the ``_FakeIntervention``
     instance itself — this assertion (``isinstance(..., str)``) turns red.
     Verified locally by temporarily reverting that one line."""
@@ -161,5 +162,43 @@ async def test_no_pending_intervention_stays_none():
         frame = await proxy.frames().__anext__()
         assert frame.message.text == "frame"
         assert proxy.pending_intervention_head() is None
+    finally:
+        await proxy.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_an_unrecognized_shape_warns_here_too_not_just_in_stream_client(caplog):
+    """Tier 2: lead-coder's #5089 review finding — before the shared
+    :func:`~reyn.interfaces.transport.client_transport.pending_head_id`
+    existed, this module had its OWN independently-written copy of the
+    narrowing that silently returned ``None`` on an unrecognized shape,
+    dropping the loud-``logger.warning`` half its sibling in ``stream_
+    client.py`` already had (the #4996/#5047 family: a silent ``None`` here
+    reads to the caller as "no pending intervention", not "I couldn't
+    tell"). Now both call sites share ONE function, so this module gets
+    the warning for free — asserted here, not just in stream_client's own
+    tests, since a future third copy is exactly what this witness guards
+    against.
+
+    Strip-falsifier: reverting ``ThreadedTransportProxy``'s call site back
+    to its own hand-written copy (the pre-#5089-fix-round-2 shape, silently
+    returning ``None``) turns this red — verified locally."""
+    import logging
+
+    inner = _InterveningTransport(head={"id": "iv-x", "prompt": "not a real shape"})
+    proxy = ThreadedTransportProxy(lambda: inner)
+    proxy.start()
+    try:
+        with caplog.at_level(logging.WARNING):
+            frame = await proxy.frames().__anext__()
+        assert frame.message.text == "frame"
+        assert proxy.pending_intervention_head() is None
+        assert any(
+            "unrecognized shape" in r.message and "ThreadedTransportProxy" in r.message
+            for r in caplog.records
+        ), (
+            "expected the shared pending_head_id() warning, naming this "
+            f"class as the caller; got log records: {[r.message for r in caplog.records]!r}"
+        )
     finally:
         await proxy.shutdown()

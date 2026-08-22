@@ -80,7 +80,7 @@ import threading
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, AsyncIterator, Callable, Coroutine
 
-from reyn.interfaces.transport.client_transport import ClientTransport
+from reyn.interfaces.transport.client_transport import ClientTransport, pending_head_id
 from reyn.interfaces.transport.drain import suspend_between_frames
 
 if TYPE_CHECKING:
@@ -124,37 +124,6 @@ _EMPTY_SNAPSHOT = _ThreadedSnapshot(
     reyn_state_root=None,
     read_model_snapshot=None,
 )
-
-
-def _pending_head_id(head: object) -> "str | None":
-    """Narrow whatever ``self._inner.pending_intervention_head()`` returned
-    down to a bare id string before it enters the snapshot slot.
-
-    Architect's finding (pre-#5048 cutover review): ``InProcessTransport``'s
-    own ``pending_intervention_head()`` returns the LIVE ``UserIntervention``
-    — a mutable, thread-affine object carrying an ``asyncio.Future`` bound
-    to the WORKER loop. Handing it straight into ``_ThreadedSnapshot``
-    would cross that live object onto the caller (TUI) thread, contradicting
-    this module's own stated contract ("nothing on the caller thread ever
-    reads their live, mutable attributes directly" / "every value ... is
-    refreshed into ONE overwriting slot") — a value, never an owned object
-    (the same family as #5044's ruling). Today's only consumers read
-    ``.id`` (``stream_client.py``'s own ``_pending_head_id`` — this
-    function's own name and shape deliberately mirror it), so extracting
-    the id here loses nothing while closing the boundary violation before
-    a future consumer reaches for ``.prompt``/``.choices``/``.future``.
-
-    ``AgUiTransport.pending_intervention_head()`` already returns a bare id
-    string (never the live object at all — there is no live object to
-    cross a remote connection), so this is a no-op for that inner
-    transport; the narrowing only bites for ``InProcessTransport`` (and
-    ``SessionBoundTransport``, which wraps it)."""
-    if head is None:
-        return None
-    if isinstance(head, str):
-        return head
-    iv_id = getattr(head, "id", None)
-    return iv_id if isinstance(iv_id, str) and iv_id else None
 
 
 class ThreadedTransportProxy(ClientTransport):
@@ -285,8 +254,9 @@ class ThreadedTransportProxy(ClientTransport):
             self._latest = _ThreadedSnapshot(
                 has_session=self._inner.has_session(),
                 attach_failed=self._inner.attach_failed(),
-                pending_intervention_head=_pending_head_id(
+                pending_intervention_head=pending_head_id(
                     self._inner.pending_intervention_head(),
+                    caller="ThreadedTransportProxy",
                 ),
                 reyn_state_root=self._inner.reyn_state_root(),
                 read_model_snapshot=(
