@@ -5615,18 +5615,6 @@ class Session:
         - **per-agent** — ``.reyn/agents/<name>/hooks.yaml`` (read directly here, same
           IN-set grain but scoped per agent).
 
-        #5091: an EARLIER revision of this method also derived 2 broker-
-        participation hooks from a dedicated ``AgentProfile.broker_identity``
-        field (#5084 ③-b) — removed. Owner ruling: "broker" is an external
-        MCP server, not a reyn-runtime concept, and the derivation solved a
-        problem the ALREADY-EXISTING per-session hooks layer (below) already
-        solves for free — an agent that wants to subscribe its own broker
-        inbox just writes ``<per-session state dir>/hooks.yaml`` directly
-        (visible ONLY to that one session, so a literal, hand-written
-        ``uri: broker://inbox/<name>`` needs no templating). No mechanism
-        was lost; #5091's own witness demonstrates the identical behaviour
-        with zero code, using this layer alone.
-
         Rebuilding from scratch each call means a removed hook (runtime or per-agent)
         simply isn't in the new registry — removal handled by construction.
 

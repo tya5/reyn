@@ -25,17 +25,6 @@ DIFFERENT, disjoint key vocabulary (`BOUNDING_KEYS`, currently `{"model"}`
 only). Kept as a separate field/key rather than folded into `preferences`
 because the two axes' composition functions differ — see
 `reyn.runtime.bounding`'s module docstring for the full reasoning.
-
-#5084 ③ added a `broker_identity` field here (a flat, non-axis column) —
-REMOVED by #5091 (owner ruling: "broker" is an external MCP server, not a
-reyn-runtime concept; per-agent identity for it is already `AgentProfile.
-name`, and the participation this field drove — a hook subscribing that
-agent's own inbox — is already expressible with the EXISTING per-session
-hooks layer, #2285, no dedicated field needed). If a future integration
-seems to need a similar "identity for external system X" field, that
-itself is the #5091 discriminator firing again (owner's own test: "would
-another integration need the same code?") — the answer is a hand-written
-hook in that agent's own hooks file, not a new column here.
 """
 from __future__ import annotations
 
