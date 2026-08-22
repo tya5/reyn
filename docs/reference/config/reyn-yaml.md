@@ -97,15 +97,15 @@ aren't.
 <!-- BEGIN config-declared-in -->
 | Key | Type | Declared in | Reload | File | Description |
 |-----|------|-----|-----|-----|-------------|
-| `output_language` | string | project · agent · session¹ | restart | `reyn.yaml` | Default output language code (e.g. `en`, `ja`). Override with `--output-language`. |
+| `output_language` | string | project · agent · session¹ | restart⁵ | `reyn.yaml` | Default output language code (e.g. `en`, `ja`). Override with `--output-language`. |
 | `safety` | map | project | restart | `reyn.yaml` | Runtime bounds **and content-layer defenses**: loop-detection caps, timeouts, on-limit policy, the untrusted-content threat scan + fence (`safety.threat_scan`, FP-0050), and operator bounds on the LLM spawn tree (`safety.spawn`, a DoS guard). See below. |
-| `cost` | map | project · agent · session¹ | restart | `reyn.yaml` | Budget caps and rate limits (per-agent, daily, monthly). See below. |
+| `cost` | map | project · agent · session¹ | restart⁵ | `reyn.yaml` | Budget caps and rate limits (per-agent, daily, monthly). See below. |
 | `web_fetch` | map | project | restart | `reyn.yaml` | The `web_fetch` tool + MCP registry calls: SSL settings. See below. |
 | `gateway` | map | project | restart | `reyn.yaml` | The `reyn web` gateway's own settings: auth model, WebSocket inbound-frame ceiling, and which surfaces are mounted. Split from the old `web:` key, which conflated this with `web_fetch` above. See below. |
 | `sandbox` | map | project | restart | `reyn.yaml` | Backend selection (`backend`), unsupported-platform policy (`on_unsupported`), the enforcement mode (`mode`: compat / strict / custom), and the agent-level sandbox policy (`policy`). See below. |
 | `hooks` | list | project · agent · session² | restart / hot | `reyn.yaml` + `.reyn/config/hooks.yaml`² | Agent-lifecycle hooks. Four action schemes: `template_push` / `exec` / `exec_capture` / `pipeline_launch`. See below. |
 | `embedding` | map | project | restart | `reyn.yaml` | RAG embedding: the master switch (`enabled`), model classes, batch sizing and concurrency, retry / backoff / timeout, tokenizer, and a cost-warning threshold. See below. |
-| `chat` | map | project · agent · session¹ | restart | `reyn.yaml` | Chat-session runtime knobs: history compaction, reasoning/"thinking" text handling, the interactive renderer (`render_mode`), TUI gutters, body neutralization, permitted image-URL schemes, and the TUI theme name. See below. **Only `chat.reasoning.display` carries the ¹ override** (a single leaf, not the whole block — see [`chat.reasoning` fields](#chatreasoning-fields)); every other `chat.*` key stays `project`-only. |
+| `chat` | map | project · agent · session¹ | restart⁵ | `reyn.yaml` | Chat-session runtime knobs: history compaction, reasoning/"thinking" text handling, the interactive renderer (`render_mode`), TUI gutters, body neutralization, permitted image-URL schemes, and the TUI theme name. See below. **Only `chat.reasoning.display` carries the ¹ override** (a single leaf, not the whole block — see [`chat.reasoning` fields](#chatreasoning-fields)); every other `chat.*` key stays `project`-only. |
 | `voice` | map | project | restart | `reyn.yaml` | Whisper model/language/device settings for F2 dictation in the inline CUI (revived #4187/#4249). See below. |
 | `audit_events` | map | project | restart | `reyn.yaml` | Rotation policy (size / age / cleanup period) for the P6 **audit-event** files under `.reyn/events`. Not WAL-events, not hook-events. See below. |
 | `artifacts` | map | project | restart | `reyn.yaml` | The artifact-ref table fallback's own row cap (`remote_fallback_limit`, #4601) — used by a remote client's (and a post-restart local client's) Artifacts pane. See below. |
@@ -165,6 +165,19 @@ config` (the ONLY producer of that `in_set`) has no path to populate. Kept
 conservative (`reyn.yaml` only) rather than repeating a claim this pass
 could not verify; flagged rather than silently resolved either way — see
 this table's own PR for the open question.
+
+⁵ **`Reload` is `restart` at the PROJECT layer only** (lead-coder's own
+#5090 review finding — issuecomment-5379469534) — the SAME ¹ rows
+(`output_language`, `chat.reasoning.display`, the 7 `cost.*.warn_ratio`
+leaves) are LIVE re-reads at the agent/session layer (`Session.
+output_language`/`_resolve_session_preference`, verbatim "Live re-read on
+every access"/"Live re-read on every call (never cached)") — a DIFFERENT
+mechanism from `_HOT_RELOAD_FILES`'s file-based hot-reload this column's
+own intro describes, and structurally invisible to it (a property-access
+re-read, not a file re-read). This footnote points at the SAME
+`PREFERENCE_KEYS` set as ¹, so a future ① gate failure on one of these
+rows carries this footnote's claim along with it, rather than the two
+drifting independently.
 
 > **Project context file (`project_context_path`).** Left unset, Reyn reads
 > `AGENTS.md` — the cross-tool convention that Claude Code, Codex, opencode and

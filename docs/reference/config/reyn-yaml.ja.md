@@ -88,14 +88,14 @@ doc↔code gate](../runtime/events.md) と同じ形）。あるキーが agent/s
 <!-- BEGIN config-declared-in -->
 | キー | 型 | Declared in | Reload | File | 説明 |
 |-----|------|-----|-----|-----|-------------|
-| `output_language` | 文字列 | project · agent · session¹ | restart | `reyn.yaml` | デフォルトの出力言語コード（例: `en`、`ja`）。`--output-language` でオーバーライド。 |
+| `output_language` | 文字列 | project · agent · session¹ | restart⁵ | `reyn.yaml` | デフォルトの出力言語コード（例: `en`、`ja`）。`--output-language` でオーバーライド。 |
 | `safety` | マップ | project | restart | `reyn.yaml` | ランタイムの上限**と content 層の防御**: ループ検出上限、タイムアウト、上限超過時ポリシー、非信頼コンテンツの threat scan + fence（`safety.threat_scan`、FP-0050）、LLM spawn ツリーの上限（`safety.spawn`、DoS ガード）。以下参照。 |
-| `cost` | マップ | project · agent · session¹ | restart | `reyn.yaml` | バジェット上限とレート制限（エージェントごと、日次、月次）。以下参照。 |
+| `cost` | マップ | project · agent · session¹ | restart⁵ | `reyn.yaml` | バジェット上限とレート制限（エージェントごと、日次、月次）。以下参照。 |
 | `web_fetch` | マップ | project | restart | `reyn.yaml` | `web_fetch` ツールと MCP レジストリ呼び出しの SSL 設定。以下参照。 |
 | `gateway` | マップ | project | restart | `reyn.yaml` | `reyn web` ゲートウェイ自身の設定: 認証モデル、WebSocket 受信フレーム上限、マウントするサーフェス。旧 `web:` キー（`web_fetch` と同居していた）から分割。以下参照。 |
 | `sandbox` | マップ | project | restart | `reyn.yaml` | バックエンド選択（`backend`）、非対応プラットフォームポリシー（`on_unsupported`）、強制モード（`mode`: compat / strict / custom）、agent-level サンドボックスポリシー（`policy`）。以下参照。 |
 | `embedding` | マップ | project | restart | `reyn.yaml` | RAG 埋め込み: マスタースイッチ（`enabled`）、モデルクラス、バッチサイズと並列度、リトライ / バックオフ / タイムアウト、トークナイザ、コスト警告閾値。以下参照。 |
-| `chat` | マップ | project · agent · session¹ | restart | `reyn.yaml` | チャットセッションのランタイム設定: 履歴の圧縮、reasoning（"thinking"）テキストの扱い、対話レンダラ（`render_mode`）、TUI の gutter、body の neutralize、許可する画像 URL スキーム。以下参照。**¹ の上書きを持つのは `chat.reasoning.display` のみ**（ブロック全体ではなく 1 leaf — EN 版の [`chat.reasoning` fields](reyn-yaml.md#chatreasoning-fields) 参照）。他の `chat.*` キーはすべて `project` のみ。 |
+| `chat` | マップ | project · agent · session¹ | restart⁵ | `reyn.yaml` | チャットセッションのランタイム設定: 履歴の圧縮、reasoning（"thinking"）テキストの扱い、対話レンダラ（`render_mode`）、TUI の gutter、body の neutralize、許可する画像 URL スキーム。以下参照。**¹ の上書きを持つのは `chat.reasoning.display` のみ**（ブロック全体ではなく 1 leaf — EN 版の [`chat.reasoning` fields](reyn-yaml.md#chatreasoning-fields) 参照）。他の `chat.*` キーはすべて `project` のみ。 |
 | `voice` | マップ | project | restart | `reyn.yaml` | inline CUI の F2 ディクテーション用の Whisper モデル/言語/デバイス設定(#4187/#4249 で復活)。以下参照。 |
 | `audit_events` | マップ | project | restart | `reyn.yaml` | `.reyn/events` 配下の P6 **audit-event** ファイルのローテーション（サイズ / 経過時間 / 掃除周期）。WAL-event でも hook-event でもありません。以下参照。 |
 | `observability` | マップ | project | restart | `reyn.yaml` | P6 監査イベントの OpenTelemetry (OTLP) エクスポート（オプトイン）。デフォルトは無効。以下参照。 |
@@ -152,6 +152,19 @@ preferences.py`）— エージェント自身の `profile.yaml` **と** セッ�
 `load_hot_reload_config` にはそれを埋める経路がありません。今回のパスで
 検証できなかった主張を繰り返すより保守的に（`reyn.yaml` のみ）しておき、
 どちらとも決めずに旗を立てています — 未解決の問いは EN 版のこの表の PR 参照。
+
+⁵ **`Reload` が `restart` なのは project 層に限る**（lead-coder 自身の
+#5090 review finding — issuecomment-5379469534）— ¹ と同じ行
+（`output_language`・`chat.reasoning.display`・7 個の
+`cost.*.warn_ratio` leaf）は agent/session 層では LIVE re-read
+（`Session.output_language` / `_resolve_session_preference`、逐語
+「Live re-read on every access」/「Live re-read on every call (never
+cached)」）— 本列の冒頭が説明する `_HOT_RELOAD_FILES` のファイル単位の
+hot reload とは★別のメカニズムで、構造的にそこからは見えません
+（property access ごとの re-read であり、ファイルの re-read ではない）。
+この脚注は ¹ と★同じ `PREFERENCE_KEYS` 集合を指すため、将来 ① の gate が
+これらの行のどれかで落ちれば、この脚注の主張も一緒に付いてきます —
+2 つが★別々に漂うことはありません。
 
 > **プロジェクトコンテキストファイル（`project_context_path`）。** 未設定のとき
 > Reyn は `AGENTS.md` を読みます — Claude Code・Codex・opencode 等も読む cross-tool
