@@ -56,22 +56,30 @@ async def test_agent_layer_project_context_path_replaces_the_project_wide_file(
     config = load_config()
     registry = build_agent_registry_from_project(project_root, config, non_interactive=True)
     try:
-        registry.create("coder1")
-        registry.create("coder2")
-        # Hand-edit each profile.yaml the way #5084's own target workflow
-        # does -- no create_agent(project_context_path=...) parameter
-        # exists (deliberately out of scope: the goal is a person writing
-        # the file directly).
-        p1 = AgentProfile.load(registry.agent_workspace_dir("coder1"))
-        AgentProfile(
-            name=p1.name, role=p1.role, created_at=p1.created_at,
-            project_context_path="${REYN_PROJECT_DIR}/coder1-context.md",
-        ).save(registry.agent_workspace_dir("coder1"))
-        p2 = AgentProfile.load(registry.agent_workspace_dir("coder2"))
-        AgentProfile(
-            name=p2.name, role=p2.role, created_at=p2.created_at,
-            project_context_path="${REYN_PROJECT_DIR}/coder2-context.md",
-        ).save(registry.agent_workspace_dir("coder2"))
+        # #5111: routes through the real creation seam now
+        # (``create_agent(..., project_context_path=...)``) rather than
+        # hand-editing profile.yaml — #5084's own goal ("declared just by
+        # writing profile.yaml, no slash commands") names the CREATION
+        # SEAM as the declaration surface, and that seam gained this
+        # parameter in #5111 (it did not exist when this test was
+        # written; the hand-edit below was a deliberate stand-in for it,
+        # not the target shape).
+        #
+        # A bare relative value here (not the ``${REYN_PROJECT_DIR}``
+        # token this file's OTHER tests use for a HAND-typed profile.yaml
+        # value) — the structured-API write side (``registry.create``)
+        # resolves a relative value against the project root and stores
+        # the RESULT as an absolute path, the same "structured parameter,
+        # never a token string" contract ``base_dir`` already has (see
+        # ``registry.create``'s own docstring). The read side
+        # (``resolve_agent_project_context``) accepts an absolute path
+        # directly — only a HAND-typed bare-relative value is rejected.
+        await registry.create_agent(
+            "coder1", project_context_path="coder1-context.md",
+        )
+        await registry.create_agent(
+            "coder2", project_context_path="coder2-context.md",
+        )
 
         session1 = registry.get_or_load("coder1")
         session2 = registry.get_or_load("coder2")

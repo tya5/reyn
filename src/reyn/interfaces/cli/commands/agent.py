@@ -46,6 +46,16 @@ def register(sub) -> None:
             "workspace. Omitted -> inherits the project's own base_dir."
         ),
     )
+    p_new.add_argument(
+        "--project-context-path", default=None,
+        help=(
+            "REYN.md / AGENTS.md override for this agent (#5111/#5084 (2); "
+            "same restrict-only shape as --base-dir -- must resolve inside "
+            "the project workspace, rejected otherwise, never clamped). "
+            "Relative paths resolve against the project workspace. Omitted "
+            "-> falls through to the project-wide file."
+        ),
+    )
     p_new.set_defaults(func=_cmd_new)
 
     p_rm = inner.add_parser(
@@ -167,7 +177,10 @@ def _cmd_new(args: argparse.Namespace) -> None:
     target = _agents_dir() / args.name
     try:
         asyncio.run(
-            reg.create_agent(args.name, role=args.role, base_dir=args.base_dir)
+            reg.create_agent(
+                args.name, role=args.role, base_dir=args.base_dir,
+                project_context_path=args.project_context_path,
+            )
         )
     except ValueError as e:                       # invalid name
         print(f"Error: {e}", file=sys.stderr)
