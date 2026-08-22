@@ -255,7 +255,15 @@ async def test_bad_per_session_yaml_syntax_error_is_silent_no_warning(
     correct (no crash, no bad hooks fire) but NOT distinguishable from "no
     hooks.yaml was ever written" — the #5100 gap: an operator's typo'd
     per-session file (the sole broker-participation mechanism, #5091) now
-    fails with zero signal anywhere."""
+    fails with zero signal anywhere.
+
+    Only the functional-degrade side is asserted here (lead-coder review,
+    issuecomment-5379974816): an earlier revision also asserted
+    ``caplog.records == []``, which is a test that goes RED the day
+    someone FIXES this gap — the six-questions Q1 answer for that assert
+    is "nobody's bug", the wrong shape for this suite. The silent-gap fact
+    itself is recorded here (docstring) and on #5100, not encoded as an
+    assertion that punishes the fix."""
     monkeypatch.chdir(tmp_path)
     # a genuine YAML syntax error, not merely a missing scheme
     (tmp_path / "hooks.yaml").write_text(
@@ -266,10 +274,3 @@ async def test_bad_per_session_yaml_syntax_error_is_silent_no_warning(
     with caplog.at_level("WARNING"):
         registry = session._build_hook_registry()
     assert registry.hooks_for("turn_end") == []  # correct functional degrade
-    assert caplog.records == [], (
-        "a YAML SYNTAX error at the per-session layer currently produces NO "
-        "warning anywhere (unlike a shape error, see the previous test) — "
-        "this is the #5100 gap, not a false claim; if this starts failing "
-        "because a warning was added, that is the fix landing, update this "
-        "test to assert the new warning text instead of deleting it"
-    )
