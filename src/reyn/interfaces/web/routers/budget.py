@@ -13,12 +13,20 @@ Routes:
 """
 from __future__ import annotations
 
+from pathlib import Path
+
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
-from reyn.interfaces.web.deps import get_budget_tracker, get_reyn_config
+from reyn.core.events.events import emit_direct_event
+from reyn.interfaces.web.deps import get_budget_tracker, get_project_root, get_reyn_config
 
 router = APIRouter(tags=["budget"])
+
+# #5067: same rationale as permissions.py's own _SURFACE (#5065) — one
+# constant feeds both the emit_direct_event directory/emitter axis and the
+# payload's own "surface" field, so the two can't drift apart.
+_SURFACE = "web"
 
 
 # ── response models ───────────────────────────────────────────────────────────
@@ -101,13 +109,28 @@ async def patch_budget_caps(
     body: PatchCapsRequest,
     tracker=Depends(get_budget_tracker),
     config=Depends(get_reyn_config),
+    project_root: Path = Depends(get_project_root),
 ) -> BudgetUsage:
     """Update hard caps on the live tracker (in-process only, not persisted).
 
     To make changes permanent, edit reyn.yaml directly.
+
+    #5067: this is a management operation on the live budget config, the
+    OTHER band pairing #5065 closed (cost-budget x audit-events, not
+    permission x audit-events) — before this, a cap raised or lowered here
+    left no record, and unlike #5065's approvals.yaml this change is not
+    even persisted (lead-coder's own measurement): a restart silently
+    reverts it, and the fact that it was ever changed lands nowhere else.
+    The audit-event is the ONLY record. Emits ``budget_caps_updated``
+    naming only the fields this call actually changed, each as its own
+    ``{"from": ..., "to": ...}`` pair (never a fabricated entry for a
+    field left ``None``); no event at all if the request changed nothing.
+    Best-effort, same scope as #5065's routes: the emit runs after the
+    caps are applied and swallows its own failure.
     """
     from reyn.runtime.budget.budget import CostLimitConfig
     cfg = tracker.config
+    changes: dict[str, dict[str, float | None]] = {}
 
     def _apply(field_name: str, new_hard_limit: float | None) -> None:
         if new_hard_limit is None:
@@ -118,6 +141,7 @@ async def patch_budget_caps(
             warn_ratio=current.warn_ratio,
         )
         setattr(cfg, field_name, updated)
+        changes[field_name] = {"from": current.hard_limit, "to": new_hard_limit}
 
     _apply("daily_tokens", body.daily_tokens_hard_limit)
     _apply("daily_cost_usd", body.daily_cost_usd_hard_limit)
@@ -125,6 +149,14 @@ async def patch_budget_caps(
     _apply("monthly_cost_usd", body.monthly_cost_usd_hard_limit)
     _apply("per_agent_tokens", body.per_agent_tokens_hard_limit)
     _apply("per_agent_cost_usd", body.per_agent_cost_usd_hard_limit)
+
+    if changes:
+        emit_direct_event(
+            "budget_caps_updated",
+            surface=_SURFACE,
+            reyn_root=project_root / ".reyn",
+            changes=changes,
+        )
 
     # Return updated state
     return await get_budget_usage(tracker=tracker, config=config)

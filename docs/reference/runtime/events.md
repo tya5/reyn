@@ -42,6 +42,7 @@ agent_response_committed
 agent_response_received
 asyncio_unhandled_exception
 body_summary_hard_truncated
+budget_caps_updated
 budget_reset
 bus_subscriber_dropped
 canonical_degraded
@@ -605,6 +606,7 @@ mostly informational.
 | `compact_op_unavailable` | The `compact` Control IR op was dispatched in a context where no compaction engine is wired. | `run_id`, `phase` |
 | `summary_resummarize_failed` | Re-summarising an existing summary (nested compaction) raised. | `error` |
 | `budget_reset` | The chat budget gateway reset its per-window accounting. | `before` (prior accumulated value) |
+| `budget_caps_updated` | #5067 — `PATCH /api/budget/caps` (`budget.py`'s REST router) changed one or more of the live `BudgetTracker`'s hard caps. In-process only (not persisted to `reyn.yaml`), reachable via `project_root` (no live Session, hence no `run_id`/`actor`/`phase` — same shape as #5065's `permission_approval_revoked`/`permission_approvals_cleared`, the OTHER band pairing: cost-budget x audit-events). Because this change is not persisted anywhere else, this event is the ONLY record either value ever existed. | `changes` (a `{field_name: {"from": old_hard_limit, "to": new_hard_limit}}` mapping of ONLY the fields the request actually set), `surface` |
 
 ## Safety limits
 
