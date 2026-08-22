@@ -26,12 +26,7 @@ are different answers to different questions).
 """
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
 from reyn.interfaces.slash import SlashContext, reply, reply_error, slash
-
-if TYPE_CHECKING:
-    from reyn.runtime.session import Session
 
 _ROOT_UNRESOLVED = (
     "can't determine this project's memory location over this connection "
@@ -48,26 +43,31 @@ _USAGE = (
 
 
 def _memory_completer(
-    session: "Session", arg_partial: str = "",
+    source: "object", arg_partial: str = "",
 ) -> list[str]:
     """Surface memory entry names after ``/memory view ``.
 
     Reads ``memory.list_entries()`` and returns the entry slugs. Empty
     list for ``/memory list`` or empty args (= hint mode covers those).
 
-    Takes a real ``Session`` directly (the pre-existing, ungated
-    ``CompleterFn`` signature — a synchronous TUI-local seam that #3595 S4
-    never touched; unlike ``memory_cmd`` below, this is not routed through
-    ``SlashContext``/``ClientTransport`` at all, so reading
-    ``session.workspace_dir`` here is not new residue).
+    ``source`` is a ``CompletionSourceSnapshot | None`` (#5044) — a plain
+    value, never a live ``Session``. Only
+    :attr:`~reyn.interfaces.repl.read_model.CompletionSourceSnapshot.
+    workspace_dir` is needed: the completer still does its OWN disk I/O
+    keyed by that Path, exactly as before — a static value, not a live
+    method, so nothing here crosses a thread boundary any differently
+    than reading a plain field.
     """
     parts = arg_partial.split()
     sub = parts[0] if parts else ""
     if sub != "view":
         return []
+    workspace_dir = getattr(source, "workspace_dir", None)
+    if workspace_dir is None:
+        return []
     try:
         from reyn.data.memory import list_entries, memory_dir
-        root = session.workspace_dir.parent.parent
+        root = workspace_dir.parent.parent
         entries = list_entries(memory_dir(root=root))
         return [e.name for e in entries]
     except Exception:

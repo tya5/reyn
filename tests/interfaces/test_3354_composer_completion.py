@@ -70,7 +70,11 @@ from reyn.interfaces.inline.textual_chat.completion import (
     CompletionPopup,
     compute_completion,
 )
-from reyn.interfaces.repl.read_model import LOCAL_CHAT_READ_CAPABILITIES, ChatReadModel
+from reyn.interfaces.repl.read_model import (
+    LOCAL_CHAT_READ_CAPABILITIES,
+    ChatReadModel,
+    completion_source_snapshot_from_session,
+)
 from reyn.interfaces.slash import REGISTRY
 from reyn.interfaces.transport.client_transport import ClientTransport
 from reyn.interfaces.transport.frames import EventFrame
@@ -138,9 +142,14 @@ class RecordingTransport(ClientTransport):
 
 class SessionReadModel(ChatReadModel):
     """A real :class:`ChatReadModel` seam impl (same pattern as
-    ``test_3338``'s ``_MutableSnapshotReadModel``) whose
-    :meth:`completion_session` returns a REAL ``Session`` — the seam the app
-    resolves both completion sources through."""
+    ``test_3338``'s ``_MutableSnapshotReadModel``) that holds a REAL
+    ``Session`` — the seam the app resolves both completion sources
+    through. :meth:`completion_source` converts it to a
+    :class:`CompletionSourceSnapshot` VALUE (#5044) via the SAME shared
+    helper :class:`RegistryReadModel` uses in production
+    (:func:`completion_source_snapshot_from_session`), never handing the
+    live ``Session`` itself across the seam — this test double exercises
+    the real conversion, not a shortcut around it."""
 
     @property
     def capabilities(self):
@@ -153,8 +162,10 @@ class SessionReadModel(ChatReadModel):
     def __init__(self, session=None) -> None:
         self._session = session
 
-    def completion_session(self):
-        return self._session
+    def completion_source(self):
+        if self._session is None:
+            return None
+        return completion_source_snapshot_from_session(self._session)
 
     def snapshot(self, config=None):
         return None
@@ -227,13 +238,14 @@ def test_command_candidates_stop_when_the_argument_stage_begins(tmp_path, monkey
     monkeypatch.chdir(tmp_path)
     session = _real_session(tmp_path)
 
-    before = compute_completion("/ima", session=session)
+    source = completion_source_snapshot_from_session(session)
+    before = compute_completion("/ima", source=source)
     assert before.kind == KIND_COMMAND
     assert "/image" in [c.label for c in before.candidates], (
         f"the command stage did not offer /image; got {[c.label for c in before.candidates]}"
     )
 
-    after = compute_completion("/image ", session=session)
+    after = compute_completion("/image ", source=source)
     assert after.kind == KIND_ARGUMENT, (
         "typing the space did not move the menu to the argument stage — the "
         "command word is settled, so command candidates must stop"
@@ -261,7 +273,8 @@ def test_argument_candidates_filter_by_the_last_typed_word(tmp_path, monkeypatch
     monkeypatch.chdir(tmp_path)
     session = _real_session(tmp_path)
 
-    state = compute_completion("/image sh", session=session)
+    source = completion_source_snapshot_from_session(session)
+    state = compute_completion("/image sh", source=source)
     assert [c.value for c in state.candidates] == ["shot.png"]
     assert state.prefix_len == len("sh"), (
         "prefix_len must cover only the argument word being completed — a "
@@ -282,7 +295,8 @@ def test_model_argument_completion_uses_the_configured_model_classes(tmp_path):
     expected = session.known_model_classes()
     assert expected, "test setup: the session reports no configured model classes"
 
-    state = compute_completion("/model ", session=session)
+    source = completion_source_snapshot_from_session(session)
+    state = compute_completion("/model ", source=source)
     assert state.kind == KIND_ARGUMENT
     assert [c.value for c in state.candidates] == list(expected), (
         f"/model completion diverged from known_model_classes(): "
@@ -451,7 +465,7 @@ def test_unreadable_sources_stay_silent_rather_than_showing_an_empty_menu():
     stage's usage header — keeps working. So ``/image `` on a remote client
     offers no filesystem candidates and no ``NO_MATCH_ROW`` (nothing was asked),
     but still says what ``/image`` takes."""
-    remote_arg = compute_completion("/image ", session=None)
+    remote_arg = compute_completion("/image ", source=None)
     assert remote_arg.candidates == (), (
         "a session-less client produced argument candidates from somewhere"
     )
@@ -462,7 +476,7 @@ def test_unreadable_sources_stay_silent_rather_than_showing_an_empty_menu():
     assert not remote_arg.owns_keys, (
         "a menu with nothing to navigate claimed the navigation keys"
     )
-    assert compute_completion("/agents ", session=None).kind == KIND_NONE, (
+    assert compute_completion("/agents ", source=None).kind == KIND_NONE, (
         "a command with neither an argument source nor a usage line must be "
         "silent, not an empty menu"
     )
@@ -470,7 +484,7 @@ def test_unreadable_sources_stay_silent_rather_than_showing_an_empty_menu():
         "skill completion must be silent when the skill source is unavailable"
     )
     # But COMMAND-name completion is registry-derived and works everywhere.
-    remote = compute_completion("/im", session=None, skills=None)
+    remote = compute_completion("/im", source=None, skills=None)
     assert remote.kind == KIND_COMMAND and remote.candidates, (
         "command-name completion must keep working on a client with no session"
     )
@@ -893,7 +907,7 @@ async def test_a_newline_in_the_composer_closes_the_menu(tmp_path) -> None:
 @pytest.mark.asyncio
 async def test_skill_menu_reaches_the_sessions_own_skill_list(tmp_path) -> None:
     """Tier 2b: the app resolves the ``:`` source through the
-    ``ChatReadModel.completion_session`` seam and a real ``Session``'s public
+    ``ChatReadModel.completion_source`` seam and a real ``Session``'s public
     ``available_skills()`` — so what the menu offers is what that session
     actually registered, not a client-side copy that can drift."""
     session = _real_session(tmp_path, skills=_skill_entries())

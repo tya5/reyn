@@ -123,7 +123,7 @@ def test_capabilities_dataclass_rejects_a_missing_field():
     lets this test claim the ``TypeError`` above is caused by the MISSING
     field specifically, not by some other construction failure."""
     ChatReadModelCapabilities(
-        completion_session=True,
+        completion_source=True,
         intervention_head=True,
         pending_command_ui=True,
         has_command_ui_region=True,
@@ -138,7 +138,7 @@ def test_capabilities_dataclass_rejects_a_missing_field():
     )
     with pytest.raises(TypeError):
         ChatReadModelCapabilities(  # type: ignore[call-arg]
-            completion_session=True,
+            completion_source=True,
             intervention_head=True,
             pending_command_ui=True,
             has_command_ui_region=True,
@@ -173,7 +173,7 @@ def test_capabilities_dataclass_has_exactly_the_declared_fields():
     docstring for why they live here anyway."""
     names = {f.name for f in fields(ChatReadModelCapabilities)}
     assert names == {
-        "completion_session",
+        "completion_source",
         "intervention_head",
         "pending_command_ui",
         "has_command_ui_region",

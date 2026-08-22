@@ -18,35 +18,20 @@ if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
 
-class _StubSession:
-    """Minimal session stub — only carries what the completers read."""
+class _StubSource:
+    """Minimal ``CompletionSourceSnapshot``-shaped stub (#5044) — only
+    carries the ONE field this completer reads."""
 
-    def __init__(self, interventions=None):
-        self._interventions = _StubInterventionRegistry(interventions or [])
-
-
-class _StubInterventionRegistry:
-    def __init__(self, ivs):
-        self._ivs = ivs
-
-    def list_active(self):
-        return self._ivs
-
-
-class _StubIntervention:
-    def __init__(self, iid):
-        self.id = iid
+    def __init__(self, active_intervention_ids=()):
+        self.active_intervention_ids = tuple(active_intervention_ids)
 
 
 def test_intervention_id_completer_returns_active_ids() -> None:
     """Tier 2: empty arg_partial returns all active intervention IDs."""
     from reyn.interfaces.slash.chat import _intervention_id_completer
 
-    session = _StubSession(interventions=[
-        _StubIntervention("iv-aaa"),
-        _StubIntervention("iv-bbb"),
-    ])
-    out = _intervention_id_completer(session, "")
+    source = _StubSource(active_intervention_ids=["iv-aaa", "iv-bbb"])
+    out = _intervention_id_completer(source, "")
     assert set(out) == {"iv-aaa", "iv-bbb"}
 
 
@@ -54,13 +39,9 @@ def test_intervention_id_completer_filters_by_prefix() -> None:
     """Tier 2: prefix filter narrows."""
     from reyn.interfaces.slash.chat import _intervention_id_completer
 
-    session = _StubSession(interventions=[
-        _StubIntervention("iv-aaa"),
-        _StubIntervention("iv-bbb"),
-        _StubIntervention("zz-ccc"),
-    ])
-    assert set(_intervention_id_completer(session, "iv-")) == {"iv-aaa", "iv-bbb"}
-    assert _intervention_id_completer(session, "zz") == ["zz-ccc"]
+    source = _StubSource(active_intervention_ids=["iv-aaa", "iv-bbb", "zz-ccc"])
+    assert set(_intervention_id_completer(source, "iv-")) == {"iv-aaa", "iv-bbb"}
+    assert _intervention_id_completer(source, "zz") == ["zz-ccc"]
 
 
 def test_intervention_id_completer_past_first_space_empty() -> None:
@@ -72,19 +53,21 @@ def test_intervention_id_completer_past_first_space_empty() -> None:
     """
     from reyn.interfaces.slash.chat import _intervention_id_completer
 
-    session = _StubSession(interventions=[_StubIntervention("iv-aaa")])
-    assert _intervention_id_completer(session, "iv-aaa hello") == []
-    assert _intervention_id_completer(session, "iv- text") == []
+    source = _StubSource(active_intervention_ids=["iv-aaa"])
+    assert _intervention_id_completer(source, "iv-aaa hello") == []
+    assert _intervention_id_completer(source, "iv- text") == []
 
 
-def test_intervention_id_completer_no_registry_returns_empty() -> None:
-    """Tier 2: session without ``_interventions`` returns empty (defensive)."""
+def test_intervention_id_completer_no_source_returns_empty() -> None:
+    """Tier 2: a source without ``active_intervention_ids`` (or ``None``
+    itself) returns empty (defensive)."""
     from reyn.interfaces.slash.chat import _intervention_id_completer
 
     class _Bare:
         pass
 
     assert _intervention_id_completer(_Bare(), "") == []
+    assert _intervention_id_completer(None, "") == []
 
 
 def test_answer_slash_has_completer_registered() -> None:

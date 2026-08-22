@@ -16,18 +16,16 @@ agent-identity default (``Agent.model``) unchanged.
 """
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
 from reyn.interfaces.slash import SlashContext, reply, reply_error, slash
 
-if TYPE_CHECKING:
-    from reyn.runtime.session import Session
 
-
-def _model_class_completer(session: "Session", arg_partial: str = "") -> list[str]:
+def _model_class_completer(source: "object", arg_partial: str = "") -> list[str]:
     """Operator-configured model classes for ``/model <class>`` completion.
 
-    Wires the EXISTING public accessor
+    ``source`` is a ``CompletionSourceSnapshot | None`` (#5044) — a plain
+    value, never a live ``Session``. :attr:`~reyn.interfaces.repl.
+    read_model.CompletionSourceSnapshot.known_model_classes` is already
+    the EXISTING public accessor's result
     (:meth:`~reyn.runtime.session.Session.known_model_classes` →
     ``ModelResolver.known_classes()``) — the same list this command's own
     no-arg branch prints under ``available:`` and the drawer's Model pane
@@ -37,16 +35,11 @@ def _model_class_completer(session: "Session", arg_partial: str = "") -> list[st
     ``arg_partial`` is accepted per the ``CompleterFn`` contract and unused:
     ``/model`` takes a single argument, and prefix-filtering is the caller's
     job (it filters by the last typed word for every command uniformly).
-    Returns ``[]`` for a session that cannot answer — a remote client holds
+    Returns ``[]`` for a source that cannot answer — a remote client holds
     none, and a broken completer must never break the composer.
     """
-    getter = getattr(session, "known_model_classes", None)
-    if getter is None:
-        return []
-    try:
-        return list(getter())
-    except Exception:  # noqa: BLE001 — a completer must never break the composer
-        return []
+    known_model_classes = getattr(source, "known_model_classes", None)
+    return list(known_model_classes) if known_model_classes is not None else []
 
 
 @slash(

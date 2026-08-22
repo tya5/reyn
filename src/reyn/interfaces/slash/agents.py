@@ -18,16 +18,20 @@ _NO_REGISTRY_ATTACH = (
 )
 
 
-def _attach_completer(session: "object", arg_partial: str = "") -> list[str]:
+def _attach_completer(source: "object", arg_partial: str = "") -> list[str]:
     """Return known agent names for tab completion.
+
+    ``source`` is a ``CompletionSourceSnapshot | None`` (#5044) — a plain
+    value, never a live ``Session``; :attr:`~reyn.interfaces.repl.
+    read_model.CompletionSourceSnapshot.agent_names` is already the
+    ``list_active_names()`` result (#1954: hide archived agents).
 
     Accepts ``arg_partial`` for forward-compat with the CompleterFn
     signature evolution (multi-arg commands like ``/tasks`` need it) —
     ``/attach`` itself is single-arg so the partial is unused.
     """
-    if getattr(session, "_registry", None) is None:
-        return []
-    return session._registry.list_active_names()  # #1954: hide archived agents
+    agent_names = getattr(source, "agent_names", None)
+    return list(agent_names) if agent_names is not None else []
 
 
 @slash("agents", summary="List all agents (* = attached, · = loaded)")
