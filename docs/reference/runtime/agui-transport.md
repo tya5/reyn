@@ -58,6 +58,14 @@ A2A; tools are MCP; observability export is OTEL. Those are separate surfaces.)
 - `POST /agui/chat/{agent}/seize` — take the active-driver token (see "Active
   driver and seize").
 
+`{agent}` on `POST /agui/chat/{agent}` and `POST /agui/chat/{agent}/seize`
+(#5129) is a **fallback, not the destination**: both routes resolve the real
+target from this connection's own `connection_id` (whichever agent it is
+currently attached to); `{agent}` is only consulted when the connection has
+no recorded attachment. A `--connect`ed client's own cross-agent `/attach`
+therefore redirects its NEXT `submit`/`seize` too, without the client having
+to change the URL it POSTs to.
+
 A client can never shut the server down — there is no shutdown message; a
 client's `/quit` is a local disconnect only. The server is the sole writer.
 
