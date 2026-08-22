@@ -25,12 +25,7 @@ truth for.
 
 Source of truth: `PREFERENCE_KEYS` (`src/reyn/runtime/preferences.py`, the ③
 preference axis) plus the ONE explicit agent-layer-only `AgentProfile` field
-(`project_context_path` #5086). There were two: `broker_identity` #5085 was
-removed by #5091 (owner ruling — "broker" is an external MCP server, not a
-reyn-runtime concept), which also emptied the `agent`-alone vocabulary value
-it was the sole instance of. Nothing here checked it (it had no row in the
-table), so its removal did not turn this gate red — the doc prose citing it
-did go stale, which is what #5091's follow-up corrected.
+(`project_context_path` #5086).
 
 Real file reads throughout (the actual doc, the actual `PREFERENCE_KEYS`
 declaration) — no mocks.
