@@ -312,6 +312,32 @@ class ClientTransport(ABC):
         as a hazard elsewhere tonight."""
         return None
 
+    async def clear_pending_command_ui(self) -> None:
+        """Consume the pending command-UI request (the ``/rewind`` picker's
+        own points, or any future command-UI kind) — a no-op wherever there
+        is nothing to consume.
+
+        #5045: moved here from ``ChatReadModel.clear_pending_command_ui``
+        (retired — see that class's own history), which MUTATED ``Session``
+        state (``s.set_pending_command_ui(None)``) despite ``ChatReadModel``
+        being named and documented as read-only. True independent of any
+        threading concern, but #5048's core-off-thread cutover is what makes
+        it load-bearing: a read model bound to a registry that now lives on
+        a WORKER thread cannot safely call a mutating method on that
+        registry's ``Session`` directly — the write needs to cross the
+        thread boundary the same way every OTHER write already does
+        (:meth:`submit_user_text`/:meth:`answer_intervention_choice`/etc.),
+        not through a read-only seam that happens to expose one exception.
+
+        The default here (no-op) is correct for any transport with no
+        local command-UI concept at all — command-UI is INLINE-APP-LOCAL
+        state (never on the wire, mirroring ``pending_command_ui()``'s own
+        ``None`` for remote): ``AgUiTransport`` inherits this default
+        unchanged. ``InProcessTransport`` overrides it to perform the real
+        clear; ``ThreadedTransportProxy`` overrides it to marshal the call
+        onto the worker thread that owns the ``Session``."""
+        return None
+
     def reyn_state_root(self) -> "Path | None":
         """The attached session's project `.reyn` root, or None (#3721).
 

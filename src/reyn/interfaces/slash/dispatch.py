@@ -197,6 +197,9 @@ class _ErrorWatchingTransport(ClientTransport):
     def pending_intervention_head(self) -> "object | None":
         return self._inner.pending_intervention_head()
 
+    async def clear_pending_command_ui(self) -> None:
+        await self._inner.clear_pending_command_ui()
+
     def reyn_state_root(self) -> "Path | None":
         return self._inner.reyn_state_root()
 

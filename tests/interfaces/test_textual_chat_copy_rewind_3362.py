@@ -87,9 +87,6 @@ class _PickerReadModel(ChatReadModel):
     ) -> None:
         self._pending = pending
         self._messages = list(messages or [])
-        #: How many times the app consumed the request — public so a test can
-        #: assert the consumption without reaching into private state.
-        self.cleared = 0
 
     def snapshot(self, config=None):
         return None
@@ -99,10 +96,6 @@ class _PickerReadModel(ChatReadModel):
 
     def pending_command_ui(self):
         return self._pending
-
-    def clear_pending_command_ui(self) -> None:
-        self._pending = None
-        self.cleared += 1
 
     @property
     def has_command_ui_region(self) -> bool:
@@ -140,6 +133,11 @@ class ScriptedTransport(ClientTransport):
         # #3595 S5: a slash line the app routes is RUN as a command through this
         # seam; ``submitted`` keeps its meaning of "went out as a turn".
         self.commands: "list[str]" = []
+        #: #5045: how many times the app consumed the pending command-UI
+        #: request through THIS seam (moved off the read model, which must
+        #: not write) — public so a test can assert the consumption without
+        #: reaching into private state.
+        self.cleared = 0
 
     def start(self) -> None:  # pragma: no cover - trivial
         pass
@@ -173,6 +171,9 @@ class ScriptedTransport(ClientTransport):
 
     def put_display(self, msg: "OutboxMessage") -> None:
         self._messages.append(msg)
+
+    async def clear_pending_command_ui(self) -> None:
+        self.cleared += 1
 
     async def cancel_inflight(self) -> None:  # pragma: no cover - trivial
         pass
@@ -409,7 +410,7 @@ async def test_rewind_sentinel_opens_the_picker_with_the_checkpoints() -> None:
         assert picker.has_points()
         rows = picker.query_one("#rewind-picker-options").option_count
         assert rows == len(_POINTS), f"{rows} rows for {len(_POINTS)} checkpoints"
-        assert read_model.cleared == 1, (
+        assert transport.cleared == 1, (
             "the command-UI request was not consumed — it would replay onto a "
             "later sentinel"
         )

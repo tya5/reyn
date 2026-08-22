@@ -312,10 +312,6 @@ class ChatReadModel(ABC):
         """The pending command-UI request (the ``/rewind`` picker), or None.
         Command-UI is inline-app-local state, not on the wire → None for remote."""
 
-    @abstractmethod
-    def clear_pending_command_ui(self) -> None:
-        """Consume the pending command-UI request (no-op when unsupported)."""
-
     @property
     @abstractmethod
     def has_command_ui_region(self) -> bool:
@@ -460,11 +456,6 @@ class RegistryReadModel(ChatReadModel):
     def pending_command_ui(self):
         s = self._attached()
         return s.pending_command_ui if s is not None else None
-
-    def clear_pending_command_ui(self) -> None:
-        s = self._attached()
-        if s is not None:
-            s.set_pending_command_ui(None)
 
     @property
     def has_command_ui_region(self) -> bool:
@@ -739,9 +730,6 @@ class RemoteReadModel(ChatReadModel):
         return (values or {}).get("pending_intervention_head")
 
     def pending_command_ui(self):
-        return None
-
-    def clear_pending_command_ui(self) -> None:
         return None
 
     @property

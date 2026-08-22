@@ -4252,7 +4252,7 @@ class TextualChatApp(App):
                 kind="status", text=f"could not open {resolved.name} — no OS opener available",
             ))
 
-    def _handle_rewind_request(self, msg: "OutboxMessage") -> None:
+    async def _handle_rewind_request(self, msg: "OutboxMessage") -> None:
         """Consume a ``__rewind_list__`` sentinel: show the picker, or the text
         fallback (#3362).
 
@@ -4266,8 +4266,9 @@ class TextualChatApp(App):
           (``{"kind": "rewind", "points": [...]}``) the picker is populated from
           the POINTS and the sentinel's pre-rendered text is dropped — one list,
           not a list plus a duplicate transcript row. The request is consumed
-          (``clear_pending_command_ui``) so it can never be replayed onto a later
-          sentinel.
+          (``ClientTransport.clear_pending_command_ui`` — #5045: moved off the
+          read model, which must not write) so it can never be replayed onto a
+          later sentinel.
         - No structured request available — the REMOTE case, where command-UI is
           not on the AG-UI wire and ``pending_command_ui()`` is ``None`` by
           design (``read_model.py``) — falls back to appending the sentinel's
@@ -4289,10 +4290,18 @@ class TextualChatApp(App):
         invisible). A ``kind="status"`` flow row — the same idiom this
         module already uses for other command-triggered feedback (the
         voice-transcription "⏳ transcribing…"/hint rows above) — says why,
-        and what to do instead. The read-model request is still consumed
-        (``clear_pending_command_ui``) even when refused: a request left
-        pending would replay onto whatever picker interaction happens
-        next, attributing THIS refused open to a later, unrelated one."""
+        and what to do instead. The request is still consumed even when
+        refused: a request left pending would replay onto whatever picker
+        interaction happens next, attributing THIS refused open to a
+        later, unrelated one.
+
+        #5045: ``async def`` now (was ``def``) — the consume step goes
+        through ``self._transport.clear_pending_command_ui()``, which for
+        ``ThreadedTransportProxy`` crosses a real thread boundary
+        (``_call_on_worker``). Safe to await here: the sole call site
+        (``_pump_frames``) already awaits its siblings
+        (``_handle_copy_request``/``_handle_open_artifact_request``) the
+        same way."""
         from reyn.runtime.outbox import OutboxMessage  # noqa: PLC0415
 
         request = None
@@ -4305,7 +4314,7 @@ class TextualChatApp(App):
         if request and request.get("kind") == "rewind" and points:
             if self._iv_panel.display:
                 try:
-                    self._read_model.clear_pending_command_ui()
+                    await self._transport.clear_pending_command_ui()
                 except Exception:
                     logger.exception("textual chat: command-UI clear failed")
                 self._ingest_frame(OutboxMessage(
@@ -4318,7 +4327,7 @@ class TextualChatApp(App):
                 return
             self._rewind_picker.show_points(list(points))
             try:
-                self._read_model.clear_pending_command_ui()
+                await self._transport.clear_pending_command_ui()
             except Exception:
                 logger.exception("textual chat: command-UI clear failed")
             return
@@ -6217,7 +6226,7 @@ class TextualChatApp(App):
                             logger.exception("textual chat: /copy sentinel failed")
                     elif msg.kind == "__rewind_list__":
                         try:
-                            self._handle_rewind_request(msg)
+                            await self._handle_rewind_request(msg)
                         except Exception:
                             logger.exception("textual chat: /rewind sentinel failed")
                     elif msg.kind == "__open_artifact__":
