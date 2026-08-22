@@ -1,7 +1,26 @@
-"""Tier 1/2: #4995 — ``ThreadedTransportProxy`` puts a real ``ClientTransport``
-on a dedicated worker thread with its own event loop, so competing work
-(e.g. the router's own turn processing) no longer starves the TUI's own
-scheduling on a shared loop.
+"""Tier 2: #4995 — ``ThreadedTransportProxy`` puts a real ``ClientTransport``
+on a dedicated worker thread with its own event loop — an OS-level
+invariant (genuinely different threads, a real ``threading.Event``
+blocking one of them) rather than a Reyn-internal contract, so this file
+declares Tier 2 throughout, not a dual Tier 1/2 (lead-coder's own
+#4995 review: a double declaration lets ``test_tier_audit.py``'s string
+match pass either reading, which avoids rather than answers CLAUDE.md's
+six-questions #6 — only a human can say which Tier a test is really
+pinning, and the answer here is one, not both).
+
+Scope, explicit (lead-coder's own #4995 review, said again here so it is
+not read from the PR body alone): this file does NOT prove the TUI
+becomes more responsive — that cutover (making ``TextualChatApp``/
+``run_repl`` actually construct a ``ThreadedTransportProxy`` instead of
+an ``InProcessTransport``) is #5048. What is proven here is the mechanism
+itself: a real ``ClientTransport`` genuinely runs on a different thread,
+and a caller on another thread keeps advancing while that thread is
+deliberately held open — the load-bearing PRECONDITION for #5048's own
+responsiveness claim, not that claim itself.
+
+Puts a real ``ClientTransport`` on a dedicated worker thread with its own
+event loop, so competing work (e.g. the router's own turn processing) no
+longer starves the TUI's own scheduling on a shared loop.
 
 **Design history, kept honest** (2 approaches rejected before this one
 settled — see ``threaded.py``'s own module docstring for the full
@@ -169,6 +188,9 @@ async def test_witness_2_the_caller_loop_keeps_advancing_while_the_worker_is_blo
         # caller's own loop via to_thread — not a sleep, not a poll.
         await asyncio.to_thread(started.wait)
 
+        # N is arbitrary — 50 carries no meaning of its own (not a
+        # threshold; any N > 0 that lets the assertion below distinguish
+        # "genuinely kept advancing" from "ran zero more times" would do).
         progressed = 0
         for _ in range(50):
             await asyncio.sleep(0)
