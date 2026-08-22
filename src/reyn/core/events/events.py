@@ -865,7 +865,11 @@ def emit_direct_event(
     idempotent (``mkdir(parents=True, exist_ok=True)``). If ``reyn_root``
     does not exist, logs a warning and returns silently — the caller's
     operation is the primary action; audit-emit failure must not
-    propagate.
+    propagate. This makes the guarantee best-effort, not just here but at
+    the underlying ``EventStore.write`` too (its own per-subscriber
+    isolation logs and swallows rather than raises) — a caller's primary
+    write can succeed while its audit record silently does not; there is
+    no separate signal distinguishing that case from "nothing happened."
 
     ``surface`` is stamped into the emitted event's own payload (a
     ``"surface"`` field, deterministic — a caller-supplied ``surface`` key

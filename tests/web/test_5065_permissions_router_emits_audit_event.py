@@ -33,8 +33,18 @@ _WORKTREE_SRC = REPO_ROOT / "src"
 if str(_WORKTREE_SRC) not in sys.path:
     sys.path.insert(0, str(_WORKTREE_SRC))
 
-fastapi = pytest.importorskip("fastapi", reason="fastapi not installed (core dependency since #5051 -- stale environment)")
-httpx = pytest.importorskip("httpx", reason="httpx not installed (needed by TestClient)")
+# fastapi is a core dependency since #5051 (pyproject.toml's `dependencies`,
+# no marker) -- an importorskip here would be exactly the silent-skip-on-a-
+# broken-install shape #5058 closed (architect ruling, found reviewing this
+# PR: the correct behavior on a genuinely broken install is red, not a
+# skip). Hard import.
+import fastapi  # noqa: F401
+
+# httpx is NOT yet a declared dependency (that's #5059's own content) --
+# this importorskip is legitimate today. Remove it the same PR #5059 lands
+# (declaring httpx would make this the same #5058-class violation as the
+# fastapi guard above).
+httpx = pytest.importorskip("httpx", reason="httpx not installed (needed by TestClient; remove this guard when #5059 declares httpx as a dependency)")
 
 
 @pytest.fixture()

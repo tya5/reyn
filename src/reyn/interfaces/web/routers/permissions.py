@@ -93,6 +93,9 @@ async def revoke_permission(
     an in-run permission decision — ``_save`` below is a raw write with no
     audit trail of its own (unlike the security-side ``_persist`` flow),
     so this route emits the audit-event itself, naming the revoked key.
+    Best-effort: the emit runs AFTER ``_save`` and swallows its own failure
+    (see ``emit_direct_event``'s docstring) — the write always lands, but on
+    an emit failure the audit trail does not record it.
     """
     data = _load(project_root)
     if key not in data:
@@ -119,7 +122,8 @@ async def clear_permissions(
 
     #5065: same audit gap as :func:`revoke_permission` above — a bulk clear
     has no single key to name, so the audit-event carries the count of
-    entries actually cleared instead.
+    entries actually cleared instead. Same best-effort scope as that route:
+    the emit runs after ``_save`` and swallows its own failure.
     """
     if not confirm:
         raise HTTPException(
