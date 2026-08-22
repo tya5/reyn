@@ -122,9 +122,12 @@ async def patch_budget_caps(
     even persisted (lead-coder's own measurement): a restart silently
     reverts it, and the fact that it was ever changed lands nowhere else.
     The audit-event is the ONLY record. Emits ``budget_caps_updated``
-    naming only the fields this call actually changed, each as its own
+    naming only the fields this call actually set (not "changed" — a
+    field set to the SAME value it already held is still recorded; this
+    route never compares old vs new to decide whether to record, only
+    whether the request specified a value at all), each as its own
     ``{"from": ..., "to": ...}`` pair (never a fabricated entry for a
-    field left ``None``); no event at all if the request changed nothing.
+    field left ``None``); no event at all if the request set nothing.
     Best-effort, same scope as #5065's routes: the emit runs after the
     caps are applied and swallows its own failure.
     """

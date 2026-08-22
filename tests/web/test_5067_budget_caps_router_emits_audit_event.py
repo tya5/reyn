@@ -163,7 +163,9 @@ def test_patch_budget_caps_with_no_changes_emits_no_event(tmp_project: Path):
     """Tier 2: a PATCH body with every field left ``None`` (no actual
     cap change) does not fabricate an event -- ``changes`` would be
     empty, and #5067's own ruling (mirroring #5065) is never to write a
-    field the request cannot answer."""
+    field the request cannot answer. This test alone is not a witness for
+    the emit MECHANISM (it would stay green even if the whole emit call
+    were deleted) -- that witness is carried by the two tests above."""
     assert _read_direct_web_events(tmp_project) == []
 
     response = _client().patch("/api/budget/caps", json={})
