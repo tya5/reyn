@@ -45,6 +45,12 @@ _WIRE_KEYS = (
     "ctx_used",
     "ctx_window",
     "waiting_on",
+    # #5050: the pending closed-set intervention (id/prompt/detail/choices),
+    # or None — the source ``RemoteReadModel.intervention_head()`` reads
+    # instead of an unconditional None (the #4996-family lying-None fix —
+    # see that method's own docstring). See ``status._snapshot``'s own
+    # docstring for the shape.
+    "pending_intervention_head",
     # #3300 P2a: server-authoritative sent-queue state — the undispatched
     # inbox queue (list of {msg_id, chain_id, text}) + whether a turn is
     # currently dispatched. Rides this SAME STATE_SNAPSHOT/STATE_DELTA
@@ -82,6 +88,8 @@ def project_status(snapshot: "dict | None", *, waiting_on: "str | None" = None) 
         "ctx_used": snap.get("ctx_used", 0),
         "ctx_window": snap.get("ctx_window", 0),
         "waiting_on": waiting_on,
+        # #5050: see _WIRE_KEYS above.
+        "pending_intervention_head": snap.get("pending_intervention_head"),
         # #3300 P2a: sent-queue state, see _WIRE_KEYS above.
         "queue": snap.get("queue", []),
         "turn_active": snap.get("turn_active", False),

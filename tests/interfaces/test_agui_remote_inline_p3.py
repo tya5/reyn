@@ -107,6 +107,94 @@ async def test_remote_read_model_projects_wire_status() -> None:
     assert snap["ctx_window"] == 1000
 
 
+@pytest.mark.asyncio
+async def test_remote_read_model_projects_pending_intervention_head() -> None:
+    """Tier 1: #5050 -- when STATE_SNAPSHOT carries a pending intervention
+    head (choices included), ``RemoteReadModel.intervention_head()`` returns
+    it — instead of the unconditional None it returned before #5050 (the
+    #4996-family lying-None: "unsupported" and "nothing pending now" rode
+    the identical value). This is the ruled witness (lead-coder,
+    issuecomment-5377022077) — NOT a claim that remote UI rendering shows
+    these choices today: how choices actually reach a remote client's
+    picker is a SEPARATE, deferred question (#5050's own issue thread —
+    they already arrive via a different AG-UI frontend-tool encoding,
+    confirmed independently; #5050 fixes the read-model source, not that
+    consumer).
+
+    FALSIFY: dropping ``pending_intervention_head`` from ``_WIRE_KEYS``/
+    ``project_status`` (state.py) turns this RED (``intervention_head()``
+    reverts to None even though the server-side state carries a real head).
+    See the sibling test below for the reverse direction: no pending head
+    on the wire still correctly returns None (not fabricated)."""
+    state = {
+        "attached_name": "researcher", "model": "opus",
+        "pending_intervention_head": {
+            "id": "iv-1", "prompt": "Allow write to src/foo.py?", "detail": "",
+            "choices": [
+                {"id": "yes", "label": "[y]es", "hotkey": "y"},
+                {"id": "always", "label": "[A]lways", "hotkey": "A"},
+                {"id": "no", "label": "[n]o", "hotkey": "n"},
+                {"id": "never", "label": "[N]ever", "hotkey": "N"},
+            ],
+        },
+    }
+
+    async def frames():
+        yield DisplayFrame(OutboxMessage(kind="__end__", text=""))
+
+    emitter = AgUiEmitter(frames(), lambda: dict(state))
+    sse = "".join([chunk async for chunk in emitter.stream()])
+    assert "STATE_SNAPSHOT" in sse
+
+    async def _noop_send(_payload):
+        return None
+
+    transport = AgUiTransport(_sse_lines(sse), _noop_send)
+    async for _f in transport.frames():
+        pass  # drain → applies STATE_* to transport.status
+
+    head = RemoteReadModel(transport).intervention_head()
+    assert head is not None
+    assert head["id"] == "iv-1"
+    assert head["prompt"] == "Allow write to src/foo.py?"
+    assert [c["id"] for c in head["choices"]] == ["yes", "always", "no", "never"]
+    assert [c["label"] for c in head["choices"]] == [
+        "[y]es", "[A]lways", "[n]o", "[N]ever",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_remote_read_model_intervention_head_is_none_not_unsupported() -> None:
+    """Tier 1: #5050 reverse direction -- a REAL STATE_SNAPSHOT that carries
+    ``pending_intervention_head: None`` (nothing pending right now, but the
+    server genuinely reported on the question) still reads back as None
+    through ``RemoteReadModel.intervention_head()`` — the correct value,
+    not a symptom of the OLD unconditional-None bug. Distinguishing this
+    from #4996-family "declared unsupported" is exactly what
+    ``REMOTE_CHAT_READ_CAPABILITIES.intervention_head=True`` (flipped by
+    #5050) now lets a caller do: a supported method genuinely returning
+    None here means "nothing pending", never "can't tell you"."""
+    state = {"attached_name": "researcher", "model": "opus", "pending_intervention_head": None}
+
+    async def frames():
+        yield DisplayFrame(OutboxMessage(kind="__end__", text=""))
+
+    emitter = AgUiEmitter(frames(), lambda: dict(state))
+    sse = "".join([chunk async for chunk in emitter.stream()])
+    assert "STATE_SNAPSHOT" in sse
+
+    async def _noop_send(_payload):
+        return None
+
+    transport = AgUiTransport(_sse_lines(sse), _noop_send)
+    async for _f in transport.frames():
+        pass  # drain → applies STATE_* to transport.status
+
+    rm = RemoteReadModel(transport)
+    assert rm.capabilities.intervention_head is True
+    assert rm.intervention_head() is None
+
+
 # --- graceful degrade: session-local affordances are empty, never faked --------
 
 
