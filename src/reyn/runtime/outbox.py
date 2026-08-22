@@ -62,6 +62,13 @@ _STANDARD_DISPLAY_KINDS: "frozenset[str]" = frozenset({
 # silent no-ops (they ride as reyn.display.* CUSTOM, round-trip losslessly).
 _PROFILED_DISPLAY_KINDS: "frozenset[str]" = frozenset({
     "intervention",         # native prompt UI (answer round-trip via reyn.intervention.*)
+    "intervention_resolved",  # #5057 axis B: an ALREADY-ANSWERED intervention —
+                              # replayed from history or folded in place after a
+                              # live answer. Never routes to the panel (never a
+                              # frontend-tool round-trip) — the sibling kind IS
+                              # the resolved/pending discriminator, so nothing
+                              # downstream needs to read meta to tell the two
+                              # apart.
     "presentation",         # a present op's text; render-node model on _reyn meta.nodes
     "user",                 # a user-authored line echoed live to the scrollback
     "system",               # persisted lifecycle/status chrome (compaction / budget / cost-warn)
@@ -98,6 +105,25 @@ CONTROL_KINDS: "frozenset[str]" = frozenset({
 
 # The complete closed vocabulary of valid OutboxMessage.kind values.
 VOCABULARY: "frozenset[str]" = DISPLAY_KINDS | CONTROL_KINDS
+
+# #5047/#5057 (structural fix, architect's confirmed design — axis A): the
+# intervention-family kinds — every one of these REQUIRES
+# ``meta["intervention_id"]`` to be a genuine identity, checked by
+# :meth:`OutboxMessage.__post_init__` (in-process construction) and
+# demoted-around by :meth:`OutboxMessage.from_wire` (untrusted wire
+# construction, which cannot fail-close).
+#
+# #5057 axis B deliberately does NOT add ``"intervention_resolved"`` here.
+# Identity is required because a frame in this family can still be ANSWERED
+# — the id is the correlation anchor ``answer_intervention_by_id`` needs.
+# An already-resolved frame is never answered again, so it carries no such
+# requirement; giving it its OWN kind (rather than growing this set) is
+# what lets ``_ingest_frame``'s registration guard become a bare
+# ``kind == "intervention"`` check with no meta inspection at all — the
+# sibling kind IS the resolved/pending discriminator now, so this set stays
+# exactly ``{"intervention"}`` rather than "growing" the way an earlier
+# draft of this comment expected.
+_INTERVENTION_FAMILY_KINDS: "frozenset[str]" = frozenset({"intervention"})
 
 
 @dataclass(frozen=True)
@@ -140,6 +166,24 @@ class OutboxMessage:
                 "CUSTOM name on the AG-UI wire. Untrusted wire values must use "
                 "OutboxMessage.from_wire (lenient)."
             )
+        # #5047 (axis A — architect's confirmed design): identity is not
+        # optional for the intervention family. Before this, `kind` was a
+        # closed, validated vocabulary while `intervention_id` lived
+        # unchecked inside the free-form `meta` dict — a well-formed
+        # `kind="intervention"` frame could be built with no identity at
+        # all, and #5047's own real-environment bug (a restored/replayed
+        # frame silently registering as a fresh pending intervention) is
+        # exactly what that gap let through. Checked HERE, in the SAME
+        # constructor that already validates `kind` — one mechanism, not
+        # two. Untrusted WIRE values still cannot fail-close this way —
+        # see :meth:`from_wire`'s own demotion instead.
+        if self.kind in _INTERVENTION_FAMILY_KINDS and not self.meta.get("intervention_id"):
+            raise ValueError(
+                f"OutboxMessage.kind {self.kind!r} requires a genuine "
+                "meta['intervention_id'] — every intervention-family frame "
+                "must carry its own identity at construction time, never "
+                "recovered later by position or absence (#5047)."
+            )
 
     @classmethod
     def from_wire(
@@ -156,7 +200,25 @@ class OutboxMessage:
         degrade gracefully (ignore-unknown), never fail-close — so decode routes
         around :meth:`__post_init__` here. All PRODUCTION construction uses the
         validating ``__init__``. Bypasses ``__init__`` via ``object.__new__`` +
-        ``object.__setattr__`` (the dataclass is frozen)."""
+        ``object.__setattr__`` (the dataclass is frozen).
+
+        #5047 (axis A, wire side — architect's confirmed design): a wire
+        frame carrying a KNOWN intervention-family ``kind`` but no
+        ``meta["intervention_id"]`` is DEMOTED to ``kind="system"`` rather
+        than built as-is. Requiring identity here the way ``__post_init__``
+        does for in-process construction would mean fail-closing on
+        untrusted wire data — "never fail-close" is this method's own
+        founding rule, not negotiable. Demotion satisfies BOTH constraints
+        at once: the frame is never silently dropped (it renders, as a
+        plain persistent info row — the same "lifecycle chrome" kind
+        already used for compaction/budget/cost-warn), and it can never
+        claim an identity it does not have, so it can never register as
+        pending or become an answer's destination. This is UNRELATED to
+        ignore-unknown (an UNKNOWN kind is untouched by this — that is a
+        different failure mode, ignored exactly as before); this only
+        catches a KNOWN kind with a missing REQUIRED field."""
+        if kind in _INTERVENTION_FAMILY_KINDS and not (meta or {}).get("intervention_id"):
+            kind = "system"
         obj = object.__new__(cls)
         object.__setattr__(obj, "kind", kind)
         object.__setattr__(obj, "text", text)

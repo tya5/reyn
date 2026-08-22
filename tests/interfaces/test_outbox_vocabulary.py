@@ -33,9 +33,16 @@ _SRC = REPO_ROOT / "src" / "reyn"
 
 
 def test_construction_accepts_every_vocabulary_kind() -> None:
-    """Tier 2: each of the closed-vocabulary kinds constructs (validated __init__)."""
+    """Tier 2: each of the closed-vocabulary kinds constructs (validated __init__).
+
+    #5047 axis A: the intervention-family kinds (``_INTERVENTION_FAMILY_KINDS``,
+    today just ``"intervention"``) additionally require a genuine
+    ``meta["intervention_id"]`` at construction — every OTHER kind still
+    constructs from bare ``kind``+``text`` alone, which is what this loop
+    pins for the rest of the vocabulary."""
     for kind in VOCABULARY:
-        msg = OutboxMessage(kind=kind, text="x")
+        meta = {"intervention_id": "iv-test"} if kind == "intervention" else {}
+        msg = OutboxMessage(kind=kind, text="x", meta=meta)
         assert msg.kind == kind
     # The vocabulary is the disjoint union of DISPLAY_KINDS and CONTROL_KINDS.
     assert DISPLAY_KINDS.isdisjoint(CONTROL_KINDS)

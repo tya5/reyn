@@ -86,6 +86,10 @@ CUSTOM_PROFILE: dict[str, CustomName] = _entries(
         "an intervention prompt is displayed (the reyn client draws it natively; the answer round-trip rides the reyn.intervention.* frontend-tool)",
     ),
     CustomName(
+        "reyn.display.intervention_resolved", DISPLAY_NS, "{text: str}",
+        "#5057 axis B: an ALREADY-ANSWERED intervention — replayed from history on reconnect or folded in place after a live answer. A distinct kind from reyn.display.intervention on purpose: it never emits a companion reyn.intervention.* frontend-tool (nothing to answer), and the reyn client never registers it as pending",
+    ),
+    CustomName(
         "reyn.display.presentation", DISPLAY_NS, "{text: str}",
         "a present op's text; the render-node model rides the _reyn block's meta.nodes, inert on the wire",
     ),

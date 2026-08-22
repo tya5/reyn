@@ -36,7 +36,10 @@ _DISPLAY = [
     OutboxMessage(kind="agent", text="hello [world] <ok>"),
     OutboxMessage(kind="status", text="thinking about it"),
     OutboxMessage(kind="error", text="something failed"),
-    OutboxMessage(kind="intervention", text="approve this? [y/N]"),
+    OutboxMessage(
+        kind="intervention", text="approve this? [y/N]",
+        meta={"intervention_id": "iv-bit-identical"},  # #5047 axis A
+    ),
     OutboxMessage(kind="trace", text="· ran a tool"),
 ]
 

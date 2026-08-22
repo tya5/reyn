@@ -163,7 +163,14 @@ class AgUiEmitter:
             # terminal TOOL_CALL_RESULT so a pending frontend-tool never dangles.
             if isinstance(frame, DisplayFrame):
                 msg = frame.message
-                if msg.kind == "intervention" and (msg.meta or {}).get("intervention_id"):
+                # #5047: the `and (msg.meta or {}).get("intervention_id")`
+                # this line used to carry is now redundant — dropped, not
+                # merely simplified: `OutboxMessage.__post_init__` requires
+                # a genuine `intervention_id` for every `kind=="intervention"`
+                # frame at construction time, so a frame reaching here with
+                # that kind is guaranteed to carry one. This is itself the
+                # observation point that the fix landed.
+                if msg.kind == "intervention":
                     yield to_sse(encode_intervention_tool_start(dict(msg.meta)))
             if isinstance(frame, EventFrame):
                 ev = frame.event

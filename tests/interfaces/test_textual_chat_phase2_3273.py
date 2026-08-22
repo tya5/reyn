@@ -470,7 +470,10 @@ def test_left_gutter_vocabulary_is_all_single_cell() -> None:
     future glyph added to any of those sources is automatically covered."""
     glyphs: "set[str]" = set(_RUNNING_FRAMES)
     for kind in _KIND_LINE:
-        glyph, _ = _gutter_glyph_color(OutboxMessage(kind=kind, text=""))
+        # #5047 axis A: "intervention" additionally requires a genuine
+        # meta["intervention_id"] at construction time.
+        meta = {"intervention_id": "iv-x"} if kind == "intervention" else {}
+        glyph, _ = _gutter_glyph_color(OutboxMessage(kind=kind, text="", meta=meta))
         glyphs.add(glyph)
     glyph, _ = _gutter_glyph_color(
         OutboxMessage(kind="tool_call_started", text="grep", meta={"tool": "grep"})
@@ -484,12 +487,16 @@ def test_left_gutter_vocabulary_is_all_single_cell() -> None:
         OutboxMessage(kind="tool_call_failed", text="", meta={"tool": "grep"})
     )
     glyphs.add(glyph)
-    # intervention: pending (no _answer_label) and resolved (has one) are two
-    # distinct glyph branches (#3324) — both enumerated.
-    glyph, _ = _gutter_glyph_color(OutboxMessage(kind="intervention", text="", meta={}))
+    # intervention: pending ("intervention") and resolved
+    # ("intervention_resolved") are two distinct glyph branches (#3324,
+    # re-keyed on KIND rather than `_answer_label` meta by #5057 axis B) —
+    # both enumerated.
+    glyph, _ = _gutter_glyph_color(
+        OutboxMessage(kind="intervention", text="", meta={"intervention_id": "iv-x"})
+    )
     glyphs.add(glyph)
     glyph, _ = _gutter_glyph_color(
-        OutboxMessage(kind="intervention", text="", meta={"_answer_label": "yes"})
+        OutboxMessage(kind="intervention_resolved", text="", meta={"_answer_label": "yes"})
     )
     glyphs.add(glyph)
 

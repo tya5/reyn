@@ -110,9 +110,9 @@ def _answered_message(
 
 def test_restored_answered_intervention_is_one_entry_with_both_qa() -> None:
     """Tier 1: a single answered-intervention history record projects to
-    EXACTLY ONE ``kind="intervention"`` frame (never two, never a bare
-    ``kind="user"`` echo of the empty answer text) whose rendered content
-    contains BOTH the question and the answer.
+    EXACTLY ONE ``kind="intervention_resolved"`` frame (#5057 axis B — never
+    two, never a bare ``kind="user"`` echo of the empty answer text) whose
+    rendered content contains BOTH the question and the answer.
 
     NON-VACUITY: before this PR, ``project_restored_frames`` had no
     ``INTERVENTION_PROMPT_META_KEY`` branch at all — this message would have
@@ -120,10 +120,10 @@ def test_restored_answered_intervention_is_one_entry_with_both_qa() -> None:
     EMPTY row (``m.text == ""`` for a choice-style answer), losing BOTH the
     question and the answer. Verified locally by reverting the ``if prompt:``
     branch in ``restore.py``: the assertions below flip RED (no
-    ``kind="intervention"`` frame is produced at all)."""
+    ``kind="intervention_resolved"`` frame is produced at all)."""
     msgs = [_answered_message(iv_id="iv-1", prompt="Proceed with deploy?", answer="Yes")]
     frames = [f for f in project_restored_frames(msgs) if f.kind != "system"]
-    assert [f.kind for f in frames] == ["intervention"], (
+    assert [f.kind for f in frames] == ["intervention_resolved"], (
         f"expected exactly one intervention entry, got kinds={[f.kind for f in frames]}"
     )
 
@@ -149,7 +149,7 @@ def test_restored_free_text_answer_also_one_entry_with_both_qa() -> None:
         },
     )
     frames = [f for f in project_restored_frames([msg]) if f.kind != "system"]
-    assert [f.kind for f in frames] == ["intervention"], (
+    assert [f.kind for f in frames] == ["intervention_resolved"], (
         f"expected exactly one intervention entry, got kinds={[f.kind for f in frames]}"
     )
     rendered = _render(frames[0])
@@ -215,7 +215,7 @@ def test_out_of_order_answers_each_restore_with_their_own_question() -> None:
         _answered_message(iv_id="iv-A", prompt="Delete branch A?", answer="Yes"),
     ]
     frames = [f for f in project_restored_frames(msgs) if f.kind != "system"]
-    assert [f.kind for f in frames] == ["intervention", "intervention"], (
+    assert [f.kind for f in frames] == ["intervention_resolved", "intervention_resolved"], (
         f"expected exactly two intervention entries, got kinds={[f.kind for f in frames]}"
     )
     first, second = (_render(f) for f in frames)
@@ -244,7 +244,7 @@ def test_unanswered_intervention_has_no_restored_trace() -> None:
     ]
     frames = [f for f in project_restored_frames(msgs) if f.kind != "system"]
     kinds = [f.kind for f in frames]
-    assert "intervention" not in kinds
+    assert "intervention_resolved" not in kinds
     assert kinds == ["user", "agent", "user"]
 
 
@@ -393,7 +393,7 @@ async def test_producer_closed_set_answer_round_trips_through_restore(tmp_path: 
 
     msg = ChatMessage(role=entry["role"], content=entry["text"], meta=entry["meta"])
     frames = [f for f in project_restored_frames([msg]) if f.kind != "system"]
-    assert [f.kind for f in frames] == ["intervention"], (
+    assert [f.kind for f in frames] == ["intervention_resolved"], (
         f"expected exactly one intervention entry, got kinds={[f.kind for f in frames]}"
     )
     rendered = _render(frames[0])

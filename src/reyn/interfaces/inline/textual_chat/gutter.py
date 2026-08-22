@@ -217,26 +217,31 @@ def _gutter_glyph_color(msg: "OutboxMessage") -> "tuple[str, str]":
         return "⎿", _CC_DIM
     if kind == "tool_call_failed":
         return "⎿", _CC_ERR
-    if kind == "intervention":
+    if kind in ("intervention", "intervention_resolved"):
         # #3299 P2 §5: an intervention's flow entry stays EntryState.DEFAULT in
         # BOTH the pending and resolved cases (never RUNNING/SUCCESS/ERROR — an
         # answer is neither an outcome to celebrate nor a failure, #3296). With
         # the state fixed at DEFAULT, the gutter's kind colour is the only axis
         # left to distinguish the two, so both legs are special-cased here
         # rather than falling through to ``_KIND_LINE["intervention"]``'s
-        # amber ("needs you") colour:
-        # #5047: presence of the KEY, not truthiness of its VALUE — a
-        # restored (backlog-replayed) intervention's ``_answer_label`` can
-        # itself be the empty string (``restore.py``'s own ``meta.get(
-        # INTERVENTION_ANSWER_META_KEY, "")``), and a falsy check on the
-        # value would render that restored, already-answered entry as
-        # still-PENDING (dim ⋯) — the same emptiness-vs-absence conflation
-        # app.py's own ``_present_intervention`` guard was measured to have
-        # (lead-coder, mid-#5047-implementation). A genuine LIVE pending
-        # intervention never carries this key at all until answered
-        # (``_resolve_intervention`` is what first sets it), so presence
-        # alone is both necessary and sufficient here.
-        if "_answer_label" not in (msg.meta or {}):
+        # amber ("needs you") colour.
+        #
+        # #5057 axis B: the branch is now on KIND, not on ``_answer_label``
+        # meta presence. Before axis B, both pending and resolved shared the
+        # SAME "intervention" kind, so this had to read meta — and a
+        # presence check (not a truthiness check on the label's VALUE) was
+        # itself a #5047-era fix: a restored (backlog-replayed) intervention's
+        # ``_answer_label`` can be the empty string (``restore.py``'s own
+        # ``meta.get(INTERVENTION_ANSWER_META_KEY, "")``), so a falsy check
+        # on the value would have rendered that already-answered entry as
+        # still-PENDING (dim ⋯). Architect + lead-coder later found this
+        # presence check was one of 3 independently-written `_answer_label`
+        # reads scattered across this file / presenter.py / the
+        # (since-removed) panel-registration guard — axis B's whole point is
+        # that a resolved entry now carries its OWN kind
+        # ("intervention_resolved", #5057), so no meta read is needed here
+        # at all to answer "is this resolved".
+        if kind == "intervention":
             # PENDING: a dim "awaiting" marker instead of the kind's normal
             # amber glyph.
             return "⋯", _CC_DIM
