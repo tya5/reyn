@@ -23,7 +23,11 @@ real ``ImportError`` / ``ModuleNotFoundError`` instances drive the branch.
 """
 from __future__ import annotations
 
-from reyn.interfaces.install_guard import install_command, missing_dep_message
+from reyn.interfaces.install_guard import (
+    install_command,
+    missing_core_dep_message,
+    missing_dep_message,
+)
 from reyn.interfaces.repl.remote_client import connect_failure_message
 
 
@@ -70,6 +74,50 @@ def test_install_command_is_interpreter_targeted_and_quoted():
     """Tier 2: install_command uses `python -m pip` and single-quotes the extra."""
     cmd = install_command("web")
     assert cmd == "python -m pip install -e '.[web]'"
+
+
+# ---------------------------------------------------------------------------
+# missing_core_dep_message (#5051) — the non-editable, non-extra guard for
+# fastapi/starlette/uvicorn/websockets, now core dependencies.
+# ---------------------------------------------------------------------------
+
+
+def test_core_dep_missing_recommends_direct_non_editable_install():
+    """Tier 2: #5051 -- ModuleNotFoundError(name=package) -> 'not installed', a
+    DIRECT `pip install <package><pin>` command, and critically NO `-e` (would
+    re-pin the editable install pointer -- #5041 ⑧'s hazard) and no reference
+    to an extra (`[web]` is now empty; recommending it would install nothing)."""
+    exc = ModuleNotFoundError("No module named 'fastapi'", name="fastapi")
+    msg = missing_core_dep_message(exc, "fastapi", ">=0.110,<0.137")
+
+    assert "not installed" in msg
+    assert "python -m pip install 'fastapi>=0.110,<0.137'" in msg
+    assert "-e" not in msg
+    assert "[web]" not in msg
+    assert "No module named 'fastapi'" in msg
+
+
+def test_core_dep_broken_import_reports_installed_but_broken():
+    """Tier 2: #5051 -- non-ModuleNotFound ImportError -> 'installed but failed
+    to import', same distinction missing_dep_message makes, no `-e`/extra
+    reference here either."""
+    exc = ImportError("cannot import name 'Foo' from 'fastapi'")
+    msg = missing_core_dep_message(exc, "fastapi", ">=0.110,<0.137")
+
+    assert "installed but failed to import" in msg
+    assert "is not installed" not in msg
+    assert "-e" not in msg
+    assert "cannot import name 'Foo' from 'fastapi'" in msg
+
+
+def test_core_dep_uvicorn_extras_bracket_is_quoted_safely():
+    """Tier 2: #5051 -- uvicorn's own pin carries a `[standard]` extras
+    bracket; the whole package+pin token must stay single-quoted so a shell
+    (zsh) does not glob it, same discipline install_command already uses."""
+    exc = ModuleNotFoundError("No module named 'uvicorn'", name="uvicorn")
+    msg = missing_core_dep_message(exc, "uvicorn", "[standard]>=0.27")
+
+    assert "python -m pip install 'uvicorn[standard]>=0.27'" in msg
 
 
 # ---------------------------------------------------------------------------

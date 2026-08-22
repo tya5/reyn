@@ -58,9 +58,10 @@ reyn web --host 0.0.0.0 --port 8080
 ### 接続する
 
 ```bash
-pip install reyn[web]   # 一度だけ、httpx クライアント依存のため
 reyn chat --connect http://<host>:8080 --token <secret> [agent_name]
 ```
+
+`--connect` の AG-UI クライアント依存はコア依存です(#5051) — 別途インストール不要。
 
 - `agent_name` はオプションで、サーバー上のどの agent にアタッチするかを選びます(ローカルの `reyn chat <agent_name>` と同様)。
 - 環境変数 `REYN_WEB_AUTH_TOKEN` が設定済みなら `--token` は省略できます。

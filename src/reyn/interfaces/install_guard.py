@@ -63,3 +63,37 @@ def missing_dep_message(exc: ImportError, package: str, extra: str) -> str:
         f"e.g. fastapi/starlette; check the installed versions). "
         f"If it is genuinely missing, run `{cmd}`. {note}"
     )
+
+
+def missing_core_dep_message(exc: ImportError, package: str, pin: str) -> str:
+    """Build a diagnosable guard message for a failed CORE (non-extra)
+    dependency import — #5051: fastapi/starlette/uvicorn/websockets moved
+    from the `[web]` extra to `[project].dependencies`, so a genuinely
+    fresh install always has them; this message only fires against a STALE
+    environment installed before that move.
+
+    Deliberately does NOT recommend `python -m pip install -e '.[web]'`
+    (the shape :func:`missing_dep_message` uses) for two reasons: (1) it is
+    now WRONG — `[web]` is an empty back-compat alias post-#5051, so
+    running it installs nothing and the error recurs; (2) even where an
+    extra genuinely still has packages, `-e` re-pins the editable install
+    pointer — in a multi-agent dev tree sharing one running `reyn` process
+    (#5041 ⑧), re-running it from a live process can re-point that
+    process's runtime onto a DIFFERENT checkout mid-session. The safe fix
+    here is a direct, non-editable package install — it touches only the
+    named package, never reyn's own install mode."""
+    cmd = f"python -m pip install '{package}{pin}'"
+    if isinstance(exc, ModuleNotFoundError) and exc.name == package:
+        return (
+            f"Error: {package} is not installed ({exc}). This is a CORE "
+            f"reyn dependency as of #5051 — a fresh `pip install` already "
+            f"includes it; you are likely on a stale environment installed "
+            f"before that change. Run `{cmd}` to install just this package "
+            f"(does not touch reyn's own install mode)."
+        )
+    return (
+        f"Error: {package} is installed but failed to import: {exc} — "
+        f"likely a version conflict; check the installed version against "
+        f"`{package}{pin}` (pyproject.toml's own pin). If it is genuinely "
+        f"missing, run `{cmd}`."
+    )
