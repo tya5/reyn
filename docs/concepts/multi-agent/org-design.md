@@ -11,7 +11,7 @@ organisation at runtime:
 
 | Tool | What it does |
 |------|-------------|
-| `spawn_agent` | Create a child agent with a name + role, capped at ⊆ your capabilities |
+| `spawn_agent` | Create a child agent with a name + role (+ optional base_dir, #5080) — capability capped at ⊆ your capabilities, base_dir capped at ⊆ the project workspace |
 | `spawn_session` | Start a fresh-context sub-session to run a task in isolation |
 | `create_topology` | Wire agents you spawned into a communication topology and optionally narrow each member's capabilities |
 
@@ -33,7 +33,7 @@ workflow.
 ## `spawn_agent` — create a child agent
 
 ```text
-spawn_agent(name: str, role: str = "")
+spawn_agent(name: str, role: str = "", base_dir: str | None = None)
 ```
 
 Creates a new agent in the registry under your authority. The new agent's
@@ -41,6 +41,14 @@ spawn lineage is set by the OS, not by the LLM (forge-guard: the LLM
 never supplies the parent link). The new agent's effective capability is
 **capped at a subset of yours by construction** — it can never do anything
 you cannot (see [⊆-parent capability model](../runtime/permission-model.md#llm-spawn-capability-model)).
+
+`base_dir` (#5080, optional) sets the new agent's own working-directory
+default. Its cap is **different from the capability cap above and from
+`spawn_session`'s own `base_dir` below**: it must resolve inside the
+**project workspace**, not inside your own effective `base_dir` —
+omitted, the new agent falls back to the project's own `base_dir`, not
+yours. A request outside the project workspace is rejected, never
+clamped.
 
 Use `spawn_agent` to design the *identity* layer of your org: who exists
 and what their role is. To control *who-can-talk-to-whom* and narrow
