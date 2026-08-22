@@ -136,6 +136,16 @@ class ThreadedTransportProxy(ClientTransport):
     bound to the SAME registry the worker thread owns) called ON THE WORKER
     THREAD alongside every frame, whose result rides in
     :class:`_ThreadedSnapshot` for the caller thread to read.
+
+    Delegation is total and explicit: every public ``ClientTransport``
+    method is defined directly on THIS class's own body — never silently
+    inherited from ``ClientTransport``'s own base default — enforced by
+    ``test_threaded_transport_proxy_total_delegation_5048.py`` (#5048,
+    mirroring #4884's identical claim/gate pairing for
+    ``_ErrorWatchingTransport``). A method missing here would fall back to
+    the base default across the WORKER-THREAD boundary specifically —
+    silently answering with a value that reflects nothing about the real
+    inner transport's state, not merely a generic wrong answer.
     """
 
     def __init__(
