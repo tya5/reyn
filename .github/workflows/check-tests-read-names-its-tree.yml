@@ -38,23 +38,17 @@ jobs:
     timeout-minutes: 5
 
     steps:
+      # No checkout of the PR. The commit list and each commit's file names
+      # are read from the API as DATA (see the script's own
+      # `commit_touched_paths`), so a contributor's tree is never executed
+      # here and there is no `ref:` to get wrong — the conditional that used
+      # to live here is what reddened #5123/#5125/#5127 on `issue_comment`
+      # runs, which check out the DEFAULT BRANCH (architect's security lens
+      # on this PR: don't have that shape at all).
       - uses: actions/checkout@v6
         with:
-          # An `issue_comment` event checks out the DEFAULT BRANCH, not the PR
-          # — measured on this gate's own first days (#5123/#5125/#5127 all
-          # went red on `issue_comment` runs whose headSha was main's). The
-          # check reads each PR commit's touched paths via `git show`, so a
-          # main checkout cannot resolve them and the loud refusal fires: a
-          # red for the wrong reason, which is the same defect class as the
-          # false green this gate exists to remove. Name the PR's head
-          # explicitly; for `pull_request` events the default is already right.
-          ref: >-
-            ${{ github.event_name == 'issue_comment'
-                && format('refs/pull/{0}/head', github.event.issue.number)
-                || '' }}
-          # The refusal above also fires on a shallow checkout, which has the
-          # commits' tips but not their history.
-          fetch-depth: 0
+          # Only the script itself is needed, from the base branch.
+          fetch-depth: 1
 
       - name: Set up Python
         uses: actions/setup-python@v6
