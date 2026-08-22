@@ -291,12 +291,27 @@ These rules then keep multi-session work coherent:
    time in its own PR-workflow section. The content was sound (confirmed
    post-hoc) and the author was not at fault — "resume" was said without
    the caveat that merge still waits on TESTS-READ, an omission on the
-   reviewer's side, not a violation on the implementer's. No CI gate: a
-   check for "a comment containing a fixed string exists" makes passing
-   the check the goal (an empty TESTS-READ satisfies it) — the same shape
-   already closed elsewhere in this file. A doc line is the proportionate
-   fix; only a human reading the PR before merging can tell a real
-   TESTS-READ from an empty one.
+   reviewer's side, not a violation on the implementer's. At the time this
+   was written: no CI gate — a check for "a comment containing a fixed
+   string exists" makes passing the check the goal (an empty TESTS-READ
+   satisfies it) — the same shape already closed elsewhere in this file. A
+   doc line was the proportionate fix; only a human reading the PR before
+   merging could tell a real TESTS-READ from an empty one.
+
+   **Partially closed since (#5120, 2026-08-22):**
+   `scripts/check_tests_read_names_its_tree.py`, wired as its own
+   `pull_request`/`issue_comment` CI workflow (repo-wide, not one train's
+   own script), now fails a `tests/`-touching PR that carries no
+   TESTS-READ note naming one of the PR's own commits, or whose only note
+   names a commit `tests/` has since moved past. This closes the
+   "never wired to that path at all" half — every PR now gets a CI check,
+   not just the ones a particular merge train happens to gate. It does
+   NOT close the "empty TESTS-READ satisfies it" half this section
+   illustrates: the gate reads only whether a note names a fresh commit,
+   never what the note SAYS — `**[X]** — TESTS-READ (B) (head \`abc1234\`)`
+   with no actual review content still passes. Only a human reading the
+   PR can still tell a real TESTS-READ from an empty one carrying the
+   right shape.
 
 ## Bundling and the owner's veto unit
 
