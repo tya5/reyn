@@ -55,33 +55,42 @@ def _table_text() -> str:
     return text[start:end]
 
 
-def _declared_in_cell(table_text: str, key: str) -> str:
-    """The `Declared in` CELL for `` `key` `` — specifically NOT the whole
-    row: the `Description` cell routinely mentions "agent"/"session" in its
-    own prose (`project_context_path`'s own row explains an agent-layer
-    override in words), so asserting against the full row text would pass
-    vacuously regardless of what the `Declared in` cell itself says. Raises
-    if the row is missing entirely (a key that was RENAMED or REMOVED from
+def _cell(table_text: str, key: str, index: int) -> str:
+    """The cell at `index` for `` `key` ``'s own row — specifically NOT the
+    whole row: the `Description` cell routinely mentions "agent"/"session"
+    in its own prose (`project_context_path`'s own row explains an
+    agent-layer override in words), so asserting against the full row text
+    would pass vacuously regardless of what a SPECIFIC cell says. Raises if
+    the row is missing entirely (a key that was RENAMED or REMOVED from
     this table would otherwise silently pass every assertion below, having
     nothing to check) or if the row doesn't have the expected 6-cell shape
-    (a malformed row is a finding, not something to index past)."""
+    (a malformed row is a finding, not something to index past).
+
+    `index`: 3=Declared in, 4=Reload, 5=File (cells[0] is "" — text before
+    the leading `|`; cells[1]=Key, [2]=Type, [6]=Description, [7]="" —
+    after the trailing `|`)."""
     pattern = re.compile(
         r"^\| `" + re.escape(key) + r"` \|.*$", re.MULTILINE,
     )
     match = pattern.search(table_text)
     assert match is not None, (
-        f"expected a `Declared in` table row for `{key}` in {_DOC} — "
+        f"expected a table row for `{key}` in {_DOC} — "
         f"the row is missing entirely, not merely wrong"
     )
     cells = [c.strip() for c in match.group(0).split("|")]
-    # cells[0] is "" (text before the leading "|"); cells[1]=Key, [2]=Type,
-    # [3]=Declared in, [4]=Reload, [5]=File, [6]=Description, [7]="" (after
-    # the trailing "|").
     assert len(cells) >= 7, (
         f"`{key}`'s row does not have the expected 6-cell shape "
         f"(Key/Type/Declared in/Reload/File/Description): {match.group(0)!r}"
     )
-    return cells[3]
+    return cells[index]
+
+
+def _declared_in_cell(table_text: str, key: str) -> str:
+    return _cell(table_text, key, 3)
+
+
+def _reload_cell(table_text: str, key: str) -> str:
+    return _cell(table_text, key, 4)
 
 
 # ── PREFERENCE_KEYS' top-level parents must show agent + session ───────────
@@ -147,3 +156,44 @@ def test_project_context_path_is_declared_agent_overridable():
         f"`project_context_path` is agent-layer-overridable (#5086) but its "
         f"`Declared in` cell never names `agent`: {cell!r}"
     )
+
+
+# ── Reload is ALSO agent/session-layer wrong for the PREFERENCE_KEYS rows ──
+#
+# lead-coder's own #5090 review finding (issuecomment-5379469534): the
+# column split correctly surfaced a SECOND drift the merged column had been
+# hiding — `output_language`/`chat.reasoning.display`/the 7
+# `cost.*.warn_ratio` leaves are agent/session-layer LIVE re-reads
+# (`Session.output_language`/`_resolve_session_preference`, verbatim "Live
+# re-read on every access"/"Live re-read on every call (never cached)"),
+# not `_HOT_RELOAD_FILES`-gated `restart` at that layer. Gated in the SAME
+# PR as the fix (lead-coder's own ruling, issuecomment-5379492328-adjacent:
+# "shipping a column with a false cell in it is not something to defer").
+
+
+def test_every_preference_keys_top_level_parent_discloses_its_reload_caveat():
+    """Tier 2: strip-falsifier for the #5090 `Reload`-column drift — a
+    `PREFERENCE_KEYS`-backed row's `Reload` cell must not read a BARE
+    `restart` (true only at the project layer); it must carry SOME marker
+    (this repo's convention: a footnote reference like `restart⁵`)
+    distinguishing it from every other row's genuinely-unqualified
+    `restart`. Not asserting the specific footnote NUMBER — footnote
+    numbering is presentation, the exact thing CLAUDE.md's testing policy
+    says never to pin — only that the cell is NOT the bare, unqualified
+    string.
+
+    Strip-falsifier: reverting any of `output_language`/`chat`/`cost`'s
+    `Reload` cell to a bare `restart` (the exact #5090 review finding)
+    turns this red — verified locally."""
+    table = _table_text()
+    top_level_parents = {key.split(".", 1)[0] for key in PREFERENCE_KEYS}
+    assert top_level_parents, "PREFERENCE_KEYS must not be empty for this test to bite"
+
+    for parent in sorted(top_level_parents):
+        cell = _reload_cell(table, parent)
+        assert cell != "restart", (
+            f"`{parent}` has a PREFERENCE_KEYS leaf, which is a LIVE "
+            f"re-read at the agent/session layer, not `_HOT_RELOAD_FILES`- "
+            f"gated `restart` — its `Reload` cell must carry a caveat "
+            f"marker, not read the bare, unqualified `restart`: {cell!r}"
+        )
