@@ -353,13 +353,15 @@ def _completing_word(arg_partial: str) -> str:
 
 
 def _argument_candidates(
-    cmd: "SlashCommand", arg_partial: str, session: object,
+    cmd: "SlashCommand", arg_partial: str, source: object,
 ) -> "tuple[CompletionCandidate, ...]":
     """Run ``cmd``'s ``CompleterFn`` and prefix-filter its result.
 
-    Honours the declared signature verbatim — ``completer(session,
+    Honours the declared signature verbatim — ``completer(source,
     arg_partial)`` — so a completer that reads the partial (``/image``'s path
-    walker, ``/memory``'s ``view`` sub-command gate) gets it.
+    walker, ``/memory``'s ``view`` sub-command gate) gets it. ``source`` is a
+    ``CompletionSourceSnapshot | None`` (#5044) — a plain value, never a live
+    ``Session`` — see that class's own docstring.
 
     Any exception is swallowed to an empty tuple: a broken completer must not
     break typing (the contract ``_image_path_completer`` documents on its own
@@ -368,7 +370,7 @@ def _argument_candidates(
     produced nothing this time.
     """
     try:
-        values = cmd.completer(session, arg_partial)  # type: ignore[misc]
+        values = cmd.completer(source, arg_partial)  # type: ignore[misc]
     except Exception:  # noqa: BLE001 — a completer must never break the composer
         return ()
     word = _completing_word(arg_partial)
@@ -403,14 +405,15 @@ def _usage_header(cmd: "SlashCommand") -> str:
     return f"{USAGE_ROW_PREFIX}{cmd.usage}" if cmd.usage else ""
 
 
-def _argument_state(text: str, session: object, registry) -> CompletionState:
+def _argument_state(text: str, source: object, registry) -> CompletionState:
     """The ``/cmd <arg>`` branch: the command word is settled, so command-name
     candidates STOP and the command's own ``CompleterFn`` takes over.
 
     Opens for either of two independent reasons — the command has an argument
-    source here (a ``CompleterFn`` AND a local session to call it with), or it
-    declares a ``usage`` line to show. The second is what makes the stage useful
-    for the 15 commands that document their syntax and offer no completer
+    source here (a ``CompleterFn`` AND a ``CompletionSourceSnapshot`` to call
+    it with, #5044 — never a live ``Session``), or it declares a ``usage``
+    line to show. The second is what makes the stage useful for the 15
+    commands that document their syntax and offer no completer
     (``/visibility ``, ``/hook ``, ``/session ``…): before #3364 those opened
     nothing at all. Only 5 commands have a ``CompleterFn``, so the usage line is
     what the argument stage has to offer three times out of four.
@@ -424,14 +427,14 @@ def _argument_state(text: str, session: object, registry) -> CompletionState:
     if cmd is None:
         return NO_COMPLETION
     header = _usage_header(cmd)
-    has_source = cmd.completer is not None and session is not None
+    has_source = cmd.completer is not None and source is not None
     if not has_source and not header:
         return NO_COMPLETION
     word = _completing_word(arg_partial)
     return CompletionState(
         kind=KIND_ARGUMENT,
         candidates=(
-            _argument_candidates(cmd, arg_partial, session) if has_source else ()
+            _argument_candidates(cmd, arg_partial, source) if has_source else ()
         ),
         prefix_len=len(word),
         token_start=len(text) - len(word),
@@ -444,7 +447,7 @@ def _argument_state(text: str, session: object, registry) -> CompletionState:
 def compute_completion(
     text: str,
     *,
-    session: object = None,
+    source: object = None,
     skills: "Sequence[SkillEntry] | None" = None,
     registry=None,
 ) -> CompletionState:
@@ -457,10 +460,12 @@ def compute_completion(
     available, which is why ``/`` COMMAND-name completion works on every client
     including a remote one.
 
-    ``session`` is the local ``Session`` a ``CompleterFn`` is called with.
-    ``None`` means "this client has no session", and argument completion stays
-    SILENT rather than calling every completer with ``None`` and rendering their
-    uniformly-empty results as a no-match menu.
+    ``source`` is a ``reyn.interfaces.repl.read_model.CompletionSourceSnapshot
+    | None`` (#5044, architect ruling — see that class's own docstring) a
+    ``CompleterFn`` is called with. ``None`` means "this client has no
+    session", and argument completion stays SILENT rather than calling every
+    completer with ``None`` and rendering their uniformly-empty results as a
+    no-match menu.
 
     ``skills`` follows the same convention, and the distinction is load-bearing:
     ``None`` = the skill source is unavailable (stay silent), an empty sequence =
@@ -476,7 +481,7 @@ def compute_completion(
         return NO_COMPLETION
     if text.startswith("/"):
         if " " in text:
-            return _argument_state(text, session, registry)
+            return _argument_state(text, source, registry)
         from reyn.interfaces.slash import slash_command_completions
 
         prefix = text[1:]

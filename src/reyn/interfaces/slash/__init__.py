@@ -36,11 +36,15 @@ if TYPE_CHECKING:
     from reyn.interfaces.transport.client_transport import ClientTransport
 
 HandlerFn = Callable[..., Awaitable[None]]
-# CompleterFn signature: ``(session, arg_partial: str = "") -> list[str]``.
-# ``arg_partial`` is the string typed after the slash command and the
-# trailing space (e.g. for ``/attach <partial>`` the partial is what's typed
-# so far). Completers that don't need it (e.g. ``/attach``
-# which always lists agent names) can ignore the arg via a default.
+# CompleterFn signature: ``(source, arg_partial: str = "") -> list[str]``.
+# #5044 (architect ruling, issuecomment-5378399712): ``source`` is a
+# ``reyn.interfaces.repl.read_model.CompletionSourceSnapshot | None`` --
+# a PLAIN VALUE, never a live ``Session`` -- see that class's own
+# docstring for what each field is and why. ``arg_partial`` is the string
+# typed after the slash command and the trailing space (e.g. for
+# ``/attach <partial>`` the partial is what's typed so far). Completers
+# that don't need it (e.g. ``/attach`` which always lists agent names)
+# can ignore the arg via a default.
 CompleterFn = Callable[..., list[str]]
 
 

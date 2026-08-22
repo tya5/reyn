@@ -53,8 +53,84 @@ from typing import TYPE_CHECKING
 from reyn.interfaces.repl.status import _snapshot
 
 if TYPE_CHECKING:
+    from reyn.data.skills.registry import SkillEntry
     from reyn.interfaces.transport.client_transport import ClientTransport
     from reyn.runtime.chat_message import ChatMessage
+
+
+@dataclass(frozen=True)
+class CompletionSourceSnapshot:
+    """The completion popup's (#3354) sources, as PLAIN VALUES — never the
+    live ``Session`` itself (#5044/#4995, architect ruling on #5044,
+    issuecomment-5378399712/issuecomment-5378442342 — "the same root as
+    #5079: sync, I/O-performing, Session-mutating does not fit the
+    async-marshal shape; but the DIFFERENT answer here is that
+    ``completion_session()`` returning a LIVE ``Session`` reference is the
+    actual problem, not a threading one — completion needs candidate
+    strings (+ freshness), the worker updates, the UI only reads").
+
+    Each field is exactly what ONE slash-command ``CompleterFn`` or the
+    ``:`` skill completer reads off the live ``Session`` today (read all 6
+    registered completers to confirm, #5044 measurement comment) — no
+    field carries a live method or a mutable collection a caller could
+    corrupt the source with:
+
+    - :attr:`agent_names` — ``/attach``'s candidate list
+      (``session._registry.list_active_names()``).
+    - :attr:`known_model_classes` — ``/model``'s candidate list
+      (``session.known_model_classes()``), config-static for the
+      session's lifetime.
+    - :attr:`active_intervention_ids` — ``/answer``'s candidate list
+      (``session._interventions.list_active()``) — the ONE genuinely
+      per-turn-MUTABLE source among the six; every other field here is
+      either session-independent or effectively static per session.
+    - :attr:`workspace_dir` — ``/memory``'s own filesystem read is keyed
+      by this Path; the completer still does its OWN disk I/O, this just
+      supplies the root it reads from instead of a live ``Session`` to
+      derive it from.
+    - :attr:`available_skills` — the ``:`` skill completer's source, the
+      SAME list :meth:`~reyn.runtime.session.Session.available_skills`
+      already returns as a copy.
+
+    ``/image``'s path completer is UNAFFECTED — it never reads ``session``
+    at all (filesystem completion is session-independent, its own
+    docstring already says so), so it needs no field here.
+
+    :meth:`RegistryReadModel.completion_session` (today's only production
+    implementation, no thread boundary) builds this synchronously, on
+    demand, straight off the live ``Session`` it already holds — always
+    current, since there is no cross-thread delay in that path. A future
+    threaded implementation (#5048, still blocked on this class landing)
+    would instead push the SAME snapshot shape into
+    :class:`~reyn.interfaces.transport.threaded._ThreadedSnapshot` at the
+    existing frame-refresh cadence — this dataclass is what such a
+    producer would refresh, not a second mechanism alongside it.
+    """
+
+    agent_names: "tuple[str, ...]" = ()
+    known_model_classes: "tuple[str, ...]" = ()
+    active_intervention_ids: "tuple[str, ...]" = ()
+    workspace_dir: "Path | None" = None
+    available_skills: "tuple[SkillEntry, ...]" = ()
+
+
+def completion_source_snapshot_from_session(session) -> CompletionSourceSnapshot:
+    """Build a :class:`CompletionSourceSnapshot` off a real, live
+    ``Session`` — the ONE place this conversion happens, so
+    :class:`RegistryReadModel` and any other ``ChatReadModel``
+    implementation that genuinely holds a local ``Session`` (including a
+    test's own real-seam double, e.g. ``test_3354``'s ``SessionReadModel``)
+    share it rather than each re-deriving the same field list."""
+    registry = getattr(session, "_registry", None)
+    return CompletionSourceSnapshot(
+        agent_names=tuple(registry.list_active_names()) if registry is not None else (),
+        known_model_classes=tuple(session.known_model_classes()),
+        active_intervention_ids=tuple(
+            iv.id for iv in session.interventions.list_active()
+        ),
+        workspace_dir=session.workspace_dir,
+        available_skills=tuple(session.available_skills()),
+    )
 
 
 @dataclass(frozen=True)
@@ -397,16 +473,20 @@ class ChatReadModel(ABC):
         into — the remote impl always returns 0 (already-exhausted, never a
         fabricated count)."""
 
-    def completion_session(self) -> "object | None":
-        """The LOCAL ``Session`` the TUI's completion popup needs (#3354), or
-        ``None`` when this client holds none.
+    def completion_session(self) -> "CompletionSourceSnapshot | None":
+        """The TUI completion popup's (#3354) sources, as a
+        :class:`CompletionSourceSnapshot` VALUE — never the live ``Session``
+        (#5044, architect ruling, issuecomment-5378399712/5378442342: see
+        that class's own docstring for the full reasoning) — or ``None``
+        when this client holds no session at all.
 
         Two consumers, both session-local by nature: a slash command's
-        ``CompleterFn`` is declared as ``(session, arg_partial="") -> list[str]``
-        (``/attach`` reads the agent registry off it, ``/answer`` the active
-        interventions), and the ``:`` skill completer reads the session's
-        registered skills — the same list the invocation path enforces its
-        visibility surface from.
+        ``CompleterFn`` is declared as ``(source, arg_partial="") ->
+        list[str]`` (``/attach`` reads :attr:`CompletionSourceSnapshot.
+        agent_names`, ``/answer`` :attr:`~CompletionSourceSnapshot.
+        active_intervention_ids`), and the ``:`` skill completer reads
+        :attr:`~CompletionSourceSnapshot.available_skills` — the same list
+        the invocation path enforces its visibility surface from.
 
         **Concrete, not ``@abstractmethod``, unlike every accessor above.** The
         class docstring's "abstract so a partial implementation fails at
@@ -416,7 +496,7 @@ class ChatReadModel(ABC):
         complete and correct answer rather than a placeholder — the same
         graceful-degrade the frame-sufficiency boundary above describes, just
         expressed as a default instead of a repeated stub. Every consumer
-        already treats a ``None`` session as "offer nothing" (each registered
+        already treats a ``None`` source as "offer nothing" (each registered
         ``CompleterFn`` returns ``[]`` for it)."""
         return None
 
@@ -446,8 +526,16 @@ class RegistryReadModel(ChatReadModel):
     def _attached(self):
         return self._registry.attached_session()
 
-    def completion_session(self):
-        return self._attached()
+    def completion_session(self) -> "CompletionSourceSnapshot | None":
+        """Builds :class:`CompletionSourceSnapshot` synchronously, on
+        demand, off the live ``Session`` this read-model already holds —
+        always current (no cross-thread delay in this implementation, the
+        one production caller as of #5044). See that class's own
+        docstring for what each field is and which command reads it."""
+        s = self._attached()
+        if s is None:
+            return None
+        return completion_source_snapshot_from_session(s)
 
     def intervention_head(self):
         s = self._attached()

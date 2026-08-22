@@ -1836,43 +1836,37 @@ class TextualChatApp(App):
     def completion_state(self, text: str) -> CompletionState:
         """The ``/``-command / ``:``-skill completion state for ``text`` (#3354).
 
-        The app's job here is ONLY to resolve the live sources and hand them to
-        the pure
+        The app's job here is ONLY to resolve the source and hand it to the pure
         :func:`~reyn.interfaces.inline.textual_chat.completion.compute_completion`
-        — no candidate is produced here. The two live sources both come off the
-        SAME :class:`~reyn.interfaces.repl.read_model.ChatReadModel` seam every
-        other session-local read uses:
+        — no candidate is produced here. Both live sources a command's
+        ``CompleterFn`` and the ``:`` skill completer need come off ONE
+        :class:`~reyn.interfaces.repl.read_model.CompletionSourceSnapshot`
+        VALUE (#5044, architect ruling — never a live ``Session``; see that
+        class's own docstring), read through the SAME
+        :class:`~reyn.interfaces.repl.read_model.ChatReadModel` seam every
+        other session-local read uses
+        (:meth:`~reyn.interfaces.repl.read_model.ChatReadModel.completion_session`).
 
-        - the local ``Session``
-          (:meth:`~reyn.interfaces.repl.read_model.ChatReadModel.completion_session`)
-          a command's ``CompleterFn`` is called with, and
-        - that session's registered skills (its public
-          :meth:`~reyn.runtime.session.Session.available_skills`), the same list
-          the ``:`` INVOCATION path filters its ``menu``/``on_demand``/``hidden``
-          surface from.
-
-        A remote client holds no session, so BOTH stay ``None`` — which
-        ``compute_completion`` reads as "source unavailable" and answers with
-        SILENCE, not an empty menu (an empty menu would read as "no such command
-        exists"; see that function's ``session``/``skills`` contract). ``/``
-        command-name completion is registry-derived and transport-independent, so
-        it keeps working there. ``None`` is likewise the answer when the skill
-        read RAISES: a failed read is an unavailable source, never an empty one.
-        Public because the ``Composer`` calls it as the app's completion hook.
+        A remote client holds no session, so the snapshot stays ``None`` —
+        which ``compute_completion`` reads as "source unavailable" and answers
+        with SILENCE, not an empty menu (an empty menu would read as "no such
+        command exists"; see that function's ``source``/``skills`` contract).
+        ``/`` command-name completion is registry-derived and
+        transport-independent, so it keeps working there. ``None`` is
+        likewise the answer when the read RAISES: a failed read is an
+        unavailable source, never an empty one. Public because the
+        ``Composer`` calls it as the app's completion hook.
         """
-        session = None
+        source = None
         skills: "list | None" = None
         if self._read_model is not None:
             try:
-                session = self._read_model.completion_session()
+                source = self._read_model.completion_session()
             except Exception:
                 logger.exception("textual chat: completion session read failed")
-        if session is not None:
-            try:
-                skills = list(session.available_skills())
-            except Exception:
-                logger.exception("textual chat: completion skill read failed")
-        return compute_completion(text, session=session, skills=skills)
+        if source is not None:
+            skills = list(source.available_skills)
+        return compute_completion(text, source=source, skills=skills)
 
     def _turn_usage(self, chain_id: str) -> "dict | None":
         """The real per-turn figures for ``chain_id``, or ``None`` when there

@@ -21,26 +21,26 @@ async def list_cmd(ctx: "SlashContext", args: str) -> None:
 
 
 def _intervention_id_completer(
-    session: "object", arg_partial: str = "",
+    source: "object", arg_partial: str = "",
 ) -> list[str]:
     """Wave-11 C#3 — completer for /answer <id-prefix> <text>.
 
-    Surfaces active intervention ids from
-    ``session._interventions.list_active()`` so the user can Tab
-    through them. ``/answer`` takes ``<id-prefix> <text>`` — only
-    the FIRST word is the id; once the user has typed past the
+    ``source`` is a ``CompletionSourceSnapshot | None`` (#5044) — a plain
+    value, never a live ``Session``. Surfaces
+    :attr:`~reyn.interfaces.repl.read_model.CompletionSourceSnapshot.
+    active_intervention_ids` so the user can Tab through them — the ONE
+    genuinely per-turn-mutable field among the snapshot's sources (that
+    class's own docstring). ``/answer`` takes ``<id-prefix> <text>`` —
+    only the FIRST word is the id; once the user has typed past the
     space the input is the answer body and the picker hint is
     irrelevant. We filter by the LAST whitespace-delimited token
     of ``arg_partial`` so the prefix-match still works regardless
     of where the cursor sits.
     """
-    try:
-        interventions = getattr(session, "_interventions", None)
-        if interventions is None:
-            return []
-        ids = [iv.id for iv in interventions.list_active()]
-    except Exception:
+    ids = getattr(source, "active_intervention_ids", None)
+    if not ids:
         return []
+    ids = list(ids)
     if not arg_partial:
         return ids
     # If the user has already typed past the first whitespace,
