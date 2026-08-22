@@ -350,7 +350,17 @@ class ThreadedTransportProxy(ClientTransport):
             try:
                 await self._pump_task
             except asyncio.CancelledError:
-                pass
+                # #4988's own gate (this coroutine IS running as a task,
+                # scheduled via ``run_coroutine_threadsafe``): a bare
+                # ``pass`` here would swallow BOTH this method's own
+                # ``_pump_task.cancel()`` outcome AND an independent,
+                # external cancellation of THIS coroutine's own task at
+                # this exact await (e.g. a shutdown sweep) — checking
+                # ``cancelling()`` before absorbing is session.py's own
+                # #3377 precedent, not a new pattern.
+                _this_task = asyncio.current_task()
+                if _this_task is not None and _this_task.cancelling() > 0:
+                    raise
 
     async def shutdown(self) -> None:
         await self._call_on_worker("shutdown")

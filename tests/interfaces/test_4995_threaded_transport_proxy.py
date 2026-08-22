@@ -129,7 +129,7 @@ class _RecordingTransport(ClientTransport):
 
 @pytest.mark.asyncio
 async def test_witness_1_worker_work_runs_on_a_different_thread_than_the_caller():
-    """Tier 1: structural witness. ``submit_user_text`` is dispatched
+    """Tier 2: structural witness. ``submit_user_text`` is dispatched
     through the proxy; the thread it actually executed on must differ from
     the calling (test/event-loop) thread.
 
