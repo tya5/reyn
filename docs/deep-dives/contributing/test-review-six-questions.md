@@ -78,12 +78,16 @@ Ask each test in the diff:
    is a non-daemon thread; what bounds it is nothing inside the test
    — the existing blocking condition ("if something outside the test
    bounds it, it is not a bound") applies exactly, just on the RED
-   path instead of the green one. The visible symptom was not a
-   traceback — it was CI hanging until the timeout killed it, an
-   `AssertionError` disguised as a hang. Three independent static
-   reads — two human reviewers and one automated check — all read
-   this test and confirmed the passing path was sound; none traced the
-   failing path until the hang was reproduced directly. **When reading a test that holds an `Event`/`Lock`/
+   path instead of the green one. CI itself saw an ordinary
+   `AssertionError` — the hang only surfaced during a LOCAL
+   strip-falsify run (reverting the fix and re-running by hand), which
+   is exactly the point: **an ordinary CI run does not teach you this
+   — only deliberately forcing the failing branch does.** Three
+   independent static reads — two reviewer sessions and one automated
+   check — all read this test and confirmed the passing path was
+   sound; none traced the failing path until the strip-falsify hang
+   was reproduced directly. **When reading a test that holds an
+   `Event`/`Lock`/
    thread/subprocess/temp file across multiple asserts, trace from
    each assert's failure point forward to the test's own `finally` (or
    its absence) and name what does NOT get released** — that is a
