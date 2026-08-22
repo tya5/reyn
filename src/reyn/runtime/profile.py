@@ -88,11 +88,31 @@ class AgentProfile:
     # anything other than absent -- an agent created without it simply
     # has no identity, the same as one that never set `role`.
     broker_identity: "str | None" = None
+    # #5084 (#4206's own axis ①, applied to a SECOND file zone): an
+    # agent-layer override of WHICH file is read as this agent's project
+    # context (REYN.md/AGENTS.md, the model-facing system-prompt text) —
+    # NOT the additive `.reyn/agents/<name>/AGENTS.md` composition that
+    # already exists (`RouterHostAdapter.get_project_context`); this
+    # REPLACES the project-wide file for this one agent's own session,
+    # the same "coder-ready agent gets its OWN REYN.md" the owner's goal
+    # names directly. Architect's own re-scoping (#5084): this is NOT axis
+    # ③ preference (a free override) — this value selects what content
+    # reaches the model, and `.reyn` is the agent's own default write
+    # zone, so opening it to the agent layer needs the SAME "⊆ workspace,
+    # protect-at-use" treatment `base_dir` already has (`Session.
+    # _workspace_project_context`, mirroring `_workspace_base_dir`) —
+    # never a bare capability toggle. Same "raw value, resolved/bounded
+    # at USE time, not here" split as `base_dir`: this field just carries
+    # the string. None = no override (falls through to the project-wide
+    # file, same convention as `base_dir`'s own None).
+    project_context_path: "str | None" = None
 
     @classmethod
     def new(
-        cls, name: str, role: str = "", *, base_dir: "str | None" = None,
+        cls, name: str, role: str = "", *,
+        base_dir: "str | None" = None,
         broker_identity: "str | None" = None,
+        project_context_path: "str | None" = None,
     ) -> "AgentProfile":
         return cls(
             name=name,
@@ -100,6 +120,7 @@ class AgentProfile:
             created_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
             base_dir=base_dir,
             broker_identity=broker_identity,
+            project_context_path=project_context_path,
         )
 
     @classmethod
@@ -139,6 +160,10 @@ class AgentProfile:
         base_dir = str(raw_base_dir) if raw_base_dir else None
         raw_broker_identity = data.get("broker_identity")
         broker_identity = str(raw_broker_identity) if raw_broker_identity else None
+        raw_project_context_path = data.get("project_context_path")
+        project_context_path = (
+            str(raw_project_context_path) if raw_project_context_path else None
+        )
         return cls(
             name=name,
             role=str(data.get("role", "") or ""),
@@ -148,6 +173,7 @@ class AgentProfile:
             bounding=bounding,
             base_dir=base_dir,
             broker_identity=broker_identity,
+            project_context_path=project_context_path,
         )
 
     def save(self, agent_dir: Path) -> None:
@@ -171,6 +197,8 @@ class AgentProfile:
             payload["base_dir"] = self.base_dir
         if self.broker_identity is not None:
             payload["broker_identity"] = self.broker_identity
+        if self.project_context_path is not None:
+            payload["project_context_path"] = self.project_context_path
         path.write_text(
             yaml.safe_dump(payload, allow_unicode=True, sort_keys=False),
             encoding="utf-8",
