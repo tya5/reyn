@@ -51,6 +51,16 @@ can additionally be written on an **agent** surface (`.reyn/agents/<name>/`,
 (`<session-state-dir>/config.yaml`) — see
 [permission-model](../../concepts/runtime/permission-model.md).
 
+A DIFFERENT exception (#4206 slice 1): `output_language` is ALSO one of a
+small set of ③ **preference** keys (free-override, no restrict-only
+composition) an agent's own `profile.yaml` — or a session's own
+`config.yaml` — may set under a `preferences:` mapping, read live rather
+than restart-gated at that layer (`reyn.runtime.preferences.
+PREFERENCE_KEYS` is the authoritative list). This row's "PRJ only" still
+describes the reyn.yaml DEFAULT correctly; it does not mean the key is
+unreachable from the agent/session layers. See
+[agent.md § `preferences`](../cli/agent.md#preferences-4206-slice-1-the-3-axis-free-override-not-restrict-only).
+
 **Placement principle (#4174 T7)**: a setting nests under an owning block when
 only that subsystem's own code path ever reads it (e.g. `embedding.cost_warn_threshold`
 — read once, inside the embedding/indexing pipeline, nowhere else). It gets a
