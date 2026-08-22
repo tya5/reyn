@@ -44,7 +44,7 @@ class _RecordingBackend:
     def available(self) -> bool:
         return True
 
-    async def run(self, argv, policy, *, stdin=None, cwd=None, cancel_event=None):
+    async def run(self, argv, policy, *, stdin=None, cwd=None, cancel_event=None, hook_process_context=None):
         self.calls.append((list(argv), policy))
         return SandboxResult(returncode=0, stdout=b"", stderr=b"")
 

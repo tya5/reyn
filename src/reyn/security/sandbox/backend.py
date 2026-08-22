@@ -13,10 +13,13 @@ from collections.abc import Callable
 from dataclasses import dataclass, fields
 from enum import Enum
 from pathlib import Path
-from typing import Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 from .capability import CapabilityDeclaration
 from .policy import SandboxPolicy
+
+if TYPE_CHECKING:
+    from reyn.hooks.shell_runner import HookProcessContext
 
 
 class AxisEnforcement(Enum):
@@ -284,6 +287,7 @@ class SandboxBackend(Protocol):
         stdin: bytes | None = None,
         cwd: str | None = None,
         cancel_event: asyncio.Event | None = None,
+        hook_process_context: "HookProcessContext | None" = None,
     ) -> SandboxResult:
         """Execute argv under the given policy and return the result.
 
@@ -299,7 +303,24 @@ class SandboxBackend(Protocol):
         ``cancel_event``: when provided and set, the backend kills the running
         subprocess (SIGTERM → SIGKILL grace) and returns a SandboxResult with
         ``cancelled=True``. None = no cancel-awareness (#1470).
-        """
+
+        ``hook_process_context`` (#5084 ④): the CLOSED, 3-field ``REYN_*``
+        env struct a shell-hook's child process reads
+        (:class:`~reyn.hooks.shell_runner.HookProcessContext`) — ``None``
+        for every non-hook caller (``sandboxed_exec`` never passes one).
+        NOT a general env-injection slot (owner's own standing directive:
+        the Sandbox abstraction gains no caller-controlled arbitrary-env
+        escape hatch) — a concrete implementation merges exactly
+        ``hook_process_context.as_env()``'s 3 keys into the subprocess
+        environment, nothing else. A workspace-coupled backend (e.g. a
+        container backend) MAY omit the two PATH-shaped keys
+        (``REYN_PROJECT_DIR``/``REYN_AGENT_BASE_DIR`` — meaningless or
+        actively wrong across a container boundary, the SAME asymmetry
+        ``cwd`` above already documents) but passes ``REYN_AGENT_NAME``
+        through unconditionally — it is a bare identity string, equally
+        true on either side of that boundary; see the concrete backend's
+        own docstring for which it does. ``None`` = no ``REYN_*`` env
+        additions at all — byte-identical to every pre-#5084 caller."""
         ...
 
 

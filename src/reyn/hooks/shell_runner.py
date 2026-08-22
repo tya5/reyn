@@ -71,6 +71,7 @@ import logging
 import os
 import shlex
 import sys
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable
@@ -88,6 +89,58 @@ _log = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 _DEFAULT_ALLOWLIST_PATH = Path.home() / ".reyn" / "shell-hooks-allowlist.json"
+
+
+@dataclass(frozen=True)
+class HookProcessContext:
+    """The CLOSED, fixed set of ``REYN_*`` values a hook's ``exec``/
+    ``exec_capture`` child process receives via its own environment (#5084
+    ④, mechanism "B" — see :mod:`reyn.runtime.workspace_paths`'s own module
+    docstring for the full A/B split: "A" is reyn's own in-process
+    ``${REYN_PROJECT_DIR}`` token expansion, ``expand_reyn_tokens``/
+    ``expand_with_map``, never touching ``os.environ``; "B" is this class,
+    a REAL environment variable a spawned CHILD process reads because it
+    has no way to run reyn's own in-process expander itself).
+
+    Exactly THREE named fields, never a free-form ``dict[str, str]`` —
+    architect's own ruling (#5084, owner's standing directive "don't break
+    the Sandbox abstraction"): a general ``run(env=Mapping[str, str])``
+    would let a caller inject ARBITRARY env into a sandboxed subprocess
+    (``PATH``/``LD_PRELOAD``/``PYTHONPATH`` are all ways to change WHAT
+    actually runs, not just what it can read) — silently routing around
+    the sandbox boundary's whole point. This type is a closed envelope
+    (Tier-1 lens 2: typed, never free-formed): a caller cannot add a
+    fourth variable, and the three names below are the ONLY ones any
+    backend's :meth:`~reyn.security.sandbox.backend.SandboxBackend.run`
+    implementation is asked to set.
+
+    ``project_dir``/``agent_base_dir`` are PATHS, resolved on the reyn
+    host — meaningless (or actively wrong) inside a container backend
+    whose repo lives at a different in-container path (the SAME asymmetry
+    ``SandboxBackend.run``'s own ``cwd`` docstring already draws for a
+    workspace-coupled backend); ``agent_name`` is a bare identity string,
+    equally true on either side of a container boundary, so it is passed
+    through unconditionally. A backend that cannot translate the two path
+    values omits them rather than passing a host-side path that would
+    silently resolve to nothing (or someone else's directory) inside the
+    container — never a silent full drop of all three."""
+
+    project_dir: Path
+    agent_base_dir: Path
+    agent_name: str
+
+    def as_env(self) -> "dict[str, str]":
+        """The literal ``os.environ`` additions a host-process backend
+        applies verbatim. A container backend calls this too but MAY strip
+        the two path keys first (see the class docstring) before merging
+        the rest into the container's own env — never call ``os.environ``
+        directly from a backend; go through this method so the three
+        names stay defined in exactly one place."""
+        return {
+            "REYN_PROJECT_DIR": str(self.project_dir),
+            "REYN_AGENT_BASE_DIR": str(self.agent_base_dir),
+            "REYN_AGENT_NAME": self.agent_name,
+        }
 
 
 def _allowlist_path() -> Path:
@@ -370,6 +423,7 @@ async def run_shell_hook(
     *,
     timeout_seconds: int = 60,
     cwd: str | None = None,
+    hook_process_context: "HookProcessContext | None" = None,
     sandbox_backend: "SandboxBackend | None" = None,
     sandbox_config: "SandboxConfig | None" = None,
     sandbox_policy: "SandboxPolicy | None" = None,
@@ -567,6 +621,7 @@ async def run_shell_hook(
             policy,
             stdin=stdin_bytes,
             cwd=cwd,
+            hook_process_context=hook_process_context,
         )
         result = launched.result
 

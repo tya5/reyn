@@ -15,6 +15,7 @@ import logging
 import os
 import signal
 import subprocess
+from typing import TYPE_CHECKING
 
 from ._subprocess_io import communicate_capped, kill_process_tree
 from .backend import (
@@ -25,6 +26,9 @@ from .backend import (
 )
 from .capability import CapabilityDeclaration, CapabilitySupport
 from .policy import POST_KILL_DRAIN_GRACE_SECONDS, SandboxPolicy, resolve_passthrough_env
+
+if TYPE_CHECKING:
+    from reyn.hooks.shell_runner import HookProcessContext
 
 _logger = logging.getLogger(__name__)
 
@@ -174,6 +178,7 @@ class NoopBackend:
         stdin: bytes | None = None,
         cwd: str | None = None,
         cancel_event: asyncio.Event | None = None,
+        hook_process_context: "HookProcessContext | None" = None,
     ) -> SandboxResult:
         _warn_once()
 
@@ -188,6 +193,12 @@ class NoopBackend:
         # wrong directory with no way to detect it.
         if cwd:
             env["PWD"] = cwd
+        # #5084 ④: this is a real host process (no container boundary), so
+        # every one of hook_process_context's 3 keys applies unchanged —
+        # see SandboxBackend.run's own docstring for the closed-envelope
+        # contract this merges verbatim, never a caller-chosen env.
+        if hook_process_context is not None:
+            env.update(hook_process_context.as_env())
 
         if cancel_event is None:
             # No cancel support: original blocking path (byte-identical).

@@ -40,7 +40,7 @@ import signal
 import subprocess
 import uuid
 from pathlib import Path
-from typing import Any, Awaitable, Callable, Pattern
+from typing import TYPE_CHECKING, Any, Awaitable, Callable, Pattern
 
 from reyn.environment.backend import GrepResult
 from reyn.security.sandbox._subprocess_io import MAX_SUBPROCESS_OUTPUT_BYTES, communicate_capped
@@ -52,6 +52,9 @@ from reyn.security.sandbox.backend import (
 )
 from reyn.security.sandbox.capability import CapabilityDeclaration, CapabilitySupport
 from reyn.security.sandbox.policy import POST_KILL_DRAIN_GRACE_SECONDS, SandboxPolicy
+
+if TYPE_CHECKING:
+    from reyn.hooks.shell_runner import HookProcessContext
 
 # Sync runner: execute argv (optionally stdin), return SandboxResult. Injected so
 # the FS-op orchestration is testable without Docker; default = _sync_runner.
@@ -632,6 +635,7 @@ class DockerEnvironmentBackend:
     async def run(
         self, argv: list[str], policy: SandboxPolicy, *, stdin: bytes | None = None,
         cwd: str | None = None, cancel_event: "asyncio.Event | None" = None,
+        hook_process_context: "HookProcessContext | None" = None,
     ) -> SandboxResult:
         """``docker exec`` of argv (via a login shell) with cwd=repo_dir — NO host-diff bridge.
 
@@ -646,7 +650,18 @@ class DockerEnvironmentBackend:
         the repo lives at the in-container ``self.repo_dir`` (``-w``), which a
         host path can't address. Same asymmetry as policy enforcement — a
         workspace-coupled backend scopes both to the fidelity boundary.
+
+        ``hook_process_context`` (#5084 ④): asymmetric, NOT a straight merge
+        like the host-process backends. ``project_dir``/``agent_base_dir``
+        are HOST paths — meaningless (or actively wrong) inside the
+        container's own filesystem, so they are deliberately OMITTED rather
+        than translated or passed as a lie. ``agent_name`` is not a path —
+        it is true in either filesystem — so it alone is forwarded, via
+        ``docker exec -e``, to every ``exec_argv`` this method builds.
         """
+        hook_env_args: list[str] = []
+        if hook_process_context is not None:
+            hook_env_args = ["-e", f"REYN_AGENT_NAME={hook_process_context.agent_name}"]
         # Run inside a LOGIN shell so the image's env-activation (conda / nvm /
         # rbenv / pyenv — set up in /etc/profile or ~/.bash_profile/~/.bashrc)
         # is in effect. A plain ``docker exec <argv>`` uses only the base PATH
@@ -669,6 +684,7 @@ class DockerEnvironmentBackend:
             # No cancel support requested: original path, byte-identical.
             exec_argv = [
                 self.docker_bin, "exec", *(["-i"] if stdin is not None else []),
+                *hook_env_args,
                 "-w", self.repo_dir, self.container,
                 "bash", "-lc", 'exec "$@"', "reyn-exec", *argv,
             ]
@@ -689,6 +705,7 @@ class DockerEnvironmentBackend:
         pidfile = f"/tmp/.reyn-exec-{uuid.uuid4().hex}.pid"
         exec_argv = [
             self.docker_bin, "exec", *(["-i"] if stdin is not None else []),
+            *hook_env_args,
             "-w", self.repo_dir, self.container,
             "bash", "-lc", 'echo $$ > "$1"; shift; exec "$@"',
             "reyn-exec", pidfile, *argv,

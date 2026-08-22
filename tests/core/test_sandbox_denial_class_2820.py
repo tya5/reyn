@@ -109,7 +109,7 @@ class _ForkDenyingBackend:
 
         return WrappedCommand(argv=list(argv), env={})
 
-    async def run(self, argv, policy, *, stdin=None, cwd=None, cancel_event=None):
+    async def run(self, argv, policy, *, stdin=None, cwd=None, cancel_event=None, hook_process_context=None):
         return SandboxResult(returncode=128, stdout=b"", stderr=_REAL_FORK_STDERR)
 
 

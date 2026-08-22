@@ -4488,6 +4488,7 @@ class Session:
         from reyn.hooks.composed_consumer import ComposedEventConsumer
         from reyn.hooks.composer import ComposerRegistry, build_composers
         from reyn.hooks.dispatcher import HookDispatcher
+        from reyn.hooks.shell_runner import HookProcessContext
         from reyn.runtime.fs_watcher import FsWatcher
         from reyn.runtime.hot_reload import HotReloader
         # Hook-Event Redesign Phase 4a (proposal 0059 §3.2/§3.3): one HookBus
@@ -4548,6 +4549,23 @@ class Session:
             # Phase 4a: broadcast every dispatched HookEvent to this session's
             # own bus, independently of the Sync hooks_for() loop above.
             bus=hook_bus,
+            # #5084 ④: LIVE cwd/env for a hook's exec/exec_capture child —
+            # same deferred-lambda posture as consent_gate/is_hook_disabled
+            # above, because ``_workspace_base_dir`` can change across this
+            # dispatcher's lifetime (#5081). A relative exec argv now
+            # resolves inside THIS agent's own tree instead of reyn's own
+            # launch cwd (the real, previously-unaddressed gap #5084 ④
+            # measured in hooks/dispatcher.py's own module docstring).
+            hook_cwd=lambda: (
+                str(self._workspace_base_dir) if self._workspace_base_dir else None
+            ),
+            hook_process_context=lambda: HookProcessContext(
+                project_dir=self._reyn_state_root.parent.resolve(),
+                agent_base_dir=(
+                    self._workspace_base_dir or self._reyn_state_root.parent
+                ).resolve(),
+                agent_name=self.agent_name,
+            ),
         )
         # #2608 H4: the session-owned filesystem watcher (see
         # reyn.runtime.fs_watcher's module docstring for the thread->async
@@ -5595,7 +5613,12 @@ class Session:
           at boot, the restart-only OUT-set, never re-read on a reload);
         - **runtime** — the global ``.reyn/hooks.yaml`` (from the IN-set);
         - **per-agent** — ``.reyn/agents/<name>/hooks.yaml`` (read directly here, same
-          IN-set grain but scoped per agent).
+          IN-set grain but scoped per agent);
+        - **derived** — #5084 ③-b: the 2 broker-participation hooks synthesized from
+          this agent's own ``profile.yaml`` ``broker_identity`` (absent, the default,
+          derives none — see :func:`reyn.runtime.broker_hooks.derive_broker_hooks`'s
+          own docstring for the exact shape and why this lives in the SAME PR/layer
+          as ④'s cwd/env threading, not a separate mechanism).
 
         Rebuilding from scratch each call means a removed hook (runtime or per-agent)
         simply isn't in the new registry — removal handled by construction.
@@ -5621,6 +5644,7 @@ class Session:
         runtime_list = list(runtime) if isinstance(runtime, list) else []
         per_agent_list = self._read_per_agent_hooks()
         per_session_list = self._read_per_session_hooks()  # #2285: the 4th, most-specific layer
+        derived_list = self._derive_broker_hooks()  # #5084 ③-b: broker-participation hooks
         combined = list(self._startup_hooks_raw)
         composed_schemas = getattr(self, "_composed_schemas", None)
         registry = load_hooks(combined, composed_schemas)  # trusted startup must load — else fail loud
@@ -5628,6 +5652,7 @@ class Session:
             ("runtime", runtime_list),
             ("per-agent", per_agent_list),
             ("per-session", per_session_list),  # #2285: session-defined hooks (try-add like untrusted)
+            ("derived", derived_list),  # #5084 ③-b: derived from broker_identity, try-add like untrusted
         ):
             if not layer:
                 continue
@@ -5640,6 +5665,29 @@ class Session:
                     "the valid hook layers: %s", label, exc,
                 )
         return registry
+
+    def _derive_broker_hooks(self) -> list:
+        """#5084 ③-b: this agent's own ``profile.yaml`` ``broker_identity``,
+        turned into the 2 hook defs :func:`reyn.runtime.broker_hooks.
+        derive_broker_hooks` synthesizes — ``[]`` when absent/missing/
+        malformed, same "live re-read, {}/[] on any read failure" contract
+        as :meth:`_agent_profile_preferences` one level up (an operator
+        hand-editing ``broker_identity`` takes effect on the next hook-
+        registry rebuild, not just the next process start)."""
+        from reyn.runtime.broker_hooks import derive_broker_hooks
+        from reyn.runtime.profile import AgentProfile
+
+        try:
+            identity = AgentProfile.load(self.workspace_dir).broker_identity
+        except FileNotFoundError:
+            return []  # no profile.yaml on disk — same non-error posture as preferences
+        except ValueError as e:
+            logger.warning(
+                "#5084: skipping unreadable agent profile at %s for broker-hook "
+                "derivation: %s", self.workspace_dir, e,
+            )
+            return []
+        return derive_broker_hooks(identity)
 
     def _read_per_agent_hooks(self) -> list:
         """Read the per-agent runtime hooks layer for the COMBINE (#2073 per-agent

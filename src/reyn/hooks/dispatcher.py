@@ -23,6 +23,16 @@ real Session's methods (no mocks):
 - ``launch_pipeline(name, input)``       — #2608 H3: launch a registered
   Pipeline (async/detached — the launched pipeline's result arrives later on
   the session's own inbox as a ``pipeline_result`` message).
+
+#5084 ④ adds two more, same DI/callable posture: ``hook_cwd()`` and
+``hook_process_context()`` — read LIVE at each ``exec``/``exec_capture``
+dispatch (not frozen at construction), so a relative argv resolves inside
+the dispatching agent's OWN tree (``Session._workspace_base_dir``) and the
+child process receives the closed ``REYN_*`` envelope
+(:class:`~reyn.hooks.shell_runner.HookProcessContext`) for THAT agent.
+Before this, every hook exec silently inherited reyn's own launch cwd
+regardless of which agent dispatched it — a real gap, not merely
+unconfirmed until #5084 ④ measured it.
 """
 from __future__ import annotations
 
@@ -80,6 +90,8 @@ class HookDispatcher:
         current_session_id: "str | None" = None,
         is_hook_disabled: "Callable[[HookDef], bool] | None" = None,
         bus: "HookBus | None" = None,
+        hook_cwd: "Callable[[], str | None] | None" = None,
+        hook_process_context: "Callable[[], Any] | None" = None,
     ) -> None:
         self._registry = registry
         # Hook-Event Redesign Phase 4a (proposal 0059 §3.2/§3.3): the optional
@@ -124,6 +136,16 @@ class HookDispatcher:
         # request windows).
         self._consent_bus = consent_bus
         self._consent_gate = consent_gate
+        # #5084 ④: cwd/hook_process_context for exec/exec_capture argv, sourced
+        # as CALLABLES (not values frozen at construction time) — same idiom
+        # as is_hook_disabled/consent_gate above, because the agent's own
+        # workspace base_dir is LIVE (Session._workspace_base_dir can change
+        # across this dispatcher's lifetime; #5081). None (the default —
+        # every pre-#5084 call site) → no cwd/env addition, byte-identical to
+        # before this parameter existed (hook exec inherits reyn's own launch
+        # cwd, same as always).
+        self._hook_cwd = hook_cwd
+        self._hook_process_context = hook_process_context
 
     def _consent_bus_now(self) -> Any:
         """The consent bus iff a live intervention listener is attached, else None."""
@@ -280,6 +302,14 @@ class HookDispatcher:
                 consent_bus=self._consent_bus_now(),
                 hook_name=hook.name,
                 emit_event=self._emit_event,
+                # #5084 ④: read live, same as consent_bus_now() above — a
+                # relative exec argv resolves inside the agent's OWN tree.
+                cwd=self._hook_cwd() if self._hook_cwd is not None else None,
+                hook_process_context=(
+                    self._hook_process_context()
+                    if self._hook_process_context is not None
+                    else None
+                ),
             )
         elif hook.exec_capture is not None:
             # exec_capture (#2069) — an argv whose STDOUT is a JSON
@@ -304,6 +334,13 @@ class HookDispatcher:
                 consent_bus=self._consent_bus_now(),
                 hook_name=hook.name,
                 emit_event=self._emit_event,
+                # #5084 ④: same live cwd/env source as the exec branch above.
+                cwd=self._hook_cwd() if self._hook_cwd is not None else None,
+                hook_process_context=(
+                    self._hook_process_context()
+                    if self._hook_process_context is not None
+                    else None
+                ),
             )
             resolved = _parse_exec_push(stdout)
             if resolved is not None:
