@@ -1845,7 +1845,7 @@ class TextualChatApp(App):
         class's own docstring), read through the SAME
         :class:`~reyn.interfaces.repl.read_model.ChatReadModel` seam every
         other session-local read uses
-        (:meth:`~reyn.interfaces.repl.read_model.ChatReadModel.completion_session`).
+        (:meth:`~reyn.interfaces.repl.read_model.ChatReadModel.completion_source`).
 
         A remote client holds no session, so the snapshot stays ``None`` —
         which ``compute_completion`` reads as "source unavailable" and answers
@@ -1861,7 +1861,7 @@ class TextualChatApp(App):
         skills: "list | None" = None
         if self._read_model is not None:
             try:
-                source = self._read_model.completion_session()
+                source = self._read_model.completion_source()
             except Exception:
                 logger.exception("textual chat: completion session read failed")
         if source is not None:

@@ -65,7 +65,7 @@ class CompletionSourceSnapshot:
     issuecomment-5378399712/issuecomment-5378442342 — "the same root as
     #5079: sync, I/O-performing, Session-mutating does not fit the
     async-marshal shape; but the DIFFERENT answer here is that
-    ``completion_session()`` returning a LIVE ``Session`` reference is the
+    ``completion_source()`` returning a LIVE ``Session`` reference is the
     actual problem, not a threading one — completion needs candidate
     strings (+ freshness), the worker updates, the UI only reads").
 
@@ -96,7 +96,7 @@ class CompletionSourceSnapshot:
     at all (filesystem completion is session-independent, its own
     docstring already says so), so it needs no field here.
 
-    :meth:`RegistryReadModel.completion_session` (today's only production
+    :meth:`RegistryReadModel.completion_source` (today's only production
     implementation, no thread boundary) builds this synchronously, on
     demand, straight off the live ``Session`` it already holds — always
     current, since there is no cross-thread delay in that path. A future
@@ -210,7 +210,7 @@ class ChatReadModelCapabilities:
     already carries, not new here): nothing checks that
     :class:`RegistryReadModel` returning ``LOCAL_CHAT_READ_CAPABILITIES``
     stays TRUE of its actual accessors. If a future edit made
-    ``completion_session()`` start returning ``None`` under some new local
+    ``completion_source()`` start returning ``None`` under some new local
     condition without updating this declaration, the declared/actual gap
     this class exists to prevent would reopen silently, on the LOCAL side
     this time. Follow-up, not a defect in this class.
@@ -248,7 +248,7 @@ class ChatReadModelCapabilities:
     declared here because there is nothing to gate.
     """
 
-    completion_session: bool
+    completion_source: bool
     intervention_head: bool
     pending_command_ui: bool
     has_command_ui_region: bool
@@ -285,7 +285,7 @@ def reported_snapshot_keys(
     new helper.
 
     Deliberately projects EVERY field, not only the ``*_reported`` ones
-    — the METHOD-axis fields from #4996 (``completion_session`` etc.)
+    — the METHOD-axis fields from #4996 (``completion_source`` etc.)
     ride along too, harmlessly (no pane reads them off the snapshot
     dict; ``ChatReadModel.capabilities`` remains their real consumer).
     Simpler than filtering by name pattern, and the field NAME already
@@ -298,7 +298,7 @@ def reported_snapshot_keys(
 #: current state; ``None``/``[]``/``0`` from it always means "genuinely
 #: nothing", never "unsupported here".
 LOCAL_CHAT_READ_CAPABILITIES = ChatReadModelCapabilities(
-    completion_session=True,
+    completion_source=True,
     intervention_head=True,
     pending_command_ui=True,
     has_command_ui_region=True,
@@ -320,7 +320,7 @@ LOCAL_CHAT_READ_CAPABILITIES = ChatReadModelCapabilities(
 #: this one genuinely reflects live server-side state rather than always
 #: degrading. See the module docstring's "Frame-sufficiency" section.
 REMOTE_CHAT_READ_CAPABILITIES = ChatReadModelCapabilities(
-    completion_session=False,
+    completion_source=False,
     intervention_head=True,
     pending_command_ui=False,
     has_command_ui_region=False,
@@ -473,7 +473,7 @@ class ChatReadModel(ABC):
         into — the remote impl always returns 0 (already-exhausted, never a
         fabricated count)."""
 
-    def completion_session(self) -> "CompletionSourceSnapshot | None":
+    def completion_source(self) -> "CompletionSourceSnapshot | None":
         """The TUI completion popup's (#3354) sources, as a
         :class:`CompletionSourceSnapshot` VALUE — never the live ``Session``
         (#5044, architect ruling, issuecomment-5378399712/5378442342: see
@@ -526,7 +526,7 @@ class RegistryReadModel(ChatReadModel):
     def _attached(self):
         return self._registry.attached_session()
 
-    def completion_session(self) -> "CompletionSourceSnapshot | None":
+    def completion_source(self) -> "CompletionSourceSnapshot | None":
         """Builds :class:`CompletionSourceSnapshot` synchronously, on
         demand, off the live ``Session`` this read-model already holds —
         always current (no cross-thread delay in this implementation, the
@@ -795,7 +795,7 @@ class RemoteReadModel(ChatReadModel):
         values = getattr(getattr(self._transport, "status", None), "values", None)
         return project_remote_snapshot(values)
 
-    def completion_session(self):
+    def completion_source(self):
         # Frame-sufficiency, same boundary as every other session-local read:
         # a remote client holds no Session, and neither the agent registry a
         # ``CompleterFn`` walks nor the skill entry list is projected onto the

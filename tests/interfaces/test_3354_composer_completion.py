@@ -144,7 +144,7 @@ class SessionReadModel(ChatReadModel):
     """A real :class:`ChatReadModel` seam impl (same pattern as
     ``test_3338``'s ``_MutableSnapshotReadModel``) that holds a REAL
     ``Session`` — the seam the app resolves both completion sources
-    through. :meth:`completion_session` converts it to a
+    through. :meth:`completion_source` converts it to a
     :class:`CompletionSourceSnapshot` VALUE (#5044) via the SAME shared
     helper :class:`RegistryReadModel` uses in production
     (:func:`completion_source_snapshot_from_session`), never handing the
@@ -162,7 +162,7 @@ class SessionReadModel(ChatReadModel):
     def __init__(self, session=None) -> None:
         self._session = session
 
-    def completion_session(self):
+    def completion_source(self):
         if self._session is None:
             return None
         return completion_source_snapshot_from_session(self._session)
@@ -907,7 +907,7 @@ async def test_a_newline_in_the_composer_closes_the_menu(tmp_path) -> None:
 @pytest.mark.asyncio
 async def test_skill_menu_reaches_the_sessions_own_skill_list(tmp_path) -> None:
     """Tier 2b: the app resolves the ``:`` source through the
-    ``ChatReadModel.completion_session`` seam and a real ``Session``'s public
+    ``ChatReadModel.completion_source`` seam and a real ``Session``'s public
     ``available_skills()`` — so what the menu offers is what that session
     actually registered, not a client-side copy that can drift."""
     session = _real_session(tmp_path, skills=_skill_entries())

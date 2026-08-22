@@ -40,11 +40,19 @@ running alongside it — the snapshot slot is written in the SAME callback
 that schedules the frame delivery.
 
 **Scope, explicit** (per lead-coder's #4995 ruling): 2 ``ChatReadModel``
-methods are NOT satisfiable by this snapshot design and are deliberately
-left unwired here — see #5044 (``completion_session()`` returns a LIVE
-``Session`` reference, not a copyable value; ``load_older_conversation_
-history()`` mutates ``Session.history`` and performs disk I/O, confirmed
-by reading it, not guessed). #5045 (``clear_pending_command_ui()`` was a
+methods were NOT satisfiable by this snapshot design at #4995's own
+landing and were deliberately left unwired here — see #5044.
+``load_older_conversation_history()`` mutated ``Session.history`` and
+performed disk I/O (confirmed by reading it, not guessed) — landed via
+``Session.extend_history_backward_async``'s own I/O-off-loop/apply-on-loop
+split, #5079. ``completion_source()`` (renamed from ``completion_session()``
+— the old name promised a ``Session``, the actual contract never fit one)
+returned a LIVE ``Session`` reference, not a copyable value; fixed by
+returning a ``CompletionSourceSnapshot`` VALUE instead, #5087 — still not
+wired through THIS class's own snapshot-refresh cadence (a future step,
+should this class ever gain a production call site).
+
+#5045 (``clear_pending_command_ui()`` was a
 WRITE living on a type named "read model") is CLOSED — the write moved
 to :meth:`ClientTransport.clear_pending_command_ui`, and this class's own
 :meth:`clear_pending_command_ui` override marshals it onto the worker
