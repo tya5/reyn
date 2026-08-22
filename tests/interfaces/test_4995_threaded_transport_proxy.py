@@ -54,6 +54,7 @@ py``'s own ``QueueTransport``).
 from __future__ import annotations
 
 import asyncio
+import json
 import threading
 from typing import TYPE_CHECKING, AsyncIterator
 
@@ -322,7 +323,11 @@ async def test_extend_history_backward_runs_the_closure_on_the_worker_thread():
     caller_ident = threading.get_ident()
     call_idents: "list[int]" = []
 
-    def _extend(agent: "str | None", session_id: "str | None") -> int:
+    async def _extend(agent: "str | None", session_id: "str | None") -> int:
+        # #5079/#4995: real closures are async and internally await an
+        # off-loop step (architect ruling) -- a real (if trivial) await
+        # here, not a bare sync function pretending to be one.
+        await asyncio.sleep(0)
         call_idents.append(threading.get_ident())
         assert agent == "researcher"
         assert session_id == "abc"
@@ -363,4 +368,212 @@ async def test_extend_history_backward_returns_zero_when_nothing_was_supplied():
         result = await proxy.extend_history_backward(agent="researcher")
         assert result == 0
     finally:
+        await proxy.shutdown()
+
+
+# ── #5079/#4995 architect ruling (issuecomment-5378398588) — the real
+# Session.extend_history_backward_async split, exercised through THIS
+# proxy: step ① (disk read) runs OFF the worker loop via asyncio.to_thread,
+# step ② (the small in-memory splice) stays on it, guarded by the EXISTING
+# before_seq value as the staleness token (no new generation mechanism —
+# #4983's own precedent, applied here). These two witnesses are the ones
+# architect's ruling names explicitly: ① paging must not stall the worker
+# loop's own frame production (structural — counted iterations, never a
+# duration) and ② a stale apply (history moved under the read) must be a
+# no-op, not a corrupting splice.
+
+
+def _write_history_lines(path, seqs) -> list[str]:
+    lines = [
+        json.dumps({"role": "user", "content": f"msg {n}", "seq": n}) for n in seqs
+    ]
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return lines
+
+
+def _make_history_session(tmp_path):
+    """A real ``Session`` with a real ``history.jsonl`` on disk (seq
+    1..10) and ``self.history`` manually seeded to "only the tail (6..10)
+    is loaded" — the exact precondition ``extend_history_backward_async``
+    is meant to satisfy (older entries on disk, nothing loaded yet).
+    Bypasses ``load_history()``'s own 200-line tail sizing (irrelevant to
+    what's under test here) by seeding ``self.history`` directly — the
+    method under test only ever reads ``self.history[0].seq``, not how
+    it got there."""
+    from tests._support.agent_session import make_session
+
+    project_root = tmp_path / "project"
+    session = make_session(
+        agent_name="alpha", workspace_state_dir=project_root / ".reyn",
+        snapshot_path=(
+            project_root / ".reyn" / "agents" / "alpha" / "state" / "snapshot.json"
+        ),
+    )
+    lines = _write_history_lines(session.history_path, range(1, 11))
+    session.history = [
+        m for line in lines[5:] if (m := session._parse_history_line(line)) is not None
+    ]
+    return session
+
+
+class _FramingTransport(_RecordingTransport):
+    """Yields frames indefinitely, one per drain — lets a test COUNT how
+    many the worker loop produces while something else is gated open,
+    the same structural-progress shape witness② (in the #4995 file
+    above) already established, applied to a frame producer instead of
+    a blocked call."""
+
+    async def frames(self):
+        n = 0
+        while True:
+            from reyn.interfaces.transport.frames import DisplayFrame
+            from reyn.runtime.outbox import OutboxMessage
+            yield DisplayFrame(OutboxMessage(kind="status", text=f"frame {n}"))
+            n += 1
+            await asyncio.sleep(0)
+
+
+@pytest.mark.asyncio
+async def test_extend_history_backward_async_does_not_stall_the_worker_loops_frame_drain(
+    tmp_path,
+):
+    """Tier 2: architect ruling (#5079/#4995) — while
+    ``Session.extend_history_backward_async``'s own disk-read step is
+    gated open (a real ``threading.Event``, the SAME technique witness②
+    above already establishes — never a duration), the worker loop must
+    keep producing frames from the inner transport — structural proof the
+    read genuinely left the worker loop (#4983's own precedent, applied
+    to this second place).
+
+    Strip-falsifier: reverting ``extend_history_backward_async`` to call
+    ``read_history_before`` synchronously (no ``asyncio.to_thread``) makes
+    this hang — the gated read would block the SAME worker loop
+    ``_pump_frames`` needs to keep yielding frames, so the drain loop
+    below would never get a chance to run at all."""
+    import reyn.runtime.history_tail_reader as history_tail_reader
+
+    real_read = history_tail_reader.read_history_before
+    read_gate = threading.Event()
+    read_started = threading.Event()
+
+    def _gated_read(*args, **kwargs):
+        read_started.set()
+        read_gate.wait()
+        return real_read(*args, **kwargs)
+
+    session = _make_history_session(tmp_path)
+    inner = _FramingTransport()
+
+    async def _extend(agent, session_id):
+        return await session.extend_history_backward_async()
+
+    proxy = ThreadedTransportProxy(
+        lambda: inner, read_model_extend_history_fn=_extend,
+    )
+    proxy.start()
+    history_tail_reader.read_history_before = _gated_read
+    try:
+        extend_task = asyncio.create_task(
+            proxy.extend_history_backward(agent="alpha"),
+        )
+        await asyncio.to_thread(read_started.wait)
+
+        frame_iter = proxy.frames()
+        drained = 0
+        for _ in range(20):
+            await frame_iter.__anext__()
+            drained += 1
+        assert drained == 20, (
+            "the worker loop's own frame production stalled while "
+            "extend_history_backward_async's disk read was gated open "
+            "-- the read did not genuinely leave the worker loop"
+        )
+        assert not extend_task.done(), (
+            "the gated read must still be in flight at this point -- "
+            "proves the 20 drained frames genuinely overlapped it"
+        )
+
+        read_gate.set()
+        result = await extend_task
+        assert result == 5
+        assert [m.content for m in session.history[:5]] == [
+            "msg 1", "msg 2", "msg 3", "msg 4", "msg 5",
+        ]
+    finally:
+        history_tail_reader.read_history_before = real_read
+        await proxy.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_extend_history_backward_async_apply_is_a_no_op_when_history_moved_mid_read(
+    tmp_path,
+):
+    """Tier 2: architect ruling (#5079/#4995) — #4983's own supersede-guard
+    shape, applied here via the EXISTING ``before_seq`` value as the
+    staleness token — no new generation mechanism. If ``self.history``'s
+    own oldest ``seq`` no longer matches what ``before_seq`` captured by
+    the time the gated disk read returns (another path already moved
+    history out from under this call — simulated here directly), applying
+    the stale read is a no-op: ``self.history`` is left exactly as the
+    intervening mutation left it, never spliced with the now-stale read.
+
+    Strip-falsifier: removing the ``current_oldest_seq != before_seq``
+    guard in ``extend_history_backward_async`` (splicing unconditionally,
+    as its sibling ``_load_older_entries`` does — correctly, since THAT
+    one is never called across an await gap) turns this red — the stale
+    entries would be prepended anyway, duplicating/misordering the
+    intervening mutation's own state."""
+    import reyn.runtime.history_tail_reader as history_tail_reader
+
+    real_read = history_tail_reader.read_history_before
+    read_gate = threading.Event()
+    read_started = threading.Event()
+
+    def _gated_read(*args, **kwargs):
+        read_started.set()
+        read_gate.wait()
+        return real_read(*args, **kwargs)
+
+    session = _make_history_session(tmp_path)
+    inner = _FramingTransport()
+
+    async def _extend(agent, session_id):
+        return await session.extend_history_backward_async()
+
+    proxy = ThreadedTransportProxy(
+        lambda: inner, read_model_extend_history_fn=_extend,
+    )
+    proxy.start()
+    history_tail_reader.read_history_before = _gated_read
+    try:
+        extend_task = asyncio.create_task(
+            proxy.extend_history_backward(agent="alpha"),
+        )
+        await asyncio.to_thread(read_started.wait)
+
+        # Simulate a concurrent path moving history out from under this
+        # call, WHILE the read is still gated -- the exact race window
+        # #4983's own docstring names ("a LATER switch may have claimed a
+        # newer generation ... while the read above was still in
+        # flight").
+        intruder = session._parse_history_line(
+            json.dumps({"role": "user", "content": "intruder", "seq": 99}),
+        )
+        session.history.insert(0, intruder)
+
+        read_gate.set()
+        result = await extend_task
+        assert result == 0, (
+            "a stale read (history moved mid-read) must report 0 "
+            "prepended, not the count it would have prepended before "
+            "the race"
+        )
+        assert session.history[0].content == "intruder", (
+            "the intervening mutation must survive UNTOUCHED -- the "
+            "stale read must not splice its own (now-wrong) entries in "
+            "front of it"
+        )
+    finally:
+        history_tail_reader.read_history_before = real_read
         await proxy.shutdown()

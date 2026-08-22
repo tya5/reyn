@@ -3905,6 +3905,55 @@ class Session:
         oldest_seq = self.history[0].seq if self.history else 0
         return self._load_older_entries(before_seq=oldest_seq, min_lines=min_lines)
 
+    async def extend_history_backward_async(
+        self, *, min_lines: int = _HISTORY_HYDRATE_MIN_LINES,
+    ) -> int:
+        """#5079/#4995 (architect ruling, issuecomment-5378398588): the
+        cross-thread-safe sibling of :meth:`extend_history_backward`,
+        following #4983's own precedent in THIS SAME FILE
+        (:meth:`~reyn.interfaces.inline.textual_chat.app.TextualChatApp.
+        _handle_session_attached_event`) — the same "read off the loop,
+        apply on the loop" split, applied to a second place, no new
+        mechanism:
+
+        - Step ① (the disk read, :func:`~reyn.runtime.history_tail_
+          reader.read_history_before`, plus the pure
+          :meth:`_parse_history_line` parse) is not ``Session``'s own —
+          it constructs a VALUE, touching nothing mutable — so it runs
+          OFF the loop via ``asyncio.to_thread``, freeing the worker loop
+          (once #5048 wires this in) to keep servicing everything else —
+          router turns, other frames — while the read is in flight.
+        - Step ② (splicing the parsed entries into ``self.history``) IS
+          ``Session``'s own — a small, in-memory, synchronous mutation —
+          so it stays exactly where :meth:`_load_older_entries` already
+          puts it.
+
+        Guarded against the same race #4983 solved, reusing the EXISTING
+        ``before_seq`` value as the staleness token (architect's explicit
+        instruction: reuse, don't invent a new generation mechanism) —
+        captured from ``self.history[0].seq`` at entry; if ``self.
+        history``'s own oldest ``seq`` no longer matches by the time the
+        read returns (another path already prepended, or history was
+        reset from under this call — e.g. a session switch), applying the
+        stale read would duplicate or misorder entries, so it is skipped:
+        a no-op, the same word #4983's own docstring uses for its
+        supersede case, not a new concept."""
+        from reyn.runtime.history_tail_reader import read_history_before
+
+        before_seq = self.history[0].seq if self.history else 0
+        lines = await asyncio.to_thread(
+            read_history_before,
+            self.history_path, before_seq=before_seq, min_lines=min_lines,
+        )
+        if not lines:
+            return 0
+        parsed = [m for line in lines if (m := self._parse_history_line(line)) is not None]
+        current_oldest_seq = self.history[0].seq if self.history else 0
+        if current_oldest_seq != before_seq:
+            return 0
+        self.history[0:0] = parsed
+        return len(parsed)
+
     def load_history(self) -> None:
         """#4387 Phase B ①: hydrate ``self.history`` at startup WITHOUT
         necessarily reading the whole (potentially huge — owner's real

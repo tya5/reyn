@@ -70,7 +70,7 @@ from __future__ import annotations
 import asyncio
 import threading
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, AsyncIterator, Callable
+from typing import TYPE_CHECKING, Any, AsyncIterator, Callable, Coroutine
 
 from reyn.interfaces.transport.client_transport import ClientTransport
 from reyn.interfaces.transport.drain import suspend_between_frames
@@ -138,18 +138,32 @@ class ThreadedTransportProxy(ClientTransport):
     THREAD alongside every frame, whose result rides in
     :class:`_ThreadedSnapshot` for the caller thread to read.
 
-    ``read_model_extend_history_fn`` is optional too — a
+    ``read_model_extend_history_fn`` is optional too — an ASYNC
     ``(agent, session_id) -> int`` callable (typically the SAME
-    ``RegistryReadModel``'s bound ``load_older_conversation_history``)
-    marshalled onto the worker thread ON DEMAND via
+    ``RegistryReadModel``'s bound ``Session.extend_history_backward_
+    async``) marshalled onto the worker thread ON DEMAND via
     :meth:`extend_history_backward`, unlike ``read_model_snapshot_fn``
     which runs unconditionally alongside every frame. #5044: this one
     genuinely MUTATES ``Session.history`` and performs disk I/O — not
     satisfiable by the snapshot design's read-only push, so it gets its
     own pull-style cross-thread call instead (mirroring
     :meth:`_call_on_worker`'s own ``run_coroutine_threadsafe`` +
-    ``wrap_future`` shape, but for a caller-supplied SYNC closure rather
-    than one of ``self._inner``'s own async methods).
+    ``wrap_future`` shape, but for a caller-supplied closure rather than
+    one of ``self._inner``'s own methods).
+
+    #5079/#4995 (architect ruling, issuecomment-5378398588): the supplied
+    closure is expected to be ASYNC and to do its OWN "read off the loop,
+    apply on the loop" split internally — mirroring #4983's own precedent
+    in ``textual_chat/app.py`` (``_handle_session_attached_event``: step
+    ① the disk read runs OFF the event loop via ``asyncio.to_thread``,
+    step ② the small in-memory apply stays on the loop). This proxy does
+    NOT impose that split itself — it is transport-generic and has no
+    Session-specific knowledge of what "the read" vs "the apply" even
+    are; it only marshals whatever coroutine the closure returns onto the
+    worker loop and awaits it, so a closure that internally awaits
+    ``asyncio.to_thread(...)`` genuinely frees the worker loop for that
+    span, while the closure's own final synchronous mutation step still
+    runs safely on the loop that owns ``Session``.
 
     Delegation is total and explicit: every public ``ClientTransport``
     method is defined directly on THIS class's own body — never silently
@@ -168,7 +182,7 @@ class ThreadedTransportProxy(ClientTransport):
         *,
         read_model_snapshot_fn: "Callable[[], dict] | None" = None,
         read_model_extend_history_fn: (
-            "Callable[[str | None, str | None], int] | None"
+            "Callable[[str | None, str | None], Coroutine[Any, Any, int]] | None"
         ) = None,
     ) -> None:
         self._transport_factory = transport_factory
@@ -300,24 +314,26 @@ class ThreadedTransportProxy(ClientTransport):
         needs the REAL, POST-mutation count back, not a value that was
         already frozen into a snapshot slot before this call happened.
 
-        Runs ``read_model_extend_history_fn`` ON THE WORKER THREAD (via
-        ``run_coroutine_threadsafe`` + ``wrap_future`` — the SAME
+        Schedules ``read_model_extend_history_fn`` (an ASYNC closure — see
+        this class's own docstring for why) ON THE WORKER THREAD's loop
+        (via ``run_coroutine_threadsafe`` + ``wrap_future`` — the SAME
         non-blocking shape :meth:`_call_on_worker` gives every ASYNC
-        ``ClientTransport`` method below, just for a caller-supplied SYNC
-        closure instead of one of ``self._inner``'s own methods) and
-        awaits the real result. Returns ``0`` (already-exhausted, never a
-        fabricated count — same convention ``ChatReadModel.
-        load_older_conversation_history``'s own docstring states for its
-        remote impl) when no callable was supplied at construction, or
-        when this proxy has not been started yet."""
+        ``ClientTransport`` method below) and awaits the real result. The
+        closure's own internal ``await`` points (#5079/#4995: its own
+        off-loop disk read) run exactly where scheduled — this call
+        itself does not block the worker loop for their duration, only
+        for the closure's brief synchronous portions. Returns ``0``
+        (already-exhausted, never a fabricated count — same convention
+        ``ChatReadModel.load_older_conversation_history``'s own docstring
+        states for its remote impl) when no callable was supplied at
+        construction, or when this proxy has not been started yet."""
         if self._read_model_extend_history_fn is None or self._worker_loop is None:
             return 0
         fn = self._read_model_extend_history_fn
 
-        async def _call() -> int:
-            return fn(agent, session_id)
-
-        concurrent_future = asyncio.run_coroutine_threadsafe(_call(), self._worker_loop)
+        concurrent_future = asyncio.run_coroutine_threadsafe(
+            fn(agent, session_id), self._worker_loop,
+        )
         return await asyncio.wrap_future(concurrent_future)
 
     # -- caller-thread writes: marshalled onto the worker loop -----------
