@@ -65,6 +65,34 @@ Ask each test in the diff:
    whose length is decided by the *caller's* pace is unbounded by construction.
    (#3872: the app's timer paced it at 10fps; `list()` paced it at CPU speed, and
    the collecting starved the worker thread it was waiting on — 10 GB.)
+
+   **5 bears on the FAILING path, not just the passing one.** PR #5049
+   (#4995): a witness test held a real `threading.Event` open across an
+   `asyncio.to_thread`-dispatched worker call, released only after a
+   sequence of asserts. When one of those asserts fails, the `Event`
+   is never `.set()` — the worker thread stays blocked inside
+   `Event.wait()` forever, `asyncio.to_thread`'s underlying
+   threadpool thread is never daemon, and CPython's default
+   threadpool executor registers an `atexit` hook that joins every
+   outstanding worker before the interpreter exits. What accumulates
+   is a non-daemon thread; what bounds it is nothing inside the test
+   — the existing blocking condition ("if something outside the test
+   bounds it, it is not a bound") applies exactly, just on the RED
+   path instead of the green one. CI itself saw an ordinary
+   `AssertionError` — the hang only surfaced during a LOCAL
+   strip-falsify run (reverting the fix and re-running by hand), which
+   is exactly the point: **an ordinary CI run does not teach you this
+   — only deliberately forcing the failing branch does.** Three
+   independent static reads — two reviewer sessions and one automated
+   check — all read this test and confirmed the passing path was
+   sound; none traced the failing path until the strip-falsify hang
+   was reproduced directly. **When reading a test that holds an
+   `Event`/`Lock`/
+   thread/subprocess/temp file across multiple asserts, trace from
+   each assert's failure point forward to the test's own `finally` (or
+   its absence) and name what does NOT get released** — that is a
+   different read than confirming the asserts are individually
+   meaningful, and the six questions do not perform it automatically.
 6. **Is the declared Tier the true one?** Only a human can answer this; the audit
    cannot. Say which of 1's answers you reached and why.
 
