@@ -59,6 +59,29 @@ if TYPE_CHECKING:
 _SSE_DONE = object()
 
 
+class _SSEPumpError:
+    """#5126 (lead-coder catch on #5107, issuecomment-5380819283): a real
+    exception (e.g. ``httpx.ReadError`` — the connection dying mid-stream)
+    used to be indistinguishable from a clean end-of-stream: :meth:`_pump_sse`
+    enqueued the SAME :data:`_SSE_DONE` sentinel in its ``finally`` on every
+    exit, then let the exception propagate out of the untracked background
+    task — where nothing ever awaited it, so it became an asyncio
+    "exception was never retrieved" orphan, and :meth:`frames` (seeing only
+    ``_SSE_DONE``) returned exactly as if the stream had ended normally.
+
+    This wraps a genuine (non-cancellation) exception so it travels through
+    the SAME queue :data:`_SSE_DONE` does — the one channel a consumer
+    (:meth:`frames`) actually drains — instead of being silently dropped on
+    the task's own way out. :meth:`frames` re-raises it, so a real caller
+    (the TUI, or a test) sees the actual failure instead of a quiet, ordinary
+    end."""
+
+    __slots__ = ("exc",)
+
+    def __init__(self, exc: BaseException) -> None:
+        self.exc = exc
+
+
 class AgUiTransport(ClientTransport):
     """Decode a server AG-UI SSE stream into the renderer's ``Frame`` vocabulary."""
 
@@ -246,6 +269,20 @@ class AgUiTransport(ClientTransport):
         ``put_nowait`` cannot be interrupted mid-call, so the sentinel
         genuinely always lands, regardless of what ``self._display_queue``
         becomes later.
+
+        #5126: a genuine (non-cancellation) exception — the connection dying
+        mid-stream — is caught HERE and forwarded through the queue as a
+        :class:`_SSEPumpError`, ahead of the ``finally``'s own
+        :data:`_SSE_DONE`. Deliberately NOT re-raised after catching: this
+        task must exit cleanly (no exception left for asyncio to log as
+        "never retrieved") because the queue IS now the retrieval path —
+        :meth:`frames` reads the error back off it and raises it in the
+        CALLER's context, where a real caller can act on it. Cancellation
+        is exempt (bare ``except Exception``, not ``BaseException`` —
+        ``asyncio.CancelledError`` derives from ``BaseException`` since
+        Python 3.8): :meth:`close`'s own ``.cancel()`` is an intentional,
+        expected shutdown, not a failure to report back through the frame
+        stream.
         """
         try:
             block: list[str] = []
@@ -276,6 +313,12 @@ class AgUiTransport(ClientTransport):
                 for frame in self._consume_block(block):
                     await suspend_between_frames()  # #3570, same reason as above
                     await self._display_queue.put(frame)
+        except Exception as exc:  # noqa: BLE001 -- #5126: forwarded via the
+            # queue for `frames()` to re-raise, not re-raised here (see
+            # docstring above) -- deliberately broad: ANY failure reading or
+            # decoding the SSE stream must reach the caller as a real error,
+            # not vanish as an ordinary end-of-stream.
+            self._display_queue.put_nowait(_SSEPumpError(exc))
         finally:
             self._display_queue.put_nowait(_SSE_DONE)
 
@@ -288,6 +331,13 @@ class AgUiTransport(ClientTransport):
             self._sse_pump_task = asyncio.create_task(self._pump_sse())
         while True:
             frame = await self._display_queue.get()
+            if isinstance(frame, _SSEPumpError):
+                # #5126: the pump died (a real exception, not a clean end or
+                # an intentional close()); surface it HERE, in the caller's
+                # own context, instead of letting `_SSE_DONE` (queued right
+                # after this by the SAME `finally`) make it look like an
+                # ordinary end-of-stream.
+                raise frame.exc
             if frame is _SSE_DONE:
                 return
             # #3570 gate (test_stream_drain_yield_3570.py's own class gate):
