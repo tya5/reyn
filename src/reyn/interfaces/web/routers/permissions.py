@@ -18,9 +18,16 @@ import yaml
 from fastapi import APIRouter, Body, Depends, HTTPException, status
 from pydantic import BaseModel
 
+from reyn.core.events.events import emit_direct_event
 from reyn.interfaces.web.deps import get_project_root
 
 router = APIRouter(tags=["permissions"])
+
+# #5065: the audit-event surface label — both the ``emit_direct_event`` seam's
+# own directory/emitter axis (``.reyn/events/direct/web/``) AND the payload's
+# ``surface`` field (part of the new kinds' required fields below) are stamped
+# from this ONE constant, so the two never drift apart.
+_SURFACE = "web"
 
 
 # ── helpers ──────────────────────────────────────────────────────────────────
@@ -80,7 +87,13 @@ async def revoke_permission(
     key: str,
     project_root: Path = Depends(get_project_root),
 ) -> None:
-    """Revoke a single approval entry by its key."""
+    """Revoke a single approval entry by its key.
+
+    #5065: this is a management operation on the SAVED-approvals store, not
+    an in-run permission decision — ``_save`` below is a raw write with no
+    audit trail of its own (unlike the security-side ``_persist`` flow),
+    so this route emits the audit-event itself, naming the revoked key.
+    """
     data = _load(project_root)
     if key not in data:
         raise HTTPException(
@@ -89,6 +102,12 @@ async def revoke_permission(
         )
     del data[key]
     _save(data, project_root)
+    emit_direct_event(
+        "permission_approval_revoked",
+        surface=_SURFACE,
+        reyn_root=project_root / ".reyn",
+        key=key,
+    )
 
 
 @router.delete("/permissions", status_code=status.HTTP_204_NO_CONTENT)
@@ -96,10 +115,22 @@ async def clear_permissions(
     confirm: bool = Body(default=False, embed=True),
     project_root: Path = Depends(get_project_root),
 ) -> None:
-    """Clear all saved approvals. Requires body: {\"confirm\": true}."""
+    """Clear all saved approvals. Requires body: {\"confirm\": true}.
+
+    #5065: same audit gap as :func:`revoke_permission` above — a bulk clear
+    has no single key to name, so the audit-event carries the count of
+    entries actually cleared instead.
+    """
     if not confirm:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="Pass {\"confirm\": true} in the request body to clear all approvals.",
         )
+    count = len(_load(project_root))
     _save({}, project_root)
+    emit_direct_event(
+        "permission_approvals_cleared",
+        surface=_SURFACE,
+        reyn_root=project_root / ".reyn",
+        count=count,
+    )

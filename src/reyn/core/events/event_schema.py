@@ -85,6 +85,18 @@ EVENT_AUDIT_REQUIREMENTS: dict[str, frozenset[str]] = {
     # record at the top of this module before touching it.
     "permission_granted": frozenset({"run_id", "actor", "phase"}),
     "permission_denied": frozenset({"run_id", "actor", "phase"}),
+    # #5065: a management operation on the SAVED-approvals store
+    # (.reyn/approvals.yaml, permissions.py's REST router), not an in-run
+    # permission decision — a different event from permission_granted/
+    # permission_denied above (which ARE in-run, hence run_id/actor/phase).
+    # This happens outside any run, so it carries no run_id/actor/phase —
+    # fabricating those would violate the band's "reconstructible", not
+    # "fields present", requirement (architect ruling, #5065). Two typed
+    # kinds rather than one kind + an "operation" string field, because
+    # their answerable fields genuinely differ (a single revoke names the
+    # key it removed; a bulk clear has no single key to name).
+    "permission_approval_revoked": frozenset({"key", "surface"}),
+    "permission_approvals_cleared": frozenset({"count", "surface"}),
     # User intervention (op_runtime/ask_user.py)
     "user_intervention_requested": frozenset({"run_id", "actor", "intervention_id"}),
     "user_intervention_received": frozenset({"run_id", "actor", "intervention_id"}),
@@ -337,6 +349,8 @@ AUDIT_EVENT_KINDS: frozenset[str] = frozenset({
     "peer_reply_failed_surfaced",
     "pending_intervention_claimed",
     "pending_intervention_discarded",
+    "permission_approval_revoked",
+    "permission_approvals_cleared",
     "permission_denied",
     "permission_granted",
     "pipeline_install_skipped",
@@ -458,6 +472,10 @@ KIND_EMIT_SEAMS: dict[str, str | None] = {
     # ``emit_cli_event(kind, **payload)`` — audit emit from a CLI entry point
     # that has no session (writes to ``.reyn/events/direct/cli``).
     "emit_cli_event": None,
+    # ``emit_direct_event(kind, *, surface, reyn_root, **payload)`` (#5065) —
+    # the general "no live Session" seam ``emit_cli_event`` above is a thin
+    # wrapper over; writes to ``.reyn/events/direct/<surface>``.
+    "emit_direct_event": None,
     # ``Session.emit_audit_event(event_type, **data)`` — the narrow public seam
     # the AG-UI transport records surface-lifecycle attribution through.
     "emit_audit_event": None,
@@ -539,11 +557,25 @@ DYNAMIC_KIND_EMIT_SITES: tuple[DynamicEmitSite, ...] = (
     DynamicEmitSite(
         module="src/reyn/core/events/events.py",
         function="emit_cli_event",
+        seam="emit_direct_event",
+        classification="FORWARDER",
+        reason=(
+            "``emit_cli_event`` is itself a registered seam (#5065: now a thin "
+            "wrapper over ``emit_direct_event``); its own call sites pass "
+            "literal kinds and are censused there."
+        ),
+    ),
+    DynamicEmitSite(
+        module="src/reyn/core/events/events.py",
+        function="emit_direct_event",
         seam="emit",
         classification="FORWARDER",
         reason=(
-            "``emit_cli_event`` is itself a registered seam; its own call sites "
-            "pass literal kinds and are censused there."
+            "#5065: ``emit_direct_event`` is itself a registered seam (the "
+            "general 'no live Session' emit path ``emit_cli_event`` above "
+            "wraps); its own callers (``emit_cli_event`` and, e.g., the "
+            "``/api/permissions`` REST router) pass literal kinds and are "
+            "censused there."
         ),
     ),
     DynamicEmitSite(
