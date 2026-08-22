@@ -97,6 +97,21 @@ EVENT_AUDIT_REQUIREMENTS: dict[str, frozenset[str]] = {
     # key it removed; a bulk clear has no single key to name).
     "permission_approval_revoked": frozenset({"key", "surface"}),
     "permission_approvals_cleared": frozenset({"count", "surface"}),
+    # #5067: same shape as the two above, on the OTHER band pairing
+    # (cost-budget x audit-events, not permission x audit-events) — a
+    # management operation on the live BudgetTracker's hard caps
+    # (budget.py's REST router, ``PATCH /api/budget/caps``), reachable
+    # only via ``project_root`` (no live Session, no run_id/actor/phase).
+    # ONE kind (not a typed union like #5065's revoked/cleared pair) since
+    # there is only one operation shape here: a PATCH may touch several
+    # cap fields at once, so ``changes`` carries only the fields the
+    # request actually set (never a fabricated entry for a field the
+    # caller left ``None`` / unchanged), each as its own
+    # ``{"from": <old hard_limit>, "to": <new hard_limit>}`` pair —
+    # lead-coder's measurement: unlike #5065's approvals.yaml, this change
+    # is not even persisted (a restart silently reverts it), so this
+    # audit-event is the ONLY record either value ever existed.
+    "budget_caps_updated": frozenset({"changes", "surface"}),
     # User intervention (op_runtime/ask_user.py)
     "user_intervention_requested": frozenset({"run_id", "actor", "intervention_id"}),
     "user_intervention_received": frozenset({"run_id", "actor", "intervention_id"}),
@@ -233,6 +248,7 @@ AUDIT_EVENT_KINDS: frozenset[str] = frozenset({
     "agent_response_received",
     "asyncio_unhandled_exception",
     "body_summary_hard_truncated",
+    "budget_caps_updated",
     "budget_reset",
     "bus_subscriber_dropped",
     "canonical_degraded",
