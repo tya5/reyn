@@ -48,14 +48,19 @@ reload）、`reyn.yaml` 側に書いた同じキーは他と同じく再起動�
 **セッション面**（`<session-state-dir>/config.yaml`）にも書けます。
 そちらは [permission-model](../../concepts/runtime/permission-model.md) を参照。
 
-**別の例外（#4206 slice 1）**: `output_language` は③ **preference** キー
-（自由上書き、restrict-only ではない）の一つでもあり、エージェント自身の
-`profile.yaml`（またはセッション自身の `config.yaml`）の `preferences:`
-マッピングで設定できます — このレイヤーでは再起動待ちではなく live に
-読まれます（`reyn.runtime.preferences.PREFERENCE_KEYS` が正の一覧）。
-この行の「PRJ のみ」は reyn.yaml 側のデフォルトの説明としては正しいまま
-です — エージェント／セッション面から到達不能という意味ではありません。
-参照: [agent.md § `preferences`](../cli/agent.md#preferences-4206-slice-1-the-3-axis-free-override-not-restrict-only)（EN 版）。
+**別の例外（#4206 slice 1）**: 下の表の `output_language` 行は「書く面 /
+再読込」列でまだ「PRJ のみ」と読めます — その列は「どのファイルか」と
+「いつ効くか」を混同しており（architect の実測、#4206 issue コメント）、
+「どのレイヤーが値を持てるか」という第 3 の軸を表す語彙を持っていません。
+その軸自体の（まだ暫定・手書きの）語彙で言えば、`output_language` は
+`project·agent` です — エージェント自身の `profile.yaml`（またはセッション
+自身の `config.yaml`）の `preferences:` マッピングでも設定でき、この
+レイヤーでは再起動待ちではなく live に読まれます（`reyn.runtime.
+preferences.PREFERENCE_KEYS` が正の一覧）。参照:
+[agent.md § `preferences`](../cli/agent.md#preferences-4206-slice-1-the-3-axis-free-override-not-restrict-only)
+（EN 版）。導出された `Declared in` 列（`PREFERENCE_KEYS` 等に対して CI で
+検査され、手作業では維持しない）は #4206 で追跡中、#5084 の残りスライスの
+後です — それまでこの注記は暫定のままです。
 
 **置き場の原理(#4174 T7)**: ある設定が**その subsystem 自身のコードパスからしか
 読まれない**なら、所有ブロックの下にネストします（例: `embedding.cost_warn_threshold`

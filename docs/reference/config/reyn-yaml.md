@@ -51,15 +51,19 @@ can additionally be written on an **agent** surface (`.reyn/agents/<name>/`,
 (`<session-state-dir>/config.yaml`) — see
 [permission-model](../../concepts/runtime/permission-model.md).
 
-A DIFFERENT exception (#4206 slice 1): `output_language` is ALSO one of a
-small set of ③ **preference** keys (free-override, no restrict-only
-composition) an agent's own `profile.yaml` — or a session's own
-`config.yaml` — may set under a `preferences:` mapping, read live rather
-than restart-gated at that layer (`reyn.runtime.preferences.
-PREFERENCE_KEYS` is the authoritative list). This row's "PRJ only" still
-describes the reyn.yaml DEFAULT correctly; it does not mean the key is
-unreachable from the agent/session layers. See
+A DIFFERENT exception (#4206 slice 1): `output_language`'s row below still
+reads "PRJ only" in the "Written on / reload" column — that column
+conflates WHICH FILE with WHEN IT TAKES EFFECT (architect finding,
+issuecomment on #4206), so it has no vocabulary for a third axis, WHICH
+LAYER may declare a key. In that axis's own (still provisional, hand-typed)
+vocabulary, `output_language` is `project·agent`: an agent's own
+`profile.yaml` — or a session's own `config.yaml` — may ALSO set it under a
+`preferences:` mapping, read live rather than restart-gated at that layer
+(`reyn.runtime.preferences.PREFERENCE_KEYS` is the authoritative list). See
 [agent.md § `preferences`](../cli/agent.md#preferences-4206-slice-1-the-3-axis-free-override-not-restrict-only).
+A derived `Declared in` column (checked in CI against `PREFERENCE_KEYS`
+and its siblings, not hand-maintained) is tracked in #4206, ordered after
+#5084's remaining slices — this note stays provisional until then.
 
 **Placement principle (#4174 T7)**: a setting nests under an owning block when
 only that subsystem's own code path ever reads it (e.g. `embedding.cost_warn_threshold`
