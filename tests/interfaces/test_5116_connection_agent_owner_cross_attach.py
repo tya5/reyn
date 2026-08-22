@@ -294,3 +294,142 @@ async def test_status_changes_are_pushed_by_the_attach_itself_not_ridden_on_a_la
     )
 
     await asyncio.sleep(0)
+
+
+def _make_get_request(query_string: bytes, app):
+    """A minimal real ``starlette.requests.Request`` for a GET to
+    ``agui_events`` — enough scope for ``_auth_context``/
+    ``authenticate_request``/``_connection_id_from_request`` to read
+    (``request.app.state.auth``, ``request.query_params``,
+    ``request.client``), without going through a full ASGI transport."""
+    from starlette.requests import Request
+
+    scope = {
+        "type": "http", "method": "GET", "path": "/agui/chat/default/events",
+        "query_string": query_string, "headers": [], "client": ("127.0.0.1", 12345),
+        "app": app,
+    }
+    return Request(scope)
+
+
+@pytest.mark.asyncio
+async def test_a_real_agui_events_get_pushes_correct_status_after_cross_agent_attach(
+    tmp_path, monkeypatch,
+):
+    """Tier 2: lead-coder block (issuecomment-5380521791, relaying
+    tui-coder's own independent strip) — the OTHER two witnesses above
+    build ``AgUiEmitter`` BY HAND with a test-owned
+    ``lambda: _snapshot_for_session(reg, source.current_session())``,
+    never calling into ``agui_events``'s own ``_status_provider`` closure
+    at all. tui-coder's strip confirmed it: reverting the fix line
+    inside ``agui_events`` (``source.current_session()`` -> the old
+    frozen ``session``) leaves BOTH existing tests green, because
+    neither one's status assertion ever executes the PRODUCTION closure
+    — they prove ``current_session()`` resolves correctly, not that the
+    product actually calls it. The owner's own live machine has gone
+    quiet on this exact shape twice already tonight (#5097 landed ->
+    empty, #5104 landed -> empty, both "the mechanism was fixed, the
+    wiring wasn't reached") — a third cannot go out.
+
+    This test calls the REAL ``agui_events`` route handler DIRECTLY (a
+    real, minimal ``starlette.requests.Request``, not a hand-built
+    Request stand-in with a stubbed interface — every attribute it reads
+    is real Starlette machinery) to obtain its own real
+    ``StreamingResponse`` and drains ITS ``body_iterator`` — the exact
+    async generator ``emitter.stream()`` produces from the REAL
+    ``_status_provider`` closure defined inside ``agui_events`` itself,
+    never a test-owned substitute. The ``attach_request`` POST goes
+    through the REAL ASGI app (a genuine httpx/ASGITransport round
+    trip), sharing this same request's own ``connection_id``.
+
+    ★Why not drive the GET through ASGITransport too (`client.stream`)★:
+    tried first, and it deadlocks — a single httpx ``AsyncClient``
+    serializes a still-open streaming GET against a concurrent POST
+    issued from the SAME client instance (confirmed in isolation: the
+    POST never even starts running while the GET's `async with
+    client.stream(...)` block is still open). Calling the route function
+    directly sidesteps that transport-level limitation without touching
+    what's actually under test — the handler's OWN closure and its own
+    real ``StreamingResponse``/``AgUiEmitter`` wiring are unchanged
+    either way; only the unrelated question "how does this test reach
+    the ASGI app" differs, and the POST still goes through a real ASGI
+    round trip.
+
+    Deliberately does NOT assert "the lambda matches production" (a
+    form lead-coder's own review rejected — that pushes the test toward
+    the SAME expression on both sides). It drives the ONE real callsite
+    directly and reads what the real wire actually carries.
+
+    Strip-falsifier: reverting the fix line inside ``agui_events``
+    (``source.current_session()`` back to the old frozen ``session``
+    variable) turns THIS test red while the other two stay green —
+    verified locally, the exact gap tui-coder's strip named."""
+    reg = _two_agent_registry(tmp_path, monkeypatch)
+    app = _build_app(reg, monkeypatch)
+    conn_id = "conn-5116-real-route-test"
+
+    from reyn.interfaces.transport.agui import endpoint as endpoint_mod
+
+    req = _make_get_request(f"token=s3cret&connection_id={conn_id}".encode(), app)
+    resp = await endpoint_mod.agui_events(req, "default")
+    from starlette.responses import StreamingResponse
+
+    assert isinstance(resp, StreamingResponse), (
+        f"expected a real StreamingResponse (auth/agent-exists must both "
+        f"pass for this test's own setup); got {resp!r}"
+    )
+    body_iter = resp.body_iterator.__aiter__()
+
+    async def _read_one_event():
+        event_type = None
+        buf = ""
+        async for chunk in _iter_lines(body_iter):
+            if chunk.startswith("event:"):
+                event_type = chunk[len("event:"):].strip()
+            elif chunk.startswith("data:"):
+                buf = chunk[len("data:"):].strip()
+                return event_type, buf
+        raise StopAsyncIteration
+
+    # Drain the initial connect snapshots (MESSAGES_SNAPSHOT, STATE_SNAPSHOT).
+    for _ in range(2):
+        await _read_one_event()
+
+    post_resp = await _post(
+        app, f"/agui/chat/default?connection_id={conn_id}&token=s3cret",
+        {"type": "attach_request", "agent_name": "coder-smith"},
+    )
+    assert post_resp.status_code == 200
+    assert post_resp.json().get("attached") is True
+
+    # Unbounded wait for the real predicate (CLAUDE.md's own policy): read
+    # events until the announce AND its own re-fired STATE_SNAPSHOT have
+    # both been seen.
+    seen_announce = False
+    last_snapshot = None
+    while last_snapshot is None:
+        etype, data = await _read_one_event()
+        if "session_attached" in data:
+            seen_announce = True
+        if seen_announce and etype == "STATE_SNAPSHOT":
+            import json as _json
+
+            last_snapshot = _json.loads(data).get("snapshot")
+
+    assert last_snapshot is not None
+    assert last_snapshot.get("attached_name") == "coder-smith", (
+        f"the REAL agui_events route's own _status_provider must reflect "
+        f"the new agent after a real cross-agent attach; got {last_snapshot!r}"
+    )
+
+
+async def _iter_lines(chunk_iter):
+    """Split a raw SSE ``body_iterator`` (whole ``event: ...\\ndata: ...\\n\\n``
+    blocks, one per ``yield``) into individual lines — mirrors what an
+    ``httpx`` line reader would hand a caller, so ``_read_one_event`` above
+    stays identical in shape to the live-script/manual-tap pattern used
+    elsewhere in this session's own verification work."""
+    async for chunk in chunk_iter:
+        for line in chunk.split("\n"):
+            if line:
+                yield line
