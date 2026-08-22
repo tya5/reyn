@@ -3984,13 +3984,30 @@ class AgentRegistry:
     def session_tree(self) -> "list[dict]":
         """Snapshot of the agent→session tree for the status-bar agent menu.
 
-        A read-only, freshly-built copy (no handle to live registry state): agents in
-        load order, each with its sessions (sids, sorted) and which (agent, sid) is the
-        current attach focus.
+        A read-only, freshly-built copy (no handle to live registry state):
+        agents in name order, each with its sessions (sids, sorted) and
+        which (agent, sid) is the current attach focus.
+
+        #5094: iterates :meth:`list_active_names` (every DECLARED,
+        non-archived agent — disk-backed, the SAME source :meth:`exists`
+        reads) rather than :meth:`loaded_names` (only agents with a LIVE
+        in-memory ``Session`` right now) — architect's own measured
+        finding: a remote client's agent tab read this method via
+        ``status.py``'s ``_snapshot`` and showed NOTHING for any agent not
+        yet attached in THIS process, regardless of how many agents the
+        workspace actually had declared (owner live-blocked on this,
+        #5041/#5094 — the #5097 wire fix alone did not close it, because
+        the wire faithfully carried an empty roster). A declared-but-
+        unattached agent now appears with an empty ``sessions`` list — the
+        #4996-family distinction between "not yet attached" and "does not
+        exist" this repo's own vocabulary already names. ``loaded_names``
+        itself is UNCHANGED and still answers its own, different question
+        ("who is running right now") — this is not a replacement, it is
+        splitting two questions this one call site used to conflate.
         """
         out: list[dict] = []
         active = self._connection.active
-        for name in self.loaded_names():
+        for name in self.list_active_names():
             sids = sorted((self._sessions.get(name) or {}).keys())
             out.append({
                 "agent": name,

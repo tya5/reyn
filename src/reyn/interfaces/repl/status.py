@@ -470,7 +470,13 @@ def _snapshot(registry, config=None):
         "model": s.model,
         "model_active_class": s.active_model_class(),
         "model_classes": list(s.known_model_classes()),
-        "agent_names": list(registry.loaded_names()),
+        # #5094: list_active_names() (every DECLARED, non-archived agent —
+        # disk-backed) not loaded_names() (only agents with a LIVE
+        # in-memory Session right now) — see session_tree()'s own
+        # docstring (registry.py) for the full measurement. This is the
+        # same source agent.py's own routing comment already claimed this
+        # call site used.
+        "agent_names": list(registry.list_active_names()),
         "attached_name": registry.attached_name,
         "session_tree": registry.session_tree(),
         # LOCAL genuinely measures the prompt/completion SPLIT below

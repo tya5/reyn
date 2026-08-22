@@ -19,6 +19,16 @@ from reyn.runtime.session import Session
 from tests._support.agent_session import make_session
 
 
+def _entry_for(tree: "list[dict]", name: str) -> dict:
+    """The tree entry for `name` — never assumes an index. #5094:
+    `session_tree()` now iterates `list_active_names()` (alphabetical),
+    so `alpha` sorts BEFORE `default` — any test that cared specifically
+    about `default`'s own entry must look it up by name, not `[0]`."""
+    by_name = {e["agent"]: e for e in tree}
+    assert name in by_name, f"{name!r} missing from session_tree(): {tree!r}"
+    return by_name[name]
+
+
 def _make_registry(tmp_path: Path) -> AgentRegistry:
     """A real AgentRegistry whose factory builds real Sessions on demand."""
     def factory(profile: AgentProfile) -> Session:
@@ -38,10 +48,40 @@ def _make_registry(tmp_path: Path) -> AgentRegistry:
     return reg
 
 
-def test_session_tree_empty_when_no_sessions_loaded(tmp_path: Path) -> None:
-    """Tier 2: session_tree() returns [] when no sessions are loaded."""
+def test_session_tree_lists_declared_agents_even_with_no_sessions_loaded(
+    tmp_path: Path,
+) -> None:
+    """Tier 2: #5094 — session_tree() lists every DECLARED (on-disk,
+    non-archived) agent even when NOTHING has been loaded/attached yet —
+    the exact owner-measured gap (a remote agent tab showed nothing for
+    any agent not yet attached in that process, regardless of how many
+    the workspace actually had). Each entry's own `sessions` list is empty
+    (nothing loaded), distinguishing "declared but not yet attached" from
+    "does not exist" (#4996 family) rather than omitting the row.
+
+    Strip-falsifier: reverting `session_tree()`'s own iteration from
+    `list_active_names()` back to `loaded_names()` makes this assert `[]`
+    again (`test_session_tree_returns_only_loaded_agents_via_the_narrower_
+    call` below pins that DIFFERENT, still-correct behaviour for
+    `loaded_names()` itself) — verified locally."""
     reg = _make_registry(tmp_path)
-    assert reg.session_tree() == []
+    names = {e["agent"] for e in reg.session_tree()}
+    assert names == {"default", "alpha"}, (
+        f"expected every declared agent even unattached; got {names!r}"
+    )
+    assert all(e["sessions"] == [] for e in reg.session_tree())
+
+
+def test_session_tree_returns_only_loaded_agents_via_the_narrower_call(
+    tmp_path: Path,
+) -> None:
+    """Tier 2: regression guard for `loaded_names()` itself — #5094 did
+    NOT change this method; it answers a DIFFERENT question ("who is
+    running right now") than `session_tree()` now does."""
+    reg = _make_registry(tmp_path)
+    assert reg.loaded_names() == []
+    reg.get_or_load("default")
+    assert reg.loaded_names() == ["default"]
 
 
 def test_session_tree_entry_shape_for_loaded_agent(tmp_path: Path) -> None:
@@ -64,19 +104,22 @@ def test_session_tree_session_entry_shape(tmp_path: Path) -> None:
     reg = _make_registry(tmp_path)
     reg.get_or_load("default")
 
-    sess_list = reg.session_tree()[0]["sessions"]
+    sess_list = _entry_for(reg.session_tree(), "default")["sessions"]
     by_sid = {s["sid"]: s for s in sess_list}
     assert set(by_sid["main"].keys()) == {"sid", "attached"}
 
 
 def test_session_tree_lists_multiple_agents(tmp_path: Path) -> None:
-    """Tier 2: each loaded agent appears once, in loaded_names() order."""
+    """Tier 2: each declared agent appears once, in list_active_names()
+    order (#5094 — no longer loaded_names(), which only lists agents with
+    a live in-memory Session; declared-but-unattached agents belong here
+    too, see the test above)."""
     reg = _make_registry(tmp_path)
     reg.get_or_load("default")
     reg.get_or_load("alpha")
 
     names = [e["agent"] for e in reg.session_tree()]
-    assert names == reg.loaded_names()
+    assert names == reg.list_active_names()
     assert set(names) == {"default", "alpha"}
 
 
@@ -86,7 +129,7 @@ def test_session_tree_lists_spawned_sessions(tmp_path: Path) -> None:
     reg.get_or_load("default")
     sid = reg.spawn_session("default", "sub1", presentation_consumer=None, intervention_bridge=None)
 
-    sids = {s["sid"] for s in reg.session_tree()[0]["sessions"]}
+    sids = {s["sid"] for s in _entry_for(reg.session_tree(), "default")["sessions"]}
     assert {"main", sid} <= sids
 
 
@@ -97,7 +140,7 @@ def test_session_tree_sids_sorted(tmp_path: Path) -> None:
     reg.spawn_session("default", "zz", presentation_consumer=None, intervention_bridge=None)
     reg.spawn_session("default", "aa", presentation_consumer=None, intervention_bridge=None)
 
-    sids = [s["sid"] for s in reg.session_tree()[0]["sessions"]]
+    sids = [s["sid"] for s in _entry_for(reg.session_tree(), "default")["sessions"]]
     assert sids == sorted(sids)
 
 
@@ -109,7 +152,7 @@ def test_session_tree_all_false_when_nothing_attached(tmp_path: Path) -> None:
     reg.spawn_session("default", "sub1", presentation_consumer=None, intervention_bridge=None)
     assert reg.attached_name is None           # public-surface precondition
 
-    entry = reg.session_tree()[0]
+    entry = _entry_for(reg.session_tree(), "default")
     assert entry["attached"] is False
     assert all(s["attached"] is False for s in entry["sessions"])
 
@@ -121,8 +164,9 @@ def test_session_tree_returns_snapshot_copy(tmp_path: Path) -> None:
     reg.get_or_load("default")
 
     first = reg.session_tree()
-    first[0]["agent"] = "MUTATED"
-    first[0]["sessions"][0]["sid"] = "MUTATED"
+    default_idx = next(i for i, e in enumerate(first) if e["agent"] == "default")
+    first[default_idx]["agent"] = "MUTATED"
+    first[default_idx]["sessions"][0]["sid"] = "MUTATED"
     first.append({"bogus": True})
 
     by_name = {e["agent"]: e for e in reg.session_tree()}
