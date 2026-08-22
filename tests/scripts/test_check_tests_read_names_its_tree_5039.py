@@ -181,9 +181,12 @@ def test_a_readable_commit_reports_its_paths() -> None:
     would still pass the reject test."""
     paths = _MOD.commit_touched_paths(
         "abc1234", "tya5/reyn",
-        run=_runner(0, stdout='["src/reyn/a.py", "tests/scripts/b.py"]'),
+        run=_runner(0, stdout='["src/reyn/runtime/registry.py", "tests/scripts/test_check_doc_drift_5003.py"]'),
     )
-    assert paths == ["src/reyn/a.py", "tests/scripts/b.py"]
+    assert paths == [
+        "src/reyn/runtime/registry.py",
+        "tests/scripts/test_check_doc_drift_5003.py",
+    ]
 
 
 def test_a_note_quoting_the_head_with_no_commits_does_not_pass():
