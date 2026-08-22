@@ -115,7 +115,7 @@ class _ConnectionRetargetHub:
         self._current_agent: "dict[str, str]" = {}
 
     def subscribe(
-        self, connection_id: str, callback: "Callable[[str, str], None]", agent_name: str = "",
+        self, connection_id: str, callback: "Callable[[str, str], None]", agent_name: str,
     ) -> None:
         """*agent_name* seeds :meth:`current_agent` to THIS connection's own
         URL agent — required so a connection that never sends
@@ -125,10 +125,20 @@ class _ConnectionRetargetHub:
         :meth:`current_agent` should not have to know that; the seed makes
         the value simply always correct from the moment of subscribe). A
         reconnect calls :meth:`subscribe` again (a fresh SSE GET), correctly
-        re-seeding to that connect's own URL agent."""
+        re-seeding to that connect's own URL agent.
+
+        No default (lead-coder co-vet, PR #5132 review): an optional
+        ``agent_name=""`` let a caller subscribe WITHOUT seeding, and
+        ``current_agent``'s ``None`` would then carry two meanings — "never
+        seen" and "subscribed, not seeded" — the second silently falling
+        back to the URL again, #5129's own symptom, with no red anywhere
+        (the #4996/#5093-family shape CLAUDE.md names: one value standing in
+        for two facts). This hub has exactly one caller
+        (:meth:`_SessionFrameSource.listen_for_retarget`); making the
+        parameter required closes the second meaning by construction rather
+        than by convention."""
         self._listeners.setdefault(connection_id, []).append(callback)
-        if agent_name:
-            self._current_agent[connection_id] = agent_name
+        self._current_agent[connection_id] = agent_name
 
     def unsubscribe(self, connection_id: str, callback: "Callable[[str, str], None]") -> None:
         listeners = self._listeners.get(connection_id)
@@ -148,8 +158,25 @@ class _ConnectionRetargetHub:
         attached``'s own no-await critical section) — a listener must not
         block or await; its job is to hand the payload to a side-channel a
         consumer task drains, the SAME idiom ``add_attach_listener``'s own
-        docstring states."""
-        self._current_agent[connection_id] = agent_name
+        docstring states.
+
+        Only records into :attr:`_current_agent` when ``connection_id`` has
+        a live subscription (architect/lead-coder co-vet, PR #5132 review):
+        the ``attach_request`` POST is a DIFFERENT request than the SSE
+        stream, correlated only by a CLIENT-SUPPLIED ``connection_id`` — a
+        client can POST ``attach_request`` repeatedly having never opened
+        (or after having closed) the matching SSE stream, and nothing here
+        requires it not to (a delayed attach after the SSE dropped is a
+        genuine, non-malicious case, not just a hostile one). Recording
+        unconditionally would create an entry :meth:`unsubscribe` — the
+        only removal path, gated on the listener list becoming empty — can
+        never reach, since no listener was ever added for that id: an
+        unbounded dict keyed by a value the client fully controls. Guarding
+        here means an entry only ever exists for a connection this hub
+        ALSO tracks a listener for, so it shares that entry's exact
+        lifetime — never longer."""
+        if connection_id in self._listeners:
+            self._current_agent[connection_id] = agent_name
         for callback in list(self._listeners.get(connection_id, ())):
             callback(agent_name, sid)
 

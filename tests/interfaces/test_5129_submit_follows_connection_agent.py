@@ -39,7 +39,11 @@ import asyncio
 import pytest
 
 from reyn.core.events.state_log import StateLog
-from reyn.interfaces.transport.agui.endpoint import _SessionFrameSource
+from reyn.interfaces.transport.agui.endpoint import (
+    _SessionFrameSource,
+    connection_current_agent,
+    connection_retarget_has_subscribers,
+)
 from reyn.runtime.registry import AgentRegistry
 from reyn.user_intervention import UserIntervention
 from tests._async_wait import wait_until
@@ -241,3 +245,43 @@ async def test_answer_after_cross_agent_attach_resolves_against_the_target_sessi
         assert answer.text == "yes, proceed"
     finally:
         source.close()
+
+
+@pytest.mark.asyncio
+async def test_attach_request_for_a_connection_with_no_open_sse_stream_leaves_nothing_behind(
+    tmp_path, monkeypatch,
+):
+    """Tier 2: architect/lead-coder co-vet (PR #5132 review) — an
+    ``attach_request`` POST is a DIFFERENT request than the SSE stream it
+    targets, correlated only by a CLIENT-SUPPLIED ``connection_id``; a
+    client can send it for a ``connection_id`` with no live subscription
+    (SSE never opened, or already closed — not necessarily hostile: a
+    delayed attach after the stream dropped). Before the guard on
+    ``notify``, this created a ``_current_agent`` entry :meth:`unsubscribe`
+    could never reach (no listener was ever registered to remove) — an
+    unbounded dict keyed by a value the client fully controls. Sent 3 times
+    (not once) to pin "does not accumulate", not just "doesn't fail once".
+    """
+    reg = _two_agent_registry(tmp_path, monkeypatch)
+    await reg.attach("default")
+    app = _build_app(reg, monkeypatch)
+    orphan_connection_id = "conn-5129-no-sse-ever"
+
+    assert connection_current_agent(orphan_connection_id) is None
+    assert connection_retarget_has_subscribers(orphan_connection_id) is False
+
+    for _ in range(3):
+        resp = await _post(
+            app,
+            f"/agui/chat/default?connection_id={orphan_connection_id}&token=s3cret",
+            {"type": "attach_request", "agent_name": "coder-smith"},
+        )
+        assert resp.json().get("attached") is True  # the attach itself still succeeds
+
+    assert connection_current_agent(orphan_connection_id) is None, (
+        "notify recorded a current_agent for a connection with no live "
+        "subscription -- this entry has no removal path (unsubscribe only "
+        "fires for a connection that was actually subscribed), so it would "
+        "outlive every real connection this hub ever forgets"
+    )
+    assert connection_retarget_has_subscribers(orphan_connection_id) is False
