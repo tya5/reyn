@@ -184,9 +184,13 @@ async def test_open_sse_stream_follows_a_cross_agent_attach_request_post(
 
     # ── ③ frame source's own current-agent read path ────────────────────
     assert source.current_agent_name() == "coder-smith"
-    assert source.current_session() is reg.get_session("coder-smith", "main") or (
-        source.current_session().agent_name == "coder-smith"
-    )
+    # #5116 co-vet (architect, issuecomment-5380501066): identity (``is``),
+    # not a truthy-adjacent fallback — the prior ``... or (...agent_name
+    # == ...)`` form made the right-hand side almost always true
+    # regardless of whether the left side's actual identity held, so a
+    # bug swapping in a DIFFERENT-but-same-named session object would
+    # have passed silently.
+    assert source.current_session() is reg.get_session("coder-smith", "main")
 
     await asyncio.sleep(0)  # let source's own tasks settle before teardown
 
@@ -243,11 +247,16 @@ async def test_status_changes_are_pushed_by_the_attach_itself_not_ridden_on_a_la
         # STATE_SNAPSHOT pair in the SAME loop iteration — stopping at the
         # announce alone would read a chunk too early and assert on
         # whatever STATE_SNAPSHOT happened to precede it, not the pushed
-        # one). A real termination condition (guaranteed exactly once by
-        # production behaviour, asserted below), never an unrelated
-        # content frame this test would otherwise have to fabricate to
-        # "unstick" a pull design.
-        for _ in range(50):
+        # one). Waited on UNBOUNDED (#5116 co-vet, architect,
+        # issuecomment-5380501066 — CLAUDE.md's own testing policy: "no
+        # `range(N)` wrapping a wait ... CI's `--timeout=120` is the kill
+        # switch"). The prior `range(50)` form was doubly wrong here, not
+        # just a policy violation: stripping the fix makes `__anext__()`
+        # itself hang (the stream never advances without the announce),
+        # so the loop never even reached its own 50th iteration — the
+        # thing actually bounding it was CI's timeout regardless, the
+        # `range(50)` was inert.
+        while True:
             chunk = await stream_iter.__anext__()
             chunks.append(chunk)
             joined = "".join(chunks)

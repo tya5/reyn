@@ -918,19 +918,37 @@ async def agui_submit(request: Request, agent_name: str):
         target = str(payload.get("agent_name", "")).strip()
         attached = False
         if target and registry.exists(target):
-            await registry.attach(target)
+            target_session = await registry.attach(target)
             attached = True
-            # #5116: this POST is a DIFFERENT HTTP request than the SSE
-            # stream it needs to retarget — correlated only by
-            # ``connection_id`` (the caller's OWN connection, already
-            # resolved above). ``registry.attach`` moved the GLOBAL
-            # pointer (a separate fact, #3793 stage 2); this notifies
-            # THIS connection's own per-connection owner
-            # (``_SessionFrameSource``) that ITS OWN "which agent" fact
-            # changed too — the fix for the cross-agent case
-            # ``registry.add_attach_listener`` cannot reach (see
-            # ``_ConnectionRetargetHub``'s own docstring).
-            _CONNECTION_RETARGET_HUB.notify(connection_id, target, _DEFAULT_SID)
+            # #5116 (architect co-vet, issuecomment-5380501066): this POST
+            # is a DIFFERENT HTTP request than the SSE stream it needs to
+            # retarget — correlated only by ``connection_id`` (the
+            # caller's OWN connection, already resolved above).
+            # ``registry.attach`` moved the GLOBAL pointer (a separate
+            # fact, #3793 stage 2); this notifies THIS connection's own
+            # per-connection owner (``_SessionFrameSource``) that ITS OWN
+            # "which agent, which session" fact changed too — the fix for
+            # the cross-agent case ``registry.add_attach_listener`` cannot
+            # reach (see ``_ConnectionRetargetHub``'s own docstring).
+            #
+            # ``target_session.session_id`` — NOT a re-typed ``_DEFAULT_
+            # SID`` literal (this PR's own first revision did exactly
+            # that, and it was the SAME "same fact typed twice" class
+            # #5116 exists to close: today `attach()` always focuses
+            # `_DEFAULT_SID`, so the two literals happened to agree, but
+            # nothing enforced it — a future change to attach()'s own
+            # focus logic would silently desync them). Reading it off the
+            # session `attach()` itself just returned is the single
+            # source of truth, not a second guess at what attach() did.
+            # `registry.attached_sid()`/`registry.attached_name` are
+            # NEVER the right read here either — those are the GLOBAL,
+            # single-connection-focus fact #3793 stage 2 deliberately
+            # keeps separate from any one AG-UI connection's own state,
+            # and reading it would race a DIFFERENT connection's own
+            # concurrent attach.
+            _CONNECTION_RETARGET_HUB.notify(
+                connection_id, target, target_session.session_id,
+            )
         return JSONResponse({"status": "ok", "attached": attached})
     elif ptype == "session_switch_request":
         # #4534 PR-1: mirrors attach_request above. The
