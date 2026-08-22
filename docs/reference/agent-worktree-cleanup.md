@@ -286,6 +286,66 @@ fi
 - **The script targets only `agent-*` paths under `.claude/worktrees/`.** All
   other worktrees — feature branches, main, etc. — are invisible to it.
 
+## Before deleting ANY tree — not just what this script covers (#5040)
+
+This script's own safety checks (PID-liveness, git merge-state) only look at
+**"is it running"** and **"what's inside it"** — they say nothing about
+**what points AT the tree from outside it**. That gap is not hypothetical:
+on 2026-08-22, `reyn_dev/reyn-self-work` was `rm -rf`'d after every one of
+this script's own kind of check passed clean — `git status --porcelain`
+empty, `--untracked-files=all` empty, `stash` empty, `HEAD == origin/main`,
+`git worktree list`, and a full scan of every process whose `cwd` was under
+the tree. All of it passed. The deletion still broke a live runtime: a
+sibling checkout's venv had that tree installed **editable**, so `import
+reyn` kept succeeding afterward while resolving to nothing (`reyn.__file__
+= None` — the editable finder survived; the tree it pointed at didn't).
+
+**Deletion safety is decided by what points at the tree, not by what's
+inside it.** This is a distinct axis from everything the two checks above
+already do, and this script does not automate it — check it by hand before
+deleting anything this script's `agent-*` filter doesn't reach (a project
+checkout, a shared library tree, anything a venv might be installed against):
+
+1. **Text references** — grep the obvious surfaces:
+   ```bash
+   grep -rn "<tree-name>" docs/ scripts/ *.md *.yaml *.yml 2>/dev/null
+   ```
+2. **Install state** — an editable install is a reference to the tree, and
+   it survives every git-state check above. `~/**/...` only recurses under
+   zsh (bash needs `globstar` set, which most shells don't have) — reads as
+   a silent, confident 0 hits under plain bash, exactly the false-safety
+   reading this whole section exists to prevent. Scan `.venv` dirs first,
+   then look inside each — measured 0.34s against a real multi-project
+   workspace, vs. 20s+ unfinished for a single `find ~ -path
+   "*/site-packages/*..."` sweep:
+   ```bash
+   find "$WORKSPACE_ROOT" -maxdepth 5 -type d -name ".venv" 2>/dev/null | while read -r v; do
+     ls "$v"/lib/*/site-packages/*.dist-info/direct_url.json 2>/dev/null
+   done | xargs grep -l "<tree-name>" 2>/dev/null
+   find "$WORKSPACE_ROOT" -maxdepth 5 -type d -name ".venv" 2>/dev/null | while read -r v; do
+     find "$v" -name "*.pth" -exec grep -l "<tree-path>" {} \; 2>/dev/null
+   done
+   pip freeze 2>/dev/null | grep -e "<tree-name>"
+   ```
+3. **Process cwd** — a process can hold the tree open without a lock file or
+   a visible name (reyn rewrites its own process name, so a bare `ps` name
+   grep reads 0 even when a session is live — resolve identity via cwd, not
+   the command column):
+   ```bash
+   lsof -a -d cwd -- 2>/dev/null | grep "<tree-path>"
+   ```
+4. **Worktree registration / symlinks** — a tree can be a registered git
+   worktree of a DIFFERENT repo, or a symlink target, without anything
+   inside it or any process on it saying so:
+   ```bash
+   git -C <other-checkout> worktree list | grep "<tree-path>"
+   find / -maxdepth 6 -type l -lname "*<tree-path>*" 2>/dev/null
+   ```
+5. **The tree's own contents** (uncommitted changes / stash / `HEAD` vs.
+   `origin/main`) — do this LAST, and passing it alone is not clearance;
+   it is what this script already checks, and it is exactly what passed
+   clean on 2026-08-22 while the deletion still broke a live runtime.
+
 ## See also
 
 - [LLM Payload Tracing](dogfood-tracing.md) — complementary debug tooling for
