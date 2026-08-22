@@ -4039,8 +4039,11 @@ class Session:
 
         Entries this doesn't load are NOT lost: ``history.jsonl`` is
         append-only, so anything left unread here stays on disk, reachable
-        later via the on-demand extend path (#4387 Phase B ②, not yet
-        implemented).
+        later via the on-demand extend path (#4387 Phase B ②):
+        :meth:`extend_history_backward`, its cross-thread-safe sibling
+        :meth:`extend_history_backward_async`, and — for a caller on the
+        other side of a transport —
+        :meth:`~reyn.interfaces.transport.threaded.ThreadedTransportProxy.extend_history_backward`.
         """
         if not self.history_path.exists():
             return
