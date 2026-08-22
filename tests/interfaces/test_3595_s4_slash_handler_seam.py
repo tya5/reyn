@@ -469,7 +469,19 @@ def test_no_slash_module_reaches_the_session_outbox() -> None:
 #: Genuinely unrelated to a slash handler reaching into the session (it
 #: is a registry-owned teardown call, not a read a slash command would
 #: use) — the gate's own documented carve-out for this case.
-_PUBLIC_MEMBER_CEILING = 113
+#: Raised 113 -> 115 for #5012-A PR #5038: ``max_hook_driven_turns`` and
+#: ``remaining_hook_driven_turns`` — two READ-ONLY properties reporting the
+#: hook-driven-turns loop-valve's effective cap and remaining budget
+#: (`_effective_hook_driven_turns_cap`'s SSoT), added so ``describe_session``
+#: (a router-callable tool, NOT a slash handler) can surface a value
+#: `safety.loop.max_hook_driven_turns` already declares but no reader could
+#: previously reach — the OS-internal enforcement site
+#: (`_stamp_execution_context`) and this pair are the only two callers.
+#: Genuinely unrelated to a slash handler reaching into the session (the
+#: gate's own documented carve-out) — no write capability, no state
+#: mutation, and the consumer is an LLM-callable tool's OpContext supplier,
+#: not `ClientTransport`.
+_PUBLIC_MEMBER_CEILING = 115
 
 
 def test_session_public_surface_does_not_grow() -> None:
