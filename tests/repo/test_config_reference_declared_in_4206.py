@@ -197,3 +197,56 @@ def test_every_preference_keys_top_level_parent_discloses_its_reload_caveat():
             f"gated `restart` — its `Reload` cell must carry a caveat "
             f"marker, not read the bare, unqualified `restart`: {cell!r}"
         )
+
+
+# ── general syntactic gate: multi-layer rows can't have a bare Reload ──────
+#
+# lead-coder's own follow-up ruling (issuecomment-5379503229, superseding
+# "defer the general form"): scoping the check to PREFERENCE_KEYS alone
+# missed 2 REAL rows already in this same diff — `permissions` and
+# `project_context_path` are BOTH multi-layer (`Declared in` names 2+
+# layers) yet BOTH had a bare, unqualified `restart` in `Reload` before this
+# fix, for reasons that have nothing to do with PREFERENCE_KEYS
+# (`project_context_path`'s agent-layer override resolves once per agent at
+# construction; `permissions`'s composes live via a #2285 reapply — neither
+# is the ③ preference axis's live-property-reread mechanism ① already
+# covers). The general, syntax-only form architect approved: a row whose
+# `Declared in` cell names 2+ layers (contains "·") may NOT have a Reload
+# cell that is a single bare token — it must carry a footnote marker, a
+# layer-specific qualifier, or multiple tokens (e.g. `restart / hot`).
+# Never checks VALUES, only shape — the same "syntax, not semantics" split
+# `Declared in`'s own gate already draws against `Reload`/`File`.
+
+_BARE_TOKEN = re.compile(r"^(restart|hot)$")
+
+
+def _all_row_keys(table_text: str) -> "list[str]":
+    """Every key with a row in the table, in source order — walks the SAME
+    marker-bounded text every other helper reads, so a row this function
+    can't see is a row nothing else in this module checks either."""
+    return re.findall(r"^\| `([^`]+)` \|", table_text, re.MULTILINE)
+
+
+def test_no_multi_layer_row_has_a_bare_single_token_reload_cell():
+    """Tier 2: strip-falsifier for the GENERAL shape of the #5090 `Reload`
+    drift — every row in the table (not just the `PREFERENCE_KEYS`-backed
+    ones) whose `Declared in` cell spans 2+ layers must carry SOME marker
+    on its `Reload` cell, syntactically: not a bare `restart` or `hot`.
+    Checks shape only, never a specific value — a row could legitimately
+    read `restart / hot` (multiple tokens) with no footnote at all.
+
+    Strip-falsifier: reverting `permissions`' or `project_context_path`'s
+    `Reload` cell to a bare `restart` (the exact 2 real rows this test
+    caught, pre-fix) turns this red — verified locally."""
+    table = _table_text()
+    for key in _all_row_keys(table):
+        declared_in = _declared_in_cell(table, key)
+        if "·" not in declared_in:
+            continue  # single-layer row — nothing for this gate to check
+        reload_cell = _reload_cell(table, key)
+        assert not _BARE_TOKEN.match(reload_cell), (
+            f"`{key}` is multi-layer (`Declared in` = {declared_in!r}) but "
+            f"its `Reload` cell is a bare, unqualified token: {reload_cell!r} "
+            f"— a multi-layer row's reload behaviour can differ BY layer; "
+            f"a bare token asserts one value for all of them without saying so"
+        )

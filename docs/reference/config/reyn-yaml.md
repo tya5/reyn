@@ -123,8 +123,8 @@ aren't.
 | `cron` | map | project | restart / hot | `reyn.yaml` + `.reyn/config/cron.yaml` | Scheduled skill executions. See below. |
 | `external_transports` | map | project | restart | `reyn.yaml` | Inbound transport → MCP tool routing for chat (Slack / LINE / Discord etc.). See below. |
 | `multimodal` | map | project | restart | `reyn.yaml` | Binary media (image/audio) size cap, on-oversize behaviour, artefact storage paths, and the `base_url` those artefacts are served under. See below. |
-| `permissions` | map | project · agent · session² | restart | `reyn.yaml` | Default permission policy. See below. |
-| `project_context_path` | string | project · agent³ | restart | `reyn.yaml` | Markdown file injected into every phase system prompt. Unset (default): auto-resolves the cross-tool standard — `AGENTS.md` if present, else `REYN.md` (legacy fallback). Set an explicit path to pin one file; set `""` to disable. **#5084: an agent's own `.reyn/agents/<name>/profile.yaml` may set `project_context_path` too, REPLACING (not merging with) this project-wide value for that one agent** — a separate file/mechanism from this `reyn.yaml` key, still restart-only. See note below. |
+| `permissions` | map | project · agent · session² | restart⁷ | `reyn.yaml` | Default permission policy. See below. |
+| `project_context_path` | string | project · agent³ | restart⁶ | `reyn.yaml` | Markdown file injected into every phase system prompt. Unset (default): auto-resolves the cross-tool standard — `AGENTS.md` if present, else `REYN.md` (legacy fallback). Set an explicit path to pin one file; set `""` to disable. **#5084: an agent's own `.reyn/agents/<name>/profile.yaml` may set `project_context_path` too, REPLACING (not merging with) this project-wide value for that one agent** — a separate file/mechanism from this `reyn.yaml` key. See note below. |
 | `llm` | map | project | restart | `reyn.yaml` | LLM-layer config: model selection (`llm.model` default class, `llm.models` class → LiteLLM string map, `llm.model_class_by_purpose` per-purpose override, `llm.api_base` proxy URL, `llm.prompt_cache_enabled`), plus routing (#1829) and retry (#1835). See below. |
 | `delegation` | map | project | restart | `reyn.yaml` | Cross-agent delegation policy (#2081). |
 | `cost_warn` | map | project | restart | `reyn.yaml` | High-cost-model gate (#1830 / FP-0052): warns before an expensive model is selected — and, despite the name, **can block it** (`cost_warn.block_on_high_cost`). See below. |
@@ -184,6 +184,29 @@ re-read, not a file re-read). This footnote points at the SAME
 `PREFERENCE_KEYS` set as ¹, so a future ① gate failure on one of these
 rows carries this footnote's claim along with it, rather than the two
 drifting independently.
+
+⁶ **`Reload` is also not a bare `restart` at the agent layer** — a
+DIFFERENT mechanism from both ¹ (a live property-access re-read on every
+call) and `_HOT_RELOAD_FILES` (a file re-read on every turn boundary):
+`project_context_path`'s agent-layer override is resolved ONCE PER AGENT,
+at session construction (`registry_bootstrap.resolve_agent_project_
+context`, called from `chat.py`'s own `_session_factory` closure via
+`AgentRegistry`). A NEW
+session picks up whatever `profile.yaml` currently says with no
+project-layer restart needed; an ALREADY-RUNNING session does not notice
+a `profile.yaml` edit until its own next construction (the next
+`--connect`/re-attach), which is neither "restart" (project-layer,
+process-wide) nor "hot" (file-based, mid-session) in this column's other
+two senses.
+
+⁷ **`Reload` is also not a bare `restart` at the agent/session layer** —
+`permissions`'s agent/session-layer narrowing (`tool_allow`/`tool_deny`/
+`mcp_allow`/`mcp_deny` etc., composed via `capability_visibility.py`) is
+LIVE-reapplied through `reapply_visibility_override` (#2285, verbatim
+"the change is live next turn") whenever the per-session config is
+re-read at a hot-reload boundary — closer to ¹'s live-reread family in
+practical effect, though via a distinct capability-composition mechanism,
+not `PREFERENCE_KEYS`.
 
 > **Project context file (`project_context_path`).** Left unset, Reyn reads
 > `AGENTS.md` — the cross-tool convention that Claude Code, Codex, opencode and

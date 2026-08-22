@@ -111,8 +111,8 @@ doc↔code gate](../runtime/events.md) と同じ形）。あるキーが agent/s
 | `cron` | マップ | project | restart / hot | `reyn.yaml` + `.reyn/config/cron.yaml` | スケジュール付きスキル実行。以下参照。 |
 | `external_transports` | マップ | project | restart | `reyn.yaml` | チャット向け受信トランスポート → MCP ツールルーティング（Slack / LINE / Discord など）。以下参照。 |
 | `multimodal` | マップ | project | restart | `reyn.yaml` | バイナリメディア（画像・音声）のサイズ上限、超過時の挙動、アーティファクト保存先、およびそれらを配信する `base_url`。以下参照。 |
-| `permissions` | マップ | project · agent · session² | restart | `reyn.yaml` | デフォルトの Permission ポリシー。以下参照。 |
-| `project_context_path` | 文字列 | project · agent³ | restart | `reyn.yaml` | すべての Phase システムプロンプトに注入する Markdown ファイル。未設定（デフォルト）: cross-tool 標準を auto-resolve — `AGENTS.md` があればそれ、なければ `REYN.md`（legacy fallback）。明示パスで 1 ファイルに固定、`""` で無効化。**#5084: エージェント自身の `.reyn/agents/<name>/profile.yaml` にも `project_context_path` を設定でき、その 1 エージェントに限り本キー（プロジェクト全体のデフォルト）を上書き（マージではなく置換）する** — 別ファイル・別メカニズムだが、こちらも再起動のみ反映。下記の注記参照。 |
+| `permissions` | マップ | project · agent · session² | restart⁷ | `reyn.yaml` | デフォルトの Permission ポリシー。以下参照。 |
+| `project_context_path` | 文字列 | project · agent³ | restart⁶ | `reyn.yaml` | すべての Phase システムプロンプトに注入する Markdown ファイル。未設定（デフォルト）: cross-tool 標準を auto-resolve — `AGENTS.md` があればそれ、なければ `REYN.md`（legacy fallback）。明示パスで 1 ファイルに固定、`""` で無効化。**#5084: エージェント自身の `.reyn/agents/<name>/profile.yaml` にも `project_context_path` を設定でき、その 1 エージェントに限り本キー（プロジェクト全体のデフォルト）を上書き（マージではなく置換）する** — 別ファイル・別メカニズム。下記の注記参照。 |
 | `llm` | マップ | project | restart | `reyn.yaml` | LLM 層の設定: モデル選択（`llm.model` デフォルトクラス、`llm.models` クラス → LiteLLM 文字列マップ、`llm.model_class_by_purpose` 用途別上書き、`llm.api_base` プロキシ URL、`llm.prompt_cache_enabled`）に加え、ルーティング（#1829）とリトライ（#1835）。以下参照。#4174 T3: `model` / `models` / `model_class_by_purpose` / `api_base` / `prompt_cache_enabled` は同名のトップレベルキーからここへ移動しました（形は同じ、ネストが変わっただけ）。 |
 | `delegation` | マップ | project | restart | `reyn.yaml` | エージェント間委任のポリシー（#2081）。 |
 | `cost_warn` | マップ | project | restart | `reyn.yaml` | 高コストモデルのゲート（#1830 / FP-0052）: 選択前に警告し、名前に反して**ブロックもできます**（`cost_warn.block_on_high_cost`）。以下参照。 |
@@ -170,6 +170,26 @@ hot reload とは★別のメカニズムで、構造的にそこからは見え
 この脚注は ¹ と★同じ `PREFERENCE_KEYS` 集合を指すため、将来 ① の gate が
 これらの行のどれかで落ちれば、この脚注の主張も一緒に付いてきます —
 2 つが★別々に漂うことはありません。
+
+⁶ **`Reload` も agent 層では裸の `restart` ではありません** — ¹（毎呼び出し
+の live property re-read）とも `_HOT_RELOAD_FILES`（ターン境界ごとの
+ファイル re-read）とも★別のメカニズムです — `project_context_path` の
+agent 層上書きは★エージェントごとに★1 度だけ、セッション構築時に解決
+されます（`registry_bootstrap.resolve_agent_project_context`、`chat.py`
+自身の `_session_factory` closure から `AgentRegistry` 経由で呼ばれる）。
+新しいセッションは★project 層の再起動なしに現在の `profile.yaml` を
+拾いますが、★既に走っているセッションは自身の次の構築（次の
+`--connect`／再アタッチ）までは `profile.yaml` の編集に気づきません —
+本列の他の 2 つの意味（project 層・プロセス全体の「restart」／ファイル
+単位・セッション途中の「hot」）のどちらでもありません。
+
+⁷ **`Reload` も agent/session 層では裸の `restart` ではありません** —
+`permissions` の agent/session 層narrowing（`tool_allow`/`tool_deny`/
+`mcp_allow`/`mcp_deny` 等、`capability_visibility.py` 経由で合成）は
+`reapply_visibility_override`（#2285、逐語「the change is live next
+turn」）を通じて LIVE に再適用されます — セッション設定が hot-reload
+境界で読み直されるたび — 実質的には ¹ の live-reread 系列に近いですが、
+`PREFERENCE_KEYS` ではなく別の capability 合成メカニズムを経由します。
 
 > **プロジェクトコンテキストファイル（`project_context_path`）。** 未設定のとき
 > Reyn は `AGENTS.md` を読みます — Claude Code・Codex・opencode 等も読む cross-tool
