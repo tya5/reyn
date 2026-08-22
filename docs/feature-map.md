@@ -29,7 +29,7 @@ mindmap
         Multi-fork UX
         Live-fork gate
       📜 Event System P6
-        171 event types
+        Closed event-kind vocabulary
         Append-only JSONL
         Replay
       🗜️ Chat Compaction
@@ -236,7 +236,7 @@ User-facing point-in-time rewind with branching. Phase 1 and Phase 2 (2a/2c/2d) 
 #### Event System (P6)
 | Feature | Description | Documentation |
 |---------|-------------|---------------|
-| 171 event types | Complete taxonomy: workflow / phase / LLM / tool / budget / permission / etc. | [Events reference](reference/runtime/events.md) · [Concepts: Events](concepts/runtime/events.md) |
+| Closed event-kind vocabulary | Complete taxonomy: workflow / phase / LLM / tool / budget / permission / etc. — the count itself lives in exactly one place, `events.md`'s own CI-checked catalog (`AUDIT_EVENT_KINDS`), not restated here as a number that would drift every time a kind is added | [Events reference](reference/runtime/events.md) · [Concepts: Events](concepts/runtime/events.md) |
 | Append-only JSONL | `.reyn/events/<run_id>.jsonl` per-run (`EventStore`); audit trail — append-only, rotation-based (not per-append fsync). Separate log and lifecycle from the recovery WAL (`.reyn/state/wal.jsonl`). | [Events reference](reference/runtime/events.md) |
 | Replay | `reyn events <path>` streams events for audit and debug | [reyn events CLI](reference/cli/events.md) |
 
