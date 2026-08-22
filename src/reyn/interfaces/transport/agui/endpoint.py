@@ -45,7 +45,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 
 from reyn.core.events.events import Event
 from reyn.interfaces.inline.textual_chat.restore import project_restored_frames
-from reyn.interfaces.repl.status import _snapshot
+from reyn.interfaces.repl.status import _snapshot_for_session
 from reyn.interfaces.transport.agui.emitter import AgUiEmitter
 from reyn.interfaces.transport.agui.surface import (
     SurfaceManager,
@@ -500,7 +500,15 @@ async def agui_events(request: Request, agent_name: str):
     source.start()
 
     def _status_provider():
-        return _snapshot(registry)
+        # #5094: read status off THIS connection's own already-resolved
+        # ``session`` (bound above via ``registry.ensure_running(agent_name)``)
+        # rather than ``_snapshot(registry)``, which reads the registry's
+        # single GLOBAL attached-pointer — deliberately never set for an
+        # AG-UI connection (``ensure_running``'s own #3793-stage-2 docstring)
+        # — and so returned ``None`` wholesale on every first connect,
+        # regardless of what #5097/#5104 already fixed inside that dict. See
+        # ``_snapshot_for_session``'s own docstring for the full reasoning.
+        return _snapshot_for_session(registry, session)
 
     def _backlog_provider(name: str, sid: str) -> "list[Frame]":
         return session_backlog_frames(registry, name, sid)

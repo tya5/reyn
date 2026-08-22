@@ -368,30 +368,56 @@ def _reported_snapshot_keys() -> "dict[str, bool]":
 
 
 def _snapshot(registry, config=None):
-    """Read live status values off the attached session via sync accessors."""
+    """Read live status values off the GLOBALLY attached session via sync
+    accessors — ``None`` when nothing is attached (LOCAL's own boot-race
+    window; genuinely "nothing to show yet" for a single-session, single-
+    focus client). See :func:`_snapshot_for_session` for the parameterized
+    body this delegates to, and its own docstring for why a caller that
+    already holds a concrete ``Session`` (AG-UI, per-connection) should call
+    THAT directly instead of going through this global-pointer lookup."""
     s = registry.attached_session()
     if s is None:
         return None
+    return _snapshot_for_session(registry, s, config)
+
+
+def _snapshot_for_session(registry, s, config=None):
+    """Read live status values off an EXPLICIT ``Session`` via sync accessors
+    — the parameterized body :func:`_snapshot` delegates to once it has
+    resolved one off the registry's global attached-pointer.
+
+    #5094: AG-UI's ``_status_provider`` used to call ``_snapshot(registry)``
+    directly, which returns ``None`` wholesale whenever
+    ``registry.attached_session()`` is unset — and it is deliberately never
+    set for an AG-UI connection (see ``AgentRegistry.ensure_running``'s own
+    docstring, #3793 stage 2: AG-UI tracks per-connection attach state itself,
+    via ``SurfaceManager``, and never reads the registry's single global
+    pointer). So the FIRST snapshot of every AG-UI connection — the exact
+    moment a client most wants to see the roster — was unconditionally
+    ``None``: not just the roster, the WHOLE status dict, regardless of
+    #5097/#5104 already having fixed what those keys themselves read.
+
+    The fix is not to make ``ensure_running`` set the global pointer (that
+    pointer is genuinely meaningless across concurrent per-agent
+    connections — one AG-UI process can serve many agents at once, and
+    "the one attached agent" doesn't generalize). It is to stop asking the
+    registry a question a caller who already has its own concrete
+    ``Session`` doesn't need to ask: this function takes ``s`` as a
+    parameter instead of looking it up, so a caller with real
+    per-connection identity (``s.agent_name``, always well-defined for a
+    genuine ``Session``) never depends on whether some OTHER connection
+    happens to hold the global focus."""
     u = s.total_usage
     # Cost breakdown (all via registry.agent_cost_usd — the single source of
     # truth for per-agent cost aggregation across all sids).
     cost_total = sum(registry.agent_cost_usd(name) for name in registry.loaded_names())
-    cost_agent = (
-        registry.agent_cost_usd(registry.attached_name)
-        if registry.attached_name else s.total_cost_usd
-    )
+    cost_agent = registry.agent_cost_usd(s.agent_name)
     # #3695: how many of those calls had no price. Projected NEXT TO the figure
     # it qualifies, from the same accessor family, so a surface cannot show the
     # cost while being unaware that it is incomplete — which is what left the
     # owner reading a frozen number all day as though it were the amount spent.
-    unpriced_calls = (
-        registry.agent_unpriced_calls(registry.attached_name)
-        if registry.attached_name else 0
-    )
-    agent_tokens = (
-        registry.agent_tokens(registry.attached_name)
-        if registry.attached_name else u.total_tokens
-    )
+    unpriced_calls = registry.agent_unpriced_calls(s.agent_name)
+    agent_tokens = registry.agent_tokens(s.agent_name)
     # Headline figure: the single most recent LLM call's prompt_tokens against
     # the model's REAL context window (get_max_input_tokens) — "how close to
     # the model's hard limit am I", matching the Claude Code-style % owners
@@ -477,7 +503,7 @@ def _snapshot(registry, config=None):
         # same source agent.py's own routing comment already claimed this
         # call site used.
         "agent_names": list(registry.list_active_names()),
-        "attached_name": registry.attached_name,
+        "attached_name": s.agent_name,
         "session_tree": registry.session_tree(),
         # LOCAL genuinely measures the prompt/completion SPLIT below
         # (real Session state, u.prompt_tokens/u.completion_tokens) —
@@ -491,10 +517,7 @@ def _snapshot(registry, config=None):
         # Cost-panel breakdown (#cost-panel-breakdown): per-scope CostBreakdown
         # (Input/Output/Saved/Saved% rows) mirroring the 3 $ totals above.
         "cost_breakdown_session": s.total_cost_breakdown,
-        "cost_breakdown_agent": (
-            registry.agent_cost_breakdown(registry.attached_name)
-            if registry.attached_name else s.total_cost_breakdown
-        ),
+        "cost_breakdown_agent": registry.agent_cost_breakdown(s.agent_name),
         "cost_breakdown_project": registry.project_cost_breakdown(),
         # #3339: the CURRENT (or most recent) turn's real token/cost total —
         # every LLM call the turn made, summed under its chain_id by the

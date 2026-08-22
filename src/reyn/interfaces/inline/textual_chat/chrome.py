@@ -719,8 +719,8 @@ def _agent_pane_entries(
     tree: "Sequence[dict]" = (),
 ) -> "list[tuple[str, str]]":
     """``(row, slash)`` for the agent→session tree (``AgentRegistry.session_tree()``
-    via the snapshot's ``session_tree``), falling back to the flat agent list when
-    the tree is empty.
+    via the snapshot's ``session_tree``), UNIONED with the flat ``names`` list —
+    not an either/or fallback.
 
     The tree shape is the retired chip bar's ``_agent_expansion`` contract, restored
     (#3338): one row per agent plus an indented row per session of that agent, the
@@ -728,22 +728,36 @@ def _agent_pane_entries(
     agent is already attached (``/session switch <sid>``); otherwise it attaches the
     agent first (``/attach <agent>``) — switching into a session of a non-attached
     agent is not a single-command operation, so the row does the reachable half
-    rather than dispatching a command that would fail."""
-    if tree:
-        out: "list[tuple[str, str]]" = []
-        for agent in tree:
-            name = agent.get("agent", "")
-            attached = bool(agent.get("attached"))
-            out.append((f"{'▸' if attached else ' '} {name}", f"/attach {name}"))
-            for sess in agent.get("sessions") or []:
-                sid = sess.get("sid", "")
-                smark = "▸" if sess.get("attached") else " "
-                cmd = f"/session switch {sid}" if attached else f"/attach {name}"
-                out.append((f"    {smark} {sid}", cmd))
-        return out
-    return [
-        (f"{n}  · active" if n == active else n, f"/attach {n}") for n in names
-    ]
+    rather than dispatching a command that would fail.
+
+    #5094 (lead-coder finding, issuecomment-5379848710): an earlier revision
+    used the tree ONLY when non-empty, falling back to the flat list otherwise
+    — correct for a wholly-empty tree, but wrong for a PARTIAL one: an agent
+    present in ``names`` but absent from ``tree`` (e.g. declared but not yet
+    session_tree-enumerated) silently vanished the moment even ONE other agent
+    had a tree entry (measured in-process: 4 ``agent_names`` + 1 ``session_tree``
+    entry rendered as 1 row, not 4). "Declared" and "has a tree entry" are
+    different information — the tree's silence about an agent must never read
+    as that agent not existing. So every agent gets exactly one representation:
+    a tree row if the tree has one, else a flat row — never both, never
+    neither."""
+    out: "list[tuple[str, str]]" = []
+    tree_agents: "set[str]" = set()
+    for agent in tree:
+        name = agent.get("agent", "")
+        tree_agents.add(name)
+        attached = bool(agent.get("attached"))
+        out.append((f"{'▸' if attached else ' '} {name}", f"/attach {name}"))
+        for sess in agent.get("sessions") or []:
+            sid = sess.get("sid", "")
+            smark = "▸" if sess.get("attached") else " "
+            cmd = f"/session switch {sid}" if attached else f"/attach {name}"
+            out.append((f"    {smark} {sid}", cmd))
+    for n in names:
+        if n in tree_agents:
+            continue
+        out.append((f"{n}  · active" if n == active else n, f"/attach {n}"))
+    return out
 
 
 def agent_pane_options(
@@ -753,10 +767,12 @@ def agent_pane_options(
 ) -> list[str]:
     """One row per loaded agent AND per session beneath it, the attach focus
     marked. Derived from the snapshot's ``session_tree`` (=
-    ``AgentRegistry.session_tree()``), degrading to the flat ``agent_names`` list
-    when no tree is available — the FULL loaded set either way, so a
-    freshly-created/attached agent (or a newly-spawned session) appears
-    automatically."""
+    ``AgentRegistry.session_tree()``) UNIONED with the flat ``agent_names``
+    list (see ``_agent_pane_entries``'s own docstring, #5094) — the FULL
+    loaded set either way, so a freshly-created/attached agent (or a
+    newly-spawned session) appears automatically, and an agent the tree
+    hasn't caught up to yet is never silently dropped just because some
+    OTHER agent already has a tree entry."""
     return [row for row, _cmd in _agent_pane_entries(names, active, tree)]
 
 
