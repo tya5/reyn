@@ -432,6 +432,32 @@ def _snapshot(registry, config=None):
     # lets the row surface ask directly, and keeps the never-fabricate contract
     # in ONE place (``BudgetTracker.turn_usage`` returns None, not 0).
     turn_usage_fn = s.turn_usage
+    # #5050: the SAME head ``ClientTransport.pending_intervention_head()``
+    # (in_process.py) already returns for the in-process path
+    # (``s.interventions.head()``), projected here to a JSON-safe dict so it
+    # can also ride STATE_SNAPSHOT/STATE_DELTA — the source
+    # ``RemoteReadModel.intervention_head()`` reads instead of an
+    # unconditional None (read_model.py's own #5050 fix: that method was
+    # conflating "unsupported" with "nothing pending now", the #4996-family
+    # lying-None pattern, independent of whether choices already reach a
+    # remote client some OTHER way — they do, via a separate AG-UI
+    # frontend-tool encoding; that path is untouched here). Shape mirrors
+    # ``intervention_handler._iv_meta``'s established choices convention
+    # (id/label/hotkey per entry). ``None`` when nothing is pending — never a
+    # fabricated placeholder.
+    _head = s.interventions.head()
+    pending_intervention_head = (
+        {
+            "id": _head.id,
+            "prompt": _head.prompt,
+            "detail": _head.detail,
+            "choices": [
+                {"id": c.id, "label": c.label, "hotkey": c.hotkey}
+                for c in _head.choices
+            ],
+        }
+        if _head is not None else None
+    )
     return {
         # #5009 / #5009 closing pass: every ``*_reported`` declaration is
         # projected in ONE call, from ONE source
@@ -440,6 +466,7 @@ def _snapshot(registry, config=None):
         # generic projection replaced 4 near-identical hand-typed
         # call sites.
         **_reported_snapshot_keys(),
+        "pending_intervention_head": pending_intervention_head,
         "model": s.model,
         "model_active_class": s.active_model_class(),
         "model_classes": list(s.known_model_classes()),

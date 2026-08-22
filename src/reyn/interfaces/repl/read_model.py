@@ -28,10 +28,15 @@ status/region state from, with two implementations —
 **Frame-sufficiency (what a remote client CAN show).** The server projects only
 the MAIN-bar subset onto the wire (``state.py``'s ``project_status`` /
 ``_WIRE_KEYS``): ``model`` · ``attached_name`` · ``cost_agent`` / ``cost_total``
-/ ``agent_tokens`` · ``ctx_used`` / ``ctx_window`` · ``waiting_on``. Those chip
-VALUES render on remote. The dropdown EXPANSIONS (cost/ctx detail tuples, the
-``/model`` class picker, the agent/session tree, the ``…`` sub-bar
-toggle counts), the interactive intervention / rewind PICKERS, and the
+/ ``agent_tokens`` · ``ctx_used`` / ``ctx_window`` · ``waiting_on`` ·
+``pending_intervention_head`` (#5050). Those chip VALUES, and now the pending
+intervention head itself, are genuinely readable via :meth:`RemoteReadModel.
+intervention_head` rather than an unconditional None (#5050 closed the
+#4996-family lying-None this method carried — see its own docstring; whether
+a remote-side RENDERING surface actually consumes this yet is separate and
+untouched by #5050, tracked in its own issue thread). The dropdown EXPANSIONS
+(cost/ctx detail tuples, the ``/model`` class picker, the agent/session tree,
+the ``…`` sub-bar toggle counts), the interactive rewind PICKER, and the
 persisted past-turn CONVERSATION log (``conversation_history`` — the #3273
 Phase-5 restore-on-restart source) are session-local and are NOT on the wire —
 the remote model returns empty/``—``/0 for them (graceful degrade), never a fake
@@ -231,13 +236,16 @@ LOCAL_CHAT_READ_CAPABILITIES = ChatReadModelCapabilities(
     pipelines_reported=True,
 )
 
-#: :class:`RemoteReadModel` — the frame-sufficiency boundary each of these 6
+#: :class:`RemoteReadModel` — the frame-sufficiency boundary each of these
 #: methods' own docstrings already document (session-local state the AG-UI
 #: wire does not project): every one of them always degrades, independent of
-#: server-side state. See the module docstring's "Frame-sufficiency" section.
+#: server-side state — with ONE exception, ``intervention_head`` (#5050):
+#: STATE_SNAPSHOT/STATE_DELTA now carry ``pending_intervention_head``, so
+#: this one genuinely reflects live server-side state rather than always
+#: degrading. See the module docstring's "Frame-sufficiency" section.
 REMOTE_CHAT_READ_CAPABILITIES = ChatReadModelCapabilities(
     completion_session=False,
-    intervention_head=False,
+    intervention_head=True,
     pending_command_ui=False,
     has_command_ui_region=False,
     conversation_history=False,
@@ -277,9 +285,27 @@ class ChatReadModel(ABC):
     @abstractmethod
     def intervention_head(self) -> "object | None":
         """The head closed-set intervention (with ``.id`` / ``.choices``) for the
-        above-input region selector, or None. Remote returns None: a remote
-        intervention rides the display prompt and is answered on the input line
-        (via the transport), not through the local region picker."""
+        above-input region selector, or None.
+
+        LOCAL returns the real ``UserIntervention`` object (``.id``/
+        ``.choices`` as real attributes). REMOTE returns the JSON-safe wire
+        projection (``{id, prompt, detail, choices: [{id, label, hotkey},
+        ...]}``) read off ``pending_intervention_head`` on the transport's
+        STATE_SNAPSHOT/STATE_DELTA-fed status view — a DICT, not an object
+        with attributes.
+
+        #5050: previously an unconditional None here, regardless of
+        server-side state — the #4996-family lying-None pattern
+        (``ChatReadModelCapabilities``'s own docstring names it): "never
+        supported" and "nothing pending right now" rode the identical
+        ``None``, indistinguishable to a caller. This was true independent
+        of whether choices themselves reach a remote client some OTHER way
+        (they do, via a separate AG-UI frontend-tool encoding — #5050's own
+        issue thread; NOT what this method's prior None was hiding). Fixing
+        this source is a precondition for any remote consumer of THIS method
+        to ever tell the two states apart, whether or not one is wired up
+        yet (``REMOTE_CHAT_READ_CAPABILITIES.intervention_head`` is the
+        companion declaration — see its own comment)."""
 
     @abstractmethod
     def pending_command_ui(self) -> "dict | None":
@@ -701,7 +727,16 @@ class RemoteReadModel(ChatReadModel):
         return None
 
     def intervention_head(self):
-        return None
+        # #5050: previously unconditional None — see this module's #5050
+        # commit for the full account. STATE_SNAPSHOT/STATE_DELTA now carry
+        # ``pending_intervention_head`` (status._snapshot's own doc), so a
+        # remote client CAN read it, the same live-tick pattern
+        # :meth:`snapshot` above already uses (``transport.status.values``).
+        # Returns the JSON-safe dict projection ({id, prompt, detail,
+        # choices: [{id, label, hotkey}, ...]}), not a ``UserIntervention``
+        # instance — a remote consumer never held a real one to begin with.
+        values = getattr(getattr(self._transport, "status", None), "values", None)
+        return (values or {}).get("pending_intervention_head")
 
     def pending_command_ui(self):
         return None
