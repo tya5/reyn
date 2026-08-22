@@ -14,7 +14,7 @@ from typing import AsyncIterator
 from textual_flowview import Entry
 
 from reyn.interfaces.inline.textual_chat import ReynPresenter
-from reyn.interfaces.transport.client_transport import ClientTransport
+from reyn.interfaces.transport.client_transport import ClientTransportStub
 from reyn.interfaces.transport.frames import DisplayFrame
 from reyn.runtime.outbox import OutboxMessage
 
@@ -25,7 +25,7 @@ def started(op_id: str, tool: str = "grep") -> OutboxMessage:
     )
 
 
-class QueueTransport(ClientTransport):
+class QueueTransport(ClientTransportStub):
     """A real :class:`ClientTransport` fed one frame at a time from a queue, so a
     test can push a ``started`` frame, inspect the RUNNING row, THEN push the
     completion and inspect the settle — with the stream staying open in between

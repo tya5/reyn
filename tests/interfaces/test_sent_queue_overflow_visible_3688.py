@@ -31,13 +31,13 @@ import pytest
 
 from reyn.interfaces.inline.textual_chat import TextualChatApp
 from reyn.interfaces.inline.textual_chat.sent_queue import SentQueue
-from reyn.interfaces.transport.client_transport import ClientTransport
+from reyn.interfaces.transport.client_transport import ClientTransportStub
 from reyn.interfaces.transport.frames import EventFrame
 from reyn.runtime.outbox import OutboxMessage
 from reyn.schemas.models import Event
 
 
-class QueueTransport(ClientTransport):
+class QueueTransport(ClientTransportStub):
     """A real, minimal :class:`ClientTransport` fed one frame at a time from a
     queue (the ``test_3300_p2b_sentqueue_render.py`` helper shape)."""
 

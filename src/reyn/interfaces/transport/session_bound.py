@@ -38,7 +38,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, AsyncIterator, Callable
 
-from reyn.interfaces.transport.client_transport import ClientTransport
+from reyn.interfaces.transport.client_transport import ClientTransportStub
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -47,7 +47,7 @@ if TYPE_CHECKING:
     from reyn.runtime.outbox import OutboxMessage
 
 
-class SessionBoundTransport(ClientTransport):
+class SessionBoundTransport(ClientTransportStub):
     """The send half of the client seam, bound to the session that dispatches."""
 
     def __init__(

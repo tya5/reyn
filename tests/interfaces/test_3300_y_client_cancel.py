@@ -58,7 +58,7 @@ from reyn.interfaces.inline.textual_chat.chrome import (
     help_pane_lines,
 )
 from reyn.interfaces.inline.textual_chat.sent_queue import SentQueue
-from reyn.interfaces.transport.client_transport import ClientTransport
+from reyn.interfaces.transport.client_transport import ClientTransportStub
 from reyn.interfaces.transport.frames import EventFrame
 from reyn.runtime.outbox import OutboxMessage
 from reyn.schemas.models import Event
@@ -66,7 +66,7 @@ from reyn.schemas.models import Event
 _RAW_ESC_OSC = "\x1b[31mRED\x1b]0;pwn\x07"
 
 
-class QueueTransport(ClientTransport):
+class QueueTransport(ClientTransportStub):
     """A real, minimal :class:`ClientTransport` fed one frame at a time from
     a queue (mirrors ``test_3300_p2b_sentqueue_render.py``'s helper), whose
     ``cancel_queued`` is CONTROLLABLE (a real attribute, not a mock) so a test

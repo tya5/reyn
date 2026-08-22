@@ -51,7 +51,7 @@ import pytest
 from textual_flowview import EntryState, FlowView
 
 from reyn.interfaces.inline.textual_chat import TextualChatApp
-from reyn.interfaces.transport.client_transport import ClientTransport
+from reyn.interfaces.transport.client_transport import ClientTransportStub
 from reyn.interfaces.transport.frames import DisplayFrame, EventFrame
 from reyn.runtime.outbox import OutboxMessage
 from reyn.schemas.models import Event
@@ -124,7 +124,7 @@ def _turn_settled() -> Event:
     return Event(type="turn_settled", data={})
 
 
-class QueueTransport(ClientTransport):
+class QueueTransport(ClientTransportStub):
     """A real, minimal :class:`ClientTransport` fed one frame at a time from
     a queue — display OR event frames (same shape as
     ``test_4691_phase_b_group_construction.py``'s own ``QueueTransport``,

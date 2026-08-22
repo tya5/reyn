@@ -29,7 +29,7 @@ from typing import TYPE_CHECKING, Any, AsyncIterator
 
 from reyn.interfaces.slash import SlashContext
 from reyn.interfaces.slash.dispatch import execute_slash_command
-from reyn.interfaces.transport.client_transport import ClientTransport
+from reyn.interfaces.transport.client_transport import ClientTransportStub
 from reyn.interfaces.transport.in_process import InProcessTransport
 from reyn.runtime.session import DEFAULT_CHAT_CHANNEL_ID
 
@@ -38,7 +38,7 @@ if TYPE_CHECKING:
     from reyn.runtime.outbox import OutboxMessage
 
 
-class RecordingTransport(ClientTransport):
+class RecordingTransport(ClientTransportStub):
     """A real client transport that keeps what was displayed."""
 
     def __init__(self, session: Any = None) -> None:

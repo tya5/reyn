@@ -34,7 +34,7 @@ from textual_flowview import EntryState, FlowView
 
 from reyn.interfaces.inline.textual_chat import TextualChatApp
 from reyn.interfaces.inline.textual_chat.chrome import Composer
-from reyn.interfaces.transport.client_transport import ClientTransport
+from reyn.interfaces.transport.client_transport import ClientTransportStub
 from reyn.interfaces.transport.frames import DisplayFrame, EventFrame
 from reyn.runtime.outbox import OutboxMessage
 from reyn.schemas.models import Event
@@ -100,7 +100,7 @@ def _failed(op_id: str, call_id: "str | None", tool: str = "grep") -> OutboxMess
     )
 
 
-class QueueTransport(ClientTransport):
+class QueueTransport(ClientTransportStub):
     """A real, minimal :class:`ClientTransport` fed one frame at a time from a
     queue — display OR event frames — so a test can push frames one at a
     time and inspect the tree between each (same shape as #72's own

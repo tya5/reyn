@@ -44,7 +44,7 @@ from reyn.interfaces.inline.textual_chat.chrome import (
 )
 from reyn.interfaces.repl.read_model import LOCAL_CHAT_READ_CAPABILITIES, ChatReadModel
 from reyn.interfaces.slash import REGISTRY, SlashCommand, SlashRegistry
-from reyn.interfaces.transport.client_transport import ClientTransport
+from reyn.interfaces.transport.client_transport import ClientTransportStub
 from reyn.interfaces.transport.frames import DisplayFrame
 from reyn.runtime.outbox import OutboxMessage
 from tests._support.paths import REPO_ROOT
@@ -246,7 +246,7 @@ class _SnapshotReadModel(ChatReadModel):
         return 0
 
 
-class ScriptedTransport(ClientTransport):
+class ScriptedTransport(ClientTransportStub):
     """A real, minimal :class:`ClientTransport`. ``end=False`` keeps the stream
     open so the app stays mounted for drawer inspection; submissions are captured
     so a picker-issued ``/model`` / ``/attach`` slash can be asserted."""

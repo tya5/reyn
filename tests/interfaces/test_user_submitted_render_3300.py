@@ -61,7 +61,7 @@ from reyn.interfaces.repl.renderer import (
     InlineChatRenderer,
     user_submitted_display_message,
 )
-from reyn.interfaces.transport.client_transport import ClientTransport
+from reyn.interfaces.transport.client_transport import ClientTransportStub
 from reyn.interfaces.transport.frames import EventFrame
 from reyn.llm.llm import LLMToolCallResult
 from reyn.llm.pricing import TokenUsage
@@ -124,7 +124,7 @@ def _capture_stdout(monkeypatch) -> io.StringIO:
     return captured
 
 
-class QueueTransport(ClientTransport):
+class QueueTransport(ClientTransportStub):
     """A real, minimal :class:`ClientTransport` fed one frame at a time from a
     queue (mirrors ``test_textual_chat_orphan_sweep_72.py``'s helper) — lets a
     test push an ``EventFrame`` and inspect ``TextualChatApp``'s retained

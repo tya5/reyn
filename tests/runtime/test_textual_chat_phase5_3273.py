@@ -52,7 +52,7 @@ from reyn.interfaces.repl.read_model import (
     RegistryReadModel,
     RemoteReadModel,
 )
-from reyn.interfaces.transport.client_transport import ClientTransport
+from reyn.interfaces.transport.client_transport import ClientTransportStub
 from reyn.interfaces.transport.frames import DisplayFrame
 from reyn.runtime.chat_message import ChatMessage
 from reyn.runtime.outbox import OutboxMessage
@@ -111,7 +111,7 @@ class _HistoryReadModel(ChatReadModel):
         return 0
 
 
-class ScriptedTransport(ClientTransport):
+class ScriptedTransport(ClientTransportStub):
     """A real, minimal :class:`ClientTransport`. ``end=False`` keeps the stream
     open so the app stays mounted; ``messages`` are the LIVE frames pumped AFTER
     the mount-time hydration."""

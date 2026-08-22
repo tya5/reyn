@@ -48,7 +48,7 @@ from textual_flowview import FlowView
 
 from reyn.interfaces.inline.textual_chat.chrome import Composer, status_line_text
 from reyn.interfaces.repl.read_model import LOCAL_CHAT_READ_CAPABILITIES, ChatReadModel
-from reyn.interfaces.transport.client_transport import ClientTransport
+from reyn.interfaces.transport.client_transport import ClientTransportStub
 from reyn.interfaces.transport.frames import DisplayFrame
 from reyn.runtime.outbox import OutboxMessage
 from reyn.runtime.profile import AgentProfile
@@ -146,7 +146,7 @@ async def test_registry_attach_failed_cleared_by_a_fresh_attach_attempt(tmp_path
 # ---------------------------------------------------------------------------
 
 
-class _AttachStateTransport(ClientTransport):
+class _AttachStateTransport(ClientTransportStub):
     """A real, minimal `ClientTransport` (mirrors `ScriptedTransport` in
     `test_textual_chat_phase4_3273.py`) whose `has_session()`/
     `attach_failed()` are test-controlled, so the composer's gating can be

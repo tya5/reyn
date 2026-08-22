@@ -92,7 +92,7 @@ from reyn.interfaces.repl.read_model import (
     project_remote_snapshot,
 )
 from reyn.interfaces.repl.status import _snapshot
-from reyn.interfaces.transport.client_transport import ClientTransport
+from reyn.interfaces.transport.client_transport import ClientTransportStub
 from reyn.interfaces.transport.frames import DisplayFrame
 from reyn.llm.pricing import TokenUsage
 from reyn.runtime.budget.budget import (
@@ -707,7 +707,7 @@ class _TurnUsageReadModel(ChatReadModel):
         return 0
 
 
-class _QueueTransport(ClientTransport):
+class _QueueTransport(ClientTransportStub):
     """A real :class:`ClientTransport` fed one frame at a time from a queue, so
     a test can push frames and inspect the render in between with the stream
     staying open (the helper shape #3337's gutter tests use)."""

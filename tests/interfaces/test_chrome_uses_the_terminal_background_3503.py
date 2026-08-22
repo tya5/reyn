@@ -40,12 +40,12 @@ from textual.color import Color
 from reyn.interfaces.inline.textual_chat import TextualChatApp
 from reyn.interfaces.inline.textual_chat.chrome import Composer, MenuBar
 from reyn.interfaces.inline.textual_chat.sent_queue import SentQueue
-from reyn.interfaces.transport.client_transport import ClientTransport
+from reyn.interfaces.transport.client_transport import ClientTransportStub
 from reyn.interfaces.transport.frames import DisplayFrame
 from reyn.runtime.outbox import OutboxMessage
 
 
-class _Transport(ClientTransport):
+class _Transport(ClientTransportStub):
     def start(self) -> None:  # pragma: no cover - trivial
         pass
 

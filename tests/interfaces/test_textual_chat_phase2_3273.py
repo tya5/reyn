@@ -56,7 +56,7 @@ from reyn.interfaces.repl.renderer import (
     _CC_WARN,
     _KIND_LINE,
 )
-from reyn.interfaces.transport.client_transport import ClientTransport
+from reyn.interfaces.transport.client_transport import ClientTransportStub
 from reyn.interfaces.transport.frames import DisplayFrame
 from reyn.runtime.outbox import OutboxMessage
 from tests._support.paths import REPO_ROOT
@@ -64,7 +64,7 @@ from tests._support.paths import REPO_ROOT
 _REPO_ROOT = REPO_ROOT
 
 
-class ScriptedTransport(ClientTransport):
+class ScriptedTransport(ClientTransportStub):
     """A real, minimal :class:`ClientTransport` replaying a fixed frame list.
 
     ``end=False`` keeps the stream open after the script so the app under test

@@ -29,12 +29,12 @@ from reyn.interfaces.inline.textual_chat.chrome import (
     ConfigWarningLine,
     config_warning_text,
 )
-from reyn.interfaces.transport.client_transport import ClientTransport
+from reyn.interfaces.transport.client_transport import ClientTransportStub
 from reyn.interfaces.transport.frames import EventFrame
 from reyn.schemas.models import Event
 
 
-class _Transport(ClientTransport):
+class _Transport(ClientTransportStub):
     """Minimal real ClientTransport implementing the CURRENT full abstract
     surface (test_conversation_chrome_separation.py's own stub predates
     #3903/#4166's cancel_inflight()/has_session()/etc additions and would

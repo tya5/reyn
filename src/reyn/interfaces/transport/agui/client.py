@@ -40,12 +40,12 @@ from reyn.interfaces.transport.agui.protocol import (
     parse_sse_blocks,
 )
 from reyn.interfaces.transport.agui.state import RemoteStatusView, reguard_nodes
-from reyn.interfaces.transport.client_transport import ClientTransport
+from reyn.interfaces.transport.client_transport import ClientTransportStub
 from reyn.interfaces.transport.drain import suspend_between_frames
 from reyn.interfaces.transport.frames import DisplayFrame, EventFrame, Frame
 
 
-class AgUiTransport(ClientTransport):
+class AgUiTransport(ClientTransportStub):
     """Decode a server AG-UI SSE stream into the renderer's ``Frame`` vocabulary."""
 
     def __init__(

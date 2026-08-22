@@ -33,7 +33,7 @@ import asyncio
 import logging
 from typing import TYPE_CHECKING, AsyncIterator
 
-from reyn.interfaces.transport.client_transport import ClientTransport
+from reyn.interfaces.transport.client_transport import ClientTransportStub
 from reyn.interfaces.transport.drain import suspend_between_frames
 from reyn.interfaces.transport.frames import (
     DisplayFrame,
@@ -52,7 +52,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class InProcessTransport(ClientTransport):
+class InProcessTransport(ClientTransportStub):
     """The local transport: forwarder + filtered audit-events → one frame stream."""
 
     def __init__(

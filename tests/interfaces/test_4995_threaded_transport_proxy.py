@@ -60,7 +60,7 @@ from typing import TYPE_CHECKING, AsyncIterator
 
 import pytest
 
-from reyn.interfaces.transport.client_transport import ClientTransport
+from reyn.interfaces.transport.client_transport import ClientTransportStub
 from reyn.interfaces.transport.threaded import ThreadedTransportProxy
 
 if TYPE_CHECKING:
@@ -68,7 +68,7 @@ if TYPE_CHECKING:
     from reyn.runtime.outbox import OutboxMessage
 
 
-class _RecordingTransport(ClientTransport):
+class _RecordingTransport(ClientTransportStub):
     """A minimal, real ``ClientTransport``. ``frames()`` never yields
     anything in these tests (an unresolved real ``asyncio.Event`` — an
     unbounded wait, not a duration) since neither witness needs a frame to

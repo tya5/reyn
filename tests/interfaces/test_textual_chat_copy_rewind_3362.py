@@ -59,7 +59,7 @@ from textual_flowview import FlowView
 from reyn.interfaces.inline.textual_chat import TextualChatApp
 from reyn.interfaces.inline.textual_chat.rewind_picker import RewindPicker
 from reyn.interfaces.repl.read_model import LOCAL_CHAT_READ_CAPABILITIES, ChatReadModel
-from reyn.interfaces.transport.client_transport import ClientTransport
+from reyn.interfaces.transport.client_transport import ClientTransportStub
 from reyn.interfaces.transport.frames import DisplayFrame
 from reyn.runtime.chat_message import ChatMessage
 from reyn.runtime.outbox import OutboxMessage
@@ -122,7 +122,7 @@ class _RemoteishReadModel(_PickerReadModel):
         return False
 
 
-class ScriptedTransport(ClientTransport):
+class ScriptedTransport(ClientTransportStub):
     """A real, minimal :class:`ClientTransport`. The stream stays open after the
     scripted frames so the app stays mounted; ``submitted`` records the lines the
     app routes back through the send seam."""

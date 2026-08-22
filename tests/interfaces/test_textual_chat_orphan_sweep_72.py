@@ -46,7 +46,7 @@ from reyn.interfaces.inline.textual_chat.presenter import (
     _RUNNING_SINCE_KEY,
     ReynPresenter,
 )
-from reyn.interfaces.transport.client_transport import ClientTransport
+from reyn.interfaces.transport.client_transport import ClientTransportStub
 from reyn.interfaces.transport.frames import DisplayFrame, EventFrame
 from reyn.runtime.outbox import OutboxMessage
 from reyn.schemas.models import Event
@@ -66,7 +66,7 @@ def _completed(op_id: str, tool: str = "grep") -> OutboxMessage:
     )
 
 
-class QueueTransport(ClientTransport):
+class QueueTransport(ClientTransportStub):
     """A real, minimal :class:`ClientTransport` fed one frame at a time from a
     queue — display OR event frames — so a test can push a ``started`` tool,
     inspect its live RUNNING row, THEN push a turn-end event and inspect the

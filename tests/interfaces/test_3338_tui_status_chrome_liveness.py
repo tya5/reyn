@@ -65,7 +65,7 @@ from reyn.interfaces.inline.textual_chat.chrome import (
 )
 from reyn.interfaces.repl.read_model import LOCAL_CHAT_READ_CAPABILITIES, ChatReadModel
 from reyn.interfaces.repl.status import _snapshot
-from reyn.interfaces.transport.client_transport import ClientTransport
+from reyn.interfaces.transport.client_transport import ClientTransportStub
 from reyn.interfaces.transport.frames import EventFrame
 from reyn.llm.pricing import CostBreakdown
 from reyn.runtime.outbox import OutboxMessage
@@ -739,7 +739,7 @@ class _MutableSnapshotReadModel(ChatReadModel):
         return 0
 
 
-class _EventOnlyTransport(ClientTransport):
+class _EventOnlyTransport(ClientTransportStub):
     """A real, minimal :class:`ClientTransport` fed one frame at a time. The
     liveness tests push ONLY ``EventFrame``s through it — never a DisplayFrame —
     so a status refresh that still sat on the DISPLAY leg can never be reached by

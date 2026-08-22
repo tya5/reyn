@@ -37,7 +37,7 @@ from reyn.interfaces.inline.textual_chat import TextualChatApp
 from reyn.interfaces.inline.textual_chat.intervention_panel import InterventionPanel
 from reyn.interfaces.inline.textual_chat.rewind_picker import RewindPicker
 from reyn.interfaces.repl.read_model import RegistryReadModel
-from reyn.interfaces.transport.client_transport import ClientTransport
+from reyn.interfaces.transport.client_transport import ClientTransportStub
 from reyn.interfaces.transport.frames import DisplayFrame, EventFrame
 from reyn.runtime.outbox import OutboxMessage
 from reyn.runtime.profile import AgentProfile
@@ -46,7 +46,7 @@ from reyn.runtime.session import Session
 from tests._support.agent_session import make_session
 
 
-class QueueTransport(ClientTransport):
+class QueueTransport(ClientTransportStub):
     """A real, minimal :class:`ClientTransport` whose ``frames()`` drains an
     ``asyncio.Queue`` a test pushes onto (mirrors the same harness shape used
     throughout ``test_4788_rewind_picker_escape_dismiss.py``)."""

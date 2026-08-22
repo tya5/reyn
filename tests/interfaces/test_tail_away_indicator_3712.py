@@ -34,13 +34,13 @@ from reyn.interfaces.inline.textual_chat.activity_row import (
     ActivityRow,
     activity_text,
 )
-from reyn.interfaces.transport.client_transport import ClientTransport
+from reyn.interfaces.transport.client_transport import ClientTransportStub
 from reyn.interfaces.transport.frames import DisplayFrame, EventFrame
 from reyn.runtime.outbox import OutboxMessage
 from reyn.schemas.models import Event
 
 
-class QueueTransport(ClientTransport):
+class QueueTransport(ClientTransportStub):
     """A real, minimal :class:`ClientTransport` (the shared test idiom)."""
 
     def __init__(self) -> None:

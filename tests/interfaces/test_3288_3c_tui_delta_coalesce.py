@@ -48,7 +48,7 @@ from textual_flowview import FlowView
 
 from reyn.interfaces.inline.textual_chat import TextualChatApp
 from reyn.interfaces.inline.textual_chat.app import _STREAM_REPAINT_MIN_INTERVAL
-from reyn.interfaces.transport.client_transport import ClientTransport
+from reyn.interfaces.transport.client_transport import ClientTransportStub
 from reyn.interfaces.transport.frames import DisplayFrame, EventFrame
 from reyn.runtime.outbox import OutboxMessage
 from reyn.schemas.models import Event
@@ -82,7 +82,7 @@ class _DrivenClock:
         self.advance(_STREAM_REPAINT_MIN_INTERVAL * 2)
 
 
-class QueueTransport(ClientTransport):
+class QueueTransport(ClientTransportStub):
     """A real, minimal :class:`ClientTransport` fed one frame at a time from a
     queue (mirrors ``tests/interfaces/test_agent_delta_no_visible_garbage_3288.py``'s
     helper of the same name)."""

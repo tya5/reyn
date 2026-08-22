@@ -32,13 +32,13 @@ from reyn.interfaces.inline.textual_chat import Composer, TextualChatApp
 from reyn.interfaces.inline.textual_chat.chrome import COMPOSER_KEYS
 from reyn.interfaces.inline.textual_chat.intervention_panel import InterventionPanel
 from reyn.interfaces.inline.textual_chat.sent_queue import SentQueue
-from reyn.interfaces.transport.client_transport import ClientTransport
+from reyn.interfaces.transport.client_transport import ClientTransportStub
 from reyn.interfaces.transport.frames import DisplayFrame, EventFrame
 from reyn.runtime.outbox import OutboxMessage
 from reyn.schemas.models import Event
 
 
-class RecordingTransport(ClientTransport):
+class RecordingTransport(ClientTransportStub):
     """A real, minimal :class:`ClientTransport` — replays a fixed frame list,
     then stays open on a live queue so a test can push more frames (e.g. a
     ``user_submitted`` sent-queue event), and RECORDS which answer seam each

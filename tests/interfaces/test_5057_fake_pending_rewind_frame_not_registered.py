@@ -42,12 +42,12 @@ import pytest
 
 from reyn.interfaces.inline.textual_chat import TextualChatApp
 from reyn.interfaces.inline.textual_chat.intervention_panel import InterventionPanel
-from reyn.interfaces.transport.client_transport import ClientTransport
+from reyn.interfaces.transport.client_transport import ClientTransportStub
 from reyn.interfaces.transport.frames import DisplayFrame
 from reyn.runtime.outbox import OutboxMessage
 
 
-class _ReplayTransport(ClientTransport):
+class _ReplayTransport(ClientTransportStub):
     """A real, minimal ``ClientTransport`` that replays a fixed frame list."""
 
     def __init__(self, messages: "list[OutboxMessage]") -> None:

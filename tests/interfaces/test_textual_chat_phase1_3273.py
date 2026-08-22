@@ -23,7 +23,7 @@ import pytest
 
 from reyn.interfaces.repl.renderer import ChatRenderer
 from reyn.interfaces.repl.stream_client import run_output_loop
-from reyn.interfaces.transport.client_transport import ClientTransport
+from reyn.interfaces.transport.client_transport import ClientTransportStub
 from reyn.interfaces.transport.frames import DisplayFrame
 from reyn.runtime.outbox import OutboxMessage
 from tests._support.paths import REPO_ROOT
@@ -31,7 +31,7 @@ from tests._support.paths import REPO_ROOT
 _REPO_ROOT = REPO_ROOT
 
 
-class ScriptedTransport(ClientTransport):
+class ScriptedTransport(ClientTransportStub):
     """A real, minimal :class:`ClientTransport` that replays a fixed frame list.
 
     Constructed cheaply from a list of :class:`OutboxMessage` — the same frames a
@@ -178,12 +178,12 @@ assert "textual" not in sys.modules, "textual imported at module load"
 from reyn.interfaces.repl.client_driver import run_chat_client  # noqa: E402
 from reyn.interfaces.repl.read_model import ChatReadModel, LOCAL_CHAT_READ_CAPABILITIES  # noqa: E402
 from reyn.interfaces.repl.renderer import ChatRenderer  # noqa: E402
-from reyn.interfaces.transport.client_transport import ClientTransport  # noqa: E402
+from reyn.interfaces.transport.client_transport import ClientTransportStub  # noqa: E402
 from reyn.interfaces.transport.frames import DisplayFrame  # noqa: E402
 from reyn.runtime.outbox import OutboxMessage  # noqa: E402
 
 
-class T(ClientTransport):
+class T(ClientTransportStub):
     def __init__(self):
         self.rendered = 0
     def start(self): pass

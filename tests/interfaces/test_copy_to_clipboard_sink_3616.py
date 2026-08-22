@@ -23,13 +23,13 @@ from textual.widgets import Input
 
 from reyn.interfaces.inline.textual_chat import TextualChatApp
 from reyn.interfaces.inline.textual_chat.search_bar import SearchBar
-from reyn.interfaces.transport.client_transport import ClientTransport
+from reyn.interfaces.transport.client_transport import ClientTransportStub
 from reyn.interfaces.transport.frames import DisplayFrame
 from reyn.runtime.outbox import OutboxMessage
 from tests._support.textual_chat_test_helpers import QueueTransport
 
 
-class _CancelTrackingTransport(ClientTransport):
+class _CancelTrackingTransport(ClientTransportStub):
     """A real, minimal :class:`ClientTransport` that counts
     ``cancel_inflight`` calls — ``QueueTransport``'s own is a no-op, and this
     file's regression guard needs the count."""

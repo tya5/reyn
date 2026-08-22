@@ -58,7 +58,7 @@ from reyn.interfaces.inline.textual_chat import TextualChatApp
 from reyn.interfaces.inline.textual_chat.sent_queue import ROW_TEXT_COLUMN, SentQueue
 from reyn.interfaces.repl.read_model import LOCAL_CHAT_READ_CAPABILITIES, ChatReadModel
 from reyn.interfaces.transport.agui.state import RemoteQueueView
-from reyn.interfaces.transport.client_transport import ClientTransport
+from reyn.interfaces.transport.client_transport import ClientTransportStub
 from reyn.interfaces.transport.frames import EventFrame
 from reyn.runtime.outbox import OutboxMessage
 from reyn.schemas.models import Event
@@ -66,7 +66,7 @@ from reyn.schemas.models import Event
 _RAW_ESC_OSC = "\x1b[31mRED\x1b]0;pwn\x07"
 
 
-class QueueTransport(ClientTransport):
+class QueueTransport(ClientTransportStub):
     """A real, minimal :class:`ClientTransport` fed one frame at a time from
     a queue (mirrors ``test_user_submitted_render_3300.py``'s helper) — lets
     a test push an ``EventFrame`` and inspect ``TextualChatApp``'s retained

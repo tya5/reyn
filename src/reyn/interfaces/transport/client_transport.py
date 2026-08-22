@@ -22,6 +22,13 @@ client codepath.
 This is an abstract base (not a bare Protocol) so a partial implementation
 fails at construction rather than silently at first use — the #1402
 completeness-by-construction discipline the ``PresentationConsumer`` seam uses.
+Every method here is ``@abstractmethod`` — a PURE contract, no defaults
+(#5076): the narrow-purpose convenience defaults 9 of these methods used to
+carry live on :class:`ClientTransportStub` instead, so a DELEGATION wrapper
+(one that forwards to another transport) inherits from THIS class directly
+and fails to construct if it forgets one, rather than silently answering a
+plausible-looking wrong value — see that class's own docstring for the
+full "one base fills two roles" finding.
 
 ⚠️ That guarantee covers the abstract METHOD SET, not each method's semantics,
 and there is one implementation that satisfies it without being a client:
@@ -118,6 +125,7 @@ class ClientTransport(ABC):
     def has_session(self) -> bool:
         """Whether a session is currently attached (client input guard)."""
 
+    @abstractmethod
     def attach_failed(self) -> bool:
         """#3671 P3: whether the attach this transport is waiting on is KNOWN
         to have given up — vs. still in flight, or never attempted (both of
@@ -126,16 +134,16 @@ class ClientTransport(ABC):
         "still connecting" from "gave up" (owner ruling: a client must never
         paint a genuine failure as an indefinite loading state).
 
-        NOT abstract (mirrors :meth:`cancel_queued` / :meth:`run_slash_command`
-        above): several narrow-purpose ``ClientTransport`` stubs across the
-        test suite pre-date this method, and only `InProcessTransport` (#3671
-        P2's own background-attach path) has anything meaningful to report —
-        a remote (``AgUiTransport``) attach either already succeeded by the
-        time ``--connect`` returns or the connection attempt itself raised,
-        so there is no separate "connecting in the background" phase to fail
-        remotely; the default ``False`` (paired with its own ``has_session()``)
-        is correct there, not a placeholder."""
-        return False
+        Abstract (#5076): moved OFF this contract's own convenience default
+        onto :class:`ClientTransportStub` — see that class for the shared
+        ``False`` body and the full rationale for why a wrapper must answer
+        this itself rather than silently inheriting a value that happens to
+        look plausible. ``False`` (paired with its own ``has_session()``) is
+        correct for any implementation with no separate "connecting in the
+        background" phase (a remote ``AgUiTransport`` attach either already
+        succeeded by the time ``--connect`` returns or the connection
+        attempt itself raised) — only ``InProcessTransport`` (#3671 P2's own
+        background-attach path) has anything meaningful to report."""
 
     @abstractmethod
     def pending_intervention_head(self) -> "object | None":
@@ -167,6 +175,7 @@ class ClientTransport(ABC):
         best-effort/generic string rather than asserting something was
         actually stopped."""
 
+    @abstractmethod
     async def run_slash_command(self, name: str, args: str) -> bool:
         """Run the registered slash command ``name`` with ``args``; ``True`` iff
         it ran (#3595 S5).
@@ -195,12 +204,10 @@ class ClientTransport(ABC):
         why the #3327 ``/answer`` fast path this method replaces is generalized
         rather than preserved.
 
-        NOT abstract (mirrors :meth:`cancel_queued`): several narrow-purpose
-        ``ClientTransport`` stubs across the test suite pre-date it, and the
-        default keeps their behavior unchanged.
-        """
-        return False
+        Abstract (#5076): the ``False``-default body moved to
+        :class:`ClientTransportStub`."""
 
+    @abstractmethod
     async def cancel_queued(self, msg_id: str) -> bool:
         """Cancel-by-id an UNDISPATCHED (queued) user message (#3300 P3
         Y-server) — a DIFFERENT intent from :meth:`cancel_inflight` (which
@@ -208,17 +215,12 @@ class ClientTransport(ABC):
         two. Returns True iff the server actually removed the item (queued);
         a no-op (already dispatched, or unknown id) returns False.
 
-        NOT abstract (unlike the other send-seam methods above): this method
-        was added after several narrow-purpose ``ClientTransport`` stubs
-        already existed across the test suite (pre-dating #3300 P3), and
-        making it abstract would force every one of them to implement a
-        method irrelevant to what they test. The default no-op preserves
-        their behavior unchanged; both production transports
+        Abstract (#5076): the no-op-``False`` default body moved to
+        :class:`ClientTransportStub`; both production transports
         (``InProcessTransport``, ``AgUiTransport``) override it with the
-        real op.
-        """
-        return False
+        real op."""
 
+    @abstractmethod
     async def request_attach(self, agent_name: str) -> bool:
         """Attach to a different agent (the ``/attach`` seam); ``True`` iff it
         happened (#4534 PR-1).
@@ -237,13 +239,10 @@ class ClientTransport(ABC):
         execution side / unknown agent on the far end) — mirrors
         :meth:`run_slash_command`'s own convention.
 
-        NOT abstract (same reasoning as :meth:`run_slash_command`/
-        :meth:`cancel_queued` above): several narrow-purpose
-        ``ClientTransport`` stubs across the test suite pre-date this
-        method; the default ``False`` preserves their behavior unchanged.
-        """
-        return False
+        Abstract (#5076): the ``False``-default body moved to
+        :class:`ClientTransportStub`."""
 
+    @abstractmethod
     async def request_session_switch(self, session_id: str) -> bool:
         """Switch the focused conversation session (the ``/session switch``
         seam); ``True`` iff it happened (#4534 PR-1).
@@ -253,10 +252,10 @@ class ClientTransport(ABC):
         sentinel (#4534 PR-2b), reaching ``registry.attach_session``
         directly instead.
 
-        NOT abstract, same reasoning as :meth:`request_attach`.
-        """
-        return False
+        Abstract (#5076): the ``False``-default body moved to
+        :class:`ClientTransportStub`."""
 
+    @abstractmethod
     async def request_artifact_list(self, *, agent: str) -> "tuple[list[dict], int]":
         """#4494 design C: the durable artifact-ref table's own entries for
         *agent* — ``([{"ref", "path"}, ...], total)``, newest-first, or
@@ -288,11 +287,10 @@ class ClientTransport(ABC):
         table is append-only/persist-tier, #4584, so an uncapped read
         only ever grows).
 
-        NOT abstract, same reasoning as :meth:`request_attach` — several
-        narrow-purpose stubs across the test suite pre-date this method;
-        the default ``([], 0)`` preserves their behavior unchanged."""
-        return [], 0
+        Abstract (#5076): the ``([], 0)``-default body moved to
+        :class:`ClientTransportStub`."""
 
+    @abstractmethod
     async def state_ready(self) -> None:
         """Return once this transport's own STATUS/state-read side-channel
         (whatever ``ChatReadModel.snapshot()``/``intervention_head()``/etc.
@@ -310,21 +308,19 @@ class ClientTransport(ABC):
         ZERO frames from :meth:`frames`, ever) would make a frame-gated
         wait hang forever, not merely late.
 
-        The default here (return immediately) is correct for any
-        transport whose status-read is ALREADY fresh the instant it is
-        asked — every implementation with no separate wire round-trip
-        (``InProcessTransport`` reads the live registry directly; any
-        narrow-purpose ``ClientTransport`` test stub that never overrode
-        this). ``AgUiTransport`` is the one implementation with a genuine
-        "not yet" window (before its first STATE_SNAPSHOT has been
-        decoded) and overrides this to actually wait.
-
         NOT merged into :meth:`frames` on purpose — mixing "produce
         display frames" with "has status state landed" would be the
         exact "two axes fused into one seam" shape #5041 ① already named
-        as a hazard elsewhere tonight."""
-        return None
+        as a hazard elsewhere tonight.
 
+        Abstract (#5076): the "return immediately" default body moved to
+        :class:`ClientTransportStub` — see that class's own docstring for
+        which implementations rely on it and why (``InProcessTransport``
+        reads the live registry directly; ``AgUiTransport`` is the one
+        implementation with a genuine "not yet" window and overrides
+        this to actually wait)."""
+
+    @abstractmethod
     async def clear_pending_command_ui(self) -> None:
         """Consume the pending command-UI request (the ``/rewind`` picker's
         own points, or any future command-UI kind) — a no-op wherever there
@@ -342,15 +338,15 @@ class ClientTransport(ABC):
         (:meth:`submit_user_text`/:meth:`answer_intervention_choice`/etc.),
         not through a read-only seam that happens to expose one exception.
 
-        The default here (no-op) is correct for any transport with no
-        local command-UI concept at all — command-UI is INLINE-APP-LOCAL
-        state (never on the wire, mirroring ``pending_command_ui()``'s own
-        ``None`` for remote): ``AgUiTransport`` inherits this default
+        Abstract (#5076): the no-op default body moved to
+        :class:`ClientTransportStub` — command-UI is INLINE-APP-LOCAL state
+        (never on the wire, mirroring ``pending_command_ui()``'s own
+        ``None`` for remote): ``AgUiTransport`` inherits the no-op
         unchanged. ``InProcessTransport`` overrides it to perform the real
         clear; ``ThreadedTransportProxy`` overrides it to marshal the call
         onto the worker thread that owns the ``Session``."""
-        return None
 
+    @abstractmethod
     def reyn_state_root(self) -> "Path | None":
         """The attached session's project `.reyn` root, or None (#3721).
 
@@ -369,16 +365,82 @@ class ClientTransport(ABC):
         end of the wire and there is no local answer to give, ever, not a
         transient failure.
 
-        NOT abstract (mirrors :meth:`run_slash_command` / :meth:`cancel_queued`
-        above): several narrow-purpose `ClientTransport` stubs across the test
-        suite pre-date this method. The default `None` is correct, not a
-        placeholder, for any transport with no local session to ask.
-        """
-        return None
+        Abstract (#5076): the `None`-default body moved to
+        :class:`ClientTransportStub`."""
 
     @abstractmethod
     async def shutdown(self) -> None:
         """Tear the session (and its registry) down — the /quit / EOF seam."""
+
+
+class ClientTransportStub(ClientTransport):
+    """A ``ClientTransport`` with the 9 narrow-purpose convenience defaults
+    every full implementation used to inherit silently, now given a
+    separate role from the contract itself (#5076, architect ruling, issue
+    #5076 — the "one base fills two roles" finding, generalizing #5045/
+    #5082/#5083/#5089's own instances of the same shape: a base default
+    that LOOKS harmless lets a delegation wrapper answer wrongly by simply
+    forgetting to override).
+
+    ``ClientTransport`` itself is now a PURE contract — every method
+    ``@abstractmethod``, no defaults anywhere. A subclass that forgets to
+    override one of the 9 methods below fails to CONSTRUCT, the same
+    completeness-by-construction guarantee the class already gave the other
+    6 (always-abstract) methods. This class exists for the OTHER role a
+    single base used to also carry: narrow-purpose convenience, for
+    implementations that genuinely want some of these 9 answers unchanged
+    (a test double that never touches ``/attach``, or a full transport like
+    ``AgUiTransport``/``SessionBoundTransport`` that deliberately relies on
+    a subset of them for real, documented reasons — see each method's own
+    docstring below for which implementation relies on which default and
+    why).
+
+    Measured (#5076 issue thread) before this split: the 2 real DELEGATION
+    wrappers in the whole codebase (``ThreadedTransportProxy``,
+    ``_ErrorWatchingTransport``) already override all 9 explicitly — they
+    stay on the pure ``ClientTransport`` contract, unaffected by this class,
+    so a THIRD wrapper that forgets one of these 9 in the future fails to
+    construct rather than silently answering wrong. Every one of the 75
+    test-side ``ClientTransport`` subclasses is a self-contained fake, not a
+    wrapper (0 of 75 hold a reference to another transport, confirmed by
+    two independent methods — a per-class body read and a name-independent
+    constructor-signature sweep) — they inherit this class instead, a
+    one-word base-class change each, no method-level audit needed.
+
+    Option ④ (``__getattr__`` auto-forwarding to an inner transport) was
+    considered and rejected: ``ThreadedTransportProxy``'s job is not
+    forwarding but marshaling across a thread boundary, so an
+    auto-forwarded NEW method would cross unmarshaled — trading "silently
+    not delegated" for "silently delegated somewhere dangerous". Falling
+    at construction, not at first (mis)use, is the point.
+    """
+
+    def attach_failed(self) -> bool:
+        return False
+
+    async def run_slash_command(self, name: str, args: str) -> bool:
+        return False
+
+    async def cancel_queued(self, msg_id: str) -> bool:
+        return False
+
+    async def request_attach(self, agent_name: str) -> bool:
+        return False
+
+    async def request_session_switch(self, session_id: str) -> bool:
+        return False
+
+    async def request_artifact_list(self, *, agent: str) -> "tuple[list[dict], int]":
+        return [], 0
+
+    async def state_ready(self) -> None:
+        return None
+
+    async def clear_pending_command_ui(self) -> None:
+        return None
+
+    def reyn_state_root(self) -> "Path | None":
+        return None
 
 
 def pending_head_id(head: object, *, caller: str) -> "str | None":
@@ -431,4 +493,4 @@ def pending_head_id(head: object, *, caller: str) -> "str | None":
     return None
 
 
-__all__ = ["ClientTransport", "pending_head_id"]
+__all__ = ["ClientTransport", "ClientTransportStub", "pending_head_id"]
