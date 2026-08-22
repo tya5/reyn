@@ -23,34 +23,66 @@ the note any good" — nothing here reads the note's content. It is only:
 3. a ``tests/``-touching PR carries at least one note (none -> red) — rule 8
    itself, which nothing has been checking mechanically.
 
-The note's CLAIM line (e.g. ``TESTS-READ (B) (head abc1234)``) lives in the PR
-**body**, not a comment. #5138: GitHub attaches a check run to the sha the
-triggering event carries, and an ``issue_comment`` event (fired when a
-comment is posted) carries the DEFAULT BRANCH's sha, not the PR's head — a run
-it starts can never land on the PR's own check rollup. Measured: 4 of 4 PRs
-whose note arrived as a comment (#5127, #5128, #5132, #5136) stayed red until
-a human re-ran the workflow by hand. A ``pull_request: edited`` event — which
-fires when the PR body changes — carries the PR's own head, so the check lands
-where it needs to. Comments remain the place for the note's GROUNDS (the
-four-section reviewer write-up: six-questions answers, scope, limits) — only
-the one-line claim moved. Comments are still fetched here, but only to give a
-precise diagnostic when a claim landed in the wrong place (see ``evaluate``).
+#5138: the note's CLAIM line lives in a PR **comment**, and only its FIRST
+LINE is ever read (see ``_NOTE_MARKER`` / ``evaluate``). That comment's line 1
+must carry the marker AND the head SHA together, e.g.
+``**[e2e-coder]** — TESTS-READ (B: independent) (head 9cc100605)``. The
+GROUNDS behind the claim (six-questions answers, scope, limits) live from
+line 2 onward and are never read.
 
-Deliberately NOT closed, and broader than "an author can edit the body to
-swap in a newer SHA with no new review behind it": moving the claim line from
-a comment to the body moved it onto the side rule 8 exists to check. A
-comment has an author distinct from the PR's; this gate could at least infer
-"someone other than the author wrote this" from that (weak, but a signal).
-The PR body has no such distinction — the PR's own author writes and edits it
-freely. So this gate establishes only that A CLAIM NAMES THIS TREE, never
-that a reviewer made the claim; that authorship signal is not weakened by
-this move, it is GONE. This is this repo's own named shape: a discriminator a
-trust decision reads must not come from the side being classified. Rule 8's
-actual review requirement rests on a human reading the PR before merging, not
-on this check — a green here is not evidence that review happened, only that
-some text in the body names a commit of this PR. Attempting to verify
-authorship with a text predicate is out of reach here and would produce
-exactly the "a checklist item answered yes every time" shape CLAUDE.md
+This shape had two earlier revisions, both measured wrong:
+
+- **Rev 1 (this file's own #5039 history):** the claim's home was ANY line of
+  ANY comment. `find_note_shas` read a whole comment body, so prose that
+  merely *discussed* TESTS-READ — with an unrelated SHA-shaped token nearby —
+  could pass.
+- **Rev 2 (#5138, briefly): the claim moved into the PR BODY.** A
+  ``pull_request: edited`` event carries the PR's own head sha, so a body
+  edit's check run lands where it needs to (an ``issue_comment`` run carries
+  the DEFAULT BRANCH's sha instead — measured 4/4, #5127/#5128/#5132/#5136
+  stayed red until a human re-ran the workflow by hand). But the PR body is
+  one document serving many purposes at once (description, Test plan,
+  reviewer blocking points, bootstrap notes) — measured on the PR that
+  introduced this exact revision (#5144): the body discussed TESTS-READ in
+  prose *and* a real commit SHA of the PR appeared elsewhere in that same
+  prose (a fixing-commit reference in a checked-off blocking point), and the
+  gate went green with no reviewer note at all. A comment is one document,
+  one purpose, and this predicate now additionally requires the marker and
+  the SHA to be co-located on that comment's OWN FIRST LINE — a document that
+  is *about* TESTS-READ, rather than *stating* a TESTS-READ claim, does not
+  put the marker there. This removes self-reference SYNTACTICALLY, not
+  statistically: it is not that a marker-plus-SHA elsewhere in a multi-line
+  comment is merely less likely to be read as a claim — it is structurally
+  excluded, because ``evaluate`` never looks past a comment's first line.
+
+Reporting: a check run attaches to the sha its *triggering event* carries,
+and ``issue_comment`` (fired when a comment is posted — the event that has to
+re-run this gate, since ``pull_request`` does not fire on a new comment)
+carries the default branch's sha, not the PR's. So the CI workflow does not
+rely on a check run at all; it posts a GitHub commit **status** to the PR's
+own head sha, resolved once via ``gh pr view`` regardless of which event
+triggered the run. One reporting channel, not two (architect's first
+objection to this shape, on an earlier round: a check run and a commit
+status both encoding "did this pass" is the exact class this repo spent an
+evening closing). The workflow posts `pending` before running this script and
+`success`/`failure` after — not decoration: it is what keeps a job that dies
+mid-run from going silent (architect's second objection: a job forced to
+always exit 0 so it never reds is a gate that fires and says nothing). See
+``check-tests-read-names-its-tree.yml`` for the three-step shape that
+provides this; it is not something a pure Python predicate can exercise, and
+the test suite says so plainly rather than pretending to cover it.
+
+Deliberately NOT closed: this predicate proves only that a comment's first
+line names a fresh commit of this PR — never that a *reviewer* wrote it.
+Every session in this repo authenticates as the same ``gh`` user (house
+rule preamble, PR-workflow doc), so comment authorship cannot distinguish
+reviewer from author any more than body authorship could; the syntactic
+first-line restriction closes the #5144 false-green (a claim can no longer
+hide inside prose that merely discusses the marker), but it does not and
+cannot establish WHO posted the claim. Rule 8's actual review requirement is
+enforced by a human reading the PR before merging, not by this check. Text
+predicates over authorship are out of reach here, and pretending otherwise
+would be the "a checklist item answered yes every time" shape CLAUDE.md
 already warns about.
 
 stdlib-only (argparse / json / re / subprocess), mirroring
@@ -64,14 +96,12 @@ import re
 import subprocess
 import sys
 
-#: A TESTS-READ note's CLAIM line is recognised by this marker appearing in
-#: the PR **body** (#5138 — a check run lands on the sha the triggering event
-#: carries, and only ``pull_request: edited``, which fires on a body edit,
-#: carries the PR's own head; an ``issue_comment`` run carries the default
-#: branch's sha and its result can never reach the PR). Matched
-#: case-insensitively and tolerating the ``TESTS-READY`` typo that several
-#: sessions produce, because the gate must not turn a typo into "no note
-#: landed" (that would fail the PR for the wrong reason).
+#: A TESTS-READ note's claim line is recognised by this marker appearing on a
+#: comment's FIRST LINE (see ``_first_line`` / ``evaluate``) — never a line 2+
+#: only appearance, and never the PR body. Matched case-insensitively and
+#: tolerating the ``TESTS-READY`` typo that several sessions produce, because
+#: the gate must not turn a typo into "no note landed" (that would fail the
+#: PR for the wrong reason).
 _NOTE_MARKER = re.compile(r"TESTS-READ(?:Y)?", re.IGNORECASE)
 
 #: A 7-40 char hex run, the shape `git rev-parse` prints. Bounded on both sides
@@ -87,8 +117,20 @@ _SHA_FALSE_FRIENDS = frozenset({
 })
 
 
-def find_note_shas(note_body: str, known_oids: "list[str]") -> "list[str]":
-    """The SHA-shaped tokens in *note_body* that are actually commits of
+def _first_line(text: str) -> str:
+    """*text*'s first line, ``\\n``-delimited, with no trailing newline.
+
+    The gate's entire "read only the claim, not the grounds" boundary is
+    this one split: a comment's line 2 onward (the six-questions write-up,
+    scope, limits) is never passed to ``_NOTE_MARKER`` or ``find_note_shas``
+    at all — not filtered out after being read, but never handed to either
+    of them, which is what makes the exclusion syntactic rather than a
+    matter of degree."""
+    return text.split("\n", 1)[0]
+
+
+def find_note_shas(note_line: str, known_oids: "list[str]") -> "list[str]":
+    """The SHA-shaped tokens in *note_line* that are actually commits of
     this PR (prefix-matched against *known_oids*).
 
     Membership is the whole point, not a nicety: a bare hex pattern also
@@ -99,7 +141,7 @@ def find_note_shas(note_body: str, known_oids: "list[str]") -> "list[str]":
     failed. A token that is not one of this PR's commits is not a claim about
     this PR's tree, so it is not a SHA for this gate's purposes."""
     out: "list[str]" = []
-    for cand in _SHA.findall(note_body):
+    for cand in _SHA.findall(note_line):
         if cand.lower() in _SHA_FALSE_FRIENDS:
             continue
         if any(oid.startswith(cand) or cand.startswith(oid) for oid in known_oids if oid):
@@ -130,46 +172,43 @@ def tests_commits_after(sha: str, commits: "list[dict]") -> "list[dict]":
 def evaluate(pr: dict) -> "tuple[int, list[str]]":
     """``(exit_code, lines)`` for one PR payload.
 
-    *pr* carries ``files`` (list of path strings), ``body`` (str — the PR
-    description, where the note's CLAIM line lives, #5138), ``comments``
-    (list of ``{'body':}`` — where the note's GROUNDS, the reviewer's
-    write-up, still lives, and read here only to produce a precise
-    diagnostic when a claim landed there instead), ``commits`` (oldest
-    first, each ``{'oid':, '_tests_paths':}``) and ``headRefOid``. Pure —
-    the live and fixture paths both build this shape first, so the decision
-    is testable without GitHub.
+    *pr* carries ``files`` (list of path strings), ``comments`` (list of
+    ``{'body':}``), ``commits`` (oldest first, each ``{'oid':,
+    '_tests_paths':}``) and ``headRefOid``. Pure — the live and fixture paths
+    both build this shape first, so the decision is testable without GitHub.
 
-    What a green return means, precisely: A CLAIM IN THE BODY NAMES A FRESH
-    COMMIT OF THIS PR. It does NOT mean a reviewer made that claim — the PR
-    body is written and edited by the PR's own author, with no distinct
-    authorship signal this function (or any text predicate) can read. Rule
-    8's actual review requirement is enforced by a human reading the PR
-    before merging, not by this check; treat a green here as "the tree is
-    named", never as "the tree was reviewed"."""
+    A claim is a comment whose FIRST LINE (``_first_line``) matches
+    ``_NOTE_MARKER``; the SHA search (``find_note_shas``) also runs only over
+    that first line, never the rest of the comment. A comment that mentions
+    TESTS-READ only from its second line onward is not a claim at all — it
+    falls into the same "no note" bucket as a comment that never mentions it,
+    which is deliberate: a document *about* the marker is not a document
+    *stating* the marker.
+
+    What a green return means, precisely: A COMMENT'S FIRST LINE NAMES A
+    FRESH COMMIT OF THIS PR. It does NOT mean a reviewer made that claim —
+    every session here authenticates as the same ``gh`` user, so comment
+    authorship carries no reviewer/author distinction for this function (or
+    any text predicate) to read. Rule 8's actual review requirement is
+    enforced by a human reading the PR before merging, not by this check;
+    treat a green here as "the tree is named", never as "the tree was
+    reviewed"."""
     touched_tests = [p for p in pr.get("files", []) if p.startswith("tests/")]
     if not touched_tests:
         return 0, ["OK — this PR does not touch tests/; rule 8 does not apply."]
 
-    body = pr.get("body", "") or ""
-    notes = [{"body": body}] if _NOTE_MARKER.search(body) else []
+    notes = [
+        _first_line(c.get("body", ""))
+        for c in pr.get("comments", [])
+        if _NOTE_MARKER.search(_first_line(c.get("body", "")))
+    ]
     if not notes:
-        comment_notes = [
-            c for c in pr.get("comments", []) if _NOTE_MARKER.search(c.get("body", ""))
-        ]
-        if comment_notes:
-            return 1, [
-                "RED — a TESTS-READ note landed in a comment, not the PR body.",
-                "  The claim line belongs in the body (e.g. `TESTS-READ (B) (head",
-                "  abc1234)`); the write-up behind it can stay a comment. Reason:",
-                "  a check run lands on the sha the triggering event carries, and",
-                "  only an event that carries THIS PR's head (a body edit) can put",
-                "  the result on this PR — a comment-triggered run's result lands",
-                "  on the default branch instead and never reaches this PR.",
-            ]
         return 1, [
             "RED — this PR touches tests/ but carries no TESTS-READ note.",
             "  House rule 8: a PR touching tests/ does not self-merge until a",
-            "  reviewer's TESTS-READ note lands on the PR body.",
+            "  reviewer's TESTS-READ note lands on it — the marker and the head",
+            "  SHA must both be on a comment's FIRST line; a marker mentioned",
+            "  only from line 2 onward does not count as a note.",
             f"  tests/ files touched: {len(touched_tests)}",
         ]
 
@@ -189,7 +228,7 @@ def evaluate(pr: dict) -> "tuple[int, list[str]]":
     oids = [c.get("oid", "") for c in commits]
     lines: "list[str]" = []
     for note in notes:
-        shas = find_note_shas(note.get("body", ""), oids)
+        shas = find_note_shas(note, oids)
         if not shas:
             continue
         for sha in shas:
@@ -204,7 +243,8 @@ def evaluate(pr: dict) -> "tuple[int, list[str]]":
     if not lines:
         return 1, [
             "RED — a TESTS-READ note landed, but none of them names a commit of",
-            "  this PR. Add the head you read (e.g. `TESTS-READ (B) (head abc1234)`).",
+            "  this PR. Add the head you read (e.g. `TESTS-READ (B) (head abc1234)`),",
+            "  on the SAME first line as the marker.",
             "  An issue-comment id is not a tree name — it is hex-shaped, and this",
             "  gate's first live run mistook one for a SHA.",
             "  Without it, nothing can tell whether the note is a claim about THIS tree.",
@@ -212,7 +252,7 @@ def evaluate(pr: dict) -> "tuple[int, list[str]]":
 
     stale: "list[str]" = []
     for note in notes:
-        for sha in find_note_shas(note.get("body", ""), oids):
+        for sha in find_note_shas(note, oids):
             for c in tests_commits_after(sha, commits):
                 stale.append(f"  {c.get('oid', '')[:9]} {c.get('messageHeadline', '')[:60]}")
     return 1, [
@@ -268,7 +308,7 @@ def fetch_pr(number: int) -> dict:
     ).stdout.strip()
     raw = subprocess.run(
         ["gh", "pr", "view", str(number), "--json",
-         "body,files,comments,commits,headRefOid"],
+         "files,comments,commits,headRefOid"],
         capture_output=True, text=True, check=True,
     ).stdout
     data = json.loads(raw)
@@ -284,7 +324,6 @@ def fetch_pr(number: int) -> dict:
         for c in data.get("commits", [])
     ]
     return {
-        "body": data.get("body", ""),
         "files": [f.get("path", "") for f in data.get("files", [])],
         "comments": data.get("comments", []),
         "commits": commits,
@@ -304,9 +343,8 @@ def build_parser() -> argparse.ArgumentParser:
     group.add_argument(
         "--fixture", metavar="PATH",
         help=(
-            "JSON file with keys 'body' (the PR description, where the "
-            "note's claim line lives), 'files' (paths), 'comments' "
-            "([{'body':}], read only for the wrong-place diagnostic), "
+            "JSON file with keys 'files' (paths), 'comments' ([{'body':}], "
+            "only each one's first line is read as a possible claim), "
             "'commits' (oldest first, [{'oid':, 'messageHeadline':, "
             "'_tests_paths':}]) and 'headRefOid'. Lets this run offline."
         ),
