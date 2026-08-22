@@ -225,13 +225,27 @@ class AgUiTransport(ClientTransport):
         no-op invisible rather than merely delayed).
 
         ALWAYS enqueues :data:`_SSE_DONE` on the way out (``finally``),
-        whichever of the 3 exits it takes — the ``__end__`` DisplayFrame
+        whichever of the 4 exits it takes — the ``__end__`` DisplayFrame
         (normal production shutdown), the source running dry with no
-        ``__end__`` (every finite test double), or a raised exception
-        (connection drop). Without this, :meth:`frames` — which now waits
-        on the shared queue rather than driving ``self._sse_lines``
-        itself — has no way to learn "no more SSE frames are coming" and
-        would hang forever on ``await self._display_queue.get()``.
+        ``__end__`` (every finite test double), a raised exception
+        (connection drop), OR :meth:`close` cancelling this task (a
+        ``CancelledError`` still runs ``finally``). Without this,
+        :meth:`frames` — which now waits on the shared queue rather than
+        driving ``self._sse_lines`` itself — has no way to learn "no more
+        SSE frames are coming" and would hang forever on
+        ``await self._display_queue.get()``.
+
+        ``put_nowait``, not ``await put`` (architect co-vet,
+        issuecomment-5380005757): this queue is unbounded today, so
+        ``await put(...)`` never actually suspends — but that is an
+        accident of the current ``maxsize``, not a guarantee this method
+        can lean on. Under cancellation (the 4th exit above), an ``await``
+        inside ``finally`` IS a real suspension point a future bounded
+        queue could get cancelled AT, before the sentinel ever lands —
+        silently breaking the "ALWAYS" this docstring promises.
+        ``put_nowait`` cannot be interrupted mid-call, so the sentinel
+        genuinely always lands, regardless of what ``self._display_queue``
+        becomes later.
         """
         try:
             block: list[str] = []
@@ -263,7 +277,7 @@ class AgUiTransport(ClientTransport):
                     await suspend_between_frames()  # #3570, same reason as above
                     await self._display_queue.put(frame)
         finally:
-            await self._display_queue.put(_SSE_DONE)
+            self._display_queue.put_nowait(_SSE_DONE)
 
     async def frames(self) -> "AsyncIterator[Frame]":
         # Started lazily, once, on first iteration (production calls this

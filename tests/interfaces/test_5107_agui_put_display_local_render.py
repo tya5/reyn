@@ -18,12 +18,27 @@ rejects) exercises the FAILURE branch too. Both strip-falsified below:
 reverting :meth:`AgUiTransport.put_display` to the pre-#5107 no-op
 turns BOTH red.
 
+A third witness (architect co-vet, issuecomment-5380005757) targets a
+narrower, easy-to-miss claim: ``_pump_sse``'s own docstring says it
+puts the ``_SSE_DONE`` sentinel on EVERY exit — including
+:meth:`AgUiTransport.close` cancelling the pump task — so
+:meth:`AgUiTransport.frames`, blocked on the shared queue's ``get()``,
+is guaranteed to unblock rather than hang forever. ①② never exercise
+that specific exit (the empty test SSE source finishes on its own,
+never via cancellation) — this test drives ``close()`` WHILE ``frames()``
+is genuinely blocked waiting, and was the reason ``put_nowait`` (not
+``await put``) matters: an ``await`` inside a ``finally`` block IS a
+real suspension a future bounded queue could get cancelled AT, before
+the sentinel ever lands.
+
 Real ``AgUiTransport`` (constructed directly, a real, minimal
 ``sse_lines``/``send`` pair — the same shape ``test_5001_remote_notice_
 delivery.py`` and ``test_3310_n3_remote_switch_parity.py`` already use)
 + the real ``maybe_dispatch_slash``/slash registry — no mocks.
 """
 from __future__ import annotations
+
+import asyncio
 
 import pytest
 
@@ -99,3 +114,43 @@ async def test_attach_failure_reply_reaches_a_real_remote_transport() -> None:
     assert any("could not confirm" in t.lower() for t in texts), (
         f"expected attach_cmd's own False-branch wording; got {texts!r}"
     )
+
+
+@pytest.mark.asyncio
+async def test_close_while_frames_blocked_on_get_unblocks_frames() -> None:
+    """Tier 2: #5107 witness ③ (architect co-vet, issuecomment-5380005757)
+    — ``close()`` cancelling the background SSE pump is the 4th exit
+    ``_pump_sse``'s own ``finally`` must cover, not just the 3 exits ①②
+    exercise (an empty test source finishing on its own). Drives
+    ``frames()`` against an SSE source that never yields (blocks
+    forever), waits — via a real ``asyncio.Event``, not a duration —
+    until the pump task has genuinely entered its own blocking wait
+    (deterministic: the consumer's ``await self._display_queue.get()``
+    is the very next line after the pump task is created, so by the
+    time the pump signals it has started, the consumer has already
+    suspended on the empty queue too), then calls ``close()``.
+
+    If the sentinel did not land on this exit, ``frames()`` would hang
+    on ``get()`` forever — this test would not fail, it would simply
+    never finish, exactly the failure mode CI's own timeout (not a
+    ``pytest.mark.timeout`` here) is the backstop for."""
+    pump_started = asyncio.Event()
+
+    async def _hanging_sse_lines():
+        pump_started.set()
+        never = asyncio.Event()
+        await never.wait()
+        yield ""  # pragma: no cover — never reached, makes this an async generator
+
+    async def _noop_send(_payload):
+        return None
+
+    transport = AgUiTransport(_hanging_sse_lines(), _noop_send, connected=True)
+
+    drain_task = asyncio.create_task(_drain_display_texts(transport))
+    await pump_started.wait()
+
+    transport.close()
+
+    texts = await drain_task
+    assert texts == [], f"no display frames were ever produced; got {texts!r}"
