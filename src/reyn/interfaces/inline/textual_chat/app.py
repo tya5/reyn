@@ -6365,31 +6365,34 @@ class TextualChatApp(App):
         #5001: appends directly via :meth:`_ingest_frame`, NOT ``self.
         _transport.put_display(...)``. This is a client-authored notice
         ABOUT this client's own composer state — it was never something the
-        server's outbox needed to carry, and routing it through the
-        transport seam meant ``AgUiTransport.put_display``'s no-op (a
-        CORRECT no-op — a remote client cannot inject into the server's
-        outbox) silently dropped this specific sentence on a remote client,
-        while the header's own connecting/failed STATE (read straight off
-        ``has_session()``/``attach_failed()``, independent of this method)
-        kept rendering — which is exactly why the gap went unnoticed: the
-        state looked fine. ``_ingest_frame`` is the SAME local-model append
-        both an in-process AND a remote client already use elsewhere for
-        purely client-side notices, so this now takes one path regardless
-        of transport, matching what ``AgUiTransport.put_display``'s own
-        docstring already claims for "client-authored echoes" — which
-        wasn't true for this call site until now.
+        server's outbox needed to carry.
+
+        ⚠️ Historical note (#5107 correction): at the time this call site
+        was written, ``AgUiTransport.put_display`` was an unconditional
+        no-op — routing through it would have silently dropped this
+        sentence on a remote client, which is why ``_ingest_frame`` was
+        chosen instead. #5107 (architect ruling B) fixed that no-op —
+        ``put_display`` now genuinely renders on this client's own face —
+        so the ORIGINAL reason to bypass it no longer holds. The bypass
+        stays anyway, for the separate, still-valid reason below
+        (immediacy vs FIFO ordering) — this is a decision that has kept
+        its conclusion but lost its original justification, worth naming
+        so nobody re-derives the wrong reason for it later.
 
         Ordering trade, stated on purpose (architect co-vet on #5004): the
-        OLD ``put_display`` path queued this notice on ``repl_outbox``,
-        landing "in FIFO order with the session's own output" (that
-        method's own docstring, verbatim). Appending via ``_ingest_frame``
-        is IMMEDIATE — it can now land ahead of any session output already
-        sitting in that outbox at the moment Enter was blocked. Deliberate:
-        this notice is about THIS client's own composer state right now,
-        not a delta from the session, so immediate is the right answer,
-        not a regression to paper over — but it IS a real position change,
-        named here so a future ordering-bug hunt doesn't rule this call
-        site out."""
+        OLD ``put_display`` path (pre-#5107, on ``InProcessTransport`` —
+        the only implementation this app used before AG-UI could carry it
+        too) queued this notice on ``repl_outbox``, landing "in FIFO order
+        with the session's own output" (that transport's own docstring,
+        verbatim — see ``ClientTransport.put_display``'s own docstring,
+        #5107, for why that guarantee was never part of the CONTRACT).
+        Appending via ``_ingest_frame`` is IMMEDIATE — it can now land
+        ahead of any session output already sitting in that outbox at the
+        moment Enter was blocked. Deliberate: this notice is about THIS
+        client's own composer state right now, not a delta from the
+        session, so immediate is the right answer, not a regression to
+        paper over — but it IS a real position change, named here so a
+        future ordering-bug hunt doesn't rule this call site out."""
         if self._transport.attach_failed():
             text = "attach failed (see log) — your message was kept; retry once resolved"
         else:
@@ -6441,7 +6444,8 @@ class TextualChatApp(App):
         own submit attempt, never something the server's outbox needed to
         carry, so routing it through the transport seam meant a remote
         client silently lost it to ``AgUiTransport.put_display``'s
-        no-op)."""
+        no-op — fixed since, #5107, but this call site's OWN reason to
+        bypass it stands independent of that fix)."""
         try:
             from reyn.interfaces.slash.dispatch import maybe_dispatch_slash
             if await maybe_dispatch_slash(self._transport, text):

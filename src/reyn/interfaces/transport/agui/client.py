@@ -47,6 +47,17 @@ from reyn.interfaces.transport.frames import DisplayFrame, EventFrame, Frame
 if TYPE_CHECKING:
     from pathlib import Path
 
+# #5107: the sentinel :meth:`AgUiTransport._pump_sse` enqueues on its own
+# way out (any of its 3 exits — the source running dry, an ``__end__``
+# DisplayFrame, or a raised exception) so :meth:`AgUiTransport.frames`
+# — which now waits on a shared queue instead of driving the SSE source
+# itself — can tell "no more SSE frames are coming" apart from "the queue
+# is just momentarily empty" and stop instead of hanging forever. A
+# module-level ``object()`` rather than ``None``: a locally-authored
+# ``put_display`` call could in principle wrap a falsy/None-ish payload,
+# and this must never be confused with one.
+_SSE_DONE = object()
+
 
 class AgUiTransport(ClientTransport):
     """Decode a server AG-UI SSE stream into the renderer's ``Frame`` vocabulary."""
@@ -75,6 +86,15 @@ class AgUiTransport(ClientTransport):
         # :meth:`state_ready`'s own docstring (on the base class) for why
         # this is a separate axis from :meth:`frames`.
         self._state_ready_event = asyncio.Event()
+        # #5107 (architect ruling B, issuecomment-5379950484): the merge
+        # point between two frame producers — the SSE pump (server-sent
+        # display, below) and :meth:`put_display` (CLIENT-authored display:
+        # a slash reply, an echo, an unknown-command note). Both feed the
+        # SAME queue :meth:`frames` drains, so a locally-authored message
+        # renders through the identical renderer path a server-sent one
+        # does, without waiting on the next SSE event to unblock it.
+        self._display_queue: "asyncio.Queue[Frame | object]" = asyncio.Queue()
+        self._sse_pump_task: "asyncio.Task[None] | None" = None
 
     # -- lifecycle ----------------------------------------------------------
 
@@ -88,6 +108,13 @@ class AgUiTransport(ClientTransport):
 
     def close(self) -> None:
         self._connected = False
+        # #5107: the SSE pump (started lazily by :meth:`frames`) is a
+        # background task now, not inline in the caller's own loop — it
+        # must be told to stop rather than leaking past this transport's
+        # own lifetime (most visible in tests: many short-lived transports
+        # constructed in one process).
+        if self._sse_pump_task is not None:
+            self._sse_pump_task.cancel()
 
     # -- status side-channel ------------------------------------------------
 
@@ -185,35 +212,97 @@ class AgUiTransport(ClientTransport):
                 out.append(self._reguard_frame(decoded))
         return out
 
+    async def _pump_sse(self) -> None:
+        """Decode ``self._sse_lines`` and feed each frame into the shared
+        display queue — the SAME queue :meth:`put_display` feeds (#5107).
+
+        This is the pre-#5107 body of :meth:`frames` itself, moved
+        verbatim into a background task rather than driven inline: a
+        locally-authored :meth:`put_display` call must be able to reach
+        the renderer WITHOUT waiting on the next SSE line to unblock the
+        ``async for`` below (the SSE stream is frequently idle between
+        server events — that idle wait is exactly what made the pre-#5107
+        no-op invisible rather than merely delayed).
+
+        ALWAYS enqueues :data:`_SSE_DONE` on the way out (``finally``),
+        whichever of the 4 exits it takes — the ``__end__`` DisplayFrame
+        (normal production shutdown), the source running dry with no
+        ``__end__`` (every finite test double), a raised exception
+        (connection drop), OR :meth:`close` cancelling this task (a
+        ``CancelledError`` still runs ``finally``). Without this,
+        :meth:`frames` — which now waits on the shared queue rather than
+        driving ``self._sse_lines`` itself — has no way to learn "no more
+        SSE frames are coming" and would hang forever on
+        ``await self._display_queue.get()``.
+
+        ``put_nowait``, not ``await put`` (architect co-vet,
+        issuecomment-5380005757): this queue is unbounded today, so
+        ``await put(...)`` never actually suspends — but that is an
+        accident of the current ``maxsize``, not a guarantee this method
+        can lean on. Under cancellation (the 4th exit above), an ``await``
+        inside ``finally`` IS a real suspension point a future bounded
+        queue could get cancelled AT, before the sentinel ever lands —
+        silently breaking the "ALWAYS" this docstring promises.
+        ``put_nowait`` cannot be interrupted mid-call, so the sentinel
+        genuinely always lands, regardless of what ``self._display_queue``
+        becomes later.
+        """
+        try:
+            block: list[str] = []
+            async for raw in self._sse_lines:
+                line = raw.rstrip("\n")
+                if line == "":
+                    if block:
+                        for frame in self._consume_block(block):
+                            # #3570, same property as ``InProcessTransport.frames``:
+                            # one SSE block decodes to MANY frames (a MESSAGES_SNAPSHOT
+                            # reconnect alone carries the whole backlog) and this inner
+                            # loop has no await of its own, while ``aiter_lines`` over a
+                            # buffered read returns without suspending either. Without
+                            # this line whether the loop breathes is a function of how
+                            # much the server packed into one block.
+                            await suspend_between_frames()
+                            await self._display_queue.put(frame)
+                            if (
+                                isinstance(frame, DisplayFrame)
+                                and frame.message.kind == "__end__"
+                            ):
+                                return
+                        block = []
+                    continue
+                block.append(line)
+            # Flush a trailing block with no terminal blank line.
+            if block:
+                for frame in self._consume_block(block):
+                    await suspend_between_frames()  # #3570, same reason as above
+                    await self._display_queue.put(frame)
+        finally:
+            self._display_queue.put_nowait(_SSE_DONE)
+
     async def frames(self) -> "AsyncIterator[Frame]":
-        block: list[str] = []
-        async for raw in self._sse_lines:
-            line = raw.rstrip("\n")
-            if line == "":
-                if block:
-                    for frame in self._consume_block(block):
-                        # #3570, same property as ``InProcessTransport.frames``:
-                        # one SSE block decodes to MANY frames (a MESSAGES_SNAPSHOT
-                        # reconnect alone carries the whole backlog) and this inner
-                        # loop has no await of its own, while ``aiter_lines`` over a
-                        # buffered read returns without suspending either. Without
-                        # this line whether the loop breathes is a function of how
-                        # much the server packed into one block.
-                        await suspend_between_frames()
-                        yield frame
-                        if (
-                            isinstance(frame, DisplayFrame)
-                            and frame.message.kind == "__end__"
-                        ):
-                            return
-                    block = []
-                continue
-            block.append(line)
-        # Flush a trailing block with no terminal blank line.
-        if block:
-            for frame in self._consume_block(block):
-                await suspend_between_frames()  # #3570, same reason as above
-                yield frame
+        # Started lazily, once, on first iteration (production calls this
+        # exactly once per connection — grepped, #5107 co-vet) rather than
+        # in ``__init__``/``start``: an event loop may not be running yet
+        # at construction time, and ``asyncio.create_task`` requires one.
+        if self._sse_pump_task is None:
+            self._sse_pump_task = asyncio.create_task(self._pump_sse())
+        while True:
+            frame = await self._display_queue.get()
+            if frame is _SSE_DONE:
+                return
+            # #3570 gate (test_stream_drain_yield_3570.py's own class gate):
+            # ``queue.get()`` suspends only while the queue is EMPTY — a
+            # burst already sitting in the queue (several ``_pump_sse``
+            # frames from one SSE block, or several rapid ``put_display``
+            # calls) would otherwise hand every ``yield`` to the consumer
+            # with the event loop never running in between. Paired here,
+            # not just in ``_pump_sse`` (which no longer yields at all, so
+            # its own copy doesn't satisfy this gate) — this is the seam
+            # this transport's ``frames()`` actually yields THROUGH now.
+            await suspend_between_frames()
+            yield frame
+            if isinstance(frame, DisplayFrame) and frame.message.kind == "__end__":
+                return
 
     # -- send side ----------------------------------------------------------
 
@@ -350,9 +439,17 @@ class AgUiTransport(ClientTransport):
         return bool(accepted)
 
     def put_display(self, msg) -> None:
-        # A remote client cannot inject into the server's outbox; client-authored
-        # echoes render locally through the renderer, not this seam. No-op here.
-        return None
+        # #5107 (architect ruling B, issuecomment-5379950484; lead-coder's
+        # contract-first correction, issuecomment-5379955824): the contract
+        # (ClientTransport.put_display's own docstring) only ever asked for
+        # "show it on this client's own face" -- this transport CAN satisfy
+        # that; a remote client genuinely cannot inject into the SERVER's
+        # own outbox (a different, stronger claim the old docstring here
+        # made, which was never this method's job to satisfy). Feeds the
+        # SAME queue the SSE-sourced frames merge into (self._pump_sse) so
+        # a slash reply / echo / unknown-command note renders through the
+        # identical renderer path a server-sent message does.
+        self._display_queue.put_nowait(DisplayFrame(msg))
 
     async def cancel_inflight(self) -> str:
         # #3903: fire-and-forget over the wire (no response frame in this

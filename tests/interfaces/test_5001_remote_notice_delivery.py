@@ -5,16 +5,24 @@ Both ``TextualChatApp._notify_blocked_on_attach`` (the "still connecting" /
 "attach failed" detail sentence shown when Enter is blocked) and
 ``TextualChatApp._submit``'s exception path (the "input could not be
 submitted: ..." error) used to route through ``self._transport.
-put_display(...)``. ``AgUiTransport.put_display`` is a CORRECT no-op — a
-remote client cannot inject into the server's outbox (#4996③'s own
-falsified design attempt tried to declare this as a "capability" and was
-rejected: nobody read the declaration, since both call sites discarded
-their own outcome already). The real defect was the CALL, not the no-op:
-both notices are entirely CLIENT-SIDE — about THIS client's own composer/
-submit attempt — and never needed the server's outbox at all. The fix
-(architect, #5001) routes them through ``_ingest_frame`` instead, the SAME
-local-model append both an in-process and a remote client already use for
-other purely client-side rows — one path, no transport branch.
+put_display(...)``. At the time this fix was written, ``AgUiTransport.
+put_display`` was an unconditional no-op — a remote client cannot inject
+into the SERVER's own outbox (#4996③'s own falsified design attempt
+tried to declare this as a "capability" and was rejected: nobody read the
+declaration, since both call sites discarded their own outcome already).
+★#5107 correction: that no-op is GONE now — ``put_display`` renders on
+THIS client's own face, which the contract (``ClientTransport.
+put_display``'s own docstring) only ever actually asked for; "inject into
+the server's outbox" was never the real requirement, just what the old
+no-op's own comment (wrongly) argued against. This module's own fix
+still stands on ITS OWN merits though (see ``_notify_blocked_on_attach``'s
+docstring in app.py for the #5107-updated account): both notices are
+entirely CLIENT-SIDE — about THIS client's own composer/submit attempt —
+so routing them through ``_ingest_frame`` is the right call regardless of
+whether ``put_display`` also works now. The fix (architect, #5001) routes
+them through ``_ingest_frame`` instead, the SAME local-model append both
+an in-process and a remote client already use for other purely
+client-side rows — one path, no transport branch.
 
 **Why the header's own "connecting"/"failed" STATE is not enough to catch
 this bug** (architect's own framing): the header reads ``has_session()``/
