@@ -141,15 +141,24 @@ def test_trace_line_uses_corner_marker() -> None:
 
 
 def test_intervention_keeps_question_text() -> None:
-    """Tier 2: an intervention line preserves the question text."""
-    out = _plain("intervention", "Which file?")
+    """Tier 2: an intervention line preserves the question text.
+
+    #5047 axis A: a genuine ``intervention_id`` is required, otherwise
+    ``OutboxMessage.from_wire`` demotes to ``kind="system"`` (the frame is
+    no longer identity-less — this test is about a WELL-FORMED
+    intervention, not the demotion path, which has its own dedicated
+    witness elsewhere)."""
+    out = _plain("intervention", "Which file?", meta={"intervention_id": "iv-x"})
     assert "Which file?" in out
 
 
 def test_intervention_suppresses_run_id_short_prefix() -> None:
     """Tier 2: intervention drops the [#short] run-id hash — it is cryptic noise on
     an interactive user-facing prompt where disambiguation is unnecessary (#2243)."""
-    out = _plain("intervention", "Confirm?", meta={"run_id_short": "ab12"})
+    out = _plain(
+        "intervention", "Confirm?",
+        meta={"run_id_short": "ab12", "intervention_id": "iv-x"},
+    )
     assert "#ab12" not in out
     assert "Confirm?" in out
 
@@ -159,7 +168,7 @@ def test_intervention_keeps_actor_prefix_when_present() -> None:
     actor is asking — only run_id_short (the cryptic hash) is suppressed."""
     out = _plain(
         "intervention", "Confirm?",
-        meta={"actor": "skill_builder", "run_id_short": "ab12"},
+        meta={"actor": "skill_builder", "run_id_short": "ab12", "intervention_id": "iv-x"},
     )
     assert "skill_builder" in out
     assert "#ab12" not in out
@@ -170,7 +179,7 @@ def test_kinds_use_distinct_markers() -> None:
     """Tier 2: message kinds carry distinct glyphs so the eye separates them — the
     assistant ● is not reused for an intervention (◆) or a tool invocation (▸)."""
     agent = _plain("agent", "x")
-    interv = _plain("intervention", "x")
+    interv = _plain("intervention", "x", meta={"intervention_id": "iv-x"})
     tool = _plain("tool_call_started", "", {"tool": "Bash", "args": {}})
     assert "●" in agent
     assert "◆" in interv and "●" not in interv
