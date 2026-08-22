@@ -103,7 +103,7 @@ from .presenter import (
     ReynPresenter,
     _neutralized_label,
 )
-from .restore import RESTORED_META_KEY, RESUME_DIVIDER, project_restored_frames
+from .restore import RESUME_DIVIDER, project_restored_frames
 from .rewind_picker import RewindPicker
 from .search_bar import SearchBar
 from .sent_queue import SentQueue
@@ -4447,36 +4447,47 @@ class TextualChatApp(App):
         self._register_call_parent(entry, kind, meta)
         if kind == "presentation":
             self._begin_image_resolutions(entry, msg)
-        # #5047: a REPLAYED (backlog) intervention reaches here on every
-        # (re)connect — ``restore.py``'s ``project_restored_frames``
-        # projects a history entry that WAS already answered into this
-        # SAME ``kind="intervention"`` shape, specifically so it renders
-        # through the presenter's existing RESOLVED branch
-        # (``ReynPresenter._present_intervention_pending``, keyed on
-        # ``meta["_answer_label"]``, same as ``gutter.py``'s own check at
-        # :228). Registering it as PENDING too (the old unconditional
-        # branch below) put a fake already-resolved entry into
-        # ``self._pending_ivs`` — harmless-looking (the presenter still
-        # drew "✓ answered"), but ``answer_oldest_intervention_text``/
-        # ``_choice`` deliver to the registry's OLDEST pending: a genuine
-        # answer could be misdelivered to whichever real entry sorts
-        # after this phantom one.
+        # #5047/#5057: a fake-pending ``kind="intervention"`` frame reaches
+        # here from more than one producer, and registering it as PENDING
+        # (the old unconditional branch below) put a phantom entry into
+        # ``self._pending_ivs`` — harmless-looking (the presenter can still
+        # draw it correctly, or it can be answered), but a genuine answer
+        # ``answer_oldest_intervention_text``/``_choice`` delivers to the
+        # registry's OLDEST pending: without a real ``intervention_id`` on
+        # THIS entry, an answer meant for it falls through to that
+        # oldest-pending fallback and can misdeliver to a completely
+        # unrelated, actually-pending entry.
         #
-        # ``RESTORED_META_KEY`` (fixed ``True``/absent), not
-        # ``_answer_label``: a restored intervention frame's
-        # ``_answer_label`` can itself be the EMPTY STRING (`restore.py`'s
-        # own ``meta.get(INTERVENTION_ANSWER_META_KEY, "")`` — a falsy
-        # check on the VALUE lets an empty-label restored frame slip
-        # through, the identical #4996-family "the value's own absence
-        # doesn't distinguish two different reasons" conflation, here on
-        # emptiness rather than None (lead-coder, mid-implementation,
-        # measured — `restore.py:95-104` — not guessed). Every restored
-        # ``kind="intervention"`` frame is, by construction, always
-        # already-answered (`restore.py`'s own docstring: an intervention
-        # NEVER answered has no history trace to restore from at all), so
-        # this marker is both necessary and sufficient — no restored
-        # intervention is ever genuinely still pending.
-        if kind == "intervention" and not (msg.meta or {}).get(RESTORED_META_KEY):
+        # #5047's own instance was a REPLAYED (backlog) intervention —
+        # ``restore.py``'s ``project_restored_frames`` projects an
+        # already-answered history entry into this SAME ``kind="intervention"``
+        # shape so it renders through the presenter's RESOLVED branch. #5057
+        # found TWO MORE producers with the identical shape (no
+        # ``intervention_id``, not restored either): ``stream_client.py``'s
+        # and this class's own ``/rewind`` text-list fallback, which reuse
+        # ``kind="intervention"`` purely for its PERSISTENT-render property
+        # (never un-answered "waiting" state to begin with). The original
+        # #5047 fix keyed on ``RESTORED_META_KEY`` — a marker naming ONE
+        # producer, not the property that actually matters, so it missed
+        # these two by construction (a fix keyed on "which producer wrote
+        # this" always misses the NEXT producer; #5057 is that miss
+        # happening).
+        #
+        # ``intervention_id`` presence is the real discriminator: it is the
+        # SAME value that decides, downstream, whether an answer can be
+        # routed ``answer_intervention_by_id`` (safe) or falls to
+        # ``answer_oldest_*`` (misdeliverable) — see
+        # ``ClientTransport.answer_intervention_text``/``_choice``'s own
+        # docstrings. ``announce`` (``intervention_handler.py``, the ONLY
+        # producer of a genuinely still-pending intervention) is also the
+        # ONLY one that sets it (``_iv_meta``, unconditionally). Discards:
+        # a future producer that legitimately needs pending-registration
+        # WITHOUT a real answerable id would silently fail this check too —
+        # none is known to exist today (only ``announce`` needs
+        # registration), but a new one must set ``intervention_id`` to a
+        # real, answerable id to pass, not merely omit the restored/rewind
+        # markers this replaces.
+        if kind == "intervention" and (msg.meta or {}).get("intervention_id"):
             self._present_intervention(msg, entry)
         else:
             self._apply_lifecycle_state(msg, entry)
