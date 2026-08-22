@@ -38,10 +38,11 @@ pytest.importorskip("httpx", reason="httpx not installed (needed by TestClient)"
 # #5058 (group C): this file never imports the mcp SDK — both tests exercise
 # /mcp/messages purely over HTTP via TestClient, checking the mount's own 4xx
 # handling. _mount_mcp (surfaces.py) already catches an mcp ImportError
-# defensively at app-build time (mcp ships transitively via the core
-# `fastmcp` dependency, so that path is a broken-install signal, not a normal
-# absent-extra one) — this test file was skipping for a reason unrelated to
-# what it actually tests.
+# defensively at app-build time (mcp is itself a DIRECT core dependency,
+# `pyproject.toml`'s `mcp>=2.0,<3.0` -- #4412; fastmcp was dropped from
+# core AND every extra entirely, #4302, and never carried mcp -- so that
+# path is a broken-install signal, not a normal absent-extra one) -- this
+# test file was skipping for a reason unrelated to what it actually tests.
 
 
 # ---------------------------------------------------------------------------
