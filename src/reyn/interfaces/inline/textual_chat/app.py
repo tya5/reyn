@@ -103,7 +103,7 @@ from .presenter import (
     ReynPresenter,
     _neutralized_label,
 )
-from .restore import RESUME_DIVIDER, project_restored_frames
+from .restore import RESTORED_META_KEY, RESUME_DIVIDER, project_restored_frames
 from .rewind_picker import RewindPicker
 from .search_bar import SearchBar
 from .sent_queue import SentQueue
@@ -4447,7 +4447,36 @@ class TextualChatApp(App):
         self._register_call_parent(entry, kind, meta)
         if kind == "presentation":
             self._begin_image_resolutions(entry, msg)
-        if kind == "intervention":
+        # #5047: a REPLAYED (backlog) intervention reaches here on every
+        # (re)connect — ``restore.py``'s ``project_restored_frames``
+        # projects a history entry that WAS already answered into this
+        # SAME ``kind="intervention"`` shape, specifically so it renders
+        # through the presenter's existing RESOLVED branch
+        # (``ReynPresenter._present_intervention_pending``, keyed on
+        # ``meta["_answer_label"]``, same as ``gutter.py``'s own check at
+        # :228). Registering it as PENDING too (the old unconditional
+        # branch below) put a fake already-resolved entry into
+        # ``self._pending_ivs`` — harmless-looking (the presenter still
+        # drew "✓ answered"), but ``answer_oldest_intervention_text``/
+        # ``_choice`` deliver to the registry's OLDEST pending: a genuine
+        # answer could be misdelivered to whichever real entry sorts
+        # after this phantom one.
+        #
+        # ``RESTORED_META_KEY`` (fixed ``True``/absent), not
+        # ``_answer_label``: a restored intervention frame's
+        # ``_answer_label`` can itself be the EMPTY STRING (`restore.py`'s
+        # own ``meta.get(INTERVENTION_ANSWER_META_KEY, "")`` — a falsy
+        # check on the VALUE lets an empty-label restored frame slip
+        # through, the identical #4996-family "the value's own absence
+        # doesn't distinguish two different reasons" conflation, here on
+        # emptiness rather than None (lead-coder, mid-implementation,
+        # measured — `restore.py:95-104` — not guessed). Every restored
+        # ``kind="intervention"`` frame is, by construction, always
+        # already-answered (`restore.py`'s own docstring: an intervention
+        # NEVER answered has no history trace to restore from at all), so
+        # this marker is both necessary and sufficient — no restored
+        # intervention is ever genuinely still pending.
+        if kind == "intervention" and not (msg.meta or {}).get(RESTORED_META_KEY):
             self._present_intervention(msg, entry)
         else:
             self._apply_lifecycle_state(msg, entry)
