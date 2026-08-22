@@ -26,8 +26,9 @@ status/region state from, with two implementations —
   read (:func:`project_remote_snapshot`).
 
 **Frame-sufficiency (what a remote client CAN show).** The server projects only
-the MAIN-bar subset onto the wire (``state.py``'s ``project_status`` /
-``_WIRE_KEYS``): ``model`` · ``attached_name`` · ``cost_agent`` / ``cost_total``
+the MAIN-bar subset onto the wire (``state.py``'s ``project_status`` — the
+sole declaration of the wire vocabulary, #5098):
+``model`` · ``attached_name`` · ``cost_agent`` / ``cost_total``
 / ``agent_tokens`` · ``ctx_used`` / ``ctx_window`` · ``waiting_on`` ·
 ``pending_intervention_head`` (#5050). Those chip VALUES, and now the pending
 intervention head itself, are genuinely readable via :meth:`RemoteReadModel.
@@ -677,8 +678,8 @@ def project_remote_snapshot(values: "dict | None") -> dict:
         # -- MAIN bar (frame-available via STATE_*) --
         "model": v.get("model") or "—",
         "attached_name": v.get("attached_name"),
-        # #5094: real wire data (agui/state.py's own _WIRE_KEYS carries
-        # these 4) — previously a hand-typed `[]`/`None` literal here
+        # #5094: real wire data (agui/state.py's own ``project_status`` dict
+        # carries these 4, #5098) — previously a hand-typed `[]`/`None` literal here
         # UNCONDITIONALLY emptied a remote client's agent tab and
         # model-class picker regardless of how many agents/model classes
         # the server actually had (owner live-blocked on this, #5041).
@@ -783,7 +784,7 @@ def project_remote_snapshot(values: "dict | None") -> dict:
         # (#5034 — same fabrication shape as ``hooks_reported`` above).
         "pipelines": [],
         # #3300 P2b: the server-authoritative sent-queue state IS on the wire
-        # (state.py's ``_WIRE_KEYS`` / ``project_status``, folded in by P2a) —
+        # (state.py's ``project_status``, folded in by P2a, #5098) —
         # project it through unlike the session-local keys above, so
         # ``ChatReadModel.snapshot()`` returns queue info uniformly for BOTH
         # local (``RegistryReadModel``, straight off ``_snapshot()``) and
