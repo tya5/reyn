@@ -1083,7 +1083,14 @@ async def agui_submit(request: Request, agent_name: str):
             # own "the announce is enqueued BEFORE _bind" barrier) — the
             # reverse would leave a window where this connection belongs to
             # NO manager, and anything arriving in that window (a seize, an
-            # answer) has no surface to resolve against.
+            # answer) has no surface to resolve against. This ordering's
+            # own consequence (architect co-vet): between `new_manager.
+            # attach` below and `old_manager.detach` further down, this
+            # connection briefly belongs to BOTH managers (the `await
+            # registry.ensure_running` in between yields the event loop).
+            # A concurrent HITL answer landing in that window is rejected
+            # by delivery-time re-authorization, not misdelivered — the
+            # safe default, not a bug.
             #
             # (a) driver token: NEVER carried across. `SurfaceManager.
             # attach` already encodes the right default (first surface on
@@ -1115,18 +1122,39 @@ async def agui_submit(request: Request, agent_name: str):
             # change). `agent_name` here is still #5129's OWN resolution
             # (the connection's agent BEFORE this attach), captured before
             # `target` shadows it below.
+            # lead-coder co-vet (issuecomment-5383186154): the prior draft
+            # `await`ed `registry.ensure_running(agent_name)` here — an
+            # exception/cancellation crossing that await between arrival
+            # (above) and this detach would leave this connection
+            # registered in BOTH managers FOREVER (detach never runs), so
+            # the old manager keeps counting a surface that already left;
+            # if it was the last real one, grace never arms — fail-close
+            # silently fails OPEN. `registry.get_session` (sync,
+            # non-loading, `None` if not currently running) removes that
+            # window entirely — no await between attach and detach means
+            # no suspension point for a cancellation to land in. (This
+            # request's own earlier, UNRELATED `session = await registry.
+            # ensure_running(agent_name)` — shared by every non-heartbeat/
+            # non-answer ptype, attach_request included — already booted
+            # the old agent by the time execution reaches here regardless;
+            # this change is about not adding a SECOND boot + a new crash
+            # window on top of that, not about whether the old agent ends
+            # up running.) `old_manager.detach`/`_ensure_fail_close_driver`
+            # never needed a session at all.
             old_manager = surface_registry().get(agent_name)
             if old_manager is not None and old_manager is not new_manager:
-                old_session = await registry.ensure_running(agent_name)
                 old_manager.detach(connection_id, now)
+                old_session = registry.get_session(agent_name)
                 if not old_manager.has_surfaces():
-                    old_session.unregister_intervention_listener(AGUI_OPERATOR_CHANNEL)
+                    if old_session is not None:
+                        old_session.unregister_intervention_listener(AGUI_OPERATOR_CHANNEL)
                     _ensure_fail_close_driver(agent_name, old_manager, registry)
-                old_session.emit_audit_event(
-                    "client_detached",
-                    auth_user_id=identity.user_id,
-                    auth_connection_id=connection_id,
-                )
+                if old_session is not None:
+                    old_session.emit_audit_event(
+                        "client_detached",
+                        auth_user_id=identity.user_id,
+                        auth_connection_id=connection_id,
+                    )
 
             # #5116 (architect co-vet, issuecomment-5380501066): this POST
             # is a DIFFERENT HTTP request than the SSE stream it needs to
