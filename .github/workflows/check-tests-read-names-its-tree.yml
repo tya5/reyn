@@ -1,0 +1,52 @@
+name: TESTS-READ names its tree
+
+# #5039: house rule 8 ("a PR touching tests/ does not self-merge until a
+# reviewer's TESTS-READ note lands") is satisfied by the note EXISTING —
+# nothing looks at WHICH tree the note is a claim about. Measured on one
+# evening (2026-08-22): four PRs each carried a note that read an earlier head
+# and then tests/ moved (#5090, #5095, #5096, #5038). All four read green.
+#
+# Same shape as check-pr-closing-intent.yml (the only other workflow that
+# inspects a PR's own text rather than its tree): a dedicated workflow, not
+# folded into test.yml, because it must re-run on `edited` — a reviewer who
+# adds the head to an existing note needs the gate to re-evaluate, and
+# `edited` is not a default pull_request event type. `synchronize` re-runs it
+# against the updated commit set, which is the whole point: a note that was
+# current becomes stale the moment tests/ moves.
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  tests-read-names-its-tree:
+    name: TESTS-READ note names the tree it read
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          # The check reads each PR commit's touched paths via `git show`, and
+          # refuses (loudly) rather than reporting a result computed from
+          # commits it could not read. A shallow checkout does not have them,
+          # so that refusal would fire on every PR — a false red, which is as
+          # bad as the false green this gate exists to remove.
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      # scripts/check_tests_read_names_its_tree.py is stdlib-only
+      # (argparse / json / re / subprocess). No pip install needed.
+      - name: Check the TESTS-READ note names this PR's tree
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python scripts/check_tests_read_names_its_tree.py --pr "${{ github.event.pull_request.number }}"
