@@ -135,6 +135,7 @@ what broke.
 from __future__ import annotations
 
 import argparse
+import ast
 import json
 import keyword
 import re
@@ -495,18 +496,126 @@ def resolve_pr_shas(pr_number: int) -> "tuple[str, str]":
     return data["baseRefOid"], data["headRefOid"]
 
 
+def _blank_span(
+    lines: "list[str]", start: "tuple[int, int]", end: "tuple[int, int]",
+) -> None:
+    """Blank out the source span *start*..*end* (1-indexed line, 0-indexed
+    col — the shape both ``ast`` node positions and ``tokenize`` token
+    positions already use) IN PLACE on *lines*, replacing every redacted
+    character with a space so line/col positions of everything else are
+    unaffected — a caller never needs a remap, only a plain substring
+    search over the result."""
+    (start_line, start_col), (end_line, end_col) = start, end
+    if start_line == end_line:
+        line = lines[start_line - 1]
+        lines[start_line - 1] = line[:start_col] + " " * (end_col - start_col) + line[end_col:]
+        return
+    first = lines[start_line - 1]
+    body_len = len(first.rstrip("\n"))
+    lines[start_line - 1] = first[:start_col] + " " * (body_len - start_col) + first[body_len:]
+    for mid in range(start_line, end_line - 1):
+        body_len = len(lines[mid].rstrip("\n"))
+        lines[mid] = " " * body_len + lines[mid][body_len:]
+    last = lines[end_line - 1]
+    lines[end_line - 1] = " " * end_col + last[end_col:]
+
+
+def _redact_comments_and_docstrings(source: str) -> "str | None":
+    """Return *source* with every COMMENT token (``tokenize``) and every
+    real docstring — a module/class/function's own first statement, an
+    ``Expr(Constant(str))`` node (``ast``) — blanked out span-for-span.
+    Everything else, including ORDINARY string literals (``data.get(
+    "broker_identity")`` is a real, live use, not prose), is left
+    untouched.
+
+    Architect ruling (#5010, issuecomment-5380169887): the discriminator
+    this backs (:func:`identifier_survives_in_src`) was asking "does this
+    identifier appear as a STRING anywhere in src/" — unable to tell a
+    living code occurrence from a comment/docstring PROSE citation
+    recording that the identifier was removed (a correct, encouraged
+    practice this repo's own convention keeps — see this module's own
+    docstring on history-class docs for the doc-side analogue). Fixing
+    the SIDE that guesses (the identifier-survives check), not the
+    convention of leaving a removal note in place.
+
+    ``None`` if *source* fails to parse or tokenize (rare — this repo's
+    own ``src/`` is always valid Python) — a caller falls back to
+    counting the raw ``git grep`` hit as survives, logged to stderr,
+    never silently dropped."""
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return None
+    lines = source.splitlines(keepends=True)
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        if not node.body or not isinstance(node.body[0], ast.Expr):
+            continue
+        doc_value = node.body[0].value
+        if not (isinstance(doc_value, ast.Constant) and isinstance(doc_value.value, str)):
+            continue
+        doc_node = node.body[0]
+        if doc_node.end_lineno is None or doc_node.end_col_offset is None:
+            continue
+        _blank_span(
+            lines,
+            (doc_node.lineno, doc_node.col_offset),
+            (doc_node.end_lineno, doc_node.end_col_offset),
+        )
+    try:
+        for tok in tokenize.generate_tokens(StringIO(source).readline):
+            if tok.type == tokenize.COMMENT:
+                _blank_span(lines, tok.start, tok.end)
+    except (tokenize.TokenError, IndentationError, SyntaxError, OSError):
+        return None
+    return "".join(lines)
+
+
 def identifier_survives_in_src(identifier: str, src_root: Path) -> bool:
-    """True iff *identifier* still appears anywhere in the CURRENT (post-
-    diff) ``src/`` tree — i.e. this diff moved it rather than deleting it
-    from the codebase. Uses `git grep` scoped to the working tree so this
-    reads the checked-out post-diff state, not history."""
+    """True iff *identifier* still appears as CODE — a NAME token (a
+    definition or use) OR a string literal — anywhere in the CURRENT
+    (post-diff) ``src/`` tree, i.e. this diff moved it rather than
+    deleting it from the codebase. Excludes comment text and real
+    docstring prose (architect ruling, #5010: "in src/ as a STRING" →
+    "in src/ as CODE" — see :func:`_redact_comments_and_docstrings`'s own
+    docstring for the incident this closes). String literals ARE
+    counted — only comments and docstring nodes are excluded.
+
+    First narrows with a plain ``git grep`` (fast, scoped to the checked-
+    out working tree — reads post-diff state, not history) to the files
+    that contain *identifier* at all as raw text; only those candidates
+    are re-checked against their redacted content, so a file with no raw
+    occurrence is never even opened."""
     result = subprocess.run(
         ["git", "grep", "-lF", "--", identifier, "--", "src"],
         cwd=src_root,
         capture_output=True,
         text=True,
     )
-    return result.returncode == 0 and bool(result.stdout.strip())
+    if result.returncode != 0 or not result.stdout.strip():
+        return False
+    for rel_path in result.stdout.splitlines():
+        if not rel_path.strip():
+            continue
+        if not rel_path.endswith(".py"):
+            return True  # no comment/docstring model for non-Python src/ files
+        abs_path = src_root / rel_path
+        try:
+            source = abs_path.read_text(encoding="utf-8")
+        except OSError:
+            return True
+        redacted = _redact_comments_and_docstrings(source)
+        if redacted is None:
+            print(
+                f"WARN check_doc_drift: {rel_path!r} failed to parse/tokenize — "
+                f"counting its raw git-grep hit as survives",
+                file=sys.stderr,
+            )
+            return True
+        if identifier in redacted:
+            return True
+    return False
 
 
 def find_doc_files_containing(identifier: str, docs_root: Path) -> "set[str]":

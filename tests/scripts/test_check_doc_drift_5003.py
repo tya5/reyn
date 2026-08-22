@@ -352,6 +352,47 @@ def test_identifier_survives_in_src_false_when_absent(tmp_path):
     assert m.identifier_survives_in_src("foo_bar_baz", repo) is False
 
 
+def test_identifier_survives_in_src_false_when_only_in_a_comment_or_docstring(tmp_path):
+    """Tier 1: #5010 (architect ruling, issuecomment-5380169887) — the
+    original `git grep -lF` counted a name mentioned only inside a
+    comment or a module/function docstring's removal-record PROSE as
+    "still present" (a STRING match), hiding a real removal whose only
+    surviving citation was record-keeping text, not living code. The
+    real incident: #5095 removed `AgentProfile.broker_identity`, leaving
+    only "removed by #5091"-shaped comments in profile.py/session.py —
+    the old check saw those and (wrongly) called the identifier present."""
+    repo = _init_repo(tmp_path)
+    (repo / "src").mkdir()
+    (repo / "src" / "x.py").write_text(
+        '"""only_a_prose_name was removed from here, see #1234."""\n'
+        "\n\n"
+        "def foo():\n"
+        "    # only_a_prose_name lived here once\n"
+        "    return 42\n",
+    )
+    subprocess.run(["git", "add", "-A"], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "-q", "-m", "init"], cwd=repo, check=True)
+    assert m.identifier_survives_in_src("only_a_prose_name", repo) is False
+
+
+def test_identifier_survives_in_src_true_for_a_string_literal_use(tmp_path):
+    """Tier 1: #5010's own boundary case (architect: "文字列リテラルは
+    落とさないこと" — a string literal is NOT prose) — a bare `#`-comment
+    or docstring mention is excluded, but `data.get("a_dict_key_name")`
+    is a REAL, live use of that string and must still count as
+    surviving. Only comments and real docstring nodes are excluded;
+    ordinary string literals are not touched."""
+    repo = _init_repo(tmp_path)
+    (repo / "src").mkdir()
+    (repo / "src" / "x.py").write_text(
+        "def foo(data):\n"
+        '    return data.get("a_dict_key_name")\n',
+    )
+    subprocess.run(["git", "add", "-A"], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "-q", "-m", "init"], cwd=repo, check=True)
+    assert m.identifier_survives_in_src("a_dict_key_name", repo) is True
+
+
 def test_find_doc_files_containing_excludes_history_class_dir(tmp_path):
     """Tier 1: the git-grep resolver itself applies exclusion 1 — a
     journal entry naming the identifier is not returned."""
