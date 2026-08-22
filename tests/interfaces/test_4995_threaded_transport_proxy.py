@@ -501,6 +501,16 @@ async def test_extend_history_backward_async_does_not_stall_the_worker_loops_fra
             "msg 1", "msg 2", "msg 3", "msg 4", "msg 5",
         ]
     finally:
+        # Release the gate FIRST, before anything else: an assert above
+        # can fail before read_gate.set() is reached, leaving the
+        # asyncio.to_thread-spawned (non-daemon) worker blocked on
+        # read_gate.wait() forever. proxy.shutdown() does not unblock an
+        # Event-waiting thread, and CPython's default threadpool joins
+        # its threads at atexit -- so an unreleased gate turns a clean
+        # AssertionError into a process hang (architect finding,
+        # issuecomment-5378539254). Safe to call twice (Event.set() is
+        # idempotent).
+        read_gate.set()
         history_tail_reader.read_history_before = real_read
         await proxy.shutdown()
 
