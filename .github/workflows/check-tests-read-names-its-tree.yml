@@ -38,14 +38,17 @@ jobs:
     timeout-minutes: 5
 
     steps:
+      # No checkout of the PR. The commit list and each commit's file names
+      # are read from the API as DATA (see the script's own
+      # `commit_touched_paths`), so a contributor's tree is never executed
+      # here and there is no `ref:` to get wrong — the conditional that used
+      # to live here is what reddened #5123/#5125/#5127 on `issue_comment`
+      # runs, which check out the DEFAULT BRANCH (architect's security lens
+      # on this PR: don't have that shape at all).
       - uses: actions/checkout@v6
         with:
-          # The check reads each PR commit's touched paths via `git show`, and
-          # refuses (loudly) rather than reporting a result computed from
-          # commits it could not read. A shallow checkout does not have them,
-          # so that refusal would fire on every PR — a false red, which is as
-          # bad as the false green this gate exists to remove.
-          fetch-depth: 0
+          # Only the script itself is needed, from the base branch.
+          fetch-depth: 1
 
       - name: Set up Python
         uses: actions/setup-python@v6

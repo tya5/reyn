@@ -148,32 +148,31 @@ def test_an_issue_comment_id_is_not_read_as_a_sha():
     assert code == 1, "a note citing only a comment id names no tree"
 
 
-def test_a_commit_this_checkout_cannot_resolve_stops_the_run():
-    """Tier 1: `fetch_pr`'s other half of the same failure — `git show` on an
-    unresolvable commit exits non-zero, and treating its empty output as
-    "touched no tests" is a green computed from a commit never read.
+def test_an_unreadable_commit_stops_the_run() -> None:
+    """Tier 1: an API failure must not read as "touched no tests" — that would
+    be a green computed from a commit this check could not read, the shape it
+    exists to reject.
 
-    Driven with a REAL `git` call against this repository and a syntactically
-    valid oid that cannot exist, so nothing is faked (the earlier revision of
-    this test replaced `subprocess.run` wholesale — docs-maintainer, #5120 B)."""
+    Driven with a REAL `gh api` call for a syntactically valid oid that cannot
+    exist in this repository, so nothing is faked (an earlier revision replaced
+    `subprocess.run` wholesale — docs-maintainer, #5120 B; the revision after
+    that shelled out to `git show`, which is what forced the checkout this gate
+    then tripped over)."""
     import pytest
 
     with pytest.raises(SystemExit) as exc:
-        _MOD.commit_touched_paths("0" * 40, 5120, repo_root=str(REPO_ROOT))
-    assert "cannot resolve commit" in str(exc.value)
+        _MOD.commit_touched_paths("0" * 40, "tya5/reyn")
+    assert "cannot read commit" in str(exc.value)
 
 
-def test_a_resolvable_commit_reports_its_paths():
+def test_a_readable_commit_reports_its_paths() -> None:
     """Tier 1: the same seam's accept side, so the reject case above is not the
-    only thing exercised — a real HEAD resolves and yields its own paths."""
-    import subprocess as _sp
-
-    head = _sp.run(
-        ["git", "rev-parse", "HEAD"], capture_output=True, text=True, check=True,
-        cwd=REPO_ROOT,
-    ).stdout.strip()
-    paths = _MOD.commit_touched_paths(head, 5120, repo_root=str(REPO_ROOT))
-    assert isinstance(paths, list)
+    only thing exercised — a real commit of this repository yields real file
+    names. Without it, a `commit_touched_paths` that raised unconditionally
+    would still pass the reject test."""
+    paths = _MOD.commit_touched_paths("ddc009a8d", "tya5/reyn")
+    assert paths, "a real commit touched at least one file"
+    assert all(isinstance(p, str) for p in paths)
 
 
 def test_a_note_quoting_the_head_with_no_commits_does_not_pass():
