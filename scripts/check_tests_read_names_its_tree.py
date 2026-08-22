@@ -170,48 +170,64 @@ def evaluate(pr: dict) -> "tuple[int, list[str]]":
     ]
 
 
-def commit_touched_paths(oid: str, number: int, repo_root: "str | None" = None) -> "list[str]":
-    """The paths *oid* touched, or stop the run if this checkout cannot read it.
+def commit_touched_paths(oid: str, repo: str, run=subprocess.run) -> "list[str]":
+    """The paths *oid* touched, read from GitHub rather than a checkout.
 
-    Split out from :func:`fetch_pr` so the refusal is reachable with a real
-    ``git`` call on a real repository — no faked runner. *repo_root* makes the
-    repository an argument rather than the process's cwd, so a caller running
-    elsewhere cannot get a refusal that merely means "not in a git repo" — the
-    refusal would then be true for the wrong reason. A commit the checkout
-    cannot resolve (unfetched, or a squashed merge) would otherwise produce
-    empty output that reads as "touched no tests": a green computed from
-    commits never read, which is the shape this gate exists to reject."""
-    shown = subprocess.run(
-        ["git", "show", "--name-only", "--format=", oid],
-        capture_output=True, text=True, cwd=repo_root,
+    Deliberately NOT ``git show``: reading the tree would force this workflow
+    to check the PR out, and an ``issue_comment`` run checks out the default
+    branch — measured, that is how this gate spent its first hour reddening
+    #5123/#5125/#5127 for a reason that had nothing to do with their notes
+    (architect's security lens on the same PR: checking out a contributor's
+    ref to run a script is a shape worth not having at all). The commit list
+    and its file names are DATA on the API side; taking them as data means the
+    PR's own tree is never executed here.
+
+    Raises ``SystemExit`` rather than returning empty on an API failure: an
+    empty list reads as "touched no tests", a green computed from a commit
+    this check could not read, which is the shape it exists to reject.
+
+    *run* is a seam, not a mock hook: an authenticated network call is not a
+    "cheaply constructible real instance", so the suite injects a small runner
+    here rather than reaching a live API. Measured why that matters — with the
+    real one, the reject-side test passed in CI because `gh` had no token, not
+    because the commit was bogus: green for the wrong reason, in the test for
+    the very behaviour this function exists to provide."""
+    result = run(
+        ["gh", "api", f"repos/{repo}/commits/{oid}", "--jq", "[.files[].filename]"],
+        capture_output=True, text=True,
     )
-    if shown.returncode != 0:
+    if result.returncode != 0:
         raise SystemExit(
-            f"check_tests_read_names_its_tree: cannot resolve commit {oid} "
-            f"in this checkout — fetch the PR's commits first "
-            f"(`git fetch origin pull/{number}/head`). Refusing to report a "
-            f"result computed from commits it could not read."
+            f"check_tests_read_names_its_tree: cannot read commit {oid} from "
+            f"{repo} ({result.stderr.strip()[:200]}). Refusing to report a "
+            f"result computed from a commit it could not read."
         )
-    return shown.stdout.split()
+    return json.loads(result.stdout or "[]")
 
 
 def fetch_pr(number: int) -> dict:
-    """Build the `evaluate` payload for a live PR via `gh`."""
+    """Build the `evaluate` payload for a live PR via `gh` — no checkout."""
+    repo = subprocess.run(
+        ["gh", "repo", "view", "--json", "nameWithOwner", "--jq", ".nameWithOwner"],
+        capture_output=True, text=True, check=True,
+    ).stdout.strip()
     raw = subprocess.run(
         ["gh", "pr", "view", str(number), "--json",
          "files,comments,commits,headRefOid"],
         capture_output=True, text=True, check=True,
     ).stdout
     data = json.loads(raw)
-    commits = []
-    for c in data.get("commits", []):
-        oid = c.get("oid", "")
-        paths = commit_touched_paths(oid, number)
-        commits.append({
-            "oid": oid,
+    commits = [
+        {
+            "oid": c.get("oid", ""),
             "messageHeadline": c.get("messageHeadline", ""),
-            "_tests_paths": [p for p in paths if p.startswith("tests/")],
-        })
+            "_tests_paths": [
+                f for f in commit_touched_paths(c.get("oid", ""), repo)
+                if f.startswith("tests/")
+            ],
+        }
+        for c in data.get("commits", [])
+    ]
     return {
         "files": [f.get("path", "") for f in data.get("files", [])],
         "comments": data.get("comments", []),

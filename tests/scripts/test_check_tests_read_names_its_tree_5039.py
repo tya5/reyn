@@ -148,32 +148,73 @@ def test_an_issue_comment_id_is_not_read_as_a_sha():
     assert code == 1, "a note citing only a comment id names no tree"
 
 
-def test_a_commit_this_checkout_cannot_resolve_stops_the_run():
-    """Tier 1: `fetch_pr`'s other half of the same failure — `git show` on an
-    unresolvable commit exits non-zero, and treating its empty output as
-    "touched no tests" is a green computed from a commit never read.
+def _runner(returncode: int, stdout: str = "", stderr: str = "", seen: "list | None" = None):
+    """A minimal stand-in for `subprocess.run`'s result, injected through
+    `commit_touched_paths`'s own `run` seam. Not a mock of a cheaply
+    constructible collaborator — the real one is an authenticated network
+    call, and using it made the reject case below pass in CI for the wrong
+    reason (no token, rather than a bogus commit).
 
-    Driven with a REAL `git` call against this repository and a syntactically
-    valid oid that cannot exist, so nothing is faked (the earlier revision of
-    this test replaced `subprocess.run` wholesale — docs-maintainer, #5120 B)."""
+    *seen* collects the argv it was handed. An earlier revision discarded it,
+    which left the seam's ONE mistakable part — the endpoint path and the
+    ``--jq`` that shapes the reply — outside every test (architect, #5128 B):
+    a `commit_touched_paths` that asked for the wrong URL would have passed
+    both cases below."""
+    import subprocess as _sp
+
+    def _run(cmd, **kwargs):
+        if seen is not None:
+            seen.append(list(cmd))
+        return _sp.CompletedProcess(cmd, returncode, stdout=stdout, stderr=stderr)
+
+    return _run
+
+
+def test_the_seam_asks_github_for_that_commits_file_names() -> None:
+    """Tier 1: the command the seam issues — the part a reader cannot check by
+    running the suite unless a test looks at it. Endpoint and `--jq` together
+    decide whether the reply is a list of file names at all."""
+    seen: list = []
+    _MOD.commit_touched_paths(
+        "abc1234", "tya5/reyn", run=_runner(0, stdout="[]", seen=seen),
+    )
+    # `seen[0]` raises if the seam was never called at all, so the shape
+    # assertions below cannot pass vacuously.
+    argv = seen[0]
+    assert argv[:2] == ["gh", "api"], f"reads via the API, not a checkout; got {argv[:2]!r}"
+    assert "repos/tya5/reyn/commits/abc1234" in argv, (
+        f"asks for THAT commit in THAT repo; got {argv!r}"
+    )
+    assert "[.files[].filename]" in argv, (
+        f"asks for file NAMES — without this jq the reply is objects, not paths; got {argv!r}"
+    )
+
+
+def test_an_unreadable_commit_stops_the_run() -> None:
+    """Tier 1: an API failure must not read as "touched no tests" — that would
+    be a green computed from a commit this check could not read, the shape it
+    exists to reject."""
     import pytest
 
     with pytest.raises(SystemExit) as exc:
-        _MOD.commit_touched_paths("0" * 40, 5120, repo_root=str(REPO_ROOT))
-    assert "cannot resolve commit" in str(exc.value)
+        _MOD.commit_touched_paths(
+            "0" * 40, "tya5/reyn", run=_runner(1, stderr="Not Found"),
+        )
+    assert "cannot read commit" in str(exc.value)
 
 
-def test_a_resolvable_commit_reports_its_paths():
+def test_a_readable_commit_reports_its_paths() -> None:
     """Tier 1: the same seam's accept side, so the reject case above is not the
-    only thing exercised — a real HEAD resolves and yields its own paths."""
-    import subprocess as _sp
-
-    head = _sp.run(
-        ["git", "rev-parse", "HEAD"], capture_output=True, text=True, check=True,
-        cwd=REPO_ROOT,
-    ).stdout.strip()
-    paths = _MOD.commit_touched_paths(head, 5120, repo_root=str(REPO_ROOT))
-    assert isinstance(paths, list)
+    only thing exercised — a `commit_touched_paths` that raised unconditionally
+    would still pass the reject test."""
+    paths = _MOD.commit_touched_paths(
+        "abc1234", "tya5/reyn",
+        run=_runner(0, stdout='["src/reyn/runtime/registry.py", "tests/scripts/test_check_doc_drift_5003.py"]'),
+    )
+    assert paths == [
+        "src/reyn/runtime/registry.py",
+        "tests/scripts/test_check_doc_drift_5003.py",
+    ]
 
 
 def test_a_note_quoting_the_head_with_no_commits_does_not_pass():
