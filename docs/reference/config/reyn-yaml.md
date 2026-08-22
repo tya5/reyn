@@ -34,7 +34,11 @@ cause of #5086/#5088 misreading each other):
   `.reyn/agents/<name>/profile.yaml` may also set it), `project · agent ·
   session` (a session's own `<session-state-dir>/config.yaml` may set it
   too), or `agent` alone (no project-wide value exists for this key at
-  all — `broker_identity` is the one case, #5084 ③-a). **This is the ONE
+  all). **`agent` alone currently has NO instance**: its only one,
+  `broker_identity`, was removed by #5091 (owner ruling — "broker" is an
+  external MCP server, not a reyn-runtime concept). The value stays in the
+  vocabulary because the boundary case it names is real, not because a key
+  occupies it today. **This is the ONE
   column derived/checked in CI** (see below) — NOT because ② and ③ can't
   go stale (they can and do: ⁵ below is a real, measured instance for
   `Reload`), but because "does this call site re-read live?" is a
@@ -69,7 +73,8 @@ the registry when one is added.
 **`Declared in`'s own source of truth**: `PREFERENCE_KEYS` in
 `src/reyn/runtime/preferences.py` (the ③ preference axis, #4206) plus the
 explicit agent-layer-only fields on `AgentProfile`
-(`project_context_path`, #5086; `broker_identity`, #5085) —
+(`project_context_path`, #5086 — the only one since #5091 removed
+`broker_identity`) —
 `tests/repo/test_config_reference_declared_in_4206.py` checks this
 table's `Declared in` cells against them in CI, mirroring
 [`events.md`'s own doc↔code gate](../runtime/events.md). A key gaining

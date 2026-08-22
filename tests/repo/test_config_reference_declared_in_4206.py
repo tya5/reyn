@@ -24,10 +24,13 @@ from. `Declared in` is the one column this repo currently has a source of
 truth for.
 
 Source of truth: `PREFERENCE_KEYS` (`src/reyn/runtime/preferences.py`, the ③
-preference axis) plus the 2 explicit agent-layer-only `AgentProfile` fields
-(`project_context_path` #5086, `broker_identity` #5085 — `broker_identity`
-itself has no project-wide row in this table at all, per architect's own
-note that it is the `agent`-alone boundary case, so it is not checked here).
+preference axis) plus the ONE explicit agent-layer-only `AgentProfile` field
+(`project_context_path` #5086). There were two: `broker_identity` #5085 was
+removed by #5091 (owner ruling — "broker" is an external MCP server, not a
+reyn-runtime concept), which also emptied the `agent`-alone vocabulary value
+it was the sole instance of. Nothing here checked it (it had no row in the
+table), so its removal did not turn this gate red — the doc prose citing it
+did go stale, which is what #5091's follow-up corrected.
 
 Real file reads throughout (the actual doc, the actual `PREFERENCE_KEYS`
 declaration) — no mocks.
