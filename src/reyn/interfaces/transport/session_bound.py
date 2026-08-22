@@ -38,7 +38,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, AsyncIterator, Callable
 
-from reyn.interfaces.transport.client_transport import ClientTransportStub
+from reyn.interfaces.transport.client_transport import ClientTransport
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -47,7 +47,7 @@ if TYPE_CHECKING:
     from reyn.runtime.outbox import OutboxMessage
 
 
-class SessionBoundTransport(ClientTransportStub):
+class SessionBoundTransport(ClientTransport):
     """The send half of the client seam, bound to the session that dispatches."""
 
     def __init__(
@@ -89,8 +89,26 @@ class SessionBoundTransport(ClientTransportStub):
         """Always True: this transport exists only because a session built it."""
         return True
 
+    def attach_failed(self) -> bool:
+        # #5094: EXPLICITLY implemented, not inherited — a --connect remote
+        # attach reaches ClientTransport.attach_failed through THIS
+        # transport (the AG-UI endpoint's slash_command arm builds its
+        # SlashContext over one of these, session.py:8284), so silently
+        # falling through to ClientTransport's own "never happened" default
+        # would be the same #5076-family defect this class exists to
+        # avoid. Delegates to the session's own registry, mirroring
+        # InProcessTransport's own identical derivation.
+        registry = getattr(self._session, "_registry", None)
+        return bool(registry.attach_failed()) if registry is not None else False
+
     def pending_intervention_head(self) -> "object | None":
         return self._session.interventions.head()
+
+    async def clear_pending_command_ui(self) -> None:
+        # #5094: EXPLICITLY implemented (mirrors InProcessTransport's own
+        # real write, #5045) — same-thread here (session-bound, in-process
+        # on the server side of a remote connection), no marshaling needed.
+        self._session.set_pending_command_ui(None)
 
     def reyn_state_root(self) -> "Path | None":
         # #3721: same derivation as InProcessTransport (mirrors that class by
@@ -132,6 +150,74 @@ class SessionBoundTransport(ClientTransportStub):
 
     async def cancel_queued(self, msg_id: str) -> bool:
         return bool(await self._session.cancel_queued(msg_id))
+
+    async def run_slash_command(self, name: str, args: str) -> bool:
+        # #5094: EXPLICITLY implemented, not inherited — mirrors
+        # InProcessTransport's own real execution side (#3595 S5): the
+        # handler is handed THIS transport (the send seam it already
+        # writes through) plus the bound session for the reads S4
+        # enumerated as residue. Un-queued by construction, same reason
+        # as InProcessTransport's own copy.
+        from reyn.interfaces.slash import SlashContext
+        from reyn.interfaces.slash.dispatch import execute_slash_command
+        return await execute_slash_command(
+            SlashContext(transport=self, session=self._session), name, args,
+        )
+
+    async def request_attach(self, agent_name: str) -> bool:
+        # #5094/#5096, architect ruling (issuecomment-5379623427):
+        # EXPLICITLY False, not inherited -- and NOT the reach-through-
+        # the-session's-own-registry implementation an earlier revision
+        # of this method carried. This transport is structurally the
+        # WRONG place to answer "attach a different agent" -- it is
+        # send-side ONLY, bound to ONE already-attached session (see the
+        # class docstring); "which agent is attached" is a REGISTRY-level
+        # question, and giving this class a registry reference would
+        # widen its own responsibility layer, a separate concern from
+        # #5048's "registry stays off the caller's own loop" ruling but
+        # the same shape of mistake. The REAL fix is #5096's own ②: the
+        # CLIENT-side dispatch layer (interfaces/slash/dispatch.py's
+        # maybe_dispatch_slash) now recognizes /attach and calls
+        # ClientTransport.request_attach directly -- the dedicated typed
+        # op AgUiTransport already implements correctly -- so a remote
+        # /attach never reaches this method (or server-side slash
+        # dispatch) at all.
+        return False
+
+    async def request_session_switch(self, session_id: str) -> bool:
+        # #5094/#5096: EXPLICITLY False, same reasoning as request_attach
+        # above -- session switching is also a registry-level operation
+        # this send-side-only transport structurally cannot answer.
+        return False
+
+    async def request_artifact_list(self, *, agent: str) -> "tuple[list[dict], int]":
+        # #5094: EXPLICITLY implemented, not inherited — mirrors
+        # InProcessTransport's own execution side (#4494 design C /
+        # #4601's own cap), reading the durable artifact-ref table
+        # directly via the same reyn_state_root() this class already
+        # derives above.
+        from reyn.config.loader import load_config
+        from reyn.data.workspace.artifact_ref import list_refs_for_agent
+        reyn_root = self.reyn_state_root()
+        if reyn_root is None:
+            return [], 0
+        project_root = reyn_root.parent
+        config = load_config(project_root)
+        return list_refs_for_agent(
+            project_root, agent, limit=config.artifacts.remote_fallback_limit,
+        )
+
+    async def state_ready(self) -> None:
+        # #5094: EXPLICITLY implemented, not inherited (even though the
+        # VALUE matches ClientTransport's own default). This transport is
+        # session-bound / in-process on the server's side of a remote
+        # connection — no separate wire round-trip, so its own
+        # status-read side-channel is already fresh the instant it is
+        # asked, the same reasoning InProcessTransport's own explicit
+        # override states. Written explicitly per lead-coder's #5096
+        # review finding: a class that silently inherits a convenience
+        # default cannot be told apart from one that forgot to answer.
+        return None
 
     async def shutdown(self) -> None:
         await self._session.shutdown()

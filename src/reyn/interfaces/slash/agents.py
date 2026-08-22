@@ -13,9 +13,6 @@ from reyn.interfaces.slash import SlashContext, reply, reply_error, slash
 _NO_REGISTRY_AGENTS = (
     "agent registry not wired; /agents only works in `reyn chat`"
 )
-_NO_REGISTRY_ATTACH = (
-    "agent registry not wired; /attach only works in `reyn chat`"
-)
 
 
 def _attach_completer(source: "object", arg_partial: str = "") -> list[str]:
@@ -34,7 +31,7 @@ def _attach_completer(source: "object", arg_partial: str = "") -> list[str]:
     return list(agent_names) if agent_names is not None else []
 
 
-@slash("agents", summary="List all agents (* = attached, · = loaded)")
+@slash("agents", summary="List all agents (* = attached, · = loaded)", locus="session")
 async def agents_cmd(ctx: "SlashContext", args: str) -> None:
     """``/agents`` — list known agents with attach / loaded markers."""
     if ctx.session._registry is None:
@@ -83,6 +80,7 @@ async def agents_cmd(ctx: "SlashContext", args: str) -> None:
 @slash(
     "attach",
     summary="Switch attached agent",
+    locus="connection",
     usage="/attach <name>",
     completer=_attach_completer,
     see_also=("docs/concepts/multi-agent/multi-agent.md",),
@@ -90,45 +88,39 @@ async def agents_cmd(ctx: "SlashContext", args: str) -> None:
 async def attach_cmd(ctx: "SlashContext", args: str) -> None:
     """``/attach <name>`` — request the client switch to a different agent.
 
-    This handler validates the name and asks
-    ``ClientTransport.request_attach`` to perform the swap (#4534 PR-2) —
-    a typed request to whichever transport holds the session (local:
-    direct ``registry.attach``; remote: a wire call the server executes),
-    not a display-channel sentinel a REPL loop has to specially detect.
+    This handler asks ``ClientTransport.request_attach`` to perform the
+    swap (#4534 PR-2) — a typed request to whichever transport holds the
+    session (local: direct ``registry.attach``; remote: a wire call the
+    server executes), not a display-channel sentinel a REPL loop has to
+    specially detect.
 
-    The success reply is ordered AFTER the call and reads its return
-    (lead-coder review, #4534 remainder): ``request_attach``'s ``False`` is
-    ambiguous by transport (AG-UI's is "unknown" — an unconfirmed remote
-    ack; in-process's is a definitive local failure), so the reply on
-    ``False`` says "could not confirm", never "failed" — the wording that
-    would be true for one transport and wrong for the other.
+    #5096 ②, architect ruling (issuecomment-5379623427/5379638878/
+    5379657592): ``locus="connection"`` — this handler MUST NOT read
+    ``ctx.session`` (``maybe_dispatch_slash`` hands it ``None`` for a
+    connection-locus command, and the whole point of that locus is that
+    the client interprets ``/attach`` and calls the typed op DIRECTLY,
+    never forwarding to server-side slash dispatch, where a
+    ``SessionBoundTransport`` cannot correctly answer "attach a different
+    agent" at all). The pre-#5096 revision validated the target name
+    against ``ctx.session._registry`` first (existence check,
+    already-attached check) for nicer replies — that validation is now
+    the SERVER's job, inside ``request_attach``'s own typed-op handler
+    (``endpoint.py``'s ``attach_request`` arm, and ``registry.attach``
+    locally), which already performs the equivalent check. This handler's
+    own reply is now driven ENTIRELY by the boolean result.
+
+    The reply is ordered AFTER the call and reads its return (lead-coder
+    review, #4534 remainder): ``request_attach``'s ``False`` is ambiguous
+    by transport (AG-UI's is "unknown" — an unconfirmed remote ack;
+    in-process's is a definitive local failure/not-found/already-there),
+    so the reply on ``False`` says "could not confirm", never "failed" —
+    the wording that would be true for one transport and wrong for the
+    other.
     """
     name = args.strip()
     if not name:
         await reply_error(ctx, "usage: /attach <name>")
         return
-    if ctx.session._registry is None:
-        await reply_error(ctx, _NO_REGISTRY_ATTACH)
-        return
-    if not ctx.session._registry.exists(name):
-        # The user is already in the TUI — direct them at the slash form,
-        # not the CLI shell command, so they don't have to drop out of
-        # chat to create the agent.
-        await reply_error(
-            ctx,
-            f"agent {name!r} not found; use /agent new {name} to create it",
-        )
-        return
-    if name == ctx.session._registry.attached_name:
-        await reply(ctx, f"already attached to {name!r}")
-        return
-    # Surface the switch in the conv pane. Without this, ``/attach``
-    # produced no in-pane feedback — the user had to run ``/agents``
-    # to confirm the switch happened. The actual attach runs through
-    # ClientTransport.request_attach (#4534 PR-2); this reply is a
-    # separate, visible breadcrumb, ordered AFTER the call so it reflects
-    # what the call actually reports. (The header label refresh is
-    # blocked by a separate registry-forwarder bug — see #191.)
     attached = await ctx.transport.request_attach(name)
     if attached:
         await reply(ctx, f"attached to {name!r}")

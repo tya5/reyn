@@ -16,6 +16,7 @@ _KINDS = ("tool", "mcp", "category")
 @slash(
     "visibility",
     summary="Toggle this session's visibility of a tool / mcp / category",
+    locus="session",
     usage="/visibility on|off <tool|mcp|category> <name>",
 )
 async def visibility_cmd(ctx: "SlashContext", args: str) -> None:

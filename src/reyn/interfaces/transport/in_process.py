@@ -33,7 +33,7 @@ import asyncio
 import logging
 from typing import TYPE_CHECKING, AsyncIterator
 
-from reyn.interfaces.transport.client_transport import ClientTransportStub
+from reyn.interfaces.transport.client_transport import ClientTransport
 from reyn.interfaces.transport.drain import suspend_between_frames
 from reyn.interfaces.transport.frames import (
     DisplayFrame,
@@ -52,7 +52,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class InProcessTransport(ClientTransportStub):
+class InProcessTransport(ClientTransport):
     """The local transport: forwarder + filtered audit-events → one frame stream."""
 
     def __init__(
@@ -181,6 +181,18 @@ class InProcessTransport(ClientTransportStub):
         s = self._attached()
         if s is not None:
             s.set_pending_command_ui(None)
+
+    async def state_ready(self) -> None:
+        # #5096 review finding (lead-coder): EXPLICITLY implemented, not
+        # inherited from ClientTransportStub, even though the VALUE
+        # matches its own default — this class reads the live registry
+        # directly (no separate wire round-trip), so its own status-read
+        # side-channel is already fresh the instant it is asked. Written
+        # here so a future reader can tell "answered, deliberately a
+        # no-op" from "forgot to answer" (ClientTransport.state_ready's
+        # own docstring for the full rationale — AgUiTransport is the ONE
+        # implementation with a genuine "not yet" window).
+        return None
 
     def reyn_state_root(self) -> "Path | None":
         # #3721: `Session.workspace_dir` is the same PUBLIC per-agent path

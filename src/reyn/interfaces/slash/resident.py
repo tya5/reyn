@@ -55,6 +55,7 @@ def _render(session_stats: "list[ContainerStat]", process_stats: "list[Container
 @slash(
     "resident",
     summary="Approximate resident-memory breakdown by container (#4497)",
+    locus="session",
 )
 async def resident_cmd(ctx: "SlashContext", args: str) -> None:  # noqa: ARG001 — no args yet
     """``/resident`` — count + approximate bytes for the major in-process

@@ -1,15 +1,18 @@
 """Slash command registry for `reyn chat`.
 
-Add a new command with three lines::
+Add a new command::
 
     from reyn.interfaces.slash import slash, reply
 
-    @slash("ping", summary="Echo pong")
+    @slash("ping", summary="Echo pong", locus="client")
     async def ping_cmd(ctx, args: str) -> None:
         await reply(ctx, "pong")
 
 The decorator handles registration. `reply()` / `reply_error()` wrap
 the OutboxMessage construction so handlers stay focused on logic.
+
+``locus`` is REQUIRED (#5096 ②) — see the ``Locus``/``LocusFn`` comment
+below for the 3 values and which one your handler needs.
 
 ★ A handler is handed a :class:`SlashContext`, NOT a ``Session`` (#3595 S4).
 Slash is a client-side layer — the owner's design is that a client interprets
@@ -30,12 +33,44 @@ so registered commands are immediately available everywhere.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Awaitable, Callable, Iterable
+from typing import TYPE_CHECKING, Any, Awaitable, Callable, Iterable, Literal
 
 if TYPE_CHECKING:
     from reyn.interfaces.transport.client_transport import ClientTransport
 
 HandlerFn = Callable[..., Awaitable[None]]
+
+# #5096 ② (architect ruling, issuecomment-5379623427/5379638878/5379657592):
+# WHERE a command's SlashContext is built, one of 3 closed values -- NOT a
+# name-keyed dispatch table (rejected, issuecomment-5379647254: "the
+# handler already knows which op it calls; a name->op table is a SECOND
+# registry that drifts from the first"). Declared PER EXECUTION UNIT, not
+# per registration name (a single @slash(...) registration whose
+# sub-commands need different loci passes a LocusFn instead of a bare
+# Locus -- see SlashCommand.locus below).
+#
+# - "client"     -- the handler needs neither transport-op nor session
+#                    state beyond put_display (e.g. /copy, /help).
+# - "session"    -- the handler reads session state (any ctx.session
+#                    attribute, including ctx.session._registry) -- the
+#                    CURRENT behavior: maybe_dispatch_slash forwards to
+#                    transport.run_slash_command(name, args), which builds
+#                    the SlashContext wherever the session actually is.
+# - "connection" -- the handler answers using ONLY a registry/connection-
+#                    level typed op (ctx.transport.request_attach /
+#                    request_session_switch / ...), never ctx.session.
+#                    maybe_dispatch_slash builds SlashContext(transport,
+#                    session=None) itself, client-side, and executes
+#                    immediately -- no forward, so a transport that cannot
+#                    correctly answer a session-level question (e.g.
+#                    SessionBoundTransport, send-side only) never receives
+#                    one.
+#
+# Declaring a command's locus is REQUIRED (no default) -- omitting it
+# fails to construct the SlashCommand at IMPORT time (#5093's own
+# discipline: a declaration you can forget is not a declaration).
+Locus = Literal["client", "session", "connection"]
+LocusFn = Callable[[str], Locus]
 # CompleterFn signature: ``(source, arg_partial: str = "") -> list[str]``.
 # #5044 (architect ruling, issuecomment-5378399712): ``source`` is a
 # ``reyn.interfaces.repl.read_model.CompletionSourceSnapshot | None`` --
@@ -84,6 +119,11 @@ class SlashCommand:
     name: str               # command name without leading /  (e.g. "list")
     summary: str            # one-line description shown in /help and palette
     handler: HandlerFn      # async (ctx: SlashContext, args: str) -> None
+    # #5096 ②: REQUIRED, no default -- see the Locus/LocusFn module-level
+    # comment above for the 3 values and why this cannot default to
+    # "session" (a default here would make the NEXT command's omission
+    # silently correct instead of failing to construct).
+    locus: "Locus | LocusFn"
     aliases: tuple[str, ...] = ()
     completer: CompleterFn | None = None  # optional: (session, arg_partial="") -> list[str]
     hidden: bool = False    # if True, omit from /help and the Tab palette
@@ -222,6 +262,7 @@ def slash(
     name: str,
     *,
     summary: str,
+    locus: "Locus | LocusFn",
     aliases: Iterable[str] = (),
     completer: CompleterFn | None = None,
     hidden: bool = False,
@@ -232,6 +273,9 @@ def slash(
 
     Arguments mirror :class:`SlashCommand`. The decorated function must be
     `async def fn(ctx: SlashContext, args: str) -> None`.
+
+    ``locus`` is REQUIRED (#5096 ②) — see the module-level ``Locus``/
+    ``LocusFn`` comment for the 3 values and why there is no default.
 
     ``usage`` is the optional structured usage line surfaced by ``/help <cmd>``
     and as the completion popup's argument-stage header row (see
@@ -247,6 +291,7 @@ def slash(
             name=name,
             summary=summary,
             handler=fn,
+            locus=locus,
             aliases=tuple(aliases),
             completer=completer,
             hidden=hidden,
@@ -326,6 +371,8 @@ __all__ = [
     "SlashRegistry",
     "SlashCommand",
     "SlashContext",
+    "Locus",
+    "LocusFn",
     "slash",
     "reply",
     "reply_error",

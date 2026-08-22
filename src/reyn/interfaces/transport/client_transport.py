@@ -374,12 +374,16 @@ class ClientTransport(ABC):
 
 
 class ClientTransportStub(ClientTransport):
-    """A ``ClientTransport`` with the 9 narrow-purpose convenience defaults
+    """★ ``tests/`` ONLY. No production ``ClientTransport`` implementation
+    may inherit this class — see the correction below before adding a new
+    one.
+
+    A ``ClientTransport`` with the 9 narrow-purpose convenience defaults
     every full implementation used to inherit silently, now given a
     separate role from the contract itself (#5076, architect ruling, issue
     #5076 — the "one base fills two roles" finding, generalizing #5045/
     #5082/#5083/#5089's own instances of the same shape: a base default
-    that LOOKS harmless lets a delegation wrapper answer wrongly by simply
+    that LOOKS harmless lets an implementation answer wrongly by simply
     forgetting to override).
 
     ``ClientTransport`` itself is now a PURE contract — every method
@@ -387,25 +391,41 @@ class ClientTransportStub(ClientTransport):
     override one of the 9 methods below fails to CONSTRUCT, the same
     completeness-by-construction guarantee the class already gave the other
     6 (always-abstract) methods. This class exists for the OTHER role a
-    single base used to also carry: narrow-purpose convenience, for
-    implementations that genuinely want some of these 9 answers unchanged
-    (a test double that never touches ``/attach``, or a full transport like
-    ``AgUiTransport``/``SessionBoundTransport`` that deliberately relies on
-    a subset of them for real, documented reasons — see each method's own
-    docstring below for which implementation relies on which default and
-    why).
+    single base used to also carry: narrow-purpose convenience for
+    ``tests/``'s own fixture doubles — a self-contained fake that never
+    touches, say, ``/attach`` can inherit this and skip implementing
+    ``request_attach`` at all.
 
-    Measured (#5076 issue thread) before this split: the 2 real DELEGATION
-    wrappers in the whole codebase (``ThreadedTransportProxy``,
-    ``_ErrorWatchingTransport``) already override all 9 explicitly — they
-    stay on the pure ``ClientTransport`` contract, unaffected by this class,
-    so a THIRD wrapper that forgets one of these 9 in the future fails to
-    construct rather than silently answering wrong. Every one of the 75
-    test-side ``ClientTransport`` subclasses is a self-contained fake, not a
-    wrapper (0 of 75 hold a reference to another transport, confirmed by
-    two independent methods — a per-class body read and a name-independent
-    constructor-signature sweep) — they inherit this class instead, a
-    one-word base-class change each, no method-level audit needed.
+    **Correction (#5096 review, lead-coder — the block this docstring is a
+    condition of):** this PR's first attempt ALSO moved ``AgUiTransport``/
+    ``InProcessTransport``/``SessionBoundTransport`` onto this class,
+    reasoning that architect's own measurement classified them as "real
+    implementations" (0 references to an inner transport) rather than
+    wrappers. That reasoning was **backwards** for THIS class's purpose:
+    "wrapper vs. implementation" answers a DIFFERENT question (does it
+    delegate to another transport) than the one this split exists to
+    answer (does forgetting a method here look plausible in PRODUCTION).
+    ``SessionBoundTransport`` silently inheriting the ``request_attach``
+    default (``False``, "did not happen here") is EXACTLY the owner-
+    reported "attach coder-smith failed" over ``--connect`` (#5094) — a
+    real implementation is not immune to this defect; it is MORE exposed
+    to it, since nothing else catches a missing override once it is on the
+    convenience side. All 3 production classes now stay on the pure
+    ``ClientTransport`` contract and EXPLICITLY implement every one of the
+    9 methods (even where the value matches this class's own default —
+    written explicitly so a future reader can tell "answered, deliberately
+    a no-op" from "forgot to answer"). **Only the 75 ``tests/`` fixture
+    classes inherit this class** — confirmed 0 of 75 hold a reference to
+    another transport (two independent methods: a per-class body read and
+    a name-independent constructor-signature sweep), so none of them is a
+    production-shaped risk in the first place.
+
+    Measured (#5076 issue thread): the 2 real DELEGATION wrappers in the
+    whole codebase (``ThreadedTransportProxy``, ``_ErrorWatchingTransport``)
+    already override all 9 explicitly — they stay on the pure
+    ``ClientTransport`` contract too, unaffected by this class, so a THIRD
+    wrapper that forgets one of these 9 in the future fails to construct
+    rather than silently answering wrong.
 
     Option ④ (``__getattr__`` auto-forwarding to an inner transport) was
     considered and rejected: ``ThreadedTransportProxy``'s job is not

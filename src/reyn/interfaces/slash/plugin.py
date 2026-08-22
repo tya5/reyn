@@ -80,6 +80,7 @@ def _extract_error(result: dict) -> "str | None":
 @slash(
     "plugin",
     summary="Install/uninstall a self-contained reyn plugin bundle",
+    locus="session",
     usage=_SYNTAX,
     see_also=("docs/deep-dives/proposals/0064-plugin-model.md",),
 )

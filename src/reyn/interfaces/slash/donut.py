@@ -7,6 +7,6 @@ from __future__ import annotations
 from reyn.interfaces.slash import SlashContext, reply, slash
 
 
-@slash("donut", summary="Andy Sloane's spinning ASCII donut", hidden=True)
+@slash("donut", summary="Andy Sloane's spinning ASCII donut", locus="client", hidden=True)
 async def donut_cmd(ctx: "SlashContext", args: str) -> None:
     await reply(ctx, "🍩")

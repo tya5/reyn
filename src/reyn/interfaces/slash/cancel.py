@@ -19,6 +19,7 @@ from reyn.interfaces.slash import SlashContext, reply, slash
 @slash(
     "cancel",
     summary="Cancel the in-flight turn (same as Esc / Ctrl+C)",
+    locus="client",
 )
 async def cancel_cmd(ctx: "SlashContext", args: str) -> None:
     """``/cancel`` — reports WHAT was cancelled, never a blanket "done": the

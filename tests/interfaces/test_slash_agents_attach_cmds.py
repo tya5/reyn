@@ -3,9 +3,16 @@
 /agents: no-registry error, empty-agents unexpected note, normal listing
 (names present → reply contains names).
 
-/attach: no-name error, no-registry error, name-not-found error,
-already-attached note, valid-name success (system reply +
-transport.request_attach called with the name — #4534 PR-2).
+/attach (locus="connection", #5096 ②): no-name usage error (client-side,
+before any transport call), then EVERYTHING else collapses into whatever
+``ClientTransport.request_attach`` itself reports — the handler no longer
+reads ``ctx.session`` at all, so "no registry"/"name not found"/"already
+attached" are no longer THREE distinguishable client-side outcomes (that
+validation now lives entirely in request_attach's own typed-op handler,
+server-side). True → success reply; False → "could not confirm" reply
+(never an error kind — False is ambiguous by transport, see attach_cmd's
+own docstring). transport.request_attach is asserted CALLED WITH the
+name (#4534 PR-2).
 """
 from __future__ import annotations
 
@@ -18,14 +25,18 @@ from tests._support.slash import slash_ctx
 # ── stubs ──────────────────────────────────────────────────────────────────
 
 
-def _ctx(session):
+def _ctx(session, *, attach_result: bool = True):
     """The context the production dispatch hands a slash handler.
 
     The transport IS this test's display recorder — ``reply()`` writes
     through the client seam now, so the list the assertions read is the
     one the transport fills.
+
+    ``attach_result`` (#5096 ②): attach_cmd (locus="connection") no
+    longer reads ``ctx.session`` at all -- its reply is driven entirely
+    by what ``ctx.transport.request_attach`` reports.
     """
-    return slash_ctx(session, recorder=session._outbox)
+    return slash_ctx(session, recorder=session._outbox, attach_result=attach_result)
 
 
 class _FakeSession:
@@ -136,30 +147,19 @@ async def test_attach_no_name_sends_error() -> None:
 
 
 @pytest.mark.asyncio
-async def test_attach_no_registry_sends_error() -> None:
-    """Tier 2: /attach with no registry wired replies an error."""
-    session = _FakeSession(registry=None)
-    await attach_cmd(_ctx(session), "alpha")
-    assert session.error_text()
-
-
-@pytest.mark.asyncio
-async def test_attach_nonexistent_name_sends_error() -> None:
-    """Tier 2: /attach <name> for a name that doesn't exist replies an error."""
+async def test_attach_unconfirmed_sends_a_could_not_confirm_system_note() -> None:
+    """Tier 2: #5096 ② -- attach_cmd (locus="connection") no longer reads
+    ``ctx.session`` at all, so "no registry", "name not found", and
+    "already attached" are no longer THREE distinguishable client-side
+    outcomes -- they collapse into whatever ``request_attach`` itself
+    reports. A False result (the transport's own typed-op call was not
+    confirmed, for ANY reason) gets a "could not confirm" reply, never an
+    error kind -- False is ambiguous by transport (AG-UI's is "unknown";
+    in-process's is definitive), so it must never read as a hard failure
+    for one transport and a correct outcome for the other."""
     session = _FakeSession(registry=_FakeRegistry(names=["alpha"], attached="alpha"))
-    await attach_cmd(_ctx(session), "ghost")
-    assert session.error_text()
-    assert "ghost" in session.error_text()
-
-
-@pytest.mark.asyncio
-async def test_attach_already_attached_sends_system_note() -> None:
-    """Tier 2: /attach to the already-attached agent replies an 'already attached' note."""
-    session = _FakeSession(
-        registry=_FakeRegistry(names=["alpha"], attached="alpha")
-    )
-    await attach_cmd(_ctx(session), "alpha")
-    assert "already" in session.system_text()
+    await attach_cmd(_ctx(session, attach_result=False), "ghost")
+    assert "could not confirm" in session.system_text()
     assert not session.error_text()
 
 

@@ -26,6 +26,7 @@ from reyn.runtime.outbox import OutboxMessage
 @slash(
     "copy",
     summary="Copy an agent reply to the clipboard",
+    locus="client",
     usage="/copy [N|list]",
 )
 async def copy_cmd(ctx: "SlashContext", args: str) -> None:

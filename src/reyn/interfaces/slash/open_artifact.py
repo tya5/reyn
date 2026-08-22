@@ -28,6 +28,7 @@ from reyn.runtime.outbox import OutboxMessage
 @slash(
     "open",
     summary="Open a generated artifact with the OS default app",
+    locus="client",
     usage="/open <ref>",
 )
 async def open_cmd(ctx: "SlashContext", args: str) -> None:

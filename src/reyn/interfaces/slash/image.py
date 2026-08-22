@@ -129,6 +129,7 @@ def _image_path_completer(
 @slash(
     "image",
     summary="Send an image (png/jpg/gif/webp/svg/jpeg)",
+    locus="session",
     usage="/image <path>",
     aliases=("img",),
     completer=_image_path_completer,

@@ -29,7 +29,7 @@ footgun where a client kills the server).
 from __future__ import annotations
 
 import asyncio
-from typing import AsyncIterator, Awaitable, Callable
+from typing import TYPE_CHECKING, AsyncIterator, Awaitable, Callable
 
 from reyn.interfaces.transport.agui.protocol import (
     InterventionTool,
@@ -40,12 +40,15 @@ from reyn.interfaces.transport.agui.protocol import (
     parse_sse_blocks,
 )
 from reyn.interfaces.transport.agui.state import RemoteStatusView, reguard_nodes
-from reyn.interfaces.transport.client_transport import ClientTransportStub
+from reyn.interfaces.transport.client_transport import ClientTransport
 from reyn.interfaces.transport.drain import suspend_between_frames
 from reyn.interfaces.transport.frames import DisplayFrame, EventFrame, Frame
 
+if TYPE_CHECKING:
+    from pathlib import Path
 
-class AgUiTransport(ClientTransportStub):
+
+class AgUiTransport(ClientTransport):
     """Decode a server AG-UI SSE stream into the renderer's ``Frame`` vocabulary."""
 
     def __init__(
@@ -217,6 +220,18 @@ class AgUiTransport(ClientTransportStub):
     def has_session(self) -> bool:
         return self._connected
 
+    def attach_failed(self) -> bool:
+        # #5096 review finding (lead-coder): EXPLICITLY implemented, not
+        # inherited from ClientTransportStub, even though the VALUE
+        # matches its own default. A remote attach either already
+        # succeeded by the time --connect returns or the connection
+        # attempt itself raised, so there is no separate "connecting in
+        # the background" phase to fail remotely — see
+        # ClientTransport.attach_failed's own docstring for the full
+        # rationale (only InProcessTransport's background-attach path has
+        # anything meaningful to report here).
+        return False
+
     def pending_intervention_head(self) -> "object | None":
         # P3: the id of the intervention awaiting an answer, tracked off the
         # server's intervention frontend-tool. Non-None routes an operator line
@@ -358,6 +373,24 @@ class AgUiTransport(ClientTransportStub):
         # client-local "cancel succeeded" inference), same as every other
         # queue-affecting mutation on this transport.
         return bool(await self._send({"type": "cancel_queued", "msg_id": msg_id}))
+
+    async def clear_pending_command_ui(self) -> None:
+        # #5096 review finding (lead-coder): EXPLICITLY implemented, not
+        # inherited from ClientTransportStub, even though the VALUE
+        # matches its own default (a no-op) — command-UI is INLINE-APP-
+        # LOCAL state, never on the wire (mirrors pending_command_ui()'s
+        # own None for remote — see ClientTransport.clear_pending_
+        # command_ui's own docstring). #5048's cutover leans on this
+        # remaining a deliberate no-op here, not a forgotten override.
+        return None
+
+    def reyn_state_root(self) -> "Path | None":
+        # #5096 review finding (lead-coder): EXPLICITLY implemented, not
+        # inherited from ClientTransportStub. The project lives on the
+        # far end of the wire — there is no local answer to give, ever,
+        # not a transient failure (see ClientTransport.reyn_state_root's
+        # own docstring for the None-vs-empty distinction this preserves).
+        return None
 
     async def shutdown(self) -> None:
         # Client-LOCAL disconnect only (A3). A client can never tear down the

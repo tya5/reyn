@@ -21,5 +21,5 @@ async def _quit_handler(ctx: "SlashContext", args: str) -> None:
 # Both names get a registry entry. Using two ``@slash``-style
 # registrations keeps the palette's ``c.name.startswith(token)`` filter
 # happy for either ``/q`` or ``/ex`` prefixes.
-slash("quit", summary="Exit the chat (alias: /exit, Ctrl+D)")(_quit_handler)
-slash("exit", summary="Exit the chat (alias: /quit, Ctrl+D)")(_quit_handler)
+slash("quit", summary="Exit the chat (alias: /exit, Ctrl+D)", locus="client")(_quit_handler)
+slash("exit", summary="Exit the chat (alias: /quit, Ctrl+D)", locus="client")(_quit_handler)

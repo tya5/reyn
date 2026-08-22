@@ -77,6 +77,7 @@ def _memory_completer(
 @slash(
     "memory",
     summary="Inspect project memory entries",
+    locus="client",
     usage="/memory [list|view <name>]",
     completer=_memory_completer,
     see_also=("docs/concepts/data-retrieval/memory.md",),

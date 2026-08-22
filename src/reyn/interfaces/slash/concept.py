@@ -154,6 +154,7 @@ _GLOSSARY_PATH_HINT = (
 @slash(
     "concept",
     summary="Look up a TUI/reyn concept in the glossary",
+    locus="client",
     usage="/concept [<term>]",
 )
 async def concept_cmd(ctx: "SlashContext", args: str) -> None:  # noqa: D401

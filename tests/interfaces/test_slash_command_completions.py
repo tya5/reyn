@@ -15,10 +15,10 @@ async def _noop(session, args) -> None:  # pragma: no cover - fixture handler
 
 
 _FIXTURE = [
-    SlashCommand(name="model", summary="Override the model class", handler=_noop),
-    SlashCommand(name="memory", summary="Memory ops", handler=_noop),
-    SlashCommand(name="agents", summary="List agents", handler=_noop),
-    SlashCommand(name="donut", summary="easter egg", handler=_noop, hidden=True),
+    SlashCommand(name="model", summary="Override the model class", handler=_noop, locus="session"),
+    SlashCommand(name="memory", summary="Memory ops", handler=_noop, locus="client"),
+    SlashCommand(name="agents", summary="List agents", handler=_noop, locus="session"),
+    SlashCommand(name="donut", summary="easter egg", handler=_noop, locus="client", hidden=True),
 ]
 
 

@@ -45,6 +45,7 @@ def _model_class_completer(source: "object", arg_partial: str = "") -> list[str]
 @slash(
     "model",
     summary="Show or override the model class for this session",
+    locus="session",
     usage="/model [<class>]",
     completer=_model_class_completer,
 )
