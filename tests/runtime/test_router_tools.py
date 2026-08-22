@@ -95,7 +95,23 @@ def _max_object_nesting(params: dict) -> int:
 FILE_TOOL_NAMES = {"list_directory", "read_file", "write_file", "delete_file"}
 FILE_READ_TOOL_NAMES = {"list_directory", "read_file"}
 FILE_WRITE_TOOL_NAMES = {"write_file", "delete_file"}
-MCP_TOOL_NAMES = {"list_mcp_servers", "list_mcp_tools", "call_mcp_tool"}
+# #5066: was 3 names (D1-D3 only) — measured against router_tools.py's own
+# ``if mcp_servers:`` block (the SAME gate covers all of D1-D11/D1b, one
+# unconditional branch, not per-tool), the full MCP-gated set is 12, not 3.
+# The missing 9 (D1b, D4-D11) were added over time (FP-0032's D4
+# describe_mcp_tool, #4686's D1b list_mcp_subscriptions, the MCP resources/
+# prompts additions D5-D11) without this constant ever being updated —
+# exactly the "structurally green on addition" shape #5066 reports: a
+# disjoint/superset check against a STALE, too-small set still passes
+# whether or not the new tools are correctly gated, because it never looks
+# at them at all.
+MCP_TOOL_NAMES = {
+    "list_mcp_servers", "list_mcp_subscriptions", "list_mcp_tools",
+    "call_mcp_tool", "describe_mcp_tool", "list_mcp_resources",
+    "list_mcp_resource_templates", "read_mcp_resource",
+    "subscribe_mcp_resource", "unsubscribe_mcp_resource",
+    "list_mcp_prompts", "get_mcp_prompt",
+}
 
 SAMPLE_MCP_SERVERS = [{"name": "fs", "description": "Filesystem MCP server"}]
 
@@ -300,31 +316,54 @@ EXPECTED_FULL_TOOL_NAMES = sorted(
 
 
 def test_total_tool_count_with_full_permissions():
-    """Tier 2: Full file + MCP permissions → all baseline + file + MCP tools present.
+    """Tier 2: Full file + MCP permissions → the tool set is EXACTLY the
+    baseline + file + MCP union — no fewer (a removed tool), no more (an
+    added tool this test was never updated to cover).
 
-    Full file + MCP permissions → 11 baseline + 4 file C1-C4
-    + 2 web E1+E2 (web_search + web_fetch always on since FP-0022; #1449
-    retired read_tool_result E3) + 4 MCP D1-D4
-    + 2 reyn_repo F1-F2 + 1 plan G1
-    + 2 presentation (present + render_template, #2692) = 25 tools total
-    (delegate_to_agent retired, #3978 P6 — was 26).
-    FP-0066 P1b retired the former 3 RAG H1-H3 tools (semantic_search /
-    drop_source / index_update).
-    FP-0032: D4 describe_mcp_tool added alongside D1-D3.
-    web_fetch_allowed param is kept for backward compat but now a no-op.
-    """
+    #5066: the three former ``missing_X = X - names; assert not missing_X``
+    checks only ever look ONE direction (does ``names`` cover ``X``) — they
+    never check the REVERSE (does ``X`` cover ``names``), so a tool ADDED to
+    ``build_tools`` and never added to ``EXPECTED_FULL_TOOL_NAMES`` (or one
+    of the three sets it is built from) makes this test's name and docstring
+    ("total tool count" / "N tools total") false while the assertions stay
+    green — structurally green on addition, the exact defect this issue
+    reports. Measured directly (not asserted from memory): the real total
+    with full permissions is **35** — 19 baseline (``EXPECTED_TOOL_NAMES``)
+    + 4 file C1-C4 + 12 MCP D1-D11/D1b (``MCP_TOOL_NAMES`` — see that
+    constant's own #5066 comment for why it grew from 3 to 12) — this is
+    the count for the INLINE MCP branch (``build_tools``'s own ``if
+    mcp_servers:`` has TWO branches, per architect's measurement: below
+    ``mcp_search_threshold`` inlines all 12 D-tools, at/above it
+    substitutes a single ``tool_search_tool`` meta-tool instead — this
+    test's single sample server never reaches that threshold, so 35 covers
+    ONLY the inline branch; the search-tool branch is a SEPARATE count
+    this test does not claim and no test is added here for it, out of
+    #5066's own scope). ``delegate_to_agent`` (#3978 P6) and the H1-H3 RAG
+    tools (FP-0066 P1b) are retired, not counted; ``web_fetch_allowed`` is
+    kept for backward compat but is now a no-op (web_fetch is always on,
+    FP-0022).
+
+    Real equality (``==`` on the two sorted name lists), not a bare
+    ``len()`` — CLAUDE.md's test-review question 3 ("who would miss this
+    test if it were gone"): a headline count alone would tell a future
+    reader THAT something changed, never WHICH tool, reproducing the exact
+    "don't know what to touch" pain #5043 already recorded. ``assert
+    expected`` guards against the vacuous case (test-review question 4):
+    an equality check alone would pass silently if ``EXPECTED_FULL_TOOL_
+    NAMES`` were ever emptied out from under it, same as ``names == []``
+    passing for a ``build_tools`` that returned nothing."""
     tools = build_tools(SAMPLE_AGENTS,
         file_permissions={"read": ["src"], "write": ["out"]},
         mcp_servers=SAMPLE_MCP_SERVERS,
         web_fetch_allowed=True,
     )
-    names = set(_tool_names(tools))
-    missing_file = FILE_TOOL_NAMES - names
-    missing_mcp = MCP_TOOL_NAMES - names
-    missing_baseline = set(EXPECTED_TOOL_NAMES) - names
-    assert not missing_file, f"Missing file tools: {missing_file}"
-    assert not missing_mcp, f"Missing MCP tools: {missing_mcp}"
-    assert not missing_baseline, f"Missing baseline tools: {missing_baseline}"
+    names = sorted(_tool_names(tools))
+    expected = EXPECTED_FULL_TOOL_NAMES
+    assert expected, "EXPECTED_FULL_TOOL_NAMES must not be empty"
+    assert names == expected, (
+        f"tool set changed — extra: {sorted(set(names) - set(expected))}, "
+        f"missing: {sorted(set(expected) - set(names))}"
+    )
 
 
 # ── Gemini-safe schema checks apply to new tools too ──────────────────────────
