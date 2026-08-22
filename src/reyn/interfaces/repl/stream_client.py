@@ -49,11 +49,34 @@ def _pending_head_id(head: object) -> "str | None":
     (``InProcessTransport``/``SessionBoundTransport`` — #5047 axis A
     guarantees its ``.id`` is a genuine identity, not merely "the oldest"),
     or a bare id string (``AgUiTransport``'s own ``_pending_intervention_id``).
-    Not a form-sniff over ambiguous shapes — these are the two production
-    transports' own established contracts, and both id forward to the same
-    ``answer_intervention_by_id`` funnel identically."""
-    iv_id = getattr(head, "id", head)
-    return str(iv_id) if iv_id is not None else None
+
+    An unrecognized third shape returns ``None`` (logged) rather than
+    silently coercing it into SOME string via ``str(...)`` — architect's own
+    review finding on this PR (#5057): a naive ``getattr(head, "id", head)``
+    would happily turn e.g. a dict-shaped value (a genuinely similar-looking
+    but DIFFERENT contract lives nearby, ``RemoteReadModel.intervention_
+    head()``'s own dict projection) into a garbage id string via ``str()``
+    — the exact #4996-family "failure that looks like success" this repo's
+    own vocabulary names. Never reached by the two production transports
+    today (this IS a strict narrowing of a check that never fires yet, not
+    a behavior change for either), but the id this function returns feeds
+    straight into ``answer_intervention_by_id`` — a caller passing a
+    genuinely wrong shape deserves "no pending intervention recognized"
+    (falls through to a normal turn), never a corrupted delivery target."""
+    if isinstance(head, str):
+        return head
+    iv_id = getattr(head, "id", None)
+    if isinstance(iv_id, str) and iv_id:
+        return iv_id
+    if head is not None:
+        logger.warning(
+            "#5057: pending_intervention_head() returned an unrecognized "
+            "shape (%s) -- neither a bare id string nor an object with a "
+            "genuine string .id. Treating as no pending intervention "
+            "rather than deriving a garbage id from it.",
+            type(head).__name__,
+        )
+    return None
 
 
 async def run_input_loop(

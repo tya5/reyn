@@ -115,3 +115,53 @@ async def test_cui_answer_targets_the_head_intervention_leaving_the_second_untou
     assert resolved_b is True
     answer_b = await asyncio.wait_for(task_b, timeout=5.0)
     assert answer_b.text == "answer meant for B"
+
+
+# ── _pending_head_id's own shape-check (architect's PR #5083 review finding) ─
+
+
+def test_pending_head_id_accepts_a_bare_string_and_an_object_with_a_string_id() -> None:
+    """Tier 2: the two RECOGNIZED shapes -- ``AgUiTransport``'s own bare id
+    string, and ``InProcessTransport``/``SessionBoundTransport``'s real
+    ``UserIntervention`` object (any object exposing a genuine string
+    ``.id`` is treated identically, matching the family, not just the one
+    concrete class)."""
+    from reyn.interfaces.repl.stream_client import _pending_head_id
+
+    assert _pending_head_id("iv-remote") == "iv-remote"
+
+    iv = UserIntervention(kind="ask_user", prompt="x?", run_id="r")
+    assert _pending_head_id(iv) == iv.id
+
+    assert _pending_head_id(None) is None
+
+
+def test_pending_head_id_refuses_to_derive_a_garbage_id_from_an_unrecognized_shape() -> (
+    None
+):
+    """Tier 2: strip-falsifier for architect's PR #5083 review finding -- a
+    THIRD shape (neither a bare string nor an object with a genuine string
+    ``.id``) must return ``None``, never a silently-coerced ``str(...)`` of
+    the whole value. A dict is the concrete near-miss named in review: a
+    genuinely similar-looking but DIFFERENT contract
+    (``RemoteReadModel.intervention_head()``) really does return a dict
+    shape nearby in this codebase, so this is not a hypothetical.
+
+    Strip-falsifier: reverting to the naive ``getattr(head, "id", head)``
+    (this function's own pre-review form) turns this red -- it would
+    return ``str({"id": "iv-x", ...})`` instead of ``None``, verified
+    locally."""
+    from reyn.interfaces.repl.stream_client import _pending_head_id
+
+    dict_shaped = {"id": "iv-x", "prompt": "Allow?", "choices": []}
+    assert _pending_head_id(dict_shaped) is None, (
+        f"a dict-shaped value must never be silently coerced into an id "
+        f"string; got {_pending_head_id(dict_shaped)!r}"
+    )
+
+    # An object whose own .id is itself the WRONG type (not a string) is the
+    # same hazard one layer down -- also refused, never str()-coerced.
+    class _WrongIdType:
+        id = 12345
+
+    assert _pending_head_id(_WrongIdType()) is None
