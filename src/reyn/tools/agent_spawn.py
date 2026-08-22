@@ -40,6 +40,10 @@ _AGENT_SPAWN_PARAMETERS: dict[str, Any] = {
             "type": "string",
             "description": _delegation_descriptions.PARAMS["spawn_agent"]["role"].text,
         },
+        "base_dir": {
+            "type": "string",
+            "description": _delegation_descriptions.PARAMS["spawn_agent"]["base_dir"].text,
+        },
     },
     "required": ["name"],
 }
@@ -63,7 +67,9 @@ async def _handle(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
             "kind": "invalid_name",
             "error": "spawn_agent requires a non-empty 'name'.",
         }
-    return await rs.spawn_agent_fn(name=name, role=args.get("role", "") or "")
+    return await rs.spawn_agent_fn(
+        name=name, role=args.get("role", "") or "", base_dir=args.get("base_dir"),
+    )
 
 
 from reyn.core.offload.canonical import agent_spawn_to_canonical  # noqa: E402

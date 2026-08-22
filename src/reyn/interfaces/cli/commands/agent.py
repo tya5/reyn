@@ -37,6 +37,15 @@ def register(sub) -> None:
         "--role", default="",
         help="Free-form role prompt injected into the agent's system prompt",
     )
+    p_new.add_argument(
+        "--base-dir", default=None,
+        help=(
+            "Working-directory override for this agent (#5080; restrict-only "
+            "-- must resolve inside the project workspace, rejected otherwise, "
+            "never clamped). Relative paths resolve against the project "
+            "workspace. Omitted -> inherits the project's own base_dir."
+        ),
+    )
     p_new.set_defaults(func=_cmd_new)
 
     p_rm = inner.add_parser(
@@ -157,7 +166,9 @@ def _cmd_new(args: argparse.Namespace) -> None:
     )
     target = _agents_dir() / args.name
     try:
-        asyncio.run(reg.create_agent(args.name, role=args.role))
+        asyncio.run(
+            reg.create_agent(args.name, role=args.role, base_dir=args.base_dir)
+        )
     except ValueError as e:                       # invalid name
         print(f"Error: {e}", file=sys.stderr)
         sys.exit(2)

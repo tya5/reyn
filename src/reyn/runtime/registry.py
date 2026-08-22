@@ -697,11 +697,53 @@ class AgentRegistry:
     def exists(self, name: str) -> bool:
         return (self._dir / name / PROFILE_FILENAME).is_file()
 
-    def create(self, name: str, *, role: str = "") -> AgentProfile:
+    def create(
+        self, name: str, *, role: str = "", base_dir: "str | Path | None" = None,
+    ) -> AgentProfile:
+        """#5080: ``base_dir`` (optional) is #4206's axis ① (capability,
+        restrict-only) applied to a "file zone" the agent layer had none
+        of before — NOT a new kind of override. Written into THIS agent's
+        own ``profile.yaml`` (``.reyn/agents/<name>/`` — keyed by AGENT
+        identity), never ``.reyn/capability_profiles/<X>.yaml`` (architect
+        BLOCK, #5081 review): that directory's ``<X>`` is keyed by PROFILE
+        name, a free string a topology's ``profiles: {member: profile_
+        name}`` binding writes with no uniqueness constraint against agent
+        names — ``profiles: {alice: alice}`` (an agent bound to a
+        same-named narrowing template) is a real, unconstrained possibility (lead-coder's own measurement: no same-name binding appears in this repo's current examples, but the frequency claim isn't what makes this a real collision -- the absent uniqueness constraint is), so
+        writing base_dir there would silently collide with an unrelated
+        narrowing template. Validated ⊆ the project workspace root here,
+        the ONE seam every creation surface (CLI / web / slash / the
+        ``spawn_agent`` LLM tool) routes through, so the check applies
+        uniformly rather than being replicated per surface — the SAME
+        "restrict-only, reject rather than clamp, name the boundary" shape
+        ``spawn_session``'s own ``base_dir`` argument already uses
+        (``router_host_adapter.py``'s ``spawn_session``), but bounded by
+        the WORKSPACE ROOT here, not a spawner's own effective
+        ``base_dir`` — owner's own resolution rule (issue #5080): an
+        agent-spawn with nothing given defaults to the PROJECT base_dir,
+        not the spawner's."""
         _validate_agent_name(name)
         if self.exists(name):
             raise FileExistsError(f"agent {name!r} already exists")
-        profile = AgentProfile.new(name, role=role)
+        resolved_base_dir: "str | None" = None
+        if base_dir is not None:
+            candidate = Path(base_dir)
+            if not candidate.is_absolute():
+                candidate = self._project_root / candidate
+            candidate = candidate.resolve()
+            workspace_resolved = self._project_root.resolve()
+            if (
+                candidate != workspace_resolved
+                and workspace_resolved not in candidate.parents
+            ):
+                raise ValueError(
+                    f"requested base_dir {str(candidate)!r} resolves outside "
+                    f"the project workspace {str(workspace_resolved)!r} — "
+                    "restrict-only: an agent's base_dir must fall under the "
+                    "project workspace."
+                )
+            resolved_base_dir = str(candidate)
+        profile = AgentProfile.new(name, role=role, base_dir=resolved_base_dir)
         profile.save(self._dir / name)
         return profile
 
@@ -883,7 +925,8 @@ class AgentRegistry:
         return self._max_pipeline_spawns
 
     async def create_agent(
-        self, name: str, *, role: str = "", parent: "str | None" = None
+        self, name: str, *, role: str = "", parent: "str | None" = None,
+        base_dir: "str | None" = None,
     ) -> AgentProfile:
         """#2103 S2b: the action-layer CREATE seam — create the profile (sync) +
         emit ``agent_created`` so rewind can track / reconstruct / drop the agent
@@ -900,7 +943,7 @@ class AgentRegistry:
         escalation-on-rewind — so the carry+restore is a security linchpin (the emit
         AND the reconstruction-restore are both verified, the registered-but-unemitted
         → resurrection hazard class)."""
-        profile = self.create(name, role=role)
+        profile = self.create(name, role=role, base_dir=base_dir)
         if parent is not None:
             self._record_spawn_lineage(name, parent)
         # #2103 C2b: the parent's identity FROZEN at this spawn (the same value the edge
