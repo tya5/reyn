@@ -74,16 +74,32 @@ class AgentProfile:
     # to the project's own base_dir, same convention as `allowed_mcp`'s
     # None).
     base_dir: "str | None" = None
+    # #5084 ③ (owner-directed, issue #5084): a FLAT identity column, the
+    # SAME shape as `name`/`role` above -- not a layered override axis
+    # like `preferences`/`bounding`/`base_dir`. Architect ruling
+    # (issuecomment-5378399712 on #5084): the project layer has no such
+    # value to override ("N agents, no single broker id" -- there is
+    # nothing for a project-wide default to mean), so this is not a
+    # ③-preference/②-bounding/①-capability axis at all, just a plain
+    # per-agent field. `None` (absent) means "this agent does not
+    # participate in broker coordination" -- owner's own words: "the
+    # default agent stays an admin-only agent; it doesn't need to join
+    # development." No special-case branch anywhere reads this as
+    # anything other than absent -- an agent created without it simply
+    # has no identity, the same as one that never set `role`.
+    broker_identity: "str | None" = None
 
     @classmethod
     def new(
         cls, name: str, role: str = "", *, base_dir: "str | None" = None,
+        broker_identity: "str | None" = None,
     ) -> "AgentProfile":
         return cls(
             name=name,
             role=role,
             created_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
             base_dir=base_dir,
+            broker_identity=broker_identity,
         )
 
     @classmethod
@@ -121,6 +137,8 @@ class AgentProfile:
         validate_bounding(bounding, source=f"agent {name!r} profile.yaml")
         raw_base_dir = data.get("base_dir")
         base_dir = str(raw_base_dir) if raw_base_dir else None
+        raw_broker_identity = data.get("broker_identity")
+        broker_identity = str(raw_broker_identity) if raw_broker_identity else None
         return cls(
             name=name,
             role=str(data.get("role", "") or ""),
@@ -129,6 +147,7 @@ class AgentProfile:
             preferences=preferences,
             bounding=bounding,
             base_dir=base_dir,
+            broker_identity=broker_identity,
         )
 
     def save(self, agent_dir: Path) -> None:
@@ -150,6 +169,8 @@ class AgentProfile:
             payload["bounding"] = dict(self.bounding)
         if self.base_dir is not None:
             payload["base_dir"] = self.base_dir
+        if self.broker_identity is not None:
+            payload["broker_identity"] = self.broker_identity
         path.write_text(
             yaml.safe_dump(payload, allow_unicode=True, sort_keys=False),
             encoding="utf-8",
