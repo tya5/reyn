@@ -35,20 +35,23 @@ researcher  2026-05-01 12:55  deep technical research, prefers primary sources
 writer      2026-04-30 18:20  concise long-form prose
 ```
 
-## `reyn agent new <name> [--role TEXT] [--base-dir PATH]`
+## `reyn agent new <name> [--role TEXT] [--base-dir PATH] [--project-context-path PATH]`
 
 Create a new agent under `.reyn/agents/<name>/`. The directory is provisioned with a `profile.yaml`; `history.jsonl`, `events.jsonl`, `memory/`, and `runs/` are created on first activity.
 
 ```bash
 reyn agent new researcher --role "deep technical research, prefers primary sources"
 reyn agent new worker --base-dir repos/worker
+reyn agent new coder1 --project-context-path coder1-context.md
 ```
 
 `<name>` must match the agent name regex: 1–32 characters of `[a-z0-9_-]` starting with `[a-z0-9]`.
 
-The `--role` text is injected into the agent's LLM system prompt — keep it short and specific. To configure `allowed_mcp` or any other profile field, edit `profile.yaml` directly after creation; see profile-yaml reference.
+The `--role` text is injected into the agent's LLM system prompt — keep it short and specific. `allowed_mcp`, `preferences`, and `bounding` have no CLI declaration surface yet — configure those by editing `profile.yaml` directly after creation; see profile-yaml reference.
 
 `--base-dir` (#5080) sets this agent's own working-directory override — restrict-only, must resolve inside the project workspace (relative paths resolve against it); a path outside is rejected, never clamped. Omitted, the agent falls back to the project's own base_dir. A session-spawn's own `base_dir` (`spawn_session`'s LLM-facing argument) still takes precedence over this agent-level default when both are set.
+
+`--project-context-path` (#5111, same restrict-only shape as `--base-dir`) sets this agent's own `REYN.md`/`AGENTS.md` override, replacing the project-wide file for this agent's sessions. Omitted, the agent falls through to the project-wide file.
 
 ## `reyn agent show <name>`
 
