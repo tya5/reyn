@@ -125,6 +125,7 @@ def test_render_focus_alias_resolves_to_canonical() -> None:
         name="xtmphelp_alias_target",
         summary="aliased target for test",
         handler=_h,
+        locus="client",
         aliases=("xtmphelp_alias_alt",),
     ))
     panel = _render_command_focus("xtmphelp_alias_alt")  # = alias
@@ -143,6 +144,7 @@ def test_render_focus_hidden_command_is_annotated() -> None:
         name="xtmphelp_hidden_target",
         summary="hidden test cmd",
         handler=_h,
+        locus="client",
         hidden=True,
     ))
     panel = _render_command_focus("xtmphelp_hidden_target")

@@ -130,9 +130,9 @@ def test_menu_pane_enumerates_full_slash_registry_no_subset() -> None:
     ``SlashRegistry`` — a freshly-registered command appears, a hidden one is
     excluded. Proves the formatter enumerates the whole registry (no subset)."""
     reg = SlashRegistry()
-    reg.register(SlashCommand("realcmd", "a real command", handler=_noop))
-    reg.register(SlashCommand("zzz-fake", "the fresh entry", handler=_noop))
-    reg.register(SlashCommand("secret", "hidden one", handler=_noop, hidden=True))
+    reg.register(SlashCommand("realcmd", "a real command", handler=_noop, locus="client"))
+    reg.register(SlashCommand("zzz-fake", "the fresh entry", handler=_noop, locus="client"))
+    reg.register(SlashCommand("secret", "hidden one", handler=_noop, locus="client", hidden=True))
 
     rows = menu_pane_options(reg.all_commands())
     names = {r.split(" — ")[0] for r in rows}

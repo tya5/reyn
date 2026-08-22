@@ -50,7 +50,7 @@ async def test_raising_slash_handler_is_contained_not_fatal(
     monkeypatch.setitem(
         REGISTRY._commands,
         "__f3boom__",
-        SlashCommand(name="__f3boom__", summary="test", handler=_boom),
+        SlashCommand(name="__f3boom__", summary="test", handler=_boom, locus="session"),
     )
 
     # Before the fix this raised RuntimeError out of dispatch (→ killed run()).
