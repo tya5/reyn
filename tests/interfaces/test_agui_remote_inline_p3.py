@@ -121,8 +121,9 @@ async def test_remote_read_model_projects_pending_intervention_head() -> None:
     confirmed independently; #5050 fixes the read-model source, not that
     consumer).
 
-    FALSIFY: dropping ``pending_intervention_head`` from ``_WIRE_KEYS``/
-    ``project_status`` (state.py) turns this RED (``intervention_head()``
+    FALSIFY: dropping ``pending_intervention_head`` from ``project_status``
+    (state.py, the sole source of truth for the wire vocabulary — #5098)
+    turns this RED (``intervention_head()``
     reverts to None even though the server-side state carries a real head).
     See the sibling test below for the reverse direction: no pending head
     on the wire still correctly returns None (not fabricated)."""

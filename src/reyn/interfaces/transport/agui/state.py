@@ -33,69 +33,42 @@ from dataclasses import dataclass, field
 
 from reyn.core.present.guard import get_neutralizer
 
-# The status keys that ride the wire — the read-model's whole vocabulary. Kept
-# as an explicit projection so a private/expensive snapshot field (e.g. the
-# bound ``ctx_compaction_status_fn`` method) can never leak onto the wire.
-_WIRE_KEYS = (
-    "attached_name",
-    "model",
-    # #5094: the agent roster + the model-class picker's own catalog — all
-    # 4 were already computed server-side (``status._snapshot``'s own
-    # ``registry.loaded_names()``/``registry.session_tree()``/
-    # ``Session.active_model_class()``/``Session.known_model_classes()``)
-    # but never forwarded past this filter, so a remote client's agent tab
-    # and model-class picker were unconditionally empty regardless of how
-    # many agents/sessions or model classes the server actually had (owner
-    # live-blocked on this, #5041/#5094). Real per-connection values, same
-    # as every other key here — not a graceful-degrade placeholder.
-    "agent_names",
-    "session_tree",
-    "model_active_class",
-    "model_classes",
-    "cost_agent",
-    "cost_total",
-    "agent_tokens",
-    "ctx_used",
-    "ctx_window",
-    "waiting_on",
-    # #5050: the pending closed-set intervention (id/prompt/detail/choices),
-    # or None — the source ``RemoteReadModel.intervention_head()`` reads
-    # instead of an unconditional None (the #4996-family lying-None fix —
-    # see that method's own docstring). See ``status._snapshot``'s own
-    # docstring for the shape.
-    "pending_intervention_head",
-    # #3300 P2a: server-authoritative sent-queue state — the undispatched
-    # inbox queue (list of {msg_id, chain_id, text}) + whether a turn is
-    # currently dispatched. Rides this SAME STATE_SNAPSHOT/STATE_DELTA
-    # channel (connect-time snapshot + delta thereafter) so a remote client
-    # is late-joiner-safe: a client connecting mid-turn gets the correct
-    # queue + turn_active from the snapshot rather than needing to have
-    # observed every prior turn_started/user_submitted audit-event.
-    "queue",
-    "turn_active",
-    # The order-race gate token (#3300 P2a design-pass pin D) — see
-    # `RemoteQueueView` below.
-    "queue_seq",
-    # #2280: the durability-halt reason (``None`` while running) — rides this
-    # SAME snapshot/delta channel so a remote status panel surfaces a halt
-    # proactively too, not only the local in-process one.
-    "halted_reason",
-)
-
 
 def project_status(snapshot: "dict | None", *, waiting_on: "str | None" = None) -> dict:
-    """Project the inline status snapshot to the wire read-model subset.
+    """Project the inline status snapshot to the wire read-model subset —
+    the read-model's WHOLE vocabulary; a private/expensive snapshot field
+    (e.g. the bound ``ctx_compaction_status_fn`` method) can never leak
+    onto the wire because this function's own return dict is the only
+    thing that does.
 
     ``snapshot`` is the CUI's ``_snapshot`` dict (or ``None`` when no session is
     attached). ``waiting_on`` is the current WaitingOn label (from the
     audit-event stream) folded in so the remote panel shows the same
     Thinking / Running / Waiting-for-you state the local one does.
+
+    #5098: this dict literal — not a separate ``_WIRE_KEYS`` tuple that
+    used to sit above this function — is now the sole source of truth for
+    which keys ride the wire. The old split had ``_WIRE_KEYS`` read by
+    NOTHING (a dead declaration authored, then cited 6 times elsewhere as
+    if it gated something) while THIS dict alone actually decided the
+    wire's contents — measured by docs-maintainer's own 2-stage strip on
+    PR #5097's TESTS-READ: deleting ``_WIRE_KEYS`` changed nothing;
+    deleting a key from THIS dict did. A future key belongs here, in one
+    place, not in a second list this function never consulted.
     """
     snap = snapshot or {}
     out = {
         "attached_name": snap.get("attached_name"),
         "model": snap.get("model"),
-        # #5094: see _WIRE_KEYS above.
+        # #5094: the agent roster + the model-class picker's own catalog —
+        # all 4 were already computed server-side (``status._snapshot``'s
+        # own ``registry.loaded_names()``/``registry.session_tree()``/
+        # ``Session.active_model_class()``/``Session.known_model_classes()``)
+        # but never forwarded past this dict, so a remote client's agent
+        # tab and model-class picker were unconditionally empty regardless
+        # of how many agents/sessions or model classes the server actually
+        # had (owner live-blocked on this, #5041/#5094). Real per-connection
+        # values — not a graceful-degrade placeholder.
         "agent_names": snap.get("agent_names", []),
         "session_tree": snap.get("session_tree", []),
         "model_active_class": snap.get("model_active_class"),
@@ -106,13 +79,27 @@ def project_status(snapshot: "dict | None", *, waiting_on: "str | None" = None) 
         "ctx_used": snap.get("ctx_used", 0),
         "ctx_window": snap.get("ctx_window", 0),
         "waiting_on": waiting_on,
-        # #5050: see _WIRE_KEYS above.
+        # #5050: the pending closed-set intervention (id/prompt/detail/choices),
+        # or None — the source ``RemoteReadModel.intervention_head()`` reads
+        # instead of an unconditional None (the #4996-family lying-None fix —
+        # see that method's own docstring). See ``status._snapshot``'s own
+        # docstring for the shape.
         "pending_intervention_head": snap.get("pending_intervention_head"),
-        # #3300 P2a: sent-queue state, see _WIRE_KEYS above.
+        # #3300 P2a: server-authoritative sent-queue state — the undispatched
+        # inbox queue (list of {msg_id, chain_id, text}) + whether a turn is
+        # currently dispatched. Rides this SAME STATE_SNAPSHOT/STATE_DELTA
+        # channel (connect-time snapshot + delta thereafter) so a remote client
+        # is late-joiner-safe: a client connecting mid-turn gets the correct
+        # queue + turn_active from the snapshot rather than needing to have
+        # observed every prior turn_started/user_submitted audit-event.
         "queue": snap.get("queue", []),
         "turn_active": snap.get("turn_active", False),
+        # The order-race gate token (#3300 P2a design-pass pin D) — see
+        # `RemoteQueueView` below.
         "queue_seq": snap.get("queue_seq", 0),
-        # #2280: see _WIRE_KEYS above.
+        # #2280: the durability-halt reason (``None`` while running) — rides this
+        # SAME snapshot/delta channel so a remote status panel surfaces a halt
+        # proactively too, not only the local in-process one.
         "halted_reason": snap.get("halted_reason"),
     }
     return out

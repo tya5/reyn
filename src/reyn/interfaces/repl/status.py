@@ -590,6 +590,6 @@ def _snapshot(registry, config=None):
         # the fail-stop set in ``Session._fail_stop_if_durability_dead`` /
         # ``run_one_iteration``. Consumed by the TUI status line
         # (``chrome.status_line_text``) and threaded onto the wire for remote
-        # parity (``agui.state._WIRE_KEYS`` / ``project_status``).
+        # parity (``agui.state.project_status``).
         "halted_reason": s.halted_reason,
     }
