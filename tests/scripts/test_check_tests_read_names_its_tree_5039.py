@@ -148,18 +148,46 @@ def test_an_issue_comment_id_is_not_read_as_a_sha():
     assert code == 1, "a note citing only a comment id names no tree"
 
 
-def _runner(returncode: int, stdout: str = "", stderr: str = ""):
+def _runner(returncode: int, stdout: str = "", stderr: str = "", seen: "list | None" = None):
     """A minimal stand-in for `subprocess.run`'s result, injected through
     `commit_touched_paths`'s own `run` seam. Not a mock of a cheaply
     constructible collaborator — the real one is an authenticated network
     call, and using it made the reject case below pass in CI for the wrong
-    reason (no token, rather than a bogus commit)."""
+    reason (no token, rather than a bogus commit).
+
+    *seen* collects the argv it was handed. An earlier revision discarded it,
+    which left the seam's ONE mistakable part — the endpoint path and the
+    ``--jq`` that shapes the reply — outside every test (architect, #5128 B):
+    a `commit_touched_paths` that asked for the wrong URL would have passed
+    both cases below."""
     import subprocess as _sp
 
     def _run(cmd, **kwargs):
+        if seen is not None:
+            seen.append(list(cmd))
         return _sp.CompletedProcess(cmd, returncode, stdout=stdout, stderr=stderr)
 
     return _run
+
+
+def test_the_seam_asks_github_for_that_commits_file_names() -> None:
+    """Tier 1: the command the seam issues — the part a reader cannot check by
+    running the suite unless a test looks at it. Endpoint and `--jq` together
+    decide whether the reply is a list of file names at all."""
+    seen: list = []
+    _MOD.commit_touched_paths(
+        "abc1234", "tya5/reyn", run=_runner(0, stdout="[]", seen=seen),
+    )
+    # `seen[0]` raises if the seam was never called at all, so the shape
+    # assertions below cannot pass vacuously.
+    argv = seen[0]
+    assert argv[:2] == ["gh", "api"], f"reads via the API, not a checkout; got {argv[:2]!r}"
+    assert "repos/tya5/reyn/commits/abc1234" in argv, (
+        f"asks for THAT commit in THAT repo; got {argv!r}"
+    )
+    assert "[.files[].filename]" in argv, (
+        f"asks for file NAMES — without this jq the reply is objects, not paths; got {argv!r}"
+    )
 
 
 def test_an_unreadable_commit_stops_the_run() -> None:
