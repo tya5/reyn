@@ -29,8 +29,18 @@ solved the "an absolute path must not calcify into history" problem this
 fix would otherwise have had to solve a second time). A caller that wants
 a workspace-relative value writes ``${REYN_PROJECT_DIR}/repos/<name>``,
 the SAME token a skill/plugin author already uses — a bare relative
-string with no token is simply not this feature's concern (unchanged,
-pre-existing ``Path`` behavior, not silently reinterpreted).
+string with no token is REJECTED outright (logged, treated as no
+override — see ``Session._read_base_dir_override``'s own docstring for
+the exact rule and its rationale), never silently reinterpreted as
+either workspace-relative (option (a), the design this module's own
+first draft implemented, then withdrawn) or as relative to the reyn
+process's current working directory (option (b), "leave it alone" — the
+ORIGINAL bug, and this sentence's own earlier, now-corrected claim: an
+untouched bare relative string is not actually a null-op, since
+``Path.cwd()``-relative resolution IS a behavior, just a
+cwd-dependent one). Architect's own measure of the choice: "which of the
+two remaining options fails silently" (issuecomment-5378958683) —
+rejection never does.
 
 **Two distinct mechanisms deliberately share the SAME token name.**
 ``${REYN_PROJECT_DIR}`` (this module's own consumer, "A": values reyn
