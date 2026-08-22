@@ -330,16 +330,28 @@ def test_total_tool_count_with_full_permissions():
     reports. Measured directly (not asserted from memory): the real total
     with full permissions is **35** — 19 baseline (``EXPECTED_TOOL_NAMES``)
     + 4 file C1-C4 + 12 MCP D1-D11/D1b (``MCP_TOOL_NAMES`` — see that
-    constant's own #5066 comment for why it grew from 3 to 12).
-    ``delegate_to_agent`` (#3978 P6) and the H1-H3 RAG tools (FP-0066 P1b)
-    are retired, not counted; ``web_fetch_allowed`` is kept for backward
-    compat but is now a no-op (web_fetch is always on, FP-0022).
+    constant's own #5066 comment for why it grew from 3 to 12) — this is
+    the count for the INLINE MCP branch (``build_tools``'s own ``if
+    mcp_servers:`` has TWO branches, per architect's measurement: below
+    ``mcp_search_threshold`` inlines all 12 D-tools, at/above it
+    substitutes a single ``tool_search_tool`` meta-tool instead — this
+    test's single sample server never reaches that threshold, so 35 covers
+    ONLY the inline branch; the search-tool branch is a SEPARATE count
+    this test does not claim and no test is added here for it, out of
+    #5066's own scope). ``delegate_to_agent`` (#3978 P6) and the H1-H3 RAG
+    tools (FP-0066 P1b) are retired, not counted; ``web_fetch_allowed`` is
+    kept for backward compat but is now a no-op (web_fetch is always on,
+    FP-0022).
 
     Real equality (``==`` on the two sorted name lists), not a bare
     ``len()`` — CLAUDE.md's test-review question 3 ("who would miss this
     test if it were gone"): a headline count alone would tell a future
     reader THAT something changed, never WHICH tool, reproducing the exact
-    "don't know what to touch" pain #5043 already recorded."""
+    "don't know what to touch" pain #5043 already recorded. ``assert
+    expected`` guards against the vacuous case (test-review question 4):
+    an equality check alone would pass silently if ``EXPECTED_FULL_TOOL_
+    NAMES`` were ever emptied out from under it, same as ``names == []``
+    passing for a ``build_tools`` that returned nothing."""
     tools = build_tools(SAMPLE_AGENTS,
         file_permissions={"read": ["src"], "write": ["out"]},
         mcp_servers=SAMPLE_MCP_SERVERS,
@@ -347,6 +359,7 @@ def test_total_tool_count_with_full_permissions():
     )
     names = sorted(_tool_names(tools))
     expected = EXPECTED_FULL_TOOL_NAMES
+    assert expected, "EXPECTED_FULL_TOOL_NAMES must not be empty"
     assert names == expected, (
         f"tool set changed — extra: {sorted(set(names) - set(expected))}, "
         f"missing: {sorted(set(expected) - set(names))}"
