@@ -59,13 +59,31 @@ class AgentProfile:
     # to `reyn.runtime.bounding.BOUNDING_KEYS`. Same "empty dict, not None"
     # shape as `preferences` above.
     bounding: "dict[str, object]" = field(default_factory=dict)
+    # #5080/#5081: #4206's axis ① (capability, restrict-only) applied to a
+    # "file zone" -- a working-directory override for this agent. Lives
+    # here (keyed by AGENT identity, this file's own directory) rather
+    # than in `.reyn/capability_profiles/<X>.yaml` (architect BLOCK,
+    # #5081): that directory's `<X>` is keyed by PROFILE name -- a
+    # topology's `profiles: {member: profile_name}` binding is a free
+    # string with no uniqueness constraint against agent names
+    # (`_validate_agent_name`/`_validate_topology_name` validate names,
+    # not profile-name uniqueness), and `profiles: {alice: alice}` (an
+    # agent bound to a same-named narrowing template) is idiomatic, not
+    # exceptional -- writing base_dir there would silently collide with
+    # an unrelated narrowing template. None = no override (falls through
+    # to the project's own base_dir, same convention as `allowed_mcp`'s
+    # None).
+    base_dir: "str | None" = None
 
     @classmethod
-    def new(cls, name: str, role: str = "") -> "AgentProfile":
+    def new(
+        cls, name: str, role: str = "", *, base_dir: "str | None" = None,
+    ) -> "AgentProfile":
         return cls(
             name=name,
             role=role,
             created_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            base_dir=base_dir,
         )
 
     @classmethod
@@ -101,6 +119,8 @@ class AgentProfile:
         raw_bounding = data.get("bounding") or {}
         bounding = dict(raw_bounding) if isinstance(raw_bounding, dict) else {}
         validate_bounding(bounding, source=f"agent {name!r} profile.yaml")
+        raw_base_dir = data.get("base_dir")
+        base_dir = str(raw_base_dir) if raw_base_dir else None
         return cls(
             name=name,
             role=str(data.get("role", "") or ""),
@@ -108,6 +128,7 @@ class AgentProfile:
             allowed_mcp=allowed_mcp,
             preferences=preferences,
             bounding=bounding,
+            base_dir=base_dir,
         )
 
     def save(self, agent_dir: Path) -> None:
@@ -127,6 +148,8 @@ class AgentProfile:
             payload["preferences"] = dict(self.preferences)
         if self.bounding:
             payload["bounding"] = dict(self.bounding)
+        if self.base_dir is not None:
+            payload["base_dir"] = self.base_dir
         path.write_text(
             yaml.safe_dump(payload, allow_unicode=True, sort_keys=False),
             encoding="utf-8",

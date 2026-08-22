@@ -702,17 +702,21 @@ class AgentRegistry:
     ) -> AgentProfile:
         """#5080: ``base_dir`` (optional) is #4206's axis ① (capability,
         restrict-only) applied to a "file zone" the agent layer had none
-        of before — NOT a new kind of override. It rides the SAME read
-        path #4200 already gave ``Session._workspace_base_dir`` for the
-        agent layer (``.reyn/capability_profiles/<name>.yaml``'s
-        ``base_dir:`` key — see that property's own docstring: "sits IN
-        FRONT OF the Agent's own value"); #4200 anticipated the read,
-        nothing wrote to it until now. Validated ⊆ the project workspace
-        root here, the ONE seam every creation surface (CLI / web / slash
-        / the ``spawn_agent`` LLM tool) routes through, so the check
-        applies uniformly rather than being replicated per surface — the
-        SAME "restrict-only, reject rather than clamp, name the boundary"
-        shape ``spawn_session``'s own ``base_dir`` argument already uses
+        of before — NOT a new kind of override. Written into THIS agent's
+        own ``profile.yaml`` (``.reyn/agents/<name>/`` — keyed by AGENT
+        identity), never ``.reyn/capability_profiles/<X>.yaml`` (architect
+        BLOCK, #5081 review): that directory's ``<X>`` is keyed by PROFILE
+        name, a free string a topology's ``profiles: {member: profile_
+        name}`` binding writes with no uniqueness constraint against agent
+        names — ``profiles: {alice: alice}`` (an agent bound to a
+        same-named narrowing template) is idiomatic, not exceptional, so
+        writing base_dir there would silently collide with an unrelated
+        narrowing template. Validated ⊆ the project workspace root here,
+        the ONE seam every creation surface (CLI / web / slash / the
+        ``spawn_agent`` LLM tool) routes through, so the check applies
+        uniformly rather than being replicated per surface — the SAME
+        "restrict-only, reject rather than clamp, name the boundary" shape
+        ``spawn_session``'s own ``base_dir`` argument already uses
         (``router_host_adapter.py``'s ``spawn_session``), but bounded by
         the WORKSPACE ROOT here, not a spawner's own effective
         ``base_dir`` — owner's own resolution rule (issue #5080): an
@@ -721,7 +725,7 @@ class AgentRegistry:
         _validate_agent_name(name)
         if self.exists(name):
             raise FileExistsError(f"agent {name!r} already exists")
-        resolved_base_dir: "Path | None" = None
+        resolved_base_dir: "str | None" = None
         if base_dir is not None:
             candidate = Path(base_dir)
             if not candidate.is_absolute():
@@ -738,29 +742,10 @@ class AgentRegistry:
                     "restrict-only: an agent's base_dir must fall under the "
                     "project workspace."
                 )
-            resolved_base_dir = candidate
-        profile = AgentProfile.new(name, role=role)
+            resolved_base_dir = str(candidate)
+        profile = AgentProfile.new(name, role=role, base_dir=resolved_base_dir)
         profile.save(self._dir / name)
-        if resolved_base_dir is not None:
-            self._write_agent_base_dir_override(name, resolved_base_dir)
         return profile
-
-    def _write_agent_base_dir_override(self, name: str, base_dir: Path) -> None:
-        """#5080: write the agent-layer ``base_dir:`` override
-        ``Session._workspace_base_dir`` reads from
-        ``.reyn/capability_profiles/<name>.yaml`` — the single writer of
-        THIS key at this path (mirrors ``_persist_session_narrowing``'s
-        own "single writer of that file" shape for the session-layer
-        sibling). Only ``create`` calls this, and only for a genuinely new
-        agent (``exists(name)`` already raised above if not), so a blind
-        write — not a read-merge-write — is correct: there is nothing
-        else in this file yet to preserve."""
-        import yaml
-        path = self._capability_profile_dir / f"{name}.yaml"
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(
-            yaml.safe_dump({"base_dir": str(base_dir)}), encoding="utf-8",
-        )
 
     def _record_spawn_lineage(self, child: str, parent: str) -> None:
         """#2103 B: OS-set the spawn lineage ``child → parent``, set-once + immutable.

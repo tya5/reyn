@@ -1786,21 +1786,21 @@ class Session:
         return self._agent.permission_resolver
 
     def _read_base_dir_override(self, path: "Path") -> "Path | None":
-        """#4200: read a ``base_dir:`` override from *path* — either this
-        session's own per-session config or the calling agent's own
-        capability_profile — or ``None`` when absent/unset/malformed.
+        """#4200/#5081: read a ``base_dir:`` override from *path* — either
+        this session's own per-session config or the calling agent's own
+        ``profile.yaml`` (this method is generic over which file; callers
+        pass the path — same shape :meth:`_read_preferences_override`
+        already uses) — or ``None`` when absent/unset/malformed.
 
-        Deliberately NOT routed through
-        :func:`reyn.security.permissions.capability_profile.load_capability_profile`:
-        that loader's own docstring says unknown keys are ignored
-        (forward-compat), which for THIS key means it would silently DROP
-        ``base_dir:`` rather than surface it — a raw read is required, same
-        shape ``AgentRegistry.per_session_narrowing`` already uses for the
-        SAME file (a key ``CapabilityProfile``'s dataclass doesn't model).
-        A malformed file is surfaced (stderr-adjacent log, not a crash) and
-        skipped — a typo must not crash session construction, and
-        (restrict-only) skipping it only WIDENS toward the next fallback
-        layer, never past the effective floor."""
+        Deliberately NOT routed through ``AgentProfile.load``: that
+        loader raises on a malformed ``preferences``/``bounding`` block
+        elsewhere in the SAME file, which would couple ``base_dir``
+        resolution to unrelated fields' validity — a raw read keeps this
+        key's own fail-open contract independent. A malformed file is
+        surfaced (stderr-adjacent log, not a crash) and skipped — a typo
+        must not crash session construction, and (restrict-only) skipping
+        it only WIDENS toward the next fallback layer, never past the
+        effective floor."""
         if not path.is_file():
             return None
         import yaml
@@ -1853,22 +1853,33 @@ class Session:
 
         A session-layer override (this session's own
         ``<session_state_dir>/config.yaml``) sits IN FRONT OF an agent-layer
-        default (``.reyn/capability_profiles/<name>.yaml``), which sits IN
-        FRONT OF the Agent's own value (``self._agent.workspace_base_dir`` —
-        the pre-#4200 default, unchanged for every caller that sets
-        neither override) — the SAME "layer in front of the shared Agent
-        identity" shape #2103-S1a capability narrowing already uses. A
-        spawned session's identity stays a SHARED ``Agent`` object; only
-        the RESOLVED VALUE differs per session, never the object — #4200's
-        own issue measured that duplicating the Agent per session is not
-        the design.
+        default (this agent's own ``profile.yaml``, ``.reyn/agents/<name>/``
+        — #5081), which sits IN FRONT OF the Agent's own value
+        (``self._agent.workspace_base_dir`` — the pre-#4200 default,
+        unchanged for every caller that sets neither override) — the SAME
+        "layer in front of the shared Agent identity" shape #2103-S1a
+        capability narrowing already uses. A spawned session's identity
+        stays a SHARED ``Agent`` object; only the RESOLVED VALUE differs
+        per session, never the object — #4200's own issue measured that
+        duplicating the Agent per session is not the design.
 
         Both override reads are direct file reads, no ``AgentRegistry``
         access needed: the session config lives at the same directory
         :meth:`_read_per_session_hooks` already reads (a sibling of
-        ``self._snapshot_path``), and the agent config lives at the same
-        ``.reyn/capability_profiles/<name>.yaml`` the topology-binding read
-        path already uses (``self._reyn_state_root`` is the SAME anchor).
+        ``self._snapshot_path``), and the agent config lives at THIS
+        agent's own ``profile.yaml`` (``self._reyn_state_root`` is the SAME
+        anchor ``AgentRegistry.agent_workspace_dir`` uses).
+
+        #5081 (architect BLOCK, 2nd round): the agent-layer override does
+        NOT live in ``.reyn/capability_profiles/<X>.yaml`` — that
+        directory's ``<X>`` is keyed by PROFILE name (a topology's
+        ``profiles: {member: profile_name}`` binding, a free string with
+        no uniqueness constraint against agent names — ``profiles:
+        {alice: alice}`` is idiomatic, not exceptional), so writing an
+        agent's base_dir there would silently collide with an unrelated
+        narrowing template bound to a same-named profile. ``profile.yaml``
+        is keyed by AGENT identity (this file's own directory) — the
+        collision is structurally impossible there, not merely mitigated.
 
         This is a live re-read on every access (a plain ``@property``, not
         cached) — a CALLER holding this value across a spawn-time fixup
@@ -1876,26 +1887,26 @@ class Session:
         ``workspace_base_dir_fn`` for why a frozen capture of this value is
         wrong for a spawned child.
 
-        #5080/#5081 (architect BLOCK): the agent-layer override is
-        protected AT USE here, not only at ``registry.create``'s own
+        #5080/#5081 (architect BLOCK, 1st round): the agent-layer override
+        is protected AT USE here, not only at ``registry.create``'s own
         write-time check. ``.reyn`` is the agent's default WRITE zone
         (``permissions.py``'s own ``_DEFAULT_WRITE_ZONES``), so
-        ``capability_profiles/<name>.yaml`` is directly agent-writable
-        through the ordinary file-write op, bypassing ``create`` entirely
-        — reyn's own vocabulary: "Protect-at-use migration ... writing
-        the config alone grants nothing usable." An out-of-bounds value
-        here is treated exactly like a malformed one above: skipped
-        (logged), falling through to the next layer — restrict-only,
-        never past the effective floor. The SESSION-layer override just
-        above is NOT bounded here (out of THIS fix's scope — its own
-        bound, if any, is a spawn-time question, not a read-time one)."""
+        ``profile.yaml`` is directly agent-writable through the ordinary
+        file-write op, bypassing ``create`` entirely — reyn's own
+        vocabulary: "Protect-at-use migration ... writing the config
+        alone grants nothing usable." An out-of-bounds value here is
+        treated exactly like a malformed one above: skipped (logged),
+        falling through to the next layer — restrict-only, never past the
+        effective floor. The SESSION-layer override just above is NOT
+        bounded here (out of THIS fix's scope — its own bound, if any, is
+        a spawn-time question, not a read-time one)."""
         session_override = self._read_base_dir_override(
             Path(self._snapshot_path).parent / "config.yaml"
         )
         if session_override is not None:
             return session_override
         agent_override = self._read_base_dir_override(
-            self._reyn_state_root / "capability_profiles" / f"{self.agent_name}.yaml"
+            self._reyn_state_root / "agents" / self.agent_name / "profile.yaml"
         )
         if agent_override is not None:
             workspace_root = self._reyn_state_root.parent.resolve()
@@ -1906,7 +1917,7 @@ class Session:
             ):
                 return agent_override
             logger.warning(
-                "#5081: capability_profiles/%s.yaml's base_dir %r resolves "
+                "#5081: agent %s's profile.yaml base_dir %r resolves "
                 "outside the project workspace %r -- ignoring (falls "
                 "through to the next layer; restrict-only means this can "
                 "only WIDEN toward that layer, never past the effective "

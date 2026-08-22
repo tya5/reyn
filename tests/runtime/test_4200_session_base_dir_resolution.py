@@ -75,12 +75,14 @@ def test_agent_layer_default_wins_over_the_agent_object_when_no_session_override
     tmp_path: Path,
 ) -> None:
     """Tier 2: absent a session-layer override, a base_dir in the agent's own
-    .reyn/capability_profiles/<name>.yaml (the SAME file the topology
-    capability-profile binding read path already uses) is the next layer —
-    still ahead of the shared Agent object's own workspace_base_dir."""
+    profile.yaml (.reyn/agents/<name>/ — #5081: NOT capability_profiles/,
+    which is keyed by PROFILE name, a namespace agent names don't own) is
+    the next layer — still ahead of the shared Agent object's own
+    workspace_base_dir."""
     project_root = tmp_path / "project"
     # #5081: must resolve INSIDE project_root -- Session._workspace_base_dir
-    # now bounds the agent-layer read (subset of) the project workspace (protect-at-use).
+    # now bounds the agent-layer read to a subset of the project workspace
+    # (protect-at-use).
     agent_default_dir = project_root / "agent-default"
     agent_default_dir.mkdir(parents=True)
     session = make_session(
@@ -89,7 +91,7 @@ def test_agent_layer_default_wins_over_the_agent_object_when_no_session_override
         snapshot_path=project_root / ".reyn" / "agents" / "alpha" / "state" / "snapshot.json",
     )
     _write_config(
-        project_root / ".reyn" / "capability_profiles" / "alpha.yaml", agent_default_dir,
+        project_root / ".reyn" / "agents" / "alpha" / "profile.yaml", agent_default_dir,
     )
 
     assert _resolved_op_context_base_dir(session) == agent_default_dir
@@ -139,7 +141,7 @@ def test_a_malformed_session_config_falls_through_to_the_agent_layer(tmp_path: P
     session_cfg.parent.mkdir(parents=True, exist_ok=True)
     session_cfg.write_text("base_dir: [unterminated\n", encoding="utf-8")
     _write_config(
-        project_root / ".reyn" / "capability_profiles" / "alpha.yaml", agent_default_dir,
+        project_root / ".reyn" / "agents" / "alpha" / "profile.yaml", agent_default_dir,
     )
 
     assert _resolved_op_context_base_dir(session) == agent_default_dir
