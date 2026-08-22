@@ -4,7 +4,8 @@ reflect the SERVER's real roster, not an unconditional empty literal.
 Owner live-blocked on this (relayed via architect/lead-coder): connecting 2
 agents (`--connect x2`, both `default`) showed nothing in the TUI's agent
 tab despite the workspace genuinely having 4 agents. Root cause,
-measured: `agui/state.py`'s own ``_WIRE_KEYS`` filter never forwarded
+measured: `agui/state.py`'s own ``project_status`` dict (the sole
+declaration of the wire vocabulary, #5098) never forwarded
 `agent_names`/`session_tree`/`model_active_class`/`model_classes` past the
 server's projection, even though `status._snapshot`'s own
 ``registry.loaded_names()``/``registry.session_tree()``/``Session.
@@ -100,8 +101,8 @@ async def test_agent_roster_and_model_catalog_ride_the_wire_end_to_end():
 @pytest.mark.asyncio
 async def test_strip_falsifier_removing_the_wire_keys_reverts_to_the_old_empty_bug():
     """Tier 2: strip-falsifier — with the 4 keys absent from the server's
-    OWN status dict (simulating `_WIRE_KEYS` reverted to not carry them,
-    the exact pre-#5094 shape), the client falls back to the SAME
+    OWN status dict (simulating `project_status` reverted to not carry
+    them, the exact pre-#5094 shape), the client falls back to the SAME
     graceful-empty defaults the bug reproduced — confirming the positive
     witness above genuinely depends on the wire carrying real data, not on
     `project_remote_snapshot`'s own defaults happening to look right."""
