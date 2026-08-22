@@ -122,7 +122,10 @@ async def test_attached_driver_mcp_permission_reaches_originator_operator(tmp_pa
     )
 
     # The operator grants on the originator surface; require_mcp returns (allow), no hang.
-    consumed = await originator.answer_oldest_intervention_choice(YES)
+    # #5057: answer_oldest_intervention_choice retired -- deliver BY ID (R1).
+    head = originator.interventions.head()
+    assert head is not None
+    consumed = await originator.answer_intervention_by_id(head.id, "", choice_id_override=YES)
     assert consumed is True
     await asyncio.wait_for(gate, timeout=5.0)  # returns None on allow; MUST NOT raise/hang
 
@@ -148,7 +151,10 @@ async def test_attached_driver_permission_kind_agnostic_same_bus(tmp_path: Path)
 
     gate = asyncio.ensure_future(resolver.require_tool(decl, _TOOL, bus))
     await wait_until(lambda: bool(originator.interventions.list_active()))
-    consumed = await originator.answer_oldest_intervention_choice(YES)
+    # #5057: answer_oldest_intervention_choice retired -- deliver BY ID (R1).
+    head = originator.interventions.head()
+    assert head is not None
+    consumed = await originator.answer_intervention_by_id(head.id, "", choice_id_override=YES)
     assert consumed is True
     await asyncio.wait_for(gate, timeout=5.0)
 

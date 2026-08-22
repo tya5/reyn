@@ -38,7 +38,9 @@ never through ``run_remote_repl`` itself).
    over-the-wire answer (a real ``TOOL_CALL_RESULT`` POST, driven by the
    production ``AgUiTransport.answer_intervention_text``) resolves the SAME
    ``InterventionAnswer`` shape (raw, unfenced ``text``) a LOCAL direct answer
-   (``session.answer_oldest_intervention_text``) produces for an equivalent
+   (``session.answer_intervention_by_id``, #5057 — this test's own local
+   oracle call migrated when the retired ``answer_oldest_intervention_text``
+   was removed) produces for an equivalent
    local intervention — both go through ``external_source=False`` (operator,
    unfenced — the P0 keystone), verified on both paths in the same test.
 
@@ -371,7 +373,8 @@ async def test_connect_intervention_round_trip_matches_local_unfenced_answer(
     local_iv = UserIntervention(kind="ask_user", prompt="Proceed?", run_id="r-local")
     local_task = asyncio.ensure_future(session._intervention_handler.dispatch(local_iv))
     await wait_until(lambda: bool(session._interventions.list_active()))
-    local_answered = await session.answer_oldest_intervention_text("yes-locally")
+    # #5057: answer_oldest_intervention_text retired -- deliver BY ID (R1).
+    local_answered = await session.answer_intervention_by_id(local_iv.id, "yes-locally")
     assert local_answered is True
     local_answer = await asyncio.wait_for(local_task, timeout=5.0)
 

@@ -197,7 +197,10 @@ async def test_attached_agent_step_permission_reaches_invoker_operator(tmp_path:
     await wait_until(lambda: bool(invoker.interventions.list_active()))
     # The operator picks the affirmative choice on the invoker surface (the authoritative
     # closed-set choice path the inline selector uses — bypasses text/hotkey match_choice).
-    consumed = await invoker.answer_oldest_intervention_choice(YES)
+    # #5057: answer_oldest_intervention_choice retired -- deliver BY ID (R1).
+    head = invoker.interventions.head()
+    assert head is not None
+    consumed = await invoker.answer_intervention_by_id(head.id, "", choice_id_override=YES)
     assert consumed is True
     answer = await asyncio.wait_for(deliver, timeout=5.0)
     # The operator's affirmative reached the agent-step's permission op (a real grant, not a refusal).

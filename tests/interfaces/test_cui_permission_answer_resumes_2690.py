@@ -19,8 +19,10 @@ requiring permission, so it is the first to hit the dead answer-delivery path.
 
 The fix (``stream_client.route_input_line``) delivers a non-slash line directly
 to the pending intervention via the transport's ``answer_intervention_text``
-seam (wrapping ``answer_oldest_intervention_text``), bypassing the inbox so the
-future resolves. Here the client's ``ClientTransport`` is the local
+seam (delivered BY ID, R1 — #5057 migrated this from the retired ``answer_
+oldest_intervention_text`` to ``_pending_head_id``'s captured-at-check-time
+id), bypassing the inbox so the future resolves. Here the client's
+``ClientTransport`` is the local
 ``InProcessTransport`` over a single-session registry — the same seam production
 uses.
 

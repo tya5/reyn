@@ -43,6 +43,51 @@ def _simple_status(text: str) -> OutboxMessage:
     return OutboxMessage(kind="status", text=text)
 
 
+def _pending_head_id(head: object) -> "str | None":
+    """Extract the id from :meth:`ClientTransport.pending_intervention_head`'s
+    two established return shapes (#5057): a real ``UserIntervention``
+    (``InProcessTransport``/``SessionBoundTransport`` — #5047 axis A
+    guarantees its ``.id`` is a genuine identity, not merely "the oldest"),
+    or a bare id string (``AgUiTransport``'s own ``_pending_intervention_id``).
+
+    An unrecognized third shape returns ``None`` (logged) rather than
+    silently coercing it into SOME string via ``str(...)`` — architect's own
+    review finding on this PR (#5057): a naive ``getattr(head, "id", head)``
+    would happily turn e.g. a dict-shaped value (a genuinely similar-looking
+    but DIFFERENT contract lives nearby, ``RemoteReadModel.intervention_
+    head()``'s own dict projection) into a garbage id string via ``str()``
+    — the exact #4996-family "failure that looks like success" this repo's
+    own vocabulary names. Never reached by the two production transports
+    today (this IS a strict narrowing of a check that never fires yet, not
+    a behavior change for either), but the id this function returns feeds
+    straight into ``answer_intervention_by_id`` — a caller passing a
+    genuinely wrong shape deserves "no pending intervention recognized"
+    (falls through to a normal turn), never a corrupted delivery target.
+    The fall-through read as "correct" is really only guaranteed today
+    because NEITHER production transport can trigger it (a resolved-
+    elsewhere intervention is the one case this repo's own #2690 fix
+    already made this exact fall-through mean); a hypothetical future
+    third shape arriving alongside a genuinely still-pending intervention
+    would fall through the SAME way but for a different reason — silence
+    over a broken destination, not "already answered". Still the right
+    choice (never deliver to a destination this function couldn't
+    verify), named here so a future reader isn't left to rediscover it."""
+    if isinstance(head, str):
+        return head
+    iv_id = getattr(head, "id", None)
+    if isinstance(iv_id, str) and iv_id:
+        return iv_id
+    if head is not None:
+        logger.warning(
+            "#5057: pending_intervention_head() returned an unrecognized "
+            "shape (%s) -- neither a bare id string nor an object with a "
+            "genuine string .id. Treating as no pending intervention "
+            "rather than deriving a garbage id from it.",
+            type(head).__name__,
+        )
+    return None
+
+
 async def run_input_loop(
     transport: ClientTransport,
     prompt_session: PromptSession,
@@ -196,8 +241,27 @@ async def route_input_line(
     # Everything below is TURN text: a command returned above, so the two
     # ``not text.startswith("/")`` guards this function used to carry are gone
     # rather than left as conditions that can no longer be false (#3595 S5).
-    if transport.pending_intervention_head() is not None:
-        if await transport.answer_intervention_text(text):
+    head = transport.pending_intervention_head()
+    if head is not None:
+        # #5057 (architect's own trace): deliver BY the id CAPTURED HERE, at
+        # check time — never let the transport funnel re-read "whichever
+        # intervention is head NOW" at delivery time. Before this, this
+        # branch called `answer_intervention_text(text)` with NO id at all,
+        # which fell through to `answer_oldest_intervention_text` — the
+        # SAME head-of-queue race #3299 P2's own `answer_intervention_by_id`
+        # (R1) was invented to close for every OTHER surface: if a second
+        # queued intervention resolves (via `/answer`, an A2A peer, …)
+        # between this check and the reply being typed, the NEXT head is a
+        # DIFFERENT intervention than the one the operator is answering —
+        # the exact multi-pending misdelivery #5047 traced. `head` here is
+        # ALWAYS a genuine `UserIntervention` (in-process/session-bound) or
+        # a bare id string (the AG-UI remote transport, `client.py`'s own
+        # `_pending_intervention_id`) — `getattr(head, "id", head)`
+        # extracts the id either way, not sniffed on ambiguity, just the
+        # two established production shapes (#5047 axis A guarantees
+        # `head.id` is a real identity now, not merely "the oldest").
+        iv_id = _pending_head_id(head)
+        if await transport.answer_intervention_text(text, intervention_id=iv_id):
             return
     # Mark a reply as in flight before submit so the pacing gate on the next
     # iteration blocks until the output loop signals it. A command would
