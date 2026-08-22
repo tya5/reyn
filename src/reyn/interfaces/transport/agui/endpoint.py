@@ -1064,6 +1064,70 @@ async def agui_submit(request: Request, agent_name: str):
         if target and registry.exists(target):
             target_session = await registry.attach(target)
             attached = True
+
+            # #5133 (architect ruling): this connection's SurfaceManager
+            # registration is a SEPARATE holder from the hub notify below —
+            # #5129 fixed WHICH agent name `agui_submit`/`agui_seize` ask,
+            # but neither of them registers this connection as a surface of
+            # the TARGET's own manager, so `/seize` 409s and a HITL answer's
+            # `is_active_driver` check reads the wrong (empty, or someone
+            # else's) surface set. No new semantics: a cross-agent /attach
+            # IS this connection's SurfaceManager attach(target) +
+            # detach(old), the same two primitives connect/disconnect
+            # already use (mirrors #5118's own "one mechanism, two
+            # producers, not two mechanisms" — reusing agui_events'/gen's
+            # own attach/detach side effects here rather than inventing a
+            # third "migrated" state).
+            #
+            # Order: ARRIVAL before DEPARTURE (architect, citing #3310 N3's
+            # own "the announce is enqueued BEFORE _bind" barrier) — the
+            # reverse would leave a window where this connection belongs to
+            # NO manager, and anything arriving in that window (a seize, an
+            # answer) has no surface to resolve against.
+            #
+            # (a) driver token: NEVER carried across. `SurfaceManager.
+            # attach` already encodes the right default (first surface on
+            # an otherwise-empty manager takes the token; an existing
+            # holder keeps it) — calling it unchanged on the target IS the
+            # "arrival competes normally, never seizes" rule, not a special
+            # case for it. `detach` on the old manager releases the token
+            # if this connection held it (a departure, same as a genuine
+            # disconnect) — regaining control post-attach is `/seize`,
+            # exactly the existing path, client-decided, never automatic.
+            new_manager = _surface_manager(target, auth)
+            now = monotonic()
+            new_first = not new_manager.has_surfaces()
+            new_manager.attach(connection_id, identity.user_id, now)
+            if new_first:
+                target_session.register_intervention_listener(AGUI_OPERATOR_CHANNEL)
+            target_session.emit_audit_event(
+                "client_attached",
+                auth_user_id=identity.user_id,
+                auth_connection_id=connection_id,
+                auth_tier=identity.tier.value,
+            )
+            _ensure_fail_close_driver(target, new_manager, registry)
+
+            # (b)/(c): the OLD agent's manager treats this exactly like an
+            # ordinary disconnect — no "special because it's a migration"
+            # branch (architect: that would give the same end state two
+            # arrival paths, only one of which gets fixed by a future
+            # change). `agent_name` here is still #5129's OWN resolution
+            # (the connection's agent BEFORE this attach), captured before
+            # `target` shadows it below.
+            old_manager = surface_registry().get(agent_name)
+            if old_manager is not None and old_manager is not new_manager:
+                old_session = await registry.ensure_running(agent_name)
+                old_manager.detach(connection_id, now)
+                if not old_manager.has_surfaces():
+                    old_session.unregister_intervention_listener(AGUI_OPERATOR_CHANNEL)
+                    _ensure_fail_close_driver(agent_name, old_manager, registry)
+                old_session.emit_audit_event(
+                    "client_detached",
+                    auth_user_id=identity.user_id,
+                    auth_connection_id=connection_id,
+                )
+
             # #5116 (architect co-vet, issuecomment-5380501066): this POST
             # is a DIFFERENT HTTP request than the SSE stream it needs to
             # retarget — correlated only by ``connection_id`` (the
