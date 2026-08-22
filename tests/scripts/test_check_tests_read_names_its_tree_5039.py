@@ -148,36 +148,51 @@ def test_an_issue_comment_id_is_not_read_as_a_sha():
     assert code == 1, "a note citing only a comment id names no tree"
 
 
-def test_a_commit_this_checkout_cannot_resolve_is_not_reported_as_clean():
-    """Tier 1: `fetch_pr`'s other half of the same failure — `git show <oid>` on an
-    unfetched or squashed commit exits non-zero, and treating its (empty)
-    output as "touched no tests" is a green computed from commits the checkout
-    never read. The live run hit this too — the PR passed while its real
-    `tests/` commits were invisible."""
+def test_a_commit_this_checkout_cannot_resolve_stops_the_run():
+    """Tier 1: `fetch_pr`'s other half of the same failure — `git show` on an
+    unresolvable commit exits non-zero, and treating its empty output as
+    "touched no tests" is a green computed from a commit never read.
+
+    Driven with a REAL `git` call against this repository and a syntactically
+    valid oid that cannot exist, so nothing is faked (the earlier revision of
+    this test replaced `subprocess.run` wholesale — docs-maintainer, #5120 B)."""
+    import pytest
+
+    with pytest.raises(SystemExit) as exc:
+        _MOD.commit_touched_paths("0" * 40, 5120, repo_root=str(REPO_ROOT))
+    assert "cannot resolve commit" in str(exc.value)
+
+
+def test_a_resolvable_commit_reports_its_paths():
+    """Tier 1: the same seam's accept side, so the reject case above is not the
+    only thing exercised — a real HEAD resolves and yields its own paths."""
     import subprocess as _sp
 
-    calls: "list[list[str]]" = []
+    head = _sp.run(
+        ["git", "rev-parse", "HEAD"], capture_output=True, text=True, check=True,
+        cwd=REPO_ROOT,
+    ).stdout.strip()
+    paths = _MOD.commit_touched_paths(head, 5120, repo_root=str(REPO_ROOT))
+    assert isinstance(paths, list)
 
-    def _fake_run(cmd, **kwargs):
-        calls.append(cmd)
-        if cmd[:2] == ["gh", "pr"]:
-            return _sp.CompletedProcess(
-                cmd, 0,
-                stdout='{"files":[{"path":"tests/scripts/test_check_doc_drift_5003.py"}],"comments":[],'
-                       '"commits":[{"oid":"deadbee1","messageHeadline":"x"}],'
-                       '"headRefOid":"deadbee1"}',
-            )
-        return _sp.CompletedProcess(cmd, 128, stdout="", stderr="bad object")
 
-    real_run = _MOD.subprocess.run
-    _MOD.subprocess.run = _fake_run
-    try:
-        raised = False
-        try:
-            _MOD.fetch_pr(5090)
-        except SystemExit as exc:
-            raised = True
-            assert "cannot resolve commit" in str(exc)
-        assert raised, "an unresolvable commit must stop the run, not read as clean"
-    finally:
-        _MOD.subprocess.run = real_run
+def test_a_note_quoting_the_head_with_no_commits_does_not_pass():
+    """Tier 1: the vacuity gap docs-maintainer found in this gate's own B
+    (#5120) — `headRefOid` used to be appended to the membership list, so a
+    note quoting the head satisfied "names a commit of this PR" while an empty
+    commit list left `tests_commits_after` nothing to find. Green with nothing
+    read, which is the shape this gate exists to reject."""
+    code, lines = _MOD.evaluate(_pr(
+        files=["tests/scripts/test_check_doc_drift_5003.py"],
+        comments=[{"body": "TESTS-READ (B) (head `deadbee1`)"}],
+        commits=[],
+        head="deadbee1",
+    ))
+    assert code == 1
+    assert "commit list is empty" in "\n".join(lines)
+
+
+def test_the_head_alone_is_not_membership():
+    """Tier 1: the same gap at the predicate level — a SHA that is only the
+    head, with no commit carrying it, is not a commit of this PR."""
+    assert _MOD.find_note_shas("head `deadbee1`", []) == []

@@ -118,7 +118,19 @@ def evaluate(pr: dict) -> "tuple[int, list[str]]":
         ]
 
     commits = pr.get("commits", [])
-    oids = [c.get("oid", "") for c in commits] + [pr.get("headRefOid", "")]
+    if not commits:
+        return 1, [
+            "RED — this PR touches tests/ but its commit list is empty.",
+            "  Nothing here can be shown to have been read; refusing to pass a",
+            "  note that names a tree this check cannot locate.",
+        ]
+    # ONLY the PR's own commits — deliberately NOT headRefOid. A note quoting
+    # the head passes membership, and with an empty commit list there is then
+    # nothing for `tests_commits_after` to find, so the PR goes green with
+    # nothing read (docs-maintainer, #5120 B). The head is a commit of this PR
+    # whenever the PR has any, so including it separately buys nothing and
+    # costs exactly this hole.
+    oids = [c.get("oid", "") for c in commits]
     head = pr.get("headRefOid", "")
     lines: "list[str]" = []
     for note in notes:
@@ -158,6 +170,31 @@ def evaluate(pr: dict) -> "tuple[int, list[str]]":
     ]
 
 
+def commit_touched_paths(oid: str, number: int, repo_root: "str | None" = None) -> "list[str]":
+    """The paths *oid* touched, or stop the run if this checkout cannot read it.
+
+    Split out from :func:`fetch_pr` so the refusal is reachable with a real
+    ``git`` call on a real repository — no faked runner. *repo_root* makes the
+    repository an argument rather than the process's cwd, so a caller running
+    elsewhere cannot get a refusal that merely means "not in a git repo" — the
+    refusal would then be true for the wrong reason. A commit the checkout
+    cannot resolve (unfetched, or a squashed merge) would otherwise produce
+    empty output that reads as "touched no tests": a green computed from
+    commits never read, which is the shape this gate exists to reject."""
+    shown = subprocess.run(
+        ["git", "show", "--name-only", "--format=", oid],
+        capture_output=True, text=True, cwd=repo_root,
+    )
+    if shown.returncode != 0:
+        raise SystemExit(
+            f"check_tests_read_names_its_tree: cannot resolve commit {oid} "
+            f"in this checkout — fetch the PR's commits first "
+            f"(`git fetch origin pull/{number}/head`). Refusing to report a "
+            f"result computed from commits it could not read."
+        )
+    return shown.stdout.split()
+
+
 def fetch_pr(number: int) -> dict:
     """Build the `evaluate` payload for a live PR via `gh`."""
     raw = subprocess.run(
@@ -169,22 +206,7 @@ def fetch_pr(number: int) -> dict:
     commits = []
     for c in data.get("commits", []):
         oid = c.get("oid", "")
-        shown = subprocess.run(
-            ["git", "show", "--name-only", "--format=", oid],
-            capture_output=True, text=True,
-        )
-        if shown.returncode != 0:
-            # A commit this checkout cannot resolve (unfetched, or a squashed
-            # merge) would otherwise read as "touched no tests" — a green for
-            # the wrong reason, which is the exact shape this gate exists to
-            # reject. Say so and stop instead.
-            raise SystemExit(
-                f"check_tests_read_names_its_tree: cannot resolve commit {oid} "
-                f"in this checkout — fetch the PR's commits first "
-                f"(`git fetch origin pull/{number}/head`). Refusing to report a "
-                f"result computed from commits it could not read."
-            )
-        paths = shown.stdout.split()
+        paths = commit_touched_paths(oid, number)
         commits.append({
             "oid": oid,
             "messageHeadline": c.get("messageHeadline", ""),
