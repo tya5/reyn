@@ -31,7 +31,10 @@ read.
 
 Older entries this reader doesn't return are NOT lost: ``history.jsonl`` is
 append-only, so anything left unread here is still on disk, reachable later
-via the extend-on-demand path (#4387 Phase B ②, not yet implemented).
+via the extend-on-demand path (#4387 Phase B ②):
+``Session.extend_history_backward`` / ``Session.extend_history_backward_
+async``, and ``ThreadedTransportProxy.extend_history_backward`` for a
+caller on the other side of a transport.
 
 #4476 Phase 1 adds a small, separate section at the end of this module:
 policy-independent measurement (bytes/line counts across every
