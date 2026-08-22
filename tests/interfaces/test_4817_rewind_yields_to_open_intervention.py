@@ -51,8 +51,12 @@ class QueueTransport(ClientTransport):
     ``asyncio.Queue`` a test pushes onto (mirrors the same harness shape used
     throughout ``test_4788_rewind_picker_escape_dismiss.py``)."""
 
-    def __init__(self) -> None:
+    def __init__(self, session: "object | None" = None) -> None:
         self._queue: "asyncio.Queue" = asyncio.Queue()
+        #: #5045: the real write side moved from ChatReadModel onto
+        #: ClientTransport — this fixture needs the real Session to
+        #: perform it, same as InProcessTransport's own override does.
+        self._session = session
 
     def start(self) -> None:
         pass
@@ -91,6 +95,10 @@ class QueueTransport(ClientTransport):
 
     def put_display(self, msg: OutboxMessage) -> None:
         self.push_display(msg)
+
+    async def clear_pending_command_ui(self) -> None:
+        if self._session is not None:
+            self._session.set_pending_command_ui(None)
 
     async def cancel_inflight(self) -> None:
         pass
@@ -136,7 +144,7 @@ async def test_rewind_does_not_open_while_an_intervention_is_showing(
     try:
         await reg.attach("alpha")
         alpha = reg.get_session("alpha")
-        transport = QueueTransport()
+        transport = QueueTransport(session=alpha)
         app = TextualChatApp(
             transport=transport, read_model=RegistryReadModel(reg), agent_name="alpha",
         )

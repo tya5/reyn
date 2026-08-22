@@ -172,6 +172,16 @@ class InProcessTransport(ClientTransport):
         s = self._attached()
         return s.interventions.head() if s is not None else None
 
+    async def clear_pending_command_ui(self) -> None:
+        # #5045: the real write side, moved off ChatReadModel (retired
+        # there — see ClientTransport.clear_pending_command_ui's own
+        # docstring for why). Same-thread here (in-process), so no
+        # marshaling needed — ThreadedTransportProxy's own override is
+        # where this crosses a real thread boundary.
+        s = self._attached()
+        if s is not None:
+            s.set_pending_command_ui(None)
+
     def reyn_state_root(self) -> "Path | None":
         # #3721: `Session.workspace_dir` is the same PUBLIC per-agent path
         # `Agent.workspace_dir` resolves (#3705) — `.reyn/agents/<name>` — so

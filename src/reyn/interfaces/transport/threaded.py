@@ -39,18 +39,19 @@ thread must reach the caller thread's ``asyncio.Queue`` via
 running alongside it — the snapshot slot is written in the SAME callback
 that schedules the frame delivery.
 
-**Scope, explicit** (per lead-coder's #4995 ruling): 3 ``ChatReadModel``/
-``ClientTransport`` methods are NOT satisfiable by this snapshot design and
-are deliberately left unwired here — see #5044 (``completion_session()``
-returns a LIVE ``Session`` reference, not a copyable value;
-``load_older_conversation_history()`` mutates ``Session.history`` and
-performs disk I/O, confirmed by reading it, not guessed) and #5045
-(``clear_pending_command_ui()`` is a WRITE living on a type named "read
-model" — a pre-existing contract defect, independent of threading, filed
-on its own). Wiring THIS class in as ``TextualChatApp``'s / ``run_repl``'s
-default local transport is left to a follow-up (#5048) — this PR's
-deliverable is the mechanism itself, with real witnesses, not the
-production cutover.
+**Scope, explicit** (per lead-coder's #4995 ruling): 2 ``ChatReadModel``
+methods are NOT satisfiable by this snapshot design and are deliberately
+left unwired here — see #5044 (``completion_session()`` returns a LIVE
+``Session`` reference, not a copyable value; ``load_older_conversation_
+history()`` mutates ``Session.history`` and performs disk I/O, confirmed
+by reading it, not guessed). #5045 (``clear_pending_command_ui()`` was a
+WRITE living on a type named "read model") is CLOSED — the write moved
+to :meth:`ClientTransport.clear_pending_command_ui`, and this class's own
+:meth:`clear_pending_command_ui` override marshals it onto the worker
+thread the same way every other write above does. Wiring THIS class in
+as ``TextualChatApp``'s / ``run_repl``'s default local transport is left
+to a follow-up (#5048) — this PR's deliverable is the mechanism itself,
+with real witnesses, not the production cutover.
 
 **As of 2026-08-22, this class has NO production call site** —
 :class:`ThreadedTransportProxy` is constructed only from
@@ -318,6 +319,17 @@ class ThreadedTransportProxy(ClientTransport):
         # marshals the coroutine onto the worker loop exactly like every
         # other delegated async method above.
         await self._call_on_worker("state_ready")
+
+    async def clear_pending_command_ui(self) -> None:
+        # #5045: the real write, marshalled onto the worker thread that
+        # owns the Session — same reasoning as state_ready() just above:
+        # ClientTransport's own base default (a no-op) would silently
+        # fail to clear anything, since the inner transport's own
+        # InProcessTransport override is what actually calls
+        # Session.set_pending_command_ui, and that Session object is
+        # owned by the WORKER thread, never safe to touch directly from
+        # the caller thread.
+        await self._call_on_worker("clear_pending_command_ui")
 
     async def cancel_inflight(self) -> str:
         return await self._call_on_worker("cancel_inflight")
