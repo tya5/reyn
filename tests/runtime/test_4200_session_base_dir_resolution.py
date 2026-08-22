@@ -79,7 +79,9 @@ def test_agent_layer_default_wins_over_the_agent_object_when_no_session_override
     capability-profile binding read path already uses) is the next layer —
     still ahead of the shared Agent object's own workspace_base_dir."""
     project_root = tmp_path / "project"
-    agent_default_dir = tmp_path / "agent-default"
+    # #5081: must resolve INSIDE project_root -- Session._workspace_base_dir
+    # now bounds the agent-layer read (subset of) the project workspace (protect-at-use).
+    agent_default_dir = project_root / "agent-default"
     agent_default_dir.mkdir(parents=True)
     session = make_session(
         agent_name="alpha", workspace_state_dir=project_root / ".reyn",
@@ -125,7 +127,9 @@ def test_a_malformed_session_config_falls_through_to_the_agent_layer(tmp_path: P
     Skipping only WIDENS toward the next fallback, never past the
     effective floor (restrict-only posture, same as narrowing)."""
     project_root = tmp_path / "project"
-    agent_default_dir = tmp_path / "agent-default"
+    # #5081: must resolve INSIDE project_root -- Session._workspace_base_dir
+    # now bounds the agent-layer read (subset of) the project workspace (protect-at-use).
+    agent_default_dir = project_root / "agent-default"
     agent_default_dir.mkdir(parents=True)
     session = make_session(
         agent_name="alpha", workspace_state_dir=project_root / ".reyn",

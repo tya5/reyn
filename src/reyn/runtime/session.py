@@ -1874,7 +1874,21 @@ class Session:
         cached) — a CALLER holding this value across a spawn-time fixup
         must re-read it, not cache it; see ``RouterOpContextSource``'s own
         ``workspace_base_dir_fn`` for why a frozen capture of this value is
-        wrong for a spawned child."""
+        wrong for a spawned child.
+
+        #5080/#5081 (architect BLOCK): the agent-layer override is
+        protected AT USE here, not only at ``registry.create``'s own
+        write-time check. ``.reyn`` is the agent's default WRITE zone
+        (``permissions.py``'s own ``_DEFAULT_WRITE_ZONES``), so
+        ``capability_profiles/<name>.yaml`` is directly agent-writable
+        through the ordinary file-write op, bypassing ``create`` entirely
+        — reyn's own vocabulary: "Protect-at-use migration ... writing
+        the config alone grants nothing usable." An out-of-bounds value
+        here is treated exactly like a malformed one above: skipped
+        (logged), falling through to the next layer — restrict-only,
+        never past the effective floor. The SESSION-layer override just
+        above is NOT bounded here (out of THIS fix's scope — its own
+        bound, if any, is a spawn-time question, not a read-time one)."""
         session_override = self._read_base_dir_override(
             Path(self._snapshot_path).parent / "config.yaml"
         )
@@ -1884,7 +1898,21 @@ class Session:
             self._reyn_state_root / "capability_profiles" / f"{self.agent_name}.yaml"
         )
         if agent_override is not None:
-            return agent_override
+            workspace_root = self._reyn_state_root.parent.resolve()
+            resolved_override = agent_override.resolve()
+            if (
+                resolved_override == workspace_root
+                or workspace_root in resolved_override.parents
+            ):
+                return agent_override
+            logger.warning(
+                "#5081: capability_profiles/%s.yaml's base_dir %r resolves "
+                "outside the project workspace %r -- ignoring (falls "
+                "through to the next layer; restrict-only means this can "
+                "only WIDEN toward that layer, never past the effective "
+                "floor)",
+                self.agent_name, str(agent_override), str(workspace_root),
+            )
         return self._agent.workspace_base_dir
 
     @property

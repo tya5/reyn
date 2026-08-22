@@ -168,3 +168,52 @@ async def test_base_dir_outside_the_workspace_is_rejected(tmp_path: Path) -> Non
     assert not reg.exists("alpha")
     cap_profile_path = project_root / ".reyn" / "capability_profiles" / "alpha.yaml"
     assert not cap_profile_path.exists()
+
+
+# ── witness ⑤ — protect-at-USE, not only at-write (architect BLOCK) ────────
+
+
+@pytest.mark.asyncio
+async def test_a_directly_tampered_capability_profile_pointing_outside_is_not_used(
+    tmp_path: Path,
+) -> None:
+    """Tier 2: architect's BLOCK on PR #5081 — ``registry.create``'s own
+    bound check only gates the ONE seam. ``.reyn`` is the agent's default
+    WRITE zone (``permissions.py``'s own ``_DEFAULT_WRITE_ZONES``), so
+    ``capability_profiles/<name>.yaml`` is directly agent-writable through
+    the ordinary file-write op, bypassing ``create`` entirely — reyn's own
+    vocabulary: "Protect-at-use migration ... writing the config alone
+    grants nothing usable." This test hand-writes the file exactly the
+    way an agent's own file-write op would (bypassing ``registry.create``
+    completely) and proves the out-of-bounds value is NOT used — the
+    session falls through to the next layer instead.
+
+    Strip-falsifier: removing the bound-check block in
+    ``Session._workspace_base_dir``'s agent-layer branch (returning
+    ``agent_override`` unconditionally, as PR #5081's own first version
+    did) turns this red — the tampered path would be used."""
+    project_root = tmp_path / "project"
+    outside_dir = tmp_path / "outside-the-workspace"
+    fallback_dir = tmp_path / "agent-object-fallback"
+
+    cap_profile_path = project_root / ".reyn" / "capability_profiles" / "alpha.yaml"
+    cap_profile_path.parent.mkdir(parents=True, exist_ok=True)
+    cap_profile_path.write_text(f"base_dir: {outside_dir}\n", encoding="utf-8")
+
+    session = make_session(
+        agent_name="alpha", workspace_state_dir=project_root / ".reyn",
+        workspace_base_dir=fallback_dir,
+        snapshot_path=(
+            project_root / ".reyn" / "agents" / "alpha" / "state" / "snapshot.json"
+        ),
+    )
+    resolved = _resolved_op_context_base_dir(session)
+    assert resolved != outside_dir.resolve(), (
+        f"a directly-tampered capability_profiles/alpha.yaml pointing "
+        f"outside the workspace ({outside_dir!r}) was USED — protect-at-"
+        f"write alone is not protect-at-use"
+    )
+    assert resolved == fallback_dir, (
+        f"expected fall-through to the Agent object's own base_dir "
+        f"{fallback_dir!r}, got {resolved!r}"
+    )
