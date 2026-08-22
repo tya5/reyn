@@ -162,7 +162,10 @@ def test_initialize_failure_includes_stderr_tail_in_error(monkeypatch) -> None:
     ``errlog=`` it's called with, simulating what a real subprocess's stderr
     capture would have produced before dying.
     """
-    pytest.importorskip("mcp")
+    # #5058: mcp is a core dependency (mcp>=2.0,<3.0, #4412) -- an
+    # importorskip here was a silent skip on a broken install, not a
+    # normal absent-extra path (architect ruling, gh issue view 5058:
+    # "the correct behavior is red"). Removed.
     client = _client()
 
     class _BrokenAsyncCM:
@@ -220,7 +223,10 @@ def test_initialize_failure_with_real_subprocess_captures_its_actual_stderr() ->
     subprocess's own exit is the only thing waited on, via
     ``asyncio.run``'s normal await chain).
     """
-    pytest.importorskip("mcp")
+    # #5058: mcp is a core dependency (mcp>=2.0,<3.0, #4412) -- an
+    # importorskip here was a silent skip on a broken install, not a
+    # normal absent-extra path (architect ruling, gh issue view 5058:
+    # "the correct behavior is red"). Removed.
     client = MCPClient({
         "type": "stdio",
         "command": sys.executable,

@@ -28,8 +28,6 @@ from __future__ import annotations
 
 import asyncio
 
-import pytest
-
 from reyn.core.events.events import EventLog
 
 _N = 25
@@ -105,7 +103,10 @@ def test_mcp_bridge_tracked_task_count_does_not_grow_with_event_count() -> None:
     ``EventLog`` leaves the MCP bridge's ``tracked_task_count`` bounded,
     not proportional to N. Mirrors the A2A case above (#3390 is one
     defect, two files)."""
-    pytest.importorskip("mcp", reason="mcp not installed")
+    # #5058: mcp is a core dependency (mcp>=2.0,<3.0, #4412) -- an
+    # importorskip here was a silent skip on a broken install, not a
+    # normal absent-extra path (architect ruling, gh issue view 5058:
+    # "the correct behavior is red"). Removed.
     from reyn.mcp.server import _MCPProgressBridge
 
     events = EventLog()

@@ -8,7 +8,7 @@ the broken transport — the off-task-orphaning hypothesis (b) — end-to-end, n
 Expected: ``gateway.list_tools`` raises ``MCPFault`` (contained), the test process SURVIVES (no
 uncontained BaseExceptionGroup escaping to the loop). This is the "fake-blind" gap lead flagged: the
 fake tests prove the boundary LOGIC; this proves it against the real substrate that produced the
-crash. Real subprocess (no mock); skipped if the ``mcp`` SDK server API is unavailable.
+crash. Real subprocess (no mock).
 """
 from __future__ import annotations
 
@@ -16,7 +16,12 @@ import sys
 
 import pytest
 
-pytest.importorskip("mcp.server", reason="mcp SDK server API required for the real-substrate test")
+# #5058: mcp is a core dependency (mcp>=2.0,<3.0, #4412) -- an
+# importorskip("mcp.server", ...) here was a silent skip on a broken
+# install, not a normal absent-extra path (architect ruling, gh issue view
+# 5058: mcp's own distribution ships mcp/server/ unconditionally -- "mcp
+# present but mcp.server absent" is not a real installed-package shape).
+# Removed; a genuinely broken install now fails loud instead.
 
 # A real low-level stdio MCP server that handshakes fine, then its subprocess DIES on list_tools.
 # #4368 (mcp 2.0 port): @app.list_tools() is gone on mcp 2.0 (measured live) -- the handler is now
