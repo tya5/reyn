@@ -42,11 +42,18 @@ class AgentIdentityGenerationStore:
 
     def record(
         self, name: str, *, create_seq: int, spawn_parent: "str | None",
-        spawn_parent_seq: "int | None", seq: int,
+        spawn_parent_seq: "tuple[int, float | None] | None", seq: int,
     ) -> Path:
         """Persist ``name``'s identity + frozen lineage as the generation at ``seq`` (atomic;
         idempotent per (name, seq) — re-recording overwrites). The recovery TRUTH for this
-        agent's identity (it survives WAL truncation, unlike the ``agent_created`` event)."""
+        agent's identity (it survives WAL truncation, unlike the ``agent_created`` event).
+
+        #5084: ``spawn_parent_seq`` is now the parent profile.yaml's own
+        ``(ino, ctime_ns)`` at spawn time (registry.py's own
+        ``_profile_identity``), not an in-memory counter — JSON round-trips
+        a tuple as a 2-element list; callers reading this back normalise it
+        back to a tuple themselves (equality against a freshly-stat'd pair
+        needs matching types)."""
         self._dir.mkdir(parents=True, exist_ok=True)
         path = self._path_for(name, seq)
         tmp = path.with_suffix(path.suffix + ".tmp")
