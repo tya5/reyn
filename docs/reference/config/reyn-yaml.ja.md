@@ -32,8 +32,11 @@ llm:
   これ）、`project · agent`（エージェント自身の `.reyn/agents/<名前>/
   profile.yaml` にも設定可）、`project · agent · session`（セッション自身の
   `<session-state-dir>/config.yaml` にも設定可）、または `agent` 単独
-  （そもそも project 層に値が存在しないキー — `broker_identity` が該当、
-  #5084 ③-a）。**CI で導出/検査される唯一の列**（下記参照）— ②③が
+  （そもそも project 層に値が存在しないキー）。**`agent` 単独は現在
+  該当キーが 0 件です** — 唯一の実例だった `broker_identity` は #5091 で
+  撤去されました（owner 裁定 —「broker」は外部 MCP サーバであって reyn
+  ランタイムの概念ではない）。語彙に値を残すのは、それが名指す境界事例が
+  実在するからであって、今日そこにキーが居るからではありません。**CI で導出/検査される唯一の列**（下記参照）— ②③が
   「スライスで偽にならない」からではありません（★偽になり得るし実際なった
   — 下記 ⑤ が `Reload` の実測インスタンス）。「この呼び出しが live
   re-read かどうか」は★呼び出し site 自身の性質であり、`_HOT_RELOAD_FILES`
@@ -63,8 +66,8 @@ llm:
 
 **`Declared in` 自身の一次ソース**: `src/reyn/runtime/preferences.py` の
 `PREFERENCE_KEYS`（③ preference 軸、#4206）と、`AgentProfile` の明示的な
-agent 層専用フィールド（`project_context_path`、#5086／`broker_identity`、
-#5085）— `tests/repo/test_config_reference_declared_in_4206.py` がこの表の
+agent 層専用フィールド（`project_context_path`、#5086 — #5091 が
+`broker_identity` を撤去して以降はこれ 1 つ）— `tests/repo/test_config_reference_declared_in_4206.py` がこの表の
 `Declared in` セルを CI でそれらと突き合わせます（[`events.md` 自身の
 doc↔code gate](../runtime/events.md) と同じ形）。あるキーが agent/session
 書き込み能力を得たのに本表が追随していなければ → 赤。
