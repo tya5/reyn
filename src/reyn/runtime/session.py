@@ -1786,11 +1786,12 @@ class Session:
         return self._agent.permission_resolver
 
     def _read_base_dir_override(self, path: "Path") -> "Path | None":
-        """#4200/#5081: read a ``base_dir:`` override from *path* — either
-        this session's own per-session config or the calling agent's own
-        ``profile.yaml`` (this method is generic over which file; callers
-        pass the path — same shape :meth:`_read_preferences_override`
-        already uses) — or ``None`` when absent/unset/malformed.
+        """#4200/#5081/#5084: read a ``base_dir:`` override from *path* —
+        either this session's own per-session config or the calling
+        agent's own ``profile.yaml`` (this method is generic over which
+        file; callers pass the path — same shape
+        :meth:`_read_preferences_override` already uses) — or ``None``
+        when absent/unset/malformed.
 
         Deliberately NOT routed through ``AgentProfile.load``: that
         loader raises on a malformed ``preferences``/``bounding`` block
@@ -1800,7 +1801,39 @@ class Session:
         surfaced (stderr-adjacent log, not a crash) and skipped — a typo
         must not crash session construction, and (restrict-only) skipping
         it only WIDENS toward the next fallback layer, never past the
-        effective floor."""
+        effective floor.
+
+        #5084 (architect's own finding, cwd-anchor family #2415, then
+        self-corrected twice — issuecomment-5378947920 / -5378958683): a
+        hand-written ``base_dir: repos/<name>`` used to resolve against
+        ``Path.cwd()`` wherever ``.resolve()`` happened to be called from
+        at USE time — a different, uncontrolled anchor from
+        ``AgentRegistry.create()``'s own write-time code (which resolves a
+        relative value against the project root), so the same key meant
+        something different depending on which path wrote it, AND the ⊆
+        workspace check ran AFTER that cwd-dependent resolve, so it passed
+        or failed depending on the launching directory.
+
+        The fix accepts exactly TWO spellings for a hand-written value —
+        an absolute path, or the EXISTING ``${REYN_PROJECT_DIR}`` token
+        (:mod:`reyn.plugins.tokens`, ADR-0064 §3.4-3.6, already used by
+        skill/plugin authors for the identical purpose — see
+        :mod:`reyn.runtime.workspace_paths`'s own module docstring for why
+        this reuses that vocabulary rather than inventing a second one,
+        and for the unrelated same-named environment variable #5084's
+        hook-derivation slice exports for CHILD processes, a different
+        mechanism never confused with this one) — and REJECTS a bare
+        relative value outright (logged, treated as no override) rather
+        than accepting it under either of the two prior, discarded
+        designs: "resolve it against workspace root" (a second spelling
+        for what ``${REYN_PROJECT_DIR}/...`` already spells, architect's
+        own first draft) or "leave it be" (silently cwd-dependent, the
+        original bug). Order is load-bearing: token expansion happens
+        BEFORE the absolute-path check (else an unexpanded
+        ``${REYN_PROJECT_DIR}/...`` reads as "relative" and is wrongly
+        rejected) and BEFORE the workspace bound-check the caller applies
+        (else a literal, un-expanded ``${...}`` string would be compared
+        as a path)."""
         if not path.is_file():
             return None
         import yaml
@@ -1816,7 +1849,25 @@ class Session:
         value = raw.get("base_dir")
         if not value:
             return None
-        return Path(str(value))
+        from reyn.plugins.tokens import expand_with_map
+
+        workspace_root = self._reyn_state_root.parent.resolve()
+        # Order load-bearing (architect, issuecomment-5378958683): expand
+        # the token FIRST, so `${REYN_PROJECT_DIR}/...` is judged by what
+        # it expands to, never as a literal string or as "relative".
+        expanded = expand_with_map(str(value), {"REYN_PROJECT_DIR": str(workspace_root)})
+        candidate = Path(expanded)
+        if not candidate.is_absolute():
+            logger.warning(
+                "#5084: skipping base_dir override %r in %s -- a hand-written "
+                "value must be either an absolute path or "
+                "'${REYN_PROJECT_DIR}/...' (a bare relative path is rejected, "
+                "never silently reinterpreted as workspace-relative or as "
+                "relative to the reyn process's own working directory)",
+                str(value), path,
+            )
+            return None
+        return candidate
 
     def _read_preferences_override(self, path: "Path") -> "dict[str, object]":
         """#4206 slice 1: read a ``preferences:`` mapping from *path* — this
@@ -1904,18 +1955,29 @@ class Session:
         alone grants nothing usable"). An out-of-bounds value at EITHER
         layer is treated exactly like a malformed one already is: skipped
         (logged), falling through to the next layer — restrict-only,
-        never past the effective floor."""
-        workspace_root = self._reyn_state_root.parent.resolve()
+        never past the effective floor.
 
-        def _within_workspace(candidate: Path) -> bool:
-            resolved = candidate.resolve()
-            return resolved == workspace_root or workspace_root in resolved.parents
+        #5084: the boundary check itself is
+        :func:`~reyn.runtime.workspace_paths.within_workspace` — a MODULE
+        function now, not a closure defined inline here. #5084's own
+        ``project_context_path`` agent-layer override needs the identical
+        "⊆ workspace" bound this method already enforces for ``base_dir``;
+        a closure captured in THIS method's own local scope cannot be
+        called from anywhere else, and lead-coder's own measurement (this
+        arc, same night) named the closure shape itself as the reason a
+        naive "reuse it" instruction would have produced a SECOND,
+        independently-written copy of the same check instead — the exact
+        "same guard, different code" family #5057 closed three instances
+        of a few hours earlier. Extracted once, both call sites here."""
+        from reyn.runtime.workspace_paths import within_workspace
+
+        workspace_root = self._reyn_state_root.parent.resolve()
 
         session_override = self._read_base_dir_override(
             Path(self._snapshot_path).parent / "config.yaml"
         )
         if session_override is not None:
-            if _within_workspace(session_override):
+            if within_workspace(session_override, workspace_root):
                 return session_override
             logger.warning(
                 "#5081: session %s's config.yaml base_dir %r resolves "
@@ -1929,7 +1991,7 @@ class Session:
             self._reyn_state_root / "agents" / self.agent_name / "profile.yaml"
         )
         if agent_override is not None:
-            if _within_workspace(agent_override):
+            if within_workspace(agent_override, workspace_root):
                 return agent_override
             logger.warning(
                 "#5081: agent %s's profile.yaml base_dir %r resolves "
@@ -4426,6 +4488,7 @@ class Session:
         from reyn.hooks.composed_consumer import ComposedEventConsumer
         from reyn.hooks.composer import ComposerRegistry, build_composers
         from reyn.hooks.dispatcher import HookDispatcher
+        from reyn.hooks.shell_runner import HookProcessContext
         from reyn.runtime.fs_watcher import FsWatcher
         from reyn.runtime.hot_reload import HotReloader
         # Hook-Event Redesign Phase 4a (proposal 0059 §3.2/§3.3): one HookBus
@@ -4486,6 +4549,23 @@ class Session:
             # Phase 4a: broadcast every dispatched HookEvent to this session's
             # own bus, independently of the Sync hooks_for() loop above.
             bus=hook_bus,
+            # #5084 ④: LIVE cwd/env for a hook's exec/exec_capture child —
+            # same deferred-lambda posture as consent_gate/is_hook_disabled
+            # above, because ``_workspace_base_dir`` can change across this
+            # dispatcher's lifetime (#5081). A relative exec argv now
+            # resolves inside THIS agent's own tree instead of reyn's own
+            # launch cwd (the real, previously-unaddressed gap #5084 ④
+            # measured in hooks/dispatcher.py's own module docstring).
+            hook_cwd=lambda: (
+                str(self._workspace_base_dir) if self._workspace_base_dir else None
+            ),
+            hook_process_context=lambda: HookProcessContext(
+                project_dir=self._reyn_state_root.parent.resolve(),
+                agent_base_dir=(
+                    self._workspace_base_dir or self._reyn_state_root.parent
+                ).resolve(),
+                agent_name=self.agent_name,
+            ),
         )
         # #2608 H4: the session-owned filesystem watcher (see
         # reyn.runtime.fs_watcher's module docstring for the thread->async
@@ -5533,7 +5613,12 @@ class Session:
           at boot, the restart-only OUT-set, never re-read on a reload);
         - **runtime** — the global ``.reyn/hooks.yaml`` (from the IN-set);
         - **per-agent** — ``.reyn/agents/<name>/hooks.yaml`` (read directly here, same
-          IN-set grain but scoped per agent).
+          IN-set grain but scoped per agent);
+        - **derived** — #5084 ③-b: the 2 broker-participation hooks synthesized from
+          this agent's own ``profile.yaml`` ``broker_identity`` (absent, the default,
+          derives none — see :func:`reyn.runtime.broker_hooks.derive_broker_hooks`'s
+          own docstring for the exact shape and why this lives in the SAME PR/layer
+          as ④'s cwd/env threading, not a separate mechanism).
 
         Rebuilding from scratch each call means a removed hook (runtime or per-agent)
         simply isn't in the new registry — removal handled by construction.
@@ -5559,6 +5644,7 @@ class Session:
         runtime_list = list(runtime) if isinstance(runtime, list) else []
         per_agent_list = self._read_per_agent_hooks()
         per_session_list = self._read_per_session_hooks()  # #2285: the 4th, most-specific layer
+        derived_list = self._derive_broker_hooks()  # #5084 ③-b: broker-participation hooks
         combined = list(self._startup_hooks_raw)
         composed_schemas = getattr(self, "_composed_schemas", None)
         registry = load_hooks(combined, composed_schemas)  # trusted startup must load — else fail loud
@@ -5566,6 +5652,7 @@ class Session:
             ("runtime", runtime_list),
             ("per-agent", per_agent_list),
             ("per-session", per_session_list),  # #2285: session-defined hooks (try-add like untrusted)
+            ("derived", derived_list),  # #5084 ③-b: derived from broker_identity, try-add like untrusted
         ):
             if not layer:
                 continue
@@ -5578,6 +5665,29 @@ class Session:
                     "the valid hook layers: %s", label, exc,
                 )
         return registry
+
+    def _derive_broker_hooks(self) -> list:
+        """#5084 ③-b: this agent's own ``profile.yaml`` ``broker_identity``,
+        turned into the 2 hook defs :func:`reyn.runtime.broker_hooks.
+        derive_broker_hooks` synthesizes — ``[]`` when absent/missing/
+        malformed, same "live re-read, {}/[] on any read failure" contract
+        as :meth:`_agent_profile_preferences` one level up (an operator
+        hand-editing ``broker_identity`` takes effect on the next hook-
+        registry rebuild, not just the next process start)."""
+        from reyn.runtime.broker_hooks import derive_broker_hooks
+        from reyn.runtime.profile import AgentProfile
+
+        try:
+            identity = AgentProfile.load(self.workspace_dir).broker_identity
+        except FileNotFoundError:
+            return []  # no profile.yaml on disk — same non-error posture as preferences
+        except ValueError as e:
+            logger.warning(
+                "#5084: skipping unreadable agent profile at %s for broker-hook "
+                "derivation: %s", self.workspace_dir, e,
+            )
+            return []
+        return derive_broker_hooks(identity)
 
     def _read_per_agent_hooks(self) -> list:
         """Read the per-agent runtime hooks layer for the COMBINE (#2073 per-agent

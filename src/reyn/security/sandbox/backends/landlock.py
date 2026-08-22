@@ -34,6 +34,7 @@ import os
 import platform
 import signal
 import subprocess
+from typing import TYPE_CHECKING
 
 from .._subprocess_io import communicate_capped, kill_process_tree
 from ..backend import (
@@ -43,6 +44,9 @@ from ..backend import (
     WrappedCommand,
 )
 from ..capability import CapabilityDeclaration, CapabilitySupport
+
+if TYPE_CHECKING:
+    from reyn.hooks.shell_runner import HookProcessContext
 from ..policy import (
     POST_KILL_DRAIN_GRACE_SECONDS,
     SandboxPolicy,
@@ -453,12 +457,19 @@ class LandlockBackend:
         stdin: bytes | None = None,
         cwd: str | None = None,
         cancel_event: asyncio.Event | None = None,
+        hook_process_context: "HookProcessContext | None" = None,
     ) -> SandboxResult:
         """Execute argv under Landlock isolation and return the result.
 
         ``cwd`` (= the run's ``workspace.base_dir``) sets the child working
         directory so repo-relative ``git`` / ``pytest`` resolve correctly; the
         Landlock ruleset still bounds filesystem access independently.
+
+        ``hook_process_context`` (#5084 ④): merged into the child's env
+        unchanged — see ``SandboxBackend.run``'s own docstring for the
+        closed-envelope contract. Landlock bounds filesystem access, not
+        the environment the child sees, so all 3 keys apply exactly as
+        they do on NoopBackend/SeatbeltBackend.
         """
         if not self.available():
             raise RuntimeError(
@@ -480,6 +491,8 @@ class LandlockBackend:
         # unmodified to a child whose actual cwd is `cwd`.
         if cwd:
             env["PWD"] = cwd
+        if hook_process_context is not None:
+            env.update(hook_process_context.as_env())
 
         # THE shared builder — the same call the landlock_exec shim makes, so the
         # two seams cannot drift apart again (#2980).

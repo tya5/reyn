@@ -655,6 +655,17 @@ def _run(args: argparse.Namespace) -> None:
         # #1827 S3: resolve the agent's topology capability_profile → contextual
         # narrowing (enforcement) + view exclusion. (None, ∅) when unbound = byte-identical.
         _ctx_perm, _profile_excluded = registry.resolved_profile_for(profile.name)
+        # #5084: this IS the owner-stated goal's own path ("2 coders brought
+        # up via `reyn chat --connect`") — an agent-layer
+        # ``profile.project_context_path`` override gives THIS agent its
+        # OWN REYN.md, resolved through the SAME shared function
+        # ``build_agent_registry_from_project`` (the `reyn pipe` path) uses,
+        # never a second, independently-written copy.
+        from reyn.runtime.registry_bootstrap import resolve_agent_project_context
+
+        agent_project_context, agent_project_context_path = resolve_agent_project_context(
+            profile, project_context, project_context_path, project_root,
+        )
         s = build_scoped_chat_session(
             # #2708 P1: chat-CLI (inline/plain --cui / run-once) — the InlineChatRenderer
             # drains the outbox "presentation" message and renders it (renderer.py:148),
@@ -674,8 +685,8 @@ def _run(args: argparse.Namespace) -> None:
             mcp_servers=session_cfg.config.mcp,
             output_language=output_language,
             prompt_cache_enabled=session_cfg.config.llm.prompt_cache_enabled,
-            project_context=project_context,
-            project_context_path=project_context_path,
+            project_context=agent_project_context,
+            project_context_path=agent_project_context_path,
             agent_role=profile.role,
             compaction_config=session_cfg.config.chat.compaction,
             reasoning_config=session_cfg.config.chat.reasoning,  # #1652

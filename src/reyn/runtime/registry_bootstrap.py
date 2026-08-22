@@ -48,8 +48,11 @@ Two tiers of extraction, deliberately:
 """
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from reyn.config import ReynConfig
@@ -65,6 +68,87 @@ def build_state_log(project_root: Path) -> "StateLog":
     from reyn.core.events.state_log import StateLog
 
     return StateLog(project_root / ".reyn" / "state" / "wal.jsonl")
+
+
+def resolve_agent_project_context(
+    profile: Any, project_context: str, project_context_path: "Path | None",
+    project_root: Path,
+) -> "tuple[str, Path | None]":
+    """#5084: an agent-layer ``profile.project_context_path`` override
+    REPLACES the project-wide file for THIS agent's own session — not
+    the additive ``.reyn/agents/<name>/AGENTS.md`` composition
+    (``RouterHostAdapter.get_project_context``), which is unaffected and
+    still layers on top of whichever text this function returns.
+
+    Shared by BOTH session-factory call sites that build a per-agent
+    session (``build_agent_registry_from_project`` below, and ``reyn
+    chat``'s own ``chat.py::_session_factory`` — the ACTUAL target of
+    #5084's owner-stated goal, "2 coders brought up via `reyn chat
+    --connect`") — a module-level function, not a closure private to
+    either, so the identical resolution isn't written out a second time
+    for the other caller (the exact "same guard, different code" family
+    #5057 closed three instances of, a few hours before this one).
+
+    Same "⊆ workspace, protect-at-use" shape ``Session._workspace_base_dir``
+    already established for ``base_dir`` (architect's own re-scoping of
+    #4206's axis assignment for THIS field, #5084) — and the SAME
+    two-accepted-spellings rule (absolute path, or
+    ``${REYN_PROJECT_DIR}/...}``; a bare relative value is rejected,
+    logged, falls through to the project-wide default)
+    ``Session._read_base_dir_override`` applies for ``base_dir``, reusing
+    the identical :func:`reyn.runtime.workspace_paths.within_workspace`
+    bound-check and :func:`reyn.plugins.tokens.expand_with_map` token
+    expansion — never a second, independently-written copy of either.
+
+    Owner ruling B (#3787): resolved ONCE per agent, at session
+    construction — the project-wide file already follows this rule
+    (``Session._project_context`` is frozen, never hot-reloaded); the
+    agent-layer override follows the same rule for the same reason."""
+    override = getattr(profile, "project_context_path", None)
+    if not override:
+        return project_context, project_context_path
+    from reyn.plugins.tokens import expand_with_map
+    from reyn.runtime.workspace_paths import within_workspace
+
+    workspace_root = project_root.resolve()
+    expanded = expand_with_map(override, {"REYN_PROJECT_DIR": str(workspace_root)})
+    candidate = Path(expanded)
+    if not candidate.is_absolute():
+        logger.warning(
+            "#5084: skipping agent %r's project_context_path override "
+            "%r -- a hand-written value must be either an absolute "
+            "path or '${REYN_PROJECT_DIR}/...' (a bare relative path "
+            "is rejected, never silently reinterpreted)",
+            profile.name, override,
+        )
+        return project_context, project_context_path
+    if not within_workspace(candidate, workspace_root):
+        logger.warning(
+            "#5084: agent %r's project_context_path override %r "
+            "resolves outside the project workspace %r -- ignoring "
+            "(falls back to the project-wide file)",
+            profile.name, str(candidate), str(workspace_root),
+        )
+        return project_context, project_context_path
+    if not candidate.is_file():
+        logger.warning(
+            "#5084: agent %r's project_context_path override %r does "
+            "not exist -- ignoring (falls back to the project-wide "
+            "file)",
+            profile.name, str(candidate),
+        )
+        return project_context, project_context_path
+    try:
+        text = candidate.read_text(encoding="utf-8").strip()
+    except OSError as e:
+        logger.warning(
+            "#5084: could not read agent %r's project_context_path "
+            "override %r: %s -- ignoring (falls back to the "
+            "project-wide file)",
+            profile.name, str(candidate), e,
+        )
+        return project_context, project_context_path
+    return text, candidate
 
 
 def build_budget_tracker(
@@ -190,6 +274,9 @@ def build_agent_registry_from_project(
 
     def _session_factory(profile: "AgentProfile", *, presentation_consumer=None, intervention_bridge=None):
         _ctx_perm, _profile_excluded = registry.resolved_profile_for(profile.name)
+        agent_project_context, agent_project_context_path = resolve_agent_project_context(
+            profile, project_context, project_context_path, project_root,
+        )
         s = build_scoped_chat_session(
             # #2708 P1: the reusable registry base session (reyn pipe run's default
             # identity + driver spawns). Outbox-backed, byte-identical to the pre-#2708
@@ -211,8 +298,8 @@ def build_agent_registry_from_project(
             mcp_servers=config.mcp,
             output_language=config.output_language,
             prompt_cache_enabled=config.llm.prompt_cache_enabled,
-            project_context=project_context,
-            project_context_path=project_context_path,
+            project_context=agent_project_context,
+            project_context_path=agent_project_context_path,
             agent_role=profile.role,
             compaction_config=config.chat.compaction,
             reasoning_config=config.chat.reasoning,

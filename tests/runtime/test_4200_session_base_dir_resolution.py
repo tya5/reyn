@@ -99,6 +99,130 @@ def test_agent_layer_default_wins_over_the_agent_object_when_no_session_override
     assert _resolved_op_context_base_dir(session) == agent_default_dir
 
 
+# ── Gate 2b (#5084): the hand-written value's TWO accepted spellings, and the
+# THIRD, deliberately rejected one — architect's own self-corrected design
+# (issuecomment-5378947920 / -5378958683), lead-coder's consolidated relay ──
+
+
+def test_agent_layer_base_dir_accepts_the_reyn_project_dir_token(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    """Tier 2: witness ① — ``base_dir: ${REYN_PROJECT_DIR}/agent-default``
+    resolves to the project workspace via the EXISTING token vocabulary
+    (:mod:`reyn.plugins.tokens`), and does so regardless of the reyn
+    process's current working directory — the whole point of routing
+    through a token instead of a bare relative path."""
+    project_root = tmp_path / "project"
+    agent_default_dir = project_root / "agent-default"
+    agent_default_dir.mkdir(parents=True)
+    session = make_session(
+        agent_name="alpha", workspace_state_dir=project_root / ".reyn",
+        snapshot_path=project_root / ".reyn" / "agents" / "alpha" / "state" / "snapshot.json",
+    )
+    _write_config(
+        project_root / ".reyn" / "agents" / "alpha" / "profile.yaml",
+        "${REYN_PROJECT_DIR}/agent-default",
+    )
+
+    # cwd must not matter -- change it away from both the project and the
+    # test's own directory before resolving.
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    monkeypatch.chdir(elsewhere)
+
+    assert _resolved_op_context_base_dir(session) == agent_default_dir
+
+
+def test_agent_layer_base_dir_absolute_path_unchanged(tmp_path: Path) -> None:
+    """Tier 2: witness ② — an absolute ``base_dir`` in a hand-written
+    profile.yaml resolves exactly as before (unaffected by #5084's token
+    handling), and stays subject to the existing ⊆workspace bound (an
+    absolute value outside the workspace is still not used — #5081's own
+    gate, unchanged)."""
+    project_root = tmp_path / "project"
+    agent_default_dir = project_root / "agent-default"
+    agent_default_dir.mkdir(parents=True)
+    session = make_session(
+        agent_name="alpha", workspace_state_dir=project_root / ".reyn",
+        workspace_base_dir=tmp_path / "agent-object-fallback",
+        snapshot_path=project_root / ".reyn" / "agents" / "alpha" / "state" / "snapshot.json",
+    )
+    _write_config(
+        project_root / ".reyn" / "agents" / "alpha" / "profile.yaml", agent_default_dir,
+    )
+
+    assert _resolved_op_context_base_dir(session) == agent_default_dir
+
+
+def test_agent_layer_base_dir_bare_relative_is_rejected_not_silently_cwd_relative(
+    tmp_path: Path, monkeypatch, caplog,
+) -> None:
+    """Tier 2: witness ③ (the one architect flagged as easy to get wrong) —
+    a BARE relative ``base_dir: agent-default`` (no token, not absolute) in
+    a hand-written profile.yaml is REJECTED — falls through to the Agent
+    object's own value, never silently resolved against the reyn
+    process's current working directory. "Happens to work because of
+    where the process was launched from" is exactly the FAIL this test
+    exists to catch, not a pass condition: even though a
+    ``project_root``-relative ``agent-default`` directory genuinely
+    exists on disk here, that must NOT make this resolve — the rejection
+    is unconditional on the SPELLING, not on whether the target happens
+    to exist somewhere.
+
+    Strip-falsifier: removing the ``is_absolute()`` rejection in
+    ``Session._read_base_dir_override`` (falling through to `Path(str(value))`
+    unconditionally, the pre-#5084 shape) turns this red — verified
+    locally: the bare relative value then resolves against whatever the
+    test process's cwd happens to be, which in a per-test isolated run
+    can even coincide with ``project_root`` and silently "pass" for the
+    wrong reason (the exact hazard this witness is written against).
+
+    lead-coder's own TESTS-READ finding on #5086: asserting only the
+    FALLBACK value doesn't distinguish "rejected for being a bare
+    relative path" from ANY other early-return that happens to produce
+    the same fallback — a caplog assertion on the specific warning this
+    rejection logs closes that gap (not the whole message — CLAUDE.md's
+    own "never pin algorithm-level behaviour" — just the fragment that
+    distinguishes THIS reason from the sibling ⊆workspace/missing-file
+    rejections)."""
+    project_root = tmp_path / "project"
+    agent_default_dir = project_root / "agent-default"
+    agent_default_dir.mkdir(parents=True)
+    fallback_dir = tmp_path / "agent-object-fallback"
+    session = make_session(
+        agent_name="alpha", workspace_state_dir=project_root / ".reyn",
+        workspace_base_dir=fallback_dir,
+        snapshot_path=project_root / ".reyn" / "agents" / "alpha" / "state" / "snapshot.json",
+    )
+    # cwd = project_root: a bare relative "agent-default" would resolve to
+    # EXACTLY agent_default_dir (which genuinely exists, INSIDE the
+    # workspace) if it were naively accepted -- the ⊆workspace bound alone
+    # would NOT catch this, so this is the scenario that actually exercises
+    # the rejection, not one the unrelated bound-check would also catch.
+    monkeypatch.chdir(project_root)
+    _write_config(
+        project_root / ".reyn" / "agents" / "alpha" / "profile.yaml", "agent-default",
+    )
+
+    import logging
+    with caplog.at_level(logging.WARNING):
+        resolved = _resolved_op_context_base_dir(session)
+    assert resolved != agent_default_dir, (
+        f"a bare relative base_dir must never resolve, even though "
+        f"{agent_default_dir!r} genuinely exists on disk -- got {resolved!r}"
+    )
+    assert resolved == fallback_dir, (
+        f"expected fall-through to the Agent object's own base_dir "
+        f"{fallback_dir!r}, got {resolved!r}"
+    )
+    assert any(
+        "must be either an absolute path or" in r.message for r in caplog.records
+    ), (
+        "expected the bare-relative-specific rejection warning, not just a "
+        f"fallback value; got log records: {[r.message for r in caplog.records]!r}"
+    )
+
+
 # ── Gate 3: regression — neither override present, byte-identical to pre-#4200 ──
 
 

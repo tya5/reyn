@@ -295,7 +295,7 @@ class _CapturingBackend:
 
         return WrappedCommand(argv=list(argv), env={})
 
-    async def run(self, argv, policy, *, stdin=None, cwd=None, cancel_event=None):
+    async def run(self, argv, policy, *, stdin=None, cwd=None, cancel_event=None, hook_process_context=None):
         from reyn.security.sandbox.backend import SandboxResult
 
         self.seen_argv = list(argv)

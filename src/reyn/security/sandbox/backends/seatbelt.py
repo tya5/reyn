@@ -28,6 +28,7 @@ import signal
 import subprocess
 import tempfile
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from reyn.security.sandbox._derivation_cache import cached_derivation
 from reyn.security.sandbox._subprocess_io import communicate_capped, kill_process_tree
@@ -38,6 +39,9 @@ from reyn.security.sandbox.backend import (
     WrappedCommand,
 )
 from reyn.security.sandbox.capability import CapabilityDeclaration, CapabilitySupport
+
+if TYPE_CHECKING:
+    from reyn.hooks.shell_runner import HookProcessContext
 from reyn.security.sandbox.policy import (
     POST_KILL_DRAIN_GRACE_SECONDS,
     SandboxPolicy,
@@ -435,6 +439,7 @@ class SeatbeltBackend:
         stdin: bytes | None = None,
         cwd: str | None = None,
         cancel_event: asyncio.Event | None = None,
+        hook_process_context: "HookProcessContext | None" = None,
     ) -> SandboxResult:
         """Execute *argv* under the SBPL policy derived from *policy*.
 
@@ -444,6 +449,12 @@ class SeatbeltBackend:
 
         ``cancel_event``: when provided and set, kills the sandbox-exec wrapper
         process group (SIGTERM → SIGKILL) and returns SandboxResult(cancelled=True).
+
+        ``hook_process_context`` (#5084 ④): merged into the child's env
+        unchanged — see ``SandboxBackend.run``'s own docstring for the
+        closed-envelope contract. Seatbelt is a real host process (the SBPL
+        profile bounds filesystem/network access, not the environment it
+        sees), so all 3 keys apply exactly as they do on NoopBackend.
         """
         profile_text = _build_sbpl_profile(policy)
 
@@ -458,6 +469,8 @@ class SeatbeltBackend:
         # unmodified to a child whose actual cwd is `cwd`.
         if cwd:
             env["PWD"] = cwd
+        if hook_process_context is not None:
+            env.update(hook_process_context.as_env())
 
         loop = asyncio.get_running_loop()
 

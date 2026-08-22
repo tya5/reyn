@@ -160,7 +160,7 @@ class _RecordingBackend:
     def available(self) -> bool:
         return True
 
-    async def run(self, argv, policy, *, stdin=None, cwd=None, cancel_event=None) -> SandboxResult:
+    async def run(self, argv, policy, *, stdin=None, cwd=None, cancel_event=None, hook_process_context=None) -> SandboxResult:
         self.run_called = True
         self.received_policy = policy
         return SandboxResult(returncode=0, stdout=b"ok", stderr=b"")
@@ -637,7 +637,7 @@ class _StubBackend:
     def available(self) -> bool:
         return True
 
-    async def run(self, argv, policy, *, stdin=None, cwd=None, cancel_event=None) -> SandboxResult:
+    async def run(self, argv, policy, *, stdin=None, cwd=None, cancel_event=None, hook_process_context=None) -> SandboxResult:
         self.received_cwd = cwd
         return SandboxResult(returncode=0, stdout=b"from-stub", stderr=b"")
 

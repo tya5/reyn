@@ -727,15 +727,27 @@ class AgentRegistry:
             raise FileExistsError(f"agent {name!r} already exists")
         resolved_base_dir: "str | None" = None
         if base_dir is not None:
+            # This is a STRUCTURED API parameter (CLI/web/slash/the
+            # spawn_agent LLM tool), not hand-typed YAML text — a relative
+            # value here has always meant "relative to the project root"
+            # unambiguously (the caller passed a Python str, never a
+            # ``${...}`` token string), so this resolution is unchanged.
+            # #5084: only the BOUND check now comes from the shared
+            # ``reyn.runtime.workspace_paths.within_workspace`` — that
+            # module's own docstring explains why this and the READ side
+            # (``Session._read_base_dir_override``, which DOES read
+            # hand-typed YAML text and therefore DOES need the
+            # ``${REYN_PROJECT_DIR}`` token vocabulary, a cwd-anchor fix
+            # of a different shape) share the bound-check function without
+            # sharing a relative-resolution rule that doesn't apply here.
+            from reyn.runtime.workspace_paths import within_workspace
+
             candidate = Path(base_dir)
             if not candidate.is_absolute():
                 candidate = self._project_root / candidate
             candidate = candidate.resolve()
             workspace_resolved = self._project_root.resolve()
-            if (
-                candidate != workspace_resolved
-                and workspace_resolved not in candidate.parents
-            ):
+            if not within_workspace(candidate, workspace_resolved):
                 raise ValueError(
                     f"requested base_dir {str(candidate)!r} resolves outside "
                     f"the project workspace {str(workspace_resolved)!r} — "
