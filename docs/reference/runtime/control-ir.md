@@ -1594,9 +1594,18 @@ Field population is closed to 3 fields (architect ruling, `gh issue view
    `{"declared": true, "allow_write_paths": [...], "deny_write_paths":
    [...]}` (the block's own declared values, verbatim).
 2. **`position`** — `{repo_root, branch, head, python_executable, venv_path,
-   capability: {ruff, pytest, mkdocs}}`. `branch`/`head` are `null` for a
-   non-git directory or before the first commit; `branch` is `null` (not the
-   literal `"HEAD"`) in a detached-HEAD state.
+   capability: {ruff, pytest, mkdocs}, hook_driven_turns_budget:
+   {remaining_hook_driven_turns, max_hook_driven_turns}}`. `branch`/`head`
+   are `null` for a non-git directory or before the first commit; `branch`
+   is `null` (not the literal `"HEAD"`) in a detached-HEAD state.
+   `hook_driven_turns_budget` is `null` (not fabricated as `0`) when no
+   session backs the OpContext (direct/test construction); `max_hook_
+   driven_turns` is `null` when the loop-valve enforces no cap at all
+   (`safety.loop.max_hook_driven_turns <= 0`). This is the pair issue
+   #5012's own field ② wording names ("残り turn ＋ max_hook_driven_turns")
+   — read LIVE via `Session.remaining_hook_driven_turns` /
+   `Session.max_hook_driven_turns`, unlike `write_scope`/`auth_status`
+   above, which are static per-session config.
 3. **`auth_status`** — one entry per provider declared in `auth.providers`
    (reyn.yaml), each `{authenticated: bool, reason: str}` — NEVER a token,
    refresh token, client secret, or scope. Scoped PERMANENTLY to reyn's own
@@ -1620,7 +1629,8 @@ Result:
     "repo_root": "/path/to/repo", "branch": "main", "head": "abc1234...",
     "python_executable": "/path/to/.venv/bin/python",
     "venv_path": "/path/to/.venv",
-    "capability": {"ruff": true, "pytest": true, "mkdocs": true}
+    "capability": {"ruff": true, "pytest": true, "mkdocs": true},
+    "hook_driven_turns_budget": {"remaining_hook_driven_turns": 25, "max_hook_driven_turns": 25}
   },
   "auth_status": {}
 }
@@ -1633,7 +1643,10 @@ Implementation: `reyn.runtime.session_write_scope.describe_write_scope`,
 `OpContext.auth_config` are narrow config-derived projections (same shape
 as `OpContext.threat_scan`), threaded through
 `build_router_op_context`/`RouterOpContextSource` from `Session`'s own
-`_sandbox_config`/`_auth_config`.
+`_sandbox_config`/`_auth_config`. `OpContext.hook_driven_turns_budget` is a
+LIVE dict (not a config projection — resolved fresh on every `build()` call
+via `Session.remaining_hook_driven_turns`/`Session.max_hook_driven_turns`,
+which both read the shared `_effective_hook_driven_turns_cap` SSoT).
 
 ---
 

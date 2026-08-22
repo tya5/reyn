@@ -119,6 +119,18 @@ def test_describe_session_reaches_real_router_op_context_wiring():
 
     assert result["write_scope"]["declared"] is True
     assert result["write_scope"]["allow_write_paths"] == ["src/"]
+    # lead-coder block (#5012-A PR #5038, issuecomment-5376729625): the
+    # `Session.remaining_hook_driven_turns` property existed with its own
+    # unit test, but was never actually reachable through describe_session's
+    # OUTPUT — the exact "declared but agent can't read it" hole #5012 exists
+    # to close, reproduced inside this very PR. Asserted here against the
+    # real value a freshly-constructed Session reports (config default 25,
+    # no turns spent) — through the tool call, not the property directly.
+    assert result["position"]["hook_driven_turns_budget"] == {
+        "remaining_hook_driven_turns": session.remaining_hook_driven_turns,
+        "max_hook_driven_turns": session.max_hook_driven_turns,
+    }
+    assert result["position"]["hook_driven_turns_budget"]["max_hook_driven_turns"] == 25
     # "github" is present because it's what THIS test's auth_config declared —
     # authenticated True/False depends on this machine's real OAuth token
     # store (session_auth_status's own isolated-tmp_path tests pin that

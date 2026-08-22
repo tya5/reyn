@@ -2424,6 +2424,20 @@ class Session:
             return None
         return max(0, cap - self._hook_driven_turns)
 
+    @property
+    def max_hook_driven_turns(self) -> "int | None":
+        """The effective hook-driven-turns cap itself (config
+        ``max_hook_driven_turns`` plus any session-local extension), or
+        ``None`` if the valve enforces no cap at all — the SAME value
+        :attr:`remaining_hook_driven_turns` is computed against, exposed as
+        its own public read (#5012-A PR #5038: `describe_session`'s
+        write-out needs BOTH figures, per issue #5012's own literal field ②
+        — "残り turn ＋ max_hook_driven_turns"). Reads
+        `_effective_hook_driven_turns_cap` (the SAME SSoT computation
+        `remaining_hook_driven_turns` and `_stamp_execution_context`'s
+        enforcement branch already share), not a third independent copy."""
+        return self._effective_hook_driven_turns_cap()
+
     def _is_turn_cancel_requested(self) -> bool:
         """Forwarding → RouterLoopDriver.is_cancel_requested (PR-3)."""
         return self._loop_driver.is_cancel_requested()
@@ -4724,6 +4738,16 @@ class Session:
             # the RAW SandboxConfig (declared, never resolved) for
             # describe_session's write-scope field, via OpContext.sandbox_config.
             sandbox_config_fn=lambda: self._sandbox_config,
+            # #5012-A PR #5038 (lead-coder block, issuecomment-5376729625):
+            # live — the SAME pair describe_session's field ② needs
+            # (issue #5012's own literal wording), read fresh every build()
+            # call via the public properties (SSoT-shared with the
+            # enforcement site, see _effective_hook_driven_turns_cap's own
+            # docstring) rather than duplicating the formula here.
+            hook_driven_turns_budget_fn=lambda: {
+                "remaining_hook_driven_turns": self.remaining_hook_driven_turns,
+                "max_hook_driven_turns": self.max_hook_driven_turns,
+            },
             # FP-0016: this agent's identity → the MCP client's X-Reyn-Agent-Id.
             agent_id=self._agent.agent_id,
             # #4574: the live agent's NAME — a DIFFERENT string from agent_id

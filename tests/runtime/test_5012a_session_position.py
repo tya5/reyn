@@ -109,19 +109,31 @@ def test_venv_position_reports_the_real_running_interpreter() -> None:
     assert position["venv_path"] == sys.prefix
 
 
-def test_capability_probe_reports_a_tool_actually_on_path() -> None:
-    """Tier 2: python itself is always resolvable on PATH in any test
-    environment — a stand-in FALSIFY witness that the probe mechanism
-    (shutil.which) genuinely distinguishes present from absent, without
-    hardcoding an assumption about whether ruff/pytest/mkdocs specifically
-    are installed in every environment this test might run in."""
-    import shutil
+def test_capability_probe_key_set_is_the_declared_three() -> None:
+    """Tier 1: capability_probe() reports exactly {ruff, pytest, mkdocs} —
+    reyn's own contract (the CLAUDE.md toolchain), independent of whether
+    any of the three happens to be installed in the environment this test
+    runs in."""
+    assert set(capability_probe().keys()) == {"ruff", "pytest", "mkdocs"}
 
-    probe = capability_probe()
 
-    assert set(probe.keys()) == {"ruff", "pytest", "mkdocs"}
-    for tool, present in probe.items():
-        assert present == (shutil.which(tool) is not None)
+def test_capability_probe_reflects_the_injected_resolver_both_directions() -> None:
+    """Tier 1: capability_probe()'s CONTRACT is "return a boolean per named
+    tool derived from the injected resolver's present/absent result" — not
+    "shutil.which is correct" (that is the standard library's contract, not
+    reyn's; #5012-A PR #5038 review, issuecomment-5376723503: the original
+    version of this test re-derived `shutil.which(tool) is not None` on the
+    assert side, the same expression as the implementation, which cannot
+    fail for a reyn-side bug and cannot construct an absent case either).
+
+    Constructs BOTH a present and an absent case via the injectable
+    ``resolve`` seam, so the boolean-collapse itself is under test, not
+    retraced."""
+    always_present = capability_probe(resolve=lambda _tool: "/usr/bin/tool")
+    always_absent = capability_probe(resolve=lambda _tool: None)
+
+    assert always_present == {"ruff": True, "pytest": True, "mkdocs": True}
+    assert always_absent == {"ruff": False, "pytest": False, "mkdocs": False}
 
 
 def test_describe_session_position_assembles_all_fields(tmp_path: Path) -> None:

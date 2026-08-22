@@ -21,7 +21,7 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
-from typing import Mapping
+from typing import Callable, Mapping
 
 # The one tunable knob here: which external tools' presence is reported.
 # Scoped to exactly the three the #5012-A reporter named (ruff/pytest/mkdocs)
@@ -67,14 +67,25 @@ def venv_position() -> "Mapping[str, str]":
     return {"python_executable": sys.executable, "venv_path": sys.prefix}
 
 
-def capability_probe() -> "Mapping[str, bool]":
+def capability_probe(
+    *, resolve: "Callable[[str], str | None]" = shutil.which,
+) -> "Mapping[str, bool]":
     """``{"ruff": bool, "pytest": bool, "mkdocs": bool}`` — whether each
-    tool resolves on ``PATH`` via ``shutil.which``. A boolean, not the
-    resolved path: the caller (an LLM agent) needs "can I run this",
-    which is what `shutil.which` answering not-None means once collapsed
-    to yes/no — the actual path is an implementation detail the report
-    does not need to leak."""
-    return {tool: shutil.which(tool) is not None for tool in _CAPABILITY_TOOLS}
+    tool resolves on ``PATH``. A boolean, not the resolved path: the caller
+    (an LLM agent) needs "can I run this", which is what a not-None
+    resolution means once collapsed to yes/no — the actual path is an
+    implementation detail the report does not need to leak.
+
+    ``resolve`` defaults to ``shutil.which`` (production behaviour,
+    unchanged) but is an injectable seam (lead-coder review, #5012-A PR
+    #5038 issuecomment-5376723503): reyn's own contract here is "return a
+    boolean per named tool derived from the injected resolver's present/
+    absent result" — ``shutil.which``'s own PATH-lookup correctness is the
+    standard library's responsibility, not reyn's, so a test pinning THIS
+    module's contract must be able to construct both a present and an
+    absent case without depending on (or re-deriving) ``shutil.which``
+    itself."""
+    return {tool: resolve(tool) is not None for tool in _CAPABILITY_TOOLS}
 
 
 def describe_session_position(repo_root: Path) -> dict:

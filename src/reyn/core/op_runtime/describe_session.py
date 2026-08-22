@@ -7,10 +7,20 @@ Assembles the 3 fields the issue enumerates (architect ruling, `gh issue view
 1. write scope — DECLARED, never resolved/effective — from
    :func:`reyn.runtime.session_write_scope.describe_write_scope` against
    ``ctx.sandbox_config``;
-2. own position — repo path / git branch+HEAD / venv / toolchain capability —
-   from :func:`reyn.runtime.session_position.describe_session_position`
-   against ``ctx.workspace.base_dir`` (the same repo root every other op
-   resolves file paths against, see ``context.resolve_path_for_gate``);
+2. own position — repo path / git branch+HEAD / venv / toolchain capability,
+   PLUS the remaining-hook-driven-turns budget (issue #5012's own literal
+   field ② wording: "残り turn ＋ max_hook_driven_turns") — the repo/git/venv/
+   capability half comes from
+   :func:`reyn.runtime.session_position.describe_session_position` against
+   ``ctx.workspace.base_dir`` (the same repo root every other op resolves
+   file paths against, see ``context.resolve_path_for_gate``); the turn-budget
+   half comes from ``ctx.hook_driven_turns_budget`` (a LIVE dict, unlike the
+   other two OpContext projections here — the turn count changes every turn,
+   so it cannot be a static per-session config value; see
+   ``Session.max_hook_driven_turns``'s own docstring). Reported as a `null`
+   sub-key (not omitted, not fabricated as `0`) when no session backs this
+   OpContext (direct/test construction) — the same honest-degrade discipline
+   ``session_position`` itself documents.
 3. auth status — reyn-managed OAuth providers only — from
    :func:`reyn.runtime.session_auth_status.describe_auth_status` against
    ``ctx.auth_config``.
@@ -40,11 +50,13 @@ async def handle(
     / not-authenticated) rather than failing the whole op over one
     unavailable sub-fact, same discipline ``session_position`` documents for
     its own git-subprocess calls."""
+    position = dict(describe_session_position(ctx.workspace.base_dir))
+    position["hook_driven_turns_budget"] = ctx.hook_driven_turns_budget
     return {
         "kind": "describe_session",
         "status": "ok",
         "write_scope": describe_write_scope(ctx.sandbox_config),
-        "position": describe_session_position(ctx.workspace.base_dir),
+        "position": position,
         "auth_status": describe_auth_status(ctx.auth_config),
     }
 
