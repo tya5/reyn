@@ -36,10 +36,10 @@ from __future__ import annotations
 
 import asyncio
 
-import pytest
-
-pytest.importorskip("fastapi", reason="fastapi not installed (core dependency since #5051 -- stale environment)")
-
+# #5058: fastapi is a core dependency (#5051) -- an importorskip here
+# was a silent skip on a broken install, not a normal absent-extra path
+# (architect ruling, gh issue view 5058, generalized from the mcp class
+# to any core dep: "the correct behavior is red"). Removed.
 from reyn.core.events.events import EventLog  # noqa: E402
 from tests._support.paths import REPO_ROOT
 

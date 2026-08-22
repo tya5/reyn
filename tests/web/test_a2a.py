@@ -29,8 +29,12 @@ _WORKTREE_SRC = REPO_ROOT / "src"
 if str(_WORKTREE_SRC) not in sys.path:
     sys.path.insert(0, str(_WORKTREE_SRC))
 
-# Skip the whole module if optional deps are missing.
-pytest.importorskip("fastapi", reason="fastapi not installed (core dependency since #5051 -- stale environment)")
+# Skip the whole module if httpx (TestClient dep) is missing -- fastapi
+# itself is no longer skip-guarded, see the #5058 comment below.
+# #5058: fastapi is a core dependency (#5051) -- an importorskip here
+# was a silent skip on a broken install, not a normal absent-extra path
+# (architect ruling, gh issue view 5058, generalized from the mcp class
+# to any core dep: "the correct behavior is red"). Removed.
 pytest.importorskip("httpx", reason="httpx not installed (needed by TestClient)")
 
 

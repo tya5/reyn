@@ -25,9 +25,12 @@ import pytest
 
 from tests._support.minimal_reyn_yaml import MINIMAL_REYN_YAML
 
-# Skip entire module if fastapi / httpx are not installed (same guard as
-# the other web tests).
-pytest.importorskip("fastapi", reason="fastapi not installed (core dependency since #5051 -- stale environment)")
+# #5058: fastapi is a core dependency (#5051) -- an importorskip here (this
+# file never had an httpx guard, so the module had exactly one) was a
+# silent skip on a broken install, not a normal absent-extra path
+# (architect ruling, gh issue view 5058, generalized from the mcp class
+# to any core dep: "the correct behavior is red"). Removed; no guard
+# remains in this module.
 
 
 # ---------------------------------------------------------------------------
