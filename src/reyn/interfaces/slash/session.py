@@ -116,17 +116,15 @@ def _session_locus(args: str) -> "Locus":
     attached" — the registry alone cannot answer "which specific session
     is asking", needed for #2103-S1a narrowing inheritance). → ``session``.
 
-    ``list`` — measured (architect co-vet, issuecomment-5379657592):
-    theoretically answerable via the registry alone (``reg.session_ids``/
-    ``reg.attached_sid``, no session-specific value), but NO typed op
-    exists today to reach the registry from ``connection`` locus for this
-    read (unlike ``switch``'s ``request_session_switch``) — inventing one
-    is out of THIS PR's scope. Declared ``session`` as the honest
-    interim (not "requires session", "no connection-locus path exists
-    yet") — remainder filed: #5099. → ``session``.
+    ``list`` — #5099 closes the remainder ``_session_locus``'s own prior
+    revision named: ``ClientTransport.request_session_list`` is now that
+    typed op (mirrors ``request_artifact_list``'s "client interprets,
+    server executes a named operation" shape) — answerable via the
+    registry alone (``reg.session_ids``/``reg.attached_sid``, no session-
+    specific value), reached without ``ctx.session``. → ``connection``.
 
-    Unknown/empty sub falls through to ``session`` too (the existing
-    ``reg`` derivation produces the usage error either way).
+    Unknown/empty sub falls through to ``session`` (the existing ``reg``
+    derivation produces the usage error either way).
 
     ⚠️ Not a structural check (architect co-vet, issuecomment-5379756281):
     an unregistered sub silently defaults to ``session`` rather than
@@ -138,7 +136,7 @@ def _session_locus(args: str) -> "Locus":
     gap needs sub-command registration, out of this PR's scope —
     remainder noted alongside #5099."""
     sub = args.strip().split(maxsplit=1)[0].lower() if args.strip() else ""
-    return "connection" if sub == "switch" else "session"
+    return "connection" if sub in ("switch", "list") else "session"
 
 
 @slash(
@@ -156,47 +154,72 @@ async def session_cmd(ctx: "SlashContext", args: str) -> None:
 
     if sub == "switch":
         # #5096 ②: connection locus (see _session_locus above) -- MUST NOT
-        # read ctx.session, which is None here. The pre-#5096 existence
-        # pre-check (reg.get_session(name, rest) is None) is dropped along
-        # with it; the SAME validation now happens server-side inside
-        # request_session_switch's own typed-op handler (endpoint.py's
-        # session_switch_request arm catches KeyError from
-        # registry.attach_session -- equivalent coverage, one seam).
-        #
-        # ⚠️ Known degradation (lead-coder ruling, #5096 issuecomment-
-        # 5379839120): the pre-#5096 switch branch built RICHER guidance
-        # than this can today -- it read the registry directly to name
-        # WHY a sid was rejected (partial-prefix not supported, full
-        # name/ID required, the accepted forms). request_session_switch's
-        # typed op returns only a bool, no reason, so that guidance is
-        # gone until #5099 (request_session_list) ships: with a
-        # connection-locus-safe way to READ the registry's sid list, this
-        # branch can rebuild "no such session 'x'; sessions are: ..."
-        # itself, entirely client-side, before ever calling
-        # request_session_switch. Explicitly NOT fixed by widening
-        # request_session_switch's own return type tonight -- lead-coder:
-        # a bool-only typed op is the #4996/#5093 family shape, and
-        # shipping a NEW instance of it the same night two PRs closed
-        # that family doesn't hold up; the contract change is also wider
-        # than owner's live-blocked PR should carry right now.
+        # read ctx.session, which is None here.
         if not rest:
             await reply_error(ctx, _USAGE)
+            return
+        # #5099: client-side pre-validation, restored via the new
+        # request_session_list typed op -- richer than #5096's temporary
+        # "could not confirm the switch" (names the bad sid AND every
+        # accepted one), closer to the pre-#5096 server-side existence
+        # check's own guidance than that interim message was. Only fires
+        # when the list itself came back non-empty: an EMPTY result has
+        # exactly one meaning now (request_session_list is @abstractmethod,
+        # #5076 -- no transport is left able to decline the query, architect
+        # co-vet issuecomment-5379990811) -- nothing is currently attached/
+        # loaded to list. There is nothing useful to enumerate in that case
+        # (no accepted sids to name), so falling through to
+        # request_session_switch and reading ITS answer is the honest
+        # degrade rather than asserting "no such session" with an empty
+        # accepted-list that would just read as a bug.
+        sids = [entry["sid"] for entry in await ctx.transport.request_session_list()]
+        if sids and rest not in sids:
+            await reply_error(
+                ctx, f"no such session {rest!r}; sessions are: {', '.join(sids)}",
+            )
             return
         # #4534 PR-2b: the actual focus flip goes through the named-operation
         # seam (request_session_switch -> registry.attach_session), not the
         # retired __session_switch_request__ display-channel sentinel — see
         # ClientTransport.request_session_switch's own docstring for why.
-        # The reply is ordered AFTER the call and reads its return. False
-        # IS still routed as an error (not a system note, unlike /attach's
-        # own "could not confirm"): unlike /attach, the sid the USER TYPED
-        # is available here without touching ctx.session (it's `rest`,
-        # client-side input), so the error can still NAME the bad sid even
-        # though it cannot yet explain WHY (that's the degradation above).
+        # False IS still routed as an error (not a system note, unlike
+        # /attach's own "could not confirm"): the sid the USER TYPED is
+        # available here without touching ctx.session (it's `rest`,
+        # client-side input). This branch is reached only when the
+        # pre-validation above could not rule `rest` out (list unsupported,
+        # or a race dropped the session between the two calls), so the
+        # message stays honest about not knowing why.
         switched = await ctx.transport.request_session_switch(rest)
         if switched:
             await reply(ctx, f"switching to session {rest!r}")
         else:
             await reply_error(ctx, f"could not confirm the switch to session {rest!r}")
+        return
+
+    if sub == "list":
+        # #5099: connection locus (see _session_locus above) -- MUST NOT
+        # read ctx.session, which is None here. The registry-level read
+        # this used to do directly (reg.session_ids/reg.attached_sid) now
+        # goes through the same typed op `switch`'s pre-validation above
+        # uses — one seam, one source of truth for both consumers.
+        #
+        # Disclosed simplification: the pre-#5099 reply named the attached
+        # AGENT ("sessions for 'default':"); no ClientTransport op reads
+        # that at connection locus today (AgUiTransport's own attached
+        # agent is scoped into the connection URL, not exposed generically
+        # on the base seam), and inventing one is out of this PR's scope
+        # (lead-coder ruling — see request_session_list's own docstring
+        # for the #4996/#5093-family reasoning already applied tonight).
+        # Dropped rather than faked.
+        sessions = await ctx.transport.request_session_list()
+        if not sessions:
+            await reply(ctx, "no sessions loaded")
+            return
+        lines = [
+            f"  {'*' if entry['attached'] else ' '} {entry['sid']}"
+            for entry in sessions
+        ]
+        await reply(ctx, "sessions:\n" + "\n".join(lines))
         return
 
     reg = ctx.session._registry
@@ -255,16 +278,6 @@ async def session_cmd(ctx: "SlashContext", args: str) -> None:
         if inherited:
             lines.extend(_inherited_restriction_lines(reg, name, sid))
         await reply(ctx, "\n".join(lines))
-        return
-
-    if sub == "list":
-        sids = reg.session_ids(name)
-        if not sids:
-            await reply(ctx, f"no sessions loaded for {name!r}")
-            return
-        focused = reg.attached_sid
-        lines = [f"  {'*' if s == focused else ' '} {s}" for s in sids]
-        await reply(ctx, f"sessions for {name!r}:\n" + "\n".join(lines))
         return
 
     await reply_error(ctx, _USAGE)

@@ -190,6 +190,17 @@ class SessionBoundTransport(ClientTransport):
         # this send-side-only transport structurally cannot answer.
         return False
 
+    async def request_session_list(self) -> "list[dict]":
+        # #5099: EXPLICITLY [], same reasoning as request_attach/
+        # request_session_switch above -- "list the attached agent's own
+        # sessions" is also a registry-level question, and answering it
+        # here would widen this class's own responsibility layer past
+        # send-side-only. In practice this is unreachable anyway: /session
+        # list is now `connection` locus (#5096 (2)), so `maybe_dispatch_
+        # slash` builds its SlashContext and runs it CLIENT-side (this
+        # class is a server-side seam) before it would ever reach here.
+        return []
+
     async def request_artifact_list(self, *, agent: str) -> "tuple[list[dict], int]":
         # #5094: EXPLICITLY implemented, not inherited — mirrors
         # InProcessTransport's own execution side (#4494 design C /

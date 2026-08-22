@@ -45,6 +45,7 @@ class RecordingTransport(ClientTransportStub):
         self, session: Any = None, *,
         attach_result: bool = True,
         switch_result: bool = True,
+        session_list_result: "list[dict] | None" = None,
     ) -> None:
         self._session = session
         self.displayed: "list[OutboxMessage]" = []
@@ -72,6 +73,15 @@ class RecordingTransport(ClientTransportStub):
         # session.py's own switch-branch docstring) needs a way to make
         # this fake say False.
         self._switch_result = switch_result
+        # #5099: same shape as _switch_result -- /session list (locus=
+        # "connection", #5099) and /session switch's own pre-validation
+        # both now read the sid roster off this typed op rather than a
+        # session's registry, so a test exercising either needs a way to
+        # make this fake answer with a real (or deliberately empty) list.
+        self._session_list_result = (
+            session_list_result if session_list_result is not None else []
+        )
+        self.session_list_requests = 0
 
     # -- the seam under test ------------------------------------------------
 
@@ -85,6 +95,10 @@ class RecordingTransport(ClientTransportStub):
     async def request_session_switch(self, session_id: str) -> bool:
         self.session_switch_requests.append(session_id)
         return self._switch_result
+
+    async def request_session_list(self) -> "list[dict]":
+        self.session_list_requests += 1
+        return self._session_list_result
 
     # -- readers a test asserts through -------------------------------------
 
@@ -177,6 +191,7 @@ def slash_ctx(
     recorder: "list[OutboxMessage] | None" = None,
     attach_result: bool = True,
     switch_result: bool = True,
+    session_list_result: "list[dict] | None" = None,
 ) -> SlashContext:
     """The context a slash handler is handed, with a recording transport.
 
@@ -190,11 +205,15 @@ def slash_ctx(
     made are the ones still being made. Pass the SAME list each call — a handler
     driven twice (a two-step confirm) must accumulate, not restart.
 
-    ``attach_result`` / ``switch_result`` (#5096 ②): what the transport's
-    ``request_attach`` / ``request_session_switch`` report back — see
+    ``attach_result`` / ``switch_result`` (#5096 ②) / ``session_list_result``
+    (#5099): what the transport's ``request_attach`` / ``request_session_
+    switch`` / ``request_session_list`` report back — see
     ``RecordingTransport``'s own docstring.
     """
-    transport = RecordingTransport(session, attach_result=attach_result, switch_result=switch_result)
+    transport = RecordingTransport(
+        session, attach_result=attach_result, switch_result=switch_result,
+        session_list_result=session_list_result,
+    )
     if recorder is not None:
         transport.displayed = recorder
     return SlashContext(transport=transport, session=session)

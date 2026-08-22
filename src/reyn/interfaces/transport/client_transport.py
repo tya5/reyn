@@ -306,6 +306,45 @@ class ClientTransport(ABC):
         :class:`ClientTransportStub`."""
 
     @abstractmethod
+    async def request_session_list(self) -> "list[dict]":
+        """#5099: the ATTACHED/connected agent's own sessions — ``[{"sid",
+        "attached"}, ...]``, same per-session entry shape
+        :meth:`~reyn.runtime.registry.AgentRegistry.session_tree` already
+        uses — or ``[]`` when nothing is attached.
+
+        Unlike some other typed ops on this seam, ``[]`` here has exactly
+        ONE meaning, not two conflated into one value: this method is
+        ``@abstractmethod`` with no default body anywhere (#5076), so there
+        is no "this transport does not support the query" case left to
+        fold in — every ``ClientTransport`` subclass fails to CONSTRUCT if
+        it forgets to implement this. An earlier revision of this
+        docstring (and of a test's own docstring) carried that stale
+        parenthetical anyway, copied from a phrasing that fit a different
+        method; caught by architect co-vet (issuecomment-5379990811).
+
+        Closes ``_session_locus``'s own remainder (``interfaces/slash/
+        session.py``, #5096 ②): ``/session list`` was declared ``session``
+        locus as an "honest interim" because no connection-locus-safe way
+        existed yet to read the registry for this — theoretically
+        answerable off the registry alone (``session_ids``/``attached_sid``,
+        no session-SPECIFIC value needed), but no typed op reached it. This
+        is that op. Same "client interprets, server executes a named
+        operation" shape :meth:`request_attach`/:meth:`request_session_switch`/
+        :meth:`request_artifact_list` already establish: ``InProcessTransport``
+        reads the registry directly; ``AgUiTransport`` POSTs a typed request
+        and the server reads its OWN copy (never a stale wire view — a
+        session list can change between one render and the next, same
+        reasoning ``request_artifact_list``'s own docstring gives for its
+        durable table).
+
+        Never a bare ``bool`` (#4996/#5093 family — this PR closes 2
+        instances of that shape in ``/session switch``'s own pre-validation,
+        see ``session.py``'s ``session_cmd`` for how).
+
+        Abstract (#5076): the ``[]``-default body moved to
+        :class:`ClientTransportStub`."""
+
+    @abstractmethod
     async def state_ready(self) -> None:
         """Return once this transport's own STATUS/state-read side-channel
         (whatever ``ChatReadModel.snapshot()``/``intervention_head()``/etc.
@@ -467,6 +506,9 @@ class ClientTransportStub(ClientTransport):
 
     async def request_artifact_list(self, *, agent: str) -> "tuple[list[dict], int]":
         return [], 0
+
+    async def request_session_list(self) -> "list[dict]":
+        return []
 
     async def state_ready(self) -> None:
         return None
