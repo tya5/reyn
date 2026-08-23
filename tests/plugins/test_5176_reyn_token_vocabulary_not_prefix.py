@@ -70,14 +70,30 @@ def test_token_vocabularies_are_disjoint_and_complete(tmp_path) -> None:
         inspect.getsource(container_backend),
         inspect.getsource(shell_runner),
     )]
-    supplied_names = {
-        node.value
-        for tree in trees
-        for node in ast.walk(tree)
-        if isinstance(node, ast.Constant)
-        and isinstance(node.value, str)
-        and node.value in AGENT_SCOPED_TOKEN_NAMES
-    }
+    supplied_names: set[str] = set()
+    for tree in trees:
+        parents = {
+            child: parent
+            for parent in ast.walk(tree)
+            for child in ast.iter_child_nodes(parent)
+        }
+        for node in ast.walk(tree):
+            if not (
+                isinstance(node, ast.Constant)
+                and isinstance(node.value, str)
+                and node.value in AGENT_SCOPED_TOKEN_NAMES
+            ):
+                continue
+            parent = parents.get(node)
+            if isinstance(parent, ast.Dict):
+                supplied_names.add(node.value)
+                continue
+            if isinstance(parent, ast.JoinedStr):
+                ancestor = parents.get(parent)
+                while ancestor is not None and not isinstance(ancestor, ast.Call):
+                    ancestor = parents.get(ancestor)
+                if isinstance(ancestor, ast.Call):
+                    supplied_names.add(node.value)
     assert supplied_names == AGENT_SCOPED_TOKEN_NAMES
 
 
