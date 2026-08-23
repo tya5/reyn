@@ -313,6 +313,37 @@ class HookDef:
         Together with ``subprocess`` and ``network`` this completes the per-site
         sandbox triad an operator already has on a stdio MCP server, so the same
         three axes are expressible at every per-site sandbox surface.
+    origin:
+        #5213: which config LAYER declared this hook — one of
+        ``HOOK_ORIGIN_ORDER`` (``"startup"``/``"runtime"``/``"per-agent"``/
+        ``"per-session"``), threaded through by
+        :func:`~reyn.hooks.loader.load_hooks`'s ``origin=`` parameter, or
+        ``"unknown"`` (the default) for a ``HookDef`` constructed directly
+        without threading one through (test fixtures, most existing
+        callers).
+
+        Exists because the ``hooks:`` COMBINE loop
+        (``Session._build_hook_registry``) used to concatenate every
+        layer's raw dicts into one flat list before parsing — provenance
+        was discarded at concatenation, so nothing downstream could ask
+        "which layer declared this hook?". That question matters for
+        exactly one predicate: ``disabled:`` (a SEPARATE, layer-agnostic
+        axis, persisted at the per-session state file) used to disable a
+        hook by NAME ALONE, with no origin check — so any agent that can
+        write its own per-session state (every agent) could silently
+        neutralise a project-layer hook the operator declared specifically
+        because that layer is the one the agent CANNOT write (#5213's own
+        motivating example: #5041's supervision hook). See
+        :func:`hook_origin_is_at_least_as_specific_as` for the rule this
+        field makes askable.
+
+        ``"unknown"`` is deliberately NOT in ``HOOK_ORIGIN_ORDER`` and is
+        treated as the MOST specific origin (freely disableable) —
+        fail-OPEN for this one default, matching every pre-#5213
+        test/direct-construction call site's behavior exactly (nothing
+        regresses); the protection this field exists to provide only
+        applies to a ``HookDef`` that actually went through the real
+        session composition path, which always sets a real origin.
     """
 
     on: str
@@ -325,3 +356,68 @@ class HookDef:
     subprocess: bool | None = field(default=None)
     network: bool | None = field(default=None)
     write_paths: "tuple[str, ...] | None" = field(default=None)
+    origin: str = field(default="unknown")
+
+
+#: #5213: the 4 config layers ``hooks:`` composes across, in ORDER FROM LEAST
+#: TO MOST specific (trust runs the same direction, most-to-least) —
+#: ``Session._build_hook_registry``'s own combine loop's real layer order:
+#: ``startup`` (reyn.yaml, the operator's, trusted) → ``runtime``
+#: (``.reyn/hooks.yaml``) → ``per-agent`` (``.reyn/agents/<name>/hooks.yaml``)
+#: → ``per-session`` (session-defined, read from the SAME per-session state
+#: file ``disabled:`` itself is persisted to). Deliberately NOT re-derived
+#: from that loop's own string literals (a second hand-typed copy would be
+#: the exact "same fact in 2 places" risk this session's own #5202/#5206
+#: work flagged repeatedly) — this IS the one declared vocabulary; the
+#: combine loop's own labels must match these 4 strings exactly, or a hook
+#: silently gets treated as more-specific-than-it-is by
+#: :func:`hook_origin_is_at_least_as_specific_as` (fail-open, per that
+#: function's own "unrecognized origin" branch).
+HOOK_ORIGIN_ORDER = ("startup", "runtime", "per-agent", "per-session")
+
+
+def hook_origin_is_at_least_as_specific_as(origin: str, layer: str) -> bool:
+    """#5213 (architect ruling): the rule that closes the ``disabled:``
+    layer-bypass hole — "a layer's ``disabled:`` may only disable hooks
+    whose origin is that layer or below [more specific]". Returns whether
+    *origin* is *layer* itself or a MORE SPECIFIC layer (later in
+    :data:`HOOK_ORIGIN_ORDER`).
+
+    Concretely, ``Session``'s own ``is_hook_disabled`` predicate calls this
+    with ``layer="per-agent"``, NOT ``"per-session"`` and NOT ``"runtime"``
+    — the real boundary (verified: ``_canonical_protected_write_paths()``
+    and ``_RECOVERY_CORE_WRITE_PREFIXES``) is the WRITE ZONE, not the file
+    ``disabled:`` happens to be persisted to. ``.reyn/agents/<name>/hooks.yaml``
+    (per-agent) and the per-session state file are BOTH agent-writable —
+    disabling a hook at either origin grants no power an agent didn't
+    already have (it could edit that same file directly to remove the hook
+    entirely). ``runtime`` (the IN-set's ``hooks:`` key, physically
+    ``.reyn/config/hooks.yaml``) is under ``_RECOVERY_CORE_WRITE_PREFIXES``
+    (``.reyn/config/``, ``.reyn/state/``) — NOT in an agent's default write
+    zone, a raw ``file.write`` there is denied — and ``startup``
+    (reyn.yaml/reyn.local.yaml, read once at boot, never re-read from a
+    writable path) is restart-only. Both genuinely differ from per-agent/
+    per-session, so ``"per-agent"`` is the correct threshold — everything
+    less specific than per-agent (``startup``, ``runtime``) stays
+    protected. An earlier version of this threshold used ``"runtime"``,
+    treating ``.reyn/config/hooks.yaml`` as agent-writable on the strength
+    of a stale pre-#2073-file-split filename (``.reyn/hooks.yaml``, which
+    still appears in a few docstrings elsewhere in this codebase) — caught
+    in #5218 review before merge. Expressed as a general order comparison
+    (not a hardcoded membership test) so the check keeps working for free
+    if the write-zone boundary ever moves again, or a SECOND
+    ``disabled:``-shaped axis is added at a different layer.
+
+    Fail-OPEN (returns ``True``, i.e. "disableable") for either argument
+    NOT in :data:`HOOK_ORIGIN_ORDER` — covers ``HookDef.origin``'s own
+    ``"unknown"`` default (every test/direct-construction call site that
+    predates #5213, preserved byte-identical) and protects against a typo'd
+    *layer* argument silently becoming "nothing is ever disableable" instead
+    of a loud failure — this function's OWN contract is permissive-by-
+    default, matching ``disabled:`` being a legitimate feature this issue
+    narrows the SCOPE of, not a security boundary it tightens to
+    fail-closed (see #5213's own issue thread: "disabled: 自体は正当な機能
+    なので消さず射程を切る")."""
+    if origin not in HOOK_ORIGIN_ORDER or layer not in HOOK_ORIGIN_ORDER:
+        return True
+    return HOOK_ORIGIN_ORDER.index(origin) >= HOOK_ORIGIN_ORDER.index(layer)

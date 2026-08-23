@@ -57,6 +57,7 @@ from reyn.core.events.state_log import StateLog
 from reyn.core.op_runtime.status_classify import classify_op_status
 from reyn.core.pipeline.registry import PipelineNotFoundError, PipelineRegistry
 from reyn.core.turn_scope import active_turn
+from reyn.hooks.schema import hook_origin_is_at_least_as_specific_as
 from reyn.hooks.schema_registry import build_hook_payload
 from reyn.llm.model_resolver import ModelResolver
 from reyn.runtime.agent import Agent
@@ -4530,7 +4531,36 @@ class Session:
             launch_pipeline=self._launch_pipeline_from_hook,
             # #2285: per-session hook applicability gate — skip a hook this session disabled. A
             # callable (not a snapshot) so a toggle applies live to the next dispatch.
-            is_hook_disabled=lambda hook: hook.name is not None and hook.name in self._disabled_hooks,
+            # #5213: the origin check closes the layer-bypass hole — `self._disabled_hooks`
+            # is persisted to THIS session's own state dir (`_persist_hook_disabled`), a
+            # WRITE ZONE every agent already has (`_DEFAULT_WRITE_ZONES = (".reyn",)`,
+            # confirmed via `_canonical_protected_write_paths()`). Two layers are agent-writable
+            # this way: `per-agent` (`.reyn/agents/<name>/hooks.yaml`) and `per-session` (this
+            # session's own state dir) — an agent disabling a hook that originates there grants
+            # no NEW power, since it could edit that same writable file directly to remove the
+            # hook entirely. Two layers are NOT agent-writable and stay protected: `startup`
+            # (reyn.yaml/reyn.local.yaml, the OUT-set — read ONCE at boot, never re-read from a
+            # writable path at runtime, #5041's own supervision-hook placement rationale) and
+            # `runtime` (the IN-set's `hooks:` key, physically `.reyn/config/hooks.yaml` — under
+            # `_RECOVERY_CORE_WRITE_PREFIXES` (`.reyn/config/`, `.reyn/state/`), which
+            # `_in_default_write_zone` explicitly excludes from the broad `.reyn/` grant; a raw
+            # `file.write` there is denied, it goes through a dedicated WAL-emitting op instead.
+            # architect correction, #5218 review: an earlier version of this threshold used
+            # "runtime" — i.e. treated `.reyn/config/hooks.yaml` as agent-writable, echoing a
+            # stale pre-#2073-file-split filename (`.reyn/hooks.yaml`) that survives in several
+            # docstrings elsewhere in this codebase. That threshold left #5041's own supervision
+            # hook (placed at the runtime layer specifically because it is protected) one
+            # `disabled:` entry away from being switched off by the party it supervises).
+            # Threshold is therefore "per-agent or below [more specific]" — `per-agent` and
+            # `per-session` only. See
+            # `reyn.hooks.schema.hook_origin_is_at_least_as_specific_as`'s own docstring for why
+            # this is a general order check, not a hardcoded membership test — general enough to
+            # extend for free if the write-zone boundary ever moves again.
+            is_hook_disabled=lambda hook: (
+                hook.name is not None
+                and hook.name in self._disabled_hooks
+                and hook_origin_is_at_least_as_specific_as(hook.origin, "per-agent")
+            ),
             sandbox_config=self._sandbox_config,
             sandbox_backend=self._sandbox_backend,
             # #2095: route a not-yet-allowlisted shell-hook's consent prompt
@@ -5639,15 +5669,30 @@ class Session:
         fail loud), then each untrusted layer is try-added INDEPENDENTLY: a bad runtime
         keeps startup ∪ per-agent; a bad per-agent keeps startup ∪ runtime; each bad
         layer is dropped + warned. (On the reload path validate-before-apply also rejects
-        a bad runtime layer up front; this is the boot + defence-in-depth guard.)"""
+        a bad runtime layer up front; this is the boot + defence-in-depth guard.)
+
+        #5213: each layer is now parsed by its OWN ``load_hooks`` call
+        (``origin=<label>``), and the resulting registries' ``HookDef``
+        lists are MERGED — never concatenated as raw dicts first (the
+        pre-#5213 shape, which discarded provenance the moment two layers'
+        entries sat in the same list before parsing, closing off the
+        question "which layer declared this hook?" the ``disabled:``
+        layer-bypass hole needed answered — see
+        ``reyn.hooks.schema.HookDef.origin``'s own docstring). Per-layer
+        boot resilience (previous paragraph) is unchanged: each layer is
+        still validated and skipped independently on its own
+        ``HookConfigError``, just without re-parsing every earlier layer's
+        entries each time (a side benefit, not the point of this change)."""
         from reyn.hooks.loader import HookConfigError, load_hooks
         runtime = (in_set or {}).get("hooks") or []
         runtime_list = list(runtime) if isinstance(runtime, list) else []
         per_agent_list = self._read_per_agent_hooks()
         per_session_list = self._read_per_session_hooks()  # #2285: the 4th, most-specific layer
-        combined = list(self._startup_hooks_raw)
         composed_schemas = getattr(self, "_composed_schemas", None)
-        registry = load_hooks(combined, composed_schemas)  # trusted startup must load — else fail loud
+        # trusted startup must load — else fail loud (unchanged from pre-#5213).
+        defs = load_hooks(
+            list(self._startup_hooks_raw), composed_schemas, origin="startup",
+        ).all_defs()
         for label, layer in (
             ("runtime", runtime_list),
             ("per-agent", per_agent_list),
@@ -5656,14 +5701,15 @@ class Session:
             if not layer:
                 continue
             try:
-                registry = load_hooks(combined + layer, composed_schemas)
-                combined = combined + layer
+                defs = defs + load_hooks(layer, composed_schemas, origin=label).all_defs()
             except HookConfigError as exc:
                 logger.warning(
                     "config hot-reload: malformed %s hooks layer — skipped, keeping "
                     "the valid hook layers: %s", label, exc,
                 )
-        return registry
+        from reyn.hooks.registry import HookRegistry
+
+        return HookRegistry(defs)
 
     def _hooks_yaml_layers(self) -> "list[tuple[str, Path]]":
         """#5166 (architect ruling, issuecomment-5384196419): the enumerable

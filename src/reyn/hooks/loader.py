@@ -230,8 +230,15 @@ def _parse_entry(
     raw: object,
     entry_index: int,
     composed_schemas: "dict[str, frozenset[str]] | None" = None,
+    *,
+    origin: str = "unknown",
 ) -> HookDef:
-    """Validate one raw hooks list entry and return a ``HookDef``."""
+    """Validate one raw hooks list entry and return a ``HookDef``.
+
+    ``origin`` (#5213): the config layer this entry came from, threaded
+    straight onto the returned ``HookDef`` — see that field's own
+    docstring. Defaults to ``"unknown"`` (every pre-#5213 caller's
+    unchanged behavior)."""
     if not isinstance(raw, dict):
         raise HookConfigError(
             f"hooks[{entry_index}] must be a mapping, "
@@ -557,6 +564,7 @@ def _parse_entry(
         subprocess=subprocess_raw,
         network=network_raw,
         write_paths=write_paths_raw,
+        origin=origin,
     )
 
 
@@ -568,6 +576,8 @@ def _parse_entry(
 def load_hooks(
     raw: object,
     composed_schemas: "dict[str, frozenset[str]] | None" = None,
+    *,
+    origin: str = "unknown",
 ) -> HookRegistry:
     """Parse and validate the ``hooks:`` value from a reyn.yaml dict.
 
@@ -587,6 +597,17 @@ def load_hooks(
         composer. ``None`` (the default) skips both checks — the pre-#2889
         permissive posture, for callers with no composer configuration to
         thread (most direct ``load_hooks(raw)`` test calls).
+    origin:
+        #5213 — the config layer *raw* came from (one of
+        ``reyn.hooks.schema.HOOK_ORIGIN_ORDER``), stamped onto every
+        resulting ``HookDef``. A SINGLE call always stamps the SAME origin
+        on every entry — a caller composing MULTIPLE layers (``Session.
+        _build_hook_registry``) calls this once PER LAYER and merges the
+        resulting registries, rather than concatenating raw dicts first
+        (which would lose provenance the moment two layers' entries sit in
+        the same list). Defaults to ``"unknown"`` — every pre-#5213 caller
+        that does not pass this keeps the SAME ``HookDef.origin`` value
+        (``"unknown"``) it always implicitly had.
 
     Returns
     -------
@@ -612,6 +633,6 @@ def load_hooks(
 
     defs: list[HookDef] = []
     for idx, entry in enumerate(raw):
-        defs.append(_parse_entry(entry, idx, composed_schemas))
+        defs.append(_parse_entry(entry, idx, composed_schemas, origin=origin))
 
     return HookRegistry(defs)
