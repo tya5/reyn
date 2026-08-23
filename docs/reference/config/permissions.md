@@ -20,7 +20,7 @@ it may touch read the same answer.
 | Axis | Schema default | Covers |
 |----|-------|-------|
 | `file.read` (also `file.glob` / `file.grep`) | `<zone-root>` | The zone root and everything below it. |
-| `file.write` (also `file.edit` / `file.delete`) | `<zone-root>/.reyn` | The state dir, minus the protected carve-outs (`.reyn/approvals.yaml`, and the `.reyn/config/` + `.reyn/state/` recovery-core prefixes, which are mutated only through their dedicated ops). |
+| `file.write` (also `file.edit` / `file.delete`) | `<zone-root>/.reyn` | The state dir, minus the protected carve-outs (`.reyn/approvals.yaml`/`.reyn/approvals.jsonl` — legacy and live approval stores, #5153/#5173 — and the `.reyn/config/` + `.reyn/state/` recovery-core prefixes, which are mutated only through their dedicated ops). |
 
 `<zone-root>` is a **symbol**, not a literal path: it is the zone anchor the
 entry point supplies — the workspace base dir under `reyn chat` / `reyn web`,
@@ -154,7 +154,7 @@ When a phase declares a non-default permission, reyn shows a single startup prom
   [N] deny
 ```
 
-Persistent choices land in `.reyn/approvals.yaml` keyed by `<skill>/<op>/<path>` (with a trailing `/` for recursive grants). External skills cannot reuse another skill's approvals — keys are skill-scoped to prevent privilege escalation.
+Persistent choices land in `.reyn/approvals.jsonl` (an append-only ledger — #5153) keyed by `<skill>/<op>/<path>` (with a trailing `/` for recursive grants). External skills cannot reuse another skill's approvals — keys are skill-scoped to prevent privilege escalation.
 
 For `file.read`/`file.write`, a key match alone no longer settles it (#5042): the approved path's own identity is bound the first time it's used and re-checked on every later use, so deleting the approved target and recreating a different object at the same path re-prompts instead of silently inheriting the old grant — see [Concepts: permission model](../../concepts/runtime/permission-model.md).
 
@@ -188,28 +188,28 @@ MCP's per-server gate (`permissions.mcp`) has two independent grant surfaces —
 
    A flat blanket form also works (`permissions.mcp: allow` grants every server), but the per-server dict form above is the one to reach for when you trust one server and not others. This is a config file, edited by the operator — it takes effect the next time reyn loads config, no running session needed.
 
-2. **`.reyn/approvals.yaml` — the saved-approvals store the interactive prompt writes.**
+2. **`.reyn/approvals.jsonl` — the saved-approvals ledger the interactive prompt writes to.**
 
-   When a chat session hits an undeclared MCP server, it prompts (`y` / `j` / `r` / `N` — see "Approval flow" above); choosing a persistent option (`j`/`r`) writes `mcp.<server>: true` under that skill's key in `.reyn/approvals.yaml`. You can also hand-edit this file directly, but it's normally the session's own record of "you already answered this," not something you author from scratch.
+   When a chat session hits an undeclared MCP server, it prompts (`y` / `j` / `r` / `N` — see "Approval flow" above); choosing a persistent option (`j`/`r`) appends a `mcp.<server>: true` record under that skill's key to `.reyn/approvals.jsonl` (an append-only ledger, folded on read — last record per key wins). Don't hand-edit this file: it's a durable, fsync'd-per-line record of every decision ever made, not a plain snapshot you author from scratch. A pre-#5153 `.reyn/approvals.yaml` snapshot is migrated into it once, on first touch, if the ledger doesn't already exist — after that `approvals.yaml` is inert history, never read again.
 
-Both surfaces feed the same runtime check (`require_mcp` — see "Runtime gate: `permissions.mcp`" in [the MCP concept doc](../../concepts/tools-integrations/mcp.md)); `reyn.yaml` is the declarative up-front grant, `.reyn/approvals.yaml` is the session's own memory of interactive answers.
+Both surfaces feed the same runtime check (`require_mcp` — see "Runtime gate: `permissions.mcp`" in [the MCP concept doc](../../concepts/tools-integrations/mcp.md)); `reyn.yaml` is the declarative up-front grant, `.reyn/approvals.jsonl` is the session's own memory of interactive answers.
 
 **`reyn pipe run`'s default:** running a pipeline via `reyn pipe run` (a one-shot, non-interactive CLI command — see below) auto-grants `permissions.mcp` for every MCP server already present in the merged MCP config (`.reyn/config/mcp.yaml` plus `reyn.yaml`/`reyn.local.yaml`'s `mcp.servers`). The gate itself is unchanged — an MCP server that is NOT configured there still denies, and an explicit `deny` you've set for a specific server (or a blanket `mcp: deny`) is never auto-overridden. This only changes the pipe-run *default* for servers you've already configured; it does not touch `reyn chat`'s own interactive prompt.
 
 ## Non-interactive runs (CI)
 
-`reyn run-once` runs non-interactively — there is no prompt. Approvals must be pre-arranged either in `reyn.yaml` or `.reyn/approvals.yaml` (e.g. by running the agent once interactively first). `reyn pipe run` is the same non-interactive model, EXCEPT for MCP servers — see "Granting an MCP server permission" above for the pipe-run-specific auto-grant of already-configured servers.
+`reyn run-once` runs non-interactively — there is no prompt. Approvals must be pre-arranged either in `reyn.yaml` or `.reyn/approvals.jsonl` (e.g. by running the agent once interactively first). `reyn pipe run` is the same non-interactive model, EXCEPT for MCP servers — see "Granting an MCP server permission" above for the pipe-run-specific auto-grant of already-configured servers.
 
 ## Inspecting and revoking
 
 ```bash
-reyn permissions list             # show saved approvals
-reyn permissions revoke <key>     # remove an approval
+reyn permissions list             # show currently-approved keys (the ledger folded)
+reyn permissions revoke <key>     # append an approved=False record — the grant stays in history
 ```
 
 ## See also
 
 - [reyn-yaml.md](reyn-yaml.md) — full project config
-- [state-dir.md](state-dir.md) — `.reyn/approvals.yaml` location
+- [state-dir.md](state-dir.md) — `.reyn/approvals.jsonl` location
 
 - [Reference: control-ir](../runtime/control-ir.md) — which ops need permissions

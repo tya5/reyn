@@ -7,7 +7,7 @@ applies_to: [reyn permissions]
 
 # `reyn permissions`
 
-Inspect and manage saved permission approvals in `.reyn/approvals.yaml`.
+Inspect and manage saved permission approvals in `.reyn/approvals.jsonl` (an append-only ledger — see [Reference: permissions](../config/permissions.md) for the mechanism).
 
 ## Synopsis
 
@@ -21,9 +21,9 @@ reyn permissions clear [--yes]
 
 | Subcommand | Description |
 |------------|-------------|
-| `list` | Print all saved approvals with their keys. |
-| `revoke <key>` | Remove a single approval entry by key. |
-| `clear` | Remove all saved approvals. Prompts unless `--yes`. |
+| `list` | Print all currently-approved keys (the ledger folded). |
+| `revoke <key>` | Revoke a single key — appends an `approved=False` record; the earlier grant stays in the ledger's history, never deleted. |
+| `clear` | Revoke every currently-approved key the same way. Prompts unless `--yes`. |
 
 ## Options
 

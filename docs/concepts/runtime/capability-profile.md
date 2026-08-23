@@ -312,9 +312,11 @@ for per-session task-scoped narrowing.
 **Effect:** applies via ProfileLayer (the agent's default spec); uses the
 natural `allowed_mcp` key (no YAML rename).
 
-**Verification:** `_DEFAULT_WRITE_ZONES = (".reyn",)` and
-`_CANONICAL_PROTECTED_WRITE_PATHS` contains only `.reyn/approvals.yaml` and
-`.reyn/index/sources.yaml`. Confirmed in `src/reyn/security/permissions/permissions.py`.
+**Verification:** `_DEFAULT_WRITE_ZONES = (".reyn",)` and the canonical
+protected-write list (`_canonical_protected_write_paths()`,
+`src/reyn/security/permissions/permissions.py`) covers `.reyn/approvals.yaml`
+(legacy, still migrated once) and `.reyn/approvals.jsonl` (the live ledger,
+#5153/#5173).
 
 ## Reload
 

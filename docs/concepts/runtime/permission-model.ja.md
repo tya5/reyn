@@ -42,7 +42,7 @@ reyn のパーミッションシステムは 4 種類のケイパビリティを
   [N] 拒否
 ```
 
-永続的な選択は `.reyn/approvals.yaml` に `<actor>/<op>/<path>`（例: `chat_router/file.write//tmp/output`）のキーで保存されます。キーは actor スコープです。ある actor の承認が別の actor に漏れることはありません（`security/permissions/permissions.py`: "Approval keys are actor-scoped to prevent external-actor privilege escalation"）。`actor` は呼び出し元サブシステムを識別します(例: LLM ルーター駆動の op パスなら `chat_router`、バックグラウンド呼び出しなら `hooks`/`cron` など) — 個々の named agent ではありません。
+永続的な選択は `.reyn/approvals.jsonl`(append-only ledger — #5153。1決定=1行のJSONLレコードで、読み込み時にfold・同一keyは最後の行が勝つ)に `<actor>/<op>/<path>`（例: `chat_router/file.write//tmp/output`）のキーで保存されます。キーは actor スコープです。ある actor の承認が別の actor に漏れることはありません（`security/permissions/permissions.py`: "Approval keys are actor-scoped to prevent external-actor privilege escalation"）。`actor` は呼び出し元サブシステムを識別します(例: LLM ルーター駆動の op パスなら `chat_router`、バックグラウンド呼び出しなら `hooks`/`cron` など) — 個々の named agent ではありません。#5153以前の `.reyn/approvals.yaml` snapshotは初回タッチ時に1度だけこのledgerへ移行され、以降は読まれません。
 
 `file.read`/`file.write`(path 系)のキーについては、キーが一致するだけでは十分ではありません(#5042): 承認済み path 自体の identity(`st_ino` + `st_birthtime`、`st_birthtime` が使えない環境では ino のみに縮退)が初回使用時に束縛され、以降の一致のたびに再照合されます。同じ path に別の identity のオブジェクトが後から現れた場合(承認対象が削除され、同名で別物が作られた場合)は一致しないものとして扱われ、purge して同じ path に作り直すと古い承認をそのまま引き継がず再度確認を求められます。承認行自体は不一致によって変更されません — 影響を受けるのはその path への新しい使用だけです。
 
@@ -69,7 +69,7 @@ permissions:
 
 ## 非インタラクティブ実行
 
-intervention bus が配線されていない実行(CI、スクリプト自動化、インタラクティブな TTY の無いコンテキスト)はプロンプトなしで進みます。承認は事前に整っている必要があります。`reyn.yaml` で事前承認されているか、以前のインタラクティブ実行から `.reyn/approvals.yaml` に永続化されているかです。
+intervention bus が配線されていない実行(CI、スクリプト自動化、インタラクティブな TTY の無いコンテキスト)はプロンプトなしで進みます。承認は事前に整っている必要があります。`reyn.yaml` で事前承認されているか、以前のインタラクティブ実行から `.reyn/approvals.jsonl` に永続化されているかです。
 
 これは同じ信頼モデルです。自動化側が何が安全かを決めるのではなく、あなたが事前に決めます。
 
@@ -131,7 +131,7 @@ op は `PermissionError` を発生させます（Android のマニフェスト�
 | レイヤー | 提供元 | 永続性 |
 |---|---|---|
 | 1 | `reyn.yaml` `permissions.<key>` | 静的設定 |
-| 2 | `.reyn/approvals.yaml` | セッション横断 |
+| 2 | `.reyn/approvals.jsonl` | セッション横断 |
 | 3 | インメモリセッション決定 | セッションのみ |
 | 4 | インタラクティブプロンプト | → レイヤー 2 または 3 |
 
@@ -309,7 +309,7 @@ Phase 1–4 の間、 bool 形式（= `mcp_install: true`）は compat shim と�
 
 Phase 7 は `http.get` 軸を `file.write` と同じ prompt model に揃えて alignment を仕上げる:
 
-- **Specific declared host**（`http.get: [{host: "api.github.com"}]`）— `startup_guard` が `<skill, host>` ごとに 1 回 operator に prompt し、 結果を approvals.yaml に `<skill>/http.get/<host>` で persist。 runtime は silent。 default zone 外 path に対する `file.write` と同 pattern。
+- **Specific declared host**（`http.get: [{host: "api.github.com"}]`）— `startup_guard` が `<skill, host>` ごとに 1 回 operator に prompt し、 結果を approvals.jsonl に `<skill>/http.get/<host>` で persist。 runtime は silent。 default zone 外 path に対する `file.write` と同 pattern。
 - **Wildcard**（`http.get: [{host: "*"}]` または `["*"]`）— host が write-time に不明（= LLM が runtime に決める、 例: `web_search` 結果 URL を `web_fetch` で follow）なので、 prompt は `require_http_get` 内の実 host gate で fire。 persistence key も同形 `<skill>/http.get/<host>`、 ALWAYS / NEVER は per-host で効く。
 - **宣言なし** — legacy `web.fetch` compat path + `DeprecationWarning`、 segmented migration window 期間中。 Tier-1 default-allow に依存していた既存ワークフローはそのまま動く。
 
@@ -357,14 +357,14 @@ OS レベルのファイルパーミッションでのみゲートされてい�
 ## パーミッションシステムではないもの
 
 - **Linux ケイパビリティサンドボックスではありません。** Python ステップの subprocess は同じユーザーとして実行され、AST allowlist は honor-system です。reyn はカーネルをサンドボックス化しません（そのレイヤーは `sandboxed_exec`）。
-- **シークレットの保管庫ではありません。** 認証情報を approvals.yaml に入れたり、パーミッションで環境変数を隠そうとしないでください。認証情報には [コンセプト: シークレット管理](../runtime/secret-handling.md) を使用してください。
+- **シークレットの保管庫ではありません。** 認証情報を approvals.jsonl に入れたり、パーミッションで環境変数を隠そうとしないでください。認証情報には [コンセプト: シークレット管理](../runtime/secret-handling.md) を使用してください。
 - **ユーザーに対する保護ではありません。** `reyn.yaml` で `permissions: exec: allow` とした場合、exec を承認したことになります。このシステムは意図せずケイパビリティが増大することを防ぐものであり、ユーザーの意図を防ぐものではありません。
 
 ## 参考
 
 - [Reference: permissions](../../reference/config/permissions.md) — 完全なスキーマ
 - [Reference: reyn.yaml](../../reference/config/reyn-yaml.md) — `permissions:` キー。現行の MCP install ゲート（`file.write` + `http.get`）を含む
-- [Reference: state-dir](../../reference/config/state-dir.md) — `.reyn/approvals.yaml`
+- [Reference: state-dir](../../reference/config/state-dir.md) — `.reyn/approvals.jsonl`
 - [コンセプト: シークレット管理](../runtime/secret-handling.md) — 認証情報のストレージ（`~/.reyn/secrets.env`）
 - [Reference: `reyn mcp`](../../reference/cli/mcp.md) — `install` サブコマンドとそのパーミッションゲート
 - [How-to: manage permissions](../../guide/for-users/manage-permissions.md)

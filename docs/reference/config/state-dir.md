@@ -22,14 +22,11 @@ Personal config overrides now live in `reyn.local.yaml` (gitignored, project roo
 If you have an existing `.reyn/config.yaml`, move its contents to `reyn.local.yaml`
 and delete the old file. Reyn will print a warning until it is removed.
 
-### `approvals.yaml`
+### `approvals.jsonl`
 
-Persistent permission approvals from interactive prompts. Keyed by `<skill>/<op>/<path>` — see [permissions.md](permissions.md).
+Persistent permission approvals from interactive prompts — an append-only ledger, one JSONL record per decision, folded on read (last record per key wins). Keyed by `<skill>/<op>/<path>` — see [permissions.md](permissions.md).
 
-```yaml
-my_skill/file.write//tmp/output: just_path
-my_skill/shell: allow
-```
+`approvals.yaml` (the pre-#5153 snapshot format) is migrated into this ledger once, on first touch, if `approvals.jsonl` does not exist yet — after that it is read-only history, never written to again.
 
 Inspect with `reyn permissions list`. Remove with `reyn permissions revoke <key>`.
 
@@ -123,5 +120,5 @@ Memory (`.reyn/memory/`) — choose based on whether project memory is shared be
 ## See also
 
 - [reyn-yaml.md](reyn-yaml.md) — `state_dir` setting
-- [permissions.md](permissions.md) — approvals.yaml details
+- [permissions.md](permissions.md) — approvals.jsonl details
 - [Reference: events](../runtime/events.md)

@@ -2,7 +2,7 @@
 type: how-to
 topic: config
 audience: [human]
-applies_to: [reyn.yaml, .reyn/approvals.yaml, phases/*.md]
+applies_to: [reyn.yaml, .reyn/approvals.jsonl, phases/*.md]
 ---
 
 # Permission を管理する
@@ -14,7 +14,7 @@ applies_to: [reyn.yaml, .reyn/approvals.yaml, phases/*.md]
 | レイヤー | 格納先 | 粒度 |
 |-------|----------|-------------|
 | Phase の宣言 | Phase の frontmatter | Phase ごと + (op, パス) ごと |
-| 保存された承認 | `.reyn/approvals.yaml` | (ワークフロー, op, パス) ごと |
+| 保存された承認 | `.reyn/approvals.jsonl` | (ワークフロー, op, パス) ごと |
 | プロジェクト全体の事前承認 | `reyn.yaml` の `permissions:` | op kind ごと |
 
 デフォルトは保守的です。その他はすべてオプトインです。理由については [Permission モデルのコンセプト](../../concepts/runtime/permission-model.md) を参照してください。
@@ -56,7 +56,7 @@ permissions:
   [N] deny
 ```
 
-`j` と `r` は `.reyn/approvals.yaml` に書き込みます。
+`j` と `r` は `.reyn/approvals.jsonl`(append-only ledger — #5153)にレコードをappendします。
 
 ## プロジェクト全体で事前承認する
 

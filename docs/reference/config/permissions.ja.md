@@ -16,7 +16,7 @@ Reyn の Permission システムは、ファイルパス、シェル、MCP ツ�
 | 軸 | schema default | 対象 |
 |----|-------|-------|
 | `file.read`（`file.glob` / `file.grep` も） | `<zone-root>` | zone root とその配下すべて。 |
-| `file.write`（`file.edit` / `file.delete` も） | `<zone-root>/.reyn` | state ディレクトリ。ただし保護された除外（`.reyn/approvals.yaml`、および recovery-core の `.reyn/config/` / `.reyn/state/` プレフィックス — これらは専用の op 経由でのみ変更）を除く。 |
+| `file.write`（`file.edit` / `file.delete` も） | `<zone-root>/.reyn` | state ディレクトリ。ただし保護された除外（`.reyn/approvals.yaml`/`.reyn/approvals.jsonl` — legacyとlive両方の承認ストア、#5153/#5173、および recovery-core の `.reyn/config/` / `.reyn/state/` プレフィックス — これらは専用の op 経由でのみ変更）を除く。 |
 
 `<zone-root>` は**リテラルではなく記号**です。値はエントリポイントが与える zone アンカー（`reyn chat` / `reyn web` では workspace base dir、`reyn pipe` / plugin install / registry bootstrap では project root、コンテナバックエンドではコンテナ内のリポジトリルート）で、**プロセス起動まで確定しない**ため、リテラルパスを default として書くことは原理的にできません。
 
@@ -115,7 +115,7 @@ Phase がデフォルト外の Permission を宣言すると、Reyn は単一の
   [N] deny
 ```
 
-永続的な選択は `<skill>/<op>/<path>` をキーとして `.reyn/approvals.yaml` に記録されます（recursive 付与の場合は末尾に `/`）。外部 Skill は別の Skill の承認を再利用できません。キーは Skill スコープで、権限昇格を防ぎます。
+永続的な選択は `<skill>/<op>/<path>` をキーとして `.reyn/approvals.jsonl`(append-only ledger — #5153)に記録されます（recursive 付与の場合は末尾に `/`）。外部 Skill は別の Skill の承認を再利用できません。キーは Skill スコープで、権限昇格を防ぎます。
 
 `file.read`/`file.write` については、キーが一致するだけでは決着しません(#5042): 承認済み path 自体の identity が初回使用時に束縛され、以降の使用のたびに再照合されます。承認対象を削除して同じ path に別のものを作り直した場合は、古い承認をそのまま引き継がず再度確認が求められます — 詳細は [Concepts: permission model](../../concepts/runtime/permission-model.ja.md) 参照。
 
@@ -137,18 +137,18 @@ permissions:
 
 ## 非インタラクティブなラン（CI）
 
-`reyn run-once` は非インタラクティブで実行されます。プロンプトはありません。承認は `reyn.yaml` または `.reyn/approvals.yaml`（例えば、最初にインタラクティブで agent を実行して保存）に事前に準備されている必要があります。
+`reyn run-once` は非インタラクティブで実行されます。プロンプトはありません。承認は `reyn.yaml` または `.reyn/approvals.jsonl`（例えば、最初にインタラクティブで agent を実行して保存）に事前に準備されている必要があります。
 
 ## 確認と取り消し
 
 ```bash
 reyn permissions list             # 保存された承認を表示
-reyn permissions revoke <key>     # 承認を削除
+reyn permissions revoke <key>     # approved=False レコードをappend(履歴には残る)
 ```
 
 ## 関連情報
 
 - [reyn-yaml.md](reyn-yaml.md) — 完全なプロジェクト設定
-- [state-dir.md](state-dir.md) — `.reyn/approvals.yaml` の場所
+- [state-dir.md](state-dir.md) — `.reyn/approvals.jsonl` の場所
 - リファレンス: skill.md — Permission の宣言
 - [リファレンス: control-ir](../runtime/control-ir.md) — Permission が必要な op

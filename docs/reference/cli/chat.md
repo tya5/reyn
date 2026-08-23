@@ -114,7 +114,7 @@ The `/attach` slash lets you watch a delegate's progress mid-chain — the previ
 
 ## Permission behavior
 
-`reyn chat` is interactive: when a sub-skill needs a permission outside the defaults, the prompt blocks until you respond via the intervention queue. Choices can be persisted to `.reyn/approvals.yaml` (see [permissions reference](../config/permissions.md)).
+`reyn chat` is interactive: when a sub-skill needs a permission outside the defaults, the prompt blocks until you respond via the intervention queue. Choices can be persisted to `.reyn/approvals.jsonl` (see [permissions reference](../config/permissions.md)).
 
 ## Diagnosing slow startup
 

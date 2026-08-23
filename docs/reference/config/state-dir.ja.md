@@ -13,7 +13,7 @@ applies_to: [.reyn/]
 
 ```
 .reyn/
-├── approvals.yaml                          # 永続的な Permission 承認
+├── approvals.jsonl                         # 永続的な Permission 承認（append-only ledger）
 ├── events/                                 # すべてのイベント JSONL ログ
 │   ├── direct/                             # `reyn run` からの Skill ラン
 │   │   └── skill_runs/<YYYY-MM>/
@@ -48,14 +48,11 @@ applies_to: [.reyn/]
 既存の `.reyn/config.yaml` がある場合は、内容を `reyn.local.yaml` に移行して旧ファイルを削除してください。
 削除するまで Reyn は警告を表示します。
 
-### `approvals.yaml`
+### `approvals.jsonl`
 
-インタラクティブなプロンプトからの永続的な Permission 承認。`<skill>/<op>/<path>` をキーとします。[permissions.md](permissions.md) を参照してください。
+インタラクティブなプロンプトからの永続的な Permission 承認 — 1決定=1行のappend-only JSONL ledgerで、読み込み時にfold(同一keyは最後の行が勝つ)されます。`<skill>/<op>/<path>` をキーとします。[permissions.md](permissions.md) を参照してください。
 
-```yaml
-my_skill/file.write//tmp/output: just_path
-my_skill/shell: allow
-```
+`approvals.yaml`(#5153以前のsnapshot形式)は、`approvals.jsonl`がまだ存在しない場合に限り初回タッチ時に1度だけこのledgerへ移行されます — 以降はread-onlyの履歴で、二度と書き込まれません。
 
 `reyn permissions list` で確認します。`reyn permissions revoke <key>` で削除します。
 
@@ -127,5 +124,5 @@ Memory（`.reyn/memory/`）— プロジェクト Memory がコラボレータ�
 ## 関連情報
 
 - [reyn-yaml.md](reyn-yaml.md) — `state_dir` 設定
-- [permissions.md](permissions.md) — approvals.yaml の詳細
+- [permissions.md](permissions.md) — approvals.jsonl の詳細
 - [リファレンス: events](../runtime/events.md)
