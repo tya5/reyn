@@ -128,7 +128,7 @@ Path-conditional gates:
 3. **Broker is a hint; the PR is the contract.** It is in-memory, lags ~30s, has no ack. Put critical pause/block signals on the PR **and** broker. **Deliver every new assignment over broker** — one written only on the issue reaches nobody.
 4. **Never place a closing keyword next to an issue number** unless the PR really closes it — GitHub matches literally, negation and context included. Sub-PRs use `part of #X`; before writing `Closes #X`, enumerate open PRs with `part of #X`. The same matching applies to **commit messages** (a squash body concatenates them), and a body edit does not fix one.
 5. **No blanket en/ja mirror obligation.** Fix a `.ja.md` file only when the PR falsifies something it asserts.
-6. **Arc-closure remainder rule**: every remainder is **filed** or **explicitly dropped**, in the closing comment. "Next arc" is a third, silent state.
+6. **Arc-closure remainder rule**: every remainder is **filed** or **explicitly dropped**, in the closing comment. "Next arc" is a third, silent state. (`docs/deep-dives/contributing/issue-management.md`)
 7. **A reviewer's blocking point goes in the PR body** as `- [ ] 🔴 <point>`, not only in a review comment — `--request-changes` does not work here. Rule 4 applies to that edit too.
 8. **A PR touching `tests/` does not self-merge until a reviewer's TESTS-READ claim lands as a comment's FIRST line** (marker + head SHA together; grounds go from line 2 on).
 9. **Arming auto-merge ends your reading of that PR** — a checkbox added afterwards is invisible to the merge. Do not arm while a reviewer's point is open, and re-check the body before arming.
@@ -156,6 +156,7 @@ dominate in Y. Direct verification: 1/N."
 - **Verification hazards** (a green that means less, a red that overstates): `docs/deep-dives/contributing/verification-hazards.md`
 - **Tier-1 rules, full rationale** (Constitution, hard rules, comment policy, pre-conclusion): `docs/deep-dives/contributing/tier1-rationale.md`
 - **PR workflow, full rationale**: `docs/deep-dives/contributing/pr-workflow.md`
+- **Issue management** (what an issue is, consolidation, closing, priority axes, labels): `docs/deep-dives/contributing/issue-management.md`
 - **Six questions, full instances**: `docs/deep-dives/contributing/test-review-six-questions.md`
 - **Workspace** (single source of truth): `docs/concepts/runtime/workspace.md`
 - **Events / replay**: `docs/concepts/runtime/events.md`
