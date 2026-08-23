@@ -192,6 +192,12 @@ def build_router_op_context(
         default_sandbox_policy=resolve_sandbox_policy(
             sandbox_policy,
             write_paths=[str(workspace.base_dir)],
+            temp_dir=(
+                str(workspace.state_dir / "cache" / "tmp" / session_id)
+                if workspace.state_dir is not None and session_id is not None
+                else ""
+            ),
+            temp_dir_required=True,
         ),
         cancel_event=cancel_event,
         ephemeral=ephemeral,

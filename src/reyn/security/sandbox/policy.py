@@ -150,11 +150,26 @@ def resolve_passthrough_env(policy: "SandboxPolicy") -> dict[str, str]:
     deny = set(policy.env_deny_names)
     if policy.allow_env_names is not None:
         allow = set(policy.allow_env_names)
-        return {
+        env = {
             name: value for name, value in os.environ.items()
             if name in allow and name not in deny
         }
-    return {name: value for name, value in os.environ.items() if name not in deny}
+    else:
+        env = {name: value for name, value in os.environ.items() if name not in deny}
+    # #5184: a child-launching policy must carry a real writable directory;
+    # fail at the spawn boundary rather than allowing tempfile to fall back to cwd.
+    if policy.temp_dir_required:
+        if not policy.temp_dir:
+            raise ValueError("sandbox child launch requires a writable temp_dir")
+        temp_path = Path(policy.temp_dir)
+        if not temp_path.is_dir() or not os.access(temp_path, os.W_OK):
+            raise ValueError(
+                f"sandbox child launch temp_dir is not writable: {policy.temp_dir!r}"
+            )
+        env["TMPDIR"] = policy.temp_dir
+    elif policy.temp_dir:
+        env["TMPDIR"] = policy.temp_dir
+    return env
 
 
 # The network default lives in ONE place so the owner can flip it trivially
@@ -353,6 +368,15 @@ class SandboxPolicy:
     # `None` rather than a sentinel large int.
     background_max_timeout_seconds: "int | None" = DEFAULT_BACKGROUND_MAX_EXEC_TIMEOUT_SECONDS
     max_output_bytes: int = MAX_SUBPROCESS_OUTPUT_BYTES
+    # #5184: session-owned temporary directory for child-process artifacts.
+    # The owner resolves this path while constructing the policy; env builders
+    # only read the value and never derive session identity themselves.
+    temp_dir: str = ""
+    # #5184: callers that launch a child through ``run`` opt into the
+    # spawn-site invariant; command-level MCP wrapping intentionally does not.
+    # Temporary bool bridge for #5184 part 1. Part 2 replaces this with a
+    # discriminated mode (session-owned / no-spawn / intentional-inherit).
+    temp_dir_required: bool = True
 
 
 def deny_narrowed_write_grants(policy: SandboxPolicy) -> list[tuple[str, str]]:
@@ -704,6 +728,8 @@ def resolve_sandbox_policy(
     config_policy: dict | None,
     *,
     write_paths: list[str] | None = None,
+    temp_dir: str = "",
+    temp_dir_required: bool = True,
     mode: str = "compat",
 ) -> dict:
     """Resolve the effective agent-level sandbox policy as a dict.
@@ -742,9 +768,14 @@ def resolve_sandbox_policy(
     semantics make the "explicit-empty vs omitted" distinction the whole fix
     hinges on directly representable — no separate sentinel is needed.
     """
+    effective_write_paths = list(write_paths or [])
+    if temp_dir and temp_dir not in effective_write_paths:
+        effective_write_paths.append(temp_dir)
     floor: dict = {
         "network": DEFAULT_SANDBOX_NETWORK,
-        "write_paths": list(write_paths or []),
+        "write_paths": effective_write_paths,
+        "temp_dir": temp_dir,
+        "temp_dir_required": temp_dir_required,
     }
     explicit = _translate_sandbox_policy_config(config_policy)
     if mode == "strict":
