@@ -1727,6 +1727,8 @@ def status_line_text(
     *,
     attach_state: "str | None" = None,
     warn_percent: int = CTX_WARN_PERCENT,
+    diagnostics_count: int = 0,
+    diagnostics_log_path: "str | None" = None,
 ) -> str:
     """The Telemetry segment (#4542: ``model · agent    $cost  ctx%``, no
     ``│``/``|`` separators — position and text-style carry the grouping
@@ -1768,38 +1770,55 @@ def status_line_text(
     glyph can be added later without touching the mechanism, but a broken
     row on a still-forming feature would cast doubt on the mechanism
     itself.
+
+    #5168: ``diagnostics_count`` (default 0, byte-identical text when unset)
+    PREPENDS a ``diagnostics: N — <path>`` segment ahead of whatever this
+    function would otherwise return — the SAME "prepend, don't replace"
+    shape ``halted_reason`` already uses, and for the same reason: this is
+    the ONE always-visible row, so it is where an operator learns a
+    stray ``stdout``/``stderr`` write (a third-party ``print``, a
+    ``warnings.warn`` that would otherwise have corrupted the live region —
+    see ``stray_output.py``) was captured, without needing a modal or a
+    per-write printed line (the exact corruption this closes). Applied
+    LAST, after every other branch (``connecting``/``failed``/HALTED/base)
+    — diagnostics can coexist with any of those, so it is not folded into
+    any single branch's own return.
     """
     if attach_state == "connecting":
-        return f"connecting… · agent {agent_name}"
-    if attach_state == "failed":
-        return f"attach failed (see log) · agent {agent_name}"
-
-    # #2280: when ``snap["halted_reason"]`` is set (the session fail-stopped on
-    # a persistent durability failure — ``Session.halted_reason``), a
-    # ``HALTED`` banner segment is PREPENDED ahead of the usual values — this
-    # line is the ONE always-visible (never-collapsed) chrome region, so it is
-    # the surface an idle operator (not currently submitting anything) will
-    # proactively see the halt on, rather than only learning it from the next
-    # op's raised ``DurabilityHaltError``. Purely observability — the halt
-    # itself is already enforced synchronously elsewhere
-    # (``_fail_stop_if_durability_dead`` / ``run_one_iteration``); this never
-    # gates or delays anything.
-    snap = snap or {}
-    model = snap.get("model_active_class") or snap.get("model") or "—"
-    agent = snap.get("attached_name") or agent_name
-    ctx_pct = _ctx_pct(snap)
-    ctx_segment = ctx_pct
-    if ctx_pct.endswith("%"):
-        try:
-            if int(ctx_pct[:-1]) >= warn_percent:
-                ctx_segment = f"ctx {ctx_pct}"
-        except ValueError:
-            pass  # "—" (no completed call yet) — bare, never escalated
-    base = f"{model} · {agent}    {cost_figure(snap)}  {ctx_segment}"
-    halted_reason = snap.get("halted_reason")
-    if halted_reason:
-        return f"⚠ HALTED — {halted_reason} — agent stopped accepting ops · {base}"
-    return base
+        text = f"connecting… · agent {agent_name}"
+    elif attach_state == "failed":
+        text = f"attach failed (see log) · agent {agent_name}"
+    else:
+        # #2280: when ``snap["halted_reason"]`` is set (the session fail-stopped on
+        # a persistent durability failure — ``Session.halted_reason``), a
+        # ``HALTED`` banner segment is PREPENDED ahead of the usual values — this
+        # line is the ONE always-visible (never-collapsed) chrome region, so it is
+        # the surface an idle operator (not currently submitting anything) will
+        # proactively see the halt on, rather than only learning it from the next
+        # op's raised ``DurabilityHaltError``. Purely observability — the halt
+        # itself is already enforced synchronously elsewhere
+        # (``_fail_stop_if_durability_dead`` / ``run_one_iteration``); this never
+        # gates or delays anything.
+        snap = snap or {}
+        model = snap.get("model_active_class") or snap.get("model") or "—"
+        agent = snap.get("attached_name") or agent_name
+        ctx_pct = _ctx_pct(snap)
+        ctx_segment = ctx_pct
+        if ctx_pct.endswith("%"):
+            try:
+                if int(ctx_pct[:-1]) >= warn_percent:
+                    ctx_segment = f"ctx {ctx_pct}"
+            except ValueError:
+                pass  # "—" (no completed call yet) — bare, never escalated
+        base = f"{model} · {agent}    {cost_figure(snap)}  {ctx_segment}"
+        halted_reason = snap.get("halted_reason")
+        text = (
+            f"⚠ HALTED — {halted_reason} — agent stopped accepting ops · {base}"
+            if halted_reason else base
+        )
+    if diagnostics_count:
+        text = f"diagnostics: {diagnostics_count} — {diagnostics_log_path or '.reyn/logs/reyn.log'} · {text}"
+    return text
 
 
 #: #4357: how many unknown-key NAMES the chrome line shows inline before

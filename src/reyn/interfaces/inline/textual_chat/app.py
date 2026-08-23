@@ -113,6 +113,7 @@ from .restore import RESUME_DIVIDER, project_restored_frames
 from .rewind_picker import RewindPicker
 from .search_bar import SearchBar
 from .sent_queue import SentQueue
+from .stray_output import StrayOutputCaptured, StrayOutputStats, capture_stray_output
 from .theme import REYN_THEME
 
 if TYPE_CHECKING:
@@ -1258,6 +1259,11 @@ class TextualChatApp(App):
         self._transport = transport
         self._read_model = read_model
         self._agent_name = agent_name
+        # #5168: set by run_textual_chat's own capture_stray_output window —
+        # None for any App constructed outside it (e.g. a bare
+        # TextualChatApp(...) in a test), in which case _status_text's own
+        # diagnostics_count read stays 0, byte-identical to before #5168.
+        self._stray_output_stats: "StrayOutputStats | None" = None
         # #5139: mirrors ``self._agent_name`` — this client's OWN idea of
         # which session it is currently attached to, updated at the same
         # site ``self._agent_name`` is (:meth:`_handle_session_attached_
@@ -2117,18 +2123,26 @@ class TextualChatApp(App):
         see ``_configured_gutter_visibility``'s own docstring for the
         pattern) — falls back to ``status_line_text``'s own module-default
         (:data:`~reyn.interfaces.inline.textual_chat.chrome.
-        CTX_WARN_PERCENT`) when unset."""
+        CTX_WARN_PERCENT`) when unset.
+
+        #5168: ``diagnostics_count`` reads ``self._stray_output_stats`` —
+        ``None`` whenever this App wasn't constructed inside
+        :func:`run_textual_chat`'s own ``capture_stray_output`` window (a
+        bare ``TextualChatApp(...)`` in a test, for instance), in which case
+        the count is always 0 — byte-identical status text to before #5168."""
         snapshot = self._snapshot() if snap is _UNSET else snap
         warn_percent = getattr(
             getattr(self._config, "tui", None),
             "context_usage_warn_percent",
             CTX_WARN_PERCENT,
         )
+        diagnostics_count = self._stray_output_stats.count if self._stray_output_stats else 0
         return status_line_text(
             snapshot,
             self._agent_name,
             attach_state=self._attach_state(),
             warn_percent=warn_percent,
+            diagnostics_count=diagnostics_count,
         )  # type: ignore[arg-type]
 
     async def _watch_loop_responsiveness(self) -> None:
@@ -2263,6 +2277,18 @@ class TextualChatApp(App):
                     "textual chat: %s",
                     stall_recovered_log_line(pump_ticks=self._pump_ticks),
                 )
+
+    def on_stray_output_captured(self, message: "StrayOutputCaptured") -> None:
+        """#5168: a stray ``stdout``/``stderr`` write was captured (a
+        third-party ``print(file=sys.stderr)``, a ``warnings.warn`` that
+        would otherwise have corrupted the live region — see
+        ``stray_output.py``). Re-reads the live count off
+        ``self._stray_output_stats`` rather than trusting anything on
+        *message* (see :class:`StrayOutputCaptured`'s own docstring for
+        why) and folds it into the SAME status-line refresh path every
+        other status-affecting event already uses — one row, updated in
+        place, never a line printed per occurrence."""
+        self._refresh_status()
 
     def on_mount(self) -> None:
         # #3505/#4840: #3504 made ``App``'s own background ``ansi_default``
@@ -6853,7 +6879,15 @@ async def run_textual_chat(
                 config=config,
                 initial_history_messages=_initial_history_messages,
             )
-        await app.run_async(inline=inline)
+        # #5168: sys.stdout/sys.stderr are the RENDERER's own from here until
+        # run_async returns — anything else writing to them (a third-party
+        # print(file=sys.stderr), a warnings.warn) corrupts the live region.
+        # See stray_output.py's own module docstring for the full rationale;
+        # __exit__ restores BOTH streams unconditionally, including a crash
+        # inside run_async, so the operator's terminal is never left mid-swap.
+        with capture_stray_output(app) as stray_output_stats:
+            app._stray_output_stats = stray_output_stats
+            await app.run_async(inline=inline)
     finally:
         if _stall_seconds is not None:
             _disarm_stall_trace()
