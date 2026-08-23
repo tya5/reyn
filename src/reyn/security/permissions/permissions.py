@@ -488,10 +488,22 @@ class PermissionResolver:
         # silent behaviour change; read via ``unconfirmable_identity_check_count``.
         self._unconfirmable_identity_checks: int = 0
         # #5152 (architect ruling, issuecomment-5383604927): one open fd
-        # per bound key, held for the remaining life of THIS process --
-        # see ``_acquire_identity_fd``'s own docstring for why this is
-        # what makes an ino comparison trustworthy without ``st_birthtime``.
-        # Bounded by the number of distinct PATH-flavor approvals in use.
+        # per bound key -- see ``_acquire_identity_fd``'s own docstring
+        # for why this is what makes an ino comparison trustworthy
+        # without ``st_birthtime``. #5157 (e2e-coder's TESTS-READY(B)
+        # finding on #5152, architect ruling issuecomment-5383671820):
+        # the population here is RATE-LIMITED BY A HUMAN, not machine-
+        # driven growth -- one fd per distinct path-flavor approval, and
+        # an approval is only ever created by a person granting it.
+        # Architect explicitly rejected an LRU cap (would routinely
+        # demote a still-protected key into the "cannot confirm" bucket,
+        # making pool SIZE decide the security guarantee's scope). The
+        # actual gap this PR closes: a same-key rebind was the ONLY
+        # release path -- see ``_persist``'s own revoke branch, which now
+        # also releases the fd (the same #5146-style "settle on
+        # disappearance" idiom, this time for approval revocation).
+        # ``bound_fd_count`` is the public read this issue's test-review
+        # Q5 asked for.
         self._bound_fds: "dict[str, int]" = {}
         # #1383 (D12): scoped read-grants for OS-offloaded artifacts. When the OS
         # offloads an artifact to a state-dir path and hands the agent an
@@ -566,13 +578,25 @@ class PermissionResolver:
         return self._bound_identities.get(key)
 
     def unconfirmable_identity_check_count(self) -> int:
-        """#5152: how many times an identity comparison could not be
-        confirmed this session (``st_birthtime`` unavailable on one or
-        both sides) and was therefore treated as fail-closed — see
-        :meth:`_identity_check_passes`'s own docstring. Public so the
-        fail-closed default this counts is observable without reaching
-        into private state."""
+        """#5152 (architect ruling, issuecomment-5383604927): how many
+        times an identity comparison could not be confirmed either way
+        this session (no fd held for the key yet, and ``st_birthtime``
+        unavailable) — the grant is HONORED, never denied, but counted
+        here so that fact is observable rather than silent. See
+        :meth:`_identity_check_passes`'s own docstring."""
         return self._unconfirmable_identity_checks
+
+    def bound_fd_count(self) -> int:
+        """#5157 (test-review Q5 — "what does this accumulate, and who
+        bounds it?"): how many identity fds this process currently
+        holds — one per distinct PATH-flavor approval a human has
+        granted and used at least once (architect ruling,
+        issuecomment-5383671820: rate-limited by human approval, not an
+        LRU cap — released on a rebind or on that approval's own
+        revocation, see :meth:`_release_identity_fd`). Public so the
+        real in-use count is observable without reaching into private
+        state."""
+        return len(self._bound_fds)
 
     def on_persist_callback_count(self) -> int:
         """Return the number of registered ``on_persist`` callbacks.
@@ -692,24 +716,50 @@ class PermissionResolver:
 
         Does NOT survive a process restart (the fd table starts empty) —
         that residual window is the ``unconfirmable_identity_check_count``
-        acceptance criterion, not closed by this method. Bounded by the
-        number of distinct PATH-flavor approvals in use (test-review Q5)
-        — one fd per bound key; a rebind (this method called again for
-        the same key) closes the previous fd first rather than
-        accumulating one per rebind. Best-effort: a failure to open
-        (permissions, races) just means this process falls back to the
-        stat-only comparison for *key*, same as before this method
-        existed."""
+        acceptance criterion, not closed by this method.
+
+        #5157 (e2e-coder's TESTS-READY(B) finding on #5152, test-review
+        Q5 — "what does this accumulate, and who bounds it?"). Architect
+        ruling (issuecomment-5383671820): the POPULATION here is
+        rate-limited by a human, not machine-driven growth — one fd per
+        distinct PATH-flavor approval, and an approval is only ever
+        created by a person granting it (reaching fd-table exhaustion,
+        ~1024+, needs on the order of 1000 individual human approvals).
+        An LRU cap was explicitly REJECTED: making eviction routine would
+        demote a still-protected key into the "cannot confirm" bucket as
+        a matter of course, making the pool SIZE decide the security
+        guarantee's scope, not the approval's own lifecycle. The actual
+        gap: a same-key REBIND was the ONLY release path this method
+        had — closed by :meth:`_release_identity_fd`, called from
+        :meth:`_persist`'s own revoke branch (the same #5146-style
+        "settle on disappearance" idiom, here triggered by a human
+        revoking the approval rather than a purge). ``bound_fd_count``
+        is the public read Q5 asked for, so the real in-use count is
+        observable if this population assumption ever needs revisiting.
+
+        Best-effort: a failure to open (permissions, races, an
+        already-exhausted fd table) just means this process falls back
+        to the stat-only comparison for *key*, same as before this
+        method existed."""
+        self._release_identity_fd(key)
+        try:
+            self._bound_fds[key] = os.open(str(path), os.O_RDONLY)
+        except OSError:
+            pass
+
+    def _release_identity_fd(self, key: str) -> None:
+        """#5157: close and forget *key*'s identity fd, if one is held.
+        Called on a rebind (a fresh fd replaces the old one) and from
+        :meth:`_persist`'s revoke branch (the approval disappearing is
+        exactly the disappearance-trigger #5146 already established for
+        this class of state — nothing left to protect once the grant
+        itself is gone)."""
         old = self._bound_fds.pop(key, None)
         if old is not None:
             try:
                 os.close(old)
             except OSError:
                 pass
-        try:
-            self._bound_fds[key] = os.open(str(path), os.O_RDONLY)
-        except OSError:
-            pass
 
     def _bind_identity(
         self,
@@ -785,6 +835,12 @@ class PermissionResolver:
         # `memory/`. Owner-confirmed reclassification (config → persist).
         self._saved[key] = approved
         self._session[key] = approved
+        if not approved:
+            # #5157 (architect ruling, issuecomment-5383671820): a human
+            # REVOKING this approval is the disappearance-trigger for its
+            # identity fd, same idiom as #5146's own settle-on-disappearance
+            # — nothing left to protect once the grant itself is gone.
+            self._release_identity_fd(key)
         try:
             import yaml
             self._approvals_path.parent.mkdir(parents=True, exist_ok=True)
