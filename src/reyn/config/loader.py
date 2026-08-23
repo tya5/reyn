@@ -1021,7 +1021,7 @@ def load_per_agent_hooks(
     """Load the per-agent runtime hooks layer (#2073 per-agent-hooks add-on) — ONLY
     ``.reyn/agents/<name>/hooks.yaml``.
 
-    Same IN-set grain as the global ``.reyn/hooks.yaml`` (runtime-mutable,
+    Same IN-set grain as the global ``.reyn/config/hooks.yaml`` (runtime-mutable,
     hot-reloadable) but scoped to one agent — read DIRECTLY here (not via
     :func:`load_hot_reload_config`, which is the top-level ``.reyn/*.yaml`` set),
     mirroring how the per-agent ``profile.yaml`` is read. Returns the raw

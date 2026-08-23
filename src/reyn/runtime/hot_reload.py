@@ -153,7 +153,7 @@ def validate_in_set(in_set: "dict") -> "str | None":
     hooks = in_set.get("hooks")
     if hooks is not None:
         # #2073 S2b: validate the runtime hooks shape via the real loader so a
-        # malformed .reyn/hooks.yaml rejects the whole reload (atomic) rather than
+        # malformed .reyn/config/hooks.yaml rejects the whole reload (atomic) rather than
         # raising inside the reapply seam.
         from reyn.hooks import HookConfigError, load_hooks
         try:
@@ -434,7 +434,7 @@ class HotReloader:
 
 # ── process-wide active HotReloader (#2073 S3) ──────────────────────────────
 # The LLM-op hooks-write tool reaches the reloader to ``request_reload`` after
-# writing .reyn/hooks.yaml. Mirrors ``set_active_scheduler`` / ``get_active_scheduler``
+# writing .reyn/config/hooks.yaml. Mirrors ``set_active_scheduler`` / ``get_active_scheduler``
 # (cron). NOTE (multi-session caveat, same as cron's single-scheduler): this is the
 # last-registered session's reloader; a per-session route (via ToolContext) is a
 # noted beauty-follow-up, out of S3 scope.

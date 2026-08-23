@@ -4547,8 +4547,9 @@ class Session:
             # `file.write` there is denied, it goes through a dedicated WAL-emitting op instead.
             # architect correction, #5218 review: an earlier version of this threshold used
             # "runtime" — i.e. treated `.reyn/config/hooks.yaml` as agent-writable, echoing a
-            # stale pre-#2073-file-split filename (`.reyn/hooks.yaml`) that survives in several
-            # docstrings elsewhere in this codebase. That threshold left #5041's own supervision
+            # stale pre-#2073-file-split filename (`.reyn/hooks.yaml`) — #5220 swept the
+            # remaining bare mentions of it (this one kept as the historical record).
+            # That threshold left #5041's own supervision
             # hook (placed at the runtime layer specifically because it is protected) one
             # `disabled:` entry away from being switched off by the party it supervises).
             # Threshold is therefore "per-agent or below [more specific]" — `per-agent` and
@@ -5623,7 +5624,7 @@ class Session:
         HotReloader (#2073 S2). Called once at construction after router_host and
         other sub-components exist. Each seam reapplies one IN-set component live at
         the turn boundary; the Session orchestrates them (it owns the sub-components).
-        Hooks = S2b (global .reyn/hooks.yaml); per-agent-hooks add-on = a separate
+        Hooks = S2b (global .reyn/config/hooks.yaml); per-agent-hooks add-on = a separate
         decision."""
         hr = self._hot_reloader
         # validate-before-apply is the HotReloader's built-in structural check
@@ -5647,7 +5648,7 @@ class Session:
 
         - **startup** — the reyn.yaml hooks (``self._startup_hooks_raw``, captured once
           at boot, the restart-only OUT-set, never re-read on a reload);
-        - **runtime** — the global ``.reyn/hooks.yaml`` (from the IN-set);
+        - **runtime** — the global ``.reyn/config/hooks.yaml`` (from the IN-set);
         - **per-agent** — ``.reyn/agents/<name>/hooks.yaml`` (read directly here, same
           IN-set grain but scoped per agent).
 
@@ -5663,7 +5664,7 @@ class Session:
 
         **Per-LAYER boot resilience (the add-on refinement):** ``load_hooks`` raises
         ``HookConfigError`` on a malformed layer, and BOTH boot AND the reload path call
-        this — a malformed persisted ``.reyn/hooks.yaml`` or per-agent file must NOT
+        this — a malformed persisted ``.reyn/config/hooks.yaml`` or per-agent file must NOT
         crash boot, NOR may one bad UNTRUSTED layer drop a good sibling. So the trusted
         startup layer (reyn.yaml — the operator's) must load (a failure propagates =
         fail loud), then each untrusted layer is try-added INDEPENDENTLY: a bad runtime
@@ -5848,7 +5849,7 @@ class Session:
 
     async def _reapply_hooks(self, in_set: dict) -> bool:
         """Reapply the hook layers (#2073 S2b + per-agent add-on) — re-read the global
-        .reyn/hooks.yaml (IN-set) AND the per-agent .reyn/agents/<name>/hooks.yaml,
+        .reyn/config/hooks.yaml (IN-set) AND the per-agent .reyn/agents/<name>/hooks.yaml,
         re-combine with the FIXED reyn.yaml startup layer, and swap the dispatcher's
         registry. The dispatcher reads its registry fresh per dispatch, so the swap
         propagates to every holder. The startup layer is never re-read (safety
