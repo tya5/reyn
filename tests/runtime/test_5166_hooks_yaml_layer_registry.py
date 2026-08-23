@@ -173,6 +173,46 @@ def test_the_four_named_reader_methods_delegate_through_the_shared_primitive(
             path.unlink()
 
 
+@pytest.mark.parametrize("key", _KEYS)
+def test_a_real_non_reyn_env_var_sharing_the_reyn_prefix_is_not_refused(
+    tmp_path, monkeypatch, key,
+) -> None:
+    """Tier 2: #5176 (architect TESTS-READ blocking finding on this PR,
+    issuecomment-5384269296) — acceptance⑤⑦, at the ACTUAL layer this
+    issue consolidated. ``${REYN_MCP_REGISTRY_URLS}`` is a real env var
+    (``config/loader.py`` propagates ``mcp.registries`` into it, meant for
+    ``expand_env``, never this module).
+
+    A REPAIR witness, not merely a prevention one (lead-coder's own
+    correction, acceptance⑦): the prefix-match bug this fixes already
+    ships on ``main`` via #5161/#5164's own fail-close call sites — a
+    per-agent ``hooks.yaml`` with ``${REYN_MCP_REGISTRY_URLS}`` is
+    refused TODAY, not merely something #5166's consolidation would have
+    newly broken. This test's own strip-verify (revert the
+    ``_KNOWN_REYN_TOKEN_NAMES`` filter) reproduces that exact CURRENT
+    ``main`` behavior — confirmed RED under the revert, restored GREEN."""
+    project = tmp_path / "proj"
+    project.mkdir()
+    session = _make_session_in(project, monkeypatch, tmp_path)
+
+    body = (
+        f"{key}:\n"
+        "  - name: probe\n"
+        "    on: turn_end\n"
+        "    exec:\n"
+        "      command: echo ${REYN_MCP_REGISTRY_URLS}\n"
+    )
+    for label, path in session._hooks_yaml_layers():
+        _write_yaml(path, body)
+        entries = session._read_hooks_yaml_layer_key(path, key)
+        assert entries, (
+            f"{label}/{key}: a real env var sharing reyn's prefix must not "
+            f"refuse the whole layer — got {entries!r}"
+        )
+        assert entries[0]["exec"]["command"] == "echo ${REYN_MCP_REGISTRY_URLS}"
+        path.unlink()
+
+
 def test_adding_a_layer_to_the_registry_is_automatically_covered(
     tmp_path, monkeypatch,
 ) -> None:

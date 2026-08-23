@@ -198,33 +198,74 @@ def expand_with_map(obj: Any, token_map: dict[str, str]) -> Any:
     return _expand(obj, token_map)
 
 
-# #5140: matches a REMAINING ``${REYN_*}``/``${CLAUDE_*}`` placeholder after
-# an expansion pass — i.e. reyn's OWN token vocabulary, never an arbitrary
-# caller-owned ``${VAR}`` (an env var meant for a spawned child process, a
-# pipeline ``ctx`` param, …). Deliberately narrower than ``_TOKEN_RE``: a
-# fail-close check built on the wrong regex here would refuse to load a
-# hooks.yaml over a token it was never reyn's job to resolve in the first
-# place (acceptance ③ — a non-reyn ``${FOO}`` must load exactly as before).
+# #5140: matches a candidate ``${REYN_*}``/``${CLAUDE_*}`` placeholder —
+# the SYNTAX only. Deliberately narrower than ``_TOKEN_RE`` (any ``${VAR}``)
+# so a genuinely unrelated ``${VAR}`` never even reaches the vocabulary
+# check below, but this regex ALONE is not the fail-close decision — see
+# :data:`_KNOWN_REYN_TOKEN_NAMES` and #5176's own correction.
 _UNRESOLVED_REYN_TOKEN_RE = re.compile(r"\$\{((?:REYN|CLAUDE)_\w+)\}")
+
+# #5176 (architect TESTS-READ blocking finding on #5166, issuecomment-5384269296):
+# a REYN_/CLAUDE_ PREFIX is not the same thing as reyn's OWN token
+# VOCABULARY — real environment variables with this prefix exist and are
+# NOT reyn tokens: ``REYN_MCP_REGISTRY_URLS`` (config/loader.py's own
+# ``mcp.registries`` propagation), the SSRF-guard allowlist vars
+# (``security/ssrf_guard.py``), and ``CLAUDE_CODE_*`` (the Claude Code
+# harness's own env, unrelated to this module's ``CLAUDE_*`` alias
+# spellings). Before this fix, ``find_unresolved_reyn_tokens`` matched ANY
+# such-shaped placeholder by prefix alone — #5166's consolidation of every
+# hooks.yaml-shaped layer onto this ONE fail-close check widened the blast
+# radius from "the 1-2 layers #5140/#5164 originally touched" to "every
+# hooks.yaml layer any operator config can write", so a real,
+# previously-working ``${REYN_MCP_REGISTRY_URLS}`` reference (meant for
+# ``expand_env``/``os.environ``, never this module) would now be
+# misidentified as reyn's OWN unresolved token and refuse the whole layer
+# — a real config silently breaking, not a hypothetical.
+#
+# The fix: fail-close membership is the ACTUAL name set this module can
+# supply a value for — :data:`~reyn.plugins.tokens.CLAUDE_ALIAS_MAP`'s own
+# keys plus every ``PluginTokenContext.tokens()`` key, PLUS
+# ``REYN_AGENT_NAME`` (#5140's own addition — supplied via an explicit
+# map to :func:`expand_with_map`, never through ``PluginTokenContext``
+# itself, so it is not already in either of the above and must be listed
+# here too). Anything else — including a genuine reyn-shaped TYPO like
+# ``${REYN_AGNT_NAME}`` — passes through untouched, same as any other
+# non-reyn token: distinguishing "meant to be a reyn token, misspelled"
+# from "a real env var that happens to share reyn's prefix" is not
+# reliably decidable from the string alone (architect's own recommendation,
+# issuecomment-5384269296).
+_KNOWN_REYN_TOKEN_NAMES: frozenset[str] = frozenset(
+    {"REYN_PLUGIN_ROOT", "REYN_PROJECT_DIR", "REYN_SKILL_DIR", "REYN_AGENT_NAME"}
+    | set(CLAUDE_ALIAS_MAP)
+)
 
 
 def find_unresolved_reyn_tokens(obj: Any) -> list[str]:
-    """Recursively collect every REMAINING ``${REYN_*}``/``${CLAUDE_*}``
-    placeholder in *obj* (post-:func:`expand_with_map`, typically).
+    """Recursively collect every REMAINING placeholder in *obj*
+    (post-:func:`expand_with_map`, typically) whose name is in reyn's OWN
+    known token vocabulary (:data:`_KNOWN_REYN_TOKEN_NAMES`) — never a
+    bare ``${REYN_*}``/``${CLAUDE_*}`` PREFIX match (#5176's own
+    correction — see that constant's docstring for why a prefix match is
+    the wrong test).
 
     #5140: the fail-close half of that issue's ruling — reyn's own token
     vocabulary left unresolved after reyn's own expansion pass means reyn
     could not supply a value it owns, which is reyn's bug, not an
-    operator's config choice (contrast with an arbitrary ``${VAR}``, which
-    a downstream consumer — e.g. a spawned child process inheriting the
-    env — may legitimately resolve later; this function does not flag
-    those at all). A caller finding this list non-empty should refuse to
-    use the expanded structure rather than silently proceed with an
-    empty/wrong value standing in for an unresolved token — see
-    ``config/loader.py``'s ``load_per_agent_hooks`` for the reference
-    caller."""
+    operator's config choice (contrast with an arbitrary ``${VAR}`` — a
+    REYN_/CLAUDE_-shaped one included — which a downstream consumer (e.g.
+    ``expand_env``, or a spawned child process inheriting the env) may
+    legitimately resolve later; this function does not flag those at
+    all). A caller finding this list non-empty should refuse to use the
+    expanded structure rather than silently proceed with an empty/wrong
+    value standing in for an unresolved token — see
+    ``config/loader.py``'s ``read_and_expand_hooks_yaml`` for the
+    reference caller."""
     if isinstance(obj, str):
-        return [m.group(0) for m in _UNRESOLVED_REYN_TOKEN_RE.finditer(obj)]
+        return [
+            m.group(0)
+            for m in _UNRESOLVED_REYN_TOKEN_RE.finditer(obj)
+            if m.group(1) in _KNOWN_REYN_TOKEN_NAMES
+        ]
     if isinstance(obj, dict):
         found: list[str] = []
         for v in obj.values():
