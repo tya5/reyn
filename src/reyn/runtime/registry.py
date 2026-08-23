@@ -3323,7 +3323,23 @@ class AgentRegistry:
         replaces (#5215 tried enforcing the OLD window with a guard on the
         READERS; withdrawn once found to be topology-dependent — this fix is
         the one architect named as the real one, closing the WRITER's own
-        window instead)."""
+        window instead).
+
+        Reorder safety: a GREP for a direct registry reach (registry/
+        get_session/attached_session/_peek/self._reg) inside ``load_
+        persisted_toggles``/``restore_state`` finds none — but this PR's
+        own TESTS-READ B (tui-coder) found a real INDIRECT one a grep
+        cannot see: ``load_persisted_toggles`` → ``CapabilityVisibility.
+        reapply_visibility_override`` → ``self.resolved_profile_for``
+        (THIS class's own method, below). Independently confirmed
+        harmless for the reorder: ``resolved_profile_for`` reads topology
+        bindings and capability-profile YAML files only — it never
+        touches ``self._sessions``/the session map, ``get_session``,
+        ``attached_session``, ``_peek_session``, or ``_pending_restore``
+        (same grep, same zero hits, re-run over its own body). Left here
+        because grep alone missed it once already — the next person
+        reordering something similar should trace the actual call graph
+        one level deeper than the direct-hit search, not just repeat it."""
         existing = self._peek_session(name)
         if existing is not None:
             return existing
