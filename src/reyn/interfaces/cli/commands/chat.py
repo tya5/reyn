@@ -699,9 +699,6 @@ def _run(args: argparse.Namespace) -> None:
             render_template_config=session_cfg.config.render_template,  # #2679: render_template output bounds
             state_log=state_log,
             budget_tracker=budget_tracker,
-            hooks_config=session_cfg.config.hooks,  # #1800 slice 5b (pass-through, not bundled)
-            composers_config=session_cfg.config.composers,  # Hook-Event Redesign Phase 4b/5 (pass-through, not bundled)
-            fs_watch_config=session_cfg.config.fs_watch,  # #2608 H4 (pass-through, not bundled)
             # #2093: the uniform reyn.yaml-derived per-session config bundle (sandbox /
             # multimodal / embedding / router / retry /
             # tool-use-scheme) — one source point for all five sites.
