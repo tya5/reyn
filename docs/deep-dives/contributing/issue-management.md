@@ -62,27 +62,36 @@ closing the unplanned ones inverts its purpose — it would leave the backlog
 holding only what is already being worked, which is what a project board is
 for, not what a backlog is for.
 
+No mechanism enforces this. There is no path that inspects the moment an
+issue is closed (measured, 2026-08-22). What holds it is a person.
+
 ## 4. Priority is a judgement, and it is the lead's
 
 Ordering a backlog is not a sort key — someone has to judge, and the
 judgement has to be defensible or it is decoration. Owner, verbatim: 「順序に
 は優先順位を判断しなきゃいけないんだよ？」.
 
-The axes below are taken from the repo's own charter (`docs/concepts/architecture/charter.md`)
-rather than invented for this purpose, in order:
+The axes below have five different sources — each is named plainly rather
+than folded into one blanket provenance claim, in order:
 
-1. **band** — violates the cross-cutting band (permission · audit-events ·
-   workspace-SSoT · crash-recovery/WAL · cost-budget/bounding). The charter
-   says a band failure does not ship, and band violations are exempt from
-   the count thresholds that otherwise suppress low-frequency work.
+1. **band** — the charter's own cross-cutting band (`docs/concepts/architecture/charter.md`):
+   permission · audit-events · workspace-SSoT · crash-recovery/WAL ·
+   cost-budget/bounding. The charter says a band failure does not ship, and
+   band violations are exempt from the count thresholds that otherwise
+   suppress low-frequency work.
 2. **owner-hit** — the operator hits it in the shipped configuration.
-   Broken-in-reality outranks unclean-in-design.
-3. **silent** — a wrong answer arrives with no signal. Nothing turns red, so
-   it survives indefinitely unless someone goes looking for it.
+   Derived from `CLAUDE.md`'s second gating question, "is this visible with
+   the shipped config?" — broken-in-reality outranks unclean-in-design.
+3. **silent** — a wrong answer arrives with no signal. Derived from
+   `CLAUDE.md`'s third gating question, "does the repair destroy the
+   evidence?" — a failure with no signal leaves nothing to repair from, so
+   nothing turns red and it survives indefinitely unless someone goes
+   looking for it.
 4. **blocks-others** — the absence of a mechanism stalls other sessions. One
-   defect here costs N people's time, not one.
-5. **thin areas** — Retrieval and Evaluation, which the charter names as the
-   areas where new work is most valuable.
+   defect here costs N people's time, not one. **This axis is the lead's own
+   addition** — it has no charter or `CLAUDE.md` basis.
+5. **thin areas** — Retrieval and Evaluation, which `CLAUDE.md` names as the
+   areas where new work is most valuable. (`CLAUDE.md`, not the charter.)
 
 Demotion axis: **ours-only** — an issue whose only consumer is our own
 process (not the operator, not the product) ranks below product work.
