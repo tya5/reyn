@@ -89,6 +89,61 @@ def _worker_revoke(ledger_path_str: str, legacy_path_str: str, key: str) -> None
     ledger.append_approval(key, False)
 
 
+def _diagnose_line_count_mismatch(raw_content: str, expected_total: int) -> str:
+    """#5192: build a SELF-DESCRIBING failure message for a line-count
+    mismatch instead of a bare ``got N``.
+
+    Architect ruling (issuecomment-5384594944, #5192): "increased" collapses
+    AT LEAST 4 structurally different causes into the same ``assert 401 ==
+    400`` — (1) a write split into two lines (the PIPE_BUF atomicity caveat
+    ``approval_ledger.py``'s own docstring names), (2) an embedded blank
+    line (a ``splitlines()`` vs a raw ``split("\\n")`` counting difference),
+    (3) a record of a DIFFERENT ``kind`` leaking in (``identity_bind``/a
+    migration record), (4) an exact-duplicate record. All four print the
+    identical bare number, so the NEXT failure must name which one — this
+    is the diagnostic, not a fix for any of the four.
+
+    Returns a multi-paragraph message naming: the per-``kind`` breakdown,
+    every line that failed to parse as JSON (raw bytes, not just a count —
+    witness for cause 1), how many embedded blank lines exist (witness for
+    cause 2), and any exact-duplicate line (witness for cause 4). Cause 3
+    falls out of the kind breakdown directly."""
+    raw_lines = raw_content.split("\n")
+    # A trailing "\n" (every successful _write_record ends with one) makes
+    # split("\n") emit one final "" that is NOT an embedded blank line —
+    # drop exactly that one, if present, before counting embedded blanks.
+    if raw_lines and raw_lines[-1] == "":
+        raw_lines = raw_lines[:-1]
+    blank_line_count = sum(1 for line in raw_lines if line == "")
+    non_blank_lines = [line for line in raw_lines if line != ""]
+
+    kind_counts: "dict[str, int]" = {}
+    unparseable: "list[str]" = []
+    seen: "dict[str, int]" = {}
+    duplicates: "list[str]" = []
+    for line in non_blank_lines:
+        seen[line] = seen.get(line, 0) + 1
+        if seen[line] == 2:  # report each duplicated line once, at its 2nd sighting
+            duplicates.append(line)
+        try:
+            rec = json.loads(line)
+        except json.JSONDecodeError:
+            unparseable.append(line)
+            continue
+        kind = rec.get("kind") if isinstance(rec, dict) else None
+        kind_counts[str(kind)] = kind_counts.get(str(kind), 0) + 1
+
+    return (
+        f"expected {expected_total} lines (no lost/dropped appends under real "
+        f"concurrent writers), got {len(non_blank_lines)} non-blank + "
+        f"{blank_line_count} blank = {len(raw_lines)} raw lines.\n"
+        f"  kind breakdown: {kind_counts!r}\n"
+        f"  unparseable lines ({len(unparseable)}): {unparseable!r}\n"
+        f"  embedded blank lines: {blank_line_count}\n"
+        f"  exact-duplicate lines ({len(duplicates)}): {duplicates!r}"
+    )
+
+
 def test_two_real_processes_approving_different_keys_both_survive(tmp_path: Path) -> None:
     """Tier 2: #5153 acceptance ① — two SEPARATE OS processes, each
     appending its OWN key many times concurrently, must both fully land
@@ -111,15 +166,35 @@ def test_two_real_processes_approving_different_keys_both_survive(tmp_path: Path
     assert p2.exitcode == 0
 
     ledger = ApprovalLedger(ledger_path)
-    lines = list(ledger.path.read_text(encoding="utf-8").splitlines())
+    raw_content = ledger.path.read_text(encoding="utf-8")
+    lines = raw_content.splitlines()
     expected_total = 2 * n
     written_total = len(lines)
-    assert written_total == expected_total, (
-        f"expected {expected_total} lines (no lost/dropped appends under "
-        f"real concurrent writers), got {written_total}"
+    assert written_total == expected_total, _diagnose_line_count_mismatch(
+        raw_content, expected_total,
     )
     for line in lines:
         json.loads(line)  # every line parses -- no interleaved corruption
+
+    # #5192 (architect ruling, issuecomment-5384594944): a RAW LINE count
+    # is the wrong population to assert "no increase" over -- an embedded
+    # blank line inflates it for a reason unrelated to record integrity.
+    # The record count iter_records()/fold() actually SEE is the real
+    # acceptance: exactly N records, kind breakdown included, so a future
+    # regression that leaks a stray identity_bind/migration record (or
+    # drops one) is caught by CONTENT, not by counting newlines.
+    records = list(ledger.iter_records())
+    kind_counts: "dict[str, int]" = {}
+    for rec in records:
+        kind_counts[str(rec.get("kind"))] = kind_counts.get(str(rec.get("kind")), 0) + 1
+    assert len(records) == expected_total, (
+        f"iter_records() saw {len(records)} records, expected {expected_total} "
+        f"(kind breakdown: {kind_counts!r})"
+    )
+    assert kind_counts == {"approval": expected_total}, (
+        f"unexpected kind breakdown: {kind_counts!r} -- every record here "
+        f"should be an 'approval' from _worker_append_many, nothing else"
+    )
 
     approvals, _bound = ledger.fold()
     # n is even, so the LAST record each process wrote (index n-1, odd) is
