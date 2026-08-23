@@ -113,7 +113,7 @@ reyn chat researcher
 
 ## Permission の動作
 
-`reyn chat` はインタラクティブです。サブ Skill がデフォルト外の Permission を必要とする場合、介入キュー経由で応答するまでプロンプトがブロックします。選択は `.reyn/approvals.yaml` に永続化できます（[permissions リファレンス](../config/permissions.md) を参照）。
+`reyn chat` はインタラクティブです。サブ Skill がデフォルト外の Permission を必要とする場合、介入キュー経由で応答するまでプロンプトがブロックします。選択は `.reyn/approvals.jsonl` に永続化できます（[permissions リファレンス](../config/permissions.md) を参照）。
 
 ## 例
 

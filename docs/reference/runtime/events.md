@@ -402,7 +402,7 @@ Each Control IR op kind emits its own event:
 | `index_updated` | `index_update` op — `source`, `added: int`, `updated: int`, `removed: int`, `skipped: int` |
 | `control_ir_skipped`, `control_ir_failed` | dispatch failures (`control_ir_skipped` reasons include `handler_not_implemented`) |
 | `permission_denied` | When an op is denied by the resolver |
-| `permission_approval_revoked`, `permission_approvals_cleared` | #5065 — a management operation on the SAVED-approvals store (`.reyn/approvals.yaml`), e.g. the `/api/permissions` REST router. Distinct from `permission_granted`/`permission_denied` above (those are in-run decisions, hence `run_id`/`actor`/`phase`; these happen outside any run, so they carry neither): `permission_approval_revoked` — `key`, `surface`; `permission_approvals_cleared` — `count`, `surface`. |
+| `permission_approval_revoked`, `permission_approvals_cleared` | #5065 — a management operation on the SAVED-approvals ledger (`.reyn/approvals.jsonl`), e.g. the `/api/permissions` REST router. Distinct from `permission_granted`/`permission_denied` above (those are in-run decisions, hence `run_id`/`actor`/`phase`; these happen outside any run, so they carry neither): `permission_approval_revoked` — `key`, `surface`; `permission_approvals_cleared` — `count`, `surface`. |
 
 ## MCP
 

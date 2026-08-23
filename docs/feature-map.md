@@ -474,7 +474,7 @@ Main reference: **[`reyn.yaml`](reference/config/reyn-yaml.md)**
 | Tier 1 — default-allow | `web_search` / `web_fetch` — deny-only gate | [Permission model](concepts/runtime/permission-model.md) · [Permissions config](reference/config/permissions.md) |
 | Tier 2/3 — declaration + 4-layer approval | `exec` (renamed from `shell` #3226 Phase 3) / `mcp` / `file` (out-of-zone) / `python` | [Permission model](concepts/runtime/permission-model.md) |
 | Layer 1: config pre-approval | `reyn.yaml` hard `allow` / `deny` | [Permissions config](reference/config/permissions.md) |
-| Layer 2: saved approvals | `.reyn/approvals.yaml` — persisted per path/server | [reyn permissions CLI](reference/cli/permissions.md) |
+| Layer 2: saved approvals | `.reyn/approvals.jsonl` — append-only ledger, persisted per path/server | [reyn permissions CLI](reference/cli/permissions.md) |
 | Layer 3: session approvals | In-memory for current invocation only | [Permission model](concepts/runtime/permission-model.md) |
 | Layer 4: interactive prompt | Ask user with persist choices (yes / always / just-this-path) | [Permission model](concepts/runtime/permission-model.md) |
 | Capability profile | Per-agent MCP / tool / category capability restriction (ProfileLayer in the ∩ model); agent can self-edit `.reyn/agents/<name>/profile.yaml` within the default write zone. A narrowed tool is withheld from the LLM's `tools=` catalog AND rejected if called anyway — both derived from the same resolved narrowing, re-derived when it changes mid-turn, so the model is never offered a capability the gate will refuse (#3378) | [Concepts: Capability profile](concepts/runtime/capability-profile.md) · Reference: profile.yaml |

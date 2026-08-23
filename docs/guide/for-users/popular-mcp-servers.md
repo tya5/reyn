@@ -108,9 +108,9 @@ Expected: `content[0].text` carries `{"timezone": "Asia/Tokyo", "datetime": "<IS
 ### Usage from chat
 
 ```bash
-echo 'mcp.time: true' >> .reyn/approvals.yaml
-
 reyn chat
+# first mcp_call_tool prompts for mcp.time -- choose [A]lways to persist
+# (writes to .reyn/approvals.jsonl, an append-only ledger -- #5153)
 > What time is it in Tokyo right now?
 ```
 
@@ -147,9 +147,9 @@ Expected: 3 most-recent commits / local branches listed.
 ### Usage from chat
 
 ```bash
-echo 'mcp.git: true' >> .reyn/approvals.yaml
-
 reyn chat
+# first mcp_call_tool prompts for mcp.git -- choose [A]lways to persist
+# (writes to .reyn/approvals.jsonl, an append-only ledger -- #5153)
 > Summarise the last 3 commits in this repo.
 ```
 
@@ -191,9 +191,9 @@ Expected: `structuredContent` carries `{"thoughtNumber": 1, ...}`.
 ### Usage from chat
 
 ```bash
-echo 'mcp.sequential-thinking: true' >> .reyn/approvals.yaml
-
 reyn chat
+# first mcp_call_tool prompts for mcp.sequential-thinking -- choose [A]lways to persist
+# (writes to .reyn/approvals.jsonl, an append-only ledger -- #5153)
 > Use sequential-thinking to plan how to organise a personal task list.
 ```
 
@@ -244,7 +244,8 @@ Expected: third call returns `[{'id': 1, 'msg': 'hello from sqlite mcp'}]`.
 ### Usage from chat
 
 ```bash
-echo 'mcp.sqlite: true' >> .reyn/approvals.yaml
+# first mcp_call_tool prompts for mcp.sqlite -- choose [A]lways to persist
+# (writes to .reyn/approvals.jsonl, an append-only ledger -- #5153)
 
 # (Optional) ensure clean history if you've previously interacted with sqlite:
 echo -n > .reyn/agents/default/history.jsonl
@@ -289,7 +290,8 @@ Expected: 13 tools listed; sum returns "The sum of 17 and 25 is 42.".
 ### Usage from chat
 
 ```bash
-echo 'mcp.everything: true' >> .reyn/approvals.yaml
+# first mcp_call_tool prompts for mcp.everything -- choose [A]lways to persist
+# (writes to .reyn/approvals.jsonl, an append-only ledger -- #5153)
 
 # Optional: clean history (= same caveat as sqlite)
 echo -n > .reyn/agents/default/history.jsonl
@@ -325,7 +327,9 @@ For any stdio-transport MCP server:
 
 ```bash
 reyn mcp install --source npm:<package>           # or pypi:<package>
-echo "mcp.<server-name>: true" >> .reyn/approvals.yaml
+# on the first tool call, choose [A]lways at the interactive prompt --
+# persists to .reyn/approvals.jsonl (an append-only ledger -- #5153),
+# no direct file edit needed
 reyn chat
 ```
 
@@ -339,7 +343,7 @@ requiring credentials: `reyn mcp set-secret <name> <KEY>` + reference
 | Symptom | Likely cause | Fix |
 |---|---|---|
 | Agent says "I cannot ..." even though the server is installed | History pollution (= prior refusal turn) | `echo -n > .reyn/agents/<name>/history.jsonl` then retry. See the history-pollution caveat above |
-| `MCP server <name> access denied` | Permission not pre-approved | `echo 'mcp.<name>: true' >> .reyn/approvals.yaml` |
+| `MCP server <name> access denied` | Permission not pre-approved | Re-run and choose `[A]lways` at the prompt, or pre-approve via `reyn.yaml`'s `permissions.mcp: {<name>: allow}` |
 | `not found` errors after install | Server uses uvx (Python) but `uv` not installed | `brew install uv` |
 | Server config in YAML missing `type: stdio` or has `server-` prefix | Outdated install path | Re-install via `reyn mcp install` |
 | MCP fetch / filesystem / memory installed but agent uses Reyn op instead | Reyn internal op (`web_fetch` / `file__*` / `memory_operation__*`) wins on natural prompts | Use `scripts/mcp_smoke.py` direct call; the MCP server isn't exercised through the chat router |

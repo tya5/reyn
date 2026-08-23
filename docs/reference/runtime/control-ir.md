@@ -1138,7 +1138,7 @@ Permission gates (§3.10 — composed from EXISTING gates, no new bool axis; the
    `require_plugin_git_run_code_trust` gate, checked BEFORE the fetch. This is
    the RCE trust boundary and is deliberately SEPARATE from `require_http_get`
    (the fetch axis): fetching bytes and RUNNING them are different decisions.
-   `require_http_get` is per-host, PERSISTENT (ALWAYS → `approvals.yaml`), and
+   `require_http_get` is per-host, PERSISTENT (ALWAYS → `approvals.jsonl`), and
    SHARED with `web.fetch`, so a host approved once for a web fetch must NOT
    thereby authorise installing + running its plugin code — else that host
    becomes a standing silent-RCE grant for every future git plugin. The

@@ -72,9 +72,9 @@ python scripts/mcp_smoke.py time get_current_time '{"timezone": "Asia/Tokyo"}'
 ### Usage from chat
 
 ```bash
-echo 'mcp.time: true' >> .reyn/approvals.yaml
-
 reyn chat
+# 最初の mcp_call_tool で mcp.time の承認を求められる -- [A]lways を選んで永続化
+# (.reyn/approvals.jsonl -- append-only ledger, #5153 -- へ書かれる)
 > What time is it in Tokyo right now?
 ```
 
@@ -108,9 +108,9 @@ python scripts/mcp_smoke.py git git_branch "{\"repo_path\": \"$PWD\", \"branch_t
 ### Usage from chat
 
 ```bash
-echo 'mcp.git: true' >> .reyn/approvals.yaml
-
 reyn chat
+# 最初の mcp_call_tool で mcp.git の承認を求められる -- [A]lways を選んで永続化
+# (.reyn/approvals.jsonl -- append-only ledger, #5153 -- へ書かれる)
 > Summarise the last 3 commits in this repo.
 ```
 
@@ -150,9 +150,9 @@ python scripts/mcp_smoke.py sequential-thinking sequentialthinking '{
 ### Usage from chat
 
 ```bash
-echo 'mcp.sequential-thinking: true' >> .reyn/approvals.yaml
-
 reyn chat
+# 最初の mcp_call_tool で mcp.sequential-thinking の承認を求められる -- [A]lways を選んで永続化
+# (.reyn/approvals.jsonl -- append-only ledger, #5153 -- へ書かれる)
 > Use sequential-thinking to plan how to organise a personal task list.
 ```
 
@@ -195,7 +195,8 @@ python scripts/mcp_smoke.py sqlite read_query \
 ### Usage from chat
 
 ```bash
-echo 'mcp.sqlite: true' >> .reyn/approvals.yaml
+# 最初の mcp_call_tool で mcp.sqlite の承認を求められる -- [A]lways を選んで永続化
+# (.reyn/approvals.jsonl -- append-only ledger, #5153 -- へ書かれる)
 
 # (任意) 以前 sqlite とやり取りしている場合は履歴をクリーンに:
 echo -n > .reyn/agents/default/history.jsonl
@@ -237,7 +238,8 @@ python scripts/mcp_smoke.py everything echo '{"message": "hello"}'
 ### Usage from chat
 
 ```bash
-echo 'mcp.everything: true' >> .reyn/approvals.yaml
+# 最初の mcp_call_tool で mcp.everything の承認を求められる -- [A]lways を選んで永続化
+# (.reyn/approvals.jsonl -- append-only ledger, #5153 -- へ書かれる)
 
 # 任意: 履歴をクリーンに（= sqlite と同じ注意）
 echo -n > .reyn/agents/default/history.jsonl
@@ -269,7 +271,9 @@ stdio トランスポートの任意の MCP サーバーについて:
 
 ```bash
 reyn mcp install --source npm:<package>           # または pypi:<package>
-echo "mcp.<server-name>: true" >> .reyn/approvals.yaml
+# 最初のtool callでインタラクティブプロンプトが出るので [A]lways を選ぶ --
+# .reyn/approvals.jsonl(append-only ledger -- #5153)へ永続化される、
+# 直接ファイルを編集する必要はない
 reyn chat
 ```
 
@@ -280,7 +284,7 @@ install コマンドはローダーが読み込める設定を自動で書き込
 | 症状 | 考えられる原因 | 対処 |
 |---|---|---|
 | サーバーがインストール済みなのにエージェントが「I cannot ...」と言う | 履歴汚染（= 過去の拒否ターン） | `echo -n > .reyn/agents/<name>/history.jsonl` してリトライ。上記の履歴汚染の注意を参照 |
-| `MCP server <name> access denied` | permission が未承認 | `echo 'mcp.<name>: true' >> .reyn/approvals.yaml` |
+| `MCP server <name> access denied` | permission が未承認 | 再実行してプロンプトで `[A]lways` を選ぶか、`reyn.yaml` の `permissions.mcp: {<name>: allow}` で事前承認 |
 | install 後の `not found` エラー | サーバーが uvx（Python）を使うが `uv` 未インストール | `brew install uv` |
 | YAML のサーバー設定に `type: stdio` が無い、または `server-` 接頭辞がある | 古い install 経路 | `reyn mcp install` で再インストール |
 | MCP fetch / filesystem / memory をインストールしたのにエージェントが Reyn op を使う | Reyn 内部 op（`web_fetch` / `file__*` / `memory_operation__*`）が自然プロンプトで勝つ | `scripts/mcp_smoke.py` の直接呼び出しを使う; MCP サーバーはチャットルーター経由では動かない |

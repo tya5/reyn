@@ -34,7 +34,8 @@ Read/glob/grep anywhere under the project root. Write/edit/delete only under `.r
 
 | Protected path | Backs | Why carved out |
 |---|---|---|
-| `.reyn/approvals.yaml` | The persistent approval store — only the runtime authorization flow writes here | Permanent. It *is* the approval gate; there is no later use-gate, so a direct write would silently activate a never-approved grant on the next startup (#1199). |
+| `.reyn/approvals.yaml` (legacy) | Migrated once into the live ledger below, never written to again | Permanent. It *is* the approval gate; there is no later use-gate, so a direct write would silently activate a never-approved grant on the next startup (#1199). |
+| `.reyn/approvals.jsonl` ⚠️ | The current persistent approval ledger (#5153) — only the runtime authorization flow appends here | **Known gap, not yet closed** (#5173): the carve-out list this table describes was never updated when the live store moved from `approvals.yaml` to `approvals.jsonl` — as of this writing a direct write to `approvals.jsonl` is NOT blocked, reopening the exact #1199 class this row exists to close. |
 | `.reyn/index/sources.yaml` | Index source registry | Transitional — carved out until the index write-gate is effective end-to-end (#1320: the postprocessor scope must carry a sandbox-policy source; the S3.4 part1 op-layer gate alone does not fire in the real index flow). |
 
 **Protect-at-use (principle).** A config-write carve-out is *redundant* when the capability it configures is gated downstream at use time. `.reyn/config/mcp.yaml` and `.reyn/config/cron.yaml` were therefore **removed** from the carve-out:
@@ -60,7 +61,7 @@ An actor that needs something outside the defaults is declared in `reyn.yaml`'s 
   [N] deny
 ```
 
-Persistent choices land in `.reyn/approvals.yaml` keyed by `<actor>/<op>/<path>` (e.g. `chat_router/file.write//tmp/output`). Keys are actor-scoped — one actor's approval doesn't leak to another (`security/permissions/permissions.py`: "Approval keys are actor-scoped to prevent external-actor privilege escalation"). `actor` identifies the calling subsystem (e.g. `chat_router` for the LLM-router-driven op path, or a background caller like `hooks`/`cron`), not an individual named agent.
+Persistent choices land in `.reyn/approvals.jsonl` (an append-only ledger — #5153; one JSONL record per decision, folded on read, last record per key wins) keyed by `<actor>/<op>/<path>` (e.g. `chat_router/file.write//tmp/output`). Keys are actor-scoped — one actor's approval doesn't leak to another (`security/permissions/permissions.py`: "Approval keys are actor-scoped to prevent external-actor privilege escalation"). `actor` identifies the calling subsystem (e.g. `chat_router` for the LLM-router-driven op path, or a background caller like `hooks`/`cron`), not an individual named agent. A pre-#5153 `.reyn/approvals.yaml` snapshot is migrated into the ledger once, on first touch, then never read again.
 
 For a `file.read`/`file.write` (path-flavor) key, the key match is necessary but no longer sufficient (#5042): the approved path's own identity (`st_ino` + `st_birthtime`, degrading to `ino`-only where `st_birthtime` is unavailable) is bound on first use and re-checked on every later match. A later object at the same path with a different identity — the target was deleted and something else created at the same name — is treated as not matching, so a purge-and-recreate at the same path re-prompts instead of silently inheriting the old grant. The approval row itself is untouched by a mismatch; only a NEW use at that path is refused.
 
@@ -87,7 +88,7 @@ Use sparingly — `allow` removes the prompt entirely.
 
 ## Non-interactive runs
 
-A run with no intervention bus wired (CI, scripted automation, any context without an interactive TTY) proceeds without prompts. Approvals must be in place beforehand: either pre-approved in `reyn.yaml` or persisted to `.reyn/approvals.yaml` from a prior interactive run.
+A run with no intervention bus wired (CI, scripted automation, any context without an interactive TTY) proceeds without prompts. Approvals must be in place beforehand: either pre-approved in `reyn.yaml` or persisted to `.reyn/approvals.jsonl` from a prior interactive run.
 
 This is the same trust model: the automation doesn't get to decide what's safe; you do, in advance.
 
@@ -170,7 +171,7 @@ Four resolution layers in `PermissionResolver._approve()`:
 | Layer | Source | Persistence |
 |---|---|---|
 | 1 | `reyn.yaml` `permissions.<key>` | Static config |
-| 2 | `.reyn/approvals.yaml` | Cross-session |
+| 2 | `.reyn/approvals.jsonl` | Cross-session |
 | 3 | In-memory session decision | Session only |
 | 4 | Interactive prompt | → Layer 2 or 3 |
 
@@ -443,7 +444,7 @@ During Phases 1–4 the bool form (= `mcp_install: true`) is accepted as a compa
 
 Phase 7 finishes the alignment by giving the `http.get` axis the same prompt model as `file.write`:
 
-- **Specific declared host** (`http.get: [{host: "api.github.com"}]`) — `startup_guard` prompts the operator once per `<skill, host>` and persists the decision to approvals.yaml under `<skill>/http.get/<host>`. Runtime is then silent. Mirrors `file.write` for paths outside the default zone.
+- **Specific declared host** (`http.get: [{host: "api.github.com"}]`) — `startup_guard` prompts the operator once per `<skill, host>` and persists the decision to approvals.jsonl under `<skill>/http.get/<host>`. Runtime is then silent. Mirrors `file.write` for paths outside the default zone.
 - **Wildcard** (`http.get: [{host: "*"}]` or `["*"]`) — host set is unknown at write-time (= LLM picks at runtime, e.g. `web_fetch` follow-up of `web_search` results), so the prompt fires at the actual host gate inside `require_http_get`. Same `<skill>/http.get/<host>` persistence; ALWAYS / NEVER choices apply per host.
 - **No declaration** — legacy `web.fetch` compat path with a `DeprecationWarning` until the segmented-migration window closes; existing workflows that relied on Tier-1 default-allow keep working.
 
@@ -603,14 +604,14 @@ See [reyn-yaml § safety.spawn](../../reference/config/reyn-yaml.md#safetyspawn-
 ## What the permission system is NOT
 
 - **Not a Linux capability sandbox.** A Python step's subprocess runs as the same user; the AST allowlist is honor-system, and reyn doesn't sandbox the kernel (that layer is `sandboxed_exec`).
-- **Not a secret keeper.** Don't put credentials in approvals.yaml or rely on permissions to hide environment variables. Use [Concepts: secret handling](../runtime/secret-handling.md) for credentials.
+- **Not a secret keeper.** Don't put credentials in approvals.jsonl or rely on permissions to hide environment variables. Use [Concepts: secret handling](../runtime/secret-handling.md) for credentials.
 - **Not protection against the user.** If you `permissions: exec: allow` in reyn.yaml, you've authorized exec. The system is protecting against accidental capability creep, not user intent.
 
 ## See also
 
 - [Reference: permissions](../../reference/config/permissions.md) — full schema
 - [Reference: reyn.yaml](../../reference/config/reyn-yaml.md) — `permissions:` key, including the current `file.write` + `http.get` MCP install gate
-- [Reference: state-dir](../../reference/config/state-dir.md) — `.reyn/approvals.yaml`
+- [Reference: state-dir](../../reference/config/state-dir.md) — `.reyn/approvals.jsonl`
 - [Concepts: secret handling](../runtime/secret-handling.md) — credential storage (`~/.reyn/secrets.env`)
 - [Reference: `reyn mcp`](../../reference/cli/mcp.md) — `install` subcommand and its permission gate
 - [How-to: manage permissions](../../guide/for-users/manage-permissions.md)

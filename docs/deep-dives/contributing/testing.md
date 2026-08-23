@@ -905,7 +905,7 @@ Tests **must not** modify the developer's real `~/.reyn/` files. The repository'
 - `secrets.store.save_secret()` / `clear_secret()` / `load_secrets()` go to `tmp_path` automatically — no `monkeypatch.setattr` needed in individual tests.
 - `reyn secret {set,list,clear,rotate}` CLI tests inherit the same isolation.
 
-When adding new infra that touches user home (`~/.reyn/registry-cache/`, `~/.reyn/approvals.yaml`, etc.), follow the same pattern:
+When adding new infra that touches user home (`~/.reyn/registry-cache/`, `~/.reyn/approvals.jsonl`, etc.), follow the same pattern:
 
 1. Make the path resolver consult an env var (`REYN_*_PATH`) at call time, falling back to `Path.home() / ".reyn" / ...`.
 2. Add an autouse fixture in `conftest.py` that points the env var at `tmp_path`.

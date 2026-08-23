@@ -2,7 +2,7 @@
 type: how-to
 topic: config
 audience: [human]
-applies_to: [reyn.yaml, .reyn/approvals.yaml, phases/*.md]
+applies_to: [reyn.yaml, .reyn/approvals.jsonl, phases/*.md]
 ---
 
 # Manage permissions
@@ -14,7 +14,7 @@ applies_to: [reyn.yaml, .reyn/approvals.yaml, phases/*.md]
 | Layer | Lives in | Granularity |
 |-------|----------|-------------|
 | Phase declaration | Phase frontmatter | Per phase + per (op, path) |
-| Saved approvals | `.reyn/approvals.yaml` | Per (workflow, op, path) |
+| Saved approvals | `.reyn/approvals.jsonl` | Per (workflow, op, path) |
 | Project-wide pre-approval | `reyn.yaml` `permissions:` | Per op kind |
 
 The defaults are conservative; the rest is opt-in. See the [permission model concept](../../concepts/runtime/permission-model.md) for the why.
@@ -56,7 +56,7 @@ When the workflow needs something not in the defaults, the runtime prompts:
   [N] deny
 ```
 
-`j` and `r` write to `.reyn/approvals.yaml`.
+`j` and `r` append a record to `.reyn/approvals.jsonl` (an append-only ledger — #5153).
 
 ## Pre-approve project-wide
 

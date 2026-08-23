@@ -315,6 +315,8 @@ natural `allowed_mcp` key (no YAML rename).
 **Verification:** `_DEFAULT_WRITE_ZONES = (".reyn",)` and
 `_CANONICAL_PROTECTED_WRITE_PATHS` contains only `.reyn/approvals.yaml` and
 `.reyn/index/sources.yaml`. Confirmed in `src/reyn/security/permissions/permissions.py`.
+⚠️ **Stale since #5153** (known gap, #5173): the live approval store moved to
+`.reyn/approvals.jsonl`, which this list does not carve out.
 
 ## Reload
 

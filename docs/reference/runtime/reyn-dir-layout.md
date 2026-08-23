@@ -23,7 +23,7 @@ Everything else is excluded, by one of four reasons:
 | Category | Handling on rewind / recovery | Subtrees |
 |---|---|---|
 | **recovery-core** | captured + restored (reconstructed) | `state/`, `config/` |
-| **persist** (knowledge / decisions) | survives rewind — never reverted | `memory/`, `approvals.yaml` |
+| **persist** (knowledge / decisions) | survives rewind — never reverted | `memory/`, `approvals.jsonl` |
 | **audit** (write-only record) | kept as a record, never restored | `events/`, `traces/`, `logs/`, `audit-trail/`, `tool-results/`, `media/` |
 | **cache** (derived) | rebuilt after restore | `cache/` (`index/` — includes the `actions` source since FP-0057 Phase 0 — `registry-cache/`, `*_cursor`, `budget_checkpoint.json`) |
 | **outside** (operator/user-owned) | not Reyn-managed for time-travel | `reyn.yaml`, `secrets.env`, `oauth_tokens.json`, `capability_profiles/` |
@@ -82,7 +82,9 @@ Everything else is excluded, by one of four reasons:
 │                           unbounded growth) but does NOT rebuild if the
 │                           manifest FILE ITSELF is deleted — pruning and
 │                           rebuilding are not the same claim.
-├── approvals.yaml          PERSIST — user-authored permission grants; survive rewind
+├── approvals.jsonl         PERSIST — user-authored permission grants, append-only ledger
+│                           (#5153); survive rewind. approvals.yaml (legacy snapshot) is
+│                           migrated into this once, on first touch, then inert history.
 ├── events/ traces/ logs/   AUDIT — append-only forensic record; never restored
 │   audit-trail/ tool-results/ media/
 ├── cache/                  DERIVED — rebuilt after restore. ⚠️ "rebuilt after
@@ -140,7 +142,7 @@ mixed in at the top level) should know things moved:
 | `.reyn/mcp.yaml`, `.reyn/cron.yaml`, `.reyn/hooks.yaml` | `.reyn/config/<x>.yaml` |
 | `.reyn/index/sources.yaml` | `.reyn/config/index/sources.yaml` |
 | `.reyn/index/` (data), `.reyn/action_index/`, `.reyn/registry-cache/` | `.reyn/cache/…` |
-| `.reyn/approvals.yaml` | **unchanged** (top-level — it is *persist*, not recovery-core config) |
+| `.reyn/approvals.yaml` | `.reyn/approvals.jsonl` (#5153 — still top-level *persist*, not recovery-core config; `approvals.yaml` migrates in once, then is inert) |
 
 `integrations.yaml` is deliberately absent from this table (#4337): no reader/writer for it
 exists at either the old or the new location, so there is nothing that actually moved — see
@@ -210,18 +212,23 @@ To change config, call the dedicated op (which writes the `.yaml` as a **new con
 - hooks → `hooks_add`
 - index sources → the index ops
 
-`approvals.yaml` (top-level *persist*) is likewise write-gated for its primary writer — the
-security-side permission-approval flow (`_persist`) never does a raw `file.write`. The
-`/api/permissions` REST router's own management operations (`revoke_permission` /
-`clear_permissions`, `interfaces/web/routers/permissions.py`) are a SECOND, direct writer
-(`_save`, a raw `path.write_text`) — write-gating does not apply to `approvals.yaml` the way
-it applies to `config/`/`state/` (there is no dedicated-op enforcement mechanism for a
-top-level *persist* file), so this second writer is legitimate, not a violation. What it must
-not do is write silently: each REST route above emits its own audit-event
-(`permission_approval_revoked` / `permission_approvals_cleared`, #5065) alongside the raw
-write, so `approvals.yaml`'s permission-shape changes stay observable through
-`.reyn/events` regardless of which of the two writers made them. `memory/`, `cache/`, and
+`approvals.jsonl` (top-level *persist*) is likewise write-gated for its primary writer — the
+security-side permission-approval flow (`_persist`) never does a raw `file.write`. **#5153**
+moved every writer (`_persist`, the CLI's `reyn permissions revoke`/`clear`, and the
+`/api/permissions` REST router's `revoke_permission`/`clear_permissions`,
+`interfaces/web/routers/permissions.py`) onto the SAME `ApprovalLedger.append_approval`
+primitive — an append-only, fsync'd-per-line record, never a snapshot read-modify-write —
+closing what used to be a second, independent `_save` (`path.write_text`) writer with its own
+race exposure. What it must not do is append silently: each REST route above still emits its
+own audit-event (`permission_approval_revoked` / `permission_approvals_cleared`, #5065)
+alongside the append, so `approvals.jsonl`'s permission-shape changes stay observable through
+`.reyn/events` regardless of which caller made them. `memory/`, `cache/`, and
 other non-recovery-core `.reyn/` paths are ordinary writable zones.
+
+⚠️ **Known gap** (#5173): the write-gate carve-out for `approvals.jsonl` itself was never
+added when the live store moved off `approvals.yaml` (still the only entry in
+`_CANONICAL_PROTECTED_WRITE_PATHS`, above) — a direct `file.write` to `approvals.jsonl` is
+currently NOT blocked, reopening the exact class #1199 exists to close.
 
 ## Where does a new subsystem put its data?
 

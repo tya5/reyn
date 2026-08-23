@@ -280,14 +280,14 @@ async op-handler client (`reyn.core.registry.client`) と safe-mode skill-intern
 
 live per-session reloader を伴う chat 駆動の install は config を書くだけでなく、 先に server を probe します（spawn/connect + `list_tools`）— 失敗/cancel/deny された probe は `.reyn/config/mcp.yaml` を変更しません（probe-then-commit; [CLI reference](../../reference/cli/mcp.md) → "Persistence asymmetry" 参照）。 この probe は config が authoritative になる *前* に、 model/plugin 供給の server 名へ張られる LIVE な接続です — #3552 以前は上記の `file.write` + `http.get` だけが install の gate で、 どちらも MCP 軸ではないため、 probe は MCP 軸のチェックを一切経ずにネットワークへ到達していました。
 
-probe は今、 先に `require_mcp` を呼び出します — 下の「ランタイムゲート」に書かれているのと全く同じゲート（interactive な "Allow access to MCP server X?" 承認、 同じく `.reyn/approvals.yaml` に永続化、 加えて per-session `ContextualLayer` narrowing）を、 既に設定済みの server ではなく、 これから probe される server 名に対して適用したものです。 したがって pre-commit probe と install 後の use のどちらの時点でも、 未承認の server へのネットワーク到達はこの同一ゲートを経由せずには起こり得ません。 deny は decision-enabling な `PermissionError`（server 名とその許可方法を明示）を raise し、 `op_runtime` の他のどの permission denial とも同じ形の `status:"denied"` として現れます — 無言でスキップされることはありません。
+probe は今、 先に `require_mcp` を呼び出します — 下の「ランタイムゲート」に書かれているのと全く同じゲート（interactive な "Allow access to MCP server X?" 承認、 同じく `.reyn/approvals.jsonl` に永続化、 加えて per-session `ContextualLayer` narrowing）を、 既に設定済みの server ではなく、 これから probe される server 名に対して適用したものです。 したがって pre-commit probe と install 後の use のどちらの時点でも、 未承認の server へのネットワーク到達はこの同一ゲートを経由せずには起こり得ません。 deny は decision-enabling な `PermissionError`（server 名とその許可方法を明示）を raise し、 `op_runtime` の他のどの permission denial とも同じ形の `status:"denied"` として現れます — 無言でスキップされることはありません。
 
 ### ランタイムゲート: `permissions.mcp`
 
 MCP 呼び出しはプロセスを離れる前に 2 つのチェックを通過します：
 
 1. **Phase 宣言。** Phase は frontmatter の `permissions.mcp` に使用したいサーバーを必ずリストアップしなければなりません。ランタイムは `require_mcp(decl, server, ...)` を呼び出し、`server not in decl.mcp` の場合は宣言欠落を明示したエラーで失敗します。
-2. **承認。** 他のケイパビリティと同様に、ワークフローごとの初回呼び出しでプロンプトが表示されます（`y` / `j` / `r` / `N`）。永続的な承認は `.reyn/approvals.yaml` に `<skill>/mcp.<server>` キーで保存されます。プロジェクト全体を信頼できる場合は `reyn.yaml` で `permissions.mcp: allow` と設定して事前承認できます。
+2. **承認。** 他のケイパビリティと同様に、ワークフローごとの初回呼び出しでプロンプトが表示されます（`y` / `j` / `r` / `N`）。永続的な承認は `.reyn/approvals.jsonl`(append-only ledger — #5153)に `<skill>/mcp.<server>` キーで保存されます。プロジェクト全体を信頼できる場合は `reyn.yaml` で `permissions.mcp: allow` と設定して事前承認できます。
 
 これは reyn の一般的なパーミッションモデルと一致します（[../runtime/permission-model.md](../runtime/permission-model.md) 参照）。ある Skill の MCP 承認が別の Skill に漏れることはなく、`run_skill` 経由で起動したサブスキルは独自にパーミッションを要求します。
 

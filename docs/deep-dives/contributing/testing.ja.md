@@ -317,7 +317,7 @@ def test_ledger_jsonl_format_during_migration():
 - `secrets.store.save_secret()` / `clear_secret()` / `load_secrets()` は自動的に `tmp_path` 配下に行きます。 個別テストで `monkeypatch.setattr` は不要。
 - `reyn secret {set,list,clear,rotate}` CLI のテストも同じ isolation を継承します。
 
-User home (`~/.reyn/registry-cache/`、 `~/.reyn/approvals.yaml` 等) に触れる新 infra を追加する時は、 同 pattern に従ってください:
+User home (`~/.reyn/registry-cache/`、 `~/.reyn/approvals.jsonl` 等) に触れる新 infra を追加する時は、 同 pattern に従ってください:
 
 1. パス resolver が呼出時に env var (`REYN_*_PATH`) を参照、 default は `Path.home() / ".reyn" / ...` で fallback。
 2. `conftest.py` に autouse fixture を追加、 env var を `tmp_path` に向ける。
