@@ -7,6 +7,17 @@ Subscribe call: `src/reyn/mcp/client.py`.
 The notification carries the **URI, not the resource body** -- the reacting
 side re-reads.
 
+**Getting subscribed (#5167).** A hook whose `matcher` names a CONCRETE
+`server` and a non-glob `uri` (e.g. `{"server": "docs", "uri":
+"orch://job/42/done"}`) is subscribed AUTOMATICALLY at session start -- no
+tool call needed on your plugin's part. A hook whose `matcher` globs `uri`
+(see below) is NOT auto-subscribed -- the agent still needs to call
+`subscribe_mcp_resource` explicitly for each concrete URI that pattern is
+meant to cover, since a glob names a SET of resources, not the one exact URI
+an MCP subscribe request requires. If your plugin's design depends on a
+specific URI firing without the agent ever having to call the tool, declare
+that URI literally rather than only under a glob matcher.
+
 **The URI is your signal namespace.** `matcher` glob-matches `uri` (see the
 glob-field set in `src/reyn/hooks/matcher.py`), so ONE hook point carries
 unlimited distinct signals: `orch://job/<id>/done`, `orch://job/<id>/failed`,

@@ -235,11 +235,34 @@ outside that loop: today, a subscribed MCP resource changing.
 ### `mcp_resource_updated`
 
 Fires when a server pushes a `resources/updated` notification for a resource
-this session subscribed to via `subscribe_mcp_resource` (see
+this session subscribed to (see
 [Resource subscriptions](../tools-integrations/mcp.md#resource-subscriptions-the-async-push-event-source)).
 Delivered from the MCP receive-loop task through a bounded queue drained on
 the session's own event loop — not from the agent's own turn/task machinery
 — so it can fire between turns, not only at a turn/task boundary.
+
+**Auto-subscribe at session start (#5167).** Declaring an `mcp_resource_updated`
+hook whose `matcher` names a CONCRETE `server` and a non-glob `uri` subscribes
+that resource automatically when the session starts — no `subscribe_mcp_resource`
+tool call, and no LLM turn, ever required. This closes a gap the mechanism
+originally shipped with: subscribing was previously reachable ONLY through the
+LLM-facing tool, so a declared hook whose agent happened never to call it
+silently never fired, with no warning anywhere — a declaration's effect
+depending on the agent's own turn-to-turn behaviour, the opposite of this
+system's usual "declared = honored deterministically" contract.
+
+A matcher with a *glob* `uri` (e.g. `{"server": "docs", "uri":
+"orch://job/*/progress"}`) is still valid and still narrows which pushes the
+hook reacts to — but it is not something reyn can auto-subscribe to (an MCP
+`resources/subscribe` request needs one exact URI). Same for a matcher missing
+`server`/`uri` entirely, or naming an unconfigured server. In every such case
+the agent's own explicit `subscribe_mcp_resource` tool call still works exactly
+as before; auto-subscribe never invents an ambiguous subscription, it only
+removes the LLM-turn dependency for the unambiguous case. Every case
+auto-subscribe cannot honor — including a genuine permission denial or a
+subscribe-level failure — emits a `mcp_hook_subscribe_not_applied` warning +
+audit-event naming the hook (see [Reference: events § MCP](../../reference/runtime/events.md#mcp)),
+so a declaration's non-effect is never silent.
 
 Template vars available to `template_push` / `pipeline_launch` rendering:
 
