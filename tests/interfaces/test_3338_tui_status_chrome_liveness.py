@@ -836,6 +836,64 @@ async def test_status_line_refreshes_on_event_frames_alone(tmp_path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_agent_name_reactive_refreshes_status_line_with_no_frame(
+    tmp_path,
+) -> None:
+    """Tier 2: #5131 — ``TextualChatApp._agent_name`` is now a Textual
+    ``reactive``; ASSIGNING it fires :meth:`TextualChatApp.watch__agent_name`
+    synchronously, refreshing :class:`StatusLine` with no server frame
+    involved at all.
+
+    This is the improvement the migration adds, not merely a
+    non-regression: before #5131, ``_agent_name`` was a plain attribute, and
+    nothing but the next :meth:`TextualChatApp._refresh_live_chrome` frame
+    tick would have picked up a change — a session switch sitting idle
+    between real frames would show a STALE agent name in the status line
+    until something else happened to redraw. Here there is no
+    ``transport.push_event`` and no extra ``pilot.pause()`` after the
+    assignment: if the watcher did not fire synchronously, the assertion
+    below would see the OLD name.
+
+    ``attached_name`` is cleared from the snapshot: ``status_line_text``
+    prefers ``snap["attached_name"]`` over the ``agent_name`` argument
+    (chrome.py's own ``agent = snap.get("attached_name") or agent_name``),
+    so leaving it set would let the snapshot's OWN agent field mask
+    whatever ``self._agent_name`` says — exactly the confound this test
+    must not have.
+
+    The replacement name is deliberately the SAME LENGTH as the original
+    (``MenuBar.update_status``'s ``changed_len`` branch remounts the whole
+    row via an async ``mount_all`` for a length change — a real effect, but
+    one that would force a ``pilot.pause()`` here for an unrelated reason,
+    diluting what this test is isolating). Same length takes the OTHER
+    branch — a direct, synchronous ``StatusLine.update(text)`` — so the
+    assertion below with NO intervening ``await`` is a clean witness of the
+    watcher firing synchronously off the plain assignment."""
+    from reyn.interfaces.inline.textual_chat import StatusLine, TextualChatApp
+
+    snap, _session, _registry = await _real_snapshot(tmp_path)
+    snap["attached_name"] = None
+    read_model = _MutableSnapshotReadModel(snap)
+    transport = _EventOnlyTransport()
+    app = TextualChatApp(transport=transport, read_model=read_model)
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        before = str(app.query_one(StatusLine).render())
+        assert app.agent_name in before, f"initial agent name missing: {before}"
+
+        new_name = "z" * len(app.agent_name)
+        assert new_name != app.agent_name
+        app._agent_name = new_name
+
+        after = str(app.query_one(StatusLine).render())
+        assert new_name in after, (
+            f"status line did not refresh synchronously off the reactive "
+            f"assignment (no frame arrived): {after}"
+        )
+
+
+@pytest.mark.asyncio
 async def test_open_pane_updates_on_frame_and_closed_panes_do_not(tmp_path) -> None:
     """Tier 2: a drawer pane left OPEN keeps updating as frames land (it used to
     be built exactly once, at open time, and then froze) — AND a pane that is NOT

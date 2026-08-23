@@ -44,6 +44,7 @@ from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal
 from textual.message import Message
+from textual.reactive import reactive
 from textual.widgets import ContentSwitcher, OptionList, Static
 from textual_flowview import (
     Anchor,
@@ -1228,6 +1229,20 @@ class TextualChatApp(App):
         "_call_parents",
     )
 
+    #: #5131 (architect ruling): the FIRST "state down" migration target —
+    #: which agent this App is currently showing. A Textual ``reactive``,
+    #: not a plain attribute: every read site below is unchanged (the
+    #: descriptor is transparent to ``self._agent_name`` reads/writes), but
+    #: a WRITE now synchronously fires :meth:`watch__agent_name`, which
+    #: refreshes every consumer from ONE canonical trigger instead of
+    #: relying on the next per-frame :meth:`_refresh_live_chrome` call to
+    #: eventually catch up (the exact "stale until something else redraws"
+    #: gap #5131 names — idle between real server frames, nothing was
+    #: forcing an immediate refresh). ``init=False``: the constructor's own
+    #: assignment (below) must NOT fire the watcher before ``compose()``
+    #: has built the widget tree — see that watch method's own docstring.
+    _agent_name: "reactive[str]" = reactive("", init=False)
+
     def __init__(
         self,
         *,
@@ -1612,6 +1627,15 @@ class TextualChatApp(App):
         # one moved AWAY from is tracked here — it needs its gutter re-derived
         # too, otherwise the rail is left behind on it.
         self._marked_cursor: "Entry[OutboxMessage] | None" = None
+
+    @property
+    def agent_name(self) -> str:
+        """#5131: public read of :attr:`_agent_name` — which agent this App
+        is currently showing. Never reach into ``self._agent_name`` directly
+        from a test asserting on it (the testing policy forbids a
+        private-state assertion); this property is the public surface that
+        exists for exactly that observation."""
+        return self._agent_name
 
     @property
     def cursor_position(self) -> "Offset":
@@ -6502,6 +6526,41 @@ class TextualChatApp(App):
         except Exception:
             return  # not yet mounted
         menubar.update_status(self._status_text(snap))
+
+    def watch__agent_name(self, old_value: str, new_value: str) -> None:
+        """#5131: the App is now showing a DIFFERENT agent (init or a real
+        session switch — Textual's reactive default (``always_update=
+        False``) means this never fires for a same-value reassignment).
+        Refresh every consumer that derives its content from
+        :attr:`_agent_name` from this ONE canonical trigger, synchronously,
+        rather than waiting for the next :meth:`_refresh_live_chrome` per-
+        frame call to eventually catch up — closing the exact "stale
+        between real server frames" gap #5131 names for the status line
+        and the currently-open drawer pane (History/Agent/etc.). Mirrors
+        :meth:`_refresh_live_chrome`'s own two calls exactly, so this is
+        strictly an ADDITIONAL, earlier trigger for the SAME refresh path,
+        not a new one — no behavior change for a caller already relying on
+        the per-frame refresh.
+
+        Does not (yet) touch :attr:`_iv_panel` — #5131's own "announce"
+        consumer is a separate, NOT-yet-migrated follow-up (it has its own
+        parallel pending/answered state, not just a re-derivation of a
+        snapshot the way the status line and drawer panes are); folding it
+        in here would be a second, independent change bundled into this
+        one, not this migration's first slice.
+
+        No mount guard needed: both calls below already no-op safely pre-
+        mount via their own ``try: self.query_one(...) except Exception:
+        return`` (the exact same guard :meth:`_refresh_live_chrome` relies
+        on for the identical reason)."""
+        self._refresh_status()
+        try:
+            drawer = self.query_one("#drawer", ContentSwitcher)
+        except Exception:
+            return  # not yet mounted
+        open_tab = drawer.current
+        if drawer.display and open_tab:
+            self._refresh_pane(open_tab)
 
     async def on_composer_submitted(self, event: "Composer.Submitted") -> None:
         text = event.value.strip()
