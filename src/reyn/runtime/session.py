@@ -5757,19 +5757,19 @@ class Session:
         reads its ``hooks:`` key from (same IN-set grain, scoped per agent).
         ``[]`` when the file or key is absent.
 
-        #5140 (part 2, sibling call site to ``load_per_agent_hooks``): this
-        used to expand ``${REYN_AGENT_NAME}`` via ``expand_env``
-        (``os.environ``-backed, ADR-0030) — always undefined at config-load
-        time for the SAME reason ``load_per_agent_hooks`` documents, so a
-        ``composers:`` entry using the token silently collapsed to ``""``.
-        Fixed the same way: :func:`reyn.plugins.tokens.expand_with_map` with
-        an explicit ``{REYN_PROJECT_DIR, REYN_AGENT_NAME}`` map, fail-closed
-        on any REMAINING ``${REYN_*}``/``${CLAUDE_*}`` token via
-        :func:`~reyn.plugins.tokens.find_unresolved_reyn_tokens` (reyn's own
-        bug, not an operator's config choice) — an arbitrary non-reyn
-        ``${FOO}`` is left untouched, for a spawned child process to resolve
-        later. See ``config/loader.py``'s ``load_per_agent_hooks`` for the
-        reference implementation this mirrors."""
+        Expands reyn-owned tokens in this layer via
+        :func:`reyn.plugins.tokens.expand_with_map` with an explicit
+        ``{REYN_PROJECT_DIR, REYN_AGENT_NAME}`` map — not ``os.environ``:
+        ``REYN_AGENT_NAME`` exists only in a SPAWNED CHILD process's own env
+        (``hooks/shell_runner.py`` and friends), never in this process's own
+        ``os.environ``, so it is undefined at config-load time and an
+        ``os.environ``-backed expander cannot resolve it here. Fails closed
+        via :func:`~reyn.plugins.tokens.find_unresolved_reyn_tokens` on any
+        REMAINING ``${REYN_*}``/``${CLAUDE_*}`` token — reyn's own bug, not
+        an operator's config choice — while an arbitrary non-reyn ``${FOO}``
+        is left untouched, for a spawned child process to resolve later. See
+        ``config/loader.py``'s ``load_per_agent_hooks`` for the reference
+        implementation this mirrors."""
         import yaml
         path = self._hot_reload_project_root() / ".reyn" / "agents" / self.agent_name / "hooks.yaml"
         if not path.is_file():

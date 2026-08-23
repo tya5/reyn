@@ -1,22 +1,20 @@
-"""Tier 2: #5140 (part 2) — ``${REYN_AGENT_NAME}`` resolves in a per-agent
-``hooks.yaml``'s ``composers:`` key, the sibling of the already-fixed
-``hooks:`` key (PR #5161, ``tests/runtime/test_5140_per_agent_hooks_token_expansion.py``).
+"""Tier 2: #5140 — ``${REYN_AGENT_NAME}`` resolves in a per-agent
+``hooks.yaml``'s ``composers:`` key, the sibling of the ``hooks:`` key
+witnessed by ``tests/runtime/test_5140_per_agent_hooks_token_expansion.py``.
 
 ``Session._read_per_agent_composers`` (``runtime/session.py``) reads the SAME
 ``.reyn/agents/<name>/hooks.yaml`` file :func:`~reyn.config.loader.load_per_agent_hooks`
-reads its ``hooks:`` key from, but its own ``composers:`` key — and it used
-to run that key through ``expand_env`` (``security/secrets/interpolation.py``,
-ADR-0030, ``os.environ``-backed). ``REYN_AGENT_NAME`` is only ever set on a
-SPAWNED CHILD process's own env, never on this process's own ``os.environ``,
-so ``${REYN_AGENT_NAME}`` was ALWAYS undefined at config-load time here too —
-silently expanding to ``""``, indistinguishable from an operator's genuine
-empty-suffix choice. This is the exact #5140 defect, in a sibling call site
-PR #5161 did not touch.
+reads its ``hooks:`` key from, but its own ``composers:`` key. It expands
+reyn-owned tokens in that key via ``expand_with_map`` (``plugins/tokens.py``)
+with an explicit ``{REYN_PROJECT_DIR, REYN_AGENT_NAME}`` map — not
+``expand_env`` (``security/secrets/interpolation.py``, ADR-0030,
+``os.environ``-backed): ``REYN_AGENT_NAME`` exists only in a SPAWNED CHILD
+process's own env, never in this process's own ``os.environ``, so an
+``os.environ``-backed expander can never resolve it here, regardless of
+operator config.
 
-Fix mirrors #5161 exactly: ``expand_with_map`` (``plugins/tokens.py``) with an
-explicit ``{REYN_PROJECT_DIR, REYN_AGENT_NAME}`` map, fail-closed (whole
-composers layer refused, not a wrong/empty value silently registered) on any
-REMAINING ``${REYN_*}``/``${CLAUDE_*}`` token via
+It fails closed (whole composers layer refused, not a wrong/empty value
+silently registered) on any REMAINING ``${REYN_*}``/``${CLAUDE_*}`` token via
 ``find_unresolved_reyn_tokens`` — while a non-reyn ``${FOO}`` (a spawned
 child process's own env var) is left untouched and still loads (the #5152
 "healthy config must not trip the fail-close" shape).
