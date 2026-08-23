@@ -381,4 +381,103 @@ def project_restored_frames(
     return [divider, *frames]
 
 
-__all__ = ["RESTORED_META_KEY", "RESUME_DIVIDER", "project_restored_frames"]
+# A sentinel that never equals a real ``chain_id`` string (nor ``None``) —
+# forces a message with no ``chain_id`` at all to always start its OWN
+# singleton group, on both sides of it, rather than accidentally merging
+# with a neighbor that also happens to lack one.
+_NO_CHAIN = object()
+
+
+def _group_by_chain_id(history: "list[ChatMessage]") -> "list[list[ChatMessage]]":
+    """Split *history* into contiguous runs sharing one ``meta["chain_id"]``
+    (#5139 C) — router_loop.py stamps the SAME ``chain_id`` on every entry
+    one turn produces (user input, an assistant reply's own tool calls, and
+    each tool result), so a run is exactly one turn's worth of correlated
+    entries. This is the ONLY unit :func:`page_restored_history` ever cuts
+    a page boundary between — never inside one (see that function's own
+    docstring for why)."""
+    groups: "list[list[ChatMessage]]" = []
+    prev_key: object = _NO_CHAIN
+    for msg in history:
+        key = msg.meta.get("chain_id") if isinstance(msg.meta, dict) else None
+        if key is not None and key == prev_key:
+            groups[-1].append(msg)
+        else:
+            groups.append([msg])
+        prev_key = key if key is not None else _NO_CHAIN
+    return groups
+
+
+def page_restored_history(
+    history: "list[ChatMessage]",
+    *,
+    before_root_id: "str | None" = None,
+    limit: int,
+) -> "tuple[list[OutboxMessage], bool, str | None]":
+    """#5139 C: one server-side backlog PAGE — at most *limit* frames'
+    worth of the newest remaining turns, cut only at a ``chain_id``
+    (turn) boundary, never inside one.
+
+    ``before_root_id`` (``None`` = the newest page, i.e. the initial
+    connect/switch backlog): restricts the source to turns strictly OLDER
+    than the turn whose ``chain_id`` equals this value — the caller's own
+    previous page's oldest turn, so paging never re-sends what a prior
+    page already covered and never skips a turn between two pages either.
+    A ``before_root_id`` that names no known turn (a stale cursor — the
+    turn it pointed at rotated out of ``history`` between calls) degrades
+    to "nothing more" (``([], False, None)``) rather than silently
+    re-serving the newest page, which would look like new history to a
+    caller expecting strictly older content.
+
+    Returns ``(frames, has_more, next_cursor)``: ``frames`` is this page,
+    newest-last (the same order :func:`project_restored_frames` always
+    produces); ``has_more`` is whether an OLDER turn still exists beyond
+    this page (the caller's own "reached the true start" signal — ``False``
+    here is a hard "no more", never "didn't check"); ``next_cursor`` is
+    ``None`` exactly when ``has_more`` is ``False``, else the ``chain_id``
+    to pass as THIS call's ``before_root_id`` on the next page.
+
+    Bounded to walk only the groups this page and ``before_root_id``'s own
+    slice actually need — never the full history when only a page's worth
+    is being paged into a long-running conversation's tail."""
+    groups = _group_by_chain_id(history)
+    if before_root_id is not None:
+        cut = None
+        for i, g in enumerate(groups):
+            key = g[0].meta.get("chain_id") if isinstance(g[0].meta, dict) else None
+            if key == before_root_id:
+                cut = i
+                break
+        if cut is None:
+            return [], False, None
+        groups = groups[:cut]
+    selected: "list[ChatMessage]" = []
+    boundary = len(groups)
+    for i in range(len(groups) - 1, -1, -1):
+        selected = groups[i] + selected
+        boundary = i
+        if len(project_restored_frames(selected)) >= limit:
+            break
+    has_more = boundary > 0
+    next_cursor = None
+    if has_more:
+        root = groups[boundary][0]
+        next_cursor = root.meta.get("chain_id") if isinstance(root.meta, dict) else None
+    frames = project_restored_frames(selected)
+    # ``project_restored_frames`` unconditionally prepends ONE resume-divider
+    # row to any non-empty projection (its own docstring) — correct for the
+    # newest page (``before_root_id is None``, the one a client shows first),
+    # a would-be DUPLICATE on every OLDER page this same function projects
+    # independently per call. Mirrors ``_extend_older_frames_from_disk``'s
+    # identical dedup for local's own backward-extend.
+    if before_root_id is not None and frames and frames[0].kind == "system" and frames[0].text == RESUME_DIVIDER:
+        frames = frames[1:]
+    return frames, has_more, next_cursor
+
+
+__all__ = [
+    "RESTORED_META_KEY",
+    "RESUME_DIVIDER",
+    "page_restored_history",
+    "project_restored_frames",
+]

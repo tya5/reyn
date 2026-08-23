@@ -226,9 +226,17 @@ class StateUpdate:
 
 @dataclass(frozen=True)
 class MessagesSnapshot:
-    """A decoded MESSAGES_SNAPSHOT — the reconnect display backlog (A4)."""
+    """A decoded MESSAGES_SNAPSHOT — the reconnect display backlog (A4).
+
+    #5139 C: ``has_more``/``next_cursor`` carry the server's own page
+    boundary — see :class:`~reyn.interfaces.transport.frames.BacklogBatch`'s
+    docstring for what each means; this is the wire-decoded form of the
+    same two fields, read straight through by
+    :meth:`~reyn.interfaces.transport.agui.client.AgUiTransport._consume_block`."""
 
     frames: list = field(default_factory=list)
+    has_more: bool = False
+    next_cursor: "str | None" = None
 
 
 @dataclass(frozen=True)
@@ -544,14 +552,23 @@ def encode_state_delta(delta: dict) -> AgUiEvent:
     )
 
 
-def encode_messages_snapshot(frames: "list[Frame]") -> AgUiEvent:
-    """MESSAGES_SNAPSHOT — the display backlog replayed on connect (A4).
+def encode_messages_snapshot(
+    frames: "list[Frame]", *, has_more: bool = False, next_cursor: "str | None" = None,
+) -> AgUiEvent:
+    """MESSAGES_SNAPSHOT — the display backlog replayed on connect (A4), a
+    switch re-fire (#3310 N3), or a client-driven older-page pull (#5139 C —
+    same encoder, same decoder, same :class:`MessagesSnapshot` shape; the
+    3 call sites differ only in which slice of history they pass in).
 
     The standard ``messages`` field is a ``[{role, content}]`` array of
     **conversation turns only** (P4) — the shape a generic AG-UI client expects;
     reyn chrome (status / error / present / intervention / trace) is NOT a
     conversation turn and is excluded. The reyn client rebuilds the FULL backlog
     (all display frames) from the ``_reyn`` block, so its scrollback is unchanged.
+
+    ``has_more``/``next_cursor`` (#5139 C) ride alongside inside the
+    ``_reyn`` block — see :class:`~reyn.interfaces.transport.frames.BacklogBatch`'s
+    docstring for what each means.
     """
     reyn_payload = [
         _encode_display(f).data[_REYN] for f in frames if isinstance(f, DisplayFrame)
@@ -563,7 +580,15 @@ def encode_messages_snapshot(frames: "list[Frame]") -> AgUiEvent:
     ]
     return AgUiEvent(
         type=MESSAGES_SNAPSHOT,
-        data={"messages": standard, _REYN: {"frame": "messages", "messages": reyn_payload}},
+        data={
+            "messages": standard,
+            _REYN: {
+                "frame": "messages",
+                "messages": reyn_payload,
+                "has_more": has_more,
+                "next_cursor": next_cursor,
+            },
+        },
     )
 
 
@@ -654,7 +679,11 @@ def decode_event(
             )
             for m in (reyn.get("messages") or [])
         ]
-        return MessagesSnapshot(frames=frames)
+        return MessagesSnapshot(
+            frames=frames,
+            has_more=bool(reyn.get("has_more", False)),
+            next_cursor=reyn.get("next_cursor"),
+        )
     if frame_tag == "intervention_tool":
         return InterventionTool(
             intervention_id=str(reyn.get("intervention_id") or ""),

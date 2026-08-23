@@ -32,6 +32,7 @@ import asyncio
 from typing import TYPE_CHECKING, AsyncIterator, Awaitable, Callable
 
 from reyn.interfaces.transport.agui.protocol import (
+    MESSAGES_SNAPSHOT,
     InterventionTool,
     InterventionToolResult,
     MessagesSnapshot,
@@ -232,6 +233,8 @@ class AgUiTransport(ClientTransport):
                         agent=self._backlog_agent,
                         sid=self._backlog_sid,
                         frames=[self._reguard_frame(f) for f in decoded.frames],
+                        has_more=decoded.has_more,
+                        next_cursor=decoded.next_cursor,
                     )
                 )
             elif isinstance(decoded, InterventionTool):
@@ -515,6 +518,49 @@ class AgUiTransport(ClientTransport):
         result = await self._send({"type": "session_list_request"})
         sessions = (result or {}).get("sessions")
         return sessions if isinstance(sessions, list) else []
+
+    async def request_older_backlog(self, before_root_id: str) -> None:
+        """#5139 C: client-driven pull for the NEXT-older backlog page —
+        ``on_flow_view_reached_top``'s remote counterpart to local's
+        on-disk ``_extend_older_frames_from_disk``. POSTs a typed request
+        (mirrors ``request_session_list`` etc. above); the response reuses
+        the EXACT ``MESSAGES_SNAPSHOT`` wire shape a live reconnect/switch
+        already decodes (:func:`~reyn.interfaces.transport.agui.protocol.decode_event`),
+        so this reuses that same decode path rather than a second one.
+
+        The decoded page is wrapped as a :class:`BacklogBatch` with
+        ``is_older_page=True`` (PREPEND, not append —
+        ``TextualChatApp._apply_backlog_batch``'s own branch on that flag)
+        and fed into the SAME queue every other frame this transport
+        produces flows through (:meth:`put_display`'s own established
+        pattern) — a new PRODUCER onto the existing delivery path, not a
+        new one. A failed/empty response is silently dropped (never a
+        fabricated empty page — the caller's own ``has_more``/cursor state
+        is simply left as it was, so a transient failure retries on the
+        next ``ReachedTop`` rather than being mistaken for "reached the
+        true start")."""
+        result = await self._send(
+            {
+                "type": "load_older_backlog_request",
+                "session_id": self._backlog_sid,
+                "before_root_id": before_root_id,
+            },
+        )
+        if not result:
+            return
+        decoded = decode_event(MESSAGES_SNAPSHOT, result)
+        if not isinstance(decoded, MessagesSnapshot):
+            return
+        self._display_queue.put_nowait(
+            BacklogBatch(
+                agent=self._backlog_agent,
+                sid=self._backlog_sid,
+                frames=[self._reguard_frame(f) for f in decoded.frames],
+                has_more=decoded.has_more,
+                next_cursor=decoded.next_cursor,
+                is_older_page=True,
+            )
+        )
 
     async def answer_intervention_text(
         self, text: str, *, intervention_id: "str | None" = None

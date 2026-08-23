@@ -284,6 +284,17 @@ class InProcessTransport(ClientTransport):
         focused = self._registry.attached_sid
         return [{"sid": sid, "attached": sid == focused} for sid in sids]
 
+    async def request_older_backlog(self, before_root_id: str) -> None:
+        # #5139 C: no-op — a local session's older-history paging goes
+        # through ``ChatReadModel.load_older_conversation_history`` (real
+        # disk, no wire hop) instead, exactly like ``conversation_history``
+        # already does. ``on_flow_view_reached_top`` never calls this for a
+        # local session (its ``self._read_model.capabilities`` already says
+        # so); this body exists only so the class constructs at all
+        # (``ClientTransport``'s own ``@abstractmethod``, #5076's
+        # discipline for this whole seam).
+        return None
+
     async def answer_intervention_text(
         self, text: str, *, intervention_id: "str | None" = None
     ) -> bool:

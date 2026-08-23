@@ -345,6 +345,33 @@ class ClientTransport(ABC):
         :class:`ClientTransportStub`."""
 
     @abstractmethod
+    async def request_older_backlog(self, before_root_id: str) -> None:
+        """#5139 C: pull the NEXT-older backlog page — the client-driven
+        continuation ``ReachedTop`` triggers once a bounded initial/switch
+        page (:data:`~reyn.interfaces.transport.frames.HYDRATE_PAGE_FRAMES`)
+        is exhausted. ``before_root_id`` is the caller's own current page's
+        oldest turn id (a ``chain_id`` — see
+        :class:`~reyn.interfaces.transport.frames.BacklogBatch`'s docstring
+        for why a turn id, never a message's own ``seq``).
+
+        Fire-and-forget by design (returns ``None``, not the page itself):
+        the OWN local restore path (``InProcessTransport``) already answers
+        this query synchronously through :class:`ChatReadModel` instead
+        (``load_older_conversation_history``/``conversation_history``) — a
+        no-op here, never called by ``on_flow_view_reached_top`` for a
+        local session. A REMOTE transport instead delivers the fetched page
+        asynchronously as a :class:`~reyn.interfaces.transport.frames.BacklogBatch`
+        (``is_older_page=True``) through the SAME :meth:`frames` stream
+        every other frame this transport produces flows through — see
+        :meth:`~reyn.interfaces.transport.agui.client.AgUiTransport.request_older_backlog`'s
+        own docstring for the full reasoning.
+
+        Abstract (mirrors #5076's own reasoning for the OTHER typed ops on
+        this seam): a new subclass that forgets this fails to CONSTRUCT,
+        rather than silently degrading ``on_flow_view_reached_top``'s
+        remote paging to a permanent no-op nobody chose."""
+
+    @abstractmethod
     async def state_ready(self) -> None:
         """Return once this transport's own STATUS/state-read side-channel
         (whatever ``ChatReadModel.snapshot()``/``intervention_head()``/etc.
@@ -519,6 +546,9 @@ class ClientTransportStub(ClientTransport):
     async def request_session_list(self) -> "list[dict]":
         return []
 
+    async def request_older_backlog(self, before_root_id: str) -> None:
+        return None
+
     async def state_ready(self) -> None:
         return None
 
@@ -644,6 +674,9 @@ class DelegatingClientTransport(ClientTransport):
 
     async def request_session_list(self) -> "list[dict]":
         return await self._inner.request_session_list()
+
+    async def request_older_backlog(self, before_root_id: str) -> None:
+        await self._inner.request_older_backlog(before_root_id)
 
     async def state_ready(self) -> None:
         await self._inner.state_ready()
