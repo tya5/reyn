@@ -166,6 +166,35 @@ def tests_commits_after(sha: str, commits: "list[dict]") -> "list[dict]":
     return [c for c in tail if c.get("_tests_paths")]
 
 
+def _note_verdict(
+    note: str, oids: "list[str]", commits: "list[dict]",
+) -> "tuple[str, str, list[dict]] | None":
+    """One note's verdict: ``None`` if it names no commit of this PR (not a
+    claim this predicate can evaluate at all — the caller's "none resolved"
+    bucket); otherwise ``(note, sha, later)`` where *sha* is the FIRST fresh
+    SHA the note names, and *later* is empty when fresh.
+
+    A note naming several SHA-shaped tokens (rare, but ``find_note_shas``
+    returns every membership hit on the line) passes as a whole the moment
+    ANY one of them is fresh — mirrors the per-note short-circuit the old
+    single-note code path already had, just no longer let one note's own
+    fresh candidate excuse a DIFFERENT note (see ``evaluate``'s own
+    docstring, #5197). When every candidate on this note is stale, *sha*/
+    *later* report the FIRST one, so the red output names one concrete
+    offending commit set rather than every candidate's own list."""
+    shas = find_note_shas(note, oids)
+    if not shas:
+        return None
+    first_later: "list[dict]" = []
+    for sha in shas:
+        later = tests_commits_after(sha, commits)
+        if not later:
+            return note, sha, []
+        if not first_later:
+            first_later = later
+    return note, shas[0], first_later
+
+
 def evaluate(pr: dict) -> "tuple[int, list[str]]":
     """``(exit_code, lines)`` for one PR payload.
 
@@ -182,14 +211,39 @@ def evaluate(pr: dict) -> "tuple[int, list[str]]":
     which is deliberate: a document *about* the marker is not a document
     *stating* the marker.
 
-    What a green return means, precisely: A COMMENT'S FIRST LINE NAMES A
-    FRESH COMMIT OF THIS PR. It does NOT mean a reviewer made that claim —
-    every session here authenticates as the same ``gh`` user, so comment
-    authorship carries no reviewer/author distinction for this function (or
-    any text predicate) to read. Rule 8's actual review requirement is
-    enforced by a human reading the PR before merging, not by this check;
-    treat a green here as "the tree is named", never as "the tree was
-    reviewed"."""
+    #5197 (architect ruling, following lead-coder's #5196 measurement): the
+    verdict is a UNIVERSAL quantification over every note that names a
+    commit of this PR, not an existential one. The predicate used to return
+    green the instant ANY ONE note named a fresh commit — measured live on
+    #5196: architect's A note named the new head, docs-maintainer's B note
+    still named the PREVIOUS head (a fresh witness commit had landed to
+    tests/ between them), and the gate went green having read only the A
+    note, because it stopped looking the moment it found one success. House
+    rule 8 requires B specifically (the A role is architect's own
+    operational practice, not something this gate — or anything else — may
+    come to require; see the paragraph below). Now EVERY note naming a
+    commit of this PR must name a FRESH one for the PR to pass — one fresh
+    note no longer excuses a different, stale note.
+
+    Deliberately does NOT parse which review role (A/B/etc.) wrote a note —
+    only "B is required" is a house rule this gate can enforce; making A
+    load-bearing here would be a new rule invented by this predicate, not a
+    reflection of one that exists. #5187 fixed the note's first line into a
+    parseable shape (role disclosed), which is what would make role-parsing
+    POSSIBLE if the universal quantification above ever proves insufficient
+    on its own — not a reason to add it preemptively (CLAUDE.md: "would
+    removing this cause a mistake?").
+
+    What a green return means, precisely: EVERY comment whose first line
+    names a commit of this PR names a FRESH one. It does NOT mean a
+    reviewer made that claim, and it does NOT mean every required ROLE
+    weighed in — every session here authenticates as the same ``gh`` user,
+    so comment authorship carries no reviewer/author distinction for this
+    function (or any text predicate) to read, and this function reads no
+    role marker at all. Rule 8's actual review requirement is enforced by a
+    human reading the PR before merging, not by this check; treat a green
+    here as "every note that names a tree names a fresh one", never as
+    "the tree was reviewed" or "the right roles reviewed it"."""
     touched_tests = [p for p in pr.get("files", []) if p.startswith("tests/")]
     if not touched_tests:
         return 0, ["OK — this PR does not touch tests/; rule 8 does not apply."]
@@ -223,21 +277,19 @@ def evaluate(pr: dict) -> "tuple[int, list[str]]":
     # whenever the PR has any, so including it separately buys nothing and
     # costs exactly this hole.
     oids = [c.get("oid", "") for c in commits]
-    lines: "list[str]" = []
-    for note in notes:
-        shas = find_note_shas(note, oids)
-        if not shas:
-            continue
-        for sha in shas:
-            later = tests_commits_after(sha, commits)
-            if not later:
-                return 0, [
-                    f"OK — a TESTS-READ note names {sha}, and no commit has",
-                    "  touched tests/ since it.",
-                ]
-        lines.append(f"  note names {', '.join(shas)}")
 
-    if not lines:
+    resolved_count = 0
+    stale: "list[tuple[str, str, list[dict]]]" = []
+    for note in notes:
+        verdict = _note_verdict(note, oids, commits)
+        if verdict is None:
+            continue
+        resolved_count += 1
+        note_text, sha, later = verdict
+        if later:
+            stale.append((note_text, sha, later))
+
+    if not resolved_count:
         return 1, [
             "RED — a TESTS-READ note landed, but none of them names a commit of",
             "  this PR. Add the head you read (e.g. `TESTS-READ (B) (head abc1234)`),",
@@ -247,18 +299,27 @@ def evaluate(pr: dict) -> "tuple[int, list[str]]":
             "  Without it, nothing can tell whether the note is a claim about THIS tree.",
         ]
 
-    stale: "list[str]" = []
-    for note in notes:
-        for sha in find_note_shas(note, oids):
-            for c in tests_commits_after(sha, commits):
-                stale.append(f"  {c.get('oid', '')[:9]} {c.get('messageHeadline', '')[:60]}")
-    return 1, [
-        "RED — every TESTS-READ note reads a tree that tests/ has moved past.",
-        *lines,
-        "  tests/ commits after it:",
-        *sorted(set(stale)),
-        "  Ask the same reviewer for a DIFFERENTIAL note over just these commits —",
-        "  re-reading the whole PR is not required.",
+    if stale:
+        lines = [
+            "RED — a TESTS-READ note reads a tree that tests/ has moved past.",
+            "  (∀ EVERY note naming a commit of this PR must name a FRESH one —",
+            "  one fresh note does not excuse a different, stale note. #5197.)",
+        ]
+        for note_text, sha, later in stale:
+            lines.append(f"  stale note (first line): {note_text!r}")
+            lines.append(f"    names {sha}")
+            lines.append("    tests/ commits after it:")
+            for c in later:
+                lines.append(f"      {c.get('oid', '')[:9]} {c.get('messageHeadline', '')[:60]}")
+        lines.append(
+            "  Ask the same reviewer for a DIFFERENTIAL note over just these commits —"
+        )
+        lines.append("  re-reading the whole PR is not required.")
+        return 1, lines
+
+    return 0, [
+        "OK — every TESTS-READ note names a commit of this PR, and no commit",
+        "  has touched tests/ since it.",
     ]
 
 

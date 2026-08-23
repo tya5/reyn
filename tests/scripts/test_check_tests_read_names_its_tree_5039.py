@@ -105,6 +105,76 @@ def test_no_claim_line_at_all_is_rejected():
     assert "no TESTS-READ note" in "\n".join(lines)
 
 
+def test_a_fresh_a_note_does_not_excuse_a_stale_b_note():
+    """Tier 1: #5197 (architect ruling) — the existential-quantification gap
+    measured live on #5196 itself. architect's A note named the NEW head;
+    docs-maintainer's B note still named the PREVIOUS head, and a fresh
+    ``tests/`` commit (the witness the blocking finding needed) had landed
+    in between. The old predicate returned green the instant it found ONE
+    fresh note (A) — it never looked at B, though house rule 8 requires B
+    specifically. Reproduced from #5196's own actual shape: two notes, one
+    fresh, one one commit stale. Must be red — a fresh note no longer
+    excuses a different, stale note (architect's acceptance ①)."""
+    code, lines = _MOD.evaluate(_pr(
+        files=["tests/core/test_5192_state_log_wal_no_toctou_guard.py"],
+        comments=[
+            {"body": "**[architect]** — TESTS-READ (A: design conformance) (head `f199bf79a`)"},
+            {"body": "**[docs-maintainer]** — TESTS-READ (B: independent) (head `48067968c`)"},
+        ],
+        commits=[
+            _commit("48067968c", "fix(#5192): remove the guard in 2 of 3 files"),
+            _commit("f199bf79a", "fix(#5192): add budget.py's own guard-absence witness",
+                     ("tests/core/test_5192_state_log_wal_no_toctou_guard.py",)),
+        ],
+    ))
+    assert code == 1, "a stale B note must not be excused by a fresh A note"
+    joined = "\n".join(lines)
+    assert "f199bf79a" in joined, "the offending witness commit is named, so the ask is scoped"
+
+
+def test_the_red_message_names_which_note_is_stale():
+    """Tier 1: #5197 acceptance ② — the red output must name WHICH note went
+    stale (its own first-line text), not just that some note somewhere did —
+    the ask a reviewer gets is "post a fresh note", and they need to know
+    it's THEIRS, not the other reviewer's, that's being asked for."""
+    code, lines = _MOD.evaluate(_pr(
+        files=["tests/scripts/test_check_doc_drift_5003.py"],
+        comments=[
+            {"body": "**[architect]** — TESTS-READ (A) (head `bbbbbbbb`)"},
+            {"body": "**[docs-maintainer]** — TESTS-READ (B) (head `aaaaaaaa`)"},
+        ],
+        commits=[
+            _commit("aaaaaaaa", "test: add", ("tests/scripts/test_check_doc_drift_5003.py",)),
+            _commit("bbbbbbbb", "test: fix", ("tests/scripts/test_check_doc_drift_5003.py",)),
+        ],
+    ))
+    assert code == 1
+    joined = "\n".join(lines)
+    assert "docs-maintainer" in joined, (
+        "the stale note's own first-line text (naming its author role) must "
+        f"appear in the output so the ask is scoped to the right reviewer; got {joined!r}"
+    )
+    assert "architect" not in joined, (
+        "the FRESH note must not be reported as if it were the problem"
+    )
+
+
+def test_a_single_note_naming_the_current_head_still_passes():
+    """Tier 1: #5197 acceptance ③ — the common case (one required B note,
+    naming the PR's current head) must keep passing under the universal
+    quantification; #5197 only tightens the "one is enough" case where
+    MULTIPLE notes exist and disagree, not the ordinary single-note PR."""
+    code, _ = _MOD.evaluate(_pr(
+        files=["tests/scripts/test_check_doc_drift_5003.py"],
+        comments=[{"body": "**[docs-maintainer]** — TESTS-READ (B) (head `bbbbbbbb`)"}],
+        commits=[
+            _commit("aaaaaaaa", "test: add", ("tests/scripts/test_check_doc_drift_5003.py",)),
+            _commit("bbbbbbbb", "test: fix", ("tests/scripts/test_check_doc_drift_5003.py",)),
+        ],
+    ))
+    assert code == 0
+
+
 def test_marker_only_from_line_two_onward_is_not_a_claim():
     """Tier 1: the #5144 reproduction (architect's acceptance ②) — a
     multi-purpose comment whose FIRST line is a plain role-prefixed opener,
