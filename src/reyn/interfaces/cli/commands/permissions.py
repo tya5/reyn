@@ -15,7 +15,7 @@ def register(sub) -> None:
     psub = p.add_subparsers(dest="permissions_command", metavar="<subcommand>")
     psub.required = True
 
-    p_list = psub.add_parser("list", help="Show all saved approvals from .reyn/approvals.yaml")
+    p_list = psub.add_parser("list", help="Show all saved approvals")
     p_list.set_defaults(func=_cmd_list)
 
     p_revoke = psub.add_parser("revoke", help="Remove a single approval entry by key")
@@ -32,39 +32,41 @@ def register(sub) -> None:
 
 # ── helpers ──────────────────────────────────────────────────────────────────
 
+# #5153 (architect ruling, issuecomment-5383838646, scope confirmed
+# issuecomment-5383848849): this command used to read/write
+# `.reyn/approvals.yaml` directly with its own `_load`/`_save`, a THIRD
+# independent writer alongside `PermissionResolver._persist` and the web
+# router's own equivalent — all 3 racing the same snapshot
+# read-modify-write. This surface, with no live `PermissionResolver`
+# instance (a standalone CLI invocation, often with no `reyn` process
+# running at all), is exactly why "make one process own the file" was
+# rejected as a fix (architect: "server 単一 writer は server 無し CLI が
+# 死ぬ"). `ApprovalLedger` needs no live resolver — constructing one here
+# is the same shape a running session uses.
 
-def _approvals_path() -> Path:
+
+def _ledger_path() -> Path:
+    project_root = _find_project_root(Path.cwd()) or Path.cwd()
+    return project_root / ".reyn" / "approvals.jsonl"
+
+
+def _legacy_snapshot_path() -> Path:
     project_root = _find_project_root(Path.cwd()) or Path.cwd()
     return project_root / ".reyn" / "approvals.yaml"
 
 
 def _load() -> dict[str, bool]:
-    path = _approvals_path()
-    if not path.exists():
-        return {}
-    try:
-        import yaml
-        data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-    except Exception as exc:
-        print(f"Failed to parse {path}: {exc}", file=sys.stderr)
-        sys.exit(1)
-    if not isinstance(data, dict):
-        return {}
-    return {str(k): bool(v) for k, v in data.items() if isinstance(v, bool)}
-
-
-def _save(data: dict[str, bool]) -> None:
-    import yaml
-    path = _approvals_path()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    if not data:
-        # Keep the file present but empty so tooling/diff stays predictable.
-        path.write_text("{}\n", encoding="utf-8")
-        return
-    path.write_text(
-        yaml.dump(data, allow_unicode=True, default_flow_style=False),
-        encoding="utf-8",
+    """Fold the ledger (migrating a legacy snapshot first, if present) —
+    the SAME read every other approvals surface (`PermissionResolver`,
+    the web router) now does."""
+    from reyn.security.permissions.approval_ledger import (
+        ApprovalLedger,
+        migrate_legacy_snapshot,
     )
+    ledger = ApprovalLedger(_ledger_path())
+    migrate_legacy_snapshot(ledger, _legacy_snapshot_path())
+    approvals, _bound = ledger.fold()
+    return approvals
 
 
 def _parse_key(key: str) -> tuple[str, str, str] | None:
@@ -90,7 +92,7 @@ def _parse_key(key: str) -> tuple[str, str, str] | None:
 
 
 def _cmd_list(args: argparse.Namespace) -> None:
-    path = _approvals_path()
+    path = _ledger_path()
     data = _load()
     if not data:
         print(f"No saved approvals at {path}.")
@@ -143,24 +145,31 @@ def _cmd_revoke(args: argparse.Namespace) -> None:
             for k in hits[:5]:
                 print(f"  {k}", file=sys.stderr)
         sys.exit(1)
-    del data[args.key]
-    _save(data)
+    from reyn.security.permissions.approval_ledger import ApprovalLedger
+    ApprovalLedger(_ledger_path()).append_approval(args.key, False)
     print(f"Revoked {args.key!r}.")
 
 
 def _cmd_clear(args: argparse.Namespace) -> None:
     data = _load()
-    if not data:
+    currently_approved = {k for k, v in data.items() if v}
+    if not currently_approved:
         print("No saved approvals to clear.")
         return
     if not args.yes:
         try:
-            ans = input(f"Remove all {len(data)} approvals from {_approvals_path()} ? [y/N]: ").strip().lower()
+            ans = input(
+                f"Remove all {len(currently_approved)} approvals from "
+                f"{_ledger_path()} ? [y/N]: "
+            ).strip().lower()
         except (EOFError, KeyboardInterrupt):
             print()
             sys.exit(1)
         if ans != "y":
             print("Aborted.")
             return
-    _save({})
-    print(f"Cleared {len(data)} approval(s).")
+    from reyn.security.permissions.approval_ledger import ApprovalLedger
+    ledger = ApprovalLedger(_ledger_path())
+    for key in currently_approved:
+        ledger.append_approval(key, False)
+    print(f"Cleared {len(currently_approved)} approval(s).")

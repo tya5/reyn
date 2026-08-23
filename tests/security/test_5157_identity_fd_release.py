@@ -88,7 +88,14 @@ async def test_revoking_an_approval_also_clears_its_stale_identity_record(
     """Tier 2: architect's confirm-item on this PR's own TESTS-READY(A)
     (issuecomment-5383698618) — releasing the fd is not enough; the
     STALE ``_bound_identities[key]`` record must go with it, both
-    in-memory and in the persisted ``approvals.yaml`` sibling section.
+    in-memory and in whatever survives the revoke on disk — #5153
+    replaced the persisted ``_bound_identities`` YAML sibling this test
+    originally checked with the ``approvals.jsonl`` ledger, whose
+    ``fold()`` already clears a key's bound identity on any
+    ``approved=False`` record (see ``approval_ledger.py``'s own "Fold
+    semantics" section) — this test now folds the ledger to confirm that
+    generic rule actually closes THIS specific gap, not just the
+    in-memory half.
 
     Left behind, a LATER re-approval of the SAME key would start with no
     fd (just released) but a stale stat from before the revoke — if the
@@ -115,11 +122,11 @@ async def test_revoking_an_approval_also_clears_its_stale_identity_record(
         "the fd"
     )
 
-    import yaml
+    from reyn.security.permissions.approval_ledger import ApprovalLedger
 
-    approvals_path = tmp_path / ".reyn" / "approvals.yaml"
-    data = yaml.safe_load(approvals_path.read_text(encoding="utf-8"))
-    assert key not in data.get("_bound_identities", {}), (
+    ledger_path = tmp_path / ".reyn" / "approvals.jsonl"
+    _saved, bound = ApprovalLedger(ledger_path).fold()
+    assert key not in bound, (
         "revoke must also clear the PERSISTED bound-identity record -- "
         "otherwise it survives a process restart and a later re-approval "
         "of the same key inherits the stale identity"

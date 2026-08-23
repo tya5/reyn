@@ -370,19 +370,20 @@ def test_first_use_after_a_process_restart_honors_the_grant_and_counts_as_unconf
 
 
 @pytest.mark.asyncio
-async def test_binding_writes_atomically_no_tmp_file_left_behind(tmp_path) -> None:
-    """Tier 2: architect co-vet (issuecomment-5383499299) — binding now
-    fires on every path-approval's FIRST USE, inside ordinary tool
-    execution, not just when a human approves (rare) like `_persist`'s
-    own read-modify-write. A crash mid-`write_text` would truncate
-    `approvals.yaml` and lose EVERY approval, not just the one being
-    bound. Fixed via tmp-file + atomic `replace` (the same precedent
-    `AgentIdentityGenerationStore.record` already uses) -- this pins the
-    OBSERVABLE consequence: no `.tmp` sibling survives a successful bind,
-    and the approvals file itself is genuinely valid YAML afterward (a
-    half-written file would not parse)."""
-    import yaml
-
+async def test_binding_writes_durably_no_tmp_file_ever_used(tmp_path) -> None:
+    """Tier 2: architect co-vet (issuecomment-5383499299) — binding fires
+    on every path-approval's FIRST USE, inside ordinary tool execution,
+    not just when a human approves (rare) like `_persist`'s own decision.
+    Originally fixed via tmp-file + atomic `replace` (the same precedent
+    `AgentIdentityGenerationStore.record` uses); #5153 (architect ruling,
+    issuecomment-5383838646) replaced that snapshot read-modify-write
+    (durable against a mid-write CRASH, but not against a concurrent
+    WRITER) with an APPEND to the `approvals.jsonl` ledger — see
+    `approval_ledger.py`. This pins the OBSERVABLE consequence of THAT
+    mechanism: no `.tmp` file is EVER created for a bind (there is
+    nothing to replace — the write is a single small ``fsync``'d
+    append), and folding the ledger correctly reflects the bound key's
+    value afterward."""
     target = tmp_path / "atomic_dir"
     target.mkdir()
     resolver = _make_resolver(tmp_path)
@@ -393,12 +394,13 @@ async def test_binding_writes_atomically_no_tmp_file_left_behind(tmp_path) -> No
     write_path = str(target / "f.txt")
     await resolver.require_file_write(PermissionDecl(), write_path, "actor")
 
-    approvals_path = tmp_path / ".reyn" / "approvals.yaml"
-    tmp_sibling = approvals_path.with_suffix(approvals_path.suffix + ".tmp")
+    ledger_path = tmp_path / ".reyn" / "approvals.jsonl"
+    tmp_sibling = ledger_path.with_suffix(ledger_path.suffix + ".tmp")
     assert not tmp_sibling.exists(), (
-        "a .tmp sibling survived a successful bind -- the atomic "
-        "replace did not clean up after itself"
+        "a .tmp sibling exists -- the append-only ledger should never "
+        "create one at all"
     )
-    data = yaml.safe_load(approvals_path.read_text(encoding="utf-8"))
-    assert data[key] is True
-    assert data["_bound_identities"][key]["ino"] is not None
+    from reyn.security.permissions.approval_ledger import ApprovalLedger
+    saved, bound = ApprovalLedger(ledger_path).fold()
+    assert saved[key] is True
+    assert bound[key][0] is not None
