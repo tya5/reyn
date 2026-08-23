@@ -839,10 +839,11 @@ async def test_status_line_refreshes_on_event_frames_alone(tmp_path) -> None:
 async def test_agent_name_reactive_refreshes_status_line_with_no_frame(
     tmp_path,
 ) -> None:
-    """Tier 2: #5131 — ``TextualChatApp._agent_name`` is now a Textual
-    ``reactive``; ASSIGNING it fires :meth:`TextualChatApp.watch__agent_name`
-    synchronously, refreshing :class:`StatusLine` with no server frame
-    involved at all.
+    """Tier 2: #5131 — ``TextualChatApp._destination`` (its ``agent`` half;
+    #5149 folded ``_agent_name``/``_session_id`` into this ONE reactive
+    dataclass) is a Textual ``reactive``; ASSIGNING it fires
+    :meth:`TextualChatApp.watch__destination` synchronously, refreshing
+    :class:`StatusLine` with no server frame involved at all.
 
     This is the improvement the migration adds, not merely a
     non-regression: before #5131, ``_agent_name`` was a plain attribute, and
@@ -858,8 +859,8 @@ async def test_agent_name_reactive_refreshes_status_line_with_no_frame(
     prefers ``snap["attached_name"]`` over the ``agent_name`` argument
     (chrome.py's own ``agent = snap.get("attached_name") or agent_name``),
     so leaving it set would let the snapshot's OWN agent field mask
-    whatever ``self._agent_name`` says — exactly the confound this test
-    must not have.
+    whatever ``self._destination.agent`` says — exactly the confound this
+    test must not have.
 
     The replacement name is deliberately the SAME LENGTH as the original
     (``MenuBar.update_status``'s ``changed_len`` branch remounts the whole
@@ -884,7 +885,9 @@ async def test_agent_name_reactive_refreshes_status_line_with_no_frame(
 
         new_name = "z" * len(app.agent_name)
         assert new_name != app.agent_name
-        app._agent_name = new_name
+        from reyn.interfaces.inline.textual_chat.app import _Destination
+
+        app._destination = _Destination(agent=new_name, session_id=app._destination.session_id)
 
         after = str(app.query_one(StatusLine).render())
         assert new_name in after, (

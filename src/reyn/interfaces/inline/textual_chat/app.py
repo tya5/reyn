@@ -496,6 +496,29 @@ class ScrollableDrawer(ContentSwitcher):
         self.scroll_end(animate=False)
 
 
+@dataclass(frozen=True, slots=True)
+class _Destination:
+    """#5149: this client's current location — which agent, and which of
+    that agent's sessions — folded into ONE immutable value instead of two
+    separately-writable fields (``_agent_name`` / ``_session_id``, pre-
+    #5149). Architect ruling (issuecomment-5384594944 → #5148 → #5149,
+    the client-side instance of #5116's "props copied into state, the
+    copy split into two"): two fields that must always change TOGETHER
+    but CAN be written independently is a bug waiting for a second write
+    site — ``TextualChatApp.watch__destination``'s own docstring names the
+    exact backlog-discard consequence.
+
+    ``frozen=True`` is load-bearing, not stylistic: it is what makes
+    "update only ``.agent``, leave ``.session_id`` stale" a
+    ``dataclasses.FrozenInstanceError`` at the write site, rather than a
+    convention a future editor has to remember. The only way to change
+    either field is to construct a whole new ``_Destination(...)`` — one
+    assignment, both fields, always together."""
+
+    agent: str
+    session_id: str
+
+
 class TextualChatApp(App):
     """The TTY conversation pane: a FlowView of the live conversation + a
     Composer, both fed/served by one :class:`ClientTransport`.
@@ -1233,8 +1256,8 @@ class TextualChatApp(App):
     #: #5131 (architect ruling): the FIRST "state down" migration target —
     #: which agent this App is currently showing. A Textual ``reactive``,
     #: not a plain attribute: every read site below is unchanged (the
-    #: descriptor is transparent to ``self._agent_name`` reads/writes), but
-    #: a WRITE now synchronously fires :meth:`watch__agent_name`, which
+    #: descriptor is transparent to ``self._destination.agent`` reads), but
+    #: a WRITE now synchronously fires :meth:`watch__destination`, which
     #: refreshes every consumer from ONE canonical trigger instead of
     #: relying on the next per-frame :meth:`_refresh_live_chrome` call to
     #: eventually catch up (the exact "stale until something else redraws"
@@ -1242,7 +1265,22 @@ class TextualChatApp(App):
     #: forcing an immediate refresh). ``init=False``: the constructor's own
     #: assignment (below) must NOT fire the watcher before ``compose()``
     #: has built the widget tree — see that watch method's own docstring.
-    _agent_name: "reactive[str]" = reactive("", init=False)
+    #:
+    #: #5149 (architect ruling, issuecomment-5384771856): folded together
+    #: with ``_session_id`` (below) into ONE frozen dataclass behind ONE
+    #: reactive, closing the #5148-flagged hazard of the two fields
+    #: diverging (a client-side #5116: "props copied into two separate
+    #: pieces of state that can drift apart"). A frozen dataclass makes
+    #: "update only one of the pair" a TypeError-shaped impossibility, not
+    #: a convention someone has to remember — ``self._destination.agent =
+    #: x`` raises ``dataclasses.FrozenInstanceError``; the only way to
+    #: change either field is a whole new ``_Destination(...)``, one
+    #: assignment, both fields together. Class-level default is the
+    #: placeholder ``_Destination("", "")`` — real values are seeded in
+    #: ``__init__`` before ``compose()``, mirroring the pre-#5149
+    #: ``_agent_name`` reactive's own placeholder-then-seed shape (the
+    #: real ``_DEFAULT_SID`` needs a deferred import — see ``__init__``).
+    _destination: "reactive[_Destination]" = reactive(_Destination("", ""), init=False)
 
     def __init__(
         self,
@@ -1258,28 +1296,26 @@ class TextualChatApp(App):
         super().__init__()
         self._transport = transport
         self._read_model = read_model
-        self._agent_name = agent_name
         # #5168: set by run_textual_chat's own capture_stray_output window —
         # None for any App constructed outside it (e.g. a bare
         # TextualChatApp(...) in a test), in which case _status_text's own
         # diagnostics_count read stays 0, byte-identical to before #5168.
         self._stray_output_stats: "StrayOutputStats | None" = None
-        # #5139: mirrors ``self._agent_name`` — this client's OWN idea of
-        # which session it is currently attached to, updated at the same
-        # site ``self._agent_name`` is (:meth:`_handle_session_attached_
-        # event` — a mid-stream SWITCH only, see that method's own
-        # docstring). Seeded to the well-known default session id
-        # (``registry.py``'s ``_DEFAULT_SID``) rather than empty: a fresh,
-        # never-switched remote connection is always attached to it, and
-        # ``AgUiTransport``'s own FIRST backlog batch is seeded the same
-        # way (see that class's ``__init__``) — both sides of the
-        # comparison must start from the SAME default or a correct FIRST
-        # connect would spuriously fail the destination check. A LOCAL
-        # (in-process) session ignores this entirely — no
+        # #5149: the two halves of "current location" are seeded TOGETHER,
+        # one ``_Destination`` construction — see that class's own
+        # docstring for why they can no longer be seeded (or later updated)
+        # independently. The session half is seeded to the well-known
+        # default session id (``registry.py``'s ``_DEFAULT_SID``) rather
+        # than empty: a fresh, never-switched remote connection is always
+        # attached to it, and ``AgUiTransport``'s own FIRST backlog batch is
+        # seeded the same way (see that class's ``__init__``) — both sides
+        # of the comparison must start from the SAME default or a correct
+        # FIRST connect would spuriously fail the destination check. A
+        # LOCAL (in-process) session ignores this entirely — no
         # ``BacklogBatch`` is ever produced off ``InProcessTransport``.
         from reyn.runtime.registry import _DEFAULT_SID  # noqa: PLC0415
 
-        self._session_id = _DEFAULT_SID
+        self._destination = _Destination(agent=agent_name, session_id=_DEFAULT_SID)
         self._config = config
         # #4983: the CURRENTLY-ATTACHED session's conversation history,
         # read BEFORE this App was constructed (the caller — normally
@@ -1636,12 +1672,12 @@ class TextualChatApp(App):
 
     @property
     def agent_name(self) -> str:
-        """#5131: public read of :attr:`_agent_name` — which agent this App
-        is currently showing. Never reach into ``self._agent_name`` directly
-        from a test asserting on it (the testing policy forbids a
-        private-state assertion); this property is the public surface that
-        exists for exactly that observation."""
-        return self._agent_name
+        """#5131: public read of :attr:`_destination`'s agent half — which
+        agent this App is currently showing. Never reach into
+        ``self._destination`` directly from a test asserting on it (the
+        testing policy forbids a private-state assertion); this property is
+        the public surface that exists for exactly that observation."""
+        return self._destination.agent
 
     @property
     def cursor_position(self) -> "Offset":
@@ -2074,7 +2110,7 @@ class TextualChatApp(App):
         if not rows:
             return rows
         project_root = _find_project_root(Path.cwd()) or Path.cwd()
-        return resolve_display_paths(rows, project_root, self._agent_name)
+        return resolve_display_paths(rows, project_root, self._destination.agent)
 
     def _pane_rows(self, tab_id: str, snap: "dict | None | object" = _UNSET) -> "list[str]":
         """The display rows for ``tab_id``'s pane, derived from canonical sources:
@@ -2139,7 +2175,7 @@ class TextualChatApp(App):
         diagnostics_count = self._stray_output_stats.count if self._stray_output_stats else 0
         return status_line_text(
             snapshot,
-            self._agent_name,
+            self._destination.agent,
             attach_state=self._attach_state(),
             warn_percent=warn_percent,
             diagnostics_count=diagnostics_count,
@@ -2615,7 +2651,7 @@ class TextualChatApp(App):
         Discarding it increments a PUBLIC counter
         (:meth:`remote_backlog_discard_count`) rather than vanishing
         silently."""
-        if batch.agent != self._agent_name or batch.sid != self._session_id:
+        if (batch.agent, batch.sid) != (self._destination.agent, self._destination.session_id):
             self._remote_backlog_discard_count += 1
             return
         # #5139 C: this batch's OWN continuation state — tracked regardless
@@ -3426,7 +3462,7 @@ class TextualChatApp(App):
             rows_from_ref_table_entries,
         )
 
-        entries, total = await self._transport.request_artifact_list(agent=self._agent_name)
+        entries, total = await self._transport.request_artifact_list(agent=self._destination.agent)
         fallback_rows = rows_from_ref_table_entries(entries)
         if fallback_rows:
             # Same resolved_path fill-in the live path gets (#4482 PR-3
@@ -3435,7 +3471,7 @@ class TextualChatApp(App):
             # artifacts in different directories.
             project_root = _find_project_root(Path.cwd()) or Path.cwd()
             fallback_rows = resolve_display_paths(
-                fallback_rows, project_root, self._agent_name,
+                fallback_rows, project_root, self._destination.agent,
             )
         self._artifact_rows_cache = fallback_rows
         self._artifact_rows_source = "ref_table_fallback"
@@ -4449,7 +4485,7 @@ class TextualChatApp(App):
             self._ingest_frame(OutboxMessage(kind="status", text="no artifact ref given"))
             return
         project_root = _find_project_root(Path.cwd()) or Path.cwd()
-        resolved = resolve_ref(project_root, self._agent_name, ref)
+        resolved = resolve_ref(project_root, self._destination.agent, ref)
         if resolved is None:
             self._ingest_frame(OutboxMessage(
                 kind="status", text=f"artifact not found (ref={ref})",
@@ -5602,14 +5638,20 @@ class TextualChatApp(App):
         self._rewind_picker.hide()
         self._queue_view = RemoteQueueView()
         self._sent_queue.clear_all()
-        if agent:
-            self._agent_name = agent
-        # #5139: mirrors the ``agent`` update just above — this switch's
-        # own ``{agent, session_id}`` announce is the wire's next
-        # BacklogBatch destination too (see ``self._session_id``'s own
-        # comment in ``__init__``).
-        if session_id:
-            self._session_id = session_id
+        # #5149: ONE atomic replacement — never two independent writes (the
+        # pre-#5149 ``if agent: self._agent_name = agent`` / ``if
+        # session_id: self._session_id = session_id`` shape this replaces
+        # is exactly the hazard: two separately-guarded writes let the pair
+        # go stale relative to each other the moment a caller supplies only
+        # one). Either half missing from the event (``data.get`` returned
+        # ``None``) falls back to the CURRENT value of that half, so a
+        # partial announce still produces a single, internally-consistent
+        # ``_Destination`` rather than a bug-shaped partial update.
+        if agent or session_id:
+            self._destination = _Destination(
+                agent=agent or self._destination.agent,
+                session_id=session_id or self._destination.session_id,
+            )
         # Eager reseed (see the ``_queue_view``/``_queue_seeded`` bullet
         # above): seed the fresh view from the NEW session's snapshot right
         # now, rather than deferring to the generic "first frame" check —
@@ -6553,12 +6595,12 @@ class TextualChatApp(App):
             return  # not yet mounted
         menubar.update_status(self._status_text(snap))
 
-    def watch__agent_name(self, old_value: str, new_value: str) -> None:
+    def watch__destination(self, old_value: "_Destination", new_value: "_Destination") -> None:
         """#5131: the App is now showing a DIFFERENT agent (init or a real
         session switch — Textual's reactive default (``always_update=
         False``) means this never fires for a same-value reassignment).
         Refresh every consumer that derives its content from
-        :attr:`_agent_name` from this ONE canonical trigger, synchronously,
+        :attr:`_destination` from this ONE canonical trigger, synchronously,
         rather than waiting for the next :meth:`_refresh_live_chrome` per-
         frame call to eventually catch up — closing the exact "stale
         between real server frames" gap #5131 names for the status line
@@ -6575,10 +6617,26 @@ class TextualChatApp(App):
         in here would be a second, independent change bundled into this
         one, not this migration's first slice.
 
+        #5149 (architect ruling, issuecomment-5384771856, condition on the
+        approval): guarded on ``old_value.agent != new_value.agent`` — a
+        ``_destination`` change where ONLY ``session_id`` moved (agent
+        unchanged) does NOT re-run this refresh. Explicit reason, per that
+        same ruling ("正しく、かつ沈黙している" must not happen again): no
+        consumer below reads ``session_id`` at all (the status line and the
+        drawer panes both derive purely from the agent's own snapshot), and
+        nothing in this codebase currently needs to react to a session_id-
+        only move — the #4983 history rehydration on a real session switch
+        is driven by :meth:`_handle_session_attached_event`'s own frame
+        handling, not by this watcher. If a future consumer DOES need to
+        react to a session_id-only change, this guard is the place that
+        will silently swallow it — widen it here, not around it.
+
         No mount guard needed: both calls below already no-op safely pre-
         mount via their own ``try: self.query_one(...) except Exception:
         return`` (the exact same guard :meth:`_refresh_live_chrome` relies
         on for the identical reason)."""
+        if old_value.agent == new_value.agent:
+            return
         self._refresh_status()
         try:
             drawer = self.query_one("#drawer", ContentSwitcher)
