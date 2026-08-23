@@ -318,6 +318,30 @@ def _deep_merge(base: dict, override: dict) -> dict:
     return result
 
 
+class UnresolvableModelClassError(ValueError):
+    """#4573 (architect blocking finding, issuecomment-5385388810, PR #5212
+    A): raised by :meth:`ModelResolver.resolve` for a class-position value
+    that resolves to neither a declared class nor a literal
+    ``provider/model`` name — a TYPED discriminator, not a bare
+    ``ValueError``, so a caller distinguishing "this specific, expected
+    failure mode" from "some OTHER ValueError I did not anticipate" can do
+    so by type instead of by string-matching the message (reyn's own
+    typed-discriminated-union preference, applied to exceptions the same
+    way #4996/``ChatReadModelCapabilities`` applies it to capabilities).
+
+    Concretely: :func:`~reyn.services.turn_budget.try_build_default_turn_
+    budget_engine` catches ONLY this subclass (never bare ``ValueError``)
+    around its own ``resolver.resolve(model)`` call — before this class
+    existed, a bare ``except ValueError`` there caught the SHAPE of the
+    failure, not the CAUSE: any future, unrelated ``ValueError`` from
+    somewhere else in that call chain would have ALSO silently degraded to
+    ``None`` (a context-window display going quietly wrong, not raising),
+    with nothing to catch the over-broad catch itself. A subclass of
+    ``ValueError`` (not a sibling exception type) so every EXISTING bare
+    ``except ValueError`` elsewhere in the codebase that already wraps a
+    ``resolve()`` call keeps working unchanged."""
+
+
 class ModelClassExceedsCeilingError(ValueError):
     """#4206 T1: raised by :func:`reyn.llm.llm.recorded_acompletion` when a
     call's declared ``model_class`` exceeds the caller's effective
@@ -548,7 +572,7 @@ class ModelResolver:
             return self._resolved[name]
         if "/" in name:
             return ModelSpec(model=name, kwargs={})
-        raise ValueError(
+        raise UnresolvableModelClassError(
             f"model class {name!r} not found among known classes "
             f"({', '.join(sorted(self._resolved)) or 'none'}). Check reyn.yaml/"
             "reyn.local.yaml's `llm.models:` section for a typo or a load "

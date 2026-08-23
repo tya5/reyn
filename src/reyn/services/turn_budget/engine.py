@@ -340,28 +340,44 @@ def try_build_default_turn_budget_engine(
     ``assert_turn_budget_bounds`` — caught here so the result is None, not a raise;
     no bounds logic is duplicated (which would drift from the engine's measure).
 
-    #4573 (architect ruling, issuecomment on that issue): ALSO catches
-    ``ValueError`` — the SAME shape ``ModelResolver.resolve()`` raises for an
-    unresolvable model CLASS (a typo'd ``llm.model``, e.g.), which this
-    engine's own ``resolver.resolve(model)`` call (inside
-    ``TurnBudgetEngine.__init__``) propagates unchanged. This call site is
-    LAZY (``RouterHostAdapter._ensure_turn_budget_engine``, first reference
-    — a status/context-window read, not a real LLM call) and its whole
-    return contract is already "``None`` is a legitimate, permanent
-    degrade" (the small-context case above) — an unresolvable model class is
-    the SAME shape of degrade for the SAME caller, not a reason to crash the
-    session before the operator ever gets a chance to run ``/model`` and
-    fix it (#4573's own observed symptom: a typo'd ``llm.model`` made
-    ``reyn chat`` unusable, including the ``/model`` escape hatch, because
-    THIS lazy build ran before any turn and before any user input). The
-    REAL turn-dispatch path (``RouterLoop``'s own ``resolve_model`` calls)
-    is untouched by this — a genuine turn attempt with an unresolved model
-    still raises the full, load-bearing error (#4573 acceptance③); only
-    this budget-ESTIMATION path degrades."""
+    #4573 (architect ruling, corrected per issuecomment-5385388810, PR
+    #5212 A blocking finding): ALSO catches
+    :class:`~reyn.llm.model_resolver.UnresolvableModelClassError` — the
+    TYPED exception ``ModelResolver.resolve()`` raises for an unresolvable
+    model CLASS (a typo'd ``llm.model``, e.g.), which this engine's own
+    ``resolver.resolve(model)`` call (inside ``TurnBudgetEngine.__init__``)
+    propagates unchanged. This call site is LAZY (``RouterHostAdapter.
+    _ensure_turn_budget_engine``, first reference — a status/context-window
+    read, not a real LLM call) and its whole return contract is already
+    "``None`` is a legitimate, permanent degrade" (the small-context case
+    above) — an unresolvable model class is the SAME shape of degrade for
+    the SAME caller, not a reason to crash the session before the operator
+    ever gets a chance to run ``/model`` and fix it (#4573's own observed
+    symptom: a typo'd ``llm.model`` made ``reyn chat`` unusable, including
+    the ``/model`` escape hatch, because THIS lazy build ran before any
+    turn and before any user input).
+
+    Deliberately a NARROW except (this specific subclass, not bare
+    ``ValueError``) — the architect finding on the first version of this
+    fix: catching bare ``ValueError`` here catches the SHAPE of the known
+    failure, not its CAUSE, so a future, UNRELATED ``ValueError`` from
+    anywhere else in this call chain would ALSO silently degrade to
+    ``None`` (a context-window display going quietly wrong instead of
+    raising), with nothing to catch the over-broad catch itself. Since
+    ``UnresolvableModelClassError`` is a ``ValueError`` subclass, every
+    EXISTING bare ``except ValueError`` elsewhere that already wraps a
+    ``resolve()`` call is unaffected by this narrowing.
+
+    The REAL turn-dispatch path (``RouterLoop``'s own ``resolve_model``
+    calls) is untouched by this — a genuine turn attempt with an
+    unresolved model still raises the full, load-bearing error (#4573
+    acceptance③); only this budget-ESTIMATION path degrades."""
+    from reyn.llm.model_resolver import UnresolvableModelClassError
+
     try:
         return build_default_turn_budget_engine(
             model, resolver=resolver, use_chars4=use_chars4,
             max_inline_bytes=max_inline_bytes, events=events,
         )
-    except (AssertionError, ValueError):
+    except (AssertionError, UnresolvableModelClassError):
         return None

@@ -118,12 +118,12 @@ def test_try_build_degrades_to_none_for_an_unresolvable_model_class() -> None:
     this function already has for a too-small-context model).
 
     Strip-falsify (acceptance④, done by hand rather than as an automated
-    monkeypatch — see this test's own docstring for why): reverting
-    ``except (AssertionError, ValueError)`` back to ``except AssertionError``
-    in ``engine.py`` makes THIS test raise ``ValueError`` instead of
-    returning ``None`` — verified manually before this PR (not re-verified
-    by a second, redundant test here — CLAUDE.md's own "same expression on
-    both sides" caution about testing exactly the code under test)."""
+    monkeypatch — see this test's own docstring for why): reverting the
+    ``except`` clause in ``engine.py`` back to ``except AssertionError``
+    alone makes THIS test raise instead of returning ``None`` — verified
+    manually before this PR (not re-verified by a second, redundant test
+    here — CLAUDE.md's own "same expression on both sides" caution about
+    testing exactly the code under test)."""
     resolver = ModelResolver(
         {"light": "openai/gpt-4o-mini", "standard": "openai/gpt-4o"},
         default_class="gemini-2.5-flash-lite",
@@ -143,6 +143,36 @@ def test_try_build_still_builds_normally_for_a_resolvable_class() -> None:
     )
     engine = try_build_default_turn_budget_engine("standard", resolver=resolver)
     assert engine is not None
+
+
+def test_an_unrelated_value_error_still_propagates_through(monkeypatch) -> None:
+    """Tier 2: architect blocking finding on the FIRST version of this fix
+    (issuecomment-5385388810, PR #5212 A): ``except (AssertionError,
+    ValueError)`` caught the SHAPE of the known failure (a bare
+    ``ValueError``), not its CAUSE — a future, UNRELATED ``ValueError``
+    raised anywhere else inside ``build_default_turn_budget_engine``'s own
+    call chain would have ALSO silently degraded to ``None`` instead of
+    propagating. Narrowed to
+    :class:`~reyn.llm.model_resolver.UnresolvableModelClassError`
+    specifically (a ``ValueError`` subclass, so this test injects a
+    DIFFERENT ``ValueError`` — not that subclass — via
+    ``estimate_tokens`` (called right after the now-successful
+    ``resolver.resolve()`` inside ``TurnBudgetEngine.__init__``) to prove
+    it is NOT swallowed."""
+    import reyn.services.turn_budget.engine as engine_module
+
+    resolver = ModelResolver(
+        {"light": "openai/gpt-4o-mini", "standard": "openai/gpt-4o"},
+        default_class="standard",
+    )
+
+    def _boom(*args, **kwargs):
+        raise ValueError("an unrelated failure, not an unresolvable model class")
+
+    monkeypatch.setattr(engine_module, "estimate_tokens", _boom)
+
+    with pytest.raises(ValueError, match="an unrelated failure"):
+        try_build_default_turn_budget_engine("standard", resolver=resolver)
 
 
 # ── acceptance② — /model can reach a valid class from a broken initial
