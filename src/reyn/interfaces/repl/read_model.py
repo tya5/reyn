@@ -704,6 +704,36 @@ class RegistryReadModel(ChatReadModel):
         return extend()
 
 
+#: #5093 (architect ruling, issuecomment-5384873023): the ``STATE_*`` wire
+#: keys that ``project_remote_snapshot`` reads via a ``v.get(key, <placeholder>)``
+#: call where the placeholder is genuinely unreachable — these keys have NO
+#: "unsupported"/"not yet on the wire" state to declare (unlike
+#: ``agent_names``/``model_classes``/etc, which DO — see
+#: ``ChatReadModelCapabilities.agent_roster_reported``/``model_catalog_reported``
+#: — and unlike a bare non-``.get`` literal like ``cron_jobs: []``, which
+#: needs its own declared axis). ``scripts/check_remote_snapshot_placeholder_
+#: declared.py`` imports this SAME constant rather than re-typing the key
+#: list — architect's explicit condition on approving the exclusion at all:
+#: "5件をgate側に書き写さない... 将来keyがwireから外れたとき、gateは除外した
+#: ままで穴が開く" (same comment as above, issuecomment-5384873023) — a key
+#: removed from here automatically re-enters the gate's scope, no second
+#: edit required.
+#:
+#: ``cost_usd`` is NOT listed separately: its own ``.get(...)`` call reads
+#: the ``"cost_agent"`` wire key (an intentional alias, see the dict below),
+#: so the gate matches on the ``.get()`` call's own key ARGUMENT, not the
+#: dict's output key name — one membership check covers both.
+#:
+#: ``queue``/``turn_active``/``queue_seq`` (#3300 P2b/#5098) are the
+#: server-authoritative sent-queue state, folded onto the wire the same way
+#: the cost/ctx figures are — see ``project_remote_snapshot``'s own inline
+#: comment at those 3 keys for the citation.
+_WIRE_KEYS = frozenset({
+    "cost_agent", "cost_total", "agent_tokens", "ctx_used", "ctx_window",
+    "queue", "turn_active", "queue_seq",
+})
+
+
 def project_remote_snapshot(values: "dict | None") -> dict:
     """Project a :class:`RemoteStatusView`'s wire values into the ``_snapshot``
     dict shape the inline chips read.
