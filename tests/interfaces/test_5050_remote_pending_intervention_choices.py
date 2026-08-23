@@ -59,7 +59,6 @@ import asyncio
 from pathlib import Path
 
 import pytest
-import yaml
 from textual_flowview import FlowView
 
 from reyn.core.events.events import Event
@@ -183,7 +182,7 @@ def _make_session_with_resolver(
 
 
 @pytest.mark.asyncio
-async def test_remote_always_choice_persists_to_approvals_yaml(tmp_path, monkeypatch):
+async def test_remote_always_choice_persists_to_the_approval_ledger(tmp_path, monkeypatch):
     """Tier 2: witness ① — the COMBINED witness lead-coder's own #5050③
     block found missing (no single test looked at the whole SET owner
     required): a construction where ``transport.frames()`` yields ZERO
@@ -269,12 +268,15 @@ async def test_remote_always_choice_persists_to_approvals_yaml(tmp_path, monkeyp
         # so ONE "down" reaches [A]lways.
         await pilot.press("down")
         await pilot.press("enter")
-        approvals_path = tmp_path / ".reyn" / "approvals.yaml"
-        await _wait_until(pilot, lambda: approvals_path.exists())
+        # #5153: persistence moved from a snapshot approvals.yaml to the
+        # append-only approvals.jsonl ledger — wait on THAT file existing.
+        ledger_path = tmp_path / ".reyn" / "approvals.jsonl"
+        await _wait_until(pilot, lambda: ledger_path.exists())
 
     await require_task
 
-    saved = yaml.safe_load(approvals_path.read_text(encoding="utf-8")) or {}
+    from reyn.security.permissions.approval_ledger import ApprovalLedger
+    saved, _bound = ApprovalLedger(ledger_path).fold()
     assert saved.get("chat_router/http.get/news.ycombinator.com") is True, saved
 
 

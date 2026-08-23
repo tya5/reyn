@@ -1,10 +1,13 @@
 """Tier 2: #5065 — the ``/api/permissions`` REST router's own management
 operations (revoke a single approval, clear all approvals) each emit a
 P6 audit-event, closing the band violation (permission x audit-events)
-this issue names: ``.reyn/approvals.yaml`` had two writers (the
-security-side ``_persist`` flow, which journals, and this router's own
-``_save``, a raw ``path.write_text`` with no audit trail of its own) and
-only one of them was observable through ``.reyn/events``.
+this issue names: the approvals store had multiple writers (the
+security-side ``_persist`` flow, and this router's own) and only one of
+them was observable through ``.reyn/events``. #5153 later moved BOTH onto
+the same ``ApprovalLedger`` (append-only ``approvals.jsonl``, replacing
+the ``.reyn/approvals.yaml`` snapshot's read-modify-write) — this test's
+seeding still uses the legacy YAML format, exercising the migration path
+``_load`` runs through on first touch.
 
 Real FastAPI TestClient + a real on-disk ``.reyn/`` tree throughout — no
 mocks. Witness reads the actual ``.reyn/events/`` files this PR's new
@@ -129,12 +132,14 @@ def test_revoke_permission_emits_one_audit_event_naming_the_key(tmp_project: Pat
     assert events[0]["data"]["key"] == "chat_router/http.get/example.com"
     assert events[0]["data"]["surface"] == "web"
 
-    # The write itself is unaffected by the audit addition -- approvals.yaml
-    # no longer carries the revoked key.
-    saved = yaml.safe_load(
-        (tmp_project / ".reyn" / "approvals.yaml").read_text(encoding="utf-8")
-    ) or {}
-    assert "chat_router/http.get/example.com" not in saved
+    # The write itself is unaffected by the audit addition -- #5153: folding
+    # the ledger no longer shows this key as approved (the row itself
+    # SURVIVES, as an explicit revoke record -- audit-events acceptance).
+    from reyn.security.permissions.approval_ledger import ApprovalLedger
+    saved, _bound = ApprovalLedger(
+        tmp_project / ".reyn" / "approvals.jsonl"
+    ).fold()
+    assert saved.get("chat_router/http.get/example.com") is False
 
 
 # ── witness ② — clear_permissions ─────────────────────────────────────────
@@ -164,7 +169,59 @@ def test_clear_permissions_emits_one_audit_event_with_the_cleared_count(
     assert events[0]["data"]["count"] == 2
     assert events[0]["data"]["surface"] == "web"
 
-    saved = yaml.safe_load(
-        (tmp_project / ".reyn" / "approvals.yaml").read_text(encoding="utf-8")
-    ) or {}
-    assert saved == {}
+    from reyn.security.permissions.approval_ledger import ApprovalLedger
+    saved, _bound = ApprovalLedger(
+        tmp_project / ".reyn" / "approvals.jsonl"
+    ).fold()
+    assert saved == {
+        "chat_router/http.get/a.example.com": False,
+        "chat_router/http.get/b.example.com": False,
+    }
+
+
+# ── #5153 acceptance ⑥ — cross-writer identity clear ─────────────────────
+
+
+def test_web_revoke_clears_the_bound_identity_a_live_resolver_would_have_held(
+    tmp_project: Path,
+):
+    """Tier 2: #5153 acceptance ⑥ — the cross-writer witness architect
+    explicitly asked to be MEASURED (issuecomment-5383848849), web's own
+    half of the SAME check #5153's CLI test makes: this router's
+    ``revoke_permission`` builds an ``ApprovalLedger`` directly from
+    ``project_root``, entirely bypassing ``deps._get_perm_resolver()``'s
+    own module-level singleton (the resolver a running session actually
+    gates permission checks through) — so a web-surface revoke must not
+    leave THAT resolver's own bound-identity record stale. Verified via a
+    FRESH ``PermissionResolver`` (the process-boundary analogue) reading
+    the SAME project after the HTTP revoke."""
+    import asyncio
+
+    from reyn.security.permissions.permissions import PermissionDecl, PermissionResolver
+
+    key = "chat_router/file.write/some_dir/"
+    target = tmp_project / "some_dir"
+    target.mkdir()
+
+    # A live resolver binds the identity (simulating the server's own
+    # deps._get_perm_resolver() singleton having gated a real write).
+    resolver = PermissionResolver({}, project_root=tmp_project)
+    resolver._saved[key] = True
+    resolver._persist(key, True)
+    asyncio.run(
+        resolver.require_file_write(
+            PermissionDecl(), str(target / "f.txt"), "chat_router",
+        ),
+    )
+    assert resolver.bound_identity_get(key) is not None
+
+    response = _client().delete(
+        "/api/permissions/chat_router%2Ffile.write%2Fsome_dir%2F",
+    )
+    assert response.status_code == 204, response.text
+
+    fresh = PermissionResolver({}, project_root=tmp_project)
+    assert fresh.bound_identity_get(key) is None, (
+        "a web-surface revoke must clear the bound identity too, not "
+        "just the approval row"
+    )

@@ -1,6 +1,6 @@
 """Tier 2: #3671 P4 item D-1 — `PermissionResolver`'s persisted-approvals
-disk read (`approvals.yaml` → `self._saved`) is deferred to first actual
-use, not paid on every `reyn chat` startup construction.
+load is deferred to first actual use, not paid on every `reyn chat`
+startup construction.
 
 Before this fix, `__init__` unconditionally called `self._load_saved()` —
 disk I/O + YAML parse, cost scaling with the number of persisted approval
@@ -11,7 +11,15 @@ whichever of `saved_get()` / `_persist()` / the internal read sites reaches
 it first — there is no second call site that could forget to trigger it,
 unlike an optional constructor kwarg (rejected pattern, #3681).
 
-Witnessed via a call-through spy on `_load_saved` (real behavior still
+#5153: the load site is now `_ensure_folded` (folds the append-only
+`approvals.jsonl` ledger, migrating a legacy `approvals.yaml` snapshot
+first if present — see `approval_ledger.py`) rather than the old
+`_load_saved`'s direct YAML read, but the SAME deferred-until-first-access
+contract this issue established still holds; `_seed_approvals` below
+seeds the legacy snapshot format, which the migration step reads exactly
+as before.
+
+Witnessed via a call-through spy on `_ensure_folded` (real behavior still
 runs; only the call COUNT and its TIMING relative to construction are
 observed) — not a private-state peek at `self.__saved` itself.
 
@@ -41,22 +49,22 @@ def _seed_approvals(tmp_path, **entries) -> None:
 
 def test_construction_does_not_read_approvals_yaml(tmp_path, monkeypatch):
     """Tier 2: #3671 P4 item D-1 core witness — `PermissionResolver(...)`
-    itself never calls `_load_saved()`. A real approvals.yaml is seeded so
-    a call WOULD find real data if it fired."""
+    itself never calls `_ensure_folded()`. A real (legacy-format)
+    approvals.yaml is seeded so a call WOULD find real data if it fired."""
     _seed_approvals(tmp_path, **{"safe.key": True})
     calls = {"n": 0}
-    orig = PermissionResolver._load_saved
+    orig = PermissionResolver._ensure_folded
 
     def _spy(self):
         calls["n"] += 1
         return orig(self)
 
-    monkeypatch.setattr(PermissionResolver, "_load_saved", _spy)
+    monkeypatch.setattr(PermissionResolver, "_ensure_folded", _spy)
 
     PermissionResolver({}, project_root=tmp_path)
 
     assert calls["n"] == 0, (
-        f"_load_saved() was called {calls['n']} time(s) during construction — "
+        f"_ensure_folded() was called {calls['n']} time(s) during construction — "
         "expected 0 (deferred to first access)"
     )
 
@@ -66,13 +74,13 @@ def test_first_saved_get_triggers_exactly_one_load(tmp_path, monkeypatch):
     only once — a second call must not re-read the file."""
     _seed_approvals(tmp_path, **{"safe.key": True})
     calls = {"n": 0}
-    orig = PermissionResolver._load_saved
+    orig = PermissionResolver._ensure_folded
 
     def _spy(self):
         calls["n"] += 1
         return orig(self)
 
-    monkeypatch.setattr(PermissionResolver, "_load_saved", _spy)
+    monkeypatch.setattr(PermissionResolver, "_ensure_folded", _spy)
 
     resolver = PermissionResolver({}, project_root=tmp_path)
     assert calls["n"] == 0
@@ -91,13 +99,13 @@ def test_persist_also_triggers_lazy_load_exactly_once(tmp_path, monkeypatch):
     the one exercised above."""
     _seed_approvals(tmp_path, **{"other.key": False})
     calls = {"n": 0}
-    orig = PermissionResolver._load_saved
+    orig = PermissionResolver._ensure_folded
 
     def _spy(self):
         calls["n"] += 1
         return orig(self)
 
-    monkeypatch.setattr(PermissionResolver, "_load_saved", _spy)
+    monkeypatch.setattr(PermissionResolver, "_ensure_folded", _spy)
 
     resolver = PermissionResolver({}, project_root=tmp_path)
     assert calls["n"] == 0
@@ -133,7 +141,7 @@ async def test_saved_property_consistent_under_concurrent_coroutines(tmp_path):
     `_get_retryable_litellm_exceptions` in #3674): every concurrent accessor
     must observe the SAME dict object (not two independently-built dicts,
     which would mean a `_persist()` mutation on one could be invisible to a
-    reader holding the other) — safe because `_load_saved()` contains no
+    reader holding the other) — safe because `_ensure_folded()` contains no
     `await`, so the whole check-then-set body runs with no yield point a
     sibling coroutine could interleave into (asyncio's single-threaded
     cooperative scheduling — see the property's own docstring for the

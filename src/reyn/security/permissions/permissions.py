@@ -452,7 +452,18 @@ class PermissionResolver:
             Path(file_zone_root).resolve() if file_zone_root else self._project_root
         )
         self._interactive = interactive
+        # #5153: the LEGACY snapshot path — read-only from here on (a
+        # one-time migration source into the ledger, never written by
+        # this class again; see ``_ensure_folded``/``migrate_legacy_snapshot``).
         self._approvals_path = self._project_root / ".reyn" / "approvals.yaml"
+        # #5153: the append-only decision ledger that REPLACES the above
+        # snapshot's read-modify-write. See ``approval_ledger.py``'s own
+        # module docstring for the full rationale (3 independent writers
+        # — this class, the CLI `permissions` command, the web router —
+        # each needing momentary ownership of the WHOLE snapshot file to
+        # change even one key was the root cause of a lost approval under
+        # concurrent access).
+        self._approval_ledger_path = self._project_root / ".reyn" / "approvals.jsonl"
         self._session: dict[str, bool] = {}
         # #3671 P4 item D-1: lazy — disk read + YAML parse deferred to the
         # `_saved` property's first access, not paid on every PermissionResolver
@@ -610,11 +621,13 @@ class PermissionResolver:
 
     @property
     def _saved(self) -> dict[str, bool]:
-        """#3671 P4 item D-1: the single owner of the lazy load — reads +
-        parses `approvals.yaml` on first access only, cached for the life of
-        this resolver. Returns the SAME dict object across calls, so
-        `self._saved[key] = value` (used by `_persist`) mutates the real
-        cached dict, not a throwaway copy.
+        """#3671 P4 item D-1: the single owner of the lazy load — folds
+        the #5153 append-only ``approvals.jsonl`` ledger (migrating a
+        legacy ``approvals.yaml`` snapshot first, if present) on first
+        access only, cached for the life of this resolver. Returns the
+        SAME dict object across calls, so `self._saved[key] = value`
+        (used by `_persist`) mutates the real cached dict, not a
+        throwaway copy.
 
         #3671 P4 D-1 review (lead-coder): this IS a check-then-set
         (`self.__saved is None` → `self.__saved = ...`), the same SHAPE as
@@ -623,7 +636,7 @@ class PermissionResolver:
         justify, not merely assert (#3674's own standard). One
         `PermissionResolver` IS shared across multiple `Session`s (PR10) —
         so this property IS reachable from more than one concurrently-
-        running coroutine. What makes it safe regardless: `_load_saved()`
+        running coroutine. What makes it safe regardless: `_ensure_folded()`
         contains NO `await` — the whole check-then-set body runs to
         completion inside a single asyncio task's turn with no yield point
         in between, so no other coroutine can observe `self.__saved` in a
@@ -634,50 +647,42 @@ class PermissionResolver:
         no longer hold and this property would need the same ownership
         treatment #3674 gave `ensure_litellm_ready`)."""
         if self.__saved is None:
-            self.__saved = self._load_saved()
+            self._ensure_folded()
+        assert self.__saved is not None  # _ensure_folded always sets both
         return self.__saved
 
-    def _load_saved(self) -> dict[str, bool]:
-        if not self._approvals_path.exists():
-            return {}
-        try:
-            import yaml
-            data = yaml.safe_load(self._approvals_path.read_text(encoding="utf-8")) or {}
-            return {k: bool(v) for k, v in data.items() if isinstance(v, bool)}
-        except Exception:
-            return {}
-
-    # ── #5042: bound identity for PATH-flavor approvals only ──────────────────
+    # ── #5042/#5153: bound identity for PATH-flavor approvals only ──────────
 
     @property
     def _bound_identities(self) -> "dict[str, tuple[int, float | None]]":
-        """Same lazy-load-once shape as :attr:`_saved` — one owner, mutation
+        """Same lazy-load-once shape as :attr:`_saved` — folded from the
+        SAME ledger in the SAME pass (see :meth:`_ensure_folded`); mutation
         through the returned dict object persists via :meth:`_bind_identity`."""
         if self.__bound_identities is None:
-            self.__bound_identities = self._load_bound_identities()
+            self._ensure_folded()
+        assert self.__bound_identities is not None  # _ensure_folded always sets both
         return self.__bound_identities
 
-    def _load_bound_identities(self) -> "dict[str, tuple[int, float | None]]":
-        if not self._approvals_path.exists():
-            return {}
-        try:
-            import yaml
-            data = yaml.safe_load(self._approvals_path.read_text(encoding="utf-8")) or {}
-            raw = data.get("_bound_identities")
-            if not isinstance(raw, dict):
-                return {}
-            out: "dict[str, tuple[int, float | None]]" = {}
-            for k, v in raw.items():
-                if not isinstance(v, dict) or "ino" not in v:
-                    continue  # malformed entry -- read as unbound, same as absent
-                ino = v.get("ino")
-                if not isinstance(ino, int):
-                    continue
-                bt = v.get("birthtime")
-                out[k] = (ino, float(bt) if isinstance(bt, (int, float)) else None)
-            return out
-        except Exception:
-            return {}
+    def _ensure_folded(self) -> None:
+        """#5153: the single fold site both :attr:`_saved` and
+        :attr:`_bound_identities` lazy-load through — one ledger read
+        producing BOTH maps together (they were always derived from the
+        same records; loading them separately would just be the same
+        file parsed twice). Migrates a legacy ``approvals.yaml`` snapshot
+        into the ledger first if the ledger doesn't exist yet (see
+        :func:`~reyn.security.permissions.approval_ledger.migrate_legacy_snapshot`)
+        — a no-op on every call after the first, for this resolver or any
+        other process (idempotent by construction: the ledger existing at
+        all is what makes it skip)."""
+        if self.__saved is not None and self.__bound_identities is not None:
+            return
+        from reyn.security.permissions.approval_ledger import (
+            ApprovalLedger,
+            migrate_legacy_snapshot,
+        )
+        ledger = ApprovalLedger(self._approval_ledger_path)
+        migrate_legacy_snapshot(ledger, self._approvals_path)
+        self.__saved, self.__bound_identities = ledger.fold()
 
     def _path_identity(self, path: Path) -> "tuple[int, float | None] | None":
         """#5042/#5084: raw ``(st_ino, st_birthtime)`` of *path* (file OR
@@ -784,48 +789,31 @@ class PermissionResolver:
         acquisition happen together so every caller gets both halves of
         the confirmation contract for free.
 
-        architect co-vet (issuecomment-5383499299): this write fires far
-        more often than ``_persist``'s own read-modify-write of the same
-        file — ``_persist`` only runs when a HUMAN approves (rare);
-        binding runs on every path-approval's FIRST USE, inside ordinary
-        tool execution (routine). A crash mid-``write_text`` here would
-        truncate ``approvals.yaml`` and lose EVERY approval, not just the
-        one being bound — a rare risk turned common by this PR's own
-        change in call frequency. Fixed the same way
-        ``AgentIdentityGenerationStore.record`` already does (tmp file +
-        atomic ``replace``): the write either lands whole or not at all,
-        never a half-written file. A second PROCESS (server + CLI)
-        racing this same read-modify-write and last-writer-wins losing
-        the OTHER process's binding is a separate, NOT-closed-here
-        finding (architect: file a follow-up; the owner runs 2 clients +
-        a server concurrently, so this is not a hypothetical)."""
+        #5153 (architect ruling, issuecomment-5383838646, superseding the
+        architect co-vet issuecomment-5383499299 that FIRST flagged this
+        write's frequency): this write fires far more often than
+        ``_persist``'s own decision — ``_persist`` only runs when a HUMAN
+        approves (rare); binding runs on every path-approval's FIRST USE
+        per process, inside ordinary tool execution (routine). The
+        original fix here was a snapshot tmp-file + atomic ``replace``
+        (still correct against a mid-write CRASH), but that read-modify-
+        write shape ALSO loses an update under concurrent WRITERS — not
+        just a crash — because every writer needs momentary ownership of
+        the WHOLE file to change even one key. #5153 replaces the
+        snapshot entirely with an APPEND to :class:`~reyn.security.
+        permissions.approval_ledger.ApprovalLedger` — see that module's
+        own docstring for why append-only removes the need for ownership
+        at all (a second, unrelated append to a DIFFERENT key never
+        conflicts; two racing appends for the SAME key both land, and
+        folding resolves the ordering deterministically)."""
         self._bound_identities[key] = identity
         self._acquire_identity_fd(key, approved_p)
         if not persist:
             return
-        try:
-            import yaml
-            self._approvals_path.parent.mkdir(parents=True, exist_ok=True)
-            existing: dict = {}
-            if self._approvals_path.exists():
-                existing = yaml.safe_load(
-                    self._approvals_path.read_text(encoding="utf-8")
-                ) or {}
-            bound_section = existing.get("_bound_identities")
-            if not isinstance(bound_section, dict):
-                bound_section = {}
-            bound_section[key] = {"ino": identity[0], "birthtime": identity[1]}
-            existing["_bound_identities"] = bound_section
-            tmp = self._approvals_path.with_suffix(
-                self._approvals_path.suffix + ".tmp"
-            )
-            tmp.write_text(
-                yaml.dump(existing, allow_unicode=True, default_flow_style=False),
-                encoding="utf-8",
-            )
-            tmp.replace(self._approvals_path)
-        except Exception:
-            pass
+        from reyn.security.permissions.approval_ledger import ApprovalLedger
+        ApprovalLedger(self._approval_ledger_path).append_identity_bind(
+            key, identity[0], identity[1],
+        )
 
     def _persist(self, key: str, approved: bool) -> None:
         # #2248: approvals.yaml is PERSIST, not recovery-core — so NO config generation
@@ -857,26 +845,17 @@ class PermissionResolver:
             # never-before-seen key.
             self._release_identity_fd(key)
             self._bound_identities.pop(key, None)
-        try:
-            import yaml
-            self._approvals_path.parent.mkdir(parents=True, exist_ok=True)
-            existing: dict = {}
-            if self._approvals_path.exists():
-                existing = yaml.safe_load(
-                    self._approvals_path.read_text(encoding="utf-8")
-                ) or {}
-            existing[key] = approved
-            if not approved:
-                bound_section = existing.get("_bound_identities")
-                if isinstance(bound_section, dict) and key in bound_section:
-                    bound_section.pop(key, None)
-                    existing["_bound_identities"] = bound_section
-            self._approvals_path.write_text(
-                yaml.dump(existing, allow_unicode=True, default_flow_style=False),
-                encoding="utf-8",
-            )
-        except Exception:
-            pass
+        # #5153 (architect ruling, issuecomment-5383838646): append the
+        # decision instead of read-modify-writing the whole snapshot — see
+        # ``approval_ledger.py``'s own module docstring. A revoke's
+        # in-memory fd-release/binding-clear above (#5157) is THIS
+        # process's own state; the PERSISTED half of "a revoke clears the
+        # bound identity too" is enforced generically by
+        # ``ApprovalLedger.fold`` (any ``approved=False`` record clears
+        # that key's fold-time binding, from WHICHEVER writer produced
+        # it — CLI, web router, or here) — no extra write needed for it.
+        from reyn.security.permissions.approval_ledger import ApprovalLedger
+        ApprovalLedger(self._approval_ledger_path).append_approval(key, approved)
         # #398 v4 emitter wiring: notify subscribers (= Session
         # instances that registered themselves) so the LLM sees the
         # permission change as a ``state_change`` history entry next
