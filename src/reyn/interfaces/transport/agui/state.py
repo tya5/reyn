@@ -71,6 +71,19 @@ def project_status(snapshot: "dict | None", *, waiting_on: "str | None" = None) 
         "session_tree": snap.get("session_tree", []),
         "model_active_class": snap.get("model_active_class"),
         "model_classes": snap.get("model_classes", []),
+        # #5185: the same pattern #5094 used above — real per-session data
+        # already computed server-side (``status._snapshot``'s own
+        # ``_session_visibility_items``/``_session_mcp_subscriptions``) but
+        # never forwarded past this projection, so a remote MCP/tool/skill
+        # pane was unconditionally "(not wired)"/empty regardless of the
+        # session's real state (owner live-observed, #5185).
+        # ``visibility_items`` MUST default to ``None``, not ``[]`` — ``None``
+        # is itself a real, meaningful value here (#3378: "this session
+        # wires no visibility seam"), and defaulting it away would silently
+        # turn a genuine "can't say" into a fabricated "nothing is
+        # narrowed" the moment this key happened to be absent from `snap`.
+        "visibility_items": snap.get("visibility_items"),
+        "mcp_subscriptions": snap.get("mcp_subscriptions", []),
         "cost_agent": snap.get("cost_agent", 0.0),
         "cost_total": snap.get("cost_total", 0.0),
         "agent_tokens": snap.get("agent_tokens", 0),
