@@ -80,6 +80,7 @@ _BUNDLED_UNIFORM = frozenset({
     "chat_tool_use_scheme",  # #1593 PR-2
     # → AgentRegistry — where delegation_capability_default drifted (#2081)
     "delegation_capability_default",
+    "reactivity_config",
 })
 
 

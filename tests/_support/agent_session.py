@@ -26,6 +26,7 @@ from typing import Any
 from reyn.runtime.agent import Agent
 from reyn.runtime.services.recovery import build_recovery, default_snapshot_path
 from reyn.runtime.session import Session
+from reyn.runtime.session_params import ReactivityConfig
 from tests._support.session import TEST_MODEL_RESOLVER
 
 # Identity fields owned by Agent (see reyn.runtime.agent.Agent). Extracted
@@ -116,6 +117,7 @@ def make_session(*, role: str | None = None, **kwargs: Any) -> Session:
     # passed its own (via ``**kwargs``, unchanged for the ~16 call sites
     # that already configure one).
     kwargs.setdefault("resolver", TEST_MODEL_RESOLVER)
+    kwargs.setdefault("reactivity", ReactivityConfig())
     return Session(
         agent=agent, generation_store=generation_store, journal=journal, **kwargs,
     )
