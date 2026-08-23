@@ -472,36 +472,60 @@ class AgentRegistry:
         # from the moment it exists" shape (that class's own module
         # docstring), never a second owner assigned later.
         #
-        # "Owns" means "only thread allowed to MUTATE OR READ", enforced on
-        # every method that touches registry-owned state (the 4 mutators
-        # PLUS 7 reads — see below).
+        # "Owns" means "only thread allowed to MUTATE", NOT "only thread
+        # allowed to touch" — the first version of this invariant asserted
+        # on 11 methods including 7 READS, and CI found a real, pre-existing,
+        # LEGITIMATE second thread within one run: ``app.py``'s #4983 design
+        # deliberately reads conversation history off the event loop via
+        # ``asyncio.to_thread`` (app.py's own ``_read_conversation_history``
+        # call sites), which genuinely executes on a second OS thread and
+        # reaches ``get_session``/``agent_workspace_dir``/etc. through
+        # ``RegistryReadModel``. That is not the race #4995 exists to
+        # prevent — 27 CI failures were this PR breaking a real feature, not
+        # catching a real bug. Scoped down to exactly the 4 methods that
+        # MUTATE registry-owned state: ``attach``, ``restore_all``,
+        # ``resume_deferred_agents``, ``record_background_attach_error``.
+        # The 7 read methods (``exists``, ``loaded_names``,
+        # ``agent_cost_usd``, ``agent_total_usage``, ``attached_session``,
+        # ``get_session``, ``agent_workspace_dir``) are NOT asserted — see
+        # each one's own docstring.
         #
-        # History (#5203, restoring what #5202 first landed then had to
-        # narrow): the first version of this invariant asserted on 11
-        # methods including these 7 READS, and CI found a real,
-        # pre-existing second thread within one run: ``app.py``'s #4983
-        # design read conversation history off the event loop via
-        # ``asyncio.to_thread`` (``app.py``'s own ``_read_conversation_
-        # history``/mount-time call sites), which genuinely executed on a
-        # second OS thread and reached ``get_session``/``attached_session``
-        # through ``RegistryReadModel``. #5202 scoped the guard down to
-        # exactly the 4 mutators to stop breaking that legitimate feature
-        # (27 CI failures) — architect's own follow-up ruling
-        # (issuecomment-5385152402) named the safety that left in place as
-        # ACCIDENTAL, not designed: the window (``get_or_load``, between
-        # ``_store_session`` and its own later ``load_persisted_toggles``/
-        # ``restore_state``) is real, and the ONLY reason nothing broke was
-        # that the one field ``app.py``'s off-thread reads actually consume
-        # (``Session.history``) happens to be hydrated before a session is
-        # ever stored — a fact about today's field, not a guarantee. #5203
-        # (same PR as this comment) moved ``app.py``'s 2 ``asyncio.to_
-        # thread`` call sites to resolve the registry-touching half ON THE
-        # LOOP first, handing the worker thread a plain, already-resolved
-        # value instead — closing the "偶然" (accidental) dependency by
-        # construction rather than merely documenting it, which is what
-        # makes restoring the guard onto all 7 reads (including
-        # ``get_session``/``attached_session``) safe again: nothing
-        # legitimate touches ANY of them off this thread anymore.
+        # #5203 tried to restore the guard onto the 7 reads too (architect
+        # issuecomment-5385152402, reasoning ``app.py``'s hoist below closed
+        # the ONLY legitimate off-thread reader) — WITHDRAWN by the same
+        # architect (issuecomment-5385481839, then reaffirmed against a
+        # narrower "just `exists()`" alternative, issuecomment-5385499177)
+        # for 2 INDEPENDENT reasons, not one:
+        #   (a) CI caught 2 MORE legitimate off-thread readers this PR
+        #       never enumerated: the web server's A2A (``resolve_a2a_
+        #       session`` → ``resolve_session`` → ``get_session``) and
+        #       artifact-by-ref (``registry.exists``) routes.
+        #   (b) even with every current caller enumerated, "one owner
+        #       thread" is topology-dependent, not a real invariant — the
+        #       web server structurally runs a SYNC endpoint via FastAPI's
+        #       own threadpool, and Starlette's own TestClient dispatches
+        #       through its own background portal thread. Narrowing to
+        #       "only `exists()` needs excluding" (the 6 OTHER reads
+        #       currently having no known off-thread caller) is SHALLOW
+        #       reasoning — "safe because nothing off-thread touches it
+        #       TODAY" is exactly the assumption that broke twice already
+        #       here (#5202's first version, then #5203's own restoration
+        #       attempt); it is a fact about today's callers, not a
+        #       structural guarantee, and a 3rd unenumerated caller would
+        #       be the same mistake a 3rd time. This is the SAME judgment
+        #       that withdrew #4995 slice 2's own lock proposal.
+        # #5203's real fix (a SEPARATE PR, not this one) is at the actual
+        # accidental-safety window instead: ``get_or_load`` (below) calls
+        # ``_store_session`` — publishing the session to this registry's
+        # map — BEFORE its own later ``load_persisted_toggles``/``restore_
+        # state`` finish constructing it. Moving ``_store_session`` to run
+        # LAST (publish only once complete) means any thread that finds a
+        # session in the map at all finds a COMPLETE one — no guard needed
+        # on the reads (there is nothing left for a read-side guard to
+        # strip-to-red once publication order is fixed), and A2A/web need
+        # no changes either. ``app.py``'s own hoist (below) stays in THIS
+        # PR regardless — independently correct hygiene (the registry
+        # touch happening on the loop, not because a guard depends on it).
         #
         # #4995 slice 2's own open question (architect, issuecomment-
         # 5384963741): whether #4983's off-thread READS observe a live view
@@ -509,26 +533,20 @@ class AgentRegistry:
         # whether an `asyncio.Lock` around the 4 mutating methods (slice 2)
         # is sufficient — a lock serializes MUTATION against MUTATION
         # (same-loop coroutines), never against a genuinely concurrent
-        # OS-thread READER. #5203 does not answer this — see #4995's own
-        # issue comments for that measurement (superseded by an
-        # uninterruptibility test per issuecomment-5385115588, out of this
-        # PR's scope).
+        # OS-thread READER. See #4995's own issue comments for that
+        # measurement once it exists.
         self._owner_thread_ident = threading.get_ident()
 
     def _assert_owner_thread(self) -> None:
-        """#4995 slice 1, scope RESTORED to its original 11 methods by
-        #5203 (see ``_owner_thread_ident``'s own comment for the full
-        history): raise if called from a thread OTHER than the one that
-        constructed this registry. Call at the top of every method that
-        MUTATES OR READS registry-owned state (``self._sessions`` and
-        friends) — the 4 mutators AND the 7 reads
-        (``exists``/``loaded_names``/``agent_cost_usd``/``agent_total_
-        usage``/``attached_session``/``get_session``/``agent_workspace_
-        dir``). Safe to assert on the reads again because #5203 (same PR)
-        moved the one legitimate off-thread caller (``app.py``'s #4983
-        ``asyncio.to_thread`` reads) to resolve the registry-touching half
-        on the loop BEFORE crossing the thread boundary — nothing
-        remaining legitimately reaches this registry off its owner thread.
+        """#4995 slice 1 (scope corrected — see ``_owner_thread_ident``'s
+        own comment): raise if called from a thread OTHER than the one that
+        constructed this registry. Call ONLY at the top of a method that
+        MUTATES registry-owned state — a read must NOT call this (#4983's
+        own off-thread reads are a legitimate second thread; asserting on a
+        read breaks them, as CI found — and, per #5215's own withdrawn
+        attempt, so does the web server's A2A/artifact-by-ref reads, plus
+        the web server's structural use of a threadpool for sync endpoints;
+        see ``_owner_thread_ident``'s own comment for the full history).
 
         Disclosed gap (architect, issuecomment-5385029098), not a
         completeness claim: nothing here or in ``tests/runtime/test_4995_
@@ -543,10 +561,10 @@ class AgentRegistry:
         current = threading.get_ident()
         if current != self._owner_thread_ident:
             raise RuntimeError(
-                f"AgentRegistry touched from thread {current} but is owned "
+                f"AgentRegistry mutated from thread {current} but is owned "
                 f"by thread {self._owner_thread_ident} — see #4995 (a single "
                 f"owner thread is the invariant this registry's cross-thread "
-                f"safety depends on; a second thread reaching this "
+                f"MUTATION safety depends on; a second thread reaching this "
                 f"method is the race #4995 exists to prevent, not a "
                 f"permitted access pattern — reads are a separate, allowed "
                 f"case, see this registry's own ``_owner_thread_ident`` "
@@ -643,15 +661,12 @@ class AgentRegistry:
         Defaults to the implicit "main" session (byte-identical to the prior
         single-session lookup).
 
-        #4995 slice 1, owner-thread-asserted again as of #5203 (see
-        ``AgentRegistry``'s own ``_owner_thread_ident``/``_assert_owner_
-        thread`` docstrings for the full history) — ``app.py``'s #4983
-        off-thread read now resolves the session on the LOOP via
-        :meth:`~reyn.interfaces.repl.read_model.RegistryReadModel.
-        resolve_conversation_history_source` before ever crossing into
-        ``asyncio.to_thread``, so this method is no longer legitimately
-        reached from a second OS thread."""
-        self._assert_owner_thread()
+        #4995 slice 1 (architect correction): NOT owner-thread-asserted —
+        a read, not a mutation. See ``AgentRegistry``'s own
+        ``_owner_thread_ident`` docstring for which methods DO assert and
+        why (#5215's attempt to restore this for #5203 was withdrawn —
+        the web server's A2A/artifact-by-ref routes reach this method the
+        same way ``app.py``'s off-thread reads do)."""
         return self._peek_session(name, sid)
 
     def session_ids(self, name: str) -> list[str]:
@@ -684,9 +699,8 @@ class AgentRegistry:
         only, so it reset to 0 on restart AND N×-counted an agent's cost across ``/session new``
         sessions, since each gateway held the full per-agent seed. #cost-restart.)
 
-        #4995 slice 1, owner-thread-asserted again as of #5203 — see
-        :meth:`get_session`'s own docstring for the full history."""
-        self._assert_owner_thread()
+        #4995 slice 1 (architect correction): NOT owner-thread-asserted —
+        a read, not a mutation. See :meth:`get_session`'s own docstring."""
         tracker = self._shared_budget_tracker()
         return tracker.agent_cost_usd(name) if tracker is not None else 0.0
 
@@ -708,9 +722,8 @@ class AgentRegistry:
     def agent_total_usage(self, name: str) -> "object":
         """Aggregate TokenUsage across ALL sessions of agent ``name``.
 
-        #4995 slice 1, owner-thread-asserted again as of #5203 — see
-        :meth:`get_session`'s own docstring for the full history."""
-        self._assert_owner_thread()
+        #4995 slice 1 (architect correction): NOT owner-thread-asserted —
+        a read, not a mutation. See :meth:`get_session`'s own docstring."""
         from reyn.llm.pricing import TokenUsage
         total: "TokenUsage" = TokenUsage()
         for sid in self.session_ids(name):
@@ -829,15 +842,13 @@ class AgentRegistry:
         bootstrap — not a re-derivation, the identical value by a
         different, session-free route).
 
-        #4995 slice 1, owner-thread-asserted again as of #5203 — see
-        :meth:`get_session`'s own docstring for the full history."""
-        self._assert_owner_thread()
+        #4995 slice 1 (architect correction): NOT owner-thread-asserted —
+        a read, not a mutation. See :meth:`get_session`'s own docstring."""
         return self._dir / name
 
     def exists(self, name: str) -> bool:
-        """#4995 slice 1, owner-thread-asserted again as of #5203 — see
-        :meth:`get_session`'s own docstring for the full history."""
-        self._assert_owner_thread()
+        """#4995 slice 1 (architect correction): NOT owner-thread-asserted
+        — a read, not a mutation. See :meth:`get_session`'s own docstring."""
         return (self._dir / name / PROFILE_FILENAME).is_file()
 
     def create(
@@ -4091,9 +4102,8 @@ class AgentRegistry:
         return active[1] if active is not None else None
 
     def attached_session(self) -> "object | None":
-        """#4995 slice 1, owner-thread-asserted again as of #5203 — see
-        :meth:`get_session`'s own docstring for the full history."""
-        self._assert_owner_thread()
+        """#4995 slice 1 (architect correction): NOT owner-thread-asserted
+        — a read, not a mutation. See :meth:`get_session`'s own docstring."""
         active = self._connection.active
         if active is None:
             return None
@@ -4358,9 +4368,8 @@ class AgentRegistry:
                 logger.warning("StateLog teardown failed: %s", exc)
 
     def loaded_names(self) -> list[str]:
-        """#4995 slice 1, owner-thread-asserted again as of #5203 — see
-        :meth:`get_session`'s own docstring for the full history."""
-        self._assert_owner_thread()
+        """#4995 slice 1 (architect correction): NOT owner-thread-asserted
+        — a read, not a mutation. See :meth:`get_session`'s own docstring."""
         return list(self._sessions.keys())
 
     def session_tree(self) -> "list[dict]":

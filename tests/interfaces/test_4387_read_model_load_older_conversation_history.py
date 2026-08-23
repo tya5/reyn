@@ -142,3 +142,24 @@ def test_remote_read_model_always_degrades_to_zero() -> None:
 
     assert rm.load_older_conversation_history() == 0
     assert rm.load_older_conversation_history(agent="anything", session_id="main") == 0
+
+
+def test_remote_read_model_split_methods_agree_with_conversation_history() -> None:
+    """Tier 1: #5215 — ``RemoteReadModel`` carries NO override of
+    ``resolve_conversation_history_source``/``conversation_history_from_
+    source`` (unlike ``RegistryReadModel``, the one implementation with a
+    real thread-safety concern to split for) — the base ``ChatReadModel``'s
+    own default (delegate straight to ``conversation_history()``) is relied
+    on silently. Explicit witness that the default produces the SAME
+    frame-sufficiency degrade (``[]``) as calling ``conversation_history()``
+    directly, so a future base-class default change is caught here rather
+    than only by this class's silence (six-questions ④)."""
+    rm = RemoteReadModel(transport=None)
+
+    assert rm.resolve_conversation_history_source() == []
+    assert rm.conversation_history_from_source([]) == []
+    assert (
+        rm.conversation_history_from_source(rm.resolve_conversation_history_source())
+        == rm.conversation_history()
+        == []
+    )

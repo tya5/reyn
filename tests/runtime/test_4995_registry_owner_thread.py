@@ -1,7 +1,6 @@
 """Tier 2: #4995 slice 1 — ``AgentRegistry`` gains an explicit, enforced
-single-owner-thread invariant, RESTORED to its original scope (all 11
-methods — 4 mutators + 7 reads) by #5203, after #5202 had to narrow it to
-just the 4 mutators.
+single-owner-thread invariant, scoped to exactly the 4 methods that MUTATE
+registry-owned state.
 
 ## History (read this before touching any test below)
 
@@ -13,56 +12,45 @@ second OS thread reaching 7 read-only registry methods through
 ``RegistryReadModel``. #5202 scoped the guard down to just the 4 mutators
 (``attach``, ``restore_all``, ``resume_deferred_agents``,
 ``record_background_attach_error``) to stop breaking that (27 CI
-failures, all the identical ``RuntimeError``).
+failures, all the identical ``RuntimeError``). The 7 reads (``exists``,
+``loaded_names``, ``agent_cost_usd``, ``agent_total_usage``,
+``attached_session``, ``get_session``, ``agent_workspace_dir``) are NOT
+asserted — see each one's own docstring.
 
-Architect's OWN follow-up ruling (issuecomment-5385152402), after
-e2e-coder's #5203 measurement: the safety #5202 left in place for the 7
-reads was ACCIDENTAL, not designed — a real partial-construction window
-exists in ``AgentRegistry.get_or_load`` (between ``_store_session`` and
-its own later ``load_persisted_toggles``/``restore_state``), and the ONLY
-reason nothing broke was that the ONE field ``app.py``'s off-thread reads
-actually consume (``Session.history``) happens to already be hydrated
-before a session is ever stored — a fact about today's field shape, not a
-guarantee. #5203 (same PR as this file's own changes) closes that by
-CONSTRUCTION instead of leaving it accidental: ``app.py``'s 2
-``asyncio.to_thread`` call sites now resolve the registry-touching half
-ON THE LOOP first (:meth:`~reyn.interfaces.repl.read_model.
-ChatReadModel.resolve_conversation_history_source`), handing the worker
-thread an already-resolved PLAIN VALUE
-(:meth:`~reyn.interfaces.repl.read_model.ChatReadModel.
-conversation_history_from_source`) instead of letting it call back into
-the registry. With that hoist in place, NOTHING legitimately reaches this
-registry off its owner thread anymore — so the guard goes back onto all 7
-reads, in this SAME PR (architect's own acceptance ①: "①が入らないなら
-やらないでください" — this restoration IS the PR's own body, not an
-optional extra).
+#5203 tried to restore the guard onto the 7 reads too (architect
+issuecomment-5385152402, reasoning that app.py's own hoist — see
+``read_model.py``'s ``resolve_conversation_history_source``/
+``conversation_history_from_source`` — closed the ONLY legitimate
+off-thread reader). **WITHDRAWN by the same architect the same day**
+(issuecomment-5385481839, PR #5215): CI caught 2 MORE legitimate
+off-thread readers this restoration never enumerated — the web server's
+A2A (``resolve_a2a_session`` → ``resolve_session`` → ``get_session``) and
+artifact-by-ref (``registry.exists``) routes. Worse: for the web server,
+"one owner thread" is not even a real invariant to begin with — FastAPI
+runs a sync endpoint via its own threadpool, so no guard here can hold
+structurally for that transport. The real fix belongs at the actual
+accidental-safety window instead (a SEPARATE PR, not #5215): ``get_or_
+load`` publishes a session to the registry's map (``_store_session``)
+BEFORE its own later ``load_persisted_toggles``/``restore_state`` finish
+constructing it — moving the publish to run LAST means any thread that
+finds a session at all finds a complete one, and no read-side guard is
+needed anywhere.
 
 Docs-maintainer's B finding on the first version of this guard
-(issuecomment-5384937050) still applies, now to BOTH groups: a
-hand-counted list has no completeness witness — stripping the guard from
-any ONE of the 11 methods must be independently caught, not just "some
-cross-thread test exists somewhere". This file exercises EACH of the 4
-mutators AND EACH of the 7 reads individually (never one standing in for
-the others).
+(issuecomment-5384937050) still applies: a hand-counted list has no
+completeness witness — stripping the guard from any ONE of the 4 mutators
+must be independently caught, not just "some cross-thread test exists
+somewhere". This file exercises EACH of the 4 mutators individually
+(never one standing in for the others).
 
-Acceptance (#5203, architect issuecomment-5385152402):
-  ① restore ``_assert_owner_thread()`` onto the 7 reads #5202 excluded, in
-     the SAME PR as the ``app.py`` hoist (this file's own subject).
-  ② with the guard restored, CI stays green (the 27-failure regression
-     does NOT reappear) — a read reached from another thread now DOES
-     raise, but ``app.py`` no longer legitimately reaches it that way.
-  ③ strip: reverting the ``app.py`` hoist (simulating the pre-#5203
-     call shape — a worker thread calling the combined
-     ``conversation_history()`` directly) flips a read to RED — proving
-     the hoist, not luck, is what keeps this green. This file's own
-     ``test_each_read_method_individually_raises_from_another_thread``
-     IS that flip: it fails on the pre-#5203 combined-call shape and
-     passes once the guard covers all 7 (see this file's own git history
-     around #5202 for the exact before/after).
-  ④ the owner thread identity is a public read
+Acceptance (#4995 slice 1, architect issuecomment-5384963741):
+  ① guard covers exactly the 4 mutators — not the 7 reads (see History
+     above for why a second attempt at the reads, #5203/#5215, was
+     withdrawn).
+  ② the owner thread identity is a public read
      (:attr:`AgentRegistry.owner_thread_ident`), not a private-state reach-in
 
-Real ``AgentRegistry`` + real ``threading.Thread`` (no mocks). The 3
+Real ``AgentRegistry`` + real ``threading.Thread`` (no mocks). The 4
 ``async def`` mutating methods are driven from the other thread via
 ``asyncio.run`` (a real, independent event loop on that thread) — the
 identical shape ``ThreadedTransportProxy`` itself uses in production.
@@ -124,11 +112,15 @@ def test_owner_thread_ident_is_the_constructing_thread(tmp_path) -> None:
 
 def test_same_thread_access_never_raises(tmp_path) -> None:
     """Tier 2: #4995 slice 1 acceptance ① — sanity/non-regression. Every
-    one of the 4 mutating methods AND every one of the 7 read methods is
-    reachable from the owner thread — the guard only ever fires against a
-    DIFFERENT thread, never against the one that constructed the registry."""
+    one of the 4 mutating methods is reachable from the owner thread — the
+    guard only ever fires against a DIFFERENT thread, never against the one
+    that constructed the registry. The 7 reads are exercised too (never
+    asserted, on any thread — see History in this file's own module
+    docstring for why they stay unguarded), so a same-thread call staying
+    silent is not itself informative for them; they are here for parity
+    with the mutators' own coverage, not as a guard witness."""
     reg = _registry(tmp_path)
-    # Reads (asserted as of #5203, but this IS the owner thread):
+    # Reads (never asserted, on any thread — see module docstring):
     reg.exists("default")
     reg.loaded_names()
     reg.agent_workspace_dir("default")
@@ -169,11 +161,12 @@ _MUTATING_METHOD_CALLS = {
 # adding that method must remember to add BOTH the guard call and an entry
 # here — this test only proves the 4 CURRENTLY listed stay guarded.
 #
-# #5203: the guard's own scope grew from 4 to 11 (4 mutators + 7 reads,
-# restored). This dict stays MUTATORS-ONLY, not because the 7 reads are less
-# important, but because they are a semantically distinct group (reads, not
-# writes) — see ``_READ_METHOD_CALLS`` below, its own sibling dict, same
-# hand-written discipline, same disclosed gap.
+# A guard-restoration attempt on the 7 reads was tried and WITHDRAWN
+# (#5203/#5215, see this file's own module docstring's History section) —
+# this dict stays MUTATORS-ONLY, not a placeholder for a sibling that will
+# return: the reads are not merely "less important", the invariant itself
+# does not hold for them given the web server's threadpool-per-sync-
+# endpoint topology.
 
 
 @pytest.mark.parametrize("method_name", sorted(_MUTATING_METHOD_CALLS))
@@ -192,58 +185,6 @@ def test_each_mutating_method_individually_raises_from_another_thread(
     assert isinstance(caught, RuntimeError), (
         f"{method_name}() reached from a different thread must raise "
         f"RuntimeError, got: {caught!r}"
-    )
-    assert "4995" in str(caught), "the error must point at the invariant's own issue"
-
-
-_READ_METHOD_CALLS = {
-    "exists": lambda reg: reg.exists("default"),
-    "loaded_names": lambda reg: reg.loaded_names(),
-    "agent_workspace_dir": lambda reg: reg.agent_workspace_dir("default"),
-    "get_session": lambda reg: reg.get_session("default"),
-    "attached_session": lambda reg: reg.attached_session(),
-    "agent_cost_usd": lambda reg: reg.agent_cost_usd("default"),
-    "agent_total_usage": lambda reg: reg.agent_total_usage("default"),
-}
-# #5203 — the SAME hand-written, not-derived-from-source discipline
-# ``_MUTATING_METHOD_CALLS`` above uses, applied to the 7 reads the guard is
-# restored onto in this PR. These are EXACTLY the 7 names #5202's own PR
-# body/commit history excluded when it narrowed the guard from 11 methods
-# down to 4 — see this file's own module docstring for the full history.
-#
-# Disclosed gap, not a completeness claim: a FUTURE new read method added
-# to ``AgentRegistry`` with no ``_assert_owner_thread()`` call is NOT
-# caught by anything here or in the source, same limitation
-# ``_MUTATING_METHOD_CALLS``'s own comment names for mutators.
-
-
-@pytest.mark.parametrize("method_name", sorted(_READ_METHOD_CALLS))
-def test_each_read_method_individually_raises_from_another_thread(
-    tmp_path, method_name,
-) -> None:
-    """Tier 2: #5203 acceptance ①②③ — the read-side counterpart of
-    ``test_each_mutating_method_individually_raises_from_another_thread``,
-    parametrized over all 7 reads so stripping the guard from ANY ONE is
-    independently caught. This is also the concrete realization of
-    acceptance③'s strip-test: with ``app.py``'s hoist landed (this same
-    PR), nothing legitimately calls any of these 7 off the owner thread
-    anymore, so a genuine cross-thread call — the exact shape ``app.py``
-    used to make, pre-#5203 — correctly raises. Reverting ``app.py``'s own
-    hoist (going back to calling the combined ``conversation_history()``
-    from inside ``asyncio.to_thread``) makes a REAL run hit this exact
-    RuntimeError in production — independently demonstrated by hand for
-    this PR: reverting ``_handle_session_attached_event``'s call site to
-    the pre-#5203 shape flips all 3 of ``test_4983_session_switch_off_
-    thread.py``'s tests to this same ``RuntimeError``, not just this
-    unit-level one (not itself checked in, since it duplicates the revert
-    this parametrization already covers structurally)."""
-    reg = _registry(tmp_path / method_name)
-    call = _READ_METHOD_CALLS[method_name]
-    caught = _call_from_other_thread(lambda: call(reg))
-    assert isinstance(caught, RuntimeError), (
-        f"{method_name}() reached from a different thread must raise "
-        f"RuntimeError now that #5203 hoists the registry touch onto the "
-        f"loop, got: {caught!r}"
     )
     assert "4995" in str(caught), "the error must point at the invariant's own issue"
 
