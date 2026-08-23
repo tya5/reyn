@@ -586,6 +586,44 @@ class AuditEventsConfig:
     # `tool_called.args`/`tool_returned.result` (a separate emit path) —
     # see the same docstring.
     user_input_include_text: bool = False
+    # #4975 (architect ruling, issuecomment-5384508845, correcting an
+    # earlier "messages" left-operand that named a knob which does not
+    # exist): a provider's 4xx/5xx error response can echo BACK content
+    # from the request it rejected — ``llm_request_error``'s
+    # ``provider_body``/``provider_response`` fields (``llm.py``'s
+    # ``_emit_llm_request_error``). reyn does not choose the shape of a
+    # provider's own error body, so it cannot tell in advance which of
+    # the 3 content classes above (streamed reply text, completed
+    # response text, user-typed text) a given provider might quote back —
+    # any of the 3 could be the one that leaks. This is therefore its OWN
+    # separate opt-in (never unified with any single one of the 3 above —
+    # "the same wall, one more narrow door inside it"), gated by a
+    # LATTICE-MEET (mirrors ``resolved_profile_for``'s own idiom,
+    # ``compose_resolved is a lattice-meet (∩ allow, ∪ deny)``): showing
+    # ``provider_body``/``provider_response`` requires ALL 3 content
+    # knobs above to ALSO be on, AND this flag itself — the narrowest
+    # participant wins. An operator who has opted out of even ONE content
+    # class must not be handed a blob that could contain it; an operator
+    # who opted into all 3 has not thereby also opted into "reyn shows me
+    # whatever an external provider chose to quote" (a genuinely
+    # different, provider-controlled risk), hence this flag being its own
+    # opt-in on top of the meet, never implied by the other 3 alone.
+    # Default off, same metadata-only-by-default rationale as the 3
+    # above. OFF does not mean silent: ``error_type``/``status_code`` are
+    # unconditional (unchanged), and ``provider_body_length`` /
+    # ``provider_response_length`` are added so "a body existed but was
+    # not shown" stays distinguishable from "there was none" — see
+    # ``_emit_llm_request_error``'s own comment for exactly which fields
+    # this flag gates.
+    provider_body_include_text: bool = False
+    # #4975: reyn cannot bound a provider's own error-body size — an
+    # explicit, operator-adjustable cap (never a baseless embedded
+    # constant, CLAUDE.md's own "no unjustified constants" rule) applied
+    # ONLY when ``provider_body_include_text`` (and the meet) is on;
+    # ``provider_body_length`` above is unaffected (always the TRUE
+    # length, truncation-independent, so a truncated body is still
+    # honestly labeled).
+    provider_body_max_chars: int = 4000
 
 
 @dataclass
@@ -1495,6 +1533,17 @@ def _build_audit_events_config(raw: object) -> AuditEventsConfig:
             coalesce_interval_ms_val = defaults.agent_delta_coalesce_interval_ms
     except (TypeError, ValueError):
         coalesce_interval_ms_val = defaults.agent_delta_coalesce_interval_ms
+    # #4975: same "malformed/non-positive falls back to the default"
+    # discipline as every other numeric field above.
+    provider_body_max_chars = raw.get(
+        "provider_body_max_chars", defaults.provider_body_max_chars,
+    )
+    try:
+        provider_body_max_chars_val = int(provider_body_max_chars)
+        if provider_body_max_chars_val <= 0:
+            provider_body_max_chars_val = defaults.provider_body_max_chars
+    except (TypeError, ValueError):
+        provider_body_max_chars_val = defaults.provider_body_max_chars
     return AuditEventsConfig(
         max_bytes=int(raw.get("max_bytes", defaults.max_bytes)),
         max_age_seconds=int(raw.get("max_age_seconds", defaults.max_age_seconds)),
@@ -1519,6 +1568,12 @@ def _build_audit_events_config(raw: object) -> AuditEventsConfig:
         user_input_include_text=bool(
             raw.get("user_input_include_text", defaults.user_input_include_text)
         ),
+        # #4975: same convention, separate knob (its own opt-in on top of
+        # the 3 above — see the field's own docstring for why).
+        provider_body_include_text=bool(
+            raw.get("provider_body_include_text", defaults.provider_body_include_text)
+        ),
+        provider_body_max_chars=provider_body_max_chars_val,
     )
 
 
