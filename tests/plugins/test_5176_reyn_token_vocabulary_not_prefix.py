@@ -18,7 +18,20 @@ working (the whole layer refused) without this fix.
 Real ``find_unresolved_reyn_tokens`` — no mocks; a pure function."""
 from __future__ import annotations
 
-from reyn.plugins.tokens import find_unresolved_reyn_tokens
+import ast
+import inspect
+
+from reyn.config import loader
+from reyn.environment import container_backend
+from reyn.hooks import shell_runner
+from reyn.plugins.tokens import (
+    AGENT_SCOPED_TOKEN_NAMES,
+    CONTEXT_TOKEN_NAMES,
+    REYN_TOKEN_NAMES,
+    PluginTokenContext,
+    find_unresolved_reyn_tokens,
+    resolve_token_map,
+)
 
 
 def test_a_real_non_reyn_env_var_sharing_the_reyn_prefix_is_not_flagged() -> None:
@@ -44,6 +57,55 @@ def test_a_reyn_shaped_typo_is_not_flagged() -> None:
     share reyn's prefix" (architect's own recommendation,
     issuecomment-5384269296; lead-coder concurred)."""
     assert find_unresolved_reyn_tokens({"a": "${REYN_AGNT_NAME}"}) == []
+
+
+def test_token_vocabularies_are_disjoint_and_complete(tmp_path) -> None:
+    """Tier 1: context and agent-scoped token sets form the full vocabulary."""
+    context = PluginTokenContext(tmp_path, tmp_path)
+    assert not CONTEXT_TOKEN_NAMES & AGENT_SCOPED_TOKEN_NAMES
+    assert CONTEXT_TOKEN_NAMES | AGENT_SCOPED_TOKEN_NAMES <= REYN_TOKEN_NAMES
+    assert set(resolve_token_map(context)) == CONTEXT_TOKEN_NAMES - {"REYN_SKILL_DIR"}
+    trees = [ast.parse(source) for source in (
+        inspect.getsource(loader),
+        inspect.getsource(container_backend),
+        inspect.getsource(shell_runner),
+    )]
+    supplied_names: set[str] = set()
+    for tree in trees:
+        parents = {
+            child: parent
+            for parent in ast.walk(tree)
+            for child in ast.iter_child_nodes(parent)
+        }
+        for node in ast.walk(tree):
+            if not (
+                isinstance(node, ast.Constant)
+                and isinstance(node.value, str)
+                and node.value in AGENT_SCOPED_TOKEN_NAMES
+            ):
+                continue
+            parent = parents.get(node)
+            if isinstance(parent, ast.Dict):
+                supplied_names.add(node.value)
+                continue
+            if isinstance(parent, ast.JoinedStr):
+                ancestor = parents.get(parent)
+                while ancestor is not None and not isinstance(ancestor, ast.Call):
+                    ancestor = parents.get(ancestor)
+                if isinstance(ancestor, ast.Call):
+                    supplied_names.add(node.value)
+    assert supplied_names == AGENT_SCOPED_TOKEN_NAMES
+
+
+def test_an_added_token_name_is_checked_automatically(monkeypatch) -> None:
+    """Tier 1: a token added to the vocabulary is part of fail-close checks."""
+    monkeypatch.setattr(
+        "reyn.plugins.tokens.REYN_TOKEN_NAMES",
+        frozenset({"REYN_NEW_TOKEN"}),
+    )
+    assert find_unresolved_reyn_tokens({"a": "${REYN_NEW_TOKEN}"}) == [
+        "${REYN_NEW_TOKEN}"
+    ]
 
 
 def test_every_real_reyn_token_name_is_still_flagged_when_unresolved() -> None:

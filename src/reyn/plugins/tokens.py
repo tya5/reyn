@@ -202,7 +202,7 @@ def expand_with_map(obj: Any, token_map: dict[str, str]) -> Any:
 # the SYNTAX only. Deliberately narrower than ``_TOKEN_RE`` (any ``${VAR}``)
 # so a genuinely unrelated ``${VAR}`` never even reaches the vocabulary
 # check below, but this regex ALONE is not the fail-close decision — see
-# :data:`_KNOWN_REYN_TOKEN_NAMES` and #5176's own correction.
+# the explicit :data:`REYN_TOKEN_NAMES` vocabulary and #5176's own correction.
 _UNRESOLVED_REYN_TOKEN_RE = re.compile(r"\$\{((?:REYN|CLAUDE)_\w+)\}")
 
 # #5176 (architect TESTS-READ blocking finding on #5166, issuecomment-5384269296):
@@ -222,28 +222,22 @@ _UNRESOLVED_REYN_TOKEN_RE = re.compile(r"\$\{((?:REYN|CLAUDE)_\w+)\}")
 # misidentified as reyn's OWN unresolved token and refuse the whole layer
 # — a real config silently breaking, not a hypothetical.
 #
-# The fix: fail-close membership is the ACTUAL name set this module can
-# supply a value for — :data:`~reyn.plugins.tokens.CLAUDE_ALIAS_MAP`'s own
-# keys plus every ``PluginTokenContext.tokens()`` key, PLUS
-# ``REYN_AGENT_NAME`` (#5140's own addition — supplied via an explicit
-# map to :func:`expand_with_map`, never through ``PluginTokenContext``
-# itself, so it is not already in either of the above and must be listed
-# here too). Anything else — including a genuine reyn-shaped TYPO like
-# ``${REYN_AGNT_NAME}`` — passes through untouched, same as any other
-# non-reyn token: distinguishing "meant to be a reyn token, misspelled"
-# from "a real env var that happens to share reyn's prefix" is not
-# reliably decidable from the string alone (architect's own recommendation,
-# issuecomment-5384269296).
-_KNOWN_REYN_TOKEN_NAMES: frozenset[str] = frozenset(
-    {"REYN_PLUGIN_ROOT", "REYN_PROJECT_DIR", "REYN_SKILL_DIR", "REYN_AGENT_NAME"}
-    | set(CLAUDE_ALIAS_MAP)
+# The token vocabulary is deliberately separate from any one resolver map:
+# a map is only a projection for one context and cannot contain agent-scoped
+# values supplied by a caller such as the hooks runner.
+CONTEXT_TOKEN_NAMES: frozenset[str] = frozenset(
+    {"REYN_PLUGIN_ROOT", "REYN_PROJECT_DIR", "REYN_SKILL_DIR"}
+)
+AGENT_SCOPED_TOKEN_NAMES: frozenset[str] = frozenset({"REYN_AGENT_NAME"})
+REYN_TOKEN_NAMES: frozenset[str] = frozenset(
+    CONTEXT_TOKEN_NAMES | AGENT_SCOPED_TOKEN_NAMES | set(CLAUDE_ALIAS_MAP)
 )
 
 
 def find_unresolved_reyn_tokens(obj: Any) -> list[str]:
     """Recursively collect every REMAINING placeholder in *obj*
     (post-:func:`expand_with_map`, typically) whose name is in reyn's OWN
-    known token vocabulary (:data:`_KNOWN_REYN_TOKEN_NAMES`) — never a
+    known token vocabulary (:data:`REYN_TOKEN_NAMES`) — never a
     bare ``${REYN_*}``/``${CLAUDE_*}`` PREFIX match (#5176's own
     correction — see that constant's docstring for why a prefix match is
     the wrong test).
@@ -264,7 +258,7 @@ def find_unresolved_reyn_tokens(obj: Any) -> list[str]:
         return [
             m.group(0)
             for m in _UNRESOLVED_REYN_TOKEN_RE.finditer(obj)
-            if m.group(1) in _KNOWN_REYN_TOKEN_NAMES
+            if m.group(1) in REYN_TOKEN_NAMES
         ]
     if isinstance(obj, dict):
         found: list[str] = []
