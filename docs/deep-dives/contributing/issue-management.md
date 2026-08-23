@@ -13,7 +13,7 @@ Normative for the lead-coder role. Decided by the repo owner 2026-08-22/23.
 
 An issue is **one problem to be addressed in future**. It is not a record of
 what happened. Owner, verbatim: 「issue は将来対策すべき問題ごとに一つ作る
-べき」「単なる日記を起票すべきではない」.
+べき」「単なる日記を〔起票〕すべきではない」.
 
 A body that is mostly a chronicle of an incident, with the future problem
 appearing in a single sentence or not at all, is not an issue — the
