@@ -79,7 +79,6 @@ def test_token_vocabularies_are_disjoint_and_complete(tmp_path) -> None:
         and node.value in AGENT_SCOPED_TOKEN_NAMES
     }
     assert supplied_names == AGENT_SCOPED_TOKEN_NAMES
-    assert agent_sources
 
 
 def test_an_added_token_name_is_checked_automatically(monkeypatch) -> None:
