@@ -110,8 +110,13 @@ def build_scoped_chat_session(
     # #3121 step1: group the scoped capability / presentation / reactivity
     # params into their cohesive parameter objects at this single construction
     # chokepoint. Reactive config is carried by the required factory bundle so
-    # every construction path either supplies it or fails loudly.
+    # every construction path either supplies it or fails loudly. The three
+    # config blocks still arrive via **base from legacy frontends; their values
+    # now come from the bundle, but pop them to keep them out of Session.__init__.
     intervention_bridge = base.pop("intervention_bridge", None)
+    base.pop("hooks_config", None)
+    base.pop("composers_config", None)
+    base.pop("fs_watch_config", None)
     reactivity = factory_config.reactivity_config
     # recovery-bundle-out-of-Session refactor: Session no longer builds its
     # own generation_store/journal, so this chokepoint builds them from the
