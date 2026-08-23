@@ -813,6 +813,25 @@ def _forward_file_signal_fields(dest: dict, result: dict, *, outcome: str) -> No
 # site that could mint an undeclared kind without any gate seeing it.
 
 
+@dataclass(frozen=True)
+class HookToggleResult:
+    """#5230: the return shape of ``Session.set_hook_enabled`` — whether the request was
+    actually APPLIED (``_disabled_hooks``/persisted state changed), plus the hook's
+    most-specific origin (``None`` only when the name resolves to no ``HookDef`` in the
+    current merged registry).
+
+    ``applied=False`` (only possible for a ``disable`` request) means the hook's origin
+    is protected (``startup``/``runtime``, #5213) — the request changed nothing, so a
+    caller reporting the outcome must NOT say "now disabled"; it fired but did not take
+    effect. See ``Session.set_hook_enabled``'s own docstring for the full #5230 ruling
+    this exists to enforce (architect: an active false confirmation is worse than a
+    passive stale display, #5227's own bug — a caller who receives a confirmation does
+    not go verify the state afterward)."""
+
+    applied: bool
+    origin: "str | None"
+
+
 class Session:
     def __init__(
         self,
@@ -2873,17 +2892,74 @@ class Session:
 
     # ── #2285: session-scoped hook APPLICABILITY toggle (the status-bar seam) ──────────────
 
-    def set_hook_enabled(self, name: str, enabled: bool) -> None:
+    def _hook_origin_is_disableable(self, origin: str) -> bool:
+        """#5230/#5233 review (lead-coder, e2e-coder's live-reproduced finding): the ONE place
+        ``hook_origin_is_at_least_as_specific_as(origin, "per-agent")`` — the actual threshold
+        constant — is ever written. A first version of this PR routed :meth:`hook_state` and
+        the dispatcher's own ``is_hook_disabled`` lambda through :meth:`_hook_effectively_
+        disabled`, but ``set_hook_enabled``'s write-refusal check called
+        ``hook_origin_is_at_least_as_specific_as`` DIRECTLY with its own copy of the
+        ``"per-agent"`` literal — a 3rd, independent copy of the exact threshold this whole
+        issue exists to collapse. Caught by reproducing e2e-coder's method: mutate ONE copy's
+        threshold, confirm the OTHER stays inert (proving they were never actually the same
+        code path). Now every threshold-consuming call site — :meth:`_hook_effectively_
+        disabled` (read: is this NAME currently suppressed) and :meth:`set_hook_enabled` (write:
+        may THIS ORIGIN be added to the disabled-set at all) — calls this one method instead."""
+        return hook_origin_is_at_least_as_specific_as(origin, "per-agent")
+
+    def _hook_effectively_disabled(self, name: str, origin: str) -> bool:
+        """#5230: the ONE predicate every hook-enabled/disabled-REPORTING surface must call —
+        never reimplement. Architect ruling (#5230, following #5227's own precedent on the
+        DISPLAY side): a census of every surface that reports this state cannot be closed with
+        confidence ("a 4th could always exist"), so the fix is structural — collapse the
+        predicate to one function, not enumerate and patch each call site. Known callers today:
+        :meth:`hook_state` (display) and :meth:`set_hook_enabled` (the operation-confirmation
+        seam, #5230's own motivating bug) — any FUTURE consumer (a new status surface, a `reyn
+        doctor` check, ...) must call this too, not re-derive the same boolean expression a
+        3rd time.
+
+        Identical to the boolean :func:`~reyn.hooks.dispatcher.HookDispatcher`'s own
+        ``is_hook_disabled`` predicate evaluates per-``HookDef`` at dispatch (session.py's
+        ``is_hook_disabled=lambda hook: ...`` wiring) — this free function takes ``(name,
+        origin)`` instead of a ``HookDef`` so a caller that already resolved the most-specific
+        origin for a name (:meth:`_hook_defs_by_name`) doesn't need to reconstruct a fake
+        ``HookDef`` just to ask the question."""
+        return name in self._disabled_hooks and self._hook_origin_is_disableable(origin)
+
+    def set_hook_enabled(self, name: str, enabled: bool) -> "HookToggleResult":
         """#2285: enable/disable a hook by name for THIS session (status-bar seam).
 
         Live at the next dispatch — the per-session HookDispatcher gate consults ``_disabled_hooks``.
         Session-scoped by construction: each session owns its dispatcher + disabled-set, so S1's
-        disable does NOT affect S2 (even though hook CONFIG is shared). Persists across restart (step2)."""
+        disable does NOT affect S2 (even though hook CONFIG is shared). Persists across restart (step2).
+
+        #5230: a ``disable`` request for a hook whose most-specific origin is protected
+        (``startup``/``runtime`` — see #5213) is REFUSED, not silently recorded-but-inert. Before
+        this fix, ``self._disabled_hooks`` gained the name regardless, and ``/hook off``'s reply
+        said "now disabled" unconditionally — an ACTIVE false confirmation (architect: worse than
+        #5227's passive display bug, because a caller who receives a confirmation does not go
+        check the actual state afterward). Refusing the write (never adding the name to
+        ``_disabled_hooks``, never persisting it) also closes lead-coder's own concern: a
+        protected-hook name sitting in a persisted ``disabled:`` list forever inert would read as
+        "disabled but the hook fires anyway" to a future operator inspecting the file by hand.
+
+        An ``enable`` request (``enabled=True``) is NEVER refused — discarding a name from
+        ``_disabled_hooks`` can only ever restore a hook to its already-enabled-or-protected
+        baseline, never grant new power, so there is nothing to gate. A name that does not
+        resolve to any ``HookDef`` in the current merged registry (unknown / not-yet-declared)
+        is treated as freely disableable, matching :func:`hook_origin_is_at_least_as_specific_as`'s
+        own fail-open contract for an origin outside :data:`~reyn.hooks.schema.HOOK_ORIGIN_ORDER`
+        — unchanged from pre-#5230 behavior for this case."""
+        hook = self._hook_defs_by_name().get(name)
+        origin = hook.origin if hook is not None else None
+        if not enabled and origin is not None and not self._hook_origin_is_disableable(origin):
+            return HookToggleResult(applied=False, origin=origin)
         if enabled:
             self._disabled_hooks.discard(name)
         else:
             self._disabled_hooks.add(name)
         self._persist_hook_disabled()  # #2285 step2 — survive restart (best-effort)
+        return HookToggleResult(applied=True, origin=origin)
 
     # ── #2285 step2: persist / restore the session toggles (SEPARATE from the envelope floor) ──
 
@@ -2997,20 +3073,33 @@ class Session:
         one displayed row, same simplification as before #5222 — the real dispatcher still fires
         BOTH independently underlying ``HookDef`` instances; this display shows only the most
         specific one's own enabled/disabled verdict. Not solved here (out of scope) — flagged in
-        the #5222 issue for whoever revisits it."""
+        the #5222 issue for whoever revisits it.
+
+        #5230: ``enabled`` is now computed via :meth:`_hook_effectively_disabled` — the ONE
+        shared predicate this display and :meth:`set_hook_enabled`'s refusal decision both
+        call, rather than each writing its own copy of the same boolean expression (architect
+        ruling, #5230: a census of every surface reporting this state cannot be closed with
+        confidence, so the fix collapses the predicate structurally instead)."""
+        out: "list[dict]" = []
+        for name, hook in self._hook_defs_by_name().items():
+            enabled = not self._hook_effectively_disabled(name, hook.origin)
+            out.append({"name": name, "scope": hook.origin, "enabled": enabled})
+        return out
+
+    def _hook_defs_by_name(self) -> "dict[str, HookDef]":
+        """The merged registry's ``HookDef``s keyed by name, most-specific origin
+        winning for a repeated name (see :meth:`hook_state`'s own docstring for why
+        forward-iteration-and-overwrite reproduces "most-specific-layer-wins"
+        without re-deriving it). Shared by :meth:`hook_state` (display) and
+        :meth:`set_hook_enabled` (#5230: the operation side needs the SAME
+        per-name origin lookup the display side already computes — a second,
+        independently-written lookup here would risk the exact "two places, one
+        fact" duplication #5222 closed on the display side alone)."""
         by_name: "dict[str, HookDef]" = {}
         for hook in self._hook_dispatcher.registry.all_defs():
             if hook.name is not None:
-                by_name[hook.name] = hook  # last write = most specific (see docstring)
-
-        out: "list[dict]" = []
-        for name, hook in by_name.items():
-            enabled = not (
-                name in self._disabled_hooks
-                and hook_origin_is_at_least_as_specific_as(hook.origin, "per-agent")
-            )
-            out.append({"name": name, "scope": hook.origin, "enabled": enabled})
-        return out
+                by_name[hook.name] = hook  # last write = most specific
+        return by_name
 
     async def dispatch_external_event(self, point: str, template_vars: dict) -> None:
         """#2608 H5: public entry point for an OUT-OF-SESSION source to fire
@@ -4567,15 +4656,18 @@ class Session:
             # That threshold left #5041's own supervision
             # hook (placed at the runtime layer specifically because it is protected) one
             # `disabled:` entry away from being switched off by the party it supervises).
-            # Threshold is therefore "per-agent or below [more specific]" — `per-agent` and
-            # `per-session` only. See
-            # `reyn.hooks.schema.hook_origin_is_at_least_as_specific_as`'s own docstring for why
-            # this is a general order check, not a hardcoded membership test — general enough to
-            # extend for free if the write-zone boundary ever moves again.
+            # #5230: this predicate is `self._hook_effectively_disabled`, NOT a second,
+            # independently hand-written copy of the same threshold check — lead-coder's own
+            # e2e-coder-verified finding on #5233's first head: a hand-copied predicate here
+            # (matching `_hook_effectively_disabled` in wording only) diverges the moment
+            # EITHER copy is edited without the other, live-reproducing #5222's exact
+            # display/enforcement split (proven by editing only one copy's threshold and
+            # observing `hook_state()` and the real dispatcher disagree). See
+            # `_hook_effectively_disabled`'s own docstring for the full "one predicate, not a
+            # census" ruling this enforces.
             is_hook_disabled=lambda hook: (
                 hook.name is not None
-                and hook.name in self._disabled_hooks
-                and hook_origin_is_at_least_as_specific_as(hook.origin, "per-agent")
+                and self._hook_effectively_disabled(hook.name, hook.origin)
             ),
             sandbox_config=self._sandbox_config,
             sandbox_backend=self._sandbox_backend,
