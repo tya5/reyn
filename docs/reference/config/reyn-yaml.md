@@ -222,6 +222,61 @@ not `PREFERENCE_KEYS`.
 > set `project_context_path` to that path; set it to `""` to inject no project
 > context at all.
 
+## Per-agent profile key reload classes (#4206 slice 1)
+
+Every key an agent's own `.reyn/agents/<name>/profile.yaml` can set — the
+surface an operator actually touches when hand-authoring an agent — has a
+declared **reload class**: how soon an edit to that key takes effect.
+Source of truth: `AGENT_PROFILE_RELOAD_CLASSES` in
+`src/reyn/runtime/profile_reload.py` — this table is a projection of that
+dict, not a second hand-written source; a key added there with no
+matching row here (or vice versa) fails
+`tests/runtime/test_4206_slice1_profile_reload_class.py`'s completeness
+gate.
+
+**Scope, explicit**: only per-agent-profile keys. Every OTHER key in the
+[table above](#top-level-keys) stays as documented there — this slice does
+not attempt project-layer or session-layer reload classes.
+
+- **`live`** — re-read on every access, no caching. A caller holding the
+  value across an await must re-read it, never cache it.
+- **`construction-once`** — resolved exactly once per agent, at session
+  construction. An already-running session does not notice a
+  `profile.yaml` edit until its own NEXT construction (next
+  `--connect`/reattach).
+- **`explicit-trigger`** — a bare hand-edit of `profile.yaml` does NOTHING
+  on its own; reapply only happens when something else calls
+  `request_reload` (`/reload`, or an LLM hooks-write op), applied at the
+  next turn boundary. **Not** the same as the [table above](#top-level-keys)'s
+  own `restart / hot` — that class's defining property is the file WRITE
+  ITSELF being the trigger (`.reyn/config/`-side writes are picked up
+  automatically at the next turn boundary); `profile.yaml` is not in
+  `_HOT_RELOAD_FILES`, so a hand-edit alone changes nothing until an
+  explicit trigger fires — the opposite polarity from `hot`, hence the
+  different name (measured during this slice: `allowed_mcp` fits none of
+  the other 3 classes cleanly).
+- **`restart`** — takes effect only after a full process restart. No
+  slice-1 key currently uses this value.
+
+<!-- BEGIN agent-profile-reload-class -->
+| Key | Reload class |
+|-----|---------------|
+| `role` | `construction-once` |
+| `allowed_mcp` | `explicit-trigger` |
+| `base_dir` | `live` |
+| `project_context_path` | `construction-once` |
+| `preferences.output_language` | `live` |
+| `preferences.chat.reasoning.display` | `live` |
+| `preferences.cost.per_agent_tokens.warn_ratio` | `live` |
+| `preferences.cost.per_agent_cost_usd.warn_ratio` | `live` |
+| `preferences.cost.daily_tokens.warn_ratio` | `live` |
+| `preferences.cost.daily_cost_usd.warn_ratio` | `live` |
+| `preferences.cost.monthly_tokens.warn_ratio` | `live` |
+| `preferences.cost.monthly_cost_usd.warn_ratio` | `live` |
+| `preferences.cost.rate_limit_warn_ratio` | `live` |
+| `bounding.model` | `live` |
+<!-- END agent-profile-reload-class -->
+
 ## `llm` block
 
 LLM-layer config: model selection (`llm.model` / `llm.models` /
