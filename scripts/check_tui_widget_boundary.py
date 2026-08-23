@@ -45,12 +45,23 @@ def _imported_module_names(tree: ast.Module) -> "list[str]":
     return names
 
 
-def find_violations(package_dir: Path = _PACKAGE_DIR) -> "list[tuple[Path, str]]":
+def find_violations(package_dir: "Path | None" = None) -> "list[tuple[Path, str]]":
     """Return ``(file, offending_module)`` for every non-exempt widget
     module importing a forbidden prefix. AST-based (real ``Import``/
     ``ImportFrom`` nodes), not a substring search — a docstring or comment
     merely MENTIONING "transport" (this package's own module docstrings do)
-    must never false-positive here."""
+    must never false-positive here.
+
+    ``package_dir`` defaults to ``None`` — resolved to the module-level
+    ``_PACKAGE_DIR`` INSIDE the function body (a name lookup at CALL time),
+    not via a bound default-argument value (evaluated ONCE at def-time).
+    Same fix ``flat_tests_ratchet.py``'s own ``main()`` already applies —
+    a bound default is invisible to ``monkeypatch.setattr(module,
+    "_PACKAGE_DIR", ...)``, which is exactly how a test drives this
+    function against a synthetic fixture package without needing a real
+    subprocess."""
+    if package_dir is None:
+        package_dir = _PACKAGE_DIR
     violations: "list[tuple[Path, str]]" = []
     for path in sorted(package_dir.glob("*.py")):
         if path.name in _EXEMPT_FILENAMES:
@@ -66,15 +77,22 @@ def find_violations(package_dir: Path = _PACKAGE_DIR) -> "list[tuple[Path, str]]
 
 
 def main() -> int:
+    # Name lookups, not bound defaults — see find_violations's own docstring
+    # for why: a test monkeypatching _PACKAGE_DIR on this module must reach
+    # main() too, not just find_violations() called directly.
     if not _PACKAGE_DIR.is_dir():
         print(f"check_tui_widget_boundary: {_PACKAGE_DIR} not found", file=sys.stderr)
         return 1
-    violations = find_violations()
+    violations = find_violations(_PACKAGE_DIR)
     if violations:
         print("check_tui_widget_boundary FAILED:\n", file=sys.stderr)
         for path, module_name in violations:
+            try:
+                shown = path.relative_to(_ROOT)
+            except ValueError:
+                shown = path  # a fixture path outside _ROOT (test-only) — show it as-is
             print(
-                f"  {path.relative_to(_ROOT)} imports {module_name!r} — "
+                f"  {shown} imports {module_name!r} — "
                 "widget modules never touch transport/registry directly "
                 "(#5131); route through app.py instead.",
                 file=sys.stderr,

@@ -154,7 +154,7 @@ def _git_show(base_ref: str, rel_path: str) -> "dict | None":
         return None
 
 
-def main() -> int:
+def main(argv: "list[str] | None" = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--write-baseline", action="store_true",
@@ -169,13 +169,20 @@ def main() -> int:
              "to BASE_REF (reactive_count decreased, or imperative_push_count "
              "increased) without a matching real measured change.",
     )
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
-    reactive_count = measured_reactive_count()
-    imperative_push_count = measured_imperative_push_count()
+    # Name lookups (_PACKAGE_DIR / _APP_PY / _BASELINE_PATH), not the callees'
+    # own bound-default parameter values — a default is evaluated ONCE at
+    # def-time, so a test's monkeypatch.setattr(module, "_BASELINE_PATH", ...)
+    # would be invisible to a call that relied on the default. Same fix
+    # flat_tests_ratchet.py's own main() applies, for the same reason: this
+    # is what lets a test drive main()'s CLI behavior against a synthetic
+    # baseline/package without a real subprocess.
+    reactive_count = measured_reactive_count(_PACKAGE_DIR)
+    imperative_push_count = measured_imperative_push_count(_APP_PY)
 
     if args.write_baseline:
-        _write_baseline(reactive_count, imperative_push_count)
+        _write_baseline(reactive_count, imperative_push_count, _BASELINE_PATH)
         print(
             f"check_tui_reactive_ratchet: baseline written — "
             f"reactive_count={reactive_count}, imperative_push_count={imperative_push_count}"
@@ -190,7 +197,7 @@ def main() -> int:
                 "nothing to compare, treating as OK (initial adoption).",
             )
         else:
-            current_baseline = _load_baseline()
+            current_baseline = _load_baseline(_BASELINE_PATH)
             if current_baseline["reactive_count"] < base_baseline["reactive_count"]:
                 print(
                     "check_tui_reactive_ratchet FAILED: baseline reactive_count "
@@ -212,7 +219,7 @@ def main() -> int:
                 )
                 return 1
 
-    baseline = _load_baseline()
+    baseline = _load_baseline(_BASELINE_PATH)
     failed = False
     if reactive_count < baseline["reactive_count"]:
         print(
