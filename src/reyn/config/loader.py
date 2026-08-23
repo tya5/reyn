@@ -945,14 +945,60 @@ def load_per_agent_hooks(
     Same IN-set grain as the global ``.reyn/hooks.yaml`` (runtime-mutable,
     hot-reloadable) but scoped to one agent — read DIRECTLY here (not via
     :func:`load_hot_reload_config`, which is the top-level ``.reyn/*.yaml`` set),
-    mirroring how the per-agent ``profile.yaml`` is read. ``${VAR}`` interpolation is
-    applied to match the global layer. Returns the raw ``hooks:`` list (``[]`` when the
-    file or key is absent — a no-op layer, never an error).
-    """
+    mirroring how the per-agent ``profile.yaml`` is read. Returns the raw
+    ``hooks:`` list (``[]`` when the file or key is absent — a no-op layer,
+    never an error).
+
+    #5140 (architect ruling, issuecomment-5383725162): a per-agent
+    ``hooks.yaml``'s ``${REYN_AGENT_NAME}`` token used to go through
+    ``expand_env`` (``security/secrets/interpolation.py``) — an
+    ``os.environ``-backed expander (ADR-0030) meant for a SPAWNED CHILD
+    process's config-time env-injection. ``REYN_AGENT_NAME`` is only ever
+    set on a child process's own env (``hooks/shell_runner.py`` and
+    friends), never on this process's own ``os.environ``, so it was
+    ALWAYS undefined at config-load time — silently expanding to ``""``
+    (a `UserWarning`, then a syntactically-valid-but-wrong value the
+    caller cannot tell apart from a genuinely empty operator choice).
+    Hooks are not secrets, and the value this layer actually needs
+    (``agent_name``, the same string this function already receives as
+    an argument) is available right here — this is a layering mistake
+    (the wrong expander for the value), not a genuinely undefined
+    token, so the fix is :func:`reyn.plugins.tokens.expand_with_map`
+    (already used the same way by ``registry_bootstrap.py`` /
+    ``session.py`` for ``REYN_PROJECT_DIR``) with an explicit map,
+    never ``os.environ``.
+
+    Fail-close, scoped to reyn's OWN token vocabulary only (acceptance
+    ②/③): if a ``${REYN_*}``/``${CLAUDE_*}`` token remains unresolved
+    after expansion, that is reyn's own bug (a token reyn should always
+    be able to supply), not an operator's config choice — refuse to
+    load this hooks layer rather than register a matcher/config value
+    reyn silently got wrong. This is the "does the trigger fire on a
+    healthy path" test #5152's own retracted fail-closed ruling failed
+    (there, EVERY comparison on a birthtime-less platform triggered it);
+    here, a healthy config with reyn's tokens correctly supplied never
+    triggers it at all. An arbitrary NON-reyn ``${FOO}`` (an env var a
+    spawned child process resolves later) is deliberately NOT touched
+    by this check — see :func:`~reyn.plugins.tokens.find_unresolved_reyn_tokens`'s
+    own docstring."""
     root = (project_root or Path.cwd()).resolve()
     raw = _load_yaml(root / ".reyn" / "agents" / agent_name / "hooks.yaml")
-    from reyn.security.secrets.interpolation import expand_env
-    data = expand_env(raw)
+    from reyn.plugins.tokens import expand_with_map, find_unresolved_reyn_tokens
+    data = expand_with_map(
+        raw, {"REYN_PROJECT_DIR": str(root), "REYN_AGENT_NAME": agent_name}
+    )
+    unresolved = find_unresolved_reyn_tokens(data)
+    if unresolved:
+        import warnings
+        warnings.warn(
+            f"Per-agent hooks.yaml for {agent_name!r} left reyn token(s) "
+            f"{sorted(set(unresolved))} unresolved -- refusing to load "
+            "this hooks layer (this is reyn's own bug, not a config "
+            "choice to honor).",
+            UserWarning,
+            stacklevel=2,
+        )
+        return []
     hooks = data.get("hooks") if isinstance(data, dict) else None
     return hooks if isinstance(hooks, list) else []
 

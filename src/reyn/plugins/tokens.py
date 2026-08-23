@@ -196,3 +196,43 @@ def expand_with_map(obj: Any, token_map: dict[str, str]) -> Any:
     "subset" purely by which keys it omits, not by a second code path.
     """
     return _expand(obj, token_map)
+
+
+# #5140: matches a REMAINING ``${REYN_*}``/``${CLAUDE_*}`` placeholder after
+# an expansion pass — i.e. reyn's OWN token vocabulary, never an arbitrary
+# caller-owned ``${VAR}`` (an env var meant for a spawned child process, a
+# pipeline ``ctx`` param, …). Deliberately narrower than ``_TOKEN_RE``: a
+# fail-close check built on the wrong regex here would refuse to load a
+# hooks.yaml over a token it was never reyn's job to resolve in the first
+# place (acceptance ③ — a non-reyn ``${FOO}`` must load exactly as before).
+_UNRESOLVED_REYN_TOKEN_RE = re.compile(r"\$\{((?:REYN|CLAUDE)_\w+)\}")
+
+
+def find_unresolved_reyn_tokens(obj: Any) -> list[str]:
+    """Recursively collect every REMAINING ``${REYN_*}``/``${CLAUDE_*}``
+    placeholder in *obj* (post-:func:`expand_with_map`, typically).
+
+    #5140: the fail-close half of that issue's ruling — reyn's own token
+    vocabulary left unresolved after reyn's own expansion pass means reyn
+    could not supply a value it owns, which is reyn's bug, not an
+    operator's config choice (contrast with an arbitrary ``${VAR}``, which
+    a downstream consumer — e.g. a spawned child process inheriting the
+    env — may legitimately resolve later; this function does not flag
+    those at all). A caller finding this list non-empty should refuse to
+    use the expanded structure rather than silently proceed with an
+    empty/wrong value standing in for an unresolved token — see
+    ``config/loader.py``'s ``load_per_agent_hooks`` for the reference
+    caller."""
+    if isinstance(obj, str):
+        return [m.group(0) for m in _UNRESOLVED_REYN_TOKEN_RE.finditer(obj)]
+    if isinstance(obj, dict):
+        found: list[str] = []
+        for v in obj.values():
+            found.extend(find_unresolved_reyn_tokens(v))
+        return found
+    if isinstance(obj, list):
+        found = []
+        for v in obj:
+            found.extend(find_unresolved_reyn_tokens(v))
+        return found
+    return []
