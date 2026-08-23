@@ -167,6 +167,7 @@ async def test_relative_exec_argv_runs_inside_the_dispatching_agents_own_tree(tm
         stage_next_turn_context=lambda *a, **k: None,
         sandbox_backend=NoopBackend(),
         hook_cwd=lambda: str(agent_dir),
+        hook_temp_dir=lambda: str(tmp_path),
     )
     await dispatcher.dispatch("turn_end", {})
 
