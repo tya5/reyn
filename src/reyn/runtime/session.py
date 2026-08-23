@@ -5755,7 +5755,21 @@ class Session:
         #2880/#2881) — the ``composers:`` key of the SAME
         ``.reyn/agents/<name>/hooks.yaml`` file :meth:`_read_per_agent_hooks`
         reads its ``hooks:`` key from (same IN-set grain, scoped per agent).
-        ``[]`` when the file or key is absent."""
+        ``[]`` when the file or key is absent.
+
+        Expands reyn-owned tokens in this layer via
+        :func:`reyn.plugins.tokens.expand_with_map` with an explicit
+        ``{REYN_PROJECT_DIR, REYN_AGENT_NAME}`` map — not ``os.environ``:
+        ``REYN_AGENT_NAME`` exists only in a SPAWNED CHILD process's own env
+        (``hooks/shell_runner.py`` and friends), never in this process's own
+        ``os.environ``, so it is undefined at config-load time and an
+        ``os.environ``-backed expander cannot resolve it here. Fails closed
+        via :func:`~reyn.plugins.tokens.find_unresolved_reyn_tokens` on any
+        REMAINING ``${REYN_*}``/``${CLAUDE_*}`` token — reyn's own bug, not
+        an operator's config choice — while an arbitrary non-reyn ``${FOO}``
+        is left untouched, for a spawned child process to resolve later. See
+        ``config/loader.py``'s ``load_per_agent_hooks`` for the reference
+        implementation this mirrors."""
         import yaml
         path = self._hot_reload_project_root() / ".reyn" / "agents" / self.agent_name / "hooks.yaml"
         if not path.is_file():
@@ -5766,8 +5780,21 @@ class Session:
             return []
         if not isinstance(raw, dict):
             return []
-        from reyn.security.secrets.interpolation import expand_env
-        data = expand_env(raw)
+        from reyn.plugins.tokens import expand_with_map, find_unresolved_reyn_tokens
+        root = self._hot_reload_project_root()
+        data = expand_with_map(
+            raw, {"REYN_PROJECT_DIR": str(root), "REYN_AGENT_NAME": self.agent_name}
+        )
+        unresolved = find_unresolved_reyn_tokens(data)
+        if unresolved:
+            logger.warning(
+                "Per-agent hooks.yaml for %r left reyn token(s) %s unresolved "
+                "in its composers: layer -- refusing to load this composers "
+                "layer (this is reyn's own bug, not a config choice to "
+                "honor).",
+                self.agent_name, sorted(set(unresolved)),
+            )
+            return []
         composers = data.get("composers") if isinstance(data, dict) else None
         return list(composers) if isinstance(composers, list) else []
 
