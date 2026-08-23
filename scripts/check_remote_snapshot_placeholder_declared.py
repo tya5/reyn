@@ -97,6 +97,7 @@ from pathlib import Path
 
 from reyn.interfaces.repl import read_model as read_model_module
 from reyn.interfaces.repl.read_model import _WIRE_KEYS, ChatReadModelCapabilities
+from reyn.interfaces.transport.agui import state as agui_state_module
 
 #: #5093 — keys whose placeholder-shaped value is covered by ONE declared
 #: axis that does not share its own name (a single boolean gating more than
@@ -148,6 +149,7 @@ _CLEARED_NON_FABRICATING_KEYS = {
 }
 
 _PACKAGE_DIR = Path(read_model_module.__file__).resolve()
+_AGUI_STATE_PATH = Path(agui_state_module.__file__).resolve()
 
 
 def _is_placeholder_literal(node: "ast.expr") -> bool:
@@ -176,36 +178,79 @@ def _get_call_placeholder_key(node: "ast.expr") -> "str | None":
     return key_arg.value
 
 
-def find_violations(package_dir: "Path | None" = None) -> "list[str]":
-    """Return a message per placeholder-shaped dict key in
-    ``project_remote_snapshot`` with none of the 3 remedies. Empty = clean."""
-    if package_dir is None:
-        package_dir = _PACKAGE_DIR
+def _find_function_return_dict(
+    package_dir: Path, func_name: str,
+) -> "tuple[ast.Dict | None, str | None]":
+    """Parse *package_dir* and return the ``ast.Dict`` node backing *func_name*'s
+    return value — shared by both this gate's checks
+    (``project_remote_snapshot``'s own placeholder scan, and
+    ``project_status``'s unconditional-key-set scan for
+    :func:`find_wire_keys_violations`). Handles both ``return {...}``
+    directly AND ``out = {...}; return out`` (``project_status``'s own
+    shape) — the LAST top-level assignment to the returned name before the
+    ``return`` statement, matching how a reader would resolve it by eye.
+    Returns ``(None, error_message)`` if the function, its return, or the
+    dict literal it resolves to could not be found."""
     source = package_dir.read_text(encoding="utf-8")
     tree = ast.parse(source, filename=str(package_dir))
 
     func_node = None
     for node in ast.walk(tree):
-        if isinstance(node, ast.FunctionDef) and node.name == "project_remote_snapshot":
+        if isinstance(node, ast.FunctionDef) and node.name == func_name:
             func_node = node
             break
     if func_node is None:
-        return [
-            "check_remote_snapshot_placeholder_declared: could not find "
-            "project_remote_snapshot in read_model.py -- has it been renamed "
-            "or moved? Update this gate's function-name lookup."
-        ]
+        return None, (
+            f"check_remote_snapshot_placeholder_declared: could not find "
+            f"{func_name} in {package_dir} -- has it been renamed or moved? "
+            f"Update this gate's function-name lookup."
+        )
 
-    return_dict = None
+    return_node = None
     for node in ast.walk(func_node):
-        if isinstance(node, ast.Return) and isinstance(node.value, ast.Dict):
-            return_dict = node.value
+        if isinstance(node, ast.Return):
+            return_node = node
             break
+    if return_node is None:
+        return None, (
+            f"check_remote_snapshot_placeholder_declared: {func_name} has no "
+            f"return statement -- update this gate."
+        )
+
+    if isinstance(return_node.value, ast.Dict):
+        return return_node.value, None
+
+    if isinstance(return_node.value, ast.Name):
+        returned_name = return_node.value.id
+        return_dict = None
+        for node in func_node.body:
+            if (
+                isinstance(node, ast.Assign)
+                and isinstance(node.value, ast.Dict)
+                and any(
+                    isinstance(t, ast.Name) and t.id == returned_name
+                    for t in node.targets
+                )
+            ):
+                return_dict = node.value  # last assignment wins (top-to-bottom walk)
+        if return_dict is not None:
+            return return_dict, None
+
+    return None, (
+        f"check_remote_snapshot_placeholder_declared: {func_name}'s return "
+        f"value does not resolve to a dict literal (neither `return {{...}}` "
+        f"nor `<name> = {{...}}; return <name>`) -- update this gate."
+    )
+
+
+def find_violations(package_dir: "Path | None" = None) -> "list[str]":
+    """Return a message per placeholder-shaped dict key in
+    ``project_remote_snapshot`` with none of the 3 remedies. Empty = clean."""
+    if package_dir is None:
+        package_dir = _PACKAGE_DIR
+    return_dict, error = _find_function_return_dict(package_dir, "project_remote_snapshot")
     if return_dict is None:
-        return [
-            "check_remote_snapshot_placeholder_declared: project_remote_snapshot's "
-            "return statement is not a dict literal -- update this gate."
-        ]
+        return [error or "unknown error locating project_remote_snapshot"]
 
     axis_field_names = {f.name for f in _dataclass_field_names()}
     violations: "list[str]" = []
@@ -247,19 +292,65 @@ def _dataclass_field_names():
     return dataclasses.fields(ChatReadModelCapabilities)
 
 
+def find_wire_keys_violations(agui_state_path: "Path | None" = None) -> "list[str]":
+    """#5093 (architect blocking finding, issuecomment-5385179961, PR #5206
+    A #1): ``_WIRE_KEYS`` was a hand-typed ASSERTION with no producer code
+    reading it -- "these keys are genuinely, unconditionally on the wire"
+    was never checked against the actual wire emitter. This closes that:
+    ``_WIRE_KEYS`` must be a SUBSET of the keys ``agui/state.py``'s
+    ``project_status`` unconditionally emits (every key in ITS OWN return
+    dict, since every value there is a ``snap.get(key, default)`` call with
+    a default -- the key is always present in the output regardless of
+    ``snap``'s own contents). A key later removed from ``project_status``
+    but left in ``_WIRE_KEYS`` now goes RED here -- the exact gap the
+    architect finding named (the PR body's prior claim that a key falling
+    off the wire "re-enters the gate's scope with no second edit" was false
+    until this function existed to make it true)."""
+    if agui_state_path is None:
+        agui_state_path = _AGUI_STATE_PATH
+    return_dict, error = _find_function_return_dict(agui_state_path, "project_status")
+    if return_dict is None:
+        return [error or "unknown error locating project_status"]
+
+    unconditional_keys = {
+        key_node.value
+        for key_node in return_dict.keys
+        if isinstance(key_node, ast.Constant) and isinstance(key_node.value, str)
+    }
+    missing = sorted(_WIRE_KEYS - unconditional_keys)
+    return [
+        f'"{key}" is in read_model._WIRE_KEYS but project_status no longer '
+        f"unconditionally emits it -- remove it from _WIRE_KEYS (it needs a "
+        f"declared ChatReadModelCapabilities axis instead, like any other "
+        f"key that can be absent from the wire)"
+        for key in missing
+    ]
+
+
 def main() -> int:
     violations = find_violations(_PACKAGE_DIR)
-    if violations:
-        print(
-            "check_remote_snapshot_placeholder_declared: "
-            f"{len(violations)} undeclared placeholder(s) in "
-            "project_remote_snapshot's return dict:\n"
-        )
-        for v in violations:
-            print(f"  - {v}")
+    wire_key_violations = find_wire_keys_violations(_AGUI_STATE_PATH)
+    if violations or wire_key_violations:
+        if violations:
+            print(
+                "check_remote_snapshot_placeholder_declared: "
+                f"{len(violations)} undeclared placeholder(s) in "
+                "project_remote_snapshot's return dict:\n"
+            )
+            for v in violations:
+                print(f"  - {v}")
+        if wire_key_violations:
+            print(
+                "check_remote_snapshot_placeholder_declared: "
+                f"{len(wire_key_violations)} _WIRE_KEYS entry(ies) no longer "
+                "backed by project_status:\n"
+            )
+            for v in wire_key_violations:
+                print(f"  - {v}")
         return 1
     print("check_remote_snapshot_placeholder_declared: OK, every placeholder-shaped "
-          "key is covered by _WIRE_KEYS, a declared axis, or a cited exemption.")
+          "key is covered by _WIRE_KEYS, a declared axis, or a cited exemption, and "
+          "_WIRE_KEYS is a verified subset of project_status's unconditional keys.")
     return 0
 
 

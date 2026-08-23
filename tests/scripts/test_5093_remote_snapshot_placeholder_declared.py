@@ -10,12 +10,22 @@ fixture files (mirrors ``test_5131_tui_widget_boundary.py``'s own pattern)
 for the falsification witnesses — a gate that only confirms green on the
 ALREADY-COMPLIANT current tree cannot distinguish "enforcing" from
 "never runs at all" (CLAUDE.md's own test-review question 4).
+
+``TestWireKeysBackedByProjectStatus`` (below) is the follow-up architect
+blocking finding (issuecomment-5385179961, PR #5206 A #1): ``_WIRE_KEYS``
+was a hand-typed ASSERTION with no producer code reading it — nothing
+checked that its members were genuinely, unconditionally on the wire.
+``find_wire_keys_violations`` closes that by AST-checking ``_WIRE_KEYS ⊆``
+the keys ``agui/state.py``'s ``project_status`` unconditionally emits.
 """
 from __future__ import annotations
 
 from pathlib import Path
 
-from scripts.check_remote_snapshot_placeholder_declared import find_violations
+from scripts.check_remote_snapshot_placeholder_declared import (
+    find_violations,
+    find_wire_keys_violations,
+)
 
 # ── acceptance① — the real source, right now, has zero violations ────────
 
@@ -155,3 +165,61 @@ def test_main_exits_nonzero_when_a_violation_exists(tmp_path: Path, monkeypatch)
     exit_code = gate_module.main()
 
     assert exit_code == 1
+
+
+# ── _WIRE_KEYS ⊆ project_status's unconditional keys (architect blocking
+# finding, issuecomment-5385179961) ───────────────────────────────────────
+
+
+def _write_status_module(tmp_path: Path, keys: "list[str]") -> Path:
+    path = tmp_path / "fixture_agui_state.py"
+    body_lines = "\n".join(f'        "{k}": snap.get("{k}"),' for k in keys)
+    path.write_text(
+        "def project_status(snapshot, *, waiting_on=None):\n"
+        "    snap = snapshot or {}\n"
+        "    out = {\n"
+        f"{body_lines}\n"
+        "    }\n"
+        "    return out\n",
+        encoding="utf-8",
+    )
+    return path
+
+
+def test_the_real_wire_keys_are_a_verified_subset_of_project_status() -> None:
+    """Tier 2: acceptance① — landed on main, every ``_WIRE_KEYS`` member is
+    genuinely one of ``project_status``'s own unconditionally-emitted keys."""
+    violations = find_wire_keys_violations()
+    assert violations == [], f"real regression(s) found: {violations}"
+
+
+def test_a_wire_key_dropped_from_project_status_is_flagged(tmp_path: Path) -> None:
+    """Tier 2: acceptance② — the exact architect finding: a key present in
+    ``_WIRE_KEYS`` but no longer emitted by ``project_status`` (e.g. removed
+    from the wire protocol) must be flagged, not silently trusted. Uses a
+    REAL ``_WIRE_KEYS`` member (``cost_agent``) with a synthetic
+    ``project_status`` fixture that omits it -- the exact "wire protocol
+    changed but the hand-typed assertion didn't move" shape."""
+    fixture = _write_status_module(
+        tmp_path,
+        # every real _WIRE_KEYS member EXCEPT "cost_agent"
+        ["cost_total", "agent_tokens", "ctx_used", "ctx_window", "queue",
+         "turn_active", "queue_seq"],
+    )
+
+    violations = find_wire_keys_violations(fixture)
+
+    assert any("cost_agent" in v for v in violations), violations
+
+
+def test_project_status_emitting_every_wire_key_is_not_flagged(tmp_path: Path) -> None:
+    """Tier 2: falsification contrast — a fixture that DOES emit every real
+    ``_WIRE_KEYS`` member (plus an unrelated extra key, proving the check is
+    a subset test, not an exact-set one) produces zero violations."""
+    fixture = _write_status_module(
+        tmp_path,
+        ["cost_agent", "cost_total", "agent_tokens", "ctx_used", "ctx_window",
+         "queue", "turn_active", "queue_seq", "some_unrelated_extra_key"],
+    )
+
+    assert find_wire_keys_violations(fixture) == []
