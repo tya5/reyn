@@ -294,6 +294,15 @@ async def test_connect_intervention_round_trip_matches_local_unfenced_answer(
     connect handler -> the dispatch task never resolved within the timeout
     (no listener -> nothing answers it) -> this test's ``asyncio.wait_for``
     raised -> RED -> reverted, GREEN.
+
+    #5155 scope note (architect, issuecomment-5383600060): this test
+    witnesses the prompt RENDERING (waits for ``renderer.messages`` to be
+    non-empty before answering) — it does NOT, and never did, witness
+    "an answer sent before the render cannot land": the test itself is the
+    only thing that calls :meth:`AgUiTransport.answer_intervention_text`,
+    and it always does so after its own wait resolves. A genuine
+    answer-before-render race in production is out of this witness's
+    scope, not disproven by it.
     """
     monkeypatch.chdir(tmp_path)
     registry = _registry(tmp_path)
@@ -348,10 +357,30 @@ async def test_connect_intervention_round_trip_matches_local_unfenced_answer(
                 remote_task = asyncio.ensure_future(
                     session._intervention_handler.dispatch(remote_iv)
                 )
-                await wait_until(
-                    lambda: transport.pending_intervention_head() is not None,
-                )
-                assert renderer.messages, "the intervention prompt must render before it is answered"
+                # #5155 (architect finding, issuecomment-5383600060): this
+                # used to wait on `pending_intervention_head()` and then
+                # bare-`assert renderer.messages` immediately after — two
+                # DIFFERENT conditions. `pending_intervention_head()` going
+                # non-None only means the transport decoded the intervention
+                # frontend-tool; it says nothing about whether the
+                # concurrently-running `output_task` (run_output_loop) has
+                # actually been scheduled far enough to append to
+                # `renderer.messages` yet — a bare `assert` right after a
+                # DIFFERENT wait is a race, not a witness (a variant of the
+                # "waited on A, asserted B" shape CLAUDE.md's six-questions
+                # Q4 names). Idle machine / few concurrent tests: the output
+                # task happens to get scheduled in time — green. Loaded
+                # machine / thousands of tests under -n auto: it may not —
+                # red, non-deterministically, exactly the shape observed on
+                # main (f7e9cc478) and PR #5148 the same night, never
+                # reproducing standalone. Waiting on the ACTUAL condition the
+                # assert depends on (unboundedly — CI's own --timeout=120 is
+                # the kill switch, no local ceiling) removes the race.
+                #
+                # This is a TEST defect, not a production ordering bug — see
+                # this PR's own scope note in the commit message for what
+                # this witness can and cannot show as a result.
+                await wait_until(lambda: bool(renderer.messages))
 
                 # The production remote answer path: the real AgUiTransport
                 # method a real client's input loop calls, over the real wire.
