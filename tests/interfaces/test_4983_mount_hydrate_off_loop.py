@@ -1,14 +1,25 @@
 """Tier 2: #4983 — ``on_mount()`` no longer makes its own synchronous
-``history.jsonl`` disk read.
+``conversation_history()`` registry/session read.
 
 Root cause: ``TextualChatApp.on_mount()`` is not ``async def``, and used to
 call ``self._hydrate_from_history()`` unconditionally, which synchronously
-called ``self._read_model.conversation_history()`` — real disk I/O, directly
-on the event loop, with no ``await`` anywhere in the chain. Found while
-investigating #4834's CI `pump heartbeat +0` stalls; confirmed as a real
-defect independent of that investigation's own open question (whether it
-explains CI's specific 2-second symptom — it may not, given CI's own small
-test fixtures — see #4834's own thread).
+called ``self._read_model.conversation_history()`` directly on the event
+loop, with no ``await`` anywhere in the chain. Found while investigating
+#4834's CI `pump heartbeat +0` stalls; confirmed as a real defect
+independent of that investigation's own open question (whether it explains
+CI's specific 2-second symptom — it may not, given CI's own small test
+fixtures — see #4834's own thread).
+
+**Not disk I/O** (#5203 measurement, docs-maintainer/architect-confirmed
+issuecomment-5385460393, corrected here — same PR that discovered the
+stale claim): ``conversation_history`` reads ``Session.history``, a plain
+in-memory list populated once by ``Session.load_history`` at session-
+construction time — it never touches ``history.jsonl`` itself. The
+"real disk I/O" framing above was #4983's ORIGINAL (wrong) understanding
+of the defect; the real defect is still real — a synchronous call
+blocking the event loop — the blocking source is a bounded in-memory list
+copy, not disk latency, which is why moving it off-loop still matters for
+a large history without being "an I/O fix" in the literal sense.
 
 Architect's design (c), issue #4983: read the CURRENTLY-ATTACHED session's
 history OFF the event loop, BEFORE the App exists at all (``run_textual_

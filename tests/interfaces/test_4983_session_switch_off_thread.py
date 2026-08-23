@@ -1,5 +1,10 @@
 """Tier 2: #4983 — the session-switch rehydrate no longer makes its
-synchronous ``history.jsonl`` disk read on the event loop.
+synchronous ``conversation_history()`` registry/session read on the event
+loop. **Not disk I/O** (#5203 measurement, docs-maintainer/architect-
+confirmed issuecomment-5385460393): ``conversation_history`` reads
+``Session.history``, a plain in-memory list, never ``history.jsonl``
+directly — this module's own earlier text claiming "disk read" was
+stale/wrong, corrected here in the same PR that discovered it.
 
 Owner ruling (2026-08-21, "セッション切り替えの見た目許容"): a brief
 blank-then-refill on switch is the ACCEPTED trade — NOT "history never
@@ -10,9 +15,10 @@ Architect's design: split by WORK, not by function — ``_hydrate_from_
 history`` itself stays synchronous (mount, #4985's own untouched
 fallback path, still uses it byte-identically); ONLY
 ``_handle_session_attached_event`` (the live switch barrier) is now
-``async def`` and runs step ① (``_read_conversation_history``, the I/O)
-via ``asyncio.to_thread`` before applying step ② (``_apply_hydrated_
-messages``, pure in-memory) on the loop, exactly as it always has.
+``async def`` and runs step ① (``_read_conversation_history``, the
+registry/session read) via ``asyncio.to_thread`` before applying step ②
+(``_apply_hydrated_messages``, pure in-memory) on the loop, exactly as it
+always has.
 
 Witness is "does the I/O run off the event loop" (real thread-identity
 check, mirroring ``test_4983_mount_hydrate_off_loop.py``'s own

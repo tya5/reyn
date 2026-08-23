@@ -1321,8 +1321,10 @@ class TextualChatApp(App):
         # read BEFORE this App was constructed (the caller — normally
         # ``run_textual_chat``'s own pre-``run_async`` step — reads it off
         # the event loop, e.g. via ``asyncio.to_thread``) so ``on_mount``
-        # never has to make its own synchronous disk read to hydrate the
-        # first frame. ``None`` means "no pre-fetched history was given" —
+        # never has to make its own synchronous registry/session read to
+        # hydrate the first frame (#5203: not a disk read — see
+        # ``_read_conversation_history``'s own docstring for why).
+        # ``None`` means "no pre-fetched history was given" —
         # a real caller that just has nothing to restore passes ``[]``,
         # not ``None`` (``ChatReadModel.conversation_history`` never
         # returns ``None`` on success) — so ``on_mount`` can tell "read
@@ -2392,7 +2394,7 @@ class TextualChatApp(App):
             # #4983: prefer the history this App was CONSTRUCTED with (the
             # caller already read it OFF the event loop — see
             # ``__init__``'s own ``initial_history_messages`` docstring) —
-            # step ② only, no new disk read here. ``None`` (nothing was
+            # step ② only, no new registry/session read here. ``None`` (nothing was
             # pre-fetched — most existing construction sites, tests
             # included) falls back to the old synchronous do-both call,
             # unchanged: this method must still hydrate correctly for a
@@ -2474,12 +2476,25 @@ class TextualChatApp(App):
     def _read_conversation_history(
         self, *, agent: "str | None" = None, session_id: "str | None" = None
     ) -> "list | None":
-        """#4983 step ① — the actual disk read (``history.jsonl`` via
-        :meth:`~reyn.interfaces.repl.read_model.ChatReadModel.
-        conversation_history`), split out of :meth:`_hydrate_from_history`
-        so a caller can choose HOW this specific step runs without also
-        touching step ② (:meth:`_apply_hydrated_messages`, pure in-memory
-        projection). Deliberately still a PLAIN synchronous method, not
+        """#4983 step ① — the registry/session read (:meth:`~reyn.interfaces.
+        repl.read_model.ChatReadModel.conversation_history`), split out of
+        :meth:`_hydrate_from_history` so a caller can choose HOW this
+        specific step runs without also touching step ② (:meth:`_apply_
+        hydrated_messages`, pure in-memory projection).
+
+        **Not a disk read** (#5203 measurement, docs-maintainer/architect-
+        confirmed issuecomment-5385460393): ``conversation_history`` reads
+        ``Session.history``, a plain in-memory list populated once by
+        ``Session.load_history`` at session-construction time — this method
+        never touches ``history.jsonl`` itself. #4983's ORIGINAL "real disk
+        I/O" framing (this docstring's own prior wording) was already wrong
+        by the time #5203 measured it; that finding is not new work this
+        PR did, just a stale claim this PR is the first to correct here.
+        The reason this step still deserves to run off the loop is
+        different from "disk I/O": see :meth:`_resolve_history_source`'s
+        own docstring for the real one (a bounded but non-zero in-memory
+        list copy, worth keeping off the loop for a large history).
+        Deliberately still a PLAIN synchronous method, not
         ``async def`` — architect ruling (#4983): the two call sites need
         DIFFERENT answers for "run this off the event loop or not" (mount
         reads before the loop's own ``run_async`` even starts; a live
@@ -5496,8 +5511,9 @@ class TextualChatApp(App):
         #4983 (owner ruling, 2026-08-21: "セッション切り替えの見た目許容" —
         a brief blank-then-refill on switch is accepted; NOT "history
         never arrives" or "order changes"): ``async def``, not ``def``,
-        so the NEW session's ``conversation_history()`` disk read
-        (:meth:`_read_conversation_history`, step ①) can run OFF the
+        so the NEW session's ``conversation_history()`` read
+        (:meth:`_read_conversation_history`, step ① — not disk I/O, #5203;
+        see that method's own docstring) can run OFF the
         event loop via ``asyncio.to_thread`` — see this method's own
         tail for where. Deliberately does NOT make :meth:`_hydrate_from_
         history` itself async (architect ruling, #4983: that would push
@@ -5727,10 +5743,12 @@ class TextualChatApp(App):
             ),
             name="hydrated-iv-head-switch", exclusive=False,
         )
-        # #4983: step ① (the disk read) runs OFF the event loop — the
-        # measured defect this issue exists for (a synchronous
-        # `conversation_history()` call blocking the TUI's own event
-        # loop, here on every session switch, not just at mount) —
+        # #4983: step ① (the registry/session read — NOT disk I/O, #5203
+        # measurement; see `_read_conversation_history`'s own docstring)
+        # runs OFF the event loop — the measured defect this issue exists
+        # for (a synchronous `conversation_history()` call blocking the
+        # TUI's own event loop, here on every session switch, not just at
+        # mount, via a bounded in-memory list copy, not disk latency) —
         # step ② (projection + apply) stays on the loop, unchanged. See
         # this method's own docstring for why `_hydrate_from_history`
         # itself is not what's called here.
