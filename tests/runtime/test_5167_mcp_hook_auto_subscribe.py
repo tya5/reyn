@@ -292,12 +292,18 @@ async def test_matcher_missing_server_or_uri_is_reported_not_silently_skipped(
 
 
 @pytest.mark.asyncio
-async def test_ephemeral_session_never_attempts_auto_subscribe(tmp_path: Path):
-    """Tier 2: mirrors _mcp_subscribe_resource's own ephemeral refusal — a
-    subscription is only meaningful on a persistent connection, so an
-    ephemeral session's auto-subscribe pass is a pure no-op (no warning,
-    no audit-event either — the session TYPE itself, not any one hook's
-    declaration, is why nothing happens here)."""
+async def test_ephemeral_session_never_subscribes_but_still_reports_why(
+    tmp_path: Path,
+):
+    """Tier 2: architect non-blocking review on #5180 (TESTS-READY(A),
+    issuecomment-5384348643) — mirrors _mcp_subscribe_resource's own
+    ephemeral refusal (a subscription is only meaningful on a persistent
+    connection), but the refusal must NOT be a silent early-return before
+    even looking at declared hooks. A declared hook on an ephemeral session
+    that subscribed nothing and said nothing would be indistinguishable
+    from the original #5167 bug (declared, never honored, never
+    explained) — so this still enumerates and reports through the SAME
+    mcp_hook_subscribe_not_applied path every other unhonored case uses."""
     events = EventLog()
     resolver = _allow_all_resolver(tmp_path, "srv")
     session = _make_session(
@@ -314,4 +320,16 @@ async def test_ephemeral_session_never_attempts_auto_subscribe(tmp_path: Path):
     await session._auto_subscribe_mcp_resource_hooks()
     await settle(events)
 
-    assert collected == []
+    assert _subscribed_uris(session, "srv") == [], (
+        "an ephemeral session must never actually subscribe — no persistent "
+        "connection exists for a push to arrive on"
+    )
+    matching = [e for e in collected if e.type == "mcp_hook_subscribe_not_applied"]
+    assert matching, (
+        "an ephemeral session's declared hook produced no "
+        "mcp_hook_subscribe_not_applied audit-event — declared, never "
+        "honored, never explained is the exact #5167 bug shape"
+    )
+    assert matching[0].data.get("server") == "srv"
+    assert matching[0].data.get("uri") == _URI
+    assert "ephemeral" in str(matching[0].data.get("reason", "")).lower()

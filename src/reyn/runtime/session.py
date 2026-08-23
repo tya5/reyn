@@ -8695,16 +8695,32 @@ class Session:
         naming the hook, so a declaration's non-effect is never silent —
         see that kind's own docstring in ``event_schema.py``.
 
-        No-op for an ephemeral session (mirrors :meth:`_mcp_subscribe_resource`
-        itself: a subscription is only meaningful on a persistent connection)
-        and when no ``mcp_resource_updated`` hook is declared at all (the
-        common case — zero declared hooks means zero enumeration, zero
-        subscribe attempts, byte-identical to pre-#5167 startup).
+        Byte-identical to pre-#5167 startup when no ``mcp_resource_updated``
+        hook is declared at all (the common case — zero declared hooks means
+        zero enumeration, zero subscribe attempts, zero audit-events).
+
+        An EPHEMERAL session (architect non-blocking review, TESTS-READY(A) on
+        #5180, issuecomment-5384348643) still ENUMERATES its declared hooks and
+        reports each through the SAME ``mcp_hook_subscribe_not_applied`` path —
+        it does not silently early-return before looking. The refusal itself
+        is correct (mirrors :meth:`_mcp_subscribe_resource`'s own: a
+        subscription is only meaningful on a persistent connection, which an
+        ephemeral session never holds), but "correct AND silent" is exactly the
+        shape #5167 exists to close — a declared hook on an ephemeral session
+        would otherwise be accepted, never honored, and never explained,
+        indistinguishable from the original bug this whole method fixes.
         """
-        if self._ephemeral:
-            return
         hooks = self._hook_dispatcher.registry.hooks_for("mcp_resource_updated")
         for hook in hooks:
+            if self._ephemeral:
+                matcher = hook.matcher or {}
+                self._report_mcp_hook_subscribe_not_applied(
+                    hook.name or "mcp_resource_updated",
+                    matcher.get("server"), matcher.get("uri"),
+                    "session is ephemeral — a subscription is only "
+                    "meaningful on a persistent connection.",
+                )
+                continue
             await self._auto_subscribe_one_mcp_resource_hook(hook)
 
     async def _auto_subscribe_one_mcp_resource_hook(self, hook: "HookDef") -> None:
