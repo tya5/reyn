@@ -42,6 +42,7 @@ from reyn.intervention_choices import (
     file_access_choices,
     generic_yn_choices,
 )
+from reyn.security.permissions import approval_ledger
 from reyn.user_intervention import (
     RequestBus,
     UserIntervention,
@@ -96,17 +97,55 @@ _RECOVERY_CORE_WRITE_PREFIXES = (
     ".reyn/state/",
 )
 
-_CANONICAL_PROTECTED_WRITE_PATHS = (
-    # #1199 security fix: the persisted approval store. It is written ONLY via
-    # the gated approval-decision mechanism (``_persist`` — which also emits the
-    # state_change audit signal). It is TOP-LEVEL (persist, #2248 A2-cont — not under
-    # the config/ recovery-core prefix), so it needs this explicit carve-out: without
-    # it a safe-mode file.write could inject an approval directly, bypassing the
-    # user-approval gate + the audit, and (since approvals load once into
-    # ``self._saved`` at startup) silently activating a never-approved grant on the
-    # NEXT run = approval-audit bypass.
-    ".reyn/approvals.yaml",
-)
+def _canonical_protected_write_paths() -> "tuple[str, ...]":
+    """The #571/#1199 canonical protected-write paths.
+
+    #1199 security fix: the persisted approval store. It is written ONLY via
+    the gated approval-decision mechanism (``_persist`` — which also emits
+    the state_change audit signal). It is TOP-LEVEL (persist, #2248 A2-cont
+    — not under the config/ recovery-core prefix), so it needs this explicit
+    carve-out: without it a safe-mode file.write could inject an approval
+    directly, bypassing the user-approval gate + the audit, and (since
+    approvals load once into ``self._saved`` at startup) silently activating
+    a never-approved grant on the NEXT run = approval-audit bypass.
+
+    #5153/#5170 moved the LIVE store from this snapshot to the append-only
+    ``.reyn/approvals.jsonl`` ledger (``ApprovalLedger`` — see
+    ``approval_ledger.py``) — #5173 found the carve-out was never updated to
+    follow: a safe-mode write could append a fake ``{"kind": "approval", ...,
+    "approved": true}`` record directly, the EXACT SAME bypass class #1199
+    closed, reopened against the new file. ``approvals.yaml`` itself stays
+    listed too — it is still read (one-time migration source,
+    ``migrate_legacy_snapshot``) and a legacy tree may still carry it.
+
+    A FUNCTION reading ``approval_ledger.RELATIVE_PATH`` LIVE at call time —
+    not a module-level tuple built once at import time — is itself part of
+    #5173's fix, not a style choice: architect's own review of the first
+    draft (issuecomment-5384258107) found that a frozen tuple built from an
+    imported *value* (``from ... import RELATIVE_PATH as X``) satisfies
+    "derived from one constant" only in the SOURCE — a future rename of
+    ``approval_ledger.RELATIVE_PATH`` would silently NOT propagate here,
+    because the name binding captured the old string at import time. Reading
+    the module attribute live on every call is what makes acceptance ③ ("a
+    renamed ledger's protection follows automatically") actually true rather
+    than merely true today. See
+    ``test_renaming_the_ledger_moves_both_carve_outs_with_it`` for the
+    monkeypatch-based witness.
+
+    LOAD-BEARING (architect co-vet, broker, #5175 2026-08-23T04:55Z): "optimizing" this
+    back to a module-level tuple silently disables that witness — the
+    monkeypatch it relies on stops reaching this function's own read the
+    moment the value is captured once at import time instead of read live.
+    That test is currently the ONLY thing that would catch a regression
+    back to a frozen tuple — CLAUDE.md's "who stops this if it repeats?"
+    question has exactly one answer here, and this note names it.
+    """
+    from reyn.security.permissions import approval_ledger
+
+    return (
+        ".reyn/approvals.yaml",
+        approval_ledger.RELATIVE_PATH,
+    )
 
 
 def _normalize_paths(v: object) -> list[str]:
@@ -126,7 +165,7 @@ def _is_canonical_protected_write(path_str: str, base: "Path | None" = None) -> 
     base = base or Path.cwd()
     p = Path(path_str).expanduser()
     resolved = (base / p).resolve() if not p.is_absolute() else p.resolve()
-    for rel in _CANONICAL_PROTECTED_WRITE_PATHS:
+    for rel in _canonical_protected_write_paths():
         if resolved == (base / rel).resolve():
             return True
     return False
@@ -153,7 +192,7 @@ def _in_default_write_zone(path_str: str, base: "Path | None" = None) -> bool:
     """Return True if path falls within a default-granted write zone (.reyn/).
 
     Exception: canonical protected paths (see
-    ``_CANONICAL_PROTECTED_WRITE_PATHS`` — ``.reyn/index/sources.yaml``
+    ``_canonical_protected_write_paths()`` — ``.reyn/index/sources.yaml``
     transitionally + ``.reyn/approvals.yaml``) return False here so the
     write is forced through its explicit ``file.write`` declaration / gated
     flow rather than the broad ``.reyn/`` zone. ``.reyn/mcp.yaml`` and
@@ -463,7 +502,7 @@ class PermissionResolver:
         # each needing momentary ownership of the WHOLE snapshot file to
         # change even one key was the root cause of a lost approval under
         # concurrent access).
-        self._approval_ledger_path = self._project_root / ".reyn" / "approvals.jsonl"
+        self._approval_ledger_path = self._project_root / Path(approval_ledger.RELATIVE_PATH)
         self._session: dict[str, bool] = {}
         # #3671 P4 item D-1: lazy — disk read + YAML parse deferred to the
         # `_saved` property's first access, not paid on every PermissionResolver
@@ -608,6 +647,15 @@ class PermissionResolver:
         real in-use count is observable without reaching into private
         state."""
         return len(self._bound_fds)
+
+    @property
+    def approval_ledger_path(self) -> Path:
+        """#5173: the resolved path this resolver's :class:`ApprovalLedger`
+        reads/writes — public so a caller (or a test asserting the write-gate
+        carve-out actually covers the LIVE file, not a hand-picked string
+        that could silently drift from it) can read it without reaching into
+        ``self._approval_ledger_path`` directly."""
+        return self._approval_ledger_path
 
     def on_persist_callback_count(self) -> int:
         """Return the number of registered ``on_persist`` callbacks.

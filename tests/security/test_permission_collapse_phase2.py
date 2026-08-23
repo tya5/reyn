@@ -26,9 +26,9 @@ from __future__ import annotations
 import pytest
 
 from reyn.security.permissions.permissions import (
-    _CANONICAL_PROTECTED_WRITE_PATHS,
     PermissionDecl,
     PermissionResolver,
+    _canonical_protected_write_paths,
     _in_default_write_zone,
     _is_canonical_protected_write,
 )
@@ -39,7 +39,7 @@ from reyn.security.permissions.permissions import (
 def test_canonical_protected_paths_excepted_from_default_zone(tmp_path, monkeypatch):
     """Tier 2: each canonical protected path returns False from _in_default_write_zone."""
     monkeypatch.chdir(tmp_path)
-    for rel in _CANONICAL_PROTECTED_WRITE_PATHS:
+    for rel in _canonical_protected_write_paths():
         assert _in_default_write_zone(rel) is False, (
             f"{rel!r} should be excepted from the default write zone (Gap A)"
         )
@@ -123,7 +123,7 @@ def test_explicit_file_write_no_canonical_implicit():
     })
     paths = {entry.get("path") for entry in decl.file_write if isinstance(entry, dict)}
     assert paths == {"/tmp/x"}
-    for canonical in _CANONICAL_PROTECTED_WRITE_PATHS:
+    for canonical in _canonical_protected_write_paths():
         assert canonical not in paths
 
 
@@ -232,24 +232,107 @@ def test_safe_file_check_write_rejects_approvals_yaml(tmp_path, monkeypatch):
     safe_file._check_write(str(tmp_path / ".reyn" / "scratch_state.json"))
 
 
-def test_canonical_protected_lists_stay_in_sync():
-    """Tier 2: the two _CANONICAL_PROTECTED_WRITE_PATHS copies must not drift.
+def test_canonical_protected_paths_cover_the_real_live_approval_ledger(tmp_path, monkeypatch):
+    """Tier 2: #5173 — the drift-guard below (``test_canonical_protected_lists_
+    stay_in_sync``) only pins the two COPIES equal to each other; it says
+    nothing about whether either copy still names the actual live approval
+    file. #5153/#5170 moved persistence from ``.reyn/approvals.yaml`` to the
+    append-only ``.reyn/approvals.jsonl`` ledger without updating either
+    copy — both stayed correctly in sync with EACH OTHER while both pointed
+    at a file the live code no longer writes through the gated path. This
+    test closes that exact blind spot: it builds a REAL ``PermissionResolver``
+    (not a hand-picked string) and asserts the path it actually uses for the
+    ledger is one of the canonical protected paths — so a future rename of
+    the live file, done without touching this list, fails HERE instead of
+    only being discoverable by hand-running the #5173 repro.
+    """
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".reyn").mkdir()
+    resolver = PermissionResolver({}, project_root=tmp_path)
 
-    permissions.permissions and safe.file each define the list — the safe
-    module runs in the python-harness subprocess and cannot import the parent
-    permissions module, so the constant is duplicated. This drift-guard pins
-    them equal, so any future add/remove of a protected path must touch BOTH
-    copies. Closes the recurrence class behind the #1199 gap, where
+    live_ledger_path = resolver.approval_ledger_path.relative_to(tmp_path).as_posix()
+    protected = _canonical_protected_write_paths()
+
+    assert live_ledger_path in protected, (
+        f"PermissionResolver's real approval-ledger path ({live_ledger_path!r}) "
+        f"is not in _canonical_protected_write_paths() ({protected!r}) — a "
+        f"safe-mode write to it would bypass the approval gate + audit "
+        f"(#1199's own bypass class, reopened by #5173)."
+    )
+    # And the write-gate itself actually denies it — not just list membership.
+    assert _in_default_write_zone(live_ledger_path) is False
+    assert _is_canonical_protected_write(live_ledger_path) is True
+
+
+def test_renaming_the_ledger_moves_both_carve_outs_with_it(monkeypatch):
+    """Tier 2: #5173 acceptance ③ (architect, issuecomment-5384258107) — a
+    RENAMED live ledger file must carry the write-gate protection WITH it,
+    automatically, not just today's fixed name. The test above only proves
+    "today's name is covered" — that alone does not distinguish a real
+    derivation from two literals that both happen to still agree; architect's
+    own point (echoed by docs-maintainer): "agreement between two copies is
+    not evidence either is correct."
+
+    Monkeypatches ``approval_ledger.RELATIVE_PATH`` itself (the ACTUAL
+    constant every dependent site reads, not a stand-in) and asserts BOTH
+    carve-out copies — ``permissions.py`` and ``api/safe/file.py`` — now
+    protect the RENAMED path and no longer protect the old one. This is only
+    meaningful because both copies read the constant as a live module
+    attribute lookup (``approval_ledger.RELATIVE_PATH``) inside a function
+    called fresh each time, rather than binding a frozen tuple once at each
+    module's own import time — see ``_canonical_protected_write_paths``'s own
+    docstring in both modules for why that distinction is the actual fix.
+    """
+    from reyn.api.safe.file import (
+        _canonical_protected_write_paths as safe_protected,
+    )
+    from reyn.security.permissions import approval_ledger
+
+    renamed = ".reyn/approvals-renamed-for-test.jsonl"
+    monkeypatch.setattr(approval_ledger, "RELATIVE_PATH", renamed)
+
+    assert renamed in _canonical_protected_write_paths(), (
+        "permissions.py's carve-out did not follow the renamed ledger path"
+    )
+    assert renamed in safe_protected(), (
+        "api/safe/file.py's carve-out did not follow the renamed ledger path"
+    )
+    assert ".reyn/approvals.jsonl" not in _canonical_protected_write_paths(), (
+        "the OLD ledger path is still listed after a rename — a stale, no-"
+        "longer-live path being protected is not itself a bug, but it means "
+        "this test isn't actually observing live derivation"
+    )
+
+
+def test_canonical_protected_lists_stay_in_sync():
+    """Tier 2: the two canonical-protected-paths copies must not drift.
+
+    permissions.permissions and safe.file each define the derivation — the
+    safe module runs in the python-harness subprocess and cannot import the
+    parent permissions module, so it is duplicated (each now derives its
+    jsonl entry from the SAME ``approval_ledger.RELATIVE_PATH``, but the
+    static ``.reyn/approvals.yaml`` entry and the function shape itself are
+    still two independent copies). This drift-guard pins the two functions'
+    OUTPUT equal, so any future add/remove of a protected path must touch
+    BOTH copies. Closes the recurrence class behind the #1199 gap, where
     approvals.yaml was added to the parent list only. #2248 PR-C: the same
     drift-guard now also pins the recovery-core PREFIX lists in sync.
+
+    (See ``test_renaming_the_ledger_moves_both_carve_outs_with_it`` for the
+    complementary check this one cannot make on its own: two copies agreeing
+    is not evidence either one is correct — #5173's own root cause was both
+    copies staying in sync while BOTH silently no longer named the live
+    file.)
     """
-    from reyn.api.safe.file import _CANONICAL_PROTECTED_WRITE_PATHS as safe_paths
     from reyn.api.safe.file import _RECOVERY_CORE_WRITE_PREFIXES as safe_prefixes
+    from reyn.api.safe.file import (
+        _canonical_protected_write_paths as safe_protected_write_paths,
+    )
     from reyn.security.permissions.permissions import (
         _RECOVERY_CORE_WRITE_PREFIXES as perm_prefixes,
     )
 
-    assert _CANONICAL_PROTECTED_WRITE_PATHS == safe_paths
+    assert _canonical_protected_write_paths() == safe_protected_write_paths()
     assert perm_prefixes == safe_prefixes
 
 

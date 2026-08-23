@@ -60,6 +60,13 @@ import os as _os
 import tempfile as _tempfile
 from typing import IO, Any
 
+# #5173: import the MODULE (not a copied value) so a rename of
+# ``approval_ledger.RELATIVE_PATH`` is visible here on every call, not just
+# frozen at this file's own import time — see
+# ``_canonical_protected_write_paths`` below for why that distinction is the
+# actual fix, not a style choice.
+from reyn.security.permissions import approval_ledger
+
 # ── Internal state ─────────────────────────────────────────────────────────
 #
 # These three module-globals are set once at python harness start-up via
@@ -105,9 +112,31 @@ _RECOVERY_CORE_WRITE_PREFIXES = (
     ".reyn/state/",
 )
 
-_CANONICAL_PROTECTED_WRITE_PATHS = (
-    ".reyn/approvals.yaml",
-)
+def _canonical_protected_write_paths() -> "tuple[str, ...]":
+    """The #571/#1199 canonical protected-write paths — mirrors
+    ``permissions.py``'s function of the same name; see that one's
+    docstring for why this is a FUNCTION reading ``approval_ledger.
+    RELATIVE_PATH`` live on every call rather than a module-level tuple
+    built once (#5173: a frozen tuple built from an imported *value* does
+    not follow a later rename of the constant it was built from — a live
+    module-attribute read does).
+
+    #5153/#5170 moved the live approval store to the append-only
+    ``.reyn/approvals.jsonl`` ledger; #5173 found this carve-out never
+    followed. ``approvals.yaml`` stays listed too (still read as the
+    one-time migration source).
+
+    LOAD-BEARING (architect co-vet, broker, #5175 2026-08-23T04:55Z):
+    "optimizing" this back to a module-level tuple silently disables
+    ``test_renaming_the_ledger_moves_both_carve_outs_with_it`` — the
+    monkeypatch it relies on stops reaching this function's own read the
+    moment the value is captured once at import time instead of read live.
+    That test is currently the ONLY thing that would catch a regression
+    back to a frozen tuple."""
+    return (
+        ".reyn/approvals.yaml",
+        approval_ledger.RELATIVE_PATH,
+    )
 
 
 def _set_permission_context(
@@ -226,7 +255,7 @@ def _is_canonical_protected_write(path: str) -> bool:
     """
     abs_path = _os.path.realpath(path)
     root = _project_root_for_gate()
-    for rel in _CANONICAL_PROTECTED_WRITE_PATHS:
+    for rel in _canonical_protected_write_paths():
         if abs_path == _os.path.realpath(_os.path.join(root, rel)):
             return True
     return False

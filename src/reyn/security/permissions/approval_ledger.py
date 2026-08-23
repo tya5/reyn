@@ -93,6 +93,24 @@ import time
 from pathlib import Path
 from typing import Any
 
+#: Canonical project-relative path to the ledger file — the ONE name every
+#: other module builds a Path from: ``PermissionResolver.__init__``, and (#5173)
+#: the #1199 write-gate carve-out's ``_CANONICAL_PROTECTED_WRITE_PATHS`` in
+#: BOTH its copies (``security/permissions/permissions.py`` and
+#: ``api/safe/file.py`` — the latter imports this constant directly rather than
+#: re-typing it; it cannot import the rest of this security package's parent
+#: module, but this module has zero reyn-internal imports, so it is safe to).
+#:
+#: This constant is the fix for the actual root cause #5173 found: when
+#: persistence moved off ``approvals.yaml`` (#5153/#5170), the write-gate
+#: carve-out — a hand-typed literal at each of 2 use sites — silently did not
+#: follow, reopening #1199's own approval-injection bypass against the new
+#: live file. A literal can drift from what it names; a single constant that
+#: every dependent site imports cannot — renaming the ledger means changing
+#: this ONE line, and every dependent site (the resolver's own path AND the
+#: write-gate that protects it) moves together by construction.
+RELATIVE_PATH = ".reyn/approvals.jsonl"
+
 
 class ApprovalLedger:
     """Append-only JSONL ledger for one project's permission-approval
