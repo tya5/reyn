@@ -366,3 +366,117 @@ async def test_session_switch_supersede_guard_lets_the_later_switch_win(
             )
     finally:
         pass
+
+
+@pytest.mark.asyncio
+async def test_a_programming_error_in_the_switch_read_propagates_not_swallowed(
+    tmp_path, monkeypatch, caplog,
+) -> None:
+    """Tier 2: #5216 — the read boundary must not collapse a genuine
+    programming error and "no history to show" into the same observable
+    (``None`` + a swallowed log). A real assertion on the RAISED error,
+    not a duration: reverting #5216 (wrapping ``_resolve_history_source``/
+    ``_history_from_source`` back in ``except Exception: ... return
+    None``) turns this red — the raised ``RuntimeError`` would never reach
+    ``pytest.raises`` below, and the switch would instead silently apply
+    ``None``/hang on whatever the caller was waiting for, exactly #5215's
+    own strip-falsify symptom (a pytest-timeout, not a legitimate
+    witness — CLAUDE.md's no-duration rule)."""
+    monkeypatch.chdir(tmp_path)
+    reg = _registry(tmp_path)
+    try:
+        await reg.attach("alpha")
+        read_model = RegistryReadModel(reg)
+
+        def _broken_resolve(*, agent=None, session_id=None):
+            raise RuntimeError("simulated: a real bug in the resolve step")
+
+        monkeypatch.setattr(
+            read_model, "resolve_conversation_history_source", _broken_resolve,
+        )
+
+        transport = QueueTransport()
+        app = TextualChatApp(transport=transport, read_model=read_model, agent_name="alpha")
+        async with app.run_test(size=(100, 30)) as pilot:
+            await _settle(pilot)
+
+            await reg.attach("beta")
+            with pytest.raises(RuntimeError, match="simulated: a real bug"):
+                await app._handle_session_attached_event(
+                    Event(
+                        type="session_attached",
+                        data={"agent": "beta", "session_id": _DEFAULT_SID},
+                    )
+                )
+    finally:
+        pass
+
+
+@pytest.mark.asyncio
+async def test_the_frame_loop_logs_and_continues_past_a_switch_read_error(
+    tmp_path, monkeypatch, caplog,
+) -> None:
+    """Tier 2: #5216's accept side — the SAME raise, driven through the
+    real event-frame pump (not called directly) instead of directly,
+    confirming the frame loop's own pre-existing ``except Exception:
+    logger.exception(...)`` around ``session_attached`` is where the
+    error actually surfaces (not a new catch this PR adds), and that the
+    pump keeps draining subsequent frames rather than dying itself."""
+    import logging
+
+    monkeypatch.chdir(tmp_path)
+    reg = _registry(tmp_path)
+    try:
+        await reg.attach("alpha")
+        read_model = RegistryReadModel(reg)
+        real_resolve = read_model.resolve_conversation_history_source
+
+        def _broken_only_for_beta(*, agent=None, session_id=None):
+            if agent == "beta":
+                raise RuntimeError("simulated: a real bug in the resolve step")
+            return real_resolve(agent=agent, session_id=session_id)
+
+        monkeypatch.setattr(
+            read_model, "resolve_conversation_history_source", _broken_only_for_beta,
+        )
+
+        transport = QueueTransport()
+        app = TextualChatApp(transport=transport, read_model=read_model, agent_name="alpha")
+        async with app.run_test(size=(100, 30)) as pilot:
+            await _settle(pilot)
+
+            await reg.attach("beta")
+            with caplog.at_level(logging.ERROR):
+                transport.push_event(
+                    "session_attached", {"agent": "beta", "session_id": _DEFAULT_SID},
+                )
+                await wait_until(
+                    lambda: any(
+                        "session_attached reset+hydrate failed" in r.message
+                        for r in caplog.records
+                    )
+                )
+            # The pump must still be alive — a THIRD switch after the
+            # error-carrying one must still be processed normally (real
+            # content assertion, not "did not crash"). Gamma's own resolve
+            # is NOT patched to raise, so this switch takes the real path.
+            from reyn.runtime.chat_message import ChatMessage
+
+            await reg.attach("gamma")
+            reg.get_session("gamma")._append_history(
+                ChatMessage(role="user", content="gamma's own turn"),
+            )
+            transport.push_event(
+                "session_attached", {"agent": "gamma", "session_id": _DEFAULT_SID},
+            )
+
+            def _rows() -> "list[tuple[str, str]]":
+                return [
+                    (e.item.kind, e.item.text)
+                    for e in app.query_one(FlowView).entries
+                    if e.item.kind != "system"
+                ]
+
+            await wait_until(lambda: ("user", "gamma's own turn") in _rows())
+    finally:
+        pass

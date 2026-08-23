@@ -509,13 +509,10 @@ class ChatReadModel(ABC):
     def resolve_conversation_history_source(
         self, *, agent: "str | None" = None, session_id: "str | None" = None,
     ) -> "list[ChatMessage]":
-        """#5203: the registry-TOUCHING half of :meth:`conversation_history`
-        — MUST be called on the registry's OWNER thread
-        (:attr:`~reyn.runtime.registry.AgentRegistry.owner_thread_ident`,
-        #4995) by an implementation that genuinely touches one. Returns a
-        plain VALUE (never a live ``Session``/registry handle) safe to
-        hand across a thread boundary to :meth:`conversation_history_
-        from_source`.
+        """#5203: the registry-TOUCHING half of :meth:`conversation_history`.
+        Returns a plain VALUE (never a live ``Session``/registry handle)
+        safe to hand across a thread boundary to :meth:`conversation_
+        history_from_source`.
 
         **Concrete, not abstract** — the default delegates straight to
         :meth:`conversation_history` (``limit=None``, the whole log),
@@ -530,13 +527,17 @@ class ChatReadModel(ABC):
         registry touch, nothing else) — the ONE implementation ``app.py``'s
         #4983 off-loop read (``asyncio.to_thread``) actually calls this
         way, from a genuine second OS thread reaching
-        ``AgentRegistry.get_session``/``attached_session`` — #4995 slice 1
-        restores the owner-thread guard onto exactly those 2 registry
-        methods (the 7-read set #5202 first excluded then #5203
-        re-covers) in this SAME PR, so the registry touch must happen on
-        the loop, BEFORE the thread hop, not inside it. Every OTHER
-        implementation is free to keep using this default — there is
-        nothing to hoist when there is no registry to protect."""
+        ``AgentRegistry.get_session``/``attached_session``. #4995's own
+        owner-thread guard does NOT cover these 2 methods (a #5215
+        attempt to restore it was withdrawn — the web server's A2A/
+        artifact-by-ref routes reach them the same way, and structurally
+        cannot honor a single-owner-thread invariant at all — see
+        ``registry.py``'s own ``_owner_thread_ident`` comment for the
+        full history); this hoist is independently correct hygiene
+        regardless — the registry touch happening on the loop, not
+        because a guard depends on it. Every OTHER implementation is
+        free to keep using this default — there is nothing to hoist
+        when there is no registry to protect."""
         return self.conversation_history(agent=agent, session_id=session_id)
 
     def conversation_history_from_source(
@@ -718,12 +719,14 @@ class RegistryReadModel(ChatReadModel):
         # loop read) can call THIS half on the registry's OWNER thread and
         # hand the plain VALUE this returns across to the worker thread,
         # instead of letting the worker thread call back into
-        # ``AgentRegistry.get_session``/``attached_session`` itself (#4995's
-        # own owner-thread invariant, restored onto exactly these 2 methods
-        # in the SAME PR — see ``registry.py``'s own ``_assert_owner_thread``
-        # call sites). The returned list IS the plain value: a shallow copy
-        # of the resolved session's ``history``, no live ``Session``/
-        # registry reference retained past this call.
+        # ``AgentRegistry.get_session``/``attached_session`` itself. #4995's
+        # own owner-thread invariant does NOT cover these 2 methods — a
+        # #5215 attempt to restore it was withdrawn (see ``registry.py``'s
+        # own ``_owner_thread_ident`` comment for the full history) — this
+        # hoist stays anyway as independently correct hygiene, not because
+        # a guard depends on it. The returned list IS the plain value: a
+        # shallow copy of the resolved session's ``history``, no live
+        # ``Session``/registry reference retained past this call.
         #
         # #3310 N2: ``agent`` given → resolve THAT session (not necessarily the
         # attached one) via ``AgentRegistry.get_session`` — the same
