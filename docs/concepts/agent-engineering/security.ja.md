@@ -20,7 +20,7 @@ declared capability → 使用時点での JIT prompt(起動時ではない)
 プロジェクト全体の事前承認(reyn.yaml)
 ```
 
-デフォルトは保守的です — プロジェクトルート配下であればどこでも read/glob/grep、write/edit/delete は `.reyn/` 配下のみ(それでも `.reyn/approvals.yaml` と `.reyn/index/sources.yaml` は狭い carve-out の対象です。これらのパスには直接書き込みを捕まえる downstream の use-time ゲートが無いためです)。⚠️ **既知のgap**(#5173): ライブの承認ストアが `.reyn/approvals.jsonl`(#5153)へ移った際、carve-outリストが更新されませんでした — 本稿執筆時点でこのファイルはcarve-outされておらず、このcarve-outが塞ぐはずだったクラスが再び開いています。それ以上はシェルも MCP も Python も一切ありません。それ以上必要なら declared capability が必要で、起動時の一括プロンプトではなく、実際に使用される時点で JIT にプロンプトされます。
+デフォルトは保守的です — プロジェクトルート配下であればどこでも read/glob/grep、write/edit/delete は `.reyn/` 配下のみ(それでも `.reyn/approvals.yaml`/`.reyn/approvals.jsonl` — legacyとlive両方の承認ストア、#5153/#5173 — は狭い carve-out の対象です。これらのパスには直接書き込みを捕まえる downstream の use-time ゲートが無いためです)。それ以上はシェルも MCP も Python も一切ありません。それ以上必要なら declared capability が必要で、起動時の一括プロンプトではなく、実際に使用される時点で JIT にプロンプトされます。
 
 **この 3 層の分割と charter の「4層 JIT approval」は矛盾ではなく、別の軸です。** この 3 層は *grant hierarchy* — actor の認可がどれだけ広いか(defaults / declared / project-wide)です。Charter の 4 層の記述は、JIT prompt 自体が実際にユーザーへ尋ねる前にチェックする *approval-source の解決順序* です: config 事前承認 → saved approvals(`.reyn/approvals.jsonl`)→ session approvals(in-memory、現在の呼び出し限り)→ interactive prompt(最後の手段)。この 4 層の解決は、このセクションの中間層(「declared capability → JIT prompt」)の内部にまるごと存在します。
 

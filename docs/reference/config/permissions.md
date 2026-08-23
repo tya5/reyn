@@ -20,7 +20,7 @@ it may touch read the same answer.
 | Axis | Schema default | Covers |
 |----|-------|-------|
 | `file.read` (also `file.glob` / `file.grep`) | `<zone-root>` | The zone root and everything below it. |
-| `file.write` (also `file.edit` / `file.delete`) | `<zone-root>/.reyn` | The state dir, minus the protected carve-outs (`.reyn/approvals.yaml`, and the `.reyn/config/` + `.reyn/state/` recovery-core prefixes, which are mutated only through their dedicated ops). ⚠️ **Known gap** (#5173): the live approval store moved to `.reyn/approvals.jsonl` (#5153) but the carve-out list was never updated to include it. |
+| `file.write` (also `file.edit` / `file.delete`) | `<zone-root>/.reyn` | The state dir, minus the protected carve-outs (`.reyn/approvals.yaml`/`.reyn/approvals.jsonl` — legacy and live approval stores, #5153/#5173 — and the `.reyn/config/` + `.reyn/state/` recovery-core prefixes, which are mutated only through their dedicated ops). |
 
 `<zone-root>` is a **symbol**, not a literal path: it is the zone anchor the
 entry point supplies — the workspace base dir under `reyn chat` / `reyn web`,

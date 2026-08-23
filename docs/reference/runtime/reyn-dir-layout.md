@@ -225,11 +225,6 @@ alongside the append, so `approvals.jsonl`'s permission-shape changes stay obser
 `.reyn/events` regardless of which caller made them. `memory/`, `cache/`, and
 other non-recovery-core `.reyn/` paths are ordinary writable zones.
 
-⚠️ **Known gap** (#5173): the write-gate carve-out for `approvals.jsonl` itself was never
-added when the live store moved off `approvals.yaml` (still the only entry in
-`_CANONICAL_PROTECTED_WRITE_PATHS`, above) — a direct `file.write` to `approvals.jsonl` is
-currently NOT blocked, reopening the exact class #1199 exists to close.
-
 ## Where does a new subsystem put its data?
 
 Ask the two recovery-core questions:

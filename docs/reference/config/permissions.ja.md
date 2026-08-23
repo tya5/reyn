@@ -16,7 +16,7 @@ Reyn の Permission システムは、ファイルパス、シェル、MCP ツ�
 | 軸 | schema default | 対象 |
 |----|-------|-------|
 | `file.read`（`file.glob` / `file.grep` も） | `<zone-root>` | zone root とその配下すべて。 |
-| `file.write`（`file.edit` / `file.delete` も） | `<zone-root>/.reyn` | state ディレクトリ。ただし保護された除外（`.reyn/approvals.yaml`、および recovery-core の `.reyn/config/` / `.reyn/state/` プレフィックス — これらは専用の op 経由でのみ変更）を除く。⚠️ 既知のgap(#5173): ライブの承認ストアは `.reyn/approvals.jsonl`(#5153)へ移りましたが、除外リストは更新されていません。 |
+| `file.write`（`file.edit` / `file.delete` も） | `<zone-root>/.reyn` | state ディレクトリ。ただし保護された除外（`.reyn/approvals.yaml`/`.reyn/approvals.jsonl` — legacyとlive両方の承認ストア、#5153/#5173、および recovery-core の `.reyn/config/` / `.reyn/state/` プレフィックス — これらは専用の op 経由でのみ変更）を除く。 |
 
 `<zone-root>` は**リテラルではなく記号**です。値はエントリポイントが与える zone アンカー（`reyn chat` / `reyn web` では workspace base dir、`reyn pipe` / plugin install / registry bootstrap では project root、コンテナバックエンドではコンテナ内のリポジトリルート）で、**プロセス起動まで確定しない**ため、リテラルパスを default として書くことは原理的にできません。
 

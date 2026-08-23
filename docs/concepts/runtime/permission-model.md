@@ -35,7 +35,7 @@ Read/glob/grep anywhere under the project root. Write/edit/delete only under `.r
 | Protected path | Backs | Why carved out |
 |---|---|---|
 | `.reyn/approvals.yaml` (legacy) | Migrated once into the live ledger below, never written to again | Permanent. It *is* the approval gate; there is no later use-gate, so a direct write would silently activate a never-approved grant on the next startup (#1199). |
-| `.reyn/approvals.jsonl` ⚠️ | The current persistent approval ledger (#5153) — only the runtime authorization flow appends here | **Known gap, not yet closed** (#5173): the carve-out list this table describes was never updated when the live store moved from `approvals.yaml` to `approvals.jsonl` — as of this writing a direct write to `approvals.jsonl` is NOT blocked, reopening the exact #1199 class this row exists to close. |
+| `.reyn/approvals.jsonl` | The current persistent approval ledger (#5153) — only the runtime authorization flow appends here | Permanent, same as the legacy row above (#1199, closed for this path by #5173 after a gap where the carve-out list lagged the store's own move to this file). |
 | `.reyn/index/sources.yaml` | Index source registry | Transitional — carved out until the index write-gate is effective end-to-end (#1320: the postprocessor scope must carry a sandbox-policy source; the S3.4 part1 op-layer gate alone does not fire in the real index flow). |
 
 **Protect-at-use (principle).** A config-write carve-out is *redundant* when the capability it configures is gated downstream at use time. `.reyn/config/mcp.yaml` and `.reyn/config/cron.yaml` were therefore **removed** from the carve-out:

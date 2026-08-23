@@ -139,7 +139,7 @@ origin を報告します。1 つの共有ビルダー（`contextual_deny_messag
 
 **効果:** ProfileLayer 経由で適用（エージェントのデフォルト仕様）; 自然な `allowed_mcp` キーを使用（YAML リネームなし）。
 
-**検証済み:** `_DEFAULT_WRITE_ZONES = (".reyn",)` であり、`_CANONICAL_PROTECTED_WRITE_PATHS` には `.reyn/approvals.yaml` と `.reyn/index/sources.yaml` のみが含まれます。`src/reyn/security/permissions/permissions.py` で確認済み。⚠️ **#5153以降stale**(既知のgap、#5173): ライブの承認ストアは `.reyn/approvals.jsonl` へ移りましたが、このリストはそれをcarve-outしていません。
+**検証済み:** `_DEFAULT_WRITE_ZONES = (".reyn",)` であり、canonical protected-write list(`_canonical_protected_write_paths()`、`src/reyn/security/permissions/permissions.py`)は `.reyn/approvals.yaml`(legacy、初回移行のみ)と `.reyn/approvals.jsonl`(ライブledger、#5153/#5173)をカバーします。
 
 ## リロード
 
