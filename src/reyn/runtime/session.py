@@ -2963,38 +2963,53 @@ class Session:
         """#2285: the status-bar's hook read model — each NAMED hook in this session's merged
         registry (startup ∪ runtime ∪ per-agent ∪ per-session) as ``{name, scope, enabled}``.
         ``scope`` = the most-specific layer that defines the name; a hook with no name is omitted
-        (it can't be individually toggled). ``enabled`` = not in this session's disabled-set."""
-        runtime_hooks: list = []
-        try:
-            from reyn.runtime.hot_reload import load_hot_reload_config
-            runtime_hooks = (load_hot_reload_config(self._hot_reload_project_root()) or {}).get("hooks") or []
-        except Exception:  # noqa: BLE001 — scope is best-effort display metadata
-            runtime_hooks = []
-        scope_by_name: "dict[str, str]" = {}
-        for scope, raw in (
-            ("startup", self._startup_hooks_raw),
-            ("runtime", runtime_hooks),
-            ("per-agent", self._read_per_agent_hooks()),
-            ("per-session", self._read_per_session_hooks()),
-        ):
-            for hook_cfg in (raw or []):
-                n = hook_cfg.get("name") if isinstance(hook_cfg, dict) else None
-                if n:
-                    scope_by_name[n] = scope  # more-specific layer wins (later in this order)
+        (it can't be individually toggled). ``enabled`` reflects the SAME predicate the real
+        dispatcher enforces (:func:`hook_origin_is_at_least_as_specific_as`), not name-membership
+        alone — see #5222 below.
 
-        registry = getattr(self._hook_dispatcher, "_registry", None)
+        #5222 (follow-up from #5218's own "Not touched" disclosure): this used to re-derive
+        ``scope`` from a SEPARATE raw-dict scan of the 4 config layers (re-reading
+        ``.reyn/config/hooks.yaml`` + the per-agent/per-session files a SECOND time, purely for
+        display) and computed ``enabled`` as bare name-membership in ``self._disabled_hooks`` —
+        both duplicating logic #5213 already made unnecessary: every ``HookDef`` in the merged
+        registry now carries its own ``origin`` directly. Reading ``origin`` off the SAME
+        ``HookDef`` list the dispatcher itself uses (via the public
+        :attr:`~reyn.hooks.dispatcher.HookDispatcher.registry` property and
+        :meth:`~reyn.hooks.registry.HookRegistry.all_defs`, never the private ``_defs``) means
+        display can no longer disagree with enforcement the way it could pre-#5222: before this
+        fix, a ``startup``- or ``runtime``-origin hook a session tried to disable via
+        ``disabled:`` was still PROTECTED (#5213) but this method reported ``enabled: false``
+        anyway, since it only checked name-membership — misleading exactly where it matters most
+        (#5041's own supervision hook: reads as neutralized when it is not).
+
+        Precedence: ``all_defs()`` is ordered startup → runtime → per-agent → per-session (see
+        ``Session._build_hook_registry``), the SAME least-to-most-specific order the old raw-dict
+        scan iterated in. Iterating forward and overwriting a per-name dict entry on every
+        occurrence reproduces "most-specific-layer-wins" without re-deriving it: the LAST write
+        for a given name is necessarily its most-specific origin. (The old code additionally kept
+        the FIRST-encountered ``HookDef`` instance for a name's OTHER fields via its own separate
+        ``seen`` set — since ``_defs``/``all_defs()`` iterate in the same least-to-most-specific
+        order, that was the LEAST specific instance, silently inconsistent with the "most specific
+        wins" scope it displayed alongside. Overwriting per name here fixes both fields from the
+        same walk, consistently.)
+
+        A name declared at two DIFFERENT origins (e.g. both startup and per-session) collapses to
+        one displayed row, same simplification as before #5222 — the real dispatcher still fires
+        BOTH independently underlying ``HookDef`` instances; this display shows only the most
+        specific one's own enabled/disabled verdict. Not solved here (out of scope) — flagged in
+        the #5222 issue for whoever revisits it."""
+        by_name: "dict[str, HookDef]" = {}
+        for hook in self._hook_dispatcher.registry.all_defs():
+            if hook.name is not None:
+                by_name[hook.name] = hook  # last write = most specific (see docstring)
+
         out: "list[dict]" = []
-        seen: "set[str]" = set()
-        for hook in getattr(registry, "_defs", []) if registry is not None else []:
-            n = getattr(hook, "name", None)
-            if n is None or n in seen:
-                continue
-            seen.add(n)
-            out.append({
-                "name": n,
-                "scope": scope_by_name.get(n, "unknown"),
-                "enabled": n not in self._disabled_hooks,
-            })
+        for name, hook in by_name.items():
+            enabled = not (
+                name in self._disabled_hooks
+                and hook_origin_is_at_least_as_specific_as(hook.origin, "per-agent")
+            )
+            out.append({"name": name, "scope": hook.origin, "enabled": enabled})
         return out
 
     async def dispatch_external_event(self, point: str, template_vars: dict) -> None:
