@@ -734,6 +734,27 @@ def load_config(cwd: Path | None = None) -> ReynConfig:
         # key should not go unreported just because there's no project).
         unknown_config_keys_found = _warn_unknown_config_keys(merged)
 
+    # #5166: reyn's OWN token vocabulary (${REYN_PROJECT_DIR} — the only one
+    # this project-wide, agent-less load has a real value for;
+    # ${REYN_AGENT_NAME} has no meaning here and is deliberately NOT in this
+    # map, same as any other token this pass does not recognise) is expanded
+    # FIRST, via expand_with_map — never os.environ, the same reasoning
+    # load_per_agent_hooks/read_and_expand_hooks_yaml use. ORDER MATTERS:
+    # this must run BEFORE expand_env below. expand_with_map's own contract
+    # leaves anything absent from its map untouched (an MCP server's
+    # ${API_KEY} is not a reyn token, so this pass never touches it) — doing
+    # it in the other order would let expand_env's os.environ lookup consume
+    # ${REYN_PROJECT_DIR} first (undefined there, silently degrading to ""),
+    # exactly the #5140 failure shape one layer up. No fail-close here
+    # (unlike the per-agent/per-session hooks.yaml layers): an unresolved
+    # ${REYN_AGENT_NAME} in reyn.yaml itself has no agent context to supply
+    # it at this project-wide load — refusing the WHOLE config over one
+    # per-agent token would be a disproportionate blast radius this
+    # project-wide layer was never asked to take on (architect ruling on
+    # #5166 scopes fail-close to the 4 enumerated hooks.yaml layers only).
+    from reyn.plugins.tokens import expand_with_map
+    merged = expand_with_map(merged, {"REYN_PROJECT_DIR": str(project_root or cwd)})
+
     # ADR-0030: apply ${VAR} interpolation across all string fields of the
     # merged config dict.  At this point os.environ already contains values
     # loaded from ~/.reyn/secrets.env (see load_secrets_to_environ() above).
@@ -936,6 +957,64 @@ def load_hot_reload_config(project_root: "Path | None" = None) -> dict:
     return expand_env(merged)
 
 
+def read_and_expand_hooks_yaml(
+    path: Path, *, agent_name: str, project_root: Path,
+) -> "dict | None":
+    """#5166 (architect ruling, issuecomment-5384196419): the ONE read+expand
+    primitive EVERY hooks.yaml-shaped layer goes through — per-agent AND
+    per-session, the ``hooks:`` key AND the ``composers:`` key alike (same
+    file on disk, same 2 keys; only the caller's own key extraction
+    differs — see :meth:`~reyn.runtime.session.Session._hooks_yaml_layers`
+    for the enumerable registry of callers).
+
+    **Why one primitive, not "a rule everyone remembers"**: hooks get
+    copy-pasted between layers (the #5164 docstring's own "mirrors" —
+    architect's evidence this issue cites). A rule duplicated 4 times
+    means the NEXT copy only carries whichever half someone remembered —
+    exactly what happened here: #5161 fixed the per-agent ``hooks:``
+    reader, #5164 caught up the per-agent ``composers:`` reader, and the
+    2 per-session readers had NO expansion at all until this function
+    unified all 4 onto one implementation.
+
+    Expands reyn's OWN token vocabulary via
+    :func:`reyn.plugins.tokens.expand_with_map` with an explicit
+    ``{REYN_PROJECT_DIR, REYN_AGENT_NAME}`` map — never ``os.environ``
+    (``expand_env``, ADR-0030): that expander is for a SPAWNED CHILD
+    process's own config-time env-injection, and ``REYN_AGENT_NAME`` is
+    only ever set on a child's env, never on THIS process's own
+    ``os.environ`` — so it is always undefined here regardless of layer
+    (#5140's original finding). Fails closed via
+    :func:`~reyn.plugins.tokens.find_unresolved_reyn_tokens` on any
+    REMAINING ``${REYN_*}``/``${CLAUDE_*}`` token (reyn's own bug, not an
+    operator's config choice) — returns ``None`` (never ``{}``, so a
+    caller can tell "genuinely absent" from "refused" if it ever needs
+    to) — while an arbitrary non-reyn ``${FOO}`` is left untouched, for
+    whatever downstream (a spawned child process) resolves it later.
+
+    Returns ``None`` when the file is absent, malformed, or refused;
+    otherwise the parsed+expanded dict — the caller reads whichever key
+    (``hooks``/``composers``) it owns out of it."""
+    raw = _load_yaml(path)
+    if not raw:
+        return None
+    from reyn.plugins.tokens import expand_with_map, find_unresolved_reyn_tokens
+    data = expand_with_map(
+        raw, {"REYN_PROJECT_DIR": str(project_root), "REYN_AGENT_NAME": agent_name}
+    )
+    unresolved = find_unresolved_reyn_tokens(data)
+    if unresolved:
+        import warnings
+        warnings.warn(
+            f"{path} left reyn token(s) {sorted(set(unresolved))} "
+            "unresolved -- refusing to load this hooks.yaml layer (this "
+            "is reyn's own bug, not a config choice to honor).",
+            UserWarning,
+            stacklevel=2,
+        )
+        return None
+    return data if isinstance(data, dict) else None
+
+
 def load_per_agent_hooks(
     project_root: "Path | None", agent_name: str
 ) -> list:
@@ -946,60 +1025,18 @@ def load_per_agent_hooks(
     hot-reloadable) but scoped to one agent — read DIRECTLY here (not via
     :func:`load_hot_reload_config`, which is the top-level ``.reyn/*.yaml`` set),
     mirroring how the per-agent ``profile.yaml`` is read. Returns the raw
-    ``hooks:`` list (``[]`` when the file or key is absent — a no-op layer,
-    never an error).
+    ``hooks:`` list (``[]`` when the file or key is absent, malformed, or
+    refused for an unresolved reyn token — a no-op layer, never an error
+    the caller has to handle specially).
 
-    #5140 (architect ruling, issuecomment-5383725162): a per-agent
-    ``hooks.yaml``'s ``${REYN_AGENT_NAME}`` token used to go through
-    ``expand_env`` (``security/secrets/interpolation.py``) — an
-    ``os.environ``-backed expander (ADR-0030) meant for a SPAWNED CHILD
-    process's config-time env-injection. ``REYN_AGENT_NAME`` is only ever
-    set on a child process's own env (``hooks/shell_runner.py`` and
-    friends), never on this process's own ``os.environ``, so it was
-    ALWAYS undefined at config-load time — silently expanding to ``""``
-    (a `UserWarning`, then a syntactically-valid-but-wrong value the
-    caller cannot tell apart from a genuinely empty operator choice).
-    Hooks are not secrets, and the value this layer actually needs
-    (``agent_name``, the same string this function already receives as
-    an argument) is available right here — this is a layering mistake
-    (the wrong expander for the value), not a genuinely undefined
-    token, so the fix is :func:`reyn.plugins.tokens.expand_with_map`
-    (already used the same way by ``registry_bootstrap.py`` /
-    ``session.py`` for ``REYN_PROJECT_DIR``) with an explicit map,
-    never ``os.environ``.
-
-    Fail-close, scoped to reyn's OWN token vocabulary only (acceptance
-    ②/③): if a ``${REYN_*}``/``${CLAUDE_*}`` token remains unresolved
-    after expansion, that is reyn's own bug (a token reyn should always
-    be able to supply), not an operator's config choice — refuse to
-    load this hooks layer rather than register a matcher/config value
-    reyn silently got wrong. This is the "does the trigger fire on a
-    healthy path" test #5152's own retracted fail-closed ruling failed
-    (there, EVERY comparison on a birthtime-less platform triggered it);
-    here, a healthy config with reyn's tokens correctly supplied never
-    triggers it at all. An arbitrary NON-reyn ``${FOO}`` (an env var a
-    spawned child process resolves later) is deliberately NOT touched
-    by this check — see :func:`~reyn.plugins.tokens.find_unresolved_reyn_tokens`'s
-    own docstring."""
+    #5140/#5166: token expansion is :func:`read_and_expand_hooks_yaml` — see
+    that function's own docstring for the full reasoning (why
+    ``expand_with_map`` not ``expand_env``, why fail-closed on reyn's own
+    tokens only)."""
     root = (project_root or Path.cwd()).resolve()
-    raw = _load_yaml(root / ".reyn" / "agents" / agent_name / "hooks.yaml")
-    from reyn.plugins.tokens import expand_with_map, find_unresolved_reyn_tokens
-    data = expand_with_map(
-        raw, {"REYN_PROJECT_DIR": str(root), "REYN_AGENT_NAME": agent_name}
-    )
-    unresolved = find_unresolved_reyn_tokens(data)
-    if unresolved:
-        import warnings
-        warnings.warn(
-            f"Per-agent hooks.yaml for {agent_name!r} left reyn token(s) "
-            f"{sorted(set(unresolved))} unresolved -- refusing to load "
-            "this hooks layer (this is reyn's own bug, not a config "
-            "choice to honor).",
-            UserWarning,
-            stacklevel=2,
-        )
-        return []
-    hooks = data.get("hooks") if isinstance(data, dict) else None
+    path = root / ".reyn" / "agents" / agent_name / "hooks.yaml"
+    data = read_and_expand_hooks_yaml(path, agent_name=agent_name, project_root=root)
+    hooks = (data or {}).get("hooks")
     return hooks if isinstance(hooks, list) else []
 
 

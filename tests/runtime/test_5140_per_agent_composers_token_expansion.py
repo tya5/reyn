@@ -34,6 +34,8 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
+import pytest
+
 from tests._support.agent_session import make_session
 
 _AGENT = "coder-smith"
@@ -81,13 +83,19 @@ def test_reyn_agent_name_resolves_to_the_real_agent_name_in_composers(
 
 
 def test_an_unresolved_reyn_token_refuses_to_load_the_composers_layer(
-    tmp_path, monkeypatch, caplog,
+    tmp_path, monkeypatch,
 ) -> None:
     """Tier 2: acceptance ② — a reyn-owned token this loader does NOT supply
     a value for (``${REYN_SKILL_DIR}`` — a location token with no meaning for
     a composers file) must refuse to load the WHOLE composers layer, not
     silently register a composer with an empty/wrong value, and must surface
-    why."""
+    why.
+
+    #5166: the surfacing mechanism is now ``warnings.warn`` (the shared
+    ``read_and_expand_hooks_yaml`` primitive every hooks.yaml-shaped layer
+    goes through, matching ``config/loader.py``'s own established
+    convention), not ``logger.warning`` — this session-local reader used to
+    warn via the stdlib logger before the #5166 consolidation."""
     project = tmp_path / "proj"
     _write_per_agent_hooks(
         project,
@@ -99,15 +107,12 @@ def test_an_unresolved_reyn_token_refuses_to_load_the_composers_layer(
     )
     session = _make_session_in(project, monkeypatch, tmp_path)
 
-    with caplog.at_level(logging.WARNING):
+    with pytest.warns(UserWarning, match="REYN_SKILL_DIR"):
         composers = session._read_per_agent_composers()
 
     assert composers == [], (
         "an unresolved reyn-owned token must refuse the WHOLE composers "
         "layer, not load a composer with a wrong/empty value"
-    )
-    assert any("REYN_SKILL_DIR" in r.getMessage() for r in caplog.records), (
-        "the refusal must surface a reason, not fail silently"
     )
 
 
