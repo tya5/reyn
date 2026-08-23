@@ -31,6 +31,7 @@ from reyn.interfaces.inline.textual_chat.chrome import status_line_text
 from reyn.interfaces.inline.textual_chat.stray_output import (
     StrayOutputStats,
     _CapturingStream,
+    _ReentrancyGuard,
     capture_stray_output,
 )
 from reyn.interfaces.repl.read_model import LOCAL_CHAT_READ_CAPABILITIES, ChatReadModel
@@ -88,7 +89,7 @@ def test_capturing_stream_write_bumps_count_and_logs(caplog: pytest.LogCaptureFi
     live count AND is logged (never dropped)."""
     stats = StrayOutputStats()
     poster = App()
-    stream = _CapturingStream(stats, poster, "stderr")
+    stream = _CapturingStream(stats, poster, "stderr", _ReentrancyGuard())
 
     with caplog.at_level(logging.WARNING, logger="reyn.interfaces.inline.textual_chat.stray_output"):
         stream.write("a stray warning fragment\n")
@@ -106,7 +107,7 @@ def test_capturing_stream_ignores_whitespace_only_writes(caplog: pytest.LogCaptu
     the diagnostic count for nothing an operator could act on."""
     stats = StrayOutputStats()
     poster = App()
-    stream = _CapturingStream(stats, poster, "stderr")
+    stream = _CapturingStream(stats, poster, "stderr", _ReentrancyGuard())
 
     with caplog.at_level(logging.WARNING, logger="reyn.interfaces.inline.textual_chat.stray_output"):
         stream.write("\n")
@@ -117,13 +118,44 @@ def test_capturing_stream_ignores_whitespace_only_writes(caplog: pytest.LogCaptu
     assert caplog.records == []
 
 
+def test_capturing_stream_write_does_not_recurse_through_a_misdirected_handler():
+    """Tier 2: architect blocking finding (#5193 A, issuecomment-...) —
+    ``write()``'s own ``_log.warning`` call must not recurse back into
+    ``write()`` when a ``logging.StreamHandler`` happens to be bound to
+    THIS exact captured stream. That binding is exactly what would happen
+    if a handler were constructed/attached AFTER the stdout/stderr swap —
+    an ordering accident this codebase's own handlers happen not to hit
+    today, not a structural impossibility. RED if ``_ReentrancyGuard`` is
+    removed: this would recurse until ``RecursionError`` (a bare
+    ``StreamHandler.emit`` writing to a stream whose ``write`` calls
+    ``_log.warning`` again, forever)."""
+    stats = StrayOutputStats()
+    poster = App()
+    guard = _ReentrancyGuard()
+    stream = _CapturingStream(stats, poster, "stderr", guard)
+
+    logger = logging.getLogger("reyn.interfaces.inline.textual_chat.stray_output")
+    misdirected_handler = logging.StreamHandler(stream)  # bound to the captured stream itself
+    logger.addHandler(misdirected_handler)
+    logger.setLevel(logging.WARNING)
+    try:
+        stream.write("a stray fragment\n")  # must return, not recurse forever
+    finally:
+        logger.removeHandler(misdirected_handler)
+
+    assert stats.count == 1, (
+        f"the misdirected handler's own recursive write must be swallowed by the "
+        f"guard, not counted as a SECOND stray write -- got count={stats.count}"
+    )
+
+
 def test_capturing_stream_posts_a_message_to_the_poster():
     """Tier 2: the cross-thread-safe signal — a write posts
     StrayOutputCaptured via post_message (thread-safe by construction, see
     the module's own docstring), not a direct method call."""
     stats = StrayOutputStats()
     poster = App()
-    stream = _CapturingStream(stats, poster, "stderr")
+    stream = _CapturingStream(stats, poster, "stderr", _ReentrancyGuard())
 
     posted = stream.write("something\n")
 

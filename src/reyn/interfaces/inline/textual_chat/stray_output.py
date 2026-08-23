@@ -58,6 +58,7 @@ from __future__ import annotations
 
 import logging
 import sys
+import threading
 from dataclasses import dataclass
 
 from textual.message import Message
@@ -86,6 +87,45 @@ class StrayOutputCaptured(Message):
     the CURRENT total, not the count at post time)."""
 
 
+class _ReentrancyGuard:
+    """#5168 (architect blocking, issuecomment-...): shared between the
+    stdout AND stderr :class:`_CapturingStream` instances of one capture
+    window, so a stray write's own ``_log.warning`` call cannot recurse
+    back into ``write()``.
+
+    The hazard: ``_log.warning`` is routed through whatever handlers
+    ``logging`` has installed, and if any ``StreamHandler`` writes to
+    ``sys.stderr`` looked up LIVE (not bound at construction), that write
+    lands on THIS module's own ``_CapturingStream`` (now installed as
+    ``sys.stderr``) — ``write`` → ``_log.warning`` → handler write →
+    ``write`` → ... . Today this does not fire only because every handler
+    this codebase installs happens to bind its stream at construction
+    time, BEFORE the swap — an ordering accident, not a contract
+    (`logging.StreamHandler.__init__` defaults to the `sys.stderr` object
+    live AT THAT MOMENT, but nothing stops a future handler from being
+    added, or an existing one reconstructed, after the swap). "Works today"
+    and "no door left open" are different claims (architect: this exact
+    line recurred several times the same night this hazard was found).
+
+    ``threading.local``-backed because a stray write can originate from a
+    background thread a third-party library owns, not only the app's own
+    event loop — a global (non-thread-local) flag would let one thread's
+    in-flight write mask another thread's genuinely-new one."""
+
+    def __init__(self) -> None:
+        self._local = threading.local()
+
+    @property
+    def active(self) -> bool:
+        return getattr(self._local, "active", False)
+
+    def __enter__(self) -> None:
+        self._local.active = True
+
+    def __exit__(self, *exc_info: object) -> None:
+        self._local.active = False
+
+
 class _CapturingStream:
     """A write-only file-like object that logs everything it receives
     instead of letting it reach the real terminal.
@@ -96,15 +136,36 @@ class _CapturingStream:
     (a library checking "am I on a real terminal before emitting ANSI
     codes" must see "no" here -- this is not one)."""
 
-    def __init__(self, stats: StrayOutputStats, poster: "MessagePump", stream_name: str) -> None:
+    def __init__(
+        self,
+        stats: StrayOutputStats,
+        poster: "MessagePump",
+        stream_name: str,
+        guard: _ReentrancyGuard,
+    ) -> None:
         self._stats = stats
         self._poster = poster
         self._stream_name = stream_name
+        self._guard = guard
 
     def write(self, s: str) -> int:
+        if self._guard.active:
+            # #5168: this is logging's OWN write of the record we are
+            # already in the middle of emitting (a StreamHandler pointed at
+            # what is now this captured stream) -- not a NEW stray write.
+            # Swallow silently: no recursive _log.warning call, no double
+            # count -- see _ReentrancyGuard's own docstring.
+            return len(s)
         if s and s.strip():
+            # A whitespace-only write (e.g. the bare "\n" terminator a
+            # print()/logging call issues as its own write() after the
+            # payload) is deliberately DISCARDED, not merely uncounted --
+            # it carries nothing worth a log line or a status-line bump.
             self._stats.count += 1
-            _log.warning("stray %s captured during TUI run: %s", self._stream_name, s.rstrip("\n"))
+            with self._guard:
+                _log.warning(
+                    "stray %s captured during TUI run: %s", self._stream_name, s.rstrip("\n"),
+                )
             try:
                 self._poster.post_message(StrayOutputCaptured())
             except Exception:  # noqa: BLE001 — a message-post fault must never crash the write() caller
@@ -138,8 +199,13 @@ class capture_stray_output:  # noqa: N801 — lowercase, contextlib-style naming
 
     def __enter__(self) -> StrayOutputStats:
         self._orig_stdout, self._orig_stderr = sys.stdout, sys.stderr
-        sys.stdout = _CapturingStream(self.stats, self._poster, "stdout")
-        sys.stderr = _CapturingStream(self.stats, self._poster, "stderr")
+        # One guard SHARED between both streams (not one each) -- a
+        # misdirected handler could in principle write the log record to
+        # either captured stream regardless of which one triggered it; see
+        # _ReentrancyGuard's own docstring.
+        guard = _ReentrancyGuard()
+        sys.stdout = _CapturingStream(self.stats, self._poster, "stdout", guard)
+        sys.stderr = _CapturingStream(self.stats, self._poster, "stderr", guard)
         return self.stats
 
     def __exit__(self, exc_type, exc, tb) -> None:
