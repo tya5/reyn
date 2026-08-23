@@ -310,3 +310,25 @@ async def test_session_resolves_a_real_cap_from_its_own_turn_budget_engine(
     cap_tokens, model = resolved
     assert isinstance(cap_tokens, int) and cap_tokens > 0
     assert model == s.model
+
+
+@pytest.mark.asyncio
+async def test_session_with_no_engine_resolves_no_cap(tmp_path: Path) -> None:
+    """Tier 2: falsification contrast — the None-path (B review non-blocking
+    note, #5229). An unresolvable model CLASS (#4573's own degrade: the
+    resolver's lazy, non-essential ``TurnBudgetEngine`` build catches the
+    typed ``UnresolvableModelClassError`` and returns ``None`` rather than
+    crashing the session) means ``RouterHostAdapter.wrap_up_output_reserve``
+    is ``None`` — ``_resolve_exec_capture_output_cap`` must degrade to
+    ``None`` too, matching pre-#5210 (unbounded) behavior, not raise."""
+    from tests._support.agent_session import make_session
+
+    s = make_session(
+        agent_name="alice",
+        model="gemini-2.5-flash-lite",  # #4573's own unresolvable-class fixture
+        snapshot_path=tmp_path / "s" / "snapshot.json",
+    )
+
+    resolved = s._resolve_exec_capture_output_cap()
+
+    assert resolved is None
