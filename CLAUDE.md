@@ -130,7 +130,7 @@ Path-conditional gates:
 5. **No blanket en/ja mirror obligation.** Fix a `.ja.md` file only when the PR falsifies something it asserts.
 6. **Arc-closure remainder rule**: every remainder is **filed** or **explicitly dropped**, in the closing comment. "Next arc" is a third, silent state.
 7. **A reviewer's blocking point goes in the PR body** as `- [ ] 🔴 <point>`, not only in a review comment — `--request-changes` does not work here. Rule 4 applies to that edit too.
-8. **A PR touching `tests/` does not self-merge until a reviewer's TESTS-READ note lands on the PR.**
+8. **A PR touching `tests/` does not self-merge until a reviewer's TESTS-READ claim lands as a comment's FIRST line** (marker + head SHA together; grounds go from line 2 on).
 9. **Arming auto-merge ends your reading of that PR** — a checkbox added afterwards is invisible to the merge. Do not arm while a reviewer's point is open, and re-check the body before arming.
 
 **Issue-triage label `blocked:external`** — needs owner judgment or an upstream

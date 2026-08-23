@@ -313,6 +313,30 @@ These rules then keep multi-session work coherent:
    PR can still tell a real TESTS-READ from an empty one carrying the
    right shape.
 
+   **Reporting reworked twice since (#5138):** a GitHub check run attaches
+   to the sha its triggering event carries, and `issue_comment` (fired by
+   a posted comment) carries the DEFAULT BRANCH's sha, not the PR's — a
+   check run from that event could never land on the PR's own rollup.
+   Measured 4/4 (#5127, #5128, #5132, #5136) stayed red until a human
+   re-ran the workflow by hand. A first fix moved the claim line into the
+   PR **body** (`pull_request: edited` carries the PR's own head, so a
+   body edit's check run lands correctly) — retracted days later
+   (architect, #5138 comment 5383200442) after it reproduced its own
+   failure mode on #5144: the body is one document with many purposes
+   (description, Test plan, blocking points), and that PR's body carried
+   both TESTS-READ prose and, elsewhere in the same text, a real commit
+   SHA — enough to pass with no reviewer note. The claim line moved back
+   to a comment, but now only that comment's FIRST LINE is read (marker
+   and head SHA co-located there; grounds from line 2 on), which excludes
+   a document merely discussing TESTS-READ SYNTACTICALLY rather than
+   statistically. Reporting moved off check runs entirely: the CI workflow
+   posts a GitHub commit STATUS to the PR's own head sha (resolved via
+   `gh pr view` regardless of which event triggered the run) — `pending`
+   before the script runs, `success`/`failure` after, so a job that dies
+   mid-run leaves the status `pending` (blocking merge) instead of going
+   silent. One reporting channel, not a check run and a status both
+   claiming the same fact.
+
 ## Bundling and the owner's veto unit
 
 A doc PR that exists to give the owner a veto opportunity should ship alone.

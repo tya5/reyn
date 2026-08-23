@@ -6,27 +6,49 @@ name: TESTS-READ names its tree
 # evening (2026-08-22): four PRs each carried a note that read an earlier head
 # and then tests/ moved (#5090, #5095, #5096, #5038). All four read green.
 #
-# Same shape as check-pr-closing-intent.yml (the only other workflow that
-# inspects a PR's own text rather than its tree): a dedicated workflow, not
-# folded into test.yml, because it must re-run on `edited` — a reviewer who
-# adds the head to an existing note needs the gate to re-evaluate, and
-# `edited` is not a default pull_request event type. `synchronize` re-runs it
-# against the updated commit set, which is the whole point: a note that was
-# current becomes stale the moment tests/ moves.
+# `pull_request` alone is not enough: a reviewer's note arrives as a new
+# COMMENT, and `pull_request` does not fire on one — measured on this
+# workflow's own first PR (#5120), the note landed and the check stayed red
+# with nothing to re-run it short of another push. So `issue_comment` is
+# listened on too.
+#
+# #5138 (two rounds): a GitHub CHECK RUN attaches to the sha its triggering
+# event carries. `issue_comment` (fired by a posted comment) carries the
+# DEFAULT BRANCH's sha, not the PR's — a check run from that event can never
+# land on the PR's own rollup. Measured 4/4 (#5127, #5128, #5132, #5136)
+# stayed red until a human re-ran the workflow by hand. A first fix moved the
+# claim into the PR body (`pull_request: edited` carries the PR's own head),
+# but the body is one document serving many purposes — measured on #5144, the
+# PR that carried that fix: the body discussed TESTS-READ in prose and named
+# a real commit SHA elsewhere in that same prose, and the gate went green
+# with no reviewer note. Retracted (architect, #5138 comment 5383200442).
+#
+# Current shape: report via a GitHub commit STATUS posted to the PR's own
+# head sha (resolved via `gh pr view`, which works the same regardless of
+# which event triggered this run) — never a check run's own pass/fail. One
+# reporting channel, not two (a check run AND a status both encoding "did
+# this pass" is the exact class this repo spent an evening closing). `pending`
+# is posted BEFORE the script runs and `success`/`failure` AFTER — not
+# decoration: a job that is forced to always exit 0 (the alternative once
+# the check run itself is not read) goes silent if it dies mid-run; posting
+# `pending` first means a job that dies leaves the status `pending`, which
+# blocks merge, rather than leaving no signal at all.
 on:
   pull_request:
     types: [opened, edited, synchronize, reopened]
-  # The SUBJECT of this check is a PR comment, and `pull_request` does not
-  # fire when one is posted — measured on this workflow's own first PR
-  # (#5120): the reviewer's note landed, the check stayed red, and nothing
-  # would have re-run it short of another push. A gate that reads comments
-  # has to listen for them.
   issue_comment:
     types: [created, edited]
 
 permissions:
   contents: read
   pull-requests: read
+  statuses: write
+
+env:
+  # Single fixed context so both triggers report to the SAME status slot —
+  # this is what "one reporting channel" means in practice: a branch
+  # protection rule names this string once.
+  STATUS_CONTEXT: tests-read-names-its-tree
 
 jobs:
   tests-read-names-its-tree:
@@ -56,13 +78,58 @@ jobs:
           python-version: "3.11"
           cache: pip
 
-      # scripts/check_tests_read_names_its_tree.py is stdlib-only
-      # (argparse / json / re / subprocess). No pip install needed.
-      - name: Check the TESTS-READ note names this PR's tree
+      - name: Resolve this PR's number and head sha
+        id: pr
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           # `pull_request` events carry the number on .pull_request; an
-          # `issue_comment` on a PR carries it on .issue.
-          python scripts/check_tests_read_names_its_tree.py \
-            --pr "${{ github.event.pull_request.number || github.event.issue.number }}"
+          # `issue_comment` on a PR carries it on .issue. Either way the
+          # HEAD SHA has to come from `gh pr view` — it is not on the
+          # `issue_comment` payload at all, and posting a status needs it.
+          NUMBER="${{ github.event.pull_request.number || github.event.issue.number }}"
+          SHA="$(gh pr view "$NUMBER" --json headRefOid -q .headRefOid)"
+          echo "number=$NUMBER" >> "$GITHUB_OUTPUT"
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+
+      - name: Post pending status
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api "repos/${{ github.repository }}/statuses/${{ steps.pr.outputs.sha }}" \
+            -f state=pending \
+            -f context="$STATUS_CONTEXT" \
+            -f description="Checking whether a TESTS-READ note names this tree..."
+
+      # scripts/check_tests_read_names_its_tree.py is stdlib-only
+      # (argparse / json / re / subprocess). No pip install needed.
+      - name: Check the TESTS-READ note names this PR's tree
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python scripts/check_tests_read_names_its_tree.py --pr "${{ steps.pr.outputs.number }}"
+
+      # `if: always()` is the whole point: this step must run whether the
+      # check step above passed, failed, or (if the runner itself dies
+      # first) never ran at all -- in that last case this step ALSO never
+      # runs, and the status posted above stays `pending` rather than
+      # silently vanishing. That is what answers "a job that dies mid-run
+      # must not go silent"; it is a property of these three steps existing
+      # in this order, not something a unit test can exercise.
+      - name: Post final status
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ "${{ steps.check.outcome }}" = "success" ]; then
+            STATE=success
+            DESC="TESTS-READ note names this tree."
+          else
+            STATE=failure
+            DESC="TESTS-READ note missing or stale -- see the job log."
+          fi
+          gh api "repos/${{ github.repository }}/statuses/${{ steps.pr.outputs.sha }}" \
+            -f state="$STATE" \
+            -f context="$STATUS_CONTEXT" \
+            -f description="$DESC"

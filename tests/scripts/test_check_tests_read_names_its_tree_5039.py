@@ -8,6 +8,29 @@ EXISTING; nothing looks at which tree the note is a claim about). The four
 2026-08-22 instances the script's own docstring lists are the population this
 was written against — the reject-side cases below are those instances' shape.
 
+The claim line is a PR COMMENT, and only that comment's FIRST LINE is ever
+read — the marker and the head SHA must be co-located there (architect,
+#5138 comment 5383200442). The tests below cover the architect's four
+acceptance cases:
+
+① no claim line anywhere → red (`test_no_claim_line_at_all_is_rejected`).
+② a comment whose marker appears only from line 2 onward → red — the #5144
+   reproduction, built from that PR's actual shape: prose that discussed
+   TESTS-READ and happened to name a real commit of the PR elsewhere in the
+   same multi-purpose document, with no first-line claim at all
+   (`test_marker_only_from_line_two_onward_is_not_a_claim`).
+③ the CI job dying mid-run leaves the posted commit status `pending`, never
+   green. This is a property of the THREE-STEP workflow shape in
+   `check-tests-read-names-its-tree.yml` (`pending` before the script runs,
+   `success`/`failure` after, the final step gated on `if: always()`) — not
+   something `evaluate` or any other pure function here can exercise, so it
+   is deliberately NOT represented by a test in this file. Recorded here
+   rather than left silent: this file's own test-review discipline (six
+   questions, #4) treats an assertion that would pass vacuously as worse than
+   no assertion, and a Tier-1 test cannot reach into a GitHub Actions run.
+④ a claim naming a sha that later tests/-touching commits moved past → red,
+   listing those commits (`test_note_whose_sha_predates_a_later_tests_commit_is_rejected`).
+
 Payloads are built inline rather than fetched: `evaluate` is pure by design so
 the decision is testable without GitHub, and the fixtures here are the only
 callers that need to exist.
@@ -27,8 +50,11 @@ assert _SPEC.loader is not None
 _SPEC.loader.exec_module(_MOD)
 
 
-def _pr(*, files, comments, commits, head="ffffffff"):
-    return {"files": files, "comments": comments, "commits": commits, "headRefOid": head}
+def _pr(*, files, comments=(), commits, head="ffffffff"):
+    return {
+        "files": files, "comments": list(comments), "commits": commits,
+        "headRefOid": head,
+    }
 
 
 def _commit(oid, headline="", tests=()):
@@ -38,7 +64,8 @@ def _commit(oid, headline="", tests=()):
 # ── reject side ─────────────────────────────────────────────────────────────
 
 def test_note_without_a_sha_is_rejected():
-    """Tier 1: the #5096 shape — a note landed, but nothing in it says which tree."""
+    """Tier 1: the #5096 shape — a claim line landed on a comment's first
+    line, but nothing on it says which tree."""
     code, lines = _MOD.evaluate(_pr(
         files=["tests/scripts/test_check_doc_drift_5003.py"],
         comments=[{"body": "**[docs-maintainer]** — TESTS-READ (B: independent). Passing."}],
@@ -51,7 +78,7 @@ def test_note_without_a_sha_is_rejected():
 def test_note_whose_sha_predates_a_later_tests_commit_is_rejected():
     """Tier 1: the #5090 / #5095 shape — the note is real and names its head, and then
     `tests/` moved. The failure names the commits so the ask is a differential
-    top-up, not a re-read."""
+    top-up, not a re-read. (Architect's acceptance ④.)"""
     code, lines = _MOD.evaluate(_pr(
         files=["tests/scripts/test_check_doc_drift_5003.py"],
         comments=[{"body": "TESTS-READ (B: independent) (head `a7c44eef6`)."}],
@@ -66,8 +93,9 @@ def test_note_whose_sha_predates_a_later_tests_commit_is_rejected():
     assert "DIFFERENTIAL" in joined.upper()
 
 
-def test_tests_touching_pr_with_no_note_at_all_is_rejected():
-    """Tier 1: rule 8 itself — nothing has been checking it mechanically."""
+def test_no_claim_line_at_all_is_rejected():
+    """Tier 1: rule 8 itself — nothing has been checking it mechanically.
+    (Architect's acceptance ①.)"""
     code, lines = _MOD.evaluate(_pr(
         files=["tests/scripts/test_check_doc_drift_5003.py"],
         comments=[{"body": "LGTM"}],
@@ -77,11 +105,44 @@ def test_tests_touching_pr_with_no_note_at_all_is_rejected():
     assert "no TESTS-READ note" in "\n".join(lines)
 
 
+def test_marker_only_from_line_two_onward_is_not_a_claim():
+    """Tier 1: the #5144 reproduction (architect's acceptance ②) — a
+    multi-purpose comment whose FIRST line is a plain role-prefixed opener,
+    and whose marker plus a real commit SHA of this PR only appear further
+    down, inside prose that is ABOUT TESTS-READ rather than STATING a
+    TESTS-READ claim. That is exactly the shape that made #5144's PR BODY
+    (a different multi-purpose document) go green with no reviewer note:
+    the marker and a real SHA were both present somewhere in the text, just
+    not co-located as a claim. This must be red, and — critically — for the
+    SAME reason as "no note at all", because the first line carries no
+    claim."""
+    code, lines = _MOD.evaluate(_pr(
+        files=["tests/scripts/test_check_doc_drift_5003.py"],
+        comments=[{
+            "body": (
+                "**[e2e-coder]** — 着手します。\n"
+                "\n"
+                "## Notes\n"
+                "\n"
+                "Reviewed the diff; will post TESTS-READ once done. Fixing "
+                "commit was `bbbbbbbb`, same tree this PR already has."
+            ),
+        }],
+        commits=[_commit("bbbbbbbb", "test: add", ("tests/scripts/test_check_doc_drift_5003.py",))],
+    ))
+    assert code == 1
+    assert "no TESTS-READ note" in "\n".join(lines), (
+        "a marker appearing only from line 2 onward must fall into the same "
+        "bucket as no marker at all -- it must not be read as a claim"
+    )
+
+
 # ── accept side ─────────────────────────────────────────────────────────────
 
 def test_note_naming_the_last_tests_commit_passes():
-    """Tier 1: the accept side — a note that names the newest tests/ commit is
-    a claim about the tree that is about to merge."""
+    """Tier 1: the accept side — a claim on a comment's first line, naming
+    the newest tests/ commit, is a claim about the tree that is about to
+    merge."""
     code, _ = _MOD.evaluate(_pr(
         files=["tests/scripts/test_check_doc_drift_5003.py"],
         comments=[{"body": "TESTS-READ (B) (head `bbbbbbbb`)"}],
@@ -108,11 +169,31 @@ def test_commits_after_the_note_that_do_not_touch_tests_pass():
     assert code == 0
 
 
+def test_multiline_comment_with_the_claim_on_line_one_still_passes():
+    """Tier 1: the first-line restriction rejects a marker BELOW line 1 — it
+    must not also reject a well-formed claim that simply has grounds
+    written below it, which is the normal, expected shape (marker + SHA on
+    line 1, six-questions write-up on lines 2+)."""
+    code, _ = _MOD.evaluate(_pr(
+        files=["tests/scripts/test_check_doc_drift_5003.py"],
+        comments=[{
+            "body": (
+                "**[architect]** — TESTS-READ (B: independent) (head `aaaaaaaa`)\n"
+                "\n"
+                "## Six questions\n"
+                "1. Tier 1, the same expression is not on both sides.\n"
+            ),
+        }],
+        commits=[_commit("aaaaaaaa", "test: add", ("tests/scripts/test_check_doc_drift_5003.py",))],
+    ))
+    assert code == 0
+
+
 def test_pr_not_touching_tests_is_out_of_scope():
     """Tier 1: rule 8 binds only PRs that touch tests/ — a src- or docs-only PR
     must not be asked for a note it does not owe."""
     code, lines = _MOD.evaluate(_pr(
-        files=["src/reyn/foo.py"], comments=[], commits=[_commit("aaaaaaaa", "fix")],
+        files=["src/reyn/foo.py"], commits=[_commit("aaaaaaaa", "fix")],
     ))
     assert code == 0
     assert "does not touch tests/" in "\n".join(lines)
@@ -146,9 +227,15 @@ def test_an_issue_comment_id_is_not_read_as_a_sha():
         ],
     ))
     assert code == 1, "a note citing only a comment id names no tree"
+    assert "names a commit of" in "\n".join(lines), (
+        "the rejection is for naming no commit, not for a missing note"
+    )
 
 
-def _runner(returncode: int, stdout: str = "", stderr: str = "", seen: "list | None" = None):
+def _runner(
+    returncode: int, stdout: str = "", stderr: str = "",
+    seen: "list | None" = None, kwargs_seen: "list | None" = None,
+):
     """A minimal stand-in for `subprocess.run`'s result, injected through
     `commit_touched_paths`'s own `run` seam. Not a mock of a cheaply
     constructible collaborator — the real one is an authenticated network
@@ -159,12 +246,19 @@ def _runner(returncode: int, stdout: str = "", stderr: str = "", seen: "list | N
     which left the seam's ONE mistakable part — the endpoint path and the
     ``--jq`` that shapes the reply — outside every test (architect, #5128 B):
     a `commit_touched_paths` that asked for the wrong URL would have passed
-    both cases below."""
+    both cases below.
+
+    *kwargs_seen* collects the keyword arguments the caller passed (e.g.
+    ``capture_output=``, ``text=``) — recorded, not silently swallowed, so a
+    caller that started passing `check=True` or a different `text=` would be
+    visible to a test rather than invisible to every test using this seam."""
     import subprocess as _sp
 
     def _run(cmd, **kwargs):
         if seen is not None:
             seen.append(list(cmd))
+        if kwargs_seen is not None:
+            kwargs_seen.append(dict(kwargs))
         return _sp.CompletedProcess(cmd, returncode, stdout=stdout, stderr=stderr)
 
     return _run
@@ -175,8 +269,10 @@ def test_the_seam_asks_github_for_that_commits_file_names() -> None:
     running the suite unless a test looks at it. Endpoint and `--jq` together
     decide whether the reply is a list of file names at all."""
     seen: list = []
+    kwargs_seen: list = []
     _MOD.commit_touched_paths(
-        "abc1234", "tya5/reyn", run=_runner(0, stdout="[]", seen=seen),
+        "abc1234", "tya5/reyn",
+        run=_runner(0, stdout="[]", seen=seen, kwargs_seen=kwargs_seen),
     )
     # `seen[0]` raises if the seam was never called at all, so the shape
     # assertions below cannot pass vacuously.
@@ -188,6 +284,12 @@ def test_the_seam_asks_github_for_that_commits_file_names() -> None:
     assert "[.files[].filename]" in argv, (
         f"asks for file NAMES — without this jq the reply is objects, not paths; got {argv!r}"
     )
+    # capture_output/text together decide whether stdout comes back as a
+    # decoded string this function can json.loads — a caller that dropped
+    # either would still issue the right argv and still break at runtime.
+    kwargs = kwargs_seen[0]
+    assert kwargs.get("capture_output") is True, f"needs captured stdout/stderr; got {kwargs!r}"
+    assert kwargs.get("text") is True, f"needs str, not bytes, output; got {kwargs!r}"
 
 
 def test_an_unreadable_commit_stops_the_run() -> None:
@@ -237,3 +339,18 @@ def test_the_head_alone_is_not_membership():
     """Tier 1: the same gap at the predicate level — a SHA that is only the
     head, with no commit carrying it, is not a commit of this PR."""
     assert _MOD.find_note_shas("head `deadbee1`", []) == []
+
+
+def test_tests_commits_after_takes_no_head_argument():
+    """Tier 1: `tests_commits_after` decides membership from *sha* against
+    *commits* alone — a `head` parameter that the decision never consulted
+    would claim to participate without doing so (the shape a signature
+    should not carry). Its 2-argument form is the contract."""
+    later = _MOD.tests_commits_after(
+        "aaaaaaaa",
+        [
+            _commit("aaaaaaaa", "test: add"),
+            _commit("bbbbbbbb", "test: more", ("tests/scripts/test_check_doc_drift_5003.py",)),
+        ],
+    )
+    assert [c["oid"] for c in later] == ["bbbbbbbb"]
