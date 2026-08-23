@@ -1,14 +1,25 @@
 """Tier 2: #4983 — ``on_mount()`` no longer makes its own synchronous
-``history.jsonl`` disk read.
+``conversation_history()`` registry/session read.
 
 Root cause: ``TextualChatApp.on_mount()`` is not ``async def``, and used to
 call ``self._hydrate_from_history()`` unconditionally, which synchronously
-called ``self._read_model.conversation_history()`` — real disk I/O, directly
-on the event loop, with no ``await`` anywhere in the chain. Found while
-investigating #4834's CI `pump heartbeat +0` stalls; confirmed as a real
-defect independent of that investigation's own open question (whether it
-explains CI's specific 2-second symptom — it may not, given CI's own small
-test fixtures — see #4834's own thread).
+called ``self._read_model.conversation_history()`` directly on the event
+loop, with no ``await`` anywhere in the chain. Found while investigating
+#4834's CI `pump heartbeat +0` stalls; confirmed as a real defect
+independent of that investigation's own open question (whether it explains
+CI's specific 2-second symptom — it may not, given CI's own small test
+fixtures — see #4834's own thread).
+
+**Not disk I/O** (#5203 measurement, docs-maintainer/architect-confirmed
+issuecomment-5385460393, corrected here — same PR that discovered the
+stale claim): ``conversation_history`` reads ``Session.history``, a plain
+in-memory list populated once by ``Session.load_history`` at session-
+construction time — it never touches ``history.jsonl`` itself. The
+"real disk I/O" framing above was #4983's ORIGINAL (wrong) understanding
+of the defect; the real defect is still real — a synchronous call
+blocking the event loop — the blocking source is a bounded in-memory list
+copy, not disk latency, which is why moving it off-loop still matters for
+a large history without being "an I/O fix" in the literal sense.
 
 Architect's design (c), issue #4983: read the CURRENTLY-ATTACHED session's
 history OFF the event loop, BEFORE the App exists at all (``run_textual_
@@ -80,6 +91,20 @@ class _CountingReadModel(ChatReadModel):
     def conversation_history(self, *, limit=None, agent=None, session_id=None):
         self.call_count += 1
         return list(self.messages)
+
+    def resolve_conversation_history_source(self, *, agent=None, session_id=None):
+        # #5203: the split half `run_textual_chat`'s own mount-time
+        # pre-fetch now calls DIRECTLY (bypassing `conversation_history`
+        # above entirely — see that call site's own docstring) — counts
+        # the same way, so `call_count` still means "a real read happened"
+        # regardless of which entry point a given call site uses.
+        self.call_count += 1
+        return list(self.messages)
+
+    def conversation_history_from_source(self, source, *, limit=None):
+        if limit is not None and limit >= 0:
+            return list(source)[-limit:]
+        return list(source)
 
     def load_older_conversation_history(self, *, agent=None, session_id=None):
         return 0
@@ -161,26 +186,32 @@ async def test_mount_without_prefetch_falls_back_to_the_synchronous_read() -> No
 async def test_run_textual_chat_prefetches_off_thread_before_construction(
     monkeypatch,
 ) -> None:
-    """Tier 2: ``run_textual_chat`` itself must call ``conversation_history``
-    BEFORE constructing the App (mirrors ``test_3671_stall_trace_startup_
+    """Tier 2: ``run_textual_chat`` itself must call ``resolve_conversation_
+    history_source``/``conversation_history_from_source`` BEFORE
+    constructing the App (mirrors ``test_3671_stall_trace_startup_
     wiring.py``'s own technique — stub ``TextualChatApp.run_async`` to raise
     immediately, so only pre-construction wiring is observed).
 
+    #5203: recording moved to ``conversation_history_from_source`` — the
+    specific half that still crosses ``asyncio.to_thread`` (the registry
+    touch, ``resolve_conversation_history_source``, now runs on the loop
+    first, per that call site's own docstring in ``app.py``).
+
     Also confirms the read runs OFF the calling task via a real
-    ``asyncio.to_thread``: records the thread identity ``conversation_
-    history`` was called from and asserts it differs from the main
-    event-loop thread's own identity."""
+    ``asyncio.to_thread``: records the thread identity that call was made
+    from and asserts it differs from the main event-loop thread's own
+    identity."""
     main_thread = threading.current_thread()
     call_threads: "list[threading.Thread]" = []
     messages = _fixture_messages()
     read_model = _CountingReadModel(messages)
-    real_conversation_history = read_model.conversation_history
+    real_from_source = read_model.conversation_history_from_source
 
     def _recording(*args, **kwargs):
         call_threads.append(threading.current_thread())
-        return real_conversation_history(*args, **kwargs)
+        return real_from_source(*args, **kwargs)
 
-    monkeypatch.setattr(read_model, "conversation_history", _recording)
+    monkeypatch.setattr(read_model, "conversation_history_from_source", _recording)
 
     construct_order: "list[str]" = []
     real_init = TextualChatApp.__init__
@@ -206,7 +237,7 @@ async def test_run_textual_chat_prefetches_off_thread_before_construction(
 
     assert read_model.call_count == 1
     assert construct_order == ["construct"], "the App must have been constructed"
-    assert call_threads, "conversation_history must have been called"
+    assert call_threads, "conversation_history_from_source must have been called"
     assert call_threads[0] is not main_thread, (
         "the read must run off the event-loop thread (asyncio.to_thread), "
         "not inline on the same thread run_textual_chat itself runs on"

@@ -490,6 +490,43 @@ class AgentRegistry:
         # ``get_session``, ``agent_workspace_dir``) are NOT asserted — see
         # each one's own docstring.
         #
+        # #5203 tried to restore the guard onto the 7 reads too (architect
+        # issuecomment-5385152402, reasoning ``app.py``'s hoist below closed
+        # the ONLY legitimate off-thread reader) — WITHDRAWN by the same
+        # architect (issuecomment-5385481839, then reaffirmed against a
+        # narrower "just `exists()`" alternative, issuecomment-5385499177)
+        # for 2 INDEPENDENT reasons, not one:
+        #   (a) CI caught 2 MORE legitimate off-thread readers this PR
+        #       never enumerated: the web server's A2A (``resolve_a2a_
+        #       session`` → ``resolve_session`` → ``get_session``) and
+        #       artifact-by-ref (``registry.exists``) routes.
+        #   (b) even with every current caller enumerated, "one owner
+        #       thread" is topology-dependent, not a real invariant — the
+        #       web server structurally runs a SYNC endpoint via FastAPI's
+        #       own threadpool, and Starlette's own TestClient dispatches
+        #       through its own background portal thread. Narrowing to
+        #       "only `exists()` needs excluding" (the 6 OTHER reads
+        #       currently having no known off-thread caller) is SHALLOW
+        #       reasoning — "safe because nothing off-thread touches it
+        #       TODAY" is exactly the assumption that broke twice already
+        #       here (#5202's first version, then #5203's own restoration
+        #       attempt); it is a fact about today's callers, not a
+        #       structural guarantee, and a 3rd unenumerated caller would
+        #       be the same mistake a 3rd time. This is the SAME judgment
+        #       that withdrew #4995 slice 2's own lock proposal.
+        # #5203's real fix (a SEPARATE PR, not this one) is at the actual
+        # accidental-safety window instead: ``get_or_load`` (below) calls
+        # ``_store_session`` — publishing the session to this registry's
+        # map — BEFORE its own later ``load_persisted_toggles``/``restore_
+        # state`` finish constructing it. Moving ``_store_session`` to run
+        # LAST (publish only once complete) means any thread that finds a
+        # session in the map at all finds a COMPLETE one — no guard needed
+        # on the reads (there is nothing left for a read-side guard to
+        # strip-to-red once publication order is fixed), and A2A/web need
+        # no changes either. ``app.py``'s own hoist (below) stays in THIS
+        # PR regardless — independently correct hygiene (the registry
+        # touch happening on the loop, not because a guard depends on it).
+        #
         # #4995 slice 2's own open question (architect, issuecomment-
         # 5384963741): whether #4983's off-thread READS observe a live view
         # of registry-owned state or an immutable snapshot determines
@@ -506,7 +543,10 @@ class AgentRegistry:
         constructed this registry. Call ONLY at the top of a method that
         MUTATES registry-owned state — a read must NOT call this (#4983's
         own off-thread reads are a legitimate second thread; asserting on a
-        read breaks them, as CI found).
+        read breaks them, as CI found — and, per #5215's own withdrawn
+        attempt, so does the web server's A2A/artifact-by-ref reads, plus
+        the web server's structural use of a threadpool for sync endpoints;
+        see ``_owner_thread_ident``'s own comment for the full history).
 
         Disclosed gap (architect, issuecomment-5385029098), not a
         completeness claim: nothing here or in ``tests/runtime/test_4995_
@@ -621,14 +661,12 @@ class AgentRegistry:
         Defaults to the implicit "main" session (byte-identical to the prior
         single-session lookup).
 
-        #4995 slice 1 (architect correction, issuecomment-5384963741): NOT
-        owner-thread-asserted, unlike the mutating methods — ``app.py``'s
-        own #4983 design deliberately reads history off the event loop via
-        ``asyncio.to_thread``, which genuinely runs on a second real OS
-        thread and reaches this method through ``RegistryReadModel``. That
-        is a legitimate existing read, not the race #4995 exists to
-        prevent — see ``AgentRegistry``'s own ``_owner_thread_ident``
-        docstring for which methods DO assert and why."""
+        #4995 slice 1 (architect correction): NOT owner-thread-asserted —
+        a read, not a mutation. See ``AgentRegistry``'s own
+        ``_owner_thread_ident`` docstring for which methods DO assert and
+        why (#5215's attempt to restore this for #5203 was withdrawn —
+        the web server's A2A/artifact-by-ref routes reach this method the
+        same way ``app.py``'s off-thread reads do)."""
         return self._peek_session(name, sid)
 
     def session_ids(self, name: str) -> list[str]:

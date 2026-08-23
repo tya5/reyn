@@ -1,38 +1,56 @@
 """Tier 2: #4995 slice 1 — ``AgentRegistry`` gains an explicit, enforced
-single-owner-THREAD-FOR-MUTATION invariant.
+single-owner-thread invariant, scoped to exactly the 4 methods that MUTATE
+registry-owned state.
+
+## History (read this before touching any test below)
 
 Architect ruling (issuecomment-5384869791), CORRECTED after CI caught the
-first version (issuecomment-5384963741, PR #5202): the invariant is "only
-one thread may MUTATE this registry", not "only one thread may touch it
-at all" — ``app.py``'s #4983 design deliberately reads conversation
-history off the event loop via ``asyncio.to_thread``, a real second OS
-thread reaching several read-only registry methods through
-``RegistryReadModel``. Asserting on those 7 reads broke that legitimate
-feature (27 CI failures, all the identical ``RuntimeError``). The guard
-now covers exactly the 4 methods that MUTATE registry-owned state:
-``attach``, ``restore_all``, ``resume_deferred_agents``,
-``record_background_attach_error``.
+first version (issuecomment-5384963741, PR #5202): the guard broke a
+legitimate feature — ``app.py``'s #4983 design deliberately read
+conversation history off the event loop via ``asyncio.to_thread``, a real
+second OS thread reaching 7 read-only registry methods through
+``RegistryReadModel``. #5202 scoped the guard down to just the 4 mutators
+(``attach``, ``restore_all``, ``resume_deferred_agents``,
+``record_background_attach_error``) to stop breaking that (27 CI
+failures, all the identical ``RuntimeError``). The 7 reads (``exists``,
+``loaded_names``, ``agent_cost_usd``, ``agent_total_usage``,
+``attached_session``, ``get_session``, ``agent_workspace_dir``) are NOT
+asserted — see each one's own docstring.
 
-Docs-maintainer's B finding on the first version (issuecomment-5384937050,
-still valid against the corrected scope): a hand-counted list has no
-completeness witness — stripping the guard from any ONE of the 4 methods
+#5203 tried to restore the guard onto the 7 reads too (architect
+issuecomment-5385152402, reasoning that app.py's own hoist — see
+``read_model.py``'s ``resolve_conversation_history_source``/
+``conversation_history_from_source`` — closed the ONLY legitimate
+off-thread reader). **WITHDRAWN by the same architect the same day**
+(issuecomment-5385481839, PR #5215): CI caught 2 MORE legitimate
+off-thread readers this restoration never enumerated — the web server's
+A2A (``resolve_a2a_session`` → ``resolve_session`` → ``get_session``) and
+artifact-by-ref (``registry.exists``) routes. Worse: for the web server,
+"one owner thread" is not even a real invariant to begin with — FastAPI
+runs a sync endpoint via its own threadpool, so no guard here can hold
+structurally for that transport. The real fix belongs at the actual
+accidental-safety window instead (a SEPARATE PR, not #5215): ``get_or_
+load`` publishes a session to the registry's map (``_store_session``)
+BEFORE its own later ``load_persisted_toggles``/``restore_state`` finish
+constructing it — moving the publish to run LAST means any thread that
+finds a session at all finds a complete one, and no read-side guard is
+needed anywhere.
+
+Docs-maintainer's B finding on the first version of this guard
+(issuecomment-5384937050) still applies: a hand-counted list has no
+completeness witness — stripping the guard from any ONE of the 4 mutators
 must be independently caught, not just "some cross-thread test exists
-somewhere". This file exercises EACH of the 4 individually (never one
-standing in for the others), plus a read-side falsification (a read
-reached from a second thread must NOT raise — the #4983 pattern this
-scope correction exists to preserve).
+somewhere". This file exercises EACH of the 4 mutators individually
+(never one standing in for the others).
 
-Acceptance:
-  ① same-thread access to every one of the 4 + every one of the 7 reads
-     never raises (sanity — slice 1's own non-regression)
-  ② EACH of the 4 mutating methods raises RuntimeError when reached from
-     a genuinely different OS thread, tested individually
-  ③ a read method reached from a different OS thread does NOT raise (the
-     #4983 pattern preserved — falsification contrast for ②)
-  ④ the owner thread identity is a public read
+Acceptance (#4995 slice 1, architect issuecomment-5384963741):
+  ① guard covers exactly the 4 mutators — not the 7 reads (see History
+     above for why a second attempt at the reads, #5203/#5215, was
+     withdrawn).
+  ② the owner thread identity is a public read
      (:attr:`AgentRegistry.owner_thread_ident`), not a private-state reach-in
 
-Real ``AgentRegistry`` + real ``threading.Thread`` (no mocks). The 3
+Real ``AgentRegistry`` + real ``threading.Thread`` (no mocks). The 4
 ``async def`` mutating methods are driven from the other thread via
 ``asyncio.run`` (a real, independent event loop on that thread) — the
 identical shape ``ThreadedTransportProxy`` itself uses in production.
@@ -45,7 +63,7 @@ import threading
 import pytest
 
 from reyn.runtime.profile import AgentProfile
-from reyn.runtime.registry import _DEFAULT_SID, AgentRegistry
+from reyn.runtime.registry import AgentRegistry
 from tests._support.agent_session import make_session
 
 
@@ -94,10 +112,15 @@ def test_owner_thread_ident_is_the_constructing_thread(tmp_path) -> None:
 
 def test_same_thread_access_never_raises(tmp_path) -> None:
     """Tier 2: #4995 slice 1 acceptance ① — sanity/non-regression. Every
-    one of the 4 mutating methods AND every one of the 7 read methods is
-    reachable from the owner thread exactly as before slice 1."""
+    one of the 4 mutating methods is reachable from the owner thread — the
+    guard only ever fires against a DIFFERENT thread, never against the one
+    that constructed the registry. The 7 reads are exercised too (never
+    asserted, on any thread — see History in this file's own module
+    docstring for why they stay unguarded), so a same-thread call staying
+    silent is not itself informative for them; they are here for parity
+    with the mutators' own coverage, not as a guard witness."""
     reg = _registry(tmp_path)
-    # Reads (never asserted, on any thread):
+    # Reads (never asserted, on any thread — see module docstring):
     reg.exists("default")
     reg.loaded_names()
     reg.agent_workspace_dir("default")
@@ -111,7 +134,7 @@ def test_same_thread_access_never_raises(tmp_path) -> None:
     asyncio.run(reg.restore_all())
     asyncio.run(reg.resume_deferred_agents())
     # No assertion needed beyond "did not raise" -- this test's only job is
-    # to prove slice 1 changed nothing for the owner thread.
+    # to prove the guard changes nothing for the owner thread.
 
 
 _MUTATING_METHOD_CALLS = {
@@ -137,6 +160,13 @@ _MUTATING_METHOD_CALLS = {
 # ``self._x =`` census over-fires on cached/memoized reads). The person
 # adding that method must remember to add BOTH the guard call and an entry
 # here — this test only proves the 4 CURRENTLY listed stay guarded.
+#
+# A guard-restoration attempt on the 7 reads was tried and WITHDRAWN
+# (#5203/#5215, see this file's own module docstring's History section) —
+# this dict stays MUTATORS-ONLY, not a placeholder for a sibling that will
+# return: the reads are not merely "less important", the invariant itself
+# does not hold for them given the web server's threadpool-per-sync-
+# endpoint topology.
 
 
 @pytest.mark.parametrize("method_name", sorted(_MUTATING_METHOD_CALLS))
@@ -157,22 +187,6 @@ def test_each_mutating_method_individually_raises_from_another_thread(
         f"RuntimeError, got: {caught!r}"
     )
     assert "4995" in str(caught), "the error must point at the invariant's own issue"
-
-
-def test_a_read_reached_from_another_thread_does_not_raise(tmp_path) -> None:
-    """Tier 2: #4995 slice 1 acceptance ③ — falsification contrast for ②,
-    and the exact regression the first version of this guard caused (CI,
-    27 failures, PR #5202): ``app.py``'s #4983 design reads conversation
-    history off the event loop via ``asyncio.to_thread`` -- a REAL second
-    OS thread reaching ``get_session`` (and siblings) through
-    ``RegistryReadModel``. That must keep working. RED if a read method
-    is ever given the mutation-only guard back."""
-    reg = _registry(tmp_path)
-    caught = _call_from_other_thread(lambda: reg.get_session("default", _DEFAULT_SID))
-    assert caught is None, (
-        f"a read reached from a different thread must NOT raise (the #4983 "
-        f"off-thread-read pattern this scope exists to preserve), got: {caught!r}"
-    )
 
 
 def test_two_different_registries_each_owned_by_their_own_constructing_thread(
