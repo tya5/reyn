@@ -318,6 +318,30 @@ def _deep_merge(base: dict, override: dict) -> dict:
     return result
 
 
+class UnresolvableModelClassError(ValueError):
+    """#4573 (architect blocking finding, issuecomment-5385388810, PR #5212
+    A): raised by :meth:`ModelResolver.resolve` for a class-position value
+    that resolves to neither a declared class nor a literal
+    ``provider/model`` name — a TYPED discriminator, not a bare
+    ``ValueError``, so a caller distinguishing "this specific, expected
+    failure mode" from "some OTHER ValueError I did not anticipate" can do
+    so by type instead of by string-matching the message (reyn's own
+    typed-discriminated-union preference, applied to exceptions the same
+    way #4996/``ChatReadModelCapabilities`` applies it to capabilities).
+
+    Concretely: :func:`~reyn.services.turn_budget.try_build_default_turn_
+    budget_engine` catches ONLY this subclass (never bare ``ValueError``)
+    around its own ``resolver.resolve(model)`` call — before this class
+    existed, a bare ``except ValueError`` there caught the SHAPE of the
+    failure, not the CAUSE: any future, unrelated ``ValueError`` from
+    somewhere else in that call chain would have ALSO silently degraded to
+    ``None`` (a context-window display going quietly wrong, not raising),
+    with nothing to catch the over-broad catch itself. A subclass of
+    ``ValueError`` (not a sibling exception type) so every EXISTING bare
+    ``except ValueError`` elsewhere in the codebase that already wraps a
+    ``resolve()`` call keeps working unchanged."""
+
+
 class ModelClassExceedsCeilingError(ValueError):
     """#4206 T1: raised by :func:`reyn.llm.llm.recorded_acompletion` when a
     call's declared ``model_class`` exceeds the caller's effective
@@ -477,6 +501,47 @@ class ModelResolver:
                     _name, _spec.model,
                 )
 
+        # #4573 (architect ruling): WARN at LOAD time — not raise — for a
+        # class-position value this resolver cannot resolve. Load-bearing
+        # ``resolve()`` (below) still raises at USE time, unchanged — #3368's
+        # own intent (a legible, load-bearing error instead of a confusing
+        # provider-side one) is preserved there. What this closes is the GAP
+        # #3368 never addressed: NOTHING previously warned that ``llm.model``
+        # (or a ``model_class_by_purpose`` entry) was already broken, at the
+        # one point reyn actually knows it — construction. A typo'd
+        # ``llm.model`` used to surface only via whatever code path first
+        # happened to call ``resolve()`` on it (#4573's own observed
+        # symptom — a lazy, incidental turn-budget-estimation call, NOT a
+        # real LLM call — crashed the whole session before the operator
+        # ever got a chance to see why or run ``/model`` to fix it). This
+        # warning fires unconditionally at construction, so the operator
+        # sees the actionable message on the FIRST render, not buried
+        # behind whichever internal call site happens to touch the value
+        # first (see this module's own docstring's "not applied" phrasing
+        # convention, mirrored in the message below).
+        _class_position_values = {
+            "default_class": default_class,
+            **{
+                f"model_class_by_purpose.{purpose}": cls
+                for purpose, cls in self._purpose_classes.items()
+            },
+        }
+        for _field_label, _value in _class_position_values.items():
+            if "/" in _value or _value in self._resolved:
+                continue
+            import logging
+
+            logging.getLogger(__name__).warning(
+                "llm.%s %r does not match any declared model class (%s) and "
+                "is not a literal provider/model string — this model is "
+                "NOT APPLIED until fixed: any use of it will fail with a "
+                "load-bearing error (not silently fall back). Check "
+                "reyn.yaml/reyn.local.yaml's `llm.models:` section for a "
+                "typo or a load failure, or run `/model <class>` to switch "
+                "to a working one for this session.",
+                _field_label, _value, ", ".join(sorted(self._resolved)) or "none",
+            )
+
     def resolve(self, name: str) -> ModelSpec:
         """Return the ModelSpec for *name*.
 
@@ -507,7 +572,7 @@ class ModelResolver:
             return self._resolved[name]
         if "/" in name:
             return ModelSpec(model=name, kwargs={})
-        raise ValueError(
+        raise UnresolvableModelClassError(
             f"model class {name!r} not found among known classes "
             f"({', '.join(sorted(self._resolved)) or 'none'}). Check reyn.yaml/"
             "reyn.local.yaml's `llm.models:` section for a typo or a load "
