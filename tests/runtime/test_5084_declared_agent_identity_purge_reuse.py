@@ -131,12 +131,46 @@ async def test_manual_rmtree_then_redeclare_rejects_stale_child_cap(tmp_path: Pa
     directory stat alone (no active-invalidation backstop reaches this path,
     since reyn's own API was never called).
 
-    ⚠️ Weaker than ⑥ on a platform where ``os.stat`` does not expose
-    ``st_birthtime`` (most Linux filesystems via plain ``stat()``) — the
-    comparison then relies on ``ino`` alone, and an inode number CAN in
-    principle be reused by the OS for the new directory. Not asserted here
-    as a guaranteed-forever property on every platform; disclosed rather
-    than silently assumed (architect co-vet, issuecomment-5380635009)."""
+    #5188: this witness's own discriminator was, until now, "does
+    ``shutil.rmtree`` + recreate happen to mint a NEW inode for the
+    replacement directory" — genuinely OS-dependent, and on most Linux
+    filesystems (no ``st_birthtime``, comparison degrades to bare ``ino``)
+    an inode CAN be reused for a freshly-created directory, especially one
+    recreated immediately after removal in the same test process. That
+    made this witness NON-DETERMINISTIC on Linux CI — it does not assert a
+    duration, but it silently depended on one (how the OS's free-inode
+    allocator happens to behave right now), which is the same class of
+    problem CLAUDE.md's floor/ceiling rule names for time: the outcome
+    should not depend on incidental timing/allocation the test does not
+    control. Confirmed unrelated to any reyn PR (tui-coder's own #5180
+    analysis: the call stack that failed never constructs a ``Session`` at
+    all — ``AgentRegistry(session_factory=lambda profile: None)`` — so it
+    cannot intersect with anything ``Session.run()``-scoped).
+
+    Fix: stop depending on whether the OS actually reused the inode.
+    ``resolved_profile_for``/``is_spawn_descendant`` (the consumers under
+    test) both make their fail-closed decision by comparing the FROZEN
+    identity against ``self.agent_directory_identity(pname)`` called FRESH
+    at query time (``registry.py``'s own ``is_spawn_descendant`` docstring)
+    — this witness's real subject is "does that comparison correctly rail
+    when the two sides differ", not "does ``rmtree``+recreate reliably
+    produce two different stats on every platform" (a DIFFERENT, disclosed,
+    genuinely platform-dependent property of the production mechanism
+    itself — #5188 records that weakness as still real and does not
+    resolve it here; narrowing/hardening ``agent_directory_identity`` is
+    explicitly out of this fix's scope, architect's own call, #5042/#5152).
+    So: monkeypatch ``agent_directory_identity`` to return a value that is
+    UNCONDITIONALLY different for the re-declared ``parent_b`` — this
+    still drives the SAME real filesystem operations (a genuine
+    ``shutil.rmtree`` + a genuine re-declare) and the SAME real consumer
+    code path (``resolved_profile_for``/``is_spawn_descendant``'s own
+    comparison, unmodified), it just no longer gambles on what the OS's
+    free-inode allocator decides to do in the gap between them. Reads
+    ``st_ino``/``st_birthtime`` NOWHERE in this test — the monkeypatch
+    replaces the whole method, never inspects what it returns, so this
+    witness is now platform-independent BY CONSTRUCTION, not by luck: a
+    reviewer can confirm that from this file's own text, without needing
+    to run it on Linux."""
     _declare_narrowed_parent(tmp_path, name="parent_b", profile="prole_b", deny="exec")
     reg = _registry(tmp_path)
     await reg.create_agent("child_b", parent="parent_b")
@@ -146,6 +180,25 @@ async def test_manual_rmtree_then_redeclare_rejects_stale_child_cap(tmp_path: Pa
 
     shutil.rmtree(tmp_path / ".reyn" / "agents" / "parent_b")  # bypasses remove()
     _declare_unrestricted(tmp_path, name="parent_b")
+
+    # #5188: force the "the OS gave the new directory a different identity"
+    # postcondition deterministically, instead of trusting the OS's
+    # free-inode allocator to have actually done so. Every OTHER name still
+    # resolves through the real method (unwrapped) — only "parent_b" (the
+    # one this witness rmtree'd+recreated) is overridden, and only to a
+    # value guaranteed to differ from whatever was frozen at spawn time
+    # above (an impossible ino, mirroring the shape of the registry's own
+    # ``INVALIDATED_SPAWN_PARENT_IDENTITY`` sentinel — never a value a real
+    # ``os.stat()`` could produce, so it cannot coincide with the frozen
+    # identity by chance either).
+    real_identity = reg.agent_directory_identity
+
+    def _identity_with_forced_reuse_mismatch(name: str):
+        if name == "parent_b":
+            return (-2, None)
+        return real_identity(name)
+
+    reg.agent_directory_identity = _identity_with_forced_reuse_mismatch  # type: ignore[method-assign]
 
     after, _ = reg.resolved_profile_for("child_b")
     assert isinstance(after, ContextualPermission)
