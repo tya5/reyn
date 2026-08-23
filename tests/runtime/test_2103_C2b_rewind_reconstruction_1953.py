@@ -57,9 +57,25 @@ async def test_rewind_across_name_reuse_does_not_resurrect_orphan(tmp_path):
     #5084: the frozen identity is now the parent AGENT DIRECTORY's own
     ``(ino, birthtime)`` (``AgentRegistry.agent_directory_identity``), re-stat'd fresh
     at comparison time — not a WAL seq. So "identity-2" here is a REAL
-    directory rmtree + recreate (a genuinely different inode), not a second
-    hand-authored WAL number; ``is_spawn_descendant`` always reads the LIVE
-    filesystem, never the WAL's own bookkeeping."""
+    directory rmtree + recreate, not a second hand-authored WAL number;
+    ``is_spawn_descendant`` always reads the LIVE filesystem, never the
+    WAL's own bookkeeping.
+
+    #5188 (lead-coder co-vet on PR #5235, same hazard/same fix as that PR's
+    own #5084 witness): whether the real rmtree+recreate actually mints a
+    genuinely different inode is OS-dependent — on most Linux filesystems
+    (no ``st_birthtime``, the comparison degrades to bare ``ino``) an
+    inode CAN be reused for a freshly created directory, which would make
+    ``is_spawn_descendant`` here silently NOT reject and this test flaky
+    on Linux CI for a reason unrelated to the rewind-reconstruction logic
+    under test. Same fix as #5235: after the real rmtree + real recreate,
+    force ``agent_directory_identity("parent")`` to return a value
+    guaranteed different from the identity actually frozen into the WAL
+    (``parent_identity_1``, already captured below) — this still drives
+    the real ``_materialize_rewind`` reconstruction and the real
+    ``is_spawn_descendant`` comparison unmodified, it just stops gambling
+    on what the OS's free-inode allocator does in the gap. Reads
+    ``st_ino``/``st_birthtime`` nowhere in this test's own code."""
     _seed(tmp_path, "parent")
     _seed(tmp_path, "child")
     reg = _registry(tmp_path)
@@ -71,8 +87,7 @@ async def test_rewind_across_name_reuse_does_not_resurrect_orphan(tmp_path):
     await log.append("agent_created", entity_kind="agent", name="child", sid="",
                      parent="parent", parent_seq=list(parent_identity_1),
                      profile={"name": "child", "role": ""})
-    # parent purged (a real rmtree) then the NAME reused (a real recreate) →
-    # a genuinely NEW directory identity (identity-2).
+    # parent purged (a real rmtree) then the NAME reused (a real recreate).
     await log.append("agent_purged", entity_kind="agent", name="parent", sid="")
     import shutil
     shutil.rmtree(tmp_path / ".reyn" / "agents" / "parent")
@@ -83,6 +98,20 @@ async def test_rewind_across_name_reuse_does_not_resurrect_orphan(tmp_path):
     # forward-checkout past everything → rebuild lineage from the WAL as-of-cut.
     await reg._materialize_rewind(reconstruct_seq=log.current_seq,
                                   workspace_at_or_below=log.current_seq)
+
+    # #5188: force the post-recreate identity to be deterministically
+    # different from parent_identity_1 (the value actually frozen into the
+    # WAL above), instead of trusting the OS to have minted a different
+    # inode. Guaranteed to differ from any real (ino, birthtime) pair, so
+    # it cannot coincide with parent_identity_1 by chance either.
+    real_identity = reg.agent_directory_identity
+
+    def _identity_with_forced_reuse_mismatch(name: str):
+        if name == "parent":
+            return (-2, None)
+        return real_identity(name)
+
+    reg.agent_directory_identity = _identity_with_forced_reuse_mismatch  # type: ignore[method-assign]
 
     # no resurrection: child's frozen edge does not match the reused parent identity.
     assert not reg.is_spawn_descendant("child", "parent"), (
