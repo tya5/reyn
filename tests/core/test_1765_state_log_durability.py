@@ -96,7 +96,10 @@ async def test_iter_from_excludes_inflight_entry_during_fsync(tmp_path, monkeypa
 @pytest.mark.asyncio
 async def test_slow_file_open_does_not_freeze_the_event_loop(tmp_path, monkeypatch):
     """Tier 2: #1765 Step 1b. Step 1a moved only `fsync` off the loop; the preceding
-    `_needs_lead_newline` check + `open`/`write`/`flush` stayed synchronous on the loop. On a
+    `open`/`write`/`flush` stayed synchronous on the loop (#5192 later removed the
+    lead-newline guard that once ran before them — see `_do_wal_write`'s own docstring —
+    but `open`/`write`/`flush` themselves are the subject of this test, unaffected by
+    that removal). On a
     stalled filesystem (Windows AV re-scan / cloud-sync rehydration / a stale lock — all far
     more likely after the file has sat idle), those calls freeze the WHOLE event loop, not just
     this append (the reported symptom: the user's message echoes, but the "Working…" indicator
