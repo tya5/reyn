@@ -22,6 +22,26 @@ explicit instruction: "逐次に書いて通しても意味がありません" (
 writes in one process would prove nothing about concurrent-writer safety;
 BudgetLedger has no such precedent test either, so this is the FIRST rigor
 check of this shape in this codebase for an append-only ledger).
+
+CI red (lead-coder, PR #5170, Python 3.12 only): one such test got 401
+lines instead of 400 -- an EXTRA line, not a lost one. The job's own
+warnings carried the actual cause: "This process (pid=...) is
+multi-threaded, use of fork() may lead to deadlocks in the child" --
+plain `multiprocessing.Process(...)` (this test's ORIGINAL form) with no
+explicit context uses the PLATFORM DEFAULT start method, which is
+"fork" on Linux (CPython's own
+docs: unsafe when the parent has more than one thread, exactly what a
+pytest-xdist worker is) but "spawn" on macOS (this dev machine, since
+Python 3.8) -- fork()ing a multi-threaded parent can leave the child
+with another thread's lock (buffering, import, etc.) held forever, or
+in another inconsistent state, with no thread present to release/fix
+it. This is why the failure never reproduced locally: it needs the
+Linux+multi-threaded-parent combination CI has and this machine does
+not. Fixed by using an EXPLICIT ``multiprocessing.get_context("spawn")``
+for every ``Process`` in this file -- ``spawn`` re-imports fresh in the
+child regardless of platform default, matching what already happened
+to work by accident on macOS, so the same safe behavior is now
+guaranteed everywhere this test runs, not just here.
 """
 from __future__ import annotations
 
@@ -34,6 +54,11 @@ from reyn.security.permissions.approval_ledger import (
     ApprovalLedger,
     migrate_legacy_snapshot,
 )
+
+# See the module docstring's "CI red" note: explicit spawn, never the
+# platform default, so this test's own correctness never depends on
+# whether the pytest worker that runs it happens to be single-threaded.
+_mp = multiprocessing.get_context("spawn")
 
 
 def _worker_append_many(path_str: str, key: str, n: int) -> None:
@@ -72,10 +97,10 @@ def test_two_real_processes_approving_different_keys_both_survive(tmp_path: Path
     ledger_path = tmp_path / "approvals.jsonl"
     n = 200
 
-    p1 = multiprocessing.Process(
+    p1 = _mp.Process(
         target=_worker_append_many, args=(str(ledger_path), "actor/file.write/dir_a/", n),
     )
-    p2 = multiprocessing.Process(
+    p2 = _mp.Process(
         target=_worker_append_many, args=(str(ledger_path), "actor/file.write/dir_b/", n),
     )
     p1.start()
@@ -116,10 +141,10 @@ def test_two_real_processes_racing_the_same_key_resolve_by_log_order(
     ledger_path = tmp_path / "approvals.jsonl"
     key = "actor/file.write/contested/"
 
-    p1 = multiprocessing.Process(
+    p1 = _mp.Process(
         target=_worker_append_one, args=(str(ledger_path), key, True),
     )
-    p2 = multiprocessing.Process(
+    p2 = _mp.Process(
         target=_worker_append_one, args=(str(ledger_path), key, False),
     )
     p1.start()
@@ -228,10 +253,10 @@ def test_two_processes_racing_the_first_migration_still_fold_correctly(
     )
     ledger_path = tmp_path / ".reyn" / "approvals.jsonl"
 
-    p1 = multiprocessing.Process(
+    p1 = _mp.Process(
         target=_worker_migrate, args=(str(ledger_path), str(legacy_path)),
     )
-    p2 = multiprocessing.Process(
+    p2 = _mp.Process(
         target=_worker_migrate, args=(str(ledger_path), str(legacy_path)),
     )
     p1.start()
@@ -278,10 +303,10 @@ def test_a_slow_migration_racing_a_real_revoke_never_resurrects_the_stale_value(
     )
     ledger_path = tmp_path / ".reyn" / "approvals.jsonl"
 
-    p_migrate = multiprocessing.Process(
+    p_migrate = _mp.Process(
         target=_worker_migrate, args=(str(ledger_path), str(legacy_path)),
     )
-    p_revoke = multiprocessing.Process(
+    p_revoke = _mp.Process(
         target=_worker_revoke, args=(str(ledger_path), str(legacy_path), target_key),
     )
     p_migrate.start()
