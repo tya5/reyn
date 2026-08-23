@@ -836,11 +836,27 @@ class PermissionResolver:
         self._saved[key] = approved
         self._session[key] = approved
         if not approved:
-            # #5157 (architect ruling, issuecomment-5383671820): a human
-            # REVOKING this approval is the disappearance-trigger for its
-            # identity fd, same idiom as #5146's own settle-on-disappearance
-            # — nothing left to protect once the grant itself is gone.
+            # #5157 (architect ruling, issuecomment-5383671820, and a
+            # confirm-item catch on THIS fix's own TESTS-READY(A),
+            # issuecomment-5383698618): a human REVOKING this approval is
+            # the disappearance-trigger for its identity fd, same idiom
+            # as #5146's own settle-on-disappearance — nothing left to
+            # protect once the grant itself is gone. The BOUND IDENTITY
+            # RECORD is one more thing that must go with it, not just the
+            # fd: leaving `_bound_identities[key]` behind after revoke
+            # means a LATER re-approval of the SAME key starts with no fd
+            # (just released) but a STALE stat recorded from before the
+            # revoke -- if the target was deleted+recreated in between
+            # and the new object's (ino, birthtime) happens to coincide
+            # with the old one (inode reuse; or two creations landing in
+            # the same coarse-grained birthtime tick), the stale record
+            # would read as a CONFIRMED match — precisely the "a name is
+            # not an identity" shape #5042 exists to close, reopened by
+            # this PR's own fd-release path. Clearing the record forces
+            # the next use back through bind-ON-FIRST-USE, same as a
+            # never-before-seen key.
             self._release_identity_fd(key)
+            self._bound_identities.pop(key, None)
         try:
             import yaml
             self._approvals_path.parent.mkdir(parents=True, exist_ok=True)
@@ -850,6 +866,11 @@ class PermissionResolver:
                     self._approvals_path.read_text(encoding="utf-8")
                 ) or {}
             existing[key] = approved
+            if not approved:
+                bound_section = existing.get("_bound_identities")
+                if isinstance(bound_section, dict) and key in bound_section:
+                    bound_section.pop(key, None)
+                    existing["_bound_identities"] = bound_section
             self._approvals_path.write_text(
                 yaml.dump(existing, allow_unicode=True, default_flow_style=False),
                 encoding="utf-8",
