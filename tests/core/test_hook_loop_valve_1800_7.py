@@ -74,6 +74,24 @@ async def _push_user(session: Session, text: str) -> None:
     await session._put_inbox("user", {"text": text, "wake": True, "chain_id": "c"})
 
 
+@pytest.mark.asyncio
+async def test_hook_message_is_fanned_out_to_live_outbox(tmp_path):
+    """Tier 2: a hook ride-along is visible on the live outbox, not only history."""
+    session = _make_session(tmp_path, cap=2)
+    subscription = session.outbox_hub.subscribe()
+    async def _noop(*_args):
+        return None
+
+    session._run_router_loop = _noop  # type: ignore[method-assign]
+
+    await session._handle_hook_message({"name": "probe", "text": "injected", "wake": True})
+    message = await subscription.get()
+    assert message is not None
+    assert message.kind == "system"
+    assert "[hook:probe]" in message.text
+    subscription.close()
+
+
 # ---------------------------------------------------------------------------
 
 
