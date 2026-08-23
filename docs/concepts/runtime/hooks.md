@@ -99,7 +99,7 @@ and argv-list-only payload as `exec` above):
 
 | Field | Type | Default | Meaning |
 |---|---|---|---|
-| `exec_capture` | `list[str]` | _required_ | The argv. Non-empty list of non-empty strings. stdout must be pure JSON: `{"push_when": bool, "wake": bool, "message": str, "session"?: str}` (first three required). Any failure (non-zero exit, invalid JSON, missing/wrong-typed field) skips the push, fail-safe. |
+| `exec_capture` | `list[str]` | _required_ | The argv. Non-empty list of non-empty strings. stdout must be pure JSON: `{"push_when": bool, "wake": bool, "message": str, "session"?: str}` (first three required). Any failure (non-zero exit, invalid JSON, missing/wrong-typed field, or — #5210 — decoded stdout exceeding a live context-budget-derived token cap) skips the push, fail-safe — never a truncated/partial directive, since a cut JSON payload would fail to parse and be indistinguishable from a clean no-push run. |
 
 **`pipeline_launch`** — launch a registered pipeline, async/detached:
 
