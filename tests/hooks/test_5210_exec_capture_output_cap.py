@@ -44,8 +44,14 @@ def _noop_backend() -> NoopBackend:
     return NoopBackend()
 
 
-def _policy(timeout: int = 10) -> SandboxPolicy:
-    return SandboxPolicy(network=False, deny_subprocess=True, timeout_seconds=timeout)
+def _policy(timeout: int = 10, temp_dir: str = "") -> SandboxPolicy:
+    return SandboxPolicy(
+        network=False,
+        deny_subprocess=True,
+        timeout_seconds=timeout,
+        temp_dir=temp_dir,
+        temp_source="session",
+    )
 
 
 # ── Level 1 — run_shell_hook itself, real subprocesses ────────────────────
@@ -69,7 +75,7 @@ async def test_output_within_cap_is_returned_unchanged(
         event_context={"event": "turn_end"},
         timeout_seconds=10,
         sandbox_backend=_noop_backend(),
-        sandbox_policy=_policy(),
+        sandbox_policy=_policy(temp_dir=str(tmp_path)),
         allowlist_path=tmp_path / "allowlist.json",
         capture_stdout=True,
         output_token_cap=(1000, "openai/gpt-4o-mini"),
@@ -109,7 +115,7 @@ async def test_output_exceeding_the_cap_is_rejected_not_truncated(
             event_context={"event": "turn_end"},
             timeout_seconds=10,
             sandbox_backend=_noop_backend(),
-            sandbox_policy=_policy(),
+            sandbox_policy=_policy(temp_dir=str(tmp_path)),
             allowlist_path=tmp_path / "allowlist.json",
             capture_stdout=True,
             emit_event=_emit_event,
@@ -157,7 +163,7 @@ async def test_no_cap_supplied_is_unbounded_matching_pre_5210(
         event_context={"event": "turn_end"},
         timeout_seconds=10,
         sandbox_backend=_noop_backend(),
-        sandbox_policy=_policy(),
+        sandbox_policy=_policy(temp_dir=str(tmp_path)),
         allowlist_path=tmp_path / "allowlist.json",
         capture_stdout=True,
         # output_token_cap omitted -- the default
@@ -192,7 +198,7 @@ async def test_strip_the_cap_check_reproduces_the_original_defect(
         event_context={"event": "turn_end"},
         timeout_seconds=10,
         sandbox_backend=_noop_backend(),
-        sandbox_policy=_policy(),
+        sandbox_policy=_policy(temp_dir=str(tmp_path)),
         allowlist_path=tmp_path / "allowlist.json",
         capture_stdout=True,
     )
@@ -201,7 +207,7 @@ async def test_strip_the_cap_check_reproduces_the_original_defect(
         event_context={"event": "turn_end"},
         timeout_seconds=10,
         sandbox_backend=_noop_backend(),
-        sandbox_policy=_policy(),
+        sandbox_policy=_policy(temp_dir=str(tmp_path)),
         allowlist_path=tmp_path / "allowlist.json",
         capture_stdout=True,
         output_token_cap=(5, "openai/gpt-4o-mini"),

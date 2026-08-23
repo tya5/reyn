@@ -2126,7 +2126,7 @@ class MCPClient:
             write_paths=[cwd, *extra],
             # #5184 part 1: MCP intentionally inherits the SDK environment;
             # part 2 will replace this bool with the three-value mode.
-            temp_dir_required=False,
+            temp_source="inherited",
             # #3901 PR-B ④ (owner ruling B): SandboxPolicy's own dataclass
             # defaults for read_deny_paths/write_deny_paths are now empty
             # (full compat) — but an MCP server is untrusted THIRD-PARTY code,

@@ -48,8 +48,14 @@ def _noop_backend() -> NoopBackend:
     return NoopBackend()
 
 
-def _policy(timeout: int = 10) -> SandboxPolicy:
-    return SandboxPolicy(network=False, deny_subprocess=True, timeout_seconds=timeout)
+def _policy(timeout: int = 10, temp_dir: str = "") -> SandboxPolicy:
+    return SandboxPolicy(
+        network=False,
+        deny_subprocess=True,
+        timeout_seconds=timeout,
+        temp_dir=temp_dir,
+        temp_source="session",
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -95,7 +101,7 @@ async def test_output_ignored_returns_none(
         event_context={"event": "turn_end"},
         timeout_seconds=10,
         sandbox_backend=_noop_backend(),
-        sandbox_policy=_policy(),
+        sandbox_policy=_policy(temp_dir=str(tmp_path)),
         allowlist_path=allowlist,
     )
 
@@ -128,7 +134,7 @@ async def test_capture_stdout_returns_decoded_stdout(
         event_context={"event": "turn_end"},
         timeout_seconds=10,
         sandbox_backend=_noop_backend(),
-        sandbox_policy=_policy(),
+        sandbox_policy=_policy(temp_dir=str(tmp_path)),
         allowlist_path=allowlist,
         capture_stdout=True,
     )
@@ -157,7 +163,7 @@ async def test_capture_stdout_nonzero_exit_returns_none(
         event_context={"event": "turn_end"},
         timeout_seconds=10,
         sandbox_backend=_noop_backend(),
-        sandbox_policy=_policy(),
+        sandbox_policy=_policy(temp_dir=str(tmp_path)),
         allowlist_path=allowlist,
         capture_stdout=True,
     )
@@ -198,7 +204,7 @@ async def test_json_context_delivered_on_stdin(
         event_context={"event": "skill_end", "skill": "my-skill"},
         timeout_seconds=10,
         sandbox_backend=_noop_backend(),
-        sandbox_policy=_policy(),
+        sandbox_policy=_policy(temp_dir=str(tmp_path)),
         allowlist_path=allowlist,
     )
 
@@ -232,7 +238,7 @@ async def test_timeout_returns_none_no_crash(
         event_context={"event": "session_end"},
         timeout_seconds=1,
         sandbox_backend=_noop_backend(),
-        sandbox_policy=_policy(timeout=1),
+        sandbox_policy=_policy(timeout=1, temp_dir=str(tmp_path)),
         allowlist_path=allowlist,
     )
 
@@ -269,7 +275,7 @@ async def test_nonapproved_command_nontty_refused(
         event_context={"event": "session_start"},
         timeout_seconds=10,
         sandbox_backend=_noop_backend(),
-        sandbox_policy=_policy(),
+        sandbox_policy=_policy(temp_dir=str(tmp_path)),
         allowlist_path=allowlist,
     )
 
