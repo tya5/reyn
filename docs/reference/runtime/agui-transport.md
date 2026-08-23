@@ -474,9 +474,14 @@ from the session's live cost / token / context accessors and the working-indicat
 state, and only the render-relevant subset is streamed.
 
 - `STATE_SNAPSHOT` — emitted **on connect**, the full read-model. Fields:
-  `attached_name`, `model`, `cost_agent`, `cost_total`, `agent_tokens`,
-  `ctx_used`, `ctx_window`, `waiting_on`, `queue`, `turn_active`,
-  `halted_reason`.
+  `attached_name`, `model`, `agent_names`, `session_tree`,
+  `model_active_class`, `model_classes` (#5094), `visibility_items`,
+  `mcp_subscriptions` (#5185), `cost_agent`, `cost_total`, `agent_tokens`,
+  `ctx_used`, `ctx_window`, `waiting_on`, `pending_intervention_head`
+  (#5050), `queue`, `turn_active`, `queue_seq` (#3300 P2a),
+  `halted_reason`. `agui/state.py`'s own `project_status` is the sole
+  declaration of this list (#5098) — read it directly rather than trusting
+  this doc's transcription to stay current.
 - `STATE_DELTA` — emitted **on change**, carrying only the changed keys. An idle
   stream emits no deltas.
 
@@ -511,14 +516,22 @@ the item by `msg_id` (unlike `turn_started`, which matches by `chain_id`).
 The client seeds its status view from the snapshot and merges each delta, so the
 remote status panel always reflects the server's values.
 
-These are exactly the **main status-line values** the interactive TUI renders, so a
+These are the **main status-line values** the interactive TUI renders, so a
 remote client on an interactive TTY draws the same status line as a local one
-(`agent` · `model` · `cost` · `ctx%`, plus the working indicator). The **drawer
-panes** behind that line (the cost breakdown and ctx/compaction detail, the
-`/model` class picker, the agent/session tree, the tool/mcp/skill/hook visibility
-and applicability toggles, the pipeline and cron listings) and the interactive
-intervention / `/rewind` **pickers** are session-local state, not on the wire — a
-remote client shows the streamed status values and degrades those to empty/`—`/0.
+(`agent` · `model` · `cost` · `ctx%`, plus the working indicator) — PLUS, as of
+#5094/#5185, a growing set of **drawer panes** that also reflect real
+server-side state: the `/model` class picker and agent/session tree (#5094),
+and the tool/mcp/skill visibility toggles (#5185, `visibility_items`) together
+with the mcp pane's own subscription rows (`mcp_subscriptions`) — see
+`ChatReadModelCapabilities`'s own docstring
+(`reyn.interfaces.repl.read_model`) for the full, authoritative list of which
+reads are genuinely wired vs. graceful-degrade; a hand-transcribed list here
+would drift the moment a new key is added, the same risk #5098 already named
+for the field list above. The REMAINING drawer panes (the cost breakdown and
+ctx/compaction detail, the hook applicability toggles, the pipeline and cron
+listings) and the interactive intervention / `/rewind` **pickers** are still
+session-local state, not on the wire — a remote client degrades those to
+empty/`—`/0/`"not reported on this connection"`, never a fabricated value.
 Adding any other field is an additive `STATE_*` key, not a client change.
 
 ## Reconnect

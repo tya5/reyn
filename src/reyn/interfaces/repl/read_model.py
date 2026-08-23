@@ -247,6 +247,34 @@ class ChatReadModelCapabilities:
     ``unknown_config_key_count``, ``unknown_config_keys``, ``ctx_source``)
     — see #5034's own issue thread for the per-key reasoning; not
     declared here because there is nothing to gate.
+
+    #5185 REVERSES #5034's clearance for 2 of those 6 —
+    ``visibility_items``/``mcp_subscriptions``. #5034's reasoning held for
+    the WIRE SHAPE at the time (both were hand-typed ``None``/``[]``
+    literals, and #5034 only asked "is the literal indistinguishable from
+    a genuinely empty local state" — for ``visibility_items`` the answer
+    was already "no", since #3378 made it ``None`` specifically so it
+    would NOT read as empty). What #5034 did not (and #5094's precedent
+    later showed matters): a hand-typed literal that never changes is
+    fabrication regardless of WHICH value it picks, once real per-session
+    data exists server-side and is simply never forwarded — owner
+    live-observed a real remote MCP pane showing "(not wired)" for a
+    session whose subscriptions were genuinely live (#5185). Both fields
+    now ride the wire for real (:func:`~reyn.interfaces.transport.agui.
+    state.project_status`), declared here so a producer that stops
+    forwarding either one fails to construct its declaration rather than
+    silently reverting to the old always-empty/always-None shape.
+    ``visibility_items_reported`` covers a SHARED key (tool/mcp/skill
+    panes all read it via ``chrome.py``'s ``_visibility_pane_rows``) —
+    genuinely one flag, since local and remote either both have the wire
+    channel or neither does; there is no way for one pane's visibility
+    read to be wired while another's is not. ``mcp_subscriptions_reported``
+    is its own separate flag (a different key, a different pane-local
+    read) even though #5185's acceptance criteria require the two land in
+    the SAME PR — landing together is an ORDERING requirement (a
+    subscription row has nothing to attach to without ``visibility_items``
+    supplying the server row first, see ``_mcp_pane_entries``'s own
+    docstring), not a reason to collapse them into one flag.
     """
 
     completion_source: bool
@@ -274,6 +302,10 @@ class ChatReadModelCapabilities:
     agent_roster_reported: bool  # covers `agent_names` + `session_tree` together
     model_catalog_reported: bool  # covers `model_classes` + `model_active_class` together
     attached_name_reported: bool
+    # #5185: see the class docstring's own section for why these reverse
+    # #5034's clearance and why they stay 2 fields despite landing together.
+    visibility_items_reported: bool  # covers `visibility_items` (tool/mcp/skill panes)
+    mcp_subscriptions_reported: bool  # covers `mcp_subscriptions` (mcp pane only)
 
 
 def reported_snapshot_keys(
@@ -327,6 +359,8 @@ LOCAL_CHAT_READ_CAPABILITIES = ChatReadModelCapabilities(
     agent_roster_reported=True,
     model_catalog_reported=True,
     attached_name_reported=True,
+    visibility_items_reported=True,
+    mcp_subscriptions_reported=True,
 )
 
 #: :class:`RemoteReadModel` — the frame-sufficiency boundary each of these
@@ -339,7 +373,11 @@ LOCAL_CHAT_READ_CAPABILITIES = ChatReadModelCapabilities(
 #: ``attached_name_reported`` (#5094, the same fix): those 5 snapshot keys
 #: now ride the SAME wire channel, so a remote agent tab / model-class
 #: picker reflects the server's real roster instead of an unconditional
-#: empty list. See the module docstring's "Frame-sufficiency" section.
+#: empty list. ``visibility_items_reported``/``mcp_subscriptions_reported``
+#: (#5185, the same fix again): a remote MCP/tool/skill pane now reflects
+#: the server's real visibility/subscription state instead of an
+#: unconditional "(not wired)"/empty subscription list. See the module
+#: docstring's "Frame-sufficiency" section.
 REMOTE_CHAT_READ_CAPABILITIES = ChatReadModelCapabilities(
     completion_source=False,
     intervention_head=True,
@@ -356,6 +394,8 @@ REMOTE_CHAT_READ_CAPABILITIES = ChatReadModelCapabilities(
     agent_roster_reported=True,
     model_catalog_reported=True,
     attached_name_reported=True,
+    visibility_items_reported=True,
+    mcp_subscriptions_reported=True,
 )
 
 
@@ -763,21 +803,29 @@ def project_remote_snapshot(values: "dict | None") -> dict:
         # pane, missed by #5009's original hand-enumerated key list).
         "hooks": [],
         "skills": [],
-        # #3378: None (not []) — a remote frame carries no visibility seam at all, and
-        # the renderer must say "not wired" rather than "(none)" (which would claim
-        # "nothing is narrowed", a statement this frame cannot support).
-        "visibility_items": None,
+        # #5185 (reverses #3378/#4686's own hand-typed literals below —
+        # see the ChatReadModelCapabilities docstring's own section):
+        # both keys now ride the wire for real
+        # (agui/state.py's own project_status, same channel #5094 used for
+        # agent_names etc). ``visibility_items`` is read straight off the
+        # wire, PRESERVING None — a bare `v.get(...)` with NO `[]` default,
+        # deliberately: defaulting to `[]` here would be the exact
+        # fabrication #3378 first existed to prevent, just moved from a
+        # permanent hand literal to a wire-miss default. `None` still means
+        # "this session wires no visibility seam" (`_visibility_pane_rows`'s
+        # own `raw is not None` check, unchanged) — now genuinely reflecting
+        # the SERVER's real per-session state instead of an unconditional
+        # remote-side constant.
+        "visibility_items": v.get("visibility_items"),
         # gated by ``hooks_reported`` alongside ``hooks`` above — one pane,
         # one field (#5034).
         "hook_items": [],
-        # #4686: session-local read (MCPConnectionService is process-local,
-        # not projected onto the wire) → [] for remote, same "empty" shape
-        # as ``mcp_servers``/``hooks``/``skills`` above — a remote client's
-        # mcp pane shows base rows with no subscription augmentation rather
-        # than raising (``_mcp_pane_entries`` treats a server absent from
-        # this list as "nothing to add", not "not wired", since the base
-        # row itself already came from ``visibility_items``).
-        "mcp_subscriptions": [],
+        # #5185: real wire data — `_session_mcp_subscriptions` always
+        # returns a list (never None, unlike `visibility_items` above; see
+        # its own docstring, "not a seam like visibility_items/hook_items"),
+        # so `[]` is the correct default for BOTH "genuinely no
+        # subscriptions" and "key not yet on the wire" here.
+        "mcp_subscriptions": v.get("mcp_subscriptions", []),
         # `[]` below is correct (pipeline registry is not on the wire);
         # gated by ``pipelines_reported`` above so `pipe_pane_lines`
         # renders "not reported" instead of its own `["(none)"]` fallback

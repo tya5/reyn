@@ -138,6 +138,8 @@ def test_capabilities_dataclass_rejects_a_missing_field():
         agent_roster_reported=True,
         model_catalog_reported=True,
         attached_name_reported=True,
+        visibility_items_reported=True,
+        mcp_subscriptions_reported=True,
     )
     with pytest.raises(TypeError):
         ChatReadModelCapabilities(  # type: ignore[call-arg]
@@ -173,9 +175,10 @@ def test_capabilities_dataclass_has_exactly_the_declared_fields():
     ``usage_breakdown_reported`` / ``ctx_compaction_reported`` (#5009) /
     ``hooks_reported`` / ``pipelines_reported`` (#5034) /
     ``agent_roster_reported`` / ``model_catalog_reported`` /
-    ``attached_name_reported`` (#5094) are the 9 fields NOT named after a
-    ``ChatReadModel`` method — see the class's own docstring for why they
-    live here anyway."""
+    ``attached_name_reported`` (#5094) /
+    ``visibility_items_reported`` / ``mcp_subscriptions_reported`` (#5185)
+    are the 11 fields NOT named after a ``ChatReadModel`` method — see the
+    class's own docstring for why they live here anyway."""
     names = {f.name for f in fields(ChatReadModelCapabilities)}
     assert names == {
         "completion_source",
@@ -193,6 +196,8 @@ def test_capabilities_dataclass_has_exactly_the_declared_fields():
         "agent_roster_reported",
         "model_catalog_reported",
         "attached_name_reported",
+        "visibility_items_reported",
+        "mcp_subscriptions_reported",
     }
 
 

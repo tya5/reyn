@@ -324,8 +324,12 @@ WaitingOn ラベル)は**read-model**であり、ファイルミラーではな�
 する部分集合のみがストリームされる。
 
 - `STATE_SNAPSHOT` — **接続時**に発行される、read-model 全体。フィールド: `attached_name`、
-  `model`、`cost_agent`、`cost_total`、`agent_tokens`、`ctx_used`、`ctx_window`、
-  `waiting_on`、`queue`、`turn_active`、`halted_reason`。
+  `model`、`agent_names`、`session_tree`、`model_active_class`、`model_classes`
+  (#5094)、`visibility_items`、`mcp_subscriptions`(#5185)、`cost_agent`、
+  `cost_total`、`agent_tokens`、`ctx_used`、`ctx_window`、`waiting_on`、
+  `pending_intervention_head`(#5050)、`queue`、`turn_active`、`queue_seq`
+  (#3300 P2a)、`halted_reason`。この一覧の正本は `agui/state.py` 自身の
+  `project_status`(#5098)— このドキュメントの転記より、そちらを直接読むこと。
 - `STATE_DELTA` — **変更時**に発行され、変更されたキーのみを運ぶ。アイドルなストリームは
   delta を発行しない。
 
