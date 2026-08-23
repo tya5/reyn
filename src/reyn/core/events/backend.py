@@ -247,6 +247,8 @@ class LocalEventBackend:
         agent_delta_include_text: bool = False,
         completed_response_include_text: bool = False,
         user_input_include_text: bool = False,
+        provider_body_include_text: bool = False,
+        provider_body_max_chars: int = 4000,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self._store = store
@@ -281,6 +283,21 @@ class LocalEventBackend:
         # inside `write()`, after `EventLog.emit()` has already handed the
         # raw event off for subscriber dispatch.
         self._user_input_include_text = user_input_include_text
+        # #4975 (architect ruling, issuecomment-5384508845): a provider's
+        # own 4xx/5xx error body can quote back ANY of the 3 content
+        # classes above — reyn does not choose that body's shape, so it
+        # cannot tell which of the 3 a given quote is. Showing
+        # `provider_body`/`provider_response` (`llm_request_error`)
+        # therefore requires ALL 3 above (a lattice-meet, the narrowest
+        # participant wins) AND this flag itself — its own opt-in on top
+        # of the meet, since "opted into all 3" is not the same claim as
+        # "opted into an externally-shaped blob that might contain any of
+        # them" (see `_persist_llm_request_error`'s own docstring).
+        self._provider_body_include_text = provider_body_include_text
+        # #4975: the operator-adjustable cap on the SHOWN provider_body/
+        # provider_response text (CLAUDE.md: never a baseless embedded
+        # constant) — reyn cannot bound a provider's own error-body size.
+        self._provider_body_max_chars = provider_body_max_chars
         # Test seam (mirrors this repo's existing ``clock: Callable[[],
         # float]`` idiom, e.g. TextualChatApp) — production always passes
         # the default ``time.monotonic``; a test can inject a fake to
@@ -306,7 +323,16 @@ class LocalEventBackend:
         "user_intervention_requested": ("question", "suggestions", "options"),
     }
 
+    #: #4975: the provider-controlled fields on ``llm_request_error`` this
+    #: gate applies to — see :meth:`_persist_llm_request_error`'s own
+    #: docstring for why this event kind needs a MEET, not a single flag
+    #: like every other kind in :attr:`_COMPLETED_RESPONSE_TEXT_FIELDS`.
+    _PROVIDER_BODY_FIELDS: "tuple[str, ...]" = ("provider_body", "provider_response")
+
     def write(self, event: Event) -> None:
+        if event.type == "llm_request_error":
+            self._persist_llm_request_error(event)
+            return
         if event.type in self._COMPLETED_RESPONSE_TEXT_FIELDS:
             if self._completed_response_include_text:
                 self._store.write(event)
@@ -406,6 +432,52 @@ class LocalEventBackend:
         data.pop(content_field, None)
         self._store.write(event.model_copy(update={"data": data}))
 
+    def _persist_llm_request_error(self, event: Event) -> None:
+        """#4975 (architect ruling, issuecomment-5384508845): the
+        lattice-meet gate for ``provider_body``/``provider_response`` —
+        a provider's own 4xx/5xx error body can echo back content from
+        the request it rejected, but reyn does not choose that body's
+        shape, so it cannot tell WHICH content class (streamed reply /
+        completed response / user input) a given quote would be. Showing
+        either field therefore requires ALL 3 #4666 knobs AND this
+        kind's own opt-in (:attr:`_provider_body_include_text`) — the
+        narrowest participant wins, same "compose_resolved is a
+        lattice-meet (∩ allow, ∪ deny)" idiom this repo's permission
+        resolution already uses.
+
+        NEVER silent either way (constitution's 2nd lens): ``error_type``/
+        ``status_code`` are untouched (unconditional, unchanged);
+        ``<field>_length`` is added for every field this method touches,
+        gate-independent, so "a body existed but was not shown" stays
+        distinguishable from "there was none" even when the meet fails.
+        When the meet holds, the field is kept but capped at
+        :attr:`_provider_body_max_chars` (reyn cannot bound a provider's
+        own body size) — ``<field>_truncated`` is added only when the cap
+        actually cut something, so a caller can tell a capped body from a
+        genuinely short one."""
+        meet = (
+            self._agent_delta_include_text
+            and self._completed_response_include_text
+            and self._user_input_include_text
+            and self._provider_body_include_text
+        )
+        data = dict(event.data)
+        for field in self._PROVIDER_BODY_FIELDS:
+            value = data.get(field)
+            if value is None:
+                continue
+            text = value if isinstance(value, str) else str(value)
+            data[f"{field}_length"] = len(text)
+            if meet:
+                if len(text) > self._provider_body_max_chars:
+                    data[field] = text[: self._provider_body_max_chars]
+                    data[f"{field}_truncated"] = True
+                else:
+                    data[field] = text
+            else:
+                data.pop(field, None)
+        self._store.write(event.model_copy(update={"data": data}))
+
     def declare_gaps(self) -> list[str]:
         gaps = [
             "agent_delta (streamed reply content, one per chunk) is not "
@@ -491,6 +563,33 @@ class LocalEventBackend:
                 "tool_called.args/tool_returned.result (a different emit "
                 "path, see this module's _USER_INPUT_CONTENT_FIELDS "
                 "docstring).",
+            )
+        # #4975: a lattice-meet, not a single flag — the gap applies
+        # whenever ANY participant is off, named per-participant so a
+        # reader knows exactly which knob(s) would need to flip.
+        missing = [
+            name for name, on in (
+                ("agent_delta_include_text", self._agent_delta_include_text),
+                ("completed_response_include_text", self._completed_response_include_text),
+                ("user_input_include_text", self._user_input_include_text),
+                ("provider_body_include_text", self._provider_body_include_text),
+            ) if not on
+        ]
+        if missing:
+            gaps.append(
+                "llm_request_error's provider_body/provider_response "
+                "(a provider's own 4xx/5xx error body, which can quote "
+                "back request content reyn does not control the shape "
+                "of) are not retained in the durable record — a "
+                "lattice-meet gate (#4975): showing them requires ALL of "
+                f"audit_events.{{{', '.join(missing)}}} to be true, and "
+                f"{'these are' if len(missing) > 1 else 'this is'} "
+                "currently False (the default). error_type/status_code "
+                "are always recorded; provider_body_length/"
+                "provider_response_length are also always recorded when "
+                "a body existed, so 'a body existed but was not shown' "
+                "stays distinguishable from 'there was none'. This gap "
+                "is durable-write-only.",
             )
         return gaps
 

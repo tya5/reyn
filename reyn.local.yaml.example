@@ -659,6 +659,27 @@
 # forgets to declare it leaks that text silently — see
 # ``src/reyn/core/dispatch/content_declarations.py``'s own module
 # docstring for the full disclosure.
+#
+# ``provider_body_include_text`` / ``provider_body_max_chars`` (#4975,
+# architect ruling (c), default false / 4000): gates ``llm_request_error``'s
+# ``provider_body``/``provider_response`` (a provider's own error-response
+# body, which can quote back request content of any of the 3 content
+# classes above — reyn does not control the shape of a provider's own
+# response, so it cannot tell in advance which class a given quote would
+# be). Showing either field requires a LATTICE-MEET: ALL of
+# ``agent_delta_include_text`` AND ``completed_response_include_text`` AND
+# ``user_input_include_text`` above AND this field's own opt-in — the
+# narrowest participant wins, same "compose_resolved is a lattice-meet"
+# idiom this repo's permission resolution already uses. When the meet
+# holds, the field is kept but capped at ``provider_body_max_chars``
+# (``_truncated`` added only when the cap actually cut something).
+# ``error_type``/``status_code`` are always recorded unconditionally;
+# ``provider_body_length``/``provider_response_length`` are also always
+# recorded when a body existed, gate-independent, so "existed but hidden"
+# stays distinguishable from "genuinely absent". Whether providers
+# actually echo conversation content in their error bodies is a separate,
+# unmeasured question tracked in #4975's own issue — this knob only
+# builds the permission surface for when that's confirmed.
 # -----------------------------------------------------------------------------
 # audit_events:
 #   max_bytes: 10485760              # 10 MB
@@ -671,6 +692,8 @@
 #   agent_delta_include_text: false         # keep the reply's own content in the durable record?
 #   completed_response_include_text: false  # keep the completed reply / ask_user question in the durable record?
 #   user_input_include_text: false          # keep the user's own words in the durable record?
+#   provider_body_include_text: false       # keep a provider's own error-response body/text? (lattice-meet, see above)
+#   provider_body_max_chars: 4000           # cap on the kept provider_body/provider_response, when shown
 
 
 # -----------------------------------------------------------------------------
