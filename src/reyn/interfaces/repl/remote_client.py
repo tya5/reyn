@@ -186,7 +186,14 @@ async def run_remote_repl(
                     async for line in resp.aiter_lines():
                         yield line
 
-                transport = AgUiTransport(sse_lines(), send)
+                # #5139: ``agent_name`` seeds this connection's OWN idea of
+                # "which (agent, sid) is the FIRST backlog batch for" — the
+                # URL this connection was opened against; see
+                # ``AgUiTransport.__init__``'s own comment for why the
+                # very first connect needs this seeded rather than
+                # learning it off a ``session_attached`` announce (that
+                # event only ever fires for a later mid-stream switch).
+                transport = AgUiTransport(sse_lines(), send, agent_name=agent_name)
                 # ADR-0039 P3: the REMOTE half of the unified chat client. It
                 # constructs the transport-specific pair (an ``AgUiTransport`` +
                 # a ``RemoteReadModel`` reading the server's STATE_* status view

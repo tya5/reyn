@@ -29,7 +29,7 @@ from prompt_toolkit.patch_stdout import patch_stdout
 
 from reyn.interfaces.slash.dispatch import maybe_dispatch_slash
 from reyn.interfaces.transport.client_transport import ClientTransport, pending_head_id
-from reyn.interfaces.transport.frames import FrameTag
+from reyn.interfaces.transport.frames import BacklogBatch, DisplayFrame, FrameTag
 from reyn.runtime.outbox import OutboxMessage
 
 from ._copy_sentinel import COPY_BUFFER_MAX, handle_copy_sentinel
@@ -304,38 +304,16 @@ async def run_output_loop(
     # Newest-first ring of recent agent replies so `/copy [N]` can grab the
     # latest (or an older) reply and pipe it to the system clipboard.
     recent_replies: deque[str] = deque(maxlen=COPY_BUFFER_MAX)
-    async for frame in transport.frames():
-        # Event frame → the renderer's working-indicator entry point. The dual
-        # stream is dispatched by tag at the CONSUMING end so the renderer keeps
-        # its two entry points; an outbox-only stream would silently drop these
-        # (the A2 WaitingOn bug, designed out by the completeness gate).
-        if frame.tag is FrameTag.EVENT:
-            event = frame.event
-            if getattr(event, "type", None) == "user_submitted":
-                data = getattr(event, "data", None) or {}
-                if own_connection_id is not None:
-                    meta = data.get("meta") or {}
-                    if meta.get("auth_connection_id") == own_connection_id:
-                        # This client's own remote submission (matched BY
-                        # CONNECTION IDENTITY, #3309 F2) — its own POST already
-                        # produced the terminal echo, no wait on any other
-                        # channel needed. Skip the redundant re-render.
-                        continue
-                elif own_submissions:
-                    event_msg_id = data.get("msg_id")
-                    if event_msg_id and event_msg_id in own_submissions:
-                        # This client's own PromptSession prompt already
-                        # echoed this exact submission (matched BY ID, #3287)
-                        # to the terminal — skip the redundant re-render and
-                        # consume the matched id so the set can't accidentally
-                        # match a LATER, unrelated event (ids never reused).
-                        own_submissions.discard(event_msg_id)
-                        continue
-            renderer.on_audit_event(event)
-            continue
-        msg = frame.message
-        if msg.kind == "__end__":
-            return
+
+    async def _render_display_message(msg: OutboxMessage) -> None:
+        # #5139: factored out of the loop body below so a
+        # ``BacklogBatch``'s own bundled frames (this plain/repl console
+        # has no destination-tracking concept the way ``TextualChatApp``
+        # does — see that class's own ``_apply_backlog_batch`` — so every
+        # message in a batch is rendered here, in order, exactly as each
+        # would have been individually before #5139 flattened them into
+        # this SAME loop) and a genuinely live ``DisplayFrame`` share ONE
+        # render path instead of two.
         if msg.kind == "agent":
             recent_replies.appendleft(msg.text)
         elif msg.kind == "__copy_last_reply__":
@@ -351,7 +329,7 @@ async def run_output_loop(
             # STILL take the text fallback — otherwise remote /rewind would be
             # swallowed for a picker that never arrives.
             if renderer.uses_app_input() and command_ui_region:
-                continue
+                return
             # persistent kind (not transient "status") so the list stays
             # readable. #5047 (axis A): was "intervention" purely for this
             # persistence property, not because a rewind list IS a
@@ -388,6 +366,49 @@ async def run_output_loop(
         # a failed router round doesn't deadlock the next iteration.
         if reply_seen is not None and msg.kind in {"agent", "error"}:
             reply_seen.set()
+
+    async for frame in transport.frames():
+        if isinstance(frame, BacklogBatch):
+            # #5139: a reconnect/switch backlog burst, bundled as ONE item
+            # (see that class's own docstring) — rendered in order, ahead
+            # of whatever comes after it in this SAME stream (wire order
+            # already IS render order here, nothing to reorder).
+            for f in frame.frames:
+                if isinstance(f, DisplayFrame):
+                    await _render_display_message(f.message)
+            continue
+        # Event frame → the renderer's working-indicator entry point. The dual
+        # stream is dispatched by tag at the CONSUMING end so the renderer keeps
+        # its two entry points; an outbox-only stream would silently drop these
+        # (the A2 WaitingOn bug, designed out by the completeness gate).
+        if frame.tag is FrameTag.EVENT:
+            event = frame.event
+            if getattr(event, "type", None) == "user_submitted":
+                data = getattr(event, "data", None) or {}
+                if own_connection_id is not None:
+                    meta = data.get("meta") or {}
+                    if meta.get("auth_connection_id") == own_connection_id:
+                        # This client's own remote submission (matched BY
+                        # CONNECTION IDENTITY, #3309 F2) — its own POST already
+                        # produced the terminal echo, no wait on any other
+                        # channel needed. Skip the redundant re-render.
+                        continue
+                elif own_submissions:
+                    event_msg_id = data.get("msg_id")
+                    if event_msg_id and event_msg_id in own_submissions:
+                        # This client's own PromptSession prompt already
+                        # echoed this exact submission (matched BY ID, #3287)
+                        # to the terminal — skip the redundant re-render and
+                        # consume the matched id so the set can't accidentally
+                        # match a LATER, unrelated event (ids never reused).
+                        own_submissions.discard(event_msg_id)
+                        continue
+            renderer.on_audit_event(event)
+            continue
+        msg = frame.message
+        if msg.kind == "__end__":
+            return
+        await _render_display_message(msg)
 
 
 __all__ = [

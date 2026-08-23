@@ -21,7 +21,7 @@ from reyn.interfaces.transport.agui.protocol import (
     encode_messages_snapshot,
     to_sse,
 )
-from reyn.interfaces.transport.frames import DisplayFrame
+from reyn.interfaces.transport.frames import BacklogBatch, DisplayFrame
 from reyn.runtime.outbox import OutboxMessage
 
 # A backlog mixing conversation turns (agent / user) with reyn chrome kinds.
@@ -57,7 +57,12 @@ def test_standard_messages_are_conversation_turns_only() -> None:
 @pytest.mark.asyncio
 async def test_reyn_client_rebuilds_full_backlog_from_reyn_block() -> None:
     """Tier 2: the reyn client replays the FULL backlog (chrome included) from the
-    _reyn block — the standard-array narrowing does not touch reyn reconstruction."""
+    _reyn block — the standard-array narrowing does not touch reyn reconstruction.
+
+    #5139: the backlog arrives as ONE ``BacklogBatch`` item off ``frames()``
+    (architect FINAL ruling, issuecomment-5383272756) rather than flattened
+    into individual DisplayFrame items — updated to match; the property
+    under test (chrome-inclusive reconstruction) is unchanged."""
     # A __end__ sentinel terminates the client's frames() loop after the backlog.
     sse = to_sse(encode_messages_snapshot(_BACKLOG)) + to_sse(
         encode_frame(DisplayFrame(OutboxMessage(kind="__end__", text="")))
@@ -67,10 +72,16 @@ async def test_reyn_client_rebuilds_full_backlog_from_reyn_block() -> None:
         return None
 
     transport = AgUiTransport(_sse_lines(sse), _noop_send)
+    items = [f async for f in transport.frames()]
+    batches = [f for f in items if isinstance(f, BacklogBatch)]
+    # Unpacking into a single-element tuple IS the "exactly one" check
+    # (raises on 0 or 2+ matches) — a behavioral assertion on the
+    # extracted value, not a ``len(...) == N`` format pin.
+    (batch,) = batches
     kinds_texts = [
         (f.message.kind, f.message.text)
-        async for f in transport.frames()
-        if isinstance(f, DisplayFrame) and f.message.kind != "__end__"
+        for f in batch.frames
+        if isinstance(f, DisplayFrame)
     ]
     assert kinds_texts == [
         ("user", "what's the weather"),

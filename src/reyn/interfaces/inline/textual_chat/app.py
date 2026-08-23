@@ -65,7 +65,7 @@ from reyn.interfaces.repl.renderer import (
     summarize_tool_result,
 )
 from reyn.interfaces.transport.agui.state import RemoteQueueView
-from reyn.interfaces.transport.frames import FrameTag
+from reyn.interfaces.transport.frames import BacklogBatch, DisplayFrame, FrameTag
 
 from ._meta_keys import ELAPSED_SECS_KEY as _ELAPSED_SECS_KEY
 from ._meta_keys import EXPANDED_KEY as _EXPANDED_KEY
@@ -1235,6 +1235,22 @@ class TextualChatApp(App):
         self._transport = transport
         self._read_model = read_model
         self._agent_name = agent_name
+        # #5139: mirrors ``self._agent_name`` — this client's OWN idea of
+        # which session it is currently attached to, updated at the same
+        # site ``self._agent_name`` is (:meth:`_handle_session_attached_
+        # event` — a mid-stream SWITCH only, see that method's own
+        # docstring). Seeded to the well-known default session id
+        # (``registry.py``'s ``_DEFAULT_SID``) rather than empty: a fresh,
+        # never-switched remote connection is always attached to it, and
+        # ``AgUiTransport``'s own FIRST backlog batch is seeded the same
+        # way (see that class's ``__init__``) — both sides of the
+        # comparison must start from the SAME default or a correct FIRST
+        # connect would spuriously fail the destination check. A LOCAL
+        # (in-process) session ignores this entirely — no
+        # ``BacklogBatch`` is ever produced off ``InProcessTransport``.
+        from reyn.runtime.registry import _DEFAULT_SID  # noqa: PLC0415
+
+        self._session_id = _DEFAULT_SID
         self._config = config
         # #4983: the CURRENTLY-ATTACHED session's conversation history,
         # read BEFORE this App was constructed (the caller — normally
@@ -1424,6 +1440,14 @@ class TextualChatApp(App):
         # started (and possibly finished) while this one's read was still
         # in flight off-thread must win. See that method's own docstring.
         self._session_switch_generation = 0
+        # #5139: how many decoded ``BacklogBatch`` items :meth:`_pump_frames`
+        # discarded because, by the time it compared, this client had
+        # already moved on to a DIFFERENT ``(agent, sid)`` than the batch
+        # was for — a public counter (mirrors #5119's own
+        # ``connection_retarget_has_subscribers`` reasoning), not a
+        # private detail a test would need to reach in for: "0 discards"
+        # must be verifiable, not merely assumed.
+        self._remote_backlog_discard_count = 0
         # A queued item's ``meta`` (ADR-0039 attribution) — ``apply_user_submitted``
         # deliberately stores only msg_id/chain_id/text on
         # ``RemoteQueueView.items`` (P2a's delta contract, reused unmodified,
@@ -2479,6 +2503,59 @@ class TextualChatApp(App):
         # alongside ``conversation.clear()``, exactly as it does for the
         # model this loop re-appends to.
         for msg in frames:
+            if msg.kind == "agent":
+                self._recent_replies.appendleft(msg.text)
+
+    def remote_backlog_discard_count(self) -> int:
+        """#5139: public read for :attr:`_remote_backlog_discard_count` —
+        see that attribute's own comment. "0 discards" must be
+        verifiable, not merely assumed (#5119's own reasoning)."""
+        return self._remote_backlog_discard_count
+
+    def _apply_backlog_batch(self, batch: "BacklogBatch") -> None:
+        """#5139 (architect FINAL ruling, issuecomment-5383272756): apply
+        ONE decoded :class:`~reyn.interfaces.transport.frames.BacklogBatch`
+        — the SAME primitive :meth:`_apply_hydrated_messages` uses for
+        LOCAL restore (``self.conversation.extend(...)``, ONE reflow),
+        never the per-frame :meth:`_append_frame` path :meth:`_ingest_frame`
+        uses for a LIVE turn's own incremental frames.
+
+        Called from :meth:`_pump_frames`, right where the batch is
+        dequeued — no separate barrier/fallback-worker apparatus is
+        needed under this design: the batch arrives IN the same stream
+        every live frame does, in the SAME wire order, so applying it the
+        moment it is dequeued already guarantees "backlog renders above
+        whatever comes after it" and "a connect with zero further frames
+        still shows history" (this batch itself is one of those frames —
+        see :class:`BacklogBatch`'s own docstring for why the earlier
+        side-channel draft needed a fallback worker at all: a
+        side-channelled batch never reached ``out``, so a connection with
+        no OTHER activity had nothing to drain it).
+
+        Destination check FIRST (architect ruling: "「在るか」は消失の
+        witness になりません — 「どれが/いくつ」を訊く" — existence is not
+        a loss-witness, ask which/how-many): a batch whose ``(agent,
+        sid)`` no longer matches THIS client's own current location has
+        been superseded by a later switch this client has already
+        rendered — the user is not looking at that destination anymore,
+        so showing it now would be wrong, not stale-but-still-correct.
+        Discarding it increments a PUBLIC counter
+        (:meth:`remote_backlog_discard_count`) rather than vanishing
+        silently."""
+        if batch.agent != self._agent_name or batch.sid != self._session_id:
+            self._remote_backlog_discard_count += 1
+            return
+        messages = [f.message for f in batch.frames if isinstance(f, DisplayFrame)]
+        if not messages:
+            return
+        try:
+            entries = self.conversation.extend(messages)
+        except Exception:
+            logger.exception("textual chat: remote backlog batch append failed")
+            return
+        for msg, entry in zip(messages, entries):
+            _apply_restored_state(msg, entry)
+        for msg in messages:
             if msg.kind == "agent":
                 self._recent_replies.appendleft(msg.text)
 
@@ -5399,6 +5476,12 @@ class TextualChatApp(App):
         self._sent_queue.clear_all()
         if agent:
             self._agent_name = agent
+        # #5139: mirrors the ``agent`` update just above — this switch's
+        # own ``{agent, session_id}`` announce is the wire's next
+        # BacklogBatch destination too (see ``self._session_id``'s own
+        # comment in ``__init__``).
+        if session_id:
+            self._session_id = session_id
         # Eager reseed (see the ``_queue_view``/``_queue_seeded`` bullet
         # above): seed the fresh view from the NEW session's snapshot right
         # now, rather than deferring to the generic "first frame" check —
@@ -6139,6 +6222,16 @@ class TextualChatApp(App):
         """
         try:
             async for frame in self._transport.frames():
+                # #5139 (architect FINAL ruling, issuecomment-5383272756):
+                # a reconnect/switch backlog burst arrives as ONE item IN
+                # this SAME stream — not a side channel — so it is applied
+                # right here, in strict wire-arrival order against every
+                # other frame, and this loop needs nothing else (no
+                # separate ordering barrier, no fallback worker for "zero
+                # further frames": this item IS one of those frames).
+                if isinstance(frame, BacklogBatch):
+                    self._apply_backlog_batch(frame)
+                    continue
                 if not self._queue_seeded:
                     try:
                         self._seed_queue_view()
