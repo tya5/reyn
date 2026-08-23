@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import json
 import multiprocessing
+import os
 from pathlib import Path
 
 from reyn.security.permissions.approval_ledger import (
@@ -50,6 +51,17 @@ def _worker_append_one(path_str: str, key: str, approved: bool) -> None:
 def _worker_migrate(ledger_path_str: str, legacy_path_str: str) -> None:
     ledger = ApprovalLedger(Path(ledger_path_str))
     migrate_legacy_snapshot(ledger, Path(legacy_path_str))
+
+
+def _worker_revoke(ledger_path_str: str, legacy_path_str: str, key: str) -> None:
+    """Mirrors the REAL call pattern every caller in this codebase
+    follows (``PermissionResolver._ensure_folded``, the CLI/web
+    ``_load``): migrate first (win or lose), THEN append the real
+    decision -- never a bare append with no migrate attempt at all,
+    which no real call site does."""
+    ledger = ApprovalLedger(Path(ledger_path_str))
+    migrate_legacy_snapshot(ledger, Path(legacy_path_str))
+    ledger.append_approval(key, False)
 
 
 def test_two_real_processes_approving_different_keys_both_survive(tmp_path: Path) -> None:
@@ -234,3 +246,96 @@ def test_two_processes_racing_the_first_migration_still_fold_correctly(
         "actor/file.write/legacy_dir/": True,
         "actor/file.write/legacy_revoked/": False,
     }
+
+
+def test_a_slow_migration_racing_a_real_revoke_never_resurrects_the_stale_value(
+    tmp_path: Path,
+) -> None:
+    """Tier 2: #5153 — docs-maintainer's TESTS-READY(B) finding on PR
+    #5170 (issuecomment-5384027134, 3/3, no strip needed): a slow
+    migration (many legacy keys, target key not first in iteration order)
+    racing a genuinely CONCURRENT real revoke of that SAME key must NOT
+    let the migration's stale legacy value land in file order AFTER the
+    real revoke -- that would make ``fold()`` resurrect an already-revoked
+    approval, straight at the permission band's own correctness.
+
+    Reproduced with a large legacy snapshot (many keys before the target,
+    so a per-key-append migration takes measurably longer than one fast
+    real append) and 2 REAL separate OS processes -- no artificial delay,
+    no strip needed to see this fail on the pre-fix (one-append-per-key)
+    migration; this test is the reproduction AND the fix's own witness."""
+    reyn_dir = tmp_path / ".reyn"
+    reyn_dir.mkdir()
+    legacy_path = reyn_dir / "approvals.yaml"
+    target_key = "actor/file.write/target_dir/"
+
+    other_rows = "\n".join(
+        f"actor/file.write/other_{i}/: true" for i in range(3000)
+    )
+    legacy_path.write_text(
+        other_rows + f"\n{target_key}: true\n",
+        encoding="utf-8",
+    )
+    ledger_path = tmp_path / ".reyn" / "approvals.jsonl"
+
+    p_migrate = multiprocessing.Process(
+        target=_worker_migrate, args=(str(ledger_path), str(legacy_path)),
+    )
+    p_revoke = multiprocessing.Process(
+        target=_worker_revoke, args=(str(ledger_path), str(legacy_path), target_key),
+    )
+    p_migrate.start()
+    p_revoke.start()
+    p_migrate.join(timeout=60)
+    p_revoke.join(timeout=60)
+    assert p_migrate.exitcode == 0
+    assert p_revoke.exitcode == 0
+
+    saved, _bound = ApprovalLedger(ledger_path).fold()
+    assert saved[target_key] is False, (
+        "a real, concurrent revoke must never be resurrected by a slow "
+        "migration's stale legacy value landing after it in file order"
+    )
+
+
+def test_migration_publish_never_clobbers_a_decision_that_wins_first(
+    tmp_path, monkeypatch,
+) -> None:
+    """Tier 2: #5153 — a DETERMINISTIC proof of the exact invariant the
+    real-process test above only demonstrates probabilistically (OS
+    scheduling/spawn overhead makes forcing an exact interleave
+    unreliable to control from the outside). Forces a real decision to
+    land in the NARROWEST possible window — the instant before
+    ``migrate_legacy_snapshot``'s own ``os.link`` publish call, after its
+    temp file is already fully written — by monkeypatching ``os.link``
+    itself (the actual publish primitive, not a fake collaborator: the
+    ledger, the temp file, and the real decision are all real) to run one
+    real ``append_approval`` immediately before delegating to the real
+    ``os.link``. This is the tightest possible race this module can ever
+    face — if migration survives THIS without clobbering the real
+    decision, it survives any looser (real-world) timing too."""
+    reyn_dir = tmp_path / ".reyn"
+    reyn_dir.mkdir()
+    legacy_path = reyn_dir / "approvals.yaml"
+    target_key = "actor/file.write/target_dir/"
+    legacy_path.write_text(f"{target_key}: true\n", encoding="utf-8")
+    ledger_path = tmp_path / ".reyn" / "approvals.jsonl"
+    ledger = ApprovalLedger(ledger_path)
+
+    real_link = os.link
+
+    def _real_decision_wins_the_narrowest_window(src, dst):
+        # The real decision creates the ledger path for the FIRST time,
+        # right before migration's own link() call would have.
+        ApprovalLedger(ledger_path).append_approval(target_key, False)
+        return real_link(src, dst)
+
+    monkeypatch.setattr(os, "link", _real_decision_wins_the_narrowest_window)
+    migrate_legacy_snapshot(ledger, legacy_path)
+
+    saved, _bound = ledger.fold()
+    assert saved[target_key] is False, (
+        "migration must never clobber a real decision, even one that "
+        "wins the ledger path's existence in the narrowest possible "
+        "window right before migration's own publish step"
+    )

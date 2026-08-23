@@ -45,11 +45,19 @@ before their own write lands.
 
 **Migration** (acceptance ③): a pre-#5153 ``approvals.yaml`` snapshot
 (``{key: bool}`` rows plus #5152's own ``_bound_identities`` sibling
-section) is migrated ONCE, on first touch, into day-0 records appended to
-this ledger — see :func:`migrate_legacy_snapshot`. Folding the ledger
-after migration must reproduce EXACTLY the same effective state the old
-snapshot reader would have returned (the acceptance witness) — migration
-adds records, it does not reinterpret them.
+section) is migrated ONCE, on first touch, into day-0 records — see
+:func:`migrate_legacy_snapshot`. Folding the ledger after migration must
+reproduce EXACTLY the same effective state the old snapshot reader would
+have returned (the acceptance witness) — migration adds records, it does
+not reinterpret them. The migration itself is written to a temp file,
+fully durable, THEN published at the ledger's own path via an atomic
+``os.link`` (not one append call per legacy key, and not a plain
+exclusive-create-then-write either — see that function's own docstring
+for why both of those still leave a gap) — see that function's own
+docstring for the real defect (docs-maintainer's TESTS-READY(B), PR
+#5170) this closes: a partially-migrated ledger racing
+a genuine concurrent decision could let a STALE legacy value land after,
+and therefore override, a real revoke.
 
 **Ordering authority** (architect co-vet, broker, #5153 2026-08-23T02:44Z):
 FILE ORDER is the ONLY authority "last wins" means — i.e. the order
@@ -80,6 +88,7 @@ from __future__ import annotations
 
 import json
 import os
+import tempfile
 import time
 from pathlib import Path
 from typing import Any
@@ -236,7 +245,61 @@ def migrate_legacy_snapshot(ledger: ApprovalLedger, legacy_yaml_path: Path) -> N
     unconditionally before every read/append without needing their own
     "have I migrated yet" flag. Malformed/partial legacy content degrades
     the same way the pre-#5153 loaders already did (a non-bool row or a
-    malformed ``_bound_identities`` entry is skipped, never an error)."""
+    malformed ``_bound_identities`` entry is skipped, never an error).
+
+    #5153 real defect (docs-maintainer's TESTS-READY(B) on PR #5170,
+    issuecomment-5384027134 — 3/3, no strip needed): the FIRST version of
+    this function appended one record PER KEY via ``ApprovalLedger``'s
+    normal ``append_*`` calls — durable per-call, but NOT atomic as a
+    WHOLE. A slow migration (many legacy keys, the target key not first
+    in iteration order) racing a genuinely CONCURRENT real decision (a
+    different process revoking that SAME key) could interleave: the real
+    revoke lands in file order BEFORE this function later reaches and
+    appends the STALE legacy value for that key — "last wins by file
+    order" then resurrects the stale, already-revoked grant. Batching
+    this function's own writes into one atomic operation would only fix
+    migration racing ITSELF (two processes both migrating); it does
+    nothing for migration racing an unrelated real append, because the
+    genuine danger is a partially-migrated ledger being visible to (and
+    written into) from another process's real decision at all.
+
+    Fixed by making migration INDIVISIBLE relative to ANY other writer,
+    not just to another migration attempt: every legacy row (both
+    ``approval`` and ``identity_bind`` records) is built into ONE buffer,
+    written COMPLETELY to a private temp file (fully flushed + fsync'd),
+    and only THEN published at the ledger's own path via ``os.link`` —
+    which POSIX guarantees is atomic and fails with ``EEXIST`` if the
+    target already exists. The ledger path itself is therefore NEVER
+    observed in a "created but not yet fully written" state by anyone —
+    it goes straight from "does not exist" to "exists with its FULL
+    migrated content", because the content was already 100% durable
+    before the ledger path was ever touched.
+
+    A first cut of this fix used a plain exclusive-create
+    (``O_CREAT | O_EXCL``) directly on the ledger path, then wrote the
+    content in a SEPARATE ``write()`` call — durable-once-written, but
+    NOT gap-free: between the create succeeding (ledger path now exists,
+    still empty) and the write landing, a genuinely concurrent real
+    decision could open the now-existing path in plain append mode,
+    write its own line into that gap, and then this function's own
+    (later) write — using ``O_APPEND``, which re-seeks to the CURRENT
+    end of file at write time, not the offset at open time — would still
+    land AFTER that real decision, reproducing the identical bug in a
+    narrower window (one syscall pair instead of an entire per-key
+    loop). The temp-file-then-link approach has no such window: nothing
+    is ever written to a path any other process can observe until the
+    content is already complete, so there is no gap to squeeze into.
+
+    Every real decision in this codebase calls this function BEFORE its
+    own append (``PermissionResolver._ensure_folded``, the CLI/web
+    ``_load`` — see each caller's own docstring), so:
+      - if THIS call wins the link, its full batch lands first, and
+        only THEN does the caller proceed to append its own
+        (necessarily later, necessarily correct) real decision;
+      - if this call LOSES (``FileExistsError`` — someone else's
+        migration, or a genuine append, already created the file), it
+        is a no-op, and the caller's own subsequent real append still
+        lands strictly AFTER whatever is already there."""
     if ledger.path.exists() or not legacy_yaml_path.exists():
         return
     try:
@@ -249,10 +312,15 @@ def migrate_legacy_snapshot(ledger: ApprovalLedger, legacy_yaml_path: Path) -> N
     bound_section = data.get("_bound_identities")
     if not isinstance(bound_section, dict):
         bound_section = {}
+    ts = ApprovalLedger._now_iso()
+    lines: list[str] = []
     for key, value in data.items():
         if key == "_bound_identities" or not isinstance(value, bool):
             continue
-        ledger.append_approval(key, value)
+        lines.append(json.dumps(
+            {"ts": ts, "kind": "approval", "key": key, "approved": value},
+            ensure_ascii=False,
+        ))
     for key, entry in bound_section.items():
         if not isinstance(entry, dict) or "ino" not in entry:
             continue
@@ -260,6 +328,46 @@ def migrate_legacy_snapshot(ledger: ApprovalLedger, legacy_yaml_path: Path) -> N
         if not isinstance(ino, int):
             continue
         bt = entry.get("birthtime")
-        ledger.append_identity_bind(
-            key, ino, float(bt) if isinstance(bt, (int, float)) else None,
-        )
+        lines.append(json.dumps(
+            {
+                "ts": ts, "kind": "identity_bind", "key": key, "ino": ino,
+                "birthtime": float(bt) if isinstance(bt, (int, float)) else None,
+            },
+            ensure_ascii=False,
+        ))
+    if not lines:
+        return  # nothing valid to migrate -- don't create an empty ledger
+    content = ("\n".join(lines) + "\n").encode("utf-8")
+    ledger.path.parent.mkdir(parents=True, exist_ok=True)
+    # Write the FULL batch to a private temp file first (fully durable —
+    # flushed + fsync'd — before the ledger path is ever touched), then
+    # publish it with os.link, which POSIX guarantees is atomic AND fails
+    # with EEXIST if the target already exists — never a "created but not
+    # yet written" intermediate state observable at the ledger path itself.
+    # A plain O_CREAT|O_EXCL open on the ledger path directly (this
+    # function's first cut) still leaves a 2-syscall gap between the
+    # create succeeding and the content actually landing — a REAL
+    # concurrent append could squeeze into exactly that gap (its own
+    # migrate() attempt sees the now-existing-but-still-empty file, skips,
+    # appends its real decision — landing BEFORE this migration's own
+    # later write, reproducing the identical bug in a narrower window).
+    # link() has no such gap: the content is complete before the ledger
+    # path is ever created.
+    tmp_fd, tmp_path_str = tempfile.mkstemp(
+        dir=str(ledger.path.parent), prefix=".approvals-migrate-", suffix=".tmp",
+    )
+    tmp_path = Path(tmp_path_str)
+    try:
+        with os.fdopen(tmp_fd, "wb") as f:
+            f.write(content)
+            f.flush()
+            os.fsync(f.fileno())
+        try:
+            os.link(str(tmp_path), str(ledger.path))
+        except FileExistsError:
+            pass  # someone else's migration (or a genuine first append) already won
+    finally:
+        try:
+            tmp_path.unlink()
+        except OSError:
+            pass
