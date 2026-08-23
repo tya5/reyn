@@ -20,8 +20,6 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-import pytest
-
 # Ensure the worktree src is importable.
 from tests._support.paths import REPO_ROOT
 
@@ -35,7 +33,6 @@ if str(_WORKTREE_SRC) not in sys.path:
 # was a silent skip on a broken install, not a normal absent-extra path
 # (architect ruling, gh issue view 5058, generalized from the mcp class
 # to any core dep: "the correct behavior is red"). Removed.
-pytest.importorskip("httpx", reason="httpx not installed (needed by TestClient)")
 
 
 from reyn.core.events.state_log import StateLog  # noqa: E402

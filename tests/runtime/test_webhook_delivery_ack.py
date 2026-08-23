@@ -23,11 +23,8 @@ Uses ``httpx.MockTransport`` so no actual network IO happens.
 """
 from __future__ import annotations
 
-import pytest
-
-pytest.importorskip("httpx", reason="httpx not installed (needed by webhook delivery)")
-
 import httpx  # noqa: E402
+import pytest
 
 from reyn.interfaces.web.notifications import post_webhook  # noqa: E402
 from reyn.runtime.channel_state import (  # noqa: E402
