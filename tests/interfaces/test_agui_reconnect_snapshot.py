@@ -3,7 +3,13 @@
 The reconnect contract (A4): before any live frame, a connecting client receives
 a display backlog (``MESSAGES_SNAPSHOT``) then the full status read-model
 (``STATE_SNAPSHOT``); deltas follow. This pins the emit order and that the client
-replays the backlog frames + seeds its status view from the snapshot.
+delivers the backlog as ONE :class:`~reyn.interfaces.transport.frames.BacklogBatch`
+item through the SAME frame stream (#5139, architect FINAL ruling,
+issuecomment-5383272756 — supersedes an earlier side-channel draft this file
+itself briefly pinned; ``frames()`` never flattened the backlog into individual
+DisplayFrame items either before OR after #5139, but #5139 changes WHAT arrives
+in its place: one bundled batch item instead of nothing), then seeds its status
+view from the snapshot.
 
 Real instances only — the real emitter, codec, AgUiTransport; no mocks.
 """
@@ -18,7 +24,7 @@ from reyn.interfaces.transport.agui.protocol import (
     STATE_SNAPSHOT,
     parse_sse_blocks,
 )
-from reyn.interfaces.transport.frames import DisplayFrame
+from reyn.interfaces.transport.frames import BacklogBatch, DisplayFrame
 from reyn.runtime.outbox import OutboxMessage
 
 
@@ -30,7 +36,8 @@ async def _sse_lines(text):
 @pytest.mark.asyncio
 async def test_connect_emits_messages_then_state_snapshot_then_frames() -> None:
     """Tier 2: the first two SSE events are MESSAGES_SNAPSHOT then STATE_SNAPSHOT,
-    the backlog is replayed to the client, and the status view is seeded."""
+    the backlog reaches the client as ONE BacklogBatch item ahead of the live
+    frame (#5139), and the status view is seeded."""
     backlog = [
         DisplayFrame(OutboxMessage(kind="agent", text="earlier reply")),
     ]
@@ -51,17 +58,31 @@ async def test_connect_emits_messages_then_state_snapshot_then_frames() -> None:
     assert events[0].type == MESSAGES_SNAPSHOT
     assert events[1].type == STATE_SNAPSHOT
 
-    # Client replays the backlog (as a real frame) then the live frame, and
+    # Client yields the backlog as ONE BacklogBatch (for the URL this
+    # connection was opened against — "a", the FIRST-connect seed;
+    # AgUiTransport.__init__'s own comment), then the live frame, and
     # seeds its status view from the snapshot.
     async def _noop_send(_payload):
         return None
 
-    transport = AgUiTransport(_sse_lines(sse), _noop_send)
-    texts = [
+    transport = AgUiTransport(_sse_lines(sse), _noop_send, agent_name="a")
+    items = [f async for f in transport.frames()]
+    batches = [f for f in items if isinstance(f, BacklogBatch)]
+    live_texts = [
         f.message.text
-        async for f in transport.frames()
+        for f in items
         if isinstance(f, DisplayFrame) and f.message.kind == "agent"
     ]
-    assert texts == ["earlier reply", "live reply"]
+    # Unpacking into a single-element tuple IS the "exactly one" check
+    # (raises on 0 or 2+ matches) — a behavioral assertion on the
+    # extracted value, not a ``len(...) == N`` format pin.
+    (batch,) = batches
+    assert [f.message.text for f in batch.frames] == ["earlier reply"]
+    assert batch.agent == "a"
+    # The batch item arrives BEFORE the live frame — wire order (backlog is
+    # sent ahead of any live activity, A4) equals queue-apply order (#5139's
+    # own witness ②).
+    assert isinstance(items[0], BacklogBatch)
+    assert live_texts == ["live reply"]
     assert transport.status.get("attached_name") == "a"
     assert transport.status.get("ctx_window") == 200

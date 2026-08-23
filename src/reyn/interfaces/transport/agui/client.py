@@ -42,7 +42,7 @@ from reyn.interfaces.transport.agui.protocol import (
 from reyn.interfaces.transport.agui.state import RemoteStatusView, reguard_nodes
 from reyn.interfaces.transport.client_transport import ClientTransport
 from reyn.interfaces.transport.drain import suspend_between_frames
-from reyn.interfaces.transport.frames import DisplayFrame, EventFrame, Frame
+from reyn.interfaces.transport.frames import BacklogBatch, DisplayFrame, EventFrame, Frame
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -90,6 +90,7 @@ class AgUiTransport(ClientTransport):
         sse_lines: "AsyncIterator[str]",
         send: "Callable[[dict], Awaitable[dict | None]]",
         *,
+        agent_name: str = "",
         status_view: "RemoteStatusView | None" = None,
         reguard_surface: str = "terminal",
         connected: bool = True,
@@ -109,6 +110,33 @@ class AgUiTransport(ClientTransport):
         # :meth:`state_ready`'s own docstring (on the base class) for why
         # this is a separate axis from :meth:`frames`.
         self._state_ready_event = asyncio.Event()
+        # #5139 (architect FINAL ruling, issuecomment-5383272756 —
+        # supersedes an earlier side-channel draft that routed
+        # ``MessagesSnapshot`` alongside ``StateUpdate`` above; see
+        # :meth:`_consume_block`'s own comment on the ``MessagesSnapshot``
+        # branch for why that draft was reverted): the destination a
+        # backlog batch about to be built is FOR — updated whenever a
+        # ``session_attached`` announce decodes (a mid-stream SWITCH re-
+        # fire, ``emitter.py``'s N3 path). The VERY FIRST connect's own
+        # backlog is a special case this ``session_attached`` decode does
+        # NOT cover: ``AgUiEmitter.stream``'s own initial reconnect chunks
+        # (``_reconnect_snapshot_chunks``, called before the ``self._frames``
+        # loop even starts) are NOT preceded by a ``session_attached``
+        # EventFrame on the wire at all — only the N3 mid-stream re-fire
+        # goes through ``self._frames`` where that event lives (verified
+        # against ``emitter.py``'s own ``stream`` body, not assumed from
+        # its module docstring's "one code path" framing, which describes
+        # the BACKLOG-BUILDING code path server-side, not the wire framing
+        # this client sees). So the FIRST connect's destination is seeded
+        # here instead, from what the caller already knows before this
+        # transport ever decodes a single SSE line: ``agent_name`` (the
+        # URL this connection was opened against) and the well-known
+        # default session id — a fresh, never-switched connection is
+        # always attached to it (``registry.py``'s own ``_DEFAULT_SID``).
+        from reyn.runtime.registry import _DEFAULT_SID  # noqa: PLC0415
+
+        self._backlog_agent = agent_name
+        self._backlog_sid = _DEFAULT_SID
         # #5107 (architect ruling B, issuecomment-5379950484): the merge
         # point between two frame producers — the SSE pump (server-sent
         # display, below) and :meth:`put_display` (CLIENT-authored display:
@@ -116,7 +144,7 @@ class AgUiTransport(ClientTransport):
         # SAME queue :meth:`frames` drains, so a locally-authored message
         # renders through the identical renderer path a server-sent one
         # does, without waiting on the next SSE event to unblock it.
-        self._display_queue: "asyncio.Queue[Frame | object]" = asyncio.Queue()
+        self._display_queue: "asyncio.Queue[Frame | BacklogBatch | object]" = asyncio.Queue()
         self._sse_pump_task: "asyncio.Task[None] | None" = None
 
     # -- lifecycle ----------------------------------------------------------
@@ -163,10 +191,13 @@ class AgUiTransport(ClientTransport):
                 )
         return frame
 
-    def _consume_block(self, block_lines: "list[str]") -> "list[Frame]":
-        # Decode one SSE block into zero or more render frames, routing STATE_*
-        # and MESSAGES_SNAPSHOT to their side-channels.
-        out: list[Frame] = []
+    def _consume_block(self, block_lines: "list[str]") -> "list[Frame | BacklogBatch]":
+        # Decode one SSE block into zero or more render frames, routing
+        # STATE_* to its side-channel and MESSAGES_SNAPSHOT into `out` as
+        # ONE BacklogBatch item (#5139) — everything this transport
+        # produces flows through the SAME queue/`frames()` stream, no
+        # second channel.
+        out: list[Frame | BacklogBatch] = []
         for ev in parse_sse_blocks(block_lines + [""]):
             decoded = decode_event(ev.type, ev.data)
             if decoded is None:
@@ -183,7 +214,26 @@ class AgUiTransport(ClientTransport):
                 # yields any display Frame.
                 self._state_ready_event.set()
             elif isinstance(decoded, MessagesSnapshot):
-                out.extend(self._reguard_frame(f) for f in decoded.frames)
+                # #5139 (architect FINAL ruling, issuecomment-5383272756):
+                # ONE BacklogBatch item, appended to `out` like any other
+                # frame — NOT a side-channel slot (this PR's own earlier
+                # draft, reverted: side-channelling left `out` empty for a
+                # snapshot-only block, so `suspend_between_frames` below
+                # never ran for one — see :meth:`_pump_sse`'s own #3570
+                # comment for what that yield is for — and an overwrite-
+                # before-pop slot is exactly what let a confirmed rapid-
+                # switch race silently drop an unpopped batch: the SAME
+                # `out`/queue every live frame already goes through has no
+                # such slot to overwrite). ``self._backlog_agent``/
+                # ``_backlog_sid`` were stamped by the ``session_attached``
+                # announce that (by protocol) always precedes this.
+                out.append(
+                    BacklogBatch(
+                        agent=self._backlog_agent,
+                        sid=self._backlog_sid,
+                        frames=[self._reguard_frame(f) for f in decoded.frames],
+                    )
+                )
             elif isinstance(decoded, InterventionTool):
                 # Answer-correlation only (R4-ii): record which intervention is
                 # pending so an operator line routes to it BY ID (R1). NOT a
@@ -232,6 +282,15 @@ class AgUiTransport(ClientTransport):
                     and getattr(decoded.event, "type", None) == "session_attached"
                 ):
                     self._state_ready_event.clear()
+                    # #5139: this announce always precedes the
+                    # MESSAGES_SNAPSHOT re-fire it belongs with (the
+                    # reconnect protocol's own ordering) — stamp the
+                    # destination NOW so the BacklogBatch built a few
+                    # lines below (this same block, next SSE event) can
+                    # carry it.
+                    edata = getattr(decoded.event, "data", None) or {}
+                    self._backlog_agent = str(edata.get("agent", ""))
+                    self._backlog_sid = str(edata.get("session_id", ""))
                 out.append(self._reguard_frame(decoded))
         return out
 
@@ -322,7 +381,12 @@ class AgUiTransport(ClientTransport):
         finally:
             self._display_queue.put_nowait(_SSE_DONE)
 
-    async def frames(self) -> "AsyncIterator[Frame]":
+    async def frames(self) -> "AsyncIterator[Frame | BacklogBatch]":
+        # #5139: widened from ``AsyncIterator[Frame]`` — this transport is
+        # the only ``ClientTransport`` implementation that ever yields a
+        # ``BacklogBatch`` (see that class's own docstring); every other
+        # implementation's ``frames()`` return type is unchanged.
+        #
         # Started lazily, once, on first iteration (production calls this
         # exactly once per connection — grepped, #5107 co-vet) rather than
         # in ``__init__``/``start``: an event loop may not be running yet

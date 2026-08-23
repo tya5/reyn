@@ -204,7 +204,59 @@ class EventFrame:
 Frame = "DisplayFrame | EventFrame"
 
 
+@dataclass(frozen=True)
+class BacklogBatch:
+    """#5139 (architect ruling, issuecomment-5383272756): one reconnect/switch
+    ``MESSAGES_SNAPSHOT`` burst, still bundled exactly as it arrived on the
+    wire — ``AgUiTransport._consume_block`` decodes it as ONE SSE block, ONE
+    list, and this is that fact carried forward instead of being flattened
+    into individual :class:`DisplayFrame` items the way every other frame
+    source is (the pre-#5139 shape, and the reason a remote client's history
+    used to flow onto screen one row at a time instead of settling in with
+    local restore's own single ``FlowModel.extend``/``insert_many`` reflow).
+
+    Yielded through the SAME queue/:meth:`AgUiTransport.frames` stream every
+    live :data:`Frame` flows through — deliberately NOT a side channel like
+    :class:`~reyn.interfaces.transport.agui.protocol.StateUpdate` (routed to
+    :class:`~reyn.interfaces.transport.agui.state.RemoteStatusView` instead
+    of the frame stream). A side channel was this PR's OWN first draft and
+    was reverted: it left the queue with nothing to put for a snapshot-only
+    SSE block, so :func:`~reyn.interfaces.transport.drain.suspend_between_frames`
+    never got a turn to run for one (measured — the reason a first connect
+    with no further live activity never drained its own popped-but-unapplied
+    backlog), and applying it synchronously at decode time would have let a
+    live frame that arrived on the wire EARLIER but is dequeued LATER
+    invert order against a backlog applied INSTANTLY off the decode thread.
+    Putting it in the same queue makes wire-arrival-order and apply-order
+    the SAME order, by construction, with nothing else to prove.
+
+    ``agent``/``sid`` are the destination this batch is FOR — for a
+    mid-stream session SWITCH (#3310 N3), the
+    :class:`~reyn.interfaces.transport.frames.EventFrame` ``session_attached``
+    announce always precedes the ``MESSAGES_SNAPSHOT`` re-fire it belongs
+    with on the wire; the VERY FIRST connect's own batch has no such
+    preceding announce (``AgUiEmitter.stream``'s initial reconnect chunks
+    are sent before its ``session_attached``-bearing event loop even
+    starts) and is seeded instead from what the caller already knows at
+    connect time — see ``AgUiTransport.__init__``'s own comment. The
+    consumer (``TextualChatApp._pump_frames``) compares this
+    against ITS OWN current location right before applying — a mismatch
+    means the connection has since moved on and this batch is stale, never
+    "arrived late so still show it" (destination-based, not arrival-order-
+    based — architect ruling, issuecomment-5383251430: "「在るか」は消失の
+    witness になりません — 「どれが/いくつ」を訊く"). Not part of the
+    :data:`Frame` union: only :class:`AgUiTransport` ever produces one and
+    only ``_pump_frames`` interprets it — the generic renderer entry points
+    (``.message`` / ``.on_audit_event``) never see it.
+    """
+
+    agent: str
+    sid: str
+    frames: "list[DisplayFrame]"
+
+
 __all__ = [
+    "BacklogBatch",
     "DisplayFrame",
     "EventFrame",
     "Frame",

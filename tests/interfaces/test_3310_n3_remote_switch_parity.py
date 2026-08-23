@@ -96,7 +96,7 @@ from reyn.interfaces.transport.agui.endpoint import (
     session_backlog_frames,
 )
 from reyn.interfaces.transport.agui.protocol import parse_sse_blocks
-from reyn.interfaces.transport.frames import DisplayFrame, EventFrame
+from reyn.interfaces.transport.frames import BacklogBatch, DisplayFrame, EventFrame
 from reyn.runtime.budget.budget import BudgetTracker, CostConfig
 from reyn.runtime.chat_message import ChatMessage
 from reyn.runtime.outbox import OutboxMessage
@@ -130,8 +130,21 @@ async def _pump(n: int = 30) -> None:
 
 
 async def _sse_lines(text):
+    # #5139: an explicit yield per line — this test builds its WHOLE
+    # ``sse`` text up-front (``_collect_all``, no real network between
+    # events), unlike production, which decodes bytes as they actually
+    # arrive with real gaps. A ``BacklogBatch`` (#5139's own item, now
+    # queued through the SAME ``out``/display-queue every live frame
+    # flows through — no side channel) gets its own
+    # :func:`~reyn.interfaces.transport.drain.suspend_between_frames`
+    # checkpoint like any other item, so this is stronger than strictly
+    # required today — kept anyway: it is what guarantees this test's
+    # OWN two switch re-fires (A's connect-time backlog, then B's
+    # switch-time re-fire) are never coalesced into one queue burst by an
+    # SSE source with no gaps of its own.
     for line in text.split("\n"):
         yield line
+        await asyncio.sleep(0)
 
 
 def _apply_client_side(events: "list", *, on_display, on_reset) -> None:
@@ -192,13 +205,34 @@ async def _collect_until_barrier(agen) -> "list":
 
 
 async def _run_emitter_to_frames(emitter: AgUiEmitter) -> "list":
+    """#5139 (architect FINAL ruling, issuecomment-5383272756): a
+    ``MessagesSnapshot`` backlog now arrives as ONE ``BacklogBatch`` item
+    IN ``AgUiTransport.frames()``'s own stream — no side channel, no pop.
+    This helper's own CONTRACT (a flat, ordered "what a client would
+    render" list) stays unchanged for every caller below — flattening
+    each batch's ``.frames`` back into the SAME flat list here, mirroring
+    ``TextualChatApp._pump_frames``'s own handling (apply the moment it
+    is dequeued — wire order already IS apply order under this design,
+    nothing to reorder) — rather than pushing that reconstruction onto
+    each test. ``agent_name="alpha"`` matches every caller's own registry
+    fixture (``_registry`` above always creates agent "alpha") so the
+    FIRST connect's own batch — which has no preceding
+    ``session_attached`` announce to read a destination off, see
+    ``AgUiTransport.__init__``'s own comment — carries the wire's real
+    agent name instead of the constructor default's empty string."""
     sse = "".join(await _collect_all(emitter.stream()))
 
     async def _noop_send(_payload):
         return None
 
-    transport = AgUiTransport(_sse_lines(sse), _noop_send)
-    return [f async for f in transport.frames()]
+    transport = AgUiTransport(_sse_lines(sse), _noop_send, agent_name="alpha")
+    out: "list" = []
+    async for f in transport.frames():
+        if isinstance(f, BacklogBatch):
+            out.extend(f.frames)
+        else:
+            out.append(f)
+    return out
 
 
 @pytest.mark.asyncio
@@ -333,6 +367,85 @@ async def test_remote_switch_parity_a_b_a_with_staleness(tmp_path) -> None:
         # And B's content is NOT mixed into the final (post switch-back) view.
         assert not any("hello B" in t for t in remote_texts), (
             f"B's content leaked into the post switch-back remote view — "
+            f"remote={remote_texts!r}"
+        )
+    finally:
+        for task in reg.running_tasks():
+            task.cancel()
+
+
+@pytest.mark.asyncio
+async def test_rapid_back_to_back_switches_lose_no_backlog(tmp_path) -> None:
+    """Tier 2: #5139 regression witness — the CONFIRMED production race
+    (lead-coder, issuecomment-5383243289: "初回 connect の backlog が一度も
+    pop されず、2 つ目の switch の backlog に上書きされて消えた" — a real
+    uvicorn+httpx repro, since deleted as a permanent test because it
+    exercised the now-REMOVED ``_pending_backlog`` overwrite slot
+    directly). That slot is gone under the #5139 redesign: every decoded
+    ``MessagesSnapshot`` is now its OWN discrete
+    :class:`~reyn.interfaces.transport.frames.BacklogBatch` queue item,
+    never a mutable single-slot side channel a second decode can
+    overwrite before the first is drained — so there is no longer a
+    SHARED slot for two switches to race on.
+
+    A -> B -> A, back to back, with ZERO scheduling gap between the two
+    ``attach_session`` calls (``_pump(0)``, unlike the sibling A->B->A
+    test above, which pumps several times between steps) — the shape
+    most likely to queue BOTH switches' ``MessagesSnapshot`` blocks
+    before either is drained, the exact condition the original race
+    needed. Strip-falsifier: making ``_consume_block``'s
+    ``MessagesSnapshot`` branch a no-op (never emit a ``BacklogBatch`` at
+    all — the observable end state a pre-#5139 overwrite-before-pop loss
+    converges to: a batch nobody ever applies) turns this test red —
+    verified locally (``remote=[]``, diverging from the local oracle),
+    not merely reasoned about."""
+    reg = _registry(tmp_path)
+    try:
+        session_a = await reg.attach("alpha")
+        session_a.history.append(ChatMessage(role="user", content="hello A"))
+
+        sid_b = reg.spawn_session("alpha", presentation_consumer=None, intervention_bridge=None)
+        session_b = reg.get_session("alpha", sid_b)
+        session_b.history.append(ChatMessage(role="user", content="hello B"))
+
+        source = _SessionFrameSource(session_a, registry=reg, agent_name="alpha")
+        source.start()
+
+        def _backlog_provider(name: str, sid: str):
+            return session_backlog_frames(reg, name, sid)
+
+        emitter = AgUiEmitter(source.frames(), lambda: None, backlog_provider=_backlog_provider)
+
+        async def _drive() -> None:
+            await _pump(1)
+            await reg.attach_session("alpha", sid_b)
+            await reg.attach_session("alpha", _DEFAULT_SID)  # no pump in between
+            await _pump(5)
+            await session_a._put_outbox(OutboxMessage(kind="__end__", text=""))
+
+        drive_task = asyncio.create_task(_drive())
+        try:
+            frames = await _run_emitter_to_frames(emitter)
+        finally:
+            await drive_task
+            source.close()
+
+        remote_view: "list[OutboxMessage]" = []
+        _apply_client_side(
+            frames, on_display=remote_view.append, on_reset=remote_view.clear
+        )
+
+        local_view = session_backlog_frames(reg, "alpha", _DEFAULT_SID)
+        local_texts = _texts([f.message for f in local_view])
+        remote_texts = _texts(remote_view)
+
+        assert remote_texts == local_texts, (
+            f"rapid back-to-back A->B->A (zero scheduling gap) diverged "
+            f"from the local oracle — a batch was lost or leaked:\n"
+            f"remote={remote_texts!r}\nlocal={local_texts!r}"
+        )
+        assert any("hello A" in t for t in remote_texts), (
+            f"A's own content is missing from the final view — "
             f"remote={remote_texts!r}"
         )
     finally:
