@@ -31,6 +31,17 @@ acceptance cases:
 ④ a claim naming a sha that later tests/-touching commits moved past → red,
    listing those commits (`test_note_whose_sha_predates_a_later_tests_commit_is_rejected`).
 
+#5204 (architect ruling, correcting #5197's own ∀): the comparison target
+is the PR's CURRENT HEAD specifically, not "any commit of this PR" (#5196's
+own bug) and not "every note ever posted must be fresh" (#5197's own
+overcorrection — a note thread only grows, so a stale note from an EARLIER
+review round permanently reds a PR that has since gained a fresh note;
+#5201 is the live counter-example architect measured). Every `_pr()` call
+below now passes an explicit `head=` matching the fixture's own intended
+"current" commit — the old default (`"ffffffff"`, matching nothing) would
+silently red every accept-side case under the new head-specific comparison,
+which is itself part of what this file now must not let happen invisibly.
+
 Payloads are built inline rather than fetched: `evaluate` is pure by design so
 the decision is testable without GitHub, and the fixtures here are the only
 callers that need to exist.
@@ -76,9 +87,11 @@ def test_note_without_a_sha_is_rejected():
 
 
 def test_note_whose_sha_predates_a_later_tests_commit_is_rejected():
-    """Tier 1: the #5090 / #5095 shape — the note is real and names its head, and then
-    `tests/` moved. The failure names the commits so the ask is a differential
-    top-up, not a re-read. (Architect's acceptance ④.)"""
+    """Tier 1: the #5090 / #5095 shape — the note is real and names an
+    EARLIER commit, and `tests/` has since moved past it (the PR's current
+    head is the LATER commit). The failure names the stale SHA and the
+    current head so the ask is a differential top-up, not a re-read.
+    (Architect's acceptance ④.)"""
     code, lines = _MOD.evaluate(_pr(
         files=["tests/scripts/test_check_doc_drift_5003.py"],
         comments=[{"body": "TESTS-READ (B: independent) (head `a7c44eef6`)."}],
@@ -86,11 +99,12 @@ def test_note_whose_sha_predates_a_later_tests_commit_is_rejected():
             _commit("a7c44eef6", "docs: split the column"),
             _commit("9ef30f95b", "test(#4206): CI-gate the Reload column too", ("tests/repo/test_config_reference_declared_in_4206.py",)),
         ],
+        head="9ef30f95b",
     ))
     assert code == 1
     joined = "\n".join(lines)
-    assert "9ef30f95" in joined, "the offending commit is named, so the ask is scoped"
-    assert "DIFFERENTIAL" in joined.upper()
+    assert "a7c44eef6" in joined, "the note's own stale SHA is named"
+    assert "9ef30f95b" in joined, "the current head it must instead name is named"
 
 
 def test_no_claim_line_at_all_is_rejected():
@@ -105,65 +119,96 @@ def test_no_claim_line_at_all_is_rejected():
     assert "no TESTS-READ note" in "\n".join(lines)
 
 
-def test_a_fresh_a_note_does_not_excuse_a_stale_b_note():
-    """Tier 1: #5197 (architect ruling) — the existential-quantification gap
-    measured live on #5196 itself. architect's A note named the NEW head;
-    docs-maintainer's B note still named the PREVIOUS head, and a fresh
-    ``tests/`` commit (the witness the blocking finding needed) had landed
-    in between. The old predicate returned green the instant it found ONE
-    fresh note (A) — it never looked at B, though house rule 8 requires B
-    specifically. Reproduced from #5196's own actual shape: two notes, one
-    fresh, one one commit stale. Must be red — a fresh note no longer
-    excuses a different, stale note (architect's acceptance ①)."""
-    code, lines = _MOD.evaluate(_pr(
+def test_a_fresh_note_passes_even_with_an_older_stale_note_present():
+    """Tier 1: #5204 (architect ruling, correcting #5197's own ∀) — the
+    live #5201 counter-example. A first B note went stale after a fix
+    landed; the SAME reviewer then posted a second, differential B note
+    correctly naming the new head — but the first note never disappears
+    (a comment thread only grows). Under #5197's ∀, this PR reported red
+    FOREVER, because the old note's own stale SHA never stops existing.
+    Under #5204's ∃-over-current-head, the fresh note alone is sufficient
+    — the old note is simply irrelevant to the CURRENT head, not a second
+    vote that has to also agree. Reproduced from #5196/#5201's own actual
+    shape: two notes from the SAME author, one now-stale, one fresh."""
+    code, _ = _MOD.evaluate(_pr(
         files=["tests/core/test_5192_state_log_wal_no_toctou_guard.py"],
         comments=[
-            {"body": "**[architect]** — TESTS-READ (A: design conformance) (head `f199bf79a`)"},
             {"body": "**[docs-maintainer]** — TESTS-READ (B: independent) (head `48067968c`)"},
+            {"body": "**[docs-maintainer]** — TESTS-READ 再B (head `f199bf79a`)"},
         ],
         commits=[
             _commit("48067968c", "fix(#5192): remove the guard in 2 of 3 files"),
             _commit("f199bf79a", "fix(#5192): add budget.py's own guard-absence witness",
                      ("tests/core/test_5192_state_log_wal_no_toctou_guard.py",)),
         ],
+        head="f199bf79a",
     ))
-    assert code == 1, "a stale B note must not be excused by a fresh A note"
-    joined = "\n".join(lines)
-    assert "f199bf79a" in joined, "the offending witness commit is named, so the ask is scoped"
+    assert code == 0, (
+        "a fresh note naming the current head must pass even with an "
+        "older, now-superseded note from an earlier review round still "
+        "sitting in the same thread"
+    )
 
 
-def test_the_red_message_names_which_note_is_stale():
-    """Tier 1: #5197 acceptance ② — the red output must name WHICH note went
-    stale (its own first-line text), not just that some note somewhere did —
-    the ask a reviewer gets is "post a fresh note", and they need to know
-    it's THEIRS, not the other reviewer's, that's being asked for."""
+def test_the_red_message_names_the_stale_note_and_the_current_head():
+    """Tier 1: #5204 acceptance ② — with NO note naming the current head
+    (only a stale one), the red output must name both the stale note's own
+    content and the head it fails to name, so the ask is "post a note
+    naming THIS head", not merely "something is wrong"."""
     code, lines = _MOD.evaluate(_pr(
         files=["tests/scripts/test_check_doc_drift_5003.py"],
         comments=[
-            {"body": "**[architect]** — TESTS-READ (A) (head `bbbbbbbb`)"},
             {"body": "**[docs-maintainer]** — TESTS-READ (B) (head `aaaaaaaa`)"},
         ],
         commits=[
             _commit("aaaaaaaa", "test: add", ("tests/scripts/test_check_doc_drift_5003.py",)),
             _commit("bbbbbbbb", "test: fix", ("tests/scripts/test_check_doc_drift_5003.py",)),
         ],
+        head="bbbbbbbb",
     ))
     assert code == 1
     joined = "\n".join(lines)
     assert "docs-maintainer" in joined, (
-        "the stale note's own first-line text (naming its author role) must "
-        f"appear in the output so the ask is scoped to the right reviewer; got {joined!r}"
+        "the stale note's own first-line text must appear in the output"
     )
-    assert "architect" not in joined, (
-        "the FRESH note must not be reported as if it were the problem"
+    assert "bbbbbbbb" in joined, "the current head the note fails to name must be named"
+
+
+def test_repair_only_adds_a_note_never_needs_to_touch_the_stale_one():
+    """Tier 1: #5204 acceptance ③ — "repair does not destroy evidence"
+    (CLAUDE.md's 3rd cross-cutting question), witnessed directly: the SAME
+    stale-note fixture from the red case above, with ONE note APPENDED
+    (never editing or removing the first), flips straight to green. The
+    old note is never touched."""
+    stale_comment = {"body": "**[docs-maintainer]** — TESTS-READ (B) (head `aaaaaaaa`)"}
+    commits = [
+        _commit("aaaaaaaa", "test: add", ("tests/scripts/test_check_doc_drift_5003.py",)),
+        _commit("bbbbbbbb", "test: fix", ("tests/scripts/test_check_doc_drift_5003.py",)),
+    ]
+    red_code, _ = _MOD.evaluate(_pr(
+        files=["tests/scripts/test_check_doc_drift_5003.py"],
+        comments=[stale_comment],
+        commits=commits, head="bbbbbbbb",
+    ))
+    assert red_code == 1, "sanity: the stale-only fixture is red on its own"
+
+    green_code, _ = _MOD.evaluate(_pr(
+        files=["tests/scripts/test_check_doc_drift_5003.py"],
+        comments=[
+            stale_comment,  # untouched, still present, still names the old SHA
+            {"body": "**[docs-maintainer]** — TESTS-READ 再B (head `bbbbbbbb`)"},
+        ],
+        commits=commits, head="bbbbbbbb",
+    ))
+    assert green_code == 0, (
+        "appending a fresh note — without editing or removing the stale "
+        "one — must be enough to pass"
     )
 
 
 def test_a_single_note_naming_the_current_head_still_passes():
-    """Tier 1: #5197 acceptance ③ — the common case (one required B note,
-    naming the PR's current head) must keep passing under the universal
-    quantification; #5197 only tightens the "one is enough" case where
-    MULTIPLE notes exist and disagree, not the ordinary single-note PR."""
+    """Tier 1: the common case (one required B note, naming the PR's
+    current head) passes."""
     code, _ = _MOD.evaluate(_pr(
         files=["tests/scripts/test_check_doc_drift_5003.py"],
         comments=[{"body": "**[docs-maintainer]** — TESTS-READ (B) (head `bbbbbbbb`)"}],
@@ -171,6 +216,7 @@ def test_a_single_note_naming_the_current_head_still_passes():
             _commit("aaaaaaaa", "test: add", ("tests/scripts/test_check_doc_drift_5003.py",)),
             _commit("bbbbbbbb", "test: fix", ("tests/scripts/test_check_doc_drift_5003.py",)),
         ],
+        head="bbbbbbbb",
     ))
     assert code == 0
 
@@ -211,8 +257,8 @@ def test_marker_only_from_line_two_onward_is_not_a_claim():
 
 def test_note_naming_the_last_tests_commit_passes():
     """Tier 1: the accept side — a claim on a comment's first line, naming
-    the newest tests/ commit, is a claim about the tree that is about to
-    merge."""
+    the newest tests/ commit (the PR's current head), is a claim about the
+    tree that is about to merge."""
     code, _ = _MOD.evaluate(_pr(
         files=["tests/scripts/test_check_doc_drift_5003.py"],
         comments=[{"body": "TESTS-READ (B) (head `bbbbbbbb`)"}],
@@ -220,14 +266,21 @@ def test_note_naming_the_last_tests_commit_passes():
             _commit("aaaaaaaa", "test: add", ("tests/scripts/test_check_doc_drift_5003.py",)),
             _commit("bbbbbbbb", "test: fix", ("tests/scripts/test_check_doc_drift_5003.py",)),
         ],
+        head="bbbbbbbb",
     ))
     assert code == 0
 
 
-def test_commits_after_the_note_that_do_not_touch_tests_pass():
-    """Tier 1: a docs-only or src-only commit after the note does not
-    invalidate it —
-    the note is a claim about `tests/`, so only `tests/` moving falsifies it."""
+def test_a_note_naming_an_older_commit_reds_even_when_the_newer_one_is_docs_only():
+    """Tier 1: #5204's own behavior change from the pre-#5204 leniency —
+    the comparison target is the CURRENT HEAD specifically, not "the
+    newest tests/-touching commit". A docs-only commit landing after the
+    note still MOVES THE HEAD, so a note naming the earlier commit no
+    longer names the current tree, even though nothing in tests/ itself
+    changed. (The pre-#5204 predicate tolerated this via `tests_commits_
+    after`'s tests/-only filter; #5204 dropped that leniency in favor of
+    "does a note name headRefOid, full stop" — see the module docstring's
+    own #5204 section, "just fix the comparison target".)"""
     code, _ = _MOD.evaluate(_pr(
         files=["tests/scripts/test_check_doc_drift_5003.py"],
         comments=[{"body": "TESTS-READ (B) (head `aaaaaaaa`)"}],
@@ -235,8 +288,12 @@ def test_commits_after_the_note_that_do_not_touch_tests_pass():
             _commit("aaaaaaaa", "test: add", ("tests/scripts/test_check_doc_drift_5003.py",)),
             _commit("cccccccc", "docs: reword"),
         ],
+        head="cccccccc",
     ))
-    assert code == 0
+    assert code == 1, (
+        "a note naming a non-head commit must red, even when the commit "
+        "that moved the head touched no tests/ file"
+    )
 
 
 def test_multiline_comment_with_the_claim_on_line_one_still_passes():
@@ -255,6 +312,7 @@ def test_multiline_comment_with_the_claim_on_line_one_still_passes():
             ),
         }],
         commits=[_commit("aaaaaaaa", "test: add", ("tests/scripts/test_check_doc_drift_5003.py",))],
+        head="aaaaaaaa",
     ))
     assert code == 0
 
