@@ -352,36 +352,46 @@ These rules then keep multi-session work coherent:
    silent. One reporting channel, not a check run and a status both
    claiming the same fact.
 
-   **Existential quantification closed to universal (#5197, 2026-08-23):**
+   **Existential quantification closed to universal, then corrected back to
+   existential over the CURRENT HEAD (#5197 → #5204, both 2026-08-23):**
    `evaluate` used to return green the instant ANY ONE note named a fresh
    commit of the PR — an existential check ("does a note naming the current
-   tree exist"), not the universal one rule 8 actually needs ("does EVERY
-   note naming a commit of the PR name a fresh one"). Measured live on
-   #5196: architect's A note named the new head; docs-maintainer's B note
-   still named the PREVIOUS head, because a fresh witness commit (the fix
-   for architect's own blocking finding) had landed to `tests/` in
-   between — and the gate went green having read only the A note, since it
-   stopped looking the moment it found one success. Rule 8 requires B
-   specifically; A is architect's own operational practice, not something
-   this gate (or any other mechanism) may come to require in its place —
-   so the fix is a plain ∀ over every note's own SHA, never a role parse.
-   `evaluate` now reds a PR the moment ANY note names a commit `tests/` has
-   moved past, and names that note's own first-line text in the failure so
-   the ask is "post a fresh note" scoped to the reviewer who owns it, not
-   "read the PR again". A single-note PR (the ordinary case) is unaffected
-   — the tightening only bites when multiple notes exist and disagree.
+   tree exist"), where "a fresh commit" meant merely "not stale relative to
+   `tests/`". Measured live on #5196: architect's A note named the new head;
+   docs-maintainer's B note still named the PREVIOUS head, because a fresh
+   witness commit (the fix for architect's own blocking finding) had landed
+   to `tests/` in between — and the gate went green having read only the A
+   note, since it stopped looking the moment it found one success. #5197's
+   own fix over-corrected to a ∀ over every note that names ANY commit of
+   the PR: reds the moment any note is stale relative to `tests/`, no matter
+   how many other notes exist. That broke on #5201, live: a first B note
+   went stale after a fix landed, the SAME reviewer posted a second,
+   differential B note correctly naming the new head — and the PR stayed
+   red FOREVER, because a comment thread only grows and the first note's own
+   stale SHA never stops existing to fail the ∀. #5204 (architect,
+   correcting #5197's own ruling) replaced the comparison target: the
+   predicate is existential over the PR's CURRENT `headRefOid` specifically
+   — "does some note name THIS commit" — not "any commit of the PR" (#5196's
+   hole) and not "every note ever posted" (#5197's hole). An old note naming
+   an old SHA simply doesn't match the (moving) target and is left exactly
+   where it is, never edited or deleted; a single fresh note matching the
+   current head is enough regardless of how many superseded notes sit above
+   it. One behavior change worth naming: because the target is now the
+   EXACT head rather than "no `tests/` commit landed since", a commit that
+   moves the head without touching `tests/` (e.g. a docs-only fixup) still
+   requires a fresh note — the pre-#5204 `tests/`-only leniency is gone.
 
    **This does not close, and was never meant to close, a second, separate
    limit:** the gate reads no role marker at all — it cannot tell an A note
    from a B note, or a B note from a third opinion, only that a comment's
-   first line names the marker and a fresh SHA. #5187 gave a note's first
-   line a role-disclosing shape parseable in principle, but adding a role
-   parse here would make "A ran" a requirement this gate enforces, when
+   first line names the marker and the current head. #5187 gave a note's
+   first line a role-disclosing shape parseable in principle, but adding a
+   role parse here would make "A ran" a requirement this gate enforces, when
    only "B ran" is a house rule that exists — a new rule invented by the
    gate, not a reflection of one that does. Whether the RIGHT roles
    reviewed a PR remains a human's judgment reading the PR before merging,
-   same as it always was; a green here means "every note that names a tree
-   names a fresh one," never "the tree was reviewed by the right people."
+   same as it always was; a green here means "some note names the exact
+   tree about to merge," never "the tree was reviewed by the right people."
 
 ## Bundling and the owner's veto unit
 

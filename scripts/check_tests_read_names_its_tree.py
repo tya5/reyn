@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""Fail a ``tests/``-touching PR whose TESTS-READ note does not name the tree
-it read, or names one that later commits to ``tests/`` have already left behind.
+"""Fail a ``tests/``-touching PR whose TESTS-READ note does not name the PR's
+CURRENT head, or carries no such note at all.
 
 #5039. House rule 8 says a PR touching ``tests/`` does not self-merge until a
 reviewer's TESTS-READ note lands on it. The rule is satisfied by the note
@@ -11,17 +11,27 @@ earlier head, and in every case ``tests/`` moved afterwards — #5090 (note at
 ``e0dd40461``; the witness commit landed 13 minutes later), #5096 (note at
 10:32; test files changed at 10:48 and 10:59), #5038 (note read ``5c90f2ac4``
 while the PR head was ``6b5d587c0``, already merged). All four read green under
-rule 8.
+rule 8; all four also fail the CURRENT algorithm below (a note naming an
+earlier SHA cannot satisfy the existential over the current head either) —
+the population these 4 real instances name did not change across #5197/#5204,
+only the shape of the check that catches them.
 
 The class this closes is the one ``verification-hazards.md`` names as its root:
 **an observation does not name its own referent**. So the predicate is not "was
 the note any good" — nothing here reads the note's content. It is only:
 
-1. the note names a SHA at all (absent -> red), and
-2. no commit has touched ``tests/`` since that SHA (later commits -> red, with
-   the commits listed, so the ask is "top up the diff", not "read it again"),
-3. a ``tests/``-touching PR carries at least one note (none -> red) — rule 8
-   itself, which nothing has been checking mechanically.
+1. a ``tests/``-touching PR carries at least one TESTS-READ note (none -> red)
+   — rule 8 itself, which nothing has been checking mechanically.
+2. that note names a SHA at all, and the SHA is a real commit of this PR
+   (absent/unresolvable -> red — an issue-comment id, e.g., is hex-shaped but
+   not a commit).
+3. #5204 (architect ruling, correcting #5197's own ∀ — see ``evaluate``'s own
+   docstring for the full history): SOME resolvable note names the PR's
+   CURRENT head specifically (none does -> red, naming both the stale note's
+   own SHA and the current head, so the ask is "post a fresh note naming
+   THIS head" — never "read the PR again", and never "edit or delete the
+   old note", which stays exactly where it is as history of what was
+   actually read at the time).
 
 The note's CLAIM line lives in a PR **comment**, and only its FIRST LINE is
 ever read (see ``_NOTE_MARKER`` / ``evaluate``). That comment's line 1 must
@@ -70,7 +80,7 @@ provides this; it is not something a pure Python predicate can exercise, and
 the test suite says so plainly rather than pretending to cover it.
 
 Deliberately NOT closed: this predicate proves only that a comment's first
-line names a fresh commit of this PR — never that a *reviewer* wrote it.
+line names the PR's current head — never that a *reviewer* wrote it.
 Every session in this repo authenticates as the same ``gh`` user (house
 rule preamble, PR-workflow doc), so comment authorship cannot distinguish
 reviewer from author any more than body authorship could; the syntactic
@@ -166,33 +176,16 @@ def tests_commits_after(sha: str, commits: "list[dict]") -> "list[dict]":
     return [c for c in tail if c.get("_tests_paths")]
 
 
-def _note_verdict(
-    note: str, oids: "list[str]", commits: "list[dict]",
-) -> "tuple[str, str, list[dict]] | None":
-    """One note's verdict: ``None`` if it names no commit of this PR (not a
-    claim this predicate can evaluate at all — the caller's "none resolved"
-    bucket); otherwise ``(note, sha, later)`` where *sha* is the FIRST fresh
-    SHA the note names, and *later* is empty when fresh.
-
-    A note naming several SHA-shaped tokens (rare, but ``find_note_shas``
-    returns every membership hit on the line) passes as a whole the moment
-    ANY one of them is fresh — mirrors the per-note short-circuit the old
-    single-note code path already had, just no longer let one note's own
-    fresh candidate excuse a DIFFERENT note (see ``evaluate``'s own
-    docstring, #5197). When every candidate on this note is stale, *sha*/
-    *later* report the FIRST one, so the red output names one concrete
-    offending commit set rather than every candidate's own list."""
-    shas = find_note_shas(note, oids)
-    if not shas:
-        return None
-    first_later: "list[dict]" = []
-    for sha in shas:
-        later = tests_commits_after(sha, commits)
-        if not later:
-            return note, sha, []
-        if not first_later:
-            first_later = later
-    return note, shas[0], first_later
+def _note_names_head(note: str, head: str, oids: "list[str]") -> bool:
+    """Does *note* (a comment's first line) name *head* specifically —
+    ``head`` prefix-matched against every SHA-shaped token *note* names
+    that is also a real commit of this PR (:func:`find_note_shas`'s own
+    membership filter). The comparison TARGET, not merely "any commit" —
+    see :func:`evaluate`'s own docstring, #5204."""
+    return any(
+        head.startswith(sha) or sha.startswith(head)
+        for sha in find_note_shas(note, oids)
+    )
 
 
 def evaluate(pr: dict) -> "tuple[int, list[str]]":
@@ -211,39 +204,48 @@ def evaluate(pr: dict) -> "tuple[int, list[str]]":
     which is deliberate: a document *about* the marker is not a document
     *stating* the marker.
 
-    #5197 (architect ruling, following lead-coder's #5196 measurement): the
-    verdict is a UNIVERSAL quantification over every note that names a
-    commit of this PR, not an existential one. The predicate used to return
-    green the instant ANY ONE note named a fresh commit — measured live on
-    #5196: architect's A note named the new head, docs-maintainer's B note
-    still named the PREVIOUS head (a fresh witness commit had landed to
-    tests/ between them), and the gate went green having read only the A
-    note, because it stopped looking the moment it found one success. House
-    rule 8 requires B specifically (the A role is architect's own
-    operational practice, not something this gate — or anything else — may
-    come to require; see the paragraph below). Now EVERY note naming a
-    commit of this PR must name a FRESH one for the PR to pass — one fresh
-    note no longer excuses a different, stale note.
+    #5204 (architect ruling, correcting #5197's own ∀ — issuecomment-
+    5384996017): the verdict is an EXISTENTIAL quantification over the
+    CURRENT HEAD specifically — "does a note exist naming THIS commit" —
+    not "any commit of this PR" (#5196's own bug: a stale B note satisfied
+    plain commit-membership, so a fresh A + a stale B still went green) and
+    NOT a universal quantification over every note ever posted (#5197's own
+    overcorrection, which #5204 replaces): a comment thread only grows, so
+    under ∀ a single stale note from an EARLIER round of review permanently
+    reds a PR that has since gained a fresh one — #5201 is the live
+    counter-example architect measured (a first B note went stale after a
+    fix landed; a second, differential B note correctly named the new head;
+    ∀ still reported red forever, because the FIRST note never stops
+    existing and never stops naming its own now-stale SHA).
+
+    Comparing against the CURRENT head fixes both holes at once: an old
+    note naming an old SHA simply does not match the (moving) target and is
+    left exactly where it is — this predicate never asks anyone to edit or
+    delete a prior note (CLAUDE.md's 3rd cross-cutting question, "does the
+    repair destroy the evidence" — here, no: every earlier note stays
+    intact as history of what was actually read at the time). A single
+    fresh note matching the current head is enough to pass, regardless of
+    how many earlier, now-superseded notes sit above it in the same thread.
 
     Deliberately does NOT parse which review role (A/B/etc.) wrote a note —
     only "B is required" is a house rule this gate can enforce; making A
     load-bearing here would be a new rule invented by this predicate, not a
     reflection of one that exists. #5187 fixed the note's first line into a
     parseable shape (role disclosed), which is what would make role-parsing
-    POSSIBLE if the universal quantification above ever proves insufficient
-    on its own — not a reason to add it preemptively (CLAUDE.md: "would
-    removing this cause a mistake?").
+    POSSIBLE if the existential check above ever proves insufficient on its
+    own — not a reason to add it preemptively (CLAUDE.md: "would removing
+    this cause a mistake?").
 
-    What a green return means, precisely: EVERY comment whose first line
-    names a commit of this PR names a FRESH one. It does NOT mean a
-    reviewer made that claim, and it does NOT mean every required ROLE
-    weighed in — every session here authenticates as the same ``gh`` user,
-    so comment authorship carries no reviewer/author distinction for this
-    function (or any text predicate) to read, and this function reads no
-    role marker at all. Rule 8's actual review requirement is enforced by a
-    human reading the PR before merging, not by this check; treat a green
-    here as "every note that names a tree names a fresh one", never as
-    "the tree was reviewed" or "the right roles reviewed it"."""
+    What a green return means, precisely: SOME comment's first line names
+    the PR's CURRENT head. It does NOT mean a reviewer made that claim, and
+    it does NOT mean every required ROLE weighed in — every session here
+    authenticates as the same ``gh`` user, so comment authorship carries no
+    reviewer/author distinction for this function (or any text predicate)
+    to read, and this function reads no role marker at all. Rule 8's actual
+    review requirement is enforced by a human reading the PR before
+    merging, not by this check; treat a green here as "a note names the
+    exact tree about to merge", never as "the tree was reviewed" or "the
+    right roles reviewed it"."""
     touched_tests = [p for p in pr.get("files", []) if p.startswith("tests/")]
     if not touched_tests:
         return 0, ["OK — this PR does not touch tests/; rule 8 does not apply."]
@@ -270,24 +272,25 @@ def evaluate(pr: dict) -> "tuple[int, list[str]]":
             "  Nothing here can be shown to have been read; refusing to pass a",
             "  note that names a tree this check cannot locate.",
         ]
-    # ONLY the PR's own commits — deliberately NOT headRefOid. A note quoting
-    # the head passes membership, and with an empty commit list there is then
-    # nothing for `tests_commits_after` to find, so the PR goes green with
-    # nothing read (docs-maintainer, #5120 B). The head is a commit of this PR
-    # whenever the PR has any, so including it separately buys nothing and
-    # costs exactly this hole.
     oids = [c.get("oid", "") for c in commits]
+    head = pr.get("headRefOid", "")
+    if not head:
+        return 1, [
+            "RED — this PR's headRefOid is empty; cannot verify a note names",
+            "  the current tree.",
+        ]
 
     resolved_count = 0
-    stale: "list[tuple[str, str, list[dict]]]" = []
+    other: "list[tuple[str, str, list[dict]]]" = []
     for note in notes:
-        verdict = _note_verdict(note, oids, commits)
-        if verdict is None:
+        shas = find_note_shas(note, oids)
+        if not shas:
             continue
         resolved_count += 1
-        note_text, sha, later = verdict
-        if later:
-            stale.append((note_text, sha, later))
+        if _note_names_head(note, head, oids):
+            return 0, [f"OK — a TESTS-READ note names the current head {head}."]
+        sha = shas[0]
+        other.append((note, sha, tests_commits_after(sha, commits)))
 
     if not resolved_count:
         return 1, [
@@ -299,28 +302,21 @@ def evaluate(pr: dict) -> "tuple[int, list[str]]":
             "  Without it, nothing can tell whether the note is a claim about THIS tree.",
         ]
 
-    if stale:
-        lines = [
-            "RED — a TESTS-READ note reads a tree that tests/ has moved past.",
-            "  (∀ EVERY note naming a commit of this PR must name a FRESH one —",
-            "  one fresh note does not excuse a different, stale note. #5197.)",
-        ]
-        for note_text, sha, later in stale:
-            lines.append(f"  stale note (first line): {note_text!r}")
-            lines.append(f"    names {sha}")
-            lines.append("    tests/ commits after it:")
-            for c in later:
-                lines.append(f"      {c.get('oid', '')[:9]} {c.get('messageHeadline', '')[:60]}")
-        lines.append(
-            "  Ask the same reviewer for a DIFFERENTIAL note over just these commits —"
-        )
-        lines.append("  re-reading the whole PR is not required.")
-        return 1, lines
-
-    return 0, [
-        "OK — every TESTS-READ note names a commit of this PR, and no commit",
-        "  has touched tests/ since it.",
+    lines = [
+        f"RED — no TESTS-READ note names the current head {head}.",
+        "  (∃ over the CURRENT head, #5204 — an older note naming an earlier",
+        "  commit does not count against a PR that has since moved. Post a",
+        "  FRESH note naming this head; earlier notes stay exactly as posted,",
+        "  nothing here asks you to edit or delete them.)",
     ]
+    for note_text, sha, later in other:
+        suffix = (
+            f" — {len(later)} tests/ commit(s) landed since"
+            if later else " — not the current head"
+        )
+        lines.append(f"  note (first line): {note_text!r}")
+        lines.append(f"    names {sha}{suffix}")
+    return 1, lines
 
 
 def commit_touched_paths(oid: str, repo: str, run=subprocess.run) -> "list[str]":
