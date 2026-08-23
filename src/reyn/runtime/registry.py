@@ -3303,7 +3303,27 @@ class AgentRegistry:
         A2A request path). It is recorded on FIRST construction (a cache hit
         returns the existing session unchanged) and drives the unbound-delegate
         default-deny in ``resolved_profile_for``. Default False = a top-level /
-        non-delegation load (byte-identical to pre-#2081)."""
+        non-delegation load (byte-identical to pre-#2081).
+
+        #5217: ``_store_session`` (PUBLISH) runs LAST, after toggle-restore and
+        state-restore (COMPLETE), not before. Before this fix, a session was
+        publicly visible in the registry's own map for the 3 lines between
+        ``_store_session`` and ``restore_state`` — any OTHER thread reaching
+        this registry in that window (``get_session``/``attached_session``)
+        could observe a half-built ``Session`` (toggles/pending-state not yet
+        applied). #5203 measured that this window happened to be harmless
+        TODAY only because the one field its own off-thread readers consumed
+        (``Session.history``) is populated earlier, inside ``_construct_
+        session``'s own factory call — an accidental safety, not a designed
+        one (architect issuecomment-5385481839). Publishing only once
+        construction is COMPLETE makes it structural instead: any thread that
+        finds a session in the map at all now finds a fully-built one, or
+        finds nothing — never a partial one. See ``AgentRegistry``'s own
+        ``_owner_thread_ident`` comment for the read-guard history this
+        replaces (#5215 tried enforcing the OLD window with a guard on the
+        READERS; withdrawn once found to be topology-dependent — this fix is
+        the one architect named as the real one, closing the WRITER's own
+        window instead)."""
         existing = self._peek_session(name)
         if existing is not None:
             return existing
@@ -3313,7 +3333,6 @@ class AgentRegistry:
             )
         profile = self.load_profile(name)
         session = self._construct_session(profile, is_delegate=is_delegate)
-        self._store_session(name, session)
         # #2285 step2: restore persisted visibility/hook toggles for the MAIN session (spawned
         # sessions load in spawn_session after the per-session path re-key). First-construction only
         # — cache-hits return above — so this runs once per session lifetime, incl. on restart.
@@ -3329,6 +3348,8 @@ class AgentRegistry:
         pending = self._pending_restore.pop((name, _DEFAULT_SID), None)
         if pending is not None:
             session.restore_state(pending)
+        # #5217: PUBLISH last — see this method's own docstring for why.
+        self._store_session(name, session)
         return session
 
     def _construct_session(
