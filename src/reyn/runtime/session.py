@@ -4618,6 +4618,12 @@ class Session:
                 ).resolve(),
                 agent_name=self.agent_name,
             ),
+            # #5210: same deferred-lambda-over-live-state idiom as hook_cwd/
+            # hook_process_context above — the model (and therefore the
+            # budget) can change across this dispatcher's lifetime (a
+            # ``/model`` switch), so this is resolved fresh at each
+            # exec_capture dispatch, never frozen here at construction.
+            resolve_exec_capture_output_cap=self._resolve_exec_capture_output_cap,
         )
         # #2608 H4: the session-owned filesystem watcher (see
         # reyn.runtime.fs_watcher's module docstring for the thread->async
@@ -5631,6 +5637,27 @@ class Session:
             agent_name=self.agent_name,
         )
         return mcp_connection_service
+
+    def _resolve_exec_capture_output_cap(self) -> "tuple[int, str] | None":
+        """#5210: ``(cap_tokens, model)`` for ``HookDispatcher``'s
+        ``exec_capture`` output-cap check, or ``None`` when no real budget
+        is available — see ``shell_runner.run_shell_hook``'s own docstring
+        for why this deliberately never falls back to an invented number.
+
+        ``self._router_host.wrap_up_output_reserve`` is the SAME live,
+        model-derived token budget ``RouterLoop._force_close_call`` already
+        hard-caps the wrap-up consolidation call to (#1092 PR-F1) — reused
+        here rather than a second, independent budget computation for
+        exec_capture specifically. ``None`` when the chat axis has no
+        turn_budget engine (an unresolvable model class, #4573 — see that
+        issue's own load-warn/use-raise ruling; this path degrades to "no
+        cap" rather than raising, matching #5210's own "no bounding subject
+        available" disclosure, not a hard dependency on #4573 being fixed
+        first)."""
+        output_reserve = self._router_host.wrap_up_output_reserve
+        if output_reserve is None:
+            return None
+        return output_reserve, self.model
 
     # ── #2073 S2: config hot-reload reapply seams (registered on the HotReloader) ──
 
