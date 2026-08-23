@@ -1,3 +1,10 @@
+---
+type: contributing
+topic: issue-management
+audience: [human, agent]
+search_hints: [issue management, backlog, 起票, 統合, consolidation, close, closing, 閉じる, priority, 優先順位, label, labels, triage, blocked:external, priority:next, band, owner-hit, silent, blocks-others, ours-only, thin:retrieval, thin:evaluation, arc-closure remainder, diary, 日記, issue triage, priority axes]
+---
+
 # Issue management
 
 Normative for the lead-coder role. Decided by the repo owner 2026-08-22/23.

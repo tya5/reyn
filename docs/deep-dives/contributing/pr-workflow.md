@@ -247,7 +247,10 @@ These rules then keep multi-session work coherent:
    session's own memory) and rotted invisibly. A remainder belongs on the
    surface the merge gate actually reads (an open issue, an unchecked Test
    plan item) — not on a surface nobody re-checks (a broker message, a memory
-   pin, a comment's prose that never becomes a ticket).
+   pin, a comment's prose that never becomes a ticket). Filing the remainder
+   is the start of its life as backlog, not a decision about its priority or
+   its eventual close — both governed by
+   `docs/deep-dives/contributing/issue-management.md`.
 7. **A reviewer's blocking point goes in the PR body as an unchecked Test
    plan item, not only in a review comment.** `gh pr review --request-changes`
    does not work in this repo's setup: every session authenticates as the
