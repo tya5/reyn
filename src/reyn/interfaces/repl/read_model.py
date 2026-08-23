@@ -506,6 +506,55 @@ class ChatReadModel(ABC):
         method's; passing a target here on a remote client is accepted but
         inert."""
 
+    def resolve_conversation_history_source(
+        self, *, agent: "str | None" = None, session_id: "str | None" = None,
+    ) -> "list[ChatMessage]":
+        """#5203: the registry-TOUCHING half of :meth:`conversation_history`
+        — MUST be called on the registry's OWNER thread
+        (:attr:`~reyn.runtime.registry.AgentRegistry.owner_thread_ident`,
+        #4995) by an implementation that genuinely touches one. Returns a
+        plain VALUE (never a live ``Session``/registry handle) safe to
+        hand across a thread boundary to :meth:`conversation_history_
+        from_source`.
+
+        **Concrete, not abstract** — the default delegates straight to
+        :meth:`conversation_history` (``limit=None``, the whole log),
+        treating its return value AS the "source". This keeps every
+        EXISTING :class:`ChatReadModel` implementation (test doubles that
+        only ever implemented the single combined method — this is a
+        pre-#5203 interface, not a new requirement on them) working
+        unchanged: their ``conversation_history`` has no thread-safety
+        concern to begin with, so the default split is a no-op split.
+
+        :class:`RegistryReadModel` OVERRIDES this with the REAL split (the
+        registry touch, nothing else) — the ONE implementation ``app.py``'s
+        #4983 off-loop read (``asyncio.to_thread``) actually calls this
+        way, from a genuine second OS thread reaching
+        ``AgentRegistry.get_session``/``attached_session`` — #4995 slice 1
+        restores the owner-thread guard onto exactly those 2 registry
+        methods (the 7-read set #5202 first excluded then #5203
+        re-covers) in this SAME PR, so the registry touch must happen on
+        the loop, BEFORE the thread hop, not inside it. Every OTHER
+        implementation is free to keep using this default — there is
+        nothing to hoist when there is no registry to protect."""
+        return self.conversation_history(agent=agent, session_id=session_id)
+
+    def conversation_history_from_source(
+        self, source: "list[ChatMessage]", *, limit: "int | None" = None,
+    ) -> "list[ChatMessage]":
+        """#5203: the thread-SAFE half — *source* is whatever
+        :meth:`resolve_conversation_history_source` returned. **Concrete,
+        not abstract** — the default just applies ``limit`` to *source*
+        (already the full resolved log, from the default resolve above);
+        see that method's own docstring for why this default is safe for
+        every implementation that does not override the split.
+        :class:`RegistryReadModel` overrides this too, so the ``limit``
+        slice it does here matches this default's own shape exactly —
+        kept as one definition, not duplicated, by inheriting it."""
+        if limit is not None and limit >= 0:
+            return list(source)[-limit:]
+        return list(source)
+
     @abstractmethod
     def load_older_conversation_history(
         self,
@@ -649,12 +698,32 @@ class RegistryReadModel(ChatReadModel):
         limit: "int | None" = None,
         agent: "str | None" = None,
         session_id: "str | None" = None,
-    ):
-        # The Session's ``history`` list IS the ChatMessage log loaded from
-        # ``history.jsonl`` by ``Session.load_history`` at load time — read it
-        # straight (no audit-event path). Return a shallow copy so a caller can
-        # not mutate the live session history. ``None`` = whole log (resume-
-        # equivalent); a positive ``limit`` keeps the most-recent N.
+    ) -> "list[ChatMessage]":
+        # #5203: the synchronous do-both convenience — a caller that does
+        # not cross a thread boundary (this is most callers) has no reason
+        # to split the 2 halves itself. Byte-identical to this method's own
+        # pre-#5203 single-piece body; the ONLY caller that DOES cross a
+        # thread boundary (``app.py``'s #4983 off-loop read) calls the 2
+        # halves directly instead — see ``resolve_conversation_history_
+        # source``'s own docstring immediately below.
+        source = self.resolve_conversation_history_source(agent=agent, session_id=session_id)
+        return self.conversation_history_from_source(source, limit=limit)
+
+    def resolve_conversation_history_source(
+        self, *, agent: "str | None" = None, session_id: "str | None" = None,
+    ) -> "list[ChatMessage]":
+        # #5203: the ONLY registry-touching half of conversation_history's
+        # own former single-piece body — split out so a caller crossing a
+        # thread boundary (``asyncio.to_thread``, ``app.py``'s #4983 off-
+        # loop read) can call THIS half on the registry's OWNER thread and
+        # hand the plain VALUE this returns across to the worker thread,
+        # instead of letting the worker thread call back into
+        # ``AgentRegistry.get_session``/``attached_session`` itself (#4995's
+        # own owner-thread invariant, restored onto exactly these 2 methods
+        # in the SAME PR — see ``registry.py``'s own ``_assert_owner_thread``
+        # call sites). The returned list IS the plain value: a shallow copy
+        # of the resolved session's ``history``, no live ``Session``/
+        # registry reference retained past this call.
         #
         # #3310 N2: ``agent`` given → resolve THAT session (not necessarily the
         # attached one) via ``AgentRegistry.get_session`` — the same
@@ -674,10 +743,24 @@ class RegistryReadModel(ChatReadModel):
             s = self._attached()
         if s is None:
             return []
-        history = list(getattr(s, "history", []) or [])
+        # The Session's ``history`` list IS the ChatMessage log loaded from
+        # ``history.jsonl`` by ``Session.load_history`` at load time — read it
+        # straight (no audit-event path). A shallow copy, so neither this
+        # caller nor a later ``conversation_history_from_source`` slice can
+        # mutate the live session history.
+        return list(getattr(s, "history", []) or [])
+
+    def conversation_history_from_source(
+        self, source: "list[ChatMessage]", *, limit: "int | None" = None,
+    ) -> "list[ChatMessage]":
+        # #5203: the thread-safe half — *source* is already a plain value
+        # (whatever :meth:`resolve_conversation_history_source` returned),
+        # never a live ``Session``/registry handle, so this method touches
+        # neither ``self._registry`` nor any ``Session`` attribute — safe
+        # to call from ANY thread, including inside ``asyncio.to_thread``.
         if limit is not None and limit >= 0:
-            return history[-limit:]
-        return history
+            return source[-limit:]
+        return list(source)
 
     def load_older_conversation_history(
         self,
@@ -919,13 +1002,16 @@ class RemoteReadModel(ChatReadModel):
         limit: "int | None" = None,
         agent: "str | None" = None,
         session_id: "str | None" = None,
-    ):
-        # Frame-sufficiency: a remote client holds no session and the past-turn
-        # ChatMessage log is NOT projected onto the wire (like the dropdown
-        # expansions / rewind picker). Degrade gracefully to empty — never a
-        # fabricated turn, regardless of a targeted (agent, session_id) — remote
-        # switch-hydrate is #3310 N3's job, not this accessor's. Restore-on-
-        # restart / switch-rehydrate is a local-attach affordance today.
+    ) -> "list[ChatMessage]":
+        # #5203: no registry to touch on this side — a remote client holds
+        # no session. Frame-sufficiency: the past-turn ChatMessage log is
+        # NOT projected onto the wire (like the dropdown expansions /
+        # rewind picker). Degrade gracefully to empty — never a fabricated
+        # turn, regardless of a targeted (agent, session_id) — remote
+        # switch-hydrate is #3310 N3's job, not this accessor's. No
+        # override of resolve_conversation_history_source/conversation_
+        # history_from_source needed: the base class's own defaults
+        # delegate straight to this method and already produce [] → [].
         return []
 
     def load_older_conversation_history(

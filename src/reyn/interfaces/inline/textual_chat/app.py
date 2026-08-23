@@ -2505,6 +2505,55 @@ class TextualChatApp(App):
             logger.exception("textual chat: conversation-history read failed")
             return None
 
+    def _resolve_history_source(
+        self, *, agent: "str | None" = None, session_id: "str | None" = None
+    ):
+        """#5203 — the registry-TOUCHING half of the #4983 off-thread read,
+        split out so it can be called ON THE LOOP, BEFORE the
+        ``asyncio.to_thread`` hop at this method's own 2 call sites
+        (``_handle_session_attached_event`` and :func:`run_textual_chat`'s
+        mount-time pre-fetch). #4995's owner-thread guard is restored onto
+        ``AgentRegistry.get_session``/``attached_session`` in this SAME PR
+        (see that class's own ``_assert_owner_thread`` docstring) — a
+        worker thread calling back into either would now raise, which is
+        exactly the defect this split closes: the accidental safety #5203
+        measured (only ``Session.history`` happened to already be hydrated
+        before a session becomes registry-visible — a fact about today's
+        field, not a designed guarantee, architect issuecomment-
+        5385152402) is replaced with a REAL one — the registry is never
+        touched off its owner thread at all, by construction.
+
+        Returns the plain VALUE :meth:`~reyn.interfaces.repl.read_model.
+        ChatReadModel.resolve_conversation_history_source` produces (never
+        a live ``Session``/registry handle) — safe to hand to
+        :meth:`_history_from_source` across the thread boundary. ``None``
+        on `self._read_model` being unset OR the resolve raising (already
+        logged here), mirroring :meth:`_read_conversation_history`'s own
+        error-handling shape."""
+        if self._read_model is None:
+            return None
+        try:
+            return self._read_model.resolve_conversation_history_source(
+                agent=agent, session_id=session_id
+            )
+        except Exception:
+            logger.exception("textual chat: conversation-history source-resolve failed")
+            return None
+
+    def _history_from_source(self, source) -> "list | None":
+        """#5203 — the thread-SAFE half. *source* is whatever
+        :meth:`_resolve_history_source` returned (already resolved ON THE
+        LOOP) — this method touches no registry and is safe to run inside
+        ``asyncio.to_thread``, the actual off-thread step #4983 exists
+        for."""
+        if source is None or self._read_model is None:
+            return None
+        try:
+            return self._read_model.conversation_history_from_source(source)
+        except Exception:
+            logger.exception("textual chat: conversation-history read failed")
+            return None
+
     def _apply_hydrated_messages(self, messages: "list | None") -> None:
         """#4983 step ② — project *messages* (already read by :meth:`_read_
         conversation_history`, step ①) into the retained model so the pane
@@ -5685,9 +5734,13 @@ class TextualChatApp(App):
         # step ② (projection + apply) stays on the loop, unchanged. See
         # this method's own docstring for why `_hydrate_from_history`
         # itself is not what's called here.
-        messages = await asyncio.to_thread(
-            self._read_conversation_history, agent=agent, session_id=session_id,
-        )
+        #
+        # #5203: the registry TOUCH (resolving `agent`/`session_id` to a
+        # Session) happens HERE, still on the loop, BEFORE the thread hop
+        # — only the plain-value slice below crosses into `to_thread`. See
+        # `_resolve_history_source`'s own docstring for why.
+        source = self._resolve_history_source(agent=agent, session_id=session_id)
+        messages = await asyncio.to_thread(self._history_from_source, source)
         # #4983 supersede guard — see this method's own docstring. A LATER
         # switch may have claimed a newer generation (and already applied
         # its own hydrate) while the read above was still in flight; this
@@ -6899,19 +6952,24 @@ async def run_textual_chat(
     # ``[]``, in that case (``on_mount`` needs to tell "nothing to read"
     # apart from "read it yourself").
     #
-    # Deliberately does NOT touch the session-switch rehydrate path
-    # (``TextualChatApp._handle_session_attached_event``, live, mid-
-    # session) — that call site still makes the SAME synchronous read it
-    # always did. Its own event-loop-block question is a separate,
-    # still-open UX question (a live switch would trade "TUI freezes
-    # briefly" for "the pane goes blank for a beat, then refills") that
-    # needs its own owner-facing ruling before it changes — see #4983's
-    # own issue thread. Do not read this fix as covering that path too.
+    # #5203: this call site and ``TextualChatApp._handle_session_attached_
+    # event``'s (the session-switch rehydrate, live, mid-session) are now
+    # the SAME shape — both resolve the target session EXPLICITLY (``agent=
+    # agent_name`` here, matching the switch path's own ``agent``/
+    # ``session_id``, rather than this call's former implicit "whichever
+    # session is attached") and both hoist the registry touch onto the
+    # LOOP, before their own ``asyncio.to_thread`` hop, so neither ever
+    # reaches ``AgentRegistry.get_session``/``attached_session`` from the
+    # worker thread anymore. See ``ChatReadModel.resolve_conversation_
+    # history_source``'s own docstring for why.
     _initial_history_messages = None
     if read_model is not None:
         try:
+            _history_source = read_model.resolve_conversation_history_source(
+                agent=agent_name
+            )
             _initial_history_messages = await asyncio.to_thread(
-                read_model.conversation_history
+                read_model.conversation_history_from_source, _history_source,
             )
         except Exception:
             # Fully guarded, same discipline as the pre-#4983 synchronous

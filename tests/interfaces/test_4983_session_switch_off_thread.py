@@ -121,11 +121,20 @@ async def test_session_switch_reads_conversation_history_off_the_event_loop(
     tmp_path, monkeypatch,
 ) -> None:
     """Tier 2: the measured defect's own falsifier. The switch barrier's
-    ``conversation_history()`` call must run on a DIFFERENT thread than
-    the event loop's own main thread — reverting the fix (calling
-    ``_hydrate_from_history`` synchronously again, as it did before this
-    PR) turns this red: the call lands on the SAME thread the test
-    itself runs on.
+    off-thread step must run on a DIFFERENT thread than the event loop's
+    own main thread — reverting the fix (calling ``_hydrate_from_history``
+    synchronously again, as it did before this PR) turns this red: the
+    call lands on the SAME thread the test itself runs on.
+
+    #5203: recording moved from ``conversation_history()`` (the combined,
+    synchronous convenience — no longer what the switch call site invokes
+    at all) to ``conversation_history_from_source()`` — the specific half
+    #5203 kept inside ``asyncio.to_thread`` (the registry TOUCH,
+    ``resolve_conversation_history_source()``, now runs on the loop
+    instead, per that method's own docstring). This test's own subject —
+    "does step ① genuinely run off-thread" — is still answered by
+    watching whichever call is the one still crossing the thread
+    boundary.
 
     #5159 (census finding): waiting for the switch's read via a flat
     ``_settle(pilot)`` (``pilot.pause()`` — CPU idle time) instead of the
@@ -144,13 +153,13 @@ async def test_session_switch_reads_conversation_history_off_the_event_loop(
         read_model = RegistryReadModel(reg)
         main_thread = threading.current_thread()
         call_threads: "list[threading.Thread]" = []
-        real_conversation_history = read_model.conversation_history
+        real_from_source = read_model.conversation_history_from_source
 
         def _recording(*args, **kwargs):
             call_threads.append(threading.current_thread())
-            return real_conversation_history(*args, **kwargs)
+            return real_from_source(*args, **kwargs)
 
-        monkeypatch.setattr(read_model, "conversation_history", _recording)
+        monkeypatch.setattr(read_model, "conversation_history_from_source", _recording)
 
         transport = QueueTransport()
         app = TextualChatApp(transport=transport, read_model=read_model, agent_name="alpha")
@@ -165,7 +174,7 @@ async def test_session_switch_reads_conversation_history_off_the_event_loop(
             await wait_until(lambda: len(call_threads) > calls_at_mount)
 
         switch_calls = call_threads[calls_at_mount:]
-        assert switch_calls, "the switch must have read conversation_history"
+        assert switch_calls, "the switch must have read conversation_history_from_source"
         assert all(t is not main_thread for t in switch_calls), (
             "the session-switch read must run off the event-loop thread "
             "(asyncio.to_thread), not inline on the test's own thread"
@@ -294,15 +303,26 @@ async def test_session_switch_supersede_guard_lets_the_later_switch_win(
             loop = asyncio.get_running_loop()
             release_beta_read = threading.Event()
             beta_read_started = asyncio.Event()
-            real_read = app._read_conversation_history
+            real_from_source = app._history_from_source
 
-            def _gated_read(*, agent=None, session_id=None):
-                if agent == "beta":
+            # #5203: the gate moves from `_read_conversation_history`
+            # (which no longer runs at all on this call path — the
+            # registry touch is now `_resolve_history_source`, hoisted
+            # onto the loop, and `agent`/`session_id` are no longer
+            # available at the point that crosses into `to_thread`) to
+            # `_history_from_source`, keyed on the resolved history's own
+            # CONTENT rather than the agent name — beta's and gamma's
+            # seeded turns are distinguishable by content alone, so no
+            # extra plumbing is needed to tell which switch's read this is.
+            def _gated_from_source(source):
+                if source and any(
+                    getattr(m, "content", None) == "beta's own turn" for m in source
+                ):
                     loop.call_soon_threadsafe(beta_read_started.set)
                     release_beta_read.wait()
-                return real_read(agent=agent, session_id=session_id)
+                return real_from_source(source)
 
-            monkeypatch.setattr(app, "_read_conversation_history", _gated_read)
+            monkeypatch.setattr(app, "_history_from_source", _gated_from_source)
 
             await reg.attach("beta")
             beta_task = asyncio.create_task(
