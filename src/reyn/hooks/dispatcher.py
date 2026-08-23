@@ -92,6 +92,7 @@ class HookDispatcher:
         bus: "HookBus | None" = None,
         hook_cwd: "Callable[[], str | None] | None" = None,
         hook_process_context: "Callable[[], Any] | None" = None,
+        resolve_exec_capture_output_cap: "Callable[[], tuple[int, str] | None] | None" = None,
     ) -> None:
         self._registry = registry
         # Hook-Event Redesign Phase 4a (proposal 0059 §3.2/§3.3): the optional
@@ -146,6 +147,15 @@ class HookDispatcher:
         # cwd, same as always).
         self._hook_cwd = hook_cwd
         self._hook_process_context = hook_process_context
+        # #5210: same "live callable, not a value frozen at construction time"
+        # idiom as hook_cwd/hook_process_context above — the context budget
+        # a live Session/TurnBudgetEngine derives can change across this
+        # dispatcher's lifetime (a model switch, e.g.). None (the default —
+        # every pre-#5210 call site) → no cap applied, byte-identical to
+        # before this parameter existed (exec_capture's returned stdout is
+        # unbounded, same as always — see shell_runner.run_shell_hook's own
+        # docstring for why #5210 does not invent a fallback number here).
+        self._resolve_exec_capture_output_cap = resolve_exec_capture_output_cap
 
     @property
     def registry(self) -> HookRegistry:
@@ -349,6 +359,14 @@ class HookDispatcher:
                 hook_process_context=(
                     self._hook_process_context()
                     if self._hook_process_context is not None
+                    else None
+                ),
+                # #5210: live-resolved (cap_tokens, model) or None — see
+                # shell_runner.run_shell_hook's own docstring for the
+                # explicit-failure-not-truncation contract this enforces.
+                output_token_cap=(
+                    self._resolve_exec_capture_output_cap()
+                    if self._resolve_exec_capture_output_cap is not None
                     else None
                 ),
             )

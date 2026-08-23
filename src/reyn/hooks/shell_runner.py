@@ -22,6 +22,14 @@ Contract
 * **Timeout** (default 60 s, overridable per-hook via ``timeout_seconds``).
   Timeout / non-zero exit → log + return ``None``; the runner NEVER crashes the
   agent.
+* **Output size** (``exec_capture`` only, #5210): the returned/parsed stdout
+  is unbounded by default (``output_token_cap=None``, byte-identical to
+  every pre-#5210 caller) — the LOGGED copy has always been capped at 200
+  bytes (see ``:200`` below) but the RETURNED value, which ends up as an
+  inbox message and ultimately a prompt, was not. A caller that supplies
+  ``output_token_cap`` gets an explicit, recorded failure (never a silent
+  truncation — see ``run_shell_hook``'s own docstring) when the decoded
+  stdout exceeds it.
 
 Sandbox (CRITICAL)
 ------------------
@@ -435,6 +443,7 @@ async def run_shell_hook(
     consent_bus: "RequestBus | None" = None,
     hook_name: str | None = None,
     emit_event: "Callable[..., Any] | None" = None,
+    output_token_cap: "tuple[int, str] | None" = None,
 ) -> str | None:
     """Run an exec/exec_capture HookDef argv under the sandbox + consent gate.
 
@@ -518,13 +527,31 @@ async def run_shell_hook(
         (allowlisted / accepted) hook, otherwise a silent side-effect, surfaces in
         the TUI events tab. NOT called when consent is refused or the command is
         skipped (then nothing ran). Best-effort: a sink error never breaks the run.
+    output_token_cap:
+        #5210 — ``(cap_tokens, model)`` for ``capture_stdout=True`` runs only;
+        ``None`` (default) applies NO cap, matching every pre-#5210 caller's
+        behavior unchanged. When set, the decoded stdout's estimated token
+        count (:func:`~reyn.services.compaction.engine.estimate_tokens`,
+        against *model*) is checked BEFORE the caller ever sees or parses it —
+        exceeding *cap_tokens* is an EXPLICIT failure (logged, recorded via
+        *emit_event* with ``denial_class="exec_capture_output_cap_exceeded"``,
+        return ``None``), never a truncation: a truncated JSON push-directive
+        fails to parse and is indistinguishable from a clean no-push run at
+        the dispatcher (the exact "two silences" shape #5041 already closed
+        once for a different cause). *cap_tokens* is deliberately not invented
+        here — the caller derives it from a real, live context-budget source
+        (``HookDispatcher``'s own ``resolve_exec_capture_output_cap``,
+        wired from ``Session``'s ``TurnBudgetEngine.budget.output_reserve``)
+        and passes ``None`` when no such source is available, rather than
+        supplying an arbitrary fallback number.
 
     Returns
     -------
     str | None
-        The decoded stdout when ``capture_stdout=True`` and the run succeeded;
-        otherwise ``None`` (always ``None`` for ``capture_stdout=False``, and on
-        any failure in either mode).
+        The decoded stdout when ``capture_stdout=True`` and the run succeeded
+        AND (if *output_token_cap* is set) is within it; otherwise ``None``
+        (always ``None`` for ``capture_stdout=False``, and on any failure in
+        either mode, including exceeding *output_token_cap*).
 
     Notes
     -----
@@ -637,6 +664,41 @@ async def run_shell_hook(
         # run_and_classify (#3823 ①) — reused here, not re-derived.
         denial_class = launched.denial_class
 
+        # #5210: computed HERE — before the single unconditional emit_event
+        # call below — so an over-cap rejection rides that SAME event
+        # (architect's own prescription: reuse denial_class, no new event
+        # surface) rather than firing a second, separate one. Only relevant
+        # for a would-be-successful capture_stdout run; an already-failed
+        # run (non-zero exit) is unaffected — that path's own denial_class
+        # (e.g. DENIAL_FORK) takes priority below, unchanged.
+        cap_exceeded = False
+        if (
+            capture_stdout
+            and result.returncode == 0
+            and output_token_cap is not None
+        ):
+            cap_tokens, cap_model = output_token_cap
+            from reyn.services.compaction.engine import estimate_tokens  # noqa: PLC0415
+
+            decoded_stdout_for_cap = result.stdout.decode("utf-8", errors="replace")
+            actual_tokens = estimate_tokens(decoded_stdout_for_cap, cap_model)
+            if actual_tokens > cap_tokens:
+                cap_exceeded = True
+                denial_class = "exec_capture_output_cap_exceeded"
+                # #5210 (architect ruling, issue #5210): NEVER truncate — a
+                # cut JSON push-directive fails to parse at the dispatcher
+                # and is indistinguishable from a clean, deliberate no-push
+                # run (the exact "two silences" #5041 already closed once).
+                # Reject outright, loudly, and record it (below) — never
+                # silently degrade.
+                _log.warning(
+                    "shell-hook %r exec_capture output (%d estimated tokens) "
+                    "exceeds the context-budget-derived cap (%d tokens) — push "
+                    "skipped, NOT truncated (a truncated JSON directive would "
+                    "silently fail to parse instead).",
+                    command, actual_tokens, cap_tokens,
+                )
+
         if emit_event is not None:
             try:
                 emit_event(
@@ -694,10 +756,13 @@ async def run_shell_hook(
             return None  # fail-safe: a failed command yields no push-directive
 
         # Success. capture_stdout (exec_capture) → return decoded stdout for the
-        # caller to parse; otherwise (exec) output is ignored.
-        if capture_stdout:
-            return result.stdout.decode("utf-8", errors="replace")
-        return None
+        # caller to parse; otherwise (exec) output is ignored. #5210: a
+        # cap_exceeded verdict (computed above, before the emit_event call,
+        # so the rejection rides that SAME event) still returns None here —
+        # never a truncated prefix of the real output.
+        if not capture_stdout or cap_exceeded:
+            return None
+        return result.stdout.decode("utf-8", errors="replace")
 
     except Exception as exc:
         _log.error("shell-hook %r: unexpected error: %s", command, exc)
