@@ -218,6 +218,23 @@ class SurfaceRegistry:
             self._by_agent[agent_name] = mgr
         return mgr
 
+    def remove(self, agent_name: str) -> None:
+        """#5146: drop this name's own ``SurfaceManager`` entirely — the
+        AG-UI-side half of the #5084-class name-reuse fix (that one closed
+        spawn-lineage identity; this one closes operator-driver-token/
+        surface-set identity). Without this, a purge followed by an
+        immediate same-name re-declare hands the NEW identity's first
+        connection the OLD identity's stale ``_active_driver`` token and
+        surface set (the OLD manager, still keyed by the same name, is
+        just found and reused by :meth:`for_agent`). Meant to be wired as
+        the callback for ``AgentRegistry.add_remove_listener`` (this class
+        does not import ``AgentRegistry`` itself — the wiring lives at the
+        call site that already imports both, keeping this module's own
+        dependency direction unchanged). A no-op if the name was never
+        seen (``.pop(..., None)``) — a purge of an agent no connection
+        ever attached to is not an error here."""
+        self._by_agent.pop(agent_name, None)
+
     def get(self, agent_name: str) -> "SurfaceManager | None":
         return self._by_agent.get(agent_name)
 

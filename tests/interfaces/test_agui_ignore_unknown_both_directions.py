@@ -87,6 +87,12 @@ class _FakeRegistry:
         # fired, matching the production split.
         return self.session
 
+    def add_remove_listener(self, callback) -> None:
+        # #5146: endpoint.py's own _ensure_remove_listener_wired touches this
+        # on every request path this file drives — a no-op stub is enough
+        # here since this file's tests never purge an agent.
+        pass
+
 
 def _app(monkeypatch, registry: _FakeRegistry) -> FastAPI:
     app = FastAPI()
