@@ -87,7 +87,7 @@ While a session is active, lines starting with `/` are intercepted and never rou
 | `/cost` | Quick token + USD cost summary for this agent |
 | `/exit` | Exit the chat (alias: `/quit`, Ctrl+D) |
 | `/help [<cmd>]` | Slash command help — list all, or focus on one |
-| `/hook on\|off <name>` | Enable/disable a hook for this session (live at the next dispatch; session-scoped — the hook still fires in the agent's other sessions; persists across restart) |
+| `/hook on\|off <name>` | Enable/disable a hook for this session (live at the next dispatch; session-scoped — the hook still fires in the agent's other sessions; persists across restart). `off` only takes effect for a per-agent- or per-session-origin hook; a startup- or runtime-origin hook (config-file layers the agent cannot write) is protected — it keeps firing regardless (#5213/#5218). `/hook off` on a protected hook still replies "now disabled" (known gap, #5230) even though the hook is unaffected; the status bar's Hook tab does NOT share that gap — its `enabled` names the SAME predicate the dispatcher enforces, not bare name-in-disabled-set (#5222) |
 | `/image <path>` (alias `/img`) | Attach an image to the next user message (multimodal input; png/jpg/jpeg/gif/webp/svg) |
 | `/list` | List pending interventions |
 | `/memory [list\|view <name>]` | Inspect project memory entries (see [concepts/memory](../../concepts/data-retrieval/memory.md)) |

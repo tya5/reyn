@@ -88,7 +88,7 @@ reyn chat researcher
 | `/cost` | このagentのトークン + USD コスト概要 |
 | `/exit` | チャットを終了(alias: `/quit`、Ctrl+D) |
 | `/help [<cmd>]` | スラッシュコマンドのヘルプ — 全件一覧、または特定コマンドに絞る |
-| `/hook on\|off <name>` | このセッションでの hook の有効/無効を切り替え(次回 dispatch から有効; セッションスコープ — agent の他セッションでは引き続き発火。再起動後も持続) |
+| `/hook on\|off <name>` | このセッションでの hook の有効/無効を切り替え(次回 dispatch から有効; セッションスコープ — agent の他セッションでは引き続き発火。再起動後も持続)。`off` が実際に効くのは per-agent / per-session origin の hook のみ — startup / runtime origin の hook(agent が書き込めない config 層)は保護されており、無効化しても発火し続ける(#5213/#5218)。保護された hook に対する `/hook off` は、実際には無効化されていないにもかかわらず今も「now disabled」と応答する(既知のギャップ、#5230)。一方 status bar の Hook タブはこのギャップを共有していない — その `enabled` は dispatcher が実際に強制するのと同じ判定を示し、単純な name-in-disabled-set ではない(#5222) |
 | `/image <path>`(alias `/img`) | 次のユーザーメッセージに画像を添付(マルチモーダル入力; png/jpg/jpeg/gif/webp/svg) |
 | `/list` | 保留中の介入を一覧表示 |
 | `/memory [list\|view <name>]` | プロジェクトメモリのエントリを確認([concepts/memory](../../concepts/data-retrieval/memory.md) 参照) |
