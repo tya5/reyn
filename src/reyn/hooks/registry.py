@@ -29,6 +29,16 @@ class HookRegistry:
     # Query
     # ------------------------------------------------------------------
 
+    def all_defs(self) -> list[HookDef]:
+        """#5213: every ``HookDef`` in this registry, registration order —
+        the public surface a caller composing MULTIPLE ``HookRegistry``
+        instances (one per config LAYER, so each entry keeps its own
+        ``HookDef.origin``) needs to merge them into one combined registry,
+        without reaching into ``self._defs`` directly (the testing
+        policy's own "no private-state reach-in" discipline, applied here
+        to production code composing this class, not just tests)."""
+        return list(self._defs)
+
     def hooks_for(self, point: str) -> list[HookDef]:
         """Return all hooks registered for *point* in registration order.
 
