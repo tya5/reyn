@@ -169,34 +169,49 @@ class ApprovalLedger:
         )
 
     def _write_record(self, record: dict) -> None:
-        """Serialize *record* as one JSONL line, append, flush, fsync —
-        identical shape to ``BudgetLedger._write_record``, including the
-        leading-newline guard against a previous crash's partial
-        (no-trailing-newline) write."""
+        """Serialize *record* as one SELF-TERMINATING JSONL line (always
+        ``line + "\\n"``, unconditionally) and append it — no read of any
+        kind happens on this path.
+
+        #5192 (architect ruling, issuecomment-5384627324, self-diagnosed
+        design flaw): this method used to mirror the sibling ``BudgetLedger``
+        class's own "leading-newline guard" — a pre-check (``stat()`` + a
+        separate ``open("rb")``/``seek``/``read`` of the file's own tail
+        byte) that inserted a leading ``"\\n"`` before the record whenever
+        the file's LAST byte wasn't already ``"\\n"``, defending against a
+        torn (no-trailing-newline) write left by a crash. Deliberately not
+        naming that check's old identifier here — acceptance ① for this fix
+        is that identifier's TOTAL absence from this module (a grep hit in
+        a docstring would still count). docs-maintainer's
+        live 3-stage repro (issuecomment-5384615994) confirmed this check
+        is ITSELF a TOCTOU race: under real concurrent writers, it can
+        observe another process's write mid-flight — its trailing ``"\\n"``
+        landed in the kernel but not yet visible to this read, or vice
+        versa — and insert a spurious lead newline, producing exactly the
+        "400 appends -> 401 lines" symptom (a bystander blank line; ``fold()``
+        already tolerated it silently via its own ``if not line: continue``,
+        so approvals were never corrupted — only the RAW LINE COUNT was ever
+        wrong).
+
+        The fix is not a smarter/locked/retried guard (all three still read
+        before writing, the exact thing this ledger's whole design exists to
+        make unnecessary — "shrink what a writer must produce down to my own
+        decision" is the architect ruling that created this class, #5153's
+        own module docstring) — it is removing the read entirely. A torn
+        write from BEFORE this fix (or any file this ledger did not itself
+        create) is a MIGRATION-time concern, handled ONCE by
+        :func:`migrate_legacy_snapshot` (see its own docstring), not
+        something every append needs to re-verify. Every record this method
+        writes is, by construction, exactly one line ending in ``"\\n"`` —
+        concatenation onto a prior malformed tail can only happen if the
+        FILE was already broken before this ledger's own append-only
+        writing began, which migration is what repairs.
+        """
         line = json.dumps(record, ensure_ascii=False) + "\n"
-        need_lead = self._needs_lead_newline()
         with self._path.open("a", encoding="utf-8") as f:
-            if need_lead:
-                f.write("\n")
             f.write(line)
             f.flush()
             os.fsync(f.fileno())
-
-    def _needs_lead_newline(self) -> bool:
-        if not self._path.is_file():
-            return False
-        try:
-            size = self._path.stat().st_size
-        except OSError:
-            return False
-        if size == 0:
-            return False
-        try:
-            with self._path.open("rb") as f:
-                f.seek(-1, 2)
-                return f.read(1) != b"\n"
-        except OSError:
-            return False
 
     def iter_records(self):
         """Yield parsed record dicts; skip broken/non-dict lines (a torn
@@ -250,6 +265,50 @@ class ApprovalLedger:
                 bt = rec.get("birthtime")
                 bound[key] = (ino, float(bt) if isinstance(bt, (int, float)) else None)
         return approvals, bound
+
+
+def _repair_missing_trailing_newline(path: Path) -> None:
+    """#5192: ONE-TIME repair for a pre-existing ledger file that does not
+    end in a trailing newline — a torn write from before this fix landed,
+    or any other historical cause. Never something a healthy, self-
+    terminating :meth:`ApprovalLedger._write_record` can produce going
+    forward (every successful append writes exactly one line ending in
+    ``"\\n"``, unconditionally) — so this repair only exists to clean up
+    a file this ledger did NOT create through its own current writes.
+
+    Called from :func:`migrate_legacy_snapshot` — every real caller in
+    this codebase invokes that before its own append (see that
+    function's own docstring), so this repair rides the SAME call site
+    rather than adding a new one. Deliberately NOT called from
+    ``_write_record``'s own hot path: that per-append check-then-write
+    was the TOCTOU race #5192 closed (docs-maintainer's live repro,
+    issuecomment-5384615994) — moving the SAME shape of check here does
+    not reintroduce that bug in practice, because it now runs once per
+    migration attempt rather than once per append, but it is still a
+    read-then-write and callers should not treat it as race-free.
+
+    Best-effort: any read/write failure is swallowed. A still-broken
+    tail after a failed repair attempt is no worse than before this
+    function existed — the next append still lands as ``O_APPEND``'s own
+    new line, concatenated onto whatever broken tail remains, exactly
+    the pre-#5192 behavior for a file this repair could not fix. This
+    function can only ever improve the situation, never worsen it."""
+    try:
+        if path.stat().st_size == 0:
+            return
+        with path.open("rb") as f:
+            f.seek(-1, 2)
+            if f.read(1) == b"\n":
+                return
+    except OSError:
+        return
+    try:
+        with path.open("a", encoding="utf-8") as f:
+            f.write("\n")
+            f.flush()
+            os.fsync(f.fileno())
+    except OSError:
+        pass
 
 
 def migrate_legacy_snapshot(ledger: ApprovalLedger, legacy_yaml_path: Path) -> None:
@@ -332,8 +391,16 @@ def migrate_legacy_snapshot(ledger: ApprovalLedger, legacy_yaml_path: Path) -> N
       - if this call LOSES (``FileExistsError`` — someone else's
         migration, or a genuine append, already created the file), it
         is a no-op, and the caller's own subsequent real append still
-        lands strictly AFTER whatever is already there."""
-    if ledger.path.exists() or not legacy_yaml_path.exists():
+        lands strictly AFTER whatever is already there.
+
+    #5192: also where a pre-existing ledger's missing trailing newline
+    gets repaired — see :func:`_repair_missing_trailing_newline`'s own
+    docstring for why this is a migration-time, not a per-append, concern
+    (``_write_record`` no longer checks this at all, by design)."""
+    if ledger.path.exists():
+        _repair_missing_trailing_newline(ledger.path)
+        return
+    if not legacy_yaml_path.exists():
         return
     try:
         import yaml

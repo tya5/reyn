@@ -28,10 +28,13 @@ field names live here, not in any domain-specific code.
 Off-loop durability (#1765 Step 1a, extended by Step 1b). Step 1a moved the `fsync` OFF the
 event loop via the shared `DurabilityWorker` (so a slow disk no longer freezes the loop — TUI
 repaint + other sessions keep running DURING the fsync); Step 1b (`_do_wal_write`) extends this
-to the `open`/`write`/`flush` themselves + the defensive lead-newline `stat`/`read` check, since
-those are NOT free on every platform (Windows AV re-scan / cloud-sync rehydration / a stale
-file-lock can stall a plain `open()` after the file has sat idle — same loop-freezing failure
-mode Step 1a fixed for `fsync`, just for a different syscall). `append` still returns only once
+to the `open`/`write`/`flush` themselves, since those are NOT free on every platform (Windows AV
+re-scan / cloud-sync rehydration / a stale file-lock can stall a plain `open()` after the file
+has sat idle — same loop-freezing failure mode Step 1a fixed for `fsync`, just for a different
+syscall). #5192: `_do_wal_write` no longer has a lead-newline check — that check was a TOCTOU
+race (a `stat`+tail-`read` that could observe a concurrent writer mid-flight), removed in favor
+of an unconditional, always self-terminating write; see `_do_wal_write`'s own docstring. `append`
+still returns only once
 durable: the per-append crash-recovery contract is UNCHANGED (no relaxed-durability window for
 `append`; `append_nowait` is the separate, deliberately-relaxed fire-and-forget path). The
 off-loop write would reopen the #1751 surface (a lockless `iter_from` reading a
@@ -224,6 +227,14 @@ def _parse_wal_line(raw: bytes) -> "dict | None":
     Mirrors ``iter_from``'s tolerance: blank lines, non-JSON (torn writes from a
     crash), non-dicts, and entries without an integer ``seq`` are skipped rather
     than raising — recovery is best-effort from whatever survived.
+
+    #5192: this tolerance is an INVARIANT of the WAL's on-disk format, not
+    incidental defensive code — `_do_wal_write` writes without a lead-newline
+    check (self-terminating append, no read-before-write), so a blank line (two
+    adjacent `\n`s from a benign race) or a torn trailing line (a crash mid-write)
+    are EXPECTED, not exceptional, on-disk shapes. The same skip is duplicated at
+    two other read sites for the identical reason — see `iter_from` and
+    `_do_truncate`.
     """
     stripped = raw.strip()
     if not stripped:
@@ -405,7 +416,8 @@ class StateLog:
     def _do_wal_write(self, payload: str) -> None:
         """#1765 Step 1b: the synchronous WAL-line write (run off-loop via ``asyncio.to_thread``,
         mirroring ``_do_truncate``'s pattern). Step 1a moved ONLY ``os.fsync`` off the loop; the
-        preceding ``_needs_lead_newline`` check (a ``stat`` + tail-byte ``read``) and the
+        preceding lead-newline guard (a ``stat`` + tail-byte ``read``, since removed — see the
+        #5192 paragraph below) and the
         ``open``/``write``/``flush`` themselves stayed SYNCHRONOUS on the loop, on the (POSIX-
         biased) assumption that appending to an already-resident file is effectively instant. On
         Windows that assumption doesn't hold after the file has sat idle: a real-time antivirus
@@ -415,11 +427,23 @@ class StateLog:
         turn-processing pipeline, that stall freezes everything (the "message echoes, but
         Working… never appears" symptom), not just this WAL append. Folding the lead-newline
         check + open/write/flush/fsync into ONE thread-hop keeps every synchronous file access
-        for this append off the loop, closing the gap Step 1a left open."""
-        need_lead_newline = self._needs_lead_newline()
+        for this append off the loop, closing the gap Step 1a left open.
+
+        #5192: the lead-newline check this docstring used to describe (a `stat` +
+        tail-byte `read` BEFORE the `open("a")`) was a TOCTOU race, not a defensive
+        check — another process's concurrent append between the check and this
+        write can land its own bytes on what the check observed as "already
+        newline-terminated," and this write's `payload` (which is ALWAYS already
+        `\n`-terminated — see `_wal_write_job`) would then be appended straight
+        after them with no separator, corrupting the line count read by
+        `iter_from`/`_tail_scan_max_seq`/`_do_truncate` (the actual entries were
+        never corrupted — only the *count* of lines was ever wrong; see #5192's
+        repro). The fix is not a smarter check: it is not checking at all. Every
+        `payload` is self-terminating by construction, so appending it
+        unconditionally is correct whether or not the file already ends in `\n` —
+        a self-terminated payload joins any prior tail (newline-terminated or
+        not) into two well-formed lines either way. No read before the write."""
         with self._path.open("a", encoding="utf-8") as f:
-            if need_lead_newline:
-                f.write("\n")
             f.write(payload)
             f.flush()
             os.fsync(f.fileno())
@@ -468,22 +492,6 @@ class StateLog:
                     kind, seq, e,
                 )
 
-    def _needs_lead_newline(self) -> bool:
-        if not self._path.is_file():
-            return False
-        try:
-            size = self._path.stat().st_size
-        except OSError:
-            return False
-        if size == 0:
-            return False
-        try:
-            with self._path.open("rb") as f:
-                f.seek(-1, 2)
-                return f.read(1) != b"\n"
-        except OSError:
-            return False
-
     def iter_from(self, min_seq: int) -> Iterator[dict]:
         """Yield WAL entries with `seq >= min_seq`, in file order, EXCEPT this log's
         currently-in-flight entry (written but not yet fsync'd).
@@ -497,6 +505,11 @@ class StateLog:
         `iter_from` stays a plain sync generator. Only that one in-flight entry is excluded:
         every other on-disk entry IS durable (this log's earlier appends, another StateLog's
         appends on the same shared file, or pre-existing entries), so reads + recovery see them.
+
+        #5192: the blank-line skip below is an INVARIANT, not incidental — see
+        `_parse_wal_line`'s docstring for why. Duplicated (not shared) at 3 sites
+        in this module (`_parse_wal_line`, here, and `_do_truncate`) because each
+        reads the file through a different loop shape; all 3 must stay in sync.
         """
         if not self._path.is_file():
             return
@@ -585,7 +598,11 @@ class StateLog:
         `truncate_below`). Two-pass: identify the highest seq present (never drop ALL entries —
         that would let `_scan_max_seq` reset the counter + re-issue used seqs), then write the
         survivors to a `.tmp` and atomically rename. A mid-rewrite crash leaves the original
-        intact (the incomplete `.tmp` is ignored at next startup)."""
+        intact (the incomplete `.tmp` is ignored at next startup).
+
+        #5192: both loops below (the highest-seq scan and the survivor-write scan)
+        skip blank lines as an INVARIANT of the on-disk format, not incidental —
+        see `_parse_wal_line`'s docstring for why."""
         if not self._path.is_file():
             return {"dropped": 0, "kept": 0,
                     "min_kept_seq": None, "max_kept_seq": None}

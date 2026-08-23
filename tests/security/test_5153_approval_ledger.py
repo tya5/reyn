@@ -243,6 +243,63 @@ def test_two_real_processes_racing_the_same_key_resolve_by_log_order(
     )
 
 
+def test_no_lead_newline_check_remains_in_the_module() -> None:
+    """Tier 2: #5192 acceptance ① (architect ruling, issuecomment-
+    5384627324) — the removed check-then-write guard's own identifier is
+    TOTALLY ABSENT from approval_ledger.py, not merely unreachable. "Never
+    called" would still leave the method defined (dead code drifting back
+    into use later); this asserts the stronger claim by reading the actual
+    module source, the same population a real ``grep`` would search."""
+    import inspect
+
+    import reyn.security.permissions.approval_ledger as approval_ledger_module
+
+    source = inspect.getsource(approval_ledger_module)
+    assert "_needs_lead_newline" not in source, (
+        "the old TOCTOU-vulnerable guard's identifier must be completely "
+        "removed, not merely unused -- see _write_record's own docstring"
+    )
+
+
+def test_a_ledger_missing_its_trailing_newline_is_repaired_by_migration(
+    tmp_path: Path,
+) -> None:
+    """Tier 2: #5192 acceptance ③ — a pre-existing ledger file that does
+    NOT end in a trailing newline (simulating a torn write from before
+    this fix, or any other historical cause) is repaired the ONE TIME
+    migrate_legacy_snapshot runs against it -- not on every append (see
+    _repair_missing_trailing_newline's own docstring for why that's a
+    migration-time, not a per-append, concern)."""
+    ledger_path = tmp_path / "approvals.jsonl"
+    # Simulate a torn write: two well-formed records, but the FILE's own
+    # last byte is not "\n" (the second record's own trailing newline is
+    # missing -- exactly what a crash mid-fsync could leave behind).
+    torn_content = (
+        json.dumps({"kind": "approval", "key": "a", "approved": True}) + "\n"
+        + json.dumps({"kind": "approval", "key": "b", "approved": False})
+    )
+    ledger_path.write_text(torn_content, encoding="utf-8")
+    assert not torn_content.endswith("\n"), "sanity: the fixture is genuinely torn"
+
+    ledger = ApprovalLedger(ledger_path)
+    legacy_yaml_path = tmp_path / "approvals.yaml"  # never created -- not this test's path
+    migrate_legacy_snapshot(ledger, legacy_yaml_path)
+
+    assert ledger.path.read_text(encoding="utf-8").endswith("\n"), (
+        "migrate_legacy_snapshot must repair a missing trailing newline on "
+        "an already-existing ledger file"
+    )
+
+    # The repair must not corrupt or duplicate what was already there --
+    # a fresh append now lands as its OWN clean line, not concatenated
+    # onto key "b"'s own (now newline-terminated) record.
+    ledger.append_approval("c", True)
+    records = list(ledger.iter_records())
+    assert [(r["key"], r["approved"]) for r in records] == [
+        ("a", True), ("b", False), ("c", True),
+    ], f"unexpected records after repair + append: {records!r}"
+
+
 def test_migration_witness_fold_matches_the_legacy_reader(tmp_path: Path) -> None:
     """Tier 2: #5153 acceptance ③ — migrating a legacy approvals.yaml
     snapshot into the ledger, then folding it, must reproduce EXACTLY

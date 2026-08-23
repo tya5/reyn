@@ -357,35 +357,50 @@ class BudgetLedger:
         )
 
     def _write_record(self, record: dict) -> None:
-        """Serialize *record* as one JSONL line, append, flush, fsync."""
+        """Serialize *record* as one SELF-TERMINATING JSONL line (always
+        ``line + "\\n"``, unconditionally) and append it — no read of any
+        kind happens on this path.
+
+        #5192 (architect ruling, issuecomment-5384627324/5384637352): this
+        method used to pre-check whether the file's own last byte was
+        already a newline (a separate ``stat()`` + ``open("rb")``/``seek``/
+        ``read`` of the tail) and insert a leading ``"\\n"`` when it wasn't
+        — defending against a torn (no-trailing-newline) write left by a
+        crash. Under real concurrent writers that check is itself a TOCTOU
+        race: it can observe ANOTHER process's write mid-flight and insert
+        a spurious lead newline, inflating the raw line count without
+        corrupting any record (:meth:`iter_records`'s own ``if not line:
+        continue`` tolerates a blank line silently — see that method's own
+        docstring for why that tolerance is an INVARIANT, not an accident,
+        and must not be "cleaned up" later). Root-caused live for the
+        sibling ``ApprovalLedger`` class (docs-maintainer, issuecomment-
+        5384615994) — this class is where architect's own #5153 ruling
+        told that class to mirror THIS one, so the same defect propagated
+        here by construction, not by a second independent bug.
+
+        Fixed the same way there: remove the read entirely rather than
+        make it smarter/locked/retried (all three still read before
+        writing). A torn write from before this fix is a one-time
+        historical concern, not something every append needs to
+        re-verify."""
         line = json.dumps(record, ensure_ascii=False) + "\n"
-        # Guard against partial writes from a previous crash (no trailing newline).
-        need_lead = self._needs_lead_newline()
         with self._path.open("a", encoding="utf-8") as f:
-            if need_lead:
-                f.write("\n")
             f.write(line)
             f.flush()
             os.fsync(f.fileno())
 
-    def _needs_lead_newline(self) -> bool:
-        if not self._path.is_file():
-            return False
-        try:
-            size = self._path.stat().st_size
-        except OSError:
-            return False
-        if size == 0:
-            return False
-        try:
-            with self._path.open("rb") as f:
-                f.seek(-1, 2)
-                return f.read(1) != b"\n"
-        except OSError:
-            return False
-
     def iter_records(self):
-        """Yield parsed record dicts; skip broken / non-dict lines."""
+        """Yield parsed record dicts; skip broken / non-dict lines.
+
+        #5192: an embedded blank line — the ONE artifact the pre-fix
+        leading-newline guard could produce under real concurrent writers
+        (never a corrupted record; see :meth:`_write_record`'s own
+        docstring) — is silently skipped here by the SAME ``if not line:
+        continue`` this method already had for a torn/malformed line. This
+        is an INVARIANT this method must keep, not incidental tolerance:
+        the population an existing ledger file may contain includes a
+        legacy blank line from before #5192, and this reader must keep
+        reading past it."""
         if not self._path.is_file():
             return
         with self._path.open("r", encoding="utf-8") as f:
