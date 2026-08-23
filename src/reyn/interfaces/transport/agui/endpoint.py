@@ -389,7 +389,7 @@ def session_backlog_frames(registry, name: str, sid: str) -> "list[Frame]":
     return [DisplayFrame(m) for m in project_restored_frames(history)]
 
 
-def session_backlog_page(
+async def session_backlog_page(
     registry, name: str, sid: str, *, before_root_id: "str | None" = None,
 ) -> "tuple[list[Frame], bool, str | None]":
     """#5139 C: ONE bounded backlog page — at most :data:`HYDRATE_PAGE_FRAMES`
@@ -402,17 +402,43 @@ def session_backlog_page(
     answer: the bound's OWNER is the server), continuation is client-pull,
     never a second server-initiated push.
 
+    **``target.history`` is only the in-memory tail, not the whole log**
+    (architect co-vet on this PR, issuecomment-5384101336): ``Session.
+    load_history()`` bounds its own startup read to a tail — "WITHOUT
+    necessarily reading the whole (potentially huge — owner's real
+    environment measured 500MB) file" (that method's own docstring) — so
+    a naive ``page_restored_history`` call over ``target.history`` alone
+    reports ``has_more=False`` the moment it reaches the front of what
+    happens to be LOADED, not the front of the conversation. A client
+    cannot tell the two apart, so this would silently truncate: "no
+    more" when there is, in fact, more on disk. Connects to the EXISTING
+    on-disk extend primitive local's own ``RegistryReadModel.
+    load_older_conversation_history`` already uses
+    (:meth:`~reyn.runtime.session.Session.extend_history_backward_async`,
+    the loop-safe sibling of ``extend_history_backward``) rather than
+    building a second one — the loop below re-asks ``page_restored_history``
+    after each successful extend (more groups are now in ``target.history``
+    for the SAME ``before_root_id`` to windup from), and only reports
+    ``has_more=False`` once an extend genuinely returns 0 (the true
+    physical start of ``history.jsonl``).
+
     Returns ``(frames, has_more, next_cursor)`` — see
     :func:`~reyn.interfaces.inline.textual_chat.restore.page_restored_history`,
     which this wraps, for what each means."""
     target = registry.get_session(name, sid)
     if target is None:
         return [], False, None
-    history = list(getattr(target, "history", []) or [])
-    frames, has_more, next_cursor = page_restored_history(
-        history, before_root_id=before_root_id, limit=HYDRATE_PAGE_FRAMES,
-    )
-    return [DisplayFrame(m) for m in frames], has_more, next_cursor
+    while True:
+        history = list(getattr(target, "history", []) or [])
+        frames, has_more, next_cursor = page_restored_history(
+            history, before_root_id=before_root_id, limit=HYDRATE_PAGE_FRAMES,
+        )
+        if has_more:
+            return [DisplayFrame(m) for m in frames], has_more, next_cursor
+        extend = getattr(target, "extend_history_backward_async", None)
+        extended = await extend() if extend is not None else 0
+        if extended <= 0:
+            return [DisplayFrame(m) for m in frames], False, None
 
 
 class _SessionFrameSource:
@@ -847,8 +873,8 @@ async def agui_events(request: Request, agent_name: str):
             # this is its one status-facing read path.
             return _snapshot_for_session(registry, source.current_session())
 
-        def _backlog_provider(name: str, sid: str) -> "tuple[list[Frame], bool, str | None]":
-            return session_backlog_page(registry, name, sid)
+        async def _backlog_provider(name: str, sid: str) -> "tuple[list[Frame], bool, str | None]":
+            return await session_backlog_page(registry, name, sid)
 
         # #3328: the INITIAL connect's `MESSAGES_SNAPSHOT` was silently empty —
         # `backlog_provider` (above) is only ever CALLED off a mid-stream
@@ -865,7 +891,7 @@ async def agui_events(request: Request, agent_name: str):
         # session's own history through the SAME projection the switch re-fire
         # and the local restore-on-restart path both use — one SSoT, populated
         # at both call sites now instead of only the second.
-        initial_backlog, initial_has_more, initial_next_cursor = session_backlog_page(
+        initial_backlog, initial_has_more, initial_next_cursor = await session_backlog_page(
             registry, agent_name, _DEFAULT_SID,
         )
         emitter = AgUiEmitter(
@@ -1326,7 +1352,7 @@ async def agui_submit(request: Request, agent_name: str):
         # no new wire vocabulary for this one request type.
         target_sid = str(payload.get("session_id", "")).strip() or _DEFAULT_SID
         cursor = payload.get("before_root_id")
-        page, has_more, next_cursor = session_backlog_page(
+        page, has_more, next_cursor = await session_backlog_page(
             registry, agent_name, target_sid,
             before_root_id=str(cursor) if cursor else None,
         )

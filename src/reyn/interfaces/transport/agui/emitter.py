@@ -43,7 +43,7 @@ second source.
 """
 from __future__ import annotations
 
-from typing import AsyncIterator, Callable
+from typing import AsyncIterator, Awaitable, Callable
 
 from reyn.interfaces.transport.agui.protocol import (
     CONTROL_FILTER_KINDS,
@@ -90,7 +90,7 @@ class AgUiEmitter:
         backlog: "list[Frame] | None" = None,
         backlog_has_more: bool = False,
         backlog_next_cursor: "str | None" = None,
-        backlog_provider: "Callable[[str, str], tuple[list[Frame], bool, str | None]] | None" = None,
+        backlog_provider: "Callable[[str, str], Awaitable[tuple[list[Frame], bool, str | None]]] | None" = None,
     ) -> None:
         # ``frames`` is the unified frame stream (e.g. an InProcessTransport's
         # ``frames()``); ``status_provider`` returns the CUI status snapshot dict
@@ -205,7 +205,7 @@ class AgUiEmitter:
                 if etype == "session_attached" and self._backlog_provider is not None:
                     self._text_stream = TextStreamTracker()
                     self._waiting_on = None
-                    new_backlog, new_has_more, new_next_cursor = self._backlog_provider(
+                    new_backlog, new_has_more, new_next_cursor = await self._backlog_provider(
                         str(edata.get("agent", "")), str(edata.get("session_id", ""))
                     )
                     for chunk in self._reconnect_snapshot_chunks(

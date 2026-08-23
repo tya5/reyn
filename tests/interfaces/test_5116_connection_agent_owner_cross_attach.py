@@ -221,10 +221,11 @@ async def test_status_changes_are_pushed_by_the_attach_itself_not_ridden_on_a_la
     source.listen_for_retarget(_CONNECTION_ID)
     source.start()
 
-    def _backlog_provider(name: str, sid: str):
-        # #5139 C: AgUiEmitter's backlog_provider contract is now
-        # (frames, has_more, next_cursor) — see test_3310's own identical
-        # comment for why ``False, None`` is the correct oracle answer here.
+    async def _backlog_provider(name: str, sid: str):
+        # #5139 C: AgUiEmitter's backlog_provider contract is now async,
+        # returning (frames, has_more, next_cursor) — see test_3310's own
+        # identical comment for why ``False, None`` is the correct oracle
+        # answer here.
         return session_backlog_frames(reg, name, sid), False, None
 
     emitter = AgUiEmitter(
