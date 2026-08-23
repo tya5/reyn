@@ -124,7 +124,15 @@ def _canonical_protected_write_paths() -> "tuple[str, ...]":
     #5153/#5170 moved the live approval store to the append-only
     ``.reyn/approvals.jsonl`` ledger; #5173 found this carve-out never
     followed. ``approvals.yaml`` stays listed too (still read as the
-    one-time migration source)."""
+    one-time migration source).
+
+    LOAD-BEARING (architect co-vet, broker, #5175 2026-08-23T04:55Z):
+    "optimizing" this back to a module-level tuple silently disables
+    ``test_renaming_the_ledger_moves_both_carve_outs_with_it`` — the
+    monkeypatch it relies on stops reaching this function's own read the
+    moment the value is captured once at import time instead of read live.
+    That test is currently the ONLY thing that would catch a regression
+    back to a frozen tuple."""
     return (
         ".reyn/approvals.yaml",
         approval_ledger.RELATIVE_PATH,
