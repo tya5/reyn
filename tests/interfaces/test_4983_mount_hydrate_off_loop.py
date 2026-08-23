@@ -257,3 +257,46 @@ async def test_run_textual_chat_with_no_read_model_prefetches_nothing(monkeypatc
 
     with pytest.raises(RuntimeError, match="simulated"):
         await run_textual_chat(transport=QueueTransport(), read_model=None)
+
+
+# ── #5216: a real programming error mounts anyway, logged distinctly ────────
+
+
+class _BrokenReadModel(_CountingReadModel):
+    """A :class:`_CountingReadModel` whose ``conversation_history`` raises a
+    genuine programming error — #5216's own subject, distinguished from
+    "no history to show"."""
+
+    def conversation_history(self, *, limit=None, agent=None, session_id=None):
+        self.call_count += 1
+        raise RuntimeError("simulated: a real bug in conversation_history")
+
+
+@pytest.mark.asyncio
+async def test_mount_without_prefetch_survives_a_real_read_bug(caplog) -> None:
+    """Tier 2: #5216 — the fallback synchronous path
+    (:meth:`on_mount`'s own no-prefetch branch) must still mount the app
+    on a genuine programming error, exactly as it did before #5216 — but
+    the swallow now lives at ``on_mount``'s own call site, not inside
+    ``_read_conversation_history`` itself (see that method's own
+    docstring). Real assertion on the LOG boundary that now actually
+    catches it, not a duration: reverting #5216's move (putting the
+    ``except Exception`` back inside ``_read_conversation_history``)
+    would still mount correctly (masking the difference at THIS level),
+    which is exactly why ``test_4983_session_switch_off_thread.py``'s own
+    ``test_a_programming_error_in_the_switch_read_propagates_not_swallowed``
+    is the real strip-witness — this test only confirms the mount path's
+    own, deliberately-different "never crash startup" contract still
+    holds."""
+    import logging
+
+    read_model = _BrokenReadModel(_fixture_messages())
+    app = TextualChatApp(transport=QueueTransport(), read_model=read_model)
+    with caplog.at_level(logging.ERROR):
+        async with app.run_test(size=(80, 24)):
+            assert not app.conversation, (
+                "a real read bug must leave the pane unhydrated, not fabricate turns"
+            )
+    assert any(
+        "on_mount hydrate-from-history failed" in r.message for r in caplog.records
+    ), "the error must be logged at on_mount's own boundary, not silently dropped"

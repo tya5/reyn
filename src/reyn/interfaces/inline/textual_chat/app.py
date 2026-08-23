@@ -2402,7 +2402,19 @@ class TextualChatApp(App):
             if self._initial_history_messages is not None:
                 self._apply_hydrated_messages(self._initial_history_messages)
             else:
-                self._hydrate_from_history()
+                # #5216: THIS try/except is now where "a hydrate failure
+                # must never stop the app from mounting" actually lives —
+                # moved OUT of ``_read_conversation_history`` itself (that
+                # method no longer swallows; see its own docstring for
+                # why catching there silently hid programming errors as
+                # "no history"). Mounting with an unhydrated pane on a
+                # genuine failure is the same degrade the old inner catch
+                # produced — only the LOG is clearer now (points at
+                # ``on_mount`` hydrate, not a generic "read failed").
+                try:
+                    self._hydrate_from_history()
+                except Exception:
+                    logger.exception("textual chat: on_mount hydrate-from-history failed")
         # The running-blink gutter animates off FlowView's NATIVE animation clock
         # (``animation_fps`` wired in :meth:`compose`), not an app-side timer — so
         # there is nothing to start/pause here. The blink is ADDITIVE: a frozen
@@ -2504,21 +2516,31 @@ class TextualChatApp(App):
         site. Each caller decides that for itself — this method only does
         the read.
 
-        Returns ``None`` on `self._read_model` being unset OR the read
-        raising (already logged here) — the caller's :meth:`_apply_
-        hydrated_messages` treats ``None`` as "nothing to hydrate", same
-        behavior as the pre-split method's own early-return did."""
+        Returns ``None`` on `self._read_model` being unset — the caller's
+        :meth:`_apply_hydrated_messages` treats ``None`` as "nothing to
+        hydrate". **Does NOT catch a read failure** (#5216, reversing this
+        method's own prior shape): the enumerated call chain
+        (``ChatReadModel.conversation_history`` → ``RegistryReadModel``'s
+        real implementation, a bare dict lookup plus an in-memory list
+        copy; ``RemoteReadModel``'s trivial ``[]``) has no legitimate
+        "there is genuinely no history to show" failure mode among either
+        production implementation — every exception reaching this point is
+        a programming error (a broken invariant, an incompatible
+        ``self._read_model``), and #5216 found the PRIOR ``except
+        Exception: ... return None`` here silently degraded that into the
+        SAME value as "nothing to hydrate" (a real bug and "no history"
+        collapsed into one observable — #5215's own strip-falsify hit
+        exactly this, and the resulting failure mode was an unbounded
+        ``wait_until`` hang, not a legitimate CLAUDE.md witness). This
+        method's ONLY caller, :meth:`_hydrate_from_history`, is itself
+        only ever called from :meth:`on_mount`'s own guarded call site —
+        see that call site's own comment for where "must never crash
+        mount" now actually lives."""
         if self._read_model is None:
             return None
-        try:
-            if agent is not None or session_id is not None:
-                return self._read_model.conversation_history(
-                    agent=agent, session_id=session_id
-                )
-            return self._read_model.conversation_history()
-        except Exception:
-            logger.exception("textual chat: conversation-history read failed")
-            return None
+        if agent is not None or session_id is not None:
+            return self._read_model.conversation_history(agent=agent, session_id=session_id)
+        return self._read_model.conversation_history()
 
     def _resolve_history_source(
         self, *, agent: "str | None" = None, session_id: "str | None" = None
@@ -2527,47 +2549,54 @@ class TextualChatApp(App):
         split out so it can be called ON THE LOOP, BEFORE the
         ``asyncio.to_thread`` hop at this method's own 2 call sites
         (``_handle_session_attached_event`` and :func:`run_textual_chat`'s
-        mount-time pre-fetch). #4995's owner-thread guard is restored onto
-        ``AgentRegistry.get_session``/``attached_session`` in this SAME PR
-        (see that class's own ``_assert_owner_thread`` docstring) — a
-        worker thread calling back into either would now raise, which is
-        exactly the defect this split closes: the accidental safety #5203
-        measured (only ``Session.history`` happened to already be hydrated
-        before a session becomes registry-visible — a fact about today's
-        field, not a designed guarantee, architect issuecomment-
-        5385152402) is replaced with a REAL one — the registry is never
-        touched off its owner thread at all, by construction.
+        mount-time pre-fetch).
+
+        This split closes the accidental safety #5203 measured (only
+        ``Session.history`` happened to already be hydrated before a
+        session becomes registry-visible — a fact about today's field, not
+        a designed guarantee, architect issuecomment-5385152402) by
+        CONSTRUCTION instead: the registry touch simply never happens off
+        this thread, regardless of what does or doesn't assert. #4995's
+        own owner-thread guard is NOT restored onto ``AgentRegistry.
+        get_session``/``attached_session`` — a #5215 attempt to do so was
+        withdrawn (the web server's A2A/artifact-by-ref routes reach them
+        the same way, and structurally cannot honor a single-owner-thread
+        invariant at all — see ``registry.py``'s own ``_owner_thread_
+        ident`` comment for the full history). This hoist is independently
+        correct hygiene regardless of that guard's own fate.
 
         Returns the plain VALUE :meth:`~reyn.interfaces.repl.read_model.
         ChatReadModel.resolve_conversation_history_source` produces (never
         a live ``Session``/registry handle) — safe to hand to
         :meth:`_history_from_source` across the thread boundary. ``None``
-        on `self._read_model` being unset OR the resolve raising (already
-        logged here), mirroring :meth:`_read_conversation_history`'s own
-        error-handling shape."""
+        only on `self._read_model` being unset. **Does NOT catch a resolve
+        failure** (#5216 — see :meth:`_read_conversation_history`'s own
+        docstring for the enumeration this shares: nothing in the current
+        call chain legitimately raises for "no history", so swallowing here
+        only ever hid a programming error). This method's ONLY caller,
+        :meth:`_handle_session_attached_event`, is itself only ever called
+        from inside the event-frame loop's own ``except Exception:
+        logger.exception(...)`` wrapper (see that loop's own
+        ``session_attached`` branch) — a raise here surfaces there, with a
+        clearer message than the swallow-and-hang this replaces, and the
+        frame loop continues to the next frame exactly as before."""
         if self._read_model is None:
             return None
-        try:
-            return self._read_model.resolve_conversation_history_source(
-                agent=agent, session_id=session_id
-            )
-        except Exception:
-            logger.exception("textual chat: conversation-history source-resolve failed")
-            return None
+        return self._read_model.resolve_conversation_history_source(
+            agent=agent, session_id=session_id
+        )
 
     def _history_from_source(self, source) -> "list | None":
         """#5203 — the thread-SAFE half. *source* is whatever
         :meth:`_resolve_history_source` returned (already resolved ON THE
         LOOP) — this method touches no registry and is safe to run inside
         ``asyncio.to_thread``, the actual off-thread step #4983 exists
-        for."""
+        for. **Does NOT catch a slice failure** (#5216) — same reasoning
+        and same caller/boundary as :meth:`_resolve_history_source`'s own
+        docstring."""
         if source is None or self._read_model is None:
             return None
-        try:
-            return self._read_model.conversation_history_from_source(source)
-        except Exception:
-            logger.exception("textual chat: conversation-history read failed")
-            return None
+        return self._read_model.conversation_history_from_source(source)
 
     def _apply_hydrated_messages(self, messages: "list | None") -> None:
         """#4983 step ② — project *messages* (already read by :meth:`_read_
@@ -2579,8 +2608,9 @@ class TextualChatApp(App):
         splitting it further would buy nothing while adding a second
         cross-thread handoff for no reason.
 
-        A no-op when *messages* is ``None`` (step ① found nothing to read,
-        or failed — already logged there).
+        A no-op when *messages* is ``None`` (step ① found no read model
+        configured — a genuine failure there now propagates instead, see
+        :meth:`_read_conversation_history`'s own docstring, #5216).
 
         Appends each projected frame to ``self.conversation``
         (:func:`.restore.project_restored_frames`). Every restored entry is
