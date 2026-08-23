@@ -177,6 +177,38 @@ A new issue gets its axis label(s) when it is filed, not later. Deferring
 the label is how a backlog ends up with 35 issues at equal, unlabeled
 weight.
 
+## 5b. Naming a target says how you checked it exists
+
+A brief or a ruling that names a concrete target — an API, a config knob, a
+path, an event name, a PR — should carry one line saying **how that name was
+checked**: the command that was run, or the words "unverified". Naming is
+cheap to write and expensive to be wrong about: the writer feels specific,
+while the reader who cannot find the name has to stop and ask.
+
+Four on 2026-08-23, in one night:
+
+- A brief pointed a reviewer at a PR that had merged 29 hours earlier, naming
+  a head that was not even the final one.
+- An issue named `agent_directory_identity` as the thing to measure; it
+  exists, but the assignee's `import reyn` resolved to their own clone rather
+  than the worktree they had checked out, so it was absent where they looked.
+- A ruling built a lattice-meet whose left operand was a knob named
+  `messages`. **No knob by that name exists** — the ruling's author had been
+  thinking of "the conversation body" as one knob when it is three. Had the
+  implementer not asked, an implementation against a non-existent knob would
+  have been written.
+- A brief named a test file that was not in the assignee's tree, because
+  their clone was behind `main`.
+
+All four were caught by the recipient asking before building, which is the
+downstream defence and works. This rule is the upstream half: closing it
+removes a round trip rather than surviving one.
+
+Note the shape it shares with the B-note rule in `pr-workflow.md`: both ask
+the writer to say **how they know**, because the reader cannot recover it.
+No mechanism enforces this either — whether a name was checked is semantic,
+and a gate cannot see it.
+
 ## 6. What the lead owes the backlog
 
 Each of these is a duty, not a description — and each has a failure mode
