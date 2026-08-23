@@ -36,13 +36,33 @@ is what makes this a low-FP structural gate rather than a grep with the
 usual comment/docstring false-positive risk (the same discriminator
 ``check_doc_drift.py``'s own comment/docstring redaction exists for, #5010).
 
-## Scope: one file, both module-level and deferred imports
+## Scope: one file, both module-level and deferred imports — never
+## ``TYPE_CHECKING``-guarded ones
 
 Both a module-level ``import reyn.foo`` and a deferred (function-local)
 ``import reyn.foo`` are in scope — a regression could reach for either
 shape, and ``approval_ledger.py``'s own existing deferred ``import yaml``
 (third-party, not reyn) shows deferred imports are already a real pattern
 in this file, not a hypothetical one to leave uncovered.
+
+An import inside ``if TYPE_CHECKING:`` is deliberately EXCLUDED (architect
+co-vet, #5183 issuecomment-5384441986): this gate's whole purpose is what
+actually gets pulled into the python-harness SUBPROCESS at runtime, and a
+``TYPE_CHECKING``-guarded import never executes — flagging it would be a
+false positive against that purpose, not a real widening of the
+subprocess's import surface.
+
+## The target path is DERIVED, not hand-typed (architect co-vet, #5183)
+
+A hand-typed ``_ROOT / "src" / ... / "approval_ledger.py"`` literal has
+exactly the failure mode #5175 (this issue's own sibling fix, landed the
+same night) closed for the write-gate carve-out: if ``approval_ledger.py``
+is ever renamed or moved, the literal path silently stops existing, this
+gate's own "absent reads as compliant" rule (below) makes that read as a
+PASS, and the gate goes quietly blind rather than failing loud. Deriving
+the path from the REAL module's own ``__file__`` means a rename raises
+``ImportError`` here instead — the gate breaks LOUDLY at the moment the
+thing it protects moves, rather than silently protecting nothing.
 """
 from __future__ import annotations
 
@@ -50,18 +70,43 @@ import ast
 import sys
 from pathlib import Path
 
+from reyn.security.permissions import approval_ledger as _approval_ledger_module
+
 _ROOT = Path(__file__).resolve().parent.parent
-_APPROVAL_LEDGER_PATH = (
-    _ROOT / "src" / "reyn" / "security" / "permissions" / "approval_ledger.py"
-)
+_APPROVAL_LEDGER_PATH = Path(_approval_ledger_module.__file__).resolve()
+
+
+def _skip_type_checking_bodies(tree: ast.AST) -> ast.AST:
+    """Strip the body of every ``if TYPE_CHECKING:`` (or ``if typing.
+    TYPE_CHECKING:``) block out of *tree* in place, so a subsequent
+    ``ast.walk`` never descends into imports that only ever run for a
+    type checker, not at real runtime — see the module docstring's
+    "never TYPE_CHECKING-guarded" section for why that distinction
+    matters for THIS gate specifically."""
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.If):
+            continue
+        test = node.test
+        is_type_checking = (
+            isinstance(test, ast.Name) and test.id == "TYPE_CHECKING"
+        ) or (
+            isinstance(test, ast.Attribute) and test.attr == "TYPE_CHECKING"
+        )
+        if is_type_checking:
+            node.body = []
+    return tree
 
 
 def reyn_internal_imports(path: Path) -> "list[str]":
     """Every reyn-internal module name *path* imports (module-level or
-    deferred, anywhere in its AST) — ``[]`` when the file has none, is
-    absent, or fails to parse (never an error; a caller checks ``[]`` vs
-    non-empty, the same "absent reads as compliant" shape the sibling
-    boundary gates use).
+    deferred, anywhere in its AST, excluding an ``if TYPE_CHECKING:``
+    block's body — see the module docstring) — ``[]`` when the file has
+    none, is absent, or fails to parse (never an error; a caller checks
+    ``[]`` vs non-empty, the same "absent reads as compliant" shape the
+    sibling boundary gates use for the FILE READ itself — contrast with
+    the module-level ``_APPROVAL_LEDGER_PATH``, which is derived via a
+    real import and therefore fails loud, not silently, if the file this
+    gate is supposed to be checking has moved).
 
     A name counts as reyn-internal when it is exactly ``reyn`` or starts
     with ``reyn.`` — the same exact-match-or-dotted-prefix rule
@@ -75,6 +120,7 @@ def reyn_internal_imports(path: Path) -> "list[str]":
         tree = ast.parse(path.read_text(encoding="utf-8"))
     except (OSError, UnicodeDecodeError, SyntaxError):
         return []
+    tree = _skip_type_checking_bodies(tree)
     found: "list[str]" = []
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
