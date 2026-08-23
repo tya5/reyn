@@ -218,10 +218,17 @@ async def test_strip_the_origin_check_reproduces_the_bypass(tmp_path, monkeypatc
     the SAME real dispatcher/registry, rather than monkeypatching internal
     session state, so this test exercises the real HookDispatcher.dispatch
     path exactly like the fixed-behavior test above — only the predicate
-    passed to it differs."""
+    passed to it differs.
+
+    #5230: ``set_hook_enabled`` itself now REFUSES to add a protected
+    hook's name to ``_disabled_hooks`` at all (a further hardening on the
+    write side, not just the read/dispatch side this test's predicate
+    swap targets) — so seeding ``_disabled_hooks`` directly here (bypassing
+    ``set_hook_enabled``) is what isolates the ORIGIN-CHECK regression this
+    test exists to catch from the SEPARATE #5230 write-refusal behavior."""
     monkeypatch.chdir(tmp_path)
     s = _make_session(tmp_path, hooks_config=_STARTUP_HOOKS)
-    s.set_hook_enabled(_STARTUP_HOOK_NAME, False)
+    s._disabled_hooks.add(_STARTUP_HOOK_NAME)
 
     old_predicate = lambda hook: hook.name is not None and hook.name in s._disabled_hooks  # noqa: E731
     s._hook_dispatcher._is_hook_disabled = old_predicate

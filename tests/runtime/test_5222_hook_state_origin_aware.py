@@ -174,10 +174,15 @@ async def test_strip_the_origin_aware_enabled_check_reproduces_the_stale_display
     """Tier 2: strip-falsify — reconstructing the OLD bare name-membership
     ``enabled`` computation (mirroring pre-#5222) against the same real
     session/dispatcher must reproduce the misleading ``enabled: False`` for
-    a hook that is actually still firing."""
+    a hook that is actually still firing.
+
+    #5230: ``set_hook_enabled`` itself now refuses to add a protected
+    hook's name to ``_disabled_hooks`` at all, so seeding it directly here
+    (bypassing ``set_hook_enabled``) isolates the #5222 DISPLAY regression
+    this test targets from the separate #5230 write-refusal behavior."""
     monkeypatch.chdir(tmp_path)
     s = _make_session(tmp_path, hooks_config=_STARTUP_HOOKS)
-    s.set_hook_enabled(_STARTUP_HOOK_NAME, False)
+    s._disabled_hooks.add(_STARTUP_HOOK_NAME)
 
     def _old_hook_state(self) -> "list[dict]":
         out = []
