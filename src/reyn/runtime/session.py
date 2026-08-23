@@ -5662,29 +5662,54 @@ class Session:
                 )
         return registry
 
+    def _hooks_yaml_layers(self) -> "list[tuple[str, Path]]":
+        """#5166 (architect ruling, issuecomment-5384196419): the enumerable
+        registry of every hooks.yaml-shaped layer this session reads — the
+        SAME 2 layers (per-agent, per-session) both ``hooks:`` and
+        ``composers:`` are read from. This is the "read+expand in ONE
+        place" ruling's own deliverable: a hand-written reader per (layer,
+        key) pair silently misses a 5th layer if one is ever added; walking
+        THIS list instead means a new entry here is automatically covered
+        by every caller that already walks it (:meth:`_read_hooks_yaml_layer_key`
+        and this repo's own #5166 registry-driven tests alike)."""
+        root = self._hot_reload_project_root()
+        return [
+            ("per-agent", root / ".reyn" / "agents" / self.agent_name / "hooks.yaml"),
+            ("per-session", Path(self._snapshot_path).parent / "hooks.yaml"),
+        ]
+
+    def _read_hooks_yaml_layer_key(self, path: Path, key: str) -> list:
+        """#5166: the ONE read+expand+extract step every per-agent/per-session
+        ``hooks:``/``composers:`` reader now goes through —
+        :func:`~reyn.config.loader.read_and_expand_hooks_yaml` does the
+        read+expand+fail-close (see its own docstring for the full
+        reasoning), this just extracts *key* from the result. ``[]`` when
+        the file is absent, malformed, refused (an unresolved reyn token),
+        or *key* itself is absent — a no-op layer, never a special case a
+        caller has to handle."""
+        from reyn.config.loader import read_and_expand_hooks_yaml
+        data = read_and_expand_hooks_yaml(
+            path, agent_name=self.agent_name, project_root=self._hot_reload_project_root(),
+        )
+        values = (data or {}).get(key)
+        return list(values) if isinstance(values, list) else []
+
     def _read_per_agent_hooks(self) -> list:
         """Read the per-agent runtime hooks layer for the COMBINE (#2073 per-agent
-        add-on) — ``.reyn/agents/<name>/hooks.yaml``, read directly (like the per-agent
-        profile.yaml, not via the top-level IN-set loader). ``[]`` when absent."""
-        from reyn.config.loader import load_per_agent_hooks
-        return load_per_agent_hooks(self._hot_reload_project_root(), self.agent_name)
+        add-on) — ``.reyn/agents/<name>/hooks.yaml``'s ``hooks:`` key. ``[]`` when
+        absent. #5166: routed through :meth:`_hooks_yaml_layers`/
+        :meth:`_read_hooks_yaml_layer_key`, the SAME primitive every other
+        hooks.yaml-shaped layer now uses."""
+        return self._read_hooks_yaml_layer_key(self._hooks_yaml_layers()[0][1], "hooks")
 
     def _read_per_session_hooks(self) -> list:
-        """#2285: read the per-SESSION hooks layer — ``<per-session state dir>/hooks.yaml`` (the 4th,
-        most-specific COMBINE layer). The per-session dir is the parent of this session's snapshot
-        path (set per (name, sid) by spawn_session). A hook defined here is visible ONLY to this
-        session. ``[]`` when absent (or the file is malformed — the loader's per-layer resilience
-        also guards)."""
-        import yaml
-        path = Path(self._snapshot_path).parent / "hooks.yaml"
-        if not path.is_file():
-            return []
-        try:
-            data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-        except Exception:  # noqa: BLE001 — malformed → treat as absent
-            return []
-        hooks = data.get("hooks") if isinstance(data, dict) else None
-        return list(hooks) if isinstance(hooks, list) else []
+        """#2285: read the per-SESSION hooks layer — ``<per-session state dir>/hooks.yaml``'s
+        ``hooks:`` key (the 4th, most-specific COMBINE layer). The per-session dir is the
+        parent of this session's snapshot path (set per (name, sid) by spawn_session). A
+        hook defined here is visible ONLY to this session. ``[]`` when absent. #5166: now
+        expands reyn tokens (previously did not — the gap #5166 exists to close), via the
+        SAME primitive :meth:`_read_per_agent_hooks` uses."""
+        return self._read_hooks_yaml_layer_key(self._hooks_yaml_layers()[1][1], "hooks")
 
     def _build_composer_defs(self, in_set: "dict | None" = None) -> list:
         """Build the LAYERED ``ComposerDef`` list (Hook-Event Redesign Phase 4b/5,
@@ -5755,65 +5780,22 @@ class Session:
         #2880/#2881) — the ``composers:`` key of the SAME
         ``.reyn/agents/<name>/hooks.yaml`` file :meth:`_read_per_agent_hooks`
         reads its ``hooks:`` key from (same IN-set grain, scoped per agent).
-        ``[]`` when the file or key is absent.
-
-        Expands reyn-owned tokens in this layer via
-        :func:`reyn.plugins.tokens.expand_with_map` with an explicit
-        ``{REYN_PROJECT_DIR, REYN_AGENT_NAME}`` map — not ``os.environ``:
-        ``REYN_AGENT_NAME`` exists only in a SPAWNED CHILD process's own env
-        (``hooks/shell_runner.py`` and friends), never in this process's own
-        ``os.environ``, so it is undefined at config-load time and an
-        ``os.environ``-backed expander cannot resolve it here. Fails closed
-        via :func:`~reyn.plugins.tokens.find_unresolved_reyn_tokens` on any
-        REMAINING ``${REYN_*}``/``${CLAUDE_*}`` token — reyn's own bug, not
-        an operator's config choice — while an arbitrary non-reyn ``${FOO}``
-        is left untouched, for a spawned child process to resolve later. See
-        ``config/loader.py``'s ``load_per_agent_hooks`` for the reference
-        implementation this mirrors."""
-        import yaml
-        path = self._hot_reload_project_root() / ".reyn" / "agents" / self.agent_name / "hooks.yaml"
-        if not path.is_file():
-            return []
-        try:
-            raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-        except Exception:  # noqa: BLE001 — malformed → treat as absent
-            return []
-        if not isinstance(raw, dict):
-            return []
-        from reyn.plugins.tokens import expand_with_map, find_unresolved_reyn_tokens
-        root = self._hot_reload_project_root()
-        data = expand_with_map(
-            raw, {"REYN_PROJECT_DIR": str(root), "REYN_AGENT_NAME": self.agent_name}
-        )
-        unresolved = find_unresolved_reyn_tokens(data)
-        if unresolved:
-            logger.warning(
-                "Per-agent hooks.yaml for %r left reyn token(s) %s unresolved "
-                "in its composers: layer -- refusing to load this composers "
-                "layer (this is reyn's own bug, not a config choice to "
-                "honor).",
-                self.agent_name, sorted(set(unresolved)),
-            )
-            return []
-        composers = data.get("composers") if isinstance(data, dict) else None
-        return list(composers) if isinstance(composers, list) else []
+        ``[]`` when the file or key is absent. #5166: routed through the
+        SAME :meth:`_hooks_yaml_layers`/:meth:`_read_hooks_yaml_layer_key`
+        primitive :meth:`_read_per_agent_hooks` uses — no longer a hand
+        copy of that reader's own token-expansion rule (the exact "mirrors"
+        docstring #5166 itself cites as evidence of the copy-drift risk)."""
+        return self._read_hooks_yaml_layer_key(self._hooks_yaml_layers()[0][1], "composers")
 
     def _read_per_session_composers(self) -> list:
         """Read the per-SESSION composer layer (Hook-Event Redesign Phase 4b/5,
         #2880/#2881) — the ``composers:`` key of the SAME per-session
         ``hooks.yaml`` file :meth:`_read_per_session_hooks` reads its
         ``hooks:`` key from (#2285's 4th, most-specific layer). ``[]`` when
-        the file or key is absent (or the file is malformed)."""
-        import yaml
-        path = Path(self._snapshot_path).parent / "hooks.yaml"
-        if not path.is_file():
-            return []
-        try:
-            data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-        except Exception:  # noqa: BLE001 — malformed → treat as absent
-            return []
-        composers = data.get("composers") if isinstance(data, dict) else None
-        return list(composers) if isinstance(composers, list) else []
+        the file or key is absent. #5166: now expands reyn tokens
+        (previously did not), via the SAME primitive every other
+        hooks.yaml-shaped layer uses."""
+        return self._read_hooks_yaml_layer_key(self._hooks_yaml_layers()[1][1], "composers")
 
     async def _reapply_hooks(self, in_set: dict) -> bool:
         """Reapply the hook layers (#2073 S2b + per-agent add-on) — re-read the global
