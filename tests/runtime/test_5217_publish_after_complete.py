@@ -69,7 +69,12 @@ def test_a_session_under_construction_is_never_visible_half_built(
 
     def _gated_load_persisted_toggles(self) -> None:
         started.set()
-        release.wait(timeout=10)
+        # #5216-adjacent note, CLAUDE.md floor/ceiling rule (architect
+        # issuecomment-5385725693): wait on the condition UNBOUNDED — no
+        # inline timeout=. CI's own --timeout is the sole kill switch; an
+        # inline ceiling here would risk a false RED (and a misleading
+        # message) on a genuinely slow machine, not a real defect.
+        release.wait()
         real_load(self)
 
     monkeypatch.setattr(
@@ -87,7 +92,7 @@ def test_a_session_under_construction_is_never_visible_half_built(
     t = threading.Thread(target=_construct)
     t.start()
     try:
-        assert started.wait(timeout=10), "construction never reached load_persisted_toggles"
+        started.wait()
         # The constructing thread is now PAUSED inside load_persisted_
         # toggles — get_or_load has not returned, so #5217's own claim is:
         # nothing is published yet. get_session (FP-0043 Stage 3) is the
@@ -98,8 +103,7 @@ def test_a_session_under_construction_is_never_visible_half_built(
         )
     finally:
         release.set()
-        t.join(timeout=10)
-    assert not t.is_alive(), "the constructing thread must have finished"
+        t.join()
     assert caught[0] is None, f"construction must not raise, got: {caught[0]!r}"
 
     # Now that construction has completed, the session IS visible via the
