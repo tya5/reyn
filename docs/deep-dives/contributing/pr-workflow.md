@@ -316,6 +316,18 @@ These rules then keep multi-session work coherent:
    PR can still tell a real TESTS-READ from an empty one carrying the
    right shape.
 
+   **A B note claiming independence must say what only its author can
+   say.** B's whole value is that it was reached without A's framing, so
+   the note should state whether A had been read — but "I posted before
+   A" is the wrong form: posting order is measurable, and on 2026-08-23 a
+   B note claiming it was measured false (the A it claimed to precede was
+   posted 57 seconds earlier). Whether the reviewer *read* A is knowable
+   only to that reviewer, which is exactly why it has to be said rather
+   than inferred. The form that carries information is "written without
+   reading A (posted after it)". Either answer is fine; an unstated one
+   leaves the reader unable to weigh the note, and a falsifiable one
+   invites the reader to check the wrong thing.
+
    **Reporting reworked twice since (#5138):** a GitHub check run attaches
    to the sha its triggering event carries, and `issue_comment` (fired by
    a posted comment) carries the DEFAULT BRANCH's sha, not the PR's — a
