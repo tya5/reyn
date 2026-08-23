@@ -42,6 +42,7 @@ from reyn.runtime.outbox import OutboxMessage
 from reyn.runtime.profile import AgentProfile
 from reyn.runtime.registry import _DEFAULT_SID, AgentRegistry
 from reyn.runtime.session import Session
+from tests._async_wait import wait_until  # noqa: E402 — shared #1751 test wait helper
 from tests._support.agent_session import make_session
 
 
@@ -124,7 +125,18 @@ async def test_session_switch_reads_conversation_history_off_the_event_loop(
     the event loop's own main thread — reverting the fix (calling
     ``_hydrate_from_history`` synchronously again, as it did before this
     PR) turns this red: the call lands on the SAME thread the test
-    itself runs on."""
+    itself runs on.
+
+    #5159 (census finding): waiting for the switch's read via a flat
+    ``_settle(pilot)`` (``pilot.pause()`` — CPU idle time) instead of the
+    real condition ("has the read call actually been made yet") used to
+    risk a false ``assert switch_calls`` failure: `pilot.pause()`
+    determines idle from CPU time, and the switch's read is off-loop
+    I/O (``asyncio.to_thread``) that a busy machine may not have even
+    STARTED by the time the loop looks idle. Waits on the actual
+    condition instead — a public read (`len(call_threads)`, this test's
+    own recording list, not reyn's private state), unboundedly (CI's
+    own --timeout=120 is the kill switch)."""
     monkeypatch.chdir(tmp_path)
     reg = _registry(tmp_path)
     try:
@@ -150,7 +162,7 @@ async def test_session_switch_reads_conversation_history_off_the_event_loop(
             transport.push_event(
                 "session_attached", {"agent": "beta", "session_id": _DEFAULT_SID},
             )
-            await _settle(pilot)
+            await wait_until(lambda: len(call_threads) > calls_at_mount)
 
         switch_calls = call_threads[calls_at_mount:]
         assert switch_calls, "the switch must have read conversation_history"
@@ -171,7 +183,17 @@ async def test_session_switch_still_hydrates_the_new_sessions_history(
     reset_hydrate.py`` already established, reconfirmed after the split:
     a turn produced on alpha while this client is on beta (durably
     persisted only, never delivered live) is present after switching
-    back to alpha."""
+    back to alpha.
+
+    #5159 (census finding): the final switch-back used to be settled via
+    a flat ``_settle(pilot)`` — a CPU-idle heuristic that can declare
+    "idle" before the switch's off-thread history read has landed and
+    been applied (same risk as the sibling test above, here for the
+    APPLIED content rather than just the call having been made). Waits
+    on the actual condition instead: the rendered rows matching what
+    this test asserts, unboundedly (CI's own --timeout=120 is the kill
+    switch) — this is the SAME condition the final `assert` already
+    checks, just waited on instead of asserted-after-a-duration."""
     monkeypatch.chdir(tmp_path)
     reg = _registry(tmp_path)
     try:
@@ -197,13 +219,21 @@ async def test_session_switch_still_hydrates_the_new_sessions_history(
             transport.push_event(
                 "session_attached", {"agent": "alpha", "session_id": _DEFAULT_SID},
             )
-            await _settle(pilot)
 
-            rows = [
-                (e.item.kind, e.item.text)
-                for e in app.query_one(FlowView).entries
-                if e.item.kind != "system"
-            ]
+            def _rows() -> "list[tuple[str, str]]":
+                return [
+                    (e.item.kind, e.item.text)
+                    for e in app.query_one(FlowView).entries
+                    if e.item.kind != "system"
+                ]
+
+            # Wait for the switch-back to have applied SOMETHING (the real
+            # condition — not a duration) before checking WHAT it applied,
+            # so a genuine content mismatch still fails with a real diff
+            # instead of a bare CI-timeout with no message.
+            await wait_until(lambda: bool(_rows()))
+
+            rows = _rows()
             assert rows == [("user", "turn while away")]
     finally:
         pass
