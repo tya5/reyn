@@ -18,6 +18,7 @@ working (the whole layer refused) without this fix.
 Real ``find_unresolved_reyn_tokens`` — no mocks; a pure function."""
 from __future__ import annotations
 
+import ast
 import inspect
 
 from reyn.config import loader
@@ -64,14 +65,21 @@ def test_token_vocabularies_are_disjoint_and_complete(tmp_path) -> None:
     assert not CONTEXT_TOKEN_NAMES & AGENT_SCOPED_TOKEN_NAMES
     assert CONTEXT_TOKEN_NAMES | AGENT_SCOPED_TOKEN_NAMES <= REYN_TOKEN_NAMES
     assert set(resolve_token_map(context)) == CONTEXT_TOKEN_NAMES - {"REYN_SKILL_DIR"}
-    agent_sources = (
-        inspect.getsource(loader)
-        + inspect.getsource(container_backend)
-        + inspect.getsource(shell_runner)
-    )
-    assert AGENT_SCOPED_TOKEN_NAMES <= {
-        name for name in AGENT_SCOPED_TOKEN_NAMES if name in agent_sources
+    trees = [ast.parse(source) for source in (
+        inspect.getsource(loader),
+        inspect.getsource(container_backend),
+        inspect.getsource(shell_runner),
+    )]
+    supplied_names = {
+        node.value
+        for tree in trees
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Constant)
+        and isinstance(node.value, str)
+        and node.value in AGENT_SCOPED_TOKEN_NAMES
     }
+    assert supplied_names == AGENT_SCOPED_TOKEN_NAMES
+    assert agent_sources
 
 
 def test_an_added_token_name_is_checked_automatically(monkeypatch) -> None:
