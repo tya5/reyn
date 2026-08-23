@@ -19,6 +19,7 @@ from reyn.runtime.budget.budget import BudgetTracker, CostConfig
 from reyn.runtime.chat_message import ChatMessage
 from reyn.runtime.services.recovery import build_recovery
 from reyn.runtime.session import Session
+from reyn.runtime.session_params import ReactivityConfig
 
 #: #4349: Session's own default when no ``resolver=`` is given is
 #: ``ModelResolver({})`` — genuinely empty, no built-in catalog to fall back
@@ -162,6 +163,7 @@ def make_session(
         compaction_config=cfg,
         snapshot_path=snapshot_path,
         resolver=resolver or TEST_MODEL_RESOLVER,
+        reactivity=ReactivityConfig(),
     )
 
 

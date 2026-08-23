@@ -40,7 +40,6 @@ from reyn.runtime.session import Session
 from reyn.runtime.session_params import (
     CapabilityScope,
     PresentationWiring,
-    ReactivityConfig,
 )
 
 if TYPE_CHECKING:
@@ -110,18 +109,15 @@ def build_scoped_chat_session(
     agent = Agent(**_agent_kwargs)
     # #3121 step1: group the scoped capability / presentation / reactivity
     # params into their cohesive parameter objects at this single construction
-    # chokepoint. ``intervention_bridge`` and the ``hooks_config``/
-    # ``composers_config``/``fs_watch_config`` reyn.yaml blocks arrive via
-    # ``**base`` (each frontend passes them straight through to
-    # ``build_scoped_chat_session``) -- popped here so they join their
-    # PresentationWiring / ReactivityConfig siblings instead of flowing
-    # through Session as flat params.
+    # chokepoint. Reactive config is carried by the required factory bundle so
+    # every construction path either supplies it or fails loudly. The three
+    # config blocks still arrive via **base from legacy frontends; their values
+    # now come from the bundle, but pop them to keep them out of Session.__init__.
     intervention_bridge = base.pop("intervention_bridge", None)
-    reactivity = ReactivityConfig(
-        hooks_config=base.pop("hooks_config", None),
-        composers_config=base.pop("composers_config", None),
-        fs_watch_config=base.pop("fs_watch_config", None),
-    )
+    base.pop("hooks_config", None)
+    base.pop("composers_config", None)
+    base.pop("fs_watch_config", None)
+    reactivity = factory_config.reactivity_config
     # recovery-bundle-out-of-Session refactor: Session no longer builds its
     # own generation_store/journal, so this chokepoint builds them from the
     # same inputs Session used to read internally — ``base`` still carries

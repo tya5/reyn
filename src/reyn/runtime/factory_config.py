@@ -26,6 +26,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+from reyn.runtime.session_params import ReactivityConfig
+
 
 @dataclass(frozen=True)
 class SessionFactoryConfig:
@@ -90,6 +92,8 @@ class SessionFactoryConfig:
     # — mirrors the build-once available_skills / pipeline_registry snapshots. Empty
     # registry when config has no presentations (byte-identical to pre-PR-C).
     presentation_registry: Any
+    # Reactive config blocks travel as one required factory bundle.
+    reactivity_config: ReactivityConfig
     # ── AgentRegistry uniform config (3) ────────────────────────────────────
     delegation_capability_default: str
     # #2103 C3: operator spawn-tree bounds (safety.spawn.*) — the LLM spawn seams
@@ -173,6 +177,11 @@ class SessionFactoryConfig:
             pipeline_registry=pipeline_registry,
             # FP-0054 PR-C: built once here from config.presentations.
             presentation_registry=presentation_registry,
+            reactivity_config=ReactivityConfig(
+                hooks_config=config.hooks,
+                composers_config=config.composers,
+                fs_watch_config=config.fs_watch,
+            ),
             delegation_capability_default=config.delegation.capability_default,
             max_spawn_depth=config.safety.spawn.max_depth,
             max_spawn_children=config.safety.spawn.max_children,

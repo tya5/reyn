@@ -35,6 +35,8 @@ import ast
 import dataclasses
 import inspect
 
+import pytest
+
 from reyn.runtime.factory_config import SessionFactoryConfig
 from reyn.runtime.scoped_session_factory import build_scoped_chat_session
 from tests._support.paths import REPO_ROOT
@@ -80,6 +82,7 @@ _BUNDLED_UNIFORM = frozenset({
     "chat_tool_use_scheme",  # #1593 PR-2
     # → AgentRegistry — where delegation_capability_default drifted (#2081)
     "delegation_capability_default",
+    "reactivity_config",
 })
 
 
@@ -176,6 +179,14 @@ def test_scoped_params_are_required_no_default() -> None:
             f"{pname} must be REQUIRED (no default) — a default re-opens "
             "silent-omission drift (#1402 completeness-by-construction)"
         )
+
+
+def test_reactivity_is_required_at_session_boundary() -> None:
+    """Tier 2: omitting reactivity fails instead of becoming a silent no-op."""
+    from reyn.runtime.session import Session
+
+    with pytest.raises(TypeError, match="reactivity configuration is required"):
+        Session.__init__(object(), None, None, None, reactivity=None)
 
 
 def test_uniform_config_is_single_sourced_in_the_bundle() -> None:

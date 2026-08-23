@@ -922,7 +922,8 @@ class Session:
             attributes.
         """
         # Default each omitted parameter object, unpack into pre-#3121 local names (#3121 step1, see session-construction.md#3121-step1-parameter-objects)
-        reactivity = reactivity if reactivity is not None else ReactivityConfig()
+        if reactivity is None:
+            raise TypeError("reactivity configuration is required")
         capability_scope = capability_scope if capability_scope is not None else CapabilityScope()
         presentation_wiring = (
             presentation_wiring if presentation_wiring is not None else PresentationWiring()

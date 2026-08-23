@@ -30,6 +30,7 @@ from reyn.runtime.agent import Agent
 from reyn.runtime.services.recovery import build_recovery, default_snapshot_path
 from reyn.runtime.session import Session
 from reyn.runtime.session_buses import AgentRequestBus
+from reyn.runtime.session_params import ReactivityConfig
 from reyn.user_intervention import InterventionAnswer, UserIntervention
 from tests._support.agent_session import make_session
 from tests._support.events import collect_events, settle
@@ -51,7 +52,11 @@ def _recovery_kwargs(agent_name: str) -> dict:
     generation_store, journal = build_recovery(
         agent_name, default_snapshot_path(agent_name), None, "main",
     )
-    return {"generation_store": generation_store, "journal": journal}
+    return {
+        "generation_store": generation_store,
+        "journal": journal,
+        "reactivity": ReactivityConfig(),
+    }
 
 # ── 1. Hook methods exist with the canonical signatures ────────────────
 

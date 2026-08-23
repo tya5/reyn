@@ -30,7 +30,7 @@ from reyn.interfaces.skill_invoke import (
     resolve_skill_body,
     substitute_arguments,
 )
-from reyn.runtime.session_params import CapabilityScope
+from reyn.runtime.session_params import CapabilityScope, ReactivityConfig
 from tests._support.events import collect_events, settle
 
 # ── Axis 3: parsing / stacking ──────────────────────────────────────────────
@@ -326,6 +326,7 @@ def _session_with_skills(tmp_path: Path, entries: list[SkillEntry], collisions: 
             state_log=state_log,
             compaction_config=cfg,
             snapshot_path=snapshot_path,
+            reactivity=ReactivityConfig(),
             capability_scope=CapabilityScope(
                 available_skills=entries, skill_collisions=collisions or {},
             ),
