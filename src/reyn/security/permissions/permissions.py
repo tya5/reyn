@@ -658,7 +658,23 @@ class PermissionResolver:
         True for a ``_saved`` (``ALWAYS``-choice) approval, written to the
         SAME file's own ``_bound_identities`` sibling key, never mixed
         into the approval row itself (see ``__bound_identities``'s own
-        docstring for why)."""
+        docstring for why).
+
+        architect co-vet (issuecomment-5383499299): this write fires far
+        more often than ``_persist``'s own read-modify-write of the same
+        file — ``_persist`` only runs when a HUMAN approves (rare);
+        binding runs on every path-approval's FIRST USE, inside ordinary
+        tool execution (routine). A crash mid-``write_text`` here would
+        truncate ``approvals.yaml`` and lose EVERY approval, not just the
+        one being bound — a rare risk turned common by this PR's own
+        change in call frequency. Fixed the same way
+        ``AgentIdentityGenerationStore.record`` already does (tmp file +
+        atomic ``replace``): the write either lands whole or not at all,
+        never a half-written file. A second PROCESS (server + CLI)
+        racing this same read-modify-write and last-writer-wins losing
+        the OTHER process's binding is a separate, NOT-closed-here
+        finding (architect: file a follow-up; the owner runs 2 clients +
+        a server concurrently, so this is not a hypothetical)."""
         self._bound_identities[key] = identity
         if not persist:
             return
@@ -675,10 +691,14 @@ class PermissionResolver:
                 bound_section = {}
             bound_section[key] = {"ino": identity[0], "birthtime": identity[1]}
             existing["_bound_identities"] = bound_section
-            self._approvals_path.write_text(
+            tmp = self._approvals_path.with_suffix(
+                self._approvals_path.suffix + ".tmp"
+            )
+            tmp.write_text(
                 yaml.dump(existing, allow_unicode=True, default_flow_style=False),
                 encoding="utf-8",
             )
+            tmp.replace(self._approvals_path)
         except Exception:
             pass
 

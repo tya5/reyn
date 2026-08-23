@@ -262,3 +262,38 @@ def test_st_birthtime_unavailable_degrades_to_ino_only_like_5084(tmp_path) -> No
             )
     finally:
         PermissionResolver._path_identity = original
+
+
+@pytest.mark.asyncio
+async def test_binding_writes_atomically_no_tmp_file_left_behind(tmp_path) -> None:
+    """Tier 2: architect co-vet (issuecomment-5383499299) — binding now
+    fires on every path-approval's FIRST USE, inside ordinary tool
+    execution, not just when a human approves (rare) like `_persist`'s
+    own read-modify-write. A crash mid-`write_text` would truncate
+    `approvals.yaml` and lose EVERY approval, not just the one being
+    bound. Fixed via tmp-file + atomic `replace` (the same precedent
+    `AgentIdentityGenerationStore.record` already uses) -- this pins the
+    OBSERVABLE consequence: no `.tmp` sibling survives a successful bind,
+    and the approvals file itself is genuinely valid YAML afterward (a
+    half-written file would not parse)."""
+    import yaml
+
+    target = tmp_path / "atomic_dir"
+    target.mkdir()
+    resolver = _make_resolver(tmp_path)
+    key = "actor/file.write/atomic_dir/"
+    resolver._saved[key] = True
+    resolver._persist(key, True)
+
+    write_path = str(target / "f.txt")
+    await resolver.require_file_write(PermissionDecl(), write_path, "actor")
+
+    approvals_path = tmp_path / ".reyn" / "approvals.yaml"
+    tmp_sibling = approvals_path.with_suffix(approvals_path.suffix + ".tmp")
+    assert not tmp_sibling.exists(), (
+        "a .tmp sibling survived a successful bind -- the atomic "
+        "replace did not clean up after itself"
+    )
+    data = yaml.safe_load(approvals_path.read_text(encoding="utf-8"))
+    assert data[key] is True
+    assert data["_bound_identities"][key]["ino"] is not None
