@@ -10,9 +10,22 @@ fingerprint to print.
 
 The generated material is an **ephemeral runtime artifact**, not recovery-core
 state — it is written under the ephemeral run dir and regenerated on the next
-start if absent. ``cryptography`` is an optional dependency of the ``[web]``
-extra; a missing install surfaces as :class:`TlsProvisioningError` so the CLI
-can print an actionable message rather than crashing deep in the stack.
+start if absent.
+
+``cryptography`` (#5059): a REGULAR core dependency of reyn itself
+(``pyproject.toml``'s own ``dependencies``), not an extra — it was already
+guaranteed to be present via ``mcp``'s own ``pyjwt[crypto]`` requirement
+before this module ever ran, and is now declared directly for the same
+reason ``httpx``/``anyio`` are (a transitive rider is not a substitute for a
+declaration a future upstream change could drop). The ``try``/``except
+ImportError`` guards below therefore no longer name a REAL install shape
+(``[web]`` has been an empty back-compat alias since #5051, and
+``cryptography`` was never part of it in the first place) — they stay as
+defense against a genuinely BROKEN venv (a declared dependency that failed
+to actually install), so the CLI still prints an actionable
+:class:`TlsProvisioningError` instead of a raw traceback deep in the stack,
+with a message that describes THAT failure mode accurately rather than
+pointing at a nonexistent extra.
 """
 from __future__ import annotations
 
@@ -40,7 +53,11 @@ def fingerprint_of_cert(certfile: Path) -> str:
         from cryptography import x509
     except ImportError as exc:  # pragma: no cover - dep-gated
         raise TlsProvisioningError(
-            "TLS requires the 'cryptography' package (install the [web] extra)."
+            "TLS requires the 'cryptography' package, which reyn declares "
+            "as a core dependency -- this install appears broken (the "
+            "package failed to actually install despite being declared); "
+            "reinstall reyn (e.g. `pip install --force-reinstall reyn`) "
+            "rather than installing an extra."
         ) from exc
     pem = certfile.read_bytes()
     cert = x509.load_pem_x509_certificate(pem)
@@ -89,7 +106,11 @@ def _generate_self_signed(run_dir: Path, *, host: str) -> TlsMaterial:
         from cryptography.x509.oid import NameOID
     except ImportError as exc:  # pragma: no cover - dep-gated
         raise TlsProvisioningError(
-            "TLS requires the 'cryptography' package (install the [web] extra)."
+            "TLS requires the 'cryptography' package, which reyn declares "
+            "as a core dependency -- this install appears broken (the "
+            "package failed to actually install despite being declared); "
+            "reinstall reyn (e.g. `pip install --force-reinstall reyn`) "
+            "rather than installing an extra."
         ) from exc
 
     run_dir.mkdir(parents=True, exist_ok=True)

@@ -263,6 +263,41 @@ dependencies = [
     # entry above. Floor set to the version already resolved and in use
     # (4.14.x); not raised for a specific new API this PR relies on.
     "anyio>=4.14",
+    # #5059: was transitive only (Required-by: chonkie, datasets, ddgs,
+    # huggingface_hub, litellm, openai — every one of which is already a
+    # DIRECT dependency of reyn itself, so httpx was never genuinely
+    # optional). reyn's own code imports it directly too (8 files:
+    # `_network.py`, `_ssrf_pin.py`, `core/present/image_fetch.py`,
+    # `core/registry/client.py`, `core/op_runtime/web.py`,
+    # `interfaces/web/notifications.py`, `interfaces/repl/remote_client.py`
+    # — grepped, not assumed). Declared directly rather than relying on
+    # other packages' own pins — the same "make an existing transitive a
+    # direct dependency" move `anyio` above already made (#4395). A future
+    # release of ddgs/litellm/openai that drops or re-pins httpx would
+    # otherwise silently break every one of those 8 call sites with no
+    # signal until runtime — "who stops this if it repeats" had no answer
+    # (owner finding, `gh issue view 5059`). Floor set to the version
+    # already resolved and in use (0.28.x, same convention `anyio` above
+    # states) — not raised for a specific new API this change relies on.
+    "httpx>=0.28",
+    # #5059: was transitive only, via `mcp`'s own `pyjwt[crypto]>=2.10.1`
+    # requirement (verified: `importlib.metadata.metadata("PyJWT").
+    # get_all("Requires-Dist")` shows `cryptography>=3.4.0; extra ==
+    # "crypto"` — `mcp` is core, above, so this chain is guaranteed
+    # TODAY). reyn's own `interfaces/web/auth/tls.py` imports it directly
+    # (x509 / hazmat primitives) — a real direct dependency wearing a
+    # transitive one's clothes, same class as `httpx` just above. Declared
+    # directly so a future `mcp` release dropping the `[crypto]` extra (or
+    # downgrading pyjwt below the version that requests it) cannot
+    # silently take TLS out from under `tls.py` with no signal until a
+    # runtime `ImportError` — see that module's own updated docstring
+    # (its former "install the [web] extra" guidance never worked: `[web]`
+    # has been an empty back-compat alias since #5051, and cryptography
+    # was never part of it in the first place). Floor set well above
+    # pyjwt's own `>=3.4.0` (a security-sensitive x509/TLS library, not
+    # pinned to a specific new API) rather than to whatever happens to be
+    # resolved on any one machine.
+    "cryptography>=42.0",
     "pyperclip>=1.9",        # #3616 ①: cross-platform clipboard, replacing a
                               # hand-rolled pbcopy/wl-copy/xclip/xsel/clip
                               # dispatch table whose Windows arm piped UTF-8

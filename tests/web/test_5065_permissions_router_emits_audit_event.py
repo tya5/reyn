@@ -44,7 +44,6 @@ import fastapi  # noqa: F401
 # this importorskip is legitimate today. Remove it the same PR #5059 lands
 # (declaring httpx would make this the same #5058-class violation as the
 # fastapi guard above).
-httpx = pytest.importorskip("httpx", reason="httpx not installed (needed by TestClient; remove this guard when #5059 declares httpx as a dependency)")
 
 
 @pytest.fixture()

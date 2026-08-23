@@ -38,7 +38,6 @@ if str(_WORKTREE_SRC) not in sys.path:
 # was a silent skip on a broken install, not a normal absent-extra path
 # (architect ruling, gh issue view 5058, generalized from the mcp class
 # to any core dep: "the correct behavior is red"). Removed.
-pytest.importorskip("httpx", reason="httpx not installed (needed by TestClient)")
 
 
 from reyn.interfaces.web.run_registry import RunRegistry  # noqa: E402

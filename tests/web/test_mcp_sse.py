@@ -23,8 +23,6 @@ from __future__ import annotations
 
 import sys
 
-import pytest
-
 from tests._support.paths import REPO_ROOT
 
 # Ensure the worktree src is importable (mirrors test_smoke.py).
@@ -32,13 +30,12 @@ _WORKTREE_SRC = REPO_ROOT / "src"
 if str(_WORKTREE_SRC) not in sys.path:
     sys.path.insert(0, str(_WORKTREE_SRC))
 
-# Skip the whole module if httpx (TestClient dep) is missing -- fastapi
-# itself is no longer skip-guarded, see the #5058 comment below.
-# #5058: fastapi is a core dependency (#5051) -- an importorskip here
-# was a silent skip on a broken install, not a normal absent-extra path
-# (architect ruling, gh issue view 5058, generalized from the mcp class
-# to any core dep: "the correct behavior is red"). Removed.
-pytest.importorskip("httpx", reason="httpx not installed (needed by TestClient)")
+# #5058/#5059: fastapi and httpx are both core dependencies (#5051/#5059) --
+# an importorskip here was a silent skip on a broken install, not a normal
+# absent-extra path (architect ruling, gh issue view 5058, generalized from
+# the mcp class to any core dep: "the correct behavior is red"). Removed
+# (both guards; `pytest` itself is no longer referenced in this file either,
+# since the removed `pytest.importorskip` call was its only use here).
 # #5058 (group C): this file never imports the mcp SDK — both tests exercise
 # /mcp/messages purely over HTTP via TestClient, checking the mount's own 4xx
 # handling. _mount_mcp (surfaces.py) already catches an mcp ImportError
