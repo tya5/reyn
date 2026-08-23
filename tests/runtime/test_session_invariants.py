@@ -648,11 +648,24 @@ async def test_inbox_put_consume_emits_wal_events_with_monotonic_seq(tmp_path, m
     monkeypatch.setattr("reyn.runtime.router_loop.call_llm_tools", stub)
 
     async def _run_one_turn():
-        """Process all three inbox messages then shutdown."""
-        # Start run() in background and shutdown after a brief moment.
+        """Process all three inbox messages then shutdown.
+
+        #5159 (census finding): this used to give the loop a flat
+        `await asyncio.sleep(0.05)` to consume all three messages before
+        calling `shutdown()` — a duration standing in for the real
+        condition ("has `run_task` actually drained the inbox yet"), with
+        no ordering guarantee against it: under load, `run_task` could
+        still not have run even once by the time the sleep elapses, and
+        `shutdown()` arriving first would end the run with messages never
+        consumed (`consume_events` empty — the assertion this test makes).
+        Waits on the real condition instead: the journal's own snapshot
+        `inbox` list emptying out (every submitted message has been
+        consumed), unboundedly (CI's own --timeout=120 is the kill
+        switch) — a PUBLIC read (`session.journal.snapshot().inbox`), not
+        reyn's private task-scheduling state."""
+        # Start run() in background and shutdown once the inbox is drained.
         run_task = asyncio.create_task(session.run())
-        # Give the event loop time to process all three messages.
-        await asyncio.sleep(0.05)
+        await wait_until(lambda: not session.journal.snapshot.inbox)
         await session.shutdown()
         try:
             await asyncio.wait_for(run_task, timeout=2.0)
