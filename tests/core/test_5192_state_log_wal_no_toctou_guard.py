@@ -1,6 +1,10 @@
 """Tier 2: #5192 — ``StateLog`` closes the same TOCTOU race
 ``ApprovalLedger``/``BudgetLedger`` had, in the third band it lives in
-(crash-recovery/WAL, not permission or cost/bounding).
+(crash-recovery/WAL, not permission or cost/bounding). Also carries
+``budget.py``'s own guard-absence witness (acceptance ①'s "3 か所とも
+grep 0 件, 1 つで代表させない" -- see the per-module test below for why it
+lives here rather than in a budget-specific test file: it needs no
+budget-specific fixtures, only ``inspect.getsource``).
 
 Architect ruling (issuecomment-5384637352, relayed by lead-coder) fixed
 ALL THREE files (this one, ``approval_ledger.py``, ``budget.py``) in one PR,
@@ -35,6 +39,7 @@ from pathlib import Path
 import pytest
 
 import reyn.core.events.state_log as state_log_module
+import reyn.runtime.budget.budget as budget_module
 from reyn.core.events.state_log import StateLog
 
 # Mirrors tests/security/test_5153_approval_ledger.py's own explicit-spawn
@@ -53,6 +58,24 @@ def test_no_lead_newline_guard_remains_in_the_module() -> None:
     assert "_needs_lead_newline" not in source, (
         "the old TOCTOU-vulnerable guard's identifier must be completely "
         "removed -- see _do_wal_write's own docstring for why"
+    )
+
+
+def test_no_lead_newline_guard_remains_in_the_budget_module() -> None:
+    """Tier 2: #5192 acceptance ① — the SAME check, for ``budget.py``
+    (architect finding, issuecomment-5384693823, on this PR's own head:
+    a witness existed for the WAL and for ``approval_ledger.py``, but NOT
+    for ``budget.py`` -- "3 か所とも grep 0 件" means 3 separate witnesses,
+    not 2 witnesses standing in for a third). ``budget.py`` is the
+    cost/budget band and the ORIGINAL #5153-era source this guard pattern
+    was mirrored FROM into ``approval_ledger.py`` -- nothing else in this
+    band bounds a reintroduction of the guard here. RED if the guard (or a
+    reintroduced equivalent under the same name) comes back."""
+    source = inspect.getsource(budget_module)
+    assert "_needs_lead_newline" not in source, (
+        "the old TOCTOU-vulnerable guard's identifier must be completely "
+        "removed from budget.py -- see BudgetLedger._write_record's own "
+        "docstring for why"
     )
 
 
