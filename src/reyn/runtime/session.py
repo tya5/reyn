@@ -7029,10 +7029,16 @@ class Session:
         name = payload.get("name", "hook")
         text = payload.get("text", "")
         chain_id = payload.get("chain_id") or new_chain_id()
+        attributed = _format_ride_along_attribution(TurnOrigin.HOOK, name, text)
         self._append_history(ChatMessage(
             role="system",
-            content=_format_ride_along_attribution(TurnOrigin.HOOK, name, text),
+            content=attributed,
             ts=_now_iso(),
+            meta={"chain_id": chain_id},
+        ))
+        await self._put_outbox(OutboxMessage(
+            kind="system",
+            text=attributed,
             meta={"chain_id": chain_id},
         ))
         try:
