@@ -39,6 +39,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import uuid
+import weakref
 from typing import Callable
 
 from fastapi import APIRouter, Request
@@ -281,6 +282,36 @@ def _surface_manager(agent_name: str, auth: AuthContext) -> SurfaceManager:
     return surface_registry().for_agent(
         agent_name, authorized=_authorized_predicate(auth)
     )
+
+
+# #5146: registries this process has already wired a purge-cleanup listener
+# for — a WeakSet (not a bare module-global bool) so wiring survives a
+# registry ever being swapped (tests construct a fresh AgentRegistry per
+# case) without silently skipping the SECOND registry's own wiring, and
+# without holding a strong ref that would keep an old registry alive past
+# its own test's teardown.
+_REMOVE_LISTENER_WIRED: "weakref.WeakSet" = weakref.WeakSet()
+
+
+def _ensure_remove_listener_wired(registry) -> None:
+    """#5146: subscribe :meth:`SurfaceRegistry.remove` to ``registry``'s own
+    purge notification, exactly once per registry instance.
+
+    Closes the #5084-class name-reuse hole for OPERATOR-DRIVER-TOKEN
+    identity (that fix closed the same class for spawn lineage): a purge
+    frees the agent name for immediate re-declaration, but
+    ``SurfaceRegistry`` keeps a purged name's ``SurfaceManager`` (with its
+    stale ``_active_driver``/surface set) forever without this — a
+    same-name re-declare's first connection would silently inherit the
+    OLD identity's operator authority. This module calls INTO
+    ``registry.add_remove_listener`` (already imports ``AgentRegistry``
+    indirectly via ``get_registry``); ``AgentRegistry`` itself never
+    imports or calls into transport (#5139's own layering ruling) — the
+    listener is the seam, wired from the transport side."""
+    if registry in _REMOVE_LISTENER_WIRED:
+        return
+    registry.add_remove_listener(surface_registry().remove)
+    _REMOVE_LISTENER_WIRED.add(registry)
 
 
 def _ensure_fail_close_driver(agent_name: str, manager: SurfaceManager, registry) -> None:
@@ -725,6 +756,7 @@ async def agui_events(request: Request, agent_name: str):
         return JSONResponse({"error": "authentication required"}, status_code=401)
 
     registry = get_registry()
+    _ensure_remove_listener_wired(registry)
     if not registry.exists(agent_name):
         return JSONResponse({"error": f"agent {agent_name!r} not found"}, status_code=404)
     session = await registry.ensure_running(agent_name)  # #3793 stage 2: boot-only, does not touch focus
@@ -902,6 +934,7 @@ async def agui_seize(request: Request, agent_name: str):
     if manager is None or not manager.seize(connection_id, identity.user_id, monotonic()):
         return JSONResponse({"seized": False, "error": "seize refused"}, status_code=409)
     registry = get_registry()
+    _ensure_remove_listener_wired(registry)
     if registry.exists(agent_name):
         session = await registry.ensure_running(agent_name)  # #3793 stage 2: boot-only, does not touch focus
         session.emit_audit_event(
@@ -970,6 +1003,7 @@ async def agui_submit(request: Request, agent_name: str):
         return JSONResponse({"status": "ok"})
 
     registry = get_registry()
+    _ensure_remove_listener_wired(registry)
     if not registry.exists(agent_name):
         return JSONResponse({"error": f"agent {agent_name!r} not found"}, status_code=404)
 

@@ -421,6 +421,17 @@ class AgentRegistry:
         # registered for the switched agent, synchronously, from the SAME
         # no-await critical section as the ``repl_outbox`` barrier put.
         self._attach_listeners: "dict[str, list[Callable[[str], None]]]" = {}
+        # #5146: subscribers wanting to know "an agent name was just purged"
+        # — NOT agent-name-keyed like _attach_listeners above (a subscriber
+        # cannot pre-register per name; it wants every purge, whichever name).
+        # Fired from remove(purge=True) only (archive keeps the name taken,
+        # so no name-reuse risk there — see remove()'s own docstring on the
+        # archive/purge split). Exists so a transport-layer registry keyed by
+        # agent name (AG-UI's SurfaceRegistry, #5146) can drop ITS OWN
+        # bookkeeping for a purged name without this module reaching INTO
+        # transport (#5139's own "AgentRegistry does not call into interfaces"
+        # ruling) — the listener lets transport clean up after itself instead.
+        self._remove_listeners: "list[Callable[[str], None]]" = []
         # #3671 P3 (now #3793 stage 1: moved onto self._connection): the ONE
         # place a caller doing a BACKGROUND attach (P2's
         # `chat.py._background_attach`, running off the render path) can
@@ -1214,6 +1225,36 @@ class AgentRegistry:
             for _child, (_pname, _pseq) in list(self._spawn_lineage.items()):
                 if _pname == name:
                     self._spawn_lineage[_child] = (_pname, self.INVALIDATED_SPAWN_PARENT_IDENTITY)
+            # #5146: tell every remove-listener this name is gone, BEFORE the
+            # cascade below (a subscriber's own cleanup should not race a
+            # later re-declare of the same name — fire while "name" is
+            # unambiguously the just-purged identity, not after any other
+            # side effect that could reintroduce it). Synchronous, no await
+            # crosses this loop — same barrier property add_attach_listener's
+            # own docstring states.
+            #
+            # architect co-vet (issuecomment-5383416113): each callback is
+            # isolated — one listener raising must not stop the REST from
+            # running, and must not turn into remove() itself raising (this
+            # loop runs strictly AFTER `shutil.rmtree(target)` above already
+            # succeeded, so the agent is genuinely gone from disk regardless
+            # of what any listener does here — a listener's own failure
+            # destroys no evidence, CLAUDE.md's third gating question; the
+            # `rmtree` failing IS possible, but that raises further up, well
+            # before this loop is ever reached, a different and unrelated
+            # failure this method already lets propagate). A listener that
+            # raised simply did not get to run its own cleanup this time —
+            # for AG-UI's listener (SurfaceRegistry.remove, a single dict
+            # pop) that reopens exactly the bug this issue closes for that
+            # one purge, never a crash or a corrupted registry state.
+            for _cb in list(self._remove_listeners):
+                try:
+                    _cb(name)
+                except Exception:
+                    logger.exception(
+                        "AgentRegistry: a remove-listener raised for purged agent %r "
+                        "— continuing with the remaining listeners", name,
+                    )
             # PR12: a hard-deleted agent would leave dangling topology references,
             # so drop it from every topology (a team losing its leader / an
             # emptied topology is removed entirely). #2103 MUST-1: return the
@@ -3700,6 +3741,26 @@ class AgentRegistry:
         listeners.remove(callback)
         if not listeners:
             del self._attach_listeners[agent_name]
+
+    def add_remove_listener(self, callback: "Callable[[str], None]") -> None:
+        """#5146: subscribe to "an agent name was just purged" — ``callback``
+        is invoked with the purged ``name``, fired synchronously from inside
+        :meth:`remove` (purge only), same no-``await``-between critical-
+        section idiom as :meth:`add_attach_listener`. The intended (only,
+        today) consumer is AG-UI's ``SurfaceRegistry`` (#5146): a purge frees
+        the name for immediate re-declaration, but a stale ``SurfaceManager``
+        keyed by that name would otherwise hand the NEW identity's first
+        connection the OLD identity's ``_active_driver`` token and surface
+        set — the #5084 name-reuse class, for operator authority instead of
+        spawn lineage. This registry does not import or call into transport
+        itself (#5139's own layering ruling); the listener is the seam that
+        lets transport clean up its own bookkeeping instead."""
+        self._remove_listeners.append(callback)
+
+    def remove_remove_listener(self, callback: "Callable[[str], None]") -> None:
+        """Undo :meth:`add_remove_listener`. A no-op if already removed."""
+        if callback in self._remove_listeners:
+            self._remove_listeners.remove(callback)
 
     def _announce_session_attached(self, name: str, sid: str) -> None:
         """#3310 N1: notify the client a switch just happened, as a stream
