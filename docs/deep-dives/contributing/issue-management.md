@@ -2,7 +2,7 @@
 type: contributing
 topic: issue-management
 audience: [human, agent]
-search_hints: [issue management, backlog, 起票, 統合, consolidation, close, closing, 閉じる, priority, 優先順位, label, labels, triage, blocked:external, priority:next, band, owner-hit, silent, blocks-others, ours-only, thin:retrieval, thin:evaluation, arc-closure remainder, diary, 日記, issue triage, priority axes]
+search_hints: [issue management, backlog, 起票, 統合, consolidation, close, closing, 閉じる, priority, 優先順位, label, labels, triage, blocked:external, priority:next, band, owner-hit, silent, blocks-others, ours-only, thin:retrieval, thin:evaluation, no-axis, arc-closure remainder, diary, 日記, issue triage, priority axes]
 ---
 
 # Issue management
@@ -111,6 +111,11 @@ These labels exist in the repo now, carrying the meanings below:
   priority"** — a scale with more levels than there are judgements
   manufactures false precision, so there is no `priority:later` or
   `priority:low` tier to fall back to.
+- `no-axis` — judged, and none of the priority axes applies. It exists so
+  that an issue with no axis label means "not yet judged" rather than
+  "judged and found unimportant" — without it those two states are the
+  same absence, and a later reader cannot tell whether the backlog was
+  triaged or merely untouched.
 - `blocked:external` — needs owner judgement or an upstream dependency. An
   open issue without it is pickable by any session. This label tells other
   sessions not to touch the issue, so a stale one makes real work invisible:
