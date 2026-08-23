@@ -27,6 +27,8 @@ Config pre-approval (reyn.yaml / reyn.local.yaml):
 """
 from __future__ import annotations
 
+import logging
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable, ClassVar
@@ -48,6 +50,8 @@ from reyn.user_intervention import (
 if TYPE_CHECKING:
     from reyn.security.permissions.file_scope import FileScopes
     from reyn.security.sandbox.policy import SandboxPolicy
+
+logger = logging.getLogger(__name__)
 
 
 _DEFAULT_WRITE_ZONES = (".reyn",)
@@ -460,6 +464,35 @@ class PermissionResolver:
         # property returns the SAME dict object each time, so in-place
         # `self._saved[key] = approved` still mutates the real stored dict.
         self.__saved: "dict[str, bool] | None" = None
+        # #5042: PATH-flavor approvals only ("what dir/file was this grant
+        # actually FOR, the moment it was last found valid") — a SIBLING
+        # structure under its own top-level ``_bound_identities`` key in
+        # the SAME approvals.yaml, never mixed into the approval rows
+        # themselves. Kept separate rather than changing the approval
+        # VALUE's own shape (bare `true`/`false`, unchanged) for two
+        # reasons: (a) every OTHER approval flavor (host/plugin — #5042's
+        # own architect ruling: "flavor を跨がない") never touches this at
+        # all, by construction, since only _is_path_approved_for (the
+        # file.read/file.write path) ever reads or writes it; (b) the
+        # audit row itself — the thing #5042's own issue thread named as
+        # "must not disappear" — stays BYTE-IDENTICAL to every approvals.
+        # yaml written before this change, so a pre-existing file needs no
+        # migration step: an entry with no sibling binding here is simply
+        # unbound (acceptance ⑤), whether it predates #5042 entirely or is
+        # a fresh grant that has not been used yet (acceptance ④).
+        self.__bound_identities: "dict[str, tuple[int, float | None]] | None" = None
+        # #5152 (architect ruling, issuecomment-5383544769): a session-life
+        # counter of "identity comparison could not be confirmed" events —
+        # see ``_identity_check_passes``'s own docstring. Exists so the
+        # fail-closed default this PR adds is OBSERVABLE (count/log), not a
+        # silent behaviour change; read via ``unconfirmable_identity_check_count``.
+        self._unconfirmable_identity_checks: int = 0
+        # #5152 (architect ruling, issuecomment-5383604927): one open fd
+        # per bound key, held for the remaining life of THIS process --
+        # see ``_acquire_identity_fd``'s own docstring for why this is
+        # what makes an ino comparison trustworthy without ``st_birthtime``.
+        # Bounded by the number of distinct PATH-flavor approvals in use.
+        self._bound_fds: "dict[str, int]" = {}
         # #1383 (D12): scoped read-grants for OS-offloaded artifacts. When the OS
         # offloads an artifact to a state-dir path and hands the agent an
         # `artifact_ref` / `_offload_ref` pointing there, that path is outside the
@@ -525,6 +558,22 @@ class PermissionResolver:
         stored boolean (or None when not yet recorded)."""
         return self._saved.get(key)
 
+    def bound_identity_get(self, key: str) -> "tuple[int, float | None] | None":
+        """#5042: read accessor for the PATH-flavor identity binding,
+        mirroring :meth:`saved_get`'s own convention — ``None`` when *key*
+        has never been bound (never used, a legacy pre-#5042 entry, or a
+        non-path-flavor key, which is never bound at all)."""
+        return self._bound_identities.get(key)
+
+    def unconfirmable_identity_check_count(self) -> int:
+        """#5152: how many times an identity comparison could not be
+        confirmed this session (``st_birthtime`` unavailable on one or
+        both sides) and was therefore treated as fail-closed — see
+        :meth:`_identity_check_passes`'s own docstring. Public so the
+        fail-closed default this counts is observable without reaching
+        into private state."""
+        return self._unconfirmable_identity_checks
+
     def on_persist_callback_count(self) -> int:
         """Return the number of registered ``on_persist`` callbacks.
 
@@ -573,6 +622,160 @@ class PermissionResolver:
             return {k: bool(v) for k, v in data.items() if isinstance(v, bool)}
         except Exception:
             return {}
+
+    # ── #5042: bound identity for PATH-flavor approvals only ──────────────────
+
+    @property
+    def _bound_identities(self) -> "dict[str, tuple[int, float | None]]":
+        """Same lazy-load-once shape as :attr:`_saved` — one owner, mutation
+        through the returned dict object persists via :meth:`_bind_identity`."""
+        if self.__bound_identities is None:
+            self.__bound_identities = self._load_bound_identities()
+        return self.__bound_identities
+
+    def _load_bound_identities(self) -> "dict[str, tuple[int, float | None]]":
+        if not self._approvals_path.exists():
+            return {}
+        try:
+            import yaml
+            data = yaml.safe_load(self._approvals_path.read_text(encoding="utf-8")) or {}
+            raw = data.get("_bound_identities")
+            if not isinstance(raw, dict):
+                return {}
+            out: "dict[str, tuple[int, float | None]]" = {}
+            for k, v in raw.items():
+                if not isinstance(v, dict) or "ino" not in v:
+                    continue  # malformed entry -- read as unbound, same as absent
+                ino = v.get("ino")
+                if not isinstance(ino, int):
+                    continue
+                bt = v.get("birthtime")
+                out[k] = (ino, float(bt) if isinstance(bt, (int, float)) else None)
+            return out
+        except Exception:
+            return {}
+
+    def _path_identity(self, path: Path) -> "tuple[int, float | None] | None":
+        """#5042/#5084: raw ``(st_ino, st_birthtime)`` of *path* (file OR
+        directory — a path-flavor grant can name either) — the SAME shape
+        ``AgentRegistry.agent_directory_identity`` (#5084) reads.
+        ``st_birthtime`` is ``None`` on a platform that does not expose it
+        (most Linux filesystems via plain ``stat()``); ``None`` overall
+        only for the path genuinely not existing. This method makes no
+        claim about what an ``st_birthtime``-less comparison MEANS — that
+        interpretation (the 3-value confirmed/refuted/unconfirmable
+        contract, per #5152) lives in :meth:`_identity_check_passes`, not
+        here."""
+        try:
+            st = path.stat()
+        except OSError:
+            return None
+        return (st.st_ino, getattr(st, "st_birthtime", None))
+
+    def _acquire_identity_fd(self, key: str, path: Path) -> None:
+        """#5152 (architect ruling, issuecomment-5383604927): open and
+        hold a file descriptor to *path*, for the remaining life of THIS
+        process, from the moment *key*'s identity is (re)bound.
+
+        Why this closes the ``st_birthtime``-absent gap entirely: POSIX
+        keeps an inode allocated as long as ANY reference to it remains
+        open, even after every directory entry naming it is removed
+        (``rmdir``/``unlink``). So as long as this fd stays open, the
+        filesystem cannot silently hand that SAME inode number to a
+        brand-new object created at the same path — the exact ambiguity
+        that made a bare ``ino`` comparison untrustworthy without
+        ``st_birthtime`` (measured: Linux ext4/tmpfs routinely reuses a
+        just-freed inode; this fd being held prevents that reuse for
+        *this* inode specifically). A later ``fstat(fd)`` vs. a fresh
+        ``stat(path)`` therefore gives a REAL confirmed match/mismatch,
+        with or without ``st_birthtime`` — see :meth:`_identity_check_passes`.
+
+        Does NOT survive a process restart (the fd table starts empty) —
+        that residual window is the ``unconfirmable_identity_check_count``
+        acceptance criterion, not closed by this method. Bounded by the
+        number of distinct PATH-flavor approvals in use (test-review Q5)
+        — one fd per bound key; a rebind (this method called again for
+        the same key) closes the previous fd first rather than
+        accumulating one per rebind. Best-effort: a failure to open
+        (permissions, races) just means this process falls back to the
+        stat-only comparison for *key*, same as before this method
+        existed."""
+        old = self._bound_fds.pop(key, None)
+        if old is not None:
+            try:
+                os.close(old)
+            except OSError:
+                pass
+        try:
+            self._bound_fds[key] = os.open(str(path), os.O_RDONLY)
+        except OSError:
+            pass
+
+    def _bind_identity(
+        self,
+        key: str,
+        identity: "tuple[int, float | None]",
+        approved_p: Path,
+        *,
+        persist: bool,
+    ) -> None:
+        """Record *key*'s bound identity — bind-ON-FIRST-USE (#5042
+        architect ruling), never at approval time (an approval can predate
+        the target existing at all; binding then would force a second,
+        unnecessary prompt the first time the path shows up). ``persist``
+        is False for a SESSION-only approval (never written to
+        ``approvals.yaml`` in the first place — binding it there too would
+        write disk state for a grant the user never asked to persist);
+        True for a ``_saved`` (``ALWAYS``-choice) approval, written to the
+        SAME file's own ``_bound_identities`` sibling key, never mixed
+        into the approval row itself (see ``__bound_identities``'s own
+        docstring for why). Also (re)acquires this process's identity fd
+        for *key* (see :meth:`_acquire_identity_fd`) — binding and fd
+        acquisition happen together so every caller gets both halves of
+        the confirmation contract for free.
+
+        architect co-vet (issuecomment-5383499299): this write fires far
+        more often than ``_persist``'s own read-modify-write of the same
+        file — ``_persist`` only runs when a HUMAN approves (rare);
+        binding runs on every path-approval's FIRST USE, inside ordinary
+        tool execution (routine). A crash mid-``write_text`` here would
+        truncate ``approvals.yaml`` and lose EVERY approval, not just the
+        one being bound — a rare risk turned common by this PR's own
+        change in call frequency. Fixed the same way
+        ``AgentIdentityGenerationStore.record`` already does (tmp file +
+        atomic ``replace``): the write either lands whole or not at all,
+        never a half-written file. A second PROCESS (server + CLI)
+        racing this same read-modify-write and last-writer-wins losing
+        the OTHER process's binding is a separate, NOT-closed-here
+        finding (architect: file a follow-up; the owner runs 2 clients +
+        a server concurrently, so this is not a hypothetical)."""
+        self._bound_identities[key] = identity
+        self._acquire_identity_fd(key, approved_p)
+        if not persist:
+            return
+        try:
+            import yaml
+            self._approvals_path.parent.mkdir(parents=True, exist_ok=True)
+            existing: dict = {}
+            if self._approvals_path.exists():
+                existing = yaml.safe_load(
+                    self._approvals_path.read_text(encoding="utf-8")
+                ) or {}
+            bound_section = existing.get("_bound_identities")
+            if not isinstance(bound_section, dict):
+                bound_section = {}
+            bound_section[key] = {"ino": identity[0], "birthtime": identity[1]}
+            existing["_bound_identities"] = bound_section
+            tmp = self._approvals_path.with_suffix(
+                self._approvals_path.suffix + ".tmp"
+            )
+            tmp.write_text(
+                yaml.dump(existing, allow_unicode=True, default_flow_style=False),
+                encoding="utf-8",
+            )
+            tmp.replace(self._approvals_path)
+        except Exception:
+            pass
 
     def _persist(self, key: str, approved: bool) -> None:
         # #2248: approvals.yaml is PERSIST, not recovery-core — so NO config generation
@@ -748,7 +951,23 @@ class PermissionResolver:
         """Return True if path is covered by any saved/session approval for this actor+kind.
 
         kind is "file.read" or "file.write".
-        """
+
+        #5042: a matching grant is additionally checked against its OWN
+        bound identity (``(st_ino, st_birthtime)`` of the APPROVED path
+        itself, ``approved_p`` below — the resource the operator actually
+        approved, not necessarily the deeper ``p_resolved`` being checked
+        under a recursive grant). Bind-ON-FIRST-USE (architect ruling,
+        issuecomment-5383453175): the first time a matching grant is found
+        with no bound identity yet (a pre-#5042 legacy entry, or a fresh
+        approval whose target did not exist at approval time), it is
+        bound NOW to whatever exists at this moment — never at approval
+        time, which can precede the target existing at all. Once bound, a
+        LATER mismatch (the approved path was deleted and a different
+        object now sits at the same name — #5042's own root finding, the
+        #5084/#5146-class "a name is not an identity") means the grant no
+        longer applies — the loop continues to the NEXT candidate key
+        rather than returning False outright, so a different, still-valid
+        grant covering the same path is not shadowed by one stale one."""
         base = self._project_root
         p = Path(path).expanduser()
         p_resolved = (base / p).resolve() if not p.is_absolute() else p.resolve()
@@ -769,16 +988,107 @@ class PermissionResolver:
                 approved_raw.resolve() if approved_raw.is_absolute()
                 else (base / approved_raw).resolve()
             )
+            matched = False
             if approved_str.endswith("/"):
                 try:
                     p_resolved.relative_to(approved_p)
-                    return True
+                    matched = True
                 except ValueError:
                     pass
             else:
-                if p_resolved == approved_p:
-                    return True
+                matched = p_resolved == approved_p
+            if not matched:
+                continue
+            if self._identity_check_passes(key, approved_p):
+                return True
+            # else: this key matched by path but its bound identity is
+            # stale — keep searching, do not fail closed on the WHOLE
+            # check just because this one candidate is no longer valid.
         return False
+
+    def _identity_check_passes(self, key: str, approved_p: Path) -> bool:
+        """#5042: the identity half of a matched path-approval — see
+        :meth:`_is_path_approved_for`'s own docstring for the bind-on-
+        first-use / mismatch-means-keep-searching contract this serves.
+
+        #5152 (architect ruling, issuecomment-5383604927 — RETRACTING
+        issuecomment-5383544769's own literal fail-closed, which turned
+        out to be over-broad, see below). This is a THREE-value question,
+        not two: ① confirmed same → honor the grant; ② confirmed
+        different → deny (#5042's own purpose); ③ cannot be confirmed
+        either way → honor the grant AND count/log it, never silently
+        fold ③ into ②. Folding ③ into ② (the retracted ruling) made
+        every path approval effectively single-use on a platform without
+        ``st_birthtime`` — measured regression (tui-coder): 6 unrelated
+        tests failed, every one an ordinary same-session repeat use of an
+        already-bound approval with NO purge at all; the fix's own log
+        line fired on that second, unrelated use, proving ③ had been
+        silently answered as ②.
+
+        The fix that actually closes the ``st_birthtime`` gap without
+        that collapse: :meth:`_acquire_identity_fd` holds an fd open on
+        the approved path from bind-time onward, for the rest of THIS
+        process's life. As long as that fd stays open, POSIX guarantees
+        its inode cannot be silently handed to a replacement object, so
+        ``fstat(fd)`` vs. a fresh ``stat(path)`` is a REAL confirmed
+        match/mismatch (① or ②) — with or without ``st_birthtime`` — and
+        this is the path taken for every use after the first in a given
+        process. ③ now only remains for the genuinely unprotected window:
+        the FIRST use after a process restart (the fd table starts
+        empty, only the persisted ``(ino, birthtime)`` survived) on a
+        platform where that pair alone can't confirm anything. The SAME
+        defect (2-value collapse via bare ino) exists in
+        ``AgentRegistry.agent_directory_identity`` (#5084) — out of
+        scope here, re-filed separately (#5084/#5123) since that call
+        site's safe direction differs by consumer.
+        """
+        bound = self._bound_identities.get(key)
+        current = self._path_identity(approved_p)
+        if bound is None:
+            if current is not None:
+                # Only a SAVED (ALWAYS-choice) approval's binding is
+                # written to disk — a session-only (YES-choice, this-run-
+                # only) approval was never persisted to approvals.yaml in
+                # the first place, and binding it there too would write
+                # disk state for a grant the user never asked to persist.
+                self._bind_identity(key, current, approved_p, persist=key in self._saved)
+            return True  # unbound (never used, or target doesn't exist yet) -- honor it
+        if current is None:
+            return False  # the approved target is gone -- fail-closed
+
+        fd = self._bound_fds.get(key)
+        if fd is not None:
+            try:
+                fd_ino = os.fstat(fd).st_ino
+            except OSError:
+                fd = None  # the fd itself went bad -- fall through below
+            else:
+                # ① / ② — a REAL confirmation, fd-anchored: this fd has
+                # held its inode open since bind, so no replacement
+                # object could have silently reused it.
+                return fd_ino == current[0]
+
+        # No fd protection for `key` in THIS process (most commonly: the
+        # first use after a process restart). Fall back to the raw stat
+        # comparison this PR originally shipped with.
+        if bound[1] is not None and current[1] is not None:
+            matched = current == bound  # ① or ② -- st_birthtime confirms it directly
+        else:
+            # ③ — cannot confirm. Honor the grant (never silently fold
+            # into ②), count/log it, and (re)acquire an fd below so
+            # every LATER use in this process is fd-anchored instead.
+            self._unconfirmable_identity_checks += 1
+            logger.warning(
+                "PermissionResolver: %r's bound identity cannot be "
+                "confirmed by stat alone (st_birthtime unavailable, no "
+                "fd held by this process yet) -- honoring the grant and "
+                "anchoring an fd for the rest of this process's life",
+                key,
+            )
+            matched = True
+        if matched:
+            self._bind_identity(key, current, approved_p, persist=key in self._saved)
+        return matched
 
     # Backwards-compatible alias used by older write-class call sites.
     def _is_path_approved(self, path: str, actor: str) -> bool:
