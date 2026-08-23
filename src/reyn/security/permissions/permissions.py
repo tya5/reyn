@@ -27,6 +27,7 @@ Config pre-approval (reyn.yaml / reyn.local.yaml):
 """
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable, ClassVar
@@ -48,6 +49,8 @@ from reyn.user_intervention import (
 if TYPE_CHECKING:
     from reyn.security.permissions.file_scope import FileScopes
     from reyn.security.sandbox.policy import SandboxPolicy
+
+logger = logging.getLogger(__name__)
 
 
 _DEFAULT_WRITE_ZONES = (".reyn",)
@@ -477,6 +480,12 @@ class PermissionResolver:
         # unbound (acceptance ⑤), whether it predates #5042 entirely or is
         # a fresh grant that has not been used yet (acceptance ④).
         self.__bound_identities: "dict[str, tuple[int, float | None]] | None" = None
+        # #5152 (architect ruling, issuecomment-5383544769): a session-life
+        # counter of "identity comparison could not be confirmed" events —
+        # see ``_identity_check_passes``'s own docstring. Exists so the
+        # fail-closed default this PR adds is OBSERVABLE (count/log), not a
+        # silent behaviour change; read via ``unconfirmable_identity_check_count``.
+        self._unconfirmable_identity_checks: int = 0
         # #1383 (D12): scoped read-grants for OS-offloaded artifacts. When the OS
         # offloads an artifact to a state-dir path and hands the agent an
         # `artifact_ref` / `_offload_ref` pointing there, that path is outside the
@@ -548,6 +557,15 @@ class PermissionResolver:
         has never been bound (never used, a legacy pre-#5042 entry, or a
         non-path-flavor key, which is never bound at all)."""
         return self._bound_identities.get(key)
+
+    def unconfirmable_identity_check_count(self) -> int:
+        """#5152: how many times an identity comparison could not be
+        confirmed this session (``st_birthtime`` unavailable on one or
+        both sides) and was therefore treated as fail-closed — see
+        :meth:`_identity_check_passes`'s own docstring. Public so the
+        fail-closed default this counts is observable without reaching
+        into private state."""
+        return self._unconfirmable_identity_checks
 
     def on_persist_callback_count(self) -> int:
         """Return the number of registered ``on_persist`` callbacks.
@@ -631,14 +649,15 @@ class PermissionResolver:
             return {}
 
     def _path_identity(self, path: Path) -> "tuple[int, float | None] | None":
-        """#5042/#5084: ``(st_ino, st_birthtime)`` of *path* (file OR
+        """#5042/#5084: raw ``(st_ino, st_birthtime)`` of *path* (file OR
         directory — a path-flavor grant can name either) — the SAME shape
-        and SAME degrade-on-missing-``st_birthtime`` behaviour as
-        ``AgentRegistry.agent_directory_identity`` (#5084): ``None`` on a
-        platform without ``st_birthtime`` (most Linux filesystems via
-        plain ``stat()``) still compares by ``ino`` alone, a weaker but
-        real guarantee — never raises for that reason, only for the path
-        genuinely not existing."""
+        ``AgentRegistry.agent_directory_identity`` (#5084) reads.
+        ``st_birthtime`` is ``None`` on a platform that does not expose it
+        (most Linux filesystems via plain ``stat()``); ``None`` overall
+        only for the path genuinely not existing. This method makes no
+        claim about what an ``st_birthtime``-less comparison MEANS — that
+        interpretation (fail-closed, per #5152) lives in
+        :meth:`_identity_check_passes`, not here."""
         try:
             st = path.stat()
         except OSError:
@@ -934,7 +953,35 @@ class PermissionResolver:
     def _identity_check_passes(self, key: str, approved_p: Path) -> bool:
         """#5042: the identity half of a matched path-approval — see
         :meth:`_is_path_approved_for`'s own docstring for the bind-on-
-        first-use / mismatch-means-keep-searching contract this serves."""
+        first-use / mismatch-means-keep-searching contract this serves.
+
+        #5152 (architect ruling, issuecomment-5383544769): a bound and a
+        current identity can each carry ``st_birthtime=None`` (platform
+        does not expose it — most Linux filesystems). ``ino`` alone does
+        NOT distinguish "the same object, still there" from "the freed
+        inode handed straight back to a brand-new object at the same
+        path" — measured live (tui-coder, PR #5152 CI): Linux
+        ext4/tmpfs routinely reuses the just-freed inode for the very
+        next create in an otherwise-empty directory, while the same
+        rmtree-then-mkdir on macOS/APFS produces a different inode every
+        time. Treating that unconfirmable ino-only equality as a
+        genuine match silently collapsed "confirmed identical" and
+        "cannot tell" onto the same ``True`` — the SAME defect
+        ``AgentRegistry.agent_directory_identity`` (#5084) carries,
+        re-filed there as a separate issue (#5084/#5123) since that
+        call site's safe direction differs by consumer and needs its
+        own measurement.
+
+        The fix here: when ``st_birthtime`` is unavailable on either
+        side, the comparison CANNOT be confirmed — default to
+        fail-closed (do not trust the binding; the caller re-asks,
+        which #4204 degrades to ``PermissionError`` outside an
+        interactive session), and count/log it via
+        ``unconfirmable_identity_check_count`` so this is an observable
+        fact, not a silent behaviour change. A platform that DOES expose
+        ``st_birthtime`` (macOS/APFS and friends) is unaffected — the
+        full tuple still compares equal across ordinary continued use
+        and unequal across a genuine purge+recreate."""
         bound = self._bound_identities.get(key)
         current = self._path_identity(approved_p)
         if bound is None:
@@ -946,7 +993,18 @@ class PermissionResolver:
                 # disk state for a grant the user never asked to persist.
                 self._bind_identity(key, current, persist=key in self._saved)
             return True  # unbound (never used, or target doesn't exist yet) -- honor it
-        return current is not None and current == bound
+        if current is None:
+            return False  # the approved target is gone -- fail-closed
+        if bound[1] is None or current[1] is None:
+            self._unconfirmable_identity_checks += 1
+            logger.warning(
+                "PermissionResolver: %r's bound identity cannot be "
+                "confirmed (st_birthtime unavailable) -- treating as "
+                "stale rather than trusting an ino-only match",
+                key,
+            )
+            return False
+        return current == bound
 
     # Backwards-compatible alias used by older write-class call sites.
     def _is_path_approved(self, path: str, actor: str) -> bool:

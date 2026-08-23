@@ -217,17 +217,29 @@ def test_a_legacy_bare_true_entry_is_treated_as_unbound_and_bound_on_first_use(
         )
 
 
-def test_st_birthtime_unavailable_degrades_to_ino_only_like_5084(tmp_path) -> None:
-    """Tier 2: the one thing architect asked to be measured, not assumed
-    — the same platform-degrade #5084 already documents (most Linux
-    filesystems via plain ``stat()`` expose no ``st_birthtime``): the
-    identity comparison must still work with ``ino`` alone, never raise,
-    on a platform where ``st_birthtime`` is absent. Simulated directly
-    (this dev machine's own filesystem DOES expose ``st_birthtime``, so a
-    real platform-dependent skip would not exercise the degrade path) by
-    stubbing ``_path_identity`` to return an ino-only tuple, the SAME
-    shape ``getattr(st, "st_birthtime", None)`` produces on such a
-    platform -- ``ino`` alone must still correctly detect a mismatch."""
+def test_st_birthtime_unavailable_fails_closed_even_without_a_purge(tmp_path) -> None:
+    """Tier 2: #5152 architect ruling (issuecomment-5383544769) — the one
+    thing architect asked to be measured, not assumed. Live CI evidence
+    (tui-coder, PR #5152, both Python 3.11/3.12) showed the ORIGINAL
+    ino-only degrade this test used to witness is not "weaker but real":
+    on Linux ext4/tmpfs, ``rmtree`` immediately followed by ``mkdir`` on
+    the same path routinely hands the just-freed inode straight back, so
+    ``ino`` alone cannot distinguish "same object, still there" from "a
+    different object now sits here" — an unconfirmable ``ino``-only
+    equality is NOT a confirmed match. Simulated directly here (this dev
+    machine's own filesystem DOES expose ``st_birthtime``, so a real
+    platform-dependent skip would not exercise the path) by stubbing
+    ``_path_identity`` to strip ``st_birthtime``, the SAME shape
+    ``getattr(st, "st_birthtime", None)`` produces on such a platform.
+
+    The fix: once ``st_birthtime`` is unavailable, EVERY later comparison
+    against this key fails closed — even with NO purge at all, the SAME
+    still-existing directory, same inode. This is deliberately
+    indistinguishable from the genuine-purge case below: the point is
+    that "cannot confirm" is no longer silently read as "matched", not
+    that ino-diffing still quietly works underneath. Also witnesses
+    ``unconfirmable_identity_check_count`` incrementing once per such
+    check, per architect's "make it observable" acceptance criterion."""
     target = tmp_path / "linux_like_dir"
     target.mkdir()
     resolver = _make_resolver(tmp_path)
@@ -253,9 +265,21 @@ def test_st_birthtime_unavailable_degrades_to_ino_only_like_5084(tmp_path) -> No
         assert resolver.bound_identity_get(key) == (
             real_path_identity(resolver, target)[0], None,
         )
+        before = resolver.unconfirmable_identity_check_count()
 
+        # No purge at all -- the SAME directory, SAME inode -- yet the
+        # identity cannot be CONFIRMED (birthtime unavailable), so it
+        # fails closed rather than silently trusting the ino match.
+        with pytest.raises(PermissionError):
+            asyncio.run(
+                resolver.require_file_write(PermissionDecl(), write_path, "actor")
+            )
+        assert resolver.unconfirmable_identity_check_count() == before + 1
+
+        # A genuine purge+recreate ALSO fails closed -- unchanged, but now
+        # for the honest reason (unconfirmable), not "ino happened to differ".
         shutil.rmtree(target)
-        target.mkdir()  # a new inode, ino-only comparison must still catch this
+        target.mkdir()
         with pytest.raises(PermissionError):
             asyncio.run(
                 resolver.require_file_write(PermissionDecl(), write_path, "actor")
