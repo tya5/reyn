@@ -152,6 +152,44 @@ async def test_purge_then_same_name_redeclare_does_not_inherit_the_old_driver_to
     )
 
 
+def test_a_raising_remove_listener_does_not_stop_the_others_or_remove_itself(
+    tmp_path, monkeypatch,
+) -> None:
+    """Tier 2: architect co-vet (issuecomment-5383416113) — the notify loop
+    isolates each callback. Before this fix, one listener raising would
+    both skip every LATER listener AND make ``remove()`` itself raise,
+    even though the purge's own ``shutil.rmtree`` (earlier in the same
+    method) had already succeeded — a caller seeing an exception from
+    ``remove()`` here would have no way to tell "the purge itself failed"
+    from "a listener misbehaved after it already succeeded"."""
+    name = "5146-t5-agent"
+    reg = _registry(tmp_path, monkeypatch)
+    reg.create(name)
+
+    calls: "list[str]" = []
+
+    def _raising_listener(_name: str) -> None:
+        calls.append("raising")
+        raise RuntimeError("a listener that misbehaves")
+
+    def _second_listener(_name: str) -> None:
+        calls.append("second")
+
+    reg.add_remove_listener(_raising_listener)
+    reg.add_remove_listener(_second_listener)
+
+    reg.remove(name, purge=True)  # must not raise
+
+    assert calls == ["raising", "second"], (
+        f"the second listener must still run after the first raised; got "
+        f"{calls!r}"
+    )
+    assert not (tmp_path / ".reyn" / "agents" / name).exists(), (
+        "the purge itself (rmtree, BEFORE the listener loop) must have "
+        "already completed regardless of a later listener's own failure"
+    )
+
+
 @pytest.mark.asyncio
 async def test_a_never_declared_agent_name_never_grows_a_manager(
     tmp_path, monkeypatch,

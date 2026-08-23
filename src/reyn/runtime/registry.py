@@ -1232,8 +1232,29 @@ class AgentRegistry:
             # side effect that could reintroduce it). Synchronous, no await
             # crosses this loop — same barrier property add_attach_listener's
             # own docstring states.
+            #
+            # architect co-vet (issuecomment-5383416113): each callback is
+            # isolated — one listener raising must not stop the REST from
+            # running, and must not turn into remove() itself raising (this
+            # loop runs strictly AFTER `shutil.rmtree(target)` above already
+            # succeeded, so the agent is genuinely gone from disk regardless
+            # of what any listener does here — a listener's own failure
+            # destroys no evidence, CLAUDE.md's third gating question; the
+            # `rmtree` failing IS possible, but that raises further up, well
+            # before this loop is ever reached, a different and unrelated
+            # failure this method already lets propagate). A listener that
+            # raised simply did not get to run its own cleanup this time —
+            # for AG-UI's listener (SurfaceRegistry.remove, a single dict
+            # pop) that reopens exactly the bug this issue closes for that
+            # one purge, never a crash or a corrupted registry state.
             for _cb in list(self._remove_listeners):
-                _cb(name)
+                try:
+                    _cb(name)
+                except Exception:
+                    logger.exception(
+                        "AgentRegistry: a remove-listener raised for purged agent %r "
+                        "— continuing with the remaining listeners", name,
+                    )
             # PR12: a hard-deleted agent would leave dangling topology references,
             # so drop it from every topology (a team losing its leader / an
             # emptied topology is removed entirely). #2103 MUST-1: return the
