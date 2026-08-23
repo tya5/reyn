@@ -1133,7 +1133,9 @@ class Session:
         self._session_id = session_id
         # #5184: session-owned child-process scratch lives outside the workspace
         # so sandbox write grants never widen recovery-core permissions.
-        self._child_temp_dir = Path(tempfile.gettempdir()) / "reyn" / session_id
+        self._child_temp_dir = (
+            Path(tempfile.gettempdir()) / "reyn" / self._agent.agent_name / session_id
+        )
         self._child_temp_dir.mkdir(parents=True, exist_ok=True)
         # #3705: pass the resolved state root through so an explicitly-
         # supplied workspace_state_dir isn't silently ignored (only used

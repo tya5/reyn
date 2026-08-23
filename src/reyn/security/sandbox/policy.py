@@ -376,7 +376,7 @@ class SandboxPolicy:
     temp_dir: str = ""
     # #5184 part 1 bridge; part 2 will make this a required discriminated
     # source. Values: session, none, inherited.
-    temp_source: str = "session"
+    temp_source: str = "inherited"
 
 
 def deny_narrowed_write_grants(policy: SandboxPolicy) -> list[tuple[str, str]]:
@@ -729,7 +729,7 @@ def resolve_sandbox_policy(
     *,
     write_paths: list[str] | None = None,
     temp_dir: str = "",
-    temp_source: str = "session",
+    temp_source: str = "inherited",
     mode: str = "compat",
 ) -> dict:
     """Resolve the effective agent-level sandbox policy as a dict.
