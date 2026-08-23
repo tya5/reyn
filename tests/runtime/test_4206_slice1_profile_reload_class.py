@@ -15,13 +15,16 @@ actual doc file, the actual `PREFERENCE_KEYS`/`BOUNDING_KEYS`) — no mocks.
 from __future__ import annotations
 
 import re
+from dataclasses import fields as dataclass_fields
 
 from reyn.runtime.bounding import BOUNDING_KEYS
 from reyn.runtime.preferences import PREFERENCE_KEYS
+from reyn.runtime.profile import AgentProfile
 from reyn.runtime.profile_reload import (
+    _NON_RELOAD_CLASS_FIELDS,
     AGENT_PROFILE_RELOAD_CLASSES,
     CONSTRUCTION_ONCE,
-    HOT,
+    EXPLICIT_TRIGGER,
     LIVE,
     RESTART,
     declared_agent_profile_keys,
@@ -34,7 +37,7 @@ _DOC = REPO_ROOT / "docs" / "reference" / "config" / "reyn-yaml.md"
 _BEGIN = "<!-- BEGIN agent-profile-reload-class -->"
 _END = "<!-- END agent-profile-reload-class -->"
 
-_VALID_CLASSES = {LIVE, CONSTRUCTION_ONCE, HOT, RESTART}
+_VALID_CLASSES = {LIVE, CONSTRUCTION_ONCE, EXPLICIT_TRIGGER, RESTART}
 
 
 # ── the completeness gate (#5190-shape: real vocabulary minus registry) ──
@@ -95,6 +98,68 @@ def test_preference_keys_and_bounding_keys_are_genuinely_nonempty():
     assert BOUNDING_KEYS
 
 
+def test_every_excluded_field_name_is_a_real_agentprofile_field():
+    """Tier 2: TESTS-READ A block ① witness (architect, issuecomment-
+    5384894847) — `_NON_RELOAD_CLASS_FIELDS` must name REAL fields on
+    `AgentProfile`, checked against `dataclasses.fields` directly, never a
+    bare equality assert against the same literal set on both sides (that
+    would prove nothing per CLAUDE.md's 6-questions #2 — "is it the
+    implementation, transcribed?"). A typo'd/renamed exclusion name here
+    would silently leave a stale entry in `declared_agent_profile_keys()`
+    that no longer subtracts anything real."""
+    real_field_names = {f.name for f in dataclass_fields(AgentProfile)}
+    for excluded in _NON_RELOAD_CLASS_FIELDS:
+        assert excluded in real_field_names, (
+            f"{excluded!r} is excluded from the reload-class vocabulary "
+            f"but is not a real AgentProfile field — real fields: "
+            f"{sorted(real_field_names)}"
+        )
+
+
+def test_agentprofile_field_derivation_is_not_a_hand_typed_literal():
+    """Tier 2: TESTS-READ A block ① strip-falsifier — confirms the REAL,
+    UNMODIFIED `declared_agent_profile_keys()` genuinely reads
+    `AgentProfile`'s own fields via `dataclasses.fields` rather than a
+    hand-typed literal that happens to match today.
+
+    Monkeypatches `reyn.runtime.profile.AgentProfile` ITSELF (the module
+    attribute the function's own local `from reyn.runtime.profile import
+    AgentProfile` re-fetches on every call) to a stand-in carrying one
+    SYNTHETIC extra field, then calls the real function with NOTHING else
+    replaced. If the AgentProfile-scoped leg were still the pre-block-①
+    hand-typed literal, this synthetic field could never reach the
+    derived set no matter what the (unread) class declares — that vacuity
+    is exactly what this test rules out, by patching the DEPENDENCY, not
+    the function under test."""
+    from dataclasses import dataclass, field
+
+    import reyn.runtime.profile as profile_mod
+
+    @dataclass(frozen=True)
+    class _FakeProfileWithExtraField:
+        name: str = ""
+        role: str = ""
+        created_at: str = ""
+        allowed_mcp: "list[str] | None" = None
+        preferences: "dict[str, object]" = field(default_factory=dict)
+        bounding: "dict[str, object]" = field(default_factory=dict)
+        base_dir: "str | None" = None
+        project_context_path: "str | None" = None
+        a_brand_new_field: "str | None" = None
+
+    real_class = profile_mod.AgentProfile
+    try:
+        profile_mod.AgentProfile = _FakeProfileWithExtraField
+        keys = declared_agent_profile_keys()
+    finally:
+        profile_mod.AgentProfile = real_class
+    assert "a_brand_new_field" in keys, (
+        "declared_agent_profile_keys() must derive from AgentProfile's "
+        "OWN fields at call time (dataclasses.fields), not a hand-typed "
+        f"literal — a synthetic extra field never reached the result: {keys!r}"
+    )
+
+
 # ── the doc's own section is a projection of the registry ────────────────
 
 
@@ -145,16 +210,17 @@ def test_the_doc_section_has_no_row_the_registry_does_not():
     )
 
 
-def test_allowed_mcp_is_the_hot_class_not_construction_once_or_restart():
+def test_allowed_mcp_is_the_explicit_trigger_class_not_construction_once_or_restart():
     """Tier 2: regression guard for this slice's own discovery — measured
     (session.py's `_reapply_per_agent_capability`, the `per_agent_
     capability` hot-reload seam) as neither a per-access live re-read, nor
     frozen for a session's lifetime, nor requiring a process restart, but
-    an explicit-trigger-then-turn-boundary reapply — the SAME shape the
-    project-layer `restart / hot` vocabulary already names. Named
-    explicitly since this is the one key this slice found that does not
-    fit the 3 originally-proposed classes."""
-    assert AGENT_PROFILE_RELOAD_CLASSES["allowed_mcp"] == HOT
+    an explicit-trigger-then-turn-boundary reapply. NOT the project-layer
+    `hot` class (TESTS-READ A block ②, architect, issuecomment-5384894847)
+    — `profile.yaml` is not in `_HOT_RELOAD_FILES`, so a bare hand-edit
+    does nothing on its own, the opposite polarity from `hot`'s own
+    defining property (the file write itself is the trigger there)."""
+    assert AGENT_PROFILE_RELOAD_CLASSES["allowed_mcp"] == EXPLICIT_TRIGGER
 
 
 def test_role_and_project_context_path_are_construction_once():

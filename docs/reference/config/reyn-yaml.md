@@ -244,12 +244,17 @@ not attempt project-layer or session-layer reload classes.
   construction. An already-running session does not notice a
   `profile.yaml` edit until its own NEXT construction (next
   `--connect`/reattach).
-- **`hot`** — changes via an explicit trigger (`/reload`, or an LLM
-  hooks-write op), applied at the next turn boundary — the SAME shape the
-  [table above](#top-level-keys) already names `restart / hot` for
-  project-layer `.reyn/config/`-side writes, reused here rather than
-  inventing a new word for an already-named shape (measured during this
-  slice: `allowed_mcp` fits none of the other 3 classes cleanly).
+- **`explicit-trigger`** — a bare hand-edit of `profile.yaml` does NOTHING
+  on its own; reapply only happens when something else calls
+  `request_reload` (`/reload`, or an LLM hooks-write op), applied at the
+  next turn boundary. **Not** the same as the [table above](#top-level-keys)'s
+  own `restart / hot` — that class's defining property is the file WRITE
+  ITSELF being the trigger (`.reyn/config/`-side writes are picked up
+  automatically at the next turn boundary); `profile.yaml` is not in
+  `_HOT_RELOAD_FILES`, so a hand-edit alone changes nothing until an
+  explicit trigger fires — the opposite polarity from `hot`, hence the
+  different name (measured during this slice: `allowed_mcp` fits none of
+  the other 3 classes cleanly).
 - **`restart`** — takes effect only after a full process restart. No
   slice-1 key currently uses this value.
 
@@ -257,7 +262,7 @@ not attempt project-layer or session-layer reload classes.
 | Key | Reload class |
 |-----|---------------|
 | `role` | `construction-once` |
-| `allowed_mcp` | `hot` |
+| `allowed_mcp` | `explicit-trigger` |
 | `base_dir` | `live` |
 | `project_context_path` | `construction-once` |
 | `preferences.output_language` | `live` |
