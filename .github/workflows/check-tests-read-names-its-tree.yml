@@ -130,8 +130,9 @@ jobs:
       # with `continue-on-error: true`, so a script failure never reddens
       # this job or its check run, only the status below. A runner that
       # dies before this step runs leaves the `pending` status from above
-      # standing, which blocks merge; nothing here overwrites it with a red
-      # check run.
+      # standing, which remains as the visible verdict -- not in
+      # `required_status_checks` today (#5138 ②), so it does not block
+      # merge; nothing here overwrites it with a red check run.
       - name: Post final status
         if: always()
         env:
