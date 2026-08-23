@@ -120,6 +120,23 @@ _MUTATING_METHOD_CALLS = {
     "resume_deferred_agents": lambda reg: reg.resume_deferred_agents(),
     "record_background_attach_error": lambda reg: reg.record_background_attach_error("x"),
 }
+# #4995 (architect: keep this hand-written, do NOT derive it from source).
+# Deliberately the mirror of #5201's own lesson, not the same shape: #5201's
+# hand-written list stood in for the REAL vocabulary (deriving it would have
+# let the real thing grow past the list unnoticed). Here the hand-written
+# list stands in for "the methods that are SUPPOSED to be guarded" — deriving
+# it (e.g. from every method whose body assigns ``self._x``) would make BOTH
+# sides of this test's assertion move together, so removing a guard AND its
+# entry from a derivation source at once would stay green (six-questions ②,
+# the identical-expression-on-both-sides failure).
+#
+# Disclosed gap, not a completeness claim: a FUTURE new mutating method
+# added to ``AgentRegistry`` with no ``_assert_owner_thread()`` call is NOT
+# caught by anything here or in the source — no zero-false-positive gate
+# exists for "which methods mutate" (that is semantics, not syntax; a naive
+# ``self._x =`` census over-fires on cached/memoized reads). The person
+# adding that method must remember to add BOTH the guard call and an entry
+# here — this test only proves the 4 CURRENTLY listed stay guarded.
 
 
 @pytest.mark.parametrize("method_name", sorted(_MUTATING_METHOD_CALLS))

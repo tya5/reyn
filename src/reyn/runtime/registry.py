@@ -506,7 +506,18 @@ class AgentRegistry:
         constructed this registry. Call ONLY at the top of a method that
         MUTATES registry-owned state — a read must NOT call this (#4983's
         own off-thread reads are a legitimate second thread; asserting on a
-        read breaks them, as CI found)."""
+        read breaks them, as CI found).
+
+        Disclosed gap (architect, issuecomment-5385029098), not a
+        completeness claim: nothing here or in ``tests/runtime/test_4995_
+        registry_owner_thread.py`` catches a FUTURE mutating method added
+        with no call to this guard — "which method mutates" is semantics,
+        not syntax, so no zero-false-positive gate can enforce it (a naive
+        census of ``self._x =`` assignments over-fires on cached/memoized
+        reads). Whoever adds a new mutating method must add both the call
+        AND a test entry; this is a manually-maintained list, deliberately
+        NOT derived from source (see that test file's own comment on why
+        deriving it would weaken, not strengthen, the witness)."""
         current = threading.get_ident()
         if current != self._owner_thread_ident:
             raise RuntimeError(
