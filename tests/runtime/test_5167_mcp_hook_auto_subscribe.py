@@ -312,5 +312,6 @@ async def test_ephemeral_session_never_attempts_auto_subscribe(tmp_path: Path):
     collected = collect_events(events)
 
     await session._auto_subscribe_mcp_resource_hooks()
+    await settle(events)
 
     assert collected == []
