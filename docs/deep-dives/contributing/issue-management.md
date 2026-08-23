@@ -65,6 +65,30 @@ for, not what a backlog is for.
 No mechanism enforces this. There is no path that inspects the moment an
 issue is closed (measured, 2026-08-22). What holds it is a person.
 
+### An issue can carry more than one claim
+
+When work discharges the claim in an issue's *title* but the investigation
+that discharged it surfaced a second, still-true claim, the issue does not
+close — its title is now wrong, and the fix is to retitle it to the claim
+that survives.
+
+Two on 2026-08-23:
+
+- #5100 was filed as "the per-session hooks layer's malformed-input
+  resilience is tested nowhere". The tests landed (#5109), so that claim is
+  false. But one of those tests documents that a YAML *syntax* error at that
+  layer degrades with no signal at all — and its own docstring names this
+  issue as where that fact is recorded. Closing on the discharged claim
+  would have deleted the record the test points at.
+- #3616's original ask had been withdrawn in-thread by the person who filed
+  it, while a different, live item (real-machine verification of a merged
+  fix) stayed. The title still named the withdrawn ask, so the issue read as
+  waiting for something nobody wanted any more.
+
+The failure this prevents is not a wrong close. It is that an issue whose
+title names a discharged claim is read — by the lead, by a patrol, by a
+peer looking for work — as an issue about the discharged thing.
+
 ## 4. Priority is a judgement, and it is the lead's
 
 Ordering a backlog is not a sort key — someone has to judge, and the
@@ -122,6 +146,32 @@ These labels exist in the repo now, carrying the meanings below:
   #4364 carried the label after its own hold had been lifted and after
   another session had already started the work — the label was still
   telling readers to stay away from work already in progress.
+
+  **A block label is itself a claim, and it is checked by nobody.** It
+  asserts that a named party outside the team must act first. Re-derive it
+  the way §3 re-derives an issue's claim — from what the thread actually
+  asks, not from the label's presence. An audit of all 33 on 2026-08-23
+  found the label wrong on four, in two distinct ways:
+
+  - **Stale** — the blocking ask had been withdrawn (#3616).
+  - **Contradicted by the thread it labels** — #4478's own comment says, in
+    the same breath, 「owner の返答を待つ列には入れていません」 and
+    「`blocked:external` も そのまま ── 外しません」. The label was
+    defensible (it waits on #4476, which does wait on the owner) but it read
+    to everyone else as an unanswered question addressed to the owner. What
+    was missing was not a label but a title saying what the issue waits on.
+  - **Wrong when applied** — #4573 (`severity:high`, the owner's own machine
+    unable to start reyn) was labelled "owner 判断待ち" for nine days. Its
+    open question was which of two conflicting in-repo precedents to
+    generalise, which the architect settles; and either answer removes the
+    crash, so no answer had to come from the owner at all. #1811 carried
+    `owner:decide` for sixty-five days — the longest-open issue in the
+    backlog — while a scan of all five of its comments found zero questions
+    addressed to the owner.
+
+  The lead applies this label, so the lead is the party who has to
+  re-derive it. Both wrong-when-applied cases above were the lead's own
+  labels, and in both the party being waited on was never asked anything.
 
 A new issue gets its axis label(s) when it is filed, not later. Deferring
 the label is how a backlog ends up with 35 issues at equal, unlabeled
