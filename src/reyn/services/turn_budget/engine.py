@@ -321,6 +321,9 @@ def try_build_default_turn_budget_engine(
 ) -> "TurnBudgetEngine | None":
     """:func:`build_default_turn_budget_engine`, but returns ``None`` instead of
     raising when the model's context is too small to satisfy the by-construction
+    force-close floor, OR (#4573) when *model* is a class the resolver cannot
+    resolve — see the ``ValueError`` paragraph below for why the second case
+    belongs in this same degrade, not a crash.
     force-close floor (``output_reserve + offload_cap < force_close_threshold``).
 
     Such a model genuinely CANNOT support force-close termination by construction
@@ -335,11 +338,30 @@ def try_build_default_turn_budget_engine(
 
     The viability gate is exactly the engine's own construction-time
     ``assert_turn_budget_bounds`` — caught here so the result is None, not a raise;
-    no bounds logic is duplicated (which would drift from the engine's measure)."""
+    no bounds logic is duplicated (which would drift from the engine's measure).
+
+    #4573 (architect ruling, issuecomment on that issue): ALSO catches
+    ``ValueError`` — the SAME shape ``ModelResolver.resolve()`` raises for an
+    unresolvable model CLASS (a typo'd ``llm.model``, e.g.), which this
+    engine's own ``resolver.resolve(model)`` call (inside
+    ``TurnBudgetEngine.__init__``) propagates unchanged. This call site is
+    LAZY (``RouterHostAdapter._ensure_turn_budget_engine``, first reference
+    — a status/context-window read, not a real LLM call) and its whole
+    return contract is already "``None`` is a legitimate, permanent
+    degrade" (the small-context case above) — an unresolvable model class is
+    the SAME shape of degrade for the SAME caller, not a reason to crash the
+    session before the operator ever gets a chance to run ``/model`` and
+    fix it (#4573's own observed symptom: a typo'd ``llm.model`` made
+    ``reyn chat`` unusable, including the ``/model`` escape hatch, because
+    THIS lazy build ran before any turn and before any user input). The
+    REAL turn-dispatch path (``RouterLoop``'s own ``resolve_model`` calls)
+    is untouched by this — a genuine turn attempt with an unresolved model
+    still raises the full, load-bearing error (#4573 acceptance③); only
+    this budget-ESTIMATION path degrades."""
     try:
         return build_default_turn_budget_engine(
             model, resolver=resolver, use_chars4=use_chars4,
             max_inline_bytes=max_inline_bytes, events=events,
         )
-    except AssertionError:
+    except (AssertionError, ValueError):
         return None

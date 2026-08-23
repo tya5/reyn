@@ -677,10 +677,14 @@ class RouterHostAdapter:
         once — #3671 follow-up).
 
         A cached ``None`` (a tiny-context model that genuinely cannot
-        support force-close, per ``try_build_default_turn_budget_engine``'s
-        own contract) is a valid, permanent answer — distinguished from
-        "not computed yet" by the ``_TURN_BUDGET_ENGINE_UNSET`` sentinel, not
-        by ``None`` itself."""
+        support force-close, OR — #4573 — a currently-unresolvable model
+        class, per ``try_build_default_turn_budget_engine``'s own contract)
+        is a valid, permanent answer — distinguished from "not computed
+        yet" by the ``_TURN_BUDGET_ENGINE_UNSET`` sentinel, not by ``None``
+        itself. The unresolvable-class case is not permanent in the
+        session's OWN lifetime, though: ``/model`` rebuilds this cache
+        directly (:meth:`set_turn_budget_engine`), so switching to a valid
+        class overwrites a stale ``None`` from a broken initial state."""
         if self._turn_budget_engine is _TURN_BUDGET_ENGINE_UNSET:
             factory = self._turn_budget_engine_factory
             self._turn_budget_engine = factory() if factory is not None else None
