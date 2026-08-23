@@ -159,7 +159,16 @@ def test_a_missing_approval_ledger_module_fails_the_gate_loudly_not_silently(
     actually running the gate script in a subprocess with a decoy
     ``reyn.security.permissions`` package (real files on disk, no
     ``approval_ledger`` module inside it) placed first on ``sys.path`` —
-    a real import failure, not a simulated one."""
+    a real import failure, not a simulated one.
+
+    Not a contradiction with ``test_an_absent_file_reads_as_compliant_
+    not_an_error`` above (architect co-vet, #5183 issuecomment-5384492445):
+    that test is about ``reyn_internal_imports``'s own FILE-READ
+    behavior when handed an arbitrary path that happens not to exist —
+    a deliberate design choice for that pure function. THIS test is
+    about the gate SCRIPT's own hard-coded target — its ``__file__``-
+    derived module-level import, which raises instead of degrading to
+    "absent" at all. Two different subjects, both correct."""
     decoy_root = tmp_path / "decoy_reyn_pkg"
     pkg_dir = decoy_root / "reyn" / "security" / "permissions"
     pkg_dir.mkdir(parents=True)
