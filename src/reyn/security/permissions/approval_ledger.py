@@ -247,6 +247,21 @@ def migrate_legacy_snapshot(ledger: ApprovalLedger, legacy_yaml_path: Path) -> N
     the same way the pre-#5153 loaders already did (a non-bool row or a
     malformed ``_bound_identities`` entry is skipped, never an error).
 
+    **Invariant (architect co-vet, broker, #5170 2026-08-23T03:53Z —
+    state this in words so a future reader does not reintroduce the
+    real defect below by going per-key): the legacy snapshot is a BASE,
+    never an UPDATE.**
+    If the ledger already holds ANY record at all — for this key or any
+    other — migration adds NOTHING, full stop; it never selectively
+    "fills in just the keys that aren't there yet." A per-key migration
+    (checking each legacy key individually against what the ledger
+    already has) is exactly the shape that reintroduces the race below —
+    that granularity is what let a stale value land after a real
+    decision for ONE key while the others were still fine. Keeping
+    migration all-or-nothing at the FILE level, gated once on whether
+    the ledger exists AT ALL, is what makes the fix below possible in
+    the first place.
+
     #5153 real defect (docs-maintainer's TESTS-READY(B) on PR #5170,
     issuecomment-5384027134 — 3/3, no strip needed): the FIRST version of
     this function appended one record PER KEY via ``ApprovalLedger``'s
@@ -353,6 +368,13 @@ def migrate_legacy_snapshot(ledger: ApprovalLedger, legacy_yaml_path: Path) -> N
     # later write, reproducing the identical bug in a narrower window).
     # link() has no such gap: the content is complete before the ledger
     # path is ever created.
+    #
+    # os.link's atomicity is a SAME-FILESYSTEM guarantee -- a hard link
+    # cannot cross filesystem boundaries at all (raises OSError/EXDEV).
+    # The temp file MUST therefore be created in the SAME directory as
+    # the ledger (never /tmp or any other mount point), which is why
+    # `dir=str(ledger.path.parent)` below is load-bearing, not a
+    # convenience default.
     tmp_fd, tmp_path_str = tempfile.mkstemp(
         dir=str(ledger.path.parent), prefix=".approvals-migrate-", suffix=".tmp",
     )
