@@ -745,9 +745,14 @@ class RegistryReadModel(ChatReadModel):
             return []
         # The Session's ``history`` list IS the ChatMessage log loaded from
         # ``history.jsonl`` by ``Session.load_history`` at load time — read it
-        # straight (no audit-event path). A shallow copy, so neither this
-        # caller nor a later ``conversation_history_from_source`` slice can
-        # mutate the live session history.
+        # straight (no audit-event path). ``list(...)`` is a shallow copy: the
+        # LIST is a new object, so neither this caller nor a later
+        # ``conversation_history_from_source`` slice/append can add or drop
+        # entries in the live session history. The ELEMENTS (``ChatMessage``
+        # instances) are the SAME objects, shared with the live list — an
+        # in-place mutation of one WOULD reach the live session. Nothing on
+        # this path does that today (docs-maintainer's #5215 B confirmed), so
+        # this is a documentation-accuracy note, not a live hazard.
         return list(getattr(s, "history", []) or [])
 
     def conversation_history_from_source(
