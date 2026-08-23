@@ -103,8 +103,15 @@ jobs:
 
       # scripts/check_tests_read_names_its_tree.py is stdlib-only
       # (argparse / json / re / subprocess). No pip install needed.
+      # `continue-on-error: true` keeps a script failure from also turning
+      # this step, and with it the job, red: the commit status posted below
+      # is the only channel that carries this verdict. `steps.check.outcome`
+      # (read below) still reports the script's real result -- `outcome` is
+      # the pre-continue-on-error result; `conclusion` is what
+      # continue-on-error would force to `success` and is not read here.
       - name: Check the TESTS-READ note names this PR's tree
         id: check
+        continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -117,6 +124,15 @@ jobs:
       # silently vanishing. That is what answers "a job that dies mid-run
       # must not go silent"; it is a property of these three steps existing
       # in this order, not something a unit test can exercise.
+      #
+      # The commit status posted here is the only verdict channel. The
+      # job's own conclusion is deliberately not a signal -- `check` runs
+      # with `continue-on-error: true`, so a script failure never reddens
+      # this job or its check run, only the status below. A runner that
+      # dies before this step runs leaves the `pending` status from above
+      # standing, which remains as the visible verdict -- not in
+      # `required_status_checks` today (#5138 ②), so it does not block
+      # merge; nothing here overwrites it with a red check run.
       - name: Post final status
         if: always()
         env:
