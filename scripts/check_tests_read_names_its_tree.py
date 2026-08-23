@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""Fail a ``tests/``-touching PR whose TESTS-READ note does not name the tree
-it read, or names one that later commits to ``tests/`` have already left behind.
+"""Fail a ``tests/``-touching PR whose TESTS-READ note does not name the PR's
+CURRENT head, or carries no such note at all.
 
 #5039. House rule 8 says a PR touching ``tests/`` does not self-merge until a
 reviewer's TESTS-READ note lands on it. The rule is satisfied by the note
@@ -11,17 +11,27 @@ earlier head, and in every case ``tests/`` moved afterwards — #5090 (note at
 ``e0dd40461``; the witness commit landed 13 minutes later), #5096 (note at
 10:32; test files changed at 10:48 and 10:59), #5038 (note read ``5c90f2ac4``
 while the PR head was ``6b5d587c0``, already merged). All four read green under
-rule 8.
+rule 8; all four also fail the CURRENT algorithm below (a note naming an
+earlier SHA cannot satisfy the existential over the current head either) —
+the population these 4 real instances name did not change across #5197/#5204,
+only the shape of the check that catches them.
 
 The class this closes is the one ``verification-hazards.md`` names as its root:
 **an observation does not name its own referent**. So the predicate is not "was
 the note any good" — nothing here reads the note's content. It is only:
 
-1. the note names a SHA at all (absent -> red), and
-2. no commit has touched ``tests/`` since that SHA (later commits -> red, with
-   the commits listed, so the ask is "top up the diff", not "read it again"),
-3. a ``tests/``-touching PR carries at least one note (none -> red) — rule 8
-   itself, which nothing has been checking mechanically.
+1. a ``tests/``-touching PR carries at least one TESTS-READ note (none -> red)
+   — rule 8 itself, which nothing has been checking mechanically.
+2. that note names a SHA at all, and the SHA is a real commit of this PR
+   (absent/unresolvable -> red — an issue-comment id, e.g., is hex-shaped but
+   not a commit).
+3. #5204 (architect ruling, correcting #5197's own ∀ — see ``evaluate``'s own
+   docstring for the full history): SOME resolvable note names the PR's
+   CURRENT head specifically (none does -> red, naming both the stale note's
+   own SHA and the current head, so the ask is "post a fresh note naming
+   THIS head" — never "read the PR again", and never "edit or delete the
+   old note", which stays exactly where it is as history of what was
+   actually read at the time).
 
 The note's CLAIM line lives in a PR **comment**, and only its FIRST LINE is
 ever read (see ``_NOTE_MARKER`` / ``evaluate``). That comment's line 1 must
@@ -70,7 +80,7 @@ provides this; it is not something a pure Python predicate can exercise, and
 the test suite says so plainly rather than pretending to cover it.
 
 Deliberately NOT closed: this predicate proves only that a comment's first
-line names a fresh commit of this PR — never that a *reviewer* wrote it.
+line names the PR's current head — never that a *reviewer* wrote it.
 Every session in this repo authenticates as the same ``gh`` user (house
 rule preamble, PR-workflow doc), so comment authorship cannot distinguish
 reviewer from author any more than body authorship could; the syntactic
