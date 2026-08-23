@@ -47,6 +47,11 @@ def _worker_append_one(path_str: str, key: str, approved: bool) -> None:
     ApprovalLedger(Path(path_str)).append_approval(key, approved)
 
 
+def _worker_migrate(ledger_path_str: str, legacy_path_str: str) -> None:
+    ledger = ApprovalLedger(Path(ledger_path_str))
+    migrate_legacy_snapshot(ledger, Path(legacy_path_str))
+
+
 def test_two_real_processes_approving_different_keys_both_survive(tmp_path: Path) -> None:
     """Tier 2: #5153 acceptance ① — two SEPARATE OS processes, each
     appending its OWN key many times concurrently, must both fully land
@@ -186,3 +191,46 @@ def test_migration_is_idempotent_a_second_call_is_a_no_op(tmp_path: Path) -> Non
         "a second migrate_legacy_snapshot call must be a no-op -- the "
         "ledger already existing is what makes it skip"
     )
+
+
+def test_two_processes_racing_the_first_migration_still_fold_correctly(
+    tmp_path: Path,
+) -> None:
+    """Tier 2: #5153 — architect's TESTS-READ(A) note for the B reviewer
+    (issuecomment-5384009424): ``_load`` calls ``migrate_legacy_snapshot``
+    unconditionally on every touch, so two processes could both see "no
+    ledger yet" and both migrate at once. Measured (not assumed, per
+    architect's own "私は測っていません"): with REAL separate OS
+    processes racing the FIRST migration of the SAME legacy snapshot,
+    each migration only ever APPENDS (never truncates/replaces), so a
+    doubled set of day-0 records is, at worst, redundant -- ``fold()``'s
+    own last-wins-per-key semantics collapse duplicate identical records
+    to the same value, same as a single migration would have produced."""
+    reyn_dir = tmp_path / ".reyn"
+    reyn_dir.mkdir()
+    legacy_path = reyn_dir / "approvals.yaml"
+    legacy_path.write_text(
+        "actor/file.write/legacy_dir/: true\n"
+        "actor/file.write/legacy_revoked/: false\n",
+        encoding="utf-8",
+    )
+    ledger_path = tmp_path / ".reyn" / "approvals.jsonl"
+
+    p1 = multiprocessing.Process(
+        target=_worker_migrate, args=(str(ledger_path), str(legacy_path)),
+    )
+    p2 = multiprocessing.Process(
+        target=_worker_migrate, args=(str(ledger_path), str(legacy_path)),
+    )
+    p1.start()
+    p2.start()
+    p1.join(timeout=30)
+    p2.join(timeout=30)
+    assert p1.exitcode == 0
+    assert p2.exitcode == 0
+
+    saved, _bound = ApprovalLedger(ledger_path).fold()
+    assert saved == {
+        "actor/file.write/legacy_dir/": True,
+        "actor/file.write/legacy_revoked/": False,
+    }
