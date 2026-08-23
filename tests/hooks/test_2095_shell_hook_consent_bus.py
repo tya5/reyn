@@ -57,8 +57,14 @@ class _RecordingBus:
         return InterventionAnswer(choice_id=self._choice_id)
 
 
-def _policy() -> SandboxPolicy:
-    return SandboxPolicy(network=False, deny_subprocess=True, timeout_seconds=10)
+def _policy(temp_dir: str = "") -> SandboxPolicy:
+    return SandboxPolicy(
+        network=False,
+        deny_subprocess=True,
+        timeout_seconds=10,
+        temp_dir=temp_dir,
+        temp_source="session",
+    )
 
 
 def _marker_argv(marker: Path) -> list[str]:
@@ -72,7 +78,7 @@ async def _run(argv: list[str], allowlist: Path, **kw) -> None:
         event_context={"event": "turn_end"},
         timeout_seconds=10,
         sandbox_backend=NoopBackend(),
-        sandbox_policy=_policy(),
+        sandbox_policy=_policy(temp_dir=str(allowlist.parent)),
         allowlist_path=allowlist,
         **kw,
     )

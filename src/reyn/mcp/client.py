@@ -2124,6 +2124,9 @@ class MCPClient:
             # backend (expand_policy_path) — NOT here, so every backend applies
             # one shared contract instead of each caller pre-expanding (#2976).
             write_paths=[cwd, *extra],
+            # #5184 part 1: MCP intentionally inherits the SDK environment;
+            # part 2 will replace this bool with the three-value mode.
+            temp_source="inherited",
             # #3901 PR-B ④ (owner ruling B): SandboxPolicy's own dataclass
             # defaults for read_deny_paths/write_deny_paths are now empty
             # (full compat) — but an MCP server is untrusted THIRD-PARTY code,

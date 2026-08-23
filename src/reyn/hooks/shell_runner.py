@@ -431,6 +431,7 @@ async def run_shell_hook(
     *,
     timeout_seconds: int = 60,
     cwd: str | None = None,
+    temp_dir: str | None = None,
     hook_process_context: "HookProcessContext | None" = None,
     sandbox_backend: "SandboxBackend | None" = None,
     sandbox_config: "SandboxConfig | None" = None,
@@ -614,6 +615,8 @@ async def run_shell_hook(
             deny_subprocess=not allow_subprocess if allow_subprocess is not None else True,
             write_paths=list(write_paths) if write_paths is not None else [],
             timeout_seconds=timeout_seconds,
+            temp_dir=temp_dir or "",
+            temp_source="session",
         )
         # #3005: the agent-level ``reyn.yaml sandbox.policy`` never reaches this
         # policy — it is resolved on the op path only. That scoping is

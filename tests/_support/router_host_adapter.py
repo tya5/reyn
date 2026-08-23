@@ -6,6 +6,7 @@ mocks) used as the adapter's action ports when a test only needs construction.
 """
 from __future__ import annotations
 
+import tempfile
 from pathlib import Path
 
 from reyn.core.events.events import EventLog
@@ -48,6 +49,7 @@ _INERT_OP_CONTEXT_SOURCE_FIELDS: dict = {
     "threat_scan": None,
     "contextual_permission_fn": None,
     "session_id_fn": None,
+    "child_temp_dir": "",
     "hook_dispatcher": None,
     "hook_bus": None,
     "turn_origin_fn": None,
@@ -64,10 +66,15 @@ def make_op_context_source(**overrides: object) -> RouterOpContextSource:
     """A REAL RouterOpContextSource with everything inert but *overrides*.
 
     The real class, not a stand-in: it is a plain object with no I/O, so a test
-    that needs one builds one."""
+    that needs one builds one. The test harness owns its temporary directory.
+    """
     unknown = set(overrides) - set(_INERT_OP_CONTEXT_SOURCE_FIELDS)
     assert not unknown, f"not RouterOpContextSource fields: {sorted(unknown)}"
-    return RouterOpContextSource(**{**_INERT_OP_CONTEXT_SOURCE_FIELDS, **overrides})
+    scratch = tempfile.TemporaryDirectory()
+    fields = {**_INERT_OP_CONTEXT_SOURCE_FIELDS, "child_temp_dir": scratch.name, **overrides}
+    source = RouterOpContextSource(**fields)
+    source._test_temp_dir = scratch
+    return source
 
 
 async def null_file_read(path: str) -> dict:

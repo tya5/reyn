@@ -9,6 +9,7 @@ import asyncio
 import json
 import logging
 import re
+import tempfile
 from typing import TYPE_CHECKING, Any, Callable
 
 if TYPE_CHECKING:
@@ -1130,6 +1131,12 @@ class Session:
 
         # WAL + per-agent snapshot for crash recovery via SnapshotJournal; snapshot_path kept only for diagnostics (PR21 / PR-refactor-session-1, see session-construction.md#family-2-recovery-wal-journal)
         self._session_id = session_id
+        # #5184: session-owned child-process scratch lives outside the workspace
+        # so sandbox write grants never widen recovery-core permissions.
+        self._child_temp_dir = (
+            Path(tempfile.gettempdir()) / "reyn" / self._agent.agent_name / session_id
+        )
+        self._child_temp_dir.mkdir(parents=True, exist_ok=True)
         # #3705: pass the resolved state root through so an explicitly-
         # supplied workspace_state_dir isn't silently ignored (only used
         # when the caller didn't already override snapshot_path itself).
@@ -4672,6 +4679,7 @@ class Session:
             ),
             sandbox_config=self._sandbox_config,
             sandbox_backend=self._sandbox_backend,
+            hook_temp_dir=lambda: str(self._child_temp_dir),
             # #2095: route a not-yet-allowlisted shell-hook's consent prompt
             # through this session's RequestBus, but ONLY when a live
             # intervention listener is attached (TUI / web / A2A-override) —
@@ -5120,6 +5128,7 @@ class Session:
             # #1953: live — a spawned session's real id is assigned after this
             # constructor runs, and ops must namespace under the real one.
             session_id_fn=lambda: self._session_id,
+            child_temp_dir=str(self._child_temp_dir),
             hook_dispatcher=self._hook_dispatcher,  # #1800 slice 5c
             hook_bus=self._hook_bus,  # Hook-Event Redesign Phase 5 part 2
             # proposal 0060 Phase 1 (A7): live — ``_current_turn_origin`` carries
@@ -7166,6 +7175,13 @@ class Session:
                 # event delivery never arrived — closing here removes
                 # that failure mode from Session's own lifecycle).
                 await self._audit_events.stop_dispatch()
+                # #5184: the session owns this scratch lifetime. Teardown is
+                # best-effort so cleanup cannot block shutdown.
+                try:
+                    import shutil
+                    shutil.rmtree(self._child_temp_dir)
+                except Exception:  # noqa: BLE001
+                    logger.warning("session temp cleanup failed", exc_info=True)
 
     async def _drain_on_shutdown(self) -> None:
         """Cancel any in-flight background work, then tear down on shutdown.
