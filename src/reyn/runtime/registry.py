@@ -26,6 +26,7 @@ import asyncio
 import json
 import logging
 import re
+import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -464,6 +465,51 @@ class AgentRegistry:
         # ★ behavior change: a malformed topology yaml's warning now surfaces
         # at first topology access instead of at Registry construction time.
         self._topologies_raw: dict[str, Topology] | None = None
+        # #4995 slice 1 (architect ruling, issuecomment-5384869791): the
+        # thread that CONSTRUCTS this registry is its owner, from birth —
+        # mirroring ``ThreadedTransportProxy``'s own "worker owns from the
+        # moment it exists" shape (that class's own module docstring),
+        # never a second owner assigned later. Slice 1's own deliverable is
+        # making this ownership EXPLICIT (a named seam) without moving
+        # anything yet — today's single caller (``chat.py``'s composition
+        # root) already runs on one thread, so this is a no-op in practice
+        # until slice 2 (#4995) routes ``_background_attach`` through a
+        # worker thread and slice 3 wires ``ThreadedTransportProxy`` in;
+        # from then on, ``_assert_owner_thread`` is what makes "a second
+        # thread cannot touch this registry" a THING THAT FAILS LOUDLY
+        # (RuntimeError) rather than a silent race, at the small set of
+        # entry points ``_background_attach``/the REPL's own direct calls
+        # use (measured: ``attach``, ``restore_all``,
+        # ``resume_deferred_agents``, ``record_background_attach_error``,
+        # ``exists``, ``loaded_names``, ``agent_cost_usd``,
+        # ``agent_total_usage``, ``attached_session``, ``get_session``,
+        # ``agent_workspace_dir`` — see #4995's own issue comments for the
+        # full measurement this list is drawn from).
+        self._owner_thread_ident = threading.get_ident()
+
+    def _assert_owner_thread(self) -> None:
+        """#4995 slice 1: raise if called from a thread OTHER than the one
+        that constructed this registry. Call at the top of any method a
+        cross-thread caller could otherwise reach — see this registry's own
+        ``_owner_thread_ident`` comment for which methods currently do."""
+        current = threading.get_ident()
+        if current != self._owner_thread_ident:
+            raise RuntimeError(
+                f"AgentRegistry touched from thread {current} but is owned "
+                f"by thread {self._owner_thread_ident} — see #4995 (a single "
+                f"owner thread is the invariant this registry's cross-thread "
+                f"safety depends on; a second thread reaching this method is "
+                f"the race #4995 exists to prevent, not a permitted access "
+                f"pattern)"
+            )
+
+    @property
+    def owner_thread_ident(self) -> int:
+        """#4995 slice 1: the thread identity this registry is owned by —
+        the public read a test (or a future caller deciding whether it is
+        safe to touch this registry) can check without reaching into
+        ``_owner_thread_ident`` directly."""
+        return self._owner_thread_ident
 
     @property
     def state_log(self) -> StateLog | None:
@@ -546,6 +592,7 @@ class AgentRegistry:
         supported replacement for external ``registry._agents.get(name)`` reach-in.
         Defaults to the implicit "main" session (byte-identical to the prior
         single-session lookup)."""
+        self._assert_owner_thread()
         return self._peek_session(name, sid)
 
     def session_ids(self, name: str) -> list[str]:
@@ -577,6 +624,7 @@ class AgentRegistry:
         restart and byte-align with ``/cost``. (Was: a SUM over per-session gateways — this-process
         only, so it reset to 0 on restart AND N×-counted an agent's cost across ``/session new``
         sessions, since each gateway held the full per-agent seed. #cost-restart.)"""
+        self._assert_owner_thread()
         tracker = self._shared_budget_tracker()
         return tracker.agent_cost_usd(name) if tracker is not None else 0.0
 
@@ -597,6 +645,7 @@ class AgentRegistry:
 
     def agent_total_usage(self, name: str) -> "object":
         """Aggregate TokenUsage across ALL sessions of agent ``name``."""
+        self._assert_owner_thread()
         from reyn.llm.pricing import TokenUsage
         total: "TokenUsage" = TokenUsage()
         for sid in self.session_ids(name):
@@ -714,9 +763,11 @@ class AgentRegistry:
         agent gets set to this SAME ``project_root / ".reyn"`` at
         bootstrap — not a re-derivation, the identical value by a
         different, session-free route)."""
+        self._assert_owner_thread()
         return self._dir / name
 
     def exists(self, name: str) -> bool:
+        self._assert_owner_thread()
         return (self._dir / name / PROFILE_FILENAME).is_file()
 
     def create(
@@ -1536,6 +1587,7 @@ class AgentRegistry:
         resolved here; narrowed out of this PR's scope rather than silently
         decided either way.
         """
+        self._assert_owner_thread()
         if self._state_log is None:
             return {}
 
@@ -3828,6 +3880,7 @@ class AgentRegistry:
         this time concrete). `_run_once`'s own design never needed the
         runner — it drives the session to completion via
         `send_to_agent_impl` itself; the runner's job (nothing else)."""
+        self._assert_owner_thread()
         # #3671 P3: a fresh attach attempt (or its `get_or_load` below, which
         # can itself raise) is never shadowed by a PRIOR background attempt's
         # recorded failure — clear it up front rather than only on success,
@@ -3968,6 +4021,7 @@ class AgentRegistry:
         return active[1] if active is not None else None
 
     def attached_session(self) -> "object | None":
+        self._assert_owner_thread()
         active = self._connection.active
         if active is None:
             return None
@@ -3981,6 +4035,7 @@ class AgentRegistry:
         A caller that never does a background attach never calls this; a
         transport reading `attach_failed()` before ANY attach was even
         attempted correctly still sees `False` (== "connecting")."""
+        self._assert_owner_thread()
         self._connection.record_background_attach_error(error)
 
     def attach_failed(self) -> bool:
@@ -4022,6 +4077,7 @@ class AgentRegistry:
         self._tasks[key].done(): ...`), so even a session already restored
         by one path never gets a second run-task from the other.
         """
+        self._assert_owner_thread()
         resumed: "list[str]" = []
         for name, sid in list(self._pending_restore.keys()):
             # Pop (not peek) BEFORE constructing: `get_or_load` is synchronous
@@ -4230,6 +4286,7 @@ class AgentRegistry:
                 logger.warning("StateLog teardown failed: %s", exc)
 
     def loaded_names(self) -> list[str]:
+        self._assert_owner_thread()
         return list(self._sessions.keys())
 
     def session_tree(self) -> "list[dict]":
