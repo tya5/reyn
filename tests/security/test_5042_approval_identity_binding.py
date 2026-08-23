@@ -217,29 +217,74 @@ def test_a_legacy_bare_true_entry_is_treated_as_unbound_and_bound_on_first_use(
         )
 
 
-def test_st_birthtime_unavailable_fails_closed_even_without_a_purge(tmp_path) -> None:
-    """Tier 2: #5152 architect ruling (issuecomment-5383544769) — the one
-    thing architect asked to be measured, not assumed. Live CI evidence
-    (tui-coder, PR #5152, both Python 3.11/3.12) showed the ORIGINAL
-    ino-only degrade this test used to witness is not "weaker but real":
-    on Linux ext4/tmpfs, ``rmtree`` immediately followed by ``mkdir`` on
-    the same path routinely hands the just-freed inode straight back, so
-    ``ino`` alone cannot distinguish "same object, still there" from "a
-    different object now sits here" — an unconfirmable ``ino``-only
-    equality is NOT a confirmed match. Simulated directly here (this dev
-    machine's own filesystem DOES expose ``st_birthtime``, so a real
-    platform-dependent skip would not exercise the path) by stubbing
-    ``_path_identity`` to strip ``st_birthtime``, the SAME shape
-    ``getattr(st, "st_birthtime", None)`` produces on such a platform.
+def test_same_session_repeat_use_of_a_birthtime_less_approval_is_not_asked_again(
+    tmp_path,
+) -> None:
+    """Tier 2: #5152 architect ruling (issuecomment-5383604927 —
+    RETRACTING this test's own earlier form, issuecomment-5383544769's
+    literal fail-closed). That retracted ruling made every path approval
+    effectively single-use on a platform without ``st_birthtime``:
+    measured regression (tui-coder, PR #5152 CI) — 6 unrelated tests
+    failed, every one an ordinary same-session repeat use of an
+    already-bound approval with NO purge anywhere; the retracted fix's
+    own log line fired on that second, unrelated use.
 
-    The fix: once ``st_birthtime`` is unavailable, EVERY later comparison
-    against this key fails closed — even with NO purge at all, the SAME
-    still-existing directory, same inode. This is deliberately
-    indistinguishable from the genuine-purge case below: the point is
-    that "cannot confirm" is no longer silently read as "matched", not
-    that ino-diffing still quietly works underneath. Also witnesses
-    ``unconfirmable_identity_check_count`` incrementing once per such
-    check, per architect's "make it observable" acceptance criterion."""
+    Simulated here (this dev machine's filesystem DOES expose
+    ``st_birthtime``) by stubbing ``_path_identity`` to strip it, the
+    same shape a birthtime-less platform produces. The fd this PR now
+    acquires at bind-time anchors every later use for the rest of this
+    process's life — the second and third use here must NOT ask again,
+    and must NOT be counted as unconfirmable (only a genuinely
+    fd-unprotected first-use-after-restart is ③; see
+    ``test_first_use_after_a_process_restart_...`` below)."""
+    target = tmp_path / "linux_like_dir"
+    target.mkdir()
+    resolver = _make_resolver(tmp_path)
+    key = "actor/file.write/linux_like_dir/"
+    resolver._saved[key] = True
+
+    real_path_identity = PermissionResolver._path_identity
+
+    def _ino_only(self, path):
+        result = real_path_identity(self, path)
+        if result is None:
+            return None
+        return (result[0], None)  # st_birthtime unavailable, ino-only
+
+    write_path = str(target / "f.txt")
+
+    original = PermissionResolver._path_identity
+    try:
+        PermissionResolver._path_identity = _ino_only
+        # First use: binds, and (per #5152) acquires the identity fd.
+        asyncio.run(
+            resolver.require_file_write(PermissionDecl(), write_path, "actor")
+        )
+        before = resolver.unconfirmable_identity_check_count()
+
+        # Second and third use, same session, no purge: fd-anchored --
+        # must NOT ask again, must NOT count as unconfirmable.
+        asyncio.run(
+            resolver.require_file_write(PermissionDecl(), write_path, "actor")
+        )
+        asyncio.run(
+            resolver.require_file_write(PermissionDecl(), write_path, "actor")
+        )
+        assert resolver.unconfirmable_identity_check_count() == before
+    finally:
+        PermissionResolver._path_identity = original
+
+
+def test_fd_anchored_identity_still_catches_a_purge_without_birthtime(tmp_path) -> None:
+    """Tier 2: #5152's actual fix for the Linux CI-red root cause —
+    :meth:`PermissionResolver._acquire_identity_fd` holds an fd on the
+    approved path open since bind-time; POSIX guarantees that fd's inode
+    cannot be silently handed to a replacement object, so a
+    ``rmtree``+``mkdir`` at the same path is STILL caught even with
+    ``st_birthtime`` unavailable — the fd is the real confirmation
+    mechanism now, not birthtime. This is the case the original #5042
+    fix existed to catch, now made to work on the platform (Linux) where
+    the naive ino-only comparison was defeated by inode reuse."""
     target = tmp_path / "linux_like_dir"
     target.mkdir()
     resolver = _make_resolver(tmp_path)
@@ -262,28 +307,64 @@ def test_st_birthtime_unavailable_fails_closed_even_without_a_purge(tmp_path) ->
         asyncio.run(
             resolver.require_file_write(PermissionDecl(), write_path, "actor")
         )
-        assert resolver.bound_identity_get(key) == (
-            real_path_identity(resolver, target)[0], None,
-        )
-        before = resolver.unconfirmable_identity_check_count()
 
-        # No purge at all -- the SAME directory, SAME inode -- yet the
-        # identity cannot be CONFIRMED (birthtime unavailable), so it
-        # fails closed rather than silently trusting the ino match.
-        with pytest.raises(PermissionError):
-            asyncio.run(
-                resolver.require_file_write(PermissionDecl(), write_path, "actor")
-            )
-        assert resolver.unconfirmable_identity_check_count() == before + 1
-
-        # A genuine purge+recreate ALSO fails closed -- unchanged, but now
-        # for the honest reason (unconfirmable), not "ino happened to differ".
         shutil.rmtree(target)
-        target.mkdir()
+        target.mkdir()  # a genuinely NEW directory at the same path
         with pytest.raises(PermissionError):
             asyncio.run(
                 resolver.require_file_write(PermissionDecl(), write_path, "actor")
             )
+    finally:
+        PermissionResolver._path_identity = original
+
+
+def test_first_use_after_a_process_restart_honors_the_grant_and_counts_as_unconfirmable(
+    tmp_path,
+) -> None:
+    """Tier 2: acceptance ③ — the ONE window #5152's fd-anchoring does
+    NOT close: the first use after a process restart has no fd yet (a
+    fresh process's fd table starts empty), so on a birthtime-less
+    platform it genuinely cannot be confirmed either way. The ruling
+    (issuecomment-5383604927): honor the grant — never silently deny,
+    that was the retracted ruling's own mistake — and make the fact
+    observable via ``unconfirmable_identity_check_count``.
+
+    Simulated by a SECOND, independent ``PermissionResolver`` instance
+    reading the SAME ``approvals.yaml`` — the natural analogue of a
+    process restart: memory (and the fd table with it) starts empty,
+    only the persisted ``(ino, birthtime)`` survives."""
+    target = tmp_path / "linux_like_dir"
+    target.mkdir()
+    key = "actor/file.write/linux_like_dir/"
+
+    real_path_identity = PermissionResolver._path_identity
+
+    def _ino_only(self, path):
+        result = real_path_identity(self, path)
+        if result is None:
+            return None
+        return (result[0], None)  # st_birthtime unavailable, ino-only
+
+    write_path = str(target / "f.txt")
+
+    original = PermissionResolver._path_identity
+    try:
+        PermissionResolver._path_identity = _ino_only
+
+        first = _make_resolver(tmp_path)
+        first._saved[key] = True
+        first._persist(key, True)
+        asyncio.run(
+            first.require_file_write(PermissionDecl(), write_path, "actor")
+        )
+
+        # A fresh resolver instance == the process-restart analogue.
+        second = _make_resolver(tmp_path)
+        before = second.unconfirmable_identity_check_count()
+        asyncio.run(
+            second.require_file_write(PermissionDecl(), write_path, "actor")
+        )
+        assert second.unconfirmable_identity_check_count() == before + 1
     finally:
         PermissionResolver._path_identity = original
 

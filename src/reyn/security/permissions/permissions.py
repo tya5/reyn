@@ -28,6 +28,7 @@ Config pre-approval (reyn.yaml / reyn.local.yaml):
 from __future__ import annotations
 
 import logging
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable, ClassVar
@@ -486,6 +487,12 @@ class PermissionResolver:
         # fail-closed default this PR adds is OBSERVABLE (count/log), not a
         # silent behaviour change; read via ``unconfirmable_identity_check_count``.
         self._unconfirmable_identity_checks: int = 0
+        # #5152 (architect ruling, issuecomment-5383604927): one open fd
+        # per bound key, held for the remaining life of THIS process --
+        # see ``_acquire_identity_fd``'s own docstring for why this is
+        # what makes an ino comparison trustworthy without ``st_birthtime``.
+        # Bounded by the number of distinct PATH-flavor approvals in use.
+        self._bound_fds: "dict[str, int]" = {}
         # #1383 (D12): scoped read-grants for OS-offloaded artifacts. When the OS
         # offloads an artifact to a state-dir path and hands the agent an
         # `artifact_ref` / `_offload_ref` pointing there, that path is outside the
@@ -656,16 +663,61 @@ class PermissionResolver:
         (most Linux filesystems via plain ``stat()``); ``None`` overall
         only for the path genuinely not existing. This method makes no
         claim about what an ``st_birthtime``-less comparison MEANS — that
-        interpretation (fail-closed, per #5152) lives in
-        :meth:`_identity_check_passes`, not here."""
+        interpretation (the 3-value confirmed/refuted/unconfirmable
+        contract, per #5152) lives in :meth:`_identity_check_passes`, not
+        here."""
         try:
             st = path.stat()
         except OSError:
             return None
         return (st.st_ino, getattr(st, "st_birthtime", None))
 
+    def _acquire_identity_fd(self, key: str, path: Path) -> None:
+        """#5152 (architect ruling, issuecomment-5383604927): open and
+        hold a file descriptor to *path*, for the remaining life of THIS
+        process, from the moment *key*'s identity is (re)bound.
+
+        Why this closes the ``st_birthtime``-absent gap entirely: POSIX
+        keeps an inode allocated as long as ANY reference to it remains
+        open, even after every directory entry naming it is removed
+        (``rmdir``/``unlink``). So as long as this fd stays open, the
+        filesystem cannot silently hand that SAME inode number to a
+        brand-new object created at the same path — the exact ambiguity
+        that made a bare ``ino`` comparison untrustworthy without
+        ``st_birthtime`` (measured: Linux ext4/tmpfs routinely reuses a
+        just-freed inode; this fd being held prevents that reuse for
+        *this* inode specifically). A later ``fstat(fd)`` vs. a fresh
+        ``stat(path)`` therefore gives a REAL confirmed match/mismatch,
+        with or without ``st_birthtime`` — see :meth:`_identity_check_passes`.
+
+        Does NOT survive a process restart (the fd table starts empty) —
+        that residual window is the ``unconfirmable_identity_check_count``
+        acceptance criterion, not closed by this method. Bounded by the
+        number of distinct PATH-flavor approvals in use (test-review Q5)
+        — one fd per bound key; a rebind (this method called again for
+        the same key) closes the previous fd first rather than
+        accumulating one per rebind. Best-effort: a failure to open
+        (permissions, races) just means this process falls back to the
+        stat-only comparison for *key*, same as before this method
+        existed."""
+        old = self._bound_fds.pop(key, None)
+        if old is not None:
+            try:
+                os.close(old)
+            except OSError:
+                pass
+        try:
+            self._bound_fds[key] = os.open(str(path), os.O_RDONLY)
+        except OSError:
+            pass
+
     def _bind_identity(
-        self, key: str, identity: "tuple[int, float | None]", *, persist: bool,
+        self,
+        key: str,
+        identity: "tuple[int, float | None]",
+        approved_p: Path,
+        *,
+        persist: bool,
     ) -> None:
         """Record *key*'s bound identity — bind-ON-FIRST-USE (#5042
         architect ruling), never at approval time (an approval can predate
@@ -677,7 +729,10 @@ class PermissionResolver:
         True for a ``_saved`` (``ALWAYS``-choice) approval, written to the
         SAME file's own ``_bound_identities`` sibling key, never mixed
         into the approval row itself (see ``__bound_identities``'s own
-        docstring for why).
+        docstring for why). Also (re)acquires this process's identity fd
+        for *key* (see :meth:`_acquire_identity_fd`) — binding and fd
+        acquisition happen together so every caller gets both halves of
+        the confirmation contract for free.
 
         architect co-vet (issuecomment-5383499299): this write fires far
         more often than ``_persist``'s own read-modify-write of the same
@@ -695,6 +750,7 @@ class PermissionResolver:
         finding (architect: file a follow-up; the owner runs 2 clients +
         a server concurrently, so this is not a hypothetical)."""
         self._bound_identities[key] = identity
+        self._acquire_identity_fd(key, approved_p)
         if not persist:
             return
         try:
@@ -955,33 +1011,37 @@ class PermissionResolver:
         :meth:`_is_path_approved_for`'s own docstring for the bind-on-
         first-use / mismatch-means-keep-searching contract this serves.
 
-        #5152 (architect ruling, issuecomment-5383544769): a bound and a
-        current identity can each carry ``st_birthtime=None`` (platform
-        does not expose it — most Linux filesystems). ``ino`` alone does
-        NOT distinguish "the same object, still there" from "the freed
-        inode handed straight back to a brand-new object at the same
-        path" — measured live (tui-coder, PR #5152 CI): Linux
-        ext4/tmpfs routinely reuses the just-freed inode for the very
-        next create in an otherwise-empty directory, while the same
-        rmtree-then-mkdir on macOS/APFS produces a different inode every
-        time. Treating that unconfirmable ino-only equality as a
-        genuine match silently collapsed "confirmed identical" and
-        "cannot tell" onto the same ``True`` — the SAME defect
-        ``AgentRegistry.agent_directory_identity`` (#5084) carries,
-        re-filed there as a separate issue (#5084/#5123) since that
-        call site's safe direction differs by consumer and needs its
-        own measurement.
+        #5152 (architect ruling, issuecomment-5383604927 — RETRACTING
+        issuecomment-5383544769's own literal fail-closed, which turned
+        out to be over-broad, see below). This is a THREE-value question,
+        not two: ① confirmed same → honor the grant; ② confirmed
+        different → deny (#5042's own purpose); ③ cannot be confirmed
+        either way → honor the grant AND count/log it, never silently
+        fold ③ into ②. Folding ③ into ② (the retracted ruling) made
+        every path approval effectively single-use on a platform without
+        ``st_birthtime`` — measured regression (tui-coder): 6 unrelated
+        tests failed, every one an ordinary same-session repeat use of an
+        already-bound approval with NO purge at all; the fix's own log
+        line fired on that second, unrelated use, proving ③ had been
+        silently answered as ②.
 
-        The fix here: when ``st_birthtime`` is unavailable on either
-        side, the comparison CANNOT be confirmed — default to
-        fail-closed (do not trust the binding; the caller re-asks,
-        which #4204 degrades to ``PermissionError`` outside an
-        interactive session), and count/log it via
-        ``unconfirmable_identity_check_count`` so this is an observable
-        fact, not a silent behaviour change. A platform that DOES expose
-        ``st_birthtime`` (macOS/APFS and friends) is unaffected — the
-        full tuple still compares equal across ordinary continued use
-        and unequal across a genuine purge+recreate."""
+        The fix that actually closes the ``st_birthtime`` gap without
+        that collapse: :meth:`_acquire_identity_fd` holds an fd open on
+        the approved path from bind-time onward, for the rest of THIS
+        process's life. As long as that fd stays open, POSIX guarantees
+        its inode cannot be silently handed to a replacement object, so
+        ``fstat(fd)`` vs. a fresh ``stat(path)`` is a REAL confirmed
+        match/mismatch (① or ②) — with or without ``st_birthtime`` — and
+        this is the path taken for every use after the first in a given
+        process. ③ now only remains for the genuinely unprotected window:
+        the FIRST use after a process restart (the fd table starts
+        empty, only the persisted ``(ino, birthtime)`` survived) on a
+        platform where that pair alone can't confirm anything. The SAME
+        defect (2-value collapse via bare ino) exists in
+        ``AgentRegistry.agent_directory_identity`` (#5084) — out of
+        scope here, re-filed separately (#5084/#5123) since that call
+        site's safe direction differs by consumer.
+        """
         bound = self._bound_identities.get(key)
         current = self._path_identity(approved_p)
         if bound is None:
@@ -991,20 +1051,44 @@ class PermissionResolver:
                 # only) approval was never persisted to approvals.yaml in
                 # the first place, and binding it there too would write
                 # disk state for a grant the user never asked to persist.
-                self._bind_identity(key, current, persist=key in self._saved)
+                self._bind_identity(key, current, approved_p, persist=key in self._saved)
             return True  # unbound (never used, or target doesn't exist yet) -- honor it
         if current is None:
             return False  # the approved target is gone -- fail-closed
-        if bound[1] is None or current[1] is None:
+
+        fd = self._bound_fds.get(key)
+        if fd is not None:
+            try:
+                fd_ino = os.fstat(fd).st_ino
+            except OSError:
+                fd = None  # the fd itself went bad -- fall through below
+            else:
+                # ① / ② — a REAL confirmation, fd-anchored: this fd has
+                # held its inode open since bind, so no replacement
+                # object could have silently reused it.
+                return fd_ino == current[0]
+
+        # No fd protection for `key` in THIS process (most commonly: the
+        # first use after a process restart). Fall back to the raw stat
+        # comparison this PR originally shipped with.
+        if bound[1] is not None and current[1] is not None:
+            matched = current == bound  # ① or ② -- st_birthtime confirms it directly
+        else:
+            # ③ — cannot confirm. Honor the grant (never silently fold
+            # into ②), count/log it, and (re)acquire an fd below so
+            # every LATER use in this process is fd-anchored instead.
             self._unconfirmable_identity_checks += 1
             logger.warning(
                 "PermissionResolver: %r's bound identity cannot be "
-                "confirmed (st_birthtime unavailable) -- treating as "
-                "stale rather than trusting an ino-only match",
+                "confirmed by stat alone (st_birthtime unavailable, no "
+                "fd held by this process yet) -- honoring the grant and "
+                "anchoring an fd for the rest of this process's life",
                 key,
             )
-            return False
-        return current == bound
+            matched = True
+        if matched:
+            self._bind_identity(key, current, approved_p, persist=key in self._saved)
+        return matched
 
     # Backwards-compatible alias used by older write-class call sites.
     def _is_path_approved(self, path: str, actor: str) -> bool:
