@@ -352,6 +352,37 @@ These rules then keep multi-session work coherent:
    silent. One reporting channel, not a check run and a status both
    claiming the same fact.
 
+   **Existential quantification closed to universal (#5197, 2026-08-23):**
+   `evaluate` used to return green the instant ANY ONE note named a fresh
+   commit of the PR — an existential check ("does a note naming the current
+   tree exist"), not the universal one rule 8 actually needs ("does EVERY
+   note naming a commit of the PR name a fresh one"). Measured live on
+   #5196: architect's A note named the new head; docs-maintainer's B note
+   still named the PREVIOUS head, because a fresh witness commit (the fix
+   for architect's own blocking finding) had landed to `tests/` in
+   between — and the gate went green having read only the A note, since it
+   stopped looking the moment it found one success. Rule 8 requires B
+   specifically; A is architect's own operational practice, not something
+   this gate (or any other mechanism) may come to require in its place —
+   so the fix is a plain ∀ over every note's own SHA, never a role parse.
+   `evaluate` now reds a PR the moment ANY note names a commit `tests/` has
+   moved past, and names that note's own first-line text in the failure so
+   the ask is "post a fresh note" scoped to the reviewer who owns it, not
+   "read the PR again". A single-note PR (the ordinary case) is unaffected
+   — the tightening only bites when multiple notes exist and disagree.
+
+   **This does not close, and was never meant to close, a second, separate
+   limit:** the gate reads no role marker at all — it cannot tell an A note
+   from a B note, or a B note from a third opinion, only that a comment's
+   first line names the marker and a fresh SHA. #5187 gave a note's first
+   line a role-disclosing shape parseable in principle, but adding a role
+   parse here would make "A ran" a requirement this gate enforces, when
+   only "B ran" is a house rule that exists — a new rule invented by the
+   gate, not a reflection of one that does. Whether the RIGHT roles
+   reviewed a PR remains a human's judgment reading the PR before merging,
+   same as it always was; a green here means "every note that names a tree
+   names a fresh one," never "the tree was reviewed by the right people."
+
 ## Bundling and the owner's veto unit
 
 A doc PR that exists to give the owner a veto opportunity should ship alone.
