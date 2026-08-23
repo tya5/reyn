@@ -42,6 +42,9 @@ from reyn.intervention_choices import (
     file_access_choices,
     generic_yn_choices,
 )
+from reyn.security.permissions.approval_ledger import (
+    RELATIVE_PATH as _APPROVAL_LEDGER_RELATIVE_PATH,
+)
 from reyn.user_intervention import (
     RequestBus,
     UserIntervention,
@@ -105,7 +108,23 @@ _CANONICAL_PROTECTED_WRITE_PATHS = (
     # user-approval gate + the audit, and (since approvals load once into
     # ``self._saved`` at startup) silently activating a never-approved grant on the
     # NEXT run = approval-audit bypass.
+    #
+    # #5153/#5170 moved the LIVE store from this snapshot to the append-only
+    # ``.reyn/approvals.jsonl`` ledger (``ApprovalLedger`` — see
+    # ``approval_ledger.py``) — #5173 found the carve-out was never updated to
+    # follow: a safe-mode write could append a fake ``{"kind": "approval", ...,
+    # "approved": true}`` record directly, the EXACT SAME bypass class #1199
+    # closed, reopened against the new file. ``approvals.yaml`` itself stays
+    # listed too — it is still read (one-time migration source,
+    # ``migrate_legacy_snapshot``) and a legacy tree may still carry it.
+    #
+    # The jsonl entry is the IMPORTED constant, not a re-typed literal (#5173's
+    # own root cause: a hand-typed copy of the live path is exactly what fell
+    # silently out of sync with it last time). Renaming the ledger means
+    # changing ``approval_ledger.RELATIVE_PATH`` once; this entry — and
+    # ``self._approval_ledger_path`` below — follow automatically.
     ".reyn/approvals.yaml",
+    _APPROVAL_LEDGER_RELATIVE_PATH,
 )
 
 
@@ -463,7 +482,7 @@ class PermissionResolver:
         # each needing momentary ownership of the WHOLE snapshot file to
         # change even one key was the root cause of a lost approval under
         # concurrent access).
-        self._approval_ledger_path = self._project_root / ".reyn" / "approvals.jsonl"
+        self._approval_ledger_path = self._project_root / Path(_APPROVAL_LEDGER_RELATIVE_PATH)
         self._session: dict[str, bool] = {}
         # #3671 P4 item D-1: lazy — disk read + YAML parse deferred to the
         # `_saved` property's first access, not paid on every PermissionResolver
@@ -608,6 +627,15 @@ class PermissionResolver:
         real in-use count is observable without reaching into private
         state."""
         return len(self._bound_fds)
+
+    @property
+    def approval_ledger_path(self) -> Path:
+        """#5173: the resolved path this resolver's :class:`ApprovalLedger`
+        reads/writes — public so a caller (or a test asserting the write-gate
+        carve-out actually covers the LIVE file, not a hand-picked string
+        that could silently drift from it) can read it without reaching into
+        ``self._approval_ledger_path`` directly."""
+        return self._approval_ledger_path
 
     def on_persist_callback_count(self) -> int:
         """Return the number of registered ``on_persist`` callbacks.

@@ -46,8 +46,14 @@ def register(sub) -> None:
 
 
 def _ledger_path() -> Path:
+    # #5173: derived from the SAME constant PermissionResolver and the #1199
+    # write-gate carve-out use — a re-typed literal here is a 4th copy of the
+    # live path that could silently drift from the two the carve-out actually
+    # checks (exactly the class of gap #5173 found).
+    from reyn.security.permissions.approval_ledger import RELATIVE_PATH
+
     project_root = _find_project_root(Path.cwd()) or Path.cwd()
-    return project_root / ".reyn" / "approvals.jsonl"
+    return project_root / Path(RELATIVE_PATH)
 
 
 def _legacy_snapshot_path() -> Path:

@@ -60,6 +60,15 @@ import os as _os
 import tempfile as _tempfile
 from typing import IO, Any
 
+# #5173: import the ledger's canonical relative path rather than re-typing
+# it — ``approval_ledger.py`` has zero reyn-internal imports, so this
+# subprocess-safe module can import just this constant even though it
+# cannot import the rest of ``security.permissions`` (see
+# ``_CANONICAL_PROTECTED_WRITE_PATHS`` below).
+from reyn.security.permissions.approval_ledger import (
+    RELATIVE_PATH as _APPROVAL_LEDGER_RELATIVE_PATH,
+)
+
 # ── Internal state ─────────────────────────────────────────────────────────
 #
 # These three module-globals are set once at python harness start-up via
@@ -106,7 +115,20 @@ _RECOVERY_CORE_WRITE_PREFIXES = (
 )
 
 _CANONICAL_PROTECTED_WRITE_PATHS = (
+    # #5153/#5170 moved the live approval store to the append-only
+    # ``.reyn/approvals.jsonl`` ledger; #5173 found this carve-out never
+    # followed — see the sibling copy's comment in ``permissions.py`` for
+    # the full bypass-class rationale. ``approvals.yaml`` stays listed (still
+    # read as the one-time migration source).
+    #
+    # The jsonl entry is the IMPORTED constant (``approval_ledger.py`` has
+    # zero reyn-internal imports, so this subprocess-safe module CAN import
+    # just that constant even though it cannot import the rest of the
+    # ``security.permissions`` package) — not a re-typed literal. #5173's own
+    # root cause was a hand-typed copy silently drifting from the live path;
+    # a shared constant cannot drift from itself.
     ".reyn/approvals.yaml",
+    _APPROVAL_LEDGER_RELATIVE_PATH,
 )
 
 

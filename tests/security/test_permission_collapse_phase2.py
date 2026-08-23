@@ -232,6 +232,38 @@ def test_safe_file_check_write_rejects_approvals_yaml(tmp_path, monkeypatch):
     safe_file._check_write(str(tmp_path / ".reyn" / "scratch_state.json"))
 
 
+def test_canonical_protected_paths_cover_the_real_live_approval_ledger(tmp_path, monkeypatch):
+    """Tier 2: #5173 — the drift-guard below (``test_canonical_protected_lists_
+    stay_in_sync``) only pins the two COPIES equal to each other; it says
+    nothing about whether either copy still names the actual live approval
+    file. #5153/#5170 moved persistence from ``.reyn/approvals.yaml`` to the
+    append-only ``.reyn/approvals.jsonl`` ledger without updating either
+    copy — both stayed correctly in sync with EACH OTHER while both pointed
+    at a file the live code no longer writes through the gated path. This
+    test closes that exact blind spot: it builds a REAL ``PermissionResolver``
+    (not a hand-picked string) and asserts the path it actually uses for the
+    ledger is one of the canonical protected paths — so a future rename of
+    the live file, done without touching this list, fails HERE instead of
+    only being discoverable by hand-running the #5173 repro.
+    """
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".reyn").mkdir()
+    resolver = PermissionResolver({}, project_root=tmp_path)
+
+    live_ledger_path = resolver.approval_ledger_path.relative_to(tmp_path).as_posix()
+
+    assert live_ledger_path in _CANONICAL_PROTECTED_WRITE_PATHS, (
+        f"PermissionResolver's real approval-ledger path ({live_ledger_path!r}) "
+        f"is not in _CANONICAL_PROTECTED_WRITE_PATHS "
+        f"({_CANONICAL_PROTECTED_WRITE_PATHS!r}) — a safe-mode write to it "
+        f"would bypass the approval gate + audit (#1199's own bypass class, "
+        f"reopened by #5173)."
+    )
+    # And the write-gate itself actually denies it — not just list membership.
+    assert _in_default_write_zone(live_ledger_path) is False
+    assert _is_canonical_protected_write(live_ledger_path) is True
+
+
 def test_canonical_protected_lists_stay_in_sync():
     """Tier 2: the two _CANONICAL_PROTECTED_WRITE_PATHS copies must not drift.
 

@@ -43,7 +43,13 @@ _SURFACE = "web"
 
 
 def _ledger_path(project_root: Path) -> Path:
-    return project_root / ".reyn" / "approvals.jsonl"
+    # #5173: derived from the SAME constant PermissionResolver and the #1199
+    # write-gate carve-out use — a re-typed literal here is a 3rd copy of the
+    # live path that could silently drift from the two the carve-out actually
+    # checks (exactly the class of gap #5173 found).
+    from reyn.security.permissions.approval_ledger import RELATIVE_PATH
+
+    return project_root / Path(RELATIVE_PATH)
 
 
 def _legacy_snapshot_path(project_root: Path) -> Path:
