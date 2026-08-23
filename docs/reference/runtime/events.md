@@ -113,6 +113,7 @@ mcp_elicitation_auto_declined
 mcp_elicitation_requested
 mcp_elicitation_timed_out
 mcp_failed
+mcp_hook_subscribe_not_applied
 mcp_initialized
 mcp_install_cancelled
 mcp_install_probe_failed
@@ -418,6 +419,7 @@ op dispatch:
 | `mcp_elicitation_answered` | The request resolves to `accept` or `decline` (human choice, or a `decline` from `auto_decline` config). | `server`, `field_keys`, `action` (`"accept"` \| `"decline"`) |
 | `mcp_elicitation_timed_out` | No answer arrived before `elicitation_timeout_seconds`. | `server`, `field_keys` |
 | `mcp_elicitation_auto_declined` | Declined without prompting — `reason` distinguishes a server configured `elicitation: auto_decline` from a headless context (no live intervention listener). | `server`, `field_keys`, `reason` (`"server_configured"` \| `"headless"`) |
+| `mcp_hook_subscribe_not_applied` | #5167: a session-start `mcp_resource_updated` hook whose auto-subscribe attempt could not be honored (permission denied, an ambiguous/glob `uri` that names no concrete resource, an unconfigured server, or a subscribe-level failure). Never silent — see [Concepts: hooks § mcp_resource_updated](../../concepts/runtime/hooks.md#mcp_resource_updated). | `hook`, `server`, `uri` (may be `None` when the matcher never named one), `reason` |
 
 None of these events include the human's typed answer or any field *value* —
 only the requested schema's property names, matching the sensitive-field

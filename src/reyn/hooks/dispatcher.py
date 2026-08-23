@@ -147,6 +147,16 @@ class HookDispatcher:
         self._hook_cwd = hook_cwd
         self._hook_process_context = hook_process_context
 
+    @property
+    def registry(self) -> HookRegistry:
+        """The currently-live :class:`HookRegistry` (#5167). Read-only
+        introspection for a caller that needs to enumerate declared hooks
+        BEFORE any dispatch happens (e.g. ``Session``'s own session-start
+        auto-subscribe pass over declared ``mcp_resource_updated`` hooks) —
+        never reach into ``self._registry`` directly. Reflects
+        :meth:`replace_registry`'s live swap, same as ``dispatch()`` itself."""
+        return self._registry
+
     def _consent_bus_now(self) -> Any:
         """The consent bus iff a live intervention listener is attached, else None."""
         if self._consent_bus is None or self._consent_gate is None:

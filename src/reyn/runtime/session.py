@@ -18,6 +18,7 @@ if TYPE_CHECKING:
     from reyn.hooks.composed_consumer import ComposedEventConsumer
     from reyn.hooks.composer import ComposerRegistry
     from reyn.hooks.dispatcher import HookDispatcher
+    from reyn.hooks.schema import HookDef
     from reyn.interfaces.slash import SlashContext
     from reyn.mcp.connection_service import MCPConnectionService
     from reyn.runtime.fs_watcher import FsWatcher
@@ -6871,6 +6872,10 @@ class Session:
         # #2608 H4: start the filesystem watcher (no-op if no fs_watch.paths
         # configured or 'watchdog' isn't installed — see FsWatcher.start).
         await self._fs_watcher.start()
+        # #5167: auto-subscribe every declared mcp_resource_updated hook that
+        # names a concrete (server, uri) — no-op if none are declared, or if
+        # this is an ephemeral session (see the method's own docstring).
+        await self._auto_subscribe_mcp_resource_hooks()
         # Hook-Event Redesign Phase 5 part 1 (proposal 0059 §9 item 3 / #2881):
         # start every configured Composer (no-op — an empty list, the default
         # — spawns zero background tasks, byte-identical to pre-Composer-
@@ -8637,6 +8642,138 @@ class Session:
         async with MCPClientPool() as pool:
             ctx.mcp_pool = pool
             return await execute_op(op, ctx)
+
+    async def _auto_subscribe_mcp_resource_hooks(self) -> None:
+        """#5167: subscribe, at session start, to every declared
+        ``mcp_resource_updated`` hook whose ``matcher`` names a CONCRETE
+        ``(server, uri)`` — no LLM turn, no explicit ``subscribe_mcp_resource``
+        tool call, ever required.
+
+        Architect ruling (issuecomment-5384120494): declaring this hook used
+        to be pure INTENT — the only construction site for a subscribe was
+        the LLM-facing tool (``tools/mcp.py``), so a declared hook whose agent
+        never happened to call it silently never fired, with no warning or
+        audit-event anywhere. Charter lens 3 (deterministic, not stuffed into
+        the prompt) names exactly this: a declaration's effect must not
+        depend on the agent's own turn-to-turn behaviour.
+
+        **What counts as "concrete" here** (architect's own warning,
+        issuecomment-5384128053, re: a follow-up gate): a matcher can glob
+        ``uri`` (``reyn.hooks.matcher``'s own field), e.g. ``{"server":
+        "docs", "uri": "orch://job/*/progress"}`` — a real, useful pattern for
+        narrowing WHICH pushes a hook reacts to, but not a URI reyn can issue
+        an MCP ``resources/subscribe`` request for (the protocol subscribes to
+        one exact resource). A hook with no matcher, or a matcher missing
+        ``server``/``uri``, or a glob ``uri``, is left for the agent's own
+        explicit tool call exactly as before — this method never invents an
+        ambiguous subscription, it only removes the LLM-turn dependency for
+        the case where the declaration is already unambiguous.
+
+        **Silence, closed either way** (②, architect ruling — required even
+        with ① auto-subscribe, since ① has real failure paths: permission
+        denied, an unconfigured server, a subscribe-level fault, or a
+        deliberately-non-concrete matcher): every hook this method cannot
+        honor emits a ``mcp_hook_subscribe_not_applied`` warning + audit-event
+        naming the hook, so a declaration's non-effect is never silent —
+        see that kind's own docstring in ``event_schema.py``.
+
+        Byte-identical to pre-#5167 startup when no ``mcp_resource_updated``
+        hook is declared at all (the common case — zero declared hooks means
+        zero enumeration, zero subscribe attempts, zero audit-events).
+
+        An EPHEMERAL session (architect non-blocking review, TESTS-READY(A) on
+        #5180, issuecomment-5384348643) still ENUMERATES its declared hooks and
+        reports each through the SAME ``mcp_hook_subscribe_not_applied`` path —
+        it does not silently early-return before looking. The refusal itself
+        is correct (mirrors :meth:`_mcp_subscribe_resource`'s own: a
+        subscription is only meaningful on a persistent connection, which an
+        ephemeral session never holds), but "correct AND silent" is exactly the
+        shape #5167 exists to close — a declared hook on an ephemeral session
+        would otherwise be accepted, never honored, and never explained,
+        indistinguishable from the original bug this whole method fixes.
+        """
+        hooks = self._hook_dispatcher.registry.hooks_for("mcp_resource_updated")
+        for hook in hooks:
+            if self._ephemeral:
+                matcher = hook.matcher or {}
+                self._report_mcp_hook_subscribe_not_applied(
+                    hook.name or "mcp_resource_updated",
+                    matcher.get("server"), matcher.get("uri"),
+                    "session is ephemeral — a subscription is only "
+                    "meaningful on a persistent connection.",
+                )
+                continue
+            await self._auto_subscribe_one_mcp_resource_hook(hook)
+
+    async def _auto_subscribe_one_mcp_resource_hook(self, hook: "HookDef") -> None:
+        """One declared hook's auto-subscribe attempt — see
+        :meth:`_auto_subscribe_mcp_resource_hooks`'s docstring for the full
+        design. Split out so each hook is isolated (one hook's failure never
+        skips the next) and so the warning/audit path has a single call
+        site."""
+        matcher = hook.matcher or {}
+        server = matcher.get("server")
+        uri = matcher.get("uri")
+        hook_label = hook.name or "mcp_resource_updated"
+
+        if not server or not uri:
+            self._report_mcp_hook_subscribe_not_applied(
+                hook_label, server, uri,
+                "matcher does not name both a concrete server and uri — "
+                "nothing to auto-subscribe to (the agent may still call "
+                "subscribe_mcp_resource itself).",
+            )
+            return
+        # #5167: reyn.hooks.matcher glob-matches `uri` via fnmatch — a
+        # pattern using any of fnmatch's special characters names a SET of
+        # resources, not the one concrete URI an MCP `resources/subscribe`
+        # request requires. `[` is included (fnmatch character classes),
+        # not just `*`/`?`.
+        if any(ch in uri for ch in "*?["):
+            self._report_mcp_hook_subscribe_not_applied(
+                hook_label, server, uri,
+                "matcher's uri is a glob pattern, not a concrete resource — "
+                "MCP subscribe requires one exact URI (the agent may still "
+                "call subscribe_mcp_resource itself for a resource that "
+                "matches this pattern).",
+            )
+            return
+
+        try:
+            result = await self._mcp_subscribe_resource(server, uri)
+        except PermissionError as exc:
+            self._report_mcp_hook_subscribe_not_applied(
+                hook_label, server, uri, f"permission denied: {exc}",
+            )
+            return
+        except Exception as exc:  # noqa: BLE001 — one hook's fault must never break startup or its siblings
+            self._report_mcp_hook_subscribe_not_applied(
+                hook_label, server, uri, f"unexpected error: {exc}",
+            )
+            return
+        if result.get("status") != "ok":
+            self._report_mcp_hook_subscribe_not_applied(
+                hook_label, server, uri,
+                str(result.get("error") or f"status={result.get('status')!r}"),
+            )
+
+    def _report_mcp_hook_subscribe_not_applied(
+        self, hook_label: str, server: "str | None", uri: "str | None", reason: str,
+    ) -> None:
+        """#5167 ②: the one place a declared ``mcp_resource_updated`` hook's
+        auto-subscribe non-effect becomes visible — mirrors the
+        ``sandbox_policy_not_applied`` shape (``hooks/shell_runner.py``) and
+        the loader's own "not applied" phrasing convention
+        (``config/loader.py``'s ``_warn_unknown_config_keys``): the consequence
+        is always named, never just the cause."""
+        logger.warning(
+            "mcp_resource_updated hook %r: auto-subscribe not applied — %s",
+            hook_label, reason,
+        )
+        self._audit_events.emit(
+            "mcp_hook_subscribe_not_applied",
+            hook=hook_label, server=server, uri=uri, reason=reason,
+        )
 
     async def _mcp_subscribe_resource(self, server: str, uri: str) -> dict:
         """Subscribe to server-pushed ``resources/updated`` for ``uri`` on

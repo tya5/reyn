@@ -319,6 +319,7 @@ AUDIT_EVENT_KINDS: frozenset[str] = frozenset({
     "mcp_elicitation_requested",
     "mcp_elicitation_timed_out",
     "mcp_failed",
+    "mcp_hook_subscribe_not_applied",
     "mcp_initialized",
     "mcp_install_cancelled",
     "mcp_install_probe_failed",
