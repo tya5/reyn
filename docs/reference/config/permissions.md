@@ -156,6 +156,8 @@ When a phase declares a non-default permission, reyn shows a single startup prom
 
 Persistent choices land in `.reyn/approvals.yaml` keyed by `<skill>/<op>/<path>` (with a trailing `/` for recursive grants). External skills cannot reuse another skill's approvals — keys are skill-scoped to prevent privilege escalation.
 
+For `file.read`/`file.write`, a key match alone no longer settles it (#5042): the approved path's own identity is bound the first time it's used and re-checked on every later use, so deleting the approved target and recreating a different object at the same path re-prompts instead of silently inheriting the old grant — see [Concepts: permission model](../../concepts/runtime/permission-model.md).
+
 ## Project-wide pre-approval (`reyn.yaml`)
 
 ```yaml

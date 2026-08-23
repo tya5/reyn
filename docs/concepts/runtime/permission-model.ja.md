@@ -44,6 +44,8 @@ reyn のパーミッションシステムは 4 種類のケイパビリティを
 
 永続的な選択は `.reyn/approvals.yaml` に `<actor>/<op>/<path>`（例: `chat_router/file.write//tmp/output`）のキーで保存されます。キーは actor スコープです。ある actor の承認が別の actor に漏れることはありません（`security/permissions/permissions.py`: "Approval keys are actor-scoped to prevent external-actor privilege escalation"）。`actor` は呼び出し元サブシステムを識別します(例: LLM ルーター駆動の op パスなら `chat_router`、バックグラウンド呼び出しなら `hooks`/`cron` など) — 個々の named agent ではありません。
 
+`file.read`/`file.write`(path 系)のキーについては、キーが一致するだけでは十分ではありません(#5042): 承認済み path 自体の identity(`st_ino` + `st_birthtime`、`st_birthtime` が使えない環境では ino のみに縮退)が初回使用時に束縛され、以降の一致のたびに再照合されます。同じ path に別の identity のオブジェクトが後から現れた場合(承認対象が削除され、同名で別物が作られた場合)は一致しないものとして扱われ、purge して同じ path に作り直すと古い承認をそのまま引き継がず再度確認を求められます。承認行自体は不一致によって変更されません — 影響を受けるのはその path への新しい使用だけです。
+
 呼び出しに intervention bus が配線されていない場合（`bus=None` — 非インタラクティブなコンテキスト）、JIT プロンプトはスキップされ、ゾーン外アクセスは保留せずに拒否されます。
 
 ### レイヤー 3：プロジェクト全体の事前承認
