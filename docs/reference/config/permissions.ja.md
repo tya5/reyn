@@ -117,6 +117,8 @@ Phase がデフォルト外の Permission を宣言すると、Reyn は単一の
 
 永続的な選択は `<skill>/<op>/<path>` をキーとして `.reyn/approvals.yaml` に記録されます（recursive 付与の場合は末尾に `/`）。外部 Skill は別の Skill の承認を再利用できません。キーは Skill スコープで、権限昇格を防ぎます。
 
+`file.read`/`file.write` については、キーが一致するだけでは決着しません(#5042): 承認済み path 自体の identity が初回使用時に束縛され、以降の使用のたびに再照合されます。承認対象を削除して同じ path に別のものを作り直した場合は、古い承認をそのまま引き継がず再度確認が求められます — 詳細は [Concepts: permission model](../../concepts/runtime/permission-model.ja.md) 参照。
+
 ## プロジェクト全体の事前承認（`reyn.yaml`）
 
 ```yaml

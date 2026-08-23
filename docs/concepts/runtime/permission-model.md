@@ -62,6 +62,8 @@ An actor that needs something outside the defaults is declared in `reyn.yaml`'s 
 
 Persistent choices land in `.reyn/approvals.yaml` keyed by `<actor>/<op>/<path>` (e.g. `chat_router/file.write//tmp/output`). Keys are actor-scoped — one actor's approval doesn't leak to another (`security/permissions/permissions.py`: "Approval keys are actor-scoped to prevent external-actor privilege escalation"). `actor` identifies the calling subsystem (e.g. `chat_router` for the LLM-router-driven op path, or a background caller like `hooks`/`cron`), not an individual named agent.
 
+For a `file.read`/`file.write` (path-flavor) key, the key match is necessary but no longer sufficient (#5042): the approved path's own identity (`st_ino` + `st_birthtime`, degrading to `ino`-only where `st_birthtime` is unavailable) is bound on first use and re-checked on every later match. A later object at the same path with a different identity — the target was deleted and something else created at the same name — is treated as not matching, so a purge-and-recreate at the same path re-prompts instead of silently inheriting the old grant. The approval row itself is untouched by a mismatch; only a NEW use at that path is refused.
+
 When no intervention bus is wired for the call (`bus=None` — a non-interactive context), the JIT prompt is skipped and outside-zone access is denied outright rather than left pending.
 
 ### Layer 3: project-wide pre-approval

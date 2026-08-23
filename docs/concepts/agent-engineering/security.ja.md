@@ -28,6 +28,8 @@ declared capability → 使用時点での JIT prompt(起動時ではない)
 
 永続的な承認選択は `<actor>/<op>/<path>` をキーとして `.reyn/approvals.yaml` に記録されます。キーは skill でもユーザーでもなく actor スコープです: ある actor の承認は別の actor に漏れません。これが組み合わせの安全性の性質です — chat router 自身の dispatch パスに付与された承認は、例えば background hook や cron caller のような別の actor identity 経由で動作するものには推移的に及びません。
 
+path 系のキー(`file.read`/`file.write`)については、キーの一致だけでは判定が終わりません(#5042): 承認済み path 自体の identity が初回使用時に束縛され、以降の一致のたびに比較されます — 名前は identity ではない、という扱いです。承認対象を削除して同じ path に別のものを作り直しても、古い承認をそのまま引き継ぐことはありません(仕組みの詳細は [Concepts: permission model](../runtime/permission-model.ja.md) 参照)。
+
 ### `sandboxed_exec` — typed で per-axis な `SandboxPolicy`
 
 サブプロセス実行は `SandboxPolicy` でゲートされ、各 axis は意図的に非対称です: `write_paths` はタイトな allowlist(プロセスが永続化できるものへのハードガード — デフォルトで閉じている唯一の軸、オペレーターが事前に知り得ない値のため)、`network`/`deny_subprocess`/`env_deny_names` はデフォルトで完全 compat(owner ruling、#3901 — サンドボックスの役割は許可された操作の裏側を bound することであり、起動元シェルが既にできることを再決定することではない。ただし `network` は operator が明示宣言する値なので、下の2つのパス軸とは異なり permission 交差に引き続き参加する)、`read` はデフォルトで broad-allow に加えオプションの opt-in センシティブパス deny-list(`read_deny_paths`、明示設定しない限り空)を持ちます — 厳格な read-allowlist モデルは廃止されました。流出を実際に止めているのは read サーフェスではなく network ゲートだからです。enforcement はプラットフォームごとにバックエンドが選択されます(macOS では Seatbelt、Linux では Landlock + seccomp-BPF、どちらも使えない場合は audit-only の `NoopBackend` フォールバック)。
