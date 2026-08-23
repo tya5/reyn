@@ -314,8 +314,14 @@ async def test_remote_switch_parity_a_b_a_with_staleness(tmp_path) -> None:
         source = _SessionFrameSource(session_a, registry=reg, agent_name="alpha")
         source.start()
 
-        def _backlog_provider(name: str, sid: str):
-            return session_backlog_frames(reg, name, sid)
+        async def _backlog_provider(name: str, sid: str):
+            # #5139 C: AgUiEmitter's backlog_provider contract is now
+            # async, returning (frames, has_more, next_cursor) — this
+            # test's own oracle (session_backlog_frames, unbounded) has
+            # no pagination of its own, so it always reports "no more"
+            # (matches production's real ``session_backlog_page`` shape
+            # when a page fits whole).
+            return session_backlog_frames(reg, name, sid), False, None
 
         emitter = AgUiEmitter(source.frames(), lambda: None, backlog_provider=_backlog_provider)
 
@@ -411,8 +417,14 @@ async def test_rapid_back_to_back_switches_lose_no_backlog(tmp_path) -> None:
         source = _SessionFrameSource(session_a, registry=reg, agent_name="alpha")
         source.start()
 
-        def _backlog_provider(name: str, sid: str):
-            return session_backlog_frames(reg, name, sid)
+        async def _backlog_provider(name: str, sid: str):
+            # #5139 C: AgUiEmitter's backlog_provider contract is now
+            # async, returning (frames, has_more, next_cursor) — this
+            # test's own oracle (session_backlog_frames, unbounded) has
+            # no pagination of its own, so it always reports "no more"
+            # (matches production's real ``session_backlog_page`` shape
+            # when a page fits whole).
+            return session_backlog_frames(reg, name, sid), False, None
 
         emitter = AgUiEmitter(source.frames(), lambda: None, backlog_provider=_backlog_provider)
 
@@ -533,8 +545,14 @@ async def test_barrier_precedes_refire_on_the_wire(tmp_path) -> None:
         source = _SessionFrameSource(session_a, registry=reg, agent_name="alpha")
         source.start()
 
-        def _backlog_provider(name: str, sid: str):
-            return session_backlog_frames(reg, name, sid)
+        async def _backlog_provider(name: str, sid: str):
+            # #5139 C: AgUiEmitter's backlog_provider contract is now
+            # async, returning (frames, has_more, next_cursor) — this
+            # test's own oracle (session_backlog_frames, unbounded) has
+            # no pagination of its own, so it always reports "no more"
+            # (matches production's real ``session_backlog_page`` shape
+            # when a page fits whole).
+            return session_backlog_frames(reg, name, sid), False, None
 
         emitter = AgUiEmitter(source.frames(), lambda: None, backlog_provider=_backlog_provider)
 
@@ -600,7 +618,10 @@ async def test_connect_path_unaffected_by_backlog_provider_wiring(tmp_path) -> N
         yield DisplayFrame(OutboxMessage(kind="__end__", text=""))
 
     without = AgUiEmitter(_frames(), lambda: None)
-    with_provider = AgUiEmitter(_frames(), lambda: None, backlog_provider=lambda a, s: [])
+    async def _empty_backlog_provider(a, s):
+        return [], False, None
+
+    with_provider = AgUiEmitter(_frames(), lambda: None, backlog_provider=_empty_backlog_provider)
 
     sse_without = "".join([c async for c in without.stream()])
     sse_with = "".join([c async for c in with_provider.stream()])

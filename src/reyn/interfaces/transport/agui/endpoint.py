@@ -46,9 +46,13 @@ from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from reyn.core.events.events import Event
-from reyn.interfaces.inline.textual_chat.restore import project_restored_frames
+from reyn.interfaces.inline.textual_chat.restore import (
+    page_restored_history,
+    project_restored_frames,
+)
 from reyn.interfaces.repl.status import _snapshot_for_session
 from reyn.interfaces.transport.agui.emitter import AgUiEmitter
+from reyn.interfaces.transport.agui.protocol import encode_messages_snapshot
 from reyn.interfaces.transport.agui.surface import (
     SurfaceManager,
     monotonic,
@@ -56,6 +60,7 @@ from reyn.interfaces.transport.agui.surface import (
 )
 from reyn.interfaces.transport.drain import suspend_between_frames
 from reyn.interfaces.transport.frames import (
+    HYDRATE_PAGE_FRAMES,
     DisplayFrame,
     EventFrame,
     Frame,
@@ -382,6 +387,58 @@ def session_backlog_frames(registry, name: str, sid: str) -> "list[Frame]":
         return []
     history = list(getattr(target, "history", []) or [])
     return [DisplayFrame(m) for m in project_restored_frames(history)]
+
+
+async def session_backlog_page(
+    registry, name: str, sid: str, *, before_root_id: "str | None" = None,
+) -> "tuple[list[Frame], bool, str | None]":
+    """#5139 C: ONE bounded backlog page — at most :data:`HYDRATE_PAGE_FRAMES`
+    frames, cut only at a turn (``chain_id``) boundary. Unlike
+    :func:`session_backlog_frames` (unbounded, still used as the "what a
+    local hydrate would show" test oracle and the switch-follow re-fire's
+    own established shape), this is the one both the initial connect/switch
+    backlog AND a client-driven ``ReachedTop`` pull now go through — server
+    sends at most one page per request (architect's own six-questions⑤
+    answer: the bound's OWNER is the server), continuation is client-pull,
+    never a second server-initiated push.
+
+    **``target.history`` is only the in-memory tail, not the whole log**
+    (architect co-vet on this PR, issuecomment-5384101336): ``Session.
+    load_history()`` bounds its own startup read to a tail — "WITHOUT
+    necessarily reading the whole (potentially huge — owner's real
+    environment measured 500MB) file" (that method's own docstring) — so
+    a naive ``page_restored_history`` call over ``target.history`` alone
+    reports ``has_more=False`` the moment it reaches the front of what
+    happens to be LOADED, not the front of the conversation. A client
+    cannot tell the two apart, so this would silently truncate: "no
+    more" when there is, in fact, more on disk. Connects to the EXISTING
+    on-disk extend primitive local's own ``RegistryReadModel.
+    load_older_conversation_history`` already uses
+    (:meth:`~reyn.runtime.session.Session.extend_history_backward_async`,
+    the loop-safe sibling of ``extend_history_backward``) rather than
+    building a second one — the loop below re-asks ``page_restored_history``
+    after each successful extend (more groups are now in ``target.history``
+    for the SAME ``before_root_id`` to windup from), and only reports
+    ``has_more=False`` once an extend genuinely returns 0 (the true
+    physical start of ``history.jsonl``).
+
+    Returns ``(frames, has_more, next_cursor)`` — see
+    :func:`~reyn.interfaces.inline.textual_chat.restore.page_restored_history`,
+    which this wraps, for what each means."""
+    target = registry.get_session(name, sid)
+    if target is None:
+        return [], False, None
+    while True:
+        history = list(getattr(target, "history", []) or [])
+        frames, has_more, next_cursor = page_restored_history(
+            history, before_root_id=before_root_id, limit=HYDRATE_PAGE_FRAMES,
+        )
+        if has_more:
+            return [DisplayFrame(m) for m in frames], has_more, next_cursor
+        extend = getattr(target, "extend_history_backward_async", None)
+        extended = await extend() if extend is not None else 0
+        if extended <= 0:
+            return [DisplayFrame(m) for m in frames], False, None
 
 
 class _SessionFrameSource:
@@ -816,8 +873,8 @@ async def agui_events(request: Request, agent_name: str):
             # this is its one status-facing read path.
             return _snapshot_for_session(registry, source.current_session())
 
-        def _backlog_provider(name: str, sid: str) -> "list[Frame]":
-            return session_backlog_frames(registry, name, sid)
+        async def _backlog_provider(name: str, sid: str) -> "tuple[list[Frame], bool, str | None]":
+            return await session_backlog_page(registry, name, sid)
 
         # #3328: the INITIAL connect's `MESSAGES_SNAPSHOT` was silently empty —
         # `backlog_provider` (above) is only ever CALLED off a mid-stream
@@ -834,9 +891,14 @@ async def agui_events(request: Request, agent_name: str):
         # session's own history through the SAME projection the switch re-fire
         # and the local restore-on-restart path both use — one SSoT, populated
         # at both call sites now instead of only the second.
+        initial_backlog, initial_has_more, initial_next_cursor = await session_backlog_page(
+            registry, agent_name, _DEFAULT_SID,
+        )
         emitter = AgUiEmitter(
             source.frames(), _status_provider,
-            backlog=session_backlog_frames(registry, agent_name, _DEFAULT_SID),
+            backlog=initial_backlog,
+            backlog_has_more=initial_has_more,
+            backlog_next_cursor=initial_next_cursor,
             backlog_provider=_backlog_provider,
         )
     except Exception:
@@ -1277,6 +1339,25 @@ async def agui_submit(request: Request, agent_name: str):
             for sid in registry.session_ids(agent_name)
         ]
         return JSONResponse({"status": "ok", "sessions": sessions})
+    elif ptype == "load_older_backlog_request":
+        # #5139 C: mirrors attach_request/session_switch_request/
+        # artifact_list_request/session_list_request above — client names
+        # an operation (the turn strictly older than its own last page's
+        # ``next_cursor``), server executes it against ITS OWN state (never
+        # a client-supplied history slice). One page per request (the bound
+        # architect's six-questions⑤ answer named the SERVER as the owner
+        # of) — reuses ``encode_messages_snapshot`` byte-for-byte, so the
+        # client decodes this response through the SAME ``MessagesSnapshot``
+        # path a live reconnect/switch ``MESSAGES_SNAPSHOT`` already does —
+        # no new wire vocabulary for this one request type.
+        target_sid = str(payload.get("session_id", "")).strip() or _DEFAULT_SID
+        cursor = payload.get("before_root_id")
+        page, has_more, next_cursor = await session_backlog_page(
+            registry, agent_name, target_sid,
+            before_root_id=str(cursor) if cursor else None,
+        )
+        event_data = encode_messages_snapshot(page, has_more=has_more, next_cursor=next_cursor).data
+        return JSONResponse({"status": "ok", **event_data})
     return JSONResponse({"status": "ok"})
 
 

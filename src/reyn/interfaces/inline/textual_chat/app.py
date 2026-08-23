@@ -65,7 +65,12 @@ from reyn.interfaces.repl.renderer import (
     summarize_tool_result,
 )
 from reyn.interfaces.transport.agui.state import RemoteQueueView
-from reyn.interfaces.transport.frames import BacklogBatch, DisplayFrame, FrameTag
+from reyn.interfaces.transport.frames import (
+    HYDRATE_PAGE_FRAMES,
+    BacklogBatch,
+    DisplayFrame,
+    FrameTag,
+)
 
 from ._meta_keys import ELAPSED_SECS_KEY as _ELAPSED_SECS_KEY
 from ._meta_keys import EXPANDED_KEY as _EXPANDED_KEY
@@ -210,7 +215,10 @@ def empty_state_hint() -> "object":
 #: 200 frames ≈ a full page-in stays well under one frame budget at the
 #: measured ~1µs/entry handle cost, while covering far more than one viewport
 #: (so a single page-in absorbs several screens of scrolling before the next).
-_HYDRATE_PAGE_FRAMES = 200
+#: #5139 C: re-exported from :mod:`~reyn.interfaces.transport.frames` — the
+#: SAME bound the server now caps a REMOTE backlog page at, so local and
+#: remote paging can never drift apart into two different numbers.
+_HYDRATE_PAGE_FRAMES = HYDRATE_PAGE_FRAMES
 
 #: #4996 witness② marker — appended in :meth:`TextualChatApp.
 #: _apply_hydrated_messages` when a read model DECLARES it can never
@@ -1448,6 +1456,21 @@ class TextualChatApp(App):
         # private detail a test would need to reach in for: "0 discards"
         # must be verifiable, not merely assumed.
         self._remote_backlog_discard_count = 0
+        # #5139 C: the REMOTE counterpart of ``self._older_frames`` (#3476
+        # ④, local's own held-prefix) — a remote client holds no on-disk
+        # prefix to page from, so instead it tracks the LAST received
+        # backlog batch's own continuation state: whether an older page
+        # still exists, and that older page's own request key (a turn's
+        # ``chain_id``). ``None``/``False`` (never fetched, or the true
+        # start was already reached) means ``on_flow_view_reached_top``'s
+        # remote branch has nothing left to pull.
+        self._remote_backlog_has_more = False
+        self._remote_backlog_cursor: "str | None" = None
+        # Guards against firing a SECOND overlapping pull before the first's
+        # response has applied — ``ReachedTop`` re-arms on retreat (its own
+        # edge-trigger contract) and a fast double-scroll can re-fire before
+        # a prior pull's ``BacklogBatch`` has come back.
+        self._remote_backlog_pull_inflight = False
         # A queued item's ``meta`` (ADR-0039 attribution) — ``apply_user_submitted``
         # deliberately stores only msg_id/chain_id/text on
         # ``RemoteQueueView.items`` (P2a's delta contract, reused unmodified,
@@ -2545,16 +2568,41 @@ class TextualChatApp(App):
         if batch.agent != self._agent_name or batch.sid != self._session_id:
             self._remote_backlog_discard_count += 1
             return
+        # #5139 C: this batch's OWN continuation state — tracked regardless
+        # of whether it carries any frames (an empty page with
+        # ``has_more=False`` IS the "reached the true start" signal;
+        # ``on_flow_view_reached_top``'s remote branch below reads this,
+        # never re-derives it).
+        self._remote_backlog_has_more = batch.has_more
+        self._remote_backlog_cursor = batch.next_cursor
         messages = [f.message for f in batch.frames if isinstance(f, DisplayFrame)]
         if not messages:
             return
         try:
-            entries = self.conversation.extend(messages)
+            if batch.is_older_page:
+                # #5139 C: a ``ReachedTop`` pull's own page — PREPEND at the
+                # top (mirrors local's own ``on_flow_view_reached_top``:
+                # ``insert_many(0, page)``), never ``extend`` (append at the
+                # bottom), which would land older history AFTER whatever
+                # the user is currently reading.
+                entries = self.conversation.insert_many(0, messages)
+            else:
+                entries = self.conversation.extend(messages)
         except Exception:
             logger.exception("textual chat: remote backlog batch append failed")
             return
         for msg, entry in zip(messages, entries):
             _apply_restored_state(msg, entry)
+        if batch.is_older_page:
+            # #5139 C: an older PAGE-IN, never seeded into the ``/copy``
+            # ring — mirrors local's own ``on_flow_view_reached_top``,
+            # which likewise leaves ``_recent_replies`` untouched when
+            # paging an older prefix in (only the INITIAL hydrate/backlog
+            # seeds it, oldest-first — see #3362/#3486's own comment on
+            # that call site). Seeding here would ``appendleft`` OLDER
+            # replies ahead of already-shown newer ones, inverting the
+            # ring's own "1 = newest" contract.
+            return
         for msg in messages:
             if msg.kind == "agent":
                 self._recent_replies.appendleft(msg.text)
@@ -2681,9 +2729,39 @@ class TextualChatApp(App):
         exhausted this no longer concludes "nothing more exists" on the
         spot — it asks :meth:`_extend_older_frames_from_disk` for more of
         ``history.jsonl`` first, so a real conversation start and a merely
-        bounded in-memory load are no longer indistinguishable to the user."""
+        bounded in-memory load are no longer indistinguishable to the user.
+
+        #5139 C: a REMOTE session holds no on-disk prefix at all
+        (``self._read_model.capabilities.load_older_conversation_history``
+        is ``False``, and :meth:`_extend_older_frames_from_disk` always
+        returns ``False`` for it) — this method's own local page-in never
+        applies to it. Falls through instead to
+        :meth:`~reyn.interfaces.transport.client_transport.ClientTransport.request_older_backlog`,
+        which fetches asynchronously and applies its own page through the
+        SAME :meth:`_apply_backlog_batch` this frame pump already runs
+        every backlog through (``is_older_page=True`` — PREPEND). Guarded
+        by ``self._remote_backlog_has_more``: ``False`` means either no
+        remote batch has arrived yet (nothing to page from) or the true
+        start was already reached — either way, correctly a no-op, never a
+        request for a page that does not exist."""
         if not self._older_frames:
             if not self._extend_older_frames_from_disk():
+                if (
+                    self._remote_backlog_has_more
+                    and self._remote_backlog_cursor is not None
+                    and not self._remote_backlog_pull_inflight
+                ):
+                    self._remote_backlog_pull_inflight = True
+
+                    async def _pull() -> None:
+                        try:
+                            await self._transport.request_older_backlog(
+                                self._remote_backlog_cursor
+                            )
+                        finally:
+                            self._remote_backlog_pull_inflight = False
+
+                    self.run_worker(_pull(), name="remote-backlog-pull", exclusive=False)
                 return
         page = self._older_frames[-_HYDRATE_PAGE_FRAMES:]
         try:

@@ -201,6 +201,15 @@ class SessionBoundTransport(ClientTransport):
         # class is a server-side seam) before it would ever reach here.
         return []
 
+    async def request_older_backlog(self, before_root_id: str) -> None:
+        # #5139 C: EXPLICITLY a no-op, same reasoning as
+        # request_session_list above — older-backlog paging is a
+        # client-driven READ query, structurally outside this send-side-only
+        # transport's own layer, and unreachable in practice for the same
+        # reason (this class is a server-side seam, never the CLIENT half
+        # ``on_flow_view_reached_top`` calls this on).
+        return None
+
     async def request_artifact_list(self, *, agent: str) -> "tuple[list[dict], int]":
         # #5094: EXPLICITLY implemented, not inherited — mirrors
         # InProcessTransport's own execution side (#4494 design C /

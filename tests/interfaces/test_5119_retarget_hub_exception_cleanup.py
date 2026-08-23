@@ -17,7 +17,7 @@ was nobody, ever).
 
 Real ``AgentRegistry``/``Session`` + a real ``agui_events`` call throughout
 — no mocks. The failure is injected via a real ``monkeypatch.setattr`` on
-``session_backlog_frames`` (module-level, in the endpoint module's own
+``session_backlog_page`` (module-level, in the endpoint module's own
 namespace), not a fake collaborator standing in for a real one.
 """
 from __future__ import annotations
@@ -82,7 +82,7 @@ async def test_exception_before_gen_starts_does_not_leak_the_hub_subscription(
     connection's own hub subscription behind.
 
     Injects the failure at the LAST call in the vulnerable window
-    (``session_backlog_frames``, called to build ``AgUiEmitter``'s own
+    (``session_backlog_page``, called to build ``AgUiEmitter``'s own
     ``backlog=`` argument) — the latest possible failure point, so this
     witness covers the WHOLE window, not just an early step.
 
@@ -97,7 +97,11 @@ async def test_exception_before_gen_starts_does_not_leak_the_hub_subscription(
     def _raising_backlog(*_args, **_kwargs):
         raise RuntimeError("deliberate #5119 injected failure")
 
-    monkeypatch.setattr(endpoint_mod, "session_backlog_frames", _raising_backlog)
+    # #5139 C: the endpoint's own initial-backlog call site now goes through
+    # ``session_backlog_page`` (bounded, page-aware), not the unbounded
+    # ``session_backlog_frames`` this test used to target — the injection
+    # point moves to match, still the LAST call in the vulnerable window.
+    monkeypatch.setattr(endpoint_mod, "session_backlog_page", _raising_backlog)
 
     assert not endpoint_mod.connection_retarget_has_subscribers(conn_id), (
         "test precondition: the hub must start with no entry for this id"

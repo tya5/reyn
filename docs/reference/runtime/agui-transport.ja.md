@@ -362,11 +362,28 @@ remote のステータスパネルは常に server の値を反映する。
 
 接続(または再接続)時、server はどのライブ event よりも前に、以下を replay する:
 
-1. `MESSAGES_SNAPSHOT` — display のバックログ(既に生成されたメッセージ)。再接続する
+1. `MESSAGES_SNAPSHOT` — display のバックログ。再接続する
    client が自身の scrollback を再構築できるようにする。続いて
 2. `STATE_SNAPSHOT` — 上記のステータス read-model。
 
 その後にライブ event(および `STATE_DELTA`)が続く。
+
+**バックログは全履歴ではなく、1つの bounded page である(#5139 C)。** server が
+1回の `MESSAGES_SNAPSHOT` で送るのは最大 `HYDRATE_PAGE_FRAMES`(200 —
+local restore 自身の lazy scrollback paging と同じ値)フレームまでであり、
+ターン境界(`chain_id` で相関する連続 run)でのみ切られる — tool call/result
+のペアの途中で切ることは決してない(相関が静かに壊れるため)。`_reyn`
+ブロックには `messages` に加えて2つのキーが乗る: `has_more`(このページより
+古いターンがまだ存在するか)と `next_cursor`(その古いターン自身の
+`chain_id`、`has_more` が `False` のときちょうど `None`)。client がこの
+page の上端を超えてスクロールすると(`FlowView.ReachedTop`)、
+`{"type": "load_older_backlog_request", "session_id", "before_root_id":
+<next_cursor>}` を POST する。応答は同じ `MESSAGES_SNAPSHOT` エンコーディング
+を再利用する(もう1つの bounded page、独自の `has_more`/`next_cursor`)
+— 別の wire 語彙を新設しない。継続は常に CLIENT 主導の pull であり、
+server が要求なしに 2 ページ目を push することはない — この doc の他の
+typed request(`session_list_request` など)と同じ「1 要求 1 bound、
+2 回目の unbounded push はしない」という規律に従う。
 
 `MESSAGES_SNAPSHOT` の `messages` フィールドは、会話ターンのみからなる標準的な
 `[{role, content}]` **配列**である — `agent` → `assistant`、`user` → `user` — これは汎用

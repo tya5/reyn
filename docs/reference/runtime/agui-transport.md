@@ -525,8 +525,8 @@ Adding any other field is an additive `STATE_*` key, not a client change.
 
 On connect (or reconnect) the server replays, before any live event:
 
-1. `MESSAGES_SNAPSHOT` — the display backlog (the messages already produced), so
-   a reconnecting client rebuilds its scrollback; then
+1. `MESSAGES_SNAPSHOT` — the display backlog, so a reconnecting client
+   rebuilds its scrollback; then
 2. `STATE_SNAPSHOT` — the status read-model above.
 
 Live events (and `STATE_DELTA`s) follow.
@@ -537,6 +537,25 @@ switch on an already-connected AG-UI stream re-fires this EXACT pair
 `reyn.event.session_attached` barrier is forwarded — see *the session-switch
 barrier* above. Connect-time and switch-time are one code path, not two
 byte-identical-by-hand copies.
+
+**The backlog is ONE bounded page, not the full history (#5139 C).** The
+server sends at most `HYDRATE_PAGE_FRAMES` (200 — the same bound local
+restore's own lazy scrollback paging already uses) frames per
+`MESSAGES_SNAPSHOT`, cut only at a turn boundary (a `chain_id`-correlated
+run — never inside a tool call/result pair, which would silently break
+its own correlation). The `_reyn` block carries two more keys alongside
+`messages`: `has_more` (whether an older turn still exists beyond this
+page) and `next_cursor` (that older turn's own `chain_id`, `None` exactly
+when `has_more` is `False`). A client that scrolls past this page's own
+top end (`FlowView.ReachedTop`) POSTs `{"type":
+"load_older_backlog_request", "session_id", "before_root_id":
+<next_cursor>}`; the response reuses this SAME `MESSAGES_SNAPSHOT`
+encoding (one more bounded page, its own `has_more`/`next_cursor`) rather
+than a second wire vocabulary. Continuation is always CLIENT-driven pull
+— the server never pushes a second page unprompted, the same "server
+owns the per-request bound, never a second unbounded send" discipline
+the rest of this doc's typed requests (`session_list_request` etc.)
+already follow.
 
 The `MESSAGES_SNAPSHOT` `messages` field is a **standard `[{role, content}]`
 array of conversation turns only** — `agent` → `assistant`, `user` → `user` — the

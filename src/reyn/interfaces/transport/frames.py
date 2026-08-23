@@ -248,11 +248,35 @@ class BacklogBatch:
     :data:`Frame` union: only :class:`AgUiTransport` ever produces one and
     only ``_pump_frames`` interprets it — the generic renderer entry points
     (``.message`` / ``.on_audit_event``) never see it.
-    """
+
+    #5139 C (architect ruling, issuecomment-5383993909): ``has_more`` /
+    ``next_cursor`` carry the SAME server-side bound every OTHER reconnect
+    backlog now respects (:data:`HYDRATE_PAGE_FRAMES`) — the server sends
+    at most one page per request; ``has_more`` says whether an older page
+    still exists, ``next_cursor`` is that older page's own request key (a
+    turn's ``chain_id`` — the root id tool-call/result correlation, group
+    parenting, and sticky state are all keyed on, never a message's own
+    ``seq``, which a mid-turn cut would silently split). ``is_older_page``
+    distinguishes this batch's OWN apply direction: ``False`` (the
+    reconnect/switch snapshot, unchanged default) appends at the bottom;
+    ``True`` (a client-driven ``ReachedTop`` pull, #5139 C) prepends at the
+    top instead — see ``TextualChatApp._apply_backlog_batch``."""
 
     agent: str
     sid: str
     frames: "list[DisplayFrame]"
+    has_more: bool = False
+    next_cursor: "str | None" = None
+    is_older_page: bool = False
+
+
+#: The server sends at most this many frames per backlog page (reconnect
+#: snapshot, switch re-fire, or an older-page pull) — #5139 C reuses the
+#: SAME bound local restore's own lazy paging already uses
+#: (``textual_chat/app.py``'s ``_HYDRATE_PAGE_FRAMES``) rather than
+#: inventing a second number; both sides import this one constant so the
+#: two can never drift apart.
+HYDRATE_PAGE_FRAMES = 200
 
 
 __all__ = [
@@ -261,5 +285,6 @@ __all__ = [
     "EventFrame",
     "Frame",
     "FrameTag",
+    "HYDRATE_PAGE_FRAMES",
     "forwarded_frame_kinds",
 ]

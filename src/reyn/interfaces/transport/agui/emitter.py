@@ -43,7 +43,7 @@ second source.
 """
 from __future__ import annotations
 
-from typing import AsyncIterator, Callable
+from typing import AsyncIterator, Awaitable, Callable
 
 from reyn.interfaces.transport.agui.protocol import (
     CONTROL_FILTER_KINDS,
@@ -88,19 +88,27 @@ class AgUiEmitter:
         status_provider: "Callable[[], dict | None]",
         *,
         backlog: "list[Frame] | None" = None,
-        backlog_provider: "Callable[[str, str], list[Frame]] | None" = None,
+        backlog_has_more: bool = False,
+        backlog_next_cursor: "str | None" = None,
+        backlog_provider: "Callable[[str, str], Awaitable[tuple[list[Frame], bool, str | None]]] | None" = None,
     ) -> None:
         # ``frames`` is the unified frame stream (e.g. an InProcessTransport's
         # ``frames()``); ``status_provider`` returns the CUI status snapshot dict
         # (or None when no session is attached); ``backlog`` is the display
-        # history replayed on connect for reconnect (A4). ``backlog_provider``
+        # history replayed on connect for reconnect (A4), ALREADY bounded to one
+        # page by the caller (#5139 C — this class never pages on its own);
+        # ``backlog_has_more``/``backlog_next_cursor`` are that same page's own
+        # continuation state, encoded alongside it. ``backlog_provider``
         # (#3310 N3) is called with ``(agent, session_id)`` off a mid-stream
         # ``session_attached`` ``EventFrame`` to fetch the switched-to session's
-        # backlog for the re-fire; ``None`` means this connection never
-        # switches sessions (byte-identical to pre-N3 behavior).
+        # OWN bounded page (``(frames, has_more, next_cursor)``, #5139 C) for
+        # the re-fire; ``None`` means this connection never switches sessions
+        # (byte-identical to pre-N3 behavior).
         self._frames = frames
         self._status_provider = status_provider
         self._backlog = list(backlog or [])
+        self._backlog_has_more = backlog_has_more
+        self._backlog_next_cursor = backlog_next_cursor
         self._backlog_provider = backlog_provider
         self._model = StatusModel()
         self._waiting_on: str | None = None
@@ -113,19 +121,25 @@ class AgUiEmitter:
     def _project(self) -> dict:
         return project_status(self._status_provider(), waiting_on=self._waiting_on)
 
-    def _reconnect_snapshot_chunks(self, backlog: "list[Frame]") -> "list[str]":
+    def _reconnect_snapshot_chunks(
+        self, backlog: "list[Frame]", *, has_more: bool = False, next_cursor: "str | None" = None,
+    ) -> "list[str]":
         """The shared reconnect protocol (A4): backlog display, then full
         status — used identically at connect (``stream()`` start) and at a
         mid-stream session switch (#3310 N3), so the two are ONE code path,
-        not a byte-identical-by-hand duplicate."""
+        not a byte-identical-by-hand duplicate. ``has_more``/``next_cursor``
+        (#5139 C) are *backlog*'s own page-continuation state, riding the
+        SAME ``MESSAGES_SNAPSHOT`` event."""
         return [
-            to_sse(encode_messages_snapshot(backlog)),
+            to_sse(encode_messages_snapshot(backlog, has_more=has_more, next_cursor=next_cursor)),
             to_sse(encode_state_snapshot(self._model.snapshot(self._project()))),
         ]
 
     async def stream(self) -> AsyncIterator[str]:
         # Reconnect snapshots first (A4): backlog display, then full status.
-        for chunk in self._reconnect_snapshot_chunks(self._backlog):
+        for chunk in self._reconnect_snapshot_chunks(
+            self._backlog, has_more=self._backlog_has_more, next_cursor=self._backlog_next_cursor,
+        ):
             yield chunk
 
         async for frame in self._frames:
@@ -191,10 +205,12 @@ class AgUiEmitter:
                 if etype == "session_attached" and self._backlog_provider is not None:
                     self._text_stream = TextStreamTracker()
                     self._waiting_on = None
-                    new_backlog = self._backlog_provider(
+                    new_backlog, new_has_more, new_next_cursor = await self._backlog_provider(
                         str(edata.get("agent", "")), str(edata.get("session_id", ""))
                     )
-                    for chunk in self._reconnect_snapshot_chunks(new_backlog):
+                    for chunk in self._reconnect_snapshot_chunks(
+                        new_backlog, has_more=new_has_more, next_cursor=new_next_cursor,
+                    ):
                         yield chunk
             delta = self._model.delta(self._project())
             if delta:

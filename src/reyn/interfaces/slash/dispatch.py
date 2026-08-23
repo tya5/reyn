@@ -258,6 +258,9 @@ class _ErrorWatchingTransport(ClientTransport):
     async def request_session_list(self) -> "list[dict]":
         return await self._inner.request_session_list()
 
+    async def request_older_backlog(self, before_root_id: str) -> None:
+        await self._inner.request_older_backlog(before_root_id)
+
     async def run_slash_command(self, name: str, args: str) -> bool:
         return await self._inner.run_slash_command(name, args)
 
