@@ -242,7 +242,7 @@ def get_default_registry() -> ToolRegistry:
     registry.register(CRON_ENABLE)
     registry.register(CRON_DISABLE)
     # #2073 S3: the hooks-write self-reload tool (the agent adds its own runtime
-    # hooks to .reyn/hooks.yaml + reloads at the turn boundary). Router-only.
+    # hooks to .reyn/config/hooks.yaml + reloads at the turn boundary). Router-only.
     registry.register(HOOKS_ADD)
     # Hook-Event Redesign Phase 5 part 2 (proposal 0059 §8): LLM-authored
     # hook-event emission onto the caller's own HookBus. Router-only (the

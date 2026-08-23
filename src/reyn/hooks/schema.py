@@ -363,7 +363,7 @@ class HookDef:
 #: TO MOST specific (trust runs the same direction, most-to-least) —
 #: ``Session._build_hook_registry``'s own combine loop's real layer order:
 #: ``startup`` (reyn.yaml, the operator's, trusted) → ``runtime``
-#: (``.reyn/hooks.yaml``) → ``per-agent`` (``.reyn/agents/<name>/hooks.yaml``)
+#: (``.reyn/config/hooks.yaml``) → ``per-agent`` (``.reyn/agents/<name>/hooks.yaml``)
 #: → ``per-session`` (session-defined, read from the SAME per-session state
 #: file ``disabled:`` itself is persisted to). Deliberately NOT re-derived
 #: from that loop's own string literals (a second hand-typed copy would be
@@ -401,9 +401,10 @@ def hook_origin_is_at_least_as_specific_as(origin: str, layer: str) -> bool:
     less specific than per-agent (``startup``, ``runtime``) stays
     protected. An earlier version of this threshold used ``"runtime"``,
     treating ``.reyn/config/hooks.yaml`` as agent-writable on the strength
-    of a stale pre-#2073-file-split filename (``.reyn/hooks.yaml``, which
-    still appears in a few docstrings elsewhere in this codebase) — caught
-    in #5218 review before merge. Expressed as a general order comparison
+    of a stale pre-#2073-file-split filename (``.reyn/hooks.yaml``) — caught
+    in #5218 review before merge; #5220 swept the remaining bare mentions
+    of that stale filename (this one deliberately kept, as the historical
+    record of what was caught and why). Expressed as a general order comparison
     (not a hardcoded membership test) so the check keeps working for free
     if the write-zone boundary ever moves again, or a SECOND
     ``disabled:``-shaped axis is added at a different layer.

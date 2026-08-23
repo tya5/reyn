@@ -259,7 +259,7 @@ lambdas.
 The config-derivation this builder takes as inputs is resolved inline, BEFORE the builder
 call:
 - Hooks are LAYERED (#2073 S2b): the `reyn.yaml` startup layer (OUT-set, captured once as
-  `_startup_hooks_raw`, never re-read on reload) ∪ the `.reyn/hooks.yaml` runtime layer
+  `_startup_hooks_raw`, never re-read on reload) ∪ the `.reyn/config/hooks.yaml` runtime layer
   (IN-set, hot-reloadable; the LLM-op writes it in S3). `_build_hook_registry` combines
   them; the boot registry includes the runtime layer too (active from session start,
   mirroring `.reyn/mcp.yaml`), and the hooks-reapply seam re-reads only the runtime layer +
@@ -297,7 +297,7 @@ call:
 
 After the bundle returns, `self._hot_reloader` is published as the process-wide active
 reloader (#2073 S3: `set_active_hot_reloader`) so the hooks-write LLM-op can
-`request_reload` after writing `.reyn/hooks.yaml` (mirrors `set_active_scheduler`;
+`request_reload` after writing `.reyn/config/hooks.yaml` (mirrors `set_active_scheduler`;
 multi-session = last-registered wins, a known cron caveat). `_register_hot_reload_seams`
 (#2073 S2) then registers the per-component hot-reload reapply seams once the
 sub-components they orchestrate (`router_host` etc., built later by Family 6a) exist —
