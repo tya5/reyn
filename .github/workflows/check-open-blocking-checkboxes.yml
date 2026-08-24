@@ -1,0 +1,42 @@
+name: Open blocking-checkbox check
+
+# #5135: house rule 7 puts a reviewer's blocking point in the PR body as
+# `- [ ] 🔴 <point>`, and rule 9 says arming auto-merge ends the reviewer's
+# reading of that PR — a box ticked afterwards is invisible to the merge.
+# Neither rule had any enforcement: on 2026-08-24 a PR went green with an
+# open `- [ ] 🔴` in its body and auto-merge armed; the only thing that
+# stopped it was a human noticing. This gate is that enforcement.
+#
+# A dedicated workflow (not folded into test.yml) for the same reason
+# check-pr-closing-intent.yml is one: the body is edited *after* opening —
+# a reviewer adds the box, the author ticks it — and `edited` is not one of
+# the default pull_request event types.
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  open-blocking-checkbox:
+    name: no open blocking checkbox in the PR body
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      # scripts/check_open_blocking_checkboxes.py is stdlib-only.
+      - name: Check the PR body for an open blocking checkbox
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python scripts/check_open_blocking_checkboxes.py --pr "${{ github.event.pull_request.number }}"
