@@ -76,7 +76,7 @@ async def _push_user(session: Session, text: str) -> None:
 
 @pytest.mark.asyncio
 async def test_hook_message_is_fanned_out_to_live_outbox(tmp_path):
-    """Tier 2: a hook ride-along is visible on the live outbox, not only history."""
+    """Tier 2: a hook-injected message is visible on the live outbox, not only history."""
     session = _make_session(tmp_path, cap=2)
     subscription = session.outbox_hub.subscribe()
     async def _noop(*_args):
