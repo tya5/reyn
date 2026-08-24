@@ -335,7 +335,17 @@ def test_call_tool_propagates_tool_error_not_transport_crash() -> None:
 
     result = asyncio.run(_run_it())
     assert result["isError"] is True
-    assert "simulated tool failure" in result["content"][0]["text"]
+    # The text inside ``content`` is the SDK's own rendering of a server-side
+    # tool exception, not reyn's: mcp 2.x changed it from the raised message
+    # ("simulated tool failure") to a generic "Error executing tool <name>",
+    # which turned every PR's CI red on an in-range bump (`mcp>=2.0,<3.0`).
+    # What reyn owns here is the shape -- a tool error arrives as a RESULT
+    # with isError set, never as a raised MCPError -- so that is what is
+    # asserted, together with the failure having reached the model at all.
+    # Reading INTO content (its shape, its wording) re-pins the same third
+    # party a different way -- mcp 3.x renaming "text" would go red for the
+    # same non-reason.
+    assert result["content"]
 
 
 def test_call_tool_propagates_transport_errors_as_mcp_error() -> None:
