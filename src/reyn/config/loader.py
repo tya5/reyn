@@ -1010,9 +1010,13 @@ def read_and_expand_hooks_yaml(
     to) — while an arbitrary non-reyn ``${FOO}`` is left untouched, for
     whatever downstream (a spawned child process) resolves it later.
 
-    Returns ``None`` when the file is absent, malformed, or refused;
-    otherwise the parsed+expanded dict — the caller reads whichever key
-    (``hooks``/``composers``) it owns out of it."""
+    Returns ``None`` when the file is absent or refused; otherwise the
+    parsed+expanded dict — the caller reads whichever key
+    (``hooks``/``composers``) it owns out of it. A file that EXISTS but
+    does not parse raises :class:`HookYamlReadError` instead of joining
+    the ``None`` cases (#5100): collapsing it there made "this layer
+    declares no hooks" and "this layer could not be read" the same value,
+    so no caller could tell them apart or report the difference."""
     raw = _load_hooks_yaml(path)
     if not raw:
         return None
