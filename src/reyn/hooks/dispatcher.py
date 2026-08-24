@@ -506,14 +506,17 @@ def _parse_exec_push(stdout: str | None) -> ResolvedPush | None:
 
     # Required-field + type checks (bool first — bool is an int subclass, so the
     # isinstance(..., bool) guard correctly rejects an integer 1/0).
+    if not isinstance(push_when, bool):
+        _log.warning("exec_capture directive 'push_when' must be a JSON bool — push skipped.")
+        return None
+    if not push_when:
+        _log.debug("exec_capture directive declined push_when=false; push skipped.")
+        return ResolvedPush(message="", wake=False, push_when=False, session=None)
     if not isinstance(message, str) or not message.strip():
         _log.warning("exec_capture directive 'message' must be a non-empty string — push skipped.")
         return None
     if not isinstance(wake, bool):
         _log.warning("exec_capture directive 'wake' must be a JSON bool — push skipped.")
-        return None
-    if not isinstance(push_when, bool):
-        _log.warning("exec_capture directive 'push_when' must be a JSON bool — push skipped.")
         return None
     if session is not None and not isinstance(session, str):
         _log.warning("exec_capture directive 'session' must be a string or null — push skipped.")
