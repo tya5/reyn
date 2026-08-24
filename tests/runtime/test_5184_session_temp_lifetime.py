@@ -25,3 +25,9 @@ def test_constructing_a_session_does_not_create_child_temp_dir(tmp_path: Path) -
     )
 
     assert not temp_dir.exists()
+    session.router_host.make_router_op_context()
+    assert temp_dir.is_dir()
+
+    import shutil
+
+    shutil.rmtree(temp_dir)
