@@ -1956,6 +1956,12 @@ class MCPClient:
         except OSError as exc:  # e.g. EPERM — never fail teardown on the reap
             logger.warning("MCP subprocess reap (pid=%s) failed: %r", pid, exc)
             return
+        # This direct child is intentionally outside Reyn's SandboxPolicy: the
+        # MCP server is third-party code, so Reyn cannot impose its own
+        # write_paths/network restrictions on the implementation it launches.
+        # The trust boundary is the operator-declared server configuration.
+        # Pushing this child under Reyn's policy would change the MCP SDK
+        # environment contract and break configured MCP servers at startup.
         # POSIX: the child was spawned in-process (anyio.open_process) so it is OUR
         # child — waitpid it so the freshly SIGKILL'd process doesn't linger as a
         # zombie (itself a leftover process). Blocks only until the just-killed child
