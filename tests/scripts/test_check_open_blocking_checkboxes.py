@@ -2,15 +2,20 @@
 from __future__ import annotations
 
 import json
-import subprocess
 
-from scripts.check_open_blocking_checkboxes import evaluate_body, main
+from scripts.check_open_blocking_checkboxes import evaluate_body, main, run_gate
 
 
-def test_open_blocking_checkbox_fails() -> None:
-    """Tier 1: an open red blocking checkbox fails the gate."""
-    code, _ = evaluate_body("- [ ] 🔴 unresolved")
-    assert code != 0
+def test_open_blocking_checkbox_variants_fail() -> None:
+    """Tier 1: supported list markers and formatting fail closed."""
+    for body in (
+        "- [ ] 🔴 unresolved",
+        "  - [ ] 🔴 nested",
+        "* [ ]🔴 compact",
+        "+ [ ] **🔴** decorated",
+    ):
+        code, _ = evaluate_body(body)
+        assert code != 0
 
 
 def test_checked_blocking_checkbox_passes() -> None:
@@ -25,13 +30,12 @@ def test_missing_body_fails_closed() -> None:
     assert code != 0
 
 
-def test_live_fetch_failure_fails_closed(monkeypatch) -> None:
-    """Tier 1: a failed body fetch returns nonzero."""
-    def fail(*args, **kwargs):
-        raise subprocess.CalledProcessError(1, args[0], stderr="network down")
+def test_body_supplier_failure_fails_closed() -> None:
+    """Tier 1: a failed body supplier returns nonzero without patching."""
+    def fail():
+        raise OSError("network down")
 
-    monkeypatch.setattr(subprocess, "run", fail)
-    assert main(["--pr", "123"]) != 0
+    assert run_gate(fail) != 0
 
 
 def test_fixture_cli_supports_both_states(tmp_path) -> None:
