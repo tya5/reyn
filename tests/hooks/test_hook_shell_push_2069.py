@@ -197,6 +197,21 @@ async def test_exec_capture_parse_failure_skips_push() -> None:
     assert seams["stage_next_turn_context"].calls == []
 
 
+def test_exec_capture_false_with_empty_message_is_observed_without_warning(caplog) -> None:
+    """Tier 2: push_when=false with an empty message is a valid declined push."""
+    caplog.set_level("WARNING")
+    rp = _parse_exec_push(json.dumps({"push_when": False, "wake": False, "message": ""}))
+    assert rp == ResolvedPush(message="", wake=False, push_when=False, session=None)
+    assert not caplog.records
+
+
+def test_exec_capture_true_with_empty_message_still_warns(caplog) -> None:
+    """Tier 2: push_when=true still requires a non-empty message."""
+    caplog.set_level("WARNING")
+    assert _parse_exec_push(json.dumps({"push_when": True, "wake": False, "message": ""})) is None
+    assert any("message" in record.message for record in caplog.records)
+
+
 @pytest.mark.asyncio
 async def test_exec_capture_push_when_false_skips_push() -> None:
     """Tier 2: a directive with push_when=false is the conditional-push guard —
