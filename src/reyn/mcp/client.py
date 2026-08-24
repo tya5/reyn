@@ -1182,6 +1182,10 @@ class MCPClient:
                 self._stderr_capture = tempfile.TemporaryFile(mode="w+t", encoding="utf-8")
             except Exception:  # noqa: BLE001 — temp-file failure is non-fatal
                 self._stderr_capture = None
+            # MCP stdio intentionally inherits the SDK's environment when the
+            # operator did not declare one: this is a third-party server path,
+            # so Reyn cannot apply its own write/network policy to the child;
+            # trust comes from the operator-declared server configuration.
             params = StdioServerParameters(
                 command=command,
                 args=args,
