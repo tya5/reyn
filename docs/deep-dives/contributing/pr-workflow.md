@@ -24,6 +24,17 @@ an owner-axis label, not because the containment claim itself was
 wrong). This paragraph is the label's only durable record; it existed
 only as broker chat before this.
 
+Two of those four names are **retired** (2026-08-24): `needs:owner-decision`
+folded into `owner:decide`, `wait_owner_iv` into `owner:verify-only`. The
+measurement above is unchanged — it was taken while all four existed, and the
+two retired names were exact synonyms of the two that remain, not a separate
+axis. What stays distinct is the axis itself: `owner:decide` (owner picks a
+direction) and `owner:verify-only` (owner reproduces on their own machine) ask
+for different acts, and `owner-hit` is a third thing again — the record that the
+operator hit it in the shipped configuration, not a request for anything. Five
+spellings for two acts is what produced the misreading this paragraph already
+records.
+
 **Before you open a PR, run `ruff check .`, `python
 scripts/test_tier_audit.py --strict <changed test files>`, `python
 scripts/verify_module_docstrings.py <changed src files>`, `python
