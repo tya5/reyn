@@ -1182,6 +1182,12 @@ class MCPClient:
                 self._stderr_capture = tempfile.TemporaryFile(mode="w+t", encoding="utf-8")
             except Exception:  # noqa: BLE001 — temp-file failure is non-fatal
                 self._stderr_capture = None
+            # The SDK performs the spawn; Reyn chooses only these hand-off
+            # parameters. ``env=None`` is intentional: MCP is a third-party
+            # server trust path, distinct from Reyn-owned sandbox children, so
+            # Reyn does not apply its write_paths/network policy here. Applying
+            # that policy would change the SDK environment contract and break
+            # configured MCP servers at startup.
             params = StdioServerParameters(
                 command=command,
                 args=args,
