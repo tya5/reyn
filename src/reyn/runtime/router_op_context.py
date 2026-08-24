@@ -90,6 +90,7 @@ def build_router_op_context(
     contextual_permission: Any = None,  # #1827 S3: per-session capability narrowing → OpContext
     session_id: str | None = None,
     child_temp_dir: str = "",
+    child_temp_dir_fn: Any = None,
     hook_dispatcher: Any = None,  # #1800 slice 5c: the Session's HookDispatcher
     hook_bus: Any = None,  # Hook-Event Redesign Phase 5 part 2: the Session's HookBus → emit_hook_event
     turn_origin: str | None = None,  # proposal 0060 Phase 1 (A7): OS-derived turn provenance → install-op stamping (A9)
@@ -193,7 +194,7 @@ def build_router_op_context(
         default_sandbox_policy=resolve_sandbox_policy(
             sandbox_policy,
             write_paths=[str(workspace.base_dir)],
-            temp_dir=child_temp_dir,
+            temp_dir=child_temp_dir_fn() if child_temp_dir_fn is not None else child_temp_dir,
             temp_source="session",
         ),
         cancel_event=cancel_event,
@@ -289,6 +290,7 @@ class RouterOpContextSource:
         contextual_permission_fn: Any,
         session_id_fn: Any,
         child_temp_dir: str,
+        child_temp_dir_fn: Any = None,
         hook_dispatcher: Any,
         hook_bus: Any,
         turn_origin_fn: Any,
@@ -327,6 +329,7 @@ class RouterOpContextSource:
         self._contextual_permission_fn = contextual_permission_fn
         self._session_id_fn = session_id_fn
         self._child_temp_dir = child_temp_dir
+        self._child_temp_dir_fn = child_temp_dir_fn
         self._hook_dispatcher = hook_dispatcher
         self._hook_bus = hook_bus
         self._turn_origin_fn = turn_origin_fn
@@ -401,6 +404,7 @@ class RouterOpContextSource:
             contextual_permission=self._resolve(self._contextual_permission_fn),
             session_id=self._resolve(self._session_id_fn),
             child_temp_dir=self._child_temp_dir,
+            child_temp_dir_fn=self._child_temp_dir_fn,
             hook_dispatcher=self._hook_dispatcher,
             hook_bus=self._hook_bus,
             turn_origin=self._resolve(self._turn_origin_fn),
