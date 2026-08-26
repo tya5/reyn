@@ -126,8 +126,10 @@ own docstring for the queue/consumer race it resolves).
 
 One kind gets special treatment on the `local` backend's write side:
 `agent_delta` (one audit-event per streamed reply chunk) is NOT written
-to disk per-fragment. Live subscriber delivery is unaffected — every
-fragment still dispatches to the TUI/AG-UI exactly as before. Measured
+to disk per-fragment. Live subscriber delivery is unaffected by THIS
+mechanism — every fragment still dispatches to its subscribers (#5259
+folds a waiting run on the AG-UI wire, separately and further down; see
+the note under the opt-in below). Measured
 (2000-delta/60KB real streamed reply, `agent_delta_include_text=true`):
 unthrottled, `agent_delta` writes were 99.4% of that run's audit file
 bytes, so writing every fragment durably would dominate the log for the
@@ -193,10 +195,11 @@ durably written, with no opt-in or opt-out. If your workflow depends on
 `.reyn/events` carrying streamed-reply text, set
 `agent_delta_include_text: true`.
 
-**Unchanged either way:** live TUI/AG-UI delivery (every fragment, full
-text, always — this flag governs the durable write only) and
-`history.jsonl` (the completed reply's own persistence is a separate
-mechanism entirely, untouched by this).
+**Unchanged either way:** live delivery's TEXT (full, always — this flag
+governs the durable write only) and `history.jsonl` (the completed
+reply's own persistence is a separate mechanism entirely, untouched by
+this). The FRAME count on the AG-UI wire is a different question, and
+#5259 does change it:
 
 > #5259: on the AG-UI wire specifically, fragments that were already waiting in a connection's queue leave as one frame — the text is identical, the frame count is not. The durable side above is unaffected: it coalesces separately, and its `coalesced_fragment_count` still counts fragments.
 
