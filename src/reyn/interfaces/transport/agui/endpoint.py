@@ -441,6 +441,42 @@ async def session_backlog_page(
             return [DisplayFrame(m) for m in frames], False, None
 
 
+def _is_delta_frame(frame) -> bool:
+    """Whether ``frame`` is an ``agent_delta`` EventFrame (#5259)."""
+    return isinstance(frame, EventFrame) and getattr(frame.event, "type", None) == "agent_delta"
+
+
+def _same_delta_run(a, b) -> bool:
+    """Whether two ``agent_delta`` frames belong to the same mergeable run.
+
+    ``round_index`` is part of the identity, not only ``chain_id``: it is the
+    boundary between what the model said BEFORE calling a tool and what it said
+    after reading the result, and ``RouterLoop._emit_agent_delta``'s own
+    docstring names re-deriving that boundary from arrival order as the coupling
+    the field exists to remove. Merging across it would put the field back to
+    being re-derivable — and wrong.
+    """
+    da, db = a.event.data or {}, b.event.data or {}
+    return (
+        da.get("chain_id") == db.get("chain_id")
+        and da.get("round_index") == db.get("round_index")
+    )
+
+
+def _merged_delta_frame(run: list):
+    """One ``agent_delta`` frame standing in for a run of them (#5259).
+
+    Built off the LAST frame so every non-text field (``chain_id``,
+    ``round_index``, and whatever a future emit site adds) is the run's own
+    latest, with only ``text`` replaced by the concatenation. Copying rather
+    than mutating keeps the frames already handed to other connections' queues
+    untouched — the same ``Event`` object is fanned out to every subscriber.
+    """
+    text = "".join(str((f.event.data or {}).get("text") or "") for f in run)
+    last = run[-1].event
+    return EventFrame(last.model_copy(update={"data": {**(last.data or {}), "text": text}}))
+
+
 class _SessionFrameSource:
     """Per-connection unified frame stream off a session (server analogue of
     :class:`InProcessTransport`): fan out ``session.outbox`` as DisplayFrames and
@@ -781,17 +817,70 @@ class _SessionFrameSource:
     async def frames(self):
         while True:
             frame = await self._q.get()
+            # #5259: whatever else is ALREADY waiting is collected here, and a
+            # run of consecutive ``agent_delta`` frames leaves as one. The
+            # window is however long the consumer took to come back for the
+            # previous frame — nothing is held for a fixed interval, and
+            # nothing is held at all: an empty queue yields exactly what a
+            # pre-#5259 reader saw. A merged run is bounded by what the
+            # provider already produced, so it cannot outgrow one reply.
+            frame, held = self._drain_delta_run(frame)
             # #3570, the server-side instance of the same shape as
             # ``InProcessTransport.frames``: ``_q`` is fed by SYNCHRONOUS
             # ``put_nowait`` callers (the audit-event subscriber, the forwarder),
             # so a burst leaves it non-empty and ``get()`` stops suspending —
             # the emitter would then encode + serialize the whole burst without
             # the server's event loop running anything else (other connections'
-            # writes, the fail-close driver's timers).
+            # writes, the fail-close driver's timers). The merge above reduces
+            # how many frames reach that encode; it must not reduce how often
+            # this loop yields, so every frame keeps its own suspension point.
             await suspend_between_frames()
             yield frame
             if isinstance(frame, DisplayFrame) and frame.message.kind == "__end__":
                 return
+            if held is not None:
+                # The frame that ENDED the run: taken off the queue to find the
+                # boundary, so it is emitted here rather than pushed back
+                # (``asyncio.Queue`` has no peek, and a one-item pushback would
+                # be state this loop otherwise does not carry).
+                await suspend_between_frames()
+                yield held
+                if isinstance(held, DisplayFrame) and held.message.kind == "__end__":
+                    return
+
+    def _drain_delta_run(self, first):
+        """Collect the ``agent_delta`` run that ``first`` starts, if it starts one.
+
+        Returns ``(frame_to_emit, frame_that_ended_the_run_or_None)``. A run is
+        consecutive ``agent_delta`` EventFrames sharing ``chain_id`` and
+        ``round_index`` — the two fields ``RouterLoop._emit_agent_delta`` stamps
+        precisely so a consumer never has to re-derive the boundary from arrival
+        order. Anything else ends the run and comes back as the second element.
+
+        Concatenation is the whole operation: ``TEXT_MESSAGE_CONTENT`` is
+        additive on the wire, so N consecutive contents and their concatenation
+        are the same message. What this does NOT preserve is the COUNT of
+        events — see this PR's own body for why the count was never a contract
+        (the pre-#5259 count is one per provider chunk, a number the provider
+        chose).
+        """
+        if not _is_delta_frame(first):
+            return first, None
+        run = [first]
+        held = None
+        while True:
+            try:
+                nxt = self._q.get_nowait()
+            except asyncio.QueueEmpty:
+                break
+            if _is_delta_frame(nxt) and _same_delta_run(run[-1], nxt):
+                run.append(nxt)
+                continue
+            held = nxt
+            break
+        if len(run) == 1:
+            return first, held
+        return _merged_delta_frame(run), held
 
 
 @router.get("/agui/chat/{agent_name}/events")
