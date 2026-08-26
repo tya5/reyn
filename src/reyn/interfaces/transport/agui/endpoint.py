@@ -857,6 +857,13 @@ class _SessionFrameSource:
         precisely so a consumer never has to re-derive the boundary from arrival
         order. Anything else ends the run and comes back as the second element.
 
+        Removing this merge does not merely restore the old frame count: it
+        restores the same-chain starvation #3570 guarded against, and #3570's
+        own server-side witness no longer catches that case — its burst was
+        re-cut to ALTERNATING chains precisely because a same-chain burst stopped
+        producing a burst of frames here. Whoever takes this out has to put that
+        witness back on the same-chain shape too.
+
         Concatenation is the whole operation: ``TEXT_MESSAGE_CONTENT`` is
         additive on the wire, so N consecutive contents and their concatenation
         are the same message. What this does NOT preserve is the COUNT of
