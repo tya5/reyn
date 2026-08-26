@@ -2712,9 +2712,22 @@ async def recorded_acompletion(
             except BaseException:
                 # A raise from the provider stream, or this whole call
                 # being cancelled from outside — either way, the other
-                # task must not be left running unattended.
+                # task must not be left running unattended. cancel() only
+                # REQUESTS cancellation — it does not wait for it, so
+                # without the gather below this function would return (and
+                # `raise` would propagate) while a task is still pending:
+                # ``_pump_chunks``'s own `finally` (which still runs on
+                # cancellation) could append to `chunks` or put onto `q`
+                # AFTER the caller believes the call is over — the same
+                # class of hazard #5267 named tonight for a different
+                # task pair. Awaiting the gather (with
+                # `return_exceptions=True`, since a cancelled task's own
+                # CancelledError must not mask the real exception we're
+                # about to re-raise) makes both tasks genuinely `done()`
+                # before this function returns.
                 drain_task.cancel()
                 pump_task.cancel()
+                await asyncio.gather(pump_task, drain_task, return_exceptions=True)
                 raise
         # #3288 ③b co-vet fix: a silent functional-dead-mode guard. If the
         # provider streamed at least one chunk AND a callback was supplied,

@@ -464,3 +464,73 @@ def test_a_tool_only_round_never_trips_the_dead_mode_guard(monkeypatch, caplog) 
         "a tool-only round must never trip the dead-mode guard — it is "
         "reyn's most common round shape, not a defect"
     )
+
+
+def _make_fake_acompletion_raises_mid_stream():
+    """A real, scripted stand-in whose streaming branch yields ONE content
+    chunk, then raises — modelling a provider stream that dies mid-flight
+    (a network drop, a malformed frame, anything ``async for`` can surface
+    as an exception from the provider's own async generator)."""
+
+    async def _fake_acompletion(model: str, messages: list, **kw: Any) -> Any:
+        def _chunk(delta: Delta) -> ModelResponseStream:
+            return ModelResponseStream(
+                id="resp-4", created=1, model=model, object="chat.completion.chunk",
+                choices=[StreamingChoices(index=0, delta=delta, finish_reason=None)],
+            )
+
+        async def _gen():
+            yield _chunk(Delta(role="assistant", content="partial"))
+            raise RuntimeError("provider stream dropped")
+
+        return _gen()
+
+    return _fake_acompletion
+
+
+def test_a_raising_provider_stream_leaves_no_task_still_running(monkeypatch) -> None:
+    """Tier 1: #5261 review (lead-coder + architect) — when the provider
+    stream itself raises, ``recorded_acompletion`` must not return (via the
+    re-raise) while ``_pump_chunks``/``_drain_and_emit_deltas`` are still
+    pending — ``cancel()`` only REQUESTS cancellation, it does not wait for
+    it, so the outer ``except`` must ``await`` the gather before
+    re-raising (mirrors #5267's own named hazard for a different task
+    pair). Witnessed via a TRUTH check (every task this call created is
+    ``done()`` once it returns), never a duration — CLAUDE.md forbids
+    writing a duration into a test in either direction."""
+    monkeypatch.setattr(litellm, "acompletion", _make_fake_acompletion_raises_mid_stream())
+
+    # #5261 review: ``asyncio.all_tasks()`` only lists tasks that are NOT
+    # yet done, so it cannot witness "done() by the time the call
+    # returned" — a genuinely-done task has already dropped out of it by
+    # the time we'd check. Capture the actual Task objects as they're
+    # created instead, via the real ``asyncio.create_task`` this module
+    # calls, so `.done()` can be asked directly on THOSE references.
+    created_tasks: "list[asyncio.Task]" = []
+    real_create_task = asyncio.create_task
+
+    def _recording_create_task(coro, **kw):
+        task = real_create_task(coro, **kw)
+        created_tasks.append(task)
+        return task
+
+    monkeypatch.setattr(asyncio, "create_task", _recording_create_task)
+
+    async def _drive() -> None:
+        try:
+            await recorded_acompletion(
+                model="gpt-4o-mini", messages=[{"role": "user", "content": "hi"}],
+                purpose="main", recorder=None,
+                model_class=None,  # #4206 T1: not subject to the axis (pre-existing call)
+                on_content_delta=lambda _t, **_kw: None,
+            )
+            assert False, "the provider's RuntimeError must propagate"
+        except RuntimeError:
+            pass
+        # The call has returned (via the re-raise) — every task IT created
+        # (_pump_chunks / _drain_and_emit_deltas) must already be done(),
+        # not merely cancel-requested.
+        assert created_tasks, "sanity: the streaming branch must have created tasks at all"
+        assert all(t.done() for t in created_tasks)
+
+    asyncio.run(_drive())
