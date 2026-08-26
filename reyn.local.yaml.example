@@ -522,6 +522,15 @@
 # resolves it, not at config-load time.
 #   theme: nord
 
+# chat.stream_repaint_min_interval: seconds between two repaints of the SAME
+# streamed reply in the TUI (#3570's budget, made reachable). Default 1/30 is
+# a knee measured on one terminal (2000 deltas / 60 KB reply: set_item
+# 1979 -> 75, wall-clock 16.1 s -> 3.3 s). A slower terminal (SSH, tmux) has a
+# different knee — raise this there. Text is never lost: the accumulation is
+# unconditional and a catch-up timer bounds every deferral. 0 or negative
+# falls back to the default rather than repainting on every delta.
+#   stream_repaint_min_interval: 0.1
+
 
 # -----------------------------------------------------------------------------
 # audit_events: audit-log rotation + automatic purge policy (#4174 T5:

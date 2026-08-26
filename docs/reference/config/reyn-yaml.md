@@ -750,6 +750,7 @@ chat:
   image_url_schemes: []   # opt-in scheme allowlist for present's image src fetch
   empty_stop_retry: false # opt-in resend on an empty router response
   theme: null              # override the TUI's Textual theme name (default: reyn's own)
+  stream_repaint_min_interval: 0.0333  # seconds between repaints of a streamed reply
 ```
 
 ### `chat.render_mode`
@@ -896,6 +897,34 @@ carries its own copy of Textual's theme registry to keep in sync.
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `theme` | str \| null | `null` | Textual theme name for the interactive TUI. `null` keeps reyn's own default (`"reyn"`). |
+
+### `chat.stream_repaint_min_interval`
+
+The minimum wall-clock gap, in **seconds**, between two repaints of the
+same streamed reply in the TTY conversation pane (#3570's repaint budget,
+made reachable). Deltas arrive at the provider's rate — measured up to
+~1000/s through a proxy that packs many SSE events into one read — and
+each repaint costs a present plus a strip render of the whole accumulated
+body, so painting every delta spends the loop redrawing frames no eye
+separates.
+
+The default is the knee measured on one terminal (2000 deltas, 60 KB
+reply): `set_item` 1979 → 75, wall-clock 16.1 s → 3.3 s. That measurement
+is the reason this knob ships with the value it does — and the reason the
+knob exists: a slower terminal (SSH, a multiplexer, a remote desktop) has
+a different knee, and before this field the only way to reach it was to
+edit source.
+
+Raising it trades update smoothness for loop time. It can never lose
+text: the reply's accumulation is unconditional, and a catch-up timer
+bounds every deferral to one interval. A non-positive value falls back to
+the default instead of disabling the budget — `0` means "repaint on every
+delta", the pre-#3570 behaviour the measurement above exists to keep
+operators out of.
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `stream_repaint_min_interval` | float | `0.0333` (1/30) | Seconds between two repaints of the same streamed reply. Non-positive falls back to the default. |
 
 ### `chat.reasoning` fields
 
