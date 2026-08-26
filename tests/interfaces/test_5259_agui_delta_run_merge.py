@@ -186,24 +186,23 @@ def test_the_drain_returns_control_while_it_collects() -> None:
     server's loop for its whole length, which is the starvation #3570 named
     (other connections' writes, the fail-close driver's timers).
 
-    Witnessed by a competing task that can only advance when this loop hands
-    control back: it must advance MORE THAN ONCE while a multi-frame run is
-    collected. Without the suspension it advances at most once, whatever the
-    run's length — so this does not measure how long anything took, only
-    whether control was returned at all.
+    Witnessed by a competing task that needs TWO turns to finish. One turn it
+    gets either way: ``frames()`` already suspended once before yielding its
+    frame, and that alone is what this test must not mistake for the property.
+    A SECOND turn exists only if the collecting loop handed control back too —
+    so the witness is whether that task ran to completion, not how long
+    anything took nor how many turns were counted.
     """
     source = _source_with([_delta("a"), _delta("b"), _delta("c"), _delta("d")])
-    ticks: list[int] = []
+    reached_its_second_turn = asyncio.Event()
 
     async def _run() -> None:
         async def _competitor() -> None:
-            while True:
-                await asyncio.sleep(0)
-                ticks.append(1)
+            await asyncio.sleep(0)
+            await asyncio.sleep(0)
+            reached_its_second_turn.set()
 
         rival = asyncio.create_task(_competitor())
-        await asyncio.sleep(0)
-        ticks.clear()
         agen = source.frames()
         await agen.__anext__()
         rival.cancel()
@@ -211,5 +210,4 @@ def test_the_drain_returns_control_while_it_collects() -> None:
 
     asyncio.run(_run())
 
-    assert len(ticks) > 1
-
+    assert reached_its_second_turn.is_set()
