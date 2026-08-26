@@ -5883,10 +5883,14 @@ class Session:
         the file is absent, malformed, refused (an unresolved reyn token),
         or *key* itself is absent — a no-op layer, never a special case a
         caller has to handle."""
-        from reyn.config.loader import read_and_expand_hooks_yaml
-        data = read_and_expand_hooks_yaml(
-            path, agent_name=self.agent_name, project_root=self._hot_reload_project_root(),
-        )
+        from reyn.config.loader import HookYamlReadError, read_and_expand_hooks_yaml
+        try:
+            data = read_and_expand_hooks_yaml(
+                path, agent_name=self.agent_name, project_root=self._hot_reload_project_root(),
+            )
+        except HookYamlReadError as exc:
+            logger.warning("hooks layer %s could not be read: %s", path, exc)
+            return []
         values = (data or {}).get(key)
         return list(values) if isinstance(values, list) else []
 

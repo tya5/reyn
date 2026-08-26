@@ -46,6 +46,10 @@ from reyn.config.observability import (
 from reyn.config.root import ReynConfig  # #1682 #3 cross-section
 
 
+class HookYamlReadError(ValueError):
+    """A hooks.yaml file exists but could not be read as a mapping."""
+
+
 def _load_yaml(path: Path) -> dict:
     if not path.exists():
         return {}
@@ -957,6 +961,21 @@ def load_hot_reload_config(project_root: "Path | None" = None) -> dict:
     return expand_env(merged)
 
 
+def _load_hooks_yaml(path: Path) -> dict:
+    """Read a hooks layer while preserving parse failure for its caller."""
+    if not path.exists():
+        return {}
+    try:
+        import yaml
+        with path.open(encoding="utf-8") as f:
+            data = yaml.safe_load(f) or {}
+    except Exception as exc:
+        import logging
+        logging.getLogger(__name__).warning("failed to parse %s: %s", path, exc)
+        raise HookYamlReadError(str(exc)) from exc
+    return data if isinstance(data, dict) else {}
+
+
 def read_and_expand_hooks_yaml(
     path: Path, *, agent_name: str, project_root: Path,
 ) -> "dict | None":
@@ -991,10 +1010,14 @@ def read_and_expand_hooks_yaml(
     to) — while an arbitrary non-reyn ``${FOO}`` is left untouched, for
     whatever downstream (a spawned child process) resolves it later.
 
-    Returns ``None`` when the file is absent, malformed, or refused;
-    otherwise the parsed+expanded dict — the caller reads whichever key
-    (``hooks``/``composers``) it owns out of it."""
-    raw = _load_yaml(path)
+    Returns ``None`` when the file is absent or refused; otherwise the
+    parsed+expanded dict — the caller reads whichever key
+    (``hooks``/``composers``) it owns out of it. A file that EXISTS but
+    does not parse raises :class:`HookYamlReadError` instead of joining
+    the ``None`` cases (#5100): collapsing it there made "this layer
+    declares no hooks" and "this layer could not be read" the same value,
+    so no caller could tell them apart or report the difference."""
+    raw = _load_hooks_yaml(path)
     if not raw:
         return None
     from reyn.plugins.tokens import expand_with_map, find_unresolved_reyn_tokens
