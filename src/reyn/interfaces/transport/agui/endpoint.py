@@ -829,7 +829,7 @@ class _SessionFrameSource:
             # nothing is held at all: an empty queue yields exactly what a
             # pre-#5259 reader saw. A merged run is bounded by what the
             # provider already produced, so it cannot outgrow one reply.
-            frame, held = self._drain_delta_run(frame)
+            frame, held = await self._drain_delta_run(frame)
             # #3570, the server-side instance of the same shape as
             # ``InProcessTransport.frames``: ``_q`` is fed by SYNCHRONOUS
             # ``put_nowait`` callers (the audit-event subscriber, the forwarder),
@@ -853,7 +853,7 @@ class _SessionFrameSource:
                 if isinstance(held, DisplayFrame) and held.message.kind == "__end__":
                     return
 
-    def _drain_delta_run(self, first):
+    async def _drain_delta_run(self, first):
         """Collect the ``agent_delta`` run that ``first`` starts, if it starts one.
 
         Returns ``(frame_to_emit, frame_that_ended_the_run_or_None)``. A run is
@@ -887,6 +887,15 @@ class _SessionFrameSource:
                 break
             if _is_delta_frame(nxt) and _same_delta_run(run[-1], nxt):
                 run.append(nxt)
+                # AFTER collecting one, before reaching for the next: the
+                # collecting is what this loop does INSTEAD of encoding and
+                # writing each frame, but it is still work, and a long enough
+                # run would hold the loop for its whole length — the starvation
+                # #3570 named. Suspending here and not at the top of the loop
+                # means the turn that finds the queue empty, and the first
+                # reach, cost nothing: control is returned once per frame
+                # actually taken, never for deciding there are none.
+                await suspend_between_frames()
                 continue
             held = nxt
             break

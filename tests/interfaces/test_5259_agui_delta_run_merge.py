@@ -178,3 +178,38 @@ def test_an_end_sentinel_that_ends_a_run_still_terminates() -> None:
     out = _drain(source)
 
     assert [f.event.data["text"] for f in out] == ["ab"]
+
+
+def test_the_drain_returns_control_while_it_collects() -> None:
+    """Tier 2: collecting a run is what this connection does INSTEAD of
+    encoding each frame, but it is still work — a long run would hold the
+    server's loop for its whole length, which is the starvation #3570 named
+    (other connections' writes, the fail-close driver's timers).
+
+    Witnessed by a competing task that can only advance when this loop hands
+    control back: it must advance MORE THAN ONCE while a multi-frame run is
+    collected. Without the suspension it advances at most once, whatever the
+    run's length — so this does not measure how long anything took, only
+    whether control was returned at all.
+    """
+    source = _source_with([_delta("a"), _delta("b"), _delta("c"), _delta("d")])
+    ticks: list[int] = []
+
+    async def _run() -> None:
+        async def _competitor() -> None:
+            while True:
+                await asyncio.sleep(0)
+                ticks.append(1)
+
+        rival = asyncio.create_task(_competitor())
+        await asyncio.sleep(0)
+        ticks.clear()
+        agen = source.frames()
+        await agen.__anext__()
+        rival.cancel()
+        await agen.aclose()
+
+    asyncio.run(_run())
+
+    assert len(ticks) > 1
+
