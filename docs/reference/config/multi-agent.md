@@ -68,13 +68,13 @@ Caps how deep an agent-to-agent message chain may traverse before the runtime re
 - `depth = 2` — researcher delegates further (e.g., `researcher → archivist`) — no current producer reaches this
 - `depth = N` — Nth hop
 
-A send with `depth > max_agent_hops` is refused: the originator gets an `error` outbox message ("agent message depth N exceeds limit M; chain refused") and an `agent_message_refused` event is recorded with `reason="max_hop_depth"`. The upstream pending chain stays registered until `chain_seconds` (see below) elapses, at which point it's resolved with a synthesized error response — so a hop refusal mid-tree degrades gracefully rather than hanging.
+A send with `depth > max_agent_hops` is refused: the originator gets an `error` outbox message ("agent message depth N exceeds limit M; chain refused") and an `agent_message_refused` event is recorded with `reason="max_hop_depth"`. The upstream pending chain stays registered until `chain_seconds` (see below) elapses — what happens THEN is governed by `safety.on_limit` (FP-0005), not an unconditional error: the shipped default (`mode: interactive`) pauses and asks whether to keep waiting before synthesizing an error; only `mode: unattended` resolves it immediately as a synthesized error response. See `safety.on_limit` in `src/reyn/config/chat.py`'s `OnLimitConfig` for the full mode set — a hop refusal mid-tree degrades gracefully either way, it just doesn't necessarily resolve silently.
 
 The default of `3` was sized for `user → A → B → C` (= 3 hops) under the pre-retirement multi-hop model. Today, any value `>= 1` behaves identically (agent-to-agent messaging enabled); raise it above `3` only once a producer exists that can create depth beyond 1. `0` does not reject a `run_prompt(async)` call outright — the caller still gets a `task_id` back — but delivery is refused and the chain resolves as a timeout error via `chain_seconds`, so it still guarantees the message never reaches the target, just not synchronously.
 
 ## `safety.timeout.chain_seconds` (float, default `60.0`)
 
-Wall-clock budget for a pending chain. `run_prompt(collect="async")`'s registered chain arms this watchdog the same way the pre-retirement model did; if the target never replies, after `chain_seconds` the runtime synthesizes an error response upstream:
+Wall-clock budget for a pending chain. `run_prompt(collect="async")`'s registered chain arms this watchdog the same way the pre-retirement model did. What happens when the watchdog fires is `safety.on_limit`-gated (FP-0005, `ChainTimeoutGlue.on_chain_timeout_fire`): the shipped default (`mode: interactive`) pauses and asks whether to re-arm with a fresh deadline; only `mode: unattended` synthesizes the error response immediately, unconditionally. Under `unattended` (or once `interactive` is refused/times out), the runtime synthesizes:
 
 ```
 chain timeout: 1 delegate(s) (gamma) did not respond within 60s

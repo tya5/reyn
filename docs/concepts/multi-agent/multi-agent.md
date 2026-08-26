@@ -119,7 +119,7 @@ Every top-level user submission mints a `chain_id` (uuid4 hex) at `submit_user_t
 
 ## max_hop_depth
 
-`safety.loop.max_agent_hops` (default `3`) is a depth cap inherited from the retired multi-hop model above. `run_prompt(async)` always registers at `depth=1` and has no mechanism to increment it further, so any positive value behaves identically today; the setting's live effect is now a `run_prompt(async)`-delivery on/off switch (`0` refuses delivery, resolving the call as a timeout error rather than failing it outright), not a depth limit. See [reference: multi-agent config](../../reference/config/multi-agent.md) for the exact mechanics.
+`safety.loop.max_agent_hops` (default `3`) is a depth cap inherited from the retired multi-hop model above. `run_prompt(async)` always registers at `depth=1` and has no mechanism to increment it further, so any positive value behaves identically today; the setting's live effect is now a `run_prompt(async)`-delivery on/off switch (`0` refuses delivery, then `chain_seconds`'s own `safety.on_limit`-gated resolution decides what happens next — the shipped default asks whether to keep waiting rather than failing it outright unconditionally). See [reference: multi-agent config](../../reference/config/multi-agent.md) for the exact mechanics.
 
 ## What the OS does NOT manage
 
