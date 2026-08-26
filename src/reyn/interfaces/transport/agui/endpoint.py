@@ -587,7 +587,12 @@ class _SessionFrameSource:
             session, "_audit_events", None
         )
         if self._events is not None:
-            self._events.add_subscriber(self._on_audit_event)
+            # #5260: the same set ``_on_audit_event`` filters on, declared at
+            # registration so the dispatcher skips instead of this connection
+            # being called once per event only to return. Fixed for the life of
+            # the source (``forwarded_frame_kinds()`` is read once, above), which
+            # is what makes it declarable at all.
+            self._events.add_subscriber(self._on_audit_event, kinds=self._forward)
 
     def _unbind(self, session) -> None:
         events = getattr(session, "audit_events", None) or getattr(
