@@ -969,6 +969,20 @@ class ChatConfig:
     still-open design question (#4840's own thread) — this knob does not
     answer it; it just stops silently discarding whatever name an operator
     already knows to type.
+
+    ``stream_repaint_min_interval`` (#5135-adjacent, this knob's own issue):
+    the minimum wall-clock gap, in SECONDS, between two repaints of the same
+    streamed reply in the TTY conversation pane. The default is the measured
+    knee documented on ``textual_chat.app._STREAM_REPAINT_MIN_INTERVAL``
+    (2000 deltas / 60 KB reply: ``set_item`` 1979 -> 75, wall-clock 16.1 s ->
+    3.3 s) and this knob does not change it — it exists because that measure
+    was taken on one terminal, and a slower one (SSH, a corporate laptop, a
+    terminal multiplexer) has a different knee that nobody can reach without
+    editing source. Seconds, not milliseconds like its ``events:`` sibling:
+    the measured value is a fraction (1/30), and expressing it in whole ms
+    would silently move the shipped default. Raising it trades update
+    smoothness for loop time; it can never lose text (the accumulation is
+    unconditional and a catch-up timer bounds every deferral).
     """
     compaction: CompactionConfig = field(default_factory=CompactionConfig)
     reasoning: ReasoningConfig = field(default_factory=ReasoningConfig)
@@ -978,6 +992,7 @@ class ChatConfig:
     image_url_schemes: "list[str]" = field(default_factory=list)
     empty_stop_retry: bool = False
     theme: "str | None" = None
+    stream_repaint_min_interval: float = 1 / 30
 
 
 def _build_reasoning_config(raw: object) -> ReasoningConfig:
@@ -1045,12 +1060,24 @@ def _build_chat_config(raw: object) -> ChatConfig:
     # list here).
     raw_theme = raw.get("theme")
     theme = str(raw_theme) if raw_theme is not None else None
+    # The TTY streamed-reply repaint budget. A non-positive or unparseable
+    # value falls back to the default rather than disabling the budget: 0
+    # would mean "repaint every delta", which is the pre-#3570 behaviour the
+    # measurement in the field's docstring exists to keep operators out of.
+    _raw_repaint = raw.get("stream_repaint_min_interval")
+    try:
+        stream_repaint_min_interval = float(_raw_repaint)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        stream_repaint_min_interval = ChatConfig().stream_repaint_min_interval
+    if stream_repaint_min_interval <= 0:
+        stream_repaint_min_interval = ChatConfig().stream_repaint_min_interval
     compaction_raw = raw.get("compaction") or {}
     if not isinstance(compaction_raw, dict):
         return ChatConfig(  # type: ignore[arg-type]
             reasoning=reasoning, render_mode=render_mode, gutters=gutters,
             neutralize_body=neutralize_body, image_url_schemes=image_url_schemes,
             empty_stop_retry=empty_stop_retry, theme=theme,
+            stream_repaint_min_interval=stream_repaint_min_interval,
         )
     # #1128: head_size/tail_size (step 3) + trigger_total_tokens/min_compact_batch
     # (PR-a, axis-1 removal) were removed — head/tail sizing is token-budget via
@@ -1141,6 +1168,7 @@ def _build_chat_config(raw: object) -> ChatConfig:
         gutters=gutters, neutralize_body=neutralize_body,
         image_url_schemes=image_url_schemes, empty_stop_retry=empty_stop_retry,
         theme=theme,
+        stream_repaint_min_interval=stream_repaint_min_interval,
     )
 
 
