@@ -5,6 +5,7 @@ import contextvars
 import inspect
 import logging
 import secrets
+from collections.abc import Iterable
 from datetime import date
 from pathlib import Path
 from typing import Awaitable, Callable, Union
@@ -80,6 +81,10 @@ class EventLog:
         # collect_events() migration first.
         self._ingested: dict[str, str] = {}
         self._subscribers: list[Subscriber] = list(subscribers or [])
+        # #5260: declared interest, per subscriber. Absent = every event (the
+        # pre-#5260 contract). Kept beside the list rather than inside it so
+        # ``subscribers`` stays a list of callables for its existing readers.
+        self._subscriber_kinds: "dict[Subscriber, frozenset[str]]" = {}
         # FP-0016 Component E: agent_id is auto-injected into every event
         # payload when set. None preserves prior behaviour for callers
         # (= tests + emit_cli_event) that don't have a session identity.
@@ -249,8 +254,30 @@ class EventLog:
         without reaching into private state."""
         return self._emitter
 
-    def add_subscriber(self, fn: Subscriber) -> None:
+    def add_subscriber(self, fn: Subscriber, *, kinds: "Iterable[str] | None" = None) -> None:
+        """Register *fn*; with ``kinds``, only for those event types (#5260).
+
+        Every subscriber used to be called for every event and filter itself on
+        the way in — the same decision written out at each of them, and a cost
+        paid per event per subscriber for the ones that only ever wanted a few
+        kinds. Declaring it here moves the decision to where the subscriber is
+        registered, and lets the dispatcher skip instead of the subscriber
+        returning.
+
+        ``kinds=None`` keeps the pre-#5260 contract exactly: every event. A
+        subscriber whose interest is dynamic (computed per event, not fixed at
+        registration) must keep filtering itself and pass nothing here — the
+        declaration is an optimisation of a FIXED interest, and claiming a fixed
+        one that is not fixed drops events silently.
+        """
         self._subscribers.append(fn)
+        if kinds is not None:
+            self._subscriber_kinds[fn] = frozenset(kinds)
+
+    def _wants(self, sub: Subscriber, event: "Event") -> bool:
+        """Whether *sub* declared an interest that excludes this event (#5260)."""
+        declared = self._subscriber_kinds.get(sub)
+        return declared is None or event.type in declared
 
     async def drain(self) -> None:
         """#4961 C (architect finding): wait until every event pushed to
@@ -452,9 +479,16 @@ class EventLog:
         """
         try:
             self._subscribers.remove(fn)
-            return True
         except ValueError:
             return False
+        # #5260: the declaration goes with it. This method exists so the
+        # subscriber list does not grow unboundedly across many scoped calls
+        # (the docstring above says so); a declaration dict that kept an entry
+        # per departed subscriber would grow at exactly the rate this bounds —
+        # and each entry holds the callable, so a closure's session would go
+        # with it.
+        self._subscriber_kinds.pop(fn, None)
+        return True
 
     def emit(self, type: str, **data) -> Event:
         # FP-0016 Component E: stamp the session's agent_id onto every
@@ -583,6 +617,8 @@ class EventLog:
         construction, so this path is not expected to fire in practice.
         """
         for sub in self._subscribers:
+            if not self._wants(sub, event):
+                continue
             try:
                 result = sub(event)
                 if inspect.isawaitable(result):
@@ -735,6 +771,8 @@ class EventLog:
                 event = await self._dispatch_queue.get()
                 try:
                     for sub in self._subscribers:
+                        if not self._wants(sub, event):
+                            continue
                         try:
                             result = sub(event)
                             if inspect.isawaitable(result):
