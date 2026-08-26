@@ -969,6 +969,20 @@ class ChatConfig:
     still-open design question (#4840's own thread) — this knob does not
     answer it; it just stops silently discarding whatever name an operator
     already knows to type.
+
+    ``stream_repaint_min_interval`` (#5135-adjacent, this knob's own issue):
+    the minimum wall-clock gap, in SECONDS, between two repaints of the same
+    streamed reply in the TTY conversation pane. The default is the measured
+    knee documented on ``textual_chat.app._STREAM_REPAINT_MIN_INTERVAL``
+    (2000 deltas / 60 KB reply: ``set_item`` 1979 -> 75, wall-clock 16.1 s ->
+    3.3 s) and this knob does not change it — it exists because that measure
+    was taken on one terminal, and a slower one (SSH, a corporate laptop, a
+    terminal multiplexer) has a different knee that nobody can reach without
+    editing source. Seconds, not milliseconds like its ``events:`` sibling:
+    the measured value is a fraction (1/30), and expressing it in whole ms
+    would silently move the shipped default. Raising it trades update
+    smoothness for loop time; it can never lose text (the accumulation is
+    unconditional and a catch-up timer bounds every deferral).
     """
     compaction: CompactionConfig = field(default_factory=CompactionConfig)
     reasoning: ReasoningConfig = field(default_factory=ReasoningConfig)
@@ -978,6 +992,7 @@ class ChatConfig:
     image_url_schemes: "list[str]" = field(default_factory=list)
     empty_stop_retry: bool = False
     theme: "str | None" = None
+    stream_repaint_min_interval: float = 1 / 30
 
 
 def _build_reasoning_config(raw: object) -> ReasoningConfig:
@@ -1045,12 +1060,44 @@ def _build_chat_config(raw: object) -> ChatConfig:
     # list here).
     raw_theme = raw.get("theme")
     theme = str(raw_theme) if raw_theme is not None else None
+    # The TTY streamed-reply repaint budget. A non-positive or unparseable
+    # value falls back to the default rather than disabling the budget: 0
+    # would mean "repaint every delta", which is the pre-#3570 behaviour the
+    # measurement in the field's docstring exists to keep operators out of.
+    _raw_repaint = raw.get("stream_repaint_min_interval")
+    _repaint_default = ChatConfig().stream_repaint_min_interval
+    _repaint_rejected: object = None
+    try:
+        stream_repaint_min_interval = float(_raw_repaint)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        if _raw_repaint is not None:
+            _repaint_rejected = _raw_repaint
+        stream_repaint_min_interval = _repaint_default
+    if stream_repaint_min_interval <= 0:
+        _repaint_rejected = _raw_repaint
+        stream_repaint_min_interval = _repaint_default
+    if _repaint_rejected is not None:
+        # The substitution is announced, not silent: without this an operator
+        # who typed 0 and one who never wrote the key at all read the same
+        # running config back, so "my setting did nothing" is indistinguishable
+        # from "I never set it". Same shape as the hooks.yaml token warning in
+        # `loader.py` — refuse the value, say so, keep the session running.
+        import warnings
+        warnings.warn(
+            f"chat.stream_repaint_min_interval={_repaint_rejected!r} is not a "
+            f"positive number of seconds -- using the default {_repaint_default!r}. "
+            "0 or negative would repaint on every delta, which is the "
+            "pre-measurement behaviour this budget exists to avoid.",
+            UserWarning,
+            stacklevel=2,
+        )
     compaction_raw = raw.get("compaction") or {}
     if not isinstance(compaction_raw, dict):
         return ChatConfig(  # type: ignore[arg-type]
             reasoning=reasoning, render_mode=render_mode, gutters=gutters,
             neutralize_body=neutralize_body, image_url_schemes=image_url_schemes,
             empty_stop_retry=empty_stop_retry, theme=theme,
+            stream_repaint_min_interval=stream_repaint_min_interval,
         )
     # #1128: head_size/tail_size (step 3) + trigger_total_tokens/min_compact_batch
     # (PR-a, axis-1 removal) were removed — head/tail sizing is token-budget via
@@ -1141,6 +1188,7 @@ def _build_chat_config(raw: object) -> ChatConfig:
         gutters=gutters, neutralize_body=neutralize_body,
         image_url_schemes=image_url_schemes, empty_stop_retry=empty_stop_retry,
         theme=theme,
+        stream_repaint_min_interval=stream_repaint_min_interval,
     )
 
 

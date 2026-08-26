@@ -191,6 +191,22 @@ def _configured_gutter_visibility(config) -> "tuple[bool, bool]":
         return (defaults.left, defaults.right)
 
 
+def _configured_stream_repaint_interval(config) -> float:
+    """The #3570 repaint budget, in seconds, from ``chat.stream_repaint_min_interval``.
+
+    Same shape as :func:`_configured_gutter_visibility`: the default lives on
+    the config dataclass, not re-typed here, and a missing/partial config (a
+    remote client that carries none) falls back to it. The module constant
+    stays the ONE place the measured knee is written down —
+    :class:`~reyn.config.chat.ChatConfig` seeds its own default from it."""
+    if config is None:
+        return _STREAM_REPAINT_MIN_INTERVAL
+    try:
+        return float(config.chat.stream_repaint_min_interval)
+    except (AttributeError, TypeError, ValueError):
+        return _STREAM_REPAINT_MIN_INTERVAL
+
+
 def empty_state_hint() -> "object":
     """The conversation pane's empty-state hint (#3476 ②, flowview 0.6.0
     ``empty=``): shown across the viewport while the model has no entries — a
@@ -1317,6 +1333,9 @@ class TextualChatApp(App):
 
         self._destination = _Destination(agent=agent_name, session_id=_DEFAULT_SID)
         self._config = config
+        #3570: the repaint budget is per app, read once — a mid-session config
+        # reload must not change the pace a reply already streaming is painted at.
+        self._stream_repaint_min_interval = _configured_stream_repaint_interval(config)
         # #4983: the CURRENTLY-ATTACHED session's conversation history,
         # read BEFORE this App was constructed (the caller — normally
         # ``run_textual_chat``'s own pre-``run_async`` step — reads it off
@@ -6308,7 +6327,7 @@ class TextualChatApp(App):
         viewer sees nothing until completion) or stop arriving entirely (a model
         that pauses mid-reply must not leave its last chunk unpainted until the
         completion frame)."""
-        if self._clock() - record.last_repaint >= _STREAM_REPAINT_MIN_INTERVAL:
+        if self._clock() - record.last_repaint >= self._stream_repaint_min_interval:
             self._flush_streaming_reply(record)
             return
         self._schedule_streaming_catchup()
@@ -6329,7 +6348,7 @@ class TextualChatApp(App):
             return
         try:
             self._streaming_catchup = self.set_timer(
-                _STREAM_REPAINT_MIN_INTERVAL, self._flush_pending_streaming_replies
+                self._stream_repaint_min_interval, self._flush_pending_streaming_replies
             )
         except Exception:
             logger.exception("textual chat: could not arm the streamed-reply catch-up")
