@@ -296,7 +296,7 @@ This implements the "private first, public fallback" pattern: servers from the p
 
 See [Concepts: permission model](../runtime/permission-model.md) → "Collapse arc" for the full migration story.
 
-> Legacy `permissions.mcp_install: ...` keys in older `reyn.yaml` files are accepted with a `DeprecationWarning` and translate to the equivalent gates during the migration window.
+> A legacy `permissions.mcp_install: ...` key in an older `reyn.yaml` no longer translates to anything (#571 collapse arc Phase 5, commit `f634f64c8`, removed the compat shim that used to expand it into `file.write`/`http.get` gates) — it establishes no runtime authority at all. `_LEGACY_BOOL_AXIS_KEYS` in `permissions.py` only emits a `DeprecationWarning` on the key; `install` is gated by the same explicit `file.write`/`http.get`/`secret.write` axes as any other write-and-fetch action — see [reference: `mcp_install`](../../reference/cli/mcp.md#permission-interaction-mcp_install).
 
 ### Pre-commit probe gate: `permissions.mcp` (#3552)
 
