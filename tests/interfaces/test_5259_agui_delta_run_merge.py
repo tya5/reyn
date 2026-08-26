@@ -178,3 +178,36 @@ def test_an_end_sentinel_that_ends_a_run_still_terminates() -> None:
     out = _drain(source)
 
     assert [f.event.data["text"] for f in out] == ["ab"]
+
+
+def test_the_drain_returns_control_while_it_collects() -> None:
+    """Tier 2: collecting a run is what this connection does INSTEAD of
+    encoding each frame, but it is still work — a long run would hold the
+    server's loop for its whole length, which is the starvation #3570 named
+    (other connections' writes, the fail-close driver's timers).
+
+    Witnessed by a competing task that needs TWO turns to finish. One turn it
+    gets either way: ``frames()`` already suspended once before yielding its
+    frame, and that alone is what this test must not mistake for the property.
+    A SECOND turn exists only if the collecting loop handed control back too —
+    so the witness is whether that task ran to completion, not how long
+    anything took nor how many turns were counted.
+    """
+    source = _source_with([_delta("a"), _delta("b"), _delta("c"), _delta("d")])
+    reached_its_second_turn = asyncio.Event()
+
+    async def _run() -> None:
+        async def _competitor() -> None:
+            await asyncio.sleep(0)
+            await asyncio.sleep(0)
+            reached_its_second_turn.set()
+
+        rival = asyncio.create_task(_competitor())
+        agen = source.frames()
+        await agen.__anext__()
+        rival.cancel()
+        await agen.aclose()
+
+    asyncio.run(_run())
+
+    assert reached_its_second_turn.is_set()
