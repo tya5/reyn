@@ -198,6 +198,8 @@ text, always — this flag governs the durable write only) and
 `history.jsonl` (the completed reply's own persistence is a separate
 mechanism entirely, untouched by this).
 
+> #5259: on the AG-UI wire specifically, fragments that were already waiting in a connection's queue leave as one frame — the text is identical, the frame count is not. The durable side above is unaffected: it coalesces separately, and its `coalesced_fragment_count` still counts fragments.
+
 ### The completed model→user text is ANOTHER, separate opt-in (#4666②)
 
 `agent_delta_include_text` above gates the STREAMED fragments' content.
