@@ -915,6 +915,8 @@ knob exists: a slower terminal (SSH, a multiplexer, a remote desktop) has
 a different knee, and before this field the only way to reach it was to
 edit source.
 
+Seconds, not the milliseconds its `events:` sibling (`agent_delta_coalesce_interval_ms`) uses: the measured value is `1/30`, and a whole-millisecond field would round it — moving the shipped default as a side effect of picking a unit. Do not "unify" the two without changing the default deliberately.
+
 Raising it trades update smoothness for loop time. It can never lose
 text: the reply's accumulation is unconditional, and a catch-up timer
 bounds every deferral to one interval. A non-positive value falls back to

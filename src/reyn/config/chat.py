@@ -1065,12 +1065,32 @@ def _build_chat_config(raw: object) -> ChatConfig:
     # would mean "repaint every delta", which is the pre-#3570 behaviour the
     # measurement in the field's docstring exists to keep operators out of.
     _raw_repaint = raw.get("stream_repaint_min_interval")
+    _repaint_default = ChatConfig().stream_repaint_min_interval
+    _repaint_rejected: object = None
     try:
         stream_repaint_min_interval = float(_raw_repaint)  # type: ignore[arg-type]
     except (TypeError, ValueError):
-        stream_repaint_min_interval = ChatConfig().stream_repaint_min_interval
+        if _raw_repaint is not None:
+            _repaint_rejected = _raw_repaint
+        stream_repaint_min_interval = _repaint_default
     if stream_repaint_min_interval <= 0:
-        stream_repaint_min_interval = ChatConfig().stream_repaint_min_interval
+        _repaint_rejected = _raw_repaint
+        stream_repaint_min_interval = _repaint_default
+    if _repaint_rejected is not None:
+        # The substitution is announced, not silent: without this an operator
+        # who typed 0 and one who never wrote the key at all read the same
+        # running config back, so "my setting did nothing" is indistinguishable
+        # from "I never set it". Same shape as the hooks.yaml token warning in
+        # `loader.py` — refuse the value, say so, keep the session running.
+        import warnings
+        warnings.warn(
+            f"chat.stream_repaint_min_interval={_repaint_rejected!r} is not a "
+            f"positive number of seconds -- using the default {_repaint_default!r}. "
+            "0 or negative would repaint on every delta, which is the "
+            "pre-measurement behaviour this budget exists to avoid.",
+            UserWarning,
+            stacklevel=2,
+        )
     compaction_raw = raw.get("compaction") or {}
     if not isinstance(compaction_raw, dict):
         return ChatConfig(  # type: ignore[arg-type]

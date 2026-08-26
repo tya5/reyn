@@ -13,8 +13,10 @@ real entrypoint surfaces it (the gap #4899 found on a sibling field).
 """
 from __future__ import annotations
 
+import warnings
 from pathlib import Path
 
+import pytest
 import yaml
 
 from reyn.config.chat import ChatConfig, _build_chat_config
@@ -107,3 +109,27 @@ def test_absent_from_yaml_keeps_the_default_through_load_config(
     cfg = load_config(tmp_path)
 
     assert cfg.chat.stream_repaint_min_interval == 1 / 30
+
+
+def test_a_rejected_value_is_announced_not_silently_substituted() -> None:
+    """Tier 1: an operator who typed 0 and one who never wrote the key must
+    not read back the same running config with nothing said. The fallback
+    keeps the session up; the warning is what makes it distinguishable."""
+    with pytest.warns(UserWarning, match="stream_repaint_min_interval"):
+        _build_chat_config({"stream_repaint_min_interval": 0})
+    with pytest.warns(UserWarning, match="stream_repaint_min_interval"):
+        _build_chat_config({"stream_repaint_min_interval": "fast"})
+
+
+def test_an_accepted_value_and_an_absent_key_are_both_silent() -> None:
+    """Tier 1: falsification pair — the warning fires on the rejection, not
+    on every parse. Without this the assertion above would still pass if the
+    parser warned unconditionally."""
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        assert _build_chat_config(
+            {"stream_repaint_min_interval": 0.2},
+        ).stream_repaint_min_interval == 0.2
+        assert _build_chat_config(
+            {"render_mode": "plain"},
+        ).stream_repaint_min_interval == 1 / 30
