@@ -109,3 +109,30 @@ def test_the_subscribers_view_still_lists_a_declared_subscriber() -> None:
     log.add_subscriber(sub, kinds={"a"})
 
     assert log.subscribers == [sub]
+
+
+def test_removing_a_declared_subscriber_forgets_its_declaration() -> None:
+    """Tier 2: ``remove_subscriber`` exists so a scoped consumer subscribing
+    per call does not grow the subscriber list without bound. A declaration
+    that outlived its subscriber would grow at exactly that rate — and it
+    holds the callable, so whatever a closure captured goes with it.
+
+    Witnessed through the public surface only: re-adding the SAME callable
+    with no declaration must receive every kind. If the stale entry survived,
+    the old declaration would still be filtering it.
+    """
+    log = _log()
+    seen: list[str] = []
+
+    def sub(event) -> None:
+        seen.append(event.type)
+
+    log.add_subscriber(sub, kinds={"a"})
+    assert log.remove_subscriber(sub) is True
+    log.add_subscriber(sub)
+
+    log.emit("a")
+    log.emit("b")
+
+    assert seen == ["a", "b"]
+

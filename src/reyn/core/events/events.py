@@ -479,9 +479,16 @@ class EventLog:
         """
         try:
             self._subscribers.remove(fn)
-            return True
         except ValueError:
             return False
+        # #5260: the declaration goes with it. This method exists so the
+        # subscriber list does not grow unboundedly across many scoped calls
+        # (the docstring above says so); a declaration dict that kept an entry
+        # per departed subscriber would grow at exactly the rate this bounds —
+        # and each entry holds the callable, so a closure's session would go
+        # with it.
+        self._subscriber_kinds.pop(fn, None)
+        return True
 
     def emit(self, type: str, **data) -> Event:
         # FP-0016 Component E: stamp the session's agent_id onto every
