@@ -337,8 +337,16 @@ async def test_the_server_frame_source_suspends_between_frames_of_a_burst(
     source.start()
     try:
         for i in range(count + 5):
+            # #5259: a per-connection drain now collapses a run of CONSECUTIVE
+            # same-chain deltas into one frame, so a same-chain burst no longer
+            # produces a burst of FRAMES — there would be nothing to measure a
+            # gap between. Alternating the chain keeps every delta its own
+            # frame, which is the shape this test is about: the queue is full
+            # and ``get()`` stops suspending, so the drain must return to the
+            # loop itself. (For the same-chain case #5259 removes the starvation
+            # rather than mitigating it: one frame, one encode.)
             session.router_host.events.emit(
-                "agent_delta", text=f"d{i}", chain_id="chain"
+                "agent_delta", text=f"d{i}", chain_id=f"chain{i % 2}"
             )
         gaps = await _suspension_gaps_while_draining(source.frames(), count=count)
 
