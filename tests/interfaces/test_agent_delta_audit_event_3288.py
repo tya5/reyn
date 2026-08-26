@@ -25,6 +25,7 @@ with a real async callable (never a mock, per testing.md) that invokes the
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime
 from pathlib import Path
 
 from reyn.core.events.events import Event
@@ -99,8 +100,17 @@ def test_agent_delta_events_fire_and_history_stays_whole_persist(tmp_path, monke
             "RouterLoop must thread on_content_delta into call_llm_tools "
             "for this to be a real streaming-wiring witness"
         )
+        # #5261: on_content_delta is now called per MERGED batch, carrying
+        # ①raw_chunk_count and ②first/last arrival. This fake stand-in
+        # drives call sites directly (it doesn't exercise the real
+        # ``_stream_and_reconstruct`` merge machinery — that's covered in
+        # ``tests/llm/test_llm_streaming_delta_emission_3288.py``), so each
+        # piece here stands in as its OWN unmerged batch of 1 raw chunk —
+        # the same "no field ⇒ 1" fact ``backend.py``'s summing fix relies
+        # on for a caller that predates #5261's merging.
         for piece in _PIECES:
-            on_delta(piece)
+            now = datetime.now().astimezone()
+            on_delta(piece, raw_chunk_count=1, first_arrival=now, last_arrival=now)
         return LLMToolCallResult(
             content=_FULL_TEXT, tool_calls=[], finish_reason="stop", usage=_EMPTY_USAGE,
         )
@@ -115,6 +125,11 @@ def test_agent_delta_events_fire_and_history_stays_whole_persist(tmp_path, monke
     delta_events = [e for e in sink.events if e.type == "agent_delta"]
     assert [e.data.get("text") for e in delta_events] == _PIECES
     assert all(e.data.get("chain_id") == "chain-delta-1" for e in delta_events)
+    # #5261: architect's mandatory condition — every "agent_delta" event
+    # carries the raw chunk count and arrival window it stands in for, all
+    # the way out to the audit-event, not just inside RouterLoop.
+    assert all(e.data.get("raw_chunk_count") == 1 for e in delta_events)
+    assert all(e.data.get("first_arrival") and e.data.get("last_arrival") for e in delta_events)
 
     # (2) the outbox NEVER carries a partial — exactly one kind="agent"
     # message, the FULL text. An "agent_delta" outbox entry never appears

@@ -32,6 +32,7 @@ the only faked boundary, the established idiom of
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime
 from pathlib import Path
 
 import pytest
@@ -161,7 +162,8 @@ def _install_bursting_llm(monkeypatch, *, chunks: int) -> None:
             "to be a real streaming-wiring witness"
         )
         for _ in range(chunks):
-            on_delta(_CHUNK)
+            now = datetime.now().astimezone()
+            on_delta(_CHUNK, raw_chunk_count=1, first_arrival=now, last_arrival=now)
         return LLMToolCallResult(
             content=_CHUNK * chunks,
             tool_calls=[],
@@ -499,7 +501,8 @@ async def test_a_deferred_repaint_is_painted_within_the_budget_window(
     async def _fake_llm(*_args, **kwargs):
         on_delta = kwargs["on_content_delta"]
         for _ in range(50):
-            on_delta(_CHUNK)
+            now = datetime.now().astimezone()
+            on_delta(_CHUNK, raw_chunk_count=1, first_arrival=now, last_arrival=now)
         await released.wait()  # the reply never completes during the assertion
         return LLMToolCallResult(
             content=_CHUNK * 50, tool_calls=[], finish_reason="stop", usage=_USAGE
