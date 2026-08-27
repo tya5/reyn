@@ -247,7 +247,7 @@ def test_chat_session_register_intervention_listener_round_trip() -> None:
 
 @pytest.mark.replay("fixtures/llm/intervention_guard/safety_limit_no_listener.jsonl")
 def test_interactive_no_timeout_no_listener_normal_turn_no_hang(
-    tmp_path: Path, _llm_replay,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, _llm_replay,
 ) -> None:
     """Tier 2: a Session built with the issue #254 combo — ``mode=interactive``
     + ``ask_timeout_seconds=0`` + no UI listener registered — runs a normal
@@ -295,21 +295,54 @@ def test_interactive_no_timeout_no_listener_normal_turn_no_hang(
     itself hang or misbehave — a regression guard on the wiring, not on the
     cap-exceeded mechanism.
 
-    The test asserts the run completes within a small wall-clock budget
-    — a 5s ceiling is generous; pre-fix (#254) the same path waited the
-    entire pytest-timeout window.
+    #5347: this used to assert ONLY that the drive completed within a 5s
+    wall-clock ceiling (CLAUDE.md testing policy: a test writes no duration
+    an assertion depends on) — and the ceiling being satisfied was
+    ORTHOGONAL to whether the turn actually succeeded. ``_handle_inbox_text``
+    carries a catch-all (the same one #5329 traced) that logs any router-loop
+    exception, converts it to a ``kind="error"`` outbox message, and returns
+    NORMALLY for an interactive (non-ephemeral) session — so a real
+    ``MissingFixture`` (a stale/drifted replay fixture) completed just as
+    "promptly" as a genuine successful reply, and this test could not tell
+    the two apart. #5283's own unconsumed-entry gate is what surfaced this:
+    the fixture's 2 completion entries never matched (tool schema drift) and
+    were removed as dead weight in #5342, which is what made this gap
+    visible. Fixed on both axes: no wall-clock ceiling (CI's own
+    ``--timeout=120`` is the kill switch — see CLAUDE.md's testing policy,
+    "no @pytest.mark.timeout, wait on the condition unboundedly"), and the
+    outbox is drained and checked for a real ``kind="error"`` message
+    afterward, same pattern ``test_router_cap.py``'s own "no exhaustion
+    event was emitted" assertion uses.
 
     #3435: this turn's router call reaches ``litellm.acompletion`` for
-    real (``make_session`` gives it no LLM stand-in), so on an unauthenticated
-    CI runner the assertion above raced a live network round trip instead of
-    the code under test — on a loaded runner the retry/backoff after the
-    connection failure can outlast the 5s ceiling, independent of any code
-    change (docs-only commits reproduced it; see issue #3435). Pinned via
+    real (``make_session`` gives it no LLM stand-in). Pinned via
     the repo's standard ``@pytest.mark.replay`` + ``_llm_replay`` fixture
     (``LLMReplay``, not a mock) so the interval this test measures contains
     only the code under test, same as every other Session-driving test in
     this file's neighbourhood (grep ``_llm_replay`` across ``tests/``).
+
+    #5347 (second finding, same investigation): even a freshly-recorded,
+    genuinely matching fixture entry still MissingFixture'd on the very
+    next separate pytest invocation. Measured (real text diff, not just
+    the key digest, per lead-coder's ruling on this issue): the ONLY
+    difference between two runs' system prompts was the ``cwd:`` line —
+    pytest's own auto-numbered per-invocation tmp dir
+    (``.../pytest-2380/...`` vs ``.../pytest-2381/...``) flows into
+    ``RouterHostAdapter.get_cwd()`` and into the system prompt, which
+    ``LLMReplay.key()`` hashes. Exactly the hazard
+    ``test_fp0063_arc_witness.py``'s own module docstring names and pins
+    against (``get_cwd`` / ``get_environment_info``) — same fix here.
     """
+    from reyn.runtime.services.router_host_adapter import RouterHostAdapter
+
+    # #5347: pin the two system-prompt fields that would otherwise silently
+    # invalidate the committed fixture's LLMReplay key on every other run —
+    # see the docstring paragraph above.
+    monkeypatch.setattr(RouterHostAdapter, "get_cwd", lambda self: "/fixture/project")
+    monkeypatch.setattr(
+        RouterHostAdapter, "get_environment_info", lambda self: {"date": "2024-01-01"},
+    )
+
     safety = SafetyConfig(
         loop=LoopConfig(max_router_calls_per_turn=3),
         on_limit=OnLimitConfig(mode="interactive", ask_timeout_seconds=0.0),
@@ -323,10 +356,24 @@ def test_interactive_no_timeout_no_listener_normal_turn_no_hang(
     # DELIBERATELY do not register a listener — that is the test condition.
 
     async def _drive() -> None:
-        # Must complete promptly — pre-Phase 1 this awaited forever.
-        await asyncio.wait_for(
-            session._handle_inbox_text("こんにちは", chain_id="chain-no-listener"),
-            timeout=5.0,
-        )
+        # #5347: no wall-clock ceiling — a real hang is caught by CI's own
+        # --timeout=120 (pytest-timeout), attributed to this test by name,
+        # same discipline CLAUDE.md's testing policy names explicitly.
+        await session._handle_inbox_text("こんにちは", chain_id="chain-no-listener")
 
     asyncio.run(_drive())
+
+    # #5347: the turn must have genuinely SUCCEEDED, not merely returned
+    # promptly — same "no exhaustion event was emitted" shape
+    # test_router_cap.py's own outbox-drain assertions use.
+    msgs = []
+    while not session.outbox.empty():
+        msgs.append(session.outbox.get_nowait())
+    error_msgs = [m for m in msgs if m.kind == "error"]
+    assert not error_msgs, (
+        f"the turn must complete successfully, not merely promptly — "
+        f"got: {[m.text for m in error_msgs]}"
+    )
+    assert any(m.kind == "agent" for m in msgs), (
+        "expected a real agent reply in the outbox"
+    )
