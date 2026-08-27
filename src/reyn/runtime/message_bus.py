@@ -161,6 +161,12 @@ class MessageBus:
 
             # Pump one iteration if inbox has work; otherwise yield briefly.
             if not agent.inbox.empty():
+                if getattr(agent, "session_completed", False):
+                    logger.warning(
+                        "MessageBus.request: session completed; leaving queued inbox work "
+                        "undispatched"
+                    )
+                    break
                 await agent.run_one_iteration()
             else:
                 await asyncio.sleep(_QUIESCENCE_POLL_INTERVAL)

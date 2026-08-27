@@ -27,6 +27,7 @@ from reyn.runtime.transport import (
     SystemRef,
     TuiRef,
 )
+from reyn.runtime.turn_origin import TurnOrigin
 from tests._support.agent_session import make_session
 
 # ---------------------------------------------------------------------------
@@ -344,6 +345,27 @@ def test_routing_layer_registered_types():
 # ---------------------------------------------------------------------------
 # Component D: MessageBus
 # ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_message_bus_stops_after_session_completed(tmp_path, monkeypatch, caplog):
+    """Tier 2: completed sessions do not dispatch queued MessageBus work."""
+    session = _make_session(tmp_path)
+    processed = []
+
+    async def handle(text, *, chain_id):
+        processed.append(text)
+
+    monkeypatch.setattr(Session, "_handle_inbox_text", handle)
+    session._session_completed = True
+    await session.inbox.put(("user", {"text": "late"}))
+    replies = await MessageBus().request(
+        session, TurnOrigin.EXTERNAL_MESSAGE, {"text": "new"},
+        A2aRef(request_id="r"), timeout=0.01,
+    )
+    assert processed == []
+    assert replies == []
+    assert any("session completed" in record.message for record in caplog.records)
 
 
 @pytest.mark.asyncio

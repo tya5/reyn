@@ -1218,6 +1218,7 @@ class Session:
         # Kept directly (not only via journal), see docs/reference/runtime/session-construction.md#family-2-recovery-wal-journal
         self._state_log = state_log
         self._halted_reason: "str | None" = None  # #2259 PR-3: set on FAIL-STOP, see session-construction.md#family-2-recovery-wal-journal
+        self._session_completed = False
         # In-memory buffer of restored-then-resolved intervention answers (PR-intervention-link L6, see docs/reference/runtime/session-construction.md#safety-limits-interactive-mode)
         self._buffered_intervention_answers: dict[str, "InterventionAnswer"] = {}
         # In-memory staging for wake=false ride-along messages, durably
@@ -6567,6 +6568,11 @@ class Session:
         return True
 
     @property
+    def session_completed(self) -> bool:
+        """Whether the session lifecycle has emitted its completion event."""
+        return self._session_completed
+
+    @property
     def halted_reason(self) -> "str | None":
         """#2259 PR-3: the fail-stop reason (e.g. ``"durability_failure"``) once the session has
         halted; ``None`` while running. The operator-visible in-memory state paired with the
@@ -7437,6 +7443,7 @@ class Session:
                 # #1800 slice 5a: session lifecycle audit event (P6). Emitted alongside
                 # chat_stopped; marks the end of the session's resource scope.
                 self._audit_events.emit("session_completed", agent_name=self.agent_name)
+                self._session_completed = True
                 # #1800 slice 5b: session_end lifecycle hooks (F's natural resource
                 # scope). The run-loop has exited, so an E push here is not drained
                 # (harmless); session_end is the C/F point in practice.
