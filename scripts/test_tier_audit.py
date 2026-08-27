@@ -228,6 +228,7 @@ RULE_NAMES = {
     "snapshot",
     "fake-attr",
     "private-read-public-alt",
+    "llm-stub-tier",
 }
 
 # ---------------------------------------------------------------------------
@@ -449,6 +450,40 @@ class TestAuditor:
                     )
                     break  # one finding per test
 
+        # --- Rule 9 (#5103): @llm_stub test must not declare Tier 3 ---
+        # architect's discriminator (#5294): Tier 3 = the model's OWN output
+        # is the subject under test. @llm_stub always returns the SAME fixed
+        # minimal completion regardless of what was asked, so a test using it
+        # can never legitimately have the model's output as its subject —
+        # declaring Tier 3 there is a false Tier, not a true one (CLAUDE.md
+        # test-review Q6).
+        if self._rule_active("llm-stub-tier"):
+            if _has_llm_stub_marker(node):
+                docstring = ast.get_docstring(node)
+                if docstring is not None:
+                    first_line = docstring.strip().splitlines()[0]
+                    if re.match(r"^Tier 3[abc]?:", first_line, re.IGNORECASE):
+                        result.findings.append(
+                            Finding(
+                                rule="llm-stub-tier",
+                                level="ERROR",
+                                line=node.lineno,
+                                message=(
+                                    "@llm_stub test declares Tier 3, but "
+                                    "@llm_stub always returns the same fixed "
+                                    "completion — the model's output cannot be "
+                                    "this test's subject"
+                                ),
+                                suggestion=(
+                                    "Declare Tier 1 or Tier 2 (the loop/valve/"
+                                    "wiring behavior actually under test), or "
+                                    "switch to @replay(fixture) if the model's "
+                                    "output really is the subject"
+                                ),
+                                policy_ref="#5103 / #5294: Tier 3 ⟺ model output is the subject",
+                            )
+                        )
+
         # --- Rule 6: Snapshot/golden test outside scaffold ---
         if self._rule_active("snapshot") and not in_scaffold:
             for rel_lineno, line in enumerate(node_lines):
@@ -473,6 +508,19 @@ class TestAuditor:
                     break  # one finding per test
 
         return result
+
+
+def _has_llm_stub_marker(node: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
+    """True iff *node* carries an ``@pytest.mark.llm_stub`` decorator (#5103)."""
+    for dec in node.decorator_list:
+        if (
+            isinstance(dec, ast.Attribute)
+            and dec.attr == "llm_stub"
+            and isinstance(dec.value, ast.Attribute)
+            and dec.value.attr == "mark"
+        ):
+            return True
+    return False
 
 
 def _is_existence_check_only(line: str, m: re.Match) -> bool:
@@ -1297,7 +1345,7 @@ def build_parser() -> argparse.ArgumentParser:
         help=(
             "Only check one rule: "
             "tier-docstring / format-pinning / private-state / mock / bounded-life / "
-            "snapshot / fake-attr / private-read-public-alt"
+            "snapshot / fake-attr / private-read-public-alt / llm-stub-tier"
         ),
     )
     parser.add_argument(

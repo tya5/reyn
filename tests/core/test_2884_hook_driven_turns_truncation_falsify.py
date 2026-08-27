@@ -16,8 +16,9 @@ source WAL events (the CLAUDE.md recovery-feature PR gate), mirroring
 ``tests/core/test_2259_config_truncation_bug.py``.
 
 Real Session / StateLog / AgentSnapshot (no mocks); only the LLM boundary
-(``_loop_driver.run_turn``) is replaced with a plain async recorder, exactly
-as ``tests/core/test_hook_loop_valve_1800_7.py`` does to isolate the valve.
+(``litellm.acompletion``, via ``@pytest.mark.llm_stub``, #5103 "C2") is
+stubbed to isolate the valve — the real ``RouterLoopDriver.run_turn`` /
+``RouterLoop`` / ``Session._run_router_loop`` chain runs for each turn.
 """
 from __future__ import annotations
 
@@ -46,13 +47,6 @@ def _make_session(wal: Path, snapshot_path: Path, *, cap: int = 100) -> tuple[Se
     return session, state_log
 
 
-def _fake_run_turn(session: Session) -> None:
-    """Replace the LLM boundary with a no-op recorder (isolates the valve)."""
-    async def _noop(user_text: str, chain_id: str) -> None:
-        return None
-    session._loop_driver.run_turn = _noop  # type: ignore[method-assign]
-
-
 async def _push_hook(session: Session, text: str) -> None:
     await session._put_inbox("hook", {"name": "turn_end", "text": text, "wake": True})
 
@@ -67,6 +61,7 @@ def _reconstruct(agent_name: str, snapshot_path: Path, state_log: StateLog) -> A
 
 
 @pytest.mark.asyncio
+@pytest.mark.llm_stub
 async def test_hook_driven_turns_survives_wal_truncation_below_its_source_events(tmp_path):
     """Tier 2: #2884 truncate-falsify (CLAUDE.md recovery-feature PR gate). Drive N=3
     hook-driven turns → their ``hook_driven_turns_set`` WAL source events + the durable
@@ -78,7 +73,6 @@ async def test_hook_driven_turns_survives_wal_truncation_below_its_source_events
     wal = tmp_path / "state.wal"
     snapshot_path = tmp_path / "snapshot.json"
     session, state_log = _make_session(wal, snapshot_path, cap=100)
-    _fake_run_turn(session)
 
     N = 3
     for i in range(N):
