@@ -6,9 +6,21 @@ every render frame the status panel drew. That composition is real work
 (iterates every held server, per-URI honored-set lookups) for a value that
 only ever changes on a handful of specific events (subscribe/unsubscribe,
 a server install/remove, or a (re)connect). Fix: a subscriber registered
-once in ``Session.__init__`` recomputes EAGERLY (off the render path) only
-when one of those events fires; every other call is a bare cached-attribute
-return.
+once in ``Session.__init__`` marks the cache DIRTY (``None``) — never
+recomputes itself — when one of those events fires; the actual
+recomputation happens lazily, on the next real ``mcp_subscription_state()``
+call, on that caller's own stack.
+
+Corrected mid-review (architect BLOCK on an earlier draft that recomputed
+EAGERLY inside the subscriber callback, #5279): (1) ``EventLog``'s
+per-subscriber try/except (#4963/#4961 A) would silently swallow a raise
+from an eager recompute, leaving a stale value in place with nobody aware
+a refresh failed; (2) recomputing per EVENT ties the real cost to
+whatever paces those events (e.g. a remote MCP server's own reconnect
+cadence), not to whether anyone is actually reading the value — a
+headless run that never reads this went from 0 real computations to one
+per event. Marking dirty instead bounds the cost to actual reads, exactly
+like every other cache in this file.
 
 Real ``Session`` + real ``MCPConnectionService`` (no held servers — this
 file tests the CACHING mechanism, not connection/subscription composition
@@ -73,11 +85,16 @@ async def test_repeated_reads_cost_one_real_compute(tmp_path, monkeypatch) -> No
 
 
 @pytest.mark.asyncio
-async def test_a_relevant_event_triggers_exactly_one_recompute(tmp_path, monkeypatch) -> None:
+async def test_a_relevant_event_marks_dirty_but_does_not_itself_recompute(
+    tmp_path, monkeypatch,
+) -> None:
     """Tier 2: acceptance — after the first (lazy) read, emitting ONE of
-    the events that can change the subscription summary triggers exactly
-    ONE recompute (in the subscriber callback, off the render path) —
-    demonstrated by a SUBSEQUENT read costing 0 additional real calls."""
+    the events that can change the subscription summary marks the cache
+    dirty WITHOUT itself costing a real call (the subscriber only sets
+    ``None`` — #5279 review: recomputing inside the subscriber would
+    silently swallow a raise via EventLog's per-subscriber try/except, and
+    would tie the real cost to event cadence rather than actual reads).
+    The NEXT real read is what pays for exactly one more real call."""
     s = _make_session(tmp_path)
     call_count = _counting_wrapper(monkeypatch, s._mcp_connection_service)
 
@@ -87,16 +104,24 @@ async def test_a_relevant_event_triggers_exactly_one_recompute(tmp_path, monkeyp
     s._audit_events.emit("mcp_resource_subscribed", server="srv", uri="resource://x")
     await settle(s._audit_events)
 
-    assert call_count["n"] == 2, (
-        f"expected the subscriber to have recomputed once by now (off the "
-        f"render path), got {call_count['n']} real calls total"
+    assert call_count["n"] == 1, (
+        f"the event itself must NOT trigger a real call (only marks dirty), "
+        f"got {call_count['n']} real calls total"
     )
 
-    # A subsequent read is now a bare cache return — 0 additional calls.
+    # The next real read pays for exactly one more real call (the lazy fill).
     s.mcp_subscription_state()
     assert call_count["n"] == 2, (
-        f"a read AFTER the subscriber already recomputed must cost nothing "
-        f"more, got {call_count['n']} real calls total"
+        f"expected exactly 1 more real call on the first read after the "
+        f"dirty-marking event, got {call_count['n']} real calls total"
+    )
+
+    # A further read with no intervening event is once again a bare cache
+    # return — 0 additional calls.
+    s.mcp_subscription_state()
+    assert call_count["n"] == 2, (
+        f"a read with no intervening event must cost nothing more, got "
+        f"{call_count['n']} real calls total"
     )
 
 

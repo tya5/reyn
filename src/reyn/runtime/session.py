@@ -1384,18 +1384,20 @@ class Session:
             self._on_audit_event_for_state_change,
         )
 
-        # #5276: mcp_subscription_state()'s reactive cache — recomputed only
-        # when one of the events that can actually change the subscription
-        # summary fires (subscribe/unsubscribe, a server being installed/
-        # removed, or a (re)connect — mcp_initialized/mcp_resource_updated,
-        # per #5277's own investigation that these two ALREADY cover a bare
-        # reconnect's mode/honored-set shift, so no new kind was needed).
-        # ``None`` means "never computed yet" — the first real read (lazy,
-        # not at construction) fills it; every subsequent read is a bare
-        # attribute return, matching ``turn_usage_fn``/``ctx_compaction_
-        # status_fn``'s own "store, don't run on every render frame" shape,
-        # but PUSH- rather than PULL-invalidated (recompute happens off the
-        # render path entirely, in the subscriber callback).
+        # #5276: mcp_subscription_state()'s reactive cache — invalidated
+        # (marked dirty, NOT recomputed here — #5279 review, see
+        # mcp_subscription_state's own docstring for why eager-inside-the-
+        # subscriber was rejected) only when one of the events that can
+        # actually change the subscription summary fires (subscribe/
+        # unsubscribe, a server being installed/removed, or a (re)connect —
+        # mcp_initialized/mcp_resource_updated, per #5277's own
+        # investigation that these two ALREADY cover a bare reconnect's
+        # mode/honored-set shift, so no new kind was needed).
+        # ``None`` means "needs a real recompute on the next read" — both
+        # at construction and right after any of these events — every OTHER
+        # read is a bare attribute return, matching ``turn_usage_fn``/
+        # ``ctx_compaction_status_fn``'s own "store, don't run on every
+        # render frame" shape.
         self._cached_mcp_subscriptions: "list[dict] | None" = None
         self._audit_events.add_subscriber(
             self._invalidate_mcp_subscription_cache,
@@ -9269,11 +9271,34 @@ class Session:
         connection service — same condition ``mcp_held_servers`` documents).
 
         #5276: reactive cache — ``self._cached_mcp_subscriptions`` is filled
-        lazily on first call (or by :meth:`_invalidate_mcp_subscription_cache`
-        whenever a subscribe/unsubscribe/install/removed/(re)connect event
-        fires — see the subscriber registration in ``__init__``), so a
-        render-frame caller pays for the real recomputation only on the
-        rare frame where something actually changed, not every frame.
+        lazily HERE, on the next real read after construction or after a
+        subscribe/unsubscribe/install/removed/(re)connect event marks it
+        dirty (see :meth:`_invalidate_mcp_subscription_cache` and the
+        subscriber registration in ``__init__``), so a render-frame caller
+        pays for the real recomputation only on the rare frame where
+        something actually changed AND something is actually reading it —
+        never on a frame nobody reads this, and never inside the event
+        dispatch itself.
+
+        #5279 review (architect BLOCK on an earlier draft that recomputed
+        EAGERLY inside the subscriber callback instead of merely marking
+        dirty): that shape had two real problems, both closed by moving
+        the recompute here instead. (1) ``EventLog``'s dispatch loop
+        isolates each subscriber with its own try/except (#4963/#4961 A) —
+        a raise from ``subscription_summary()`` inside the subscriber
+        would be silently swallowed, leaving the STALE cached value in
+        place with nobody aware a refresh failed (before #5276, every
+        read hit the real call directly, so a raise was never silently
+        absorbed this way). (2) recomputing on every qualifying EVENT ties
+        the actual compute cost to whatever paces those events — e.g.
+        ``mcp_resource_updated``'s cadence is controlled by the remote MCP
+        server, not by this session — so a headless run that never reads
+        this value went from 0 real computations (pre-#5276) to one per
+        event (the eager draft), with no bounding subject. Marking dirty
+        here instead bounds the cost to actual READS, exactly like every
+        other cache in this file, and a raise here propagates to THIS
+        call's own caller exactly as it always did.
+
         Recomputation itself is still this SAME thin forwarder to
         ``MCPConnectionService.subscription_summary`` — see that method's
         own docstring for why the composition lives there and not here (the
@@ -9286,13 +9311,15 @@ class Session:
 
     def _invalidate_mcp_subscription_cache(self, _event: object) -> None:
         """#5276: the subscriber callback wired to the events that can
-        actually change :meth:`mcp_subscription_state`'s answer — recomputes
-        EAGERLY, off the render path entirely, so the next render-frame
-        read of :attr:`_cached_mcp_subscriptions` is a bare attribute
-        return. Takes the event only to match the ``Subscriber`` shape
+        actually change :meth:`mcp_subscription_state`'s answer — marks the
+        cache dirty (``None``) rather than recomputing here; the next real
+        call to :meth:`mcp_subscription_state` does the actual work,
+        lazily, on its own caller's stack (see that method's own #5279
+        review paragraph for why eager-inside-the-subscriber was rejected).
+        Takes the event only to match the ``Subscriber`` shape
         (``Callable[[Event], None]``) — the event itself carries no
-        information this recompute needs beyond "something happened"."""
-        self._cached_mcp_subscriptions = self._mcp_connection_service.subscription_summary()
+        information this invalidation needs beyond "something happened"."""
+        self._cached_mcp_subscriptions = None
 
     async def aclose_background_tasks(self) -> None:
         """#4759 teardown: drain every background task this session (or a
