@@ -302,3 +302,141 @@ def test_the_real_cli_entry_point_actually_calls_register_process(
         assert proc.stdin is not None  # sanity: PIPE was requested above
         proc.stdin.close()  # release the real blocked read — a graceful exit
         proc.wait()
+
+
+# ── #5346: register_process() writes via a .tmp staging file + atomic rename ─
+
+
+def test_a_tmp_only_marker_is_invisible_to_live_processes_and_never_misglobbed(
+    _isolated_processes_dir: Path,
+) -> None:
+    """Tier 2: #5346 — architect's own prescribed witness. A ``.tmp``
+    staging file (the intermediate state ``register_process`` passes
+    through between writing content and the atomic rename onto the real
+    marker name) must be invisible to ``live_processes()`` two ways at
+    once: the pid it names must not appear in the returned list, AND the
+    file itself must never be mistaken for a real ``*.json`` marker (the
+    exact failure #5345 fixed on the READER side of this same file —
+    #5346 closes the WRITER side)."""
+    pid = os.getpid() + 1  # a pid guaranteed not to be this test process's own
+    _isolated_processes_dir.mkdir(parents=True, exist_ok=True)
+    tmp_marker = _isolated_processes_dir / f"{pid}.json.tmp"
+    tmp_marker.write_text(json.dumps({"pid": pid, "subcommand": "mid-write"}), encoding="utf-8")
+
+    result = process_registry.live_processes()
+
+    assert all(entry["pid"] != pid for entry in result), (
+        f"#5346 REGRESSION: a bare .tmp staging file's pid should never "
+        f"appear as a live process — got {result!r}"
+    )
+    real_markers = list(_isolated_processes_dir.glob("*.json"))
+    assert real_markers == [], (
+        f"#5346 REGRESSION: a .tmp file should never be matched by the "
+        f"*.json glob — got {real_markers!r}"
+    )
+
+
+def test_dead_pid_tmp_marker_is_reaped_on_the_next_read(
+    _isolated_processes_dir: Path,
+) -> None:
+    """Tier 2: #5346 — a ``.tmp`` orphaned by a process that died BETWEEN
+    writing it and the atomic rename (a narrow window, but a real one —
+    architect's own charter Q1 bounding: something must eventually stop
+    this from accumulating) is reaped the next time anything reads the
+    registry, once its pid is confirmed dead — mirrors the EXISTING
+    dead-``.json``-marker reap exactly, same criterion
+    (``pid_alive``), same file."""
+    proc = _spawn_registering_subprocess()
+    try:
+        _wait_until(lambda: len(process_registry.live_processes()) == 1)
+        real_marker = _isolated_processes_dir / f"{proc.pid}.json"
+        assert real_marker.exists()  # sanity: the real write+rename completed
+
+        proc.kill()
+        proc.wait()
+        _wait_until(lambda: not process_registry.pid_alive(proc.pid))
+
+        # Simulate the orphan-.tmp shape directly (deterministic — not
+        # trying to force the real, narrow write/death race): a .tmp
+        # file for this now-confirmed-dead pid, exactly what would be
+        # left if the kill had landed between the tmp write and the
+        # rename instead of after it.
+        orphan_tmp = _isolated_processes_dir / f"{proc.pid}.json.tmp"
+        orphan_tmp.write_text(
+            json.dumps({"pid": proc.pid, "subcommand": "orphaned"}), encoding="utf-8",
+        )
+
+        process_registry.live_processes()
+
+        assert not orphan_tmp.exists(), (
+            "#5346 REGRESSION: a .tmp orphan for a confirmed-dead pid should "
+            "be reaped on the next read, the same as a dead .json marker is"
+        )
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait()
+
+
+def test_live_pid_tmp_marker_is_never_reaped(
+    _isolated_processes_dir: Path,
+) -> None:
+    """Tier 2: #5346 — the reap must never touch a ``.tmp`` belonging to a
+    process that is still ALIVE (mid-write, or simply slow) — reaping a
+    live process's in-flight staging file would be indistinguishable from
+    corrupting its next write. Uses this TEST's own real, indisputably-
+    alive pid (never a synthetic one) as the ``.tmp`` owner."""
+    _isolated_processes_dir.mkdir(parents=True, exist_ok=True)
+    own_tmp = _isolated_processes_dir / f"{os.getpid()}.json.tmp"
+    own_tmp.write_text(json.dumps({"pid": os.getpid(), "subcommand": "still-writing"}), encoding="utf-8")
+    try:
+        process_registry.live_processes()
+        assert own_tmp.exists(), (
+            "#5346 REGRESSION: live_processes() must never reap a .tmp file "
+            "belonging to a confirmed-ALIVE pid"
+        )
+    finally:
+        own_tmp.unlink(missing_ok=True)
+
+
+def test_register_process_writes_via_tmp_then_atomic_rename_never_direct(
+    _isolated_processes_dir: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Tier 2: #5346 — strip-falsify target for the fix itself, not just
+    its surrounding reap logic. Forces the atomic-rename step
+    (``Path.replace``) to fail AFTER the content write succeeds, then
+    checks what's on disk: a COMPLETE, valid ``.tmp`` file, and NO
+    ``.json`` file at all. Under the OLD code (a direct ``write_text`` to
+    the final path, no ``.tmp``/rename at all), patching ``Path.replace``
+    has no effect on that code path — the final ``.json`` would exist
+    directly and no ``.tmp`` would exist, failing BOTH assertions here.
+    No duration anywhere: the failure is forced structurally (a raised
+    exception), never a real race waited out."""
+    real_replace = Path.replace
+
+    def _failing_replace(self: Path, target) -> None:
+        raise OSError("#5346 test: simulated rename failure, proves write-then-rename order")
+
+    monkeypatch.setattr(Path, "replace", _failing_replace)
+    pid = os.getpid()
+    process_registry.register_process("rename-fails")
+    monkeypatch.setattr(Path, "replace", real_replace)  # restore before any cleanup .replace() call
+
+    tmp_marker = _isolated_processes_dir / f"{pid}.json.tmp"
+    final_marker = _isolated_processes_dir / f"{pid}.json"
+    try:
+        assert tmp_marker.is_file(), (
+            "#5346 REGRESSION: the content write should still have happened "
+            "before the (forced-failing) rename was attempted"
+        )
+        assert json.loads(tmp_marker.read_text(encoding="utf-8"))["pid"] == pid
+        assert not final_marker.exists(), (
+            "#5346 REGRESSION: the final marker must never exist unless the "
+            "atomic rename actually succeeded"
+        )
+    finally:
+        tmp_marker.unlink(missing_ok=True)
+        # register_process()'s own except-OSError branch returns BEFORE
+        # arming atexit when the write+rename fails (confirmed by reading
+        # the source, not asserted here as private state) — no
+        # unregister_process() call needed to avoid a stray atexit handler.
