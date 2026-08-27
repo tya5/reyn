@@ -103,6 +103,12 @@ EVENT_AUDIT_REQUIREMENTS: dict[str, frozenset[str]] = {
     # (key, surface) — the value the approval covers is deliberately never
     # in the payload, matching that kind's own choice.
     "permission_approval_granted": frozenset({"key", "surface"}),
+    # #5296 PR-2: fires once per same-turn recovery attempt after a
+    # BYTE-limited (HTTP 413) unrecovered overflow — spill and/or durable
+    # compaction reduced the wire payload and the turn is being re-sent
+    # WITHOUT re-triggering user_submitted/turn_started (same chain_id).
+    # `attempt` is the 1-based retry count within this turn.
+    "payload_reduced": frozenset({"chain_id", "attempt"}),
     # #5067: same shape as the two above, on the OTHER band pairing
     # (cost-budget x audit-events, not permission x audit-events) — a
     # management operation on the live BudgetTracker's hard caps
@@ -371,6 +377,7 @@ AUDIT_EVENT_KINDS: frozenset[str] = frozenset({
     "new_msg_exceeds_budget",
     "oauth_login_completed",
     "oauth_login_started",
+    "payload_reduced",
     "peer_reply_failed_surfaced",
     "pending_intervention_claimed",
     "pending_intervention_discarded",

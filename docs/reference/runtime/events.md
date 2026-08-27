@@ -159,6 +159,7 @@ network_ssl_verify_disabled
 new_msg_exceeds_budget
 oauth_login_completed
 oauth_login_started
+payload_reduced
 peer_reply_failed_surfaced
 pending_intervention_claimed
 pending_intervention_discarded
@@ -617,6 +618,7 @@ mostly informational.
 | `compact_op_unavailable` | The `compact` Control IR op was dispatched in a context where no compaction engine is wired. | `run_id`, `phase` |
 | `summary_resummarize_failed` | Re-summarising an existing summary (nested compaction) raised. | `error` |
 | `budget_reset` | The chat budget gateway reset its per-window accounting. | `before` (prior accumulated value) |
+| `payload_reduced` | #5296 PR-2 — `RouterLoopDriver`'s same-turn recovery from a BYTE-limited (HTTP 413) `UnrecoveredError`: spill (tool-result turns offloaded to `MediaStore` via a session-lived, non-durable projection overlay — never mutates `history.jsonl` or a stored `ChatMessage`, never advances the compaction watermark) and, only if spill made no progress, durable compaction (`ContextBudgetAdvisor`'s existing `force_compact_now` path) reduced the wire payload below what it was before the attempt, and the turn is being re-sent with the SAME `chain_id` — `user_submitted`/`turn_started`/the WAL append are NOT re-fired (this retry loop lives entirely inside `run_turn`, below where those fire). A non-byte-limited overflow (retry_loop's own token axis, never saw a 413) never reaches this path — see `_run_with_shrink_and_byte_reduction`'s own docstring. | `chain_id`, `attempt` (1-based, within this turn) |
 | `budget_caps_updated` | #5067 — `PATCH /api/budget/caps` (`budget.py`'s REST router) changed one or more of the live `BudgetTracker`'s hard caps. In-process only (not persisted to `reyn.yaml`), reachable via `project_root` (no live Session, hence no `run_id`/`actor`/`phase` — same shape as #5065's `permission_approval_revoked`/`permission_approvals_cleared`, the OTHER band pairing: cost-budget x audit-events). Because this change is not persisted anywhere else, this event is the ONLY record either value ever existed. | `changes` (a `{field_name: {"from": old_hard_limit, "to": new_hard_limit}}` mapping of ONLY the fields the request actually set), `surface` |
 
 ## Safety limits

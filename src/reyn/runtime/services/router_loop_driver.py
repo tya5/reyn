@@ -47,6 +47,20 @@ def _narrowing_per_iteration(safety: "SafetyConfig") -> bool:
     return bool(safety.threat_scan.narrowing_per_iteration())
 
 
+# #5296 PR-2: the ONE place this turn's total send-BUDGET (across
+# _run_with_shrink calls) is declared — architect ruling
+# (issuecomment-5439181599): retry_loop's own ``max_shrink_iterations``
+# bounds a SINGLE _run_with_shrink call's own token-shrink escalation (a
+# different layer — the driver's except block is the trigger point,
+# retry_loop stays a pure transport operation); this constant bounds how
+# many TIMES ``run_turn`` may call ``_run_with_shrink`` again after a
+# byte-limited failure, each retry preceded by a real reduction attempt
+# (spill, then compaction if spill made no progress). The two compose,
+# they do not conflict: this turn's total LLM-call-attempt upper bound is
+# ``(1 + _MAX_BYTE_REDUCTION_ATTEMPTS) * compaction.max_shrink_iterations``.
+_MAX_BYTE_REDUCTION_ATTEMPTS: int = 2
+
+
 class RouterLoopDriver:
     """Orchestrates the per-turn router loop for one Session.
 
@@ -221,6 +235,155 @@ class RouterLoopDriver:
             self._budget.check_and_increment_router_cap(user_text)
 
     # ── Overflow-resilient router invocation ─────────────────────────────────
+
+    @staticmethod
+    def _spill_candidates(head: "list[dict]", tail: "list[dict]") -> "list[dict]":
+        """#5296 PR-2 ②: oldest-and-largest-first spill candidates.
+
+        ``head`` (older turns) is offered entirely before ``tail`` (more
+        recent turns — "this turn's own subject", contract's own "今回の
+        主題は最後"); within each group, the largest content goes first
+        (the fastest route to a byte-count decrease per spill). Only
+        ``role == "tool"`` turns with an inline string body are candidates
+        — an already-ref'd/non-string content has nothing left to spill.
+        ``new_msg`` (the turn's own newest user message) is never passed
+        in here at all — contract's own "user自身の最新messageは落とさな
+        い" is satisfied structurally, not by a filter that could miss it.
+        """
+        def _spillable(turns: "list[dict]") -> "list[dict]":
+            cands = [
+                t for t in turns
+                if t.get("role") == "tool" and isinstance(t.get("content"), str)
+            ]
+            return sorted(cands, key=lambda t: -len(t["content"]))
+        return _spillable(head) + _spillable(tail)
+
+    async def _attempt_reactive_spill(self, user_text: str, *, chain_id: str) -> bool:
+        """#5296 PR-2 ②③: one spill pass over the CURRENT head/tail.
+
+        Spills candidates (oldest/largest first) one at a time, re-measuring
+        total wire bytes after each, STOPPING as soon as the total has
+        decreased from before this pass started (contract ⑥'s "each
+        attempt strictly decreases bytes" — spilling more than needed
+        would destroy more of the operator's visible context than
+        necessary) or candidates are exhausted. The returned bool is this
+        method's OWN local verdict (useful standalone/for tests); the
+        caller (``_run_with_shrink_and_byte_reduction``) makes its own
+        escalate-to-compaction decision from a wrapper-wide
+        ``_wire_bytes_now()`` reading instead — see that method's own
+        docstring for why a narrower, call-scoped verdict is not always
+        the right signal.
+        """
+        from reyn.services.compaction.engine import estimate_wire_bytes
+
+        SP = self._history_buffer.build_system_prompt()
+        new_msg = {"role": "user", "content": user_text}
+        head, _raw_middle, tail, summary, _ = (
+            self._history_buffer.decompose_history_for_retry()
+        )
+        before = estimate_wire_bytes(SP=SP, head=head, summary=summary, tail=tail, new_msg=new_msg)
+
+        candidates = self._spill_candidates(head, tail)
+        for i, turn in enumerate(candidates):
+            replacement = self._history_buffer.spill_turn_content(
+                turn["content"], chain_id=chain_id, seq=i + 1,
+            )
+            if replacement is None:
+                continue
+            head2, _rm2, tail2, summary2, _sb2 = (
+                self._history_buffer.decompose_history_for_retry()
+            )
+            after = estimate_wire_bytes(
+                SP=SP, head=head2, summary=summary2, tail=tail2, new_msg=new_msg,
+            )
+            if after < before:
+                return True
+            # #5296 PR-2 (architect review): this spill did NOT help —
+            # undo it rather than leaving a useless overlay entry in
+            # place. Without this, a turn whose every candidate happens
+            # to spill for zero net benefit ends this loop with ALL of
+            # them spilled anyway — this method's own docstring already
+            # disclaims exactly that outcome ("destroy more of the
+            # operator's visible context than necessary").
+            self._history_buffer.discard_spill_overlay_for(turn["content"])
+        # Every candidate spilled-then-undone (or none were spillable at
+        # all) without ever getting strictly under `before` — no progress.
+        return False
+
+    def _wire_bytes_now(self) -> int:
+        """The wire-JSON byte size of what ``build_history()`` would send
+        RIGHT NOW — the single canonical "how big is the payload" reading
+        both the attempt-start baseline and every reduction-progress check
+        below share, so they can never disagree about what "smaller"
+        means."""
+        import json
+        return len(
+            json.dumps(self._history_buffer.build_history(), ensure_ascii=False)
+            .encode("utf-8")
+        )
+
+    async def _run_with_shrink_and_byte_reduction(
+        self, loop: Any, user_text: str, *, chain_id: str,
+    ) -> Any:
+        """#5296 PR-2 wrapper: same-turn recovery for a BYTE-limited (HTTP
+        413) unrecovered overflow, per the frozen implementation contract
+        (issue #5296, issuecomment-5437029911).
+
+        ``_run_with_shrink``'s own contract is UNCHANGED (architect
+        ruling) — this wrapper only decides whether to call it AGAIN after
+        it raises, never alters what it does internally. On each byte-
+        limited ``UnrecoveredError``: spill (②), re-measure (③); if the
+        payload shrank (from EITHER spill or ``_run_with_shrink``'s own
+        pre-existing side-effect below), re-send; if not, re-raise (⑤ —
+        the caller's own except still names the cause via ``repr(exc)``).
+        A non-byte-limited ``UnrecoveredError`` (never saw a 413 —
+        retry_loop's own token axis already exhausted itself) and
+        ``ContextOverflowError`` (the window itself is too small) are
+        UNCHANGED — this wrapper only intervenes on the ONE cause spill
+        can actually address.
+
+        #5296 PR-2 review (architect, 2nd finding): this wrapper does NOT
+        call ``force_compact_now`` itself — contract ④'s durable-
+        compaction step is already covered WITHOUT a second call site,
+        because ``_run_with_shrink``'s own except block ALREADY calls
+        ``force_compact_now`` as its pre-existing #4954(b) ``next_turn``
+        side-effect, before it ever re-raises back to this wrapper — a
+        SEPARATE call here would either be redundant (``next_turn``: the
+        watermark already advanced moments ago, nothing left to compact)
+        or, worse, would silently violate ``recovery_policy="never"``
+        (this NEW call site was never gated by that check #5303 added to
+        the ONE existing call site — an operator who opted out of
+        same-turn-visible compaction would have gotten it anyway). The
+        "did this attempt make progress" verdict is taken from
+        ``_wire_bytes_now()`` at the START of the attempt vs AFTER spill
+        ran — that single read already reflects ANY reduction that
+        happened in between, spill's own or the pre-existing side-effect's,
+        without this wrapper needing to trigger or gate compaction itself
+        at all.
+        """
+        from reyn.services.compaction.engine import UnrecoveredError as _UnrecoveredError
+
+        for attempt in range(_MAX_BYTE_REDUCTION_ATTEMPTS + 1):
+            attempt_start_bytes = self._wire_bytes_now()
+            try:
+                return await self._run_with_shrink(loop, user_text)
+            except _UnrecoveredError as exc:
+                if not exc.saw_byte_limit or attempt >= _MAX_BYTE_REDUCTION_ATTEMPTS:
+                    raise
+                await self._attempt_reactive_spill(user_text, chain_id=chain_id)
+                if self._wire_bytes_now() >= attempt_start_bytes:
+                    raise
+                # #5296 PR-2 ⑥: chain_id is the SAME value this call already
+                # closes over — no new chain_id, no re-emitted
+                # user_submitted/turn_started/WAL append (those all live
+                # ABOVE run_turn, in Session — unreached by looping back to
+                # the top of this for-loop and calling _run_with_shrink
+                # again from HERE).
+                self._events.emit(
+                    "payload_reduced", chain_id=chain_id, attempt=attempt + 1,
+                )
+                continue
+        raise AssertionError("unreachable: loop always returns or raises")
 
     async def _run_with_shrink(self, loop: Any, user_text: str) -> Any:
         """Run the router once with the reactive bounded-shrink ``retry_loop``.
@@ -581,7 +744,16 @@ class RouterLoopDriver:
         # #4381 family (tool-result spill) is what now keeps an
         # oversized single result from reaching this point at all.
         try:
-            router_usage = await self._run_with_shrink(loop, user_text)
+            # #5296 PR-2: was a bare `self._run_with_shrink(loop, user_text)`
+            # — this wrapper adds same-turn spill/compaction recovery for a
+            # byte-limited (HTTP 413) unrecovered overflow, then re-tries
+            # THIS call (bounded, `_MAX_BYTE_REDUCTION_ATTEMPTS`) instead of
+            # always failing the turn on the first 413 that survives
+            # `_run_with_shrink`'s own token-axis attempts. See that
+            # method's own docstring for the full contract.
+            router_usage = await self._run_with_shrink_and_byte_reduction(
+                loop, user_text, chain_id=chain_id,
+            )
         # #4885: widened from `_ContextOverflowError` alone — `_run_with_
         # shrink` no longer merges `_UnrecoveredError` (shrinking recovered
         # the SAME cause repeatedly without resolving it, e.g. an HTTP 413
