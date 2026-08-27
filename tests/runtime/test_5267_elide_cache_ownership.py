@@ -121,12 +121,20 @@ def test_a_stale_owners_publish_is_rejected(monkeypatch) -> None:
     already published, making a broken ownership check indistinguishable
     from a working one — this is why the stale payload must come from the
     OLDER snapshot, matching what actually races in production."""
+    # Distinct identity objects, not strings: production compares
+    # expected_owner via `is`, and two equal-but-distinct string literals
+    # can compare `is`-equal under CPython's interning — a fixture built
+    # from strings would pass today for the wrong reason and only break
+    # later (a non-reasoned red) once a literal became an f-string or a
+    # concatenation (architect/lead-coder review, #5275).
+    owner_a = object()
+    owner_b = object()
     history = _turns(50)
-    owner_box = ["owner-A"]
+    owner_box = [owner_a]
     buf = _make_buf(history, current_turn_owner_fn=lambda: owner_box[0])
 
     # Turn A (currently the owner) builds and publishes normally.
-    buf.build_history(expected_owner="owner-A")
+    buf.build_history(expected_owner=owner_a)
 
     # Turn A's own private computation, from THIS (50-turn) snapshot —
     # captured now, "finished" but not yet committed, mirroring a
@@ -138,15 +146,15 @@ def test_a_stale_owners_publish_is_rejected(monkeypatch) -> None:
     # Simulate cancel + immediate retry: a NEW turn takes ownership,
     # extends history, and publishes legitimately BEFORE turn A's stale
     # computation above gets a chance to commit.
-    owner_box[0] = "owner-B"
+    owner_box[0] = owner_b
     history.extend(_turns(10, start=51))
-    buf.build_history(expected_owner="owner-B")  # turn B: legitimate, publishes 60 turns
+    buf.build_history(expected_owner=owner_b)  # turn B: legitimate, publishes 60 turns
 
     # Turn A's orphaned computation finally "commits" — its own
-    # expected_owner ("owner-A") no longer matches the current owner
-    # ("owner-B"), so this must be rejected.
+    # expected_owner (owner_a) no longer matches the current owner
+    # (owner_b), so this must be rejected.
     stale_total = buf._incremental_elide_total(
-        turns_a, wire_turns_a, use_chars4=True, expected_owner="owner-A",
+        turns_a, wire_turns_a, use_chars4=True, expected_owner=owner_a,
     )
     assert isinstance(stale_total, int), (
         "a rejected-publish call must still return its own correct result "
@@ -160,7 +168,7 @@ def test_a_stale_owners_publish_is_rejected(monkeypatch) -> None:
     # (reverting turn_count back to 50), this call would treat the 10
     # turns turn B already accounted for as "new" again.
     call_count = _counting_wrapper(monkeypatch)
-    buf.build_history(expected_owner="owner-B")
+    buf.build_history(expected_owner=owner_b)
     assert call_count["n"] == 0, (
         f"expected 0 new-turn estimates (cache already reflects the current "
         f"60-turn history), got {call_count['n']} — the stale call's commit "
@@ -192,14 +200,18 @@ def test_the_legitimate_owners_own_publish_still_works(monkeypatch) -> None:
     the current owner, the cache publishes exactly as before (the feature
     only ever SUBTRACTS a publish, never adds a new inconsistency for the
     matching case)."""
+    # An identity object, not a string — see test_a_stale_owners_publish_is_rejected's
+    # own comment: production compares via `is`, and a string fixture can pass
+    # today for the wrong reason (CPython interning) and break later.
+    the_one_owner = object()
     history = _turns(50)
-    buf = _make_buf(history, current_turn_owner_fn=lambda: "the-one-owner")
+    buf = _make_buf(history, current_turn_owner_fn=lambda: the_one_owner)
 
-    buf.build_history(expected_owner="the-one-owner")
+    buf.build_history(expected_owner=the_one_owner)
     history.extend(_turns(30, start=51))
 
     call_count = _counting_wrapper(monkeypatch)
-    buf.build_history(expected_owner="the-one-owner")
+    buf.build_history(expected_owner=the_one_owner)
     assert call_count["n"] == 30, (
         f"a matching-owner call must still publish incrementally, got "
         f"{call_count['n']} new estimates instead of 30"
