@@ -233,7 +233,21 @@ async def test_root_no_listener_budget_exceed_fail_closed_not_parked(tmp_path: P
 # ── self-bound `_dispatch_intervention` capture ──────────────────────────────────────────────
 
 
-def _frozen_dispatch_capture_bus_classes() -> "list[str]":
+def _parsed_session_source() -> "tuple[str, ast.Module]":
+    """Parse ``Session``'s own source ONCE — ``inspect.getsource(Session)`` (a CLASS) resolves
+    via CPython's ``_ClassFinder`` (matches on ``__qualname__`` via a fresh ``ast.parse``,
+    #5290), not the function/method branch (``findsource``'s ``co_firstlineno``-plus-regex-scan,
+    re-read from whatever ``linecache.checkcache`` finds on disk at call time — fragile if the
+    file is edited between this call and a LATER ``getsource`` call in the same process, #5290's
+    own report, mirroring #5299's identical fix on the sibling #3049 test). Both the offender
+    scan and the vacuity guard below read the SAME parse of the SAME source instead of each
+    doing its own ``getsource`` — the exact shape #5290 describes: two ``getsource`` calls in
+    one test, one of a class (safe) and one of a method (not)."""
+    src = textwrap.dedent(inspect.getsource(Session))
+    return src, ast.parse(src)
+
+
+def _frozen_dispatch_capture_bus_classes(tree: ast.Module) -> "list[str]":
     """Enumerate nested classes defined inside a ``Session`` method that invoke a LOCAL name
     assigned directly from ``self._dispatch_intervention`` (e.g. ``_x = self._dispatch_intervention``
     then ``_x(iv)`` inside the nested class) — the #3053 anti-pattern: a bespoke intervention-bus
@@ -241,8 +255,6 @@ def _frozen_dispatch_capture_bus_classes() -> "list[str]":
     ``_make_router_intervention_bus`` (bridge-aware). Derived from the live class source (never
     hand-listed), so a FUTURE limit/budget-style bus reintroducing the same self-bound freeze is
     caught automatically, independent of variable naming."""
-    src = textwrap.dedent(inspect.getsource(Session))
-    tree = ast.parse(src)
     offenders: list[str] = []
     for func in ast.walk(tree):
         if not isinstance(func, (ast.FunctionDef, ast.AsyncFunctionDef)):
@@ -283,7 +295,8 @@ def test_budget_bus_has_no_frozen_self_bound_dispatch_capture() -> None:
     OWN listener-less registry instead of reaching the pipeline originator. RED before the fix:
     ``__init__`` captured ``_session_dispatch = self._dispatch_intervention`` and
     ``_ChatBudgetBus.request`` called it directly."""
-    offenders = _frozen_dispatch_capture_bus_classes()
+    src, tree = _parsed_session_source()
+    offenders = _frozen_dispatch_capture_bus_classes(tree)
     assert offenders == [], (
         "these Session-nested bus classes invoke a frozen self-bound `_dispatch_intervention` "
         "capture directly, bypassing the bridge-aware `_make_router_intervention_bus` seam — "
@@ -294,7 +307,53 @@ def test_budget_bus_has_no_frozen_self_bound_dispatch_capture() -> None:
     # Vacuity guard: `_ChatBudgetBus` must still resolve through `_make_router_intervention_bus`
     # on each call (not a frozen bus reference), else the scan above is vacuously green because
     # there is nothing left to freeze-and-call in the first place (guard inert).
-    init_src = inspect.getsource(Session.__init__)
+    #
+    # #5290: reads `__init__`'s own source segment out of the SAME tree the offender scan just
+    # walked (`ast.get_source_segment`, byte-exact against `src`) rather than a second,
+    # independent `inspect.getsource(Session.__init__)` call — that second call resolves via
+    # CPython's line-number-plus-regex branch (`inspect.findsource`'s `co_firstlineno`),
+    # re-read from whatever the file on disk currently contains (`linecache.checkcache`) at
+    # call time. If the file is edited between the two `getsource` calls in the same test run
+    # (a real, observed shape the night this was found: #5284/#5285 both landed lines in
+    # session.py mid-sweep), `__init__`'s SOURCE moves and the second call can read a DIFFERENT
+    # method's body entirely — a false vacuity-guard failure that looks like the wiring
+    # disappeared, when nothing did.
+    #
+    # architect's TESTS-READ(B) BLOCK (#5341): an earlier version of this fix searched
+    # `ast.walk(tree)` for a node named `__init__` — `Session` has TWO nested classes
+    # (`_ChatBudgetBus`, `_ChatLimitBus`; neither currently defines its own `__init__`), and
+    # `ast.walk`'s own docstring is explicit — "in no specified order" — so that search
+    # depended on an unspecified CPython implementation detail (today's BFS order) AND would
+    # silently start reading a NESTED class's `__init__` body instead of `Session`'s own the
+    # moment either nested class gained one — reintroducing the exact "silently reads a
+    # different method's body" defect this fix exists to remove, just relocated. Fixed to walk
+    # only `Session`'s OWN ClassDef body (never descending into a nested class at all), which
+    # depends on neither `ast.walk`'s order nor a re-run census of what nested classes
+    # currently do or don't define.
+    #
+    # No separate test witnesses "one parse, not two, is used" — that is a structural property
+    # of THIS code (which resolution path it takes), not an observable behavior a test can
+    # assert on without transcribing the implementation (Tier 4). What DOES stay observable,
+    # and is guarded below, is that `__init__` is actually found and that its source still
+    # names the two markers the vacuity guard exists to check.
+    session_cls = next(
+        node for node in tree.body
+        if isinstance(node, ast.ClassDef) and node.name == "Session"
+    )
+    init_node = next(
+        (
+            node for node in session_cls.body
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and node.name == "__init__"
+        ),
+        None,
+    )
+    assert init_node is not None, (
+        "Session.__init__ not found in Session's own source — this guard needs updating, "
+        "not a bare StopIteration."
+    )
+    init_src = ast.get_source_segment(src, init_node)
+    assert init_src is not None
     assert "_ChatBudgetBus" in init_src and "_make_router_intervention_bus" in init_src, (
         "Session.__init__ no longer wires `_ChatBudgetBus` through `_make_router_intervention_bus` "
         "— the frozen-capture structural scan would be vacuously green (guard inert)."
