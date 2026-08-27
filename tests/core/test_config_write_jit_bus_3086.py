@@ -161,8 +161,11 @@ async def test_skill_install_config_write_bus_none_denies(tmp_path):
 
 
 @pytest.mark.asyncio
-@pytest.mark.replay("fixtures/llm/skill_install/config_write_bus_approves.jsonl")
-async def test_skill_install_config_write_bus_approves(tmp_path, _llm_replay):
+# #5283: this test drives `handle(op, ctx)` directly, no LLM call anywhere
+# (same shape as its pipeline/presentation siblings below, which never
+# carried the marker) — the @replay marker + fixture were spurious, found
+# by reyn.dev.testing.replay_unconsumed's own first real full run.
+async def test_skill_install_config_write_bus_approves(tmp_path):
     """Tier 2: #3086 fix — a real bus threaded through the gate lets the
     operator interactively approve the narrowed write; install succeeds and
     the JIT prompt fired exactly once. RED if bus= is not passed through to
