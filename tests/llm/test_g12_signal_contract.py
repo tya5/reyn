@@ -443,9 +443,14 @@ def test_success_cell_is_self_describing_and_uniform_with_the_directive() -> Non
 
     assert _G12_SIGNAL_TEXT == EMPTY_STOP_RETRY_DIRECTIVE
     assert "resume" in _G12_SIGNAL_TEXT.lower()
-    # Negation clause: states it is not an instruction from a person.
-    assert "instruction" in _G12_SIGNAL_TEXT.lower()
-    assert "no" in _G12_SIGNAL_TEXT.lower() or "not" in _G12_SIGNAL_TEXT.lower()
+    # Negation clause: architect review (#5274) — "instruction" present AND
+    # a bare "no"/"not" somewhere is vacuously true even for a SENTENCE
+    # ASSERTING the opposite (e.g. "an instruction ..., no reply needed"
+    # passes both clauses while stating exactly what this fix must NOT
+    # say). Pin the actual negation phrase instead — this is reyn's own
+    # authored prose (not third-party text), so pinning it is legitimate,
+    # and the phrase IS the property under test.
+    assert "not an instruction" in _G12_SIGNAL_TEXT.lower()
 
 
 def test_success_cell_contains_no_task_complete() -> None:
