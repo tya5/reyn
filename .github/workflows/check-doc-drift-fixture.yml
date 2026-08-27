@@ -1,0 +1,61 @@
+name: Doc-drift gate calibration fixture (#5010)
+
+# #5010: 4 regression tests in tests/scripts/test_check_doc_drift_5003.py
+# pin the doc-drift gate's calibration to 2 immutable, historical SHAs
+# (`e802ad73a` / `ba9690bb2^`) via `git show <sha>:<path>` — never the
+# live working tree, so the fixture measures the same thing regardless
+# of how far `main` has moved (see that test file's own #5010 section
+# for the full account).
+#
+# Isolated into its OWN workflow, path-scoped to the 2 files that could
+# possibly need it, rather than folded into `test.yml`'s `test:` job —
+# lead-coder review (#5298): that job's own checkout is depth-1
+# (shallow) by default, and adding `fetch-depth: 0` there would pay a
+# full-clone cost on EVERY PR just for 4 tests that only exercise 2
+# specific, rarely-touched files. This job pays that cost only when a
+# PR actually touches one of them.
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened, ready_for_review]
+    paths:
+      - "scripts/check_doc_drift.py"
+      - "tests/scripts/test_check_doc_drift_5003.py"
+  push:
+    branches: [main]
+    paths:
+      - "scripts/check_doc_drift.py"
+      - "tests/scripts/test_check_doc_drift_5003.py"
+
+permissions:
+  contents: read
+
+jobs:
+  doc-drift-fixture:
+    name: doc-drift gate calibration fixture (#5010)
+    runs-on: ubuntu-latest
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    timeout-minutes: 5
+
+    steps:
+      # fetch-depth: 0 (full history) — the fixture's own `_content_at`
+      # helper reads real file content at 2 pinned, historical SHAs via
+      # `git show <sha>:<path>`; a shallow (depth-1) checkout would 404
+      # on objects that old, raising CalledProcessError (the fixture's
+      # own `check=True` is deliberate — see its docstring — so this
+      # fails loudly rather than silently, but it still needs the real
+      # history present to succeed at all).
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install test dependencies
+        run: pip install -e ".[dev]"
+
+      - name: Run the #5010 calibration fixture tests
+        run: pytest tests/scripts/test_check_doc_drift_5003.py -k 5010 -v
