@@ -6230,7 +6230,6 @@ class Session:
                 if exc.line is not None and exc.column is not None
                 else "unknown location"
             )
-            warning = f"hooks.yaml could not be read: {path.name} ({location})"
             self._hooks_config_warnings[path.name] = location
             logger.warning("hooks layer %s could not be read: %s", path, exc)
             return []
