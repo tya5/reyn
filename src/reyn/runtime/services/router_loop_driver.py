@@ -239,6 +239,15 @@ class RouterLoopDriver:
 
         No ``router_context_overflow_unrecovered`` event here — the caller
         is the one that emits it, on the overflow it treats as terminal.
+
+        #5256: a provider usage-window/plan quota exhaustion is checked
+        FIRST and re-raised UNWRAPPED without entering the shrink loop at
+        all — shrinking cannot fix a clock-based limit, and trying anyway
+        (compaction's own LLM call) spends more of the same exhausted
+        quota. This is NOT one of the two overflow outcomes above; the
+        caller's own except clause does not catch it, so it reaches
+        Session's generic exception handler, which keeps the session
+        alive (owner ruling).
         """
         from reyn.runtime.usage_shim import _RouterUsageShim
         from reyn.services.compaction.engine import (
@@ -308,6 +317,30 @@ class RouterLoopDriver:
         try:
             return await loop.run(user_text=user_text, history=history)
         except Exception as _exc:
+            # #5256: a provider usage-window/plan quota exhaustion is NEVER
+            # shrinkable — it is time-based, not input-size-based — and
+            # entering retry_loop below would spend more of the SAME
+            # exhausted quota on compaction's own LLM call (the real
+            # incident: 2 agents x 2 turns x 3 shrink attempts = 12 wasted
+            # calls, each itself hitting the same 429). Checked BEFORE
+            # is_context_overflow_error on purpose: a RateLimitError whose
+            # message happens to contain a context-overflow keyword (e.g.
+            # "usage LIMIT reached") would otherwise match that predicate's
+            # own keyword fallback and be misdiagnosed as "context too
+            # large" — the exact defect this issue reports. Re-raising here
+            # (never wrapped in ContextOverflowError/UnrecoveredError)
+            # means it propagates to run_turn's own except, which does NOT
+            # catch a bare RateLimitError, then to Session._handle_inbox_
+            # text's generic catch-all — which already does the right
+            # thing for an un-wrapped exception: surface it via the
+            # outbox (classify_router_error) and return normally, keeping
+            # the session alive (owner ruling, #5256: quota exhaustion
+            # must never end the session).
+            from reyn.runtime.error_format import (
+                is_quota_exhausted_error as _is_quota_exhausted_error,
+            )
+            if _is_quota_exhausted_error(_exc):
+                raise
             # #3783 stage 1: single shared predicate (was an inline copy).
             if not _is_context_overflow_error(_exc):
                 raise

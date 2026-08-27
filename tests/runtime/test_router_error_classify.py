@@ -14,7 +14,11 @@ from __future__ import annotations
 import pytest
 
 from reyn.runtime.budget.budget import BudgetExceeded
-from reyn.runtime.error_format import classify_router_error
+from reyn.runtime.error_format import (
+    classify_router_error,
+    is_quota_exhausted_error,
+    quota_reset_seconds,
+)
 
 # ── synthetic exception shapes mimicking provider classes ────────────────────
 
@@ -134,3 +138,70 @@ def test_very_long_message_is_truncated() -> None:
     assert out.endswith("• wait a moment then retry"), out
     # Truncation marker must be present
     assert "…" in out
+
+
+# ── #5256: quota exhaustion is a distinct 429 shape, not a plain rate limit ──
+
+
+class _QuotaExhaustedRateLimitError(Exception):
+    """Real shape observed (#5256): a RateLimitError whose litellm ``.body``
+    carries the provider's own structured usage-window/plan quota fields."""
+
+    def __init__(self, *, resets_in_seconds: "int | None" = None) -> None:
+        super().__init__("The usage limit has been reached")
+        self.status_code = 429
+        body = {"type": "usage_limit_reached", "message": "The usage limit has been reached"}
+        if resets_in_seconds is not None:
+            body["resets_in_seconds"] = resets_in_seconds
+        self.body = body
+
+
+def test_is_quota_exhausted_error_reads_the_structured_body_type() -> None:
+    """Tier 1: the discriminator is the STRUCTURED ``body.type`` field, never
+    ``str(exc)`` (#5257's own precedent — a provider's free-text wording is
+    not reyn's contract to match)."""
+    assert is_quota_exhausted_error(_QuotaExhaustedRateLimitError()) is True
+    # A plain RateLimitError with no such body is NOT quota-exhaustion —
+    # non-vacuity: the predicate must not fire on every RateLimitError.
+    assert is_quota_exhausted_error(RateLimitError("429 too many requests")) is False
+    # A body dict present but with a DIFFERENT type must not match either.
+    other = RateLimitError("429")
+    other.body = {"type": "some_other_reason"}
+    assert is_quota_exhausted_error(other) is False
+
+
+def test_quota_reset_seconds_reads_resets_in_seconds_not_resets_at() -> None:
+    """Tier 1: #5256 — a real occurrence computed a wait time from
+    ``resets_at`` (an absolute epoch) that was wrong by ~4 days against the
+    account's actual recovery; ``resets_in_seconds`` (a duration, used
+    as-is, never derived) is the field this reads."""
+    exc = _QuotaExhaustedRateLimitError(resets_in_seconds=12258)
+    exc.body["resets_at"] = 1788132890  # present, must be ignored
+    assert quota_reset_seconds(exc) == 12258
+
+    absent = _QuotaExhaustedRateLimitError()
+    assert quota_reset_seconds(absent) is None
+
+
+def test_quota_exhaustion_gets_its_own_bucket_with_the_reset_duration() -> None:
+    """Tier 1: the [usage limit] bucket is distinct from [rate limit] and
+    surfaces the provider's own reported wait — never the provider's own
+    wording (#5257), and never a value derived from resets_at."""
+    out = classify_router_error(_QuotaExhaustedRateLimitError(resets_in_seconds=12258))
+    assert out.startswith("router failed: [usage limit]"), out
+    assert "12258" in out
+
+
+def test_quota_exhaustion_without_a_reset_duration_still_gets_the_bucket() -> None:
+    """Tier 1: non-vacuity for the missing-duration branch — the bucket
+    still fires and still says something decision-enabling, not a crash
+    on a missing field."""
+    out = classify_router_error(_QuotaExhaustedRateLimitError())
+    assert out.startswith("router failed: [usage limit]"), out
+
+
+def test_plain_rate_limit_is_unaffected_by_the_new_bucket() -> None:
+    """Tier 2: non-vacuity — an ordinary RateLimitError with no quota body
+    still lands in the pre-existing [rate limit] bucket, unchanged."""
+    out = classify_router_error(RateLimitError("429 too many requests"))
+    assert out.startswith("router failed: [rate limit]"), out

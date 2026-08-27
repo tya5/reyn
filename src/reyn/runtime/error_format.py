@@ -9,7 +9,9 @@ and gives the user no path forward.
 
 This module maps the common patterns to a short, actionable prefix:
 
-    [rate limit]      provider 429 — wait a moment and retry
+    [rate limit]      provider 429 (per-request) — wait a moment and retry
+    [usage limit]     provider 429 (usage-window/plan quota exhausted,
+                      #5256) — a wait, not a retry-worthy failure
     [provider error]  provider 5xx / connection failure — retry shortly
     [auth error]      bad / missing API key
     [timeout]         client- or server-side timeout
@@ -21,10 +23,64 @@ The classifier inspects ``type(exc).__name__`` and falls back to a
 import litellm or httpx — keeping this layer free of provider deps
 means new provider exceptions don't have to be re-imported here as
 long as their class names follow common conventions.
+
+#5256: a 429 is not one failure — a per-request rate limit (shrinking
+the input can genuinely help avoid it) and a usage-window/plan quota
+exhaustion (shrinking cannot: the window resets on a clock, not on
+input size) both surface as ``RateLimitError`` today. ``is_quota_
+exhausted_error``/``quota_reset_seconds`` below read the STRUCTURED
+provider body litellm exposes on ``exc.body`` (a dict) to tell the two
+apart and surface a wait time — never the provider's own free-text
+message (#5257: a provider/SDK changing its own wording is not reyn's
+bug to catch or reyn's string to own).
 """
 from __future__ import annotations
 
 from reyn.runtime.budget.budget import BudgetExceeded
+
+#: #5256: the ONE provider ``type`` value observed to mean "usage-window /
+#: plan quota exhausted, waiting is the only remedy" (reyn-self, litellm/
+#: Anthropic-proxy, 2026-08-24/25/27 — see issue #5256's own real
+#: transcripts). A provider that expresses the same failure class under a
+#: DIFFERENT ``type`` string is a disclosed gap, not a silently-assumed
+#: absence — this is a positive allowlist, not an attempt to enumerate
+#: every provider's vocabulary.
+_QUOTA_EXHAUSTED_BODY_TYPE = "usage_limit_reached"
+
+
+def is_quota_exhausted_error(exc: BaseException) -> bool:
+    """True when *exc* is a provider usage-window/plan quota exhaustion —
+    genuinely time-based and input-size-independent (#5256), never
+    something shrinking the request can fix. Distinguishes this from an
+    ordinary per-request rate limit, which a ``RateLimitError`` ALSO
+    reports and which shrinking the input CAN help avoid.
+
+    Checked via the structured field litellm exposes on ``exc.body``
+    (the provider's own parsed error dict), never ``str(exc)`` — matching
+    the provider's own free-text message is a responsibility that belongs
+    to the provider, not reyn (#5257's own precedent for this exact
+    class of mistake)."""
+    body = getattr(exc, "body", None)
+    return isinstance(body, dict) and body.get("type") == _QUOTA_EXHAUSTED_BODY_TYPE
+
+
+def quota_reset_seconds(exc: BaseException) -> "int | None":
+    """The provider's own ``resets_in_seconds`` field, if *exc* carries one
+    — how long until the exhausted quota window resets. ``None`` if absent
+    or not an int.
+
+    Deliberately does NOT read ``resets_at`` (an absolute epoch timestamp
+    the SAME provider also returns): a real occurrence (#5256 issue
+    thread) computed a wait time from ``resets_at`` that was wrong by
+    ~4 days against the account's actual recovery — the field does not
+    reliably predict recovery time, so no promise is derived from it here.
+    ``resets_in_seconds`` is used as reported (a duration, not a promise);
+    the caller frames it as "reported by the provider", not a guarantee."""
+    body = getattr(exc, "body", None)
+    if not isinstance(body, dict):
+        return None
+    val = body.get("resets_in_seconds")
+    return val if isinstance(val, int) else None
 
 
 def classify_router_error(exc: BaseException) -> str:
@@ -43,7 +99,7 @@ def classify_router_error(exc: BaseException) -> str:
     msg = str(exc) or name
     code = getattr(exc, "status_code", None)
 
-    bucket = _bucket_for(name, code)
+    bucket = _bucket_for(name, code, exc)
     if bucket is None:
         return f"router failed: {msg}"
     label, hint = bucket
@@ -55,7 +111,7 @@ def classify_router_error(exc: BaseException) -> str:
     return f"router failed: [{label}] {short} • {hint}"
 
 
-def _bucket_for(name: str, code: int | None) -> tuple[str, str] | None:
+def _bucket_for(name: str, code: "int | None", exc: BaseException) -> "tuple[str, str] | None":
     """Return a ``(label, hint)`` pair for the matched bucket, or None.
 
     Class-name matching is intentionally substring-based so subclasses
@@ -67,6 +123,22 @@ def _bucket_for(name: str, code: int | None) -> tuple[str, str] | None:
     """
     # Rate limit — 429
     if "RateLimit" in name or code == 429:
+        # #5256: a quota exhaustion (waiting is the only remedy) gets a
+        # distinct, decision-enabling hint from a plain per-request rate
+        # limit — "wait a moment" understates a multi-hour usage window.
+        if is_quota_exhausted_error(exc):
+            resets = quota_reset_seconds(exc)
+            if resets is not None:
+                return (
+                    "usage limit",
+                    f"provider reports it resets in {resets}s — no need to "
+                    "reply, it will recover on its own",
+                )
+            return (
+                "usage limit",
+                "provider usage limit reached — it will recover on its own, "
+                "no fixed wait reported",
+            )
         return "rate limit", "wait a moment then retry"
     # Auth — 401 / 403
     if "Authentication" in name or "PermissionDenied" in name or code in (401, 403):
@@ -98,4 +170,4 @@ def _bucket_for(name: str, code: int | None) -> tuple[str, str] | None:
     return None
 
 
-__all__ = ["classify_router_error"]
+__all__ = ["classify_router_error", "is_quota_exhausted_error", "quota_reset_seconds"]
