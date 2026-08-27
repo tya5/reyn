@@ -7,10 +7,22 @@ trail") found these two operator actions had NO audit-event at all —
 not a performance gap, a pre-existing observability hole this session's
 own design pass surfaced by writing "no emit found" instead of assuming
 one existed. Fix: ``Session.set_capability_visible`` emits
-``visibility_changed`` (kind/name/on) unconditionally once the forwarded
-call returns without raising; ``Session.set_hook_enabled`` emits
-``hook_changed`` (name/enabled) ONLY on its ``applied=True`` path — the
-#5230 refusal path changes nothing, so nothing is recorded there.
+``visibility_changed`` (kind/name/on/applied) unconditionally once the
+forwarded call returns without raising; ``Session.set_hook_enabled``
+emits ``hook_changed`` (name/enabled/applied/origin) on BOTH outcomes.
+
+Corrected mid-review (architect BLOCK on the first draft, #5277): that
+first draft had ``hook_changed`` fire ONLY on the applied path — a
+refused disable of a PROTECTED hook emitted nothing at all. Architect:
+the two kinds were then following DIFFERENT rules ("did state change"
+for hooks vs "did the operator act" for visibility), and the refused
+path is exactly the event lens 7 needs to answer "why is this
+protected hook still running after someone tried to stop it"
+(#5041/#5213) — a kind that only ever fires on success can never answer
+that, and the meaning cannot be widened later without changing what
+already-logged events of the SAME kind mean (the #5261-rejected shape).
+Both branches now emit from the start, with ``applied: bool``
+distinguishing them.
 
 Real ``Session`` + real ``EventLog`` — no mocks. Uses
 ``tests/_support/events.py``'s ``collect_events``/``settle`` — the
@@ -57,8 +69,8 @@ def _make_session(tmp_path: Path, *, hooks_config=None) -> Session:
 @pytest.mark.asyncio
 async def test_visibility_toggle_emits_visibility_changed(tmp_path, monkeypatch) -> None:
     """Tier 2: acceptance — a plain ``/visibility off`` toggle emits
-    ``visibility_changed`` with the operator's own kind/name/on, exactly
-    once."""
+    ``visibility_changed`` with the operator's own kind/name/on/applied,
+    exactly once."""
     monkeypatch.chdir(tmp_path)
     s = _make_session(tmp_path)
     collected = collect_events(s._audit_events)
@@ -72,32 +84,44 @@ async def test_visibility_toggle_emits_visibility_changed(tmp_path, monkeypatch)
     assert seen[0].data["kind"] == "tool"
     assert seen[0].data["name"] == "grep"
     assert seen[0].data["on"] is False
+    assert seen[0].data["applied"] is True
 
 
 @pytest.mark.asyncio
-async def test_hook_toggle_emits_hook_changed_only_when_applied(tmp_path, monkeypatch) -> None:
-    """Tier 2: acceptance + falsification contrast. Disabling a genuine
-    per-session hook emits ``hook_changed``; disabling a PROTECTED
-    (startup-origin) hook is refused (#5230) and must emit NOTHING —
-    the refusal changed no state, so there is nothing to record."""
+async def test_hook_toggle_emits_hook_changed_on_both_outcomes(tmp_path, monkeypatch) -> None:
+    """Tier 2: acceptance + falsification contrast (architect-corrected,
+    #5277). Disabling a genuine per-session hook emits ``hook_changed``
+    with ``applied=True``; disabling a PROTECTED (startup-origin) hook is
+    refused (#5230) but STILL emits ``hook_changed``, with
+    ``applied=False`` — the refused attempt is exactly what lens 7 needs
+    on record, not silence."""
     monkeypatch.chdir(tmp_path)
     s = _make_session(tmp_path, hooks_config=_STARTUP_HOOKS)
     collected = collect_events(s._audit_events)
 
-    # Refused: startup-origin hook, no state change → no event.
+    # Refused: startup-origin hook — no state change, but the ATTEMPT is recorded.
     refused = s.set_hook_enabled(_STARTUP_HOOK_NAME, False)
     await settle(s._audit_events)
-    assert [e for e in collected if e.type == "hook_changed"] == [], (
-        f"a refused (unapplied) hook toggle must emit nothing, got {collected}"
-    )
+    seen_refused = [e for e in collected if e.type == "hook_changed"]
     assert refused.applied is False
+    assert seen_refused, "a refused hook-disable attempt must still emit hook_changed"
+    assert seen_refused == [seen_refused[0]], (
+        f"expected exactly one hook_changed event for the refused attempt, got {seen_refused}"
+    )
+    assert seen_refused[0].data["name"] == _STARTUP_HOOK_NAME
+    assert seen_refused[0].data["enabled"] is False
+    assert seen_refused[0].data["applied"] is False
+    assert seen_refused[0].data["origin"] == "startup"
 
-    # Applied: an unknown/per-session name is freely disableable → event fires.
+    # Applied: an unknown/per-session name is freely disableable → applied=True.
     applied = s.set_hook_enabled("some-per-session-hook", False)
     await settle(s._audit_events)
-    seen = [e for e in collected if e.type == "hook_changed"]
+    seen_applied = [e for e in collected if e.type == "hook_changed" and e is not seen_refused[0]]
     assert applied.applied is True
-    assert seen, "expected a hook_changed event, got none"
-    assert seen == [seen[0]], f"expected exactly one hook_changed event, got {seen}"
-    assert seen[0].data["name"] == "some-per-session-hook"
-    assert seen[0].data["enabled"] is False
+    assert seen_applied, "expected a hook_changed event for the applied toggle"
+    assert seen_applied == [seen_applied[0]], (
+        f"expected exactly one NEW hook_changed event, got {seen_applied}"
+    )
+    assert seen_applied[0].data["name"] == "some-per-session-hook"
+    assert seen_applied[0].data["enabled"] is False
+    assert seen_applied[0].data["applied"] is True
