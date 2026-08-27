@@ -190,6 +190,7 @@ presentation_install_blocked
 presentation_installed
 presentation_load_failed
 presented
+process_marker_reaped
 project_context_changed
 repo_ingest_files_skipped
 resource_cap_exceeds_budget_trigger

@@ -196,6 +196,106 @@ def test_marker_content_never_carries_argv_or_a_path_beyond_cwd(
         process_registry.unregister_process(os.getpid())
 
 
+# ── #5358: reap destroys the only evidence a process ever ran — a P6
+# event before the unlink is what makes the stop no longer silent ──────────
+
+
+def _read_events_of_kind(events_dir: Path, kind: str) -> list[dict]:
+    """Read every JSONL event of *kind* from anywhere under *events_dir*
+    (same helper shape ``test_asyncio_diagnostics.py`` uses for the SAME
+    ``emit_cli_event`` seam)."""
+    found: list[dict] = []
+    if not events_dir.exists():
+        return found
+    for path in events_dir.rglob("*.jsonl"):
+        for line in path.read_text().splitlines():
+            if not line.strip():
+                continue
+            rec = json.loads(line)
+            if rec.get("type") == kind:
+                found.append(rec)
+    return found
+
+
+def test_reaping_a_dead_marker_emits_one_event_carrying_the_markers_own_content(
+    _isolated_processes_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Tier 2: #5358 — the reap in ``live_processes()`` used to unlink a
+    confirmed-dead marker with zero logger/audit-event calls (docs-maintainer's
+    real-machine measurement, #4850's own investigation): the ONLY record
+    that PID ever ran was the marker file itself, and the reap destroyed it
+    with nothing written first. One ``process_marker_reaped`` P6 event must
+    now land, BEFORE the unlink, carrying the marker's own content (not a
+    summary/subset of it — a reader needs to reconstruct what was lost) plus
+    an ``observed_at`` timestamp (an upper bound on when the process actually
+    stopped, never asserted as an exact stop time — this is a
+    detection mechanism, not a diagnosis one)."""
+    reyn_dir = tmp_path / ".reyn"
+    reyn_dir.mkdir()
+    monkeypatch.chdir(tmp_path)
+
+    proc = _spawn_registering_subprocess()
+    try:
+        _wait_until(lambda: len(process_registry.live_processes()) == 1)
+        marker_path = _isolated_processes_dir / f"{proc.pid}.json"
+        original_marker = json.loads(marker_path.read_text(encoding="utf-8"))
+
+        proc.kill()
+        proc.wait()
+        _wait_until(lambda: not process_registry.pid_alive(proc.pid))
+
+        before_reap = time.time()
+        result = process_registry.live_processes()
+        after_reap = time.time()
+
+        assert result == []  # sanity: the dead marker was reaped, as before
+        assert not marker_path.exists()  # sanity: same reap behavior, unchanged
+
+        events = _read_events_of_kind(reyn_dir / "events", "process_marker_reaped")
+        [event] = events  # exactly one — unpack raises otherwise
+        data = event["data"]
+        assert data["marker"] == original_marker, (
+            "#5358 REGRESSION: the event must carry the marker's own full "
+            f"content, not a summary — got {data['marker']!r}, expected "
+            f"{original_marker!r}"
+        )
+        assert before_reap <= data["observed_at"] <= after_reap, (
+            "observed_at must be a real timestamp taken at reap time, not a "
+            "constant or the marker's own started_at"
+        )
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait()
+
+
+def test_a_live_marker_is_never_reaped_and_emits_no_event(
+    _isolated_processes_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Tier 2: #5358 deny side, in the SAME shape as the positive witness
+    above (CLAUDE.md's own six-questions ④ — a deny-only assertion is green
+    even if the whole mechanism silently never ran; pairing it with the
+    positive witness above closes that gap the same way #5331's own
+    reviewer named it). A confirmed-ALIVE process's marker must be neither
+    reaped NOR reported — reaping only fires for a confirmed-dead PID."""
+    reyn_dir = tmp_path / ".reyn"
+    reyn_dir.mkdir()
+    monkeypatch.chdir(tmp_path)
+
+    process_registry.register_process("self")
+    try:
+        result = process_registry.live_processes()
+        assert os.getpid() in {e["pid"] for e in result}  # sanity: still reported live
+
+        events = _read_events_of_kind(reyn_dir / "events", "process_marker_reaped")
+        assert events == [], (
+            "#5358 REGRESSION: a live process's marker must never be "
+            f"reported as reaped — got {events!r}"
+        )
+    finally:
+        process_registry.unregister_process(os.getpid())
+
+
 def test_the_real_cli_entry_point_actually_calls_register_process(
     tmp_path: Path,
 ) -> None:

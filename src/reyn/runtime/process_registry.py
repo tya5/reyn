@@ -236,6 +236,25 @@ def live_processes() -> "list[dict]":
             continue
         pid = data.get("pid")
         if not isinstance(pid, int) or not pid_alive(pid):
+            # #5358: the marker itself is the only record that this PID
+            # ever ran — the process that owned it never got to say it was
+            # stopping (a graceful exit's own atexit handler would have
+            # unlinked this file already; reaching this branch at all means
+            # it did not). One event BEFORE the unlink below, carrying the
+            # marker's own content plus this observation's own wall-clock
+            # time (an UPPER BOUND on when the process actually stopped,
+            # never the stop time itself — nothing here knows when between
+            # the marker's last write and this read the process actually
+            # died). This is not a crash-diagnosis mechanism: it does not
+            # know WHY the process stopped (crash / SIGKILL / power loss /
+            # OOM are indistinguishable from here), and a process that died
+            # before ever reaching register_process() leaves no marker to
+            # reap in the first place. What it closes is narrower and
+            # structural: a stop that used to be perfectly silent (this
+            # same reap, with no record before it) now has exactly one.
+            from reyn.core.events.events import emit_cli_event
+
+            emit_cli_event("process_marker_reaped", marker=data, observed_at=time.time())
             try:
                 path.unlink()
             except OSError:
