@@ -85,7 +85,11 @@ def test_blocking_comment_with_no_cleared_fails_even_with_empty_body() -> None:
     """Tier 1: ⑤ a BLOCKING comment with no BLOCKING-CLEARED anywhere
     fails — even when the body has nothing in it at all (the reviewer
     who follows house rule 7 and posts the point as a comment is
-    protected regardless of what the body currently says)."""
+    protected regardless of what the body currently says). This is the
+    deletion bypass #5311 case 1 closes: the gate is stateless, so "the
+    body's checkbox was deleted" and "the body never had one" are the
+    SAME input to `evaluate` — there is no separate test for "deleted",
+    only this one, which already covers an empty body unconditionally."""
     code, lines = evaluate(_pr(
         "",
         comments=[f"**[architect]** — BLOCKING (head {_HEAD})\nThe cache must be invalidated on write."],
@@ -95,7 +99,9 @@ def test_blocking_comment_with_no_cleared_fails_even_with_empty_body() -> None:
 
 
 def test_blocking_comment_with_verbatim_cleared_at_current_head_passes() -> None:
-    """Tier 1: a BLOCKING comment with a LATER BLOCKING-CLEARED comment
+    """Tier 1: ⑥ (condition A's accept side — without this, condition A
+    could be "always red" and still satisfy every other acceptance test)
+    a BLOCKING comment with a LATER BLOCKING-CLEARED comment
     that names the current head and quotes the identifying line verbatim
     passes — the two-comment record #5314 asks reviewers to keep."""
     code, _ = evaluate(_pr(
@@ -137,20 +143,6 @@ def test_cleared_with_different_wording_does_not_resolve() -> None:
         ],
     ))
     assert code != 0
-
-
-def test_blocking_survives_a_full_body_deletion_when_never_cleared() -> None:
-    """Tier 1: ⑥ (the deletion bypass, #5311 case 1 — "本命") — a BLOCKING
-    comment that was NEVER cleared stays red even after the body's own
-    copy of the point is deleted entirely (body="") — condition A never
-    reads the body, so there is nothing there to delete out from under
-    it."""
-    code, lines = evaluate(_pr(
-        "",  # the reviewer's original checkbox line has been deleted from the body
-        comments=[f"**[architect]** — BLOCKING (head {_HEAD})\nThe cache must be invalidated on write."],
-    ))
-    assert code != 0
-    assert any("BLOCKING comment has no matching" in line for line in lines)
 
 
 # ---------------------------------------------------------------------------
