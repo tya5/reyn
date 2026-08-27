@@ -424,21 +424,97 @@ async def session_backlog_page(
 
     Returns ``(frames, has_more, next_cursor)`` — see
     :func:`~reyn.interfaces.inline.textual_chat.restore.page_restored_history`,
-    which this wraps, for what each means."""
+    which this wraps, for what each means. A thin wrapper over
+    :func:`_session_backlog_page_and_status`, discarding its paired status —
+    this is the shape every EXISTING caller (a mid-stream switch re-fire, a
+    client-driven ``ReachedTop`` pull) wants: those need a FRESH status read
+    of their own (#5116 — the target session may have changed), never a
+    status frozen at the moment this particular page was built."""
+    frames, has_more, next_cursor, _status = await _session_backlog_page_and_status(
+        registry, name, sid, before_root_id=before_root_id,
+    )
+    return frames, has_more, next_cursor
+
+
+async def _session_backlog_page_and_status(
+    registry, name: str, sid: str, *, before_root_id: "str | None" = None,
+) -> "tuple[list[Frame], bool, str | None, dict | None]":
+    """#5179 fix: the CONNECT-time caller (``agui_events``, below) needs its
+    initial backlog page and its initial status to describe the SAME
+    instant — not the freshest available status, paired with it.
+
+    **The bug this closes is about consistency, not freshness.** The
+    connect-time reconnect snapshot used to pair the backlog built here with
+    a status read taken LATER — either lazily at ``AgUiEmitter.stream()``
+    start (the original report: an ASGI-scheduling gap after this function
+    already returned) or, in an earlier draft of this fix, immediately after
+    this function returns (architect review, issuecomment-5434642964: still
+    wrong for this loop's own ``extended <= 0`` exit, which returns
+    ``frames`` built BEFORE ``extend_history_backward_async``'s disk-read
+    await — a status read taken AFTER that await already reflects any turn
+    dispatched during it, while the backlog paired with it does not). Both
+    of those "read status separately, whenever" designs are the SAME defect
+    at different distances: a dispatch that commits inside the gap advances
+    status past a turn whose OWN historical frames the seq-gate (state.py's
+    ``RemoteQueueView``) then correctly refuses to resurrect — so the turn
+    is promoted NOWHERE. The fix is not "read status sooner" or "read it
+    later" — it is to stop reading it at a different time than ``history``
+    at all.
+
+    So: capture status via :func:`~reyn.interfaces.repl.status._snapshot_for_session`
+    in the SAME synchronous tick as each ``history = list(...)`` read below,
+    overwritten every loop iteration — whichever iteration's ``frames`` is
+    what finally gets returned (exit A, no await ever taken; or exit B,
+    after one or more ``extend_history_backward_async`` awaits), the status
+    returned alongside it was captured paired with THAT SAME iteration's
+    history read, with no await between the two. There is no "which one is
+    older" question left to get backwards: if the paired seed is OLD (a
+    turn dispatched after this whole call started), ``_last_seq`` seeds low,
+    that turn's own frames pass the gate and promote normally once
+    forwarded live — exactly once, never twice, and never dropped. Do NOT
+    special-case this to read a "fresher" status once the loop is about to
+    return — that is the exact regression this docstring exists to head
+    off (lead-coder/architect, #5179: "次の人が status が古いのはバグと見て
+    live読みに戻す" — a future contributor who thinks a stale-looking status
+    is itself the bug and reverts to a live read here reintroduces #5179).
+
+    Returns ``(frames, has_more, next_cursor, status)`` — the first three
+    identical to :func:`session_backlog_page`'s own contract; ``status`` is
+    ``None`` only when ``target`` itself does not resolve (mirrors the
+    ``None``-session case :func:`~reyn.interfaces.repl.status._snapshot_for_session`
+    itself already handles for a detached agent).
+
+    **Paired against ``target`` (this function's own resolved session), not
+    ``source.current_session()``** (architect, PR #5293 review, non-blocking)
+    — the live mid-stream path (``_status_provider`` below) reads the
+    LATTER. At the moment ``agui_events`` calls this function, the two are
+    the SAME session: ``attach()`` always focuses ``_DEFAULT_SID``
+    (registry.py), and ``_SessionFrameSource.__init__`` resolves
+    ``current_session()`` via ``self._bind(session)`` off that SAME
+    connect-time ``attach`` result — no cross-agent ``/attach`` re-point
+    (the only thing that can make them diverge, #5116) has had a chance to
+    fire yet at this specific call site. Pairing against ``target`` (this
+    function's own local) rather than threading ``source`` through as a
+    parameter is deliberate: it keeps this function's own contract self-
+    contained and matches the backlog's own resolution (``target`` is
+    where ``history`` itself comes from too — pairing status against a
+    DIFFERENT session's resolution than the backlog it rides alongside
+    would reintroduce a mismatch of its own)."""
     target = registry.get_session(name, sid)
     if target is None:
-        return [], False, None
+        return [], False, None, None
     while True:
         history = list(getattr(target, "history", []) or [])
+        status = _snapshot_for_session(registry, target)
         frames, has_more, next_cursor = page_restored_history(
             history, before_root_id=before_root_id, limit=HYDRATE_PAGE_FRAMES,
         )
         if has_more:
-            return [DisplayFrame(m) for m in frames], has_more, next_cursor
+            return [DisplayFrame(m) for m in frames], has_more, next_cursor, status
         extend = getattr(target, "extend_history_backward_async", None)
         extended = await extend() if extend is not None else 0
         if extended <= 0:
-            return [DisplayFrame(m) for m in frames], False, None
+            return [DisplayFrame(m) for m in frames], False, None, status
 
 
 def _is_delta_frame(frame) -> bool:
@@ -981,6 +1057,16 @@ async def agui_events(request: Request, agent_name: str):
             # session. ``source`` is the SINGLE per-connection owner of
             # "which agent, which session" now (see its own class docstring);
             # this is its one status-facing read path.
+            #
+            # #5179 (architect, non-blocking): at CONNECT time, this reads
+            # the SAME session `_session_backlog_page_and_status` paired
+            # its own status against for `initial_status` below —
+            # `attach()` always focuses `_DEFAULT_SID`, so `source.current_
+            # session()` and that function's own `target` resolve
+            # identically here. They can only diverge LATER, mid-stream,
+            # after a cross-agent `/attach` re-points `source` (#5116) —
+            # which is exactly why this live closure (not `initial_status`)
+            # is what the mid-stream switch re-fire still reads.
             return _snapshot_for_session(registry, source.current_session())
 
         async def _backlog_provider(name: str, sid: str) -> "tuple[list[Frame], bool, str | None]":
@@ -1001,8 +1087,15 @@ async def agui_events(request: Request, agent_name: str):
         # session's own history through the SAME projection the switch re-fire
         # and the local restore-on-restart path both use — one SSoT, populated
         # at both call sites now instead of only the second.
-        initial_backlog, initial_has_more, initial_next_cursor = await session_backlog_page(
-            registry, agent_name, _DEFAULT_SID,
+        # #5179: the initial backlog AND the initial status must describe
+        # the SAME instant — paired via ``_session_backlog_page_and_status``
+        # (that function's own docstring has the full reasoning: this is a
+        # consistency fix, not a freshness one). ``_status_provider`` above
+        # stays the LIVE read for the mid-stream switch re-fire only
+        # (``_backlog_provider``'s own caller, emitter.py) — #5116 needs
+        # that one fresh; this one must not be.
+        initial_backlog, initial_has_more, initial_next_cursor, initial_status = (
+            await _session_backlog_page_and_status(registry, agent_name, _DEFAULT_SID)
         )
         emitter = AgUiEmitter(
             source.frames(), _status_provider,
@@ -1010,6 +1103,7 @@ async def agui_events(request: Request, agent_name: str):
             backlog_has_more=initial_has_more,
             backlog_next_cursor=initial_next_cursor,
             backlog_provider=_backlog_provider,
+            initial_status=initial_status,
         )
     except Exception:
         source.close()

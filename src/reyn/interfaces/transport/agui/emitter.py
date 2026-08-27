@@ -91,6 +91,7 @@ class AgUiEmitter:
         backlog_has_more: bool = False,
         backlog_next_cursor: "str | None" = None,
         backlog_provider: "Callable[[str, str], Awaitable[tuple[list[Frame], bool, str | None]]] | None" = None,
+        initial_status: "dict | None" = None,
     ) -> None:
         # ``frames`` is the unified frame stream (e.g. an InProcessTransport's
         # ``frames()``); ``status_provider`` returns the CUI status snapshot dict
@@ -104,12 +105,26 @@ class AgUiEmitter:
         # OWN bounded page (``(frames, has_more, next_cursor)``, #5139 C) for
         # the re-fire; ``None`` means this connection never switches sessions
         # (byte-identical to pre-N3 behavior).
+        #
+        # ``initial_status`` (#5179) is the status paired with ``backlog`` at
+        # the SAME instant the caller captured it — used ONLY for the very
+        # first reconnect snapshot (``stream()``'s own preamble, below). This
+        # is a consistency fix, not a freshness one: pairing a fresher-but-
+        # later status with an older backlog is the bug (a turn dispatched
+        # in between gets a seq-gated seed that never resurrects, so it is
+        # never promoted anywhere — see the caller's own docstring,
+        # ``_session_backlog_page_and_status`` in endpoint.py, for the full
+        # reasoning). ``None`` falls back to ``status_provider()`` — the
+        # pre-#5179 behavior, unchanged for any caller not yet passing this.
+        # The mid-stream switch re-fire (``session_attached``, below) is
+        # DELIBERATELY NOT changed to use this — #5116 needs that one live.
         self._frames = frames
         self._status_provider = status_provider
         self._backlog = list(backlog or [])
         self._backlog_has_more = backlog_has_more
         self._backlog_next_cursor = backlog_next_cursor
         self._backlog_provider = backlog_provider
+        self._initial_status = initial_status
         self._model = StatusModel()
         self._waiting_on: str | None = None
         # #3288 ③d: one tracker per connection so a streamed reply's
@@ -118,27 +133,41 @@ class AgUiEmitter:
         # ``TextStreamTracker``'s docstring, protocol.py).
         self._text_stream = TextStreamTracker()
 
-    def _project(self) -> dict:
-        return project_status(self._status_provider(), waiting_on=self._waiting_on)
+    def _project(self, status: "dict | None" = None) -> dict:
+        # ``status`` overrides a live ``status_provider()`` read when the
+        # caller already holds one paired with the backlog it is projecting
+        # alongside (#5179 — the connect-time reconnect snapshot). ``None``
+        # (every OTHER call site: the mid-stream switch re-fire, the
+        # per-frame delta loop) falls back to the live read, unchanged.
+        resolved = status if status is not None else self._status_provider()
+        return project_status(resolved, waiting_on=self._waiting_on)
 
     def _reconnect_snapshot_chunks(
         self, backlog: "list[Frame]", *, has_more: bool = False, next_cursor: "str | None" = None,
+        status: "dict | None" = None,
     ) -> "list[str]":
         """The shared reconnect protocol (A4): backlog display, then full
         status — used identically at connect (``stream()`` start) and at a
         mid-stream session switch (#3310 N3), so the two are ONE code path,
         not a byte-identical-by-hand duplicate. ``has_more``/``next_cursor``
         (#5139 C) are *backlog*'s own page-continuation state, riding the
-        SAME ``MESSAGES_SNAPSHOT`` event."""
+        SAME ``MESSAGES_SNAPSHOT`` event. ``status`` (#5179), when given, is
+        a status ALREADY paired with this same ``backlog`` at the instant
+        the caller captured it — passed through to :meth:`_project` instead
+        of a fresh live read; ``None`` (the mid-stream switch re-fire's own
+        call, below) keeps reading live, as before."""
         return [
             to_sse(encode_messages_snapshot(backlog, has_more=has_more, next_cursor=next_cursor)),
-            to_sse(encode_state_snapshot(self._model.snapshot(self._project()))),
+            to_sse(encode_state_snapshot(self._model.snapshot(self._project(status)))),
         ]
 
     async def stream(self) -> AsyncIterator[str]:
-        # Reconnect snapshots first (A4): backlog display, then full status.
+        # Reconnect snapshots first (A4): backlog display, then full status —
+        # ``self._initial_status``, paired with ``self._backlog`` at the
+        # SAME instant the caller captured both (#5179), not a fresh read.
         for chunk in self._reconnect_snapshot_chunks(
             self._backlog, has_more=self._backlog_has_more, next_cursor=self._backlog_next_cursor,
+            status=self._initial_status,
         ):
             yield chunk
 
