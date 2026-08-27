@@ -103,15 +103,29 @@ jobs:
 
       # scripts/check_tests_read_names_its_tree.py is stdlib-only
       # (argparse / json / re / subprocess). No pip install needed.
-      # `continue-on-error: true` keeps a script failure from also turning
-      # this step, and with it the job, red: the commit status posted below
-      # is the only channel that carries this verdict. `steps.check.outcome`
-      # (read below) still reports the script's real result -- `outcome` is
-      # the pre-continue-on-error result; `conclusion` is what
-      # continue-on-error would force to `success` and is not read here.
+      #
+      # #5328: this step used to run with `continue-on-error: true`,
+      # reasoning "the commit status posted below is the only channel that
+      # carries this verdict" -- but that setting forces the STEP's (and
+      # so the JOB's, and so this job's own auto-generated check-run's)
+      # *conclusion* to `success` regardless of the script's real exit
+      # code. Measured (the sibling `check-open-blocking-checkboxes.yml`'s
+      # own #5328 fix, #5337 empirical PR): a job with `continue-on-error:
+      # true` on its only real step reads PASS on its own check-run at the
+      # SAME push-time evaluation a correctly-computed commit status reads
+      # FAIL for -- not staleness (that residual gap is real and disclosed
+      # below), unconditional. This workflow shares the identical shape,
+      # so the identical fix applies: removed.
+      #
+      # This job's own conclusion (and so its check-run) now tracks the
+      # SAME script result the commit status below is computed from, in
+      # the SAME run -- the two can only disagree afterward, when a LATER
+      # `issue_comment`-triggered run updates the commit status without a
+      # matching `pull_request` event to refresh this job's own check-run
+      # (an `issue_comment` event's own check-run attaches to the DEFAULT
+      # BRANCH's sha, never the PR's -- see the module comment above).
       - name: Check the TESTS-READ note names this PR's tree
         id: check
-        continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -123,16 +137,14 @@ jobs:
       # runs, and the status posted above stays `pending` rather than
       # silently vanishing. That is what answers "a job that dies mid-run
       # must not go silent"; it is a property of these three steps existing
-      # in this order, not something a unit test can exercise.
-      #
-      # The commit status posted here is the only verdict channel. The
-      # job's own conclusion is deliberately not a signal -- `check` runs
-      # with `continue-on-error: true`, so a script failure never reddens
-      # this job or its check run, only the status below. A runner that
-      # dies before this step runs leaves the `pending` status from above
-      # standing, which remains as the visible verdict -- not in
-      # `required_status_checks` today (#5138 ②), so it does not block
-      # merge; nothing here overwrites it with a red check run.
+      # in this order, not something a unit test can exercise. #5328: now
+      # that the check step has no `continue-on-error`, a real failure
+      # there would otherwise SKIP this step under the default `if:` (all
+      # previous steps succeeded) -- this `always()` is what keeps the
+      # commit status accurate instead of stuck on `pending` every time the
+      # note is genuinely missing or stale, which is exactly the case this
+      # status exists to report. Not in `required_status_checks` today
+      # (#5138 ②), so it does not block merge on its own.
       - name: Post final status
         if: always()
         env:
