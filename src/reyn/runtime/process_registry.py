@@ -92,6 +92,18 @@ def _marker_path(pid: int) -> Path:
     return PROCESSES_DIR / f"{pid}.json"
 
 
+def _tmp_marker_path(pid: int) -> Path:
+    """#5346: the staging path :func:`register_process` writes to BEFORE
+    the atomic rename onto :func:`_marker_path`'s own name — never a real
+    marker itself. ``*.json`` globs (both here and in
+    :func:`live_processes`) never match this suffix, so a reader can never
+    mistake a still-being-written marker for a real one; only
+    :func:`live_processes`'s own reap pass (below) ever looks at this
+    suffix at all, and only to remove one whose owning PID is confirmed
+    dead."""
+    return PROCESSES_DIR / f"{pid}.json.tmp"
+
+
 def register_process(subcommand: "str | None") -> None:
     """Write this process's own marker and register its own cleanup.
 
@@ -105,7 +117,16 @@ def register_process(subcommand: "str | None") -> None:
     missing home directory, a full disk) must never block reyn from
     starting — this is a diagnostic aid, not a precondition (mirrors
     ``proctitle.py``'s own "a diagnostic aid that can stop a program
-    from starting is worse than the diagnosis it offers")."""
+    from starting is worse than the diagnosis it offers").
+
+    #5346: writes to a ``.tmp`` staging path first, then
+    :meth:`~pathlib.Path.replace` (``os.replace``, atomic on the same
+    filesystem on POSIX) onto the real marker name — a reader
+    (:func:`live_processes`) can therefore only ever see this pid's
+    marker as either "fully written" or "not there yet", never
+    partial. Found via a real CI failure (#5345/#5226, lead-coder's own
+    observation): a reader that raced a plain ``write_text`` straight to
+    the final path could read a truncated file mid-write."""
     pid = os.getpid()
     marker = {
         "pid": pid,
@@ -116,7 +137,9 @@ def register_process(subcommand: "str | None") -> None:
     }
     try:
         PROCESSES_DIR.mkdir(parents=True, exist_ok=True)
-        _marker_path(pid).write_text(json.dumps(marker), encoding="utf-8")
+        tmp_path = _tmp_marker_path(pid)
+        tmp_path.write_text(json.dumps(marker), encoding="utf-8")
+        tmp_path.replace(_marker_path(pid))
     except OSError:
         logger.warning(
             "process_registry: failed to write launch marker for pid %d "
@@ -181,9 +204,30 @@ def live_processes() -> "list[dict]":
     abandoned session) — it only ever removes metadata about a process
     that :func:`~reyn.data.index.build_lock.pid_alive` has already
     confirmed does not exist, so the next read does not have to
-    re-confirm the same negative."""
+    re-confirm the same negative.
+
+    #5346: also reaps an orphaned ``.tmp`` staging file (:func:`register_process`'s
+    write target BEFORE its atomic rename onto the real marker name) —
+    the one shape that can leave one behind is the process dying between
+    the ``.tmp`` write and the rename, a narrow window but not a zero
+    one. A ``.tmp`` file is never trusted as a live marker regardless (the
+    ``*.json`` glob below never matches it, and its own content is never
+    read here — only its PID-shaped filename, since a still-mid-write
+    file's content is exactly what must not be trusted); this is charter
+    Q1's bounding subject for THAT one channel of "who stops it if it
+    repeats" — a live, still-registering process's own ``.tmp`` is never
+    touched (only a CONFIRMED-DEAD one's is), so this can never race the
+    write it might belong to."""
     if not PROCESSES_DIR.is_dir():
         return []
+    for tmp_path in sorted(PROCESSES_DIR.glob("*.json.tmp")):
+        pid_str = tmp_path.name.removesuffix(".json.tmp")
+        if not pid_str.isdigit() or pid_alive(int(pid_str)):
+            continue
+        try:
+            tmp_path.unlink()
+        except OSError:
+            pass
     result: "list[dict]" = []
     for path in sorted(PROCESSES_DIR.glob("*.json")):
         try:
