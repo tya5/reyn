@@ -864,7 +864,14 @@ independent of this scheme setting.
 Opt-in retry of an empty router response (#4677). When the LLM returns
 `finish_reason="stop"` with no content and no tool calls — a provider-level
 glitch, observed at ~50% rate with weak models (B7-G12 measurement) — reyn
-can resend ONE "resume" continuation prompt before surfacing the failure.
+can resend ONE continuation nudge before surfacing the failure. **#5273/#5274:**
+the nudge is no longer a bare `"resume"` — a bare word at the message's content
+position read as a human instruction to some models, which replied with a
+status report instead of continuing (observed live). It is now a self-describing,
+attributed string (`"(reyn-auto-continue) resume - automatic continuation
+signal from reyn's own scheduler, not an instruction from anyone. No reply
+needed; continue the interrupted work."`) injected as a synthesized
+`role="system"` message, not `role="user"`.
 Owner default is now `false` (2026-08-14) — the retry was previously
 hardcoded on in production with no config knob at all, until an incident
 where 30 empty-response detections in one `reyn-self` run each cost a
@@ -880,7 +887,7 @@ audit event fires regardless of this setting.
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `empty_stop_retry` | bool | `false` | Resend one "resume" prompt when the router loop detects an empty `finish_reason="stop"` response. |
+| `empty_stop_retry` | bool | `false` | Resend one self-describing continuation nudge (`role="system"`, #5273/#5274 — not a bare `"resume"`) when the router loop detects an empty `finish_reason="stop"` response. |
 
 ### `chat.theme`
 
