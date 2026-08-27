@@ -802,8 +802,11 @@ class CompactionConfig:
     # if a specific deployment's models warrant a different budget.
     max_schema_reprompt_attempts: int = 1
     # #5296: stop-line for same-turn recovery after a measured payload
-    # constraint. `never` permits only reversible reductions; `next_turn`
-    # (the default) preserves compaction for the following turn.
+    # constraint. This stop-line applies only to the irreversible
+    # compaction step; it never controls spill. Spill is triggered by the
+    # constraint itself, not by this policy. `never` permits only reversible
+    # reductions; `next_turn` (the default) preserves compaction for the
+    # following turn.
     recovery_policy: Literal["never", "next_turn"] = "next_turn"
     # #4957 (owner: "max iterations は config ノブにしておいた方が良いね") —
     # retry_loop's own `max_iterations` safety cap, previously a signature
