@@ -2504,14 +2504,16 @@ class TextualChatApp(App):
         self.query_one("#drawer", ContentSwitcher).display = False
         self.query_one(Composer).focus()
 
-    def _read_conversation_history(
-        self, *, agent: "str | None" = None, session_id: "str | None" = None
-    ) -> "list | None":
+    def _read_conversation_history(self) -> "list | None":
         """#4983 step ① — the registry/session read (:meth:`~reyn.interfaces.
         repl.read_model.ChatReadModel.conversation_history`), split out of
         :meth:`_hydrate_from_history` so a caller can choose HOW this
         specific step runs without also touching step ② (:meth:`_apply_
-        hydrated_messages`, pure in-memory projection).
+        hydrated_messages`, pure in-memory projection). Used to also accept
+        ``agent``/``session_id`` for the CURRENTLY-ATTACHED-session's own
+        targeted variant; dropped along with :meth:`_hydrate_from_history`'s
+        own copy of those parameters (#4995④'s audit found no caller for
+        either) — reads the currently attached session only.
 
         **Not a disk read** (#5203 measurement, docs-maintainer/architect-
         confirmed issuecomment-5385460393): ``conversation_history`` reads
@@ -2557,8 +2559,6 @@ class TextualChatApp(App):
         mount" now actually lives."""
         if self._read_model is None:
             return None
-        if agent is not None or session_id is not None:
-            return self._read_model.conversation_history(agent=agent, session_id=session_id)
         return self._read_model.conversation_history()
 
     def _resolve_history_source(
@@ -2806,39 +2806,31 @@ class TextualChatApp(App):
             if msg.kind == "agent":
                 self._recent_replies.appendleft(msg.text)
 
-    def _hydrate_from_history(
-        self, *, agent: "str | None" = None, session_id: "str | None" = None
-    ) -> None:
-        """Restore-on-restart (#3273 Phase 5) AND session-switch reset+rehydrate
-        (#3310 N2): the SYNCHRONOUS do-both convenience — runs step ①
-        (:meth:`_read_conversation_history`) then step ② (:meth:`_apply_
-        hydrated_messages`) back to back, on whatever thread/task calls
-        this. #4983: mount (:meth:`on_mount`) no longer calls this when a
-        pre-fetched history is available (see that method's own docstring
-        for why it reads BEFORE the app is even constructed instead) —
-        this wrapper remains for :meth:`_handle_session_attached_event`
-        (the live session-switch rehydrate, #3310 N2), which #4983
-        deliberately did NOT touch: that call site's own event-loop-block
-        question is a separate, still-open UX question (does the
-        conversation pane briefly go blank on switch, in exchange for the
-        TUI no longer freezing?) requiring its own owner-facing ruling —
-        see #4983's own issue thread. Do not read "mount is fixed" as
-        "this method is fixed" — it is the SAME synchronous shape it
-        always was, on this call path.
+    def _hydrate_from_history(self) -> None:
+        """Restore-on-restart (#3273 Phase 5): the SYNCHRONOUS do-both
+        convenience — runs step ① (:meth:`_read_conversation_history`) then
+        step ② (:meth:`_apply_hydrated_messages`) back to back, on whatever
+        thread/task calls this. #4983: mount (:meth:`on_mount`) no longer
+        calls this when a pre-fetched history is available (see that
+        method's own docstring for why it reads BEFORE the app is even
+        constructed instead) — this remains the fallback for a caller that
+        never opted into that split.
 
-        Two call shapes:
+        #4994 (#4983's own arc): the live session-switch rehydrate
+        (:meth:`_handle_session_attached_event`, #3310 N2) no longer calls
+        THIS method at all — it has its own inline implementation with the
+        same step ①/② split as mount (step ① off the loop via
+        ``asyncio.to_thread``, gated by :attr:`_session_switch_generation`
+        against a superseding later switch; step ② on the loop, unchanged).
+        This method used to also accept ``agent``/``session_id`` for that
+        call site's sake; dropped (#4995④'s own audit found zero production
+        or test callers passing either) rather than left as unnamed dead
+        surface — a targeted-hydrate shape can be reintroduced against a
+        real caller if one ever needs it.
 
-        - No args: hydrates the CURRENTLY ATTACHED session, byte-identical
-          to pre-N2/pre-#4983 behavior.
-        - ``agent``/``session_id`` given (:meth:`_handle_session_attached_event`,
-          called AFTER :meth:`self.conversation`'s ``clear()``): hydrates that
-          SPECIFIC (possibly never-before-attached-in-this-client-run) session
-          instead — the same read-model seam
-          (:meth:`~reyn.interfaces.repl.read_model.ChatReadModel.conversation_history`
-          — ``history.jsonl``, NOT the P6 audit-event log), just targeted."""
-        self._apply_hydrated_messages(
-            self._read_conversation_history(agent=agent, session_id=session_id)
-        )
+        Hydrates the CURRENTLY ATTACHED session, byte-identical to
+        pre-N2/pre-#4983 behavior."""
+        self._apply_hydrated_messages(self._read_conversation_history())
 
     def _extend_older_frames_from_disk(self) -> bool:
         """#4387 Phase B ② (remaining consumers): when ``self._older_frames``
