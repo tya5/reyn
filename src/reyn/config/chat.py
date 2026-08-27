@@ -801,6 +801,10 @@ class CompactionConfig:
     # a silently-accepted empty summary) — operator-tunable via this field
     # if a specific deployment's models warrant a different budget.
     max_schema_reprompt_attempts: int = 1
+    # #5296: stop-line for same-turn recovery after a measured payload
+    # constraint. `never` permits only reversible reductions; `same_turn`
+    # (the default) also permits durable compaction in the current turn.
+    recovery_policy: Literal["never", "same_turn"] = "same_turn"
     # #4957 (owner: "max iterations は config ノブにしておいた方が良いね") —
     # retry_loop's own `max_iterations` safety cap, previously a signature
     # default only (8) with no operator-facing knob: router_loop_driver.py
@@ -818,6 +822,11 @@ class CompactionConfig:
     section_token_caps: CompactionSectionCaps = field(default_factory=CompactionSectionCaps)
 
     def __post_init__(self) -> None:
+        if self.recovery_policy not in {"never", "same_turn"}:
+            raise ValueError(
+                "chat.compaction.recovery_policy must be 'never' or 'same_turn'; "
+                f"got {self.recovery_policy!r}"
+            )
         if self.max_shrink_iterations < 1:
             raise ValueError(
                 "chat.compaction.max_shrink_iterations must be >= 1 (0 would "
@@ -1177,6 +1186,9 @@ def _build_chat_config(raw: object) -> ChatConfig:
             compaction_raw.get(
                 "max_schema_reprompt_attempts", defaults.max_schema_reprompt_attempts
             )
+        ),
+        recovery_policy=str(
+            compaction_raw.get("recovery_policy", defaults.recovery_policy)
         ),
         max_shrink_iterations=int(
             compaction_raw.get("max_shrink_iterations", defaults.max_shrink_iterations)
