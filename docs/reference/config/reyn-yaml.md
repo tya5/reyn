@@ -2348,6 +2348,7 @@ chat:
     body_token_cap: 1500               # hard cap on summary body tokens (post-truncation)
     resummarize_passes: 1              # LLM re-compression passes before hard_truncate floor
     max_schema_reprompt_attempts: 1    # bounded re-prompt budget on invalid compaction JSON
+    recovery_policy: next_turn         # #5296: compaction only; spill follows the constraint
     max_shrink_iterations: 8           # retry_loop's overflow-recovery safety cap (escape valve, not a cure)
     # Section budget weights within body, normalised at runtime.
     section_weights:
@@ -2374,6 +2375,7 @@ chat:
 | `body_token_cap` | int | `1500` | Hard cap on summary body tokens after post-truncation. |
 | `resummarize_passes` | int | `1` | Max LLM re-compression passes when a produced `topic_arc` overshoots its body budget, before the deterministic `hard_truncate` floor. `0` = skip re-summary (straight to the floor). |
 | `max_schema_reprompt_attempts` | int | `1` | #4883: bounded re-prompt budget when the compaction LLM's JSON response has an empty/missing `topic_arc` (whose emptiness can't be told apart from a dead response). Exhausting the budget raises rather than silently accepting an empty summary. `0` = raise on the first invalid response, no re-prompt. `new_turn_seqs` plays no part in this: `covers_through_seq` is derived from `compact()`'s own input, never read from an LLM echo (#4951-A) — and #4951-B removed the `new_turn_seqs` key from the schema/prompt entirely, so there is nothing left to gate or not gate. |
+| `recovery_policy` | `never` \| `next_turn` | `next_turn` | #5296: controls only irreversible compaction after measured byte-limit exhaustion. `next_turn` preserves the current behavior: compaction is persisted for the following turn; `never` skips compaction and ends with the existing structured error. It does not control spill; spill is triggered by the constraint itself. |
 | `max_shrink_iterations` | int | `8` | #4957: `retry_loop`'s own safety cap on overflow-recovery iterations. **This is an escape valve, not a cure** — raising it only delays exhaustion if the underlying cause (a persistent HTTP 413, a 5xx, a rate limit) never resolves on its own; it does not fix that cause. Must be `>= 1` (`0` would never run the shrink loop at all, raising immediately on the first overflow). Distinct from `RouterLoop`'s own unrelated `max_iterations` (the tool-call loop bound) — do not confuse the two. |
 | `use_chars4_estimate` | bool | `false` | When `true`, use `len(text)//4` for token estimation instead of `litellm.token_counter` (latency opt-out for large deployments). |
 
