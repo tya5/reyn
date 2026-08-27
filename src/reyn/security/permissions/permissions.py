@@ -904,6 +904,40 @@ class PermissionResolver:
         # it — CLI, web router, or here) — no extra write needed for it.
         from reyn.security.permissions.approval_ledger import ApprovalLedger
         ApprovalLedger(self._approval_ledger_path).append_approval(key, approved)
+        # #5236: the grant half of the same band pairing #5065 only closed
+        # for revoke — "audit that records only the undo, never the
+        # decision itself, is not an audit" (lead-coder's own filing).
+        # ``_persist`` is THIS process's SINGLE choke point for a grant:
+        # every ``approved=True`` call funnels through here (``_prompt``'s
+        # ALWAYS choice, ``_prompt_file_access``'s JUST_PATH/RECURSIVE
+        # choices — the only 3 call sites in this module, confirmed by
+        # `git grep '_persist(' `) — there is no REST/CLI grant endpoint at
+        # all (only revoke/clear), unlike revoke's own web-only gap #②
+        # this issue explicitly left untouched.
+        #
+        # ``emit_direct_event`` (not ``Session.emit_audit_event``) matches
+        # the SAME choice ``permission_approval_revoked``/``_cleared``
+        # already made — ``PermissionResolver`` has no live-Session
+        # reference to call through even when one happens to exist
+        # elsewhere in-process; band: workspace-SSoT, not a Session
+        # convenience.
+        #
+        # ``surface="permission_prompt"``, not ``"web"``/``"cli"``: unlike
+        # revoke (REST-route-only today, so ``"web"`` is honest), a grant
+        # can be answered from ANY surface presenting the interactive
+        # ``UserIntervention`` this method's own callers await (TUI inline
+        # chat, an SSE-delivered web intervention, A2A, MCP elicitation) —
+        # ``_persist`` itself never learns which one. Claiming ``"web"``
+        # here would be a fabricated field the #5065 charter band explicitly
+        # warns against (reconstructible, not merely field-present).
+        if approved:
+            from reyn.core.events.events import emit_direct_event
+            emit_direct_event(
+                "permission_approval_granted",
+                surface="permission_prompt",
+                reyn_root=self._project_root / ".reyn",
+                key=key,
+            )
         # #398 v4 emitter wiring: notify subscribers (= Session
         # instances that registered themselves) so the LLM sees the
         # permission change as a ``state_change`` history entry next

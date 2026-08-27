@@ -162,6 +162,7 @@ oauth_login_started
 peer_reply_failed_surfaced
 pending_intervention_claimed
 pending_intervention_discarded
+permission_approval_granted
 permission_approval_revoked
 permission_approvals_cleared
 permission_denied
@@ -408,6 +409,7 @@ Each Control IR op kind emits its own event:
 | `control_ir_skipped`, `control_ir_failed` | dispatch failures (`control_ir_skipped` reasons include `handler_not_implemented`) |
 | `permission_denied` | When an op is denied by the resolver |
 | `permission_approval_revoked`, `permission_approvals_cleared` | #5065 — a management operation on the SAVED-approvals ledger (`.reyn/approvals.jsonl`), e.g. the `/api/permissions` REST router. Distinct from `permission_granted`/`permission_denied` above (those are in-run decisions, hence `run_id`/`actor`/`phase`; these happen outside any run, so they carry neither): `permission_approval_revoked` — `key`, `surface`; `permission_approvals_cleared` — `count`, `surface`. |
+| `permission_approval_granted` | #5236 — the grant half of the pair above: an operator answering an interactive permission prompt with the persist-and-allow choice (`PermissionResolver._persist`, the SINGLE choke point every such choice funnels through — `_prompt`'s ALWAYS branch, `_prompt_file_access`'s JUST_PATH/RECURSIVE branches). Before this, only the undo (revoke/clear) was observable; the grant itself left no trail. `surface="permission_prompt"` (not `"web"`/`"cli"`, unlike the revoke pair above) — a grant can be answered from ANY surface presenting the prompt (TUI, an SSE-delivered web intervention, A2A, MCP elicitation), and `_persist` itself never learns which one; claiming a specific surface would be a fabricated field. | `key`, `surface` |
 
 ## MCP
 
