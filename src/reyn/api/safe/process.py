@@ -55,6 +55,14 @@ def pid_alive(pid: int) -> bool:
     :class:`PermissionError` — that means the PID exists but is owned
     by a different user, which still counts as "alive" for stale-lock
     purposes.
+
+    Core's own twin is :func:`reyn.data.index.build_lock.pid_alive`
+    (semantically identical today) — deliberately NOT unified (#5333,
+    architect's ruling): this module is the curated, sandbox-scoped
+    surface exposed to safe-mode python, and every direction of sharing
+    (core importing this, this importing core, or a third shared module)
+    either crosses that boundary or just relocates the question without
+    closing it.
     """
     if pid <= 0:
         return False
