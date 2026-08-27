@@ -376,19 +376,23 @@ def test_max_shrink_iterations_config_value_bounds_the_real_driver_call(
 # ── #4954 (b): a byte-limit exhaustion triggers a real compaction ────────────
 
 
-def test_byte_limit_exhaustion_triggers_a_real_compaction(tmp_path, monkeypatch) -> None:
-    """Tier 1: architect-ruled (b) — when `_run_with_shrink` exhausts with
-    `UnrecoveredError(saw_byte_limit=True)`, the driver's except block
-    triggers `CompactionController.force_compact_now()` (the SAME
-    durable-watermark path the pre-frame guard already uses — not
-    retry_loop's own non-continuous `covers`). This turn still fails
-    (`UnrecoveredError` still propagates) — the trigger only helps the
-    NEXT turn.
+@pytest.mark.parametrize(
+    ("recovery_policy", "compaction_expected"),
+    [("next_turn", True), ("never", False)],
+)
+def test_byte_limit_recovery_policy_controls_compaction(
+    tmp_path, monkeypatch, recovery_policy: str, compaction_expected: bool,
+) -> None:
+    """Tier 1: #5296 — the recovery stop-line changes real behavior.
 
-    Real effect observed, not a mock call-count: `force_compact_now`
-    emits a real `compaction_check` audit-event on the controller's own
-    EventLog — subscribed to directly, the same public observable an
-    operator's own event tooling would see.
+    With ``next_turn`` (the default), a byte-limit exhaustion triggers the
+    existing durable compaction path for the following turn. With ``never``, the same measured
+    exhaustion propagates without compaction. Both assertions observe the
+    controller's real ``compaction_check`` event, not a mock call count.
+
+    The existing #4954 behavior is preserved by the default policy; the
+    ``never`` arm is the explicit opt-out for deployments that must not make
+    an irreversible change during same-turn recovery.
     """
     from reyn.services.compaction.engine import UnrecoveredError
 
@@ -402,6 +406,7 @@ def test_byte_limit_exhaustion_triggers_a_real_compaction(tmp_path, monkeypatch)
         use_chars4_estimate=True,
         section_caps_spec_tokens=0,
         max_shrink_iterations=3,
+        recovery_policy=recovery_policy,
     )
     state_log = StateLog(tmp_path / ".reyn" / "state" / "wal.jsonl")
     bt = BudgetTracker(CostConfig())
@@ -430,9 +435,9 @@ def test_byte_limit_exhaustion_triggers_a_real_compaction(tmp_path, monkeypatch)
 
     assert excinfo.value.saw_byte_limit is True
     checks = [e for e in events if e.type == "compaction_check"]
-    assert checks, (
-        "expected force_compact_now to emit compaction_check on a "
-        "byte-limit exhaustion — none observed"
+    assert bool(checks) is compaction_expected, (
+        f"recovery_policy={recovery_policy!r} expected compaction="
+        f"{compaction_expected}, observed: {[e.data for e in checks]!r}"
     )
 
 
