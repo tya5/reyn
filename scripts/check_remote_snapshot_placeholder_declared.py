@@ -140,7 +140,6 @@ _CLEARED_NON_FABRICATING_KEYS = {
     "mcp_servers",  # #5034: same reasoning as "skills"
     "unknown_config_key_count",  # #4194: remote has no client-local reyn.yaml to report
     "unknown_config_keys",  # #4357: same as unknown_config_key_count
-    "hooks_config_warnings",  # #5100: remote has no client-local per-session hooks.yaml to report
     "ctx_source",  # #5034: a label, not a fabricatable figure (defensive:
     # its CURRENT value ("remote") isn't placeholder-shaped at all, so this
     # entry only matters if a future edit narrows it to a bare "")
