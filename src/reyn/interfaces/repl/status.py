@@ -167,6 +167,44 @@ def _extract_cron_jobs(config) -> list[dict]:
     return result
 
 
+def _extract_live_cron_jobs() -> "list[dict] | None":
+    """#5278: the LIVE cron-jobs list — same output shape as
+    :func:`_extract_cron_jobs`, but read off the actual running
+    :class:`~reyn.runtime.cron.scheduler.CronScheduler` (via
+    :func:`~reyn.runtime.cron.scheduler.get_active_scheduler`) instead of
+    the boot-time ``config`` snapshot :func:`_extract_cron_jobs` is stuck
+    reading forever (see :data:`_CONFIG_DERIVED_CACHE`'s own comment for
+    why that one can never reflect a hot-reload). ``Session._reapply_cron``
+    mutates the scheduler directly (``sched.add_job``/``sched.remove_job``)
+    — this reads the SAME live object, so a hot-reloaded cron job appears
+    (or a removed one disappears) on the very next status read, no cache
+    or invalidation needed here at all: :meth:`CronScheduler.jobs` is a
+    cheap ``list(self._jobs.values())`` read, safe on every render frame.
+
+    ``None`` when no scheduler is currently registered for this process —
+    distinct from ``[]`` (a real scheduler with zero jobs), mirroring the
+    same "not wired vs genuinely empty" distinction
+    :func:`_session_visibility_items` already establishes. Today a
+    scheduler is registered only by the AG-UI web gateway's own boot path
+    (``interfaces/web/server.py``) or a one-off ``reyn cron`` CLI
+    invocation (``interfaces/cli/commands/cron.py``) — a bare local CUI
+    session with neither running has no active scheduler, so ``None`` is
+    the correct, honest answer there (cron genuinely is not live in that
+    process; nothing to reflect a hot-reload FROM). The caller
+    (:func:`cron_pane_lines` chrome.py) falls back to the config-derived
+    ``cron_jobs`` in that case, same shape as the existing
+    hooks/mcp/skills panes' own live-then-fallback pattern."""
+    from reyn.runtime.cron.scheduler import get_active_scheduler
+
+    sched = get_active_scheduler()
+    if sched is None:
+        return None
+    return [
+        {"name": j.name, "schedule": j.schedule, "enabled": bool(j.enabled)}
+        for j in sched.jobs()
+    ]
+
+
 def _extract_mcp_servers(config) -> list[dict]:
     """Extract mcp server name dicts from config. Returns [] on any missing/malformed section."""
     mcp = getattr(config, "mcp", None)
@@ -633,6 +671,13 @@ def _snapshot_for_session(registry, s, config=None):
         # function's own comment for why this is behavior-neutral: #5278,
         # filed separately, is the real staleness gap this leaves as-is).
         "cron_jobs": _config_derived_fields(s, config)["cron_jobs"],
+        # #5278: the LIVE sibling of cron_jobs — see
+        # _extract_live_cron_jobs's own docstring. None when no scheduler
+        # is registered for this process; cron_pane_lines (chrome.py)
+        # falls back to the stale cron_jobs above in that case, same
+        # shape as the existing hooks/mcp/skills panes' own
+        # live-then-fallback pattern (hook_items/visibility_items).
+        "cron_items": _extract_live_cron_jobs(),
         "mcp_servers": _config_derived_fields(s, config)["mcp_servers"],
         "hooks": _config_derived_fields(s, config)["hooks"],
         "skills": _config_derived_fields(s, config)["skills"],

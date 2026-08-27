@@ -7,14 +7,34 @@ and ``config`` is a frozen reference assigned exactly once at construction
 assignment site in that class; ``Session`` never assigns ``self._config``
 at all — grep-confirmed). So every pre-#5276 render frame recomputed the
 IDENTICAL result from the same unchanging input — pure waste, not a
-correctness issue. #5278 (filed separately, NOT fixed here) is the real,
-disclosed gap this leaves untouched: the actual hot-reload machinery
-mutates SEPARATE live objects (the cron scheduler, the hook dispatcher's
-registry, ``_available_skills``, the MCP tool cache), never ``config``
-itself — so these 4 fields never reflected a hot-reload before this PR
-either, and still don't after it. This file tests ONLY the "computed at
-most once" claim — it does not, and must not, assert anything about
-hot-reload reflection (that would be asserting #5278's own absence).
+correctness issue. Memoizing them here causes ZERO behavior change either
+way, since they never changed input to begin with — see
+``_CONFIG_DERIVED_CACHE``'s own comment (status.py) for the full "why
+caching here is safe" reasoning. This file tests ONLY the "computed at
+most once" claim about THESE 4 CACHED fields themselves — it does not,
+and must not, assert anything about whether the STATUS PANEL as a whole
+reflects a hot-reload (a different, renderer-level question — see
+#5278's own resolution below).
+
+**#5278 update (filed from this PR's own review, since resolved for 3 of
+the 4):** investigation at #5278 fix time found ``mcp_servers``/``hooks``/
+``skills`` were NEVER actually stuck showing stale data for a real running
+session — chrome.py's own renderer (``_hook_pane_entries``/
+``_visibility_pane_rows``) prefers a LIVE sibling (``hook_items``/
+``visibility_items``) that was already correctly invalidated at the hot-
+reload mutation site (``_reapply_hooks``/``_reapply_mcp``/
+``_reapply_skills`` — #5276②/#5285, this same investigation arc), falling
+back to these cached, config-derived fields only when the live sibling is
+empty (a remote connection that never wires it, or genuinely zero
+configured — not a real local staleness case). Only ``cron_jobs`` had NO
+live sibling at all; #5278's own fix added one (``cron_items``, reading the
+real running ``CronScheduler`` — see ``_extract_live_cron_jobs``'s own
+docstring, status.py). So: the 4 fields THIS file caches still never
+reflect a hot-reload on their own (unchanged, correctly memoized-once) —
+but the PANEL itself now does, for all 4, via each field's own live
+sibling. Do not read this file's own claim as "the panel is still broken
+for all 4" — that was #5278's original, correctly-disclosed-at-the-time
+finding, since narrowed and resolved.
 
 Real ``AgentRegistry``/``Session`` — no mocks. Uses the #4403 counting
 technique (wrap the real extractor, count real calls) — the SAME technique

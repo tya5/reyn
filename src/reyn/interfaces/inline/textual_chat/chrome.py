@@ -1034,9 +1034,19 @@ def pipe_pane_lines(snap: "dict | None") -> list[str]:
 
 
 def cron_pane_lines(snap: "dict | None") -> list[str]:
-    """The configured cron jobs (``config.cron.jobs`` via the snapshot's
-    ``cron_jobs``), each with its enabled state and schedule. Read-only: a cron
-    job's enabled flag is config-declared, not session-togglable.
+    """The cron jobs, each with its enabled state and schedule. Read-only: a
+    cron job's enabled flag is config-declared, not session-togglable.
+
+    #5278: prefers the snapshot's LIVE ``cron_items`` (read off the actual
+    running ``CronScheduler``, so a hot-reloaded job add/remove/enable
+    shows up here) and falls back to the config-derived ``cron_jobs``
+    (stale — reflects only the boot-time config, forever) when
+    ``cron_items`` is falsy — same shape as :func:`_hook_pane_entries`'s
+    own ``hook_items``-then-``hooks`` fallback (``cron_items`` is ``None``
+    whenever no scheduler is registered for this process at all, e.g. a
+    bare local CUI session with neither the AG-UI web gateway nor a
+    ``reyn cron`` CLI invocation running — see ``_extract_live_cron_jobs``'s
+    own docstring, status.py).
 
     #5009 closing pass: ``cron_jobs_reported`` (``snap.get(..., False)`` —
     ``False`` is the safe direction, matching every other #5009 field;
@@ -1048,7 +1058,8 @@ def cron_pane_lines(snap: "dict | None") -> list[str]:
     snap = snap or {}
     if not snap.get("cron_jobs_reported", False):
         return ["not reported on this connection"]
-    jobs = snap.get("cron_jobs") or []
+    items = snap.get("cron_items") or []
+    jobs = items if items else (snap.get("cron_jobs") or [])
     return [
         f"[{'on' if j.get('enabled') else 'off'}] {j['name']}  {j['schedule']}"
         for j in jobs
