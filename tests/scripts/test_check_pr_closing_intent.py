@@ -720,11 +720,15 @@ def test_boundary_3_a_genuine_closes_inside_a_multiline_fence_stays_green():
 # ---------------------------------------------------------------------------
 
 
-def test_title_check4_fires_when_2plus_commits_and_body_silent():
-    """Tier 1: #5321 — a closing keyword in the PR TITLE, with 2+ commits
-    (so the title WILL become the squash headline) and the body NOT also
-    declaring closing intent, is the exact #3187/check-4 leak class via a
-    third text GitHub reads."""
+def test_title_check4_fires_with_2plus_commits_and_body_silent():
+    """Tier 1: #5321, corrected #5330 — a closing keyword in the PR TITLE
+    (with 2+ commits, so the title WILL become the squash headline
+    regardless of merge method) and the body NOT also declaring closing
+    intent, is the exact #3187/check-4 leak class via a third text
+    GitHub reads. The commit count no longer gates whether this fires at
+    all (see test_title_check4_fires_even_with_only_1_commit) — this
+    test keeps the 2-commit shape as its own witness that the scan still
+    works there too, not only in the 1-commit corrected case."""
     findings = m.check_contradictions(
         "part of #5299",
         closing_refs=[],
@@ -734,22 +738,26 @@ def test_title_check4_fires_when_2plus_commits_and_body_silent():
     assert _checks(findings) == [(4, 5299)]
 
 
-def test_title_check4_silent_with_only_1_commit():
-    """Tier 1: #5321 — the SAME closing-keyword title, but only 1 commit on
-    the PR: the title never becomes the squash headline (that one commit's
-    own title does, already covered by the commit_messages scan), so
-    flagging it would be a false positive on the common 1-commit PR shape.
-    Must stay silent."""
+def test_title_check4_fires_even_with_only_1_commit():
+    """Tier 1: #5321, corrected #5330 — a 1-commit PR's title is NOT safe:
+    if this PR merges via a plain merge commit (this repo's own
+    merge_commit_message=PR_TITLE setting, allow_merge_commit=true),
+    the merge commit's body IS the PR TITLE regardless of commit count.
+    #5321's own first version wrongly gated this scan on the commit
+    count being 2 or more (true only for squash) — the merge METHOD
+    is not known at check time, so the scan must fire unconditionally.
+    Here the SAME closing keyword is in both the one commit message and
+    the title (a realistic single-commit PR whose title mirrors its only
+    commit) — TWO independent findings, one per source, is correct: each
+    text is a genuinely separate leak path into a DIFFERENT possible
+    merge commit body."""
     findings = m.check_contradictions(
         "part of #5299",
         closing_refs=[],
         commit_messages=["fix #5299 regression in the cron runner"],
         title="fix #5299 regression in the cron runner",
     )
-    # The commit message itself still legitimately fires check 4 — the
-    # title-source scan specifically must not ALSO fire (would double-count
-    # the same #5299 finding, or fire on a title that can't leak).
-    assert _checks(findings) == [(4, 5299)]
+    assert _checks(findings) == [(4, 5299), (4, 5299)]
 
 
 def test_title_check4_silent_when_body_also_declares_closing():
@@ -813,19 +821,23 @@ def test_title_check5_fires_on_negated_keyword_with_2plus_commits():
     assert _checks(findings) == [(4, 4834), (5, 4834)]
 
 
-def test_title_check5_silent_with_only_1_commit():
-    """Tier 1: #5321 — the same negated title, but only 1 commit: the
-    title never becomes the squash headline, so check 5's title-source
-    scan must stay silent (check 5's own body/commit-message scans are
-    unrelated and also stay silent here since neither text carries the
-    phrase)."""
+def test_title_check5_fires_even_with_only_1_commit():
+    """Tier 1: #5321, corrected #5330 — same reasoning as check 4's own
+    1-commit-still-fires test above: a 1-commit PR's title still becomes
+    the merge commit's body under a plain merge (regardless of commit
+    count), so check 5's title-source scan must fire here too, not stay
+    silent. Check 4 also fires (the negated phrase is still a syntactic
+    closing declaration ``_CLOSING_RE`` does not understand negation for)
+    — same "check 4 fires alongside check 5" property
+    ``test_title_check5_fires_on_negated_keyword_with_2plus_commits``
+    already documents for the 2-commit case, now true with only 1."""
     findings = m.check_contradictions(
         "body text",
         closing_refs=[],
         commit_messages=["c1"],
         title="does not close #4834 in this PR",
     )
-    assert findings == []
+    assert _checks(findings) == [(4, 4834), (5, 4834)]
 
 
 def test_title_scan_does_not_duplicate_a_commit_message_finding():

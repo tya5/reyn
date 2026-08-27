@@ -57,24 +57,36 @@ entry below for why it is deliberately NOT an intent-comparison check):
      design, not a gap: the check's job is to catch the state that CAN leak
      a close, not to certify that a human removed it.
 
-     **Title source (#5321)**: the PR's own TITLE is a third text that can
-     carry the same leak — ``gh api repos/<owner>/<repo>`` measured this
-     repo's own ``squash_merge_commit_title: COMMIT_OR_PR_TITLE`` setting,
-     which means a 2+-commit PR's squash headline is built from the PR
-     TITLE, not any one commit's own title. `` `fix #5299 regression in
-     the cron runner` `` as a title on a 2+-commit PR is exactly the
-     #3187 leak class via this third text — unscanned before #5321 (no
-     known merged PR has actually tripped it; the gap was found by
-     inspection of the script's own field list, not a real incident).
-     Gated on ``len(commit_messages) >= 2``: a 1-commit PR's squash
-     headline is that ONE commit's own title (already covered by the
-     commit-message scan above), so an ungated title scan would be a
-     false positive on the common 1-commit PR shape.
+     **Title source (#5321, corrected #5330)**: the PR's own TITLE is a
+     third text that can carry the same leak — ``gh api repos/<owner>/
+     <repo>`` measured this repo's own ``squash_merge_commit_title:
+     COMMIT_OR_PR_TITLE`` setting, which means a 2+-commit PR's squash
+     headline is built from the PR TITLE, not any one commit's own title.
+     `` `fix #5299 regression in the cron runner` `` as a title on a
+     2+-commit PR is exactly the #3187 leak class via this third text —
+     unscanned before #5321 (no known merged PR has actually tripped it;
+     the gap was found by inspection of the script's own field list, not
+     a real incident). #5321's own first version gated this on
+     ``len(commit_messages) >= 2`` — WRONG (#5330, architect + lead-coder):
+     that reasoning is true ONLY for a squash merge. This repo ALSO
+     allows a plain merge commit (``allow_merge_commit: true``,
+     ``merge_commit_message: PR_TITLE``, the SAME ``gh api`` call, a field
+     #5321 didn't read) — a merge commit's body is the PR TITLE
+     regardless of commit count, and the merge METHOD a human will pick
+     is not known at check time, so "1 commit → safe" cannot be asserted.
+     The scan is UNCONDITIONAL. A 1-commit PR's title duplicating its own
+     single commit-message finding is not a false positive in practice
+     (this repo's own ``fix(#N):``-shaped commit titles never match
+     ``_CLOSING_RE`` at all — the parenthesis right after the keyword
+     breaks the match); where a title genuinely matches, a duplicate
+     finding on the SAME real leak is still correct, just two reports of
+     one true positive.
   5. **negated closing keyword** (#4992, real incident 2026-08-21) — a
      closing keyword with a negation word in the narrow window immediately
      before it (e.g. "does not close #N", "will never fix #N"), in the PR
-     body, a commit message, OR the PR title (#5321, same >= 2-commit
-     gate as check 4's title scan). UNCONDITIONAL — fires regardless of
+     body, a commit message, OR the PR title (#5321, corrected #5330 —
+     unconditional, same as check 4's title scan). UNCONDITIONAL — fires
+     regardless of
      ``closingIssuesReferences``, never comparing declared intent against
      the parser's actual behavior the way checks 1-4 do. Real incidents
      #4834 and #4986 were BOTH auto-closed by exactly this shape ("it does
@@ -790,14 +802,26 @@ def check_contradictions(
             )
         )
 
-    # Check 4, title source (#5321): the PR title itself, scanned ONLY when
-    # it will actually BECOME the squash-merge headline — see this
-    # function's own docstring for the COMMIT_OR_PR_TITLE condition
-    # (>= 2 commits). A 1-commit PR's title never reaches the merge
-    # commit (that commit's own title does, already covered above), so
-    # this is gated rather than unconditional — an ungated scan would be a
-    # false positive on the common 1-commit PR shape.
-    if title and len(commit_messages or []) >= 2:
+    # Check 4, title source (#5321, corrected #5330 — architect + lead-coder
+    # converged): the PR title, scanned UNCONDITIONALLY, not gated on commit
+    # count. First version of this PR gated on len(commit_messages) >= 2,
+    # reasoning "a 1-commit PR's title never becomes the merge commit" —
+    # that reasoning is true ONLY for a SQUASH merge
+    # (squash_merge_commit_title=COMMIT_OR_PR_TITLE, this repo's own
+    # setting). This repo ALSO allows a plain merge commit
+    # (allow_merge_commit=true, merge_commit_message=PR_TITLE, gh api
+    # repos/tya5/reyn — lead-coder's own field, missed the first time): a
+    # merge commit's body is the PR TITLE regardless of commit count. The
+    # merge METHOD a human will pick is not known at check time, so
+    # "1 commit → safe" cannot be asserted — the gate must scan the title
+    # unconditionally. False-positive concern (a 1-commit PR's title
+    # duplicating its own single commit-message finding) does not apply in
+    # practice: this repo's own `fix(#N):`-shaped commit titles never match
+    # _CLOSING_RE at all (its `\s*:?\s*` does not allow a `(` between the
+    # keyword and `#N`) — verified directly (architect). Where a title DOES
+    # genuinely match, a duplicate finding on the SAME real leak is not
+    # incorrect, just two reports of one true positive.
+    if title:
         title_closing_declared = (
             find_closing_declarations(title) - find_discussing_declarations(title)
         )
@@ -809,15 +833,18 @@ def check_contradictions(
                     message=(
                         f"this PR's TITLE declares closing intent for #{n} "
                         f"(Closes/Fixes/Resolves) but the PR BODY does not "
-                        f"also declare closing intent for #{n}. This PR has "
-                        "2+ commits, so GitHub's squash-merge headline is "
-                        "built from the PR TITLE (this repo's own "
-                        "squash_merge_commit_title=COMMIT_OR_PR_TITLE "
-                        "setting), which will carry this keyword into the "
-                        f"merge commit and can auto-close #{n} on merge "
-                        "regardless of what the PR body says (the #3187/"
-                        "check-4 leak class, via a third text GitHub reads "
-                        f"— #5321). If closing #{n} is intended, also write "
+                        f"also declare closing intent for #{n}. If this PR "
+                        "merges as a plain merge commit, the commit body IS "
+                        "the PR TITLE (this repo's own "
+                        "merge_commit_message=PR_TITLE setting) regardless "
+                        "of commit count; if it squashes, the title becomes "
+                        "the headline whenever this PR has 2+ commits "
+                        "(squash_merge_commit_title=COMMIT_OR_PR_TITLE). "
+                        "Either way this keyword can carry into the merge "
+                        f"commit and auto-close #{n} on merge regardless of "
+                        "what the PR body says (the #3187/check-4 leak "
+                        "class, via a third text GitHub reads — #5321). If "
+                        f"closing #{n} is intended, also write "
                         f"'Closes #{n}' in the PR body. If not, reword the "
                         f"title so it doesn't read as a closing keyword — a "
                         "discussing marker in the body cannot exempt a "
@@ -876,10 +903,11 @@ def check_contradictions(
                 )
             )
 
-    # Check 5, title source (#5321): same negated-keyword shape, same
-    # >= 2-commit gate as check 4's title scan above (a 1-commit PR's
-    # title never becomes the squash headline).
-    if title and len(commit_messages or []) >= 2:
+    # Check 5, title source (#5321, corrected #5330): same negated-keyword
+    # shape, scanned UNCONDITIONALLY — same reasoning as check 4's title
+    # scan above (the merge METHOD is not known at check time, and a plain
+    # merge commit carries the PR TITLE regardless of commit count).
+    if title:
         for n in sorted(find_negated_closing_declarations(title)):
             findings.append(
                 Finding(
@@ -888,9 +916,11 @@ def check_contradictions(
                     message=(
                         f"this PR's TITLE contains a NEGATED closing "
                         f"keyword for #{n} — same defect as check 5's body/"
-                        "commit-message findings, carried into the squash-"
-                        "merge headline because this PR has 2+ commits "
-                        "(squash_merge_commit_title=COMMIT_OR_PR_TITLE). "
+                        "commit-message findings, carried into the merge "
+                        "commit either as a plain merge commit's body "
+                        "(merge_commit_message=PR_TITLE) or a squash "
+                        "headline (squash_merge_commit_title="
+                        "COMMIT_OR_PR_TITLE). "
                         "Rewrite the title without the verb, or wrap the "
                         "phrase in backticks."
                     ),
