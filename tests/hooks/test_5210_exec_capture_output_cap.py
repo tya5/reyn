@@ -134,7 +134,14 @@ async def test_message_exceeding_the_cap_is_bounded_not_discarded(
             allowlist_path=tmp_path / "allowlist.json",
             capture_stdout=True,
             emit_event=_emit_event,
-            output_token_cap=(5, "openai/gpt-4o-mini"),
+            # 50, not a single-digit value: large enough that the elision
+            # marker itself (a fixed ~20-token string) fits comfortably
+            # inside the budget alongside a real truncated body — a cap
+            # smaller than the marker's own footprint cannot be honored by
+            # any amount of body truncation (there is a real floor), which
+            # is a separate, degenerate-input concern this test doesn't
+            # need to explore.
+            output_token_cap=(50, "openai/gpt-4o-mini"),
         )
 
     assert result is not None, (
@@ -145,9 +152,18 @@ async def test_message_exceeding_the_cap_is_bounded_not_discarded(
     assert parsed["push_when"] is True
     assert parsed["wake"] is True
     assert "elided" in parsed["message"]
-    assert estimate_tokens(parsed["message"], "openai/gpt-4o-mini") < estimate_tokens(
+    bounded_tokens = estimate_tokens(parsed["message"], "openai/gpt-4o-mini")
+    assert bounded_tokens < estimate_tokens(
         long_message, "openai/gpt-4o-mini"
     ), "the bounded message must be genuinely shorter than the original"
+    assert bounded_tokens <= 50, (
+        "architect's TESTS-READ catch (#5343): the elision MARKER itself "
+        "costs tokens too — appending it to a body already truncated to "
+        "the FULL cap would let the combined message exceed cap_tokens, "
+        "the exact thing this cap exists to prevent. The marker's own "
+        "cost must come OUT of the cap budget, not be added on top of it "
+        f"— got {bounded_tokens} tokens against a cap of 50"
+    )
     assert any(
         "exceeds the context-budget-derived cap" in r.message for r in caplog.records
     ), "the bounding must be logged, not silent"

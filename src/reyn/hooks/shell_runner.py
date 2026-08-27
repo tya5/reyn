@@ -541,12 +541,22 @@ async def run_shell_hook(
         independent parse of whatever this returns) and, IF that parse
         succeeds and yields a string ``message`` field whose estimated token
         count (:func:`~reyn.services.compaction.engine.estimate_tokens`,
-        against *model*) exceeds *cap_tokens*: bounds ONLY that field's text
+        against *model*) exceeds *cap_tokens*: bounds that field's text
         (:func:`~reyn.services.compaction.engine.hard_truncate_summary`,
-        deterministic char-ratio truncation) with a visible elision marker
-        appended, re-serializes the SAME JSON object with the bounded
-        ``message``, and returns that — the directive's other fields, and
-        its structure, are untouched, and it still reaches the caller as a
+        deterministic char-ratio truncation) to leave room for a visible
+        elision marker WITHIN *cap_tokens* — the marker's own estimated
+        token cost is reserved from the body's budget first (architect's
+        TESTS-READ catch, #5343: appending the marker to a body already
+        truncated to the FULL cap would let the combined message exceed
+        *cap_tokens*, the exact thing this cap exists to prevent) — then
+        re-serializes the SAME JSON object with the bounded ``message``,
+        and returns that. A *cap_tokens* smaller than the marker's own
+        token floor (~20 tokens for its fixed English text) cannot be
+        honored exactly no matter how much the body is truncated — a
+        real, live context-budget-derived cap is never this small in
+        practice, so this is a theoretical floor, not a handled case with
+        its own fallback. The directive's other fields, and its
+        structure, are untouched, and it still reaches the caller as a
         normal push. Recorded via *emit_event* with
         ``denial_class="exec_capture_message_bounded"``. #5210's original
         form checked the RAW stdout byte/token count BEFORE any parse and
@@ -745,11 +755,22 @@ async def run_shell_hook(
                 if message_tokens > cap_tokens:
                     denial_class = "exec_capture_message_bounded"
                     elided = message_tokens - cap_tokens
-                    bounded_message = hard_truncate_summary(message, cap_tokens, cap_model)
-                    bounded_message += (
+                    # architect's TESTS-READ catch (#5343): the marker
+                    # itself costs tokens too. Appending it to a body
+                    # already truncated to the FULL cap would let the
+                    # combined message exceed cap_tokens — the exact
+                    # thing this cap exists to prevent. Reserve the
+                    # marker's own token cost from the body's budget FIRST
+                    # so the combined result stays within cap_tokens (the
+                    # marker is counted IN the cap, not appended on top of
+                    # it).
+                    marker = (
                         f"\n\n… ({elided} estimated tokens elided by the "
                         "context-budget-derived hook-output cap)"
                     )
+                    marker_tokens = estimate_tokens(marker, cap_model)
+                    body_budget = max(0, cap_tokens - marker_tokens)
+                    bounded_message = hard_truncate_summary(message, body_budget, cap_model) + marker
                     directive["message"] = bounded_message
                     bounded_stdout = json.dumps(directive)
                     _log.warning(
