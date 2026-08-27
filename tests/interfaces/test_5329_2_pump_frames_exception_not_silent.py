@@ -215,14 +215,29 @@ async def test_a_clean_end_of_stream_logs_nothing_new(
     end-of-stream (no exception, just ``__end__``) must NOT trigger the
     new log line. Only a genuine exception should surface as one; a clean
     end is still silent, exactly as it was before this fix (the fix adds
-    a signal on the exception path, not noise on the normal one)."""
+    a signal on the exception path, not noise on the normal one).
+
+    The deny-side assert alone (architect's finding, TESTS-READ (B)) is
+    satisfied by an empty ``messages`` list for reasons that have nothing
+    to do with the fix — the app failing to start, the logger name
+    drifting, ``caplog`` catching nothing. The affirmative assert below
+    closes that gap: it requires the SAME pump that would carry the new
+    log line to have actually run and delivered its frame."""
+    from textual_flowview import FlowView
+
     transport = _CleanEndTransport()
     app = TextualChatApp(transport=transport)
     with caplog.at_level(logging.ERROR, logger=_LOGGER_NAME):
         async with app.run_test(size=(80, 24)) as pilot:
             await pilot.pause()
             await pilot.pause()
+            delivered = [e.item.text for e in app.query_one(FlowView).entries]
 
+    assert "a normal reply" in delivered, (
+        f"the pump must have actually run and rendered the clean-end "
+        f"frame — got {delivered!r}; without this, the assert below "
+        f"would pass just as well on a pump that never ran at all"
+    )
     messages = [r.message for r in caplog.records if r.name == _LOGGER_NAME]
     assert not any("_pump_frames' frame stream" in m for m in messages), (
         f"#5329 REGRESSION: a CLEAN end-of-stream must not produce the "
