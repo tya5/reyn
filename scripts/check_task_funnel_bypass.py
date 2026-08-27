@@ -95,16 +95,48 @@ is a candidate for removal rather than indefinite warn status — a
 warn-only gate nobody ever promotes is indistinguishable, in effect,
 from no gate at all, and #5010 is the standing example of exactly that
 non-outcome.
+
+## The baseline — where a false positive gets COUNTED (lead-coder review)
+
+The 20-PR/2-week conditions above need a denominator: something that
+actually COUNTS a false positive when one fires, distinct from a real
+defect. The first draft's own test (a bare "the tree has exactly this
+one disclosed hit" pin) failed that job — its own failure message told
+a person to "update this pin," which silently absorbs a genuinely NEW
+hit (false positive OR real defect, indistinguishable) into the pin
+with zero record that anything happened. Zero false positives could
+ever get counted that way, so the 20-PR promotion condition could never
+be evaluated either — not because none occurred, but because nothing
+was built to notice.
+
+``task_funnel_bypass_baseline.json`` is the fix — the same
+declared-baseline idiom this repo already uses for exactly this problem
+(``mypy_ratchet.py``'s ``(file, code)`` pairs, ``flat_tests_ratchet.py``'s
+filename set): every CURRENTLY accepted offender is a declared entry,
+keyed by file path, each carrying its own ``"type"`` (``"defect"`` — a
+real hazard tracked for its own fix PR, same as ``session.py`` today —
+or ``"false_positive"`` — the gate is wrong about this one) and a
+``"note"`` explaining which and why. The test
+(``tests/scripts/test_check_task_funnel_bypass_5267.py``) asserts the
+REAL tree's offenders match the declared set exactly; a new,
+undeclared offender fails that test (a real, already-blocking CI signal
+via the normal pytest job — no separate always-blocking workflow
+needed), forcing whoever introduced it to add a declared entry and
+classify it BEFORE the PR is green. That one required action is what
+makes ``"false_positive"`` entries countable: they are not a "same as
+before" default that requires nobody to write anything down.
 """
 from __future__ import annotations
 
 import ast
+import json
 import sys
 from pathlib import Path
 
 _ROOT = Path(__file__).resolve().parents[1]
 _SRC_DIR = _ROOT / "src" / "reyn"
 _TRACKED_TASKS_MODULE = _SRC_DIR / "runtime" / "tracked_tasks.py"
+_BASELINE_PATH = _ROOT / "scripts" / "task_funnel_bypass_baseline.json"
 
 
 def _annotation_text(node: "ast.expr | None") -> str:
@@ -211,6 +243,15 @@ def offending_files(src_dir: Path) -> "list[tuple[Path, list[int]]]":
         if hits:
             offenders.append((path, hits))
     return offenders
+
+
+def load_declared_baseline(path: Path = _BASELINE_PATH) -> "dict[str, dict[str, str]]":
+    """The committed record of every offender CURRENTLY accepted, keyed by
+    a ``src/reyn/...``-relative path string, each carrying its own
+    ``type`` (``"defect"`` / ``"false_positive"``) and ``note`` — see this
+    module's own "The baseline" docstring section for why this exists
+    instead of a bare pinned count."""
+    return json.loads(path.read_text(encoding="utf-8"))
 
 
 def main(argv: "list[str] | None" = None) -> int:

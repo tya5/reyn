@@ -8,9 +8,16 @@ repo's own established convention for a static gate's own test file
 """
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
-from scripts.check_task_funnel_bypass import in_scope_files, offending_files
+from scripts.check_task_funnel_bypass import (
+    _BASELINE_PATH,
+    _SRC_DIR,
+    in_scope_files,
+    load_declared_baseline,
+    offending_files,
+)
 
 
 def test_a_required_constructor_param_module_is_in_scope(tmp_path: Path) -> None:
@@ -141,24 +148,80 @@ def test_the_funnels_own_implementation_file_is_excluded_from_scope(tmp_path: Pa
     )
 
 
-def test_the_real_repo_tree_has_exactly_the_one_disclosed_pre_existing_hit() -> None:
+def test_the_real_repo_tree_matches_the_declared_baseline_exactly() -> None:
     """Tier 2: the gate's own starting population against the real tree —
     verified, not assumed (matching the sibling gates' own "run it before
-    shipping it" discipline). This PR is the family remedy (the gate)
-    only; #5267's own comment thread explicitly scoped the 4 real defect
-    sites (including this one, ``session.py``'s ``_turn_owner_task``) to
-    their OWN separate PRs, not this one — so this gate's baseline is
-    NOT zero, and pinning it to the one disclosed pre-existing hit (never
-    a bare "the tree is clean") is what makes a genuinely NEW regression
-    (a 2nd hit appearing) visible as a diff against this test, rather than
-    silently absorbed into an already-nonzero warn count."""
-    from scripts.check_task_funnel_bypass import _SRC_DIR
+    shipping it" discipline). #5267's own comment thread explicitly
+    scoped the 4 real defect sites (including this one, ``session.py``'s
+    ``_turn_owner_task``) to their OWN separate PRs, not this one — so
+    this gate's baseline is NOT zero.
 
+    lead-coder review (#5270): a bare "the tree has exactly this one
+    disclosed hit" pin, whose own failure message says "update this pin,"
+    silently absorbs a NEW hit — defect or false positive,
+    indistinguishable — with no record that anything happened, which
+    means the module docstring's own "0 new false positives across 20
+    PRs" promotion condition could never be evaluated (nothing ever
+    counts a false positive when one fires). Comparing against the
+    DECLARED baseline instead (``task_funnel_bypass_baseline.json``)
+    means a new, undeclared offender fails THIS test — forcing whoever
+    introduced it to add a classified (``"defect"`` / ``"false_positive"``)
+    entry before the PR is green, the same declared-baseline idiom this
+    repo already uses for exactly this problem (``mypy_ratchet.py``,
+    ``flat_tests_ratchet.py``)."""
     offenders = offending_files(_SRC_DIR)
-    assert [str(p.relative_to(_SRC_DIR.parents[1])) for p, _ in offenders] == [
-        "src/reyn/runtime/session.py",
-    ], (
-        f"population changed: {offenders} — if this is a NEW module bypassing "
-        "the funnel, fix it (route through TrackedTaskSet.spawn()); if it is "
-        "the disclosed session.py hit moving line numbers, update this pin"
+    measured = {str(p.relative_to(_SRC_DIR.parents[1])) for p, _ in offenders}
+    declared = set(load_declared_baseline().keys())
+    new = measured - declared
+    assert not new, (
+        f"undeclared offender(s): {new} — add an entry to "
+        f"{_BASELINE_PATH.name} classifying each as \"defect\" (a real "
+        "hazard, tracked for its own fix PR) or \"false_positive\" (the "
+        "gate is wrong about this one), with a one-line note explaining "
+        "which and why"
+    )
+    # A declared entry that no longer measures (fixed, or the module
+    # changed shape) is allowed to silently drop — same as mypy_ratchet's
+    # own "a fix just stops appearing" behavior; only NEW, undeclared
+    # growth needs a person to act.
+
+
+def test_load_declared_baseline_round_trips_a_classified_entry(tmp_path: Path) -> None:
+    """Tier 1: ``load_declared_baseline`` reads back exactly what a real
+    declaration writes — the ``type``/``note`` fields the ratchet's own
+    failure message tells a person to add."""
+    fixture = tmp_path / "baseline.json"
+    fixture.write_text(
+        json.dumps({"src/reyn/example.py": {"type": "false_positive", "note": "reason"}}),
+        encoding="utf-8",
+    )
+    declared = load_declared_baseline(fixture)
+    assert declared == {"src/reyn/example.py": {"type": "false_positive", "note": "reason"}}
+
+
+def test_an_undeclared_offender_is_what_the_ratchet_exists_to_catch(tmp_path: Path) -> None:
+    """Tier 1: the exact regression lead-coder's review found in the first
+    draft — a NEW offender not present in the declared baseline must be
+    distinguishable from "the same accepted population as before", via a
+    plain set difference against the real baseline file's own declared
+    keys (the same check ``test_the_real_repo_tree_matches_the_declared_
+    baseline_exactly`` runs against the real tree)."""
+    (tmp_path / "new_offender.py").write_text(
+        "import asyncio\n"
+        "from reyn.runtime.tracked_tasks import TrackedTaskSet\n"
+        "\n"
+        "class NewOwner:\n"
+        "    def __init__(self) -> None:\n"
+        "        self._t = TrackedTaskSet()\n"
+        "\n"
+        "    def go(self) -> None:\n"
+        "        asyncio.create_task(self._work())\n",
+        encoding="utf-8",
+    )
+    offenders = offending_files(tmp_path)
+    measured = {str(p.relative_to(tmp_path)) for p, _ in offenders}
+    declared = set(load_declared_baseline(_BASELINE_PATH).keys())  # the real repo's own baseline
+    assert measured - declared == {"new_offender.py"}, (
+        "a synthetic new offender, absent from the real declared baseline, "
+        "must show up as undeclared growth"
     )

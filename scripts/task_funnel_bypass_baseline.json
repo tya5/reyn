@@ -1,0 +1,6 @@
+{
+  "src/reyn/runtime/session.py": {
+    "type": "defect",
+    "note": "#5267's own chain (Session.run_one_iteration's _turn_owner_task) — a real hazard, tracked for its own separate fix PR, not a gate false positive."
+  }
+}
