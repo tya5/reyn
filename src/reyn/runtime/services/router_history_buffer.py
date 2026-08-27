@@ -460,6 +460,26 @@ class RouterHistoryBuffer:
         self._cached_elide_last_seq: "int | None" = None
         self._cached_elide_model: "str | None" = None
         self._cached_elide_use_chars4: "bool | None" = None
+        # #5296 PR-2: session-lived, non-durable reactive-spill overlay —
+        # maps a tool-result turn's content hash (``"sha256:<hex>"``, same
+        # form/derivation as MediaStore's own ``content_hash``, #5296's own
+        # architect ruling: "既存spillの _offload_content_hash と語彙を揃
+        # える") to the offloaded preview text that replaces it in every
+        # FUTURE ``_serialise_turn`` call for a turn whose content hashes to
+        # that key. Applied at the SAME projection stage as the watermark
+        # filter (architect ruling, issuecomment-5439234430) — never
+        # written to ``history.jsonl``, never mutates a ``ChatMessage`` in
+        # place (that would silently change what an already-attached
+        # operator sees, a UX change #5296 explicitly does not authorize),
+        # never advances the compaction watermark, and does not survive a
+        # restart (reversible/idempotent by construction: re-deriving it is
+        # just re-spilling the same oversized turn again, not a correctness
+        # loss). Keyed by CONTENT, not by index/seq: a compaction pass
+        # trimming ``head`` shifts every downstream index, so a positional
+        # key would silently point at the wrong turn after the very
+        # recovery step (#4954-style durable compaction) this overlay's own
+        # caller may trigger next.
+        self._spill_overlay: "dict[str, str]" = {}
 
     @property
     def _model(self) -> str:
@@ -536,6 +556,19 @@ class RouterHistoryBuffer:
         content = _refresh_skill_location_tokens(
             content, getattr(m, "meta", None), self._project_dir_fn,
         )
+        # #5296 PR-2: apply the reactive-spill overlay, same stage as the
+        # watermark filter above — a hit replaces this turn's content with
+        # its offloaded preview for every projection from here on (until a
+        # future overlay entry supersedes it or the process restarts). The
+        # `self._spill_overlay` guard keeps this a no-op fast path (no
+        # hashing at all) on every call before the first spill ever fires —
+        # the overwhelming common case.
+        if self._spill_overlay and isinstance(content, str):
+            import hashlib
+            content_hash = "sha256:" + hashlib.sha256(content.encode("utf-8")).hexdigest()
+            replacement = self._spill_overlay.get(content_hash)
+            if replacement is not None:
+                content = replacement
         msg: dict = {"role": role, "content": content}
         if m.tool_calls is not None:
             msg["tool_calls"] = m.tool_calls
@@ -1074,6 +1107,58 @@ class RouterHistoryBuffer:
         # is in-place, so the shared dicts in head/raw_middle/tail are bounded).
         self._bound_wire_reasoning(head + raw_middle + tail)
         return head, raw_middle, tail, summary_dict, seq_by_id
+
+    def spill_turn_content(
+        self, content: str, *, chain_id: str = "", tool: str = "tool", seq: int = 1,
+    ) -> "str | None":
+        """#5296 PR-2: reactively spill one already-serialised tool-result
+        wire string — offload it via the SAME mechanism the existing
+        write-time cap already uses (``tool_result_cap.cap_tool_result_
+        content`` + ``MediaStore.save_tool_result``, architect ruling:
+        "既存機構を再利用"), record the resulting overlay entry so every
+        FUTURE ``_serialise_turn`` of a turn with this exact content
+        returns the offloaded preview instead, and return that preview
+        text (``None`` if no ``media_store`` is configured — the same
+        no-op degrade the write-time cap already has for that case; the
+        caller treats that as "no progress" and escalates).
+
+        ``cap_tokens=1`` forces the offload branch unconditionally — this
+        method is called only once a caller has ALREADY decided (by
+        ordering: oldest/largest first, #5296's own contract ②) that THIS
+        turn should be spilled; ``cap_tool_result_content`` itself has no
+        "force offload regardless of size" mode, only "offload if over
+        cap_tokens", so a threshold no real content can be under is how
+        this reuses that function without adding a second offload path.
+        No new threshold config here — #5296's own contract explicitly
+        rules that out ("閾値configを作らない").
+        """
+        if self._media_store is None:
+            return None
+        import hashlib
+
+        from reyn.runtime.services.tool_result_cap import cap_tool_result_content
+
+        def _save(c: "str | dict", **kw: Any) -> dict:
+            return self._media_store.save_tool_result(
+                c, chain_id=chain_id, tool=tool, seq=seq, **kw
+            )
+
+        replacement = cap_tool_result_content(
+            content,
+            cap_tokens=1,
+            model=self._model,
+            save_fn=_save,
+            use_chars4=getattr(self._compaction, "use_chars4_estimate", False),
+            events=self._events,
+        )
+        if replacement == content:
+            # cap_tool_result_content's own no-op paths (cap<=0, or the
+            # store write itself somehow returned the input unchanged) —
+            # nothing was actually offloaded, so no overlay entry to add.
+            return None
+        content_hash = "sha256:" + hashlib.sha256(content.encode("utf-8")).hexdigest()
+        self._spill_overlay[content_hash] = replacement
+        return replacement
 
     def build_system_prompt(self) -> str:
         """Return the router system prompt for the current session state.
