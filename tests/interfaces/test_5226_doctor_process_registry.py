@@ -55,4 +55,4 @@ def test_a_real_registered_process_is_reported_by_pid_ppid_cwd_subcommand(
         assert os.getcwd() in out
         assert "subcommand: chat" in out
     finally:
-        process_registry._cleanup(os.getpid())
+        process_registry.unregister_process(os.getpid())

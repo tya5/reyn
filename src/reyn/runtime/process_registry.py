@@ -139,6 +139,37 @@ def _cleanup(pid: int) -> None:
         pass
 
 
+def unregister_process(pid: "int | None" = None) -> None:
+    """The public counterpart to :func:`register_process` — removes this
+    process's own marker right now AND cancels the ``atexit`` handler
+    :func:`register_process` armed, so nothing fires again later.
+
+    Exists because #5326's TESTS-READ(B) review found two real problems
+    with calling the private :func:`_cleanup` directly (as this module's
+    own tests originally did): (a) CLAUDE.md's own rule — "a test must
+    not depend on private state... if neither exists, that absence is
+    the finding" — and no PUBLIC way to undo a registration existed; (b)
+    calling ``_cleanup`` alone still leaves the ``atexit`` handler armed,
+    so it fires again at interpreter shutdown — against whatever
+    ``PROCESSES_DIR`` is live AT THAT POINT, not the one active when
+    ``register_process`` was called. A test that monkeypatches
+    ``PROCESSES_DIR`` to an isolated ``tmp_path`` and calls only
+    ``_cleanup`` in its own teardown leaves that stale handler armed
+    against the REAL ``~/.reyn/processes/`` for the rest of the
+    interpreter's life — harmless only by the accident that the pid
+    being unlinked is always this test process's own (which no real reyn
+    process can also be using while alive), a guarantee nothing in the
+    code enforced or documented until now.
+
+    Idempotent: ``atexit.unregister`` on a handler that was already
+    cancelled (or never armed) is a documented no-op, and ``_cleanup``
+    already swallows a missing marker."""
+    if pid is None:
+        pid = os.getpid()
+    _cleanup(pid)
+    atexit.unregister(_cleanup)
+
+
 def live_processes() -> "list[dict]":
     """Every currently-alive reyn process's own marker — read-only,
     reaping (deleting) any marker whose PID is confirmed no longer
