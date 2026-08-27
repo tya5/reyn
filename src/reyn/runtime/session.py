@@ -2880,9 +2880,36 @@ class Session:
         """#2285: toggle the session-visibility of a tool / mcp / category / skill
         (status-bar seam). Thin forwarder — see
         ``CapabilityVisibility.set_capability_visible`` for the full rationale
-        (#3121 step3 Extract Class)."""
+        (#3121 step3 Extract Class).
+
+        #5276/#5277 (architect review — the #5230 audit analog: a refused
+        attempt that leaves no trace is worse than a passive display bug):
+        emits ``visibility_changed`` (kind/name/on/applied — the operator's
+        own toggle, nothing derived) once the forwarded call returns without
+        raising. This is the OPERATOR'S ACTION, not "did the effective,
+        envelope-gated visibility change" — that own docstring's "no-op for
+        visibility" case (toggling ON something the envelope denies) still
+        records the override and still emits here, matching lead-coder's
+        stated reason (charter lens 7: reconstruct from the audit-event
+        trail). ``applied`` here means "the override was written" (this
+        method's own call never raises past the initial unknown-kind check,
+        so it is always ``True`` at this point) — the SAME rule
+        :meth:`set_hook_enabled` uses (``applied`` = "did the state this
+        method owns actually change"), not "did the live, envelope-gated
+        visibility end up matching the request". That deeper distinction
+        (a toggle whose override write succeeded but whose EFFECTIVE
+        visibility the envelope still denies) is a real, disclosed gap this
+        PR does NOT close — computing it would mean re-deriving
+        ``capability_visibility_state``'s own authorized/denied
+        classification here, keyed off the live catalogs, for a ``name``
+        this method never validates against them (see this class's own
+        docstring: an unregistered skill name is silently ignored, not
+        rejected) — left for a follow-up if lens 7 ever needs it."""
         self._capability_visibility.set_capability_visible(
             kind, name, visible, self._toggle_store_dir(),
+        )
+        self._audit_events.emit(
+            "visibility_changed", kind=kind, name=name, on=visible, applied=True,
         )
 
     def capability_visibility_state(self) -> dict:
@@ -2958,16 +2985,32 @@ class Session:
         resolve to any ``HookDef`` in the current merged registry (unknown / not-yet-declared)
         is treated as freely disableable, matching :func:`hook_origin_is_at_least_as_specific_as`'s
         own fail-open contract for an origin outside :data:`~reyn.hooks.schema.HOOK_ORIGIN_ORDER`
-        — unchanged from pre-#5230 behavior for this case."""
+        — unchanged from pre-#5230 behavior for this case.
+
+        #5276/#5277 (architect BLOCK, corrected): emits ``hook_changed`` (name/enabled/
+        applied/origin) on BOTH the refused and the applied path — an attempted disable of
+        a PROTECTED hook is exactly the event lens 7 needs to answer "why is this hook
+        still running after someone tried to stop it" (#5041/#5213 context), and a kind
+        that only ever fires on success cannot answer that question no matter what a
+        caller adds later: shipping ``hook_changed`` meaning "state changed" today and
+        widening it to also mean "an attempt happened" later would silently change what
+        already-logged events of this SAME kind mean (the #5261-rejected shape). Both
+        branches emit from the start instead."""
         hook = self._hook_defs_by_name().get(name)
         origin = hook.origin if hook is not None else None
         if not enabled and origin is not None and not self._hook_origin_is_disableable(origin):
+            self._audit_events.emit(
+                "hook_changed", name=name, enabled=enabled, applied=False, origin=origin,
+            )
             return HookToggleResult(applied=False, origin=origin)
         if enabled:
             self._disabled_hooks.discard(name)
         else:
             self._disabled_hooks.add(name)
         self._persist_hook_disabled()  # #2285 step2 — survive restart (best-effort)
+        self._audit_events.emit(
+            "hook_changed", name=name, enabled=enabled, applied=True, origin=origin,
+        )
         return HookToggleResult(applied=True, origin=origin)
 
     # ── #2285 step2: persist / restore the session toggles (SEPARATE from the envelope floor) ──
