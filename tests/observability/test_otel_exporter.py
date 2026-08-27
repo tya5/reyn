@@ -540,3 +540,76 @@ def test_orphan_span_flushed_and_closed_on_shutdown() -> None:
     # every finished span carries an end timestamp (closed, not leaked)
     for s in cap.spans():
         assert s.end_time is not None
+
+
+# ── 8. HANDLED_EVENT_TYPES structurally matches _dispatch (#5260) ───────────
+
+
+def test_handled_event_types_matches_the_dispatch_elif_chain() -> None:
+    """Tier 1: #5260 — ``HANDLED_EVENT_TYPES`` (the ``kinds=`` declaration the
+    registration site in ``session.py`` now passes) must be EXACTLY the set
+    of kinds ``_dispatch``'s own if/elif chain does something with, not a
+    hand-typed list that can silently drift from it. A kind added to
+    ``_dispatch`` without a matching addition to ``HANDLED_EVENT_TYPES``
+    would, once the registration declares kinds, never reach this exporter
+    at all — no exception, no log, just a telemetry gap nobody would notice
+    without this test.
+
+    Parses ``OtelExporter``'s source via the CLASS branch of
+    ``inspect.getsource`` (``__qualname__`` + a fresh ``ast.parse`` — immune
+    to the line-number-cache hazard the METHOD branch has, #5290) and walks
+    ``_dispatch``'s own ``ast.Compare`` nodes for the exact literal/name
+    comparisons it makes against ``etype`` — not a runtime read of
+    ``_dispatch``'s bytecode, and not a duplicate hand-typed list of its
+    own that could equally drift.
+    """
+    import ast
+    import inspect
+
+    from reyn.observability.otel_exporter import (
+        _LOG_EVENT_TYPES,
+        _TOOL_EVENT_TYPES,
+        HANDLED_EVENT_TYPES,
+        OtelExporter,
+    )
+
+    tree = ast.parse(inspect.getsource(OtelExporter))
+    dispatch_node = next(
+        node for node in ast.walk(tree)
+        if isinstance(node, ast.FunctionDef) and node.name == "_dispatch"
+    )
+
+    literal_kinds: set[str] = set()
+    name_refs: set[str] = set()
+    for cmp_node in ast.walk(dispatch_node):
+        if not isinstance(cmp_node, ast.Compare):
+            continue
+        # Only comparisons whose left side is the ``etype`` local this
+        # method's whole chain switches on — excludes unrelated comparisons
+        # elsewhere in the same function body (there are none today, but a
+        # future addition should not silently widen what this test reads).
+        if not (isinstance(cmp_node.left, ast.Name) and cmp_node.left.id == "etype"):
+            continue
+        for comparator in cmp_node.comparators:
+            if isinstance(comparator, ast.Constant) and isinstance(comparator.value, str):
+                literal_kinds.add(comparator.value)
+            elif isinstance(comparator, ast.Tuple):
+                for elt in comparator.elts:
+                    if isinstance(elt, ast.Constant) and isinstance(elt.value, str):
+                        literal_kinds.add(elt.value)
+            elif isinstance(comparator, ast.Name):
+                name_refs.add(comparator.id)
+
+    assert literal_kinds, "no literal-kind comparisons found — the parse/walk is broken"
+    assert name_refs == {"_TOOL_EVENT_TYPES", "_LOG_EVENT_TYPES"}, (
+        f"expected _dispatch to compare etype against exactly these two named "
+        f"constants, got {name_refs} — HANDLED_EVENT_TYPES's own composition "
+        f"(literals | _TOOL_EVENT_TYPES | _LOG_EVENT_TYPES) needs updating to match"
+    )
+
+    reconstructed = literal_kinds | _TOOL_EVENT_TYPES | _LOG_EVENT_TYPES
+    assert reconstructed == HANDLED_EVENT_TYPES, (
+        f"HANDLED_EVENT_TYPES has drifted from _dispatch's own elif chain — "
+        f"in chain but not declared: {reconstructed - HANDLED_EVENT_TYPES}; "
+        f"declared but not in chain: {HANDLED_EVENT_TYPES - reconstructed}"
+    )

@@ -649,7 +649,13 @@ class _A2AProgressBridge:
     def attach(self) -> None:
         events = getattr(self._session, "_audit_events", None)
         if events is not None:
-            events.add_subscriber(self.on_event)
+            # #5260: declare the fixed interest at registration instead of
+            # letting every OTHER event reach on_event just to be filtered
+            # at its own top (the ``event_type not in self.TRACKED_EVENTS``
+            # check there — kept as a defensive no-op, not removed, since a
+            # narrowed declaration must never be the ONLY thing enforcing
+            # the filter).
+            events.add_subscriber(self.on_event, kinds=self.TRACKED_EVENTS)
 
     def detach(self) -> None:
         if self._detached:

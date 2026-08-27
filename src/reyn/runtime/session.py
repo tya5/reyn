@@ -10,6 +10,7 @@ import json
 import logging
 import re
 import tempfile
+from collections.abc import Iterable
 from typing import TYPE_CHECKING, Any, Callable
 
 if TYPE_CHECKING:
@@ -1592,15 +1593,25 @@ class Session:
     def _accumulate(self, result) -> None:
         self._budget.accumulate(result)
 
-    def subscribe_audit_events(self, cb: "Callable[..., None]") -> None:
+    def subscribe_audit_events(
+        self, cb: "Callable[..., None]", *, kinds: "Iterable[str] | None" = None,
+    ) -> None:
         """Register ``cb`` for this session's audit events (narrow public API).
 
         Encapsulates the internal EventLog so UI callers (e.g. the inline CUI
         working indicator) subscribe without reaching into ``_audit_events``.
         ``cb`` receives an ``Event`` (``.type`` / ``.data``) synchronously on the
         session loop. Pair with :meth:`unsubscribe_audit_events`.
+
+        #5260: ``kinds`` forwards to ``EventLog.add_subscriber``'s own
+        ``kinds`` param — added there by #5263, but this public seam never
+        threaded it through, so a caller reaching the EventLog only via
+        ``Session`` (rather than the internal ``_audit_events`` attribute
+        directly) had no way to declare a fixed interest, however narrow.
+        ``None`` (the default) keeps the pre-#5260 contract exactly: every
+        event, matching every existing caller of this method unchanged.
         """
-        self._audit_events.add_subscriber(cb)
+        self._audit_events.add_subscriber(cb, kinds=kinds)
 
     def unsubscribe_audit_events(self, cb: "Callable[..., None]") -> bool:
         """Remove a callback registered via :meth:`subscribe_audit_events`."""
@@ -4780,10 +4791,17 @@ class Session:
         )
         otel_exporter = None
         try:
-            from reyn.observability.otel_exporter import build_otel_exporter
+            from reyn.observability.otel_exporter import (
+                HANDLED_EVENT_TYPES,
+                build_otel_exporter,
+            )
             otel_exporter = build_otel_exporter(observability_config)
             if otel_exporter is not None:
-                audit_events.add_subscriber(otel_exporter)
+                # #5260: declare the fixed set of kinds _dispatch's own
+                # elif chain actually handles, instead of every event
+                # reaching __call__ only to fall through its trailing
+                # "SR5b: silently ignored" branch.
+                audit_events.add_subscriber(otel_exporter, kinds=HANDLED_EVENT_TYPES)
         except Exception:  # noqa: BLE001 — OTEL attach must never break session init
             otel_exporter = None
         return _AuditEventBundle(

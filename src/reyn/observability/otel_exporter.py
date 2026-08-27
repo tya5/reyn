@@ -152,6 +152,26 @@ _TOOL_EVENT_TYPES: frozenset[str] = frozenset({
     "web_search_failed",
 })
 
+# The fixed set of kinds ``_dispatch``'s own if/elif chain actually branches
+# on (#5260) — every other event type falls through to the trailing "SR5b:
+# silently ignored" comment there and does nothing. Declared as one constant
+# so the registration site (``session.py``'s ``_build_events_backend``) can
+# pass it as ``kinds=`` instead of every event reaching ``__call__`` only to
+# be dropped by the same elif chain. Reuses ``_TOOL_EVENT_TYPES``/
+# ``_LOG_EVENT_TYPES`` (the two branches that already read a shared
+# frozenset) rather than re-listing their members, but the 8 single-kind
+# branches above them (``session_started`` .. ``llm_response_received``)
+# have no such shared constant to read, so they are hand-typed here — a
+# kind added to ``_dispatch`` still needs a matching addition here, same as
+# any other declared-vocabulary pair in this repo (test_dispatch_kinds_
+# match_handled_event_types below is the gate that catches drift, not this
+# comment).
+HANDLED_EVENT_TYPES: frozenset[str] = frozenset({
+    "session_started", "session_completed", "turn_started",
+    "turn_completed", "turn_cancelled", "turn_settled",
+    "llm_called", "llm_response_received",
+}) | _TOOL_EVENT_TYPES | _LOG_EVENT_TYPES
+
 
 def _corr_keys(data: dict[str, Any]) -> list[str]:
     """Correlation keys for an event, most-specific first.
