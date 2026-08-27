@@ -493,7 +493,21 @@ class MCPConnectionService:
     ) -> MCPClient:
         """Discard the (dead) held client for ``server`` and open a fresh one.
         Teardown of the dead client is best-effort — its transport is already gone,
-        so a teardown fault here is expected and never blocks the reconnect."""
+        so a teardown fault here is expected and never blocks the reconnect.
+
+        #5280: if the reopen below (``_ensure_open``) itself raises — the
+        server subprocess is genuinely gone/unreachable, not just a
+        transient transport death — ``server`` has ALREADY been popped
+        from ``self._clients`` (right above), so ``held_servers()`` (and
+        therefore ``Session.mcp_subscription_state()``'s reactive cache,
+        session.py) no longer lists it. None of the 6 kinds that cache
+        subscribes to fire on a FAILED reopen — ``mcp_initialized`` only
+        fires on success (see ``_ensure_open``'s own tail). Emits
+        ``mcp_reconnect_failed`` here, the ONE place both call paths
+        (``_HeldConnection._heal``'s reactive path and
+        ``_reconnect_from_lost_subscription``'s proactive one) funnel
+        through, so the cache invalidates on this path too instead of
+        staying stale until an unrelated event happens to fire."""
         old = self._clients.pop(server, None)
         if old is not None:
             try:
@@ -526,7 +540,12 @@ class MCPConnectionService:
                     "MCPConnectionService: teardown of dead subscription adapter for %r "
                     "contained an error", server, exc_info=True,
                 )
-        return await self._ensure_open(server, config, agent_id=agent_id)
+        try:
+            return await self._ensure_open(server, config, agent_id=agent_id)
+        except Exception:
+            if self._emit_sink is not None:
+                self._emit_sink("mcp_reconnect_failed", server=server)
+            raise
 
     def _on_subscription_lost(
         self, server: str, config: dict, agent_id: "str | None", dead_client: "MCPClient",
