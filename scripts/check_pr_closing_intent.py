@@ -632,18 +632,20 @@ def check_contradictions(
     that only have body/closing_refs (e.g. the existing test suite) are
     unaffected.
 
-    ``title`` (#5321) — the PR's own title, scanned by checks 4 and 5
-    ONLY when ``len(commit_messages) >= 2`` (this repo's own measured
-    ``squash_merge_commit_title: COMMIT_OR_PR_TITLE`` setting: a 1-commit
-    PR's squash headline is that ONE commit's own title, already covered
-    by scanning ``commit_messages`` — the PR title never reaches the
-    merge commit in that case, and flagging it there would be a false
-    positive on the common 1-commit PR, not a genuine leak). A 2+-commit
-    PR's squash headline IS the PR title, so a closing keyword there is
-    the exact #3187/check-4 leak class, just via a THIRD text GitHub
-    reads (body, commit messages, and now title) — unscanned before
-    #5321 (real gap named in #5321, not yet incident-confirmed: no
-    known merged PR has actually tripped this one).
+    ``title`` (#5321, corrected #5330) — the PR's own title, scanned by
+    checks 4 and 5 UNCONDITIONALLY — a closing keyword there is the exact
+    #3187/check-4 leak class, just via a THIRD text GitHub reads (body,
+    commit messages, and now title), unscanned before #5321. #5321's own
+    first version gated this scan on the commit count being 2 or more
+    (this repo's own measured ``squash_merge_commit_title:
+    COMMIT_OR_PR_TITLE`` setting: a 1-commit PR's squash headline is that
+    ONE commit's own title) — WRONG (#5330): that reasoning covers only a
+    squash merge. This repo ALSO allows a plain merge commit
+    (``allow_merge_commit: true``, ``merge_commit_message: PR_TITLE``): a
+    merge commit's body IS the PR title regardless of commit count, and
+    the merge method a human will pick is not known at check time, so
+    the scan cannot be gated on commit count at all — see this module's
+    own docstring (check 4's "Title source" note) for the full reasoning.
     """
     closing_declared = find_closing_declarations(body)
     nonclosing_declared = find_nonclosing_declarations(body)
