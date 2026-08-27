@@ -42,6 +42,18 @@ threads/cancellation — the unit under test is the ownership CHECK itself,
 not the thread-scheduling race that motivates it (which #4995's own
 future PR, wiring this into ``RouterLoopDriver`` via ``asyncio.to_thread``,
 is responsible for exercising end-to-end).
+
+No strip-falsify test lives in this file (review correction, #5275): an
+earlier draft reconstructed the OLD unconditional-commit
+``_incremental_elide_total`` BY HAND inside a test — that only proves a
+hand-copied re-implementation of the old bug reproduces the old bug, a
+tautology that stays green even if the REAL ownership check were removed
+from production (CLAUDE.md's test-review Q3: nobody would miss it). The
+actual strip-falsify — disabling the real ``still_owner`` check in
+``router_history_buffer.py`` and confirming
+``test_a_stale_owners_publish_is_rejected`` above goes RED — was done by
+hand against the real source and is recorded in #5275's own PR body, not
+duplicated here as a second, parallel implementation.
 """
 from __future__ import annotations
 
@@ -191,72 +203,4 @@ def test_the_legitimate_owners_own_publish_still_works(monkeypatch) -> None:
     assert call_count["n"] == 30, (
         f"a matching-owner call must still publish incrementally, got "
         f"{call_count['n']} new estimates instead of 30"
-    )
-
-
-def test_strip_the_ownership_check_reproduces_the_stale_publish(monkeypatch) -> None:
-    """Tier 2: strip-falsify — reconstructing the OLD unconditional-commit
-    ``_incremental_elide_total`` (mirroring pre-#5267: always write the
-    cache, regardless of ownership) against the same real buffer must
-    reproduce the corruption: the stale call's revert IS observed by the
-    next legitimate call needing to re-estimate turns it already
-    accounted for. Same stale-snapshot construction as the acceptance
-    test above, and for the same reason (a live-reread stale call would
-    compute the SAME correct values turn B already published)."""
-    import types
-
-    history = _turns(50)
-    owner_box = ["owner-A"]
-    buf = _make_buf(history, current_turn_owner_fn=lambda: owner_box[0])
-
-    def _old_incremental_elide_total(self, turns, wire_turns, *, use_chars4, expected_owner=None):
-        from reyn.services.compaction.engine import estimate_tokens_for_any_turn
-
-        model = self._model
-        cache_valid = (
-            len(turns) >= self._cached_elide_turn_count
-            and self._cached_elide_model == model
-            and self._cached_elide_use_chars4 == use_chars4
-            and (
-                self._cached_elide_turn_count == 0
-                or turns[self._cached_elide_turn_count - 1].seq == self._cached_elide_last_seq
-            )
-        )
-        if cache_valid:
-            new_wire_turns = wire_turns[self._cached_elide_turn_count:]
-            total = self._cached_elide_total + sum(
-                estimate_tokens_for_any_turn(wt, model, use_chars4=use_chars4)
-                for wt in new_wire_turns
-            )
-        else:
-            total = sum(
-                estimate_tokens_for_any_turn(wt, model, use_chars4=use_chars4)
-                for wt in wire_turns
-            )
-        self._cached_elide_total = total
-        self._cached_elide_turn_count = len(turns)
-        self._cached_elide_last_seq = turns[-1].seq if turns else None
-        self._cached_elide_model = model
-        self._cached_elide_use_chars4 = use_chars4
-        return total
-
-    buf._incremental_elide_total = types.MethodType(_old_incremental_elide_total, buf)
-
-    buf.build_history(expected_owner="owner-A")
-    turns_a, _watermark_a = buf._elide_candidate_turns(list(history))
-    wire_turns_a = [buf._serialise_turn(m) for m in turns_a]
-
-    owner_box[0] = "owner-B"
-    history.extend(_turns(10, start=51))
-    buf.build_history(expected_owner="owner-B")
-    # OLD code: publishes unconditionally, reverting the cache to turn A's
-    # stale (50-turn) view even though owner-A no longer owns.
-    buf._incremental_elide_total(turns_a, wire_turns_a, use_chars4=True, expected_owner="owner-A")
-
-    call_count = _counting_wrapper(monkeypatch)
-    buf.build_history(expected_owner="owner-B")
-    assert call_count["n"] != 0, (
-        "the OLD unconditional-commit must reproduce the stale revert (a "
-        "non-zero re-estimate here) — if this assertion fails, the strip "
-        "did not actually revert to the pre-#5267 shape"
     )
