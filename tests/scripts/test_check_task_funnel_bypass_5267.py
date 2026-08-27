@@ -11,6 +11,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from scripts.check_task_funnel_bypass import (
     _BASELINE_PATH,
     _SRC_DIR,
@@ -268,3 +270,21 @@ def test_false_positive_count_does_not_move_when_an_accepted_entry_is_added() ->
         "a genuinely new \"false_positive\" entry must move the counter — "
         "the counter is not inert to every addition, only to \"accepted\" ones"
     )
+
+
+def test_load_declared_baseline_rejects_an_unrecognized_type(tmp_path: Path) -> None:
+    """Tier 1: #5300 review (architect) — an unvalidated free ``type``
+    string would let a typo (``"acepted"`` for ``"accepted"``) silently
+    fall out of ``false_positive_count()``'s count with no signal, always
+    landing on the lenient side (a real ``"false_positive"`` entry typo'd
+    away would silently vanish from the count too). ``load_declared_
+    baseline`` — the one place every downstream consumer reads ``type``
+    through — must reject an unrecognized value loudly rather than pass
+    it through."""
+    fixture = tmp_path / "baseline.json"
+    fixture.write_text(
+        json.dumps({"src/reyn/example.py": {"type": "acepted", "note": "typo'd type"}}),
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="acepted"):
+        load_declared_baseline(fixture)

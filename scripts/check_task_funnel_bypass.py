@@ -297,11 +297,29 @@ def offending_files(src_dir: Path) -> "list[tuple[Path, list[int]]]":
 def load_declared_baseline(path: Path = _BASELINE_PATH) -> "dict[str, dict[str, str]]":
     """The committed record of every offender CURRENTLY accepted, keyed by
     a ``src/reyn/...``-relative path string, each carrying its own
-    ``type`` (``"defect"`` / ``"false_positive"`` / ``"accepted"``) and
-    ``note`` — see this module's own "The baseline" docstring section for
-    why this exists instead of a bare pinned count, and for what each of
-    the three types means."""
-    return json.loads(path.read_text(encoding="utf-8"))
+    ``type`` (``"defect"`` / ``"false_positive"`` / ``"accepted"`` — see
+    ``VALID_BASELINE_TYPES``) and ``note`` — see this module's own "The
+    baseline" docstring section for why this exists instead of a bare
+    pinned count, and for what each of the three types means.
+
+    Validates every entry's ``type`` against ``VALID_BASELINE_TYPES`` and
+    raises loudly on anything else (#5300 review: an unvalidated free
+    string would let a typo — ``"acepted"`` — silently fall out of
+    ``false_positive_count()``'s count with no signal, the same "declared
+    but not enforced" hole #5300 itself exists to close one layer up).
+    This is the ONE place that reads the ``type`` field for every
+    downstream consumer (the offender-tree comparison and
+    ``false_positive_count()`` both call this), so validating here covers
+    both."""
+    baseline = json.loads(path.read_text(encoding="utf-8"))
+    for rel_path, entry in baseline.items():
+        entry_type = entry.get("type")
+        if entry_type not in VALID_BASELINE_TYPES:
+            raise ValueError(
+                f"{path}: {rel_path!r} has an unrecognized \"type\" "
+                f"{entry_type!r} — must be one of {sorted(VALID_BASELINE_TYPES)}"
+            )
+    return baseline
 
 
 def false_positive_count(baseline: "dict[str, dict[str, str]]") -> int:
