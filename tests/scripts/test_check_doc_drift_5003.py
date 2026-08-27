@@ -614,7 +614,7 @@ def _pinned_shas_resolve_locally() -> bool:
     ([[feedback_git_existence_check_cat_file_not_ls_tree]]-equivalent
     discipline: an object either resolves or it does not, no separate
     empty-output case to misread)."""
-    for ref in (_5010_SRC_SHA, _5010_DOCS_PRE_SHA.rstrip("^")):
+    for ref in (_5010_SRC_SHA, _5010_DOCS_PRE_SHA):
         result = subprocess.run(
             ["git", "cat-file", "-e", ref], cwd=REPO_ROOT, capture_output=True
         )
