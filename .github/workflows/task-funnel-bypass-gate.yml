@@ -1,0 +1,58 @@
+name: task-funnel-bypass gate
+
+# #5267 (Family A): a module that owns a TrackedTaskSet (receives one as
+# a required constructor param, or constructs one directly) must route
+# every background spawn through it, never a raw asyncio.create_task —
+# such a task is invisible to the funnel's own cancel-then-await
+# discipline (TrackedTaskSet.aclose()'s asyncio.gather(...,
+# return_exceptions=True)), the exact shape #5267's own chain (Session.
+# run_one_iteration's _turn_owner_task) and #5268 (same night, a
+# different ad hoc task pair in llm.py) both hit. See
+# scripts/check_task_funnel_bypass.py's module docstring for the full
+# design rationale, the derived (not hand-enumerated) scope, and the
+# promotion/removal conditions.
+#
+# WARN-ONLY (architect ruling, #5267) — nobody has measured this AST
+# shape's false-positive rate against the real tree yet. The promotion
+# condition (0 new false positives across 20 consecutive PRs touching an
+# in-scope file -> promote to blocking) is written in the script's own
+# module docstring NOW, at gate creation, specifically so this does not
+# repeat #5010's own fate (a warn-only gate nobody ever wrote a
+# promotion condition for, so it never had a moment anyone could call
+# "now" and stayed warn-only indefinitely).
+on:
+  pull_request:
+    paths:
+      - "src/reyn/**"
+
+permissions:
+  contents: read
+
+jobs:
+  task-funnel-bypass:
+    name: task-funnel-bypass gate (warn-only)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      # scripts/check_task_funnel_bypass.py is stdlib-only (ast / pathlib
+      # / sys). No pip install needed.
+      - name: Check no TrackedTaskSet-owning module bypasses its own funnel
+        run: |
+          set +e
+          python scripts/check_task_funnel_bypass.py > funnel_bypass_output.txt 2>&1
+          exit_code=$?
+          cat funnel_bypass_output.txt
+          if [ "$exit_code" -ne 0 ]; then
+            while IFS= read -r line; do
+              echo "::warning::${line}"
+            done < <(grep "^  src/" funnel_bypass_output.txt)
+          fi
+          exit 0

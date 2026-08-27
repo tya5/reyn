@@ -224,6 +224,13 @@ class ChainManager:
         # `cancel_timeout`) stays the primary bookkeeping either way; this is
         # an ADDITIONAL registration for teardown-reachability, not a
         # replacement for it.
+        #
+        # #5267: this optionality is WHY scripts/check_task_funnel_bypass.py
+        # does not scope this class in — if a future change makes this
+        # class spawn turn-crossing background work WITHOUT the funnel
+        # (today's watchdog timers are drop-safe/reversible, not turn-
+        # crossing state-writers), that gate's scope needs revisiting, not
+        # just this comment.
         self._task_tracker = task_tracker
 
         self._chains: dict[str, _PendingChain] = {}
