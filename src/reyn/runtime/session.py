@@ -983,6 +983,14 @@ class Session:
         self._attended: bool = True
         # Lazily-resolved minimal _untrusted profile cache (#1827 S4b, see docs/reference/runtime/session-construction.md#capability-permission-visibility)
         self._untrusted_contextual_cache = None
+        # #5282: whether ``_ephemeral_contextual_for_turn`` was narrowed the
+        # LAST time it ran — the transition latch that turns its per-call,
+        # side-effect-free re-derivation (see that method's own docstring)
+        # into exactly one ``untrusted_narrowing_engaged``/``_lifted`` audit
+        # event per genuine state change, however many times (status-panel
+        # poll, live gate, Tool tab) the method itself is called while the
+        # state does not change. See that method's own "#5282" comment.
+        self._ephemeral_narrowing_engaged: bool = False
         # #4381 PR-2 stage ③: per-turn in-flight taint latch — set the moment
         # router_loop.py stamps `external_source` on a tool-result's meta
         # (RouterHostAdapter.mark_untrusted_in_flight, same update point, no
@@ -3507,6 +3515,25 @@ class Session:
         than ``off``. It is the SINGLE place the opt-in is read, so the live gate,
         the advertisement filter and the Tool tab are all engaged or all disengaged
         by one check and cannot disagree about whether the mechanism is on.
+
+        #5282: this is also the SINGLE place the DEFAULT rung's own state is
+        computed, so it is the one place that can tell an audit subscriber
+        "narrowing just engaged" / "narrowing just lifted" for that rung —
+        the ``iteration`` rung (top of the same ladder) already emits
+        ``untrusted_narrowing_engaged`` from its own call site
+        (``router_loop.py``'s ``_intra_turn_contextual_for_turn_fn`` branch);
+        this rung — ``turn``, the one an operator who opts in at all is most
+        likely running — previously emitted nothing at either transition.
+        ``_note_ephemeral_narrowing_transition`` below fires the SAME kind
+        (a subscriber correlating narrowing state does not need to know
+        which rung produced it) plus its own ``untrusted_narrowing_lifted``
+        counterpart, and ONLY on a genuine flip of
+        ``self._ephemeral_narrowing_engaged`` — never per call, however many
+        times this method itself is called (status-panel poll, live gate,
+        Tool tab) while the state does not change. This is purely additive
+        observability: every ``return`` below is unchanged in what it
+        returns, so the live gate/advertisement filter/Tool tab behavior
+        this docstring described above is untouched.
         """
         from reyn.security.permissions.capability_profile import (
             UNTRUSTED_NARROWING_ORIGIN,
@@ -3517,6 +3544,7 @@ class Session:
 
         threat_scan = getattr(self._safety, "threat_scan", None)
         if threat_scan is None or not threat_scan.narrowing_engaged():
+            self._note_ephemeral_narrowing_transition(False)
             return None
         watermark = self._compaction_watermark()
         # #4954(2): this exact predicate (seq==0 is the #3704 "no
@@ -3549,6 +3577,7 @@ class Session:
             or self._in_flight_untrusted_this_turn
             or self._max_evicted_untrusted_seq > watermark
         ):
+            self._note_ephemeral_narrowing_transition(False)
             return None
         if self._untrusted_contextual_cache is None:
             root = self._perm.project_root if self._perm is not None else Path.cwd()
@@ -3556,7 +3585,55 @@ class Session:
                 load_untrusted_profile(root),
                 origin=UNTRUSTED_NARROWING_ORIGIN,
             )[0]
+        self._note_ephemeral_narrowing_transition(True)
         return self._untrusted_contextual_cache
+
+    def _note_ephemeral_narrowing_transition(self, engaged: bool) -> None:
+        """#5282: emit ``untrusted_narrowing_engaged``/``untrusted_narrowing_lifted``
+        for the DEFAULT (``turn``) rung, exactly once per genuine flip of
+        ``self._ephemeral_narrowing_engaged`` — a no-op when *engaged*
+        matches the latch's current value, so calling this on every one of
+        ``_ephemeral_contextual_for_turn``'s own calls (status-panel poll,
+        live gate, Tool tab — see that method's own docstring) never
+        produces more than one event per actual state change (charter
+        lens 1: "who stops this if it repeats" — the latch itself, by
+        construction, not a rate limit).
+
+        Same event KIND as the ``iteration`` rung's own engage emit
+        (``router_loop.py``'s ``_intra_turn_contextual_for_turn_fn`` branch)
+        so a subscriber correlating narrowing state does not need to know
+        which rung produced it; ``untrusted_narrowing_lifted`` is new (#5282
+        — neither rung emitted a lift before this).
+
+        Suppressed under the ``iteration`` rung specifically: ``RouterLoop``
+        threads ``self._effective_contextual_for_turn`` (which calls THIS
+        method's own caller) as `_intra_turn_contextual_for_turn_fn`` only
+        on that rung, so a real ``iteration``-rung turn drives this same
+        transition through BOTH that call site's own richer emit
+        (``chain_id``/``iteration`` payload) and this one — measured
+        (#5282 review): without this guard, `test_1909_intra_turn_opt_in_
+        narrowing.py``'s own engage-count assertion doubled. The latch
+        state (below) still tracks the real transition regardless — only
+        the emit is skipped, so a later flip back is still detected
+        correctly; the ``iteration`` rung simply keeps its own pre-existing
+        (engage-only) observability, untouched by #5282, which is the
+        ``turn`` rung's gap alone.
+        """
+        if engaged == self._ephemeral_narrowing_engaged:
+            return
+        self._ephemeral_narrowing_engaged = engaged
+        threat_scan = getattr(self._safety, "threat_scan", None)
+        if threat_scan is not None and threat_scan.narrowing_per_iteration():
+            return
+        # #3410: two literal-kind emit calls, not one call with a ternary
+        # kind argument — the AST census (test_audit_event_kind_vocabulary_
+        # 3410.py) only reads a kind it can see as a constant at the call
+        # site; a computed/ternary first argument is exactly the closed-
+        # vocabulary bypass that gate exists to catch.
+        if engaged:
+            self._audit_events.emit("untrusted_narrowing_engaged", provenance="external_source")
+        else:
+            self._audit_events.emit("untrusted_narrowing_lifted", provenance="external_source")
 
     def _mark_untrusted_in_flight(self) -> None:
         """#4381 PR-2 stage ③: set the per-turn in-flight taint latch.
