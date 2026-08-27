@@ -224,6 +224,12 @@ def live_processes() -> "list[dict]":
         pid_str = tmp_path.name.removesuffix(".json.tmp")
         if not pid_str.isdigit() or pid_alive(int(pid_str)):
             continue
+        # #5358 (architect, non-blocking note on #5359): deliberately no
+        # process_marker_reaped event here — an orphaned .tmp means the
+        # process died BEFORE ever completing registration (no real marker
+        # was ever recorded), never that a registered process stopped. Its
+        # own content is untrusted/unread by design (see this function's
+        # own docstring above), so there is nothing to report losing.
         try:
             tmp_path.unlink()
         except OSError:
@@ -252,9 +258,47 @@ def live_processes() -> "list[dict]":
             # reap in the first place. What it closes is narrower and
             # structural: a stop that used to be perfectly silent (this
             # same reap, with no record before it) now has exactly one.
-            from reyn.core.events.events import emit_cli_event
+            #
+            # lead-coder's TESTS-READ(B) BLOCK (#5359): the reaping PROCESS'S
+            # own cwd (what emit_cli_event walks up from) has NOTHING to do
+            # with the DEAD process's own project — PROCESSES_DIR is one
+            # machine-wide directory, so `reyn doctor` run from project A can
+            # reap a marker for a process that ran in project B, and (worse)
+            # a caller running from a cwd inside NO project's `.reyn/` at all
+            # made emit_cli_event's own best-effort "warn and return" fire
+            # silently, reintroducing the exact silence this issue exists to
+            # close. Fixed by resolving reyn_root from the DEAD marker's own
+            # ``cwd`` field (the project the process actually ran in), never
+            # the caller's — same `_find_reyn_dir` helper `emit_cli_event`
+            # uses internally, called directly here via `emit_direct_event`.
+            #
+            # The whole block is best-effort, matching the unlink beneath it
+            # and every other diagnostic-aid in this module (register_process
+            # / _cleanup): an audit-emit failure (no `.reyn/` reachable from
+            # the marker's own cwd, or any other error) must never block the
+            # actual reap — leaving a marker permanently un-reaped because
+            # its OWN diagnostic record failed to write would be a worse
+            # regression than the record simply not existing this once.
+            try:
+                from reyn.core.events.events import _find_reyn_dir, emit_direct_event
 
-            emit_cli_event("process_marker_reaped", marker=data, observed_at=time.time())
+                marker_cwd = data.get("cwd")
+                reyn_dir = _find_reyn_dir(Path(marker_cwd)) if marker_cwd else None
+                if reyn_dir is not None:
+                    emit_direct_event(
+                        "process_marker_reaped",
+                        surface="cli",
+                        reyn_root=reyn_dir,
+                        track_audit_seq=False,
+                        marker=data,
+                        observed_at=time.time(),
+                    )
+            except Exception:
+                logger.warning(
+                    "process_registry: failed to emit process_marker_reaped "
+                    "for pid %d (diagnostic-only, does not block the reap)",
+                    pid, exc_info=True,
+                )
             try:
                 path.unlink()
             except OSError:
