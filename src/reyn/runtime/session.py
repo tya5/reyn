@@ -7699,10 +7699,32 @@ class Session:
             # gets the real answer without needing to know a second event exists.
             _root_cause = _deepest_cause(exc)
             _cause_name = type(_root_cause).__name__ if _root_cause is not None else None
+            # #5332: this line used to say "terminated by unhandled
+            # exception" — nothing here terminates. This except IS the
+            # catch; the audit event below still fires either way, and the
+            # interactive leg (below) returns normally after queuing a
+            # `kind="error"` OutboxMessage — the loop keeps running, the
+            # session keeps accepting turns. Only ``self._ephemeral`` (an
+            # agent-step spawn's leaf session) actually re-raises past this
+            # point (as ``AgentStepError``, further down) — real-environment
+            # evidence this line's old wording caused 3 real misreadings the
+            # SAME night (2026-08-27, lead-coder investigating #5329):
+            # "terminated" read as "the process died here", "unhandled" read
+            # as "nothing caught this" — both false, and both refuted only
+            # by re-reading this exact code and the audit trail. The outcome
+            # half is conditioned on the SAME ``self._ephemeral`` check the
+            # actual control flow below uses, not asserted unconditionally
+            # for both legs.
+            _outcome = (
+                "re-raising as AgentStepError"
+                if self._ephemeral
+                else "this turn failed; the session continues"
+            )
             logger.exception(
-                "router loop terminated by unhandled exception (chain_id=%s)%s",
+                "router loop caught an unhandled exception (chain_id=%s)%s — %s",
                 chain_id,
-                f" — cause: {_cause_name}: {_root_cause}" if _root_cause is not None else "",
+                f" [cause: {_cause_name}: {_root_cause}]" if _root_cause is not None else "",
+                _outcome,
             )
             try:
                 self._audit_events.emit(

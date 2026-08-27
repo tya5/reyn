@@ -141,8 +141,8 @@ async def test_stall_trace_disarmed_even_when_the_turn_raises(
 
     await session._put_inbox("user", {"text": "hi", "chain_id": "c1"})
     # The router loop's own top-level handler logs-and-swallows an
-    # unhandled exception (session.py's "router loop terminated by
-    # unhandled exception" path) rather than propagating it out of
+    # unhandled exception (session.py's "router loop caught an unhandled
+    # exception" path, #5332) rather than propagating it out of
     # run_one_iteration — so this await completes normally; the turn's
     # FAILURE is not what this test is about, only whether disarm() ran.
     await session.run_one_iteration()
