@@ -1044,9 +1044,12 @@ def cron_pane_lines(snap: "dict | None") -> list[str]:
     ``cron_items`` is falsy — same shape as :func:`_hook_pane_entries`'s
     own ``hook_items``-then-``hooks`` fallback (``cron_items`` is ``None``
     whenever no scheduler is registered for this process at all, e.g. a
-    bare local CUI session with neither the AG-UI web gateway nor a
-    ``reyn cron`` CLI invocation running — see ``_extract_live_cron_jobs``'s
-    own docstring, status.py).
+    bare local CUI session with no AG-UI web gateway running — the ONLY
+    site that registers one (grep-confirmed, lead-coder PR #5295 review:
+    ``interfaces/web/server.py:263-264``) — see ``_extract_live_cron_
+    jobs``'s own docstring, status.py, for what does NOT count (a
+    standalone ``reyn cron`` CLI invocation constructs its own scheduler
+    but never registers it as active).
 
     #5009 closing pass: ``cron_jobs_reported`` (``snap.get(..., False)`` —
     ``False`` is the safe direction, matching every other #5009 field;

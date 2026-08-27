@@ -184,15 +184,20 @@ def _extract_live_cron_jobs() -> "list[dict] | None":
     ``None`` when no scheduler is currently registered for this process —
     distinct from ``[]`` (a real scheduler with zero jobs), mirroring the
     same "not wired vs genuinely empty" distinction
-    :func:`_session_visibility_items` already establishes. Today a
-    scheduler is registered only by the AG-UI web gateway's own boot path
-    (``interfaces/web/server.py``) or a one-off ``reyn cron`` CLI
-    invocation (``interfaces/cli/commands/cron.py``) — a bare local CUI
-    session with neither running has no active scheduler, so ``None`` is
-    the correct, honest answer there (cron genuinely is not live in that
-    process; nothing to reflect a hot-reload FROM). The caller
-    (:func:`cron_pane_lines` chrome.py) falls back to the config-derived
-    ``cron_jobs`` in that case, same shape as the existing
+    :func:`_session_visibility_items` already establishes. Today
+    :func:`~reyn.runtime.cron.scheduler.set_active_scheduler` is called
+    from exactly ONE site in ``src/reyn`` (grep-confirmed, lead-coder PR
+    #5295 review): the AG-UI web gateway's own boot path
+    (``interfaces/web/server.py:263-264``). ``interfaces/cli/commands/
+    cron.py`` constructs its own standalone ``CronScheduler`` for a one-off
+    ``reyn cron`` CLI invocation but never registers it as active — so that
+    scheduler is invisible to this function, correctly (it exists only for
+    that command's own run, not this process's status panel). A bare local
+    CUI session (no AG-UI web gateway running) has no active scheduler
+    either, so ``None`` is the correct, honest answer there (cron genuinely
+    is not live in that process; nothing to reflect a hot-reload FROM).
+    The caller (:func:`cron_pane_lines` chrome.py) falls back to the
+    config-derived ``cron_jobs`` in that case, same shape as the existing
     hooks/mcp/skills panes' own live-then-fallback pattern."""
     from reyn.runtime.cron.scheduler import get_active_scheduler
 

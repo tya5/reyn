@@ -123,11 +123,14 @@ async def test_cron_panel_falls_back_to_stale_config_when_no_scheduler_is_active
     tmp_path,
 ) -> None:
     """Tier 2: falsification contrast — with NO active scheduler (the
-    ordinary bare local CUI case, no AG-UI web gateway / ``reyn cron`` CLI
-    running), ``cron_items`` is ``None`` (not-wired, distinct from a real
-    empty scheduler) and the panel correctly falls back to the
-    config-derived ``cron_jobs`` — unchanged from before this fix, no
-    regression for the no-scheduler case."""
+    ordinary bare local CUI case, no AG-UI web gateway running — the
+    ONLY site that calls ``set_active_scheduler`` today, grep-confirmed;
+    a standalone ``reyn cron`` CLI invocation constructs its own
+    scheduler but never registers it as active), ``cron_items`` is
+    ``None`` (not-wired, distinct from a real empty scheduler) and the
+    panel correctly falls back to the config-derived ``cron_jobs`` —
+    unchanged from before this fix, no regression for the no-scheduler
+    case."""
     reg = _make_registry(tmp_path)
     s = await reg.ensure_running("alpha")
 
