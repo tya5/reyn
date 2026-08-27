@@ -940,6 +940,18 @@ def project_remote_snapshot(values: "dict | None") -> dict:
         "visibility_items": v.get("visibility_items"),
         # gated by ``hooks_reported`` alongside ``hooks`` above — one pane,
         # one field (#5034).
+        #
+        # #5278 review (architect, PR #5295): this constant ``[]`` is safe
+        # ONLY because ``REMOTE_CHAT_READ_CAPABILITIES.hooks_reported`` is
+        # False (below), so ``_hook_pane_entries`` (chrome.py) exits at its
+        # own "not reported" gate before ever reaching the ``hook_items``
+        # None-vs-``[]`` check this constant would otherwise feed. Since
+        # #5278, that check reads a bare ``[]`` as "the seam answered:
+        # genuinely zero hooks" (never falls back to config) — if a future
+        # change ever sets ``hooks_reported=True`` for remote without also
+        # making this a real per-connection read (mirroring
+        # ``visibility_items`` just above), a remote agent that DOES have
+        # hooks would render "(none)" instead of them.
         "hook_items": [],
         # #5185: real wire data — `_session_mcp_subscriptions` always
         # returns a list (never None, unlike `visibility_items` above; see

@@ -42,7 +42,11 @@ import pytest
 
 from reyn.interfaces.inline.textual_chat.chrome import cron_pane_lines
 from reyn.interfaces.repl.status import _snapshot_for_session
-from reyn.runtime.cron.scheduler import CronScheduler, set_active_scheduler
+from reyn.runtime.cron.scheduler import (
+    CronScheduler,
+    get_active_scheduler,
+    set_active_scheduler,
+)
 from reyn.runtime.profile import AgentProfile
 from reyn.runtime.registry import AgentRegistry
 from reyn.runtime.session import Session
@@ -80,6 +84,12 @@ async def test_cron_panel_reflects_a_live_reload_the_boot_time_config_never_saw(
     reg = _make_registry(tmp_path)
     s = await reg.ensure_running("alpha")
 
+    # #5278 review (architect, non-blocking③): restore whatever THIS
+    # process's active scheduler was before this test ran, not force it to
+    # None — set_active_scheduler is a module global, so unconditionally
+    # nulling it would stomp a scheduler a DIFFERENT test registered
+    # (the #5290 order-dependent family).
+    previous = get_active_scheduler()
     sched = CronScheduler([])
     set_active_scheduler(sched)
     try:
@@ -115,7 +125,59 @@ async def test_cron_panel_reflects_a_live_reload_the_boot_time_config_never_saw(
             f"{rendered!r}"
         )
     finally:
-        set_active_scheduler(None)
+        set_active_scheduler(previous)
+
+
+@pytest.mark.asyncio
+async def test_cron_panel_shows_empty_not_stale_after_the_last_job_is_removed(
+    tmp_path,
+) -> None:
+    """Tier 2: acceptance — architect finding (PR #5295 review, BLOCKING):
+    the consumer (``cron_pane_lines``) originally checked ``cron_items``
+    for truthiness, collapsing ``_extract_live_cron_jobs``'s own documented
+    ``None`` (not wired) vs ``[]`` (a real scheduler with zero jobs)
+    distinction. A truthy check treats a real, active, now-EMPTY scheduler
+    the same as "not wired" and falls through to the stale ``cron_jobs`` —
+    so removing the LAST live job via a hot-reload made it REAPPEAR from
+    the boot-time config, the exact inverse of the bug #5278 fixes. This
+    test drives exactly that: start with one live job, hot-reload it away,
+    and confirm the pane shows genuinely empty — not the stale job."""
+    reg = _make_registry(tmp_path)
+    s = await reg.ensure_running("alpha")
+
+    previous = get_active_scheduler()
+    sched = CronScheduler([])
+    set_active_scheduler(sched)
+    try:
+        added = await s._reapply_cron({
+            "cron": {"jobs": [
+                {"name": "soon-to-be-removed", "schedule": "*/5 * * * *",
+                 "to": "alpha", "message": "hi"},
+            ]},
+        })
+        assert added is True  # sanity: the job really was applied live
+
+        snap_with_job = _snapshot_for_session(reg, s, config=_STALE_CONFIG)
+        assert snap_with_job["cron_items"] == [
+            {"name": "soon-to-be-removed", "schedule": "*/5 * * * *", "enabled": True},
+        ], "test construction error: the live job did not apply before removal"
+
+        removed = await s._reapply_cron({"cron": {"jobs": []}})
+        assert removed is True  # sanity: the real seam reports the removal
+
+        snap_after_removal = _snapshot_for_session(reg, s, config=_STALE_CONFIG)
+        assert snap_after_removal["cron_items"] == [], (
+            "test construction error: expected the real scheduler to report "
+            f"zero jobs after removal, got {snap_after_removal['cron_items']!r}"
+        )
+
+        rendered = cron_pane_lines(snap_after_removal)
+        assert rendered == ["(none)"], (
+            "#5278 REGRESSION: the removed job reappeared from the stale "
+            f"boot-time config instead of showing genuinely empty — got {rendered!r}"
+        )
+    finally:
+        set_active_scheduler(previous)
 
 
 @pytest.mark.asyncio
@@ -134,15 +196,22 @@ async def test_cron_panel_falls_back_to_stale_config_when_no_scheduler_is_active
     reg = _make_registry(tmp_path)
     s = await reg.ensure_running("alpha")
 
+    # #5278 review (architect, non-blocking③): save/restore rather than
+    # force None unconditionally — same module-global concern as the
+    # other tests in this file.
+    previous = get_active_scheduler()
     set_active_scheduler(None)  # explicit: no scheduler registered
-    snap = _snapshot_for_session(reg, s, config=_STALE_CONFIG)
+    try:
+        snap = _snapshot_for_session(reg, s, config=_STALE_CONFIG)
 
-    assert snap["cron_items"] is None, (
-        "test construction error: expected no active scheduler to report "
-        f"None, got {snap['cron_items']!r}"
-    )
-    rendered = cron_pane_lines(snap)
-    assert any("boot-time-job" in line for line in rendered), (
-        f"expected the stale-config fallback when no scheduler is active, "
-        f"got {rendered!r}"
-    )
+        assert snap["cron_items"] is None, (
+            "test construction error: expected no active scheduler to report "
+            f"None, got {snap['cron_items']!r}"
+        )
+        rendered = cron_pane_lines(snap)
+        assert any("boot-time-job" in line for line in rendered), (
+            f"expected the stale-config fallback when no scheduler is active, "
+            f"got {rendered!r}"
+        )
+    finally:
+        set_active_scheduler(previous)

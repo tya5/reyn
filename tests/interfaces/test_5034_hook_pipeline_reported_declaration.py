@@ -106,7 +106,34 @@ def test_hook_pane_still_lists_real_hooks_when_reported():
 
 def test_hook_pane_config_only_fallback_still_works_when_reported():
     """Tier 2: accept-side, the read-only `hooks` fallback (no session-
-    backed `hook_items`) still renders when genuinely reported."""
+    backed `hook_items`) still renders when genuinely reported.
+
+    #5278 review (lead-coder/architect, PR #5295): this test originally
+    used `"hook_items": []` to mean "no session-backed hook_items" — but
+    `[]` is what a session WITH hook state and genuinely zero current
+    hooks also reports (`_session_hook_items`'s own None-vs-`[]`
+    contract, status.py). Using `[]` here made `_hook_pane_entries`
+    collapse the two, so hot-reloading away the LAST hook resurrected it
+    from this exact stale-config fallback. Corrected to `None` — the
+    real "not wired" signal — which is what this test actually meant by
+    "no session-backed hook_items"."""
+    snap = {
+        "hook_items": None,
+        "hooks": [{"label": "lint-on-save"}],
+        "hooks_reported": True,
+    }
+    entries = _hook_pane_entries(snap)
+    rows = [row for row, _cmd in entries]
+    assert rows == ["lint-on-save"], rows
+
+
+def test_hook_pane_shows_none_not_stale_when_wired_but_genuinely_empty():
+    """Tier 2: #5278 regression guard — a real, wired `hook_items: []`
+    (a session that DOES report hook state, with genuinely zero hooks
+    right now — e.g. right after a hot-reload removes the last one)
+    must show "(none)", never fall back to a stale, non-empty `hooks`
+    config. Distinct from the test above, which covers the OTHER case
+    (`hook_items: None`, no session-backed state at all)."""
     snap = {
         "hook_items": [],
         "hooks": [{"label": "lint-on-save"}],
@@ -114,7 +141,10 @@ def test_hook_pane_config_only_fallback_still_works_when_reported():
     }
     entries = _hook_pane_entries(snap)
     rows = [row for row, _cmd in entries]
-    assert rows == ["lint-on-save"], rows
+    assert rows == ["(none)"], (
+        f"#5278 REGRESSION: a wired-but-empty hook_items fell back to the "
+        f"stale hooks config instead of showing genuinely empty — got {rows!r}"
+    )
 
 
 # ── pipelines_reported ──────────────────────────────────────────────────

@@ -997,8 +997,18 @@ def _hook_pane_entries(snap: dict) -> "list[tuple[str, str]]":
     found via #5034's mechanical re-derivation."""
     if not snap.get("hooks_reported", False):
         return [DrawerRow(label="not reported on this connection").as_entry()]
-    items = snap.get("hook_items") or []
-    if items:
+    # #5278 review (lead-coder, PR #5295 review — a pre-existing sibling
+    # defect, predates this PR): ``is not None``, never a truthy check —
+    # same reasoning as ``cron_pane_lines``'s own fix. ``hook_items`` is
+    # ``None`` only when the session wires no hook state at all; ``[]``
+    # means it answered and there are genuinely zero hooks right now. A
+    # truthy check collapsed the two, so hot-reloading away the LAST hook
+    # made it reappear from the stale config-derived ``hooks`` fallback —
+    # the exact same regression this PR's cron fix closes, in the sibling
+    # pane. ``_visibility_pane_rows`` (below) already gets this right —
+    # this function was the deviation, not the norm.
+    items = snap.get("hook_items")
+    if items is not None:
         return [
             DrawerRow(
                 label=h["name"],
@@ -1007,7 +1017,7 @@ def _hook_pane_entries(snap: dict) -> "list[tuple[str, str]]":
                 command=f"/hook {'off' if h['on'] else 'on'} {h['name']}",
             ).as_entry()
             for h in items
-        ]
+        ] or [DrawerRow(label="(none)").as_entry()]
     labels = [h["label"] for h in (snap.get("hooks") or [])]
     return [DrawerRow(label=label).as_entry() for label in labels] or [
         DrawerRow(label="(none)").as_entry()
@@ -1041,9 +1051,12 @@ def cron_pane_lines(snap: "dict | None") -> list[str]:
     running ``CronScheduler``, so a hot-reloaded job add/remove/enable
     shows up here) and falls back to the config-derived ``cron_jobs``
     (stale — reflects only the boot-time config, forever) when
-    ``cron_items`` is falsy — same shape as :func:`_hook_pane_entries`'s
-    own ``hook_items``-then-``hooks`` fallback (``cron_items`` is ``None``
-    whenever no scheduler is registered for this process at all, e.g. a
+    ``cron_items`` **is ``None``** — NOT a truthy check (architect review,
+    PR #5295: a truthy check collapses "not wired" and "a real scheduler
+    with zero jobs right now" into one, resurrecting a job that was just
+    live-removed the moment the scheduler's own job count reaches zero).
+    ``cron_items`` is ``None`` whenever no scheduler is registered for
+    this process at all, e.g. a
     bare local CUI session with no AG-UI web gateway running — the ONLY
     site that registers one (grep-confirmed, lead-coder PR #5295 review:
     ``interfaces/web/server.py:263-264``) — see ``_extract_live_cron_
@@ -1061,8 +1074,17 @@ def cron_pane_lines(snap: "dict | None") -> list[str]:
     snap = snap or {}
     if not snap.get("cron_jobs_reported", False):
         return ["not reported on this connection"]
-    items = snap.get("cron_items") or []
-    jobs = items if items else (snap.get("cron_jobs") or [])
+    # #5278 review (architect, non-blocking→BLOCKING correction, PR #5295):
+    # ``is not None``, never a truthy check — ``cron_items`` distinguishes
+    # "no scheduler registered" (``None``, fall back to stale) from "a
+    # real scheduler with zero jobs right now" (``[]``, show empty). A
+    # truthy check collapses that distinction: removing the LAST live job
+    # via a hot-reload leaves ``cron_items == []``, which a truthy check
+    # treats the SAME as "not wired" and falls through to the stale
+    # ``cron_jobs`` — resurrecting a job that was just live-removed. The
+    # exact inverse of the bug this fix exists to close.
+    items = snap.get("cron_items")
+    jobs = items if items is not None else (snap.get("cron_jobs") or [])
     return [
         f"[{'on' if j.get('enabled') else 'off'}] {j['name']}  {j['schedule']}"
         for j in jobs

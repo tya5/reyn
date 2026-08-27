@@ -402,23 +402,35 @@ def _session_visibility_items(session) -> "list[dict] | None":
         return None
 
 
-def _session_hook_items(session) -> list[dict]:
+def _session_hook_items(session) -> "list[dict] | None":
     """Read hook applicability state from the session (#2285 backend seam).
 
-    Returns [] until e2e lands ``hook_state`` on the Session.
     Shape when available: [{name, scope, on}, ...].
-    """
+
+    #5278 review (lead-coder, PR #5295): returns ``None`` — not ``[]`` —
+    when ``hook_state`` is absent from ``session`` or the accessor raises,
+    mirroring :func:`_session_visibility_items`'s own established
+    None-vs-``[]`` contract (that docstring's own #3378 requirement: a
+    caller must be able to tell "this session wires no hook state" from
+    "it wires state and there are genuinely zero hooks right now", which
+    an unconditional ``[]`` conflated here before this fix — the exact
+    same collapse ``cron_items`` was fixed to avoid, and the reason
+    :func:`~reyn.interfaces.inline.textual_chat.chrome._hook_pane_entries`
+    used to resurrect the LAST hook removed by a hot-reload the instant
+    ``hook_state()`` reported zero. In practice ``Session.hook_state`` is
+    unconditionally defined (session.py) — the ``getattr`` absence branch
+    below is defensive, not a reachable case for a real ``Session`` today."""
     getter = getattr(session, "hook_state", None)
     if getter is None:
-        return []
+        return None
     try:
         return [
             {"name": h["name"], "scope": h.get("scope", ""), "on": h.get("enabled", True)}
             for h in (getter() or [])
         ]
     except Exception:  # noqa: BLE001
-        logger.warning("hook_state() raised; hooks panel degraded to []", exc_info=True)
-        return []
+        logger.warning("hook_state() raised; hooks panel degraded to unwired", exc_info=True)
+        return None
 
 
 def _session_mcp_subscriptions(session) -> list[dict]:
