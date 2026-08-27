@@ -1,19 +1,38 @@
-"""Tier 2: #5210 — exec_capture's returned stdout is bounded when a caller
-supplies a real, context-budget-derived cap; unbounded (byte-identical to
-pre-#5210) when it does not.
+"""Tier 2: #5210, corrected #5244 — exec_capture's returned stdout is bounded
+when a caller supplies a real, context-budget-derived cap; unbounded
+(byte-identical to pre-#5210) when it does not.
 
 Architect ruling (issue #5210): the LOGGED copy of a shell-hook's stdout has
 always been capped at 200 bytes (``shell_runner.py``'s own ``[:200]`` slices);
 the RETURNED copy — the ``exec_capture`` push directive, whose ``message``
-field lands in an inbox and ultimately a prompt — was not. Do NOT truncate:
-a truncated JSON push-directive fails to parse and is indistinguishable from
-a clean, deliberate no-push run at the dispatcher (the exact "two silences"
-shape #5041 already closed once). Exceeding the cap is an EXPLICIT failure
-(no push, recorded via the existing ``hook_shell_executed`` event's
-``denial_class`` field), never a silent truncation. The cap itself is never
-invented — it is derived from a real, live context-budget source
+field lands in an inbox and ultimately a prompt — was not.
+
+Architect's #5244 correction (own #5210 ruling, self-corrected): "never
+truncate" was about the SERIALIZED byte stream — cutting the JSON string
+mid-stream produces a directive that fails to parse and is indistinguishable
+from a clean, deliberate no-push run at the dispatcher (the exact "two
+silences" shape #5041 already closed once). That reasoning does not forbid
+bounding a single structured field's VALUE after a successful parse: the
+STRUCTURE survives, the caller's own parse still succeeds, and the push
+still reaches its target — only the ``message`` text itself is shortened,
+with a visible elision marker appended. #5210's original form checked the
+raw stdout BEFORE any parse and discarded the whole directive wholesale on
+overflow; coder-brown's census (28 output-capping call sites repo-wide)
+found this was the only one of the 28 that discarded rather than marking
+and delivering a bounded result — #5244 brings it in line with the other 27.
+Recorded via the existing ``hook_shell_executed`` event's ``denial_class``
+field (now ``"exec_capture_message_bounded"``, not
+``"exec_capture_output_cap_exceeded"`` — the outcome changed from "no push"
+to "bounded push", so the class name changed with it). The cap itself is
+never invented — it is derived from a real, live context-budget source
 (``RouterHostAdapter.wrap_up_output_reserve``, the SAME token budget the
 force-close wrap-up call is already hard-capped to).
+
+A directive that isn't valid JSON, or has no usable string ``message``
+field, is left untouched by this bounding step even when it's huge —
+bounding only ever operates on a successfully-parsed directive's
+``message`` field; a malformed directive is the dispatcher's own (separate,
+unchanged) fail-safe parse's problem, not this layer's.
 
 Level 1 (``run_shell_hook`` itself): REAL subprocesses (``python -c``
 one-liners), mirroring ``test_1800_hook_shell_runner.py``'s own established
@@ -44,14 +63,8 @@ def _noop_backend() -> NoopBackend:
     return NoopBackend()
 
 
-def _policy(timeout: int = 10, temp_dir: str = "") -> SandboxPolicy:
-    return SandboxPolicy(
-        network=False,
-        deny_subprocess=True,
-        timeout_seconds=timeout,
-        temp_dir=temp_dir,
-        temp_source="session",
-    )
+def _policy(timeout: int = 10) -> SandboxPolicy:
+    return SandboxPolicy(network=False, deny_subprocess=True, timeout_seconds=timeout)
 
 
 # ── Level 1 — run_shell_hook itself, real subprocesses ────────────────────
@@ -75,7 +88,7 @@ async def test_output_within_cap_is_returned_unchanged(
         event_context={"event": "turn_end"},
         timeout_seconds=10,
         sandbox_backend=_noop_backend(),
-        sandbox_policy=_policy(temp_dir=str(tmp_path)),
+        sandbox_policy=_policy(),
         allowlist_path=tmp_path / "allowlist.json",
         capture_stdout=True,
         output_token_cap=(1000, "openai/gpt-4o-mini"),
@@ -86,23 +99,25 @@ async def test_output_within_cap_is_returned_unchanged(
 
 
 @pytest.mark.asyncio
-async def test_output_exceeding_the_cap_is_rejected_not_truncated(
+async def test_message_exceeding_the_cap_is_bounded_not_discarded(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog,
 ) -> None:
-    """Tier 2: acceptance — the #5210 witness itself. A real subprocess whose
-    stdout genuinely exceeds a small token cap must return ``None`` (an
-    EXPLICIT rejection), not a truncated prefix of its own output — a
-    truncated JSON string would fail ``json.loads`` at the dispatcher and be
-    indistinguishable from a clean no-push run, exactly the silent-failure
-    shape this issue exists to prevent."""
+    """Tier 2: acceptance — the #5244 witness itself. A real subprocess
+    whose JSON directive's ``message`` field genuinely exceeds a small
+    token cap gets that field bounded IN PLACE (structure preserved, a
+    visible elision marker appended, still delivered as a normal push) —
+    never a whole-directive discard (#5210's original, now-corrected form)."""
     import logging
 
     from reyn.hooks.shell_runner import run_shell_hook
+    from reyn.services.compaction.engine import estimate_tokens
 
     monkeypatch.setenv("REYN_ACCEPT_HOOKS", "1")
-    # A long, repetitive string — genuinely large, real subprocess output,
-    # not a synthetic in-process value.
-    script = "import sys; sys.stdout.write('x' * 20000)"
+    # A long, repetitive message inside an otherwise-valid directive — real
+    # subprocess output, not a synthetic in-process value.
+    long_message = "word " * 5000
+    directive = {"push_when": True, "wake": True, "message": long_message}
+    script = f"import json,sys; sys.stdout.write(json.dumps({directive!r}))"
 
     events: "list[dict]" = []
 
@@ -115,31 +130,86 @@ async def test_output_exceeding_the_cap_is_rejected_not_truncated(
             event_context={"event": "turn_end"},
             timeout_seconds=10,
             sandbox_backend=_noop_backend(),
-            sandbox_policy=_policy(temp_dir=str(tmp_path)),
+            sandbox_policy=_policy(),
             allowlist_path=tmp_path / "allowlist.json",
             capture_stdout=True,
             emit_event=_emit_event,
-            output_token_cap=(5, "openai/gpt-4o-mini"),
+            # 50, not a single-digit value: large enough that the elision
+            # marker itself (a fixed ~20-token string) fits comfortably
+            # inside the budget alongside a real truncated body — a cap
+            # smaller than the marker's own footprint cannot be honored by
+            # any amount of body truncation (there is a real floor), which
+            # is a separate, degenerate-input concern this test doesn't
+            # need to explore.
+            output_token_cap=(50, "openai/gpt-4o-mini"),
         )
 
-    assert result is None, (
-        "output genuinely exceeding the cap must be rejected outright, "
-        "never truncated into a shorter (and likely unparseable) string"
+    assert result is not None, (
+        "a bounded message must still be DELIVERED as a push, never turned "
+        "into None the way a whole-directive discard would"
+    )
+    parsed = json.loads(result)
+    assert parsed["push_when"] is True
+    assert parsed["wake"] is True
+    assert "elided" in parsed["message"]
+    bounded_tokens = estimate_tokens(parsed["message"], "openai/gpt-4o-mini")
+    assert bounded_tokens < estimate_tokens(
+        long_message, "openai/gpt-4o-mini"
+    ), "the bounded message must be genuinely shorter than the original"
+    assert bounded_tokens <= 50, (
+        "architect's TESTS-READ catch (#5343): the elision MARKER itself "
+        "costs tokens too — appending it to a body already truncated to "
+        "the FULL cap would let the combined message exceed cap_tokens, "
+        "the exact thing this cap exists to prevent. The marker's own "
+        "cost must come OUT of the cap budget, not be added on top of it "
+        f"— got {bounded_tokens} tokens against a cap of 50"
     )
     assert any(
         "exceeds the context-budget-derived cap" in r.message for r in caplog.records
-    ), "the rejection must be logged, not silent"
-    (event,) = events  # raises if not exactly 1: the rejection must ride the
+    ), "the bounding must be logged, not silent"
+    (event,) = events  # raises if not exactly 1: the verdict must ride the
     # SAME single hook_shell_executed event the run already emits, not fire
     # a second, separate one.
     assert event["event_type"] == "hook_shell_executed"
     assert event["mode"] == "exec_capture"
     assert event["returncode"] == 0
-    assert event["denial_class"] == "exec_capture_output_cap_exceeded", (
-        "the rejection must be recorded on the existing hook_shell_executed "
+    assert event["denial_class"] == "exec_capture_message_bounded", (
+        "the verdict must be recorded on the existing hook_shell_executed "
         "event's denial_class field (architect's own prescription: reuse "
-        "denial_class, no new surface needed) so a future reader (#5041's "
-        f"own design) can see it — got {event!r}"
+        f"denial_class, no new surface needed) — got {event!r}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_malformed_or_message_less_directive_is_left_untouched_even_if_huge(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Tier 2: falsification contrast — bounding only ever operates on a
+    successfully-parsed directive's ``message`` field. A huge, genuinely
+    invalid-JSON payload with a cap set is returned UNCHANGED (not bounded,
+    not rejected) — the dispatcher's own, separate, unchanged fail-safe
+    parse handles that shape the same way it always has; this layer must
+    not invent a second opinion about malformed input."""
+    from reyn.hooks.shell_runner import run_shell_hook
+
+    monkeypatch.setenv("REYN_ACCEPT_HOOKS", "1")
+    payload = "x" * 20000  # not valid JSON at all
+
+    result = await run_shell_hook(
+        [_PY, "-c", f"import sys; sys.stdout.write({payload!r})"],
+        event_context={"event": "turn_end"},
+        timeout_seconds=10,
+        sandbox_backend=_noop_backend(),
+        sandbox_policy=_policy(),
+        allowlist_path=tmp_path / "allowlist.json",
+        capture_stdout=True,
+        output_token_cap=(5, "openai/gpt-4o-mini"),
+    )
+
+    assert result == payload, (
+        "a directive this layer cannot parse (or that has no usable "
+        "message field) must pass through unchanged — bounding is not "
+        "attempted, and the dispatcher's own fail-safe parse is untouched"
     )
 
 
@@ -163,7 +233,7 @@ async def test_no_cap_supplied_is_unbounded_matching_pre_5210(
         event_context={"event": "turn_end"},
         timeout_seconds=10,
         sandbox_backend=_noop_backend(),
-        sandbox_policy=_policy(temp_dir=str(tmp_path)),
+        sandbox_policy=_policy(),
         allowlist_path=tmp_path / "allowlist.json",
         capture_stdout=True,
         # output_token_cap omitted -- the default
@@ -177,28 +247,26 @@ async def test_no_cap_supplied_is_unbounded_matching_pre_5210(
 
 
 @pytest.mark.asyncio
-async def test_strip_the_cap_check_reproduces_the_original_defect(
+async def test_cap_supplied_changes_the_outcome_for_the_same_oversized_message(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Tier 2: strip-falsify — mirrors the real check by hand: with a cap
-    supplied but a genuinely-oversized output, if the cap enforcement were
-    removed the function would return the full string instead of None. This
-    test pins that a cap being SUPPLIED changes the outcome versus not being
-    supplied (contrasted against the previous test), which is what proves
-    the check in shell_runner.py's own return-point logic is load-bearing,
+    """Tier 2: contrast — the SAME oversized message is returned whole with
+    no cap supplied, and bounded when a cap is supplied — proving the
+    bounding logic in ``shell_runner.py``'s own return-point is load-bearing,
     not decorative."""
     from reyn.hooks.shell_runner import run_shell_hook
 
     monkeypatch.setenv("REYN_ACCEPT_HOOKS", "1")
-    payload = "x" * 20000
-    script = f"import sys; sys.stdout.write({payload!r})"
+    long_message = "word " * 5000
+    directive = {"push_when": True, "wake": True, "message": long_message}
+    script = f"import json,sys; sys.stdout.write(json.dumps({directive!r}))"
 
     no_cap_result = await run_shell_hook(
         [_PY, "-c", script],
         event_context={"event": "turn_end"},
         timeout_seconds=10,
         sandbox_backend=_noop_backend(),
-        sandbox_policy=_policy(temp_dir=str(tmp_path)),
+        sandbox_policy=_policy(),
         allowlist_path=tmp_path / "allowlist.json",
         capture_stdout=True,
     )
@@ -207,17 +275,17 @@ async def test_strip_the_cap_check_reproduces_the_original_defect(
         event_context={"event": "turn_end"},
         timeout_seconds=10,
         sandbox_backend=_noop_backend(),
-        sandbox_policy=_policy(temp_dir=str(tmp_path)),
+        sandbox_policy=_policy(),
         allowlist_path=tmp_path / "allowlist.json",
         capture_stdout=True,
         output_token_cap=(5, "openai/gpt-4o-mini"),
     )
 
-    assert no_cap_result == payload
-    assert with_cap_result is None, (
-        "the SAME oversized output must be treated differently depending "
-        "on whether a cap was supplied — proving the cap check actually "
-        "gates the return value"
+    assert json.loads(no_cap_result)["message"] == long_message
+    assert json.loads(with_cap_result)["message"] != long_message, (
+        "the SAME oversized message must be treated differently depending "
+        "on whether a cap was supplied — proving the bounding logic "
+        "actually gates the returned message text"
     )
 
 
