@@ -78,6 +78,24 @@ _WRONG_SCOPE_HINTS: dict[str, str] = {
     ),
 }
 
+#: #5356: the two ``HookDef.origin`` values whose config FILE an agent can
+#: already write directly via the ordinary file-write op (the SAME two
+#: layers ``session.py``'s own ``_build_hook_registry`` comment and
+#: ``hook_origin_is_at_least_as_specific_as``'s docstring name as
+#: "agent-writable": ``.reyn/agents/<name>/hooks.yaml`` and the per-session
+#: state dir's ``hooks.yaml``). A ``write_paths:`` declared at either is a
+#: confused-deputy self-grant, not a silent drop: verified directly
+#: (docs-maintainer, real ``SeatbeltBackend``, #5351/#5356) that the
+#: declaration is fully HONORED — an agent could already write its own
+#: hooks.yaml, and this key would then grant that same agent's hook
+#: sandbox write access to an arbitrary declared path, including another
+#: agent's working tree. Rejecting the key at these two origins closes the
+#: class (both layers share the same write-access-to-the-declaration
+#: reasoning); the operator's ``startup``/``runtime`` layers are untouched
+#: (those are NOT agent-writable, so the same grant carries no self-
+#: escalation risk there).
+_AGENT_WRITABLE_ORIGINS: frozenset[str] = frozenset({"per-agent", "per-session"})
+
 
 # ---------------------------------------------------------------------------
 # Internal helpers
@@ -461,6 +479,26 @@ def _parse_entry(
     # write_paths — a list of path strings. An explicit `[]` is a real (empty)
     # grant, so presence, not truthiness, decides "the operator wrote this";
     # stored as a tuple because HookDef is frozen.
+    #
+    # #5356 (architect ruling, docs-maintainer measurement): eager-rejected
+    # at an agent-writable origin, BEFORE the type/shape checks below — an
+    # agent can already write its own per-agent/per-session hooks.yaml via
+    # the ordinary file-write op, and this key is fully honored by the real
+    # sandbox (verified directly, no silent drop), so declaring it there is
+    # a confused-deputy self-grant: the same actor writes the rule and is
+    # bound by it. This is NOT the #4501 unknown-key shape (the key name is
+    # correct and known) — it is a known key rejected at a specific origin,
+    # so it is checked here rather than folded into `_KNOWN_HOOK_ENTRY_KEYS`.
+    if "write_paths" in raw and origin in _AGENT_WRITABLE_ORIGINS:
+        raise HookConfigError(
+            f"hooks[{entry_index}].write_paths is not permitted at the "
+            f"{origin!r} layer — an agent can write its own "
+            f"{origin} hooks.yaml, so a write_paths grant declared there "
+            f"is a self-grant, not an operator's expressed will (#5356). "
+            f"Declare write_paths at the startup (reyn.yaml) or runtime "
+            f"(.reyn/config/hooks.yaml) layer instead — neither is "
+            f"agent-writable."
+        )
     write_paths_raw: "tuple[str, ...] | None" = None
     if "write_paths" in raw:
         _exec_only("write_paths")

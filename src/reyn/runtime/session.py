@@ -6121,6 +6121,19 @@ class Session:
                     "config hot-reload: malformed %s hooks layer — skipped, keeping "
                     "the valid hook layers: %s", label, exc,
                 )
+                # #5356: a log line alone is invisible with the shipped
+                # config — the whole point of this except block is that an
+                # UNTRUSTED layer can be silently wrong (a typo, or a
+                # rejected self-grant), and the second band gate ("is this
+                # visible with the shipped config?") is not satisfied by a
+                # log line nobody is guaranteed to be watching. Fires only
+                # when a layer was ACTUALLY dropped (this except block, not
+                # every reload) — matching #4501's own rejection, which
+                # shared this exact site but had no audit-event of its own
+                # until now (verified directly: #4501 predates this emit).
+                self._audit_events.emit(
+                    "hooks_layer_rejected", layer=label, reason=str(exc),
+                )
         from reyn.hooks.registry import HookRegistry
 
         return HookRegistry(defs)
