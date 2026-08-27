@@ -100,11 +100,18 @@ non-outcome.
 new script. ``git log -p -- scripts/task_funnel_bypass_baseline.json``
 shows every commit that added an entry; the commit(s) adding a
 ``"false_positive"`` entry ARE the false-positive count, in order,
-against the PRs that touched an in-scope file over that stretch. #5010
-stalled because nobody wrote down what "ready to promote" meant, not
-because nothing counted it automatically — writing the one-line
-derivation above, at promotion time, is enough; building a counter for
-it would be solving a problem #5010 never actually had.
+against the PRs that touched an in-scope file over that stretch — a
+commit that adds an ``"accepted"`` entry (#5300; see "The baseline"
+below) does NOT count, since that type means the gate correctly found a
+real bypass, not that the gate was wrong. #5010 stalled because nobody
+wrote down what "ready to promote" meant, not because nothing counted
+it automatically — writing the one-line derivation above, at promotion
+time, is enough; building a counter for it would be solving a problem
+#5010 never actually had. ``false_positive_count()`` below exposes the
+CURRENT baseline's own count mechanically (for tests and for a quick
+sanity check at promotion time) but does not replace the git-log walk
+above, which is the only thing that can distinguish an entry added THIS
+stretch from one carried over from before it.
 
 ## The baseline — where a false positive gets COUNTED (lead-coder review)
 
@@ -123,13 +130,34 @@ was built to notice.
 declared-baseline idiom this repo already uses for exactly this problem
 (``mypy_ratchet.py``'s ``(file, code)`` pairs, ``flat_tests_ratchet.py``'s
 filename set): every CURRENTLY accepted offender is a declared entry,
-keyed by file path, each carrying its own ``"type"`` (``"defect"`` — a
-real hazard tracked for its own fix PR — or ``"false_positive"`` — the
-gate is wrong about this one) and a ``"note"`` explaining which and why.
-``session.py`` was this file's first entry and was typed ``"defect"``;
-#5267 measured the hazard it named and could not reproduce it, so it is
-now the first ``"false_positive"`` — which is exactly the count the
-promotion condition below reads. The test
+keyed by file path, each carrying its own ``"type"`` and a ``"note"``
+explaining which and why. Three types exist, and they carry three
+DIFFERENT meanings — collapsing any two of them into one label would
+mix "the gate is wrong" into "the gate is right and this is fine",
+silently contaminating the promotion condition's own count (#5300):
+
+- ``"defect"`` — the bypass is real AND dangerous; a real hazard,
+  tracked for its own fix PR.
+- ``"false_positive"`` — the gate is WRONG about this one; not a
+  bypass at all (a scope/AST-shape miss). This is the ONLY type
+  ``false_positive_count()`` counts, and the only type the promotion
+  condition's "0 new false positives" reads.
+- ``"accepted"`` (#5300) — the bypass is real, but was MEASURED and
+  judged not dangerous — the gate correctly found a real funnel-bypass;
+  the danger it warns about specifically does not apply here. Does NOT
+  count toward the false-positive rate: the gate was right to flag it,
+  a human just decided the flagged thing is fine. The note MUST say
+  what was measured (not just "seems fine") — ``session.py``'s own
+  entry is the model for this.
+
+``session.py`` was this file's first entry, typed ``"defect"``; #5267
+measured the specific orphaning hazard it was flagged for and could not
+reproduce it, so it moved to ``"false_positive"`` (#5297) — a
+misclassification later found: the *gate* was not wrong (the bypass —
+a raw ``asyncio.create_task`` outside the funnel — is real), only the
+*danger* judgment was. #5300 re-types it a second time, to
+``"accepted"``, which is the type that actually matches what #5267
+measured. The test
 (``tests/scripts/test_check_task_funnel_bypass_5267.py``) asserts the
 REAL tree's offenders match the declared set exactly; a new,
 undeclared offender fails that test (a real, already-blocking CI signal
@@ -150,6 +178,14 @@ _ROOT = Path(__file__).resolve().parents[1]
 _SRC_DIR = _ROOT / "src" / "reyn"
 _TRACKED_TASKS_MODULE = _SRC_DIR / "runtime" / "tracked_tasks.py"
 _BASELINE_PATH = _ROOT / "scripts" / "task_funnel_bypass_baseline.json"
+
+# The three baseline entry types (#5300) — see "The baseline" in this
+# module's own docstring for what each means and why collapsing any two
+# into one label would contaminate the promotion condition's own count.
+TYPE_DEFECT = "defect"
+TYPE_FALSE_POSITIVE = "false_positive"
+TYPE_ACCEPTED = "accepted"
+VALID_BASELINE_TYPES = frozenset({TYPE_DEFECT, TYPE_FALSE_POSITIVE, TYPE_ACCEPTED})
 
 
 def _annotation_text(node: "ast.expr | None") -> str:
@@ -261,10 +297,24 @@ def offending_files(src_dir: Path) -> "list[tuple[Path, list[int]]]":
 def load_declared_baseline(path: Path = _BASELINE_PATH) -> "dict[str, dict[str, str]]":
     """The committed record of every offender CURRENTLY accepted, keyed by
     a ``src/reyn/...``-relative path string, each carrying its own
-    ``type`` (``"defect"`` / ``"false_positive"``) and ``note`` — see this
-    module's own "The baseline" docstring section for why this exists
-    instead of a bare pinned count."""
+    ``type`` (``"defect"`` / ``"false_positive"`` / ``"accepted"``) and
+    ``note`` — see this module's own "The baseline" docstring section for
+    why this exists instead of a bare pinned count, and for what each of
+    the three types means."""
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def false_positive_count(baseline: "dict[str, dict[str, str]]") -> int:
+    """Count only the ``"false_positive"``-typed entries in *baseline* —
+    the promotion condition's own denominator (#5300). ``"accepted"``
+    entries (a real bypass, measured and judged not dangerous) and
+    ``"defect"`` entries (a real hazard, tracked for its own fix PR) must
+    NOT inflate this count: only a case where the GATE ITSELF was wrong
+    counts against the gate's own precision. See "Who counts, and how" in
+    this module's own docstring — this function is the current-baseline
+    snapshot that derivation reads; it does not replace the git-log walk
+    needed to isolate one promotion stretch's own additions."""
+    return sum(1 for entry in baseline.values() if entry.get("type") == TYPE_FALSE_POSITIVE)
 
 
 def main(argv: "list[str] | None" = None) -> int:
