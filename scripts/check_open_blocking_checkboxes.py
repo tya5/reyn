@@ -119,20 +119,31 @@ _OPEN_BLOCK = re.compile(r"^[ \t]*[-*+][ \t]*\[[ \t]*\][ \t]*(?:\*\*[ \t]*)*🔴
 #: an `x`/`X` inside the brackets instead of whitespace.
 _CHECKED_BLOCK = re.compile(r"^[ \t]*[-*+][ \t]*\[[xX]\][ \t]*(?:\*\*[ \t]*)*🔴(.*)$", re.MULTILINE)
 
-#: A comment's first line raising a blocking point (#5314 condition A).
-#: Mirrors check_tests_read_names_its_tree.py's own `_NOTE_MARKER` shape —
-#: an unanchored search, not a start-of-line match: a real comment's first
-#: line is `**[<role>]** — BLOCKING (head <sha>)`, the SAME "role prefix
-#: before the marker" shape every comment in this repo already uses, so
-#: the marker must be found ANYWHERE on the first line, not only at its
-#: start. Marker+SHA co-location on the SAME first line is still required
-#: (checked separately in ``evaluate``) — this regex only locates the word.
-_BLOCKING_MARKER = re.compile(r"\bBLOCKING\b(?!-CLEARED)", re.IGNORECASE)
-_CLEARED_MARKER = re.compile(r"\bBLOCKING-CLEARED\b", re.IGNORECASE)
-
-#: A 7-40 char hex run — the shape `git rev-parse` prints. Reused verbatim
-#: from check_tests_read_names_its_tree.py's own bounded pattern.
-_SHA = re.compile(r"(?<![0-9a-fA-F])([0-9a-fA-F]{7,40})(?![0-9a-fA-F])")
+#: A comment's first line raising or clearing a blocking point (#5314
+#: condition A). Requires the FULL `BLOCKING (head <sha>)` / `BLOCKING-
+#: CLEARED (head <sha>)` shape co-located on one line — not the bare word
+#: found anywhere on the line. Case-sensitive and unanchored otherwise
+#: (a real comment's first line is `**[<role>]** — BLOCKING (head
+#: <sha>)`, the SAME "role prefix before the marker" shape every comment
+#: in this repo already uses, so the marker itself is not required to
+#: start the line — only to be followed by its own `(head <sha>)`).
+#:
+#: architect's TESTS-READ catch, lead-coder's real-world falsification
+#: (#5318, "gate側の読み（1件、非blocking）。" — a review comment
+#: genuinely discussing whether something IS a blocking point, containing
+#: the bare word with no `(head <sha>)` anywhere near it): an EARLIER,
+#: looser version of this regex matched the bare word "BLOCKING" anywhere
+#: on line 1, so an everyday sentence mentioning it ("my blocking is
+#: closed") was miscounted as a formal raise, permanently reddening any
+#: PR whose review prose happened to use the word this way. Requiring the
+#: `(head <sha>)` immediately after the marker (whitespace only between)
+#: is what makes this a FORM check, not a word search — the same
+#: distinction `check_tests_read_names_its_tree.py`'s own marker+SHA
+#: co-location rule draws on its claim side. `IGNORECASE` is dropped
+#: (not just made stricter) for the same reason: prose is far more likely
+#: to write "blocking" lowercase than a deliberate marker is.
+_BLOCKING_MARKER = re.compile(r"\bBLOCKING(?!-CLEARED)\s*\(\s*head\s+([0-9a-fA-F]{7,40})\s*\)")
+_CLEARED_MARKER = re.compile(r"\bBLOCKING-CLEARED\s*\(\s*head\s+([0-9a-fA-F]{7,40})\s*\)")
 
 
 def _normalize(text: str) -> str:
@@ -204,17 +215,28 @@ def evaluate(pr: dict) -> "tuple[int, list[str]]":
     # Condition A (#5314): a BLOCKING comment needs a LATER CLEARED comment
     # naming the CURRENT head and quoting the BLOCKING comment's own
     # identifying line verbatim.
+    #
+    # A BLOCKING comment's OWN head is never checked against the current
+    # one — intentional, not an oversight left unstated (lead-coder's
+    # TESTS-READ catch, #5317: this was originally "correct by not
+    # touching it", never written down as a decision). A raise does not
+    # expire on a push: only a CLEARED comment's head must be current.
+    # The opposite rule — treating a BLOCKING comment as stale once the
+    # PR moves past its head — would let an ordinary push silently drop
+    # an unresolved point with no deliberate action at all, worse than
+    # the deletion bypass #5311 measured.
     for i, blocking_body in enumerate(comment_bodies):
-        if not _BLOCKING_MARKER.search(_first_line(blocking_body)):
+        blocking_match = _BLOCKING_MARKER.search(_first_line(blocking_body))
+        if not blocking_match:
             continue
         identifying = _identifying_line(blocking_body)
         resolved = False
         for later_body in comment_bodies[i + 1:]:
-            later_first = _first_line(later_body)
-            if not _CLEARED_MARKER.search(later_first):
+            cleared_match = _CLEARED_MARKER.search(_first_line(later_body))
+            if not cleared_match:
                 continue
-            shas = _SHA.findall(later_first)
-            if not any(head.startswith(s) or s.startswith(head) for s in shas if head):
+            cleared_sha = cleared_match.group(1)
+            if not (head and (head.startswith(cleared_sha) or cleared_sha.startswith(head))):
                 continue  # names a stale head, or no head at all — does not clear
             if identifying and _normalize(identifying) in _normalize(later_body):
                 resolved = True

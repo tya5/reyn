@@ -98,6 +98,26 @@ def test_blocking_comment_with_no_cleared_fails_even_with_empty_body() -> None:
     assert any("BLOCKING comment has no matching" in line for line in lines)
 
 
+def test_a_blocking_raise_does_not_expire_just_because_a_push_landed() -> None:
+    """Tier 1: (lead-coder's TESTS-READ catch, #5317) a BLOCKING comment
+    naming a STALE head — one older than the PR's current one — still
+    fails when it has no CLEARED comment. The raise's OWN head is never
+    checked (only a CLEARED comment's head must be current); a raise
+    does not expire on a push. Without this, an ordinary push after a
+    reviewer's blocking point — no removal, no tick, just normal work —
+    would silently make the point vanish: worse than the deletion bypass
+    #5311 already measured, since it needs no deliberate action at all.
+    Real instance: this very PR's own first BLOCKING comment named
+    b3e8a32b2, and its head moved to 43e09c7d6 on the very next push."""
+    code, lines = evaluate(_pr(
+        "",
+        comments=["**[architect]** — BLOCKING (head 1111111)\nThe cache must be invalidated on write."],
+        head="2222222",  # a push landed after the (still-unresolved) raise
+    ))
+    assert code != 0
+    assert any("BLOCKING comment has no matching" in line for line in lines)
+
+
 def test_blocking_comment_with_verbatim_cleared_at_current_head_passes() -> None:
     """Tier 1: ⑥ (condition A's accept side — without this, condition A
     could be "always red" and still satisfy every other acceptance test)
@@ -129,6 +149,23 @@ def test_cleared_naming_a_stale_head_does_not_resolve() -> None:
     ))
     assert code != 0
     assert any("current head" in line for line in lines)
+
+
+def test_prose_mentioning_blocking_with_no_sha_is_not_a_raise() -> None:
+    """Tier 1: (architect's TESTS-READ catch) a comment whose first line
+    merely DISCUSSES blocking ("my blocking is closed"), with no
+    `(head <sha>)` co-located on that same line, is not a formal raise —
+    the same marker+SHA co-location rule
+    check_tests_read_names_its_tree.py already applies on its own claim
+    side. Without this, this exact sentence would be miscounted as a
+    raise requiring a verbatim-quoting CLEARED comment forever, since
+    "my blocking is closed" is itself an everyday sentence in this
+    repo's own review threads."""
+    code, _ = evaluate(_pr(
+        "",
+        comments=["**[lead-coder]** — my blocking is closed, thanks for the fix."],
+    ))
+    assert code == 0
 
 
 def test_cleared_with_different_wording_does_not_resolve() -> None:
