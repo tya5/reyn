@@ -1131,6 +1131,14 @@ class RouterHistoryBuffer:
         this reuses that function without adding a second offload path.
         No new threshold config here — #5296's own contract explicitly
         rules that out ("閾値configを作らない").
+
+        Deliberately does NOT check ``offload.enabled`` (the write-time
+        cap's own debug lever, ``ContextBudgetAdvisor.cap_tool_result``'s
+        first check) — spill is a REACTIVE overflow-recovery operation,
+        not a proactive budget-shaping one (architect review); that flag
+        exists to let an operator disable the routine per-turn offload
+        decision, not to also silence the last lever between a 413 and a
+        failed turn.
         """
         if self._media_store is None:
             return None
@@ -1159,6 +1167,22 @@ class RouterHistoryBuffer:
         content_hash = "sha256:" + hashlib.sha256(content.encode("utf-8")).hexdigest()
         self._spill_overlay[content_hash] = replacement
         return replacement
+
+    def discard_spill_overlay_for(self, content: str) -> None:
+        """#5296 PR-2 (lead-coder review): undo a :meth:`spill_turn_content`
+        call for *content* whose caller has determined it did NOT help
+        (the total payload did not shrink) — without this, a no-progress
+        spill attempt still LEAVES its overlay entry in place, so a turn
+        whose every candidate got spilled for zero net benefit would keep
+        ALL of them spilled anyway: exactly the "destroy more of the
+        operator's visible context than necessary" outcome
+        :meth:`spill_turn_content`'s own docstring already disclaims.
+        Recomputes the SAME hash :meth:`spill_turn_content` used (the
+        ORIGINAL content, not the replacement) — a no-op if no entry is
+        present (idempotent, safe to call speculatively)."""
+        import hashlib
+        content_hash = "sha256:" + hashlib.sha256(content.encode("utf-8")).hexdigest()
+        self._spill_overlay.pop(content_hash, None)
 
     def build_system_prompt(self) -> str:
         """Return the router system prompt for the current session state.

@@ -298,47 +298,17 @@ class RouterLoopDriver:
             )
             if after < before:
                 return True
-        # Every candidate spilled (or none were spillable at all) without
-        # ever getting strictly under `before` — no progress.
+            # #5296 PR-2 (architect review): this spill did NOT help —
+            # undo it rather than leaving a useless overlay entry in
+            # place. Without this, a turn whose every candidate happens
+            # to spill for zero net benefit ends this loop with ALL of
+            # them spilled anyway — this method's own docstring already
+            # disclaims exactly that outcome ("destroy more of the
+            # operator's visible context than necessary").
+            self._history_buffer.discard_spill_overlay_for(turn["content"])
+        # Every candidate spilled-then-undone (or none were spillable at
+        # all) without ever getting strictly under `before` — no progress.
         return False
-
-    async def _attempt_compaction_reduction(self) -> bool:
-        """#5296 PR-2 ④: durable compaction, ONLY reached when spill made no
-        progress AND the cause is CONFIRMED bytes (the caller only invokes
-        this after ``exc.saw_byte_limit`` — contract's own "設定は診断を
-        飛ばす権限ではない": an `unknown` cause never reaches here).
-
-        Reuses the SAME existing durable-watermark path
-        ``_run_with_shrink``'s own except block already calls for the
-        `next_turn` recovery policy (``force_compact_now`` —
-        `_durable_active_history_after`-backed, continuous from the last
-        real `covers_through_seq`) — not `retry_loop`'s own compaction
-        result, for the same reason that except block's own comment gives
-        (retry_loop's `covers` can skip `head` entirely).
-
-        Progress is measured via ``_wire_bytes_now()`` (``build_history()``
-        underneath), NOT ``decompose_history_for_retry()``: the latter's
-        own "everything fits under effective_trigger" fast path returns
-        EVERY role-matched turn regardless of the compaction watermark
-        whenever nothing needs eliding (measured directly building this
-        PR: a corpus small enough to stay under effective_trigger showed
-        the SAME head/tail before/after a real, watermark-advancing
-        compaction pass — the wire byte count genuinely does not move on
-        that path even though the NEXT real send, which goes through
-        ``build_history()``, would see far fewer turns). ``build_history()``
-        always applies the watermark filter (its own docstring/contract,
-        unconditionally) — the correct one to check "would the actual next
-        attempt see less."
-
-        This method's OWN return value is a local, standalone verdict
-        (this call's own before/after); the caller
-        (``_run_with_shrink_and_byte_reduction``) makes its actual
-        escalation decision from its own wrapper-wide baseline instead —
-        see that method's own docstring for why.
-        """
-        before_bytes = self._wire_bytes_now()
-        await self._compaction_controller.force_compact_now()
-        return self._wire_bytes_now() < before_bytes
 
     def _wire_bytes_now(self) -> int:
         """The wire-JSON byte size of what ``build_history()`` would send
@@ -362,26 +332,34 @@ class RouterLoopDriver:
         ``_run_with_shrink``'s own contract is UNCHANGED (architect
         ruling) — this wrapper only decides whether to call it AGAIN after
         it raises, never alters what it does internally. On each byte-
-        limited ``UnrecoveredError``: spill first (②), re-measure (③);
-        if spill made no progress, durable compaction ONLY because the
-        cause is confirmed bytes (④); if NEITHER made progress, re-raise
-        (⑤ — the caller's own except still names the cause via
-        ``repr(exc)``). A non-byte-limited ``UnrecoveredError`` (never saw
-        a 413 — retry_loop's own token axis already exhausted itself) and
+        limited ``UnrecoveredError``: spill (②), re-measure (③); if the
+        payload shrank (from EITHER spill or ``_run_with_shrink``'s own
+        pre-existing side-effect below), re-send; if not, re-raise (⑤ —
+        the caller's own except still names the cause via ``repr(exc)``).
+        A non-byte-limited ``UnrecoveredError`` (never saw a 413 —
+        retry_loop's own token axis already exhausted itself) and
         ``ContextOverflowError`` (the window itself is too small) are
-        UNCHANGED — this wrapper only intervenes on the ONE cause spill/
-        compaction can actually address.
+        UNCHANGED — this wrapper only intervenes on the ONE cause spill
+        can actually address.
 
-        The "did this attempt make progress" verdict is taken from
-        ``_wire_bytes_now()`` at the START of the attempt vs AFTER spill/
-        compaction ran — not from either sub-method's own narrower
-        before/after check. ``_run_with_shrink``'s OWN PRE-EXISTING
-        #4954(b) next_turn side-effect can ALREADY compact as part of its
-        own except-handling before it re-raises here (measured directly
-        building this PR) — a check scoped to only THIS wrapper's own
-        calls would then see nothing left for `_attempt_compaction_
-        reduction` to do and wrongly report no progress, even though the
-        actual next-attempt payload IS already smaller.
+        #5296 PR-2 review (architect, 2nd finding): this wrapper does NOT
+        call ``force_compact_now`` itself — contract ④'s durable-
+        compaction step is already covered WITHOUT a second call site,
+        because ``_run_with_shrink``'s own except block ALREADY calls
+        ``force_compact_now`` as its pre-existing #4954(b) ``next_turn``
+        side-effect, before it ever re-raises back to this wrapper — a
+        SEPARATE call here would either be redundant (``next_turn``: the
+        watermark already advanced moments ago, nothing left to compact)
+        or, worse, would silently violate ``recovery_policy="never"``
+        (this NEW call site was never gated by that check #5303 added to
+        the ONE existing call site — an operator who opted out of
+        same-turn-visible compaction would have gotten it anyway). The
+        "did this attempt make progress" verdict is taken from
+        ``_wire_bytes_now()`` at the START of the attempt vs AFTER spill
+        ran — that single read already reflects ANY reduction that
+        happened in between, spill's own or the pre-existing side-effect's,
+        without this wrapper needing to trigger or gate compaction itself
+        at all.
         """
         from reyn.services.compaction.engine import UnrecoveredError as _UnrecoveredError
 
@@ -393,8 +371,6 @@ class RouterLoopDriver:
                 if not exc.saw_byte_limit or attempt >= _MAX_BYTE_REDUCTION_ATTEMPTS:
                     raise
                 await self._attempt_reactive_spill(user_text, chain_id=chain_id)
-                if self._wire_bytes_now() >= attempt_start_bytes:
-                    await self._attempt_compaction_reduction()
                 if self._wire_bytes_now() >= attempt_start_bytes:
                     raise
                 # #5296 PR-2 ⑥: chain_id is the SAME value this call already

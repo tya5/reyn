@@ -135,7 +135,7 @@ def _push(session, role: str, text: str, **kw) -> None:
 def _make_spill_session(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *,
     max_shrink_iterations: int = 1, t_max: "int | None" = None,
-    fake_compaction_engine: bool = False,
+    fake_compaction_engine: bool = False, recovery_policy: str = "next_turn",
 ):
     """A real Session with a real MediaStore (default ``make_session`` gives
     ``media_store=None`` — the spill mechanism needs a real one to have any
@@ -146,7 +146,18 @@ def _make_spill_session(
     ``fake_compaction_engine`` swaps in ``_NoNetworkCompactionEngine`` — ONLY
     the one scenario that needs a `compact()` call to actually SUCCEED
     (rather than merely be attempted and fail/be avoided) needs this; the
-    others never let ``compact()`` run for real at all."""
+    others never let ``compact()`` run for real at all.
+
+    ``recovery_policy`` — lead-coder review: default ``"next_turn"`` means
+    ``_run_with_shrink``'s own PRE-EXISTING #4954(b) side-effect ALSO
+    compacts on every byte-limited failure, confounding a test that wants
+    to isolate whether THIS PR's own ``_attempt_compaction_reduction`` is
+    what recovered a turn (measured directly: with the pre-existing
+    side-effect left on, disabling this PR's compaction call entirely
+    still passed the "compaction recovers it" scenario — the pre-existing
+    mechanism alone was doing the work, and the test never noticed).
+    ``"never"`` disables that side-effect, so any compaction observed can
+    only be THIS PR's own."""
     monkeypatch.chdir(tmp_path)
     if t_max is not None:
         import reyn.llm.model_budget as _mb
@@ -156,6 +167,7 @@ def _make_spill_session(
         use_chars4_estimate=True,
         section_caps_spec_tokens=0,
         max_shrink_iterations=max_shrink_iterations,
+        recovery_policy=recovery_policy,
     )
     state_log = StateLog(tmp_path / ".reyn" / "state" / "wal.jsonl")
     bt = BudgetTracker(CostConfig())
@@ -240,16 +252,30 @@ def test_single_huge_tool_result_recovers_via_spill_not_compaction(
     assert not _has_content(last_call, huge)
 
 
-# ── ① small turns in bulk — spill finds nothing, compaction closes it ───────
+# ── ① small turns in bulk — spill finds nothing; recovery depends on the ───
+# ── PRE-EXISTING next_turn side-effect, which this wrapper must detect ─────
 
 
-def test_history_dominant_overflow_recovers_via_compaction_not_spill(
+def test_history_dominant_overflow_recovers_via_pre_existing_compaction(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Tier 2: contract acceptance ① — many small turns, no tool-result
     turn at all (nothing spillable — spill's own candidate scan
-    structurally finds zero candidates), so compaction must be what
-    actually recovers the turn.
+    structurally finds zero candidates).
+
+    #5296 PR-2 review (architect + lead-coder, 2nd finding): this
+    wrapper does NOT call ``force_compact_now`` itself (removed — see
+    ``_run_with_shrink_and_byte_reduction``'s own docstring for why a
+    second call site would either be redundant or, worse, silently
+    violate ``recovery_policy="never"``). Contract ④'s durable-
+    compaction step is instead covered by ``_run_with_shrink``'s own
+    PRE-EXISTING #4954(b) ``next_turn`` side-effect (the DEFAULT policy),
+    which already runs ``force_compact_now`` inside its own except block
+    before re-raising. This test's job is narrower than its name once
+    suggested: prove the wrapper correctly DETECTS that pre-existing
+    reduction (via ``_wire_bytes_now()``) and retries successfully — not
+    that the wrapper itself triggers compaction (it structurally cannot,
+    anymore).
 
     ``fake_compaction_engine`` (a network-free stand-in, same shape the
     PR-N6 test file's own ``_OverflowingEngine`` uses — a real
@@ -258,25 +284,19 @@ def test_history_dominant_overflow_recovers_via_compaction_not_spill(
     ``tail_budget=1500``, ``effective_trigger=7000``) — 50 turns of 80
     tokens each (4000 total, measured directly while building this test)
     exceeds ``head_budget + tail_budget`` (real compaction candidates
-    exist for ``force_compact_now``) while staying under
-    ``effective_trigger`` (``decompose_history_for_retry`` keeps
-    ``raw_middle`` EMPTY — retry_loop's own internal fold never
-    triggers, so this genuinely exercises THIS wrapper's own
-    ``_attempt_compaction_reduction`` fallback, not a pre-existing
-    mechanism)."""
+    exist) while staying under ``effective_trigger``
+    (``decompose_history_for_retry`` keeps ``raw_middle`` EMPTY —
+    retry_loop's own internal fold never triggers, isolating the
+    pre-existing except-block side-effect as the only compaction path
+    exercised)."""
     session = _make_spill_session(
-        tmp_path, monkeypatch, max_shrink_iterations=1, fake_compaction_engine=True,
+        tmp_path, monkeypatch, max_shrink_iterations=1,
+        fake_compaction_engine=True,  # recovery_policy="next_turn" (default)
     )
     for _i in range(50):
         _push(session, "user", "X" * 320)
 
     events: list = []
-    # The REAL, observable signal that compaction (not spill) is what
-    # unblocked this turn: a `compaction_completed` event — driven off
-    # whichever path actually retires content (retry_loop's own internal
-    # raw_middle fold, or this wrapper's own `force_compact_now` fallback
-    # both emit the SAME event; acceptance ① only cares that compaction —
-    # not spill — is what did it).
     compacted = {"done": False}
 
     def _on_event(e) -> None:
@@ -301,6 +321,55 @@ def test_history_dominant_overflow_recovers_via_compaction_not_spill(
         "nothing was spillable (no tool-result turns) — spill must not "
         f"have offloaded anything: {[e.data for e in spill_events]!r}"
     )
+
+
+def test_recovery_policy_never_leaves_the_watermark_alone_and_terminates(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Tier 2: #5296 PR-2 review (architect's own prescribed witness,
+    2nd finding) — with ``recovery_policy="never"``, an operator's
+    "don't summarize my history" choice must hold even through THIS
+    wrapper's own retry path: the SAME history-dominant, nothing-
+    spillable scenario as the sibling test above, but with compaction
+    disabled, must (①) leave the compaction watermark exactly where it
+    was (no ``compaction_completed`` at all — not the pre-existing
+    side-effect, and not a resurrected wrapper-owned call) and (②)
+    terminate cleanly (raise ``UnrecoveredError``, not hang or loop
+    forever) rather than silently compacting anyway."""
+    session = _make_spill_session(
+        tmp_path, monkeypatch, max_shrink_iterations=1,
+        fake_compaction_engine=True, recovery_policy="never",
+    )
+    for _i in range(50):
+        _push(session, "user", "X" * 320)
+
+    events: list = []
+    session._audit_events.add_subscriber(lambda e: events.append(e))
+
+    loop = _ContentDrivenLoop(lambda history, user_text: True)  # always 413
+
+    with pytest.raises(UnrecoveredError) as excinfo:
+        asyncio.run(
+            session._loop_driver._run_with_shrink_and_byte_reduction(
+                loop, "continue please", chain_id="c1",
+            )
+        )
+    assert excinfo.value.saw_byte_limit is True
+
+    # ① watermark untouched.
+    assert not [e for e in events if e.type == "compaction_completed"], (
+        "recovery_policy='never' must leave the watermark alone — no "
+        "compaction_completed event may fire, from either the pre-"
+        "existing next_turn side-effect (disabled by this policy) or a "
+        "wrapper-owned call (removed entirely)"
+    )
+    # ② clean, bounded termination — not a hang. The call count is
+    # structurally bounded by _MAX_BYTE_REDUCTION_ATTEMPTS regardless of
+    # how large the history is (a wall-clock timeout is never needed to
+    # prove this) — sliced past the composite bound, the tail must be
+    # empty.
+    from reyn.runtime.services.router_loop_driver import _MAX_BYTE_REDUCTION_ATTEMPTS
+    assert loop.calls[(1 + _MAX_BYTE_REDUCTION_ATTEMPTS) * 1:] == []
 
 
 # ── ③ oversized user message alone — both levers fail, clean termination ───
@@ -332,9 +401,10 @@ def test_oversized_new_message_alone_terminates_cleanly_not_a_hang(
 
     # Bounded: (1 + _MAX_BYTE_REDUCTION_ATTEMPTS) outer attempts, each an
     # independent retry_loop call bounded by max_shrink_iterations=1 (one
-    # main_call per outer attempt here — no raw_middle to fold first).
+    # main_call per outer attempt here — no raw_middle to fold first) —
+    # sliced past the composite bound, the tail must be empty.
     from reyn.runtime.services.router_loop_driver import _MAX_BYTE_REDUCTION_ATTEMPTS
-    assert len(loop.calls) <= (1 + _MAX_BYTE_REDUCTION_ATTEMPTS) * 1
+    assert loop.calls[(1 + _MAX_BYTE_REDUCTION_ATTEMPTS) * 1:] == []
 
 
 # ── spill persists across turns (session-lived overlay) ────────────────────
@@ -387,4 +457,49 @@ def test_spill_persists_into_the_next_turn_413_fires_once(
     assert loop2.calls[1:] == [], (
         f"turn 2 must succeed on its FIRST attempt (overlay already "
         f"applied) — observed {len(loop2.calls)} calls"
+    )
+
+
+# ── a no-progress spill must not leave a useless overlay entry behind ──────
+
+
+def test_a_spill_that_does_not_help_is_undone(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Tier 2: #5296 PR-2 review (architect, 1st finding) — spilling a
+    TINY tool result makes it BIGGER, not smaller (the offloaded preview
+    carries a fixed pointer-path overhead — measured directly building
+    this PR: an 11-char original became a 115-char replacement). Before
+    this fix, ``_attempt_reactive_spill`` left that overlay entry in
+    place regardless, contradicting its own docstring ("destroy more of
+    the operator's visible context than necessary"). Witnessed via the
+    PUBLIC ``build_history()`` seam (never the private ``_spill_overlay``
+    dict directly): the tiny turn's ORIGINAL content must still be what
+    gets sent, not the bloated replacement."""
+    session = _make_spill_session(tmp_path, monkeypatch)
+    _push(session, "user", "hi")
+    # NOT "hi" — a 2-char body estimates at <=1 token, so `cap_tokens=1`
+    # never offloads it at all (`spill_turn_content` returns `None`,
+    # never reaching the discard path this test means to exercise —
+    # confirmed directly: an earlier draft using "hi" here stayed GREEN
+    # even with `discard_spill_overlay_for` stripped out). "tiny result"
+    # (11 chars) DOES cross the 1-token cap and genuinely gets offloaded
+    # — into a 115-char preview, bigger than the original.
+    tiny = "tiny result"
+    _push(session, "tool", tiny, tool_call_id="tc1", name="tool")
+    _push(session, "assistant", "ok")
+
+    reduced = asyncio.run(
+        session._loop_driver._attempt_reactive_spill("continue", chain_id="c1")
+    )
+    assert reduced is False, (
+        "control arm: spilling a tiny result must NOT report progress — "
+        "it makes the payload bigger, not smaller"
+    )
+
+    history = session._loop_driver._history_buffer.build_history()
+    assert _has_content(history, tiny), (
+        "a no-progress spill must be undone — the tiny turn's ORIGINAL "
+        "content should still be what gets sent, not a bloated "
+        "offloaded-preview replacement left behind uselessly"
     )
