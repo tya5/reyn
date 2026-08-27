@@ -97,6 +97,12 @@ EVENT_AUDIT_REQUIREMENTS: dict[str, frozenset[str]] = {
     # key it removed; a bulk clear has no single key to name).
     "permission_approval_revoked": frozenset({"key", "surface"}),
     "permission_approvals_cleared": frozenset({"count", "surface"}),
+    # #5236: the grant half of the pair above — a management operation on
+    # the SAVED-approvals store, same non-in-run reasoning (no run_id/
+    # actor/phase). Same field shape as permission_approval_revoked
+    # (key, surface) — the value the approval covers is deliberately never
+    # in the payload, matching that kind's own choice.
+    "permission_approval_granted": frozenset({"key", "surface"}),
     # #5067: same shape as the two above, on the OTHER band pairing
     # (cost-budget x audit-events, not permission x audit-events) — a
     # management operation on the live BudgetTracker's hard caps
@@ -368,6 +374,7 @@ AUDIT_EVENT_KINDS: frozenset[str] = frozenset({
     "peer_reply_failed_surfaced",
     "pending_intervention_claimed",
     "pending_intervention_discarded",
+    "permission_approval_granted",
     "permission_approval_revoked",
     "permission_approvals_cleared",
     "permission_denied",
