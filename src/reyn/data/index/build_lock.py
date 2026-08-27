@@ -34,6 +34,14 @@ def pid_alive(pid: int) -> bool:
     On POSIX, ``os.kill(pid, 0)`` raises ProcessLookupError when the PID
     is gone and PermissionError when it exists but is not ours; both
     mean "still alive enough to defer to". Windows is best-effort.
+
+    The sandbox-mode twin is :func:`reyn.api.safe.process.pid_alive`
+    (semantically identical today) — deliberately NOT unified (#5333,
+    architect's ruling): that module is the curated, sandbox-scoped
+    surface exposed to safe-mode python, and every direction of sharing
+    (that module importing core, core importing that module, or a third
+    shared module) either crosses the boundary that surface exists to
+    keep, or just relocates the question without closing it.
     """
     if pid <= 0:
         return False
