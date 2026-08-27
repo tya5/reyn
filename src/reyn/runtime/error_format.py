@@ -44,7 +44,11 @@ from reyn.runtime.budget.budget import BudgetExceeded
 #: transcripts). A provider that expresses the same failure class under a
 #: DIFFERENT ``type`` string is a disclosed gap, not a silently-assumed
 #: absence — this is a positive allowlist, not an attempt to enumerate
-#: every provider's vocabulary.
+#: every provider's vocabulary. lead-coder review (#5292): if the provider
+#: ever renames this field's VALUE, ``is_quota_exhausted_error`` silently
+#: stops matching — nothing here turns red to say so, and #5256's own
+#: failure mode (shrink-then-terminate on a quota exhaustion) can recur
+#: with no signal until it is observed live again.
 _QUOTA_EXHAUSTED_BODY_TYPE = "usage_limit_reached"
 
 

@@ -81,9 +81,17 @@ def test_quota_exhaustion_never_enters_shrink_and_never_ends_the_session(
         "reyn.runtime.router_loop.call_llm_tools", _fake_call_llm_tools,
     )
 
-    # Must not raise — the generic catch-all keeps the session alive.
-    asyncio.run(session._handle_inbox_text("hi", chain_id="chain-quota-1"))
-    asyncio.run(settle(session._audit_events))
+    async def _drive() -> None:
+        # Must not raise — the generic catch-all keeps the session alive.
+        await session._handle_inbox_text("hi", chain_id="chain-quota-1")
+        await settle(session._audit_events)
+
+    # architect review (#5292): a separate asyncio.run() per await runs each
+    # on its OWN event loop — today's dispatch consumers happen to drain
+    # before either loop closes, but that is not guaranteed, and a day it
+    # doesn't would surface as an unrelated flake (a join() that never
+    # returns), not a real assertion failure. One loop for both awaits.
+    asyncio.run(_drive())
 
     # ① never shrinkable: exactly ONE LLM call — a shrink retry would
     # have made a second one (and the real incident's own compaction
@@ -136,3 +144,14 @@ def test_a_genuine_context_overflow_still_shrinks_unaffected(monkeypatch) -> Non
     exc = _PlainOverflowError("maximum context length exceeded")
     assert is_quota_exhausted_error(exc) is False
     assert is_context_overflow_error(exc) is True
+
+    # architect/lead-coder review (#5292): without this line, nothing here
+    # asserts WHY the #5256 gate is load-bearing — this test only exercised
+    # a DIFFERENT string, so removing "limit" from _CONTEXT_OVERFLOW_KEYWORDS
+    # would make the gate a silent no-op and every test in this PR would
+    # stay green. Pin the actual would-be-misdiagnosis directly: the quota
+    # exception's own message ("The usage limit has been reached") DOES
+    # match is_context_overflow_error's keyword fallback today — that
+    # positive match is exactly what the new gate in _run_with_shrink
+    # exists to intercept before it ever reaches this predicate.
+    assert is_context_overflow_error(_QuotaExhaustedError()) is True
