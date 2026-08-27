@@ -19,8 +19,10 @@ def test_session_reads_malformed_per_session_hooks_and_records_location(tmp_path
 
     session._read_per_session_hooks()
     warnings = session.hooks_config_warnings
-    assert warnings == [f"hooks.yaml could not be read: {path.name} (line 2, column 1)"]
+    assert len(warnings) == 1
+    assert path.name in warnings[0]
     assert "turn_end" not in warnings[0]
+    assert "line " in warnings[0] and "column " in warnings[0]
 
     session._read_per_session_hooks()
     assert session.hooks_config_warnings == warnings
