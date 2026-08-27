@@ -47,6 +47,15 @@ def main() -> None:
     from reyn.runtime.proctitle import set_process_title  # noqa: PLC0415
 
     set_process_title(getattr(args, "command", None))
+    # #5226: the SAME hook point as set_process_title, immediately after —
+    # a marker `reyn doctor` (and any other reader) can use to answer "how
+    # many reyn processes are alive right now, and whose" without shelling
+    # out to `ps` (see process_registry.py's own module docstring for the
+    # full incident this closes: a session left running 11 days with no
+    # way to tell it was reyn's own, let alone whose).
+    from reyn.runtime.process_registry import register_process  # noqa: PLC0415
+
+    register_process(getattr(args, "command", None))
     # #3905: the #2708 P3.2b typed missing-cred error boundary (and the
     # hardcoded _PROVIDER_ENV_VARS pre-check it caught) was removed — an
     # unnecessary hardcode (owner ruling). But owner's OTHER standing
