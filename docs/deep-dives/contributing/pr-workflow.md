@@ -227,20 +227,28 @@ These rules then keep multi-session work coherent:
    **Reviewer recovery angle:** an unexpected issue auto-close triggered by a
    sub-PR merge is almost always a closing-keyword false positive. Reopen the
    issue and verify the arc is not half-done before assuming completion.
-   **This rule's checks all read the PR body — a `git commit` message is a
-   SEPARATE surface the same keyword-plus-number matching applies to, and
-   fixing it costs more.** `scripts/check_pr_closing_intent.py` scans every
-   individual commit message in the PR too (not just the body), because a
-   squash-merge's default commit message is the *concatenation* of the PR's
-   own commit messages — a closing keyword sitting in any one of them
+   **This rule's checks all read the PR body — a `git commit` message and the
+   PR's own title are two more SEPARATE surfaces the same keyword-plus-number
+   matching applies to, and fixing either costs more.** `scripts/check_pr_closing_intent.py`
+   scans every individual commit message in the PR too (not just the body),
+   because a squash-merge's default commit message is the *concatenation* of
+   the PR's own commit messages — a closing keyword sitting in any one of them
    appears in that default squash body regardless of what the PR body says
    (#3187: the PR body was clean; an intermediate commit's message wasn't;
    the squash-merge auto-closed the wrong issue). Editing the PR body does
    NOT fix a commit-message violation — the gate stays red until the
    offending commit is `amend`ed (or the history is rebased) and
    force-pushed, real extra cost a body edit never needs (#4443 hit this
-   directly). The avoidance is the same single rule as the body's own: never
-   place a closing keyword next to an issue number, in either surface.
+   directly). **The PR title is scanned too, unconditionally** (#5321,
+   corrected #5330): this repo's squash headline is built from the PR TITLE
+   whenever a PR has 2+ commits, and a plain merge commit's body is the PR
+   TITLE regardless of commit count — an earlier version gated the title
+   scan on commit count and was wrong for the merge-commit case, so the
+   check does not try to guess which merge method will be used. Editing a
+   commit message does not fix a title violation either — each of the
+   three surfaces (body, commit messages, title) needs its own fix. The
+   avoidance is the same single rule everywhere: never place a closing
+   keyword next to an issue number, in any of the three surfaces.
 5. **No blanket en/ja mirror obligation.** JA docs are a curated, intentionally
    partial subset (614 EN files vs 125 JA, repo-wide) — a PR is not required to
    touch a `.ja.md` file just because an EN sibling exists or just changed. Do
