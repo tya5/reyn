@@ -6196,8 +6196,15 @@ class Session:
     async def _reapply_mcp(self, in_set: dict) -> bool:
         """Reapply MCP servers (#2073 S2) — re-probe via the existing turn-boundary
         refresh chain (which reads the re-read .reyn/mcp.yaml). Returns whether the
-        in-memory tool cache changed."""
+        in-memory tool cache changed.
+
+        #5276: invalidates ``capability_visibility_state()``'s memoized
+        envelope census (`get_mcp_servers()`'s answer, one of the census's
+        own inputs, can change here) — synchronously, right after the
+        refresh, same "no subscriber" reasoning as ``hook_state()``'s own
+        cache (#5279/#5284)."""
         result = await self.refresh_mcp_servers()
+        self._capability_visibility.invalidate_envelope_census()
         return bool(result.get("refreshed"))
 
     async def _reapply_skills(self, in_set: dict) -> bool:
@@ -6235,6 +6242,10 @@ class Session:
                 return False
         self._available_skills = new_skills or None
         self._capability_visibility.reapply_skill_visibility()
+        # #5276: invalidates the memoized envelope census (the skill roster
+        # just reassigned above is one of its own inputs) — synchronously,
+        # same reasoning as _reapply_mcp's own comment.
+        self._capability_visibility.invalidate_envelope_census()
         return True
 
     async def _reapply_pipelines(self, in_set: dict) -> bool:
