@@ -26,6 +26,8 @@ import sys
 import tempfile
 from pathlib import Path
 
+import pytest
+
 from tests._support.paths import REPO_ROOT
 
 
@@ -604,6 +606,41 @@ _5010_DOC_FILES = (
 )
 
 
+def _pinned_shas_resolve_locally() -> bool:
+    """True iff both #5010 pinned SHAs are present in this checkout's
+    object database. False in a shallow (fetch-depth: 1) checkout --
+    e.g. test.yml's own `test:` job, which has no reason to fetch commits
+    this old. `git cat-file -e` is the existence check
+    ([[feedback_git_existence_check_cat_file_not_ls_tree]]-equivalent
+    discipline: an object either resolves or it does not, no separate
+    empty-output case to misread)."""
+    for ref in (_5010_SRC_SHA, _5010_DOCS_PRE_SHA.rstrip("^")):
+        result = subprocess.run(
+            ["git", "cat-file", "-e", ref], cwd=REPO_ROOT, capture_output=True
+        )
+        if result.returncode != 0:
+            return False
+    return True
+
+
+# Disclosed, reasoned skip (never silent) -- lead-coder, #5298: test.yml's
+# main `test:` job collects the whole tree with no deselect/marker filter,
+# so these 4 tests would otherwise run there too and fail with
+# CalledProcessError on a shallow checkout. They run for real, unskipped,
+# in .github/workflows/check-doc-drift-fixture.yml's dedicated
+# fetch-depth: 0 job -- this guard only prevents a false failure on a
+# checkout that structurally cannot satisfy the fixture, it does not
+# reduce what actually gets exercised.
+_skip_unless_full_history = pytest.mark.skipif(
+    not _pinned_shas_resolve_locally(),
+    reason=(
+        "#5010 pinned SHAs not present -- this checkout is shallow "
+        "(fetch-depth: 1); these tests run instead in "
+        "check-doc-drift-fixture.yml's full-history job"
+    ),
+)
+
+
 def _content_at(sha: str, path: str) -> str:
     """Real file content at a pinned, immutable ref in THIS repo's own
     git history — never the live working tree. Fails loudly (via
@@ -639,6 +676,7 @@ def _materialize_fixture_repo(tmp_path: Path) -> Path:
     return repo
 
 
+@_skip_unless_full_history
 def test_5010_fixture_content_matches_the_real_historical_commits_exactly():
     """Tier 2: sanity check on the fixture itself, independent of
     ``check_doc_drift.py`` entirely — a plain ``git grep -n`` against the
@@ -673,6 +711,7 @@ def test_5010_fixture_content_matches_the_real_historical_commits_exactly():
     assert "reyn-yaml.ja.md" not in touched
 
 
+@_skip_unless_full_history
 def test_5010_naive_grep_says_the_identifier_still_survives(tmp_path):
     """Tier 2: acceptance ① of #5010's re-promotion fixture (architect,
     issuecomment-5435721126) — the OLD discriminator class this fixture
@@ -696,6 +735,7 @@ def test_5010_naive_grep_says_the_identifier_still_survives(tmp_path):
     assert hits == set(_5010_SRC_PROSE_ONLY_FILES)
 
 
+@_skip_unless_full_history
 def test_5010_real_discriminator_correctly_says_it_does_not_survive(tmp_path):
     """Tier 2: acceptance ② — the REAL, current ``identifier_survives_in_src``
     (the tokenizer/AST-backed redaction fix, #5010 round 2) on the exact
@@ -708,6 +748,7 @@ def test_5010_real_discriminator_correctly_says_it_does_not_survive(tmp_path):
     assert m.identifier_survives_in_src(_5010_IDENTIFIER, repo) is False
 
 
+@_skip_unless_full_history
 def test_5010_end_to_end_finds_the_real_4_line_drift_untouched_by_5095():
     """Tier 2: acceptance ③ — wires ①+② together the way
     ``resolve_gone_identifiers_precise``/``check_doc_drift_pure`` do, over
