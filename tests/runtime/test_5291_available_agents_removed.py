@@ -89,7 +89,7 @@ def _run_turn_with_n_registry_dispatched_tool_calls(monkeypatch, n: int) -> int:
 
 
 def test_registry_dispatched_tool_call_never_reads_available_agents(monkeypatch) -> None:
-    """Tier 1: #5291 — a REGISTRY_DISPATCH_TOOLS tool call (list_memory,
+    """Tier 2: #5291 — a REGISTRY_DISPATCH_TOOLS tool call (list_memory,
     which has nothing to do with agents) drives all the way through
     RouterLoopDriver._invoke_via_registry -> build_resource_caller_state ->
     (formerly) list_available_agents(). Witness: driving 1 vs 3 such
@@ -103,6 +103,16 @@ def test_registry_dispatched_tool_call_never_reads_available_agents(monkeypatch)
     count_with_1 = _run_turn_with_n_registry_dispatched_tool_calls(monkeypatch, 1)
     count_with_3 = _run_turn_with_n_registry_dispatched_tool_calls(monkeypatch, 3)
 
+    # architect review (#5294): count_with_1 == count_with_3 alone is
+    # vacuously green if BOTH are 0 — e.g. if the system-prompt build's own
+    # call site moved to a different class this patch doesn't cover, the
+    # counter would silently stop firing at all and this test would keep
+    # passing while witnessing nothing. Assert the docstring's own stated
+    # premise (the one live reader still fires) directly.
+    assert count_with_1 >= 1, (
+        "the counter never fired at all — either RouterHostAdapter.list_"
+        "available_agents() moved, or this patch target is stale"
+    )
     assert count_with_1 == count_with_3, (
         f"list_available_agents() call count scaled with the number of "
         f"registry-dispatched tool_calls ({count_with_1} vs {count_with_3}) "
