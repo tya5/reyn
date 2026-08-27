@@ -1408,6 +1408,26 @@ class Session:
             ],
         )
 
+        # #5276②: hook_state()'s reactive cache. Deliberately NOT invalidated
+        # via an EventLog subscriber (unlike mcp_subscription_state's cache
+        # above) — caught during implementation via a genuine, pre-existing
+        # test failure (test_hook_slash_disables_via_public_state):
+        # set_hook_enabled is a plain SYNCHRONOUS method, and a caller that
+        # toggles then reads hook_state() immediately, with no intervening
+        # await, has always gotten the fresh answer synchronously. But
+        # EventLog.emit() QUEUES subscriber dispatch onto a background
+        # consumer task whenever a loop is running (#4966) — so a
+        # subscriber-based invalidation would not have run YET by the time
+        # such a caller reads hook_state(), returning the STALE pre-toggle
+        # cache. mcp_subscription_state's own cache doesn't hit this because
+        # every real trigger there already crosses an async boundary (a
+        # network round-trip) before any caller could plausibly read the
+        # panel. Fix: invalidate this cache SYNCHRONOUSLY, directly at each
+        # mutation site (set_hook_enabled's applied path, _reapply_hooks,
+        # load_persisted_toggles) — see each site's own comment. No
+        # subscriber registration for this cache at all.
+        self._cached_hook_items: "list[dict] | None" = None
+
         # Budget adapter, byte-identical extraction, simplest of the #3082 families (Family 4, see session-construction.md#family-4-cost-budget)
         self._budget = self._build_budget(
             budget_tracker, self._audit_events, self.agent_name, _router_cap,
@@ -3032,6 +3052,15 @@ class Session:
         else:
             self._disabled_hooks.add(name)
         self._persist_hook_disabled()  # #2285 step2 — survive restart (best-effort)
+        # #5276②: invalidate hook_state()'s cache SYNCHRONOUSLY, right here
+        # — not via the audit-event below. A caller that toggles then reads
+        # hook_state() immediately (no await in between, e.g. the existing
+        # test_hook_slash_disables_via_public_state) must see the fresh
+        # answer; EventLog.emit()'s subscriber dispatch is QUEUED whenever a
+        # loop is running (#4966), so relying on an emitted event to
+        # invalidate this cache would still be showing the stale pre-toggle
+        # value by the time such a caller reads it.
+        self._cached_hook_items = None
         self._audit_events.emit(
             "hook_changed", name=name, enabled=enabled, applied=True, origin=origin,
         )
@@ -3106,6 +3135,11 @@ class Session:
                     self._disabled_hooks = {str(n) for n in disabled}
         except Exception as exc:  # noqa: BLE001
             logger.warning("#2285: load hook disabled-set failed: %r", exc)
+        # #5276②: this method resets/repopulates self._disabled_hooks above
+        # (unconditionally, at both call sites this docstring names) —
+        # invalidate hook_state()'s cache synchronously here too, same
+        # reasoning as set_hook_enabled's own comment.
+        self._cached_hook_items = None
         if loaded_visibility:
             self._capability_visibility.reapply_visibility_override()
         if loaded_skill_visibility:
@@ -3155,12 +3189,26 @@ class Session:
         shared predicate this display and :meth:`set_hook_enabled`'s refusal decision both
         call, rather than each writing its own copy of the same boolean expression (architect
         ruling, #5230: a census of every surface reporting this state cannot be closed with
-        confidence, so the fix collapses the predicate structurally instead)."""
-        out: "list[dict]" = []
-        for name, hook in self._hook_defs_by_name().items():
-            enabled = not self._hook_effectively_disabled(name, hook.origin)
-            out.append({"name": name, "scope": hook.origin, "enabled": enabled})
-        return out
+        confidence, so the fix collapses the predicate structurally instead).
+
+        #5276②: reactive cache — ``self._cached_hook_items`` is filled lazily
+        here, on the next real call after construction or after a mutation
+        site (``set_hook_enabled``'s applied path, ``_reapply_hooks``,
+        ``load_persisted_toggles``) directly clears it to ``None``.
+        Deliberately NOT invalidated via an ``EventLog`` subscriber (unlike
+        ``mcp_subscription_state``'s own cache) — see this field's own
+        comment in ``__init__`` for the genuine, pre-existing test failure
+        (a synchronous toggle-then-read caller) that direct, synchronous
+        invalidation was needed to fix, since subscriber dispatch is queued
+        (#4966) and would not have run yet by the time such a caller reads
+        this."""
+        if self._cached_hook_items is None:
+            out: "list[dict]" = []
+            for name, hook in self._hook_defs_by_name().items():
+                enabled = not self._hook_effectively_disabled(name, hook.origin)
+                out.append({"name": name, "scope": hook.origin, "enabled": enabled})
+            self._cached_hook_items = out
+        return self._cached_hook_items
 
     def _hook_defs_by_name(self) -> "dict[str, HookDef]":
         """The merged registry's ``HookDef``s keyed by name, most-specific origin
@@ -6078,8 +6126,16 @@ class Session:
         re-combine with the FIXED reyn.yaml startup layer, and swap the dispatcher's
         registry. The dispatcher reads its registry fresh per dispatch, so the swap
         propagates to every holder. The startup layer is never re-read (safety
-        boundary). Always rebuilds (handles add / change / remove of either layer)."""
+        boundary). Always rebuilds (handles add / change / remove of either layer).
+
+        #5276②: invalidates ``hook_state()``'s cache synchronously right
+        after swapping the registry — same "direct at the mutation site,
+        no subscriber" reasoning as :meth:`set_hook_enabled`'s own comment
+        (an awaited caller reading ``hook_state()`` right after this
+        reload completes must see the fresh declaration set, not a value
+        an event subscriber hasn't gotten around to invalidating yet)."""
         self._hook_dispatcher.replace_registry(self._build_hook_registry(in_set))
+        self._cached_hook_items = None
         return True
 
     def _hot_reload_project_root(self) -> "Path":
