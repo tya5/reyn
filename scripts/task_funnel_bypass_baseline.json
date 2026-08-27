@@ -1,6 +1,6 @@
 {
   "src/reyn/runtime/session.py": {
-    "type": "defect",
-    "note": "#5267's own chain (Session.run_one_iteration's _turn_owner_task) — a real hazard, tracked for its own separate fix PR, not a gate false positive."
+    "type": "false_positive",
+    "note": "Session.run_one_iteration's _turn_owner_task (session.py:6937). The funnel is for tasks that outlive their creating call; this one is awaited at :6942 and discarded at :7013. Two grounds, both checked in #5267: (a) a driver cancelled by ANY route does cancel it -- Task.cancel() propagates through _fut_waiter, measured on a minimal repro and on a real Session, falsifying the orphaning hazard this entry was first typed 'defect' for; (b) quiescence is already covered without the funnel -- await_quiescent's own docstring calls its list 'the exhaustive set of append-capable spawned tasks in this surface' and names 'the current turn (_turn_idle)' first. Re-type to 'defect' only if a reproduction of an actually-orphaned turn task appears."
   }
 }

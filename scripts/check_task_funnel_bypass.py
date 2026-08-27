@@ -124,9 +124,12 @@ declared-baseline idiom this repo already uses for exactly this problem
 (``mypy_ratchet.py``'s ``(file, code)`` pairs, ``flat_tests_ratchet.py``'s
 filename set): every CURRENTLY accepted offender is a declared entry,
 keyed by file path, each carrying its own ``"type"`` (``"defect"`` — a
-real hazard tracked for its own fix PR, same as ``session.py`` today —
-or ``"false_positive"`` — the gate is wrong about this one) and a
-``"note"`` explaining which and why. The test
+real hazard tracked for its own fix PR — or ``"false_positive"`` — the
+gate is wrong about this one) and a ``"note"`` explaining which and why.
+``session.py`` was this file's first entry and was typed ``"defect"``;
+#5267 measured the hazard it named and could not reproduce it, so it is
+now the first ``"false_positive"`` — which is exactly the count the
+promotion condition below reads. The test
 (``tests/scripts/test_check_task_funnel_bypass_5267.py``) asserts the
 REAL tree's offenders match the declared set exactly; a new,
 undeclared offender fails that test (a real, already-blocking CI signal
