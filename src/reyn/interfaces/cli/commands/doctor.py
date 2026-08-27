@@ -129,6 +129,18 @@ declaration as its own witness) is already implemented — C-5 above is
 architect's own named special case of it (sandbox posture: declared
 ``sandbox.*`` next to the resolved backend), not a separate, still-owed
 slice.
+
+#5226 (this slice's own addition, lead-coder ruling): a NEW category —
+not declared-vs-effective, but "reyn cannot currently answer how many
+of ITSELF are alive, or whose, without an operator manually shelling
+out to ``ps``+``lsof``". :func:`_print_process_registry` reads
+:func:`~reyn.runtime.process_registry.live_processes` — a live read of
+PID-keyed markers each reyn CLI process writes about ITSELF at startup
+(``interfaces/cli/__init__.py:main()``, the same hook
+``set_process_title`` uses), never a process-table scan of its own
+(that is the OS's job, per lead-coder's own ruling). D-2 unchanged:
+report-only — no kill, no TTL expiry; that judgment call is explicitly
+out of #5226's own scope until the count is visible at all.
 """
 from __future__ import annotations
 
@@ -331,6 +343,12 @@ def run(args: argparse.Namespace) -> None:
     print("Model reachability — 0-token GET {api_base}/v1/models (never a")
     print("real completion call; D-2: doctor never spends inference cost):")
     _print_model_reachability(config)
+
+    # ── #5226: reyn process registry — how many, and whose ─────────────────
+    print()
+    print("Reyn process registry (~/.reyn/processes/) — every reyn CLI")
+    print("process currently alive on this machine, across every workspace:")
+    _print_process_registry()
 
 
 def _configured_exec_hooks(config: object) -> "list[HookDef]":
@@ -937,3 +955,54 @@ def _print_model_reachability(config: object) -> None:
                 f"    ✗ {model_class} ({bare_name!r}): NOT in the proxy's model "
                 f"list — check the name form (bare vs 'provider/name')",
             )
+
+
+def _print_process_registry() -> None:
+    """#5226: owner's own observation ("I only launched one reyn session,
+    so the rest are your own cleanup misses") plus lead-coder's real-
+    machine trace (12 reyn/reyn:chat processes, 11 abandoned, oldest 11
+    days) found there was no way for reyn ITSELF to answer "how many of
+    me are alive, and whose" — only a manual ``ps``+``lsof -d cwd``
+    reconstruction. This section is that read seam, D-1/D-2 unchanged
+    (a live read of :func:`~reyn.runtime.process_registry.live_processes`,
+    never a restatement of config; report-only, no kill/TTL — that
+    judgment is explicitly out of THIS issue's scope, an owner-level call
+    once the count is visible at all).
+
+    Deliberately prints only the fields the marker itself carries — pid/
+    ppid/cwd/subcommand/age — never full argv or any path beyond cwd
+    (see ``process_registry.py``'s own module docstring for why: it
+    mirrors ``reyn.runtime.proctitle``'s explicit stance against leaking
+    more than the minimum into anything read back after the fact)."""
+    import time
+
+    from reyn.runtime.process_registry import live_processes
+
+    processes = live_processes()
+    if not processes:
+        print("  no reyn process markers found (none registered, or none still alive)")
+        return
+
+    now = time.time()
+    print(f"  {len(processes)} process(es) currently alive:")
+    for entry in processes:
+        pid = entry.get("pid")
+        ppid = entry.get("ppid")
+        cwd = entry.get("cwd", "?")
+        subcommand = entry.get("subcommand") or "(no subcommand)"
+        started_at = entry.get("started_at")
+        age_desc = "unknown age"
+        if isinstance(started_at, (int, float)):
+            age_seconds = max(0, int(now - started_at))
+            days, rem = divmod(age_seconds, 86400)
+            hours, rem = divmod(rem, 3600)
+            minutes = rem // 60
+            if days:
+                age_desc = f"{days}d {hours}h ago"
+            elif hours:
+                age_desc = f"{hours}h {minutes}m ago"
+            else:
+                age_desc = f"{minutes}m ago"
+        print(f"    pid={pid} ppid={ppid} started {age_desc}")
+        print(f"      cwd:        {cwd}")
+        print(f"      subcommand: {subcommand}")
