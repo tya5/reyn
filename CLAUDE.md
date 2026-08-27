@@ -91,11 +91,12 @@ a classification, and nothing else looks.
 | 1 | **none** — including a third party's, a past bug's, and reyn's own trivia |
 | 2 | yes — the same expression is on both sides |
 | 3 | **nobody**, or only a configuration this test itself constructed |
-| 4 | green having never run **or over an empty collection**, and the PR does not say so |
+| 4 | green having never run **or over an empty collection**, and the test's own docstring does not say so |
 | 5 | **anything outside the test bounds it** — a thread, a timer, the caller's pace |
 | 6 | the declared Tier is not the one question 1 named |
 
 - 4 blocks on the **silence**, not on the skip: a whole-file skip is often correct; a green nobody qualified is not.
+- 4's disclosure lives in the **test's own docstring**, not the PR: a PR is read once, at merge time; the next person to touch the test opens the file, not the PR.
 - 5 has no carve-out: "it is small today" is a measurement of today.
 - 3 needs no accept-side exception — an accept-side test's consumer is the operators the gate would have false-positived against.
 - **When something forces you to touch a test — a bump, a rebase, a CI failure — ask "should this exist" before "how do I make it pass again."**
