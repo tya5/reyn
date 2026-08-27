@@ -230,6 +230,14 @@ class CapabilityVisibility:
         self._visibility_override: "dict[str, set[str]]" = {
             "tool": set(), "mcp": set(), "category": set(), "skill": set(),
         }
+        # #5276: the expensive envelope-only census's cache — see
+        # _envelope_census's own docstring. None = never computed / needs
+        # recompute; invalidated synchronously by invalidate_envelope_census
+        # — called from Session at 3 sites (grep-confirmed:
+        # `git grep invalidate_envelope_census -- src` → session.py's
+        # `_reapply_mcp`, `_reapply_skills`, `load_persisted_toggles`) —
+        # never via an EventLog subscriber, the #5279/#5284 lesson.
+        self._cached_envelope_census: "dict | None" = None
 
     @property
     def contextual_permission(self) -> "object | None":
@@ -631,6 +639,139 @@ class CapabilityVisibility:
             names = (names - wrapper_plumbing) | catalog_names
         return names
 
+    def invalidate_envelope_census(self) -> None:
+        """#5276: mark :attr:`_cached_envelope_census` dirty. Called
+        SYNCHRONOUSLY by ``Session`` at each of its 3 grep-confirmed
+        mutation sites (``_reapply_mcp``, ``_reapply_skills``,
+        ``load_persisted_toggles``) — NOT via an ``EventLog`` subscriber
+        (the #5279/#5284 lesson: subscriber dispatch is queued whenever a
+        loop is running, #4966, so it cannot reliably invalidate a cache
+        before a caller that mutates-then-reads-immediately observes it).
+        See :meth:`capability_visibility_state`'s own docstring for what
+        this census covers and why it is safe to memoize."""
+        self._cached_envelope_census = None
+
+    def _envelope_census(self) -> dict:
+        """#5276: the EXPENSIVE, envelope-only half of
+        ``capability_visibility_state`` — memoized in
+        :attr:`_cached_envelope_census`. Computes, for every reachable
+        tool/mcp/category/skill, whether the AGENT ENVELOPE (topology ∩
+        delegate ∩ per-session config — never the ``/visibility`` override,
+        never the per-turn ephemeral taint) authorizes it — via
+        ``_reachable_tool_names``'s real, bridged-sync scheme
+        ``build_presentation`` call (#3220) and a fresh
+        ``resolved_profile_for`` read, both genuinely non-trivial per-call
+        costs this method exists to stop paying every render frame.
+
+        Grep-confirmed (#5276 investigation) invariant this memoization
+        relies on: the ENVELOPE itself (topology bindings, the #2081
+        delegate floor, #2103-S1a per-session config) is set at THIS
+        session's own construction/spawn/restore and never mutated by any
+        live, in-session command — ``resolved_profile_for``'s answer for a
+        GIVEN (agent, sid) does not change while that session keeps
+        running EXCEPT for one edge the ``sid=`` argument itself exposes —
+        a session's own sid CAN be re-keyed post-construction (spawn
+        fixup; see this class's own module docstring), so ``load_persisted_
+        toggles`` (called right after a re-key) is this cache's 3rd
+        invalidation site, alongside the two below. What DOES change
+        mid-session otherwise, and this cache correctly tracks via
+        :meth:`invalidate_envelope_census`'s 3 call sites, is WHICH
+        capabilities exist to classify at all: the MCP server roster
+        (``_reapply_mcp``) and the skill registry (``_reapply_skills``)
+        can both change via hot-reload.
+
+        #5288 (filed, not fixed here): whether some OTHER input the active
+        scheme's own ``build_presentation`` reads (e.g.
+        ``list_available_agents()``, via ``_VisibilityProbeOps``) can
+        change mid-session independent of these 3 sites is not
+        grep-verified.
+
+        Returns a dict whose shape mirrors the ORIGINAL method's own 3
+        per-kind treatments exactly (preserved verbatim, just relocated —
+        see the loop below): ``eph_pending_authorized``/
+        ``eph_pending_unknown`` hold TOOL/MCP rows that still need the
+        cheap per-turn ephemeral check the caller applies (the only rows
+        that ever did, in the pre-#5276 code); ``final_authorized``/
+        ``final_unknown`` hold CATEGORY/SKILL rows that are already the
+        FINAL answer (categories and skills were never checked against
+        the ephemeral gate at all, before or after this change — a
+        category is either envelope-authorized or not, full stop; a
+        skill is always authorized, full stop). ``denied_by_envelope``
+        is final for every kind (the pre-#5276 code never re-checked an
+        envelope denial against the ephemeral gate either — an envelope
+        denial already IS the actionable answer, #3380's own docstring).
+        Getting this 3-way split wrong would silently apply the
+        turn-context check to a kind that must never carry it (or vice
+        versa) — caught and fixed during this PR's own implementation by
+        re-deriving each kind's original branch instead of assuming
+        symmetry."""
+        from typing import cast
+
+        from reyn.security.permissions.effective import (
+            CapabilityAxis,
+            ContextualLayer,
+            ContextualPermission,
+        )
+        from reyn.tools.universal_catalog import CATEGORIES
+
+        if self._cached_envelope_census is not None:
+            return self._cached_envelope_census
+
+        base_ctx: "ContextualPermission | None" = None
+        base_excl: "frozenset[str]" = frozenset()
+        envelope_unknown = not (
+            self._registry is not None and hasattr(self._registry, "resolved_profile_for")
+        )
+        if not envelope_unknown:
+            raw_ctx, base_excl = self._registry.resolved_profile_for(
+                self._agent_name, sid=self._session_id_provider(),
+            )
+            base_ctx = cast("ContextualPermission | None", raw_ctx)
+        else:
+            self._surface_unreadable_envelope_source_for_read()
+        ctx = ContextualLayer(base_ctx)  # the envelope gate (None → allows all)
+
+        eph_pending_authorized: "list[dict]" = []
+        eph_pending_unknown: "list[dict]" = []
+        denied: "list[dict]" = []
+        final_authorized: "list[dict]" = []
+        final_unknown: "list[dict]" = []
+
+        def _place(axis: "CapabilityAxis", row: dict) -> None:
+            if envelope_unknown:
+                eph_pending_unknown.append({**row, "_axis": axis})
+            elif not ctx.allows(axis, row["name"]):
+                denied.append(row)
+            else:
+                eph_pending_authorized.append({**row, "_axis": axis})
+
+        for name in sorted(self._reachable_tool_names(base_excl)):
+            _place(CapabilityAxis.TOOL, {"kind": "tool", "name": name})
+        for server in self._router_host.get_mcp_servers():
+            n = server.get("name")
+            if n:
+                _place(CapabilityAxis.MCP, {"kind": "mcp", "name": n})
+        for category in CATEGORIES:
+            if envelope_unknown:
+                final_unknown.append({"kind": "category", "name": category})
+            elif category not in base_excl:
+                final_authorized.append({"kind": "category", "name": category})
+        # #2548 PR-B: skills are togglable per-session; the registered base set is the
+        # envelope — never gated by resolved_profile_for, so #3615's envelope_unknown
+        # does not apply here (unaffected by whether the base could be read).
+        for entry in (self._available_skills_provider() or []):
+            final_authorized.append({"kind": "skill", "name": entry.name})
+
+        self._cached_envelope_census = {
+            "eph_pending_authorized": eph_pending_authorized,
+            "eph_pending_unknown": eph_pending_unknown,
+            "denied_by_envelope": denied,
+            "final_authorized": final_authorized,
+            "final_unknown": final_unknown,
+            "envelope_unknown": envelope_unknown,
+        }
+        return self._cached_envelope_census
+
     def capability_visibility_state(
         self, *, ephemeral_contextual: "object | None" = None,
     ) -> dict:
@@ -694,31 +835,26 @@ class CapabilityVisibility:
         ``self._registry``), so it stays fully determined even when the envelope is
         unknown — a row the ephemeral gate denies is reported there, not swept into
         ``unknown``, because that denial is a fact regardless of what the envelope
-        would have said."""
+        would have said.
+
+        #5276: the EXPENSIVE envelope-only classification (this method used
+        to redo it on every call, including every render frame) is memoized
+        in :meth:`_envelope_census` — see that method's own docstring for
+        the invariant this relies on and its 3 grep-confirmed invalidation
+        sites. What runs HERE, on every call, is only the CHEAP overlay:
+        splitting each already-envelope-classified row against the live
+        ``ephemeral_contextual`` (a plain ``ContextualLayer.allows`` check,
+        no catalog work) and reading ``self._visibility_override`` fresh
+        (a dict already held in memory) for ``hidden_by_session``. Neither
+        of those may be cached — #3380's whole point is that the ephemeral
+        taint self-clears the instant the tainted entry compacts out, and
+        the override changes on every ``/visibility`` toggle."""
         from typing import cast
 
-        from reyn.security.permissions.effective import (
-            CapabilityAxis,
-            ContextualLayer,
-            ContextualPermission,
-        )
-        from reyn.tools.universal_catalog import CATEGORIES
+        from reyn.security.permissions.effective import ContextualLayer, ContextualPermission
 
-        # resolved_profile_for's declared return is the wider `object | None`; cast to the
-        # concrete type ContextualLayer expects (registry.py:3509 documents ContextualPermission).
-        base_ctx: "ContextualPermission | None" = None
-        base_excl: "frozenset[str]" = frozenset()
-        envelope_unknown = not (
-            self._registry is not None and hasattr(self._registry, "resolved_profile_for")
-        )
-        if not envelope_unknown:
-            raw_ctx, base_excl = self._registry.resolved_profile_for(
-                self._agent_name, sid=self._session_id_provider(),
-            )
-            base_ctx = cast("ContextualPermission | None", raw_ctx)
-        else:
-            self._surface_unreadable_envelope_source_for_read()
-        ctx = ContextualLayer(base_ctx)  # the envelope gate (None → allows all)
+        census = self._envelope_census()
+        envelope_unknown = census["envelope_unknown"]
         # #3380: the ephemeral gate, asked ONLY for what the envelope already allows —
         # so a capability the envelope denies keeps its durable reason even while the
         # context happens to be tainted (both deny it; the un-liftable one is the
@@ -727,47 +863,38 @@ class CapabilityVisibility:
             cast("ContextualPermission | None", ephemeral_contextual)
         )
 
-        authorized: "list[dict]" = []
-        denied: "list[dict]" = []
+        # #5276: only TOOL/MCP rows (`eph_pending_*`) were ever checked
+        # against the ephemeral gate, before or after this change —
+        # CATEGORY/SKILL rows (`final_*`) pass straight through unchanged,
+        # exactly like the pre-#5276 code's own category/skill loops
+        # (neither ever called `eph.allows` at all).
+        authorized: "list[dict]" = [
+            {"kind": row["kind"], "name": row["name"]}
+            for row in census["final_authorized"]
+        ]
         denied_turn: "list[dict]" = []
-        unknown: "list[dict]" = []
+        unknown: "list[dict]" = [
+            {"kind": row["kind"], "name": row["name"]}
+            for row in census["final_unknown"]
+        ]
 
-        def _place(axis: "CapabilityAxis", row: dict) -> None:
-            if envelope_unknown:
-                # #3615: no base to test the ENVELOPE axis against — classifying into
-                # authorized/denied_by_envelope would be a guess dressed as an answer.
-                # The TURN-CONTEXT axis is independent of the envelope source (``eph``
-                # composes only ``ephemeral_contextual``, a caller-supplied argument
-                # that has nothing to do with ``self._registry``), so a turn-context
-                # denial is still a determined fact and must not be swallowed into
-                # "unknown" — only the row's envelope-standing is undetermined.
-                if not eph.allows(axis, row["name"]):
-                    denied_turn.append(row)
-                else:
-                    unknown.append(row)
-            elif not ctx.allows(axis, row["name"]):
-                denied.append(row)
-            elif not eph.allows(axis, row["name"]):
-                denied_turn.append(row)
+        for row in census["eph_pending_authorized"]:
+            if eph.allows(row["_axis"], row["name"]):
+                authorized.append({"kind": row["kind"], "name": row["name"]})
             else:
-                authorized.append(row)
-
-        for name in sorted(self._reachable_tool_names(base_excl)):
-            _place(CapabilityAxis.TOOL, {"kind": "tool", "name": name})
-        for server in self._router_host.get_mcp_servers():
-            n = server.get("name")
-            if n:
-                _place(CapabilityAxis.MCP, {"kind": "mcp", "name": n})
-        for category in CATEGORIES:
-            if envelope_unknown:
-                unknown.append({"kind": "category", "name": category})
-            elif category not in base_excl:
-                authorized.append({"kind": "category", "name": category})
-        # #2548 PR-B: skills are togglable per-session; the registered base set is the
-        # envelope — never gated by resolved_profile_for, so #3615's envelope_unknown
-        # does not apply here (unaffected by whether the base could be read).
-        for entry in (self._available_skills_provider() or []):
-            authorized.append({"kind": "skill", "name": entry.name})
+                denied_turn.append({"kind": row["kind"], "name": row["name"]})
+        for row in census["eph_pending_unknown"]:
+            # #3615: no base to test the ENVELOPE axis against — classifying into
+            # authorized/denied_by_envelope would be a guess dressed as an answer.
+            # The TURN-CONTEXT axis is independent of the envelope source (``eph``
+            # composes only ``ephemeral_contextual``, a caller-supplied argument
+            # that has nothing to do with ``self._registry``), so a turn-context
+            # denial is still a determined fact and must not be swallowed into
+            # "unknown" — only the row's envelope-standing is undetermined.
+            if eph.allows(row["_axis"], row["name"]):
+                unknown.append({"kind": row["kind"], "name": row["name"]})
+            else:
+                denied_turn.append({"kind": row["kind"], "name": row["name"]})
 
         hidden = [
             {"kind": kind, "name": name}
@@ -777,7 +904,10 @@ class CapabilityVisibility:
         return {
             "authorized": authorized,
             "hidden_by_session": hidden,
-            "denied_by_envelope": denied,
+            "denied_by_envelope": [
+                {"kind": row["kind"], "name": row["name"]}
+                for row in census["denied_by_envelope"]
+            ],
             "denied_by_turn_context": denied_turn,
             "unknown": unknown,
             "envelope_unknown": envelope_unknown,
