@@ -14,6 +14,11 @@ name: PR closing-intent check
 # scripts/check_pr_closing_intent.py's module docstring (check 4) for the
 # real incident and design rationale.
 #
+# #5321: this repo's squash headline is built from the PR TITLE, not any
+# one commit's own title, whenever a PR has 2+ commits — so the same
+# check 4/5 scan also covers the PR title (gated on commit count; see the
+# module docstring's "Title source" note).
+#
 # A dedicated workflow (not folded into test.yml's bare `pull_request:`
 # trigger) because this check must also re-run on `edited` — an author
 # who edits the body after opening (e.g. adds/removes a `Closes #N`) needs
