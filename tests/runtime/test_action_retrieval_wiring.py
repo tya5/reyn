@@ -113,7 +113,7 @@ def test_router_host_adapter_with_flag_on() -> None:
 
 def test_build_tools_off_when_flag_off() -> None:
     """Tier 2: with flag off, universal wrappers do NOT appear in tools=."""
-    tools = build_tools([], universal_wrappers_enabled=False)
+    tools = build_tools(universal_wrappers_enabled=False)
     names = [t["function"]["name"] for t in tools]
     for w in ("list_actions", "describe_action", "invoke_action"):
         assert w not in names
@@ -121,7 +121,7 @@ def test_build_tools_off_when_flag_off() -> None:
 
 def test_build_tools_on_when_flag_on() -> None:
     """Tier 2: with flag on, 3 universal wrappers appear at the end of tools=."""
-    tools = build_tools([], universal_wrappers_enabled=True)
+    tools = build_tools(universal_wrappers_enabled=True)
     names = [t["function"]["name"] for t in tools]
     assert names[-3:] == ["list_actions", "describe_action", "invoke_action"]
 

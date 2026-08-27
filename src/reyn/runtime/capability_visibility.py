@@ -96,8 +96,12 @@ class _VisibilityProbeOps:
 
         # This probe stands in for the router's own ``present``, which is always a
         # ``tool_calls`` presentation — the channel exists (#3421).
+        # #5291: no longer reads .reyn/agents/ here — build_tools's own
+        # available_agents param is dead (never read by its body, #3978 P6
+        # retired the only consumer); this call ran on EVERY render frame
+        # (this class's own docstring), making it the hottest of the
+        # confirmed-dead call sites.
         return Presentation(tools_channel=AdvertisedTools(entries=build_tools(
-            self._host.list_available_agents(),
             file_permissions=self._host.get_file_permissions(),
             mcp_servers=self._host.get_mcp_servers(),
             web_fetch_allowed=self._host.get_web_fetch_allowed(),
@@ -109,8 +113,8 @@ class _VisibilityProbeOps:
     def base_tools(self, available: dict, layer_ctx: dict) -> "list[dict]":
         from reyn.runtime.router_tools import build_tools
 
+        # #5291: see present()'s own comment above — same dead read, same fix.
         return build_tools(
-            self._host.list_available_agents(),
             file_permissions=self._host.get_file_permissions(),
             mcp_servers=self._host.get_mcp_servers(),
             web_fetch_allowed=self._host.get_web_fetch_allowed(),

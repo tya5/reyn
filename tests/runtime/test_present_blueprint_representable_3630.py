@@ -46,7 +46,7 @@ _TWO_COMPONENT_BLUEPRINT = [
 
 def _present_parameters() -> dict:
     """The parameter schema as actually published to the model."""
-    for tool in build_tools([]):
+    for tool in build_tools():
         function = tool["function"]
         if function["name"] == "present":
             return function["parameters"]

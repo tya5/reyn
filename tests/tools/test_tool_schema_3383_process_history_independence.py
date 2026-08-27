@@ -160,17 +160,16 @@ def test_render_for_router_survives_in_place_mutation_of_a_handed_out_payload() 
 
 def test_build_tools_survives_in_place_mutation_of_a_handed_out_payload() -> None:
     """Tier 1: mutating a build_tools() payload cannot alter the next build_tools()."""
-    agents = [{"name": "researcher", "role": "Research agent"}]
-    pristine = deepcopy(build_tools(agents))
+    pristine = deepcopy(build_tools())
 
-    payload = build_tools(agents)
+    payload = build_tools()
     touched = _mutate_in_place(payload)
     assert touched > len(pristine), (
         f"mutation did not reach nested sub-schemas (touched={touched})"
     )
     assert payload != pristine, "the mutation helper did not change the payload"
 
-    assert build_tools(agents) == pristine, (
+    assert build_tools() == pristine, (
         "build_tools() changed after an EARLIER payload was mutated in place — "
         "a ToolSpec / ToolDefinition schema escaped by reference (#3383)"
     )

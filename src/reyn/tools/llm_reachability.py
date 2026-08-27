@@ -31,10 +31,14 @@ can deliver it to the model:
       ``search_actions``) are only emitted under a *particular*
       configuration (MCP servers configured / context near budget /
       embedding enabled) — that is correct conditional gating, not an
-      unreachability defect, and executing ``build_tools([])`` with one
-      fixed arg tuple cannot tell the two apart (confirmed: doing so
+      unreachability defect, and executing ``build_tools()`` with one
+      fixed set of kwargs cannot tell the two apart (confirmed: doing so
       flags those as "unreachable" too, a false positive this census
-      avoids).
+      avoids). #5291: ``build_tools``'s own leading positional arg
+      (``available_agents``, dead — 0 real consumers) was removed; this
+      module's own census never depended on that argument's value, only
+      on what parameters MAKE a tool appear, so the removal changes
+      nothing here but the call shape in this prose.
   (b) **Dispatch via ``invoke_action``** — the name is a catalog action,
       i.e. a member of ``universal_dispatch.KNOWN_ACTION_NAMES`` (the
       ``_CATEGORY_ACTIONS`` membership table). #3429 abolished the
@@ -253,10 +257,10 @@ def compute_direct_advertisable_tool_names(*, source_text: str | None = None) ->
     """Derive route (a): every tool name ``build_tools()`` can place directly
     in the ``tools=`` payload under SOME valid combination of its parameters.
 
-    Structural (AST) census, not one execution with one args tuple — see the
-    module docstring for why a single ``build_tools([])`` call produces false
-    positives for correctly-conditional tools (MCP resource verbs, ``compact``,
-    ``spawn_session``, ``search_actions``).
+    Structural (AST) census, not one execution with one fixed set of kwargs —
+    see the module docstring for why a single ``build_tools()`` call produces
+    false positives for correctly-conditional tools (MCP resource verbs,
+    ``compact``, ``spawn_session``, ``search_actions``).
 
     ``source_text`` defaults to the real ``build_tools`` source (via
     ``inspect.getsource``); tests pass a modified string to strip-falsify

@@ -198,7 +198,6 @@ class _OracleOps:
         from reyn.tools.scheme import AdvertisedTools, Presentation
 
         return Presentation(tools_channel=AdvertisedTools(entries=build_tools(
-            self._host.list_available_agents(),
             file_permissions=self._host.get_file_permissions(),
             mcp_servers=self._host.get_mcp_servers(),
             web_fetch_allowed=self._host.get_web_fetch_allowed(),
@@ -210,7 +209,6 @@ class _OracleOps:
         from reyn.runtime.router_tools import build_tools
 
         return build_tools(
-            self._host.list_available_agents(),
             file_permissions=self._host.get_file_permissions(),
             mcp_servers=self._host.get_mcp_servers(),
             web_fetch_allowed=self._host.get_web_fetch_allowed(),

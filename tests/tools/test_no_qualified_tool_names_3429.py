@@ -151,7 +151,6 @@ def test_no_advertised_tool_name_is_qualified() -> None:
     advertised = [
         entry.get("function", {}).get("name") or entry.get("name", "")
         for entry in build_tools(
-            available_agents=[{"name": "peer", "role": "r"}],
             file_permissions={"read": ["."], "write": ["."]},
             mcp_servers=[{"name": "echo", "tools": [{"name": "ping"}]}],
             universal_wrappers_enabled=True,

@@ -146,9 +146,7 @@ def test_build_tools_includes_web_fetch_via_registry():
     parameter is kept for backward compat but is a no-op."""
     from reyn.runtime.router_tools import build_tools
 
-    tools = build_tools(
-        available_agents=[],
-    )
+    tools = build_tools()
 
     # Find web_fetch in the returned tools list
     wf_tools = [t for t in tools if t.get("function", {}).get("name") == "web_fetch"]
@@ -174,9 +172,7 @@ def test_build_tools_web_fetch_not_duplicated():
     being included simultaneously. FP-0022: web_fetch is always in catalog."""
     from reyn.runtime.router_tools import build_tools
 
-    tools = build_tools(
-        available_agents=[],
-    )
+    tools = build_tools()
     wf_tools = [t for t in tools if t.get("function", {}).get("name") == "web_fetch"]
     assert wf_tools, "web_fetch should appear in build_tools output"
 

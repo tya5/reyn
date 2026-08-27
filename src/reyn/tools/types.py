@@ -60,7 +60,12 @@ class RouterCallerState:
     """
     # Catalog discovery (= for catalog tools list_agents / describe_agent handlers)
     agent_registry: Any = None
-    available_agents: list[Mapping[str, Any]] | None = None
+    # #5291: available_agents removed — 0 real consumers (its only one,
+    # delegate_to_agent's per-call `to` enum injection, retired #3978 P6);
+    # every populate site was a real disk read (list_available_agents())
+    # for a value nothing downstream read. If a future capability needs
+    # this again, give it a real reader (mcp_servers-shaped, a live field
+    # some enricher actually reads) — not an eager list nobody consumes.
 
     # IS-1 (docs/proposals/reyn-pipeline-v0.9-design-resolutions.md R6): the
     # PipelineRegistry the run_pipeline tool looks up a registered Pipeline by
@@ -301,7 +306,9 @@ async def build_resource_caller_state(host: Any) -> "RouterCallerState":
         rag_sources = None
 
     return RouterCallerState(
-        available_agents=list(getattr(host, "list_available_agents", list)()),
+        # #5291: no longer reads .reyn/agents/ here — RouterCallerState.
+        # available_agents was removed (0 real consumers); this was a
+        # real disk read (list_available_agents()) on every call.
         op_context_factory=getattr(host, "make_router_op_context", None),
         host=host,
         available_rag_sources=rag_sources,
@@ -491,14 +498,17 @@ class ToolDefinition:
     # Per-call schema enrichment hook (= ADR-0026 M4 Phase 3).
     # When set, callers (= build_tools) invoke this hook AFTER
     # render_for_router to inject per-session dynamic data into the
-    # schema (canonical example: delegate_to_agent.to enum from
-    # available_agents).
+    # schema (live example, #5291: tools/mcp.py's _enrich_router_schema
+    # reads state.mcp_servers to enumerate call_mcp_tool's server names;
+    # the original canonical example, delegate_to_agent.to from
+    # available_agents, is gone — that consumer retired #3978 P6, and
+    # available_agents itself was removed, #5291, 0 remaining readers).
     #
     # Signature: (rendered_tool_dict, RouterCallerState) -> rendered_tool_dict
     #   - rendered_tool_dict: the dict produced by render_for_router
     #     (= function/parameters/etc shape)
-    #   - RouterCallerState: contains available_agents and other
-    #     per-session data the enricher may consult
+    #   - RouterCallerState: per-session data the enricher may consult
+    #     (e.g. mcp_servers)
     #   - returns: a NEW dict with dynamic enrichment applied (do NOT
     #     mutate the input; static schema is the canonical render)
     #
@@ -545,10 +555,10 @@ class ToolDefinition:
 
         M4 Phase 3: when ``schema_enricher`` is set on the ToolDefinition AND
         ``state`` is provided, the static render is post-processed by the
-        enricher to inject per-call dynamic data (e.g. delegate_to_agent.to
-        enum from RouterCallerState.available_agents). When either is None (= 24/26
-        capabilities, plus all callers that don't supply state), the static
-        render is returned as-is.
+        enricher to inject per-call dynamic data (e.g. ``call_mcp_tool``'s
+        server-name enum from ``RouterCallerState.mcp_servers``, #5291).
+        When either is None (= 24/26 capabilities, plus all callers that
+        don't supply state), the static render is returned as-is.
         """
         rendered = {
             "type": "function",

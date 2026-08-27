@@ -190,7 +190,7 @@ def test_unconfigured_project_advertises_the_file_tools(tmp_path: Path) -> None:
     resolver = PermissionResolver({}, project_root=zone)
     names = {
         t["function"]["name"]
-        for t in build_tools([], file_permissions=resolver.advertised_file_permissions())
+        for t in build_tools(file_permissions=resolver.advertised_file_permissions())
     }
     assert {"read_file", "list_directory"} <= names
     assert _gate_readable(resolver, str(zone / "src" / "a.py")) is True
@@ -206,7 +206,7 @@ def test_deny_hides_the_file_tools(tmp_path: Path) -> None:
     assert resolver.advertised_file_permissions() is None
     names = {
         t["function"]["name"]
-        for t in build_tools([], file_permissions=resolver.advertised_file_permissions())
+        for t in build_tools(file_permissions=resolver.advertised_file_permissions())
     }
     assert not ({"read_file", "list_directory", "write_file", "delete_file"} & names)
     assert _gate_readable(resolver, str(zone / "src" / "a.py")) is False

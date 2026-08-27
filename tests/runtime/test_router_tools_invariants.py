@@ -21,11 +21,6 @@ from reyn.runtime.router_tools import (
     get_dispatch_kind,
 )
 
-# ── shared fixtures ───────────────────────────────────────────────────────────
-
-_SAMPLE_AGENTS = [{"name": "peer_agent", "role": "Peer"}]
-
-
 # ── 1. ToolSpec round-trip to OpenAI shape ────────────────────────────────────
 
 
@@ -104,7 +99,7 @@ def test_build_tools_dispatch_kinds_consistent() -> None:
     default to "sync". delegate_to_agent (the original sole async tool
     besides spawn_session) retired in proposal 0067 P6 (#3978).
     """
-    tools = build_tools(_SAMPLE_AGENTS)
+    tools = build_tools()
     tool_names = [t["function"]["name"] for t in tools]
 
     # All tools in the baseline set must be "sync" except the known async ones.
@@ -122,7 +117,6 @@ def test_build_tools_full_permissions_dispatch_kinds_consistent() -> None:
     (list_directory, read_file, write_file, delete_file, list_mcp_servers,
     list_mcp_tools, call_mcp_tool, web_fetch) must all be 'sync'."""
     tools = build_tools(
-        _SAMPLE_AGENTS,
         file_permissions={"read": ["src"], "write": ["out"]},
         mcp_servers=[{"name": "fs", "description": "FS"}],
         web_fetch_allowed=True,
@@ -171,7 +165,6 @@ def test_build_tools_advertises_all_mcp_verbs() -> None:
     could not discover or call them even though the handlers worked.
     """
     tools = build_tools(
-        _SAMPLE_AGENTS,
         mcp_servers=[{"name": "fs", "description": "FS"}],
     )
     tool_names = {t["function"]["name"] for t in tools}

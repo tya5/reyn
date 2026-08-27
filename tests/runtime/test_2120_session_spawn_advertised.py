@@ -26,7 +26,7 @@ from reyn.runtime.router_tools import build_tools
 
 
 def _advertised(**kw) -> set:
-    return {t.get("function", {}).get("name") for t in build_tools([], **kw)}
+    return {t.get("function", {}).get("name") for t in build_tools(**kw)}
 
 
 def test_session_spawn_is_advertised_individual_mode() -> None:
@@ -50,7 +50,7 @@ def test_session_spawn_schema_is_advertised_complete() -> None:
     """Tier 2: the advertised spawn_session carries its spawn-time schema (the mode
     enum + request) — the LLM sees a usable tool, not a name-only stub."""
     tool = next(
-        t for t in build_tools([])
+        t for t in build_tools()
         if t.get("function", {}).get("name") == "spawn_session"
     )
     props = tool["function"]["parameters"]["properties"]

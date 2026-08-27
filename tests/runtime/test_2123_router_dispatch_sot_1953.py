@@ -117,7 +117,6 @@ _EXPECTED_DISPATCH: "frozenset[str]" = frozenset({
     "describe_session",
 })
 
-_AG = [{"name": "a1", "description": "d"}]
 _MCP = [{"name": "fs", "description": "Filesystem MCP server"}]
 
 
@@ -127,7 +126,6 @@ def _advertised_bare_router_tools() -> "set[str]":
     names: set[str] = set()
     for wrappers in (True, False):
         tools = build_tools(
-            _AG,
             file_permissions={"read": ["src"], "write": ["out"]},
             mcp_servers=_MCP, universal_wrappers_enabled=wrappers, compact_visible=True,
         )

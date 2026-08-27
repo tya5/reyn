@@ -94,7 +94,7 @@ def test_present_and_render_template_resolve_in_the_default_registry():
 def test_build_tools_contains_present_and_render_template():
     """Tier 2: the default chat catalog (build_tools output) now advertises present +
     render_template — directly reversing the observed 0/69 (unreachable from chat)."""
-    tools = build_tools([{"name": "a1", "description": "d"}])
+    tools = build_tools()
     names = {t["function"]["name"] for t in tools}
     assert "present" in names
     assert "render_template" in names

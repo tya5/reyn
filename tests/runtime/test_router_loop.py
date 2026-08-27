@@ -661,7 +661,7 @@ async def test_session_spawn_dispatches_to_host_not_unhandled():
     loop = RouterLoop(host=host, chain_id="chain-test")
 
     from reyn.runtime.router_tools import build_tools
-    tools = build_tools(host.list_available_agents())
+    tools = build_tools()
     loop._catalog = {t["function"]["name"]: t for t in tools}
     loop._tool_names = frozenset(loop._catalog.keys())
 
@@ -701,7 +701,7 @@ async def test_send_to_session_dispatches_to_host_not_unhandled():
     loop = RouterLoop(host=host, chain_id="chain-test")
 
     from reyn.runtime.router_tools import build_tools
-    tools = build_tools(host.list_available_agents())
+    tools = build_tools()
     loop._catalog = {t["function"]["name"]: t for t in tools}
     loop._tool_names = frozenset(loop._catalog.keys())
 
