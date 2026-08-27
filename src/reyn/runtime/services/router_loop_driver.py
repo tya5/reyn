@@ -463,7 +463,10 @@ class RouterLoopDriver:
                 # the pre-trigger's own estimate was wrong, which the
                 # existing adaptive learner (not a second compaction
                 # trigger here) is the correct fix for.
-                if _unrecovered.saw_byte_limit:
+                if (
+                    _unrecovered.saw_byte_limit
+                    and self._compaction.recovery_policy == "same_turn"
+                ):
                     await self._compaction_controller.force_compact_now()
                 raise
             return _shim.usage
