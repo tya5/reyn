@@ -1384,6 +1384,28 @@ class Session:
             self._on_audit_event_for_state_change,
         )
 
+        # #5276: mcp_subscription_state()'s reactive cache — recomputed only
+        # when one of the events that can actually change the subscription
+        # summary fires (subscribe/unsubscribe, a server being installed/
+        # removed, or a (re)connect — mcp_initialized/mcp_resource_updated,
+        # per #5277's own investigation that these two ALREADY cover a bare
+        # reconnect's mode/honored-set shift, so no new kind was needed).
+        # ``None`` means "never computed yet" — the first real read (lazy,
+        # not at construction) fills it; every subsequent read is a bare
+        # attribute return, matching ``turn_usage_fn``/``ctx_compaction_
+        # status_fn``'s own "store, don't run on every render frame" shape,
+        # but PUSH- rather than PULL-invalidated (recompute happens off the
+        # render path entirely, in the subscriber callback).
+        self._cached_mcp_subscriptions: "list[dict] | None" = None
+        self._audit_events.add_subscriber(
+            self._invalidate_mcp_subscription_cache,
+            kinds=[
+                "mcp_resource_subscribed", "mcp_resource_unsubscribed",
+                "mcp_server_installed", "mcp_server_removed",
+                "mcp_initialized", "mcp_resource_updated",
+            ],
+        )
+
         # Budget adapter, byte-identical extraction, simplest of the #3082 families (Family 4, see session-construction.md#family-4-cost-budget)
         self._budget = self._build_budget(
             budget_tracker, self._audit_events, self.agent_name, _router_cap,
@@ -9246,12 +9268,31 @@ class Session:
         Always ``[]`` for an ephemeral session (never populates the
         connection service — same condition ``mcp_held_servers`` documents).
 
-        Thin forwarder to ``MCPConnectionService.subscription_summary`` —
-        see that method's own docstring for why the composition lives there
-        and not here (the single-producer reasoning behind both this method
-        and ``RouterHostAdapter.mcp_list_subscriptions`` reading the same
+        #5276: reactive cache — ``self._cached_mcp_subscriptions`` is filled
+        lazily on first call (or by :meth:`_invalidate_mcp_subscription_cache`
+        whenever a subscribe/unsubscribe/install/removed/(re)connect event
+        fires — see the subscriber registration in ``__init__``), so a
+        render-frame caller pays for the real recomputation only on the
+        rare frame where something actually changed, not every frame.
+        Recomputation itself is still this SAME thin forwarder to
+        ``MCPConnectionService.subscription_summary`` — see that method's
+        own docstring for why the composition lives there and not here (the
+        single-producer reasoning behind both this method and
+        ``RouterHostAdapter.mcp_list_subscriptions`` reading the same
         source)."""
-        return self._mcp_connection_service.subscription_summary()
+        if self._cached_mcp_subscriptions is None:
+            self._cached_mcp_subscriptions = self._mcp_connection_service.subscription_summary()
+        return self._cached_mcp_subscriptions
+
+    def _invalidate_mcp_subscription_cache(self, _event: object) -> None:
+        """#5276: the subscriber callback wired to the events that can
+        actually change :meth:`mcp_subscription_state`'s answer — recomputes
+        EAGERLY, off the render path entirely, so the next render-frame
+        read of :attr:`_cached_mcp_subscriptions` is a bare attribute
+        return. Takes the event only to match the ``Subscriber`` shape
+        (``Callable[[Event], None]``) — the event itself carries no
+        information this recompute needs beyond "something happened"."""
+        self._cached_mcp_subscriptions = self._mcp_connection_service.subscription_summary()
 
     async def aclose_background_tasks(self) -> None:
         """#4759 teardown: drain every background task this session (or a
