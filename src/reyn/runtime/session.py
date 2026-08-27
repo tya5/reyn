@@ -1426,6 +1426,28 @@ class Session:
         # mutation site (set_hook_enabled's applied path, _reapply_hooks,
         # load_persisted_toggles) — see each site's own comment. No
         # subscriber registration for this cache at all.
+        #
+        # #5284 review (lead-coder BLOCK): the 3-site enumeration above is
+        # a claim about a search actually run, not an assumption — every
+        # write to the two things hook_state()'s answer is a pure function
+        # of (`self._disabled_hooks`, `self._hook_dispatcher`'s registry):
+        #   grep -n '_disabled_hooks\s*=\|_disabled_hooks\.add\|_disabled_hooks\.discard' session.py
+        #     → exactly 4 lines, all inside set_hook_enabled (2) and
+        #       load_persisted_toggles (2)
+        #   grep -rn '\.replace_registry\(' src/reyn/
+        #     → exactly 1 call site (session.py, inside _reapply_hooks);
+        #       HookDispatcher.replace_registry is the ONLY method that
+        #       reassigns HookDispatcher._registry after construction
+        #       (checked dispatcher.py directly — the constructor's own
+        #       assignment doesn't need an invalidation, since this cache
+        #       starts at None regardless)
+        # ⚠️ WHOEVER ADDS A NEW SITE THAT MUTATES EITHER OF THOSE TWO
+        # THINGS MUST ALSO CLEAR `self._cached_hook_items = None` THERE —
+        # nothing here will turn red on its own; a 4th such site added
+        # without this line means hook_state() silently starts returning a
+        # stale answer (the #5267 "breaking side" comment placement: on
+        # the field that breaks, not just the code path that uses it
+        # correctly today).
         self._cached_hook_items: "list[dict] | None" = None
 
         # Budget adapter, byte-identical extraction, simplest of the #3082 families (Family 4, see session-construction.md#family-4-cost-budget)
