@@ -398,6 +398,13 @@ class AgentRegistry:
         # on every attach so a `/attach <other>` doesn't strand them on the old
         # session. Generic session-level listeners (not domain-specific).
         self._focus_chat_listener: "Callable[..., None] | None" = None
+        # #5041 ①: the ACTUAL closure subscribed to a session's audit_events
+        # — never the raw ``_focus_chat_listener`` itself once a listener is
+        # set (see ``_wire_focus_listeners``'s own docstring for why this
+        # exists: the raw listener is called with a name BOUND AT SUBSCRIBE
+        # TIME, and unsubscribe must target the exact wrapped object, not a
+        # freshly-built one, or the unsubscribe silently no-ops).
+        self._wired_chat_listener: "Callable[[object], None] | None" = None
         self._focus_intervention_channel: str | None = None
         # WAL truncation throttle (WAL-floor design). monotonic ts of last
         # successful truncation attempt; ``None`` means no throttle is active.
@@ -3864,10 +3871,38 @@ class AgentRegistry:
         self._focus_intervention_channel = None
 
     def _wire_focus_listeners(self, session: "object | None") -> None:
+        """#5041 ① (architect's own BLOCK finding, #5344's TESTS-READ(B)):
+        the closure actually subscribed to ``session.audit_events`` BINDS
+        the target agent's name NOW, at subscribe time — never left for
+        the listener to read a live ``self.attached_name`` later, when it
+        is actually CALLED. ``EventLog`` dispatches to subscribers via its
+        own background consumer (#4961 C), not synchronously with
+        ``emit()`` — so a listener that reads global "who's attached"
+        state at call time is answering an EXECUTION-ORDER question
+        ("has a switch landed before this callback happened to run?") it
+        has no business depending on. Binding here instead means a
+        callback that runs late still carries the name of the session it
+        was ACTUALLY subscribed to, regardless of any later switch —
+        structurally, not by timing luck.
+
+        ``self.attached_name`` is safe to read HERE specifically because
+        this call always happens in the SAME synchronous block as the
+        connection flip that made ``session`` the target (``attach()`` /
+        ``attach_session()`` / ``bind_focus_listeners``'s own initial
+        wire) — the same no-``await``-in-between barrier property
+        ``_announce_session_attached`` already relies on elsewhere in
+        this file."""
         if session is None:
             return
         if self._focus_chat_listener is not None:
-            session.subscribe_audit_events(self._focus_chat_listener)
+            listener = self._focus_chat_listener
+            agent = self.attached_name
+
+            def _bound_listener(event: "object", _listener=listener, _agent=agent) -> None:
+                _listener(event, agent=_agent)
+
+            self._wired_chat_listener = _bound_listener
+            session.subscribe_audit_events(_bound_listener)
         if self._focus_intervention_channel is not None:
             try:
                 session.register_intervention_listener(self._focus_intervention_channel)
@@ -3877,8 +3912,14 @@ class AgentRegistry:
     def _unwire_focus_listeners(self, session: "object | None") -> None:
         if session is None:
             return
-        if self._focus_chat_listener is not None:
-            session.unsubscribe_audit_events(self._focus_chat_listener)
+        if self._wired_chat_listener is not None:
+            # Unsubscribe the EXACT closure `_wire_focus_listeners` built
+            # (never a freshly-constructed one, or the identity check
+            # inside `unsubscribe_audit_events` silently no-ops and the
+            # old session keeps calling a listener meant for a switch
+            # that already happened).
+            session.unsubscribe_audit_events(self._wired_chat_listener)
+            self._wired_chat_listener = None
         if self._focus_intervention_channel is not None:
             try:
                 session.unregister_intervention_listener(self._focus_intervention_channel)

@@ -186,18 +186,42 @@ def forwarded_frame_kinds() -> frozenset[str]:
 
 @dataclass(frozen=True)
 class DisplayFrame:
-    """A display-path frame: one verbatim outbox message → ``renderer.message``."""
+    """A display-path frame: one verbatim outbox message → ``renderer.message``.
+
+    #5041 ①: ``agent`` is the ORIGIN agent's name — architect's own reading
+    (issuecomment-5442805752) found this frame carried no attribution at
+    all, structurally, so a consumer draining a stream that N agents'
+    frames converge onto (e.g. the registry's process-wide ``repl_outbox``,
+    #5041's own motivating case) could not tell them apart, even in
+    principle. Not a new concept: :class:`BacklogBatch` below already
+    carries ``agent`` on the snapshot/reconnect path (#5139) — this is that
+    same axis threaded onto the live per-frame path too. Optional / defaults
+    to ``None`` so every existing construction site (there are many, across
+    the AG-UI wire encode/decode paths and test doubles) is unaffected;
+    :class:`~reyn.interfaces.transport.in_process.InProcessTransport` is the
+    one production path that populates it today (from the registry's
+    already-tracked attached-agent name), closing ①'s finding for the
+    ``repl_outbox`` convergence point specifically. Scope note (disclosed,
+    not silently dropped): the SAME structural gap exists for an
+    ``EventFrame`` sourced from a session's own audit-event subscription
+    outside that convergence point — left for a follow-up, per the owner
+    dispatch's own explicit "①だけ、広げない" scoping."""
 
     message: "OutboxMessage"
     tag: FrameTag = FrameTag.DISPLAY
+    agent: "str | None" = None
 
 
 @dataclass(frozen=True)
 class EventFrame:
-    """An event-path frame: one renderer-relevant audit-event → ``on_audit_event``."""
+    """An event-path frame: one renderer-relevant audit-event → ``on_audit_event``.
+
+    #5041 ①: see :class:`DisplayFrame`'s own docstring — same missing-
+    attribution finding, same fix shape, same optional/defaulted field."""
 
     event: "Event"
     tag: FrameTag = FrameTag.EVENT
+    agent: "str | None" = None
 
 
 # A client consumes a stream of these; ``frame.tag`` selects the renderer entry.
