@@ -407,3 +407,270 @@ def test_retry_loop_that_only_413s_still_emits_wire_bytes_with_accepted_false() 
         f"the rejected size must be a real positive measurement, not a "
         f"placeholder; got {[e.data.get('wire_bytes') for e in measured]!r}"
     )
+
+
+# ---------------------------------------------------------------------------
+# #5316: the per-component breakdown estimate_wire_bytes threw away
+# ---------------------------------------------------------------------------
+
+
+def test_estimate_wire_bytes_breakdown_components_sum_to_the_total() -> None:
+    """Tier 1: #5316 — estimate_wire_bytes_breakdown's 5 fields sum to
+    exactly what estimate_wire_bytes (the pre-#5316 total-only function)
+    returns for the SAME inputs — the split adds visibility, it does not
+    change the measured quantity."""
+    from reyn.services.compaction.engine import estimate_wire_bytes_breakdown
+
+    SP = "system prompt text"
+    head = [{"role": "user", "content": "h" * 50, "seq": 1}]
+    summary = {"topic_arc": "stub", "covers_through_seq": 1}
+    tail = [{"role": "user", "content": "t" * 30, "seq": 2}]
+    new_msg = {"role": "user", "content": "q" * 20, "seq": 3}
+
+    breakdown = estimate_wire_bytes_breakdown(
+        SP=SP, head=head, summary=summary, tail=tail, new_msg=new_msg,
+    )
+    total = estimate_wire_bytes(SP=SP, head=head, summary=summary, tail=tail, new_msg=new_msg)
+    assert breakdown.total == total
+    assert (
+        breakdown.sp_bytes + breakdown.head_bytes + breakdown.summary_bytes
+        + breakdown.tail_bytes + breakdown.new_msg_bytes
+    ) == total
+
+
+def test_estimate_wire_bytes_breakdown_isolates_which_component_dominates() -> None:
+    """Tier 1: #5316's own reason to exist — a payload where ONE component
+    is far larger than the others must show up as that one component's
+    field being far larger, not just a bigger opaque total (the exact
+    "history支配/単品大/最新message単体のどれか" diagnostic #5316's issue
+    body names)."""
+    from reyn.services.compaction.engine import estimate_wire_bytes_breakdown
+
+    huge_tail = [{"role": "tool", "content": "x" * 100_000, "seq": 1}]
+    breakdown = estimate_wire_bytes_breakdown(
+        SP="sp", head=[{"role": "user", "content": "h", "seq": 2}],
+        summary=None, tail=huge_tail,
+        new_msg={"role": "user", "content": "q", "seq": 3},
+    )
+    assert breakdown.tail_bytes > breakdown.sp_bytes
+    assert breakdown.tail_bytes > breakdown.head_bytes
+    assert breakdown.tail_bytes > breakdown.new_msg_bytes
+
+
+def test_retry_loop_success_event_carries_the_breakdown_fields() -> None:
+    """Tier 2: #5316 — the real ``compaction_wire_bytes_measured`` event
+    (not a unit-tested helper in isolation) carries the 5 breakdown fields,
+    each matching an INDEPENDENTLY computed value over the same inputs —
+    not merely present, but correct."""
+    cfg = CompactionConfig(
+        component_weights={
+            "head": 10, "body": 5, "tail": 15, "new_msg": 10, "compaction_batch": 60,
+        },
+        section_weights={
+            "topic_arc": 5, "decisions": 40, "pending": 25,
+            "session_user_facts": 10, "artifacts_referenced": 35,
+        },
+        section_caps_spec_tokens=100,
+        use_chars4_estimate=True,
+    )
+    engine = _MinimalCompactionEngine()
+    learner = TokenMultiplierLearner(storage_path=Path(tempfile.mkdtemp()) / "m.json")
+
+    SP = "system prompt"
+    head = [{"role": "user", "content": "h", "seq": 1}]
+    tail = [{"role": "user", "content": "t", "seq": 2}]
+    new_msg = {"role": "user", "content": "hello", "seq": 3}
+
+    async def _success_call(**kwargs):
+        from types import SimpleNamespace
+        return SimpleNamespace(usage=SimpleNamespace(prompt_tokens=800), choices=[])
+
+    seen: list = []
+    engine._events.add_subscriber(lambda e: seen.append(e))
+
+    asyncio.run(retry_loop(
+        SP=SP, head=head, summary=None, raw_middle=[], tail=tail, new_msg=new_msg,
+        cfg=cfg, model="test-model", engine=engine,  # type: ignore[arg-type]
+        learner=learner, main_call=_success_call, max_iterations=8,
+    ))
+
+    (event,) = [e for e in seen if e.type == "compaction_wire_bytes_measured"]
+    expected_sp = len(SP.encode("utf-8"))
+    expected_head = _estimate_bytes_list(head)
+    expected_tail = _estimate_bytes_list(tail)
+    expected_new_msg = estimate_turn_bytes(new_msg)
+    assert event.data.get("sp_bytes") == expected_sp
+    assert event.data.get("head_bytes") == expected_head
+    assert event.data.get("summary_bytes") == 0
+    assert event.data.get("tail_bytes") == expected_tail
+    assert event.data.get("new_msg_bytes") == expected_new_msg
+    assert (
+        event.data.get("sp_bytes") + event.data.get("head_bytes")
+        + event.data.get("summary_bytes") + event.data.get("tail_bytes")
+        + event.data.get("new_msg_bytes")
+    ) == event.data.get("wire_bytes")
+
+
+# ---------------------------------------------------------------------------
+# #5316: the learned byte limit, read back (not re-measured) into the
+# terminal UnrecoveredError message
+# ---------------------------------------------------------------------------
+
+
+def test_learned_byte_limit_clause_with_both_bounds_names_both() -> None:
+    """Tier 1: #5316 — with both an accepted (lower) and rejected (upper)
+    bound observed, the clause names both, derived from the inputs, not a
+    hardcoded template check."""
+    from reyn.services.compaction.engine import _learned_byte_limit_clause
+
+    clause = _learned_byte_limit_clause(
+        last_accepted_wire_bytes=12_345, last_rejected_wire_bytes=20_000,
+    )
+    assert "12345" in clause  # no thousands separator — the actual, single format
+    assert str(20_000) in clause
+
+
+def test_learned_byte_limit_clause_with_no_accepted_bound_degrades() -> None:
+    """Tier 1: #5316 — a turn whose FIRST attempt already 413s has no
+    accepted bound yet; the clause must still name the rejected bound
+    without fabricating an accepted one."""
+    from reyn.services.compaction.engine import _learned_byte_limit_clause
+
+    clause = _learned_byte_limit_clause(
+        last_accepted_wire_bytes=None, last_rejected_wire_bytes=20_000,
+    )
+    assert str(20_000) in clause
+    assert "accepted this turn" in clause.lower() or "no smaller" in clause.lower()
+
+
+def test_learned_byte_limit_clause_with_no_rejected_bound_is_empty() -> None:
+    """Tier 1: #5316 — with no rejected bound at all (should not arise on a
+    genuine byte-limit terminal path, but the function must not fabricate
+    content it was not given), the clause is the empty string — a no-op
+    append onto the base message."""
+    from reyn.services.compaction.engine import _learned_byte_limit_clause
+
+    assert _learned_byte_limit_clause(
+        last_accepted_wire_bytes=5_000, last_rejected_wire_bytes=None,
+    ) == ""
+
+
+def test_retry_loop_that_only_413s_names_the_learned_limit_in_the_terminal_message() -> None:
+    """Tier 2: #5316 — THE end-to-end proof. A turn whose every attempt
+    413s (same fixture as the pre-#5316 accepted=False regression test
+    above) raises UnrecoveredError whose message names the actual rejected
+    byte size that was observed THIS run — not a generic "413 occurred"
+    with no number attached. No accepted bound is claimed (every attempt
+    in this fixture failed)."""
+    from reyn.services.compaction.engine import UnrecoveredError
+
+    class _FakeStatusError(Exception):
+        def __init__(self, message: str, *, status_code: int) -> None:
+            super().__init__(message)
+            self.status_code = status_code
+
+    cfg = CompactionConfig(
+        component_weights={
+            "head": 10, "body": 5, "tail": 15, "new_msg": 10, "compaction_batch": 60,
+        },
+        section_weights={
+            "topic_arc": 5, "decisions": 40, "pending": 25,
+            "session_user_facts": 10, "artifacts_referenced": 35,
+        },
+        section_caps_spec_tokens=100,
+        use_chars4_estimate=True,
+    )
+    engine = _MinimalCompactionEngine()
+    learner = TokenMultiplierLearner(storage_path=Path(tempfile.mkdtemp()) / "m.json")
+
+    head = [{"role": "user", "content": "h", "seq": 1}]
+    tail = [{"role": "user", "content": "t", "seq": 2}]
+    new_msg = {"role": "user", "content": "q", "seq": 3}
+
+    async def _always_413(**kwargs):
+        from reyn.services.compaction.engine import ContextOverflowError
+        raise ContextOverflowError("simulated 413") from _FakeStatusError(
+            "Request Entity Too Large", status_code=413,
+        )
+
+    seen: list = []
+    engine._events.add_subscriber(lambda e: seen.append(e))
+
+    try:
+        asyncio.run(retry_loop(
+            SP="sp", head=head, summary=None, raw_middle=[], tail=tail,
+            new_msg=new_msg, cfg=cfg, model="test-model",
+            engine=engine,  # type: ignore[arg-type]
+            learner=learner, main_call=_always_413, max_iterations=40,
+        ))
+        raise AssertionError("expected UnrecoveredError, none raised")
+    except UnrecoveredError as exc:
+        last_rejected = [
+            e.data["wire_bytes"] for e in seen
+            if e.type == "compaction_wire_bytes_measured" and e.data.get("accepted") is False
+        ][-1]
+        assert str(last_rejected) in str(exc), (
+            f"terminal message should name the last observed rejected byte "
+            f"size {last_rejected}; got: {exc}"
+        )
+        assert "accepted" in str(exc).lower() and (
+            "no smaller" in str(exc).lower() or "not accepted" in str(exc).lower()
+            or "no accepted" in str(exc).lower()
+        )
+
+
+def test_compaction_wire_bytes_measured_carries_only_byte_counts_never_content() -> None:
+    """Tier 2: #5316 (architect co-vet non-blocking note) — every value in a
+    real ``compaction_wire_bytes_measured`` event is an ``int`` or ``bool``,
+    never a string (which could carry real payload content). This is the
+    company-environment guarantee ``EVENT_AUDIT_REQUIREMENTS`` itself
+    cannot express — that dict only declares which fields are REQUIRED, not
+    a type/no-content constraint on their values, so a future field like a
+    ``head_preview`` string could be added there without this gate ever
+    turning red. This test is that gate."""
+    cfg = CompactionConfig(
+        component_weights={
+            "head": 10, "body": 5, "tail": 15, "new_msg": 10, "compaction_batch": 60,
+        },
+        section_weights={
+            "topic_arc": 5, "decisions": 40, "pending": 25,
+            "session_user_facts": 10, "artifacts_referenced": 35,
+        },
+        section_caps_spec_tokens=100,
+        use_chars4_estimate=True,
+    )
+    engine = _MinimalCompactionEngine()
+    learner = TokenMultiplierLearner(storage_path=Path(tempfile.mkdtemp()) / "m.json")
+
+    async def _success_call(**kwargs):
+        from types import SimpleNamespace
+        return SimpleNamespace(usage=SimpleNamespace(prompt_tokens=800), choices=[])
+
+    seen: list = []
+    engine._events.add_subscriber(lambda e: seen.append(e))
+
+    asyncio.run(retry_loop(
+        SP="system prompt with secrets", head=[{"role": "user", "content": "sensitive", "seq": 1}],
+        summary=None, raw_middle=[], tail=[{"role": "user", "content": "also sensitive", "seq": 2}],
+        new_msg={"role": "user", "content": "and this too", "seq": 3},
+        cfg=cfg, model="test-model", engine=engine,  # type: ignore[arg-type]
+        learner=learner, main_call=_success_call, max_iterations=8,
+    ))
+
+    (event,) = [e for e in seen if e.type == "compaction_wire_bytes_measured"]
+    # #4496 PR-1's own framework-stamped keys — always present, legitimately
+    # non-numeric (a hash / a counter used as an id), NOT something this
+    # kind's own emit-site code controls. Everything else on this event
+    # must be int/bool — checked WITHOUT a fixed whitelist of "the fields
+    # I expect", so a future field this emit site adds (the exact scenario
+    # architect's co-vet warned about, e.g. a "head_preview" string) is
+    # caught even though this test was never updated to name it.
+    _FRAMEWORK_KEYS = {"emitter", "audit_seq", "agent_id", "run_id"}
+    non_numeric = {
+        k: v for k, v in event.data.items()
+        if k not in _FRAMEWORK_KEYS and not isinstance(v, (int, bool))
+    }
+    assert non_numeric == {}, (
+        f"every compaction_wire_bytes_measured field this emit site controls "
+        f"must be int/bool only — got non-numeric values: {non_numeric!r}"
+    )
