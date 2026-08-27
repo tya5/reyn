@@ -959,9 +959,11 @@ def fetch_pr_data(pr_number: int) -> tuple[str, list[int], list[str], str]:
     Uses ``gh pr view``. ``commit_messages`` is one full message string
     (headline + body) per commit currently on the PR — see check 4 in the
     module docstring for why these are scanned independently of
-    ``closingIssuesReferences``. ``title`` (#5321) is the PR's own title —
-    see :func:`check_contradictions`'s own docstring for when it actually
-    becomes the squash-merge headline.
+    ``closingIssuesReferences``. ``title`` (#5321, corrected #5330) is
+    the PR's own title — see :func:`check_contradictions`'s own
+    docstring for when it actually reaches the merge commit (either the
+    squash headline or a plain merge commit's body) once this PR merges
+    into the default branch.
     """
     result = subprocess.run(
         [

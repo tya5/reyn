@@ -713,10 +713,13 @@ def test_boundary_3_a_genuine_closes_inside_a_multiline_fence_stays_green():
 
 
 # ---------------------------------------------------------------------------
-# #5321: the PR title itself, when it becomes the squash-merge headline
-# (this repo's own squash_merge_commit_title=COMMIT_OR_PR_TITLE setting —
-# only true for a 2+-commit PR; a 1-commit PR's title never reaches the
-# merge commit, its ONE commit's own title does).
+# #5321, corrected #5330: the PR title itself, scanned UNCONDITIONALLY —
+# it can reach the merge commit either as a squash headline (this repo's
+# own squash_merge_commit_title=COMMIT_OR_PR_TITLE setting, true for a
+# 2+-commit PR) OR as a plain merge commit's body regardless of commit
+# count (allow_merge_commit=true, merge_commit_message=PR_TITLE — the
+# field #5321's first version missed). The merge method is not known at
+# check time, so the scan cannot be gated on commit count at all.
 # ---------------------------------------------------------------------------
 
 
