@@ -109,6 +109,17 @@ EVENT_AUDIT_REQUIREMENTS: dict[str, frozenset[str]] = {
     # WITHOUT re-triggering user_submitted/turn_started (same chain_id).
     # `attempt` is the 1-based retry count within this turn.
     "payload_reduced": frozenset({"chain_id", "attempt"}),
+    # #5316: retry_loop's byte-axis measurement (#4944①) — wire_bytes is
+    # the total, accepted names whether this size was SENT and SUCCEEDED
+    # (True, a lower bound on the real limit) or SENT and REJECTED (False,
+    # an upper bound). #5316 splits that total into its 5 components (byte
+    # counts only, never content — company environment) so a reader can
+    # tell WHICH part of the payload dominated, closing the "measure-and-
+    # emit only, not yet consumed" gap #4944① left open.
+    "compaction_wire_bytes_measured": frozenset({
+        "wire_bytes", "accepted",
+        "sp_bytes", "head_bytes", "summary_bytes", "tail_bytes", "new_msg_bytes",
+    }),
     # #5067: same shape as the two above, on the OTHER band pairing
     # (cost-budget x audit-events, not permission x audit-events) — a
     # management operation on the live BudgetTracker's hard caps

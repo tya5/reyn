@@ -1798,6 +1798,54 @@ def _estimate_bytes_list(turns: list[dict]) -> int:
     return sum(estimate_turn_bytes(t) for t in turns)
 
 
+@dataclass(frozen=True)
+class WireByteBreakdown:
+    """#5316: the 5-component byte breakdown ``estimate_wire_bytes`` computes
+    but, before this, only ever summed and threw away — the diagnostic gap
+    #5316 exists to close ("spill が効いたか/効かなかったか、出た後に判る手段
+    が無い"). Each field is a byte COUNT only, never content (company
+    environment — see the ``compaction_wire_bytes_measured`` emit sites'
+    own comment)."""
+
+    sp_bytes: int
+    head_bytes: int
+    summary_bytes: int
+    tail_bytes: int
+    new_msg_bytes: int
+
+    @property
+    def total(self) -> int:
+        return (
+            self.sp_bytes + self.head_bytes + self.summary_bytes
+            + self.tail_bytes + self.new_msg_bytes
+        )
+
+
+def estimate_wire_bytes_breakdown(
+    *,
+    SP: str,
+    head: list[dict],
+    summary: dict | None,
+    tail: list[dict],
+    new_msg: dict,
+) -> WireByteBreakdown:
+    """Same 5 components ``estimate_wire_bytes`` sums, kept apart (#5316) so
+    a caller can tell WHICH component dominated a given payload — the
+    diagnostic ``estimate_wire_bytes``'s own single ``int`` return cannot
+    answer. See that function's docstring for the shared KNOWN
+    under-measurement disclosure (unchanged by this split)."""
+    return WireByteBreakdown(
+        sp_bytes=len(SP.encode("utf-8")),
+        head_bytes=_estimate_bytes_list(head),
+        summary_bytes=(
+            len(json.dumps(summary, ensure_ascii=False).encode("utf-8"))
+            if summary else 0
+        ),
+        tail_bytes=_estimate_bytes_list(tail),
+        new_msg_bytes=estimate_turn_bytes(new_msg),
+    )
+
+
 def estimate_wire_bytes(
     *,
     SP: str,
@@ -1819,17 +1867,15 @@ def estimate_wire_bytes(
     than chased here with a provider-specific correction — the same
     "widen the floor, not the estimate" shape retry_loop's own token floor
     already uses (``SP + head_min + summary + tail_min + new_msg``, this
-    function's byte-axis mirror)."""
-    history_bytes = (
-        _estimate_bytes_list(head)
-        + (
-            len(json.dumps(summary, ensure_ascii=False).encode("utf-8"))
-            if summary else 0
-        )
-        + _estimate_bytes_list(tail)
-        + estimate_turn_bytes(new_msg)
-    )
-    return history_bytes + len(SP.encode("utf-8"))
+    function's byte-axis mirror).
+
+    #5316: a thin wrapper over :func:`estimate_wire_bytes_breakdown` — kept
+    as its own narrow ``int``-returning function since its two existing
+    callers (``router_loop_driver.py``'s before/after spill comparison)
+    only ever want the total, never the breakdown."""
+    return estimate_wire_bytes_breakdown(
+        SP=SP, head=head, summary=summary, tail=tail, new_msg=new_msg,
+    ).total
 
 
 # #3783 stage 2: same-cause consecutive-recover cap. Stage 3 will flip the
@@ -1851,6 +1897,34 @@ def estimate_wire_bytes(
 # Without the reset, a genuinely-shrinking cause (#3783 stage 3 arm (a)'s
 # own motivating case) can trip this cap even while making real progress.
 _MAX_CONSECUTIVE_SAME_CAUSE_RECOVERS = 2
+
+
+def _learned_byte_limit_clause(
+    *, last_accepted_wire_bytes: int | None, last_rejected_wire_bytes: int | None,
+) -> str:
+    """#5316: render the bracketed "this is what we learned about the
+    gateway's real byte limit THIS turn" clause for a byte-limit terminal
+    message — a read-back of the ``compaction_wire_bytes_measured``
+    accepted=True (lower bound M)/accepted=False (upper bound N) pair
+    already emitted this call, per architect's #5316 ruling ("新しい測定
+    は要りません — 挟んだ値を終端 message に出す"). Degrades gracefully:
+    a turn whose first attempt already 413s has no accepted bound to
+    report yet (``last_accepted_wire_bytes is None``), and a turn that
+    never got a chance to retry with a bigger payload has no rejected
+    bound (should not happen on a byte-limit terminal path, but this
+    function does not assume it). Byte counts only — never content."""
+    if last_rejected_wire_bytes is None:
+        return ""
+    if last_accepted_wire_bytes is None:
+        return (
+            f" This gateway rejects at roughly {last_rejected_wire_bytes} "
+            "bytes or fewer (no smaller size was accepted this turn)."
+        )
+    return (
+        f" This gateway rejects at roughly {last_rejected_wire_bytes} bytes "
+        f"(the last size that WAS accepted this turn was "
+        f"{last_accepted_wire_bytes} bytes)."
+    )
 
 
 async def retry_loop(
@@ -2010,6 +2084,14 @@ async def retry_loop(
     # (below) — not one more halved attempt, and not "exceeds T_max" (false
     # in this specific case: a byte limit was hit, not a token one).
     _last_recover_is_byte_limit = False
+    # #5316: the learned ceiling — read back (not re-measured, per issue
+    # #5316's own "新しい測定は要りません") into the terminal message below
+    # when this loop ends on a byte limit. ``None`` until this loop's own
+    # accepted=True/False pair has been observed at least once each; a
+    # turn whose FIRST attempt already 413s carries no accepted bound yet
+    # (the terminal message degrades gracefully — see its own comment).
+    _last_accepted_wire_bytes: int | None = None
+    _last_rejected_wire_bytes: int | None = None
     _t_max_override: int | None = None
     # #4947 ③ (architect-ruled): how many of ``raw_middle``'s turns the NEXT
     # ``compact()`` attempt should offer — ``None`` means "all of it" (the
@@ -2157,24 +2239,36 @@ async def retry_loop(
                     actual_tokens=actual,
                 )
 
-            # #4944①: measure-and-emit only (not yet consumed for any
-            # decision — #4944②/③) — see estimate_wire_bytes's own
-            # docstring and this event's entry in docs/reference/runtime/
-            # events.md for what "wire_bytes" does and does not include.
-            # ``accepted=True``: this size was SENT and SUCCEEDED, so the
-            # real limit is >= this value (a lower bound). Paired with the
-            # ``accepted=False`` emission below (lead-coder's TESTS-READ
-            # finding on this PR's first version: a turn whose EVERY
-            # attempt 413s — owner's own real-machine shape — would emit
-            # this event zero times without that pairing, leaving no
-            # diagnostic trail at all for exactly the case #4944 exists to
-            # diagnose).
+            # #4944①: measure-and-emit only (not consumed for any decision
+            # until #5316's terminal-message read-back below) — see
+            # estimate_wire_bytes's own docstring and this event's entry in
+            # docs/reference/runtime/events.md for what "wire_bytes" does
+            # and does not include. ``accepted=True``: this size was SENT
+            # and SUCCEEDED, so the real limit is >= this value (a lower
+            # bound). Paired with the ``accepted=False`` emission below
+            # (lead-coder's TESTS-READ finding on this PR's first version:
+            # a turn whose EVERY attempt 413s — owner's own real-machine
+            # shape — would emit this event zero times without that
+            # pairing, leaving no diagnostic trail at all for exactly the
+            # case #4944 exists to diagnose).
+            # #5316: the per-component breakdown (byte counts only — never
+            # content, company environment) — the field this event's own
+            # single ``wire_bytes`` total could never answer: WHICH of the
+            # 5 components dominated. ``_last_accepted_wire_bytes`` feeds
+            # the learned-limit read-back in the terminal message below.
+            _accepted_breakdown = estimate_wire_bytes_breakdown(
+                SP=SP, head=head, summary=summary, tail=tail, new_msg=new_msg,
+            )
+            _last_accepted_wire_bytes = _accepted_breakdown.total
             engine._events.emit(
                 "compaction_wire_bytes_measured",
-                wire_bytes=estimate_wire_bytes(
-                    SP=SP, head=head, summary=summary, tail=tail, new_msg=new_msg,
-                ),
+                wire_bytes=_accepted_breakdown.total,
                 accepted=True,
+                sp_bytes=_accepted_breakdown.sp_bytes,
+                head_bytes=_accepted_breakdown.head_bytes,
+                summary_bytes=_accepted_breakdown.summary_bytes,
+                tail_bytes=_accepted_breakdown.tail_bytes,
+                new_msg_bytes=_accepted_breakdown.new_msg_bytes,
             )
 
             return response
@@ -2220,12 +2314,21 @@ async def retry_loop(
                 # ``_this_iteration_called_main_call``: a compact()-origin
                 # 413 raised from a DIFFERENT, unmeasured payload (see the
                 # flag's own comment above the loop).
+                # #5316: same breakdown as the accepted=True site; feeds
+                # the learned-limit read-back in the terminal message below.
+                _rejected_breakdown = estimate_wire_bytes_breakdown(
+                    SP=SP, head=head, summary=summary, tail=tail, new_msg=new_msg,
+                )
+                _last_rejected_wire_bytes = _rejected_breakdown.total
                 engine._events.emit(
                     "compaction_wire_bytes_measured",
-                    wire_bytes=estimate_wire_bytes(
-                        SP=SP, head=head, summary=summary, tail=tail, new_msg=new_msg,
-                    ),
+                    wire_bytes=_rejected_breakdown.total,
                     accepted=False,
+                    sp_bytes=_rejected_breakdown.sp_bytes,
+                    head_bytes=_rejected_breakdown.head_bytes,
+                    summary_bytes=_rejected_breakdown.summary_bytes,
+                    tail_bytes=_rejected_breakdown.tail_bytes,
+                    new_msg_bytes=_rejected_breakdown.new_msg_bytes,
                 )
             engine._events.emit(
                 "compaction_shrink_recovered",
@@ -2330,7 +2433,10 @@ async def retry_loop(
                         "recurred compacting a single raw_middle turn "
                         "alone — mid cannot be split any further; this is "
                         "not a token-shrink problem, shrinking it further "
-                        "is not possible.",
+                        "is not possible." + _learned_byte_limit_clause(
+                            last_accepted_wire_bytes=_last_accepted_wire_bytes,
+                            last_rejected_wire_bytes=_last_rejected_wire_bytes,
+                        ),
                         saw_byte_limit=True,
                     )
                 # Defer: move ONLY the one turn that was just attempted
@@ -2387,7 +2493,10 @@ async def retry_loop(
                     "BYTE limit, not a token-count one — shrinking the "
                     "token-count representation further cannot resolve it "
                     "(most likely: the newest message alone exceeds the "
-                    "upstream byte limit).",
+                    "upstream byte limit)." + _learned_byte_limit_clause(
+                        last_accepted_wire_bytes=_last_accepted_wire_bytes,
+                        last_rejected_wire_bytes=_last_rejected_wire_bytes,
+                    ),
                     saw_byte_limit=True,
                 )
             _t_max_override = _candidate
@@ -2454,7 +2563,10 @@ async def retry_loop(
             "limit), which this ladder's token-only shrink steps cannot "
             "resolve on their own. Raising this config value is an escape "
             "valve, not a cure: if the same 413 recurs every turn, it will "
-            "only delay exhaustion, not prevent it.",
+            "only delay exhaustion, not prevent it." + _learned_byte_limit_clause(
+                last_accepted_wire_bytes=_last_accepted_wire_bytes,
+                last_rejected_wire_bytes=_last_rejected_wire_bytes,
+            ),
             saw_byte_limit=True,
         )
     raise UnrecoveredError(
