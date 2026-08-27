@@ -71,14 +71,20 @@ def _isolated_processes_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> 
     return processes_dir
 
 
-def _spawn_registering_subprocess() -> subprocess.Popen:
+def _spawn_registering_subprocess(cwd: "Path | None" = None) -> subprocess.Popen:
     """A REAL, separate OS subprocess that imports this exact module,
     calls ``register_process`` for ITS OWN real PID (genuinely different
     from this test process's own PID), then blocks on a real stdin read
     (never a sleep) until the test releases it by closing stdin. The
     PROCESSES_DIR override is threaded through an env var, since a
     subprocess has no access to this test's own monkeypatched module
-    attribute."""
+    attribute.
+
+    ``cwd`` (#5358): the child's own working directory, hence its
+    marker's own ``cwd`` field — deliberately independent of THIS test
+    process's cwd, so a test can prove a #5358-shaped fix resolves the
+    marker's own project, not whatever directory the reaping caller
+    happens to be running from."""
     script = (
         "import sys\n"
         "from reyn.runtime import process_registry\n"
@@ -89,7 +95,7 @@ def _spawn_registering_subprocess() -> subprocess.Popen:
     return subprocess.Popen(
         [sys.executable, "-c", script, str(process_registry.PROCESSES_DIR)],
         stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-        text=True,
+        text=True, cwd=str(cwd) if cwd is not None else None,
     )
 
 
@@ -194,6 +200,187 @@ def test_marker_content_never_carries_argv_or_a_path_beyond_cwd(
         )
     finally:
         process_registry.unregister_process(os.getpid())
+
+
+# ── #5358: reap destroys the only evidence a process ever ran — a P6
+# event before the unlink is what makes the stop no longer silent ──────────
+
+
+def _read_events_of_kind(events_dir: Path, kind: str) -> list[dict]:
+    """Read every JSONL event of *kind* from anywhere under *events_dir*
+    (same helper shape ``test_asyncio_diagnostics.py`` uses for the SAME
+    ``emit_cli_event`` seam)."""
+    found: list[dict] = []
+    if not events_dir.exists():
+        return found
+    for path in events_dir.rglob("*.jsonl"):
+        for line in path.read_text().splitlines():
+            if not line.strip():
+                continue
+            rec = json.loads(line)
+            if rec.get("type") == kind:
+                found.append(rec)
+    return found
+
+
+def test_reaping_a_dead_marker_emits_one_event_under_the_markers_own_project(
+    _isolated_processes_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Tier 2: #5358 — the reap in ``live_processes()`` used to unlink a
+    confirmed-dead marker with zero logger/audit-event calls (docs-maintainer's
+    real-machine measurement, #4850's own investigation): the ONLY record
+    that PID ever ran was the marker file itself, and the reap destroyed it
+    with nothing written first. One ``process_marker_reaped`` P6 event must
+    now land, BEFORE the unlink, carrying the marker's own content (not a
+    summary/subset of it — a reader needs to reconstruct what was lost) plus
+    an ``observed_at`` timestamp (an upper bound on when the process actually
+    stopped, never asserted as an exact stop time — this is a
+    detection mechanism, not a diagnosis one).
+
+    lead-coder's TESTS-READ(B) BLOCK (#5359): ``PROCESSES_DIR`` is one
+    machine-wide directory but ``.reyn/events`` is per-project — the
+    REAPING caller's own cwd has nothing to do with the DEAD process's
+    project. This test deliberately runs the dying subprocess from its OWN
+    project directory (``dead_process_project``) while THIS test process
+    (the reaping caller, standing in for ``reyn doctor``) sits in a
+    SEPARATE directory that has no ``.reyn/`` at all — the shape that used
+    to make ``emit_cli_event``'s own cwd-based discovery warn-and-skip
+    silently, reintroducing the exact silence #5358 exists to close. The
+    event must land under the marker's OWN project, never the caller's
+    (which has nowhere for it to land at all)."""
+    dead_process_project = tmp_path / "dead_process_project"
+    dead_process_project.mkdir()
+    (dead_process_project / ".reyn").mkdir()
+    caller_cwd = tmp_path / "caller_with_no_reyn_dir"
+    caller_cwd.mkdir()
+    monkeypatch.chdir(caller_cwd)
+
+    proc = _spawn_registering_subprocess(cwd=dead_process_project)
+    try:
+        _wait_until(lambda: len(process_registry.live_processes()) == 1)
+        marker_path = _isolated_processes_dir / f"{proc.pid}.json"
+        original_marker = json.loads(marker_path.read_text(encoding="utf-8"))
+        assert original_marker["cwd"] == str(dead_process_project.resolve()), (
+            "sanity: the marker's own cwd is the subprocess's real cwd"
+        )
+
+        proc.kill()
+        proc.wait()
+        _wait_until(lambda: not process_registry.pid_alive(proc.pid))
+
+        before_reap = time.time()
+        result = process_registry.live_processes()
+        after_reap = time.time()
+
+        assert result == []  # sanity: the dead marker was reaped, as before
+        assert not marker_path.exists()  # sanity: same reap behavior, unchanged
+
+        # Nothing landed under the CALLER's own (nonexistent) .reyn/ — there
+        # isn't one to land under; this only fails if some OTHER code path
+        # accidentally created one.
+        assert not (caller_cwd / ".reyn").exists()
+
+        events = _read_events_of_kind(
+            dead_process_project / ".reyn" / "events", "process_marker_reaped",
+        )
+        [event] = events  # exactly one — unpack raises otherwise
+        data = event["data"]
+        assert data["marker"] == original_marker, (
+            "#5358 REGRESSION: the event must carry the marker's own full "
+            f"content, not a summary — got {data['marker']!r}, expected "
+            f"{original_marker!r}"
+        )
+        assert before_reap <= data["observed_at"] <= after_reap, (
+            "observed_at must be a real timestamp taken at reap time, not a "
+            "constant or the marker's own started_at"
+        )
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait()
+
+
+def test_a_live_marker_is_never_reaped_and_emits_no_event(
+    _isolated_processes_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Tier 2: #5358 deny side, in the SAME shape as the positive witness
+    above (CLAUDE.md's own six-questions ④ — a deny-only assertion is green
+    even if the whole mechanism silently never ran; pairing it with the
+    positive witness above closes that gap the same way #5331's own
+    reviewer named it). A confirmed-ALIVE process's marker must be neither
+    reaped NOR reported — reaping only fires for a confirmed-dead PID."""
+    reyn_dir = tmp_path / ".reyn"
+    reyn_dir.mkdir()
+    monkeypatch.chdir(tmp_path)
+
+    process_registry.register_process("self")
+    try:
+        result = process_registry.live_processes()
+        assert os.getpid() in {e["pid"] for e in result}  # sanity: still reported live
+
+        events = _read_events_of_kind(reyn_dir / "events", "process_marker_reaped")
+        assert events == [], (
+            "#5358 REGRESSION: a live process's marker must never be "
+            f"reported as reaped — got {events!r}"
+        )
+    finally:
+        process_registry.unregister_process(os.getpid())
+
+
+def test_reap_still_happens_when_the_audit_emit_itself_fails(
+    _isolated_processes_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Tier 2: #5358, lead-coder's TESTS-READ(B) BLOCK ③ — the pre-existing
+    ``except OSError: pass`` around the unlink only ever protected the
+    enumeration loop from a filesystem error on the unlink itself; the NEW
+    audit-emit call sits ahead of it with no guard of its own. Forces
+    ``emit_direct_event`` to raise (a real exception, not a mock — the
+    genuinely-importable production function, monkeypatched to fail on
+    THIS one call) and confirms ``live_processes()`` still completes,
+    still returns the empty-of-dead-markers result, and still reaps the
+    marker file — an audit-emit failure must degrade to a log line, never
+    break the read path this module's whole reason to exist is to keep
+    working.
+
+    The spawned process needs a REAL ``.reyn/``-reachable cwd (this repo's
+    own autouse ``_isolated_cwd`` fixture already chdirs THIS test process
+    itself to a bare tmp dir with none — otherwise ``reyn_dir is None``
+    would skip the emit call entirely, and this test would pass without
+    ever exercising the code path it means to falsify, invisibly."""
+    dead_process_project = tmp_path / "dead_process_project"
+    dead_process_project.mkdir()
+    (dead_process_project / ".reyn").mkdir()
+
+    from reyn.core.events import events as events_mod
+
+    def _raising_emit(*args, **kwargs):
+        raise RuntimeError("#5358 test: simulated emit_direct_event failure")
+
+    monkeypatch.setattr(events_mod, "emit_direct_event", _raising_emit)
+
+    proc = _spawn_registering_subprocess(cwd=dead_process_project)
+    try:
+        _wait_until(lambda: len(process_registry.live_processes()) == 1)
+        marker_path = _isolated_processes_dir / f"{proc.pid}.json"
+
+        proc.kill()
+        proc.wait()
+        _wait_until(lambda: not process_registry.pid_alive(proc.pid))
+
+        result = process_registry.live_processes()  # must not raise
+
+        assert result == [], (
+            "#5358 REGRESSION: a failing audit-emit must not prevent the "
+            f"dead marker from being correctly excluded — got {result!r}"
+        )
+        assert not marker_path.exists(), (
+            "#5358 REGRESSION: a failing audit-emit must not prevent the "
+            "reap itself — the marker should still be gone"
+        )
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait()
 
 
 def test_the_real_cli_entry_point_actually_calls_register_process(

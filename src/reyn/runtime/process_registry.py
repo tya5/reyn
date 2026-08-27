@@ -224,6 +224,12 @@ def live_processes() -> "list[dict]":
         pid_str = tmp_path.name.removesuffix(".json.tmp")
         if not pid_str.isdigit() or pid_alive(int(pid_str)):
             continue
+        # #5358 (architect, non-blocking note on #5359): deliberately no
+        # process_marker_reaped event here — an orphaned .tmp means the
+        # process died BEFORE ever completing registration (no real marker
+        # was ever recorded), never that a registered process stopped. Its
+        # own content is untrusted/unread by design (see this function's
+        # own docstring above), so there is nothing to report losing.
         try:
             tmp_path.unlink()
         except OSError:
@@ -236,6 +242,63 @@ def live_processes() -> "list[dict]":
             continue
         pid = data.get("pid")
         if not isinstance(pid, int) or not pid_alive(pid):
+            # #5358: the marker itself is the only record that this PID
+            # ever ran — the process that owned it never got to say it was
+            # stopping (a graceful exit's own atexit handler would have
+            # unlinked this file already; reaching this branch at all means
+            # it did not). One event BEFORE the unlink below, carrying the
+            # marker's own content plus this observation's own wall-clock
+            # time (an UPPER BOUND on when the process actually stopped,
+            # never the stop time itself — nothing here knows when between
+            # the marker's last write and this read the process actually
+            # died). This is not a crash-diagnosis mechanism: it does not
+            # know WHY the process stopped (crash / SIGKILL / power loss /
+            # OOM are indistinguishable from here), and a process that died
+            # before ever reaching register_process() leaves no marker to
+            # reap in the first place. What it closes is narrower and
+            # structural: a stop that used to be perfectly silent (this
+            # same reap, with no record before it) now has exactly one.
+            #
+            # lead-coder's TESTS-READ(B) BLOCK (#5359): the reaping PROCESS'S
+            # own cwd (what emit_cli_event walks up from) has NOTHING to do
+            # with the DEAD process's own project — PROCESSES_DIR is one
+            # machine-wide directory, so `reyn doctor` run from project A can
+            # reap a marker for a process that ran in project B, and (worse)
+            # a caller running from a cwd inside NO project's `.reyn/` at all
+            # made emit_cli_event's own best-effort "warn and return" fire
+            # silently, reintroducing the exact silence this issue exists to
+            # close. Fixed by resolving reyn_root from the DEAD marker's own
+            # ``cwd`` field (the project the process actually ran in), never
+            # the caller's — same `_find_reyn_dir` helper `emit_cli_event`
+            # uses internally, called directly here via `emit_direct_event`.
+            #
+            # The whole block is best-effort, matching the unlink beneath it
+            # and every other diagnostic-aid in this module (register_process
+            # / _cleanup): an audit-emit failure (no `.reyn/` reachable from
+            # the marker's own cwd, or any other error) must never block the
+            # actual reap — leaving a marker permanently un-reaped because
+            # its OWN diagnostic record failed to write would be a worse
+            # regression than the record simply not existing this once.
+            try:
+                from reyn.core.events.events import _find_reyn_dir, emit_direct_event
+
+                marker_cwd = data.get("cwd")
+                reyn_dir = _find_reyn_dir(Path(marker_cwd)) if marker_cwd else None
+                if reyn_dir is not None:
+                    emit_direct_event(
+                        "process_marker_reaped",
+                        surface="cli",
+                        reyn_root=reyn_dir,
+                        track_audit_seq=False,
+                        marker=data,
+                        observed_at=time.time(),
+                    )
+            except Exception:
+                logger.warning(
+                    "process_registry: failed to emit process_marker_reaped "
+                    "for pid %d (diagnostic-only, does not block the reap)",
+                    pid, exc_info=True,
+                )
             try:
                 path.unlink()
             except OSError:

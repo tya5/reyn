@@ -190,6 +190,7 @@ presentation_install_blocked
 presentation_installed
 presentation_load_failed
 presented
+process_marker_reaped
 project_context_changed
 repo_ingest_files_skipped
 resource_cap_exceeds_budget_trigger
@@ -630,6 +631,17 @@ intervention flow and force-close wrap-up.
 |------|------|-------------|
 | `limit_denied` | A safety limit was denied (no extension granted) and the OS is about to attempt the force-close wrap-up. | `kind` (`max_iterations` \| `router_cap`), `chain_id`, plus `limit` (router iterations) or `count`/`cap` (router cap) |
 | `untrusted_narrowing_engaged`, `untrusted_narrowing_lifted` | #1909/#3501 opt-in (`safety.threat_scan.capability_narrowing` != `off`): untrusted external content (an `external_source`-tagged history entry) enters/leaves the active, uncompacted context, most-restrictively narrowing tool visibility while it is live. `Session._ephemeral_contextual_for_turn` — the default `turn` rung, the common case an operator opting in at all is most likely running — emits both kinds, exactly once per genuine state flip, never per read (a status-panel poll on an unchanged state produces no event); previously silent at both transitions (#5282). The top `iteration` rung (`RouterLoop`'s own `_intra_turn_contextual_for_turn_fn` branch) separately emits `untrusted_narrowing_engaged` only — it has no lift event yet, out of #5282's scope. | `provenance` (`external_source`); the `iteration` rung's `engaged` also carries `chain_id`, `iteration` |
+
+## Process registry
+
+`.reyn/processes/<pid>.json` (#5226) is a machine-wide, per-PID liveness
+marker — not per-project like every other event source in this doc. A
+reader (`reyn doctor`, `reyn.runtime.process_registry.live_processes`)
+reaps any marker whose PID is confirmed dead as a side effect of reading.
+
+| Kind | Trigger | Key payload |
+|------|---------|-------------|
+| `process_marker_reaped` | #5358: a confirmed-dead PID's marker is about to be reaped (unlinked) — the marker was the ONLY record that PID ever ran, since the process itself never got to say it was stopping (a graceful exit's own `atexit` handler would have already removed it). Emitted from the reading CALLER's process, but under the DEAD process's OWN project (`reyn_root` resolved by walking up from the marker's own `cwd` field, never the caller's cwd — a `reyn doctor` run from project A must not misattribute a reap for a process that ran in project B). Best-effort: an emit failure (no `.reyn/` reachable from the marker's cwd, or any other error) logs a warning and never blocks the reap itself. Detection, not diagnosis — carries no information about WHY the process stopped (crash / SIGKILL / power loss / OOM are indistinguishable from here). | `marker` (the dead process's own full recorded content: `pid`/`ppid`/`cwd`/`subcommand`/`started_at`), `observed_at` (an UPPER BOUND on the stop time — the real stop happened sometime between the marker's `started_at` and this timestamp, never asserted as the exact moment) |
 
 ## Replay
 
