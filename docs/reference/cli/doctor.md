@@ -272,6 +272,39 @@ constructor, #3075) — never a free-hand `httpx.Client(...)`, so this call site
 covered by the same standard-proxy-env/CA completeness gate every other reyn-owned
 HTTP client is.
 
+### Reyn process registry — how many, and whose ([#5226](https://github.com/tya5/reyn/issues/5226))
+
+```
+Reyn process registry (~/.reyn/processes/) — every reyn CLI
+process currently alive on this machine, across every workspace:
+  2 process(es) currently alive:
+    pid=41213 ppid=1 started 2h 14m ago
+      cwd:        /Users/alice/proj-a
+      subcommand: chat
+    pid=52098 ppid=41022 started 11d 3h ago
+      cwd:        /Users/alice/proj-b
+      subcommand: chat
+```
+
+A NEW category, not another declared-vs-effective pair: before this, reyn had no
+way to answer "how many of ITSELF are alive, and whose" without an operator
+manually reconstructing it via `ps`+`lsof -d cwd` — the motivating case (lead-
+coder's own real machine, #5226) found 12 `reyn`/`reyn:chat` processes, 11 of
+them abandoned, the oldest 11 days old.
+
+Reads `reyn.runtime.process_registry.live_processes()` — a live read of PID-
+keyed markers each reyn CLI process writes about ITSELF at startup
+(`interfaces/cli/__init__.py:main()`, the same hook `set_process_title` uses),
+never a process-table scan of its own (that's the OS's job, per lead-coder's
+own ruling). Prints only the fields the marker itself carries — pid/ppid/cwd/
+subcommand/age — never full argv or any path beyond cwd, mirroring
+`reyn.runtime.proctitle`'s own stance against leaking more than the minimum
+into anything read back after the fact.
+
+**Report-only, D-2 unchanged**: no kill, no TTL expiry. Whether an abandoned
+process should ever be reaped automatically is an owner-level judgment call
+explicitly out of this slice's scope until the count is visible at all.
+
 ## Not applicable, measured (not a later slice)
 
 C-6's "listen port declared-vs-effective" example does NOT apply to reyn's
