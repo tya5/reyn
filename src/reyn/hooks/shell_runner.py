@@ -22,14 +22,18 @@ Contract
 * **Timeout** (default 60 s, overridable per-hook via ``timeout_seconds``).
   Timeout / non-zero exit → log + return ``None``; the runner NEVER crashes the
   agent.
-* **Output size** (``exec_capture`` only, #5210): the returned/parsed stdout
-  is unbounded by default (``output_token_cap=None``, byte-identical to
-  every pre-#5210 caller) — the LOGGED copy has always been capped at 200
-  bytes (see ``:200`` below) but the RETURNED value, which ends up as an
-  inbox message and ultimately a prompt, was not. A caller that supplies
-  ``output_token_cap`` gets an explicit, recorded failure (never a silent
-  truncation — see ``run_shell_hook``'s own docstring) when the decoded
-  stdout exceeds it.
+* **Output size** (``exec_capture`` only, #5210, corrected #5244): the
+  returned/parsed stdout is unbounded by default (``output_token_cap=None``,
+  byte-identical to every pre-#5210 caller) — the LOGGED copy has always
+  been capped at 200 bytes (see ``:200`` below) but the RETURNED value,
+  which ends up as an inbox message and ultimately a prompt, was not. A
+  caller that supplies ``output_token_cap`` gets the parsed directive's
+  ``message`` field bounded IN PLACE (structure preserved, marked with a
+  visible elision note, still delivered) when it exceeds the cap — #5210's
+  own "never truncate" ruling governs the SERIALIZED byte stream (cutting
+  JSON mid-stream breaks the parse); it does not forbid bounding a
+  structured field's VALUE after a successful parse, which #5244 found
+  #5210's original form conflated (see ``run_shell_hook``'s own docstring).
 
 Sandbox (CRITICAL)
 ------------------
@@ -529,30 +533,51 @@ async def run_shell_hook(
         the TUI events tab. NOT called when consent is refused or the command is
         skipped (then nothing ran). Best-effort: a sink error never breaks the run.
     output_token_cap:
-        #5210 — ``(cap_tokens, model)`` for ``capture_stdout=True`` runs only;
-        ``None`` (default) applies NO cap, matching every pre-#5210 caller's
-        behavior unchanged. When set, the decoded stdout's estimated token
+        #5210, corrected #5244 — ``(cap_tokens, model)`` for
+        ``capture_stdout=True`` runs only; ``None`` (default) applies NO cap,
+        matching every pre-#5210 caller's behavior unchanged. When set, this
+        function parses the decoded stdout as the JSON push-directive itself
+        (a preview parse — the caller/dispatcher still does its own,
+        independent parse of whatever this returns) and, IF that parse
+        succeeds and yields a string ``message`` field whose estimated token
         count (:func:`~reyn.services.compaction.engine.estimate_tokens`,
-        against *model*) is checked BEFORE the caller ever sees or parses it —
-        exceeding *cap_tokens* is an EXPLICIT failure (logged, recorded via
-        *emit_event* with ``denial_class="exec_capture_output_cap_exceeded"``,
-        return ``None``), never a truncation: a truncated JSON push-directive
-        fails to parse and is indistinguishable from a clean no-push run at
-        the dispatcher (the exact "two silences" shape #5041 already closed
-        once for a different cause). *cap_tokens* is deliberately not invented
-        here — the caller derives it from a real, live context-budget source
-        (``HookDispatcher``'s own ``resolve_exec_capture_output_cap``,
-        wired from ``Session``'s ``TurnBudgetEngine.budget.output_reserve``)
-        and passes ``None`` when no such source is available, rather than
-        supplying an arbitrary fallback number.
+        against *model*) exceeds *cap_tokens*: bounds ONLY that field's text
+        (:func:`~reyn.services.compaction.engine.hard_truncate_summary`,
+        deterministic char-ratio truncation) with a visible elision marker
+        appended, re-serializes the SAME JSON object with the bounded
+        ``message``, and returns that — the directive's other fields, and
+        its structure, are untouched, and it still reaches the caller as a
+        normal push. Recorded via *emit_event* with
+        ``denial_class="exec_capture_message_bounded"``. #5210's original
+        form checked the RAW stdout byte/token count BEFORE any parse and
+        discarded the whole directive on overflow (a `#5244 finding
+        <https://github.com/tya5/reyn/issues/5244>`_: #5210's own "never
+        truncate" ruling is about not cutting the SERIALIZED byte stream —
+        a truncated JSON push-directive fails to parse and is
+        indistinguishable from a clean no-push run at the dispatcher, the
+        exact "two silences" shape #5041 already closed once for a
+        different cause — it says nothing about bounding a structured
+        field's VALUE after a successful parse, which is what this branch
+        now does). If the preview parse fails, or yields no usable
+        ``message`` string, this function does not attempt to bound
+        anything — the caller's own (separate) parse handles that shape the
+        same fail-safe way it always has. *cap_tokens* is deliberately not
+        invented here — the caller derives it from a real, live
+        context-budget source (``HookDispatcher``'s own
+        ``resolve_exec_capture_output_cap``, wired from ``Session``'s
+        ``TurnBudgetEngine.budget.output_reserve``) and passes ``None`` when
+        no such source is available, rather than supplying an arbitrary
+        fallback number.
 
     Returns
     -------
     str | None
-        The decoded stdout when ``capture_stdout=True`` and the run succeeded
-        AND (if *output_token_cap* is set) is within it; otherwise ``None``
-        (always ``None`` for ``capture_stdout=False``, and on any failure in
-        either mode, including exceeding *output_token_cap*).
+        The decoded stdout when ``capture_stdout=True`` and the run
+        succeeded — with its ``message`` field bounded in place if
+        *output_token_cap* was set and exceeded (see above); otherwise
+        ``None`` (always ``None`` for ``capture_stdout=False``, and on any
+        run failure — non-zero exit, timeout, consent refusal, exception —
+        in either mode).
 
     Notes
     -----
@@ -667,40 +692,73 @@ async def run_shell_hook(
         # run_and_classify (#3823 ①) — reused here, not re-derived.
         denial_class = launched.denial_class
 
-        # #5210: computed HERE — before the single unconditional emit_event
-        # call below — so an over-cap rejection rides that SAME event
-        # (architect's own prescription: reuse denial_class, no new event
-        # surface) rather than firing a second, separate one. Only relevant
-        # for a would-be-successful capture_stdout run; an already-failed
-        # run (non-zero exit) is unaffected — that path's own denial_class
-        # (e.g. DENIAL_FORK) takes priority below, unchanged.
-        cap_exceeded = False
+        # #5210, corrected #5244: computed HERE — before the single
+        # unconditional emit_event call below — so a bounded-message
+        # verdict rides that SAME event (architect's own prescription:
+        # reuse denial_class, no new event surface) rather than firing a
+        # second, separate one. Only relevant for a would-be-successful
+        # capture_stdout run; an already-failed run (non-zero exit) is
+        # unaffected — that path's own denial_class (e.g. DENIAL_FORK)
+        # takes priority below, unchanged.
+        #
+        # #5244 (architect ruling, correcting #5210): #5210's own "never
+        # truncate" reasoning is about the SERIALIZED byte stream — cutting
+        # JSON mid-stream produces a directive that fails to parse and is
+        # indistinguishable from a clean, deliberate no-push run (the exact
+        # "two silences" shape #5041 already closed once). That reasoning
+        # does NOT extend to bounding a single structured field's VALUE
+        # after a successful parse — the structure survives, the caller's
+        # own parse still succeeds, and the push still reaches its target.
+        # #5210's original form conflated the two (checked raw stdout
+        # BEFORE any parse, discarded the whole directive on overflow) —
+        # coder-brown's census (28 output-capping call sites repo-wide)
+        # found this was the only one of the 28 that discarded wholesale
+        # rather than marking and delivering a bounded result; #5244 brings
+        # it in line with the other 27.
+        bounded_stdout: str | None = None
         if (
             capture_stdout
             and result.returncode == 0
             and output_token_cap is not None
         ):
             cap_tokens, cap_model = output_token_cap
-            from reyn.services.compaction.engine import estimate_tokens  # noqa: PLC0415
+            from reyn.services.compaction.engine import (  # noqa: PLC0415
+                estimate_tokens,
+                hard_truncate_summary,
+            )
 
             decoded_stdout_for_cap = result.stdout.decode("utf-8", errors="replace")
-            actual_tokens = estimate_tokens(decoded_stdout_for_cap, cap_model)
-            if actual_tokens > cap_tokens:
-                cap_exceeded = True
-                denial_class = "exec_capture_output_cap_exceeded"
-                # #5210 (architect ruling, issue #5210): NEVER truncate — a
-                # cut JSON push-directive fails to parse at the dispatcher
-                # and is indistinguishable from a clean, deliberate no-push
-                # run (the exact "two silences" #5041 already closed once).
-                # Reject outright, loudly, and record it (below) — never
-                # silently degrade.
-                _log.warning(
-                    "shell-hook %r exec_capture output (%d estimated tokens) "
-                    "exceeds the context-budget-derived cap (%d tokens) — push "
-                    "skipped, NOT truncated (a truncated JSON directive would "
-                    "silently fail to parse instead).",
-                    command, actual_tokens, cap_tokens,
-                )
+            # A preview parse, purely to reach the `message` field for
+            # bounding — the caller/dispatcher still does its own,
+            # independent parse of whatever this function returns
+            # (`_parse_exec_push`, unchanged). If this preview parse fails,
+            # or the directive has no usable string `message`, nothing is
+            # bounded here — the caller's own fail-safe parse handles that
+            # shape the same way it always has.
+            try:
+                directive = json.loads(decoded_stdout_for_cap)
+            except (json.JSONDecodeError, ValueError):
+                directive = None
+            message = directive.get("message") if isinstance(directive, dict) else None
+            if isinstance(message, str):
+                message_tokens = estimate_tokens(message, cap_model)
+                if message_tokens > cap_tokens:
+                    denial_class = "exec_capture_message_bounded"
+                    elided = message_tokens - cap_tokens
+                    bounded_message = hard_truncate_summary(message, cap_tokens, cap_model)
+                    bounded_message += (
+                        f"\n\n… ({elided} estimated tokens elided by the "
+                        "context-budget-derived hook-output cap)"
+                    )
+                    directive["message"] = bounded_message
+                    bounded_stdout = json.dumps(directive)
+                    _log.warning(
+                        "shell-hook %r exec_capture message (%d estimated tokens) "
+                        "exceeds the context-budget-derived cap (%d tokens) — "
+                        "message bounded in place (%d tokens elided, structure "
+                        "and other fields preserved, push still delivered).",
+                        command, message_tokens, cap_tokens, elided,
+                    )
 
         if emit_event is not None:
             try:
@@ -758,13 +816,16 @@ async def run_shell_hook(
                 )
             return None  # fail-safe: a failed command yields no push-directive
 
-        # Success. capture_stdout (exec_capture) → return decoded stdout for the
-        # caller to parse; otherwise (exec) output is ignored. #5210: a
-        # cap_exceeded verdict (computed above, before the emit_event call,
-        # so the rejection rides that SAME event) still returns None here —
-        # never a truncated prefix of the real output.
-        if not capture_stdout or cap_exceeded:
+        # Success. capture_stdout (exec_capture) → return decoded stdout for
+        # the caller to parse; otherwise (exec) output is ignored. #5244: a
+        # bounded-message verdict (computed above, before the emit_event
+        # call, so it rides that SAME event) still returns the directive —
+        # with its `message` field bounded — never None; only a genuine run
+        # failure above returns None.
+        if not capture_stdout:
             return None
+        if bounded_stdout is not None:
+            return bounded_stdout
         return result.stdout.decode("utf-8", errors="replace")
 
     except Exception as exc:
