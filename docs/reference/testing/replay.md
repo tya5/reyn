@@ -289,3 +289,47 @@ explicit step (`REYN_LLM_RECORD=1`). A `"replay"`-mode test whose fixture
 file does not exist fails at fixture setup, before `LLMReplay.install()`
 runs, with the exact command to re-run (never a silent, unauthorized real
 network call — see `reyn.dev.testing.network_gate`).
+
+### Unconsumed-entry check (`reyn.dev.testing.replay_unconsumed`, #5283)
+
+A fixture file entry can go stale without ever going red: #3634 makes
+in-place regeneration REPLACE a call's entry when its `group_signature`
+matches, but that signature deliberately excludes `tools` (the one
+component a schema change is expected to move) — so when reyn's OWN code
+changes what it injects into a message instead (e.g. a new retry-directive
+string), the old entry stops matching what the code now sends but never
+gets replaced or removed. It just sits on disk, matching both the old and
+the new message content, so the fixture can never go red regardless of
+which one the code actually sends.
+
+This plugin closes the class by **measurement, not enumeration**: `LLMReplay`
+tracks every key an actual replay hit consumed this session
+(`LLMReplay.consumed_keys()`), diffs that against every key the same
+fixture file held on disk (`LLMReplay.loaded_keys()`), and reports the
+remainder at session end. A new injected token moves a key; the old key's
+entry stops being consumed; it falls into "unconsumed" automatically —
+nothing has to know the token existed.
+
+**Opt-in, fail-open by construction** — `REYN_REPLAY_UNCONSUMED_CHECK=1` is
+required and never inferred from the absence of `-k`/`-x` (that inference
+would be the same unprovable-closure mistake a rejected static alternative
+made). Only a genuinely full run can say "unconsumed"; a narrowed run leaves
+the report silent rather than false-flagging. Set in
+`.github/workflows/test.yml`'s main "Run tests" step (the one step that
+always collects the whole `tests/` tree with no narrowing), so a finding
+there already blocks merge the same way any other pytest failure does — no
+separate required-check plumbing.
+
+Under `pytest-xdist`, every worker appends "opened"/"consumed" events to
+one shared JSONL file (the same cross-worker technique `network_gate`'s
+`stale_allow_markers` uses) — only the controller process (or the sole
+process when xdist isn't in use) reads it back and judges; a worker judged
+alone would falsely report unconsumed for entries a *sibling* worker's
+shard consumed. A skipped test is reported as a skip count alongside any
+finding, never silently folded into "unreachable" — a skip means the
+environment narrowed what could run, not that the entry is dead.
+
+**Detection, not prevention**: a stacked/orphaned entry keeps sitting on
+disk until this check runs and someone reads it — nothing here stops one
+from being *written*. `#3969`'s `kind="environment"` entries (no `key`,
+only `name`) are out of scope; a distinct follow-up if wanted.
