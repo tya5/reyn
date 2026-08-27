@@ -63,6 +63,27 @@ Real ``AgUiEmitter`` (server-side encoder) + real ``AgUiTransport``
 read off PUBLIC widget surfaces only: ``FlowView.entries`` (mirroring
 ``test_3300_p2b_sentqueue_render.py``'s own ``_flow_user_entries``) and
 ``SentQueue.rendered_texts()``.
+
+**Scope correction, written after the fix landed (endpoint.py/emitter.py,
+#5179):** this test builds ``AgUiEmitter`` DIRECTLY with a hand-set
+``status_provider`` already reflecting the post-dispatch ``queue_seq`` from
+the very first line of its construction — it never calls through
+``session_backlog_page``/``endpoint.py`` at all, so it does not exercise
+(and cannot be closed by) the endpoint-level fix
+(``_session_backlog_page_and_status`` pairing backlog+status in one tick).
+It demonstrates a different, narrower thing, correctly: the seq-gate
+mechanism itself (``RemoteQueueView``) WILL drop an already-reflected turn
+when handed a status that is inconsistent with the frames it is paired
+with — which is its designed behavior, not a bug, and stays true forever
+(feeding it deliberately-inconsistent inputs will always reproduce this).
+This test was earlier mis-described (issue thread) as one of two
+acceptance criteria the fix must flip green — that was wrong; the real
+end-to-end acceptance coverage for whether the FIXED endpoint actually
+avoids producing this inconsistency lives in
+``test_5179_backlog_gap_end_to_end.py`` (drives the real, fixed connect
+pairing) and ``test_5179_exit_b_status_race_discriminator.py`` (pins the
+specific race the fix closes). This file is kept as a mechanism
+illustration only and is expected to keep reproducing indefinitely.
 """
 from __future__ import annotations
 

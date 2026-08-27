@@ -205,7 +205,19 @@ async def test_capture_right_after_return_still_mismatches_on_exit_b(tmp_path, m
             "closes this."
         )
     finally:
+        # Architect review (relayed via broker, non-blocking finding): an
+        # exception raised BEFORE `release_extend_read.set()` above
+        # (e.g. one of the "test construction error" asserts) would
+        # otherwise leave `backlog_task` un-awaited -- release the stall
+        # unconditionally here too, then cancel+await the task itself,
+        # mirroring `turn_task`'s own cleanup right below.
         release_extend_read.set()  # in case an assertion above fired first
+        if not backlog_task.done():
+            backlog_task.cancel()
+        try:
+            await backlog_task
+        except (Exception, asyncio.CancelledError):
+            pass
         if turn_task is not None:
             turn_task.cancel()
             try:
