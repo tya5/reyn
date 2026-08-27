@@ -7699,10 +7699,49 @@ class Session:
             # gets the real answer without needing to know a second event exists.
             _root_cause = _deepest_cause(exc)
             _cause_name = type(_root_cause).__name__ if _root_cause is not None else None
+            # #5332: this line used to say "terminated by unhandled
+            # exception" — nothing here terminates. This except IS the
+            # catch; the audit event below still fires either way, and the
+            # interactive leg (below) returns normally after queuing a
+            # `kind="error"` OutboxMessage. Only ``self._ephemeral`` (an
+            # agent-step spawn's leaf session) actually re-raises past this
+            # point (as ``AgentStepError``, further down) — real-environment
+            # evidence this line's old wording caused 3 real misreadings the
+            # SAME night (2026-08-27, lead-coder investigating #5329):
+            # "terminated" read as "the process died here", "unhandled" read
+            # as "nothing caught this" — both false, and both refuted only
+            # by re-reading this exact code and the audit trail.
+            #
+            # architect's TESTS-READ(B) BLOCK on the first attempt here
+            # (still #5332): the interactive outcome text said "the session
+            # continues" — a claim about what happens AFTER this except
+            # returns, which this code does not itself observe (the owner's
+            # own #5329 report is a process disappearing to shell, root
+            # cause still open) — the SAME class of error the old wording
+            # made ("terminated" asserted an ending nothing here observed
+            # either). Fixed to name only what THIS code actually does:
+            # queues the error reply and returns. "unhandled" is also
+            # dropped for the same reason (architect, follow-up) — the
+            # comment above already names it as one of the two words that
+            # caused a real misreading, so leaving it half-fixed would
+            # repeat the same mistake in miniature.
+            #
+            # The outcome half is conditioned on the SAME ``self._ephemeral``
+            # check the actual control flow below uses, not asserted
+            # unconditionally for both legs — witnessed by
+            # ``test_router_loop_swallow_instrument_187.py``'s two
+            # ``caplog``-driven tests (one per leg), so a future revert to an
+            # unconditional claim goes red.
+            _outcome = (
+                "re-raising as AgentStepError"
+                if self._ephemeral
+                else "this turn failed; queued an error reply and returning normally"
+            )
             logger.exception(
-                "router loop terminated by unhandled exception (chain_id=%s)%s",
+                "router loop caught an exception no inner handler took (chain_id=%s)%s — %s",
                 chain_id,
-                f" — cause: {_cause_name}: {_root_cause}" if _root_cause is not None else "",
+                f" [cause: {_cause_name}: {_root_cause}]" if _root_cause is not None else "",
+                _outcome,
             )
             try:
                 self._audit_events.emit(
