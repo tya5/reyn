@@ -91,8 +91,10 @@ def _load_jobs() -> list:
 def _jobs_to_cron_jobs(job_configs) -> list:
     """Convert CronJobConfig entries to CronJob instances.
 
-    Jobs are message-based (= ``to`` + ``message``); the runner dispatches
-    the message to the target agent's inbox.
+    ``action="message"`` (default): ``to`` + ``message``, the runner
+    dispatches the message to the target agent's inbox. ``action="hook"``
+    (#5209): ``to`` only — the runner fires ``cron_fired`` on the host
+    session without pushing anything.
     """
     from reyn.runtime.cron import CronJob
     return [
@@ -101,6 +103,7 @@ def _jobs_to_cron_jobs(job_configs) -> list:
             schedule=jc.schedule,
             to=jc.to,
             message=jc.message,
+            action=jc.action,
             notify=jc.notify,
             input=dict(jc.input),
             enabled=jc.enabled,

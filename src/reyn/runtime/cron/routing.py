@@ -57,23 +57,28 @@ def resolve_cron_session(registry, agent_name: str, job_name: str):
     return _ADAPTER.resolve_session(registry, agent_name, job_name)
 
 
-def dispatch_cron_fired(session, job_name: str, to: str) -> None:
+def dispatch_cron_fired(session, job_name: str, to: str, *, action: str = "message") -> None:
     """#2608 H5 / Hook-Event Phase 2 §6.4: fire the ``cron_fired`` external-event
     hook on ``session`` (the job's own resolved Session — pass the object
     :func:`resolve_cron_session` returned, so the hook fires on the SAME
     session the job's message was delivered to).
 
     Delegates to ``CronIngressAdapter``'s ``to_event`` (builds the typed
-    ``HookEvent`` via Phase 1's ``build_hook_payload``, unchanged field-set)
-    then ``deliver`` (``reyn.hooks.external_fire.fire_and_forget`` — a slow
-    hook action must never stall the cron job's own inbox delivery).
-    ``template_vars`` carry only operator-authored config metadata
-    (``job_name``, the target agent name) — a cron job never carries
-    end-user-supplied secrets the way an inbound webhook body can, so
-    nothing is withheld here (contrast
-    ``reyn.runtime.webhook_routing.dispatch_webhook_received``). ``job_name``
-    is the matchable field (exact match — not a glob field, see
+    ``HookEvent`` via Phase 1's ``build_hook_payload``) then ``deliver``
+    (``reyn.hooks.external_fire.fire_and_forget`` — a slow hook action must
+    never stall the cron job's own inbox delivery). ``template_vars`` carry
+    only operator-authored config metadata (``job_name``, the target agent
+    name, ``action``) — a cron job never carries end-user-supplied secrets
+    the way an inbound webhook body can, so nothing is withheld here
+    (contrast ``reyn.runtime.webhook_routing.dispatch_webhook_received``).
+    ``job_name`` is the matchable field (exact match — not a glob field, see
     ``reyn.hooks.matcher``), e.g. ``matcher: {job_name: "backup"}``.
+
+    ``action`` (#5209) — ``"message"`` (default) if the job also delivered a
+    message to the inbox, ``"hook"`` if this fire is hook-only (never pushed
+    anything itself) — lets a ``hooks.yaml`` ``on: cron_fired`` entry branch
+    on which kind of fire this was via ``matcher: {action: "hook"}`` or its
+    own template logic.
 
     #4605: also emits a ``cron_fired`` AUDIT event on ``session._audit_events``
     (P6, distinct from the hook fire above) — the ARRIVAL of the signal is
@@ -87,5 +92,5 @@ def dispatch_cron_fired(session, job_name: str, to: str) -> None:
         session._audit_events.emit("cron_fired", job_name=job_name, to=to)
     except Exception:  # noqa: BLE001 — audit emit is best-effort, never blocks the job
         _log.debug("dispatch_cron_fired: audit emit failed for job %r", job_name, exc_info=True)
-    event = _ADAPTER.to_event(job_name, to)
+    event = _ADAPTER.to_event(job_name, to, action=action)
     _ADAPTER.deliver(event, session)

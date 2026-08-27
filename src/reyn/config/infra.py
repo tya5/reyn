@@ -1305,24 +1305,43 @@ def _build_sandbox_config(raw: object) -> SandboxConfig:
 
 @dataclass
 class CronJobConfig:
-    """One ``cron.jobs[]`` entry (FP-0009 Component B + FP-0041 #489 PR-B).
+    """One ``cron.jobs[]`` entry (FP-0009 Component B + FP-0041 #489 PR-B;
+    ``action`` field #5209).
 
     Maps directly onto ``CronJob`` consumed by ``CronScheduler``; this
     config-side dataclass exists to keep the YAML parsing layer
     independent of the runtime layer.
 
-    Jobs are message-based (= FP-0041 #489 PR-B): ``to`` (target agent) +
-    ``message`` (free-form text). Cron dispatches the message to the target
-    agent's inbox with a ``sender="cron:<name>"`` envelope.
+    ``to`` (target agent) is required for EVERY job regardless of
+    ``action`` — it names the agent whose ``cron:<job_name>`` Session this
+    job runs on (the "host"), which ``resolve_cron_session`` /
+    ``dispatch_cron_fired`` need to resolve a Session to fire
+    ``cron_fired`` on at all; there is no session-less dispatch path.
+    ``action`` declares what a fire actually DOES on that host session:
 
-    (A bare name without ``to`` + ``message`` is not a valid job shape;
-    an entry missing those fields is rejected at load with a ValueError naming it.)
+      - ``"message"`` (default, unchanged): ``to`` doubles as the message
+        RECIPIENT too — ``message`` (free-form text) is required, dispatched
+        to the agent's inbox as a normal attributed turn (= always starts an
+        LLM turn).
+      - ``"hook"`` (#5209): only fires the ``cron_fired`` external-event hook
+        on the host session — never starts a turn itself. Whether anything
+        happens next is entirely up to a hooks.yaml ``on: cron_fired``
+        entry's own ``push_when`` (an ``exec_capture`` hook whose script
+        decides token-0 vs push, #5209's own reason to exist). ``message``
+        set on a ``"hook"`` job is a config error — a hook job never has
+        text to deliver, so a written ``message`` would silently be
+        ignored without this check (#5209, architect ruling: declare the
+        action positively, never let an absent field carry meaning).
+
+    Unknown ``action`` values are rejected at load, same as a missing
+    ``to``/``message`` shape.
     """
 
     name: str
     schedule: str   # 5-field cron expression
-    to: str | None = None        # target agent name
-    message: str | None = None   # free-form text dispatched to the agent's inbox
+    to: str | None = None        # target agent name — required for every action (see class docstring)
+    message: str | None = None   # free-form text dispatched to the agent's inbox — action="message" only
+    action: str = "message"      # #5209: "message" (default) | "hook"
     notify: str | None = None    # FP-0043 S4b-3b: opt-in notify channel (e.g. "telegram"); None = event-log only
     input: dict = field(default_factory=dict)
     enabled: bool = True
@@ -1344,7 +1363,7 @@ class CronConfig:
 def _build_cron_config(raw: object) -> CronConfig:
     """Parse the ``cron:`` section from reyn.yaml / ``.reyn/cron.yaml``.
 
-    Shape (FP-0009 + FP-0041 #489 PR-B)::
+    Shape (FP-0009 + FP-0041 #489 PR-B; ``action`` #5209)::
 
         cron:
           jobs:
@@ -1353,13 +1372,17 @@ def _build_cron_config(raw: object) -> CronConfig:
               message: "今日の主要ニュースをまとめて"
               schedule: "0 9 * * *"
               enabled: true
+            - name: check_deploy_status   # action: hook — no turn unless the
+              to: ops_agent               # hook's own push_when says so
+              action: hook
+              schedule: "*/5 * * * *"
 
     ``None`` / missing block / empty dict → ``CronConfig(jobs=[])``.
-    Validates ``name`` + ``schedule`` are non-empty strings + ``to`` +
-    ``message`` are set per entry, raising ``ValueError`` naming the
-    offending entry on failure. An entry without the ``to`` + ``message``
-    shape (entry missing ``to`` + ``message``) is rejected with that
-    ValueError. Unknown extra fields are ignored (= forward-compatible).
+    Validates ``name`` + ``schedule`` are non-empty strings + ``to`` is
+    always set + ``action``-appropriate shape per entry (#5209:
+    ``action: message`` needs ``message`` too; ``action: hook`` rejects a
+    ``message``), raising ``ValueError`` naming the offending entry on
+    failure. Unknown extra fields are ignored (= forward-compatible).
     """
     if raw is None:
         return CronConfig()
@@ -1386,19 +1409,38 @@ def _build_cron_config(raw: object) -> CronConfig:
                 f"cron.jobs[{i}] (name={name!r}): 'schedule' must be a non-empty string "
                 f"(got {schedule!r})"
             )
-        # FP-0041 #489 PR-B: a job must be message-based (to + message). An
-        # entry lacking that shape is rejected below.
-        to = entry.get("to")
-        message = entry.get("message")
-        has_message_shape = (
-            bool(to) and isinstance(to, str)
-            and bool(message) and isinstance(message, str)
-        )
-        if not has_message_shape:
+        # #5209: action declares what a fire does; to is required either
+        # way (the host session cron_fired resolves against).
+        action = entry.get("action", "message")
+        if action not in ("message", "hook"):
             raise ValueError(
-                f"cron.jobs[{i}] (name={name!r}): must set "
-                f"'to' + 'message'."
+                f"cron.jobs[{i}] (name={name!r}): 'action' must be "
+                f"'message' or 'hook' (got {action!r})"
             )
+        to = entry.get("to")
+        if not to or not isinstance(to, str):
+            raise ValueError(
+                f"cron.jobs[{i}] (name={name!r}): 'to' must be a non-empty "
+                f"string (the agent this job runs on — required for every "
+                f"action, got {to!r})"
+            )
+        message = entry.get("message")
+        if action == "message":
+            # FP-0041 #489 PR-B: a message job must set 'message' too.
+            if not message or not isinstance(message, str):
+                raise ValueError(
+                    f"cron.jobs[{i}] (name={name!r}): action='message' "
+                    f"requires a non-empty 'message' (got {message!r})"
+                )
+        else:  # action == "hook"
+            # #5209: a hook job never delivers text — a written 'message'
+            # would silently be ignored without this check.
+            if message is not None:
+                raise ValueError(
+                    f"cron.jobs[{i}] (name={name!r}): action='hook' must "
+                    f"not set 'message' (it is never delivered — got "
+                    f"{message!r})"
+                )
         raw_input = entry.get("input") or {}
         if not isinstance(raw_input, dict):
             raw_input = {}
@@ -1411,6 +1453,7 @@ def _build_cron_config(raw: object) -> CronConfig:
             schedule=schedule,
             to=to,
             message=message,
+            action=action,
             notify=notify,
             input=dict(raw_input),
             enabled=enabled,
