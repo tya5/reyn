@@ -107,10 +107,16 @@ async def test_action_hook_with_push_when_false_starts_zero_turns(tmp_path):
     """Tier 2: THE core #5209 proof. A real ``action="hook"`` CronJob fires
     through the REAL runner (``build_default_runner``'s hook_only_dispatcher
     branch); the configured ``on: cron_fired`` hook's own ``push_when``
-    template renders false — nothing lands in the session's inbox, so no
-    turn is ever triggered. Waits on the PUBLIC ``pending_dispatch_count``
-    snapshot (not a fixed sleep) to know the fire-and-forget hook dispatch
-    has actually settled before asserting the (negative) outcome."""
+    template renders false — nothing lands in the session's inbox. Waits on
+    the PUBLIC ``pending_dispatch_count`` snapshot (not a fixed sleep) to
+    know the fire-and-forget hook dispatch has actually settled before
+    asserting the (negative) outcome.
+
+    Witness scope (architect review, non-blocking): this asserts the inbox
+    stays empty, not "the LLM was called 0 times" directly — at THIS layer
+    (``_NoRunAgentRegistry``, no live ``Session.run()`` loop) a turn can only
+    ever start via an inbox arrival, so an empty inbox is a faithful proxy,
+    but it is a proxy, not a direct LLM-call count."""
     hooks_config = [
         {
             "on": "cron_fired",

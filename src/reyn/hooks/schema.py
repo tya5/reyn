@@ -262,7 +262,9 @@ class HookDef:
         ``reyn.hooks.matcher.matches`` for the match semantics and
         ``reyn.hooks.dispatcher.HookDispatcher.dispatch`` for where it's
         applied (before the hook's action runs). Absent/empty -> always fires
-        (unchanged for every hook that predates H2).
+        (unchanged for every hook that predates H2). ``cron_fired``'s
+        ``action`` field (#5209, ``"message"``/``"hook"``) is also exact-match
+        here, same as ``job_name`` — not a glob field either.
     subprocess:
         OPERATOR-declared per-hook sandbox knob (#2827): may this hook's exec
         argv spawn children? Only meaningful for ``exec`` / ``exec_capture``
