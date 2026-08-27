@@ -63,6 +63,7 @@ from reyn.llm.litellm_bootstrap import (
     ensure_litellm_ready_or_defer,
 )
 from reyn.prompt import compaction as _prompt_compaction
+from reyn.runtime.error_format import is_quota_exhausted_error
 
 if TYPE_CHECKING:
     from reyn.config import CompactionConfig
@@ -2187,6 +2188,35 @@ async def retry_loop(
                         # summary.
                         continue
                 except Exception as exc:
+                    # #5329: a provider usage-window/plan quota exhaustion
+                    # (429 usage_limit_reached) is the ONE exception #3783
+                    # stage 3's own "no per-exception-type allowlist"
+                    # ruling below does not cover — it is genuinely never
+                    # shrinkable (the window resets on a clock, not on
+                    # input size, #5256's own finding for the SAME
+                    # predicate at the outer _run_with_shrink gate). Real
+                    # incident (owner, reyn-self): compact()'s own LLM call
+                    # hit the SAME exhausted quota that had already failed
+                    # main_call, got wrapped as CompactionOverflowError by
+                    # the general rule below, and burned 2 more calls into
+                    # the SAME dead window before the stage-2 cap finally
+                    # gave up — 3 wasted round-trips during an active
+                    # outage, not 1. Re-raised BARE (never wrapped), the
+                    # SAME shape #5256's outer gate already uses and
+                    # ``_handle_inbox_text``'s generic catch-all already
+                    # handles safely — this is reuse of an existing,
+                    # already-battle-tested seam, not a new one.
+                    #
+                    # Deliberately NARROWER than "remove RateLimitError
+                    # from the shrinkable family" (architect ruling,
+                    # #5329): an ordinary per-request 429 (no structured
+                    # ``usage_limit_reached`` body) is NOT touched here —
+                    # #3783 stage 3's own reasoning for including it stays
+                    # intact, this predicate only carves out the ONE
+                    # subtype that can never recover regardless of how
+                    # many times shrinking retries it.
+                    if is_quota_exhausted_error(exc):
+                        raise
                     # #3783 stage 3 (owner-ratified): EVERY compact()-call
                     # exception now recovers by default — shrinking the
                     # input is a general remedy (a truncated JSON response,
