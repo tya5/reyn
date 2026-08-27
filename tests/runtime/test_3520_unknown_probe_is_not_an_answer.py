@@ -14,9 +14,10 @@ the mechanism ran. The mechanism-level facts (a `mcp_tool_probe_degraded`
 audit-event fires; the cache dict has/hasn't a key) are all downstream
 proxies; the thing the issue is about is whether the model is told about
 capabilities it actually has, and that is the ``mcp_tool_name`` enum inside
-``build_tools(...)`` output. `build_tools(agents, mcp_servers=host.get_mcp_servers())`
+``build_tools(...)`` output. `build_tools(mcp_servers=host.get_mcp_servers())`
 is the exact expression `RouterLoop` uses to assemble `tools=`, so these tests
-call it with the same input, not a paraphrase of it.
+call it with the same input, not a paraphrase of it. (#5291: available_agents
+removed from build_tools's own signature — 0 real consumers.)
 
 Three surfaces, one defect — a fix that misses any of them leaves it alive:
   1. the in-memory cache          → `test_payload_*`
@@ -164,9 +165,10 @@ def _mcp_tool_enum(adapter: RouterHostAdapter) -> "list[str] | None":
     """The `mcp_tool_name` enum as the LLM would receive it in `tools=`.
 
     Reproduces `RouterLoop`'s own assembly expression —
-    ``build_tools(..., mcp_servers=self.host.get_mcp_servers())`` — so what is
-    asserted is the payload content, not an intermediate the payload happens
-    to be derived from. Returns None when the field carries no enum at all
+    ``build_tools(mcp_servers=self.host.get_mcp_servers())`` (#5291:
+    available_agents removed from the signature) — so what is asserted is
+    the payload content, not an intermediate the payload happens to be
+    derived from. Returns None when the field carries no enum at all
     (= the schema degrades to a free-form string and the model is told
     nothing about which tools exist).
     """

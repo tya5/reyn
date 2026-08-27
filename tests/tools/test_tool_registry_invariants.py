@@ -345,7 +345,6 @@ def test_router_caller_state_defaults_all_none():
     """Tier 2: RouterCallerState() with no arguments defaults all fields to None."""
     state = RouterCallerState()
     assert state.agent_registry is None
-    assert state.available_agents is None
     assert state.send_to_session_fn is None
     assert state.chain_id is None
     assert state.budget is None
@@ -408,7 +407,6 @@ def test_router_caller_state_partial_population():
     state = RouterCallerState(agent_registry=sentinel_registry)
 
     assert state.agent_registry is sentinel_registry
-    assert state.available_agents is None
     assert state.send_to_session_fn is None
     assert state.chain_id is None
     assert state.budget is None
@@ -428,7 +426,6 @@ def test_router_caller_state_full_population():
 
     state = RouterCallerState(
         agent_registry=sentinel_agent_reg,
-        available_agents=[{"name": "a1"}],
         send_to_session_fn=_send_to_session,
         chain_id="chain-xyz",
         budget=sentinel_budget,
@@ -438,7 +435,6 @@ def test_router_caller_state_full_population():
     )
 
     assert state.agent_registry is sentinel_agent_reg
-    assert state.available_agents == [{"name": "a1"}]
     assert state.send_to_session_fn is _send_to_session
     assert state.chain_id == "chain-xyz"
     assert state.budget is sentinel_budget
@@ -490,11 +486,17 @@ def test_tool_definition_schema_enricher_defaults_none():
 
 
 def test_tool_definition_schema_enricher_can_be_set():
-    """Tier 2: ToolDefinition.schema_enricher accepts a callable and can be invoked."""
+    """Tier 2: ToolDefinition.schema_enricher accepts a callable and can be invoked.
+
+    #5291: was keyed on ``available_agents`` (removed — 0 real consumers,
+    #5291's own field-removal commit); ``mcp_servers`` is the actual field
+    a live enricher reads (``tools/mcp.py``'s ``_enrich_router_schema``) —
+    switching the sample to it keeps this test exercising the SAME
+    mechanism a real capability uses, not a dead one."""
     def _enricher(rendered: dict, state: RouterCallerState) -> dict:
         enriched = dict(rendered)
         enriched["_enriched"] = True
-        enriched["_agents_count"] = len(state.available_agents or [])
+        enriched["_servers_count"] = len(state.mcp_servers or [])
         return enriched
 
     tool = ToolDefinition(
@@ -510,9 +512,9 @@ def test_tool_definition_schema_enricher_can_be_set():
     assert callable(tool.schema_enricher)
 
     sample_rendered = {"type": "function", "function": {"name": "enricher_tool"}}
-    state = RouterCallerState(available_agents=[{"name": "agent_a"}, {"name": "agent_b"}])
+    state = RouterCallerState(mcp_servers=[{"name": "server_a"}, {"name": "server_b"}])
     result = tool.schema_enricher(sample_rendered, state)
 
     assert result["_enriched"] is True
-    assert result["_agents_count"] == 2
+    assert result["_servers_count"] == 2
     assert result["type"] == "function"

@@ -60,7 +60,12 @@ class RouterCallerState:
     """
     # Catalog discovery (= for catalog tools list_agents / describe_agent handlers)
     agent_registry: Any = None
-    available_agents: list[Mapping[str, Any]] | None = None
+    # #5291: available_agents removed — 0 real consumers (its only one,
+    # delegate_to_agent's per-call `to` enum injection, retired #3978 P6);
+    # every populate site was a real disk read (list_available_agents())
+    # for a value nothing downstream read. If a future capability needs
+    # this again, give it a real reader (mcp_servers-shaped, a live field
+    # some enricher actually reads) — not an eager list nobody consumes.
 
     # IS-1 (docs/proposals/reyn-pipeline-v0.9-design-resolutions.md R6): the
     # PipelineRegistry the run_pipeline tool looks up a registered Pipeline by
@@ -301,7 +306,9 @@ async def build_resource_caller_state(host: Any) -> "RouterCallerState":
         rag_sources = None
 
     return RouterCallerState(
-        available_agents=list(getattr(host, "list_available_agents", list)()),
+        # #5291: no longer reads .reyn/agents/ here — RouterCallerState.
+        # available_agents was removed (0 real consumers); this was a
+        # real disk read (list_available_agents()) on every call.
         op_context_factory=getattr(host, "make_router_op_context", None),
         host=host,
         available_rag_sources=rag_sources,
