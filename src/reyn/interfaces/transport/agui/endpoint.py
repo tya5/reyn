@@ -1057,6 +1057,16 @@ async def agui_events(request: Request, agent_name: str):
             # session. ``source`` is the SINGLE per-connection owner of
             # "which agent, which session" now (see its own class docstring);
             # this is its one status-facing read path.
+            #
+            # #5179 (architect, non-blocking): at CONNECT time, this reads
+            # the SAME session `_session_backlog_page_and_status` paired
+            # its own status against for `initial_status` below —
+            # `attach()` always focuses `_DEFAULT_SID`, so `source.current_
+            # session()` and that function's own `target` resolve
+            # identically here. They can only diverge LATER, mid-stream,
+            # after a cross-agent `/attach` re-points `source` (#5116) —
+            # which is exactly why this live closure (not `initial_status`)
+            # is what the mid-stream switch re-fire still reads.
             return _snapshot_for_session(registry, source.current_session())
 
         async def _backlog_provider(name: str, sid: str) -> "tuple[list[Frame], bool, str | None]":
