@@ -233,8 +233,10 @@ class CapabilityVisibility:
         # #5276: the expensive envelope-only census's cache — see
         # _envelope_census's own docstring. None = never computed / needs
         # recompute; invalidated synchronously by invalidate_envelope_census
-        # (called by Session at its 3 grep-confirmed mutation sites — never
-        # via an EventLog subscriber, the #5279/#5284 lesson).
+        # — called from Session at 3 sites (grep-confirmed:
+        # `git grep invalidate_envelope_census -- src` → session.py's
+        # `_reapply_mcp`, `_reapply_skills`, `load_persisted_toggles`) —
+        # never via an EventLog subscriber, the #5279/#5284 lesson.
         self._cached_envelope_census: "dict | None" = None
 
     @property
@@ -667,11 +669,22 @@ class CapabilityVisibility:
         session's own construction/spawn/restore and never mutated by any
         live, in-session command — ``resolved_profile_for``'s answer for a
         GIVEN (agent, sid) does not change while that session keeps
-        running. What DOES change mid-session, and this cache correctly
-        tracks via :meth:`invalidate_envelope_census`'s 3 call sites,
-        is WHICH capabilities exist to classify at all: the MCP server
-        roster (``_reapply_mcp``) and the skill registry
-        (``_reapply_skills``) can both change via hot-reload.
+        running EXCEPT for one edge the ``sid=`` argument itself exposes —
+        a session's own sid CAN be re-keyed post-construction (spawn
+        fixup; see this class's own module docstring), so ``load_persisted_
+        toggles`` (called right after a re-key) is this cache's 3rd
+        invalidation site, alongside the two below. What DOES change
+        mid-session otherwise, and this cache correctly tracks via
+        :meth:`invalidate_envelope_census`'s 3 call sites, is WHICH
+        capabilities exist to classify at all: the MCP server roster
+        (``_reapply_mcp``) and the skill registry (``_reapply_skills``)
+        can both change via hot-reload.
+
+        #5288 (filed, not fixed here): whether some OTHER input the active
+        scheme's own ``build_presentation`` reads (e.g.
+        ``list_available_agents()``, via ``_VisibilityProbeOps``) can
+        change mid-session independent of these 3 sites is not
+        grep-verified.
 
         Returns a dict whose shape mirrors the ORIGINAL method's own 3
         per-kind treatments exactly (preserved verbatim, just relocated —

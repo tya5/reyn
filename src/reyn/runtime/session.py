@@ -3162,6 +3162,19 @@ class Session:
         # invalidate hook_state()'s cache synchronously here too, same
         # reasoning as set_hook_enabled's own comment.
         self._cached_hook_items = None
+        # #5276/#5285 review (architect): this method's own module
+        # docstring (capability_visibility.py, top) already documents WHY
+        # `session_id_provider` is a live getter, not a snapshot — a
+        # session's own sid CAN be re-keyed post-construction (spawn
+        # fixup), and `load_persisted_toggles` is called AFTER that
+        # re-key. `_envelope_census()` bakes `resolved_profile_for(...,
+        # sid=...)` into its cache, so a re-keyed sid can genuinely change
+        # what that call returns for the SAME session object — the one
+        # scenario this PR's own earlier "envelope never changes
+        # mid-session" claim did not hold for. Invalidate here too,
+        # synchronously (same "no subscriber" reasoning as every other
+        # site — #5279/#5284).
+        self._capability_visibility.invalidate_envelope_census()
         if loaded_visibility:
             self._capability_visibility.reapply_visibility_override()
         if loaded_skill_visibility:
