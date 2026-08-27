@@ -2880,10 +2880,21 @@ class Session:
         """#2285: toggle the session-visibility of a tool / mcp / category / skill
         (status-bar seam). Thin forwarder — see
         ``CapabilityVisibility.set_capability_visible`` for the full rationale
-        (#3121 step3 Extract Class)."""
+        (#3121 step3 Extract Class).
+
+        #5276: emits ``visibility_changed`` (kind/name/on — the operator's own
+        toggle, nothing derived) once the forwarded call returns without
+        raising. This is the OPERATOR'S ACTION, not "did the effective,
+        envelope-gated visibility change" — that own docstring's "no-op for
+        visibility" case (toggling ON something the envelope denies) still
+        records the override and still emits here, matching lead-coder's
+        stated reason (charter lens 7: reconstruct from the audit-event trail)
+        rather than a narrower "actually took effect" signal nothing downstream
+        asked for."""
         self._capability_visibility.set_capability_visible(
             kind, name, visible, self._toggle_store_dir(),
         )
+        self._audit_events.emit("visibility_changed", kind=kind, name=name, on=visible)
 
     def capability_visibility_state(self) -> dict:
         """#2285: the status-bar's read model. Thin forwarder — see
@@ -2968,6 +2979,13 @@ class Session:
         else:
             self._disabled_hooks.add(name)
         self._persist_hook_disabled()  # #2285 step2 — survive restart (best-effort)
+        # #5276: emits ONLY on this applied=True path — the refusal branch
+        # above changed nothing (``_disabled_hooks`` untouched), so there is
+        # no state change to record there, unlike ``set_capability_visible``'s
+        # own always-emit (that toggle's override is recorded even when
+        # envelope-denied; this one's write is refused outright and never
+        # reaches ``_disabled_hooks`` at all).
+        self._audit_events.emit("hook_changed", name=name, enabled=enabled)
         return HookToggleResult(applied=True, origin=origin)
 
     # ── #2285 step2: persist / restore the session toggles (SEPARATE from the envelope floor) ──
