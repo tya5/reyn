@@ -125,18 +125,28 @@ own docstring for the queue/consumer race it resolves).
 ### `agent_delta` durable-write coalescing (#4960)
 
 One kind gets special treatment on the `local` backend's write side:
-`agent_delta` (one audit-event per streamed reply chunk) is NOT written
-to disk per-fragment. Live subscriber delivery is unaffected by THIS
-mechanism — every fragment still dispatches to its subscribers (#5259
+`agent_delta` (one audit-event per EMITTED content-delta batch — **not**
+one raw provider chunk since #5261/#5268, which merges whatever raw
+chunks are already waiting into one emitted batch at the LLM-call source,
+before this event ever exists; `raw_chunk_count`/`first_arrival`/
+`last_arrival` on each event carry the merged-away detail) is NOT written
+to disk per-event. Live subscriber delivery is unaffected by THIS
+mechanism — every emitted batch still dispatches to its subscribers (#5259
 folds a waiting run on the AG-UI wire, separately and further down; see
 the note under the opt-in below). Measured
-(2000-delta/60KB real streamed reply, `agent_delta_include_text=true`):
+(2000-delta/60KB real streamed reply, `agent_delta_include_text=true`,
+predating #5261's source-side merge — one event per raw chunk at
+measurement time):
 unthrottled, `agent_delta` writes were 99.4% of that run's audit file
-bytes, so writing every fragment durably would dominate the log for the
+bytes, so writing every one durably would dominate the log for the
 duration of any streamed reply. That figure assumes `text` is being
 written — with #4666's default (`agent_delta_include_text=false`, see
 below), a coalesced record's bytes are smaller and this percentage does
-not apply as measured.
+not apply as measured. `coalesced_fragment_count` on a coalesced record
+sums each incoming event's own `raw_chunk_count` (default 1) rather than
+counting events 1-for-1 — #5261/#5268, so a durable record's stated
+fragment count still means "raw provider chunks," not "emitted events,"
+after the source-side merge.
 
 Three mechanisms, each covering a gap the others leave open:
 
