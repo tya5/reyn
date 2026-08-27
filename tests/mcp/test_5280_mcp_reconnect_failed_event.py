@@ -33,6 +33,8 @@ that file's own established idiom for the other 6 kinds.
 """
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 
 from reyn.mcp.connection_service import MCPConnectionService
@@ -102,6 +104,54 @@ async def test_a_successful_reconnect_does_not_emit_the_failure_kind() -> None:
         )
         assert "mcp_initialized" in kinds, (
             f"a successful reconnect must still emit the pre-existing kind, got {kinds!r}"
+        )
+    finally:
+        await service.aclose()
+
+
+@pytest.mark.asyncio
+async def test_a_cancellation_mid_reopen_still_emits_the_failure_kind(monkeypatch) -> None:
+    """Tier 2: non-blocking review (lead-coder) — a bare ``except
+    Exception:`` does not catch ``asyncio.CancelledError`` (a
+    ``BaseException``, not an ``Exception``, since Python 3.8): a real
+    task-cancellation landing mid-``_ensure_open`` would leave ``server``
+    already popped from ``self._clients`` with NOTHING emitted — the exact
+    staleness this PR exists to close, just reached via cancellation
+    instead of an ordinary raise. Fixed to ``except BaseException:``.
+
+    Pins a GENUINE task cancellation (``task.cancel()`` against a real,
+    never-resolving ``asyncio.Event().wait()`` — CLAUDE.md's own "external
+    drive, not a sleep" discipline for a collaborator gated by its own
+    timer), not a fabricated ``CancelledError`` raise. ``_ensure_open`` is
+    swapped for a controllable stand-in only to make the cancellation
+    point deterministic — ``_reconnect``'s own except-clause behavior
+    (this file's actual subject) is exercised unmodified, against a real
+    ``asyncio.Task``."""
+    events: "list[tuple[str, dict]]" = []
+
+    def _sink(kind: str, **data) -> None:
+        events.append((kind, data))
+
+    service = MCPConnectionService(emit_sink=_sink)
+    hang = asyncio.Event()
+
+    async def _hanging_ensure_open(server, config, *, agent_id):
+        await hang.wait()  # never resolves on its own — must be cancelled
+
+    monkeypatch.setattr(service, "_ensure_open", _hanging_ensure_open)
+    try:
+        task = asyncio.create_task(
+            service._reconnect("srv-cancel-5280", {}, agent_id=None)
+        )
+        await asyncio.sleep(0)  # let the task actually start and reach the real await
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+        kinds = [k for k, _ in events]
+        assert "mcp_reconnect_failed" in kinds, (
+            "#5280 non-blocking REGRESSION: a cancellation mid-reopen emitted "
+            f"nothing — got {kinds!r}"
         )
     finally:
         await service.aclose()

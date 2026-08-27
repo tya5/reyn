@@ -542,7 +542,19 @@ class MCPConnectionService:
                 )
         try:
             return await self._ensure_open(server, config, agent_id=agent_id)
-        except Exception:
+        except BaseException:
+            # #5280 review (lead-coder, non-blocking): a bare ``except
+            # Exception:`` here does not catch ``CancelledError`` (it's a
+            # ``BaseException``, not an ``Exception``, since Python 3.8).
+            # ``server`` is already popped from ``self._clients`` (above)
+            # regardless of WHY the reopen didn't complete — a cancel
+            # landing mid-``_ensure_open`` leaves the cache exactly as
+            # stale as any other reopen failure would. ``raise``
+            # unconditionally below re-raises the SAME exception
+            # untouched (cancellation or otherwise) — this only adds the
+            # emit as a side effect, never changes what propagates or
+            # swallows a cancel (mirrors ``llm/llm.py``'s own ``except
+            # BaseException`` precedent for "always look, never absorb").
             if self._emit_sink is not None:
                 self._emit_sink("mcp_reconnect_failed", server=server)
             raise
