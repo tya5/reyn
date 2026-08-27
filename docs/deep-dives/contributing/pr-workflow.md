@@ -267,17 +267,24 @@ These rules then keep multi-session work coherent:
    does not work in this repo's setup: every session authenticates as the
    same `gh` user, and GitHub refuses to let an account request changes on
    its own pull request — there is no machine-readable `CHANGES_REQUESTED`
-   state available here. A review comment alone is easy to miss because
-   nothing about the PR's own checks-passing state reflects it: "all checks
-   green" can be — and four times in one day was (#3720 ×2, #3722, #3730) —
-   reported while a still-open review comment sat unaddressed, because the
-   comment lived on a surface the merge decision doesn't read. This is
-   **the reviewer's obligation**, not the implementer's: rule 1 above
-   already covers the implementer side (finish your OWN Test plan before
-   merge). A reviewing session that has a blocking point edits the PR body
-   to add it as `- [ ] 🔴 <point>` (append, don't remove the author's own
-   items) and does not merge while it's unchecked; the author checks it off
-   once addressed, in the same PR body, with the fixing commit noted.
+   state available here. A review comment alone used to be easy to miss
+   because nothing about the PR's own checks-passing state reflected it:
+   "all checks green" could be — and four times in one day was (#3720 ×2,
+   #3722, #3730) — reported while a still-open review comment sat
+   unaddressed, because the comment lived on a surface the merge decision
+   didn't read. Since #5317, that gap is closed on the comment side too: a
+   `BLOCKING (head <sha>)` comment reddens the PR's own checks on its own,
+   with no body edit at all (`scripts/check_open_blocking_checkboxes.py`).
+   This is **the reviewer's obligation**, not the implementer's: rule 1
+   above already covers the implementer side (finish your OWN Test plan
+   before merge). A reviewing session that has a blocking point edits the
+   PR body to add it as `- [ ] 🔴 <point>` (append, don't remove the
+   author's own items) — or posts the equivalent `BLOCKING (head <sha>)`
+   comment form — and does not merge while it's unresolved. Ticking the
+   box alone no longer closes it: closing takes a comment quoting that
+   line verbatim (`BLOCKING-CLEARED (head <sha>)` for the comment form),
+   or the gate stays red (#5314). The author reports the fix and asks the
+   reviewer to confirm — the author does not tick the reviewer's own box.
    **Rule 4 applies to this edit too** — a reviewer's appended text lands
    on the same PR body surface rule 4 governs, and `check_pr_closing_intent.py`
    deliberately strips backticks before matching (the criterion is *use vs
